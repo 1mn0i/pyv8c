@@ -1,0 +1,82 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav</Extensions>
+    </Filter>
+    <Filter Include="faker">
+      <UniqueIdentifier>{d3fab5f2-db1d-46d0-8178-687c99e85723}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="faker\env">
+      <UniqueIdentifier>{cc0851eb-aa16-4568-9fce-46876a757503}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="faker\vm.cpp">
+      <Filter>faker</Filter>
+    </ClCompile>
+    <ClCompile Include="context.cpp" />
+    <ClCompile Include="convert.cpp" />
+    <ClCompile Include="debugger.cpp" />
+    <ClCompile Include="exception.cpp" />
+    <ClCompile Include="jsfunction.cpp" />
+    <ClCompile Include="jsobject.cpp" />
+    <ClCompile Include="kappa.cpp" />
+    <ClCompile Include="pyclass.cpp" />
+    <ClCompile Include="pyclasshandlers.cpp" />
+    <ClCompile Include="pyfunction.cpp" />
+    <ClCompile Include="pyv8env.cpp" />
+    <ClCompile Include="script.cpp" />
+    <ClCompile Include="faker\tools.cpp">
+      <Filter>faker</Filter>
+    </ClCompile>
+    <ClCompile Include="faker\env\Window.cpp">
+      <Filter>faker\env</Filter>
+    </ClCompile>
+    <ClCompile Include="faker\Faker.cpp">
+      <Filter>faker</Filter>
+    </ClCompile>
+    <ClCompile Include="faker\env\EventTarget.cpp">
+      <Filter>faker\env</Filter>
+    </ClCompile>
+    <ClCompile Include="v8tools.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="faker\vm.h">
+      <Filter>faker</Filter>
+    </ClInclude>
+    <ClInclude Include="context.h" />
+    <ClInclude Include="convert.h" />
+    <ClInclude Include="debugger.h" />
+    <ClInclude Include="exception.h" />
+    <ClInclude Include="jsobject.h" />
+    <ClInclude Include="kappa.h" />
+    <ClInclude Include="polyfill.h" />
+    <ClInclude Include="pyclass.h" />
+    <ClInclude Include="pyfunction.h" />
+    <ClInclude Include="pyv8env.h" />
+    <ClInclude Include="script.h" />
+    <ClInclude Include="faker\tools.h">
+      <Filter>faker</Filter>
+    </ClInclude>
+    <ClInclude Include="faker\env\Window.h">
+      <Filter>faker\env</Filter>
+    </ClInclude>
+    <ClInclude Include="faker\Faker.h">
+      <Filter>faker</Filter>
+    </ClInclude>
+    <ClInclude Include="faker\env\EventTarget.h">
+      <Filter>faker\env</Filter>
+    </ClInclude>
+    <ClInclude Include="v8tools.h" />
+    <ClInclude Include="faker\hook.h">
+      <Filter>faker</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="pyv8env.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+</Project>

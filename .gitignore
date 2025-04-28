@@ -1,0 +1,13 @@
+.idea/
+__pycache__/
+
+*.log
+*.pyc
+*.egg-info
+build
+dist
+.eggs
+
+.vs/
+vc140.pdb
+v8
