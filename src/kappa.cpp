@@ -1,6 +1,6 @@
 #include <v8.h>
 
-#include "pyv8env.h"
+#include "pyv8.h"
 #include "kappa.h"
 
 #define DEFINE_MEME(name, string) Persistent<String> name##p;

@@ -1,5 +1,5 @@
 #include <Python.h>
-#include "pyv8env.h"
+#include "pyv8.h"
 #include <v8.h>
 
 #include "convert.h"
@@ -9,26 +9,39 @@
 using namespace v8;
 
 
-PyObject *javascript;
+PyObject* javascript;
 
-PyTypeObject script_type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-};
-int script_type_init() {
+PyTypeObject* script_type = NULL;
 
-    javascript = PyString_InternFromString("javascript");
+static PyType_Slot script_slots[] = {
+    {Py_tp_doc, "v8 Script"},
+    {Py_tp_new, (void*)script_new},
+    {Py_tp_dealloc, (void*)script_dealloc},
+    {0, NULL} };
 
-    script_type.tp_name = "pyv8env.Script";
-    script_type.tp_basicsize = sizeof(script_c);
-    script_type.tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_WEAKREFS;
-    script_type.tp_doc = "v8 Script";
-    script_type.tp_new = (newfunc) script_new;
-    script_type.tp_dealloc = (destructor) script_dealloc;
+static PyType_Spec script_spec = {
+    "_pyv8.Script",
+    sizeof(script_c),
+    0,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_WEAKREFS,
+    script_slots };
 
-    return PyType_Ready(&script_type);
+int 
+script_type_init()
+{
+    javascript = PyUnicode_InternFromString("javascript");
+
+    script_type = (PyTypeObject *)PyType_FromSpec(&script_spec);
+    if (script_type == NULL)
+    {
+        return -1;
+    }
+    return 0;
 }
 
-PyObject *construct_script_name(Local<Context> context, Local<Value> js_name, int id) {
+PyObject *
+construct_script_name(Local<Context> context, Local<Value> js_name, int id)
+{
     PyObject *name;
     if (js_name.IsEmpty() || js_name->IsUndefined()) {
         name = javascript;
@@ -45,7 +58,9 @@ PyObject *construct_script_name(Local<Context> context, Local<Value> js_name, in
     return script_name;
 }
 
-PyObject *script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
+PyObject *
+script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
+{
     context_c *py_ctx;
     static const char *keywords[] = {"context", "source", "filename", NULL};
     PyObject *source;
@@ -68,7 +83,8 @@ PyObject *script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
     MaybeLocal<UnboundScript> maybe_script = script_compile(context, source, filename);
     PY_PROPAGATE_JS;
     Local<UnboundScript> script = maybe_script.ToLocalChecked();
-    script_c *self = (script_c *) type->tp_alloc(type, 0);
+    //script_c *self = (script_c *) type->tp_alloc(type, 0);
+    script_c *self = (script_c *)PyType_GenericAlloc(type, 0);
     self->script.Reset(isolate, script);
     Py_INCREF(filename);
     self->script_name = filename;
@@ -78,7 +94,9 @@ PyObject *script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
     return (PyObject *) self;
 }
 
-MaybeLocal<UnboundScript> script_compile(Local<Context> context, PyObject *source, PyObject *filename) {
+MaybeLocal<UnboundScript> 
+script_compile(Local<Context> context, PyObject *source, PyObject *filename)
+{
     EscapableHandleScope hs(isolate);
     MaybeLocal<UnboundScript> maybe_script;
     // fucking god / c++
@@ -95,11 +113,14 @@ MaybeLocal<UnboundScript> script_compile(Local<Context> context, PyObject *sourc
     return hs.Escape(maybe_script.ToLocalChecked());
 }
 
-void script_dealloc(script_c *self) {
+void 
+script_dealloc(script_c *self)
+{
     self->script.Reset();
 
     Py_XDECREF(self->script_name);
     Py_XDECREF(self->source);
-    Py_TYPE(self)->tp_free((PyObject *) self);
+    //Py_TYPE(self)->tp_free((PyObject *) self);
+    TP_FREE_ABI3(script_type, self);
 }
 

@@ -6,7 +6,7 @@
 #include <v8-inspector.h>
 #include <memory>
 
-#include "pyv8env.h"
+#include "pyv8.h"
 
 using namespace v8;
 using namespace v8_inspector;
@@ -14,16 +14,18 @@ using namespace v8_inspector;
 class V8PyInspectorClient;
 class V8PyChannel;
 
-typedef struct _debugger {
-    PyObject_HEAD
-        context_c* context;
+typedef struct _debugger
+{
+    PyObject_HEAD 
+    context_c* context;
     V8PyInspectorClient* client;
     V8PyChannel* channel;
     std::unique_ptr<V8Inspector> inspector;
     std::unique_ptr<V8InspectorSession> session;
     PyObject* scripts;
 } debugger_c;
-extern PyTypeObject debugger_type;
+
+extern PyTypeObject* debugger_type;
 int debugger_type_init();
 
 PyObject* debugger_new(PyTypeObject* type, PyObject* args, PyObject* kwargs);
@@ -33,10 +35,12 @@ PyObject* debugger_send(debugger_c* self, PyObject* message);
 void debugger_run_js(debugger_c* self, PyObject* args, PyObject* kwargs);
 PyObject* debugger_handle(debugger_c* self, PyObject* message);
 
-class V8PyInspectorClient : public V8InspectorClient {
+class V8PyInspectorClient : public V8InspectorClient
+{
 public:
     V8PyInspectorClient(debugger_c* debugger) : debugger_(debugger) {}
-    Local<Context> ensureDefaultContextInGroup(int context_group_id) override {
+    Local<Context> ensureDefaultContextInGroup(int context_group_id) override
+    {
         return debugger_->context->js_context.Get(isolate);
     }
 
@@ -47,14 +51,18 @@ private:
     debugger_c* debugger_;
 };
 
-class V8PyChannel : public V8Inspector::Channel {
+class V8PyChannel : public V8Inspector::Channel
+{
 public:
     V8PyChannel(debugger_c* debugger) : debugger_(debugger) {}
+
 private:
-    void sendResponse(int callId, std::unique_ptr<StringBuffer> message) override {
+    void sendResponse(int callId, std::unique_ptr<StringBuffer> message) override
+    {
         handle_message(message);
     }
-    void sendNotification(std::unique_ptr<StringBuffer> message) override {
+    void sendNotification(std::unique_ptr<StringBuffer> message) override
+    {
         handle_message(message);
     }
     void flushProtocolNotifications() override {}

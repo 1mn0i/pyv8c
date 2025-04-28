@@ -2,7 +2,7 @@
 #define PYV8ENV_TOOLS_H
 
 #include <Python.h>
-#include "pyv8env.h"
+#include "pyv8.h"
 #include "pyclass.h"
 #include <v8.h>
 

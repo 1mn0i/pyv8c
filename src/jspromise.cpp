@@ -1,0 +1,101 @@
+#include <Python.h>
+#include "pyv8.h"
+#include <v8.h>
+
+#include "convert.h"
+#include "jspromise.h"
+#include "context.h"
+
+
+using namespace v8;
+
+PyTypeObject *js_promise_type = NULL;
+
+static PyType_Slot js_promise_slots[] = {
+    {Py_tp_dealloc, (void*)js_promise_dealloc},
+    {Py_tp_new, (void*)js_promise_new},
+    {Py_tp_repr, (void*)js_promise_repr},
+    {Py_tp_doc, "v8 Promise"},
+    {0, NULL} };
+
+static PyType_Spec js_promise_spec = {
+    "_pyv8.Promise",
+    sizeof(js_promise),
+    0,
+    Py_TPFLAGS_DEFAULT,
+    js_promise_slots };
+
+int js_promise_type_init()
+{
+    // Create a base class spec
+    PyObject* bases = PyTuple_New(1);
+    if (bases == NULL)
+    {
+        return -1;
+    }
+    PyTuple_SetItem(bases, 0, (PyObject*)js_object_type);
+    Py_INCREF(js_object_type);
+
+    js_promise_type = (PyTypeObject*)PyType_FromSpecWithBases(&js_promise_spec, bases);
+    Py_DECREF(bases);
+
+    //js_promise_type = (PyTypeObject*)PyType_FromSpec(&js_promise_spec);
+    if (js_promise_type == NULL)
+    {
+        return -1;
+    }
+    return 0;
+}
+
+PyObject *
+js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
+{
+    IN_V8;
+
+    PyObject* resolve = NULL;
+    PyObject* reject = NULL;
+    static const char* keywords[] = { "resolve", "reject", NULL};
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "|OO", (char**)keywords, &resolve, &reject) < 0) {
+        return NULL;
+    }
+    IN_CONTEXT(isolate->GetCurrentContext());
+    //js_object* self = (js_object*)type->tp_alloc(type, 0);
+    js_promise *self = (js_promise *)PyType_GenericAlloc(type, 0);
+    Local<Promise::Resolver> resolver = Promise::Resolver::New(context).ToLocalChecked();
+    Local<Promise> promise = resolver->GetPromise();
+    if (resolve != NULL) {
+        Local<Object> exception = pyexception_to_jsexception(resolve, context);
+        if (!exception.IsEmpty()) 
+            resolver->Resolve(context, exception).ToChecked();
+        else 
+            resolver->Resolve(context, js_from_py(resolve, context)).ToChecked();
+
+    }
+    if (reject != NULL) {
+        Local<Object> exception = pyexception_to_jsexception(reject, context);
+        if (!exception.IsEmpty())
+            resolver->Reject(context, exception).ToChecked();
+        else
+            resolver->Reject(context, js_from_py(reject, context)).ToChecked();
+    }
+    self->base.object.Reset(isolate, promise);
+    return (PyObject*)self;
+}
+
+PyObject * 
+js_promise_repr(js_promise* self)
+{
+    static PyObject* promise_repr = NULL;
+    if (promise_repr == NULL)
+    {
+        promise_repr = PyUnicode_InternFromString("[object Promise]");
+    }
+    Py_INCREF(promise_repr);
+    return promise_repr;
+}
+
+void 
+js_promise_dealloc(js_promise *self)
+{
+    js_object_dealloc((js_object*)self);
+}

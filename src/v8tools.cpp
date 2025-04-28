@@ -12,7 +12,7 @@ namespace bindings {
         Local<Object> global = context->Global();
         Local<Object> faker = global->Get(context, V8String(isolate, "faker")).ToLocalChecked().As<Object>();
         PyObject* cb_name = (PyObject*)info.Data().As<External>()->Value();
-        Local<String> cb = V8String(isolate, PyUnicode_AsUTF8(cb_name));
+        Local<String> cb = V8String(isolate, PyUnicode_AsUTF8_abi3(cb_name));
         Local<Value> func = faker->Get(context, cb).ToLocalChecked();
         if (func.IsEmpty() || !func->IsFunction()) {
             info.GetIsolate()->ThrowException(v8::Exception::Error(String::Concat(isolate, V8String(isolate, "patch callback "), cb)));
@@ -263,28 +263,28 @@ namespace bindings {
 
         int length = PySequence_Length(configs);
         for (int i = 0; i < length; i++) {
-            PyObject* config = PyTuple_GET_ITEM(configs, i);
+            PyObject* config = PyTuple_GetItem(configs, i);
 
             if (config == NULL || !PyTuple_Check(config))
                 continue;
             
             AttributeConfig v8_config;
 
-            PyObject* attr_name = PyTuple_GET_ITEM(config, 0);
-            v8_config.name = PyUnicode_AsUTF8(attr_name);
+            PyObject* attr_name = PyTuple_GetItem(config, 0);
+            v8_config.name = PyUnicode_AsUTF8_abi3(attr_name);
 
-            PyObject* type = PyTuple_GET_ITEM(config, 3);
+            PyObject* type = PyTuple_GetItem(config, 3);
             int cb_type;
             if (type != NULL && PyLong_Check(type)) {
                 cb_type = PyLong_AsLong(type);
             }
 
-            PyObject* location = PyTuple_GET_ITEM(config, 4);
+            PyObject* location = PyTuple_GetItem(config, 4);
             if (location != NULL && PyLong_Check(location)) {
                 v8_config.location = PyLong_AsLong(location);
             }
 
-            PyObject* cb_get_name = PyTuple_GET_ITEM(config, 1);
+            PyObject* cb_get_name = PyTuple_GetItem(config, 1);
             if (cb_get_name != NULL && PyUnicode_Check(cb_get_name)) {
                 if (cb_type == unsigned(CallbackType::kPy)) {
                     PyObject* py_get_method = PyObject_GetAttr(cls, cb_get_name);
@@ -297,7 +297,7 @@ namespace bindings {
                 }
             }
 
-            PyObject* cb_set_name = PyTuple_GET_ITEM(config, 2);
+            PyObject* cb_set_name = PyTuple_GetItem(config, 2);
             if (cb_set_name != NULL && PyUnicode_Check(cb_set_name)) {
                 if (v8_config.location == unsigned(FlagLocation::kInstance) && cb_type == unsigned(CallbackType::kPy)) {
                     PyObject* py_set_method = PyObject_GetAttr(cls, cb_set_name);
@@ -319,27 +319,27 @@ namespace bindings {
                 v8_config.callback_for_set = nullptr;
             }
 
-            PyObject* property_attribute = PyTuple_GET_ITEM(config, 5);
+            PyObject* property_attribute = PyTuple_GetItem(config, 5);
             if (property_attribute != NULL && PyLong_Check(property_attribute)) {
                 v8_config.v8_property_attribute = PyLong_AsLong(property_attribute);
             }
 
-            PyObject* receiver_check = PyTuple_GET_ITEM(config, 6);
+            PyObject* receiver_check = PyTuple_GetItem(config, 6);
             if (receiver_check != NULL && PyLong_Check(receiver_check)) {
                 v8_config.receiver_check = PyLong_AsLong(receiver_check);
             }
 
-            PyObject* cross_origin_get_check = PyTuple_GET_ITEM(config, 7);
+            PyObject* cross_origin_get_check = PyTuple_GetItem(config, 7);
             if (cross_origin_get_check != NULL && PyLong_Check(cross_origin_get_check)) {
                 v8_config.cross_origin_check_for_get = PyLong_AsLong(cross_origin_get_check);
             }
 
-            PyObject* cross_origin_set_check = PyTuple_GET_ITEM(config, 8);
+            PyObject* cross_origin_set_check = PyTuple_GetItem(config, 8);
             if (cross_origin_set_check != NULL && PyLong_Check(cross_origin_set_check)) {
                 v8_config.cross_origin_check_for_set = PyLong_AsLong(cross_origin_set_check);
             }
 
-            PyObject* side_effect = PyTuple_GET_ITEM(config, 9);
+            PyObject* side_effect = PyTuple_GetItem(config, 9);
             if (side_effect != NULL && PyLong_Check(side_effect)) {
                 v8_config.v8_side_effect = PyLong_AsLong(side_effect);
             }
@@ -395,33 +395,33 @@ namespace bindings {
         int length = PySequence_Length(configs);
         for (int i = 0; i < length; i++) {
 
-            PyObject* config = PyTuple_GET_ITEM(configs, i);
+            PyObject* config = PyTuple_GetItem(configs, i);
             if (config == NULL || !PyTuple_Check(config))
                 continue;
 
             OperationConfig v8_config;
 
-            PyObject* method_name = PyTuple_GET_ITEM(config, 0);
-            v8_config.name = PyUnicode_AsUTF8(method_name);
+            PyObject* method_name = PyTuple_GetItem(config, 0);
+            v8_config.name = PyUnicode_AsUTF8_abi3(method_name);
 
 
-            PyObject* type = PyTuple_GET_ITEM(config, 3);
+            PyObject* type = PyTuple_GetItem(config, 3);
             int cb_type;
             if (type != NULL && PyLong_Check(type)) {
                 cb_type = PyLong_AsLong(type);
             }
 
-            PyObject* location = PyTuple_GET_ITEM(config, 4);
+            PyObject* location = PyTuple_GetItem(config, 4);
             if (location != NULL && PyLong_Check(location)) {
                 v8_config.location = PyLong_AsLong(location);
             }
 
-            PyObject* cb_name = PyTuple_GET_ITEM(config, 1);
+            PyObject* cb_name = PyTuple_GetItem(config, 1);
             if (cb_name != NULL && PyUnicode_Check(cb_name)) {
                 if (cb_type == unsigned(CallbackType::kPy)) {
                     PyObject* py_method = PyObject_GetAttr(cls, cb_name);
                     v8_config.js_method = External::New(isolate, py_method);
-                    if(strcmp(PyUnicode_AsUTF8(cb_name), "fn_postMessage")==0 && strcmp(world, "Window") == 0)
+                    if(strcmp(PyUnicode_AsUTF8_abi3(cb_name), "fn_postMessage")==0 && strcmp(world, "Window") == 0)
                         v8_config.callback = py_class_cross_origin_method_callback;
                     else
                         v8_config.callback = py_class_method_callback;
@@ -432,27 +432,27 @@ namespace bindings {
                 }
             }
 
-            PyObject* length = PyTuple_GET_ITEM(config, 2);
+            PyObject* length = PyTuple_GetItem(config, 2);
             if (length != NULL && PyLong_Check(length)) {
                 v8_config.length = PyLong_AsLong(length);
             }
 
-            PyObject* property_attribute = PyTuple_GET_ITEM(config, 5);
+            PyObject* property_attribute = PyTuple_GetItem(config, 5);
             if (property_attribute != NULL && PyLong_Check(property_attribute)) {
                 v8_config.v8_property_attribute = PyLong_AsLong(property_attribute);
             }
 
-            PyObject* receiver_check = PyTuple_GET_ITEM(config, 6);
+            PyObject* receiver_check = PyTuple_GetItem(config, 6);
             if (receiver_check != NULL && PyLong_Check(receiver_check)) {
                 v8_config.receiver_check = PyLong_AsLong(receiver_check);
             }
 
-            PyObject* cross_origin_check = PyTuple_GET_ITEM(config, 7);
+            PyObject* cross_origin_check = PyTuple_GetItem(config, 7);
             if (cross_origin_check != NULL && PyLong_Check(cross_origin_check)) {
                 v8_config.cross_origin_check = PyLong_AsLong(cross_origin_check);
             }
 
-            PyObject* side_effect = PyTuple_GET_ITEM(config, 8);
+            PyObject* side_effect = PyTuple_GetItem(config, 8);
             if (side_effect != NULL && PyLong_Check(side_effect)) {
                 v8_config.v8_side_effect = PyLong_AsLong(side_effect);
             }
@@ -504,7 +504,7 @@ namespace bindings {
         int length = PySequence_Length(configs);
         for (int i = 0; i < length; i++) {
 
-            PyObject* config = PySequence_ITEM(configs, i);
+            PyObject* config = PySequence_GetItem(configs, i);
             if (config == NULL)
                 continue;
 
@@ -514,11 +514,11 @@ namespace bindings {
             }
             ConstantValueConfig v8_config;
 
-            PyObject* attr_name = PySequence_ITEM(config, 0);
-            v8_config.name = PyUnicode_AsUTF8(attr_name);
+            PyObject* attr_name = PySequence_GetItem(config, 0);
+            v8_config.name = PyUnicode_AsUTF8_abi3(attr_name);
             Py_XDECREF(attr_name);
 
-            PyObject* attr_value = PySequence_ITEM(config, 1);
+            PyObject* attr_value = PySequence_GetItem(config, 1);
             v8_config.value = PyLong_AsLong(attr_value);
             Py_XDECREF(attr_value);
 
@@ -547,7 +547,7 @@ namespace bindings {
         int length = PySequence_Length(configs);
         for (int i = 0; i < length; i++) {
 
-            PyObject* config = PySequence_ITEM(configs, i);
+            PyObject* config = PySequence_GetItem(configs, i);
             if (config == NULL)
                 continue;
 
@@ -557,12 +557,12 @@ namespace bindings {
             }
             ConstantCallbackConfig v8_config;
 
-            PyObject* attr_name = PySequence_ITEM(config, 0);
-            v8_config.name = PyUnicode_AsUTF8(attr_name);
+            PyObject* attr_name = PySequence_GetItem(config, 0);
+            v8_config.name = PyUnicode_AsUTF8_abi3(attr_name);
             Py_XDECREF(attr_name);
 
-            PyObject* attr_cb_name = PySequence_ITEM(config, 1);
-            v8_config.callback_name = PyUnicode_AsUTF8(attr_cb_name);
+            PyObject* attr_cb_name = PySequence_GetItem(config, 1);
+            v8_config.callback_name = PyUnicode_AsUTF8_abi3(attr_cb_name);
             v8_config.callback = FakerJsFunctionAccessorNameGetterCallback;
             Py_XDECREF(attr_cb_name);
 

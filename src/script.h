@@ -1,7 +1,7 @@
 #include <Python.h>
 #include <v8.h>
 
-#include "pyv8env.h"
+#include "pyv8.h"
 
 typedef struct {
     PyObject_HEAD
@@ -9,7 +9,8 @@ typedef struct {
     PyObject *source;
     PyObject *script_name;
 } script_c;
-extern PyTypeObject script_type;
+
+extern PyTypeObject* script_type;
 
 int script_type_init();
 PyObject *script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs);

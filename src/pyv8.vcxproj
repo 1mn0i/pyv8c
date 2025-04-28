@@ -23,6 +23,7 @@
     <ProjectGuid>{B21EC90F-A669-494D-8CB3-4B527A070804}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>src</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -78,7 +79,8 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <PublicIncludeDirectories>$(PublicIncludeDirectories)</PublicIncludeDirectories>
     <IncludePath>../v8/include/;D:\src\depot_tools\.cipd_bin\3.11\bin\include;D:\code\chromium\depot_tools\.cipd_bin\3.11\bin\include;$(IncludePath)</IncludePath>
-    <ReferencePath>D:\src\pyv8env\v8\out\win\x64.release\obj;D:\src\depot_tools\.cipd_bin\3.11\bin\libs;D:\src\depot_tools\.cipd_bin\3.11\bin;$(ReferencePath)</ReferencePath>
+    <ReferencePath>D:\src\pyv8\v8\out\win\x64.release\obj;D:\src\depot_tools\.cipd_bin\3.11\bin\libs;D:\src\depot_tools\.cipd_bin\3.11\bin;$(ReferencePath)</ReferencePath>
+    <LibraryPath>D:\src\pyv8\v8\out\win\x64.release\obj;D:\src\depot_tools\.cipd_bin\3.11\bin\libs;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -124,6 +126,7 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="abi3.cpp" />
     <ClCompile Include="context.cpp" />
     <ClCompile Include="convert.cpp" />
     <ClCompile Include="debugger.cpp" />
@@ -134,16 +137,21 @@
     <ClCompile Include="faker\tools.cpp" />
     <ClCompile Include="faker\vm.cpp" />
     <ClCompile Include="jsfunction.cpp" />
+    <ClCompile Include="jsnull.cpp" />
     <ClCompile Include="jsobject.cpp" />
+    <ClCompile Include="jspromise.cpp" />
+    <ClCompile Include="jstypedarray.cpp" />
+    <ClCompile Include="jsundefined.cpp" />
     <ClCompile Include="kappa.cpp" />
     <ClCompile Include="pyclass.cpp" />
     <ClCompile Include="pyclasshandlers.cpp" />
     <ClCompile Include="pyfunction.cpp" />
-    <ClCompile Include="pyv8env.cpp" />
+    <ClCompile Include="pyv8.cpp" />
     <ClCompile Include="script.cpp" />
     <ClCompile Include="v8tools.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="abi3.h" />
     <ClInclude Include="context.h" />
     <ClInclude Include="convert.h" />
     <ClInclude Include="debugger.h" />
@@ -154,17 +162,22 @@
     <ClInclude Include="faker\hook.h" />
     <ClInclude Include="faker\tools.h" />
     <ClInclude Include="faker\vm.h" />
+    <ClInclude Include="jsfunction.h" />
+    <ClInclude Include="jsnull.h" />
     <ClInclude Include="jsobject.h" />
+    <ClInclude Include="jspromise.h" />
+    <ClInclude Include="jstypedarray.h" />
+    <ClInclude Include="jsundefined.h" />
     <ClInclude Include="kappa.h" />
     <ClInclude Include="polyfill.h" />
     <ClInclude Include="pyclass.h" />
     <ClInclude Include="pyfunction.h" />
-    <ClInclude Include="pyv8env.h" />
+    <ClInclude Include="pyv8.h" />
     <ClInclude Include="script.h" />
     <ClInclude Include="v8tools.h" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="pyv8env.rc" />
+    <ResourceCompile Include="pyv8.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -18,8 +18,7 @@ os.chdir(os.path.abspath(os.path.dirname(__file__)))
 
 sources = \
     list(map(lambda path: os.path.join('src', path), filter(lambda path: path.endswith('.cpp'), os.listdir('src')))) + \
-    list(map(lambda path: os.path.join('src/faker', path), filter(lambda path: path.endswith('.cpp'), os.listdir('src/faker')))) + \
-    list(map(lambda path: os.path.join('src/faker/env', path), filter(lambda path: path.endswith('.cpp'), os.listdir('src/faker/env'))))
+    list(map(lambda path: os.path.join('src/faker', path), filter(lambda path: path.endswith('.cpp'), os.listdir('src/faker'))))
 
 v8_libraries = ['v8_monolith']
 libraries = list(v8_libraries)
@@ -177,24 +176,27 @@ setup(
     name='pyv8',
     version='1.0.0',
     author='conlin',
-    author_email='995018884@icloud.com',
+    author_email='995018884@qq.com',
     url='https://github.com/ConlinH/pyv8',
 
-    python_requires='>=3.9, <4',
+    python_requires='>=3.10, <4',
     keywords=['v8', 'javascript', 'python', 'spider'],
 
     packages=find_packages(exclude=['tests']),
+    package_data={
+        'pyv8': ['icudtl.dat']
+    },
     ext_modules=[
         Extension(
-            '_pyv8env',
+            '_pyv8',
             sources=sources,
             include_dirs=include_dirs,
             library_dirs=library_dirs,
             libraries=libraries,
             extra_compile_args=extra_compile_args,
             extra_link_args=extra_link_args,
-            # define_macros=[('Py_LIMITED_API', '0x030A0000')],
-            # py_limited_api=True,
+            define_macros=[('Py_LIMITED_API', '0x030A0000')],
+            py_limited_api=True,
             language='c++'
         )
     ],

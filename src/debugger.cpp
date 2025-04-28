@@ -1,5 +1,5 @@
 #include <Python.h>
-#include "pyv8env.h"
+#include "pyv8.h"
 #include <v8.h>
 #include "context.h"
 #include "debugger.h"
@@ -9,29 +9,48 @@ PyMethodDef debugger_methods[] = {
     {"send", (PyCFunction)debugger_send, METH_O, NULL},
     {NULL},
 };
-PyTypeObject debugger_type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-};
-int debugger_type_init() {
-    debugger_type.tp_name = "pyv8env.Debugger";
-    debugger_type.tp_basicsize = sizeof(debugger_c);
-    debugger_type.tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE;
-    debugger_type.tp_doc = "v8 inspector";
-    debugger_type.tp_dealloc = (destructor)debugger_dealloc;
-    debugger_type.tp_new = (newfunc)debugger_new;
-    debugger_type.tp_init = (initproc)debugger_init;
-    debugger_type.tp_methods = debugger_methods;
-    return PyType_Ready(&debugger_type);
+PyTypeObject *debugger_type = NULL;
+
+static PyType_Slot debugger_slots[] = {
+    {Py_tp_dealloc, (void*)debugger_dealloc},
+    {Py_tp_new, (void*)debugger_new},
+    {Py_tp_init, (void*)debugger_init},
+    {Py_tp_methods, debugger_methods},
+    {Py_tp_doc, "v8 inspector"},
+    {0, NULL} };
+
+static PyType_Spec debugger_spec = {
+    "_pyv8.Debugger",
+    sizeof(debugger_c),
+    0,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    debugger_slots };
+
+int 
+debugger_type_init()
+{
+    debugger_type = (PyTypeObject *)PyType_FromSpec(&debugger_spec);
+    if (debugger_type == NULL)
+    {
+        return -1;
+    }
+    return 0;
 }
 
-PyObject* debugger_new(PyTypeObject* type, PyObject* args, PyObject* kwargs) {
-    debugger_c* self = (debugger_c*)type->tp_alloc(type, 0);
+PyObject * 
+debugger_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
+{
+    //debugger_c* self = (debugger_c*)type->tp_alloc(type, 0);
+    debugger_c* self = (debugger_c*)PyType_GenericAlloc(type, 0);
+
     PyErr_PROPAGATE(self);
     self->client = NULL; // indicate the object has not been initialized
     return (PyObject*)self;
 }
 
-int debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs) {
+int 
+debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs)
+{
     IN_V8;
 
     context_c* context;
@@ -58,7 +77,9 @@ int debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs) {
     return 0;
 }
 
-void call_self(debugger_c* self, const char* method) {
+void 
+call_self(debugger_c* self, const char* method)
+{
     PyObject* debugger = (PyObject*)self;
     if (PyObject_HasAttrString(debugger, method)) {
         if (PyObject_CallMethod(debugger, (char*)method, NULL) == NULL) {
@@ -67,7 +88,9 @@ void call_self(debugger_c* self, const char* method) {
     }
 }
 
-void V8PyChannel::handle_message(const std::unique_ptr<StringBuffer>& message) {
+void 
+V8PyChannel::handle_message(const std::unique_ptr<StringBuffer>& message)
+{
     const StringView& stringview = message->string();
     PyObject* string;
     if (stringview.is8Bit())
@@ -83,15 +106,21 @@ void V8PyChannel::handle_message(const std::unique_ptr<StringBuffer>& message) {
     }
 }
 
-void V8PyInspectorClient::runMessageLoopOnPause(int /*context_group_id*/) {
+void 
+V8PyInspectorClient::runMessageLoopOnPause(int /*context_group_id*/)
+{
     call_self(debugger_, "run_loop");
 }
 
-void V8PyInspectorClient::quitMessageLoopOnPause() {
+void 
+V8PyInspectorClient::quitMessageLoopOnPause()
+{
     call_self(debugger_, "quit_loop");
 }
 
-PyObject* debugger_send(debugger_c* self, PyObject* message) {
+PyObject * 
+debugger_send(debugger_c* self, PyObject* message)
+{
     if (self->client == NULL) {
         PyErr_SetString(PyExc_RuntimeError, "__init__ has not yet been called");
         return NULL;
@@ -100,8 +129,17 @@ PyObject* debugger_send(debugger_c* self, PyObject* message) {
     IN_V8;
     IN_CONTEXT(self->context->js_context.Get(isolate));
 
-    const uint8_t* command_bytes = (const uint8_t*)PyBytes_AS_STRING(message);
-    int length = PyBytes_GET_SIZE(message);
+    //const uint8_t* command_bytes = (const uint8_t*)PyBytes_AS_STRING(message);
+    //int length = PyBytes_GET_SIZE(message);
+
+    char* command_bytes_str;
+    Py_ssize_t length;
+    if (PyBytes_AsStringAndSize(message, &command_bytes_str, &length) < 0)
+    {
+        return NULL;
+    }
+    const uint8_t* command_bytes = (const uint8_t*)command_bytes_str;
+
     std::unique_ptr<StringBuffer> stringview = StringBuffer::create(StringView(command_bytes, length));
 
     if (stringview.get() == NULL) return NULL;
@@ -116,7 +154,9 @@ PyObject* debugger_send(debugger_c* self, PyObject* message) {
     Py_RETURN_TRUE;
 }
 
-void debugger_dealloc(debugger_c* self) {
+void 
+debugger_dealloc(debugger_c* self)
+{
     IN_V8;
     self->session.reset();
     self->inspector.reset();
@@ -124,5 +164,6 @@ void debugger_dealloc(debugger_c* self) {
     delete self->channel;
     self->context->has_debugger = false;
     Py_XDECREF(self->context);
-    Py_TYPE(self)->tp_free((PyObject*)self);
+    //Py_TYPE(self)->tp_free((PyObject*)self);
+    TP_FREE_ABI3(debugger_type, self);
 }

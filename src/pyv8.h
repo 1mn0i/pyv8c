@@ -9,16 +9,18 @@
 #define NO_RETURN __attribute__((noreturn))
 #endif
 
+
 #include <v8.h>
 #include "polyfill.h"
 #include "exception.h"
 #include "kappa.h"
+#include "abi3.h"
+#include "jsnull.h"
+#include "jsundefined.h"
 
 using namespace v8;
 
 extern Isolate *isolate;
-extern PyObject *null_object;
-extern PyObject *undefined_object;
 
 #define HOOKHANDLE "faker"
 

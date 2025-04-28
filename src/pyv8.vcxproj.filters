@@ -26,7 +26,7 @@
     <ClCompile Include="pyclass.cpp" />
     <ClCompile Include="pyclasshandlers.cpp" />
     <ClCompile Include="pyfunction.cpp" />
-    <ClCompile Include="pyv8env.cpp" />
+    <ClCompile Include="pyv8.cpp" />
     <ClCompile Include="script.cpp" />
     <ClCompile Include="faker\tools.cpp">
       <Filter>faker</Filter>
@@ -41,6 +41,11 @@
       <Filter>faker\env</Filter>
     </ClCompile>
     <ClCompile Include="v8tools.cpp" />
+    <ClCompile Include="abi3.cpp" />
+    <ClCompile Include="jspromise.cpp" />
+    <ClCompile Include="jstypedarray.cpp" />
+    <ClCompile Include="jsnull.cpp" />
+    <ClCompile Include="jsundefined.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="faker\vm.h">
@@ -55,7 +60,7 @@
     <ClInclude Include="polyfill.h" />
     <ClInclude Include="pyclass.h" />
     <ClInclude Include="pyfunction.h" />
-    <ClInclude Include="pyv8env.h" />
+    <ClInclude Include="pyv8.h" />
     <ClInclude Include="script.h" />
     <ClInclude Include="faker\tools.h">
       <Filter>faker</Filter>
@@ -73,9 +78,15 @@
     <ClInclude Include="faker\hook.h">
       <Filter>faker</Filter>
     </ClInclude>
+    <ClInclude Include="abi3.h" />
+    <ClInclude Include="jsfunction.h" />
+    <ClInclude Include="jspromise.h" />
+    <ClInclude Include="jstypedarray.h" />
+    <ClInclude Include="jsnull.h" />
+    <ClInclude Include="jsundefined.h" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="pyv8env.rc">
+    <ResourceCompile Include="pyv8.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
   </ItemGroup>

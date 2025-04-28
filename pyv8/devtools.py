@@ -8,10 +8,10 @@ from gevent import pywsgi
 from geventwebsocket.exceptions import WebSocketError
 from geventwebsocket.handler import WebSocketHandler
 
-import _pyv8env
+import _pyv8
 
 
-class DevtoolsDebugger(_pyv8env.Debugger):
+class DevtoolsDebugger(_pyv8.Debugger):
     def __init__(self, context, *args, callback=None):
         super().__init__(context)
         self.connect_lock = gevent.lock.Semaphore(0)
@@ -96,5 +96,5 @@ def start_devtools(context, *args, callback=None, port=9005):
 
 
 if __name__ == '__main__':
-    c = _pyv8env.Context(ctx_type='Top')
+    c = _pyv8.Context(ctx_type='Top')
     start_devtools(c)

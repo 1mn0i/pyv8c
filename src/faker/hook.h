@@ -1,25 +1,15 @@
 
 
-// src\third_party\blink\renderer\core\faker
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FAKER_FAKER_HOOK_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FAKER_FAKER_HOOK_H_
 
 
-// #include "third_party/blink/renderer/core/frame/dom_window.h"
-// #include "third_party/blink/renderer/platform/bindings/script_state.h"
-// #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
-// #include "third_party/blink/renderer/platform/bindings/wrapper_type_info.h"
-// #include "tools/v8_context_snapshot/buildflags.h"
-// #include "third_party/blink/renderer/platform/bindings/v8_object_constructor.h"
-
-
 #include <v8.h>
-#include "pyv8env.h"
+#include "pyv8.h"
 #define HOOKHANDLE "faker"
 
 namespace faker {
 
-// 记录标志
 #define FAKER_RECORD                                                                    \
         ghook_key = v8::Private::ForApi(isolate, V8String(isolate, "hook"));                \
         v8::MaybeLocal<v8::Value> maybe_value = ctx->Global()->GetPrivate(ctx, ghook_key);  \
@@ -28,7 +18,6 @@ namespace faker {
         }                                                                                   \
         ctx->Global()->SetPrivate(ctx, ghook_key, v8::Boolean::New(isolate, false));        \
 
-// 复位标志
 #define FAKER_RECOVER                                                               \
         global->SetPrivate(ctx, ghook_key, v8::Boolean::New(isolate, ghook));
 
@@ -37,7 +26,6 @@ namespace faker {
 
 
 
-// 初始化参数
 #define FAKER_INIT                                            \
     ctx = info.Holder()->GetCreationContextChecked();         \
     v8::Isolate* isolate = info.GetIsolate();                 \
@@ -45,7 +33,6 @@ namespace faker {
     FAKER_RECORD                                              
 
 
-// 定义变量
 #define FAKER_DEFINE                   \
     v8::Local<v8::Context> ctx;        \
     v8::TryCatch try_catch;            \
@@ -57,7 +44,6 @@ namespace faker {
     FAKER_DEFINE_HOOK
 
 
-// 定义检测错误类型函数
 #define FAKER_CHECK_EXCEPTION_FUNCTION                      \
     void CheckException1() {                                \
         if (try_catch.HasCaught()) {                        \
@@ -77,7 +63,6 @@ namespace faker {
     }
 
 
-// 定义处理参数和返回值的函数
 #define FAKER_ARGS_RESULT_FUNCTION                                    \
     v8::Local<v8::Array> GetArgsArray() {                             \
         v8::Local<v8::Array> args =                                   \

@@ -1,31 +1,53 @@
 #include <Python.h>
-#include "pyv8env.h"
+#include "pyv8.h"
 #include <v8.h>
 
+#include "jsfunction.h"
 #include "jsobject.h"
 #include "convert.h"
 #include "context.h"
 
 using namespace v8;
 
-PyTypeObject js_function_type = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-};
-int js_function_type_init() {
-    js_function_type.tp_name = "pyv8env.BoundFunction";
-    js_function_type.tp_basicsize = sizeof(js_function);
-    js_function_type.tp_dealloc = (destructor) js_function_dealloc;
-    js_function_type.tp_flags = Py_TPFLAGS_DEFAULT;
-    js_function_type.tp_doc = "";
-    js_function_type.tp_repr = (reprfunc) js_function_repr;
-    js_function_type.tp_call = (ternaryfunc) js_function_call;
-    js_function_type.tp_base = &js_object_type;
-    return PyType_Ready(&js_function_type);
+PyTypeObject *js_function_type = NULL;
+
+static PyType_Slot js_function_slots[] = {
+    {Py_tp_dealloc, (void*)js_function_dealloc},
+    {Py_tp_repr, (void*)js_function_repr},
+    {Py_tp_call, (void*)js_function_call},
+    {Py_tp_doc, ""},
+    {0, NULL} };
+
+static PyType_Spec js_function_spec = {
+    "_pyv8.BoundFunction",
+    sizeof(js_function),
+    0,
+    Py_TPFLAGS_DEFAULT,
+    js_function_slots };
+
+int js_function_type_init()
+{
+    PyObject* bases = PyTuple_New(1);
+    if (bases == NULL)
+    {
+        return -1;
+    }
+    PyTuple_SetItem(bases, 0, (PyObject*)js_object_type);
+    Py_INCREF(js_object_type); 
+
+    js_function_type = (PyTypeObject * )PyType_FromSpecWithBases(&js_function_spec, bases);
+    Py_DECREF(bases);
+
+    if (js_function_type == NULL)
+    {
+        return -1;
+    }
+    return 0;
 }
 
 PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) {
     IN_V8;
-    Local<Object> object = self->object.Get(isolate);
+    Local<Object> object = self->base.object.Get(isolate);
     //IN_CONTEXT(object->CreationContext());
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
@@ -36,7 +58,7 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
     } else {
         js_this = self->js_this.Get(isolate);
     }
-    int argc = PyTuple_GET_SIZE(args);
+    int argc = PyTuple_Size(args);
     MaybeLocal<Value> result;
 
     if (!context_setup_timeout(context)) return NULL;
@@ -63,7 +85,7 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
 
 PyObject* js_function_repr(js_function* self) {
     IN_V8;
-    Local<Object> object = self->object.Get(isolate);
+    Local<Object> object = self->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
     PyObject* repr = NULL;
@@ -95,5 +117,5 @@ PyObject* js_function_repr(js_function* self) {
 
 void js_function_dealloc(js_function *self) {
     self->js_this.Reset();
-    js_object_dealloc((js_object *) self);
+    js_object_dealloc((js_object*)self);
 }

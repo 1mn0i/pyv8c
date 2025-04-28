@@ -14,33 +14,31 @@
 using namespace v8;
 
 
-namespace faker {
 
-	class Faker
-	{
-	private:
-		Faker() = delete;
-		Faker(const Faker&) = delete;
-		~Faker();
-	private:
-		static void Print(const FunctionCallbackInfo<Value>& info);
-		static void Read(const FunctionCallbackInfo<Value>& info);
-		static void V8Version(const FunctionCallbackInfo<Value>& info);
-		static void RunJS(const FunctionCallbackInfo<Value>& info);
-		static void RunJSFile(const FunctionCallbackInfo<Value>& info);
-		static void DocumentAll(const FunctionCallbackInfo<Value>& info);
-		static void NativeWrapper(const FunctionCallbackInfo<Value>& info);
-		static void GetArg(const FunctionCallbackInfo<Value>& info);
-		static void SetArg(const FunctionCallbackInfo<Value>& info);
-		static void CreateConstructor(const FunctionCallbackInfo<Value>& info);
-		static void GetHook(const FunctionCallbackInfo<Value>& info);
-		static void SetHook(const FunctionCallbackInfo<Value>& info);
+class Faker
+{
+private:
+	Faker() = delete;
+	Faker(const Faker&) = delete;
+	~Faker();
+private:
+	static void Print(const FunctionCallbackInfo<Value>& info);
+	static void Read(const FunctionCallbackInfo<Value>& info);
+	static void V8Version(const FunctionCallbackInfo<Value>& info);
+	static void RunJS(const FunctionCallbackInfo<Value>& info);
+	static void RunJSFile(const FunctionCallbackInfo<Value>& info);
+	static void DocumentAll(const FunctionCallbackInfo<Value>& info);
+	static void NativeWrapper(const FunctionCallbackInfo<Value>& info);
+	static void GetArg(const FunctionCallbackInfo<Value>& info);
+	static void SetArg(const FunctionCallbackInfo<Value>& info);
+	static void CreateConstructor(const FunctionCallbackInfo<Value>& info);
+	static void GetHook(const FunctionCallbackInfo<Value>& info);
+	static void SetHook(const FunctionCallbackInfo<Value>& info);
 
-	public:
-		static void Register(Isolate* isolate, Local<FunctionTemplate>& global_inteface_template);
-	};
+public:
+	static void Register(Isolate* isolate, Local<FunctionTemplate>& global_inteface_template);
+};
 
-} // namespace faker
 
 
 #endif

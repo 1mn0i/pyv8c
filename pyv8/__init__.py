@@ -1,9 +1,9 @@
 import os
 
-from pyv8env import _pyv8env
+import _pyv8
 
 
-_pyv8env.init_v8(
+_pyv8.init_v8(
     icudtl_path=os.path.join(os.path.dirname(__file__), r'icudtl.dat'),
     params=[
         "--expose-gc",
@@ -17,20 +17,20 @@ _pyv8env.init_v8(
         ]
 )
 
-Context = _pyv8env.Context
-Script = _pyv8env.Script
-Debugger = _pyv8env.Debugger
-JSObject = _pyv8env.JSObject
-JSPromise = _pyv8env.JSPromise
-JSTypeArray = _pyv8env.JSTypeArray
-JSFunction = _pyv8env.JSFunction
-JSException = _pyv8env.JSException
-JavaScriptTerminated = _pyv8env.JavaScriptTerminated
-Null = _pyv8env.Null
-Undefined = _pyv8env.Undefined
-current_context = _pyv8env.current_context
-new = _pyv8env.new
-v8_gc = _pyv8env.v8_gc
+Context = _pyv8.Context
+Script = _pyv8.Script
+Debugger = _pyv8.Debugger
+JSObject = _pyv8.JSObject
+JSPromise = _pyv8.JSPromise
+JSTypeArray = _pyv8.JSTypeArray
+JSFunction = _pyv8.JSFunction
+JSException = _pyv8.JSException
+JavaScriptTerminated = _pyv8.JavaScriptTerminated
+Null = _pyv8.Null
+Undefined = _pyv8.Undefined
+current_context = _pyv8.current_context
+new = _pyv8.new
+v8_gc = _pyv8.v8_gc
 
 
 class ArrayType:
@@ -45,5 +45,4 @@ class ArrayType:
     Uint8ClampedArray = 9
 
 
-from .debug import Debugger, DebuggerError
 from .devtools import start_devtools

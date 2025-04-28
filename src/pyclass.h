@@ -17,12 +17,12 @@ typedef struct {
 } py_class;
 
 int py_class_type_init();
-extern PyTypeObject py_class_type;
+extern PyTypeObject* py_class_type;
 
 extern PyObject* cls_template_dict;
-PyObject* py_class_new(PyObject* cls, context_c* py_ctx);
+PyObject* py_class_new(PyObject* cls, context_c *py_ctx);
 void py_class_dealloc(py_class* self);
-PyObject* py_class_to_template(PyObject* cls, context_c* py_ctx);
+PyObject* py_class_to_template(PyObject* cls, context_c *py_ctx);
 Local<Function> py_class_get_constructor(py_class *self, Local<Context> context);
 Local<Object> py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> context);
 void py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context);

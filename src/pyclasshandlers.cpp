@@ -2,7 +2,7 @@
 #include <Python.h>
 #include <sstream>
 
-#include "pyv8env.h"
+#include "pyv8.h"
 #include "convert.h"
 #include "pyclass.h"
 #include "faker/hook.h"
@@ -48,13 +48,16 @@ template <class T> inline extern PyObject* get_self(const FunctionCallbackInfo<T
 
 
 #define PY_CLASS_CONSTRUCT_CALLBACK_CODE                                                                                                                            \
-    PyObject* class_dict = ((PyTypeObject*)self->cls)->tp_dict;                                                                                                     \
-    PyObject* constructor_behavior = PyDict_GetItemString(class_dict, "__v8_constructor__");                                                                        \
+    PyObject* class_dict = PyObject_GetAttrString(self->cls, "__dict__");                                                                                           \
     int flag = 0;                                                                                                                                                   \
-    if (constructor_behavior != NULL && PyLong_Check(constructor_behavior)) {                                                                                       \
-        flag = PyLong_AsLong(constructor_behavior);                                                                                                                 \
+    if (PyMapping_HasKeyString(class_dict, "__v8_constructor__")) {                                                                                                 \
+        PyObject* constructor_behavior = PyMapping_GetItemString(class_dict, "__v8_constructor__");                                                                 \
+        if (PyLong_Check(constructor_behavior)) {                                                                                                                   \
+            flag = PyLong_AsLong(constructor_behavior);                                                                                                             \
+        }                                                                                                                                                           \
+        Py_XDECREF(constructor_behavior);                                                                                                                           \
     }                                                                                                                                                               \
-                                                                                                                                                                    \
+    Py_XDECREF(class_dict);                                                                                                                                         \
     bool can_new = (flag & FlagConstructor::kNew) != 0;                                                                                                             \
     bool can_call = (flag & FlagConstructor::kCall) != 0;                                                                                                           \
                                                                                                                                                                     \
@@ -65,7 +68,7 @@ template <class T> inline extern PyObject* get_self(const FunctionCallbackInfo<T
     }                                                                                                                                                               \
     if (!can_call && !info.IsConstructCall()) {                                                                                                                     \
         std::ostringstream oss;                                                                                                                                     \
-        const char* cls_name = PyUnicode_AsUTF8(self->cls_name);                                                                                                    \
+        const char* cls_name = PyUnicode_AsUTF8_abi3(self->cls_name);                                                                                               \
         oss << "Failed to construct '" << std::string(cls_name) << "': Please use the 'new' operator, this DOM object constructor cannot be called as a function."; \
         isolate->ThrowException(Exception::TypeError(JSTR(oss.str().c_str())));                                                                                     \
         return;                                                                                                                                                     \
@@ -106,7 +109,7 @@ void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
     py_class *self = (py_class *) info.Data().As<External>()->Value();
     context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     if (ctx_c->hook) {
-        faker::FakerHookConstruct construct_hook(info, PyUnicode_AsUTF8(self->cls_name),  self->cls, ctx_c);
+        faker::FakerHookConstruct construct_hook(info, PyUnicode_AsUTF8_abi3(self->cls_name),  self->cls, ctx_c);
 
         PY_CLASS_CONSTRUCT_CALLBACK_CODE;
     }
@@ -158,17 +161,17 @@ void py_class_cross_origin_method_callback(const FunctionCallbackInfo<Value>& in
 
     PyObject* method = (PyObject*)info.Data().As<External>()->Value();
     JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check(method));
+    assert(PyFunction_Check_abi3(method));
 
-    if (self == Py_None && PyMethod_Check(method)) {
-        self = PyMethod_GET_SELF(method);
+    if (self == Py_None && PyMethod_Check_abi3(method)) {
+        self = PyMethod_GET_SELF_abi3(method);
     }
     //Local<Context> incumbent_ctx = isolate->GetIncumbentContext();
 
     PyObject* method_name = PyObject_GetAttrString(method, "__name__");
     const char* method_name_str;
     if (method_name && PyUnicode_Check(method_name)) {
-        method_name_str = PyUnicode_AsUTF8(method_name);
+        method_name_str = PyUnicode_AsUTF8_abi3(method_name);
     }
     else {
         method_name_str = "<unknown>";
@@ -192,17 +195,17 @@ void py_class_method_callback(const FunctionCallbackInfo<Value>& info) {
 
     PyObject* method = (PyObject*)info.Data().As<External>()->Value();
     JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check(method));
+    assert(PyFunction_Check_abi3(method));
 
-    if (self == Py_None && PyMethod_Check(method)) {
-        self = PyMethod_GET_SELF(method);
+    if (self == Py_None && PyMethod_Check_abi3(method)) {
+        self = PyMethod_GET_SELF_abi3(method);
     }
     //Local<Context> incumbent_ctx = isolate->GetIncumbentContext();
 
     PyObject* method_name = PyObject_GetAttrString(method, "__name__");
     const char* method_name_str;
     if (method_name && PyUnicode_Check(method_name)) {
-        method_name_str = PyUnicode_AsUTF8(method_name);
+        method_name_str = PyUnicode_AsUTF8_abi3(method_name);
     }
     else {
         method_name_str = "<unknown>";
@@ -227,10 +230,10 @@ void py_class_property_getter(Local<Name> js_name, Info(Value)) {
 
     PyObject* method = (PyObject*)info.Data().As<External>()->Value();
     JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check(method));
+    assert(PyFunction_Check_abi3(method));
 
-    if (self == Py_None && PyMethod_Check(method)) {
-        self = PyMethod_GET_SELF(method);
+    if (self == Py_None && PyMethod_Check_abi3(method)) {
+        self = PyMethod_GET_SELF_abi3(method);
     }
 
     PyObject* set_method_name = PyObject_GetAttrString(method, "__name__");
@@ -241,7 +244,7 @@ void py_class_property_getter(Local<Name> js_name, Info(Value)) {
     Py_XDECREF(replace_from);
     Py_XDECREF(replace_to);
 
-    PyObject* result = PyObject_CallMethodNoArgs(self, get_method_name);
+    PyObject* result = PyObject_CallMethodNoArgs_abi3(self, get_method_name);
     Py_XDECREF(get_method_name);
     JS_PROPAGATE_PY(result);
     info.GetReturnValue().Set(js_from_py(result, context));
@@ -254,10 +257,10 @@ void py_class_property_setter(Local<Name> js_name, Local<Value> js_value, Info(v
     PyObject* self = get_self(info);
     PyObject* method = (PyObject*)info.Data().As<External>()->Value();
     JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check(method));
+    assert(PyFunction_Check_abi3(method));
 
-    if (self == Py_None && PyMethod_Check(method)) {
-        self = PyMethod_GET_SELF(method);
+    if (self == Py_None && PyMethod_Check_abi3(method)) {
+        self = PyMethod_GET_SELF_abi3(method);
     }
 
 
@@ -265,7 +268,7 @@ void py_class_property_setter(Local<Name> js_name, Local<Value> js_value, Info(v
     JS_PROPAGATE_PY(value);
 
     PyObject* method_name = PyObject_GetAttrString(method, "__name__");
-    PyObject* result = PyObject_CallMethodOneArg(self, method_name, value);
+    PyObject* result = PyObject_CallMethodOneArg_abi3(self, method_name, value);
     Py_XDECREF(value);
     Py_XDECREF(method_name);
     Py_XDECREF(result);
@@ -278,10 +281,10 @@ void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
 
     PyObject* method = (PyObject*)info.Data().As<External>()->Value();
     JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check(method));
+    assert(PyFunction_Check_abi3(method));
 
-    if (self == Py_None && PyMethod_Check(method)) {
-        self = PyMethod_GET_SELF(method);
+    if (self == Py_None && PyMethod_Check_abi3(method)) {
+        self = PyMethod_GET_SELF_abi3(method);
         PyObject* result = PyObject_CallFunction(method, "", NULL);
         JS_PROPAGATE_PY(result);
         info.GetReturnValue().Set(js_from_py(result, context));
@@ -290,7 +293,7 @@ void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
     }
 
     PyObject* method_name = PyObject_GetAttrString(method, "__name__");
-    PyObject* result = PyObject_CallMethodNoArgs(self, method_name);
+    PyObject* result = PyObject_CallMethodNoArgs_abi3(self, method_name);
     Py_XDECREF(method_name);
 
     JS_PROPAGATE_PY(result);
@@ -309,17 +312,17 @@ void py_attribute_for_instance_set(const FunctionCallbackInfo<Value>& info) {
 
     PyObject* method = (PyObject*)info.Data().As<External>()->Value();
     JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check(method));
+    assert(PyFunction_Check_abi3(method));
 
-    if (self == Py_None && PyMethod_Check(method)) {
-        self = PyMethod_GET_SELF(method);
+    if (self == Py_None && PyMethod_Check_abi3(method)) {
+        self = PyMethod_GET_SELF_abi3(method);
     }
 
     PyObject* value = py_from_js(info[0], context);
     JS_PROPAGATE_PY(value);
 
     PyObject* method_name = PyObject_GetAttrString(method, "__name__");
-    PyObject* result = PyObject_CallMethodOneArg(self, method_name, value);
+    PyObject* result = PyObject_CallMethodOneArg_abi3(self, method_name, value);
 
     Py_XDECREF(value);
     Py_XDECREF(method_name);
@@ -327,7 +330,7 @@ void py_attribute_for_instance_set(const FunctionCallbackInfo<Value>& info) {
     JS_PROPAGATE_PY(result);
 
     PyObject* raw_name = PyObject_GetAttrString(method, "__v8_raw_name__");
-    const char* js_name = PyUnicode_AsUTF8(raw_name);
+    const char* js_name = PyUnicode_AsUTF8_abi3(raw_name);
     Py_XDECREF(raw_name);
 
     // [Replaceable]
@@ -351,18 +354,18 @@ void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info) {
 
     PyObject* method = (PyObject*)info.Data().As<External>()->Value();
 
-    if (self == Py_None && PyMethod_Check(method)) {
-        self = PyMethod_GET_SELF(method);
+    if (self == Py_None && PyMethod_Check_abi3(method)) {
+        self = PyMethod_GET_SELF_abi3(method);
     }
 
     JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check(method));
+    assert(PyFunction_Check_abi3(method));
 
     PyObject* value = py_from_js(info[0], context);
     JS_PROPAGATE_PY(value);
 
     PyObject* method_name = PyObject_GetAttrString(method, "__name__");
-    PyObject* result = PyObject_CallMethodOneArg(self, method_name, value);
+    PyObject* result = PyObject_CallMethodOneArg_abi3(self, method_name, value);
     Py_XDECREF(value);
     Py_XDECREF(method_name);
     Py_XDECREF(result);
@@ -527,7 +530,7 @@ void named_enumerator(Info(Array)) {
     }
     Local<Array> js_keys = Array::New(isolate, PySequence_Length(keys));
     for (int i = 0; i < PySequence_Length(keys); i++) {
-        PyObject* item = PySequence_ITEM(keys, i);
+        PyObject* item = PySequence_GetItem(keys, i);
         if (item == NULL) {
             Py_XDECREF(keys);
             js_throw_py();

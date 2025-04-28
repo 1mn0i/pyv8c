@@ -11,3 +11,4 @@ dist
 .vs/
 vc140.pdb
 v8
+src/x64
