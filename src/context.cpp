@@ -77,7 +77,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     double timeout = 0;
     PyObject* global = NULL;
     PyObject* hook = Py_False;
-    PyObject* ctx_type;
+    PyObject *ctx_type = NULL;
     static const char *keywords[] = {"global_this", "hook", "ctx_type", "timeout", NULL};
 
     if (PyArg_ParseTupleAndKeywords(args, kwargs, "|OOOd", (char **) keywords, &global, &hook, &ctx_type, &timeout) < 0) {

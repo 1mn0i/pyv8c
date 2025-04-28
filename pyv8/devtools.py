@@ -8,7 +8,7 @@ from gevent import pywsgi
 from geventwebsocket.exceptions import WebSocketError
 from geventwebsocket.handler import WebSocketHandler
 
-import _pyv8
+from . import _pyv8
 
 
 class DevtoolsDebugger(_pyv8.Debugger):

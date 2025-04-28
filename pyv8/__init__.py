@@ -1,6 +1,6 @@
 import os
 
-import _pyv8
+from . import _pyv8
 
 
 _pyv8.init_v8(
