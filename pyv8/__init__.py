@@ -1,7 +1,8 @@
 import os
 
 from . import _pyv8
-
+from .tools import *
+from .flag import *
 
 _pyv8.init_v8(
     icudtl_path=os.path.join(os.path.dirname(__file__), r'icudtl.dat'),

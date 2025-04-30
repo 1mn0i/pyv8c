@@ -1,0 +1,102 @@
+import unittest
+import pyv8
+
+class TestContext(unittest.TestCase):
+    """测试JavaScript上下文的创建和基本功能"""
+    
+    def setUp(self):
+        """每个测试前创建一个新的上下文"""
+        class Window: pass
+        self.context = pyv8.Context(Window())
+    
+    def tearDown(self):
+        """测试结束后清理上下文"""
+        del self.context
+    
+    def test_context_creation(self):
+        """测试上下文创建"""
+        self.assertIsInstance(self.context, pyv8.Context)
+    
+    def test_exec_js(self):
+        """测试执行简单的JavaScript代码"""
+        result = self.context.exec_js("1 + 1")
+        self.assertEqual(result, 2)
+    
+    def test_global_access(self):
+        """测试访问全局对象"""
+        self.context.exec_js("var globalVar = 'hello world';")
+        result = self.context.globalVar
+        self.assertEqual(result, "hello world")
+    
+    def test_js_obj(self):
+        """测试获取通过python object获取js object"""
+        class A: 
+            __v8_constructor__ = pyv8.FlagConstructor.kAll
+
+            def __init__(self, win=None):
+                pass
+
+        self.context.expose(A)
+        # py_obj是python对象，直接使用，调用的是python对象的方法
+        py_obj = self.context.exec_js("a = new A; a.name= 'test'; a")
+        with self.assertRaises(AttributeError):
+            py_obj.name
+        
+        # js_obj是py_obj对象对应的js对象，可以调用的是js对象的方法
+        js_obj = self.context.js_obj(py_obj)
+        self.assertEqual(js_obj.name, 'test')
+
+    def test_expose_python_function(self):
+        """测试在JavaScript中暴露Python函数"""
+        def add(a, b):
+            return a + b
+        
+        self.context.expose(add=add)
+        result = self.context.exec_js("add(5, 3)")
+        self.assertEqual(result, 8)
+    
+    def test_expose_python_object(self):
+        """测试在JavaScript中暴露Python对象"""
+        class Calculator:
+            __v8_method__ = (
+                # (name, cb, length, CallbackType, FlagLocation, V8Attribute, FlagReceiverCheck, 
+                # cross_origin_check, SideEffectType)
+                ("add", "fn_add", 0, 0, 0, 0, 0, 0, 0),
+                ("subtract", "fn_subtract", 0, 0, 0, 0, 0, 0, 0),
+            )
+            def fn_add(self, a, b):
+                return a + b
+            
+            def fn_subtract(self, a, b):
+                return a - b
+        
+        calc = Calculator()
+        self.context.expose(calc=calc)
+        
+        add_result = self.context.exec_js("calc.add(10, 5)")
+        self.assertEqual(add_result, 15)
+        
+        subtract_result = self.context.exec_js("calc.subtract(10, 5)")
+        self.assertEqual(subtract_result, 5)
+    
+    def test_timeout(self):
+        """测试JavaScript执行超时"""
+        # 设置一个非常短的超时时间
+        self.context.timeout = 0.1
+        
+        # 尝试执行一个无限循环
+        with self.assertRaises(pyv8.JavaScriptTerminated):
+            self.context.exec_js("while(true) {}")
+    
+    def test_gc(self):
+        """测试垃圾回收"""
+        # 创建一些JavaScript对象
+        self.context.exec_js("var a = {}; for(var i=0; i<1000; i++) { a[i] = 'test'; }")
+        
+        # 调用垃圾回收
+        self.context.gc()
+        
+        # 这个测试主要是确保gc()方法不会崩溃
+
+if __name__ == "__main__":
+    unittest.main()

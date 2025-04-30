@@ -120,9 +120,12 @@ js_object_weak_new(Local<Object> object, Local<Context> context)
 PyObject *
 js_object_getattro(js_object *self, PyObject *name)
 {
-    if (PyObject_GenericHasAttr((PyObject *) self, name)) {
-        return PyObject_GenericGetAttr((PyObject *) self, name);
-    }
+    PyObject *attr_value = PyObject_GenericGetAttr((PyObject *)self, name);
+    if (attr_value == NULL)
+        PyErr_Clear();
+    else
+        return attr_value;
+
     IN_V8;
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
@@ -162,8 +165,15 @@ js_object_getattro(js_object *self, PyObject *name)
 int 
 js_object_setattro(js_object *self, PyObject *name, PyObject *value)
 {
-    if (PyObject_GenericHasAttr((PyObject *) self, name)) {
-        return PyObject_GenericSetAttr((PyObject *) self, name, value);
+    PyObject *attr_value = PyObject_GenericGetAttr((PyObject *)self, name);
+    if (attr_value == NULL)
+    {
+        PyErr_Clear();
+    }
+    else
+    {
+        Py_XDECREF(attr_value);
+        return PyObject_GenericSetAttr((PyObject *)self, name, value);
     }
 
     IN_V8;

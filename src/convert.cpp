@@ -189,7 +189,7 @@ js_from_py(PyObject *value, Local<Context> context)
         Local<String> js_value = String::NewFromUtf8(isolate, str, NewStringType::kNormal, len).ToLocalChecked();
         return hs.Escape(js_value);
     }
-    if (PyString_Check(value))
+    if (PyUnicode_Check(value))
     {
         char *str;
         Py_ssize_t len;
@@ -200,7 +200,7 @@ js_from_py(PyObject *value, Local<Context> context)
         return hs.Escape(js_value);
     }
 
-    if (PyNumber_Check(value) && !PyInstance_Check(value))
+    if (PyNumber_Check(value))
     {
         Local<Number> js_value;
         if (PyFloat_Check(value))
@@ -283,7 +283,6 @@ js_from_py(PyObject *value, Local<Context> context)
             ctx_c->hook = false;
             if (templ->to_obj == 1)
             {
-
                 v8::Local<v8::ObjectTemplate> object_template = templ->templ.Get(isolate).As<v8::ObjectTemplate>();
                 context->Global()->Set(context, v8_name, object_template->NewInstance(context).ToLocalChecked());
                 // templ->to_obj += 1;
@@ -292,15 +291,17 @@ js_from_py(PyObject *value, Local<Context> context)
             ctx_c->hook = hook;
             return hs.Escape(obj);
         }
-        return hs.Escape(py_class_get_constructor(templ, context));
+        return hs.Escape(py_class_get_constructor(context, templ, (py_class *)templ->parent));
     }
     if (PyObject_TypeCheck(value, js_object_type))
     {
         js_object *py_value = (js_object *)value;
         return hs.Escape(py_value->object.Get(isolate));
     }
+
+    // python global_this -> js globalThis
     context_c *ctx_c = (context_c *)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
-    if (Py_TYPE(value) == Py_TYPE(ctx_c->py_global))
+    if (ctx_c->py_global != NULL && Py_TYPE(value) == Py_TYPE(ctx_c->py_global))
     {
         PyObject *ctx = PyObject_GetAttrString(value, "_ctx");
         if (ctx == NULL)
@@ -316,17 +317,8 @@ js_from_py(PyObject *value, Local<Context> context)
     }
     // it's an arbitrary object
     PyObject *type;
-    if (PyInstance_Check(value))
-    {
-        type = PyObject_GetAttrString(value, "__class__");
-    }
-    else
-    {
-        type = (PyObject *)Py_TYPE(value);
-        Py_INCREF(type);
-    }
+    type = (PyObject*)Py_TYPE(value);
     py_class *templ = (py_class *)py_class_to_template(type, ctx_c);
-    Py_DECREF(type);
     return hs.Escape(py_class_create_js_object(templ, value, context));
 }
 

@@ -211,29 +211,29 @@ js_typedarray_repr(js_typedarray* self)
 
     PyObject* arry_type = NULL;
     if (object->IsUint32Array()) 
-        arry_type = PyUnicode_FromString("Uint32Array[%s]");
+        arry_type = PyUnicode_FromString("Uint32Array([%s])");
     else if (object->IsUint16Array())
-        arry_type = PyUnicode_FromString("Uint16Array[%s]");
+        arry_type = PyUnicode_FromString("Uint16Array([%s])");
     else if (object->IsUint8Array())
-        arry_type = PyUnicode_FromString("Uint8Array[%s]");
+        arry_type = PyUnicode_FromString("Uint8Array([%s])");
     else if (object->IsInt32Array()) 
-        arry_type = PyUnicode_FromString("Int32Array[%s]");
+        arry_type = PyUnicode_FromString("Int32Array([%s])");
     else if (object->IsInt16Array())
-        arry_type = PyUnicode_FromString("Int16Array[%s]");
+        arry_type = PyUnicode_FromString("Int16Array([%s])");
     else if (object->IsInt8Array())
-        arry_type = PyUnicode_FromString("Int8Array[%s]");
+        arry_type = PyUnicode_FromString("Int8Array([%s])");
     else if (object->IsFloat64Array())
-        arry_type = PyUnicode_FromString("Float64Array[%s]");
+        arry_type = PyUnicode_FromString("Float64Array([%s])");
     else if (object->IsFloat32Array())
-        arry_type = PyUnicode_FromString("Float32Array[%s]");
+        arry_type = PyUnicode_FromString("Float32Array([%s])");
     else if (object->IsBigInt64Array())
-        arry_type = PyUnicode_FromString("BigInt64Array[%s]");
+        arry_type = PyUnicode_FromString("BigInt64Array([%s])");
     else if (object->IsBigUint64Array())
-        arry_type = PyUnicode_FromString("BigUint64Array[%s]");
+        arry_type = PyUnicode_FromString("BigUint64Array([%s])");
     else if (object->IsUint8ClampedArray())
-        arry_type = PyUnicode_FromString("Uint8ClampedArray[%s]");
+        arry_type = PyUnicode_FromString("Uint8ClampedArray([%s])");
     else {
-        arry_type = PyUnicode_FromString("UnKnownTypedArray[%s]");
+        arry_type = PyUnicode_FromString("UnKnownTypedArray([%s])");
     }
     PyObject* repr = PyUnicode_Format(arry_type, text);
     Py_XDECREF(text);

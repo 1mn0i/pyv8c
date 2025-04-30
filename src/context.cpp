@@ -77,15 +77,15 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     double timeout = 0;
     PyObject* global = NULL;
     PyObject* hook = Py_False;
-    PyObject *ctx_type = NULL;
+    PyObject* ctx_type = NULL;
     static const char *keywords[] = {"global_this", "hook", "ctx_type", "timeout", NULL};
 
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "|OOOd", (char **) keywords, &global, &hook, &ctx_type, &timeout) < 0) {
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOd", (char **) keywords, &global, &hook, &ctx_type, &timeout) < 0) {
         return NULL;
     }
 
     if (global != NULL) {
-        if (PyType_Check(global) || PyClass_Check(global)) {
+        if (PyType_Check(global)) {
             PyObject* no_args = PyTuple_New(0);
             PyErr_PROPAGATE(no_args);
             global = PyObject_Call(global, no_args, NULL);
@@ -125,7 +125,6 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         templ = (py_class*)py_class_to_template(global_type, self);
         Py_XDECREF(global_type);
         Local<FunctionTemplate> global_inteface_template = templ->templ.Get(isolate);
-        //faker::Register(isolate, global_inteface_template);
         global_template = global_inteface_template->InstanceTemplate();
 
     }
@@ -289,7 +288,7 @@ context_js_obj(context_c* self, PyObject* py_object)
     if (PyMapping_HasKey(self->js_object_cache, py_object)) {
         PyObject* jsobj = PyObject_GetItem(self->js_object_cache, py_object);
         if (jsobj == NULL) {
-            PyErr_WriteUnraisable(PyString_InternFromString("pyv8env py_class_create_js_object getitem"));
+            PyErr_WriteUnraisable(PyUnicode_InternFromString("pyv8env py_class_create_js_object getitem"));
         }
         Py_INCREF(jsobj);
         return jsobj;
@@ -397,14 +396,18 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|Od", (char **) keywords, &program, &filename, &timeout) < 0) {
         return NULL;
     }
-    if (!PyString_Check(program) && !PyObject_IsInstance(program, (PyObject *)script_type)) {
+    if (!PyUnicode_Check(program) && !PyObject_IsInstance(program, (PyObject *)script_type))
+    {
         PyErr_SetString(PyExc_TypeError, "program must be a string or Script");
         return NULL;
     }
-    if (PyString_Check(program)) {
+    if (PyUnicode_Check(program))
+    {
         program = PyObject_CallFunctionObjArgs((PyObject *)script_type, (PyObject*)self, program, filename, NULL);
         PyErr_PROPAGATE(program);
-    } else {
+    }
+    else
+    {
         Py_INCREF(program);
     }
     assert(PyObject_IsInstance(program, (PyObject*)script_type));
@@ -443,7 +446,7 @@ context_get_cached_jsobject(Local<Context> js_context, PyObject *py_object)
     if (PyMapping_HasKey(self->js_object_cache, py_object)) {
         js_object *jsobj = (js_object *) PyObject_GetItem(self->js_object_cache, py_object);
         if (jsobj == NULL) {
-            PyErr_WriteUnraisable(PyString_InternFromString("pyv8env py_class_create_js_object getitem"));
+            PyErr_WriteUnraisable(PyUnicode_InternFromString("pyv8env py_class_create_js_object getitem"));
         }
         return hs.Escape(jsobj->object.Get(isolate));
     }
@@ -461,7 +464,7 @@ context_set_cached_jsobject(Local<Context> js_context, PyObject *py_object, Loca
             // if it's a type error, it's probably "cannot create weak reference" and should be ignored.
             PyErr_Clear();
         } else {
-            PyErr_WriteUnraisable(PyString_InternFromString("pyv8env py_class_create_js_object setitem"));
+            PyErr_WriteUnraisable(PyUnicode_InternFromString("pyv8env py_class_create_js_object setitem"));
         }
     }
 }
@@ -484,7 +487,8 @@ context_get_global(context_c *self, void *shit)
 {
     IN_V8;
     Local<Context> context = self->js_context.Get(isolate);
-    return py_from_js(context->Global()->GetPrototype(), context);
+    PyObject* pyobj= py_from_js(context->Global()->GetPrototype(), context);
+    return context_js_obj(self, pyobj);
 }
 
 PyObject *
@@ -507,9 +511,11 @@ context_getitem(context_c *self, PyObject *name)
     PyObject *global = py_from_js(object->GetPrototype(), context);
     PyErr_PROPAGATE(global);
 
-    if (PyObject_GenericHasAttr((PyObject*)global, name)) {
-        return PyObject_GenericGetAttr((PyObject*)global, name);
-    }
+    PyObject *attr_value = PyObject_GenericGetAttr((PyObject *)global, name);
+    if (attr_value == NULL)
+        PyErr_Clear();
+    else
+        return attr_value;
 
     Local<Value> js_name = js_from_py(name, context);
     JS_TRY;

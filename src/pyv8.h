@@ -33,19 +33,22 @@ static uint16_t string_buffer[STRING_BUFFER_SIZE] = {};
 
 #define V8String(isolate, str) String::NewFromUtf8(isolate, str).ToLocalChecked()
 
-#define JSDUMP(obj) \
-    { \
+#define PYDUMP(obj) printf("%s\n", PyUnicode_AsUTF8_abi3(obj));
+
+
+#define JSDUMP(obj)                   \
+    {                                 \
         String::Utf8Value value(obj); \
-        printf("%s\n", *value); \
+        printf("%s\n", *value);       \
     }
 
-#define IN_V8 \
-    Locker locker(isolate); \
+#define IN_V8                   \
+    Locker locker(isolate);     \
     Isolate::Scope is(isolate); \
     USING_V8
 
-#define ESCAPING_IN_V8 \
-    Locker locker(isolate); \
+#define ESCAPING_IN_V8          \
+    Locker locker(isolate);     \
     Isolate::Scope is(isolate); \
     ESCAPING_V8
 
@@ -55,7 +58,7 @@ static uint16_t string_buffer[STRING_BUFFER_SIZE] = {};
 #define ESCAPING_V8 \
     EscapableHandleScope hs(isolate)
 
-#define IN_CONTEXT(ctx) \
+#define IN_CONTEXT(ctx)           \
     Local<Context> context = ctx; \
     Context::Scope cs(context);
 

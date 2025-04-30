@@ -15,16 +15,16 @@ PyTypeObject* script_type = NULL;
 
 static PyType_Slot script_slots[] = {
     {Py_tp_doc, "v8 Script"},
-    {Py_tp_new, (void*)script_new},
-    {Py_tp_dealloc, (void*)script_dealloc},
-    {0, NULL} };
+    {Py_tp_new, (void *)script_new},
+    {Py_tp_dealloc, (void *)script_dealloc},
+    {0, NULL}};
 
 static PyType_Spec script_spec = {
     "_pyv8.Script",
     sizeof(script_c),
     0,
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_WEAKREFS,
-    script_slots };
+    Py_TPFLAGS_DEFAULT,
+    script_slots};
 
 int 
 script_type_init()
@@ -72,11 +72,13 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     IN_CONTEXT(py_ctx->js_context.Get(isolate));
     JS_TRY
 
-    if (!PyString_Check(source)) {
+    if (!PyUnicode_Check(source))
+    {
         PyErr_SetString(PyExc_TypeError, "source must be a string");
         return NULL;
     }
-    if (filename != Py_None && !PyString_Check(filename)) {
+    if (filename != Py_None && !PyUnicode_Check(filename))
+    {
         PyErr_SetString(PyExc_TypeError, "filename must be a string or None");
         return NULL;
     }

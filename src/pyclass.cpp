@@ -10,8 +10,6 @@
 #include "faker/Faker.h"
 
 
-//static PyObject* __dict__ = PyString_InternFromString("__dict__");
-
 enum FlagIterator {
     iterator = 1 << 0,
     entries = 1 << 1,
@@ -89,7 +87,6 @@ py_class_to_template(PyObject *cls, context_c* py_ctx)
     return templ;
 }
 
-int add_class_to_template(PyObject* cls, Local<FunctionTemplate> templ, Local<Signature> signature, const char* world, context_c* py_ctx);
 int add_to_template(PyObject* cls, context_c* py_ctx, PyObject* member_name, PyObject* member_value, Local<FunctionTemplate> templ, Local<Signature> sig, const char* world);
 
 
@@ -141,21 +138,6 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     
     const char* world = PyUnicode_AsUTF8_abi3(self->cls_name);
     Local<String> v8_name = V8String(isolate, world);
-
-
-    if (PyMapping_HasKeyString(class_dict, "__v8_as_obj__"))
-    {
-        self->to_obj = 1;
-        //v8::Local<v8::ObjectTemplate> namespace_object_template = templ.As<v8::ObjectTemplate>();
-        templ->Set(Symbol::GetToStringTag(isolate), v8_name, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
-    }
-    else
-    {
-        self->to_obj = 0;
-        templ->ReadOnlyPrototype();
-        templ->SetClassName(v8_name);
-        templ->PrototypeTemplate()->Set(Symbol::GetToStringTag(isolate), v8_name, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
-    }
 
     Local<Signature> sig = Signature::New(isolate, templ);
     if (PyMapping_HasKeyString(class_dict, "__v8_global_this__")) {
@@ -249,7 +231,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     if (PyMapping_HasKeyString(class_dict, "__v8_has_constructor__"))
     {
         PyObject* value = PyMapping_GetItemString(class_dict, "__v8_has_constructor__");
-        self->constructor = PyLong_AsLong(value);
+        self->has_constructor = PyLong_AsLong(value);
         Py_DECREF(value);
     }
 
@@ -295,7 +277,6 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         templ->InstanceTemplate()->SetAccessCheckCallback(CrossOriginAccessCheckCallback);
         //templ->InstanceTemplate()->SetAccessCheckCallbackAndHandler(CrossOriginAccessCheckCallback, name_handler, index_handler);
     }
-    Py_XDECREF(class_dict);
 
     if (strcmp(world, "WindowProperties") == 0) {
         NamedPropertyHandlerConfiguration name_callbacks(window_properties_named_getter);
@@ -328,47 +309,29 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         templ->Inherit(superclass_templ->templ.Get(isolate));
         self->parent = (PyObject*)superclass_templ;
     }
+
+    if (PyMapping_HasKeyString(class_dict, "__v8_as_obj__"))
+    {
+        self->to_obj = 1;
+        //v8::Local<v8::ObjectTemplate> namespace_object_template = templ.As<v8::ObjectTemplate>();
+        templ->Set(Symbol::GetToStringTag(isolate), v8_name, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
+    }
+    else
+    {
+        self->to_obj = 0;
+        templ->ReadOnlyPrototype();
+        templ->SetClassName(v8_name);
+        templ->PrototypeTemplate()->Set(Symbol::GetToStringTag(isolate), v8_name, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
+    }
+
+    Py_XDECREF(class_dict);
+
     templ->InstanceTemplate()->SetInternalFieldCount(OBJECT_INTERNAL_FIELDS);
 
     self->templ.Reset(isolate, templ);
     return (PyObject *) self;
 }
                                                        
-
-int 
-add_class_to_template(PyObject *cls, Local<FunctionTemplate> templ, Local<Signature> signature, const char* world, context_c* py_ctx)
-{
-    PyObject *dict;
-    if (PyClass_Check(cls)) {
-        // old style
-        dict = PyObject_GetAttr(cls, PyString_InternFromString("__dict__"));
-    } else {
-        // new style
-        // Sorry, but I have to do this to use PyDict_Next. At least the layout
-        // is the same on 2 and 3.
-        struct dictproxy {
-            PyObject_HEAD
-            PyObject *dict;
-        };
-        struct dictproxy *proxy = (struct dictproxy *) PyObject_GenericGetAttr(cls, PyString_InternFromString("__dict__"));
-        dict = proxy->dict;
-        Py_INCREF(dict);
-        Py_XDECREF(proxy);
-    }
-    PyErr_PROPAGATE(dict);
-    PyObject *member_name, *member_value;
-    Py_ssize_t pos = 0;
-    while (PyDict_Next(dict, &pos, &member_name, &member_value)) {
-        Py_INCREF(member_name);
-        Py_INCREF(member_value);
-        if (add_to_template(cls, py_ctx, member_name, member_value, templ, signature, world) < 0) {
-            Py_XDECREF(dict);
-            return -1;
-        }
-    }
-    Py_XDECREF(dict);
-    return 0;
-}
 
 bool 
 if_property_has(PyObject *property, const char *what)
@@ -388,16 +351,14 @@ add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObjec
     Local<Context> no_ctx;
     // I can't use an AccessorSignature here because then property access on
     // the global object from this gets fucked up.
-    if (PyString_Check(member_name) && PyUnicode_AsUTF8_abi3(member_name)[0] == '_') {
+    if (PyUnicode_Check(member_name) && PyUnicode_AsUTF8_abi3(member_name)[0] == '_')
+    {
         return 0;
     }
 
     if (PyObject_HasAttrString(member_value, "__v8_hidden__")) {
         return 0;
     }
-
-    Local<Name> js_name = js_from_py(member_name, no_ctx).As<Name>();
-    Local<Data> js_value;
 
     if (PyFunction_Check_abi3(member_value)) {
         return 0;
@@ -415,28 +376,44 @@ add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObjec
         return 0;
     }
 
-    // otherwise just convert
-    if (PyType_Check(member_value) && std::isupper(static_cast<unsigned char>(PyUnicode_AsUTF8_abi3(member_name)[0]))) {
-        py_class_to_template(member_value, py_ctx);
-        return 0;
-    }
-    js_value = js_from_py(member_value, no_ctx);
-    if (!js_value.IsEmpty()) {
+    Local<Name> js_name = js_from_py(member_name, no_ctx).As<Name>();
+    Local<Data> js_value = js_from_py(member_value, no_ctx);
+    if (!js_value.IsEmpty())
+    {
         templ->Set(js_name, js_value);
         templ->PrototypeTemplate()->Set(js_name, js_value);
         return 0;
     }
+
+    // otherwise just convert
+    if (PyType_Check(member_value) && std::isupper(static_cast<unsigned char>(PyUnicode_AsUTF8_abi3(member_name)[0])))
+    {
+        py_class_to_template(member_value, py_ctx);
+        return 0;
+    }
+
     return -1;
 }
 
+
 Local<Function> 
-py_class_get_constructor(py_class *self, Local<Context> context)
+py_class_get_constructor(Local<Context> context, py_class* self, py_class* parent)
 {
-    EscapableHandleScope hs(isolate);
-    Local<Function> function = self->templ.Get(isolate)->GetFunction(context).ToLocalChecked();
+    Context::Scope cs(context);
     delete_constructor(self, context);
+    Local<Function> js_parent;
+    if (parent != NULL) {
+        if(PyObject_HasAttrString(parent->cls, "__v8_skip_inherit__"))
+            parent = (py_class *)parent->parent;
+
+        if (parent != NULL)
+            js_parent = py_class_get_constructor(context, parent, (py_class*)parent->parent);
+    }
+    Local<Function> function = self->templ.Get(isolate)->GetFunction(context).ToLocalChecked();
+    if (!js_parent.IsEmpty())
+        function->SetPrototype(context, js_parent).ToChecked();
     function->SetName(js_from_py(self->cls_name, context).As<String>());
-    return hs.Escape(function);
+    return function;
 }
 
 void 
@@ -483,8 +460,8 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
 void 
 delete_constructor(py_class* self, Local<Context> context)
 {
-    if (!self->constructor) {
-        self->constructor = 1;
+    if (!self->has_constructor) {
+        self->has_constructor = 1;
         v8::Local<v8::FunctionTemplate> interface_template = self->templ.Get(isolate);
         v8::Local<v8::Function> function;
         if (interface_template->GetFunction(context).ToLocal(&function)) {
