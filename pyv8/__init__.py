@@ -34,6 +34,9 @@ new = _pyv8.new
 v8_gc = _pyv8.v8_gc
 
 
+from .devtools import start_devtools
+
+
 class ArrayType:
     Uint32Array = 1
     Uint16Array = 2
@@ -45,5 +48,3 @@ class ArrayType:
     Float32Array = 8
     Uint8ClampedArray = 9
 
-
-from .devtools import start_devtools

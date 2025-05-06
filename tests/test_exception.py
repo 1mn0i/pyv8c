@@ -42,7 +42,6 @@ class TestException(unittest.TestCase):
                 };
                 ret
             """)
-        print(result)
         self.assertEqual(result["message"], "Test exception")
         self.assertEqual(result["name"], "Error")
         self.assertIn("Error: Test exception\n    at <anonymous>", result["stack"])

@@ -88,6 +88,21 @@ class TestContext(unittest.TestCase):
         with self.assertRaises(pyv8.JavaScriptTerminated):
             self.context.exec_js("while(true) {}")
     
+    def test_new(self):
+        """测试js的new关键字"""
+        JsUint8Array = self.context.exec_js("Uint8Array")
+        js_obj = pyv8.new(JsUint8Array, [1, 2, 3])
+        self.context.test = js_obj
+        self.assertEqual(self.context.exec_js("test instanceof Uint8Array"), True)
+
+        # new Promise((resolve, reject)=>{ resolve( "resolve result" )}).then(console.debug)
+        def fn_promise(fn_resolve, fn_reject, *arg):
+            fn_resolve("resolve result")
+        Promise = self.context.Promise
+        self.context.p = pyv8.new(Promise, fn_promise)
+        self.context.exec_js("var ret; p.then((v)=>{ret=v})")
+        self.assertEqual(self.context.ret, "resolve result")
+
     def test_gc(self):
         """测试垃圾回收"""
         # 创建一些JavaScript对象
