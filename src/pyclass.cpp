@@ -61,6 +61,8 @@ py_class_dealloc(py_class* self)
     TP_FREE_ABI3(py_class_type, self);
 }
 
+PyObject *cls_template_dict = NULL;
+
 PyObject *
 py_class_to_template(PyObject *cls, context_c* py_ctx)
 {

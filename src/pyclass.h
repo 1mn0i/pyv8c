@@ -61,6 +61,5 @@ void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info);
 
 bool CrossOriginAccessCheckCallback(v8::Local<v8::Context> accessing_context, v8::Local<v8::Object> accessed_object, v8::Local<v8::Value> unused_data);
 
-static PyObject* cls_template_dict = NULL;
 
 #endif
