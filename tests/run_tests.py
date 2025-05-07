@@ -35,7 +35,7 @@ def run_tests():
         TestPyClass,
         TestException,
         TestConversion,
-        TestFaker
+        TestFaker,
         TestMultipleContext
     ]
     
