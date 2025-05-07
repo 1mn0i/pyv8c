@@ -28,7 +28,7 @@ PyMethodDef context_methods[] = {
 };
 // Python is wrong. The first entry is not modifiable and should be const char *
 PyGetSetDef context_getset[] = {
-    {(char*)"globalThis", (getter)context_get_global, NULL, NULL, NULL},
+    {(char*)"glob", (getter)context_get_global, NULL, NULL, NULL},
     {(char*)"timeout", (getter)context_get_timeout, (setter)context_set_timeout, NULL, NULL},
     {NULL},
 };
@@ -505,48 +505,9 @@ context_getattro(context_c *self, PyObject *name)
 PyObject *
 context_getitem(context_c *self, PyObject *name)
 {
-    IN_V8;
-    Local<Context> context = self->js_context.Get(isolate);
-    Local<Object> object = context->Global();
-    PyObject *global = py_from_js(object->GetPrototype(), context);
+    PyObject* global = context_get_global(self, NULL);
     PyErr_PROPAGATE(global);
-
-    PyObject *attr_value = PyObject_GenericGetAttr((PyObject *)global, name);
-    if (attr_value == NULL)
-        PyErr_Clear();
-    else
-        return attr_value;
-
-    Local<Value> js_name = js_from_py(name, context);
-    JS_TRY;
-    if (!context_setup_timeout(context)) return NULL;
-    if (!object->Has(context, js_name).FromJust()) {
-        // TODO fix this so that it works
-        PyObject* class_name = py_from_js(object->GetConstructorName(), context);
-        PyErr_PROPAGATE(class_name);
-        PyObject* class_name_string = PyObject_Str(class_name);
-        Py_XDECREF(class_name);
-        PyErr_PROPAGATE(class_name_string);
-
-        PyErr_Format(PyExc_AttributeError, "'%.50S' JavaScript object has no attribute '%.400S'",
-            class_name_string, name);
-        Py_XDECREF(class_name_string);
-        return NULL;
-    }
-    PY_PROPAGATE_JS;
-
-    MaybeLocal<Value> js_value = object->Get(context, js_name);
-    if (!context_cleanup_timeout(context)) return NULL;
-
-    PY_PROPAGATE_JS;
-    PyObject* value = py_from_js(js_value.ToLocalChecked(), context);
-    PyErr_PROPAGATE(value);
-    // if this was called like object.method() then bind the return value to make it callable
-    if (Py_TYPE(value) == js_function_type) {
-        js_function* func = (js_function*)value;
-        func->js_this.Reset(isolate, object);
-    }
-    return value;
+    return PyObject_GetAttr(global, name);
 }
 
 int 

@@ -26,9 +26,10 @@ class TestScript(unittest.TestCase):
     
     def test_script_with_filename(self):
         """测试带有文件名的脚本"""
-        script = pyv8.Script(self.context, "1 + 1", "test.js")
+        script = pyv8.Script(self.context, "(new Error).stack", "https://www.xxx.com/test.js")
         result = self.context.exec_js(script)
-        self.assertEqual(result, 2)
+        self.assertIn("https://www.xxx.com/test.js", result)
+        #self.assertEqual(result, 2)
 
 if __name__ == "__main__":
     unittest.main()

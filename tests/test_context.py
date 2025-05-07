@@ -21,12 +21,30 @@ class TestContext(unittest.TestCase):
         """测试执行简单的JavaScript代码"""
         result = self.context.exec_js("1 + 1")
         self.assertEqual(result, 2)
+
+        result = self.context.exec_js("(new Error).stack", "https://www.xxx.com/test.js")
+        self.assertIn("https://www.xxx.com/test.js", result)
     
+    def test_glob(self):
+        """测试glob属性"""
+        # context.glob就是浏览器的globalThis
+        self.assertIsInstance(self.context.glob, pyv8.JSObject)
+
     def test_global_access(self):
         """测试访问全局对象"""
+
         self.context.exec_js("var globalVar = 'hello world';")
+        # 测试下面代码是否 等价于浏览器中执行 globalThis.globalVar
         result = self.context.globalVar
         self.assertEqual(result, "hello world")
+
+        # 测试下面代码是否 等价于浏览器中执行 globalThis.global_var2 = 1
+        self.context.global_var2 = 1
+        self.assertEqual(self.context.exec_js("global_var2"), 1)
+        
+        # globalThis.non_existent返回undefined, 但self.context.non_existent抛属性异常
+        with self.assertRaises(AttributeError):
+            self.context.non_existent
     
     def test_js_obj(self):
         """测试获取通过python object获取js object"""
@@ -37,26 +55,21 @@ class TestContext(unittest.TestCase):
                 pass
 
         self.context.expose(A)
-        # py_obj是python对象，直接使用，调用的是python对象的方法
+        # py_obj是python对象 直接访问name属性 相当于python代码 a=A(); a.name
         py_obj = self.context.exec_js("a = new A; a.name= 'test'; a")
         with self.assertRaises(AttributeError):
             py_obj.name
         
-        # js_obj是py_obj对象对应的js对象，可以调用的是js对象的方法
+        # 通过context.js_obj方法可获得py_obj对象对应的js对象，便可调用的是js对象的方法
         js_obj = self.context.js_obj(py_obj)
         self.assertEqual(js_obj.name, 'test')
 
-    def test_expose_python_function(self):
-        """测试在JavaScript中暴露Python函数"""
+    def test_expose(self):
+        """测试context.expose方法"""
+
         def add(a, b):
             return a + b
         
-        self.context.expose(add=add)
-        result = self.context.exec_js("add(5, 3)")
-        self.assertEqual(result, 8)
-    
-    def test_expose_python_object(self):
-        """测试在JavaScript中暴露Python对象"""
         class Calculator:
             __v8_method__ = (
                 # (name, cb, length, CallbackType, FlagLocation, V8Attribute, FlagReceiverCheck, 
@@ -71,14 +84,17 @@ class TestContext(unittest.TestCase):
                 return a - b
         
         calc = Calculator()
-        self.context.expose(calc=calc)
+        self.context.expose(add, calc=calc)
+
+        result = self.context.exec_js("add(5, 3)")
+        self.assertEqual(result, 8)
         
         add_result = self.context.exec_js("calc.add(10, 5)")
         self.assertEqual(add_result, 15)
         
         subtract_result = self.context.exec_js("calc.subtract(10, 5)")
         self.assertEqual(subtract_result, 5)
-    
+
     def test_timeout(self):
         """测试JavaScript执行超时"""
         # 设置一个非常短的超时时间
@@ -102,6 +118,61 @@ class TestContext(unittest.TestCase):
         self.context.p = pyv8.new(Promise, fn_promise)
         self.context.exec_js("var ret; p.then((v)=>{ret=v})")
         self.assertEqual(self.context.ret, "resolve result")
+
+    def test_iframe(self):
+        """测试iframe"""
+        class Document:
+
+            __v8_method__ = (
+                ("createElement", "fn_createElement", 1, 0, 1, 0, 0, 0, 0),
+                )
+            
+            def fn_createElement(self, *args, **kw):
+                name = str(args[0])
+                if name.lower() == "iframe":
+                    return HTMLIFrameElement()
+
+        class Window: 
+            __v8_global_this__ = True
+            
+            __v8_attribute__ = (
+                ("window", "get_window", None, 0, 0, 4, 0, 1, 0, 1),
+                ("document", "get_document", None, 0, 0, 4, 0, 0, 0, 1),
+                )
+
+            def __v8__cross_origin_check__(self, interviewee):
+                return True
+
+            def __init__(self, win=None):
+                self.document = Document()
+
+            def get_window(self):
+                return self
+
+            def get_document(self):
+                return self.document
+
+        class HTMLIFrameElement:
+            def __init__(self, win=None):
+                self._contentWindow = None
+
+            __v8_attribute__ = (
+                ("contentWindow", "get_contentWindow", None, 0, 1, 0, 0, 0, 0, 1),
+                )
+            
+            def get_contentWindow(self):
+                if self._contentWindow is None:
+                    self._contentWindow = Window()
+                    iframe_ctx = pyv8.Context(self._contentWindow, ctx_type='Ifrome')
+                    self._contentWindow._ctx = iframe_ctx
+                return self._contentWindow
+
+        win = Window()
+        win_ctx = pyv8.Context(win, ctx_type='Top')
+        win_ctx.exec_js("var iframe = document.createElement('iframe'); iframe.contentWindow.aaa=111")
+        self.assertEqual(False, win_ctx.exec_js("iframe.contentWindow == window"))
+        self.assertEqual(pyv8.Undefined, win_ctx.exec_js("window.aaa"))
+        self.assertEqual(111, win_ctx.exec_js("iframe.contentWindow.aaa"))
 
     def test_gc(self):
         """测试垃圾回收"""

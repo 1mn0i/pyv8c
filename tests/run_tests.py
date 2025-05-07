@@ -17,6 +17,7 @@ from tests.test_pyclass import TestPyClass
 from tests.test_exception import TestException
 from tests.test_conversion import TestConversion
 from tests.test_faker import TestFaker
+from tests.test_multiple_context import TestMultipleContext
 
 def run_tests():
     """运行所有测试"""
@@ -35,6 +36,7 @@ def run_tests():
         TestException,
         TestConversion,
         TestFaker
+        TestMultipleContext
     ]
     
     for test_class in test_classes:
