@@ -162,9 +162,11 @@ void NativeWrapperCallback(const FunctionCallbackInfo<Value>& info) {
 
 
 void Faker::Print(const FunctionCallbackInfo<Value>& info) {
+    HandleScope handle_scope(info.GetIsolate());
+    Local<Object> temp = Object::New(info.GetIsolate());
     for (int i = 0; i < info.Length(); i++) {
-        HandleScope handle_scope(info.GetIsolate());
-        String::Utf8Value str(info.GetIsolate(), info[i]);
+        temp->SetPrototype(info.GetIsolate()->GetCurrentContext(), info[i]);
+        String::Utf8Value str(info.GetIsolate(), temp);
         printf("%s ", *str);
     }
     printf("\n");

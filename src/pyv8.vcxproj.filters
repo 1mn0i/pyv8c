@@ -8,14 +8,8 @@
     <Filter Include="faker">
       <UniqueIdentifier>{d3fab5f2-db1d-46d0-8178-687c99e85723}</UniqueIdentifier>
     </Filter>
-    <Filter Include="faker\env">
-      <UniqueIdentifier>{cc0851eb-aa16-4568-9fce-46876a757503}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="faker\vm.cpp">
-      <Filter>faker</Filter>
-    </ClCompile>
     <ClCompile Include="context.cpp" />
     <ClCompile Include="convert.cpp" />
     <ClCompile Include="debugger.cpp" />
@@ -31,14 +25,8 @@
     <ClCompile Include="faker\tools.cpp">
       <Filter>faker</Filter>
     </ClCompile>
-    <ClCompile Include="faker\env\Window.cpp">
-      <Filter>faker\env</Filter>
-    </ClCompile>
     <ClCompile Include="faker\Faker.cpp">
       <Filter>faker</Filter>
-    </ClCompile>
-    <ClCompile Include="faker\env\EventTarget.cpp">
-      <Filter>faker\env</Filter>
     </ClCompile>
     <ClCompile Include="v8tools.cpp" />
     <ClCompile Include="abi3.cpp" />
@@ -48,9 +36,6 @@
     <ClCompile Include="jsundefined.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="faker\vm.h">
-      <Filter>faker</Filter>
-    </ClInclude>
     <ClInclude Include="context.h" />
     <ClInclude Include="convert.h" />
     <ClInclude Include="debugger.h" />
@@ -65,14 +50,8 @@
     <ClInclude Include="faker\tools.h">
       <Filter>faker</Filter>
     </ClInclude>
-    <ClInclude Include="faker\env\Window.h">
-      <Filter>faker\env</Filter>
-    </ClInclude>
     <ClInclude Include="faker\Faker.h">
       <Filter>faker</Filter>
-    </ClInclude>
-    <ClInclude Include="faker\env\EventTarget.h">
-      <Filter>faker\env</Filter>
     </ClInclude>
     <ClInclude Include="v8tools.h" />
     <ClInclude Include="faker\hook.h">

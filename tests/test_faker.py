@@ -38,6 +38,10 @@ class TestFaker(unittest.TestCase):
     def test_print(self):
         """测试print函数"""
         self.context.exec_js("faker.print('Hello, World!')")
+        
+        # 测试print函数不会调用对象的toString方法
+        self.context.exec_js("a = {i:0, toString: function toString(){this.i+=1; return 'a'}}; faker.print(a, a);")
+        self.assertEqual(self.context.exec_js("a.i"), 0)
 
     def test_native_wrapper(self):
         """测试native_wrapper函数"""

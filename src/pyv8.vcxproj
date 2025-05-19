@@ -131,11 +131,8 @@
     <ClCompile Include="convert.cpp" />
     <ClCompile Include="debugger.cpp" />
     <ClCompile Include="exception.cpp" />
-    <ClCompile Include="faker\env\EventTarget.cpp" />
-    <ClCompile Include="faker\env\Window.cpp" />
     <ClCompile Include="faker\Faker.cpp" />
     <ClCompile Include="faker\tools.cpp" />
-    <ClCompile Include="faker\vm.cpp" />
     <ClCompile Include="jsfunction.cpp" />
     <ClCompile Include="jsnull.cpp" />
     <ClCompile Include="jsobject.cpp" />
@@ -156,12 +153,9 @@
     <ClInclude Include="convert.h" />
     <ClInclude Include="debugger.h" />
     <ClInclude Include="exception.h" />
-    <ClInclude Include="faker\env\EventTarget.h" />
-    <ClInclude Include="faker\env\Window.h" />
     <ClInclude Include="faker\Faker.h" />
     <ClInclude Include="faker\hook.h" />
     <ClInclude Include="faker\tools.h" />
-    <ClInclude Include="faker\vm.h" />
     <ClInclude Include="jsfunction.h" />
     <ClInclude Include="jsnull.h" />
     <ClInclude Include="jsobject.h" />

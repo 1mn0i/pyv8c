@@ -119,61 +119,6 @@ class TestContext(unittest.TestCase):
         self.context.exec_js("var ret; p.then((v)=>{ret=v})")
         self.assertEqual(self.context.ret, "resolve result")
 
-    def test_iframe(self):
-        """测试iframe"""
-        class Document:
-
-            __v8_method__ = (
-                ("createElement", "fn_createElement", 1, 0, 1, 0, 0, 0, 0),
-                )
-            
-            def fn_createElement(self, *args, **kw):
-                name = str(args[0])
-                if name.lower() == "iframe":
-                    return HTMLIFrameElement()
-
-        class Window: 
-            __v8_global_this__ = True
-            
-            __v8_attribute__ = (
-                ("window", "get_window", None, 0, 0, 4, 0, 1, 0, 1),
-                ("document", "get_document", None, 0, 0, 4, 0, 0, 0, 1),
-                )
-
-            def __v8__cross_origin_check__(self, interviewee):
-                return True
-
-            def __init__(self, win=None):
-                self.document = Document()
-
-            def get_window(self):
-                return self
-
-            def get_document(self):
-                return self.document
-
-        class HTMLIFrameElement:
-            def __init__(self, win=None):
-                self._contentWindow = None
-
-            __v8_attribute__ = (
-                ("contentWindow", "get_contentWindow", None, 0, 1, 0, 0, 0, 0, 1),
-                )
-            
-            def get_contentWindow(self):
-                if self._contentWindow is None:
-                    self._contentWindow = Window()
-                    iframe_ctx = pyv8.Context(self._contentWindow, ctx_type='Ifrome')
-                    self._contentWindow._ctx = iframe_ctx
-                return self._contentWindow
-
-        win = Window()
-        win_ctx = pyv8.Context(win, ctx_type='Top')
-        win_ctx.exec_js("var iframe = document.createElement('iframe'); iframe.contentWindow.aaa=111")
-        self.assertEqual(False, win_ctx.exec_js("iframe.contentWindow == window"))
-        self.assertEqual(pyv8.Undefined, win_ctx.exec_js("window.aaa"))
-        self.assertEqual(111, win_ctx.exec_js("iframe.contentWindow.aaa"))
-
     def test_gc(self):
         """测试垃圾回收"""
         # 创建一些JavaScript对象

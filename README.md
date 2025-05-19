@@ -36,16 +36,85 @@ git clone https://github.com/ConlinH/pyv8.git
 cd pyv8
 ```
 
-2. 安装依赖：
+2. 使用pyproject.toml构建和安装（推荐）：
 
 ```bash
-pip install -r requirements.txt
+# 开发模式安装
+pip install -e .
+
+# 或者直接安装
+pip install .
 ```
 
-3. 构建扩展：
+3. 或者使用传统的setup.py（向后兼容）：
 
 ```bash
 python setup.py install
+```
+
+### 编译选项
+
+pyv8的编译配置在`build_ext.py`文件中定义。如果需要自定义编译选项，可以修改此文件：
+
+- 修改包含目录：`include_dirs`
+- 修改库目录：`library_dirs`
+- 修改链接的库：`libraries`
+- 修改编译参数：`extra_compile_args`
+- 修改链接参数：`extra_link_args`
+
+例如，在Windows上添加自定义包含目录：
+
+```python
+# 在build_ext.py中修改
+if os.name == 'nt':
+    include_dirs = ['src', 'v8/include', 'path/to/custom/include']
+```
+
+## 开发与测试
+
+### 使用tox进行测试
+
+项目使用tox进行自动化测试，支持多个Python版本：
+
+```bash
+# 安装tox
+pip install tox
+
+# 运行所有测试环境
+tox
+
+# 运行特定Python版本的测试
+tox -e py310
+tox -e py311
+
+# 运行代码风格检查
+tox -e lint
+```
+
+### 使用pytest直接运行测试
+
+```bash
+# 安装pytest
+pip install pytest pytest-cov
+
+# 运行所有测试
+pytest
+
+# 运行特定测试文件
+pytest tests/test_context.py
+
+# 生成测试覆盖率报告
+pytest --cov=pyv8 tests/
+```
+
+### 使用传统的unittest运行测试
+
+```bash
+# 运行所有测试
+python tests/run_tests.py
+
+# 使用pytest运行
+python tests/run_tests.py --pytest
 ```
 
 ## 快速入门
@@ -97,23 +166,24 @@ print(result)  # 输出: Hello, World from Python!
 import pyv8
 from pyv8 import start_devtools
 
-class Window: pass
+class Window:
+    __v8_global_this__ = True
 
-
-context = pyv8.Context(Window())
-
-# 启动DevTools调试服务器
-start_devtools(context, port=9005)
 
 # 执行JavaScript代码
-context.exec_js("""
-    function test() {
-        console.log('Testing DevTools');
-        debugger;  // 这将在DevTools中触发断点
-        return 'Done';
-    }
-    test();
-""")
+def callback(ctx):
+    ctx.exec_js("""
+        function test() {
+            console.log('Testing DevTools');
+            debugger;  // 这将在DevTools中触发断点
+            return 'Done';
+        }
+        test();
+    """)
+
+context = pyv8.Context(Window())
+# 启动DevTools调试服务器
+start_devtools(context, callback=callback, port=9005)
 
 # 控制台会输出DevTools URL，可以在Chrome浏览器中打开进行调试
 ```

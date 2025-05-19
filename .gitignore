@@ -4,12 +4,23 @@ __pycache__/
 
 *.log
 *.pyc
+*.dll
 *.egg-info
-build
-dist
-.eggs
+build/
+dist/
+.eggs/
 
+# tox相关
+.tox/
+.coverage
+htmlcov/
+.pytest_cache/
+
+# 编译相关
 .vs/
 vc140.pdb
-v8
-src/x64
+v8/
+src/x64/
+*.obj
+*.lib
+*.exp
