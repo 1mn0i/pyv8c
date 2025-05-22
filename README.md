@@ -32,7 +32,7 @@ pip install pyv8
 1. 克隆仓库：
 
 ```bash
-git clone https://github.com/ConlinH/pyv8.git
+git clone https://github.com/ConlinH/_pyv8.git
 cd pyv8
 ```
 
@@ -201,4 +201,4 @@ start_devtools(context, callback=callback, port=9005)
 
 - 作者：conlin
 - 邮箱：995018884@qq.com
-- GitHub：[https://github.com/ConlinH/pyv8](https://github.com/ConlinH/pyv8)
+- GitHub：[https://github.com/ConlinH/_pyv8](https://github.com/ConlinH/_pyv8)
