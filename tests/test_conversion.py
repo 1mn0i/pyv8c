@@ -188,5 +188,18 @@ class TestConversion(unittest.TestCase):
         test_result = self.context.exec_js("(function(re) { return re.test('Hello World'); })")(js_regexp)
         self.assertTrue(test_result)
 
+    def test_bigint_conversion(self):
+        """测试Bigint类型转换"""
+        code = """
+        get_type = function(x){
+            return typeof x;
+        }
+        bigint_val = 666n;
+        """
+        self.context.exec_js(code)
+        self.assertIsInstance(self.context.bigint_val, pyv8.JSValue)
+        self.assertEqual(self.context.get_type(self.context.bigint_val), 'bigint')
+        self.assertEqual(self.context.get_type(self.context.BigInt(11)), 'bigint')
+
 if __name__ == "__main__":
     unittest.main()

@@ -139,6 +139,7 @@
     <ClCompile Include="jspromise.cpp" />
     <ClCompile Include="jstypedarray.cpp" />
     <ClCompile Include="jsundefined.cpp" />
+    <ClCompile Include="jsvalue.cpp" />
     <ClCompile Include="kappa.cpp" />
     <ClCompile Include="pyclass.cpp" />
     <ClCompile Include="pyclasshandlers.cpp" />
@@ -162,6 +163,7 @@
     <ClInclude Include="jspromise.h" />
     <ClInclude Include="jstypedarray.h" />
     <ClInclude Include="jsundefined.h" />
+    <ClInclude Include="jsvalue.h" />
     <ClInclude Include="kappa.h" />
     <ClInclude Include="polyfill.h" />
     <ClInclude Include="pyclass.h" />

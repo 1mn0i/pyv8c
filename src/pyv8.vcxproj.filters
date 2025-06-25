@@ -34,6 +34,7 @@
     <ClCompile Include="jstypedarray.cpp" />
     <ClCompile Include="jsnull.cpp" />
     <ClCompile Include="jsundefined.cpp" />
+    <ClCompile Include="jsvalue.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="context.h" />
@@ -63,6 +64,7 @@
     <ClInclude Include="jstypedarray.h" />
     <ClInclude Include="jsnull.h" />
     <ClInclude Include="jsundefined.h" />
+    <ClInclude Include="jsvalue.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="pyv8.rc">

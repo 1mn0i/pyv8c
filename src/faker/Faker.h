@@ -34,6 +34,7 @@ private:
 	static void CreateConstructor(const FunctionCallbackInfo<Value>& info);
 	static void GetHook(const FunctionCallbackInfo<Value>& info);
 	static void SetHook(const FunctionCallbackInfo<Value>& info);
+	static void StructuredClone(const FunctionCallbackInfo<Value>& info);
 
 public:
 	static void Register(Isolate* isolate, Local<FunctionTemplate>& global_inteface_template);

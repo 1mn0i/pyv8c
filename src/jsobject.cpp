@@ -58,6 +58,7 @@ js_object_new(Local<Object> object, Local<Context> context)
     IN_V8;
     Context::Scope cs(context);
     js_object *self;
+    
     if (object->IsPromise()) {
         //self = (js_object *) js_promise_type.tp_alloc(&js_promise_type, 0);
         self = (js_object*)PyType_GenericAlloc(js_promise_type, 0);
@@ -261,7 +262,7 @@ js_object_repr(js_object *self)
     Local<String> v8_str;
     MaybeLocal<String> maybe_v8_str = object->ToString(context);
     if (!maybe_v8_str.ToLocal(&v8_str)) {
-        return PyUnicode_FromString("[error toString]");
+        return PyUnicode_FromString("[error toString object]");
     }
 
     v8::String::Utf8Value str(isolate, v8_str);

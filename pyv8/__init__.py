@@ -22,6 +22,7 @@ Context = _pyv8.Context
 Script = _pyv8.Script
 Debugger = _pyv8.Debugger
 JSObject = _pyv8.JSObject
+JSValue = _pyv8.JSValue
 JSPromise = _pyv8.JSPromise
 JSTypeArray = _pyv8.JSTypeArray
 JSFunction = _pyv8.JSFunction

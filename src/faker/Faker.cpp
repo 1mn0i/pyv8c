@@ -344,6 +344,49 @@ void Faker::SetHook(const FunctionCallbackInfo<Value>& info) {
     }
 }
 
+
+void Faker::StructuredClone(const FunctionCallbackInfo<Value>& info) {
+    Isolate* isolate = info.GetIsolate();
+
+    if (info.Length() < 1) {
+        info.GetIsolate()->ThrowException(Exception::TypeError(V8String(isolate, "Failed to execute 'structuredClone' on 'Window': 1 argument required, but only 0 present.")));
+        return;
+    }
+
+    Local<Context> ctx = isolate->GetCurrentContext();
+
+    Local<Value> value = info[0];
+
+
+    if (value->IsRegExp()) {
+        auto regex = Local<RegExp>::Cast(value);
+        info.GetReturnValue().Set(regex->Clone());
+        return;
+    }
+
+    v8::ValueSerializer serializer(isolate);
+
+    if (!serializer.WriteValue(ctx, value).FromMaybe(false)) {
+        info.GetIsolate()->ThrowException(Exception::TypeError(V8String(isolate, "Failed to execute 'structuredClone' on 'Window': object could not be cloned.")));
+        return;
+    }
+
+    std::pair<uint8_t*, size_t> buffer = serializer.Release();
+
+    ValueDeserializer deserializer(isolate, buffer.first, buffer.second);
+
+    v8::Local<v8::Value> result;
+    if (!deserializer.ReadValue(ctx).ToLocal(&result)) {
+        free(buffer.first);
+        info.GetIsolate()->ThrowException(Exception::TypeError(V8String(isolate, "Failed to execute 'structuredClone' on 'Window': object could not be cloned.")));
+        return;
+    }
+
+    free(buffer.first);
+    info.GetReturnValue().Set(result);
+}
+
+
 void Faker::Register(Isolate* isolate, Local<FunctionTemplate>& global_inteface_template) {
     v8::Local<v8::FunctionTemplate> interface_template_Faker = FunctionTemplate::New(isolate);
     Local<ObjectTemplate> prototype_template_Faker = interface_template_Faker->PrototypeTemplate();
@@ -357,6 +400,7 @@ void Faker::Register(Isolate* isolate, Local<FunctionTemplate>& global_inteface_
     prototype_template_Faker->Set(isolate, "run_js_file", FunctionTemplate::New(isolate, RunJSFile));
     prototype_template_Faker->Set(isolate, "v8_version", V8String(isolate, v8::V8::GetVersion()));
     prototype_template_Faker->Set(isolate, "print", FunctionTemplate::New(isolate, Print));
+    prototype_template_Faker->Set(isolate, "structuredClone", FunctionTemplate::New(isolate, StructuredClone));
     //prototype_template_Faker->Set(isolate, "new_symbol", Symbol::New(isolate, V8String(isolate, "new_symbol")));
 
     prototype_template_Faker->Set(isolate, "get_arg", FunctionTemplate::New(isolate, GetArg));

@@ -6,6 +6,7 @@
 #include "pyfunction.h"
 #include "pyclass.h"
 #include "jsobject.h"
+#include "jsvalue.h"
 #include "context.h"
 
 PyObject *
@@ -151,6 +152,9 @@ py_from_js(Local<Value> value, Local<Context> context)
         return PyFloat_FromDouble(value.As<Number>()->Value());
     }
 
+    if (value->IsBigInt()) {
+        return (PyObject*)js_value_new(value, context);
+    }
     // i'm not quite ready to turn this into an assert quite yet
     // i'll do that when I've special-cased every primitive type
     printf("cannot convert\n");
@@ -297,6 +301,12 @@ js_from_py(PyObject *value, Local<Context> context)
     {
         js_object *py_value = (js_object *)value;
         return hs.Escape(py_value->object.Get(isolate));
+    }
+
+    if (PyObject_TypeCheck(value, js_value_type))
+    {
+        js_value* py_value = (js_value*)value;
+        return hs.Escape(py_value->value.Get(isolate));
     }
 
     // python global_this -> js globalThis

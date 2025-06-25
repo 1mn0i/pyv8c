@@ -9,6 +9,7 @@
 #include "script.h"
 #include "pyclass.h"
 #include "jsobject.h"
+#include "jsvalue.h"
 #include "jsfunction.h"
 #include "jspromise.h"
 #include "jstypedarray.h"
@@ -277,6 +278,11 @@ PyMODINIT_FUNC PyInit__pyv8()
     if (js_object_type_init() < 0)
         return FAIL;
     if (PyModule_AddObject(module, "JSObject", (PyObject *)js_object_type) < 0)
+        return FAIL;
+
+    if (js_value_type_init() < 0)
+        return FAIL;
+    if (PyModule_AddObject(module, "JSValue", (PyObject*)js_value_type) < 0)
         return FAIL;
 
     if (js_promise_type_init() < 0)
