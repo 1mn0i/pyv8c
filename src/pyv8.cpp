@@ -212,6 +212,19 @@ context_get_current(PyObject *self, PyObject *args)
     return context;
 }
 
+PyObject*
+context_get_incumbent(PyObject* self, PyObject* args)
+{
+    Local<Context> current_context = isolate->GetIncumbentContext();
+    if (current_context.IsEmpty())
+    {
+        Py_RETURN_NONE;
+    }
+    PyObject* context = (PyObject*)current_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    Py_INCREF(context);
+    return context;
+}
+
 PyObject *
 v8_version(PyObject *self, PyObject *args)
 {
@@ -231,6 +244,7 @@ static PyMethodDef v8_methods[] = {
     {"hidden", mark_hidden, METH_O, ""},
     {"unconstructable", mark_unconstructable, METH_O, ""},
     {"current_context", context_get_current, METH_NOARGS, "get current v8 context"},
+    {"incumbent_context", context_get_incumbent, METH_NOARGS, "get incumbent v8 context"},
     {"new", construct_new_object, METH_VARARGS, "Creates a new JavaScript object from a given constructor function"},
     {"low_memory_notification", trigger_low_memory_notification, METH_NOARGS, "Trigger V8 low memory notification"},
     {"init_v8", (PyCFunction)py_initialize_v8, METH_VARARGS | METH_KEYWORDS, "initialize v8 platform and isolate"},

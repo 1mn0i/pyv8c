@@ -28,7 +28,7 @@ class TestMultipleContext(unittest.TestCase):
             # 控制是否允许跨域访问 accessor为访问对象 self为被访问对象
             # accessor（window）想要访问 self（window） 中的属性时，会调用这个方法
             # 返回True为允许访问 反之拒绝
-            def __v8__cross_origin_check__(self, accessor):
+            def __v8_cross_origin_check__(self, accessor):
                 print("accessor id: ", id(accessor))
                 print("self id: ", id(self))
                 return True

@@ -22,7 +22,8 @@ enum FlagConstructor {
 
 
 
-template <class T> inline extern PyObject* get_self(const PropertyCallbackInfo<T>& info) {
+template <class T> 
+inline extern PyObject* get_self(const PropertyCallbackInfo<T>& info) {
     Local<Context> context = isolate->GetCurrentContext();
     Local<Object> js_self = info.Holder();
     if (js_self == context->Global()) {
@@ -32,10 +33,35 @@ template <class T> inline extern PyObject* get_self(const PropertyCallbackInfo<T
     return (PyObject*)js_self->GetInternalField(1).template As<External>()->Value();
 }
 
-template <class T> inline extern PyObject* get_self(const FunctionCallbackInfo<T>& info) {
+template <class T> 
+inline extern PyObject* get_self(const FunctionCallbackInfo<T>& info) {
     Local<Context> context = isolate->GetCurrentContext();
     Local<Object> js_self = info.Holder();
     if (js_self == context->Global()) {
+        js_self = js_self->GetPrototype().As<Object>();
+    }
+    if (js_self->InternalFieldCount() > 0) {
+        return (PyObject*)js_self->GetInternalField(1).template As<External>()->Value();
+    }
+    return Py_None;
+}
+
+template <class T>
+inline extern PyObject* get_self_cross_origin(const PropertyCallbackInfo<T>& info) {
+    Local<Context> context = isolate->GetCurrentContext();
+    Local<Object> js_self = info.Holder();
+    if (js_self->Equals(context, context->Global()).IsJust()) {
+        js_self = js_self->GetPrototype().As<Object>();
+    }
+
+    return (PyObject*)js_self->GetInternalField(1).template As<External>()->Value();
+}
+
+template <class T>
+inline extern PyObject* get_self_cross_origin(const FunctionCallbackInfo<T>& info) {
+    Local<Context> context = isolate->GetCurrentContext();
+    Local<Object> js_self = info.Holder();
+    if (js_self->Equals(context, context->Global()).IsJust()) {
         js_self = js_self->GetPrototype().As<Object>();
     }
     if (js_self->InternalFieldCount() > 0) {
@@ -133,7 +159,7 @@ void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
     Py_XDECREF(retval);
 
 
-#define PY_CLASS__CROSS_ORIGIN_METHOD_CALLBACK_CODE                                                                         \
+#define PY_CLASS_CROSS_ORIGIN_METHOD_CALLBACK_CODE                                                                          \
     PyObject* args = pys_from_jss(info, context);                                                                           \
     JS_PROPAGATE_PY(args);                                                                                                  \
     PyObject* method_py = PyObject_GetAttrString(self, method_name_str);                                                    \
@@ -181,10 +207,10 @@ void py_class_cross_origin_method_callback(const FunctionCallbackInfo<Value>& in
     context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     if (ctx_c->hook) {
         faker::FakerHookOperation operation_hook(info, method_name_str, self, ctx_c);
-        PY_CLASS__CROSS_ORIGIN_METHOD_CALLBACK_CODE
+        PY_CLASS_CROSS_ORIGIN_METHOD_CALLBACK_CODE
     }
     else {
-        PY_CLASS__CROSS_ORIGIN_METHOD_CALLBACK_CODE
+        PY_CLASS_CROSS_ORIGIN_METHOD_CALLBACK_CODE
     }
 }
 
@@ -373,14 +399,14 @@ void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info) {
 }
 
 
-#define NAMED_GETTER_CODE                                                             \
+#define NAMED_GETTER_CODE(py_method_name)                                             \
     PyObject* name = py_from_js(js_name, context);                                    \
     if (name == NULL) {                                                               \
         js_throw_py();                                                                \
         return Intercepted::kNo;                                                      \
     };                                                                                \
-    if (PyObject_HasAttrString(self, "__v8_name_get__")) {                            \
-        PyObject* value = PyObject_CallMethod(self, "__v8_name_get__", "O", name);    \
+    if (PyObject_HasAttrString(self, py_method_name)) {                               \
+        PyObject* value = PyObject_CallMethod(self, py_method_name, "O", name);       \
         Py_XDECREF(name);                                                             \
         if (value == NULL) {                                                          \
             js_throw_py();                                                            \
@@ -396,22 +422,44 @@ void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info) {
     Py_XDECREF(name);                                                                 \
     return Intercepted::kNo;
 
+
 Intercepted named_getter(Local<Name> js_name, Info(Value)) { 
     SETUP
 
     context_c* ctx_c = (context_c*)info.GetIsolate()->GetCurrentContext()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     PyObject* self = get_self(info);
+
     if (ctx_c->hook) {
         faker::FakerHookGetter hook(info, js_name, self, ctx_c);
-        NAMED_GETTER_CODE
+        NAMED_GETTER_CODE("__v8_name_get__")
     }
     else
     {
-        NAMED_GETTER_CODE
+        NAMED_GETTER_CODE("__v8_name_get__")
     }
 }
 
-#define NAMED_SETTER_CODE                                                                   \
+Intercepted properties_named_getter(Local<Name> js_name, Info(Value)) {
+    SETUP;
+
+    context_c* ctx_c = (context_c*)info.GetIsolate()->GetCurrentContext()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    PyObject* self = ctx_c->py_global;
+
+    NAMED_GETTER_CODE("__v8_property_name_get__")
+}
+
+Intercepted cross_origin_named_getter(Local<Name> js_name, Info(Value)){
+    SETUP;
+
+    PyObject* self = get_self_cross_origin(info);
+
+    NAMED_GETTER_CODE("__v8_cross_origin_name_get__")
+
+}
+
+
+
+#define NAMED_SETTER_CODE(py_method_name)                                                   \
     PyObject* name = py_from_js(js_name, context);                                          \
     if (name == NULL) {                                                                     \
         js_throw_py();                                                                      \
@@ -424,8 +472,8 @@ Intercepted named_getter(Local<Name> js_name, Info(Value)) {
         js_throw_py();                                                                      \
         return Intercepted::kNo;                                                            \
     }                                                                                       \
-    if (PyObject_HasAttrString(self, "__v8_name_set__")) {                                  \
-        PyObject* ret = PyObject_CallMethod(self, "__v8_name_set__", "OO", name, value);    \
+    if (PyObject_HasAttrString(self, py_method_name)) {                                     \
+        PyObject* ret = PyObject_CallMethod(self, py_method_name, "OO", name, value);       \
         Py_XDECREF(name);                                                                   \
         Py_XDECREF(value);                                                                  \
         if (ret == NULL) {                                                                  \
@@ -451,106 +499,155 @@ Intercepted named_setter(Local<Name> js_name, Local<Value> js_value, Info(void))
     
     if (ctx_c->hook) {
         faker::FakerHookSetter hook(info, js_name, js_value, self, ctx_c);
-        NAMED_SETTER_CODE
+        NAMED_SETTER_CODE("__v8_name_set__")
     }
     else {
-        NAMED_SETTER_CODE
+        NAMED_SETTER_CODE("__v8_name_set__")
     }
-
 }
+
+Intercepted cross_origin_named_setter(Local<Name> js_name, Local<Value> js_value, Info(void)) {
+    SETUP;
+
+    PyObject* self = get_self_cross_origin(info);
+
+    NAMED_SETTER_CODE("__v8_cross_origin_name_set__")
+}
+
+#define NAMED_DELETER_CODE(py_method_name)                                                \
+    PyObject *name = py_from_js(js_name, context);                                        \
+    if (name == NULL)                                                                     \
+    {                                                                                     \
+        js_throw_py();                                                                    \
+        return Intercepted::kNo;                                                          \
+    };                                                                                    \
+                                                                                          \
+    if (PyObject_HasAttrString(self, py_method_name))                                     \
+    {                                                                                     \
+        PyObject *value = PyObject_CallMethod(self, py_method_name, "O", name);           \
+        Py_XDECREF(name);                                                                 \
+        if (value == NULL)                                                                \
+        {                                                                                 \
+            js_throw_py();                                                                \
+            return Intercepted::kNo;                                                      \
+        }                                                                                 \
+        if (value == Py_None)                                                             \
+        {                                                                                 \
+            return Intercepted::kNo;                                                      \
+        }                                                                                 \
+        if (!PyBool_Check(value))                                                         \
+        {                                                                                 \
+            Py_XDECREF(value);                                                            \
+            return Intercepted::kNo;                                                      \
+        }                                                                                 \
+        info.GetReturnValue().Set(Boolean::New(isolate, value == Py_True));               \
+        Py_XDECREF(value);                                                                \
+        return Intercepted::kYes;                                                         \
+    }                                                                                     \
+    Py_XDECREF(name);                                                                     \
+    return Intercepted::kNo;
+
 Intercepted named_deleter(Local<Name> js_name, Info(Boolean)) {
     SETUP;
-
-    PyObject* name = py_from_js(js_name, context);
-    if (name == NULL) {
-        js_throw_py();
-        return Intercepted::kNo;
-    };
-
     PyObject* self = get_self(info);
-    if (PyObject_HasAttrString(self, "__v8_name_del__")) {
-        PyObject* value = PyObject_CallMethod(get_self(info), "__v8_name_del__", "O", name);
-        Py_XDECREF(name);
-        if (value == NULL) {
-            js_throw_py();
-            return Intercepted::kNo;
-        }
-        if (value == Py_None) {
-            return Intercepted::kNo;
-        }
-        if (!PyBool_Check(value)) {
-            Py_XDECREF(value);
-            return Intercepted::kNo;
-        }
-        info.GetReturnValue().Set(Boolean::New(isolate, value == Py_True));
-        Py_XDECREF(value);
-        return Intercepted::kYes;
-    }
-    Py_XDECREF(name);
-    return Intercepted::kNo;
+    NAMED_DELETER_CODE("__v8_name_del__")
 }
+
+Intercepted cross_origin_named_deleter(Local<Name> js_name, Info(Boolean)){
+    SETUP;
+    PyObject* self = get_self_cross_origin(info);
+    NAMED_DELETER_CODE("__v8_cross_origin_name_del__")
+}
+
+#define NAMED_QUERY_CODE(py_method_name)                                             \
+    PyObject *name = py_from_js(js_name, context);                                   \
+    if (name == NULL)                                                                \
+    {                                                                                \
+        js_throw_py();                                                               \
+        return Intercepted::kNo;                                                     \
+    };                                                                               \
+                                                                                     \
+    if (PyObject_HasAttrString(self, py_method_name))                                \
+    {                                                                                \
+        PyObject *value = PyObject_CallMethod(self, py_method_name, "O", name);      \
+        Py_XDECREF(name);                                                            \
+        if (value == NULL)                                                           \
+        {                                                                            \
+            js_throw_py();                                                           \
+            return Intercepted::kNo;                                                 \
+        }                                                                            \
+        if (PyLong_Check(value))                                                     \
+        {                                                                            \
+            info.GetReturnValue().Set(Integer::New(isolate, PyLong_AsLong(value)));  \
+            Py_XDECREF(value);                                                       \
+            return Intercepted::kYes;                                                \
+        }                                                                            \
+        Py_XDECREF(value);                                                           \
+        return Intercepted::kNo;                                                     \
+    }                                                                                \
+    Py_XDECREF(name);                                                                \
+    return Intercepted::kNo;
+
 Intercepted named_query(Local<Name> js_name, Info(Integer)) {
     SETUP;
-
-    PyObject* name = py_from_js(js_name, context);
-    if (name == NULL) {
-        js_throw_py();
-        return Intercepted::kNo;
-    };
-
     PyObject* self = get_self(info);
-    if (PyObject_HasAttrString(self, "__v8_name_query__")) {
-        PyObject* value = PyObject_CallMethod(self, "__v8_name_query__", "O", name);
-        Py_XDECREF(name);
-        if (value == NULL) {
-            js_throw_py();
-            return Intercepted::kNo;
-        }
-        if (PyLong_Check(value)) {
-            info.GetReturnValue().Set(Integer::New(isolate, PyLong_AsLong(value)));
-            Py_XDECREF(value);
-            return Intercepted::kYes;
-        }
-        Py_XDECREF(value);
-        return Intercepted::kNo;
-    }
-    Py_XDECREF(name);
-    return Intercepted::kNo;
+    NAMED_QUERY_CODE("__v8_name_query__")
 }
+
+Intercepted cross_origin_named_query(Local<Name> js_name, Info(Integer)){
+    SETUP;
+    PyObject* self = get_self_cross_origin(info);
+    NAMED_QUERY_CODE("__v8_cross_origin_name_query__")
+}
+
+#define NAMED_ENUM_CODE(py_method_name)                                           \
+    PyObject *keys = PyObject_CallMethod(self, py_method_name, "");               \
+    JS_PROPAGATE_PY(keys);                                                        \
+    if (keys == Py_None)                                                          \
+    {                                                                             \
+        return;                                                                   \
+    }                                                                             \
+    if (!PySequence_Check(keys))                                                  \
+    {                                                                             \
+        Py_XDECREF(keys);                                                         \
+        return;                                                                   \
+    }                                                                             \
+    Local<Array> js_keys = Array::New(isolate, PySequence_Length(keys));          \
+    for (int i = 0; i < PySequence_Length(keys); i++)                             \
+    {                                                                             \
+        PyObject *item = PySequence_GetItem(keys, i);                             \
+        if (item == NULL)                                                         \
+        {                                                                         \
+            Py_XDECREF(keys);                                                     \
+            js_throw_py();                                                        \
+            return;                                                               \
+        }                                                                         \
+        js_keys->Set(context, i, js_from_py(item, context)).FromJust();           \
+    }                                                                             \
+    Py_XDECREF(keys);                                                             \
+    info.GetReturnValue().Set(js_keys);
+
 void named_enumerator(Info(Array)) {
     SETUP;
-    PyObject* keys = PyObject_CallMethod(get_self(info), "__v8_name_enum__", "");
-    JS_PROPAGATE_PY(keys);
-    if (keys == Py_None) {
-        return;
-    }
-    if (!PySequence_Check(keys)) {
-        Py_XDECREF(keys);
-        return;
-    }
-    Local<Array> js_keys = Array::New(isolate, PySequence_Length(keys));
-    for (int i = 0; i < PySequence_Length(keys); i++) {
-        PyObject* item = PySequence_GetItem(keys, i);
-        if (item == NULL) {
-            Py_XDECREF(keys);
-            js_throw_py();
-            return;
-        }
-        js_keys->Set(context, i, js_from_py(item, context)).FromJust();
-    }
-    Py_XDECREF(keys);
-    info.GetReturnValue().Set(js_keys);
+    PyObject* self = get_self(info);
+    NAMED_ENUM_CODE("__v8_name_enum__")
 }
 
-#define INDEXED_GETTER_CODE                                                          \
+void cross_origin_named_enumerator(Info(Array)) {
+    SETUP;
+    PyObject* self = get_self_cross_origin(info);
+    NAMED_ENUM_CODE("__v8_cross_origin_name_enum__")
+}
+
+#define INDEXED_GETTER_CODE(py_method_name)                                          \
     PyObject* idx = PyLong_FromSize_t(index);                                        \
     if (idx == NULL) {                                                               \
         js_throw_py();                                                               \
         return Intercepted::kNo;                                                     \
     };                                                                               \
                                                                                      \
-    if (PyObject_HasAttrString(self, "__v8_index_get__")) {                          \
-        PyObject* value = PyObject_CallMethod(self, "__v8_index_get__", "O", idx);   \
+    if (PyObject_HasAttrString(self, py_method_name)) {                              \
+        PyObject* value = PyObject_CallMethod(self, py_method_name, "O", idx);       \
         Py_XDECREF(idx);                                                             \
         if (value == NULL) {                                                         \
             js_throw_py();                                                           \
@@ -574,14 +671,23 @@ Intercepted indexed_getter(uint32_t index, Info(Value)) {
 
     if (ctx_c->hook) {
         faker::FakerHookGetter hook(info, index, self, ctx_c);
-        INDEXED_GETTER_CODE
+        INDEXED_GETTER_CODE("__v8_index_get__")
     }
     else {
-        INDEXED_GETTER_CODE
+        INDEXED_GETTER_CODE("__v8_index_get__")
     }
 }
 
-#define INDEXED_SETTER_CODE                                                             \
+Intercepted cross_origin_indexed_getter(uint32_t index, Info(Value)) {
+    SETUP;
+
+    PyObject* self = get_self_cross_origin(info);
+
+    INDEXED_GETTER_CODE("__v8_cross_origin_index_get__")
+}
+
+
+#define INDEXED_SETTER_CODE(py_method_name)                                             \
     PyObject* idx = PyLong_FromSize_t(index);                                           \
     if (idx == NULL) {                                                                  \
         js_throw_py();                                                                  \
@@ -594,8 +700,8 @@ Intercepted indexed_getter(uint32_t index, Info(Value)) {
         js_throw_py();                                                                  \
         return Intercepted::kNo;                                                        \
     }                                                                                   \
-    if (PyObject_HasAttrString(self, "__v8_index_set__")) {                             \
-        PyObject* ret = PyObject_CallMethod(self, "__v8_index_set__", "OO", idx, value);\
+    if (PyObject_HasAttrString(self, py_method_name)) {                                 \
+        PyObject* ret = PyObject_CallMethod(self, py_method_name, "OO", idx, value);    \
         Py_XDECREF(idx);                                                                \
         Py_XDECREF(value);                                                              \
         if (ret == NULL) {                                                              \
@@ -621,137 +727,152 @@ Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
 
     if (ctx_c->hook) {
         faker::FakerHookSetter hook(info, index, js_value, self, ctx_c);
-        INDEXED_SETTER_CODE
+        INDEXED_SETTER_CODE("__v8_index_set__")
     }
     else {
-        INDEXED_SETTER_CODE
+        INDEXED_SETTER_CODE("__v8_index_set__")
     }
 }
+
+Intercepted cross_origin_indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
+    SETUP;
+
+    PyObject* self = get_self_cross_origin(info);
+
+    INDEXED_SETTER_CODE("__v8_cross_origin_index_set__")
+}
+
+#define INDEXED_DELETER_CODE(py_method_name)                                       \
+    PyObject *idx = PyLong_FromSize_t(index);                                      \
+    if (idx == NULL)                                                               \
+    {                                                                              \
+        js_throw_py();                                                             \
+        return Intercepted::kNo;                                                   \
+    };                                                                             \
+                                                                                   \
+    if (PyObject_HasAttrString(self, py_method_name))                              \
+    {                                                                              \
+        PyObject *value = PyObject_CallMethod(self, py_method_name, "O", idx);     \
+        Py_XDECREF(idx);                                                           \
+        if (value == NULL)                                                         \
+        {                                                                          \
+            js_throw_py();                                                         \
+            return Intercepted::kNo;                                               \
+        }                                                                          \
+        if (value == Py_None)                                                      \
+        {                                                                          \
+            return Intercepted::kNo;                                               \
+        }                                                                          \
+        if (!PyBool_Check(value))                                                  \
+        {                                                                          \
+            Py_XDECREF(value);                                                     \
+            return Intercepted::kNo;                                               \
+        }                                                                          \
+        info.GetReturnValue().Set(Boolean::New(isolate, value == Py_True));        \
+        Py_XDECREF(value);                                                         \
+        return Intercepted::kYes;                                                  \
+    }                                                                              \
+    Py_XDECREF(idx);                                                               \
+    return Intercepted::kNo;
 
 Intercepted indexed_deleter(uint32_t index, Info(Boolean)) {
-    HandleScope hs(isolate);
-    Local<Context> context = isolate->GetCurrentContext();
-    PyObject* idx = PyLong_FromSize_t(index);
-    if (idx == NULL) {
-        js_throw_py();
-        return Intercepted::kNo;
-    };
-
+    SETUP;
     PyObject* self = get_self(info);
-    if (PyObject_HasAttrString(self, "__v8_index_del__")) {
-        PyObject* value = PyObject_CallMethod(self, "__v8_index_del__", "O", idx);
-        Py_XDECREF(idx);
-        if (value == NULL) {
-            js_throw_py();
-            return Intercepted::kNo;
-        }
-        if (value == Py_None) {
-            return Intercepted::kNo;
-        }
-        if (!PyBool_Check(value)) {
-            Py_XDECREF(value);
-            return Intercepted::kNo;
-        }
-        info.GetReturnValue().Set(Boolean::New(isolate, value == Py_True));
-        Py_XDECREF(value);
-        return Intercepted::kYes;
-    }
-    Py_XDECREF(idx);
-    return Intercepted::kNo;
+    INDEXED_DELETER_CODE("__v8_index_del__")
 }
+
+Intercepted cross_origin_indexed_deleter(uint32_t index, Info(Boolean)) {
+    SETUP;
+    PyObject* self = get_self_cross_origin(info);
+    INDEXED_DELETER_CODE("__v8_cross_origin_index_del__")
+}
+
+#define INDEXED_QUERY_CODE(py_method_name)                                           \
+    PyObject *idx = PyLong_FromSize_t(index);                                        \
+    if (idx == NULL)                                                                 \
+    {                                                                                \
+        js_throw_py();                                                               \
+        return Intercepted::kNo;                                                     \
+    };                                                                               \
+                                                                                     \
+    if (PyObject_HasAttrString(self, py_method_name))                                \
+    {                                                                                \
+        PyObject *value = PyObject_CallMethod(self, py_method_name, "O", idx);       \
+        Py_XDECREF(idx);                                                             \
+        if (value == NULL)                                                           \
+        {                                                                            \
+            js_throw_py();                                                           \
+            return Intercepted::kNo;                                                 \
+        }                                                                            \
+        if (PyLong_Check(value))                                                     \
+        {                                                                            \
+            info.GetReturnValue().Set(Integer::New(isolate, PyLong_AsLong(value)));  \
+            Py_XDECREF(value);                                                       \
+            return Intercepted::kYes;                                                \
+        }                                                                            \
+        Py_XDECREF(value);                                                           \
+        return Intercepted::kNo;                                                     \
+    }                                                                                \
+    Py_XDECREF(idx);                                                                 \
+    return Intercepted::kNo;
 
 Intercepted indexed_query(uint32_t index, Info(Integer)) {
     SETUP;
-
-    PyObject* idx = PyLong_FromSize_t(index);
-    if (idx == NULL) {
-        js_throw_py();
-        return Intercepted::kNo;
-    };
-
     PyObject* self = get_self(info);
-    if (PyObject_HasAttrString(self, "__v8_index_query__")) {
-        PyObject* value = PyObject_CallMethod(self, "__v8_index_query__", "O", idx);
-        Py_XDECREF(idx);
-        if (value == NULL) {
-            js_throw_py();
-            return Intercepted::kNo;
-        }
-        if (PyLong_Check(value)) {
-            info.GetReturnValue().Set(Integer::New(isolate, PyLong_AsLong(value)));
-            Py_XDECREF(value);
-            return Intercepted::kYes;
-        }
-        Py_XDECREF(value);
-        return Intercepted::kNo;
-    }
-    Py_XDECREF(idx);
-    return Intercepted::kNo;
+    INDEXED_QUERY_CODE("__v8_index_query__")
 }
+
+Intercepted cross_origin_indexed_query(uint32_t index, Info(Integer)) {
+    SETUP;
+    PyObject* self = get_self_cross_origin(info);
+    INDEXED_QUERY_CODE("__v8_cross_origin_index_query__")
+}
+
+#define INDEXED_ENUM_CODE(py_method_name)                                         \
+    PyObject *len = PyObject_CallMethod(self, py_method_name, "");                \
+    JS_PROPAGATE_PY(len);                                                         \
+                                                                                  \
+    if (len == Py_None)                                                           \
+    {                                                                             \
+        return;                                                                   \
+    }                                                                             \
+    if (!PyLong_Check(len))                                                       \
+    {                                                                             \
+        Py_XDECREF(len);                                                          \
+        return;                                                                   \
+    }                                                                             \
+                                                                                  \
+    int length = PyLong_AsLong(len);                                              \
+    Local<Array> keys = Array::New(isolate, length);                              \
+    for (int i = 0; i < length; i++)                                              \
+    {                                                                             \
+        keys->Set(context, i, Integer::New(isolate, i));                          \
+    }                                                                             \
+    info.GetReturnValue().Set(keys);
 
 void indexed_enumerator(Info(Array)) {
     SETUP;
-
-    PyObject* len = PyObject_CallMethod(get_self(info), "__v8_index_enum__", "");
-    JS_PROPAGATE_PY(len);
-
-    if (len == Py_None) {
-        return;
-    }
-    if (!PyLong_Check(len)) {
-        Py_XDECREF(len);
-        return;
-    }
-
-    int length = PyLong_AsLong(len);
-    Local<Array> keys = Array::New(isolate, length);
-    for (int i = 0; i < length; i++) {
-        keys->Set(context, i, Integer::New(isolate, i));
-    }
-    info.GetReturnValue().Set(keys);
+    PyObject* self = get_self(info);
+    INDEXED_ENUM_CODE("__v8_index_enum__")
 }
 
-
-
-Intercepted window_properties_named_getter(Local<Name> js_name, Info(Value)) {
+void cross_origin_indexed_enumerator(Info(Array)) {
     SETUP;
-
-    context_c* ctx_c = (context_c*)info.GetIsolate()->GetCurrentContext()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
-    PyObject* self = ctx_c->py_global;
-
-    PyObject* name = py_from_js(js_name, context);                                    
-    if (name == NULL) {
-        js_throw_py();                                                                
-        return Intercepted::kNo;                                                      
-    };                                                                               
-    if (PyObject_HasAttrString(self, "__v8_property_name_get__")) {
-        PyObject* value = PyObject_CallMethod(self, "__v8_property_name_get__", "O", name);   
-        Py_XDECREF(name);                                                            
-        if (value == NULL) {
-            js_throw_py();                                                            
-            return Intercepted::kNo;                                                  
-        }                                                                             
-        if (value == Py_None) {
-            return Intercepted::kNo;                                                  
-        }                                                                            
-        info.GetReturnValue().Set(js_from_py(value, context));                        
-        Py_XDECREF(value);                                                            
-        return Intercepted::kYes;                                                     
-    }                                                                                
-    Py_XDECREF(name);                                                               
-    return Intercepted::kNo;
+    PyObject* self = get_self_cross_origin(info);
+    INDEXED_ENUM_CODE("__v8_cross_origin_index_enum__")    
 }
 
-bool CrossOriginAccessCheckCallback(v8::Local<v8::Context> accessing_context, v8::Local<v8::Object> accessed_object, v8::Local<v8::Value> unused_data) {
+
+bool cross_origin_access_check(v8::Local<v8::Context> accessing_context, v8::Local<v8::Object> accessed_object, v8::Local<v8::Value> unused_data) {
     context_c* accessing_ctx_c = (context_c*)accessing_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     PyObject* accessor = accessing_ctx_c->py_global;
 
     context_c* interviewee_ctx_c = (context_c*)accessed_object->GetCreationContext().ToLocalChecked()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
 
     PyObject* interviewee = interviewee_ctx_c->py_global;
-    if (PyObject_HasAttrString(interviewee, "__v8__cross_origin_check__")) {
+    if (PyObject_HasAttrString(interviewee, "__v8_cross_origin_check__")) {
         Py_INCREF(accessor);
-        PyObject* value = PyObject_CallMethod(interviewee, "__v8__cross_origin_check__", "O", accessor);
+        PyObject* value = PyObject_CallMethod(interviewee, "__v8_cross_origin_check__", "O", accessor);
         if (value == Py_False) {
             return false;
         }

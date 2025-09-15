@@ -31,6 +31,7 @@ JavaScriptTerminated = _pyv8.JavaScriptTerminated
 Null = _pyv8.Null
 Undefined = _pyv8.Undefined
 current_context = _pyv8.current_context
+incumbent_context = _pyv8.incumbent_context
 new = _pyv8.new
 v8_gc = _pyv8.v8_gc
 

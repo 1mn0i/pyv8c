@@ -53,4 +53,6 @@ PyObject_CallMethodOneArg_abi3(PyObject* self, PyObject* name, PyObject* arg) {
     return PyObject_CallMethodObjArgs(self, name, arg, NULL);
 }
 
+void print_pyobject(PyObject* obj, const char* name);
+
 #endif

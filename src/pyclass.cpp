@@ -274,14 +274,39 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         templ->InstanceTemplate()->SetHandler(callbacks);
     }
 
-    if (PyMapping_HasKeyString(class_dict, "__v8__cross_origin_check__"))
-    {
-        templ->InstanceTemplate()->SetAccessCheckCallback(CrossOriginAccessCheckCallback);
-        //templ->InstanceTemplate()->SetAccessCheckCallbackAndHandler(CrossOriginAccessCheckCallback, name_handler, index_handler);
+    if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_check__"))
+    {   
+        if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_name_get__")){
+            NamedPropertyHandlerConfiguration cross_origin_named_callbacks(cross_origin_named_getter);
+            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_name_set__") != NULL)
+                cross_origin_named_callbacks.setter = cross_origin_named_setter;
+            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_name_query__") != NULL)
+                cross_origin_named_callbacks.query = cross_origin_named_query;
+            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_name_del__") != NULL)
+                cross_origin_named_callbacks.deleter = cross_origin_named_deleter;
+            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_name_enum__") != NULL)
+                cross_origin_named_callbacks.enumerator = cross_origin_named_enumerator;
+
+            IndexedPropertyHandlerConfiguration cross_origin_index_callbacks;
+            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_index_get__") != NULL)
+                cross_origin_index_callbacks.getter = cross_origin_indexed_getter;
+            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_index_set__") != NULL)
+                cross_origin_index_callbacks.setter = cross_origin_indexed_setter;
+            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_index_query__") != NULL)
+                cross_origin_index_callbacks.query = cross_origin_indexed_query;
+            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_index_enum__") != NULL)
+                cross_origin_index_callbacks.enumerator = cross_origin_indexed_enumerator;
+            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_index_del__") != NULL)
+                cross_origin_index_callbacks.deleter = cross_origin_indexed_deleter;
+            templ->InstanceTemplate()->SetAccessCheckCallbackAndHandler(cross_origin_access_check, cross_origin_named_callbacks, cross_origin_index_callbacks);
+        }
+        else{
+            templ->InstanceTemplate()->SetAccessCheckCallback(cross_origin_access_check);
+        }
     }
 
     if (strcmp(world, "WindowProperties") == 0) {
-        NamedPropertyHandlerConfiguration name_callbacks(window_properties_named_getter);
+        NamedPropertyHandlerConfiguration name_callbacks(properties_named_getter);
         templ->PrototypeTemplate()->SetHandler(name_callbacks);
     }
 

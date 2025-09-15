@@ -38,3 +38,23 @@ int
 PyMethod_Check_abi3(PyObject* op) {
     return PyObject_IsInstance(op, g_method_type);
 }
+
+
+void 
+print_pyobject(PyObject* obj, const char* name) {
+    PyObject* repr = PyObject_Repr(obj);
+    if (repr == NULL) {
+        printf("Could not get representation of object\n"); fflush(stdout);
+        return;
+    }
+    const char* str = PyUnicode_AsUTF8_abi3(repr);
+    if (str == NULL) {
+        Py_DECREF(repr);
+        printf("Could not convert to UTF-8 string\n"); fflush(stdout);
+        return;
+    }
+
+    printf("print_pyobject: %s %s\n", name, str); fflush(stdout);
+
+    Py_DECREF(repr);
+}

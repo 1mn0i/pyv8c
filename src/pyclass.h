@@ -38,7 +38,7 @@ void py_class_method_callback(const FunctionCallbackInfo<Value>& info);
 void py_class_cross_origin_method_callback(const FunctionCallbackInfo<Value>& info);
 
 // Handlers 
-Intercepted window_properties_named_getter(Local<Name> name, const PropertyCallbackInfo<Value>& info);
+Intercepted properties_named_getter(Local<Name> name, const PropertyCallbackInfo<Value>& info);
 
 Intercepted named_getter(Local<Name> name, const PropertyCallbackInfo<Value>& info);
 Intercepted named_setter(Local<Name> name, Local<Value> value, const PropertyCallbackInfo<void>& info);
@@ -59,7 +59,18 @@ void py_attribute_for_get(const FunctionCallbackInfo<Value>& info);
 void py_attribute_for_instance_set(const FunctionCallbackInfo<Value>& info);
 void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info);
 
-bool CrossOriginAccessCheckCallback(v8::Local<v8::Context> accessing_context, v8::Local<v8::Object> accessed_object, v8::Local<v8::Value> unused_data);
+// cross origin access handlers
+bool cross_origin_access_check(v8::Local<v8::Context> accessing_context, v8::Local<v8::Object> accessed_object, v8::Local<v8::Value> unused_data);
 
+Intercepted cross_origin_named_getter(Local<Name> name, const PropertyCallbackInfo<Value>& info);
+Intercepted cross_origin_named_setter(Local<Name> name, Local<Value> value, const PropertyCallbackInfo<void>& info);
+Intercepted cross_origin_named_query(Local<Name> name, const PropertyCallbackInfo<Integer>& info);
+Intercepted cross_origin_named_deleter(Local<Name> name, const PropertyCallbackInfo<Boolean>& info);
+void cross_origin_named_enumerator(const PropertyCallbackInfo<Array>& info);
 
+Intercepted cross_origin_indexed_getter(uint32_t index, const PropertyCallbackInfo<Value>& info);
+Intercepted cross_origin_indexed_setter(uint32_t index, Local<Value> value, const PropertyCallbackInfo<void>& info);
+Intercepted cross_origin_indexed_query(uint32_t index, const PropertyCallbackInfo<Integer>& info);
+Intercepted cross_origin_indexed_deleter(uint32_t index, const PropertyCallbackInfo<Boolean>& info);
+void cross_origin_indexed_enumerator(const PropertyCallbackInfo<Array>& info);
 #endif

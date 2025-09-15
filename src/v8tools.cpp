@@ -421,10 +421,11 @@ namespace bindings {
                 if (cb_type == unsigned(CallbackType::kPy)) {
                     PyObject* py_method = PyObject_GetAttr(cls, cb_name);
                     v8_config.js_method = External::New(isolate, py_method);
-                    if(strcmp(PyUnicode_AsUTF8_abi3(cb_name), "fn_postMessage")==0 && strcmp(world, "Window") == 0)
-                        v8_config.callback = py_class_cross_origin_method_callback;
-                    else
-                        v8_config.callback = py_class_method_callback;
+                    v8_config.callback = py_class_method_callback;
+                    //if(strcmp(PyUnicode_AsUTF8_abi3(cb_name), "fn_postMessage")==0 && strcmp(world, "Window") == 0)
+                    //    v8_config.callback = py_class_cross_origin_method_callback;
+                    //else
+                    //    v8_config.callback = py_class_method_callback;
                 }
                 else {
                     v8_config.js_method = External::New(isolate, cb_name);

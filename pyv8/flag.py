@@ -1,6 +1,3 @@
-import sys
-from functools import wraps
-
 
 class CallbackType:
     kPy = 0         # 回调Python类方法
