@@ -40,21 +40,24 @@ cd pyv8
 
 ```bash
 # 开发模式安装
-pip install -e .
+python -m pip install -e .
 
 # 或者直接安装
-pip install .
+python -m pip install .
 ```
 
-3. 或者使用传统的setup.py（向后兼容）：
+3. 构建可发布的 ABI3 wheel：
 
 ```bash
-python setup.py install
+python310 -m pip install --upgrade build
+python310 -m build --wheel
 ```
+
+生成的 `cp310-abi3` wheel 可安装到 CPython 3.10 及以上版本。
 
 ### 编译选项
 
-pyv8的编译配置在`build_ext.py`文件中定义。如果需要自定义编译选项，可以修改此文件：
+pyv8的扩展编译配置在`setup.py`文件中定义。如果需要自定义编译选项，可以修改此文件：
 
 - 修改包含目录：`include_dirs`
 - 修改库目录：`library_dirs`
@@ -65,7 +68,7 @@ pyv8的编译配置在`build_ext.py`文件中定义。如果需要自定义编�
 例如，在Windows上添加自定义包含目录：
 
 ```python
-# 在build_ext.py中修改
+# 在setup.py中修改
 if os.name == 'nt':
     include_dirs = ['src', 'v8/include', 'path/to/custom/include']
 ```
@@ -74,37 +77,45 @@ if os.name == 'nt':
 
 ### 使用tox进行测试
 
-项目使用tox进行自动化测试，支持多个Python版本：
+项目使用 tox 4 测试 Python 3.10 至 3.14。tox 会使用 Python 3.10 构建一次
+`cp310-abi3` wheel，然后在五个隔离环境中安装并测试同一个 wheel。
 
 ```bash
-# 安装tox
-pip install tox
+# 安装构建和测试工具
+python314 -m pip install --upgrade build tox
 
-# 运行所有测试环境
-tox
+# 运行Python 3.10至3.14的全部测试环境
+python314 -m tox
 
 # 运行特定Python版本的测试
-tox -e py310
-tox -e py311
+python314 -m tox -e py310
+python314 -m tox -e py314
 
 # 运行代码风格检查
-tox -e lint
+python314 -m tox -e lint
 ```
+
+Windows 环境需要能够通过 `python310`、`python311`、`python312`、`python313`、
+`python314` 命令启动对应解释器。测试命令使用隔离模式运行，确保加载的是 tox
+安装的 wheel，而不是源码目录中的 `pyv8/_pyv8.pyd`。
 
 ### 使用pytest直接运行测试
 
 ```bash
 # 安装pytest
-pip install pytest pytest-cov
+python -m pip install pytest pytest-cov
+
+# 快速原地编译扩展，不需要手工复制_pyv8.pyd
+python setup.py build_ext --inplace --force
 
 # 运行所有测试
-pytest
+python -m pytest
 
 # 运行特定测试文件
-pytest tests/test_context.py
+python -m pytest tests/test_context.py
 
 # 生成测试覆盖率报告
-pytest --cov=pyv8 tests/
+python -m pytest --cov=pyv8 tests/
 ```
 
 ### 使用传统的unittest运行测试

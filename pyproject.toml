@@ -43,10 +43,6 @@ pyv8 = ["icudtl.dat", "_pyv8.pyi", "_pyv8.abi3.so"]
 
 # 注意：扩展模块配置在setup.py中定义
 
-[tool.pytest]
-testpaths = ["tests"]
-python_files = "test_*.py"
-
 [tool.black]
 line-length = 100
 target-version = ["py310"]

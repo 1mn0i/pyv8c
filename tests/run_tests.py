@@ -3,50 +3,24 @@
 运行pyv8测试的脚本
 支持unittest和pytest两种方式
 """
-import unittest
-import sys
-import os
 import argparse
+import os
+import sys
+import unittest
 
-# 添加项目根目录到Python路径
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# 直接运行该脚本时，允许从当前源码树导入 pyv8。
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+TESTS_DIR = os.path.join(PROJECT_ROOT, "tests")
+sys.path.insert(0, PROJECT_ROOT)
+
 
 def run_unittest():
     """使用unittest运行所有测试"""
-    # 导入所有测试模块
-    from tests.test_context import TestContext
-    from tests.test_script import TestScript
-    from tests.test_jsobject import TestJSObject
-    from tests.test_jsfunction import TestJSFunction
-    from tests.test_jspromise import TestJSPromise
-    from tests.test_jstypedarray import TestJSTypedArray
-    from tests.test_pyclass import TestPyClass
-    from tests.test_exception import TestException
-    from tests.test_conversion import TestConversion
-    from tests.test_faker import TestFaker
-    from tests.test_multiple_context import TestMultipleContext
-
-    # 创建测试套件
-    test_suite = unittest.TestSuite()
-
-    # 添加测试类
-    test_classes = [
-        TestContext,
-        TestScript,
-        TestJSObject,
-        TestJSFunction,
-        TestJSPromise,
-        TestJSTypedArray,
-        TestPyClass,
-        TestException,
-        TestConversion,
-        TestFaker,
-        TestMultipleContext
-    ]
-
-    for test_class in test_classes:
-        tests = unittest.defaultTestLoader.loadTestsFromTestCase(test_class)
-        test_suite.addTests(tests)
+    test_suite = unittest.defaultTestLoader.discover(
+        start_dir=TESTS_DIR,
+        pattern="test_*.py",
+        top_level_dir=PROJECT_ROOT,
+    )
 
     # 运行测试
     runner = unittest.TextTestRunner(verbosity=2)
@@ -59,13 +33,11 @@ def run_pytest():
     try:
         import pytest
     except ImportError:
-        print("pytest未安装，使用pip install pytest安装中...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pytest" ])
-        import pytest
+        print("pytest未安装，请先执行：python -m pip install pytest")
+        return False
 
     # 运行pytest
-    return pytest.main(["-v", "tests"]) == 0
+    return pytest.main(["-v", TESTS_DIR]) == 0
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="运行pyv8测试")
