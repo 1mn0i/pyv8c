@@ -112,6 +112,8 @@ js_object_weak_new(Local<Object> object, Local<Context> context)
 
     if (self != NULL) {
         self->object.Reset(isolate, object);
+        // The V8 weak callback owns this reference and releases it on GC.
+        Py_INCREF(self);
         //self->object.SetWeak(self, js_object_weak_callback, WeakCallbackType::kFinalizer);
         self->object.SetWeak(self, js_object_weak_callback, WeakCallbackType::kParameter);
     }

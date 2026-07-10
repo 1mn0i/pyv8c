@@ -92,6 +92,18 @@ class TestConversion(unittest.TestCase):
         # JavaScript -> Python
         js_array = self.context.exec_js("[1, 2, 3, 'four', true]")
         self.assertEqual(list(js_array), [1, 2, 3, "four", True])
+
+    def test_js_self_referential_array_conversion(self):
+        js_array = self.context.exec_js("const a = []; a[0] = a; a")
+        self.assertIs(js_array[0], js_array)
+
+    def test_bytes_arraybuffer_conversion(self):
+        self.context.py_bytes = b"\x01\x02\xff"
+        self.assertEqual(self.context.exec_js("py_bytes.byteLength"), 3)
+        self.assertEqual(
+            self.context.exec_js("Array.from(new Uint8Array(py_bytes)).join(',')"),
+            "1,2,255",
+        )
     
     def test_dict_object_conversion(self):
         """测试字典/对象类型转换"""

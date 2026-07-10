@@ -30,7 +30,9 @@ py_from_js(Local<Value> value, Local<Context> context)
     }
     if (value->IsBoolean())
     {
-        return value.As<Boolean>()->Value() ? Py_True : Py_False;
+        if (value.As<Boolean>()->Value())
+            Py_RETURN_TRUE;
+        Py_RETURN_FALSE;
     }
 
     if (value->IsString())
@@ -57,6 +59,7 @@ py_from_js(Local<Value> value, Local<Context> context)
 
             if (js_value->StrictEquals(array))
             {
+                Py_INCREF(list);
                 PyList_SetItem(list, i, list);
                 continue;
             }
@@ -193,14 +196,19 @@ js_from_py(PyObject *value, Local<Context> context)
         Local<String> js_value = String::NewFromUtf8(isolate, str, NewStringType::kNormal, len).ToLocalChecked();
         return hs.Escape(js_value);
     }
-    if (PyUnicode_Check(value))
+    if (PyBytes_Check(value))
     {
         char *str;
         Py_ssize_t len;
-        PyBytes_AsStringAndSize(value, &str, &len);
-        Local<ArrayBuffer> js_value = ArrayBuffer::New(isolate, len);
-        // memcpy(str, js_value->GetContents().Data(), len);
-        memcpy(str, js_value->Data(), len);
+        if (PyBytes_AsStringAndSize(value, &str, &len) < 0)
+        {
+            return hs.Escape(Undefined(isolate));
+        }
+        Local<ArrayBuffer> js_value = ArrayBuffer::New(isolate, static_cast<size_t>(len));
+        if (len > 0)
+        {
+            memcpy(js_value->Data(), str, static_cast<size_t>(len));
+        }
         return hs.Escape(js_value);
     }
 
@@ -372,13 +380,37 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
         return exception;
     }
     PyObject *exc_value_str = PyObject_Str(value);
+    if (exc_value_str == NULL)
+    {
+        return exception;
+    }
     const char *exc_message = PyUnicode_AsUTF8_abi3(exc_value_str);
-    Py_XDECREF(exc_value_str);
+    if (exc_message == NULL)
+    {
+        Py_XDECREF(exc_value_str);
+        return exception;
+    }
     PyObject *exc_type = PyObject_Type(value);
+    if (exc_type == NULL)
+    {
+        Py_XDECREF(exc_value_str);
+        return exception;
+    }
     PyObject *exc_cls_name = PyObject_GetAttrString(exc_type, "__name__");
-    Py_XDECREF(exc_type);
+    if (exc_cls_name == NULL)
+    {
+        Py_XDECREF(exc_type);
+        Py_XDECREF(exc_value_str);
+        return exception;
+    }
     const char *exc_type_name = PyUnicode_AsUTF8_abi3(exc_cls_name);
-    Py_XDECREF(exc_value_str);
+    if (exc_type_name == NULL)
+    {
+        Py_XDECREF(exc_cls_name);
+        Py_XDECREF(exc_type);
+        Py_XDECREF(exc_value_str);
+        return exception;
+    }
     if (PyObject_TypeCheck(value, js_exception_type))
     {
         exception = ((js_exception *)value)->exception.Get(isolate).As<Object>();
@@ -406,8 +438,12 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
     else
     {
         exception = js_from_py(value, context).As<Object>();
+        Py_INCREF(exc_type);
         exception->SetInternalField(2, External::New(isolate, exc_type));
         exception->Set(context, V8String(isolate, "message"), V8String(isolate, exc_message));
     }
+    Py_XDECREF(exc_cls_name);
+    Py_XDECREF(exc_type);
+    Py_XDECREF(exc_value_str);
     return exception;
 }

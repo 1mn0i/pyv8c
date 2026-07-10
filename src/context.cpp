@@ -171,8 +171,6 @@ context_dealloc(context_c *self)
             if (iterator) {
                 PyObject* item;
                 while ((item = PyIter_Next(iterator)) != nullptr) {
-                    PyObject* key = PyTuple_GetItem(item, 0);
-                    Py_XDECREF(key);
                     Py_DECREF(item);
                 }
                 Py_DECREF(iterator);
@@ -459,6 +457,9 @@ context_set_cached_jsobject(Local<Context> js_context, PyObject *py_object, Loca
     EscapableHandleScope hs(isolate);
     context_c *self = (context_c *) js_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     js_object *jsobj = js_object_weak_new(object, js_context);
+    if (jsobj == NULL) {
+        return;
+    }
     if (PyObject_SetItem(self->js_object_cache, py_object, (PyObject *) jsobj) < 0) {
         if (PyErr_ExceptionMatches(PyExc_TypeError)) {
             // if it's a type error, it's probably "cannot create weak reference" and should be ignored.
@@ -467,6 +468,7 @@ context_set_cached_jsobject(Local<Context> js_context, PyObject *py_object, Loca
             PyErr_WriteUnraisable(PyUnicode_InternFromString("pyv8env py_class_create_js_object setitem"));
         }
     }
+    Py_DECREF((PyObject *)jsobj);
 }
 
 PyObject *
@@ -488,7 +490,10 @@ context_get_global(context_c *self, void *shit)
     IN_V8;
     Local<Context> context = self->js_context.Get(isolate);
     PyObject* pyobj= py_from_js(context->Global()->GetPrototype(), context);
-    return context_js_obj(self, pyobj);
+    PyErr_PROPAGATE(pyobj);
+    PyObject* result = context_js_obj(self, pyobj);
+    Py_DECREF(pyobj);
+    return result;
 }
 
 PyObject *
@@ -541,4 +546,3 @@ context_gc(context_c *self)
     isolate->RequestGarbageCollectionForTesting(Isolate::GarbageCollectionType::kFullGarbageCollection);
     Py_RETURN_NONE;
 }
-

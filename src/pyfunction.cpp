@@ -71,7 +71,19 @@ py_function_new(PyObject *function)
         Py_XDECREF(len);
     }
 
-    if (PyObject_HasAttrString(function, "__v8_constructor_behavior__") && PyObject_GetAttrString(function, "__v8_constructor_behavior__")==Py_False) {
+    bool throw_on_construct = false;
+    if (PyObject_HasAttrString(function, "__v8_constructor_behavior__")) {
+        PyObject* behavior = PyObject_GetAttrString(function, "__v8_constructor_behavior__");
+        PyErr_PROPAGATE(behavior);
+        int truth = PyObject_IsTrue(behavior);
+        Py_XDECREF(behavior);
+        if (truth < 0) {
+            return NULL;
+        }
+        throw_on_construct = truth == 0;
+    }
+
+    if (throw_on_construct) {
         js_template = FunctionTemplate::New(isolate, py_function_callback, js_self, Local<Signature>(), length, ConstructorBehavior::kThrow);
     }
     else {
