@@ -49,17 +49,17 @@ pyv8 主要用于 JS 逆向时补环境，为一比一模拟 Chromium 内置原�
 
 ## P1 - 异常安全
 
-- [ ] 替换散落的 `ToLocalChecked()`、`FromJust()`、`ToChecked()`。
-  典型位置：`src/jsobject.cpp:136`、`src/convert.cpp:88`、`src/pyclass.cpp:478`。这些在 V8 返回 empty `MaybeLocal` / `Maybe` 时可能导致 fatal crash。
+- [√] 替换核心路径散落的 `ToLocalChecked()`、`FromJust()`、`ToChecked()`。
+  已覆盖 `src/context.cpp`、`src/jsobject.cpp`、`src/jsfunction.cpp`、`src/pyv8.cpp`、`src/script.cpp`、`src/convert.cpp`、`src/exception.cpp`、`src/pyclass.cpp`、`src/pyfunction.cpp`、`src/jspromise.cpp`、`src/jstypedarray.cpp`、`src/pyclasshandlers.cpp` 的主要执行/转换/模板实例化路径；`src/faker/*` 与 `src/v8tools.cpp` 的 hook 辅助路径建议后续单独做安全封装。
 
-- [ ] 增加 `TimeoutGuard` RAII 工具。
+- [√] 增加 `TimeoutGuard` RAII 工具。
   用于封装 `context_setup_timeout()` / `context_cleanup_timeout()`，保证早退路径也能清理 timeout。
 
-- [ ] 将 timeout 状态改成每次执行独立持有。
+- [√] 将 timeout 状态改成每次执行独立持有。
   当前 `src/context.cpp:301` 的 `s_timer_id`、`breaker_id`、`s_timeout` 是全局状态，嵌套执行或多 Context 时可能互相影响。
 
-- [ ] 审计所有 V8 `TryCatch` 活跃时调用 Python 的路径。
-  确保 Python 异常只转换一次，不留下 Python 异常和 V8 异常同时存在的混乱状态。
+- [√] 审计核心 V8 `TryCatch` 活跃时调用 Python 的路径。
+  已补充执行、函数调用、构造调用、属性访问、对象枚举、Python 回调返回转换中的异常传播检查，避免 Python 异常和 V8 异常同时残留。
 
 ## P1 - Runtime 与生命周期管理
 
@@ -139,8 +139,10 @@ pyv8 主要用于 JS 逆向时补环境，为一比一模拟 Chromium 内置原�
 - [ ] 第一批：修复 P0 refcount 与转换 bug。
 
 - [ ] 第二批：加入 `PyObject*` RAII helper 和 `TimeoutGuard`。
+  `TimeoutGuard` 已完成；`PyObject*` RAII helper 仍待后续单独引入。
 
 - [ ] 第三批：建立 V8 `Maybe` / `MaybeLocal` 安全封装层。
+  核心路径的显式 `Maybe` / `MaybeLocal` 检查已完成；统一 helper/封装层仍待后续整理。
 
 - [ ] 第四批：整理 context/runtime state 和 allocator 所有权。
 

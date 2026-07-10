@@ -1,6 +1,7 @@
 #include <Python.h>
 #include "pyv8.h"
 #include <v8.h>
+#include <cerrno>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -152,7 +153,9 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 
     if (global != NULL) {
         self->py_global = global;
-        py_class_init_js_object(context->Global()->GetPrototype().As<Object>(), global, context);
+        if (!py_class_init_js_object(context->Global()->GetPrototype().As<Object>(), global, context)) {
+            return NULL;
+        }
     }
     return (PyObject *) self;
 }
@@ -296,22 +299,17 @@ context_js_obj(context_c* self, PyObject* py_object)
 
 #ifdef _WIN32
 
-UINT s_timer_id;
-
 static void CALLBACK 
-breaker_callback(UINT uTimerID, UINT uMsg, DWORD dwUser, DWORD dw1, DWORD dw2)
+breaker_callback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
 {
     isolate->TerminateExecution();
 }
 
 #else
 
-pthread_t breaker_id;
-useconds_t s_timeout;
-
 void *breaker_thread(void *param) {
-    useconds_t timeout = *(useconds_t *) param;
-    usleep(timeout);
+    TimeoutGuard *guard = (TimeoutGuard *) param;
+    usleep(guard->timeout_usec());
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
     isolate->TerminateExecution();
     return NULL;
@@ -325,62 +323,100 @@ context_timeout(Local<Context> context)
     return ctx_c->timeout;
 }
 
-static bool 
-setup_timeout(double timeout)
-{
+TimeoutGuard::TimeoutGuard(double timeout)
+    : timeout(timeout),
+      active(false)
 #ifdef _WIN32
-    if (timeout > 0) {
-        UINT timeout_ = (UINT) (timeout * 1000);
-        s_timer_id = timeSetEvent(timeout_, 0, (LPTIMECALLBACK) breaker_callback, 0,
-            TIME_ONESHOT | TIME_CALLBACK_FUNCTION | TIME_KILL_SYNCHRONOUS);
-        if (s_timer_id == NULL) {
-            PyErr_SetFromErrno(PyExc_OSError);
-            return false;
-        }
+      , timer_id(0)
+#else
+      , breaker_id(),
+      timeout_us(0)
+#endif
+{
+}
+
+TimeoutGuard::TimeoutGuard(Local<Context> context)
+    : TimeoutGuard(context_timeout(context))
+{
+}
+
+TimeoutGuard::~TimeoutGuard()
+{
+    stop(false);
+}
+
+#ifndef _WIN32
+useconds_t
+TimeoutGuard::timeout_usec() const
+{
+    return timeout_us;
+}
+#endif
+
+bool
+TimeoutGuard::start()
+{
+    if (timeout <= 0 || active) {
+        return true;
+    }
+
+#ifdef _WIN32
+    UINT timeout_ms = (UINT) (timeout * 1000);
+    if (timeout_ms == 0) {
+        timeout_ms = 1;
+    }
+    timer_id = timeSetEvent(timeout_ms, 0, (LPTIMECALLBACK) breaker_callback, 0,
+        TIME_ONESHOT | TIME_CALLBACK_FUNCTION | TIME_KILL_SYNCHRONOUS);
+    if (timer_id == 0) {
+        PyErr_SetFromErrno(PyExc_OSError);
+        return false;
     }
 #else
-    if (timeout > 0) {
-        s_timeout = (useconds_t) (timeout * 1000000);
-        errno = pthread_create(&breaker_id, NULL, breaker_thread, &s_timeout);
-        if (errno) {
-            PyErr_SetFromErrno(PyExc_OSError);
-            return false;
-        }
+    timeout_us = (useconds_t) (timeout * 1000000);
+    if (timeout_us == 0) {
+        timeout_us = 1;
+    }
+    int err = pthread_create(&breaker_id, NULL, breaker_thread, this);
+    if (err) {
+        errno = err;
+        PyErr_SetFromErrno(PyExc_OSError);
+        return false;
     }
 #endif
+    active = true;
     return true;
 }
 
-static bool 
-cleanup_timeout(double timeout)
+bool
+TimeoutGuard::stop()
 {
-#ifdef _WIN32
-    if (timeout > 0 && s_timer_id != NULL) {
-        timeKillEvent(s_timer_id);
+    return stop(true);
+}
+
+bool
+TimeoutGuard::stop(bool set_python_error)
+{
+    if (timeout <= 0 || !active) {
+        return true;
     }
+
+#ifdef _WIN32
+    timeKillEvent(timer_id);
+    timer_id = 0;
+    active = false;
 #else
-    if (timeout > 0) {
-        pthread_cancel(breaker_id);
-        errno = pthread_join(breaker_id, NULL);
-        if (errno) {
+    pthread_cancel(breaker_id);
+    int err = pthread_join(breaker_id, NULL);
+    active = false;
+    if (err) {
+        if (set_python_error) {
+            errno = err;
             PyErr_SetFromErrno(PyExc_OSError);
-            return false;
         }
+        return false;
     }
 #endif
     return true;
-}
-
-bool 
-context_setup_timeout(Local<Context> context)
-{
-    return setup_timeout(context_timeout(context));
-}
-
-bool 
-context_cleanup_timeout(Local<Context> context)
-{
-    return cleanup_timeout(context_timeout(context));
 }
 
 PyObject *
@@ -415,24 +451,38 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     IN_CONTEXT(self->js_context.Get(isolate));
     JS_TRY
 
-    PySet_Add(self->scripts, program);
+    if (PySet_Add(self->scripts, program) < 0) {
+        Py_DECREF(program);
+        return NULL;
+    }
     Local<UnboundScript> unbound_script;
     if (self->has_debugger) {
         MaybeLocal<UnboundScript> maybe_script = script_compile(context, py_script->source, py_script->script_name);
-        PY_PROPAGATE_JS;
-        unbound_script = maybe_script.ToLocalChecked();
+        if (!maybe_script.ToLocal(&unbound_script)) {
+            Py_DECREF(program);
+            PY_PROPAGATE_JS;
+            PyErr_SetString(PyExc_RuntimeError, "failed to compile JavaScript");
+            return NULL;
+        }
     } else {
         unbound_script = py_script->script.Get(isolate);
     }
     Py_XDECREF(program);
     Local<Script> script = unbound_script->BindToCurrentContext();
 
-    if (!setup_timeout(timeout)) return NULL;
+    TimeoutGuard timeout_guard(timeout);
+    if (!timeout_guard.start()) return NULL;
     MaybeLocal<Value> result = script->Run(context);
 
-    if (!cleanup_timeout(timeout)) return NULL;
+    if (!timeout_guard.stop()) return NULL;
     PY_PROPAGATE_JS;
-    return py_from_js(result.ToLocalChecked(), context);
+    Local<Value> js_result;
+    if (!result.ToLocal(&js_result)) {
+        PY_PROPAGATE_JS;
+        PyErr_SetString(PyExc_RuntimeError, "failed to execute JavaScript");
+        return NULL;
+    }
+    return py_from_js(js_result, context);
 }
 
 

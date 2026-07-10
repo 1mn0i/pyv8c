@@ -205,7 +205,13 @@ js_typedarray_repr(js_typedarray* self)
     Local<Object> object = self->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
-    v8::String::Utf8Value str(isolate, object->ToString(context).ToLocalChecked());
+    Local<String> js_text;
+    if (!object->ToString(context).ToLocal(&js_text)) {
+        PY_PROPAGATE_JS;
+        PyErr_SetString(PyExc_RuntimeError, "failed to stringify JavaScript typed array");
+        return NULL;
+    }
+    v8::String::Utf8Value str(isolate, js_text);
     PyObject* text = PyUnicode_DecodeUTF8(*str, str.length(), NULL);
     PY_PROPAGATE_JS;
 

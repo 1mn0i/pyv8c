@@ -433,17 +433,36 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
         if(PyObject_HasAttrString(parent->cls, "__v8_skip_inherit__"))
             parent = (py_class *)parent->parent;
 
-        if (parent != NULL)
+        if (parent != NULL) {
             js_parent = py_class_get_constructor(context, parent, (py_class*)parent->parent);
+            if (js_parent.IsEmpty()) {
+                return Local<Function>();
+            }
+        }
     }
-    Local<Function> function = self->templ.Get(isolate)->GetFunction(context).ToLocalChecked();
-    if (!js_parent.IsEmpty())
-        function->SetPrototype(context, js_parent).ToChecked();
-    function->SetName(js_from_py(self->cls_name, context).As<String>());
+    Local<Function> function;
+    if (!self->templ.Get(isolate)->GetFunction(context).ToLocal(&function)) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript class template");
+        return Local<Function>();
+    }
+    if (!js_parent.IsEmpty()) {
+        bool set_worked;
+        if (!function->SetPrototype(context, js_parent).To(&set_worked)) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript class prototype");
+            return Local<Function>();
+        }
+    }
+    Local<Value> class_name = js_from_py(self->cls_name, context);
+    if (PyErr_Occurred()) {
+        return Local<Function>();
+    }
+    if (!class_name.IsEmpty() && class_name->IsString()) {
+        function->SetName(class_name.As<String>());
+    }
     return function;
 }
 
-void 
+bool
 py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context)
 {
     //PyObject_Print(py_object, stdout, Py_PRINT_RAW);
@@ -460,11 +479,28 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
     // last_proto is guaranteed to have a value because the loop is guaranteed
     // to run at least once because last_proto_chain is initialized to js_object
     assert(!last_proto.IsEmpty());
-    if (last_proto_object->GetPrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).ToLocalChecked()->StrictEquals(I_CAN_HAZ_ERROR_PROTOTYPE)) {
-        last_proto_object->DeletePrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).FromJust();
-        last_proto_object->SetPrototype(context, context->GetEmbedderData(ERROR_PROTOTYPE_SLOT));
+    Local<Value> proto_override;
+    if (!last_proto_object->GetPrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).ToLocal(&proto_override)) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to read JavaScript prototype marker");
+        return false;
+    }
+    if (proto_override->StrictEquals(I_CAN_HAZ_ERROR_PROTOTYPE)) {
+        bool delete_worked;
+        if (!last_proto_object->DeletePrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).To(&delete_worked)) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to clear JavaScript prototype marker");
+            return false;
+        }
+        bool set_worked;
+        if (!last_proto_object->SetPrototype(context, context->GetEmbedderData(ERROR_PROTOTYPE_SLOT)).To(&set_worked)) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript error prototype");
+            return false;
+        }
     }
     context_set_cached_jsobject(context, py_object, js_object);
+    if (PyErr_Occurred()) {
+        return false;
+    }
+    return true;
 }
 
 Local<Object> 
@@ -475,11 +511,17 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
     if (!object.IsEmpty()) {
         return hs.Escape(object);
     }
-    object = self->templ.Get(isolate)->InstanceTemplate()->NewInstance(context).ToLocalChecked();
+    if (!self->templ.Get(isolate)->InstanceTemplate()->NewInstance(context).ToLocal(&object)) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript object template");
+        return Local<Object>();
+    }
     Py_INCREF(py_object);
 
     delete_constructor(self, context);
-    py_class_init_js_object(object, py_object, context);
+    if (!py_class_init_js_object(object, py_object, context)) {
+        Py_DECREF(py_object);
+        return Local<Object>();
+    }
     return hs.Escape(object);
 }
 
@@ -495,7 +537,8 @@ delete_constructor(py_class* self, Local<Context> context)
             v8::Local<v8::Value> prototype_value;
             if (function->Get(context, V8String(isolate, "prototype")).ToLocal(&prototype_value)) {
                 v8::Local<v8::Object> prototype_object = prototype_value.As<v8::Object>();
-                prototype_object->Delete(context, V8String(isolate, "constructor")).ToChecked();
+                bool delete_worked;
+                prototype_object->Delete(context, V8String(isolate, "constructor")).To(&delete_worked);
             }
         }
     }

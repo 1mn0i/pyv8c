@@ -5,6 +5,11 @@
 #include <Python.h>
 #include <v8.h>
 
+#ifndef _WIN32
+#include <pthread.h>
+#include <unistd.h>
+#endif
+
 
 using namespace v8;
 
@@ -25,8 +30,31 @@ typedef struct
 extern PyTypeObject* context_type;
 int context_type_init();
 
-bool context_setup_timeout(Local<Context> context);
-bool context_cleanup_timeout(Local<Context> context);
+class TimeoutGuard
+{
+public:
+    explicit TimeoutGuard(double timeout);
+    explicit TimeoutGuard(Local<Context> context);
+    ~TimeoutGuard();
+
+    bool start();
+    bool stop();
+#ifndef _WIN32
+    useconds_t timeout_usec() const;
+#endif
+
+private:
+    bool stop(bool set_python_error);
+
+    double timeout;
+    bool active;
+#ifdef _WIN32
+    unsigned int timer_id;
+#else
+    pthread_t breaker_id;
+    useconds_t timeout_us;
+#endif
+};
 
 void context_dealloc(context_c* self);
 PyObject* context_new(PyTypeObject* type, PyObject* args, PyObject* kwargs);

@@ -133,9 +133,24 @@ js_object_getattro(js_object *self, PyObject *name)
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     Local<Value> js_name = js_from_py(name, context);
+    if (PyErr_Occurred()) return NULL;
+    if (js_name.IsEmpty()) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to convert JavaScript property name");
+        return NULL;
+    }
     JS_TRY
-    if (!context_setup_timeout(context)) return NULL;
-    if (!object->Has(context, js_name).FromJust()) {
+    TimeoutGuard timeout_guard(context);
+    if (!timeout_guard.start()) return NULL;
+    Maybe<bool> maybe_has_property = object->Has(context, js_name);
+    if (!timeout_guard.stop()) return NULL;
+    PY_PROPAGATE_JS;
+    bool has_property;
+    if (!maybe_has_property.To(&has_property)) {
+        PY_PROPAGATE_JS;
+        PyErr_SetString(PyExc_RuntimeError, "failed to check JavaScript property");
+        return NULL;
+    }
+    if (!has_property) {
         // TODO fix this so that it works
         PyObject *class_name = py_from_js(object->GetConstructorName(), context);
         PyErr_PROPAGATE(class_name);
@@ -148,13 +163,19 @@ js_object_getattro(js_object *self, PyObject *name)
         Py_XDECREF(class_name_string);
         return NULL;
     }
-    PY_PROPAGATE_JS;
 
+    if (!timeout_guard.start()) return NULL;
     MaybeLocal<Value> js_value = object->Get(context, js_name);
-    if (!context_cleanup_timeout(context)) return NULL;
+    if (!timeout_guard.stop()) return NULL;
 
     PY_PROPAGATE_JS;
-    PyObject *value = py_from_js(js_value.ToLocalChecked(), context);
+    Local<Value> local_js_value;
+    if (!js_value.ToLocal(&local_js_value)) {
+        PY_PROPAGATE_JS;
+        PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript property");
+        return NULL;
+    }
+    PyObject *value = py_from_js(local_js_value, context);
     PyErr_PROPAGATE(value);
     // if this was called like object.method() then bind the return value to make it callable
     if (Py_TYPE(value) == js_function_type) {
@@ -183,18 +204,30 @@ js_object_setattro(js_object *self, PyObject *name, PyObject *value)
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
+    Local<Value> js_name = js_from_py(name, context);
+    if (PyErr_Occurred()) return -1;
+    Local<Value> js_value;
+    if (value != NULL) {
+        js_value = js_from_py(value, context);
+        if (PyErr_Occurred()) return -1;
+    }
 
+    TimeoutGuard timeout_guard(context);
+    if (!timeout_guard.start()) return -1;
 
-    if (!context_setup_timeout(context)) return -1;
+    Maybe<bool> maybe_worked = value != NULL
+        ? object->Set(context, js_name, js_value)
+        : object->Delete(context, js_name);
 
-    if (value != NULL)
-        object->Set(context, js_from_py(name, context), js_from_py(value, context));
-    else
-        object->Delete(context, js_from_py(name, context));
-
-    if (!context_cleanup_timeout(context)) return -1;
+    if (!timeout_guard.stop()) return -1;
 
     PY_PROPAGATE_JS_RET(-1);
+    bool worked;
+    if (!maybe_worked.To(&worked)) {
+        PY_PROPAGATE_JS_RET(-1);
+        PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript property");
+        return -1;
+    }
     return 0;
 }
 
@@ -217,21 +250,52 @@ js_object_dir(js_object *self)
     Context::Scope cs(context);
     JS_TRY
 
+    TimeoutGuard timeout_guard(context);
+    if (!timeout_guard.start()) return NULL;
     MaybeLocal<Array> maybe_properties = object->GetOwnPropertyNames(context, ALL_PROPERTIES);
+    if (!timeout_guard.stop()) return NULL;
     PY_PROPAGATE_JS;
-    Local<Array> properties = maybe_properties.ToLocalChecked();
+    Local<Array> properties;
+    if (!maybe_properties.ToLocal(&properties)) {
+        PY_PROPAGATE_JS;
+        PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript property names");
+        return NULL;
+    }
     PyObject *py_properties = PyList_New(properties->Length());
     PyErr_PROPAGATE(py_properties);
 
-    if (!context_setup_timeout(context)) return NULL;
+    if (!timeout_guard.start()) {
+        Py_DECREF(py_properties);
+        return NULL;
+    }
     for (unsigned i = 0; i < properties->Length(); i++) {
         MaybeLocal<Value> js_property = properties->Get(context, i);
-        PY_PROPAGATE_JS;
-        PyObject *py_property = py_from_js(js_property.ToLocalChecked(), context);
-        PyList_SetItem(py_properties, i, py_property);
+        Local<Value> local_js_property;
+        if (!js_property.ToLocal(&local_js_property)) {
+            timeout_guard.stop();
+            Py_DECREF(py_properties);
+            PY_PROPAGATE_JS;
+            PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript property name");
+            return NULL;
+        }
+        PyObject *py_property = py_from_js(local_js_property, context);
+        if (py_property == NULL) {
+            timeout_guard.stop();
+            Py_DECREF(py_properties);
+            return NULL;
+        }
+        if (PyList_SetItem(py_properties, i, py_property) < 0) {
+            timeout_guard.stop();
+            Py_DECREF(py_property);
+            Py_DECREF(py_properties);
+            return NULL;
+        }
     }
 
-    if (!context_cleanup_timeout(context)) return NULL;
+    if (!timeout_guard.stop()) {
+        Py_DECREF(py_properties);
+        return NULL;
+    }
 
     return py_properties;
 }
@@ -279,4 +343,3 @@ js_object_dealloc(js_object *self)
     self->object.Reset();
     TP_FREE_ABI3(js_object_type, self);
 }
-

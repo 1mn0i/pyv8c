@@ -61,22 +61,52 @@ js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
     IN_CONTEXT(isolate->GetCurrentContext());
     //js_object* self = (js_object*)type->tp_alloc(type, 0);
     js_promise *self = (js_promise *)PyType_GenericAlloc(type, 0);
-    Local<Promise::Resolver> resolver = Promise::Resolver::New(context).ToLocalChecked();
+    PyErr_PROPAGATE(self);
+    Local<Promise::Resolver> resolver;
+    if (!Promise::Resolver::New(context).ToLocal(&resolver)) {
+        Py_DECREF((PyObject*)self);
+        PyErr_SetString(PyExc_RuntimeError, "failed to create JavaScript Promise resolver");
+        return NULL;
+    }
     Local<Promise> promise = resolver->GetPromise();
     if (resolve != NULL) {
         Local<Object> exception = pyexception_to_jsexception(resolve, context);
-        if (!exception.IsEmpty()) 
-            resolver->Resolve(context, exception).ToChecked();
-        else 
-            resolver->Resolve(context, js_from_py(resolve, context)).ToChecked();
+        Local<Value> js_resolve;
+        if (!exception.IsEmpty())
+            js_resolve = exception;
+        else {
+            js_resolve = js_from_py(resolve, context);
+            if (PyErr_Occurred()) {
+                Py_DECREF((PyObject*)self);
+                return NULL;
+            }
+        }
+        bool resolved;
+        if (!resolver->Resolve(context, js_resolve).To(&resolved)) {
+            Py_DECREF((PyObject*)self);
+            PyErr_SetString(PyExc_RuntimeError, "failed to resolve JavaScript Promise");
+            return NULL;
+        }
 
     }
     if (reject != NULL) {
         Local<Object> exception = pyexception_to_jsexception(reject, context);
+        Local<Value> js_reject;
         if (!exception.IsEmpty())
-            resolver->Reject(context, exception).ToChecked();
-        else
-            resolver->Reject(context, js_from_py(reject, context)).ToChecked();
+            js_reject = exception;
+        else {
+            js_reject = js_from_py(reject, context);
+            if (PyErr_Occurred()) {
+                Py_DECREF((PyObject*)self);
+                return NULL;
+            }
+        }
+        bool rejected;
+        if (!resolver->Reject(context, js_reject).To(&rejected)) {
+            Py_DECREF((PyObject*)self);
+            PyErr_SetString(PyExc_RuntimeError, "failed to reject JavaScript Promise");
+            return NULL;
+        }
     }
     self->base.object.Reset(isolate, promise);
     return (PyObject*)self;

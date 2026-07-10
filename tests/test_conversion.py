@@ -94,11 +94,21 @@ class TestConversion(unittest.TestCase):
         self.assertEqual(list(js_array), [1, 2, 3, "four", True])
 
     def test_js_self_referential_array_conversion(self):
+        """测试 JavaScript 自引用数组转换为 Python 列表。"""
+
+        # 创建一个首个元素指向数组自身的 JavaScript 数组。
         js_array = self.context.exec_js("const a = []; a[0] = a; a")
+
+        # 转换后应保留自引用关系，而不是创建新的列表副本。
         self.assertIs(js_array[0], js_array)
 
     def test_bytes_arraybuffer_conversion(self):
+        """测试 Python bytes 转换为 JavaScript ArrayBuffer。"""
+
+        # 将包含边界字节值的 bytes 暴露到 JavaScript 上下文。
         self.context.py_bytes = b"\x01\x02\xff"
+
+        # 验证 ArrayBuffer 长度和每个字节的内容保持不变。
         self.assertEqual(self.context.exec_js("py_bytes.byteLength"), 3)
         self.assertEqual(
             self.context.exec_js("Array.from(new Uint8Array(py_bytes)).join(',')"),

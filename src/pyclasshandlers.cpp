@@ -126,7 +126,11 @@ inline extern PyObject* get_self_cross_origin(const FunctionCallbackInfo<T>& inf
     Py_XDECREF(args);                                                                                                                                               \
     Py_XDECREF(kwargs);                                                                                                                                             \
     JS_PROPAGATE_PY(new_object);                                                                                                                                    \
-    py_class_init_js_object(js_new_object, new_object, context);
+    if (!py_class_init_js_object(js_new_object, new_object, context)) {                                                                                            \
+        Py_XDECREF(new_object);                                                                                                                                    \
+        js_throw_py();                                                                                                                                             \
+        return;                                                                                                                                                    \
+    }
 
 
 void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
@@ -622,7 +626,21 @@ Intercepted cross_origin_named_query(Local<Name> js_name, Info(Integer)){
             js_throw_py();                                                        \
             return;                                                               \
         }                                                                         \
-        js_keys->Set(context, i, js_from_py(item, context)).FromJust();           \
+        Local<Value> js_item = js_from_py(item, context);                         \
+        Py_XDECREF(item);                                                         \
+        if (PyErr_Occurred())                                                     \
+        {                                                                         \
+            Py_XDECREF(keys);                                                     \
+            js_throw_py();                                                        \
+            return;                                                               \
+        }                                                                         \
+        bool set_worked;                                                          \
+        if (!js_keys->Set(context, i, js_item).To(&set_worked))                   \
+        {                                                                         \
+            Py_XDECREF(keys);                                                     \
+            js_throw_py();                                                        \
+            return;                                                               \
+        }                                                                         \
     }                                                                             \
     Py_XDECREF(keys);                                                             \
     info.GetReturnValue().Set(js_keys);
@@ -867,7 +885,11 @@ bool cross_origin_access_check(v8::Local<v8::Context> accessing_context, v8::Loc
     context_c* accessing_ctx_c = (context_c*)accessing_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     PyObject* accessor = accessing_ctx_c->py_global;
 
-    context_c* interviewee_ctx_c = (context_c*)accessed_object->GetCreationContext().ToLocalChecked()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    Local<Context> accessed_context;
+    if (!accessed_object->GetCreationContext().ToLocal(&accessed_context)) {
+        return false;
+    }
+    context_c* interviewee_ctx_c = (context_c*)accessed_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
 
     PyObject* interviewee = interviewee_ctx_c->py_global;
     if (PyObject_HasAttrString(interviewee, "__v8_cross_origin_check__")) {

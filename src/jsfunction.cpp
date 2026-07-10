@@ -60,26 +60,42 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
     }
     int argc = PyTuple_Size(args);
     MaybeLocal<Value> result;
+    TimeoutGuard timeout_guard(context);
 
-    if (!context_setup_timeout(context)) return NULL;
 #ifndef _WIN32
     // error C2131: expression did not evaluate to a constant on Windows
     if (argc <= 16) {
-        Local<Value> argv[argc];
-        jss_from_pys(args, &argv[0], context);
-        result = object->CallAsFunction(context, js_this, argc, &argv[0]);
+        Local<Value> argv[16];
+        jss_from_pys(args, argv, context);
+        if (PyErr_Occurred()) return NULL;
+        if (!timeout_guard.start()) return NULL;
+        result = object->CallAsFunction(context, js_this, argc, argv);
     } else {
 #endif
         Local<Value> *argv = new Local<Value>[argc];
         jss_from_pys(args, argv, context);
+        if (PyErr_Occurred()) {
+            delete[] argv;
+            return NULL;
+        }
+        if (!timeout_guard.start()) {
+            delete[] argv;
+            return NULL;
+        }
         result = object->CallAsFunction(context, js_this, argc, argv);
         delete[] argv;
 #ifndef _WIN32
     }
 #endif
-    if (!context_cleanup_timeout(context)) return NULL;
+    if (!timeout_guard.stop()) return NULL;
     PY_PROPAGATE_JS;
-    return py_from_js(result.ToLocalChecked(), context);
+    Local<Value> js_result;
+    if (!result.ToLocal(&js_result)) {
+        PY_PROPAGATE_JS;
+        PyErr_SetString(PyExc_RuntimeError, "failed to call JavaScript function");
+        return NULL;
+    }
+    return py_from_js(js_result, context);
 }
 
 

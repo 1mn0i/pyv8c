@@ -83,8 +83,13 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         return NULL;
     }
     MaybeLocal<UnboundScript> maybe_script = script_compile(context, source, filename);
-    PY_PROPAGATE_JS;
-    Local<UnboundScript> script = maybe_script.ToLocalChecked();
+    Local<UnboundScript> script;
+    if (!maybe_script.ToLocal(&script))
+    {
+        PY_PROPAGATE_JS;
+        PyErr_SetString(PyExc_RuntimeError, "failed to compile JavaScript");
+        return NULL;
+    }
     //script_c *self = (script_c *) type->tp_alloc(type, 0);
     script_c *self = (script_c *)PyType_GenericAlloc(type, 0);
     self->script.Reset(isolate, script);
@@ -110,9 +115,10 @@ script_compile(Local<Context> context, PyObject *source, PyObject *filename)
         ScriptCompiler::Source js_source(js_from_py(source, context).As<String>());
         maybe_script = ScriptCompiler::CompileUnboundScript(isolate, &js_source);
     }
-    if (maybe_script.IsEmpty())
+    Local<UnboundScript> script;
+    if (!maybe_script.ToLocal(&script))
         return maybe_script;
-    return hs.Escape(maybe_script.ToLocalChecked());
+    return hs.Escape(script);
 }
 
 void 

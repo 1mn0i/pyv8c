@@ -82,16 +82,35 @@ py_from_js(Local<Value> value, Local<Context> context)
         {
             context = obj_value->GetCreationContextChecked();
         }
-        if (obj_value->GetPrototype()->StrictEquals(context->GetEmbedderData(OBJECT_PROTOTYPE_SLOT)) && !obj_value->HasOwnProperty(context, Symbol::GetToStringTag(context->GetIsolate())).ToChecked())
+        bool has_to_string_tag;
+        Maybe<bool> maybe_has_to_string_tag = obj_value->HasOwnProperty(context, Symbol::GetToStringTag(context->GetIsolate()));
+        if (!maybe_has_to_string_tag.To(&has_to_string_tag))
+        {
+            PyErr_SetString(PyExc_RuntimeError, "failed to inspect JavaScript object");
+            return NULL;
+        }
+        if (obj_value->GetPrototype()->StrictEquals(context->GetEmbedderData(OBJECT_PROTOTYPE_SLOT)) && !has_to_string_tag)
         {
             PyObject *dict = PyDict_New();
             if (!dict)
                 return NULL;
 
-            Local<Array> js_keys = obj_value->GetPropertyNames(context).ToLocalChecked();
+            Local<Array> js_keys;
+            if (!obj_value->GetPropertyNames(context).ToLocal(&js_keys))
+            {
+                Py_XDECREF(dict);
+                PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object properties");
+                return NULL;
+            }
             for (uint32_t i = 0; i < js_keys->Length(); i++)
             {
-                Local<Value> js_key = js_keys->Get(context, i).ToLocalChecked();
+                Local<Value> js_key;
+                if (!js_keys->Get(context, i).ToLocal(&js_key))
+                {
+                    Py_XDECREF(dict);
+                    PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object property key");
+                    return NULL;
+                }
                 PyObject *key = py_from_js(js_key, context);
                 if (key == NULL)
                 {
@@ -102,14 +121,19 @@ py_from_js(Local<Value> value, Local<Context> context)
                 if (!obj_value->Get(context, js_key).ToLocal(&js_value))
                 {
                     Py_XDECREF(key);
-                    continue;
+                    Py_XDECREF(dict);
+                    PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object property value");
+                    return NULL;
                 }
                 if (js_value->StrictEquals(obj_value))
                 {
-                    Py_INCREF(dict);
-                    PyDict_SetItem(dict, key, dict);
+                    if (PyDict_SetItem(dict, key, dict) < 0)
+                    {
+                        Py_XDECREF(key);
+                        Py_XDECREF(dict);
+                        return NULL;
+                    }
                     Py_XDECREF(key);
-                    Py_XDECREF(dict);
                     continue;
                 }
                 PyObject *dict_value = py_from_js(js_value, context);
@@ -193,7 +217,16 @@ js_from_py(PyObject *value, Local<Context> context)
     {
         Py_ssize_t len;
         const char *str = PyUnicode_AsUTF8AndSize(value, &len);
-        Local<String> js_value = String::NewFromUtf8(isolate, str, NewStringType::kNormal, len).ToLocalChecked();
+        if (str == NULL)
+        {
+            return Local<Value>();
+        }
+        Local<String> js_value;
+        if (!String::NewFromUtf8(isolate, str, NewStringType::kNormal, len).ToLocal(&js_value))
+        {
+            PyErr_SetString(PyExc_RuntimeError, "failed to create JavaScript string");
+            return Local<Value>();
+        }
         return hs.Escape(js_value);
     }
     if (PyBytes_Check(value))
@@ -252,10 +285,28 @@ js_from_py(PyObject *value, Local<Context> context)
         Py_ssize_t pos = 0;
         while (PyDict_Next(dict, &pos, &key, &value))
         {
+            Local<Value> js_key = js_from_py(key, context);
+            if (PyErr_Occurred())
+            {
+                return Local<Value>();
+            }
+            Local<Value> js_value;
             if (dict == value)
-                js_dict->Set(context, js_from_py(key, context), js_dict).FromJust();
+                js_value = js_dict;
             else
-                js_dict->Set(context, js_from_py(key, context), js_from_py(value, context)).FromJust();
+            {
+                js_value = js_from_py(value, context);
+                if (PyErr_Occurred())
+                {
+                    return Local<Value>();
+                }
+            }
+            bool set_worked;
+            if (!js_dict->Set(context, js_key, js_value).To(&set_worked))
+            {
+                PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript object property");
+                return Local<Value>();
+            }
         }
         return hs.Escape(js_dict);
     }
@@ -267,11 +318,35 @@ js_from_py(PyObject *value, Local<Context> context)
         for (int i = 0; i < length; i++)
         {
             PyObject *item = PySequence_GetItem(value, i);
+            if (item == NULL)
+            {
+                return Local<Value>();
+            }
             bool set_worked;
             if (item == value)
-                set_worked = array->Set(context, i, array).FromJust();
+            {
+                if (!array->Set(context, i, array).To(&set_worked))
+                {
+                    Py_DECREF(item);
+                    PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript array item");
+                    return Local<Value>();
+                }
+            }
             else
-                set_worked = array->Set(context, i, js_from_py(item, context)).FromJust();
+            {
+                Local<Value> js_item = js_from_py(item, context);
+                if (PyErr_Occurred())
+                {
+                    Py_DECREF(item);
+                    return Local<Value>();
+                }
+                if (!array->Set(context, i, js_item).To(&set_worked))
+                {
+                    Py_DECREF(item);
+                    PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript array item");
+                    return Local<Value>();
+                }
+            }
             assert(set_worked);
             Py_DECREF(item);
         }
@@ -280,7 +355,16 @@ js_from_py(PyObject *value, Local<Context> context)
     if (PyFunction_Check_abi3(value) || PyMethod_Check_abi3(value))
     {
         py_function *templ = (py_function *)py_function_to_template(value);
-        return hs.Escape(py_template_to_function(templ, context));
+        if (templ == NULL)
+        {
+            return Local<Value>();
+        }
+        Local<Function> function = py_template_to_function(templ, context);
+        if (function.IsEmpty())
+        {
+            return Local<Value>();
+        }
+        return hs.Escape(function);
     }
 
     if (PyType_Check(value))
@@ -296,14 +380,38 @@ js_from_py(PyObject *value, Local<Context> context)
             if (templ->to_obj == 1)
             {
                 v8::Local<v8::ObjectTemplate> object_template = templ->templ.Get(isolate).As<v8::ObjectTemplate>();
-                context->Global()->Set(context, v8_name, object_template->NewInstance(context).ToLocalChecked());
+                Local<Object> new_instance;
+                if (!object_template->NewInstance(context).ToLocal(&new_instance))
+                {
+                    ctx_c->hook = hook;
+                    PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript object template");
+                    return Local<Value>();
+                }
+                bool set_worked;
+                if (!context->Global()->Set(context, v8_name, new_instance).To(&set_worked))
+                {
+                    ctx_c->hook = hook;
+                    PyErr_SetString(PyExc_RuntimeError, "failed to expose JavaScript object template");
+                    return Local<Value>();
+                }
                 // templ->to_obj += 1;
             }
-            Local<Value> obj = context->Global()->Get(context, v8_name).ToLocalChecked();
+            Local<Value> obj;
+            if (!context->Global()->Get(context, v8_name).ToLocal(&obj))
+            {
+                ctx_c->hook = hook;
+                PyErr_SetString(PyExc_RuntimeError, "failed to retrieve JavaScript object template");
+                return Local<Value>();
+            }
             ctx_c->hook = hook;
             return hs.Escape(obj);
         }
-        return hs.Escape(py_class_get_constructor(context, templ, (py_class *)templ->parent));
+        Local<Function> constructor = py_class_get_constructor(context, templ, (py_class *)templ->parent);
+        if (constructor.IsEmpty())
+        {
+            return Local<Value>();
+        }
+        return hs.Escape(constructor);
     }
     if (PyObject_TypeCheck(value, js_object_type))
     {
@@ -337,7 +445,16 @@ js_from_py(PyObject *value, Local<Context> context)
     PyObject *type;
     type = (PyObject*)Py_TYPE(value);
     py_class *templ = (py_class *)py_class_to_template(type, ctx_c);
-    return hs.Escape(py_class_create_js_object(templ, value, context));
+    if (templ == NULL)
+    {
+        return Local<Value>();
+    }
+    Local<Object> js_object = py_class_create_js_object(templ, value, context);
+    if (js_object.IsEmpty())
+    {
+        return Local<Value>();
+    }
+    return hs.Escape(js_object);
 }
 
 PyObject *

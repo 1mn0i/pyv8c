@@ -163,18 +163,21 @@ construct_new_object(PyObject *self, PyObject *args)
     // exclude first argument
     argc--;
 
-    if (!context_setup_timeout(context))
-        return NULL;
     MaybeLocal<Value> result;
+    TimeoutGuard timeout_guard(context);
 #ifndef _WIN32
     // error C2131: expression did not evaluate to a constant on Windows
     if (argc <= 16)
     {
-        Local<Value> argv[argc];
+        Local<Value> argv[16];
         for (long i = 0; i < argc; i++)
         {
             argv[i] = js_from_py(PyTuple_GetItem(args, i + 1), context);
         }
+        if (PyErr_Occurred())
+            return NULL;
+        if (!timeout_guard.start())
+            return NULL;
         result = object->CallAsConstructor(isolate->GetCurrentContext(), argc, argv);
     }
     else
@@ -185,18 +188,35 @@ construct_new_object(PyObject *self, PyObject *args)
         {
             argv[i] = js_from_py(PyTuple_GetItem(args, i + 1), context);
         }
+        if (PyErr_Occurred())
+        {
+            delete[] argv;
+            return NULL;
+        }
+        if (!timeout_guard.start())
+        {
+            delete[] argv;
+            return NULL;
+        }
         result = object->CallAsConstructor(isolate->GetCurrentContext(), argc, argv);
         delete[] argv;
 #ifndef _WIN32
     }
 #endif
 
-    if (!context_cleanup_timeout(context))
+    if (!timeout_guard.stop())
         return NULL;
 
     PY_PROPAGATE_JS;
 
-    return py_from_js(result.ToLocalChecked(), context);
+    Local<Value> js_result;
+    if (!result.ToLocal(&js_result))
+    {
+        PY_PROPAGATE_JS;
+        PyErr_SetString(PyExc_RuntimeError, "failed to construct JavaScript object");
+        return NULL;
+    }
+    return py_from_js(js_result, context);
 }
 
 PyObject *

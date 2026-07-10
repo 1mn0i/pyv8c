@@ -1,4 +1,4 @@
-﻿#include <Python.h>
+#include <Python.h>
 #include "pyv8.h"
 #include <v8.h>
 #include <sstream>
@@ -92,12 +92,13 @@ extract_exception(Local<Value> exception, Local<Message> message)
             oss << std::string(*name, name.length());
         }
 
-        oss << " @ " << message->GetLineNumber(isolate->GetCurrentContext()).ToChecked()
-            << " : " << message->GetStartColumn() << " ) ";
+        int line_number = message->GetLineNumber(isolate->GetCurrentContext()).FromMaybe(0);
+        oss << " @ " << line_number << " : " << message->GetStartColumn() << " ) ";
 
-        if (!message->GetSourceLine(isolate->GetCurrentContext()).IsEmpty())
+        Local<String> source_line;
+        if (message->GetSourceLine(isolate->GetCurrentContext()).ToLocal(&source_line))
         {
-            v8::String::Utf8Value line(isolate, message->GetSourceLine(isolate->GetCurrentContext()).ToLocalChecked());
+            v8::String::Utf8Value line(isolate, source_line);
 
             oss << " -> " << std::string(*line, line.length());
         }
@@ -219,12 +220,34 @@ js_throw_py()
     }
 
     PyObject* exc_value_str = PyObject_Str(exc_value);
-    const char* exc_message = PyUnicode_AsUTF8_abi3(exc_value_str);
-    Py_XDECREF(exc_value_str);
+    const char* exc_message = "Python exception";
+    if (exc_value_str != NULL) {
+        const char* message = PyUnicode_AsUTF8_abi3(exc_value_str);
+        if (message != NULL) {
+            exc_message = message;
+        }
+        else {
+            PyErr_Clear();
+        }
+    }
+    else {
+        PyErr_Clear();
+    }
 
     PyObject* exc_cls_name = PyObject_GetAttrString(exc_type, "__name__");
-    const char* exc_type_name = PyUnicode_AsUTF8_abi3(exc_cls_name);
-    Py_XDECREF(exc_value_str);
+    const char* exc_type_name = "";
+    if (exc_cls_name != NULL) {
+        const char* type_name = PyUnicode_AsUTF8_abi3(exc_cls_name);
+        if (type_name != NULL) {
+            exc_type_name = type_name;
+        }
+        else {
+            PyErr_Clear();
+        }
+    }
+    else {
+        PyErr_Clear();
+    }
 
     Local<Object> exception;
     if (PyObject_TypeCheck(exc_value, js_exception_type)) {
@@ -250,39 +273,32 @@ js_throw_py()
         exception = Exception::SyntaxError(V8String(isolate, exc_message)).As<Object>();
     }
     else {
-        exception = js_from_py(exc_value, context).As<Object>();
-        exception->SetInternalField(2, External::New(isolate, exc_type));
-        exception->SetInternalField(3, External::New(isolate, exc_traceback));
-        exception->Set(context, V8String(isolate, "message"), V8String(isolate, exc_message));
-        //v8::Exception::CaptureStackTrace(context, exception);
+        Local<Value> js_exception_value = js_from_py(exc_value, context);
+        if (js_exception_value.IsEmpty() || !js_exception_value->IsObject()) {
+            PyErr_Clear();
+            exception = Exception::Error(V8String(isolate, exc_message)).As<Object>();
+        }
+        else {
+            exception = js_exception_value.As<Object>();
+            exception->SetInternalField(2, External::New(isolate, exc_type));
+            exception->SetInternalField(3, External::New(isolate, exc_traceback));
+            exception->Set(context, V8String(isolate, "message"), V8String(isolate, exc_message));
 
-        Local<Value> error_ctor_val;
-        if (!context->Global()->Get(context, String::NewFromUtf8Literal(isolate, "Error"))
-            .ToLocal(&error_ctor_val)) {
-            printf("error in cpp function js_throw_py 1\n");
-            fflush(stdout);
+            Local<Value> error_ctor_val;
+            Local<Value> capture_stack_trace_val;
+            if (context->Global()->Get(context, String::NewFromUtf8Literal(isolate, "Error")).ToLocal(&error_ctor_val) &&
+                error_ctor_val->IsObject() &&
+                error_ctor_val.As<Object>()->Get(context, V8String(isolate, "captureStackTrace")).ToLocal(&capture_stack_trace_val) &&
+                capture_stack_trace_val->IsFunction()) {
+                Local<Function> capture_stack_trace = capture_stack_trace_val.As<Function>();
+                Local<Value> args[] = { exception };
+                capture_stack_trace->Call(context, Undefined(isolate), 1, args);
+            }
         }
-        if (!error_ctor_val->IsObject()) {
-            printf("error in cpp function js_throw_py 2\n");
-            fflush(stdout);
-        }
-        Local<Object> error_ctor = error_ctor_val.As<Object>();
-
-        Local<Value> capture_stack_trace_val;
-        if (!error_ctor->Get(context, V8String(isolate, "captureStackTrace"))
-            .ToLocal(&capture_stack_trace_val)) {
-            printf("error in cpp function js_throw_py 3\n");
-            fflush(stdout);
-        }
-        if (!capture_stack_trace_val->IsFunction()) {
-            printf("error in cpp function js_throw_py 4\n");
-            fflush(stdout);
-        }
-        Local<Function> capture_stack_trace = capture_stack_trace_val.As<Function>();
-
-        Local<Value> args[] = { exception };
-        capture_stack_trace->Call(context, Undefined(isolate), 1, args);
     }
+
+    Py_XDECREF(exc_cls_name);
+    Py_XDECREF(exc_value_str);
 
     isolate->ThrowException(exception);
 }
