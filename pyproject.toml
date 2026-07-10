@@ -13,6 +13,9 @@ authors = [
 license = {text = "MIT"}
 requires-python = ">=3.10, <4"
 keywords = ["v8", "javascript", "python", "spider"]
+dependencies = [
+    "websockets>=16",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -22,6 +25,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: C++",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]

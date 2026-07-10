@@ -41,7 +41,7 @@ if sys.platform.startswith('darwin'):
 # 设置扩展模块
 ext_modules = [
     Extension(
-        '_pyv8',
+        'pyv8._pyv8',
         sources=sources,
         include_dirs=include_dirs,
         library_dirs=library_dirs,
@@ -57,4 +57,5 @@ ext_modules = [
 # 使用setuptools的setup函数
 setup(
     ext_modules=ext_modules,
+    options={'bdist_wheel': {'py_limited_api': 'cp310'}},
 )
