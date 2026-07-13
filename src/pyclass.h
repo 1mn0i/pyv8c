@@ -10,7 +10,10 @@ typedef struct {
     PyObject_HEAD
     PyObject *cls;
     PyObject *cls_name;
+    PyObject *call_method;
     PyObject *parent;
+    int constructor_behavior;
+    int unconstructable;
     int has_constructor;
     int to_obj;
     Persistent<FunctionTemplate> templ;

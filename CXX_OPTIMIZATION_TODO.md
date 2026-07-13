@@ -83,17 +83,17 @@ pyv8 主要用于 JS 逆向时补环境，为一比一模拟 Chromium 内置原�
 
 ## P1 - pyclass 与 hook 可维护性
 
-- [ ] 将 `py_class_new()` 中的 class metadata 解析抽成 `ClassConfig`。
-  `src/pyclass.cpp:130` 附近大量重复探测 `__v8_*` key，建议一次解析，后续安装模板时直接使用配置。
+- [√] 将 `py_class_new()` 中的 class metadata 解析抽成 `ClassConfig`。
+  已集中读取并校验 `__v8_*` 元数据，模板安装阶段复用配置，减少重复访问 `class_dict`。
 
-- [ ] 将 `src/pyclasshandlers.cpp` 中的大型宏改成小函数。
-  当前宏过多，refcount、异常传播、return 路径都比较难审计。
+- [√] 将 `src/pyclasshandlers.cpp` 中的大型宏改成小函数。
+  named/indexed getter、setter、query、deleter、enumerator 以及 constructor/operation callback 已改为显式 helper；仅保留作用域初始化和类型别名等结构性宏。
 
 - [ ] 模板安装时预解析 getter、setter、query、deleter、enumerator 等 Python callable。
-  热路径中应避免反复 `PyObject_HasAttrString` 和 `PyObject_CallMethod`。
+  当前 helper 已去掉 `PyObject_HasAttrString` + `PyObject_CallMethod` 的双重查找，但实例绑定 callable 仍需结合 descriptor 语义单独设计。
 
-- [ ] 给 handler 目标对象增加 internal field 校验。
-  `get_self()` 等函数默认对象布局正确，补环境实验时容易因为异常对象导致硬崩。
+- [√] 给 handler 目标对象增加 internal field 校验。
+  `get_self()` 现在校验 internal field 数量和 Python magic 标记，异常对象会安全回退为 `Py_None`。
 
 - [ ] 将 cross-origin handler 拆成独立模块。
   减少普通 named/indexed property handler 文件复杂度。

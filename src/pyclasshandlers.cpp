@@ -1,5 +1,6 @@
 #include <v8.h>
 #include <Python.h>
+#include <climits>
 #include <sstream>
 
 #include "pyv8.h"
@@ -22,116 +23,120 @@ enum FlagConstructor {
 
 
 
-template <class T> 
-inline extern PyObject* get_self(const PropertyCallbackInfo<T>& info) {
+template <class Info>
+static PyObject*
+get_handler_self(const Info& info, bool cross_origin)
+{
     Local<Context> context = isolate->GetCurrentContext();
     Local<Object> js_self = info.Holder();
-    if (js_self == context->Global()) {
-        js_self = js_self->GetPrototype().As<Object>();
+    bool is_global = cross_origin
+        ? js_self->Equals(context, context->Global()).FromMaybe(false)
+        : js_self == context->Global();
+    if (is_global) {
+        Local<Value> prototype = js_self->GetPrototype();
+        if (!prototype->IsObject())
+            return Py_None;
+        js_self = prototype.As<Object>();
     }
 
-    return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD).template As<External>()->Value();
-}
-
-template <class T> 
-inline extern PyObject* get_self(const FunctionCallbackInfo<T>& info) {
-    Local<Context> context = isolate->GetCurrentContext();
-    Local<Object> js_self = info.Holder();
-    if (js_self == context->Global()) {
-        js_self = js_self->GetPrototype().As<Object>();
-    }
-    if (js_self->InternalFieldCount() > 0) {
-        return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD).template As<External>()->Value();
-    }
-    return Py_None;
-}
-
-template <class T>
-inline extern PyObject* get_self_cross_origin(const PropertyCallbackInfo<T>& info) {
-    Local<Context> context = isolate->GetCurrentContext();
-    Local<Object> js_self = info.Holder();
-    if (js_self->Equals(context, context->Global()).IsJust()) {
-        js_self = js_self->GetPrototype().As<Object>();
-    }
-
-    return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD).template As<External>()->Value();
+    if (js_self->InternalFieldCount() != OBJECT_INTERNAL_FIELDS)
+        return Py_None;
+    Local<Data> magic = js_self->GetInternalField(PYTHON_MAGIC_FIELD);
+    if (magic != IZ_DAT_OBJECT)
+        return Py_None;
+    return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD)
+        .template As<External>()->Value();
 }
 
 template <class T>
-inline extern PyObject* get_self_cross_origin(const FunctionCallbackInfo<T>& info) {
-    Local<Context> context = isolate->GetCurrentContext();
-    Local<Object> js_self = info.Holder();
-    if (js_self->Equals(context, context->Global()).IsJust()) {
-        js_self = js_self->GetPrototype().As<Object>();
-    }
-    if (js_self->InternalFieldCount() > 0) {
-        return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD).template As<External>()->Value();
-    }
-    return Py_None;
+inline PyObject* get_self(const PropertyCallbackInfo<T>& info) {
+    return get_handler_self(info, false);
+}
+
+template <class T>
+inline PyObject* get_self(const FunctionCallbackInfo<T>& info) {
+    return get_handler_self(info, false);
+}
+
+template <class T>
+inline PyObject* get_self_cross_origin(const PropertyCallbackInfo<T>& info) {
+    return get_handler_self(info, true);
+}
+
+template <class T>
+inline PyObject* get_self_cross_origin(const FunctionCallbackInfo<T>& info) {
+    return get_handler_self(info, true);
 }
 
 #define Info(T) const PropertyCallbackInfo<T> &info
 
 
-#define PY_CLASS_CONSTRUCT_CALLBACK_CODE                                                                                                                            \
-    PyObject* class_dict = PyObject_GetAttrString(self->cls, "__dict__");                                                                                           \
-    int flag = 0;                                                                                                                                                   \
-    if (PyMapping_HasKeyString(class_dict, "__v8_constructor__")) {                                                                                                 \
-        PyObject* constructor_behavior = PyMapping_GetItemString(class_dict, "__v8_constructor__");                                                                 \
-        if (PyLong_Check(constructor_behavior)) {                                                                                                                   \
-            flag = PyLong_AsLong(constructor_behavior);                                                                                                             \
-        }                                                                                                                                                           \
-        Py_XDECREF(constructor_behavior);                                                                                                                           \
-    }                                                                                                                                                               \
-    Py_XDECREF(class_dict);                                                                                                                                         \
-    bool can_new = (flag & FlagConstructor::kNew) != 0;                                                                                                             \
-    bool can_call = (flag & FlagConstructor::kCall) != 0;                                                                                                           \
-                                                                                                                                                                    \
-                                                                                                                                                                    \
-    if (!can_call && !can_new) {                                                                                                                                    \
-        isolate->ThrowException(Exception::TypeError(JSTR("Illegal constructor")));                                                                                 \
-        return;                                                                                                                                                     \
-    }                                                                                                                                                               \
-    if (!can_call && !info.IsConstructCall()) {                                                                                                                     \
-        std::ostringstream oss;                                                                                                                                     \
-        const char* cls_name = PyUnicode_AsUTF8_abi3(self->cls_name);                                                                                               \
-        oss << "Failed to construct '" << std::string(cls_name) << "': Please use the 'new' operator, this DOM object constructor cannot be called as a function."; \
-        isolate->ThrowException(Exception::TypeError(JSTR(oss.str().c_str())));                                                                                     \
-        return;                                                                                                                                                     \
-    }                                                                                                                                                               \
-    if (PyObject_HasAttrString(self->cls, "__v8_unconstructable__")) {                                                                                              \
-        PyObject* format_args = Py_BuildValue("O", self->cls_name);                                                                                                 \
-        JS_PROPAGATE_PY(format_args);                                                                                                                               \
-        PyObject* format_string = PyUnicode_FromString("%s is not a constructor");                                                                                  \
-        if (format_string == NULL) {                                                                                                                                \
-            Py_XDECREF(format_args);                                                                                                                                \
-            js_throw_py();                                                                                                                                          \
-            return;                                                                                                                                                 \
-        }                                                                                                                                                           \
-        PyObject* message = PyUnicode_Format(format_string, format_args);                                                                                           \
-        JS_PROPAGATE_PY(message);                                                                                                                                   \
-        isolate->ThrowException(Exception::TypeError(js_from_py(message, context).As<String>()));                                                                   \
-        Py_XDECREF(format_string);                                                                                                                                  \
-        Py_XDECREF(message);                                                                                                                                        \
-    }                                                                                                                                                               \
-                                                                                                                                                                    \
-    Local<Object> js_new_object = info.Holder();                                                                                                                    \
-    PyObject* kwargs = PyDict_New();                                                                                                                                \
-    if (PyDict_SetItemString(kwargs, "win", ctx_c->py_global) != 0) {                                                                                               \
-        Py_XDECREF(kwargs);                                                                                                                                         \
-        js_throw_py();                                                                                                                                              \
-    }                                                                                                                                                               \
-    PyObject* args = pys_from_jss(info, context);                                                                                                                   \
-    PyObject* new_object = PyObject_Call(self->cls, args, kwargs);                                                                                                  \
-    Py_XDECREF(args);                                                                                                                                               \
-    Py_XDECREF(kwargs);                                                                                                                                             \
-    JS_PROPAGATE_PY(new_object);                                                                                                                                    \
-    if (!py_class_init_js_object(js_new_object, new_object, context)) {                                                                                            \
-        Py_XDECREF(new_object);                                                                                                                                    \
-        js_throw_py();                                                                                                                                             \
-        return;                                                                                                                                                    \
-    }                                                                                                                                                               \
+static void
+py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
+                        Local<Context> context,
+                        py_class* self,
+                        context_c* py_context)
+{
+    bool can_new = (self->constructor_behavior & FlagConstructor::kNew) != 0;
+    bool can_call = (self->constructor_behavior & FlagConstructor::kCall) != 0;
+    if (!can_call && !can_new) {
+        info.GetIsolate()->ThrowException(Exception::TypeError(JSTR("Illegal constructor")));
+        return;
+    }
+    if (!can_call && !info.IsConstructCall()) {
+        std::ostringstream message;
+        message << "Failed to construct '" << PyUnicode_AsUTF8_abi3(self->cls_name)
+                << "': Please use the 'new' operator, this DOM object constructor "
+                   "cannot be called as a function.";
+        info.GetIsolate()->ThrowException(Exception::TypeError(JSTR(message.str().c_str())));
+        return;
+    }
+    if (self->unconstructable) {
+        PyObject* message = PyUnicode_FromFormat("%S is not a constructor", self->cls_name);
+        if (message == NULL) {
+            js_throw_py();
+            return;
+        }
+        Local<Value> js_message = js_from_py(message, context);
+        Py_DECREF(message);
+        if (js_message.IsEmpty() || PyErr_Occurred()) {
+            js_throw_py();
+            return;
+        }
+        info.GetIsolate()->ThrowException(Exception::TypeError(js_message.As<String>()));
+        return;
+    }
+
+    PyObject* kwargs = PyDict_New();
+    if (kwargs == NULL) {
+        js_throw_py();
+        return;
+    }
+    if (PyDict_SetItemString(kwargs, "win", py_context->py_global) < 0) {
+        Py_DECREF(kwargs);
+        js_throw_py();
+        return;
+    }
+    PyObject* args = pys_from_jss(info, context);
+    if (args == NULL) {
+        Py_DECREF(kwargs);
+        js_throw_py();
+        return;
+    }
+    PyObject* new_object = PyObject_Call(self->cls, args, kwargs);
+    Py_DECREF(args);
+    Py_DECREF(kwargs);
+    if (new_object == NULL) {
+        js_throw_py();
+        return;
+    }
+    if (!py_class_init_js_object(info.Holder(), new_object, context)) {
+        Py_DECREF(new_object);
+        js_throw_py();
+        return;
+    }
     Py_DECREF(new_object);
+}
 
 
 void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
@@ -141,48 +146,89 @@ void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
     context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     if (ctx_c->hook) {
         faker::FakerHookConstruct construct_hook(info, PyUnicode_AsUTF8_abi3(self->cls_name),  self->cls, ctx_c);
-
-        PY_CLASS_CONSTRUCT_CALLBACK_CODE;
+        py_class_construct_impl(info, context, self, ctx_c);
     }
     else {
-
-        PY_CLASS_CONSTRUCT_CALLBACK_CODE
-
+        py_class_construct_impl(info, context, self, ctx_c);
     }
 }
 
-#define PY_CLASS_METHOD_CALLBACK_CODE                                    \
-    PyObject* args = pys_from_jss(info, context);                        \
-    JS_PROPAGATE_PY(args);                                               \
-    PyObject* method_py = PyObject_GetAttrString(self, method_name_str); \
-    JS_PROPAGATE_PY(method_py);                                          \
-    PyObject* retval = PyObject_Call(method_py, args, NULL);             \
-    Py_XDECREF(method_py);                                               \
-    Py_XDECREF(args);                                                    \
-    JS_PROPAGATE_PY(retval);                                             \
-    info.GetReturnValue().Set(js_from_py(retval, context));              \
-    Py_XDECREF(retval);
+static void
+py_class_method_impl(const FunctionCallbackInfo<Value>& info,
+                     Local<Context> context,
+                     PyObject* self,
+                     PyObject* method,
+                     bool cross_origin)
+{
+    PyObject* method_name = PyObject_GetAttrString(method, "__name__");
+    if (method_name == NULL || !PyUnicode_Check(method_name)) {
+        Py_XDECREF(method_name);
+        PyErr_SetString(PyExc_TypeError, "Python callback must have a string __name__");
+        js_throw_py();
+        return;
+    }
+    PyObject* callable;
+    if (self == Py_None) {
+        Py_INCREF(method);
+        callable = method;
+    }
+    else {
+        callable = PyObject_GetAttr(self, method_name);
+    }
+    if (callable == NULL) {
+        Py_DECREF(method_name);
+        js_throw_py();
+        return;
+    }
 
+    PyObject* args = pys_from_jss(info, context);
+    if (args == NULL) {
+        Py_DECREF(callable);
+        Py_DECREF(method_name);
+        js_throw_py();
+        return;
+    }
+    PyObject* kwargs = NULL;
+    if (cross_origin) {
+        Local<Context> incumbent = isolate->GetIncumbentContext();
+        if (incumbent.IsEmpty()) {
+            Py_DECREF(args);
+            Py_DECREF(callable);
+            Py_DECREF(method_name);
+            PyErr_SetString(PyExc_RuntimeError, "cross-origin callback has no incumbent context");
+            js_throw_py();
+            return;
+        }
+        context_c* incumbent_ctx = (context_c*)incumbent->GetEmbedderData(CONTEXT_OBJECT_SLOT)
+            .As<External>()->Value();
+        kwargs = PyDict_New();
+        if (kwargs == NULL || PyDict_SetItemString(kwargs, "win", incumbent_ctx->py_global) < 0) {
+            Py_XDECREF(kwargs);
+            Py_DECREF(args);
+            Py_DECREF(callable);
+            Py_DECREF(method_name);
+            js_throw_py();
+            return;
+        }
+    }
 
-#define PY_CLASS_CROSS_ORIGIN_METHOD_CALLBACK_CODE                                                                          \
-    PyObject* args = pys_from_jss(info, context);                                                                           \
-    JS_PROPAGATE_PY(args);                                                                                                  \
-    PyObject* method_py = PyObject_GetAttrString(self, method_name_str);                                                    \
-    JS_PROPAGATE_PY(method_py);                                                                                             \
-    PyObject* kwargs = PyDict_New();                                                                                        \
-    Local<Context> incumbent_ctx = isolate->GetIncumbentContext();                                                          \
-    context_c* incumbent_ctx_c = (context_c*)incumbent_ctx->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();   \
-    if (PyDict_SetItemString(kwargs, "win", incumbent_ctx_c->py_global) != 0) {                                             \
-        Py_XDECREF(kwargs);                                                                                                 \
-        js_throw_py();                                                                                                      \
-    }                                                                                                                       \
-    PyObject* retval = PyObject_Call(method_py, args, kwargs);                                                              \
-    Py_XDECREF(kwargs);                                                                                                     \
-    Py_XDECREF(method_py);                                                                                                  \
-    Py_XDECREF(args);                                                                                                       \
-    JS_PROPAGATE_PY(retval);                                                                                                \
-    info.GetReturnValue().Set(js_from_py(retval, context));                                                                 \
-    Py_XDECREF(retval);  
+    PyObject* result = PyObject_Call(callable, args, kwargs);
+    Py_XDECREF(kwargs);
+    Py_DECREF(args);
+    Py_DECREF(callable);
+    Py_DECREF(method_name);
+    if (result == NULL) {
+        js_throw_py();
+        return;
+    }
+    Local<Value> js_result = js_from_py(result, context);
+    Py_DECREF(result);
+    if (js_result.IsEmpty() || PyErr_Occurred()) {
+        js_throw_py();
+        return;
+    }
+    info.GetReturnValue().Set(js_result);
+}
 
 
 void py_class_cross_origin_method_callback(const FunctionCallbackInfo<Value>& info) {
@@ -212,10 +258,10 @@ void py_class_cross_origin_method_callback(const FunctionCallbackInfo<Value>& in
     context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     if (ctx_c->hook) {
         faker::FakerHookOperation operation_hook(info, method_name_str, self, ctx_c);
-        PY_CLASS_CROSS_ORIGIN_METHOD_CALLBACK_CODE
+        py_class_method_impl(info, context, self, method, true);
     }
     else {
-        PY_CLASS_CROSS_ORIGIN_METHOD_CALLBACK_CODE
+        py_class_method_impl(info, context, self, method, true);
     }
 }
 
@@ -246,10 +292,10 @@ void py_class_method_callback(const FunctionCallbackInfo<Value>& info) {
     context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     if (ctx_c->hook) {
         faker::FakerHookOperation operation_hook(info, method_name_str, self, ctx_c);
-        PY_CLASS_METHOD_CALLBACK_CODE
+        py_class_method_impl(info, context, self, method, false);
     }
     else {
-        PY_CLASS_METHOD_CALLBACK_CODE
+        py_class_method_impl(info, context, self, method, false);
     }
 }
 
@@ -403,29 +449,271 @@ void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info) {
     JS_PROPAGATE_PY(result);
 }
 
+static PyObject*
+get_handler_method(PyObject* self, const char* method_name)
+{
+    PyObject* method = PyObject_GetAttrString(self, method_name);
+    if (method == NULL && PyErr_ExceptionMatches(PyExc_AttributeError))
+        PyErr_Clear();
+    return method;
+}
 
-#define NAMED_GETTER_CODE(py_method_name)                                             \
-    PyObject* name = py_from_js(js_name, context);                                    \
-    if (name == NULL) {                                                               \
-        js_throw_py();                                                                \
-        return Intercepted::kNo;                                                      \
-    };                                                                                \
-    if (PyObject_HasAttrString(self, py_method_name)) {                               \
-        PyObject* value = PyObject_CallMethod(self, py_method_name, "O", name);       \
-        Py_XDECREF(name);                                                             \
-        if (value == NULL) {                                                          \
-            js_throw_py();                                                            \
-            return Intercepted::kNo;                                                  \
-        }                                                                             \
-        if (value == Py_None) {                                                       \
-            return Intercepted::kNo;                                                  \
-        }                                                                             \
-        info.GetReturnValue().Set(js_from_py(value, context));                        \
-        Py_XDECREF(value);                                                            \
-        return Intercepted::kYes;                                                     \
-    }                                                                                 \
-    Py_XDECREF(name);                                                                 \
-    return Intercepted::kNo;
+static Intercepted
+property_getter_handler(PyObject* key,
+                        const PropertyCallbackInfo<Value>& info,
+                        Local<Context> context,
+                        PyObject* self,
+                        const char* method_name)
+{
+    if (key == NULL) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    PyObject* method = get_handler_method(self, method_name);
+    if (method == NULL) {
+        Py_DECREF(key);
+        if (PyErr_Occurred())
+            js_throw_py();
+        return Intercepted::kNo;
+    }
+    PyObject* result = PyObject_CallFunctionObjArgs(method, key, NULL);
+    Py_DECREF(method);
+    Py_DECREF(key);
+    if (result == NULL) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    if (result == Py_None) {
+        Py_DECREF(result);
+        return Intercepted::kNo;
+    }
+    Local<Value> js_result = js_from_py(result, context);
+    Py_DECREF(result);
+    if (js_result.IsEmpty() || PyErr_Occurred()) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    info.GetReturnValue().Set(js_result);
+    return Intercepted::kYes;
+}
+
+static Intercepted
+property_setter_handler(PyObject* key,
+                        Local<Value> js_value,
+                        const PropertyCallbackInfo<void>& info,
+                        Local<Context> context,
+                        PyObject* self,
+                        const char* method_name)
+{
+    if (key == NULL) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    PyObject* value = py_from_js(js_value, context);
+    if (value == NULL) {
+        Py_DECREF(key);
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    PyObject* method = get_handler_method(self, method_name);
+    if (method == NULL) {
+        Py_DECREF(key);
+        Py_DECREF(value);
+        if (PyErr_Occurred())
+            js_throw_py();
+        return Intercepted::kNo;
+    }
+    PyObject* result = PyObject_CallFunctionObjArgs(method, key, value, NULL);
+    Py_DECREF(method);
+    Py_DECREF(key);
+    Py_DECREF(value);
+    if (result == NULL) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    if (result == Py_None) {
+        Py_DECREF(result);
+        return Intercepted::kNo;
+    }
+    Local<Value> js_result = js_from_py(result, context);
+    Py_DECREF(result);
+    if (js_result.IsEmpty() || PyErr_Occurred()) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    info.GetReturnValue().Set(js_result);
+    return Intercepted::kYes;
+}
+
+static Intercepted
+property_deleter_handler(PyObject* key,
+                         const PropertyCallbackInfo<Boolean>& info,
+                         PyObject* self,
+                         const char* method_name)
+{
+    if (key == NULL) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    PyObject* method = get_handler_method(self, method_name);
+    if (method == NULL) {
+        Py_DECREF(key);
+        if (PyErr_Occurred())
+            js_throw_py();
+        return Intercepted::kNo;
+    }
+    PyObject* result = PyObject_CallFunctionObjArgs(method, key, NULL);
+    Py_DECREF(method);
+    Py_DECREF(key);
+    if (result == NULL) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    if (!PyBool_Check(result)) {
+        Py_DECREF(result);
+        return Intercepted::kNo;
+    }
+    info.GetReturnValue().Set(Boolean::New(info.GetIsolate(), result == Py_True));
+    Py_DECREF(result);
+    return Intercepted::kYes;
+}
+
+static Intercepted
+property_query_handler(PyObject* key,
+                       const PropertyCallbackInfo<Integer>& info,
+                       PyObject* self,
+                       const char* method_name)
+{
+    if (key == NULL) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    PyObject* method = get_handler_method(self, method_name);
+    if (method == NULL) {
+        Py_DECREF(key);
+        if (PyErr_Occurred())
+            js_throw_py();
+        return Intercepted::kNo;
+    }
+    PyObject* result = PyObject_CallFunctionObjArgs(method, key, NULL);
+    Py_DECREF(method);
+    Py_DECREF(key);
+    if (result == NULL) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    if (!PyLong_Check(result)) {
+        Py_DECREF(result);
+        return Intercepted::kNo;
+    }
+    long attributes = PyLong_AsLong(result);
+    Py_DECREF(result);
+    if (PyErr_Occurred()) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    info.GetReturnValue().Set(Integer::New(info.GetIsolate(), attributes));
+    return Intercepted::kYes;
+}
+
+static void
+named_enumerator_handler(const PropertyCallbackInfo<Array>& info,
+                         Local<Context> context,
+                         PyObject* self,
+                         const char* method_name)
+{
+    PyObject* method = get_handler_method(self, method_name);
+    if (method == NULL) {
+        if (PyErr_Occurred())
+            js_throw_py();
+        return;
+    }
+    PyObject* keys = PyObject_CallNoArgs(method);
+    Py_DECREF(method);
+    if (keys == NULL) {
+        js_throw_py();
+        return;
+    }
+    if (keys == Py_None || !PySequence_Check(keys)) {
+        Py_DECREF(keys);
+        return;
+    }
+    Py_ssize_t length = PySequence_Length(keys);
+    if (length < 0 || length > INT_MAX) {
+        Py_DECREF(keys);
+        if (!PyErr_Occurred())
+            PyErr_SetString(PyExc_OverflowError, "handler key sequence is too large");
+        js_throw_py();
+        return;
+    }
+    Local<Array> js_keys = Array::New(info.GetIsolate(), (int)length);
+    for (Py_ssize_t i = 0; i < length; ++i) {
+        PyObject* item = PySequence_GetItem(keys, i);
+        if (item == NULL) {
+            Py_DECREF(keys);
+            js_throw_py();
+            return;
+        }
+        Local<Value> js_item = js_from_py(item, context);
+        Py_DECREF(item);
+        if (js_item.IsEmpty() || PyErr_Occurred()) {
+            Py_DECREF(keys);
+            js_throw_py();
+            return;
+        }
+        bool set_worked;
+        if (!js_keys->Set(context, (uint32_t)i, js_item).To(&set_worked)) {
+            Py_DECREF(keys);
+            PyErr_SetString(PyExc_RuntimeError, "failed to set handler enumeration key");
+            js_throw_py();
+            return;
+        }
+    }
+    Py_DECREF(keys);
+    info.GetReturnValue().Set(js_keys);
+}
+
+static void
+indexed_enumerator_handler(const PropertyCallbackInfo<Array>& info,
+                           Local<Context> context,
+                           PyObject* self,
+                           const char* method_name)
+{
+    PyObject* method = get_handler_method(self, method_name);
+    if (method == NULL) {
+        if (PyErr_Occurred())
+            js_throw_py();
+        return;
+    }
+    PyObject* py_length = PyObject_CallNoArgs(method);
+    Py_DECREF(method);
+    if (py_length == NULL) {
+        js_throw_py();
+        return;
+    }
+    if (py_length == Py_None || !PyLong_Check(py_length)) {
+        Py_DECREF(py_length);
+        return;
+    }
+    long length = PyLong_AsLong(py_length);
+    Py_DECREF(py_length);
+    if (length < 0 || length > INT_MAX || PyErr_Occurred()) {
+        if (!PyErr_Occurred())
+            PyErr_SetString(PyExc_OverflowError, "handler index length is out of range");
+        js_throw_py();
+        return;
+    }
+    Local<Array> keys = Array::New(info.GetIsolate(), (int)length);
+    for (int i = 0; i < length; ++i) {
+        bool set_worked;
+        if (!keys->Set(context, i, Integer::New(info.GetIsolate(), i)).To(&set_worked)) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to set handler enumeration index");
+            js_throw_py();
+            return;
+        }
+    }
+    info.GetReturnValue().Set(keys);
+}
 
 
 Intercepted named_getter(Local<Name> js_name, Info(Value)) { 
@@ -436,11 +724,11 @@ Intercepted named_getter(Local<Name> js_name, Info(Value)) {
 
     if (ctx_c->hook) {
         faker::FakerHookGetter hook(info, js_name, self, ctx_c);
-        NAMED_GETTER_CODE("__v8_name_get__")
+        return property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_name_get__");
     }
     else
     {
-        NAMED_GETTER_CODE("__v8_name_get__")
+        return property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_name_get__");
     }
 }
 
@@ -450,7 +738,7 @@ Intercepted properties_named_getter(Local<Name> js_name, Info(Value)) {
     context_c* ctx_c = (context_c*)info.GetIsolate()->GetCurrentContext()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     PyObject* self = ctx_c->py_global;
 
-    NAMED_GETTER_CODE("__v8_property_name_get__")
+    return property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_property_name_get__");
 }
 
 Intercepted cross_origin_named_getter(Local<Name> js_name, Info(Value)){
@@ -458,43 +746,11 @@ Intercepted cross_origin_named_getter(Local<Name> js_name, Info(Value)){
 
     PyObject* self = get_self_cross_origin(info);
 
-    NAMED_GETTER_CODE("__v8_cross_origin_name_get__")
+    return property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_cross_origin_name_get__");
 
 }
 
 
-
-#define NAMED_SETTER_CODE(py_method_name)                                                   \
-    PyObject* name = py_from_js(js_name, context);                                          \
-    if (name == NULL) {                                                                     \
-        js_throw_py();                                                                      \
-        return Intercepted::kNo;                                                            \
-    };                                                                                      \
-                                                                                            \
-    PyObject* value = py_from_js(js_value, context);                                        \
-    if (value == NULL) {                                                                    \
-        Py_XDECREF(name);                                                                   \
-        js_throw_py();                                                                      \
-        return Intercepted::kNo;                                                            \
-    }                                                                                       \
-    if (PyObject_HasAttrString(self, py_method_name)) {                                     \
-        PyObject* ret = PyObject_CallMethod(self, py_method_name, "OO", name, value);       \
-        Py_XDECREF(name);                                                                   \
-        Py_XDECREF(value);                                                                  \
-        if (ret == NULL) {                                                                  \
-            js_throw_py();                                                                  \
-            return Intercepted::kNo;                                                        \
-        }                                                                                   \
-        if (ret == Py_None) {                                                               \
-            return Intercepted::kNo;                                                        \
-        }                                                                                   \
-        info.GetReturnValue().Set(js_from_py(ret, context));                                \
-        Py_XDECREF(ret);                                                                    \
-        return Intercepted::kYes;                                                           \
-    }                                                                                       \
-    Py_XDECREF(name);                                                                       \
-    Py_XDECREF(value);                                                                      \
-    return Intercepted::kNo;
 
 Intercepted named_setter(Local<Name> js_name, Local<Value> js_value, Info(void)) {
     SETUP
@@ -504,10 +760,10 @@ Intercepted named_setter(Local<Name> js_name, Local<Value> js_value, Info(void))
     
     if (ctx_c->hook) {
         faker::FakerHookSetter hook(info, js_name, js_value, self, ctx_c);
-        NAMED_SETTER_CODE("__v8_name_set__")
+        return property_setter_handler(py_from_js(js_name, context), js_value, info, context, self, "__v8_name_set__");
     }
     else {
-        NAMED_SETTER_CODE("__v8_name_set__")
+        return property_setter_handler(py_from_js(js_name, context), js_value, info, context, self, "__v8_name_set__");
     }
 }
 
@@ -516,171 +772,44 @@ Intercepted cross_origin_named_setter(Local<Name> js_name, Local<Value> js_value
 
     PyObject* self = get_self_cross_origin(info);
 
-    NAMED_SETTER_CODE("__v8_cross_origin_name_set__")
+    return property_setter_handler(py_from_js(js_name, context), js_value, info, context, self, "__v8_cross_origin_name_set__");
 }
-
-#define NAMED_DELETER_CODE(py_method_name)                                                \
-    PyObject *name = py_from_js(js_name, context);                                        \
-    if (name == NULL)                                                                     \
-    {                                                                                     \
-        js_throw_py();                                                                    \
-        return Intercepted::kNo;                                                          \
-    };                                                                                    \
-                                                                                          \
-    if (PyObject_HasAttrString(self, py_method_name))                                     \
-    {                                                                                     \
-        PyObject *value = PyObject_CallMethod(self, py_method_name, "O", name);           \
-        Py_XDECREF(name);                                                                 \
-        if (value == NULL)                                                                \
-        {                                                                                 \
-            js_throw_py();                                                                \
-            return Intercepted::kNo;                                                      \
-        }                                                                                 \
-        if (value == Py_None)                                                             \
-        {                                                                                 \
-            return Intercepted::kNo;                                                      \
-        }                                                                                 \
-        if (!PyBool_Check(value))                                                         \
-        {                                                                                 \
-            Py_XDECREF(value);                                                            \
-            return Intercepted::kNo;                                                      \
-        }                                                                                 \
-        info.GetReturnValue().Set(Boolean::New(isolate, value == Py_True));               \
-        Py_XDECREF(value);                                                                \
-        return Intercepted::kYes;                                                         \
-    }                                                                                     \
-    Py_XDECREF(name);                                                                     \
-    return Intercepted::kNo;
 
 Intercepted named_deleter(Local<Name> js_name, Info(Boolean)) {
     SETUP;
     PyObject* self = get_self(info);
-    NAMED_DELETER_CODE("__v8_name_del__")
+    return property_deleter_handler(py_from_js(js_name, context), info, self, "__v8_name_del__");
 }
 
 Intercepted cross_origin_named_deleter(Local<Name> js_name, Info(Boolean)){
     SETUP;
     PyObject* self = get_self_cross_origin(info);
-    NAMED_DELETER_CODE("__v8_cross_origin_name_del__")
+    return property_deleter_handler(py_from_js(js_name, context), info, self, "__v8_cross_origin_name_del__");
 }
-
-#define NAMED_QUERY_CODE(py_method_name)                                             \
-    PyObject *name = py_from_js(js_name, context);                                   \
-    if (name == NULL)                                                                \
-    {                                                                                \
-        js_throw_py();                                                               \
-        return Intercepted::kNo;                                                     \
-    };                                                                               \
-                                                                                     \
-    if (PyObject_HasAttrString(self, py_method_name))                                \
-    {                                                                                \
-        PyObject *value = PyObject_CallMethod(self, py_method_name, "O", name);      \
-        Py_XDECREF(name);                                                            \
-        if (value == NULL)                                                           \
-        {                                                                            \
-            js_throw_py();                                                           \
-            return Intercepted::kNo;                                                 \
-        }                                                                            \
-        if (PyLong_Check(value))                                                     \
-        {                                                                            \
-            info.GetReturnValue().Set(Integer::New(isolate, PyLong_AsLong(value)));  \
-            Py_XDECREF(value);                                                       \
-            return Intercepted::kYes;                                                \
-        }                                                                            \
-        Py_XDECREF(value);                                                           \
-        return Intercepted::kNo;                                                     \
-    }                                                                                \
-    Py_XDECREF(name);                                                                \
-    return Intercepted::kNo;
 
 Intercepted named_query(Local<Name> js_name, Info(Integer)) {
     SETUP;
     PyObject* self = get_self(info);
-    NAMED_QUERY_CODE("__v8_name_query__")
+    return property_query_handler(py_from_js(js_name, context), info, self, "__v8_name_query__");
 }
 
 Intercepted cross_origin_named_query(Local<Name> js_name, Info(Integer)){
     SETUP;
     PyObject* self = get_self_cross_origin(info);
-    NAMED_QUERY_CODE("__v8_cross_origin_name_query__")
+    return property_query_handler(py_from_js(js_name, context), info, self, "__v8_cross_origin_name_query__");
 }
-
-#define NAMED_ENUM_CODE(py_method_name)                                           \
-    PyObject *keys = PyObject_CallMethod(self, py_method_name, "");               \
-    JS_PROPAGATE_PY(keys);                                                        \
-    if (keys == Py_None)                                                          \
-    {                                                                             \
-        return;                                                                   \
-    }                                                                             \
-    if (!PySequence_Check(keys))                                                  \
-    {                                                                             \
-        Py_XDECREF(keys);                                                         \
-        return;                                                                   \
-    }                                                                             \
-    Local<Array> js_keys = Array::New(isolate, PySequence_Length(keys));          \
-    for (int i = 0; i < PySequence_Length(keys); i++)                             \
-    {                                                                             \
-        PyObject *item = PySequence_GetItem(keys, i);                             \
-        if (item == NULL)                                                         \
-        {                                                                         \
-            Py_XDECREF(keys);                                                     \
-            js_throw_py();                                                        \
-            return;                                                               \
-        }                                                                         \
-        Local<Value> js_item = js_from_py(item, context);                         \
-        Py_XDECREF(item);                                                         \
-        if (PyErr_Occurred())                                                     \
-        {                                                                         \
-            Py_XDECREF(keys);                                                     \
-            js_throw_py();                                                        \
-            return;                                                               \
-        }                                                                         \
-        bool set_worked;                                                          \
-        if (!js_keys->Set(context, i, js_item).To(&set_worked))                   \
-        {                                                                         \
-            Py_XDECREF(keys);                                                     \
-            js_throw_py();                                                        \
-            return;                                                               \
-        }                                                                         \
-    }                                                                             \
-    Py_XDECREF(keys);                                                             \
-    info.GetReturnValue().Set(js_keys);
 
 void named_enumerator(Info(Array)) {
     SETUP;
     PyObject* self = get_self(info);
-    NAMED_ENUM_CODE("__v8_name_enum__")
+    named_enumerator_handler(info, context, self, "__v8_name_enum__");
 }
 
 void cross_origin_named_enumerator(Info(Array)) {
     SETUP;
     PyObject* self = get_self_cross_origin(info);
-    NAMED_ENUM_CODE("__v8_cross_origin_name_enum__")
+    named_enumerator_handler(info, context, self, "__v8_cross_origin_name_enum__");
 }
-
-#define INDEXED_GETTER_CODE(py_method_name)                                          \
-    PyObject* idx = PyLong_FromSize_t(index);                                        \
-    if (idx == NULL) {                                                               \
-        js_throw_py();                                                               \
-        return Intercepted::kNo;                                                     \
-    };                                                                               \
-                                                                                     \
-    if (PyObject_HasAttrString(self, py_method_name)) {                              \
-        PyObject* value = PyObject_CallMethod(self, py_method_name, "O", idx);       \
-        Py_XDECREF(idx);                                                             \
-        if (value == NULL) {                                                         \
-            js_throw_py();                                                           \
-            return Intercepted::kNo;                                                 \
-        }                                                                            \
-        if (value == Py_None) {                                                      \
-            return Intercepted::kNo;                                                 \
-        }                                                                            \
-        info.GetReturnValue().Set(js_from_py(value, context));                       \
-        Py_XDECREF(value);                                                           \
-        return Intercepted::kYes;                                                    \
-    }                                                                                \
-    Py_XDECREF(idx);                                                                 \
-    return Intercepted::kNo;                                                         
 
 Intercepted indexed_getter(uint32_t index, Info(Value)) {
     SETUP;
@@ -690,10 +819,10 @@ Intercepted indexed_getter(uint32_t index, Info(Value)) {
 
     if (ctx_c->hook) {
         faker::FakerHookGetter hook(info, index, self, ctx_c);
-        INDEXED_GETTER_CODE("__v8_index_get__")
+        return property_getter_handler(PyLong_FromSize_t(index), info, context, self, "__v8_index_get__");
     }
     else {
-        INDEXED_GETTER_CODE("__v8_index_get__")
+        return property_getter_handler(PyLong_FromSize_t(index), info, context, self, "__v8_index_get__");
     }
 }
 
@@ -702,41 +831,9 @@ Intercepted cross_origin_indexed_getter(uint32_t index, Info(Value)) {
 
     PyObject* self = get_self_cross_origin(info);
 
-    INDEXED_GETTER_CODE("__v8_cross_origin_index_get__")
+    return property_getter_handler(PyLong_FromSize_t(index), info, context, self, "__v8_cross_origin_index_get__");
 }
 
-
-#define INDEXED_SETTER_CODE(py_method_name)                                             \
-    PyObject* idx = PyLong_FromSize_t(index);                                           \
-    if (idx == NULL) {                                                                  \
-        js_throw_py();                                                                  \
-        return Intercepted::kNo;                                                        \
-    };                                                                                  \
-                                                                                        \
-    PyObject* value = py_from_js(js_value, context);                                    \
-    if (value == NULL) {                                                                \
-        Py_XDECREF(idx);                                                                \
-        js_throw_py();                                                                  \
-        return Intercepted::kNo;                                                        \
-    }                                                                                   \
-    if (PyObject_HasAttrString(self, py_method_name)) {                                 \
-        PyObject* ret = PyObject_CallMethod(self, py_method_name, "OO", idx, value);    \
-        Py_XDECREF(idx);                                                                \
-        Py_XDECREF(value);                                                              \
-        if (ret == NULL) {                                                              \
-            js_throw_py();                                                              \
-            return Intercepted::kNo;                                                    \
-        }                                                                               \
-        if (ret == Py_None) {                                                           \
-            return Intercepted::kNo;                                                    \
-        }                                                                               \
-        info.GetReturnValue().Set(js_from_py(ret, context));                            \
-        Py_XDECREF(ret);                                                                \
-        return Intercepted::kYes;                                                       \
-    }                                                                                   \
-    Py_XDECREF(idx);                                                                    \
-    Py_XDECREF(value);                                                                  \
-    return Intercepted::kNo;
 
 Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
     SETUP;
@@ -746,10 +843,10 @@ Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
 
     if (ctx_c->hook) {
         faker::FakerHookSetter hook(info, index, js_value, self, ctx_c);
-        INDEXED_SETTER_CODE("__v8_index_set__")
+        return property_setter_handler(PyLong_FromSize_t(index), js_value, info, context, self, "__v8_index_set__");
     }
     else {
-        INDEXED_SETTER_CODE("__v8_index_set__")
+        return property_setter_handler(PyLong_FromSize_t(index), js_value, info, context, self, "__v8_index_set__");
     }
 }
 
@@ -758,127 +855,43 @@ Intercepted cross_origin_indexed_setter(uint32_t index, Local<Value> js_value, I
 
     PyObject* self = get_self_cross_origin(info);
 
-    INDEXED_SETTER_CODE("__v8_cross_origin_index_set__")
+    return property_setter_handler(PyLong_FromSize_t(index), js_value, info, context, self, "__v8_cross_origin_index_set__");
 }
-
-#define INDEXED_DELETER_CODE(py_method_name)                                       \
-    PyObject *idx = PyLong_FromSize_t(index);                                      \
-    if (idx == NULL)                                                               \
-    {                                                                              \
-        js_throw_py();                                                             \
-        return Intercepted::kNo;                                                   \
-    };                                                                             \
-                                                                                   \
-    if (PyObject_HasAttrString(self, py_method_name))                              \
-    {                                                                              \
-        PyObject *value = PyObject_CallMethod(self, py_method_name, "O", idx);     \
-        Py_XDECREF(idx);                                                           \
-        if (value == NULL)                                                         \
-        {                                                                          \
-            js_throw_py();                                                         \
-            return Intercepted::kNo;                                               \
-        }                                                                          \
-        if (value == Py_None)                                                      \
-        {                                                                          \
-            return Intercepted::kNo;                                               \
-        }                                                                          \
-        if (!PyBool_Check(value))                                                  \
-        {                                                                          \
-            Py_XDECREF(value);                                                     \
-            return Intercepted::kNo;                                               \
-        }                                                                          \
-        info.GetReturnValue().Set(Boolean::New(isolate, value == Py_True));        \
-        Py_XDECREF(value);                                                         \
-        return Intercepted::kYes;                                                  \
-    }                                                                              \
-    Py_XDECREF(idx);                                                               \
-    return Intercepted::kNo;
 
 Intercepted indexed_deleter(uint32_t index, Info(Boolean)) {
     SETUP;
     PyObject* self = get_self(info);
-    INDEXED_DELETER_CODE("__v8_index_del__")
+    return property_deleter_handler(PyLong_FromSize_t(index), info, self, "__v8_index_del__");
 }
 
 Intercepted cross_origin_indexed_deleter(uint32_t index, Info(Boolean)) {
     SETUP;
     PyObject* self = get_self_cross_origin(info);
-    INDEXED_DELETER_CODE("__v8_cross_origin_index_del__")
+    return property_deleter_handler(PyLong_FromSize_t(index), info, self, "__v8_cross_origin_index_del__");
 }
-
-#define INDEXED_QUERY_CODE(py_method_name)                                           \
-    PyObject *idx = PyLong_FromSize_t(index);                                        \
-    if (idx == NULL)                                                                 \
-    {                                                                                \
-        js_throw_py();                                                               \
-        return Intercepted::kNo;                                                     \
-    };                                                                               \
-                                                                                     \
-    if (PyObject_HasAttrString(self, py_method_name))                                \
-    {                                                                                \
-        PyObject *value = PyObject_CallMethod(self, py_method_name, "O", idx);       \
-        Py_XDECREF(idx);                                                             \
-        if (value == NULL)                                                           \
-        {                                                                            \
-            js_throw_py();                                                           \
-            return Intercepted::kNo;                                                 \
-        }                                                                            \
-        if (PyLong_Check(value))                                                     \
-        {                                                                            \
-            info.GetReturnValue().Set(Integer::New(isolate, PyLong_AsLong(value)));  \
-            Py_XDECREF(value);                                                       \
-            return Intercepted::kYes;                                                \
-        }                                                                            \
-        Py_XDECREF(value);                                                           \
-        return Intercepted::kNo;                                                     \
-    }                                                                                \
-    Py_XDECREF(idx);                                                                 \
-    return Intercepted::kNo;
 
 Intercepted indexed_query(uint32_t index, Info(Integer)) {
     SETUP;
     PyObject* self = get_self(info);
-    INDEXED_QUERY_CODE("__v8_index_query__")
+    return property_query_handler(PyLong_FromSize_t(index), info, self, "__v8_index_query__");
 }
 
 Intercepted cross_origin_indexed_query(uint32_t index, Info(Integer)) {
     SETUP;
     PyObject* self = get_self_cross_origin(info);
-    INDEXED_QUERY_CODE("__v8_cross_origin_index_query__")
+    return property_query_handler(PyLong_FromSize_t(index), info, self, "__v8_cross_origin_index_query__");
 }
-
-#define INDEXED_ENUM_CODE(py_method_name)                                         \
-    PyObject *len = PyObject_CallMethod(self, py_method_name, "");                \
-    JS_PROPAGATE_PY(len);                                                         \
-                                                                                  \
-    if (len == Py_None)                                                           \
-    {                                                                             \
-        return;                                                                   \
-    }                                                                             \
-    if (!PyLong_Check(len))                                                       \
-    {                                                                             \
-        Py_XDECREF(len);                                                          \
-        return;                                                                   \
-    }                                                                             \
-                                                                                  \
-    int length = PyLong_AsLong(len);                                              \
-    Local<Array> keys = Array::New(isolate, length);                              \
-    for (int i = 0; i < length; i++)                                              \
-    {                                                                             \
-        keys->Set(context, i, Integer::New(isolate, i));                          \
-    }                                                                             \
-    info.GetReturnValue().Set(keys);
 
 void indexed_enumerator(Info(Array)) {
     SETUP;
     PyObject* self = get_self(info);
-    INDEXED_ENUM_CODE("__v8_index_enum__")
+    indexed_enumerator_handler(info, context, self, "__v8_index_enum__");
 }
 
 void cross_origin_indexed_enumerator(Info(Array)) {
     SETUP;
     PyObject* self = get_self_cross_origin(info);
-    INDEXED_ENUM_CODE("__v8_cross_origin_index_enum__")    
+    indexed_enumerator_handler(info, context, self, "__v8_cross_origin_index_enum__");
 }
 
 

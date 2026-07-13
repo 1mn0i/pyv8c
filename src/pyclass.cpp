@@ -24,6 +24,132 @@ enum FlagImmutable {
     prototype = 1 << 1,
 };
 
+struct ClassConfig {
+    PyObject* class_dict = NULL;
+    PyObject* length = NULL;
+    PyObject* attributes = NULL;
+    PyObject* methods = NULL;
+    PyObject* constant_values = NULL;
+    PyObject* constant_callbacks = NULL;
+    PyObject* call = NULL;
+    PyObject* array = NULL;
+    PyObject* immutable = NULL;
+    PyObject* has_constructor = NULL;
+    PyObject* constructor_behavior = NULL;
+
+    bool global_this = false;
+    bool undetectable = false;
+    bool as_object = false;
+    bool unconstructable = false;
+    bool name_get = false;
+    bool name_set = false;
+    bool name_query = false;
+    bool name_enum = false;
+    bool name_del = false;
+    bool index_get = false;
+    bool index_set = false;
+    bool index_query = false;
+    bool index_enum = false;
+    bool index_del = false;
+    bool cross_origin_check = false;
+    bool cross_origin_name_get = false;
+    bool cross_origin_name_set = false;
+    bool cross_origin_name_query = false;
+    bool cross_origin_name_enum = false;
+    bool cross_origin_name_del = false;
+    bool cross_origin_index_get = false;
+    bool cross_origin_index_set = false;
+    bool cross_origin_index_query = false;
+    bool cross_origin_index_enum = false;
+    bool cross_origin_index_del = false;
+
+    ~ClassConfig()
+    {
+        Py_XDECREF(class_dict);
+        Py_XDECREF(length);
+        Py_XDECREF(attributes);
+        Py_XDECREF(methods);
+        Py_XDECREF(constant_values);
+        Py_XDECREF(constant_callbacks);
+        Py_XDECREF(call);
+        Py_XDECREF(array);
+        Py_XDECREF(immutable);
+        Py_XDECREF(has_constructor);
+        Py_XDECREF(constructor_behavior);
+    }
+};
+
+static bool
+class_config_has(PyObject* class_dict, const char* name, bool* result)
+{
+    int has_key = PyMapping_HasKeyString(class_dict, name);
+    if (has_key < 0)
+        return false;
+    *result = has_key != 0;
+    return true;
+}
+
+static bool
+class_config_get(PyObject* class_dict, const char* name, PyObject** result)
+{
+    bool has_key = false;
+    if (!class_config_has(class_dict, name, &has_key))
+        return false;
+    if (!has_key)
+        return true;
+    *result = PyMapping_GetItemString(class_dict, name);
+    return *result != NULL;
+}
+
+static bool
+class_config_load(PyObject* cls, ClassConfig* config)
+{
+    config->class_dict = PyObject_GetAttrString(cls, "__dict__");
+    if (config->class_dict == NULL)
+        return false;
+
+    if (!class_config_get(config->class_dict, "__v8_length__", &config->length) ||
+        !class_config_get(config->class_dict, "__v8_attribute__", &config->attributes) ||
+        !class_config_get(config->class_dict, "__v8_method__", &config->methods) ||
+        !class_config_get(config->class_dict, "__v8_constants_value__", &config->constant_values) ||
+        !class_config_get(config->class_dict, "__v8_constants_callback__", &config->constant_callbacks) ||
+        !class_config_get(config->class_dict, "__call__", &config->call) ||
+        !class_config_get(config->class_dict, "__v8_array__", &config->array) ||
+        !class_config_get(config->class_dict, "__v8_immutable__", &config->immutable) ||
+        !class_config_get(config->class_dict, "__v8_has_constructor__", &config->has_constructor) ||
+        !class_config_get(config->class_dict, "__v8_constructor__", &config->constructor_behavior))
+        return false;
+
+    if (!class_config_has(config->class_dict, "__v8_global_this__", &config->global_this) ||
+        !class_config_has(config->class_dict, "__v8_undetectable__", &config->undetectable) ||
+        !class_config_has(config->class_dict, "__v8_as_obj__", &config->as_object) ||
+        !class_config_has(config->class_dict, "__v8_unconstructable__", &config->unconstructable) ||
+        !class_config_has(config->class_dict, "__v8_name_get__", &config->name_get) ||
+        !class_config_has(config->class_dict, "__v8_name_set__", &config->name_set) ||
+        !class_config_has(config->class_dict, "__v8_name_query__", &config->name_query) ||
+        !class_config_has(config->class_dict, "__v8_name_enum__", &config->name_enum) ||
+        !class_config_has(config->class_dict, "__v8_name_del__", &config->name_del) ||
+        !class_config_has(config->class_dict, "__v8_index_get__", &config->index_get) ||
+        !class_config_has(config->class_dict, "__v8_index_set__", &config->index_set) ||
+        !class_config_has(config->class_dict, "__v8_index_query__", &config->index_query) ||
+        !class_config_has(config->class_dict, "__v8_index_enum__", &config->index_enum) ||
+        !class_config_has(config->class_dict, "__v8_index_del__", &config->index_del) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_check__", &config->cross_origin_check) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_name_get__", &config->cross_origin_name_get) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_name_set__", &config->cross_origin_name_set) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_name_query__", &config->cross_origin_name_query) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_name_enum__", &config->cross_origin_name_enum) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_name_del__", &config->cross_origin_name_del) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_index_get__", &config->cross_origin_index_get) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_index_set__", &config->cross_origin_index_set) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_index_query__", &config->cross_origin_index_query) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_index_enum__", &config->cross_origin_index_enum) ||
+        !class_config_has(config->class_dict, "__v8_cross_origin_index_del__", &config->cross_origin_index_del))
+        return false;
+
+    return true;
+}
+
 PyTypeObject* py_class_type = NULL;
 
 static PyType_Slot py_class_slots[] = {
@@ -55,6 +181,7 @@ py_class_dealloc(py_class* self)
 {
     Py_XDECREF(self->cls);
     Py_XDECREF(self->cls_name);
+    Py_XDECREF(self->call_method);
     //Py_XDECREF(self->parent);
     self->templ.Reset();
     //Py_TYPE(self)->tp_free((PyObject*)self);
@@ -107,104 +234,142 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     py_class *self = (py_class *) PyType_GenericAlloc(py_class_type, 0);
     PyErr_PROPAGATE(self);
 
+    self->cls = NULL;
+    self->cls_name = NULL;
+    self->call_method = NULL;
+    self->parent = NULL;
+    self->constructor_behavior = 0;
+    self->unconstructable = 0;
+    self->has_constructor = 0;
+    self->to_obj = 0;
+    self->templ.Reset();
+
     Py_INCREF(cls);
     self->cls = cls;
     self->cls_name = PyObject_GetAttrString(cls, "__name__");
     if (self->cls_name == NULL) {
-        Py_XDECREF(self->cls);
+        Py_DECREF((PyObject*)self);
         return NULL;
     }
 
-    //PyObject* class_dict = ((PyTypeObject*)cls)->tp_dict;
-    //PyObject* class_dict = PyType_GetDict((PyTypeObject *)cls);
-    PyObject* class_dict = PyObject_GetAttrString(cls, "__dict__");  // mappingproxy
-    if (class_dict == NULL)
-    {
-        Py_XDECREF(self->cls);
-        Py_XDECREF(self->cls_name);
+    ClassConfig config;
+    if (!class_config_load(cls, &config)) {
+        Py_DECREF((PyObject*)self);
         return NULL;
     }
 
     Local<External> js_self = External::New(isolate, self);
     int templ_lenght = 0;
-    if (PyMapping_HasKeyString(class_dict, "__v8_length__"))
-    {
-        PyObject* value = PyMapping_GetItemString(class_dict, "__v8_length__");
-        if (PyLong_Check(value)) 
-            templ_lenght = PyLong_AsLong(value);
-        Py_XDECREF(value);
+    if (config.length != NULL) {
+        if (!PyLong_Check(config.length)) {
+            PyErr_SetString(PyExc_TypeError, "__v8_length__ must be an integer");
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+        templ_lenght = PyLong_AsLong(config.length);
+        if (PyErr_Occurred()) {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
     }
+    if (config.constructor_behavior != NULL) {
+        if (!PyLong_Check(config.constructor_behavior)) {
+            PyErr_SetString(PyExc_TypeError, "__v8_constructor__ must be an integer");
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+        self->constructor_behavior = PyLong_AsLong(config.constructor_behavior);
+        if (PyErr_Occurred()) {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+    }
+    self->unconstructable = config.unconstructable;
 
     Local<FunctionTemplate> templ = FunctionTemplate::New(isolate, py_class_construct_callback, js_self,
             Local<Signature>(), templ_lenght, ConstructorBehavior::kAllow);
     
     const char* world = PyUnicode_AsUTF8_abi3(self->cls_name);
+    if (world == NULL) {
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
     Local<String> v8_name = V8String(isolate, world);
 
     Local<Signature> sig = Signature::New(isolate, templ);
-    if (PyMapping_HasKeyString(class_dict, "__v8_global_this__")) {
+    if (config.global_this) {
         Faker::Register(isolate, templ);
     }
 
-    PyObject* keys = PyMapping_Keys(class_dict);
+    PyObject* keys = PyMapping_Keys(config.class_dict);
     if (!keys) {
+        Py_DECREF((PyObject*)self);
         return NULL; 
     }
     Py_ssize_t num_keys = PyList_Size(keys);
     for (Py_ssize_t i = 0; i < num_keys; i++) 
     {
         PyObject* member_name = PyList_GetItem(keys, i);
-        PyObject* member_value = PyObject_GetItem(class_dict, member_name);
-        add_to_template(cls, py_ctx, member_name, member_value, templ, sig, world);
+        PyObject* member_value = PyObject_GetItem(config.class_dict, member_name);
+        if (member_value == NULL) {
+            Py_DECREF(keys);
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+        if (add_to_template(cls, py_ctx, member_name, member_value, templ, sig, world) < 0) {
+            Py_DECREF(member_value);
+            Py_DECREF(keys);
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
         Py_DECREF(member_value);
     }
     Py_XDECREF(keys);
 
-    if (PyMapping_HasKeyString(class_dict, "__v8_attribute__"))
+    if (config.attributes != NULL)
     {
-        PyObject* value = PyMapping_GetItemString(class_dict, "__v8_attribute__");
-        bindings::InstallAttributes(isolate, world, templ, sig, cls, value);
-        Py_DECREF(value);
+        bindings::InstallAttributes(isolate, world, templ, sig, cls, config.attributes);
     }
         
-    if (PyMapping_HasKeyString(class_dict, "__v8_method__"))
+    if (config.methods != NULL)
     {
-        PyObject* value = PyMapping_GetItemString(class_dict, "__v8_method__");
-        bindings::InstallOperations(isolate, world, templ, sig, cls, value);
-        Py_DECREF(value);
+        bindings::InstallOperations(isolate, world, templ, sig, cls, config.methods);
     }
 
-    if (PyMapping_HasKeyString(class_dict, "__v8_constants_value__"))
+    if (config.constant_values != NULL)
     {
-        PyObject* value = PyMapping_GetItemString(class_dict, "__v8_constants_value__");
-        bindings::InstallConstantValues(isolate, world, templ, sig, value);
-        Py_DECREF(value);
+        bindings::InstallConstantValues(isolate, world, templ, sig, config.constant_values);
     }
         
-    if (PyMapping_HasKeyString(class_dict, "__v8_constants_callback__"))
+    if (config.constant_callbacks != NULL)
     {
-        PyObject* value = PyMapping_GetItemString(class_dict, "__v8_constants_callback__");
-        bindings::InstallConstantCallbacks(isolate, world, templ, sig, value);
-        Py_DECREF(value);
+        bindings::InstallConstantCallbacks(isolate, world, templ, sig, config.constant_callbacks);
     }
         
-    if (PyMapping_HasKeyString(class_dict, "__call__"))
+    if (config.call != NULL)
     {
-        PyObject* value = PyMapping_GetItemString(class_dict, "__call__");
-        templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_method_callback, External::New(isolate, value));
-        Py_DECREF(value);
+        Py_INCREF(config.call);
+        self->call_method = config.call;
+        templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_method_callback, External::New(isolate, self->call_method));
     }
         
-    if (PyMapping_HasKeyString(class_dict, "__v8_undetectable__"))
+    if (config.undetectable)
     {
         templ->InstanceTemplate()->MarkAsUndetectable();
     }
         
-    if (PyMapping_HasKeyString(class_dict, "__v8_array__"))
+    if (config.array != NULL)
     {
-        PyObject* value = PyMapping_GetItemString(class_dict, "__v8_array__");
-        int flag = PyLong_AsLong(value);
-        Py_DECREF(value);
+        if (!PyLong_Check(config.array)) {
+            PyErr_SetString(PyExc_TypeError, "__v8_array__ must be an integer");
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+        int flag = PyLong_AsLong(config.array);
+        if (PyErr_Occurred()) {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
 
         if ((flag & FlagIterator::iterator) != 0)
             templ->PrototypeTemplate()->SetIntrinsicDataProperty(v8::Symbol::GetIterator(isolate), v8::kArrayProto_values, v8::DontEnum);
@@ -218,11 +383,18 @@ py_class_new(PyObject *cls, context_c * py_ctx)
             templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "forEach"), v8::kArrayProto_entries, v8::None);
     }
 
-    if (PyMapping_HasKeyString(class_dict, "__v8_immutable__"))
+    if (config.immutable != NULL)
     {
-        PyObject* value = PyMapping_GetItemString(class_dict, "__v8_immutable__");
-        int flag = PyLong_AsLong(value);
-        Py_DECREF(value);
+        if (!PyLong_Check(config.immutable)) {
+            PyErr_SetString(PyExc_TypeError, "__v8_immutable__ must be an integer");
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+        int flag = PyLong_AsLong(config.immutable);
+        if (PyErr_Occurred()) {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
 
         if ((flag & FlagImmutable::instance) != 0)
             templ->InstanceTemplate()->SetImmutableProto();
@@ -230,73 +402,80 @@ py_class_new(PyObject *cls, context_c * py_ctx)
             templ->PrototypeTemplate()->SetImmutableProto();
     }
 
-    if (PyMapping_HasKeyString(class_dict, "__v8_has_constructor__"))
+    if (config.has_constructor != NULL)
     {
-        PyObject* value = PyMapping_GetItemString(class_dict, "__v8_has_constructor__");
-        self->has_constructor = PyLong_AsLong(value);
-        Py_DECREF(value);
+        if (!PyLong_Check(config.has_constructor)) {
+            PyErr_SetString(PyExc_TypeError, "__v8_has_constructor__ must be an integer");
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+        self->has_constructor = PyLong_AsLong(config.has_constructor);
+        if (PyErr_Occurred()) {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
     }
 
-    if ((py_ctx->hook || PyMapping_HasKeyString(class_dict, "__v8_name_get__")) && strcmp(world, "WindowProperties") != 0)
+    if ((py_ctx->hook || config.name_get) && strcmp(world, "WindowProperties") != 0)
     {
         NamedPropertyHandlerConfiguration callbacks(named_getter);
-        if (py_ctx->hook || PyMapping_HasKeyString(class_dict, "__v8_name_set__")) {
+        if (py_ctx->hook || config.name_set) {
             callbacks.setter = named_setter;
         }
-        if (PyMapping_HasKeyString(class_dict, "__v8_name_query__") != NULL) {
+        if (config.name_query) {
             callbacks.query = named_query;
         }
-        if (PyMapping_HasKeyString(class_dict, "__v8_name_enum__") != NULL) {
+        if (config.name_enum) {
             callbacks.enumerator = named_enumerator;
         }
-        if (PyMapping_HasKeyString(class_dict, "__v8_name_del__") != NULL) {
+        if (config.name_del) {
             callbacks.deleter = named_deleter;
         }
         templ->InstanceTemplate()->SetHandler(callbacks);
     }
 
-    if ((py_ctx->hook || PyMapping_HasKeyString(class_dict, "__v8_index_get__")) && strcmp(world, "WindowProperties") != 0)
+    if ((py_ctx->hook || config.index_get) && strcmp(world, "WindowProperties") != 0)
     {
         IndexedPropertyHandlerConfiguration callbacks;
         callbacks.getter = indexed_getter;
-        if (py_ctx->hook || PyMapping_HasKeyString(class_dict, "__v8_index_set__")) {
+        if (py_ctx->hook || config.index_set) {
             callbacks.setter = indexed_setter;
         }
-        if (PyMapping_HasKeyString(class_dict, "__v8_index_enum__")) {
+        if (config.index_enum) {
             callbacks.enumerator = indexed_enumerator;
         }
-        if (PyMapping_HasKeyString(class_dict, "__v8_index_query__")) {
+        if (config.index_query) {
             callbacks.query = indexed_query;
         }
-        if (PyMapping_HasKeyString(class_dict, "__v8_index_del__")) {
+        if (config.index_del) {
             callbacks.deleter = indexed_deleter;
         }
         templ->InstanceTemplate()->SetHandler(callbacks);
     }
 
-    if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_check__"))
+    if (config.cross_origin_check)
     {   
-        if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_name_get__")){
+        if (config.cross_origin_name_get){
             NamedPropertyHandlerConfiguration cross_origin_named_callbacks(cross_origin_named_getter);
-            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_name_set__") != NULL)
+            if (config.cross_origin_name_set)
                 cross_origin_named_callbacks.setter = cross_origin_named_setter;
-            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_name_query__") != NULL)
+            if (config.cross_origin_name_query)
                 cross_origin_named_callbacks.query = cross_origin_named_query;
-            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_name_del__") != NULL)
+            if (config.cross_origin_name_del)
                 cross_origin_named_callbacks.deleter = cross_origin_named_deleter;
-            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_name_enum__") != NULL)
+            if (config.cross_origin_name_enum)
                 cross_origin_named_callbacks.enumerator = cross_origin_named_enumerator;
 
             IndexedPropertyHandlerConfiguration cross_origin_index_callbacks;
-            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_index_get__") != NULL)
+            if (config.cross_origin_index_get)
                 cross_origin_index_callbacks.getter = cross_origin_indexed_getter;
-            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_index_set__") != NULL)
+            if (config.cross_origin_index_set)
                 cross_origin_index_callbacks.setter = cross_origin_indexed_setter;
-            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_index_query__") != NULL)
+            if (config.cross_origin_index_query)
                 cross_origin_index_callbacks.query = cross_origin_indexed_query;
-            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_index_enum__") != NULL)
+            if (config.cross_origin_index_enum)
                 cross_origin_index_callbacks.enumerator = cross_origin_indexed_enumerator;
-            if (PyMapping_HasKeyString(class_dict, "__v8_cross_origin_index_del__") != NULL)
+            if (config.cross_origin_index_del)
                 cross_origin_index_callbacks.deleter = cross_origin_indexed_deleter;
             templ->InstanceTemplate()->SetAccessCheckCallbackAndHandler(cross_origin_access_check, cross_origin_named_callbacks, cross_origin_index_callbacks);
         }
@@ -313,6 +492,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     PyObject* bases = PyObject_GetAttrString(cls, "__bases__");
     if (bases == NULL)
     {
+        Py_DECREF((PyObject*)self);
         return NULL;
     }
     //PyObject*  bases = ((PyTypeObject*)cls)->tp_bases;
@@ -333,11 +513,15 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     }
     else if (last_base != NULL && last_base != (PyObject*)&PyBaseObject_Type) {
         py_class* superclass_templ = (py_class*)py_class_to_template(last_base, py_ctx);
+        if (superclass_templ == NULL) {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
         templ->Inherit(superclass_templ->templ.Get(isolate));
         self->parent = (PyObject*)superclass_templ;
     }
 
-    if (PyMapping_HasKeyString(class_dict, "__v8_as_obj__"))
+    if (config.as_object)
     {
         self->to_obj = 1;
         //v8::Local<v8::ObjectTemplate> namespace_object_template = templ.As<v8::ObjectTemplate>();
@@ -350,8 +534,6 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         templ->SetClassName(v8_name);
         templ->PrototypeTemplate()->Set(Symbol::GetToStringTag(isolate), v8_name, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
     }
-
-    Py_XDECREF(class_dict);
 
     templ->InstanceTemplate()->SetInternalFieldCount(OBJECT_INTERNAL_FIELDS);
 
