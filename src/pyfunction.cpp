@@ -11,6 +11,7 @@
 PyTypeObject* py_function_type = NULL;
 
 static PyType_Slot py_function_slots[] = {
+    {Py_tp_dealloc, (void*)py_function_dealloc},
     {Py_tp_doc, ""},
     {0, NULL} };
 
@@ -51,13 +52,10 @@ py_function_new(PyObject *function)
     else {
         self->function_name = PyObject_GetAttrString(function, "__name__");
     }
-    
-    // I've discovered that v8 trades memory leaks for speed. If you allocate a
-    // FunctionTemplate and instantiate it, the FunctionTemplate, callback
-    // data, and instantiated Function will **never** get GC'd. Presumably,
-    // this is by design. This means that the FunctionTemplate python object
-    // should never be freed either.
-    Py_INCREF(self);
+    if (self->function_name == NULL) {
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
 
     Local<External> js_self = External::New(isolate, self);
     Local<FunctionTemplate> js_template;
@@ -74,10 +72,14 @@ py_function_new(PyObject *function)
     bool throw_on_construct = false;
     if (PyObject_HasAttrString(function, "__v8_constructor_behavior__")) {
         PyObject* behavior = PyObject_GetAttrString(function, "__v8_constructor_behavior__");
-        PyErr_PROPAGATE(behavior);
+        if (behavior == NULL) {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
         int truth = PyObject_IsTrue(behavior);
         Py_XDECREF(behavior);
         if (truth < 0) {
+            Py_DECREF((PyObject*)self);
             return NULL;
         }
         throw_on_construct = truth == 0;
@@ -93,26 +95,37 @@ py_function_new(PyObject *function)
     return (PyObject *) self;
 }
 
-static PyObject *func_template_dict = NULL;
-
 PyObject *
 py_function_to_template(PyObject *func)
 {
-    if (func_template_dict == NULL) {
-        func_template_dict = PyDict_New();
-        PyErr_PROPAGATE(func_template_dict);
-    }
+    PyObject* cache = runtime_state.function_template_cache();
+    PyErr_PROPAGATE(cache);
 
-    PyObject *templ = PyDict_GetItem(func_template_dict, func);
+    PyObject *templ = PyDict_GetItem(cache, func);
     if (templ != NULL) {
-        Py_INCREF(templ);
         return templ;
     }
 
     templ = py_function_new(func);
-    PyDict_SetItem(func_template_dict, func, templ);
-    Py_XDECREF(templ);
-    return templ;
+    PyErr_PROPAGATE(templ);
+    if (PyDict_SetItem(cache, func, templ) < 0) {
+        Py_DECREF(templ);
+        return NULL;
+    }
+    Py_DECREF(templ);
+    return PyDict_GetItem(cache, func);
+}
+
+void
+py_function_dealloc(py_function *self)
+{
+    if (self->js_template != NULL) {
+        self->js_template->Reset();
+        delete self->js_template;
+    }
+    Py_XDECREF(self->function);
+    Py_XDECREF(self->function_name);
+    TP_FREE_ABI3(py_function_type, self);
 }
 
 Local<Function> 

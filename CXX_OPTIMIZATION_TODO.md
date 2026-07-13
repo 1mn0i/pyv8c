@@ -63,23 +63,23 @@ pyv8 主要用于 JS 逆向时补环境，为一比一模拟 Chromium 内置原�
 
 ## P1 - Runtime 与生命周期管理
 
-- [ ] 引入 `RuntimeState` 对象。
-  统一管理 platform、isolate、allocator、interned strings、template cache 等状态，替代散落的全局变量。
+- [√] 引入 `RuntimeState` 对象。
+  已统一管理 platform、isolate、allocator、interned strings、函数模板 cache 和 Python object owner。
 
-- [ ] 保存并释放 V8 ArrayBuffer allocator。
-  `src/pyv8.cpp:91` 里创建了 `ArrayBuffer::Allocator::NewDefaultAllocator()`，但当前没有所有权管理和释放路径。
+- [√] 保存并释放 V8 ArrayBuffer allocator。
+  allocator 已由 `RuntimeState` 的 `std::unique_ptr` 持有，并在 isolate Dispose 后释放。
 
-- [ ] 定义显式 V8 shutdown 流程。
-  需要覆盖 Persistent strings、templates、platform、isolate、allocator 等资源。
+- [√] 定义显式 V8 shutdown 流程。
+  已增加 `shutdown_v8()`；活动 Persistent 存在时拒绝关闭，成功关闭后禁止重新初始化 V8。
 
-- [ ] 替换 `src/pyfunction.cpp:55` 的永久模板保活策略。
-  当前通过额外 `Py_INCREF(self)` 让函数模板常驻，建议改成可控 cache，并在 runtime/context 销毁时统一清理。
+- [√] 替换 `src/pyfunction.cpp:55` 的永久模板保活策略。
+  已删除额外 `Py_INCREF(self)`，改由 Runtime cache 持有并在 shutdown 时统一清理。
 
-- [ ] 重构 `src/pyclass.cpp:64` 的 `cls_template_dict`。
-  当前它是全局缓存，但 `py_class_new(cls, py_ctx)` 会依赖 context 配置，例如 hook 行为。缓存 key 至少应包含 context 配置，或迁移到 context/runtime state。
+- [√] 重构 `src/pyclass.cpp:64` 的 `cls_template_dict`。
+  类模板 cache 已迁移到各自的 Context，避免不同 hook 配置复用同一个模板。
 
-- [ ] 审计 V8 internal field 中保存的 Python 对象所有权。
-  例如 `src/pyclass.cpp:479` 对 `py_object` 做了 `Py_INCREF`，需要确认 JS 对象或 Context 释放时有对应释放。
+- [√] 审计 V8 internal field 中保存的 Python 对象所有权。
+  已增加弱 Persistent owner，在 V8 GC 或 shutdown 时对称释放 Python 对象、异常类型和 traceback 引用。
 
 ## P1 - pyclass 与 hook 可维护性
 
@@ -144,7 +144,7 @@ pyv8 主要用于 JS 逆向时补环境，为一比一模拟 Chromium 内置原�
 - [ ] 第三批：建立 V8 `Maybe` / `MaybeLocal` 安全封装层。
   核心路径的显式 `Maybe` / `MaybeLocal` 检查已完成；统一 helper/封装层仍待后续整理。
 
-- [ ] 第四批：整理 context/runtime state 和 allocator 所有权。
+- [√] 第四批：整理 context/runtime state 和 allocator 所有权。
 
 - [ ] 第五批：重构 class metadata 解析与 handler callback。
 

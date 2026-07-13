@@ -66,6 +66,8 @@ js_typedarray_type_init()
 PyObject * 
 js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 {
+    if (!runtime_state.require_initialized())
+        return NULL;
     IN_V8;
 
     PyObject* data = NULL;
@@ -90,7 +92,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
         js_object* py_value = (js_object*)data;
         array_buffer = py_value->object.Get(isolate).As<ArrayBuffer>();
         auto ary = v8::Uint8Array::New(array_buffer, 0, array_buffer->ByteLength());
-        self->base.object.Reset(isolate, ary);
+        js_object_set_persistent((js_object*)self, ary, context, true);
         return (PyObject*)self;
     }
 
@@ -105,7 +107,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
                 return NULL;
             ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
         }
-        self->base.object.Reset(isolate, ary);
+        js_object_set_persistent((js_object*)self, ary, context, true);
     }
     else if (array_type == ArrayType::Uint16Array) {
         array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(uint16_t));
@@ -116,7 +118,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
                 return NULL;
             ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
         }
-        self->base.object.Reset(isolate, ary);
+        js_object_set_persistent((js_object*)self, ary, context, true);
     }
     else if (array_type == ArrayType::Uint8Array) {
 
@@ -128,7 +130,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
                 return NULL;
             ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
         }
-        self->base.object.Reset(isolate, ary);
+        js_object_set_persistent((js_object*)self, ary, context, true);
     }
     else if (array_type == ArrayType::Int32Array) {
         array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(int32_t));
@@ -139,7 +141,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
                 return NULL;
             ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
         }
-        self->base.object.Reset(isolate, ary);
+        js_object_set_persistent((js_object*)self, ary, context, true);
     }
     else if (array_type == ArrayType::Int16Array) {
         array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(int16_t));
@@ -150,7 +152,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
                 return NULL;
             ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
         }
-        self->base.object.Reset(isolate, ary);
+        js_object_set_persistent((js_object*)self, ary, context, true);
     }
     else if (array_type == ArrayType::Int8Array) {
         array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(int8_t));
@@ -161,7 +163,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
                 return NULL;
             ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
         }
-        self->base.object.Reset(isolate, ary);
+        js_object_set_persistent((js_object*)self, ary, context, true);
     }
     else if (array_type == ArrayType::Float64Array) {
         array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(double));
@@ -172,7 +174,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
                 return NULL;
             ary->Set(isolate->GetCurrentContext(), i, v8::Number::New(isolate, PyLong_AsLong(val))).Check();
         }
-        self->base.object.Reset(isolate, ary);
+        js_object_set_persistent((js_object*)self, ary, context, true);
     }
     else if (array_type == ArrayType::Float32Array) {
         array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(float));
@@ -181,7 +183,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
             PyObject* val = PyList_GetItem(data, i);
             ary->Set(isolate->GetCurrentContext(), i, v8::Number::New(isolate, PyFloat_AsDouble(val))).Check();
         }
-        self->base.object.Reset(isolate, ary);
+        js_object_set_persistent((js_object*)self, ary, context, true);
     }
     else if (array_type == ArrayType::Uint8ClampedArray) {
         array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(uint8_t));
@@ -190,7 +192,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
             PyObject* val = PyList_GetItem(data, i);
             ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
         }
-        self->base.object.Reset(isolate, ary);
+        js_object_set_persistent((js_object*)self, ary, context, true);
     }else{
             return NULL;
     }

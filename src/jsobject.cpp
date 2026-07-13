@@ -41,6 +41,21 @@ static PyType_Spec js_object_spec = {
 
 PyTypeObject *js_object_type = NULL;
 
+void
+js_object_set_persistent(js_object* self, Local<Object> object,
+                         Local<Context> context, bool retain_context)
+{
+    self->object.Reset(isolate, object);
+    runtime_state.retain_v8_handle();
+    if (retain_context && !context.IsEmpty()) {
+        Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
+        if (context_data->IsExternal()) {
+            self->py_context = (PyObject*)context_data.As<External>()->Value();
+            Py_INCREF(self->py_context);
+        }
+    }
+}
+
 int js_object_type_init()
 {
     js_object_type = (PyTypeObject*)PyType_FromSpec(&js_object_spec);
@@ -74,7 +89,7 @@ js_object_new(Local<Object> object, Local<Context> context)
     }
 
     if (self != NULL) {
-        self->object.Reset(isolate, object);
+        js_object_set_persistent(self, object, context, true);
     }
     return self;
 }
@@ -83,7 +98,10 @@ void
 js_object_weak_callback(const WeakCallbackInfo<js_object> &info)
 {
     js_object *self = info.GetParameter();
-    self->object.Reset();
+    if (!self->object.IsEmpty()) {
+        self->object.Reset();
+        runtime_state.release_v8_handle();
+    }
     Py_XDECREF(self);
 }
 
@@ -111,7 +129,7 @@ js_object_weak_new(Local<Object> object, Local<Context> context)
     }
 
     if (self != NULL) {
-        self->object.Reset(isolate, object);
+        js_object_set_persistent(self, object, context, false);
         // The V8 weak callback owns this reference and releases it on GC.
         Py_INCREF(self);
         //self->object.SetWeak(self, js_object_weak_callback, WeakCallbackType::kFinalizer);
@@ -340,6 +358,10 @@ js_object_repr(js_object *self)
 void 
 js_object_dealloc(js_object *self)
 {
-    self->object.Reset();
+    if (!self->object.IsEmpty()) {
+        self->object.Reset();
+        runtime_state.release_v8_handle();
+    }
+    Py_XDECREF(self->py_context);
     TP_FREE_ABI3(js_object_type, self);
 }

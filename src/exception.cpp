@@ -37,8 +37,8 @@ js_exception_type_init()
     {
         return -1;
     }
+    Py_INCREF(PyExc_BaseException);
     PyTuple_SetItem(bases, 0, (PyObject*)PyExc_BaseException);
-    Py_INCREF(PyExc_Exception); // PyTuple_SetItem steals a reference
 
     js_exception_type = (PyTypeObject*)PyType_FromSpecWithBases(&js_exception_spec, bases);
     Py_DECREF(bases);
@@ -58,11 +58,11 @@ int
 js_terminated_type_init()
 {
     js_terminated_type = (PyTypeObject*)PyErr_NewException("_pyv8env.JavaScriptTerminated", PyExc_BaseException, nullptr);
-    Py_INCREF(js_terminated_type);
     if (js_terminated_type == NULL)
     {
         return -1;
     }
+    Py_INCREF(js_terminated_type);
     return 0;
 }
 
@@ -143,11 +143,27 @@ js_exception_new(Local<Value> exception, Local<Message> message)
     PyErr_PROPAGATE(self);
     self->exception.Reset(isolate, exception);
     self->message.Reset(isolate, message);
+    runtime_state.retain_v8_handle();
+    Local<Context> context = isolate->GetCurrentContext();
+    if (!context.IsEmpty()) {
+        Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
+        if (context_data->IsExternal()) {
+            self->py_context = (PyObject*)context_data.As<External>()->Value();
+            Py_INCREF(self->py_context);
+        }
+    }
     const std::string msg = extract_exception(exception, message);
     PyObject* py_message = PyUnicode_DecodeUTF8(msg.c_str(), msg.size(), NULL);
-    PyErr_PROPAGATE(py_message);
+    if (py_message == NULL) {
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
     self->args = PyTuple_New(1);
-    PyErr_PROPAGATE(self->args);
+    if (self->args == NULL) {
+        Py_DECREF(py_message);
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
     PyTuple_SetItem(self->args, 0, py_message);
     return (PyObject*)self;
 }
@@ -166,8 +182,18 @@ js_exception_get_value(js_exception* self, void* args)
 void 
 js_exception_dealloc(js_exception* self)
 {
-    self->exception.Reset();
-    self->message.Reset();
+    if (!self->exception.IsEmpty() || !self->message.IsEmpty()) {
+        self->exception.Reset();
+        self->message.Reset();
+        runtime_state.release_v8_handle();
+    }
+    Py_XDECREF(self->py_context);
+    Py_XDECREF(self->dict);
+    Py_XDECREF(self->args);
+    Py_XDECREF(self->notes);
+    Py_XDECREF(self->traceback);
+    Py_XDECREF(self->context);
+    Py_XDECREF(self->cause);
     //Py_TYPE(self)->tp_free((PyObject*)self);
     TP_FREE_ABI3(js_exception_type, self);
 }
@@ -176,15 +202,24 @@ js_exception_dealloc(js_exception* self)
 void 
 py_throw_js(Local<Value> js_exc, Local<Message> js_message)
 {
-    if (js_exc->IsObject() && js_exc.As<Object>()->InternalFieldCount() == OBJECT_INTERNAL_FIELDS) {
+    bool is_python_object = false;
+    if (js_exc->IsObject() &&
+        js_exc.As<Object>()->InternalFieldCount() == OBJECT_INTERNAL_FIELDS) {
+        Local<Data> magic = js_exc.As<Object>()->GetInternalField(PYTHON_MAGIC_FIELD);
+        is_python_object = magic == IZ_DAT_OBJECT;
+    }
+    if (is_python_object) {
         Local<Object> exc_object = js_exc.As<Object>();
-        PyObject* exc_type = (PyObject*)exc_object->GetInternalField(2).As<External>()->Value();
-        PyObject* exc_value = (PyObject*)exc_object->GetInternalField(1).As<External>()->Value();
-        PyObject* exc_traceback = (PyObject*)exc_object->GetInternalField(3).As<External>()->Value();
+        PyObject* exc_type = (PyObject*)exc_object->GetInternalField(PYTHON_EXCEPTION_TYPE_FIELD).As<External>()->Value();
+        PyObject* exc_value = (PyObject*)exc_object->GetInternalField(PYTHON_OBJECT_FIELD).As<External>()->Value();
+        PyObject* exc_traceback = (PyObject*)exc_object->GetInternalField(PYTHON_TRACEBACK_FIELD).As<External>()->Value();
         if (exc_type == NULL && exc_traceback == NULL) {
             PyErr_SetObject((PyObject*)Py_TYPE(exc_value), exc_value);
         }
         else {
+            Py_XINCREF(exc_type);
+            Py_INCREF(exc_value);
+            Py_XINCREF(exc_traceback);
             PyErr_Restore(exc_type, exc_value, exc_traceback);
         }
     }
@@ -194,6 +229,7 @@ py_throw_js(Local<Value> js_exc, Local<Message> js_message)
             return;
         }
         PyErr_SetObject((PyObject*)js_exception_type, exception);
+        Py_DECREF(exception);
     }
 }
 
@@ -280,8 +316,10 @@ js_throw_py()
         }
         else {
             exception = js_exception_value.As<Object>();
-            exception->SetInternalField(2, External::New(isolate, exc_type));
-            exception->SetInternalField(3, External::New(isolate, exc_traceback));
+            if (!runtime_state.attach_exception_state(exception, exc_type, exc_traceback)) {
+                PyErr_Clear();
+                exception = Exception::Error(V8String(isolate, exc_message)).As<Object>();
+            }
             exception->Set(context, V8String(isolate, "message"), V8String(isolate, exc_message));
 
             Local<Value> error_ctor_val;
@@ -299,6 +337,9 @@ js_throw_py()
 
     Py_XDECREF(exc_cls_name);
     Py_XDECREF(exc_value_str);
+    Py_XDECREF(exc_type);
+    Py_XDECREF(exc_value);
+    Py_XDECREF(exc_traceback);
 
     isolate->ThrowException(exception);
 }

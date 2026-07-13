@@ -158,11 +158,10 @@ py_from_js(Local<Value> value, Local<Context> context)
 
         if (obj_value->InternalFieldCount() == OBJECT_INTERNAL_FIELDS)
         {
-            // Local<Value> magic = obj_value->GetInternalField(0);
-            Local<Data> magic = obj_value->GetInternalField(0);
+            Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
             if (magic == IZ_DAT_OBJECT)
             {
-                PyObject *object = (PyObject *)obj_value->GetInternalField(1).As<External>()->Value();
+                PyObject *object = (PyObject *)obj_value->GetInternalField(PYTHON_OBJECT_FIELD).As<External>()->Value();
                 Py_INCREF(object);
                 return object;
             }
@@ -554,10 +553,13 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
     }
     else
     {
-        exception = js_from_py(value, context).As<Object>();
-        Py_INCREF(exc_type);
-        exception->SetInternalField(2, External::New(isolate, exc_type));
-        exception->Set(context, V8String(isolate, "message"), V8String(isolate, exc_message));
+        Local<Value> js_exception = js_from_py(value, context);
+        if (!js_exception.IsEmpty() && js_exception->IsObject())
+        {
+            exception = js_exception.As<Object>();
+            runtime_state.attach_exception_state(exception, exc_type, nullptr);
+            exception->Set(context, V8String(isolate, "message"), V8String(isolate, exc_message));
+        }
     }
     Py_XDECREF(exc_cls_name);
     Py_XDECREF(exc_type);

@@ -19,7 +19,6 @@ typedef struct {
 int py_class_type_init();
 extern PyTypeObject* py_class_type;
 
-extern PyObject* cls_template_dict;
 PyObject* py_class_new(PyObject* cls, context_c *py_ctx);
 void py_class_dealloc(py_class* self);
 PyObject* py_class_to_template(PyObject* cls, context_c *py_ctx);
@@ -27,11 +26,14 @@ Local<Function> py_class_get_constructor(Local<Context> context, py_class* self,
 Local<Object> py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> context);
 bool py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context);
 void delete_constructor(py_class* self, Local<Context> context);
-// first one is magic pointer
-// second one is actual object
-// third is exception traceback (usually unused)
-// fourth is exception type (also usually unused)
-#define OBJECT_INTERNAL_FIELDS 4
+enum PythonObjectInternalField {
+    PYTHON_MAGIC_FIELD = 0,
+    PYTHON_OBJECT_FIELD = 1,
+    PYTHON_EXCEPTION_TYPE_FIELD = 2,
+    PYTHON_TRACEBACK_FIELD = 3,
+    PYTHON_OWNER_FIELD = 4,
+    OBJECT_INTERNAL_FIELDS = 5,
+};
 
 void py_class_construct_callback(const FunctionCallbackInfo<Value>& info);
 void py_class_method_callback(const FunctionCallbackInfo<Value>& info);

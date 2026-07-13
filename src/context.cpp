@@ -73,6 +73,8 @@ int context_type_init()
 PyObject *
 context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
+    if (!runtime_state.require_initialized())
+        return NULL;
     IN_V8;
 
     double timeout = 0;
@@ -99,6 +101,14 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     }
 
     context_c* self = (context_c*)PyType_GenericAlloc(type, 0);
+    if (self == NULL) {
+        Py_XDECREF(global);
+        return NULL;
+    }
+    self->js_object_cache = NULL;
+    self->class_template_cache = PyDict_New();
+    self->py_global = global;
+    self->scripts = NULL;
     self->has_debugger = false;
     self->has_done = false;
     self->timeout = timeout;
@@ -106,9 +116,14 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 
     if (ctx_type == NULL) {
         ctx_type = PyUnicode_FromString("Top");
+    } else {
+        Py_INCREF(ctx_type);
     }
-
-    PyErr_PROPAGATE(self);
+    if (ctx_type == NULL || self->class_template_cache == NULL) {
+        Py_XDECREF(ctx_type);
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
     
     MaybeLocal<ObjectTemplate> global_template;
     if (global != NULL) {
@@ -122,9 +137,19 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
             global_type = (PyObject*)Py_TYPE(global);
             Py_INCREF(global_type);
         }
+        if (global_type == NULL) {
+            Py_DECREF(ctx_type);
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
         py_class* templ;
         templ = (py_class*)py_class_to_template(global_type, self);
         Py_XDECREF(global_type);
+        if (templ == NULL) {
+            Py_DECREF(ctx_type);
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
         Local<FunctionTemplate> global_inteface_template = templ->templ.Get(isolate);
         global_template = global_inteface_template->InstanceTemplate();
 
@@ -132,28 +157,44 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 
     IN_CONTEXT(Context::New(isolate, NULL, global_template));
     self->js_context.Reset(isolate, context);
+    runtime_state.retain_v8_handle();
     self->has_done = true;
 
     // add env to vm
     //IN_CONTEXT(self->js_context.Get(isolate));
     context->SetEmbedderData(CTX_TYPE, V8String(isolate, PyUnicode_AsUTF8_abi3(ctx_type)));
+    Py_DECREF(ctx_type);
     context->SetEmbedderData(CONTEXT_OBJECT_SLOT, External::New(isolate, self));
     context->SetEmbedderData(OBJECT_PROTOTYPE_SLOT, Object::New(isolate)->GetPrototype());
     context->SetEmbedderData(ERROR_PROTOTYPE_SLOT, Exception::Error(String::Empty(isolate)).As<Object>()->GetPrototype());
 
     PyObject *weakref_module = PyImport_ImportModule("weakref");
-    PyErr_PROPAGATE(weakref_module);
+    if (weakref_module == NULL) {
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
     PyObject *weak_key_dict = PyObject_GetAttrString(weakref_module, "WeakKeyDictionary");
-    PyErr_PROPAGATE(weak_key_dict);
+    Py_DECREF(weakref_module);
+    if (weak_key_dict == NULL) {
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
     self->js_object_cache = PyObject_CallObject(weak_key_dict, NULL);
-    PyErr_PROPAGATE(self->js_object_cache);
+    Py_DECREF(weak_key_dict);
+    if (self->js_object_cache == NULL) {
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
 
     self->scripts = PySet_New(NULL);
-    PyErr_PROPAGATE(self->scripts);
+    if (self->scripts == NULL) {
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
 
     if (global != NULL) {
-        self->py_global = global;
         if (!py_class_init_js_object(context->Global()->GetPrototype().As<Object>(), global, context)) {
+            Py_DECREF((PyObject*)self);
             return NULL;
         }
     }
@@ -163,11 +204,15 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 void 
 context_dealloc(context_c *self)
 {
-    self->js_context.Reset();
+    Py_CLEAR(self->class_template_cache);
+    if (!self->js_context.IsEmpty()) {
+        self->js_context.Reset();
+        runtime_state.release_v8_handle();
+    }
     Py_XDECREF(self->py_global);
     Py_XDECREF(self->scripts);
 
-    if (PyObject_HasAttrString(self->js_object_cache, "items")) {
+    if (self->js_object_cache != NULL && PyObject_HasAttrString(self->js_object_cache, "items")) {
         PyObject* items = PyObject_CallMethod(self->js_object_cache, "items", nullptr);
         if (items) {
             PyObject* iterator = PyObject_GetIter(items);

@@ -17,10 +17,11 @@
 #include "abi3.h"
 #include "jsnull.h"
 #include "jsundefined.h"
+#include "runtime.h"
 
 using namespace v8;
 
-extern Isolate *isolate;
+extern Isolate *&isolate;
 
 #define HOOKHANDLE "faker"
 

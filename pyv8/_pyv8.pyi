@@ -73,6 +73,9 @@ Undefined: JSObject
 # 初始化v8
 def init_v8(icudtl_path: Optional[str] = None, params: Optional[List[str]] = None) -> bool: ...
 
+# 永久关闭 V8；仍有活动 Context/JS 对象时会拒绝关闭
+def shutdown_v8() -> bool: ...
+
 # 执行isolate->RequestGarbageCollectionForTesting();触发v8垃圾回收
 def v8_gc() -> None: ...
 

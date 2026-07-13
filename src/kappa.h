@@ -19,6 +19,7 @@ MAGIC_CONSTANT_STRING_LIST_KAPPA(DECLARE_MAGIC)
 
 // boring function prototype
 void create_memes_plz_thx();
+void reset_memes_plz_thx();
 
 
 #endif

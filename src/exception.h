@@ -20,6 +20,7 @@ typedef struct
     char suppress_context;
     Persistent<Value> exception;
     Persistent<Message> message;
+    PyObject* py_context;
 } js_exception;
 extern PyTypeObject* js_exception_type;
 extern PyTypeObject* js_terminated_type;

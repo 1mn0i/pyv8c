@@ -9,8 +9,6 @@
 using namespace v8;
 
 
-PyObject* javascript;
-
 PyTypeObject* script_type = NULL;
 
 static PyType_Slot script_slots[] = {
@@ -29,8 +27,6 @@ static PyType_Spec script_spec = {
 int 
 script_type_init()
 {
-    javascript = PyUnicode_InternFromString("javascript");
-
     script_type = (PyTypeObject *)PyType_FromSpec(&script_spec);
     if (script_type == NULL)
     {
@@ -44,7 +40,8 @@ construct_script_name(Local<Context> context, Local<Value> js_name, int id)
 {
     PyObject *name;
     if (js_name.IsEmpty() || js_name->IsUndefined()) {
-        name = javascript;
+        name = runtime_state.javascript_name();
+        PyErr_PROPAGATE(name);
         Py_INCREF(name);
     } else {
         name = py_from_js(js_name, context);
@@ -61,6 +58,8 @@ construct_script_name(Local<Context> context, Local<Value> js_name, int id)
 PyObject *
 script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
+    if (!runtime_state.require_initialized())
+        return NULL;
     context_c *py_ctx;
     static const char *keywords[] = {"context", "source", "filename", NULL};
     PyObject *source;
@@ -92,7 +91,9 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     }
     //script_c *self = (script_c *) type->tp_alloc(type, 0);
     script_c *self = (script_c *)PyType_GenericAlloc(type, 0);
+    PyErr_PROPAGATE(self);
     self->script.Reset(isolate, script);
+    runtime_state.retain_v8_handle();
     Py_INCREF(filename);
     self->script_name = filename;
     Py_INCREF(source);
@@ -124,11 +125,13 @@ script_compile(Local<Context> context, PyObject *source, PyObject *filename)
 void 
 script_dealloc(script_c *self)
 {
-    self->script.Reset();
+    if (!self->script.IsEmpty()) {
+        self->script.Reset();
+        runtime_state.release_v8_handle();
+    }
 
     Py_XDECREF(self->script_name);
     Py_XDECREF(self->source);
     //Py_TYPE(self)->tp_free((PyObject *) self);
     TP_FREE_ABI3(script_type, self);
 }
-

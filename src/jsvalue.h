@@ -10,6 +10,7 @@ typedef struct
 {
     PyObject_HEAD
     Persistent<Value> value;
+    PyObject* py_context;
 } js_value;
 
 extern PyTypeObject *js_value_type;

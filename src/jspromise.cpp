@@ -50,6 +50,8 @@ int js_promise_type_init()
 PyObject *
 js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 {
+    if (!runtime_state.require_initialized())
+        return NULL;
     IN_V8;
 
     PyObject* resolve = NULL;
@@ -108,7 +110,7 @@ js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
             return NULL;
         }
     }
-    self->base.object.Reset(isolate, promise);
+    js_object_set_persistent((js_object*)self, promise, context, true);
     return (PyObject*)self;
 }
 

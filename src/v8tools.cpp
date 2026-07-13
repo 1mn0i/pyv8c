@@ -63,8 +63,9 @@ namespace bindings {
 
         String::Utf8Value property_name(isolate, property);
         PyObject* name = PyUnicode_FromString(*property_name);
-        PyObject* py_cls = PyDict_GetItem(cls_template_dict, name);
+        PyObject* py_cls = PyDict_GetItem(py_ctx->class_template_cache, name);
         if (py_cls == NULL) {
+            Py_XDECREF(name);
             info.GetReturnValue().SetUndefined();
             return;
         }

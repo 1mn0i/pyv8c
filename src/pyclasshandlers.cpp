@@ -30,7 +30,7 @@ inline extern PyObject* get_self(const PropertyCallbackInfo<T>& info) {
         js_self = js_self->GetPrototype().As<Object>();
     }
 
-    return (PyObject*)js_self->GetInternalField(1).template As<External>()->Value();
+    return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD).template As<External>()->Value();
 }
 
 template <class T> 
@@ -41,7 +41,7 @@ inline extern PyObject* get_self(const FunctionCallbackInfo<T>& info) {
         js_self = js_self->GetPrototype().As<Object>();
     }
     if (js_self->InternalFieldCount() > 0) {
-        return (PyObject*)js_self->GetInternalField(1).template As<External>()->Value();
+        return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD).template As<External>()->Value();
     }
     return Py_None;
 }
@@ -54,7 +54,7 @@ inline extern PyObject* get_self_cross_origin(const PropertyCallbackInfo<T>& inf
         js_self = js_self->GetPrototype().As<Object>();
     }
 
-    return (PyObject*)js_self->GetInternalField(1).template As<External>()->Value();
+    return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD).template As<External>()->Value();
 }
 
 template <class T>
@@ -65,7 +65,7 @@ inline extern PyObject* get_self_cross_origin(const FunctionCallbackInfo<T>& inf
         js_self = js_self->GetPrototype().As<Object>();
     }
     if (js_self->InternalFieldCount() > 0) {
-        return (PyObject*)js_self->GetInternalField(1).template As<External>()->Value();
+        return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD).template As<External>()->Value();
     }
     return Py_None;
 }
@@ -130,7 +130,8 @@ inline extern PyObject* get_self_cross_origin(const FunctionCallbackInfo<T>& inf
         Py_XDECREF(new_object);                                                                                                                                    \
         js_throw_py();                                                                                                                                             \
         return;                                                                                                                                                    \
-    }
+    }                                                                                                                                                               \
+    Py_DECREF(new_object);
 
 
 void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {

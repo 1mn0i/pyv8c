@@ -61,32 +61,32 @@ py_class_dealloc(py_class* self)
     TP_FREE_ABI3(py_class_type, self);
 }
 
-PyObject *cls_template_dict = NULL;
-
 PyObject *
 py_class_to_template(PyObject *cls, context_c* py_ctx)
 {
-    if (cls_template_dict == NULL) {
-        cls_template_dict = PyDict_New();
-        PyErr_PROPAGATE(cls_template_dict);
+    if (py_ctx->class_template_cache == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "context class template cache is unavailable");
+        return NULL;
     }
-    PyObject *templ = PyDict_GetItem(cls_template_dict, cls);
+    PyObject *templ = PyDict_GetItem(py_ctx->class_template_cache, cls);
     if (templ != NULL) {
-        // PyDict_GetItem returns a borrowed reference
-        Py_INCREF(templ);
         return templ;
     }
     templ = py_class_new(cls, py_ctx);
     PyErr_PROPAGATE(templ);
 
-    //PyObject_SetAttrString(cls, "ctx", (PyObject*)py_ctx);
-    if (PyDict_SetItem(cls_template_dict, cls, templ) < 0) {
+    if (PyDict_SetItem(py_ctx->class_template_cache, cls, templ) < 0) {
+        Py_DECREF(templ);
         return NULL;
     }
-   /* if (PyDict_SetItem(cls_template_dict, PyObject_GetAttrString(cls, "__name__"), templ) < 0) {
+    PyObject* cls_name = ((py_class*)templ)->cls_name;
+    if (PyDict_SetItem(py_ctx->class_template_cache, cls_name, templ) < 0) {
+        PyDict_DelItem(py_ctx->class_template_cache, cls);
+        Py_DECREF(templ);
         return NULL;
-    }*/
-    return templ;
+    }
+    Py_DECREF(templ);
+    return PyDict_GetItem(py_ctx->class_template_cache, cls);
 }
 
 int add_to_template(PyObject* cls, context_c* py_ctx, PyObject* member_name, PyObject* member_value, Local<FunctionTemplate> templ, Local<Signature> sig, const char* world);
@@ -465,9 +465,13 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
 bool
 py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context)
 {
-    //PyObject_Print(py_object, stdout, Py_PRINT_RAW);
-    js_object->SetInternalField(0, IZ_DAT_OBJECT);
-    js_object->SetInternalField(1, External::New(isolate, py_object));
+    if (!runtime_state.track_python_object(js_object, py_object)) {
+        return false;
+    }
+    js_object->SetInternalField(PYTHON_MAGIC_FIELD, IZ_DAT_OBJECT);
+    js_object->SetInternalField(PYTHON_OBJECT_FIELD, External::New(isolate, py_object));
+    js_object->SetInternalField(PYTHON_EXCEPTION_TYPE_FIELD, External::New(isolate, nullptr));
+    js_object->SetInternalField(PYTHON_TRACEBACK_FIELD, External::New(isolate, nullptr));
     // find out if the object is supposed to inherit from Error 
     // the information is in an internal field on the last prototype
     Local<Value> last_proto = js_object;
@@ -515,11 +519,8 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
         PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript object template");
         return Local<Object>();
     }
-    Py_INCREF(py_object);
-
     delete_constructor(self, context);
     if (!py_class_init_js_object(object, py_object, context)) {
-        Py_DECREF(py_object);
         return Local<Object>();
     }
     return hs.Escape(object);

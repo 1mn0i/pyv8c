@@ -1,7 +1,6 @@
 #include <Python.h>
 #include "pyv8.h"
 #include <v8.h>
-#include <libplatform/libplatform.h>
 #include <cstring>
 
 #include "context.h"
@@ -24,17 +23,9 @@
 
 using namespace v8;
 
-std::unique_ptr<Platform> current_platform = NULL;
-Isolate *isolate = NULL;
-
 static PyObject *
 py_initialize_v8(PyObject *self, PyObject *args, PyObject *kw)
 {
-
-    if (current_platform != NULL)
-    {
-        Py_RETURN_FALSE;
-    }
     static char *keywords[] = {"icudtl_path", "params", NULL};
     PyObject *icu = NULL;
     PyObject *params = NULL;
@@ -43,60 +34,19 @@ py_initialize_v8(PyObject *self, PyObject *args, PyObject *kw)
     {
         return NULL;
     }
-    if (icu != NULL)
-    {
-        if (!PyUnicode_Check(icu))
-        {
-            PyErr_SetString(PyExc_TypeError, "icudtl_path parameter must be a string");
-            return NULL;
-        }
-        const char *icudtl_path = PyUnicode_AsUTF8_abi3(icu);
-        if (icudtl_path == NULL)
-            return NULL;
-        V8::InitializeICU(icudtl_path);
-    }
-    else
-    {
-        V8::InitializeICU();
-    }
+    bool initialized = runtime_state.initialize(icu, params);
+    if (PyErr_Occurred())
+        return NULL;
+    return PyBool_FromLong(initialized);
+}
 
-    if (params != NULL)
-    {
-        if (!PyList_Check(params))
-        {
-            PyErr_SetString(PyExc_TypeError, "params parameter must be a list");
-            return NULL;
-        }
-
-        Py_ssize_t size = PyList_Size(params);
-        for (Py_ssize_t i = 0; i < size; ++i)
-        {
-            PyObject *item = PyList_GetItem(params, i);
-            if (!PyUnicode_Check(item))
-            {
-                PyErr_SetString(PyExc_TypeError, "params list must only contain strings");
-                return NULL;
-            }
-            const char *item_str = PyUnicode_AsUTF8_abi3(item);
-            if (item_str == NULL)
-                return NULL;
-            V8::SetFlagsFromString(item_str);
-        }
-    }
-    current_platform = platform::NewDefaultPlatform();
-    V8::InitializePlatform(current_platform.get());
-    V8::Initialize();
-
-    Isolate::CreateParams create_params;
-    create_params.array_buffer_allocator = ArrayBuffer::Allocator::NewDefaultAllocator();
-    isolate = Isolate::New(create_params);
-    isolate->SetCaptureStackTraceForUncaughtExceptions(true, 100,
-                                                       // sadly the v8 people screwed up and require me to cast this into to an enum
-                                                       static_cast<StackTrace::StackTraceOptions>(StackTrace::kOverview | StackTrace::kScriptId));
-
-    create_memes_plz_thx();
-
-    Py_RETURN_TRUE;
+static PyObject *
+py_shutdown_v8(PyObject *self, PyObject *args)
+{
+    bool shut_down = runtime_state.shutdown(true);
+    if (PyErr_Occurred())
+        return NULL;
+    return PyBool_FromLong(shut_down);
 }
 
 PyObject *
@@ -124,6 +74,8 @@ mark_unconstructable(PyObject *self, PyObject *thing)
 PyObject *
 trigger_low_memory_notification(PyObject *self, PyObject *args)
 {
+    if (!runtime_state.require_initialized())
+        return NULL;
     IN_V8;
     isolate->LowMemoryNotification();
     Py_RETURN_NONE;
@@ -132,7 +84,8 @@ trigger_low_memory_notification(PyObject *self, PyObject *args)
 PyObject *
 construct_new_object(PyObject *self, PyObject *args)
 {
-
+    if (!runtime_state.require_initialized())
+        return NULL;
     int argc = (int)PyTuple_Size(args);
     if (argc == 0)
     {
@@ -222,6 +175,8 @@ construct_new_object(PyObject *self, PyObject *args)
 PyObject *
 context_get_current(PyObject *self, PyObject *args)
 {
+    if (!runtime_state.require_initialized())
+        return NULL;
     Local<Context> current_context = isolate->GetCurrentContext();
     if (current_context.IsEmpty())
     {
@@ -235,6 +190,8 @@ context_get_current(PyObject *self, PyObject *args)
 PyObject*
 context_get_incumbent(PyObject* self, PyObject* args)
 {
+    if (!runtime_state.require_initialized())
+        return NULL;
     Local<Context> current_context = isolate->GetIncumbentContext();
     if (current_context.IsEmpty())
     {
@@ -255,6 +212,8 @@ v8_version(PyObject *self, PyObject *args)
 PyObject *
 v8_gc(PyObject *self, PyObject *args)
 {
+    if (!runtime_state.require_initialized())
+        return NULL;
     IN_V8;
     isolate->RequestGarbageCollectionForTesting(Isolate::GarbageCollectionType::kFullGarbageCollection);
     Py_RETURN_NONE;
@@ -268,6 +227,7 @@ static PyMethodDef v8_methods[] = {
     {"new", construct_new_object, METH_VARARGS, "Creates a new JavaScript object from a given constructor function"},
     {"low_memory_notification", trigger_low_memory_notification, METH_NOARGS, "Trigger V8 low memory notification"},
     {"init_v8", (PyCFunction)py_initialize_v8, METH_VARARGS | METH_KEYWORDS, "initialize v8 platform and isolate"},
+    {"shutdown_v8", py_shutdown_v8, METH_NOARGS, "shut down v8 platform and isolate"},
     {"v8_version", v8_version, METH_NOARGS, "v8 version"},
     {"v8_gc", v8_gc, METH_NOARGS, "v8 gc"},
     {NULL},

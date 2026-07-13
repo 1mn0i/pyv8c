@@ -9,6 +9,7 @@ using namespace v8;
 typedef struct {
     PyObject_HEAD
     Persistent<Object> object;
+    PyObject* py_context;
 } js_object;
 
 extern PyTypeObject* js_object_type;
@@ -16,6 +17,8 @@ int js_object_type_init();
 
 js_object *js_object_new(Local<Object> object, Local<Context> context);
 js_object *js_object_weak_new(Local<Object> object, Local<Context> context);
+void js_object_set_persistent(js_object* self, Local<Object> object,
+                              Local<Context> context, bool retain_context);
 PyObject *js_object_fake_new(PyTypeObject *type, PyObject *args, PyObject *kwargs);
 void js_object_dealloc(js_object *self);
 

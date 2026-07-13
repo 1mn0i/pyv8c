@@ -34,6 +34,7 @@ current_context = _pyv8.current_context
 incumbent_context = _pyv8.incumbent_context
 new = _pyv8.new
 v8_gc = _pyv8.v8_gc
+shutdown_v8 = _pyv8.shutdown_v8
 
 
 from .devtools import start_devtools
@@ -49,4 +50,3 @@ class ArrayType:
     Float64Array = 7
     Float32Array = 8
     Uint8ClampedArray = 9
-
