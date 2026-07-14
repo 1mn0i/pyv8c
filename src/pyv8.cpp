@@ -118,44 +118,21 @@ construct_new_object(PyObject *self, PyObject *args)
 
     MaybeLocal<Value> result;
     TimeoutGuard timeout_guard(context);
-#ifndef _WIN32
-    // error C2131: expression did not evaluate to a constant on Windows
-    if (argc <= 16)
+    V8ValueArguments argv(argc);
+    if (!argv.valid())
     {
-        Local<Value> argv[16];
-        for (long i = 0; i < argc; i++)
-        {
-            argv[i] = js_from_py(PyTuple_GetItem(args, i + 1), context);
-        }
-        if (PyErr_Occurred())
-            return NULL;
-        if (!timeout_guard.start())
-            return NULL;
-        result = object->CallAsConstructor(isolate->GetCurrentContext(), argc, argv);
+        PyErr_NoMemory();
+        return NULL;
     }
-    else
+    for (long i = 0; i < argc; i++)
     {
-#endif
-        Local<Value> *argv = new Local<Value>[argc];
-        for (long i = 0; i < argc; i++)
-        {
-            argv[i] = js_from_py(PyTuple_GetItem(args, i + 1), context);
-        }
-        if (PyErr_Occurred())
-        {
-            delete[] argv;
-            return NULL;
-        }
-        if (!timeout_guard.start())
-        {
-            delete[] argv;
-            return NULL;
-        }
-        result = object->CallAsConstructor(isolate->GetCurrentContext(), argc, argv);
-        delete[] argv;
-#ifndef _WIN32
+        argv.data()[i] = js_from_py(PyTuple_GetItem(args, i + 1), context);
     }
-#endif
+    if (PyErr_Occurred())
+        return NULL;
+    if (!timeout_guard.start())
+        return NULL;
+    result = object->CallAsConstructor(isolate->GetCurrentContext(), argc, argv.data());
 
     if (!timeout_guard.stop())
         return NULL;

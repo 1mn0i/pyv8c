@@ -13,7 +13,6 @@
 #include <v8.h>
 #include "polyfill.h"
 #include "exception.h"
-#include "kappa.h"
 #include "abi3.h"
 #include "jsnull.h"
 #include "jsundefined.h"

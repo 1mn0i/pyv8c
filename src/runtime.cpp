@@ -1,8 +1,8 @@
 #include "pyv8.h"
 
-#include "kappa.h"
 #include "pyclass.h"
 
+#include <cassert>
 #include <new>
 
 using namespace v8;
@@ -47,6 +47,7 @@ RuntimeState::~RuntimeState()
     // shutdown_v8() owns the deterministic cleanup path.
     if (isolate != nullptr)
     {
+        v8_strings_.release();
         platform_.release();
         allocator_.release();
     }
@@ -157,7 +158,42 @@ RuntimeState::initialize(PyObject* icu, PyObject* params)
         true, 100,
         static_cast<StackTrace::StackTraceOptions>(
             StackTrace::kOverview | StackTrace::kScriptId));
-    create_memes_plz_thx();
+
+    try
+    {
+        v8_strings_ = std::make_unique<V8StringCache>();
+    }
+    catch (const std::bad_alloc&)
+    {
+        isolate->Dispose();
+        isolate = nullptr;
+        V8::Dispose();
+        V8::DisposePlatform();
+        allocator_.reset();
+        platform_.reset();
+        PyErr_NoMemory();
+        return false;
+    }
+
+    bool strings_initialized;
+    {
+        Locker locker(isolate);
+        Isolate::Scope isolate_scope(isolate);
+        HandleScope handle_scope(isolate);
+        strings_initialized = v8_strings_->initialize(isolate);
+    }
+    if (!strings_initialized)
+    {
+        v8_strings_.reset();
+        isolate->Dispose();
+        isolate = nullptr;
+        V8::Dispose();
+        V8::DisposePlatform();
+        allocator_.reset();
+        platform_.reset();
+        PyErr_SetString(PyExc_RuntimeError, "failed to initialize V8 string cache");
+        return false;
+    }
     return true;
 }
 
@@ -213,6 +249,13 @@ RuntimeState::javascript_name()
         javascript_name_ = PyUnicode_InternFromString("javascript");
     }
     return javascript_name_;
+}
+
+Local<String>
+RuntimeState::v8_string(V8StringId id) const
+{
+    assert(v8_strings_ != nullptr);
+    return v8_strings_->get(isolate, id);
 }
 
 bool
@@ -336,9 +379,10 @@ RuntimeState::shutdown(bool report_error)
         clear_function_template_cache();
         Py_CLEAR(javascript_name_);
         clear_python_owners();
-        reset_memes_plz_thx();
+        v8_strings_->reset();
     }
 
+    v8_strings_.reset();
     isolate->Dispose();
     isolate = nullptr;
     V8::Dispose();

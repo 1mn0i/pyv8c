@@ -102,6 +102,45 @@ class TestConversion(unittest.TestCase):
         # 转换后应保留自引用关系，而不是创建新的列表副本。
         self.assertIs(js_array[0], js_array)
 
+    def test_js_indirect_cycle_and_shared_reference_conversion(self):
+        """测试 JavaScript 间接循环和共享子对象转换。"""
+
+        js_array = self.context.exec_js(
+            "const root = []; const child = {root}; "
+            "root.push(child, child); root"
+        )
+
+        # child.root 应回到根列表，两个数组元素也应指向同一个 Python 字典。
+        self.assertIs(js_array[0]["root"], js_array)
+        self.assertIs(js_array[0], js_array[1])
+
+    def test_python_indirect_cycle_and_shared_reference_conversion(self):
+        """测试 Python 间接循环和共享子对象转换。"""
+
+        py_root = []
+        py_child = {"root": py_root}
+        py_root.extend((py_child, py_child))
+        self.context.py_root = py_root
+
+        # 转换后应保留循环关系和共享引用，而不是重复创建 JS 对象。
+        self.assertTrue(self.context.exec_js("py_root[0].root === py_root"))
+        self.assertTrue(self.context.exec_js("py_root[0] === py_root[1]"))
+
+    def test_large_shared_reference_conversion(self):
+        """测试超过栈内 visited 容量后的共享引用转换。"""
+
+        py_items = [{"value": index} for index in range(20)]
+        self.context.py_graph = {"items": py_items, "last": py_items[-1]}
+        self.assertTrue(
+            self.context.exec_js("py_graph.items[19] === py_graph.last")
+        )
+
+        js_graph = self.context.exec_js(
+            "const items = Array.from({length: 20}, (_, value) => ({value})); "
+            "({items, last: items[19]})"
+        )
+        self.assertIs(js_graph["items"][19], js_graph["last"])
+
     def test_bytes_arraybuffer_conversion(self):
         """测试 Python bytes 转换为 JavaScript ArrayBuffer。"""
 

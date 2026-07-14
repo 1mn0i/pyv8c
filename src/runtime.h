@@ -13,6 +13,8 @@
 #include <v8.h>
 #include <libplatform/libplatform.h>
 
+#include "v8_string_cache.h"
+
 #include <cstddef>
 #include <memory>
 #include <unordered_set>
@@ -39,6 +41,7 @@ public:
     PyObject* function_template_cache();
     void clear_function_template_cache();
     PyObject* javascript_name();
+    v8::Local<v8::String> v8_string(V8StringId id) const;
 
     bool track_python_object(v8::Local<v8::Object> object, PyObject* py_object);
     bool attach_exception_state(v8::Local<v8::Object> object,
@@ -53,6 +56,7 @@ private:
 
     std::unique_ptr<v8::Platform> platform_;
     std::unique_ptr<v8::ArrayBuffer::Allocator> allocator_;
+    std::unique_ptr<V8StringCache> v8_strings_;
     std::size_t live_v8_handles_;
     PyObject* function_template_cache_;
     PyObject* javascript_name_;

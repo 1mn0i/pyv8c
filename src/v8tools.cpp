@@ -1,4 +1,5 @@
 #include "v8tools.h"
+#include "convert.h"
 
 using namespace v8;
 
@@ -10,7 +11,10 @@ namespace bindings {
         v8::Isolate* isolate = info.GetIsolate();
         Local<Context> context = isolate->GetCurrentContext();
         Local<Object> global = context->Global();
-        Local<Object> faker = global->Get(context, V8String(isolate, "faker")).ToLocalChecked().As<Object>();
+        Local<Object> faker = global
+            ->Get(context, runtime_state.v8_string(V8StringId::Faker))
+            .ToLocalChecked()
+            .As<Object>();
         PyObject* cb_name = (PyObject*)info.Data().As<External>()->Value();
         Local<String> cb = V8String(isolate, PyUnicode_AsUTF8_abi3(cb_name));
         Local<Value> func = faker->Get(context, cb).ToLocalChecked();
@@ -18,13 +22,18 @@ namespace bindings {
             info.GetIsolate()->ThrowException(v8::Exception::Error(String::Concat(isolate, V8String(isolate, "patch callback "), cb)));
             return;
         }
-        Local<Value>* arguments = new Local<Value>[info.Length()];
+        V8ValueArguments arguments(info.Length());
+        if (!arguments.valid()) {
+            isolate->ThrowException(v8::Exception::Error(
+                V8String(isolate, "failed to allocate JavaScript arguments")));
+            return;
+        }
         for (int i = 0; i < info.Length(); i++) {
-            arguments[i] = info[i];
+            arguments.data()[i] = info[i];
         }
         TryCatch try_catch(isolate);
-        MaybeLocal<Value> result = func.As<Function>()->Call(context, info.This(), info.Length(), arguments);
-        delete[] arguments;
+        MaybeLocal<Value> result = func.As<Function>()->Call(
+            context, info.This(), info.Length(), arguments.data());
         if (try_catch.HasCaught()) {
             try_catch.ReThrow();
             return;
@@ -36,7 +45,10 @@ namespace bindings {
         v8::Isolate* isolate = info.GetIsolate();
         Local<Context> context = isolate->GetCurrentContext();
         Local<Object> global = context->Global();
-        Local<Object> faker = global->Get(context, V8String(isolate, "faker")).ToLocalChecked().As<Object>();
+        Local<Object> faker = global
+            ->Get(context, runtime_state.v8_string(V8StringId::Faker))
+            .ToLocalChecked()
+            .As<Object>();
         Local<String> cb = info.Data().As<String>();
         Local<Value> func = faker->Get(context, cb).ToLocalChecked();
         if (func.IsEmpty() || !func->IsFunction()) {

@@ -140,12 +140,13 @@
     <ClCompile Include="jstypedarray.cpp" />
     <ClCompile Include="jsundefined.cpp" />
     <ClCompile Include="jsvalue.cpp" />
-    <ClCompile Include="kappa.cpp" />
     <ClCompile Include="pyclass.cpp" />
     <ClCompile Include="pyclasshandlers.cpp" />
     <ClCompile Include="pyfunction.cpp" />
     <ClCompile Include="pyv8.cpp" />
+    <ClCompile Include="runtime.cpp" />
     <ClCompile Include="script.cpp" />
+    <ClCompile Include="v8_string_cache.cpp" />
     <ClCompile Include="v8tools.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -164,12 +165,13 @@
     <ClInclude Include="jstypedarray.h" />
     <ClInclude Include="jsundefined.h" />
     <ClInclude Include="jsvalue.h" />
-    <ClInclude Include="kappa.h" />
     <ClInclude Include="polyfill.h" />
     <ClInclude Include="pyclass.h" />
     <ClInclude Include="pyfunction.h" />
     <ClInclude Include="pyv8.h" />
+    <ClInclude Include="runtime.h" />
     <ClInclude Include="script.h" />
+    <ClInclude Include="v8_string_cache.h" />
     <ClInclude Include="v8tools.h" />
   </ItemGroup>
   <ItemGroup>

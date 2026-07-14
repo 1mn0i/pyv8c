@@ -61,32 +61,16 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
     int argc = PyTuple_Size(args);
     MaybeLocal<Value> result;
     TimeoutGuard timeout_guard(context);
-
-#ifndef _WIN32
-    // error C2131: expression did not evaluate to a constant on Windows
-    if (argc <= 16) {
-        Local<Value> argv[16];
-        jss_from_pys(args, argv, context);
-        if (PyErr_Occurred()) return NULL;
-        if (!timeout_guard.start()) return NULL;
-        result = object->CallAsFunction(context, js_this, argc, argv);
-    } else {
-#endif
-        Local<Value> *argv = new Local<Value>[argc];
-        jss_from_pys(args, argv, context);
-        if (PyErr_Occurred()) {
-            delete[] argv;
-            return NULL;
-        }
-        if (!timeout_guard.start()) {
-            delete[] argv;
-            return NULL;
-        }
-        result = object->CallAsFunction(context, js_this, argc, argv);
-        delete[] argv;
-#ifndef _WIN32
+    V8ValueArguments argv(argc);
+    if (!argv.valid())
+    {
+        PyErr_NoMemory();
+        return NULL;
     }
-#endif
+    jss_from_pys(args, argv.data(), context);
+    if (PyErr_Occurred()) return NULL;
+    if (!timeout_guard.start()) return NULL;
+    result = object->CallAsFunction(context, js_this, argc, argv.data());
     if (!timeout_guard.stop()) return NULL;
     PY_PROPAGATE_JS;
     Local<Value> js_result;
@@ -109,9 +93,11 @@ PyObject* js_function_repr(js_function* self) {
         Local<Object> global = context->Global();
         v8::Local<v8::Value> faker, raw_tostring, ret;
         v8::MaybeLocal<v8::Value> maybe_faker, maybe_raw_tostring, maybe_ret;
-        maybe_faker = global->Get(context, V8String(isolate, HOOKHANDLE));
+        maybe_faker = global->Get(
+            context, runtime_state.v8_string(V8StringId::Faker));
         if (maybe_faker.ToLocal(&faker) && faker->IsObject()) {
-            maybe_raw_tostring = faker.As<v8::Object>()->Get(context, V8String(isolate, "raw_tostring"));
+            maybe_raw_tostring = faker.As<v8::Object>()->Get(
+                context, runtime_state.v8_string(V8StringId::RawToString));
             if (maybe_raw_tostring.ToLocal(&raw_tostring) && raw_tostring->IsFunction()) {
                 v8::MaybeLocal<v8::Value> maybe_ret = raw_tostring.As<v8::Function>()->Call(context, object, 0, NULL);
                 if (maybe_ret.ToLocal(&ret)) {

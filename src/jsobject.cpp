@@ -41,6 +41,26 @@ static PyType_Spec js_object_spec = {
 
 PyTypeObject *js_object_type = NULL;
 
+static bool
+js_object_should_try_python_attribute(js_object* self, PyObject* name)
+{
+    if (Py_TYPE(self) != js_object_type &&
+        Py_TYPE(self) != js_function_type &&
+        Py_TYPE(self) != js_promise_type &&
+        Py_TYPE(self) != js_typedarray_type)
+    {
+        return true;
+    }
+    if (!PyUnicode_Check(name))
+        return false;
+
+    Py_ssize_t length;
+    const char* utf8_name = PyUnicode_AsUTF8AndSize(name, &length);
+    if (utf8_name == NULL)
+        return true;
+    return length == 0 || utf8_name[0] == '_';
+}
+
 void
 js_object_set_persistent(js_object* self, Local<Object> object,
                          Local<Context> context, bool retain_context)
@@ -141,11 +161,14 @@ js_object_weak_new(Local<Object> object, Local<Context> context)
 PyObject *
 js_object_getattro(js_object *self, PyObject *name)
 {
-    PyObject *attr_value = PyObject_GenericGetAttr((PyObject *)self, name);
-    if (attr_value == NULL)
-        PyErr_Clear();
-    else
-        return attr_value;
+    if (js_object_should_try_python_attribute(self, name))
+    {
+        PyObject *attr_value = PyObject_GenericGetAttr((PyObject *)self, name);
+        if (attr_value == NULL)
+            PyErr_Clear();
+        else
+            return attr_value;
+    }
 
     IN_V8;
     Local<Object> object = self->object.Get(isolate);
@@ -207,15 +230,18 @@ js_object_getattro(js_object *self, PyObject *name)
 int 
 js_object_setattro(js_object *self, PyObject *name, PyObject *value)
 {
-    PyObject *attr_value = PyObject_GenericGetAttr((PyObject *)self, name);
-    if (attr_value == NULL)
+    if (js_object_should_try_python_attribute(self, name))
     {
-        PyErr_Clear();
-    }
-    else
-    {
-        Py_XDECREF(attr_value);
-        return PyObject_GenericSetAttr((PyObject *)self, name, value);
+        PyObject *attr_value = PyObject_GenericGetAttr((PyObject *)self, name);
+        if (attr_value == NULL)
+        {
+            PyErr_Clear();
+        }
+        else
+        {
+            Py_XDECREF(attr_value);
+            return PyObject_GenericSetAttr((PyObject *)self, name, value);
+        }
     }
 
     IN_V8;

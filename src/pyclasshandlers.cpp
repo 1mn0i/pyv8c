@@ -42,7 +42,7 @@ get_handler_self(const Info& info, bool cross_origin)
     if (js_self->InternalFieldCount() != OBJECT_INTERNAL_FIELDS)
         return Py_None;
     Local<Data> magic = js_self->GetInternalField(PYTHON_MAGIC_FIELD);
-    if (magic != IZ_DAT_OBJECT)
+    if (magic != runtime_state.v8_string(V8StringId::PythonObjectMagic))
         return Py_None;
     return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD)
         .template As<External>()->Value();

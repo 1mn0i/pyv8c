@@ -11,7 +11,8 @@
 namespace faker {
 
 #define FAKER_RECORD                                                                    \
-        ghook_key = v8::Private::ForApi(isolate, V8String(isolate, "hook"));                \
+        ghook_key = v8::Private::ForApi(                                                   \
+            isolate, runtime_state.v8_string(V8StringId::Hook));                           \
         v8::MaybeLocal<v8::Value> maybe_value = ctx->Global()->GetPrivate(ctx, ghook_key);  \
         if (!maybe_value.IsEmpty()) {                                                       \
             ghook = maybe_value.ToLocalChecked()->IsTrue();                                 \
@@ -163,9 +164,11 @@ class FakerHookGetter {
             v8::Local<v8::Object> global = ctx->Global();
             v8::MaybeLocal<v8::Value> maybe_faker, maybe_getter;
             v8::Local<v8::Value> faker, getter;
-            maybe_faker = global->Get(ctx, V8String(isolate, HOOKHANDLE));
+            maybe_faker = global->Get(
+                ctx, runtime_state.v8_string(V8StringId::Faker));
             if (maybe_faker.ToLocal(&faker) && faker->IsObject()) {
-                maybe_getter = faker.As<v8::Object>()->Get(ctx, V8String(isolate, "getter"));
+                maybe_getter = faker.As<v8::Object>()->Get(
+                    ctx, runtime_state.v8_string(V8StringId::Getter));
                 if (maybe_getter.ToLocal(&getter) && getter->IsFunction()) {
                     if (property_value.IsEmpty()) {
                         property_value = info.Holder()->Get(ctx, v8_property_name).FromMaybe(v8::Undefined(isolate).As<v8::Value>());
@@ -261,9 +264,11 @@ class FakerHookSetter {
             v8::Local<v8::Object> global = ctx->Global();
             v8::MaybeLocal<v8::Value> maybe_faker, maybe_setter;
             v8::Local<v8::Value> faker, setter;
-            maybe_faker = global->Get(ctx, V8String(isolate, HOOKHANDLE));
+            maybe_faker = global->Get(
+                ctx, runtime_state.v8_string(V8StringId::Faker));
             if (maybe_faker.ToLocal(&faker) && faker->IsObject()) {
-                maybe_setter = faker.As<v8::Object>()->Get(ctx, V8String(isolate, "setter"));
+                maybe_setter = faker.As<v8::Object>()->Get(
+                    ctx, runtime_state.v8_string(V8StringId::Setter));
                 if (maybe_setter.ToLocal(&setter) && setter->IsFunction()) {
                     v8::Local<v8::Value> params[] = { info.Holder(), v8_property_name, v8_property_value, exception };
                     v8::MaybeLocal<v8::Value> return_value = setter.As<v8::Function>()->Call(ctx, faker, 4, params);
@@ -358,9 +363,11 @@ class FakerHookOperation {
                 v8::Local<v8::Object> global = ctx->Global();
                 v8::MaybeLocal<v8::Value> maybe_faker, maybe_operation;
                 v8::Local<v8::Value> faker, operation;
-                maybe_faker = global->Get(ctx, V8String(ctx->GetIsolate(), HOOKHANDLE));
+                maybe_faker = global->Get(
+                    ctx, runtime_state.v8_string(V8StringId::Faker));
                 if (maybe_faker.ToLocal(&faker) && faker->IsObject()) {
-                    maybe_operation = faker.As<v8::Object>()->Get(ctx, V8String(ctx->GetIsolate(), "method"));
+                    maybe_operation = faker.As<v8::Object>()->Get(
+                        ctx, runtime_state.v8_string(V8StringId::Method));
                     if (maybe_operation.ToLocal(&operation) && operation->IsFunction()) {
                         if (args.IsEmpty()) {
                             args = GetArgsArray();
@@ -459,9 +466,11 @@ public:
             v8::Local<v8::Object> global = ctx->Global();
             v8::MaybeLocal<v8::Value> maybe_faker, maybe_construct;
             v8::Local<v8::Value> faker, construct;
-            maybe_faker = global->Get(ctx, V8String(ctx->GetIsolate(), HOOKHANDLE));
+            maybe_faker = global->Get(
+                ctx, runtime_state.v8_string(V8StringId::Faker));
             if (maybe_faker.ToLocal(&faker) && faker->IsObject()) {
-                maybe_construct = faker.As<v8::Object>()->Get(ctx, V8String(isolate, "construct"));
+                maybe_construct = faker.As<v8::Object>()->Get(
+                    ctx, runtime_state.v8_string(V8StringId::Construct));
                 if (maybe_construct.ToLocal(&construct) && construct->IsFunction()) {
 
                     if (args.IsEmpty()) {

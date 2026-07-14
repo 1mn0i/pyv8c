@@ -180,5 +180,16 @@ class TestJSObject(unittest.TestCase):
         self.assertEqual(js_obj.get_name(), "xiaoming")
         self.assertEqual(js_obj.get_age(), 18)
 
+    def test_js_object_private_style_property(self):
+        """测试以下划线开头的 JS 属性仍会在 Python 属性查找后回退到 V8。"""
+
+        js_obj = self.context.exec_js(
+            "new (class PrivateValue { constructor() { this._value = 42; } })()"
+        )
+
+        self.assertEqual(js_obj._value, 42)
+        js_obj._value = 84
+        self.assertEqual(js_obj._value, 84)
+
 if __name__ == "__main__":
     unittest.main()

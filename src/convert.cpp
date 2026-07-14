@@ -9,11 +9,125 @@
 #include "jsvalue.h"
 #include "context.h"
 
-PyObject *
-py_from_js(Local<Value> value, Local<Context> context)
-{
-    IN_V8;
+#include <climits>
+#include <new>
+#include <unordered_map>
+#include <vector>
 
+namespace
+{
+class JsToPyConversionContext
+{
+public:
+    PyObject* find(Local<Object> object)
+    {
+        for (const Entry& entry : visited_)
+        {
+            if (entry.object.Get(isolate)->StrictEquals(object))
+            {
+                Py_INCREF(entry.result);
+                return entry.result;
+            }
+        }
+        return NULL;
+    }
+
+    bool remember(Local<Object> object, PyObject* result)
+    {
+        try
+        {
+            visited_.emplace_back(isolate, object, result);
+        }
+        catch (const std::bad_alloc&)
+        {
+            PyErr_NoMemory();
+            return false;
+        }
+        return true;
+    }
+
+private:
+    struct Entry
+    {
+        Entry(Isolate* isolate, Local<Object> object, PyObject* result)
+            : object(isolate, object), result(result)
+        {
+        }
+
+        Entry(Entry&&) noexcept = default;
+        Entry& operator=(Entry&&) noexcept = default;
+        Entry(const Entry&) = delete;
+        Entry& operator=(const Entry&) = delete;
+
+        Global<Object> object;
+        PyObject* result;
+    };
+
+    std::vector<Entry> visited_;
+};
+
+class PyToJsConversionContext
+{
+public:
+    PyToJsConversionContext()
+        : inline_size_(0)
+    {
+    }
+
+    bool find(PyObject* object, Local<Value>* result) const
+    {
+        for (size_t i = 0; i < inline_size_; ++i)
+        {
+            if (inline_objects_[i] == object)
+            {
+                *result = inline_values_[i];
+                return true;
+            }
+        }
+        auto item = overflow_.find(object);
+        if (item != overflow_.end())
+        {
+            *result = item->second.Get(isolate);
+            return true;
+        }
+        return false;
+    }
+
+    bool remember(PyObject* object, Local<Value> result)
+    {
+        if (inline_size_ < kInlineCapacity)
+        {
+            inline_objects_[inline_size_] = object;
+            inline_values_[inline_size_] = result;
+            ++inline_size_;
+            return true;
+        }
+        try
+        {
+            overflow_.emplace(object, Global<Value>(isolate, result));
+        }
+        catch (const std::bad_alloc&)
+        {
+            PyErr_NoMemory();
+            return false;
+        }
+        return true;
+    }
+
+private:
+    static constexpr size_t kInlineCapacity = 16;
+    size_t inline_size_;
+    PyObject* inline_objects_[kInlineCapacity];
+    Local<Value> inline_values_[kInlineCapacity];
+    std::unordered_map<PyObject*, Global<Value>> overflow_;
+};
+}
+
+static PyObject *
+py_from_js_impl(Local<Value> value,
+                Local<Context> context,
+                JsToPyConversionContext* conversion)
+{
     if (value->IsSymbol())
     {
         value = value.As<Symbol>()->Description(context->GetIsolate());
@@ -43,12 +157,26 @@ py_from_js(Local<Value> value, Local<Context> context)
 
     if (value->IsArray())
     {
+        JsToPyConversionContext local_conversion;
+        if (conversion == nullptr)
+            conversion = &local_conversion;
+
         Local<Array> array = value.As<Array>();
-        PyObject *list = PyList_New(array->Length());
+        PyObject* existing = conversion->find(array);
+        if (existing != NULL || PyErr_Occurred())
+            return existing;
+
+        const uint32_t length = array->Length();
+        PyObject *list = PyList_New(length);
         if (!list)
             return NULL;
+        if (!conversion->remember(array, list))
+        {
+            Py_DECREF(list);
+            return NULL;
+        }
 
-        for (uint32_t i = 0; i < array->Length(); i++)
+        for (uint32_t i = 0; i < length; i++)
         {
             Local<Value> js_value;
             if (!array->Get(context, i).ToLocal(&js_value))
@@ -57,14 +185,7 @@ py_from_js(Local<Value> value, Local<Context> context)
                 return NULL;
             }
 
-            if (js_value->StrictEquals(array))
-            {
-                Py_INCREF(list);
-                PyList_SetItem(list, i, list);
-                continue;
-            }
-
-            PyObject *obj = py_from_js(js_value, context);
+            PyObject *obj = py_from_js_impl(js_value, context, conversion);
             if (obj == NULL)
             {
                 Py_DECREF(list);
@@ -91,9 +212,22 @@ py_from_js(Local<Value> value, Local<Context> context)
         }
         if (obj_value->GetPrototype()->StrictEquals(context->GetEmbedderData(OBJECT_PROTOTYPE_SLOT)) && !has_to_string_tag)
         {
+            JsToPyConversionContext local_conversion;
+            if (conversion == nullptr)
+                conversion = &local_conversion;
+
+            PyObject* existing = conversion->find(obj_value);
+            if (existing != NULL || PyErr_Occurred())
+                return existing;
+
             PyObject *dict = PyDict_New();
             if (!dict)
                 return NULL;
+            if (!conversion->remember(obj_value, dict))
+            {
+                Py_DECREF(dict);
+                return NULL;
+            }
 
             Local<Array> js_keys;
             if (!obj_value->GetPropertyNames(context).ToLocal(&js_keys))
@@ -111,7 +245,7 @@ py_from_js(Local<Value> value, Local<Context> context)
                     PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object property key");
                     return NULL;
                 }
-                PyObject *key = py_from_js(js_key, context);
+                PyObject *key = py_from_js_impl(js_key, context, conversion);
                 if (key == NULL)
                 {
                     Py_XDECREF(dict);
@@ -125,18 +259,7 @@ py_from_js(Local<Value> value, Local<Context> context)
                     PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object property value");
                     return NULL;
                 }
-                if (js_value->StrictEquals(obj_value))
-                {
-                    if (PyDict_SetItem(dict, key, dict) < 0)
-                    {
-                        Py_XDECREF(key);
-                        Py_XDECREF(dict);
-                        return NULL;
-                    }
-                    Py_XDECREF(key);
-                    continue;
-                }
-                PyObject *dict_value = py_from_js(js_value, context);
+                PyObject *dict_value = py_from_js_impl(js_value, context, conversion);
                 if (dict_value == NULL)
                 {
                     Py_XDECREF(dict);
@@ -159,7 +282,7 @@ py_from_js(Local<Value> value, Local<Context> context)
         if (obj_value->InternalFieldCount() == OBJECT_INTERNAL_FIELDS)
         {
             Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
-            if (magic == IZ_DAT_OBJECT)
+            if (magic == runtime_state.v8_string(V8StringId::PythonObjectMagic))
             {
                 PyObject *object = (PyObject *)obj_value->GetInternalField(PYTHON_OBJECT_FIELD).As<External>()->Value();
                 Py_INCREF(object);
@@ -187,30 +310,37 @@ py_from_js(Local<Value> value, Local<Context> context)
     Py_RETURN_NONE;
 }
 
-Local<Value>
-js_from_py(PyObject *value, Local<Context> context)
+PyObject *
+py_from_js(Local<Value> value, Local<Context> context)
 {
-    ESCAPING_IN_V8;
+    IN_V8;
+    return py_from_js_impl(value, context, nullptr);
+}
 
+static Local<Value>
+js_from_py_impl(PyObject *value,
+                Local<Context> context,
+                PyToJsConversionContext* conversion)
+{
     if (value == Py_False)
     {
-        return hs.Escape(False(isolate));
+        return False(isolate);
     }
     if (value == Py_True)
     {
-        return hs.Escape(True(isolate));
+        return True(isolate);
     }
     if (value == js_undefined_object)
     {
-        return hs.Escape(Undefined(isolate));
+        return Undefined(isolate);
     }
     if (value == Py_None)
     {
-        return hs.Escape(Undefined(isolate));
+        return Undefined(isolate);
     }
     if (value == js_null_object)
     {
-        return hs.Escape(Null(isolate));
+        return Null(isolate);
     }
     if (PyUnicode_Check(value))
     {
@@ -226,7 +356,7 @@ js_from_py(PyObject *value, Local<Context> context)
             PyErr_SetString(PyExc_RuntimeError, "failed to create JavaScript string");
             return Local<Value>();
         }
-        return hs.Escape(js_value);
+        return js_value;
     }
     if (PyBytes_Check(value))
     {
@@ -234,14 +364,14 @@ js_from_py(PyObject *value, Local<Context> context)
         Py_ssize_t len;
         if (PyBytes_AsStringAndSize(value, &str, &len) < 0)
         {
-            return hs.Escape(Undefined(isolate));
+            return Undefined(isolate);
         }
         Local<ArrayBuffer> js_value = ArrayBuffer::New(isolate, static_cast<size_t>(len));
         if (len > 0)
         {
             memcpy(js_value->Data(), str, static_cast<size_t>(len));
         }
-        return hs.Escape(js_value);
+        return js_value;
     }
 
     if (PyNumber_Check(value))
@@ -268,37 +398,41 @@ js_from_py(PyObject *value, Local<Context> context)
         {
             // TODO make this work right
             printf("what the hell kind of number is this?!");
-            return hs.Escape(Undefined(isolate));
+            return Undefined(isolate);
         }
-        return hs.Escape(js_value);
+        return js_value;
     }
 
     if (PyDict_Check(value))
     {
+        PyToJsConversionContext local_conversion;
+        if (conversion == nullptr)
+            conversion = &local_conversion;
+
+        Local<Value> existing;
+        if (conversion->find(value, &existing))
+            return existing;
+
         // a context scope is (I think) needed for Object::New to work
         Context::Scope cs(context);
         Local<Object> js_dict = Object::New(isolate);
+        if (!conversion->remember(value, js_dict))
+            return Local<Value>();
 
         PyObject *dict = value;
-        PyObject *key, *value;
+        PyObject *key, *dict_value;
         Py_ssize_t pos = 0;
-        while (PyDict_Next(dict, &pos, &key, &value))
+        while (PyDict_Next(dict, &pos, &key, &dict_value))
         {
-            Local<Value> js_key = js_from_py(key, context);
-            if (PyErr_Occurred())
+            Local<Value> js_key = js_from_py_impl(key, context, conversion);
+            if (js_key.IsEmpty() || PyErr_Occurred())
             {
                 return Local<Value>();
             }
-            Local<Value> js_value;
-            if (dict == value)
-                js_value = js_dict;
-            else
+            Local<Value> js_value = js_from_py_impl(dict_value, context, conversion);
+            if (js_value.IsEmpty() || PyErr_Occurred())
             {
-                js_value = js_from_py(value, context);
-                if (PyErr_Occurred())
-                {
-                    return Local<Value>();
-                }
+                return Local<Value>();
             }
             bool set_worked;
             if (!js_dict->Set(context, js_key, js_value).To(&set_worked))
@@ -307,49 +441,52 @@ js_from_py(PyObject *value, Local<Context> context)
                 return Local<Value>();
             }
         }
-        return hs.Escape(js_dict);
+        return js_dict;
     }
 
     if (PyList_Check(value) || PyTuple_Check(value))
     {
-        int length = PySequence_Length(value);
-        Local<Array> array = Array::New(isolate, length);
-        for (int i = 0; i < length; i++)
+        PyToJsConversionContext local_conversion;
+        if (conversion == nullptr)
+            conversion = &local_conversion;
+
+        Local<Value> existing;
+        if (conversion->find(value, &existing))
+            return existing;
+
+        Py_ssize_t length = PySequence_Length(value);
+        if (length < 0 || length > INT_MAX)
         {
-            PyObject *item = PySequence_GetItem(value, i);
+            if (!PyErr_Occurred())
+                PyErr_SetString(PyExc_OverflowError, "Python sequence is too large for a JavaScript array");
+            return Local<Value>();
+        }
+        Local<Array> array = Array::New(isolate, static_cast<int>(length));
+        if (!conversion->remember(value, array))
+            return Local<Value>();
+
+        for (Py_ssize_t i = 0; i < length; i++)
+        {
+            PyObject *item = PyList_Check(value)
+                ? PyList_GetItem(value, i)
+                : PyTuple_GetItem(value, i);
             if (item == NULL)
             {
                 return Local<Value>();
             }
+            Local<Value> js_item = js_from_py_impl(item, context, conversion);
+            if (js_item.IsEmpty() || PyErr_Occurred())
+                return Local<Value>();
+
             bool set_worked;
-            if (item == value)
+            if (!array->Set(context, static_cast<uint32_t>(i), js_item).To(&set_worked))
             {
-                if (!array->Set(context, i, array).To(&set_worked))
-                {
-                    Py_DECREF(item);
-                    PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript array item");
-                    return Local<Value>();
-                }
-            }
-            else
-            {
-                Local<Value> js_item = js_from_py(item, context);
-                if (PyErr_Occurred())
-                {
-                    Py_DECREF(item);
-                    return Local<Value>();
-                }
-                if (!array->Set(context, i, js_item).To(&set_worked))
-                {
-                    Py_DECREF(item);
-                    PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript array item");
-                    return Local<Value>();
-                }
+                PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript array item");
+                return Local<Value>();
             }
             assert(set_worked);
-            Py_DECREF(item);
         }
-        return hs.Escape(array);
+        return array;
     }
     if (PyFunction_Check_abi3(value) || PyMethod_Check_abi3(value))
     {
@@ -363,7 +500,7 @@ js_from_py(PyObject *value, Local<Context> context)
         {
             return Local<Value>();
         }
-        return hs.Escape(function);
+        return function;
     }
 
     if (PyType_Check(value))
@@ -403,25 +540,25 @@ js_from_py(PyObject *value, Local<Context> context)
                 return Local<Value>();
             }
             ctx_c->hook = hook;
-            return hs.Escape(obj);
+            return obj;
         }
         Local<Function> constructor = py_class_get_constructor(context, templ, (py_class *)templ->parent);
         if (constructor.IsEmpty())
         {
             return Local<Value>();
         }
-        return hs.Escape(constructor);
+        return constructor;
     }
     if (PyObject_TypeCheck(value, js_object_type))
     {
         js_object *py_value = (js_object *)value;
-        return hs.Escape(py_value->object.Get(isolate));
+        return py_value->object.Get(isolate);
     }
 
     if (PyObject_TypeCheck(value, js_value_type))
     {
         js_value* py_value = (js_value*)value;
-        return hs.Escape(py_value->value.Get(isolate));
+        return py_value->value.Get(isolate);
     }
 
     // python global_this -> js globalThis
@@ -453,7 +590,17 @@ js_from_py(PyObject *value, Local<Context> context)
     {
         return Local<Value>();
     }
-    return hs.Escape(js_object);
+    return js_object;
+}
+
+Local<Value>
+js_from_py(PyObject *value, Local<Context> context)
+{
+    ESCAPING_IN_V8;
+    Local<Value> result = js_from_py_impl(value, context, nullptr);
+    if (result.IsEmpty())
+        return result;
+    return hs.Escape(result);
 }
 
 PyObject *
@@ -477,7 +624,8 @@ pys_from_jss(const FunctionCallbackInfo<Value> &js_args, Local<Context> context)
 // js_args is an out parameter, expected to contain enough space
 void jss_from_pys(PyObject *py_args, Local<Value> *js_args, Local<Context> context)
 {
-    for (int i = 0; i < PyTuple_Size(py_args); i++)
+    const Py_ssize_t length = PyTuple_Size(py_args);
+    for (Py_ssize_t i = 0; i < length; i++)
     {
         js_args[i] = js_from_py(PyTuple_GetItem(py_args, i), context);
     }
@@ -558,7 +706,10 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
         {
             exception = js_exception.As<Object>();
             runtime_state.attach_exception_state(exception, exc_type, nullptr);
-            exception->Set(context, V8String(isolate, "message"), V8String(isolate, exc_message));
+            exception->Set(
+                context,
+                runtime_state.v8_string(V8StringId::Message),
+                V8String(isolate, exc_message));
         }
     }
     Py_XDECREF(exc_cls_name);

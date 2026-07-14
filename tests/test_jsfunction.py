@@ -113,5 +113,26 @@ class TestJSFunction(unittest.TestCase):
         self.assertEqual(list(result['array']), [1, 2, 3])
         self.assertEqual(result['object']['key'], "value")
 
+    def test_js_function_inline_and_heap_arguments(self):
+        """测试小参数栈存储和大参数堆存储都能正确传递。"""
+
+        js_func = self.context.exec_js(
+            "(function () { return Array.from(arguments).join(','); })"
+        )
+
+        # 16 个参数命中栈内存路径，17 个参数命中堆内存路径。
+        self.assertEqual(js_func(*range(16)), ",".join(map(str, range(16))))
+        self.assertEqual(js_func(*range(17)), ",".join(map(str, range(17))))
+
+    def test_js_constructor_inline_and_heap_arguments(self):
+        """测试构造函数的小参数和大参数调用路径。"""
+
+        constructor = self.context.exec_js(
+            "(function () { this.count = arguments.length; })"
+        )
+
+        self.assertEqual(pyv8.new(constructor, *range(16)).count, 16)
+        self.assertEqual(pyv8.new(constructor, *range(17)).count, 17)
+
 if __name__ == "__main__":
     unittest.main()

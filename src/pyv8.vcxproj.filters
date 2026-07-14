@@ -16,12 +16,13 @@
     <ClCompile Include="exception.cpp" />
     <ClCompile Include="jsfunction.cpp" />
     <ClCompile Include="jsobject.cpp" />
-    <ClCompile Include="kappa.cpp" />
     <ClCompile Include="pyclass.cpp" />
     <ClCompile Include="pyclasshandlers.cpp" />
     <ClCompile Include="pyfunction.cpp" />
     <ClCompile Include="pyv8.cpp" />
+    <ClCompile Include="runtime.cpp" />
     <ClCompile Include="script.cpp" />
+    <ClCompile Include="v8_string_cache.cpp" />
     <ClCompile Include="faker\tools.cpp">
       <Filter>faker</Filter>
     </ClCompile>
@@ -42,12 +43,13 @@
     <ClInclude Include="debugger.h" />
     <ClInclude Include="exception.h" />
     <ClInclude Include="jsobject.h" />
-    <ClInclude Include="kappa.h" />
     <ClInclude Include="polyfill.h" />
     <ClInclude Include="pyclass.h" />
     <ClInclude Include="pyfunction.h" />
     <ClInclude Include="pyv8.h" />
+    <ClInclude Include="runtime.h" />
     <ClInclude Include="script.h" />
+    <ClInclude Include="v8_string_cache.h" />
     <ClInclude Include="faker\tools.h">
       <Filter>faker</Filter>
     </ClInclude>

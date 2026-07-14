@@ -508,8 +508,9 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         // and sets the prototype's prototype to Error.prototype, which it finds in an embedder data slot on the context
         // it has to be a magic count instead of a field because you can't set an internal field on a template
         // only an object
-        templ->PrototypeTemplate()->SetPrivate(v8::Private::ForApi(isolate, JSTR("__proto__")), I_CAN_HAZ_ERROR_PROTOTYPE);
-        //templ->PrototypeTemplate()->Set(JSTR("__proto__"), I_CAN_HAZ_ERROR_PROTOTYPE);
+        templ->PrototypeTemplate()->SetPrivate(
+            v8::Private::ForApi(isolate, JSTR("__proto__")),
+            runtime_state.v8_string(V8StringId::ErrorPrototypeMagic));
     }
     else if (last_base != NULL && last_base != (PyObject*)&PyBaseObject_Type) {
         py_class* superclass_templ = (py_class*)py_class_to_template(last_base, py_ctx);
@@ -650,7 +651,9 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
     if (!runtime_state.track_python_object(js_object, py_object)) {
         return false;
     }
-    js_object->SetInternalField(PYTHON_MAGIC_FIELD, IZ_DAT_OBJECT);
+    js_object->SetInternalField(
+        PYTHON_MAGIC_FIELD,
+        runtime_state.v8_string(V8StringId::PythonObjectMagic));
     js_object->SetInternalField(PYTHON_OBJECT_FIELD, External::New(isolate, py_object));
     js_object->SetInternalField(PYTHON_EXCEPTION_TYPE_FIELD, External::New(isolate, nullptr));
     js_object->SetInternalField(PYTHON_TRACEBACK_FIELD, External::New(isolate, nullptr));
@@ -670,7 +673,8 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
         PyErr_SetString(PyExc_RuntimeError, "failed to read JavaScript prototype marker");
         return false;
     }
-    if (proto_override->StrictEquals(I_CAN_HAZ_ERROR_PROTOTYPE)) {
+    if (proto_override->StrictEquals(
+            runtime_state.v8_string(V8StringId::ErrorPrototypeMagic))) {
         bool delete_worked;
         if (!last_proto_object->DeletePrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).To(&delete_worked)) {
             PyErr_SetString(PyExc_RuntimeError, "failed to clear JavaScript prototype marker");
@@ -721,7 +725,11 @@ delete_constructor(py_class* self, Local<Context> context)
             if (function->Get(context, V8String(isolate, "prototype")).ToLocal(&prototype_value)) {
                 v8::Local<v8::Object> prototype_object = prototype_value.As<v8::Object>();
                 bool delete_worked;
-                prototype_object->Delete(context, V8String(isolate, "constructor")).To(&delete_worked);
+                prototype_object
+                    ->Delete(
+                        context,
+                        runtime_state.v8_string(V8StringId::Constructor))
+                    .To(&delete_worked);
             }
         }
     }

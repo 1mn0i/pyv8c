@@ -206,7 +206,8 @@ py_throw_js(Local<Value> js_exc, Local<Message> js_message)
     if (js_exc->IsObject() &&
         js_exc.As<Object>()->InternalFieldCount() == OBJECT_INTERNAL_FIELDS) {
         Local<Data> magic = js_exc.As<Object>()->GetInternalField(PYTHON_MAGIC_FIELD);
-        is_python_object = magic == IZ_DAT_OBJECT;
+        is_python_object =
+            magic == runtime_state.v8_string(V8StringId::PythonObjectMagic);
     }
     if (is_python_object) {
         Local<Object> exc_object = js_exc.As<Object>();
@@ -320,7 +321,10 @@ js_throw_py()
                 PyErr_Clear();
                 exception = Exception::Error(V8String(isolate, exc_message)).As<Object>();
             }
-            exception->Set(context, V8String(isolate, "message"), V8String(isolate, exc_message));
+            exception->Set(
+                context,
+                runtime_state.v8_string(V8StringId::Message),
+                V8String(isolate, exc_message));
 
             Local<Value> error_ctor_val;
             Local<Value> capture_stack_trace_val;

@@ -100,20 +100,20 @@ pyv8 主要用于 JS 逆向时补环境，为一比一模拟 Chromium 内置原�
 
 ## P2 - 性能优化
 
-- [ ] 缓存常用 V8 字符串为 Persistent / interned strings。
-  例如 `"constructor"`、`"prototype"`、`"message"`、`"length"`、`"name"`、常见 `__v8_*` key。
+- [√] 缓存常用 V8 字符串为 Persistent / interned strings。
+  已由 `RuntimeState` 持有强类型 `V8StringCache`，缓存 `constructor`、`prototype`、`message`、`length`、`name` 以及 faker/hook 常用 key。
 
-- [ ] 为 Python/JS 递归转换增加 conversion context 和 visited map。
-  当前只处理部分直接自引用，复杂循环引用仍可能无限递归。
+- [√] 为 Python/JS 递归转换增加 conversion context 和 visited map。
+  已支持间接循环和共享子对象身份；普通小型 Python-to-JS 嵌套转换约增加 10%-20% 开销，换取完整循环安全和引用一致性。
 
-- [ ] 优化 `src/jsobject.cpp:121` 的 `js_object_getattro()`。
-  避免每次 JS 属性访问都依赖 Python 异常作为普通分支。
+- [√] 优化 `src/jsobject.cpp:121` 的 `js_object_getattro()`。
+  内置 JS 包装类型的普通属性直接进入 V8，以下划线开头的属性和 Python 子类仍保留原有 descriptor 查找顺序。
 
-- [ ] 避免循环里重复调用 `PySequence_Length()`。
-  例如 `src/pyclasshandlers.cpp` 的 enumerator 宏中存在重复长度查询。
+- [√] 避免循环里重复调用 `PySequence_Length()`。
+  handler enumerator、JS Array 转换和 Python 参数转换均在循环前缓存长度。
 
-- [ ] 小参数数组优先使用栈或 small-vector 存储，减少堆分配。
-  典型位置：`src/pyv8.cpp:183`、`src/jsfunction.cpp:73`、`src/v8tools.cpp:21`。
+- [√] 小参数数组优先使用栈或 small-vector 存储，减少堆分配。
+  `V8ValueArguments` 对 16 个以内参数使用栈存储，超过 16 个参数时回退到堆存储。
 
 - [ ] 建立 JS 逆向常用热路径 benchmark。
   建议覆盖 property getter、named interceptor、indexed interceptor、function call、constructor call、object wrapping、Python-to-JS conversion。
@@ -124,7 +124,7 @@ pyv8 主要用于 JS 逆向时补环境，为一比一模拟 Chromium 内置原�
 
 - [ ] 增加 Python bool 转换引用稳定性测试。
 
-- [ ] 增加循环 list / dict 转换测试。
+- [√] 增加循环 list / dict 转换测试。
 
 - [ ] 增加 Python 异常到 JS 异常的转换测试。
 
@@ -148,7 +148,7 @@ pyv8 主要用于 JS 逆向时补环境，为一比一模拟 Chromium 内置原�
 
 - [ ] 第五批：重构 class metadata 解析与 handler callback。
 
-- [ ] 第六批：基于 benchmark 做热路径性能优化。
+- [√] 第六批：基于 benchmark 做热路径性能优化。
 
 ## 备注
 
