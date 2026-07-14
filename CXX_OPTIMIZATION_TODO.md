@@ -1,6 +1,6 @@
 # pyv8 C++ 优化 TODO 报告
 
-最后更新：2026-07-10
+最后更新：2026-07-14
 
 这份报告用于跟踪 pyv8 C++ 层的正确性、性能和可维护性优化事项。
 
@@ -122,17 +122,31 @@ pyv8 主要用于 JS 逆向时补环境，为一比一模拟 Chromium 内置原�
 
 - [√] 增加 bytes / ArrayBuffer 转换测试。
 
-- [ ] 增加 Python bool 转换引用稳定性测试。
+- [√] 增加 Python bool 转换引用稳定性测试。
+  已连续执行 5000 次双向转换；普通对象模型校验引用计数，Python 3.14 immortal object 校验单例身份。
 
 - [√] 增加循环 list / dict 转换测试。
 
-- [ ] 增加 Python 异常到 JS 异常的转换测试。
+- [√] 增加 Python 异常到 JS 异常的转换测试。
+  已覆盖未捕获时恢复原 Python 异常，以及 JS 捕获时读取 message 和 stack。
 
-- [ ] 增加重复创建和销毁 Context 的压力测试。
+- [√] 增加重复创建和销毁 Context 的压力测试。
+  已在子进程连续创建和销毁 200 个 Context，并验证最终可完整关闭 V8 Runtime。
 
-- [ ] 增加大量生成原型类的压力测试。
+- [√] 增加大量生成原型类的压力测试。
+  已一次安装 128 个共享基类的动态原型类，并验证构造函数和继承关系。
 
-- [ ] 增加 timeout 嵌套执行和早退异常路径测试。
+- [√] 增加 timeout 嵌套执行和早退异常路径测试。
+  已覆盖嵌套 `exec_js()` 终止传播、内外 TimeoutGuard 清理和提前异常后的定时器取消。
+
+- [√] 增加 Chromium-like 行为契约测试。
+  已覆盖构造器、prototype accessor、interface operation、常量 descriptor、receiver check 和完整 interceptor 组合。
+
+- [√] 增加 hook 与 interceptor 故障恢复测试。
+  已覆盖十类 named/indexed handler 异常、四类 hook 自身异常、原 callback 异常和 JS 别名上报。
+
+- [√] 增加跨 Context 对象身份与隔离测试。
+  已覆盖单 Context wrapper 身份、双 Context expando 隔离、current/incumbent Context 和 GC 所有权释放。
 
 ## 建议执行顺序
 

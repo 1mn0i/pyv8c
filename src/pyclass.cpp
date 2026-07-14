@@ -179,11 +179,12 @@ py_class_type_init()
 void 
 py_class_dealloc(py_class* self) 
 {
+    self->templ.Reset();
     Py_XDECREF(self->cls);
     Py_XDECREF(self->cls_name);
     Py_XDECREF(self->call_method);
+    Py_XDECREF(self->operation_callback_data);
     //Py_XDECREF(self->parent);
-    self->templ.Reset();
     //Py_TYPE(self)->tp_free((PyObject*)self);
     TP_FREE_ABI3(py_class_type, self);
 }
@@ -237,12 +238,19 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     self->cls = NULL;
     self->cls_name = NULL;
     self->call_method = NULL;
+    self->operation_callback_data = NULL;
     self->parent = NULL;
     self->constructor_behavior = 0;
     self->unconstructable = 0;
     self->has_constructor = 0;
     self->to_obj = 0;
     self->templ.Reset();
+
+    self->operation_callback_data = PyList_New(0);
+    if (self->operation_callback_data == NULL) {
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
 
     Py_INCREF(cls);
     self->cls = cls;
@@ -333,7 +341,12 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         
     if (config.methods != NULL)
     {
-        bindings::InstallOperations(isolate, world, templ, sig, cls, config.methods);
+        if (!bindings::InstallOperations(
+                isolate, world, templ, sig, cls, config.methods,
+                self->operation_callback_data)) {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
     }
 
     if (config.constant_values != NULL)

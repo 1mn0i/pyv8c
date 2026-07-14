@@ -145,8 +145,12 @@ void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
     py_class *self = (py_class *) info.Data().As<External>()->Value();
     context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     if (ctx_c->hook) {
-        faker::FakerHookConstruct construct_hook(info, PyUnicode_AsUTF8_abi3(self->cls_name),  self->cls, ctx_c);
-        py_class_construct_impl(info, context, self, ctx_c);
+        {
+            faker::FakerHookConstruct construct_hook(info, PyUnicode_AsUTF8_abi3(self->cls_name), self->cls, ctx_c);
+            py_class_construct_impl(info, context, self, ctx_c);
+        }
+        if (PyErr_Occurred())
+            js_throw_py();
     }
     else {
         py_class_construct_impl(info, context, self, ctx_c);
@@ -230,13 +234,61 @@ py_class_method_impl(const FunctionCallbackInfo<Value>& info,
     info.GetReturnValue().Set(js_result);
 }
 
+static bool
+get_method_callback_data(const FunctionCallbackInfo<Value>& info,
+                         PyObject** method,
+                         std::string* js_name)
+{
+    Local<Value> data = info.Data();
+    if (!data->IsExternal()) {
+        PyErr_SetString(PyExc_RuntimeError, "invalid Python method callback data");
+        js_throw_py();
+        return false;
+    }
+
+    PyObject* callback_data =
+        (PyObject*)data.As<External>()->Value();
+    PyObject* name = NULL;
+    bool owns_name = false;
+    if (PyTuple_Check(callback_data) && PyTuple_Size(callback_data) == 2) {
+        *method = PyTuple_GetItem(callback_data, 0);
+        name = PyTuple_GetItem(callback_data, 1);
+    }
+    else {
+        *method = callback_data;
+        name = PyObject_GetAttrString(*method, "__name__");
+        owns_name = true;
+    }
+
+    if (name == NULL || !PyUnicode_Check(name)) {
+        if (owns_name)
+            Py_XDECREF(name);
+        PyErr_SetString(PyExc_TypeError, "Python callback must have a string name");
+        js_throw_py();
+        return false;
+    }
+    const char* name_utf8 = PyUnicode_AsUTF8_abi3(name);
+    if (name_utf8 != NULL)
+        *js_name = name_utf8;
+    if (owns_name)
+        Py_DECREF(name);
+    if (name_utf8 == NULL) {
+        js_throw_py();
+        return false;
+    }
+    return true;
+}
+
 
 void py_class_cross_origin_method_callback(const FunctionCallbackInfo<Value>& info) {
     SETUP;
 
     PyObject* self = get_self(info);
 
-    PyObject* method = (PyObject*)info.Data().As<External>()->Value();
+    PyObject* method;
+    std::string js_method_name;
+    if (!get_method_callback_data(info, &method, &js_method_name))
+        return;
     JS_PROPAGATE_PY(method);
     assert(PyFunction_Check_abi3(method));
 
@@ -245,20 +297,14 @@ void py_class_cross_origin_method_callback(const FunctionCallbackInfo<Value>& in
     }
     //Local<Context> incumbent_ctx = isolate->GetIncumbentContext();
 
-    PyObject* method_name = PyObject_GetAttrString(method, "__name__");
-    const char* method_name_str;
-    if (method_name && PyUnicode_Check(method_name)) {
-        method_name_str = PyUnicode_AsUTF8_abi3(method_name);
-    }
-    else {
-        method_name_str = "<unknown>";
-    }
-    Py_XDECREF(method_name);
-
     context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     if (ctx_c->hook) {
-        faker::FakerHookOperation operation_hook(info, method_name_str, self, ctx_c);
-        py_class_method_impl(info, context, self, method, true);
+        {
+            faker::FakerHookOperation operation_hook(info, js_method_name.c_str(), self, ctx_c);
+            py_class_method_impl(info, context, self, method, true);
+        }
+        if (PyErr_Occurred())
+            js_throw_py();
     }
     else {
         py_class_method_impl(info, context, self, method, true);
@@ -270,7 +316,10 @@ void py_class_method_callback(const FunctionCallbackInfo<Value>& info) {
     
     PyObject* self = get_self(info);
 
-    PyObject* method = (PyObject*)info.Data().As<External>()->Value();
+    PyObject* method;
+    std::string js_method_name;
+    if (!get_method_callback_data(info, &method, &js_method_name))
+        return;
     JS_PROPAGATE_PY(method);
     assert(PyFunction_Check_abi3(method));
 
@@ -279,20 +328,14 @@ void py_class_method_callback(const FunctionCallbackInfo<Value>& info) {
     }
     //Local<Context> incumbent_ctx = isolate->GetIncumbentContext();
 
-    PyObject* method_name = PyObject_GetAttrString(method, "__name__");
-    const char* method_name_str;
-    if (method_name && PyUnicode_Check(method_name)) {
-        method_name_str = PyUnicode_AsUTF8_abi3(method_name);
-    }
-    else {
-        method_name_str = "<unknown>";
-    }
-    Py_XDECREF(method_name);
-
     context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     if (ctx_c->hook) {
-        faker::FakerHookOperation operation_hook(info, method_name_str, self, ctx_c);
-        py_class_method_impl(info, context, self, method, false);
+        {
+            faker::FakerHookOperation operation_hook(info, js_method_name.c_str(), self, ctx_c);
+            py_class_method_impl(info, context, self, method, false);
+        }
+        if (PyErr_Occurred())
+            js_throw_py();
     }
     else {
         py_class_method_impl(info, context, self, method, false);
@@ -723,8 +766,16 @@ Intercepted named_getter(Local<Name> js_name, Info(Value)) {
     PyObject* self = get_self(info);
 
     if (ctx_c->hook) {
-        faker::FakerHookGetter hook(info, js_name, self, ctx_c);
-        return property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_name_get__");
+        Intercepted result;
+        {
+            faker::FakerHookGetter hook(info, js_name, self, ctx_c);
+            result = property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_name_get__");
+        }
+        if (PyErr_Occurred()) {
+            js_throw_py();
+            return Intercepted::kYes;
+        }
+        return result;
     }
     else
     {
@@ -757,10 +808,18 @@ Intercepted named_setter(Local<Name> js_name, Local<Value> js_value, Info(void))
 
     context_c* ctx_c = (context_c*)info.GetIsolate()->GetCurrentContext()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     PyObject* self = get_self(info);
-    
+
     if (ctx_c->hook) {
-        faker::FakerHookSetter hook(info, js_name, js_value, self, ctx_c);
-        return property_setter_handler(py_from_js(js_name, context), js_value, info, context, self, "__v8_name_set__");
+        Intercepted result;
+        {
+            faker::FakerHookSetter hook(info, js_name, js_value, self, ctx_c);
+            result = property_setter_handler(py_from_js(js_name, context), js_value, info, context, self, "__v8_name_set__");
+        }
+        if (PyErr_Occurred()) {
+            js_throw_py();
+            return Intercepted::kYes;
+        }
+        return result;
     }
     else {
         return property_setter_handler(py_from_js(js_name, context), js_value, info, context, self, "__v8_name_set__");
@@ -818,8 +877,16 @@ Intercepted indexed_getter(uint32_t index, Info(Value)) {
     PyObject* self = get_self(info);
 
     if (ctx_c->hook) {
-        faker::FakerHookGetter hook(info, index, self, ctx_c);
-        return property_getter_handler(PyLong_FromSize_t(index), info, context, self, "__v8_index_get__");
+        Intercepted result;
+        {
+            faker::FakerHookGetter hook(info, index, self, ctx_c);
+            result = property_getter_handler(PyLong_FromSize_t(index), info, context, self, "__v8_index_get__");
+        }
+        if (PyErr_Occurred()) {
+            js_throw_py();
+            return Intercepted::kYes;
+        }
+        return result;
     }
     else {
         return property_getter_handler(PyLong_FromSize_t(index), info, context, self, "__v8_index_get__");
@@ -842,8 +909,16 @@ Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
     PyObject* self = get_self(info);
 
     if (ctx_c->hook) {
-        faker::FakerHookSetter hook(info, index, js_value, self, ctx_c);
-        return property_setter_handler(PyLong_FromSize_t(index), js_value, info, context, self, "__v8_index_set__");
+        Intercepted result;
+        {
+            faker::FakerHookSetter hook(info, index, js_value, self, ctx_c);
+            result = property_setter_handler(PyLong_FromSize_t(index), js_value, info, context, self, "__v8_index_set__");
+        }
+        if (PyErr_Occurred()) {
+            js_throw_py();
+            return Intercepted::kYes;
+        }
+        return result;
     }
     else {
         return property_setter_handler(PyLong_FromSize_t(index), js_value, info, context, self, "__v8_index_set__");

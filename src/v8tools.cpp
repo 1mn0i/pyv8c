@@ -146,7 +146,7 @@ namespace bindings {
     template <>
     inline Local<Value> GetConfigCallbackName<FunctionKind::kOperation>(
         const OperationConfig& config) {
-        return config.js_method;
+        return config.callback_data;
     }
 
 
@@ -396,14 +396,15 @@ namespace bindings {
             static_cast<v8::PropertyAttribute>(config.v8_property_attribute));
     }
 
-    void InstallOperations(v8::Isolate* isolate,
+    bool InstallOperations(v8::Isolate* isolate,
         const char* world,
         v8::Local<v8::FunctionTemplate> interface_template,
         v8::Local<v8::Signature> signature,
         PyObject* cls,
-        PyObject* configs) {
+        PyObject* configs,
+        PyObject* callback_data_owner) {
         if (configs == NULL || !PyTuple_Check(configs))
-            return;
+            return true;
 
         int length = PySequence_Length(configs);
         for (int i = 0; i < length; i++) {
@@ -433,7 +434,18 @@ namespace bindings {
             if (cb_name != NULL && PyUnicode_Check(cb_name)) {
                 if (cb_type == unsigned(CallbackType::kPy)) {
                     PyObject* py_method = PyObject_GetAttr(cls, cb_name);
-                    v8_config.js_method = External::New(isolate, py_method);
+                    if (py_method == NULL)
+                        return false;
+                    PyObject* callback_data = PyTuple_Pack(2, py_method, method_name);
+                    Py_DECREF(py_method);
+                    if (callback_data == NULL)
+                        return false;
+                    if (PyList_Append(callback_data_owner, callback_data) < 0) {
+                        Py_DECREF(callback_data);
+                        return false;
+                    }
+                    v8_config.callback_data = External::New(isolate, callback_data);
+                    Py_DECREF(callback_data);
                     v8_config.callback = py_class_method_callback;
                     //if(strcmp(PyUnicode_AsUTF8_abi3(cb_name), "fn_postMessage")==0 && strcmp(world, "Window") == 0)
                     //    v8_config.callback = py_class_cross_origin_method_callback;
@@ -441,7 +453,7 @@ namespace bindings {
                     //    v8_config.callback = py_class_method_callback;
                 }
                 else {
-                    v8_config.js_method = External::New(isolate, cb_name);
+                    v8_config.callback_data = External::New(isolate, cb_name);
                     v8_config.callback = FakerJsFunctionCallback;
                 }
             }
@@ -473,6 +485,7 @@ namespace bindings {
 
             InstallOperation(isolate, world, interface_template, signature, v8_config);
         }
+        return true;
     }
 
 

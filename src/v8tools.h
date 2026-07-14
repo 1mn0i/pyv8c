@@ -83,9 +83,8 @@ namespace bindings {
         OperationConfig& operator=(const OperationConfig&) = delete;
 
         const char* name;
-        Local<Value> callback_name;
+        Local<Value> callback_data;
         v8::FunctionCallback callback;
-        Local<External> js_method;
         unsigned length : 8;
         unsigned v8_property_attribute : 3;  // v8::PropertyAttribute
         unsigned location : 2;               // FlagLocation
@@ -136,12 +135,13 @@ namespace bindings {
         v8::Local<v8::Signature> signature,
         const OperationConfig& config);
 
-    void InstallOperations(v8::Isolate* isolate,
+    bool InstallOperations(v8::Isolate* isolate,
         const char* world,
         v8::Local<v8::FunctionTemplate> interface_template,
         v8::Local<v8::Signature> signature,
         PyObject* cls,
-        PyObject* configs);
+        PyObject* configs,
+        PyObject* callback_data_owner);
 
     void InstallConstantValue(v8::Isolate* isolate,
         const char* world,

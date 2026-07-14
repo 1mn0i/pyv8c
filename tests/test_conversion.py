@@ -1,4 +1,7 @@
+import gc
+import sys
 import unittest
+
 import pyv8
 
 class TestConversion(unittest.TestCase):
@@ -57,6 +60,32 @@ class TestConversion(unittest.TestCase):
         js_false = self.context.exec_js("false")
         self.assertEqual(js_true, True)
         self.assertEqual(js_false, False)
+
+    def test_boolean_conversion_reference_stability(self):
+        """测试重复转换布尔值不会泄漏 True 和 False 的引用。"""
+
+        echo = self.context.exec_js("(value => value)")
+        gc.collect()
+        true_refcount = sys.getrefcount(True)
+        false_refcount = sys.getrefcount(False)
+
+        for _ in range(5000):
+            true_value = echo(True)
+            false_value = echo(False)
+            if true_value is not True or false_value is not False:
+                self.fail("JavaScript 布尔值没有转换回 Python 单例")
+            del true_value
+            del false_value
+
+        gc.collect()
+        is_immortal = getattr(sys, "_is_immortal", lambda value: False)
+        if is_immortal(True) and is_immortal(False):
+            # CPython 3.14 不再保证 immortal object 的可观察引用计数恒定。
+            self.assertIs(echo(True), True)
+            self.assertIs(echo(False), False)
+        else:
+            self.assertEqual(sys.getrefcount(True), true_refcount)
+            self.assertEqual(sys.getrefcount(False), false_refcount)
     
     def test_none_null_undefined_conversion(self):
         """测试None/null/undefined类型转换"""

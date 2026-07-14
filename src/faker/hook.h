@@ -152,13 +152,16 @@ class FakerHookGetter {
                 PyObject* value = py_from_js(property_value, ctx);
                 PyObject* exc = py_from_js(exception, ctx);
                 PyObject* py_ctx_type = PyUnicode_FromString(*ctx_type_char);
-                PyObject_CallMethod(self, "__v8_get_hook__", "OOOO", key, value, exc, py_ctx_type);
+                PyObject* hook_result = PyObject_CallMethod(
+                    self, "__v8_get_hook__", "OOOO", key, value, exc, py_ctx_type);
+                Py_XDECREF(hook_result);
                 Py_XDECREF(key);
                 Py_XDECREF(value);
                 Py_XDECREF(exc);
                 Py_XDECREF(py_ctx_type);
             }
 
+            if (PyErr_Occurred()) return;
             if (!ctx_c->has_debugger) return;
 
             v8::Local<v8::Object> global = ctx->Global();
@@ -252,13 +255,17 @@ class FakerHookSetter {
                 PyObject* value = py_from_js(v8_property_value, ctx);
                 PyObject* exc = py_from_js(exception, ctx);
                 PyObject* py_ctx_type = PyUnicode_FromString(*ctx_type_char);
-                PyObject_CallMethod(self, "__v8_set_hook__", "OOOO", key, value, exc, py_ctx_type);
+                PyObject* hook_result = PyObject_CallMethod(
+                    self, "__v8_set_hook__", "OOOO", key, value, exc, py_ctx_type);
+                Py_XDECREF(hook_result);
                 //PyObject_CallMethod(self, "__v8_set_hook__", "OOO", key, value, exc);
                 Py_XDECREF(key);
                 Py_XDECREF(value);
+                Py_XDECREF(exc);
                 Py_XDECREF(py_ctx_type);
             }
 
+            if (PyErr_Occurred()) return;
             if (!ctx_c->has_debugger) return;
             
             v8::Local<v8::Object> global = ctx->Global();
@@ -340,16 +347,22 @@ class FakerHookOperation {
                     PyObject* has_error = PyBool_FromLong(int(has_caught));
 
                     PyObject* py_ctx_type = PyUnicode_FromString(*ctx_type_char);
+                    PyObject* hook_result;
                     if (PyType_Check(self)) {
                         PyObject* method = PyObject_GetAttrString(self, "__v8_method_hook__");
-                        PyObject_CallFunction(method, "OOOOOO", self, name, py_args, py_ret, has_error, py_ctx_type);
+                        hook_result = PyObject_CallFunction(
+                            method, "OOOOOO", self, name, py_args, py_ret,
+                            has_error, py_ctx_type);
                         //PyObject_CallFunction(method, "OOOOO", self, name, py_args, py_ret, has_error);
                         Py_XDECREF(method);
                     }
                     else {
-                        PyObject_CallMethod(self, "__v8_method_hook__", "OOOOO", name, py_args, py_ret, has_error, py_ctx_type);
+                        hook_result = PyObject_CallMethod(
+                            self, "__v8_method_hook__", "OOOOO", name, py_args,
+                            py_ret, has_error, py_ctx_type);
                         //PyObject_CallMethod(self, "__v8_method_hook__", "OOOO", name, py_args, py_ret, has_error);
                     }
+                    Py_XDECREF(hook_result);
 
                     Py_XDECREF(name);
                     Py_XDECREF(py_args);
@@ -358,6 +371,7 @@ class FakerHookOperation {
                     Py_XDECREF(py_ctx_type);
                 }
 
+                if (PyErr_Occurred()) return;
                 if (!ctx_c->has_debugger) return;
 
                 v8::Local<v8::Object> global = ctx->Global();
@@ -451,7 +465,10 @@ public:
                 PyObject* has_error = PyBool_FromLong(int(has_caught));
                 PyObject* is_construct_call = PyBool_FromLong(int(info.IsConstructCall()));
                 PyObject* py_ctx_type = PyUnicode_FromString(*ctx_type_char);
-                PyObject_CallMethod(self, "__v8_construct_hook__", "OOOOOO", name, py_args, py_ret, has_error, is_construct_call, py_ctx_type);
+                PyObject* hook_result = PyObject_CallMethod(
+                    self, "__v8_construct_hook__", "OOOOOO", name, py_args,
+                    py_ret, has_error, is_construct_call, py_ctx_type);
+                Py_XDECREF(hook_result);
                 //PyObject_CallMethod(self, "__v8_construct_hook__", "OOOOOO", name, py_args, py_ret, has_error, is_construct_call);
                 Py_XDECREF(name);
                 Py_XDECREF(py_args);
@@ -461,6 +478,7 @@ public:
                 Py_XDECREF(py_ctx_type);
             }
 
+            if (PyErr_Occurred()) return;
             if (!ctx_c->has_debugger) return;
 
             v8::Local<v8::Object> global = ctx->Global();

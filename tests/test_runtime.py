@@ -97,6 +97,43 @@ class TestRuntimeLifecycle(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_repeated_context_creation_and_destruction_in_subprocess(self):
+        """重复创建和销毁 Context 后应能完整关闭 V8 Runtime。"""
+
+        code = textwrap.dedent(
+            """
+            import gc
+
+            import pyv8
+
+
+            class Window:
+                pass
+
+
+            for index in range(200):
+                context = pyv8.Context(Window())
+                assert context.exec_js(f"{index} + 1") == index + 1
+                del context
+                if index % 20 == 0:
+                    gc.collect()
+                    pyv8.v8_gc()
+
+            gc.collect()
+            pyv8.v8_gc()
+            gc.collect()
+            assert pyv8.shutdown_v8() is True
+            """
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

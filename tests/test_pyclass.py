@@ -119,6 +119,31 @@ class TestPyClass(unittest.TestCase):
         
         # 验证结果
         self.assertEqual(result, 'function Node() { [native code] }')
+
+    def test_many_generated_prototype_classes(self):
+        """大量生成共享基类的原型模板时应保持缓存和继承关系稳定。"""
+
+        PrototypeBase = type("PrototypeBase", (), {})
+        prototypes = [
+            type(f"GeneratedPrototype{index}", (PrototypeBase,), {})
+            for index in range(128)
+        ]
+
+        self.context.expose(*prototypes)
+        result = self.context.exec_js(
+            """
+            [
+                typeof GeneratedPrototype0,
+                typeof GeneratedPrototype127,
+                GeneratedPrototype0.__proto__.name,
+                GeneratedPrototype127.__proto__.name
+            ]
+            """
+        )
+        self.assertEqual(
+            result,
+            ["function", "function", "PrototypeBase", "PrototypeBase"],
+        )
     
     def test_class_skip_inherit(self):
         """测试类跳过原型继承继承"""

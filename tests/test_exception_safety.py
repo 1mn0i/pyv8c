@@ -1,3 +1,4 @@
+import time
 import unittest
 
 import pyv8
@@ -75,6 +76,34 @@ class TestExceptionSafety(unittest.TestCase):
         # 构造失败不能影响同一上下文中的后续执行。
         self.assertEqual(self.context.exec_js("3 + 3"), 6)
 
+    def test_python_exception_round_trip_and_js_metadata(self):
+        """Python 异常应能穿过 JavaScript 并保留原类型、消息和堆栈。"""
+
+        class PythonFailure(ValueError):
+            __v8_error__ = True
+
+        def raise_python_failure():
+            raise PythonFailure("python callback boom")
+
+        self.context.expose(raise_python_failure=raise_python_failure)
+
+        # JavaScript 未捕获时，应在 Python 侧恢复原始异常类型。
+        with self.assertRaisesRegex(PythonFailure, "python callback boom"):
+            self.context.exec_js("raise_python_failure()")
+
+        # JavaScript 捕获时，应能读取异常消息和 V8 捕获的 stack。
+        result = self.context.exec_js(
+            """
+            try {
+                raise_python_failure();
+            } catch (error) {
+                [error.message, typeof error.stack, error.stack.includes("python callback boom")];
+            }
+            """
+        )
+        self.assertEqual(result, ["python callback boom", "string", True])
+        self.assertEqual(self.context.exec_js("5 + 5"), 10)
+
     def test_timeout_cleanup_allows_next_execution(self):
         """执行超时后应清理定时器，并允许上下文继续运行。"""
 
@@ -86,6 +115,32 @@ class TestExceptionSafety(unittest.TestCase):
         # 清除超时设置后，上下文不应残留终止状态。
         self.context.timeout = 0
         self.assertEqual(self.context.exec_js("4 + 4"), 8)
+
+    def test_timeout_nested_execution_cleanup(self):
+        """嵌套执行超时后应清理内外两层 TimeoutGuard。"""
+
+        self.context.timeout = 0.2
+
+        def run_nested_timeout():
+            return self.context.exec_js("while (true) {}", timeout=0.02)
+
+        self.context.expose(run_nested_timeout=run_nested_timeout)
+        with self.assertRaises(pyv8.JavaScriptTerminated):
+            self.context.exec_js("run_nested_timeout()")
+
+        self.context.timeout = 0
+        self.assertEqual(self.context.exec_js("6 * 7"), 42)
+
+    def test_timeout_early_exception_cancels_timer(self):
+        """脚本提前抛出异常时应取消尚未触发的超时定时器。"""
+
+        self.context.timeout = 0.05
+        with self.assertRaises(pyv8.JSException):
+            self.context.exec_js("throw new Error('early exit')")
+
+        # 等待超过原超时时间，残留定时器不应终止后续执行。
+        time.sleep(0.08)
+        self.assertEqual(self.context.exec_js("20 + 22"), 42)
 
 
 if __name__ == "__main__":
