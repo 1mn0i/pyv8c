@@ -141,7 +141,8 @@
     <ClCompile Include="jsundefined.cpp" />
     <ClCompile Include="jsvalue.cpp" />
     <ClCompile Include="pyclass.cpp" />
-    <ClCompile Include="pyclasshandlers.cpp" />
+    <ClCompile Include="pyclass_handlers.cpp" />
+    <ClCompile Include="pyclass_cross_origin_handlers.cpp" />
     <ClCompile Include="pyfunction.cpp" />
     <ClCompile Include="pyv8.cpp" />
     <ClCompile Include="runtime.cpp" />
@@ -167,6 +168,8 @@
     <ClInclude Include="jsvalue.h" />
     <ClInclude Include="polyfill.h" />
     <ClInclude Include="pyclass.h" />
+    <ClInclude Include="pyclass_cross_origin_handlers.h" />
+    <ClInclude Include="pyclass_handlers_internal.h" />
     <ClInclude Include="pyfunction.h" />
     <ClInclude Include="pyv8.h" />
     <ClInclude Include="runtime.h" />

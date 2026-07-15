@@ -6,6 +6,7 @@
 #include "jsobject.h"
 #include "pyfunction.h"
 #include "pyclass.h"
+#include "pyclass_cross_origin_handlers.h"
 #include "v8tools.h"
 #include "faker/Faker.h"
 
