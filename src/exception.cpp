@@ -67,8 +67,8 @@ js_terminated_type_init()
 }
 
 
-const std::string 
-extract_exception(Local<Value> exception, Local<Message> message)
+const std::string
+extract_exception(Isolate* isolate, Local<Value> exception, Local<Message> message)
 {
     assert(isolate->InContext());
 
@@ -136,23 +136,33 @@ extract_exception(Local<Value> exception, Local<Message> message)
 PyObject * 
 js_exception_new(Local<Value> exception, Local<Message> message)
 {
+    IsolateState* isolate_state = current_isolate_state();
+    if (isolate_state == nullptr || !isolate_state->require_active())
+        return NULL;
+    Isolate* isolate = isolate_state->isolate();
     HandleScope hs(isolate);
     Local<Context> no_ctx;
 
     js_exception* self = (js_exception*)PyType_GenericAlloc(js_exception_type, 0);
     PyErr_PROPAGATE(self);
+    self->isolate_state = isolate_state;
     self->exception.Reset(isolate, exception);
     self->message.Reset(isolate, message);
-    runtime_state.retain_v8_handle();
+    isolate_state->retain_v8_handle();
     Local<Context> context = isolate->GetCurrentContext();
     if (!context.IsEmpty()) {
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
             self->py_context = (PyObject*)context_data.As<External>()->Value();
             Py_INCREF(self->py_context);
+            context_c* py_context = (context_c*)self->py_context;
+            if (py_context->py_isolate != nullptr) {
+                self->py_isolate = py_context->py_isolate;
+                Py_INCREF(self->py_isolate);
+            }
         }
     }
-    const std::string msg = extract_exception(exception, message);
+    const std::string msg = extract_exception(isolate, exception, message);
     PyObject* py_message = PyUnicode_DecodeUTF8(msg.c_str(), msg.size(), NULL);
     if (py_message == NULL) {
         Py_DECREF((PyObject*)self);
@@ -171,9 +181,12 @@ js_exception_new(Local<Value> exception, Local<Message> message)
 PyObject * 
 js_exception_get_value(js_exception* self, void* args)
 {
-    IN_V8;
+    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(self->isolate_state);
 
-    const std::string msg = extract_exception(self->exception.Get(isolate), self->message.Get(isolate));
+    const std::string msg = extract_exception(
+        isolate, self->exception.Get(isolate), self->message.Get(isolate));
     PyObject* py_message = PyUnicode_DecodeUTF8(msg.c_str(), msg.size(), NULL);
     return py_message;
 }
@@ -185,9 +198,12 @@ js_exception_dealloc(js_exception* self)
     if (!self->exception.IsEmpty() || !self->message.IsEmpty()) {
         self->exception.Reset();
         self->message.Reset();
-        runtime_state.release_v8_handle();
+        if (self->isolate_state != nullptr)
+            self->isolate_state->release_v8_handle();
     }
     Py_XDECREF(self->py_context);
+    Py_XDECREF(self->py_isolate);
+    self->isolate_state = nullptr;
     Py_XDECREF(self->dict);
     Py_XDECREF(self->args);
     Py_XDECREF(self->notes);
@@ -202,12 +218,17 @@ js_exception_dealloc(js_exception* self)
 void 
 py_throw_js(Local<Value> js_exc, Local<Message> js_message)
 {
+    IsolateState* isolate_state = current_isolate_state();
+    if (isolate_state == nullptr) {
+        PyErr_SetString(PyExc_RuntimeError, "no active V8 isolate");
+        return;
+    }
     bool is_python_object = false;
     if (js_exc->IsObject() &&
         js_exc.As<Object>()->InternalFieldCount() == OBJECT_INTERNAL_FIELDS) {
         Local<Data> magic = js_exc.As<Object>()->GetInternalField(PYTHON_MAGIC_FIELD);
         is_python_object =
-            magic == runtime_state.v8_string(V8StringId::PythonObjectMagic);
+            magic == isolate_state->v8_string(V8StringId::PythonObjectMagic);
     }
     if (is_python_object) {
         Local<Object> exc_object = js_exc.As<Object>();
@@ -237,6 +258,12 @@ py_throw_js(Local<Value> js_exc, Local<Message> js_message)
 void 
 js_throw_py()
 {
+    IsolateState* isolate_state = current_isolate_state();
+    if (isolate_state == nullptr || !isolate_state->is_active()) {
+        PyErr_SetString(PyExc_RuntimeError, "no active V8 isolate");
+        return;
+    }
+    Isolate* isolate = isolate_state->isolate();
     Local<Context> context = isolate->GetCurrentContext();
     PyObject* exc_type, * exc_value, * exc_traceback;
     PyErr_Fetch(&exc_type, &exc_value, &exc_traceback);
@@ -288,7 +315,14 @@ js_throw_py()
 
     Local<Object> exception;
     if (PyObject_TypeCheck(exc_value, js_exception_type)) {
-        exception = ((js_exception*)exc_value)->exception.Get(isolate).As<Object>();
+        js_exception* py_exception = (js_exception*)exc_value;
+        if (py_exception->isolate_state != isolate_state) {
+            exception = Exception::Error(
+                V8String(isolate, "JavaScript value belongs to another isolate")).As<Object>();
+        }
+        else {
+            exception = py_exception->exception.Get(isolate).As<Object>();
+        }
     }
     else if (strcmp(exc_type_name, "V8TypeError") == 0)
     {
@@ -317,13 +351,13 @@ js_throw_py()
         }
         else {
             exception = js_exception_value.As<Object>();
-            if (!runtime_state.attach_exception_state(exception, exc_type, exc_traceback)) {
+            if (!isolate_state->attach_exception_state(exception, exc_type, exc_traceback)) {
                 PyErr_Clear();
                 exception = Exception::Error(V8String(isolate, exc_message)).As<Object>();
             }
             exception->Set(
                 context,
-                runtime_state.v8_string(V8StringId::Message),
+                isolate_state->v8_string(V8StringId::Message),
                 V8String(isolate, exc_message));
 
             Local<Value> error_ctor_val;

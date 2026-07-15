@@ -66,9 +66,12 @@ js_typedarray_type_init()
 PyObject * 
 js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 {
-    if (!runtime_state.require_initialized())
+    if (!runtime_manager.require_initialized())
         return NULL;
-    IN_V8;
+    IsolateState* isolate_state = current_isolate_state();
+    if (isolate_state == nullptr)
+        isolate_state = runtime_manager.default_isolate();
+    IN_ISOLATE(isolate_state);
 
     PyObject* data = NULL;
     PyObject* typed = NULL;
@@ -81,7 +84,12 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
         return NULL;
     }
 
-    IN_CONTEXT(isolate->GetCurrentContext());
+    Local<Context> current_context = isolate->GetCurrentContext();
+    if (current_context.IsEmpty()) {
+        PyErr_SetString(PyExc_RuntimeError, "JSTypeArray requires an active V8 Context");
+        return NULL;
+    }
+    IN_CONTEXT(current_context);
     //js_object* self = (js_object*)type->tp_alloc(type, 0);
     js_typedarray* self = (js_typedarray*)PyType_GenericAlloc(type, 0);
 
@@ -90,6 +98,11 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 
     if (PyObject_TypeCheck(data, js_object_type)) {
         js_object* py_value = (js_object*)data;
+        if (py_value->isolate_state != isolate_state) {
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
         array_buffer = py_value->object.Get(isolate).As<ArrayBuffer>();
         auto ary = v8::Uint8Array::New(array_buffer, 0, array_buffer->ByteLength());
         js_object_set_persistent((js_object*)self, ary, context, true);
@@ -203,7 +216,9 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 PyObject * 
 js_typedarray_repr(js_typedarray* self)
 {
-    IN_V8;
+    if (self->base.isolate_state == nullptr || !self->base.isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(self->base.isolate_state);
     Local<Object> object = self->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;

@@ -50,9 +50,12 @@ int js_promise_type_init()
 PyObject *
 js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 {
-    if (!runtime_state.require_initialized())
+    if (!runtime_manager.require_initialized())
         return NULL;
-    IN_V8;
+    IsolateState* isolate_state = current_isolate_state();
+    if (isolate_state == nullptr)
+        isolate_state = runtime_manager.default_isolate();
+    IN_ISOLATE(isolate_state);
 
     PyObject* resolve = NULL;
     PyObject* reject = NULL;
@@ -60,7 +63,12 @@ js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
     if (PyArg_ParseTupleAndKeywords(args, kwargs, "|OO", (char**)keywords, &resolve, &reject) < 0) {
         return NULL;
     }
-    IN_CONTEXT(isolate->GetCurrentContext());
+    Local<Context> current_context = isolate->GetCurrentContext();
+    if (current_context.IsEmpty()) {
+        PyErr_SetString(PyExc_RuntimeError, "JSPromise requires an active V8 Context");
+        return NULL;
+    }
+    IN_CONTEXT(current_context);
     //js_object* self = (js_object*)type->tp_alloc(type, 0);
     js_promise *self = (js_promise *)PyType_GenericAlloc(type, 0);
     PyErr_PROPAGATE(self);

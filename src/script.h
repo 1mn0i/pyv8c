@@ -5,7 +5,9 @@
 
 typedef struct {
     PyObject_HEAD
+    IsolateState* isolate_state;
     Persistent<UnboundScript> script;
+    PyObject* py_isolate;
     PyObject *source;
     PyObject *script_name;
 } script_c;

@@ -40,7 +40,8 @@ construct_script_name(Local<Context> context, Local<Value> js_name, int id)
 {
     PyObject *name;
     if (js_name.IsEmpty() || js_name->IsUndefined()) {
-        name = runtime_state.javascript_name();
+        IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+        name = isolate_state->javascript_name();
         PyErr_PROPAGATE(name);
         Py_INCREF(name);
     } else {
@@ -58,7 +59,7 @@ construct_script_name(Local<Context> context, Local<Value> js_name, int id)
 PyObject *
 script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
-    if (!runtime_state.require_initialized())
+    if (!runtime_manager.require_initialized())
         return NULL;
     context_c *py_ctx;
     static const char *keywords[] = {"context", "source", "filename", NULL};
@@ -67,7 +68,14 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     if (PyArg_ParseTupleAndKeywords(args, kwargs, "OO|O", (char **) keywords, &py_ctx, &source, &filename) < 0) {
         return NULL;
     }
-    IN_V8;
+    if (!PyObject_TypeCheck((PyObject*)py_ctx, context_type) || py_ctx->isolate_state == nullptr) {
+        PyErr_SetString(PyExc_TypeError, "context must be an active Context instance");
+        return NULL;
+    }
+    IsolateState* isolate_state = py_ctx->isolate_state;
+    if (!isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(isolate_state);
     IN_CONTEXT(py_ctx->js_context.Get(isolate));
     JS_TRY
 
@@ -92,8 +100,13 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     //script_c *self = (script_c *) type->tp_alloc(type, 0);
     script_c *self = (script_c *)PyType_GenericAlloc(type, 0);
     PyErr_PROPAGATE(self);
+    self->isolate_state = isolate_state;
     self->script.Reset(isolate, script);
-    runtime_state.retain_v8_handle();
+    isolate_state->retain_v8_handle();
+    if (py_ctx->py_isolate != nullptr) {
+        self->py_isolate = py_ctx->py_isolate;
+        Py_INCREF(self->py_isolate);
+    }
     Py_INCREF(filename);
     self->script_name = filename;
     Py_INCREF(source);
@@ -105,6 +118,7 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 MaybeLocal<UnboundScript> 
 script_compile(Local<Context> context, PyObject *source, PyObject *filename)
 {
+    Isolate* isolate = context->GetIsolate();
     EscapableHandleScope hs(isolate);
     MaybeLocal<UnboundScript> maybe_script;
     // fucking god / c++
@@ -127,11 +141,14 @@ script_dealloc(script_c *self)
 {
     if (!self->script.IsEmpty()) {
         self->script.Reset();
-        runtime_state.release_v8_handle();
+        if (self->isolate_state != nullptr)
+            self->isolate_state->release_v8_handle();
     }
 
     Py_XDECREF(self->script_name);
     Py_XDECREF(self->source);
+    Py_XDECREF(self->py_isolate);
+    self->isolate_state = nullptr;
     //Py_TYPE(self)->tp_free((PyObject *) self);
     TP_FREE_ABI3(script_type, self);
 }

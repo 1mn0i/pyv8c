@@ -8,6 +8,7 @@ using namespace v8;
 
 typedef struct {
     PyObject_HEAD
+    IsolateState* isolate_state;
     PyObject *cls;
     PyObject *cls_name;
     PyObject *call_method;

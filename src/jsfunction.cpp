@@ -6,6 +6,7 @@
 #include "jsobject.h"
 #include "convert.h"
 #include "context.h"
+#include "timeout_guard.h"
 
 using namespace v8;
 
@@ -46,7 +47,9 @@ int js_function_type_init()
 }
 
 PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) {
-    IN_V8;
+    if (self->base.isolate_state == nullptr || !self->base.isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(self->base.isolate_state);
     Local<Object> object = self->base.object.Get(isolate);
     //IN_CONTEXT(object->CreationContext());
     IN_CONTEXT(object->GetCreationContextChecked());
@@ -84,7 +87,9 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
 
 
 PyObject* js_function_repr(js_function* self) {
-    IN_V8;
+    if (self->base.isolate_state == nullptr || !self->base.isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(self->base.isolate_state);
     Local<Object> object = self->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
@@ -94,10 +99,10 @@ PyObject* js_function_repr(js_function* self) {
         v8::Local<v8::Value> faker, raw_tostring, ret;
         v8::MaybeLocal<v8::Value> maybe_faker, maybe_raw_tostring, maybe_ret;
         maybe_faker = global->Get(
-            context, runtime_state.v8_string(V8StringId::Faker));
+            context, self->base.isolate_state->v8_string(V8StringId::Faker));
         if (maybe_faker.ToLocal(&faker) && faker->IsObject()) {
             maybe_raw_tostring = faker.As<v8::Object>()->Get(
-                context, runtime_state.v8_string(V8StringId::RawToString));
+                context, self->base.isolate_state->v8_string(V8StringId::RawToString));
             if (maybe_raw_tostring.ToLocal(&raw_tostring) && raw_tostring->IsFunction()) {
                 v8::MaybeLocal<v8::Value> maybe_ret = raw_tostring.As<v8::Function>()->Call(context, object, 0, NULL);
                 if (maybe_ret.ToLocal(&ret)) {

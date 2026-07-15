@@ -8,6 +8,7 @@ template <class Info>
 inline PyObject*
 get_handler_self(const Info& info, bool cross_origin)
 {
+    Isolate* isolate = info.GetIsolate();
     Local<Context> context = isolate->GetCurrentContext();
     Local<Object> js_self = info.Holder();
     bool is_global = cross_origin
@@ -23,7 +24,7 @@ get_handler_self(const Info& info, bool cross_origin)
     if (js_self->InternalFieldCount() != OBJECT_INTERNAL_FIELDS)
         return Py_None;
     Local<Data> magic = js_self->GetInternalField(PYTHON_MAGIC_FIELD);
-    if (magic != runtime_state.v8_string(V8StringId::PythonObjectMagic))
+    if (magic != runtime_manager.find_isolate(isolate)->v8_string(V8StringId::PythonObjectMagic))
         return Py_None;
     return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD)
         .template As<External>()->Value();

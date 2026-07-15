@@ -224,7 +224,10 @@ int add_to_template(PyObject* cls, context_c* py_ctx, PyObject* member_name, PyO
 PyObject *
 py_class_new(PyObject *cls, context_c * py_ctx)
 {
-    IN_V8;
+    IsolateState* isolate_state = py_ctx->isolate_state;
+    if (isolate_state == nullptr || !isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(isolate_state);
 
     // The convert functions require a context for function conversion, but we
     // don't have a context. So we use an empty context and special-case
@@ -236,6 +239,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     py_class *self = (py_class *) PyType_GenericAlloc(py_class_type, 0);
     PyErr_PROPAGATE(self);
 
+    self->isolate_state = isolate_state;
     self->cls = NULL;
     self->cls_name = NULL;
     self->call_method = NULL;
@@ -524,7 +528,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         // only an object
         templ->PrototypeTemplate()->SetPrivate(
             v8::Private::ForApi(isolate, JSTR("__proto__")),
-            runtime_state.v8_string(V8StringId::ErrorPrototypeMagic));
+            isolate_state->v8_string(V8StringId::ErrorPrototypeMagic));
     }
     else if (last_base != NULL && last_base != (PyObject*)&PyBaseObject_Type) {
         py_class* superclass_templ = (py_class*)py_class_to_template(last_base, py_ctx);
@@ -571,6 +575,7 @@ if_property_has(PyObject *property, const char *what)
 int 
 add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObject *member_value, Local<FunctionTemplate> templ, Local<Signature> sig, const char* world)
 {
+    Isolate* isolate = py_ctx->isolate_state->isolate();
     HandleScope hs(isolate);
     Local<Context> no_ctx;
     // I can't use an AccessorSignature here because then property access on
@@ -600,8 +605,8 @@ add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObjec
         return 0;
     }
 
-    Local<Name> js_name = js_from_py(member_name, no_ctx).As<Name>();
-    Local<Data> js_value = js_from_py(member_value, no_ctx);
+    Local<Name> js_name = js_from_py(member_name, no_ctx, isolate).As<Name>();
+    Local<Data> js_value = js_from_py(member_value, no_ctx, isolate);
     if (!js_value.IsEmpty())
     {
         templ->Set(js_name, js_value);
@@ -623,6 +628,11 @@ add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObjec
 Local<Function> 
 py_class_get_constructor(Local<Context> context, py_class* self, py_class* parent)
 {
+    Isolate* isolate = context->GetIsolate();
+    if (self->isolate_state == nullptr || self->isolate_state->isolate() != isolate) {
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+        return Local<Function>();
+    }
     Context::Scope cs(context);
     delete_constructor(self, context);
     Local<Function> js_parent;
@@ -662,12 +672,14 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
 bool
 py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context)
 {
-    if (!runtime_state.track_python_object(js_object, py_object)) {
+    Isolate* isolate = context->GetIsolate();
+    IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
+    if (!isolate_state->track_python_object(js_object, py_object)) {
         return false;
     }
     js_object->SetInternalField(
         PYTHON_MAGIC_FIELD,
-        runtime_state.v8_string(V8StringId::PythonObjectMagic));
+        isolate_state->v8_string(V8StringId::PythonObjectMagic));
     js_object->SetInternalField(PYTHON_OBJECT_FIELD, External::New(isolate, py_object));
     js_object->SetInternalField(PYTHON_EXCEPTION_TYPE_FIELD, External::New(isolate, nullptr));
     js_object->SetInternalField(PYTHON_TRACEBACK_FIELD, External::New(isolate, nullptr));
@@ -688,7 +700,7 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
         return false;
     }
     if (proto_override->StrictEquals(
-            runtime_state.v8_string(V8StringId::ErrorPrototypeMagic))) {
+            isolate_state->v8_string(V8StringId::ErrorPrototypeMagic))) {
         bool delete_worked;
         if (!last_proto_object->DeletePrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).To(&delete_worked)) {
             PyErr_SetString(PyExc_RuntimeError, "failed to clear JavaScript prototype marker");
@@ -710,6 +722,11 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
 Local<Object> 
 py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> context)
 {
+    Isolate* isolate = context->GetIsolate();
+    if (self->isolate_state == nullptr || self->isolate_state->isolate() != isolate) {
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+        return Local<Object>();
+    }
     EscapableHandleScope hs(isolate);
     Local<Object> object = context_get_cached_jsobject(context, py_object);
     if (!object.IsEmpty()) {
@@ -730,6 +747,7 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
 void 
 delete_constructor(py_class* self, Local<Context> context)
 {
+    Isolate* isolate = context->GetIsolate();
     if (!self->has_constructor) {
         self->has_constructor = 1;
         v8::Local<v8::FunctionTemplate> interface_template = self->templ.Get(isolate);
@@ -742,7 +760,7 @@ delete_constructor(py_class* self, Local<Context> context)
                 prototype_object
                     ->Delete(
                         context,
-                        runtime_state.v8_string(V8StringId::Constructor))
+                        self->isolate_state->v8_string(V8StringId::Constructor))
                     .To(&delete_worked);
             }
         }

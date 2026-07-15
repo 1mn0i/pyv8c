@@ -133,6 +133,9 @@
     <ClCompile Include="exception.cpp" />
     <ClCompile Include="faker\Faker.cpp" />
     <ClCompile Include="faker\tools.cpp" />
+    <ClCompile Include="isolate.cpp" />
+    <ClCompile Include="isolate_scope.cpp" />
+    <ClCompile Include="isolate_state.cpp" />
     <ClCompile Include="jsfunction.cpp" />
     <ClCompile Include="jsnull.cpp" />
     <ClCompile Include="jsobject.cpp" />
@@ -145,10 +148,12 @@
     <ClCompile Include="pyclass_cross_origin_handlers.cpp" />
     <ClCompile Include="pyfunction.cpp" />
     <ClCompile Include="pyv8.cpp" />
+    <ClCompile Include="platform_state.cpp" />
     <ClCompile Include="runtime.cpp" />
     <ClCompile Include="script.cpp" />
     <ClCompile Include="v8_string_cache.cpp" />
     <ClCompile Include="v8tools.cpp" />
+    <ClCompile Include="timeout_guard.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="abi3.h" />
@@ -159,6 +164,9 @@
     <ClInclude Include="faker\Faker.h" />
     <ClInclude Include="faker\hook.h" />
     <ClInclude Include="faker\tools.h" />
+    <ClInclude Include="isolate.h" />
+    <ClInclude Include="isolate_scope.h" />
+    <ClInclude Include="isolate_state.h" />
     <ClInclude Include="jsfunction.h" />
     <ClInclude Include="jsnull.h" />
     <ClInclude Include="jsobject.h" />
@@ -172,13 +180,12 @@
     <ClInclude Include="pyclass_handlers_internal.h" />
     <ClInclude Include="pyfunction.h" />
     <ClInclude Include="pyv8.h" />
+    <ClInclude Include="platform_state.h" />
     <ClInclude Include="runtime.h" />
     <ClInclude Include="script.h" />
     <ClInclude Include="v8_string_cache.h" />
     <ClInclude Include="v8tools.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="pyv8.rc" />
+    <ClInclude Include="timeout_guard.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

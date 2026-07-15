@@ -19,6 +19,7 @@ _pyv8.init_v8(
 )
 
 Context = _pyv8.Context
+Isolate = _pyv8.Isolate
 Script = _pyv8.Script
 Debugger = _pyv8.Debugger
 JSObject = _pyv8.JSObject
@@ -35,6 +36,8 @@ incumbent_context = _pyv8.incumbent_context
 new = _pyv8.new
 v8_gc = _pyv8.v8_gc
 shutdown_v8 = _pyv8.shutdown_v8
+
+__version__ = "2.0.0"
 
 
 from .devtools import start_devtools

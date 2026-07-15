@@ -37,19 +37,26 @@ int js_value_type_init()
 js_value *
 js_value_new(Local<Value> value, Local<Context> context)
 {
-    IN_V8;
+    IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+    IN_ISOLATE(isolate_state);
     Context::Scope cs(context);
     js_value *self;
 
     self = (js_value*)PyType_GenericAlloc(js_value_type, 0);
 
     if (self != NULL) {
+        self->isolate_state = isolate_state;
         self->value.Reset(isolate, value);
-        runtime_state.retain_v8_handle();
+        isolate_state->retain_v8_handle();
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
-            self->py_context = (PyObject*)context_data.As<External>()->Value();
+            context_c* py_context = (context_c*)context_data.As<External>()->Value();
+            self->py_context = (PyObject*)py_context;
             Py_INCREF(self->py_context);
+            if (py_context->py_isolate != nullptr) {
+                self->py_isolate = py_context->py_isolate;
+                Py_INCREF(self->py_isolate);
+            }
         }
     }
     return self;
@@ -60,7 +67,7 @@ void js_value_weak_callback(const WeakCallbackInfo<js_value> &info)
     js_value *self = info.GetParameter();
     if (!self->value.IsEmpty()) {
         self->value.Reset();
-        runtime_state.release_v8_handle();
+        self->isolate_state->release_v8_handle();
     }
     Py_XDECREF(self);
 }
@@ -68,13 +75,23 @@ void js_value_weak_callback(const WeakCallbackInfo<js_value> &info)
 js_value *
 js_value_weak_new(Local<Value> value, Local<Context> context)
 {
-    IN_V8;
+    IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+    IN_ISOLATE(isolate_state);
     Context::Scope cs(context);
     js_value*self;
     self = (js_value*)PyType_GenericAlloc(js_value_type, 0);
     if (self != NULL) {
+        self->isolate_state = isolate_state;
         self->value.Reset(isolate, value);
-        runtime_state.retain_v8_handle();
+        isolate_state->retain_v8_handle();
+        Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
+        if (context_data->IsExternal()) {
+            context_c* py_context = (context_c*)context_data.As<External>()->Value();
+            if (py_context->py_isolate != nullptr) {
+                self->py_isolate = py_context->py_isolate;
+                Py_INCREF(self->py_isolate);
+            }
+        }
         Py_INCREF(self);
         //self->object.SetWeak(self, js_object_weak_callback, WeakCallbackType::kFinalizer);
         self->value.SetWeak(self, js_value_weak_callback, WeakCallbackType::kParameter);
@@ -86,7 +103,9 @@ js_value_weak_new(Local<Value> value, Local<Context> context)
 PyObject *
 js_value_repr(js_value *self)
 {
-    IN_V8;
+    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(self->isolate_state);
 
     Local<Value> value = self->value.Get(isolate);
     if (value->IsBigInt()) {
@@ -105,9 +124,11 @@ js_value_dealloc(js_value *self)
 {
     if (!self->value.IsEmpty()) {
         self->value.Reset();
-        runtime_state.release_v8_handle();
+        if (self->isolate_state != nullptr)
+            self->isolate_state->release_v8_handle();
     }
     Py_XDECREF(self->py_context);
+    Py_XDECREF(self->py_isolate);
+    self->isolate_state = nullptr;
     TP_FREE_ABI3(js_value_type, self);
 }
-

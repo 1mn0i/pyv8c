@@ -19,11 +19,16 @@ namespace
 class JsToPyConversionContext
 {
 public:
+    explicit JsToPyConversionContext(Isolate* isolate)
+        : isolate_(isolate)
+    {
+    }
+
     PyObject* find(Local<Object> object)
     {
         for (const Entry& entry : visited_)
         {
-            if (entry.object.Get(isolate)->StrictEquals(object))
+            if (entry.object.Get(isolate_)->StrictEquals(object))
             {
                 Py_INCREF(entry.result);
                 return entry.result;
@@ -36,7 +41,7 @@ public:
     {
         try
         {
-            visited_.emplace_back(isolate, object, result);
+            visited_.emplace_back(isolate_, object, result);
         }
         catch (const std::bad_alloc&)
         {
@@ -64,13 +69,14 @@ private:
     };
 
     std::vector<Entry> visited_;
+    Isolate* isolate_;
 };
 
 class PyToJsConversionContext
 {
 public:
-    PyToJsConversionContext()
-        : inline_size_(0)
+    explicit PyToJsConversionContext(Isolate* isolate)
+        : inline_size_(0), isolate_(isolate)
     {
     }
 
@@ -87,7 +93,7 @@ public:
         auto item = overflow_.find(object);
         if (item != overflow_.end())
         {
-            *result = item->second.Get(isolate);
+            *result = item->second.Get(isolate_);
             return true;
         }
         return false;
@@ -104,7 +110,7 @@ public:
         }
         try
         {
-            overflow_.emplace(object, Global<Value>(isolate, result));
+            overflow_.emplace(object, Global<Value>(isolate_, result));
         }
         catch (const std::bad_alloc&)
         {
@@ -120,6 +126,7 @@ private:
     PyObject* inline_objects_[kInlineCapacity];
     Local<Value> inline_values_[kInlineCapacity];
     std::unordered_map<PyObject*, Global<Value>> overflow_;
+    Isolate* isolate_;
 };
 }
 
@@ -128,6 +135,8 @@ py_from_js_impl(Local<Value> value,
                 Local<Context> context,
                 JsToPyConversionContext* conversion)
 {
+    Isolate* isolate = context->GetIsolate();
+    IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
     if (value->IsSymbol())
     {
         value = value.As<Symbol>()->Description(context->GetIsolate());
@@ -157,7 +166,7 @@ py_from_js_impl(Local<Value> value,
 
     if (value->IsArray())
     {
-        JsToPyConversionContext local_conversion;
+        JsToPyConversionContext local_conversion(isolate);
         if (conversion == nullptr)
             conversion = &local_conversion;
 
@@ -212,7 +221,7 @@ py_from_js_impl(Local<Value> value,
         }
         if (obj_value->GetPrototype()->StrictEquals(context->GetEmbedderData(OBJECT_PROTOTYPE_SLOT)) && !has_to_string_tag)
         {
-            JsToPyConversionContext local_conversion;
+            JsToPyConversionContext local_conversion(isolate);
             if (conversion == nullptr)
                 conversion = &local_conversion;
 
@@ -282,7 +291,7 @@ py_from_js_impl(Local<Value> value,
         if (obj_value->InternalFieldCount() == OBJECT_INTERNAL_FIELDS)
         {
             Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
-            if (magic == runtime_state.v8_string(V8StringId::PythonObjectMagic))
+            if (magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
             {
                 PyObject *object = (PyObject *)obj_value->GetInternalField(PYTHON_OBJECT_FIELD).As<External>()->Value();
                 Py_INCREF(object);
@@ -313,14 +322,16 @@ py_from_js_impl(Local<Value> value,
 PyObject *
 py_from_js(Local<Value> value, Local<Context> context)
 {
-    IN_V8;
+    IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+    IN_ISOLATE(isolate_state);
     return py_from_js_impl(value, context, nullptr);
 }
 
 static Local<Value>
 js_from_py_impl(PyObject *value,
-                Local<Context> context,
-                PyToJsConversionContext* conversion)
+                 Local<Context> context,
+                 PyToJsConversionContext* conversion,
+                 Isolate* isolate)
 {
     if (value == Py_False)
     {
@@ -405,7 +416,7 @@ js_from_py_impl(PyObject *value,
 
     if (PyDict_Check(value))
     {
-        PyToJsConversionContext local_conversion;
+        PyToJsConversionContext local_conversion(isolate);
         if (conversion == nullptr)
             conversion = &local_conversion;
 
@@ -424,12 +435,12 @@ js_from_py_impl(PyObject *value,
         Py_ssize_t pos = 0;
         while (PyDict_Next(dict, &pos, &key, &dict_value))
         {
-            Local<Value> js_key = js_from_py_impl(key, context, conversion);
+            Local<Value> js_key = js_from_py_impl(key, context, conversion, isolate);
             if (js_key.IsEmpty() || PyErr_Occurred())
             {
                 return Local<Value>();
             }
-            Local<Value> js_value = js_from_py_impl(dict_value, context, conversion);
+            Local<Value> js_value = js_from_py_impl(dict_value, context, conversion, isolate);
             if (js_value.IsEmpty() || PyErr_Occurred())
             {
                 return Local<Value>();
@@ -446,7 +457,7 @@ js_from_py_impl(PyObject *value,
 
     if (PyList_Check(value) || PyTuple_Check(value))
     {
-        PyToJsConversionContext local_conversion;
+        PyToJsConversionContext local_conversion(isolate);
         if (conversion == nullptr)
             conversion = &local_conversion;
 
@@ -474,7 +485,7 @@ js_from_py_impl(PyObject *value,
             {
                 return Local<Value>();
             }
-            Local<Value> js_item = js_from_py_impl(item, context, conversion);
+            Local<Value> js_item = js_from_py_impl(item, context, conversion, isolate);
             if (js_item.IsEmpty() || PyErr_Occurred())
                 return Local<Value>();
 
@@ -490,7 +501,8 @@ js_from_py_impl(PyObject *value,
     }
     if (PyFunction_Check_abi3(value) || PyMethod_Check_abi3(value))
     {
-        py_function *templ = (py_function *)py_function_to_template(value);
+        IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
+        py_function *templ = (py_function *)py_function_to_template(value, isolate_state);
         if (templ == NULL)
         {
             return Local<Value>();
@@ -552,12 +564,22 @@ js_from_py_impl(PyObject *value,
     if (PyObject_TypeCheck(value, js_object_type))
     {
         js_object *py_value = (js_object *)value;
+        if (py_value->isolate_state == nullptr || py_value->isolate_state->isolate() != isolate)
+        {
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+            return Local<Value>();
+        }
         return py_value->object.Get(isolate);
     }
 
     if (PyObject_TypeCheck(value, js_value_type))
     {
         js_value* py_value = (js_value*)value;
+        if (py_value->isolate_state == nullptr || py_value->isolate_state->isolate() != isolate)
+        {
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+            return Local<Value>();
+        }
         return py_value->value.Get(isolate);
     }
 
@@ -573,7 +595,14 @@ js_from_py_impl(PyObject *value,
             return context->Global();
         }
 
-        auto js_content = ((context_c *)ctx)->js_context.Get(isolate);
+        context_c* source_context = (context_c*)ctx;
+        if (source_context->isolate_state == nullptr || source_context->isolate_state->isolate() != isolate)
+        {
+            Py_DECREF(ctx);
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+            return Local<Value>();
+        }
+        auto js_content = source_context->js_context.Get(isolate);
         Py_DECREF(ctx);
         return js_content->Global();
     }
@@ -596,8 +625,25 @@ js_from_py_impl(PyObject *value,
 Local<Value>
 js_from_py(PyObject *value, Local<Context> context)
 {
-    ESCAPING_IN_V8;
-    Local<Value> result = js_from_py_impl(value, context, nullptr);
+    if (context.IsEmpty()) {
+        PyErr_SetString(PyExc_RuntimeError, "an explicit isolate is required without a Context");
+        return Local<Value>();
+    }
+    return js_from_py(value, context, context->GetIsolate());
+}
+
+Local<Value>
+js_from_py(PyObject *value, Local<Context> context, Isolate* target_isolate)
+{
+    if (!context.IsEmpty() && context->GetIsolate() != target_isolate) {
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+        return Local<Value>();
+    }
+    IsolateState* isolate_state = runtime_manager.find_isolate(target_isolate);
+    if (isolate_state == nullptr || !isolate_state->require_active())
+        return Local<Value>();
+    ESCAPING_IN_ISOLATE(isolate_state);
+    Local<Value> result = js_from_py_impl(value, context, nullptr, isolate);
     if (result.IsEmpty())
         return result;
     return hs.Escape(result);
@@ -634,6 +680,8 @@ void jss_from_pys(PyObject *py_args, Local<Value> *js_args, Local<Context> conte
 Local<Object>
 pyexception_to_jsexception(PyObject *value, Local<Context> context)
 {
+    Isolate* isolate = context->GetIsolate();
+    IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
     Local<Object> exception;
     if (!PyExceptionInstance_Check(value))
     {
@@ -677,7 +725,15 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
     }
     if (PyObject_TypeCheck(value, js_exception_type))
     {
-        exception = ((js_exception *)value)->exception.Get(isolate).As<Object>();
+        js_exception* py_exception = (js_exception*)value;
+        if (py_exception->isolate_state != isolate_state)
+        {
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+        }
+        else
+        {
+            exception = py_exception->exception.Get(isolate).As<Object>();
+        }
     }
     else if (strcmp(exc_type_name, "V8TypeError") == 0)
     {
@@ -705,10 +761,10 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
         if (!js_exception.IsEmpty() && js_exception->IsObject())
         {
             exception = js_exception.As<Object>();
-            runtime_state.attach_exception_state(exception, exc_type, nullptr);
+            isolate_state->attach_exception_state(exception, exc_type, nullptr);
             exception->Set(
                 context,
-                runtime_state.v8_string(V8StringId::Message),
+                isolate_state->v8_string(V8StringId::Message),
                 V8String(isolate, exc_message));
         }
     }

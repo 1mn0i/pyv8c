@@ -154,6 +154,41 @@ result = context.exec_js("""
 print(result)  # 输出: 12
 ```
 
+### 使用多个 Isolate
+
+PyV8 2.0 支持在同一进程中创建多个相互隔离的 V8 Isolate。每个 Isolate 都有独立的
+JavaScript heap、模板缓存、字符串缓存和 Python 对象 owner。
+
+```python
+import gc
+import pyv8
+
+class Window:
+    pass
+
+isolate_a = pyv8.Isolate()
+isolate_b = pyv8.Isolate()
+
+context_a = isolate_a.context(Window)
+context_b = pyv8.Context(Window, isolate=isolate_b)
+
+context_a.exec_js("globalThis.name = 'A'")
+context_b.exec_js("globalThis.name = 'B'")
+
+assert context_a.exec_js("name") == "A"
+assert context_b.exec_js("name") == "B"
+
+# 必须先释放该 Isolate 的 Context、Script 和 JS wrapper。
+del context_a, context_b
+gc.collect()
+isolate_a.close()
+isolate_b.close()
+```
+
+V8 句柄不能跨 Isolate 使用。将一个 Isolate 的 `JSObject`、`JSFunction` 或 `Script`
+传给另一个 Isolate 时会抛出 `RuntimeError`，需要传输数据时应显式使用 JSON 或
+structured clone。
+
 ### 将Python函数暴露给JavaScript
 
 ```python

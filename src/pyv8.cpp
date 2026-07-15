@@ -14,6 +14,8 @@
 #include "jstypedarray.h"
 #include "pyfunction.h"
 #include "debugger.h"
+#include "isolate.h"
+#include "timeout_guard.h"
 
 #ifdef V8_OS_WIN
 #define LIB_EXPORT __declspec(dllexport)
@@ -34,7 +36,7 @@ py_initialize_v8(PyObject *self, PyObject *args, PyObject *kw)
     {
         return NULL;
     }
-    bool initialized = runtime_state.initialize(icu, params);
+    bool initialized = runtime_manager.initialize(icu, params);
     if (PyErr_Occurred())
         return NULL;
     return PyBool_FromLong(initialized);
@@ -43,7 +45,7 @@ py_initialize_v8(PyObject *self, PyObject *args, PyObject *kw)
 static PyObject *
 py_shutdown_v8(PyObject *self, PyObject *args)
 {
-    bool shut_down = runtime_state.shutdown(true);
+    bool shut_down = runtime_manager.shutdown(true);
     if (PyErr_Occurred())
         return NULL;
     return PyBool_FromLong(shut_down);
@@ -74,9 +76,10 @@ mark_unconstructable(PyObject *self, PyObject *thing)
 PyObject *
 trigger_low_memory_notification(PyObject *self, PyObject *args)
 {
-    if (!runtime_state.require_initialized())
+    if (!runtime_manager.require_initialized())
         return NULL;
-    IN_V8;
+    IsolateState* isolate_state = runtime_manager.default_isolate();
+    IN_ISOLATE(isolate_state);
     isolate->LowMemoryNotification();
     Py_RETURN_NONE;
 }
@@ -84,7 +87,7 @@ trigger_low_memory_notification(PyObject *self, PyObject *args)
 PyObject *
 construct_new_object(PyObject *self, PyObject *args)
 {
-    if (!runtime_state.require_initialized())
+    if (!runtime_manager.require_initialized())
         return NULL;
     int argc = (int)PyTuple_Size(args);
     if (argc == 0)
@@ -102,7 +105,10 @@ construct_new_object(PyObject *self, PyObject *args)
 
     js_function *function = (js_function *)constructor;
 
-    IN_V8;
+    IsolateState* isolate_state = function->base.isolate_state;
+    if (isolate_state == nullptr || !isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(isolate_state);
     Local<Object> object = function->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked())
     JS_TRY
@@ -152,8 +158,15 @@ construct_new_object(PyObject *self, PyObject *args)
 PyObject *
 context_get_current(PyObject *self, PyObject *args)
 {
-    if (!runtime_state.require_initialized())
+    if (!runtime_manager.require_initialized())
         return NULL;
+    PyObject* py_isolate = Py_None;
+    if (!PyArg_ParseTuple(args, "|O", &py_isolate))
+        return NULL;
+    IsolateState* isolate_state = isolate_state_from_python(py_isolate, true);
+    if (isolate_state == nullptr)
+        return NULL;
+    IN_ISOLATE(isolate_state);
     Local<Context> current_context = isolate->GetCurrentContext();
     if (current_context.IsEmpty())
     {
@@ -167,8 +180,15 @@ context_get_current(PyObject *self, PyObject *args)
 PyObject*
 context_get_incumbent(PyObject* self, PyObject* args)
 {
-    if (!runtime_state.require_initialized())
+    if (!runtime_manager.require_initialized())
         return NULL;
+    PyObject* py_isolate = Py_None;
+    if (!PyArg_ParseTuple(args, "|O", &py_isolate))
+        return NULL;
+    IsolateState* isolate_state = isolate_state_from_python(py_isolate, true);
+    if (isolate_state == nullptr)
+        return NULL;
+    IN_ISOLATE(isolate_state);
     Local<Context> current_context = isolate->GetIncumbentContext();
     if (current_context.IsEmpty())
     {
@@ -189,9 +209,10 @@ v8_version(PyObject *self, PyObject *args)
 PyObject *
 v8_gc(PyObject *self, PyObject *args)
 {
-    if (!runtime_state.require_initialized())
+    if (!runtime_manager.require_initialized())
         return NULL;
-    IN_V8;
+    IsolateState* isolate_state = runtime_manager.default_isolate();
+    IN_ISOLATE(isolate_state);
     isolate->RequestGarbageCollectionForTesting(Isolate::GarbageCollectionType::kFullGarbageCollection);
     Py_RETURN_NONE;
 }
@@ -199,8 +220,8 @@ v8_gc(PyObject *self, PyObject *args)
 static PyMethodDef v8_methods[] = {
     {"hidden", mark_hidden, METH_O, ""},
     {"unconstructable", mark_unconstructable, METH_O, ""},
-    {"current_context", context_get_current, METH_NOARGS, "get current v8 context"},
-    {"incumbent_context", context_get_incumbent, METH_NOARGS, "get incumbent v8 context"},
+    {"current_context", context_get_current, METH_VARARGS, "get current v8 context"},
+    {"incumbent_context", context_get_incumbent, METH_VARARGS, "get incumbent v8 context"},
     {"new", construct_new_object, METH_VARARGS, "Creates a new JavaScript object from a given constructor function"},
     {"low_memory_notification", trigger_low_memory_notification, METH_NOARGS, "Trigger V8 low memory notification"},
     {"init_v8", (PyCFunction)py_initialize_v8, METH_VARARGS | METH_KEYWORDS, "initialize v8 platform and isolate"},
@@ -223,6 +244,11 @@ PyMODINIT_FUNC PyInit__pyv8()
         return FAIL;
 
     if (cache_FunctionType_init() < 0)
+        return FAIL;
+
+    if (isolate_type_init() < 0)
+        return FAIL;
+    if (PyModule_AddObject(module, "Isolate", (PyObject*)isolate_type) < 0)
         return FAIL;
 
     if (context_type_init() < 0)

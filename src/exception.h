@@ -18,9 +18,11 @@ typedef struct
     PyObject* context; 
     PyObject* cause; 
     char suppress_context;
+    IsolateState* isolate_state;
     Persistent<Value> exception;
     Persistent<Message> message;
     PyObject* py_context;
+    PyObject* py_isolate;
 } js_exception;
 extern PyTypeObject* js_exception_type;
 extern PyTypeObject* js_terminated_type;

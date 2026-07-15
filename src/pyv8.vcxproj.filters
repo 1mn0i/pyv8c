@@ -1,10 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Resource Files">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav</Extensions>
-    </Filter>
     <Filter Include="faker">
       <UniqueIdentifier>{d3fab5f2-db1d-46d0-8178-687c99e85723}</UniqueIdentifier>
     </Filter>
@@ -14,6 +10,9 @@
     <ClCompile Include="convert.cpp" />
     <ClCompile Include="debugger.cpp" />
     <ClCompile Include="exception.cpp" />
+    <ClCompile Include="isolate.cpp" />
+    <ClCompile Include="isolate_scope.cpp" />
+    <ClCompile Include="isolate_state.cpp" />
     <ClCompile Include="jsfunction.cpp" />
     <ClCompile Include="jsobject.cpp" />
     <ClCompile Include="pyclass.cpp" />
@@ -21,6 +20,7 @@
     <ClCompile Include="pyclass_cross_origin_handlers.cpp" />
     <ClCompile Include="pyfunction.cpp" />
     <ClCompile Include="pyv8.cpp" />
+    <ClCompile Include="platform_state.cpp" />
     <ClCompile Include="runtime.cpp" />
     <ClCompile Include="script.cpp" />
     <ClCompile Include="v8_string_cache.cpp" />
@@ -37,12 +37,16 @@
     <ClCompile Include="jsnull.cpp" />
     <ClCompile Include="jsundefined.cpp" />
     <ClCompile Include="jsvalue.cpp" />
+    <ClCompile Include="timeout_guard.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="context.h" />
     <ClInclude Include="convert.h" />
     <ClInclude Include="debugger.h" />
     <ClInclude Include="exception.h" />
+    <ClInclude Include="isolate.h" />
+    <ClInclude Include="isolate_scope.h" />
+    <ClInclude Include="isolate_state.h" />
     <ClInclude Include="jsobject.h" />
     <ClInclude Include="polyfill.h" />
     <ClInclude Include="pyclass.h" />
@@ -50,6 +54,7 @@
     <ClInclude Include="pyclass_handlers_internal.h" />
     <ClInclude Include="pyfunction.h" />
     <ClInclude Include="pyv8.h" />
+    <ClInclude Include="platform_state.h" />
     <ClInclude Include="runtime.h" />
     <ClInclude Include="script.h" />
     <ClInclude Include="v8_string_cache.h" />
@@ -70,10 +75,6 @@
     <ClInclude Include="jsnull.h" />
     <ClInclude Include="jsundefined.h" />
     <ClInclude Include="jsvalue.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="pyv8.rc">
-      <Filter>Resource Files</Filter>
-    </ResourceCompile>
+    <ClInclude Include="timeout_guard.h" />
   </ItemGroup>
 </Project>

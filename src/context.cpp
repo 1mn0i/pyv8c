@@ -1,13 +1,6 @@
 #include <Python.h>
 #include "pyv8.h"
 #include <v8.h>
-#include <cerrno>
-
-#ifdef _WIN32
-#include <Windows.h>
-#else
-#include <pthread.h>
-#endif
 
 #include "context.h"
 #include "script.h"
@@ -16,6 +9,8 @@
 #include "pyclass.h"
 #include "pyfunction.h"
 #include "jsfunction.h"
+#include "isolate.h"
+#include "timeout_guard.h"
 
 using namespace v8;
 
@@ -27,6 +22,17 @@ PyMethodDef context_methods[] = {
     {"gc", (PyCFunction)context_gc, METH_NOARGS, NULL},
     {NULL},
 };
+
+static IsolateState*
+context_require_isolate(context_c* self)
+{
+    if (self->isolate_state == nullptr || !self->isolate_state->is_active() || self->js_context.IsEmpty())
+    {
+        PyErr_SetString(PyExc_RuntimeError, "V8 context is no longer active");
+        return nullptr;
+    }
+    return self->isolate_state;
+}
 // Python is wrong. The first entry is not modifiable and should be const char *
 PyGetSetDef context_getset[] = {
     {(char*)"glob", (getter)context_get_global, NULL, NULL, NULL},
@@ -73,19 +79,25 @@ int context_type_init()
 PyObject *
 context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
-    if (!runtime_state.require_initialized())
+    if (!runtime_manager.require_initialized())
         return NULL;
-    IN_V8;
 
     double timeout = 0;
     PyObject* global = NULL;
     PyObject* hook = Py_False;
     PyObject* ctx_type = NULL;
-    static const char *keywords[] = {"global_this", "hook", "ctx_type", "timeout", NULL};
+    PyObject* py_isolate = Py_None;
+    static const char *keywords[] = {"global_this", "hook", "ctx_type", "timeout", "isolate", NULL};
 
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOd", (char **) keywords, &global, &hook, &ctx_type, &timeout) < 0) {
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdO", (char **) keywords,
+                                    &global, &hook, &ctx_type, &timeout, &py_isolate) < 0) {
         return NULL;
     }
+
+    IsolateState* isolate_state = isolate_state_from_python(py_isolate, true);
+    if (isolate_state == nullptr)
+        return NULL;
+    IN_ISOLATE(isolate_state);
 
     if (global != NULL) {
         if (PyType_Check(global)) {
@@ -104,6 +116,12 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     if (self == NULL) {
         Py_XDECREF(global);
         return NULL;
+    }
+    self->isolate_state = isolate_state;
+    self->py_isolate = nullptr;
+    if (py_isolate != Py_None) {
+        Py_INCREF(py_isolate);
+        self->py_isolate = py_isolate;
     }
     self->js_object_cache = NULL;
     self->class_template_cache = PyDict_New();
@@ -157,7 +175,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 
     IN_CONTEXT(Context::New(isolate, NULL, global_template));
     self->js_context.Reset(isolate, context);
-    runtime_state.retain_v8_handle();
+    isolate_state->retain_v8_handle();
     self->has_done = true;
 
     // add env to vm
@@ -207,7 +225,8 @@ context_dealloc(context_c *self)
     Py_CLEAR(self->class_template_cache);
     if (!self->js_context.IsEmpty()) {
         self->js_context.Reset();
-        runtime_state.release_v8_handle();
+        if (self->isolate_state != nullptr)
+            self->isolate_state->release_v8_handle();
     }
     Py_XDECREF(self->py_global);
     Py_XDECREF(self->scripts);
@@ -228,6 +247,8 @@ context_dealloc(context_c *self)
     }
 
     Py_XDECREF(self->js_object_cache);
+    Py_XDECREF(self->py_isolate);
+    self->isolate_state = nullptr;
 
     //Py_TYPE(self)->tp_free((PyObject *) self);
     TP_FREE_ABI3(context_type, self);
@@ -236,7 +257,10 @@ context_dealloc(context_c *self)
 PyObject *
 context_expose(context_c *self, PyObject *args, PyObject *kwargs)
 {
-    IN_V8;
+    IsolateState* isolate_state = context_require_isolate(self);
+    if (isolate_state == nullptr)
+        return NULL;
+    IN_ISOLATE(isolate_state);
     Local<Context> context = self->js_context.Get(isolate);
     Local<Object> global = context->Global();
 
@@ -261,7 +285,23 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
         PyErr_PROPAGATE(object);
         PyObject *name = PyObject_GetAttrString(object, "__name__");
         PyErr_PROPAGATE(name);
-        global->CreateDataProperty(context, js_from_py(name, context).As<String>(), js_from_py(object, context));
+        Local<Value> js_name = js_from_py(name, context);
+        Local<Value> js_object = js_from_py(object, context);
+        if (js_name.IsEmpty() || js_object.IsEmpty() || PyErr_Occurred()) {
+            Py_DECREF(object);
+            Py_DECREF(name);
+            Py_DECREF(args);
+            return NULL;
+        }
+        bool created;
+        if (!global->CreateDataProperty(
+                context, js_name.As<String>(), js_object).To(&created)) {
+            Py_DECREF(object);
+            Py_DECREF(name);
+            Py_DECREF(args);
+            PyErr_SetString(PyExc_RuntimeError, "failed to expose Python object");
+            return NULL;
+        }
         Py_DECREF(object);
         Py_DECREF(name);
     }
@@ -273,7 +313,16 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
         Py_ssize_t pos = 0;
         while (PyDict_Next(kwargs, &pos, &name, &object))
         {
-            global->CreateDataProperty(context, js_from_py(name, context).As<String>(), js_from_py(object, context));
+            Local<Value> js_name = js_from_py(name, context);
+            Local<Value> js_object = js_from_py(object, context);
+            if (js_name.IsEmpty() || js_object.IsEmpty() || PyErr_Occurred())
+                return NULL;
+            bool created;
+            if (!global->CreateDataProperty(
+                    context, js_name.As<String>(), js_object).To(&created)) {
+                PyErr_SetString(PyExc_RuntimeError, "failed to expose Python object");
+                return NULL;
+            }
         }
     }
 
@@ -342,131 +391,12 @@ context_js_obj(context_c* self, PyObject* py_object)
     Py_RETURN_NONE;
 }
 
-#ifdef _WIN32
-
-static void CALLBACK 
-breaker_callback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
-{
-    isolate->TerminateExecution();
-}
-
-#else
-
-void *breaker_thread(void *param) {
-    TimeoutGuard *guard = (TimeoutGuard *) param;
-    usleep(guard->timeout_usec());
-    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
-    isolate->TerminateExecution();
-    return NULL;
-}
-#endif
-
-static double 
-context_timeout(Local<Context> context)
-{
-    context_c *ctx_c = (context_c *) context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
-    return ctx_c->timeout;
-}
-
-TimeoutGuard::TimeoutGuard(double timeout)
-    : timeout(timeout),
-      active(false)
-#ifdef _WIN32
-      , timer_id(0)
-#else
-      , breaker_id(),
-      timeout_us(0)
-#endif
-{
-}
-
-TimeoutGuard::TimeoutGuard(Local<Context> context)
-    : TimeoutGuard(context_timeout(context))
-{
-}
-
-TimeoutGuard::~TimeoutGuard()
-{
-    stop(false);
-}
-
-#ifndef _WIN32
-useconds_t
-TimeoutGuard::timeout_usec() const
-{
-    return timeout_us;
-}
-#endif
-
-bool
-TimeoutGuard::start()
-{
-    if (timeout <= 0 || active) {
-        return true;
-    }
-
-#ifdef _WIN32
-    UINT timeout_ms = (UINT) (timeout * 1000);
-    if (timeout_ms == 0) {
-        timeout_ms = 1;
-    }
-    timer_id = timeSetEvent(timeout_ms, 0, (LPTIMECALLBACK) breaker_callback, 0,
-        TIME_ONESHOT | TIME_CALLBACK_FUNCTION | TIME_KILL_SYNCHRONOUS);
-    if (timer_id == 0) {
-        PyErr_SetFromErrno(PyExc_OSError);
-        return false;
-    }
-#else
-    timeout_us = (useconds_t) (timeout * 1000000);
-    if (timeout_us == 0) {
-        timeout_us = 1;
-    }
-    int err = pthread_create(&breaker_id, NULL, breaker_thread, this);
-    if (err) {
-        errno = err;
-        PyErr_SetFromErrno(PyExc_OSError);
-        return false;
-    }
-#endif
-    active = true;
-    return true;
-}
-
-bool
-TimeoutGuard::stop()
-{
-    return stop(true);
-}
-
-bool
-TimeoutGuard::stop(bool set_python_error)
-{
-    if (timeout <= 0 || !active) {
-        return true;
-    }
-
-#ifdef _WIN32
-    timeKillEvent(timer_id);
-    timer_id = 0;
-    active = false;
-#else
-    pthread_cancel(breaker_id);
-    int err = pthread_join(breaker_id, NULL);
-    active = false;
-    if (err) {
-        if (set_python_error) {
-            errno = err;
-            PyErr_SetFromErrno(PyExc_OSError);
-        }
-        return false;
-    }
-#endif
-    return true;
-}
-
 PyObject *
 context_run(context_c *self, PyObject *args, PyObject *kwargs)
 {
+    IsolateState* isolate_state = context_require_isolate(self);
+    if (isolate_state == nullptr)
+        return NULL;
     PyObject *program;
     PyObject *filename = Py_None;
     double timeout = self->timeout;
@@ -492,7 +422,13 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     assert(PyObject_IsInstance(program, (PyObject*)script_type));
     script_c *py_script = (script_c *) program;
 
-    IN_V8;
+    if (py_script->isolate_state != isolate_state) {
+        Py_DECREF(program);
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+        return NULL;
+    }
+
+    IN_ISOLATE(isolate_state);
     IN_CONTEXT(self->js_context.Get(isolate));
     JS_TRY
 
@@ -515,7 +451,7 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     Py_XDECREF(program);
     Local<Script> script = unbound_script->BindToCurrentContext();
 
-    TimeoutGuard timeout_guard(timeout);
+    TimeoutGuard timeout_guard(timeout, isolate);
     if (!timeout_guard.start()) return NULL;
     MaybeLocal<Value> result = script->Run(context);
 
@@ -534,6 +470,7 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
 Local<Object> 
 context_get_cached_jsobject(Local<Context> js_context, PyObject *py_object)
 {
+    Isolate* isolate = js_context->GetIsolate();
     EscapableHandleScope hs(isolate);
     context_c *self = (context_c *) js_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     if (PyMapping_HasKey(self->js_object_cache, py_object)) {
@@ -549,6 +486,7 @@ context_get_cached_jsobject(Local<Context> js_context, PyObject *py_object)
 void 
 context_set_cached_jsobject(Local<Context> js_context, PyObject *py_object, Local<Object> object)
 {
+    Isolate* isolate = js_context->GetIsolate();
     EscapableHandleScope hs(isolate);
     context_c *self = (context_c *) js_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
     js_object *jsobj = js_object_weak_new(object, js_context);
@@ -582,7 +520,10 @@ context_set_timeout(context_c *self, PyObject *value, void *shit)
 PyObject *
 context_get_global(context_c *self, void *shit)
 {
-    IN_V8;
+    IsolateState* isolate_state = context_require_isolate(self);
+    if (isolate_state == nullptr)
+        return NULL;
+    IN_ISOLATE(isolate_state);
     Local<Context> context = self->js_context.Get(isolate);
     PyObject* pyobj= py_from_js(context->Global()->GetPrototype(), context);
     PyErr_PROPAGATE(pyobj);
@@ -637,7 +578,10 @@ context_setitem(context_c *self, PyObject *name, PyObject *value)
 PyObject *
 context_gc(context_c *self) 
 {
-    IN_V8;
+    IsolateState* isolate_state = context_require_isolate(self);
+    if (isolate_state == nullptr)
+        return NULL;
+    IN_ISOLATE(isolate_state);
     isolate->RequestGarbageCollectionForTesting(Isolate::GarbageCollectionType::kFullGarbageCollection);
     Py_RETURN_NONE;
 }

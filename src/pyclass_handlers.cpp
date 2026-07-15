@@ -33,6 +33,7 @@ py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
                         py_class* self,
                         context_c* py_context)
 {
+    Isolate* isolate = info.GetIsolate();
     bool can_new = (self->constructor_behavior & FlagConstructor::kNew) != 0;
     bool can_call = (self->constructor_behavior & FlagConstructor::kCall) != 0;
     if (!can_call && !can_new) {
@@ -120,6 +121,7 @@ py_class_method_impl(const FunctionCallbackInfo<Value>& info,
                      PyObject* method,
                      bool cross_origin)
 {
+    Isolate* isolate = info.GetIsolate();
     PyObject* method_name = PyObject_GetAttrString(method, "__name__");
     if (method_name == NULL || !PyUnicode_Check(method_name)) {
         Py_XDECREF(method_name);

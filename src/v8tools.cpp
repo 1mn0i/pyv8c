@@ -12,7 +12,7 @@ namespace bindings {
         Local<Context> context = isolate->GetCurrentContext();
         Local<Object> global = context->Global();
         Local<Object> faker = global
-            ->Get(context, runtime_state.v8_string(V8StringId::Faker))
+            ->Get(context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Faker))
             .ToLocalChecked()
             .As<Object>();
         PyObject* cb_name = (PyObject*)info.Data().As<External>()->Value();
@@ -46,7 +46,7 @@ namespace bindings {
         Local<Context> context = isolate->GetCurrentContext();
         Local<Object> global = context->Global();
         Local<Object> faker = global
-            ->Get(context, runtime_state.v8_string(V8StringId::Faker))
+            ->Get(context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Faker))
             .ToLocalChecked()
             .As<Object>();
         Local<String> cb = info.Data().As<String>();
@@ -615,7 +615,7 @@ namespace bindings {
 
 
     void InstallExposedConstruct(v8::Local<v8::Context> context, v8::Local<v8::Object> instance_object, const char* name) {
-        //v8::Local<v8::Context> context = isolate->GetCurrentContext();
+        v8::Isolate* isolate = context->GetIsolate();
         instance_object
             ->SetLazyDataProperty(context, V8String(isolate, name),
                 ConstructAccessorNameGetterCallback, v8::Local<v8::Value>(),

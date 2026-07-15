@@ -35,6 +35,7 @@ private:
 
 PyObject *py_from_js(Local<Value> js_value, Local<Context> context);
 Local<Value> js_from_py(PyObject *py_value, Local<Context> context);
+Local<Value> js_from_py(PyObject *py_value, Local<Context> context, Isolate* isolate);
 
 PyObject *pys_from_jss(const FunctionCallbackInfo<Value> &js_args, Local<Context> context);
 void jss_from_pys(PyObject *py_args, Local<Value> *js_args, Local<Context> context);

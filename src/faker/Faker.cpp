@@ -1,5 +1,6 @@
 #include "Faker.h"
 #include "../runtime.h"
+#include "../isolate_state.h"
 
 
 // Extracts a C string from a V8 Utf8Value.
@@ -143,7 +144,7 @@ void NativeWrapperCallback(const FunctionCallbackInfo<Value>& info) {
 
     Local<Object> handler = info.Data().As<Object>();
     Local<Function> func = handler
-        ->Get(context, runtime_state.v8_string(V8StringId::Callback))
+        ->Get(context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Callback))
         .ToLocalChecked()
         .As<Function>();
 
@@ -256,17 +257,17 @@ void Faker::NativeWrapper(const FunctionCallbackInfo<Value>& info) {
         Local<Object> handler = info[0].As<Object>();
         if (handler
                 ->HasOwnProperty(
-                    context, runtime_state.v8_string(V8StringId::Callback))
+                    context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Callback))
                 .ToChecked()) {
 
             Local<FunctionTemplate> func_temp = FunctionTemplate::New(isolate, NativeWrapperCallback, handler);
 
             if (handler
                     ->HasOwnProperty(
-                        context, runtime_state.v8_string(V8StringId::Name))
+                        context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Name))
                     .ToChecked()) {
                 Local<String> name = handler
-                    ->Get(context, runtime_state.v8_string(V8StringId::Name))
+                    ->Get(context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Name))
                     .ToLocalChecked()
                     .As<String>();
                 func_temp->SetClassName(name);
@@ -274,10 +275,10 @@ void Faker::NativeWrapper(const FunctionCallbackInfo<Value>& info) {
 
             if (handler
                     ->HasOwnProperty(
-                        context, runtime_state.v8_string(V8StringId::Length))
+                        context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Length))
                     .ToChecked()) {
                 Local<Number> length = handler
-                    ->Get(context, runtime_state.v8_string(V8StringId::Length))
+                    ->Get(context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Length))
                     .ToLocalChecked()
                     .As<Number>();
                 func_temp->SetLength(length->Value());
@@ -345,7 +346,7 @@ void Faker::GetHook(const FunctionCallbackInfo<Value>& info) {
     Local<Context> ctx = isolate->GetCurrentContext();
     v8::Local<v8::Object> global = ctx->Global();
     v8::Local<v8::Private> key = v8::Private::ForApi(
-        isolate, runtime_state.v8_string(V8StringId::Hook));
+        isolate, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Hook));
     v8::MaybeLocal<v8::Value> maybe_value = global->GetPrivate(ctx, key);
     bool hook = false;
     if (!maybe_value.IsEmpty()) {
@@ -359,7 +360,7 @@ void Faker::SetHook(const FunctionCallbackInfo<Value>& info) {
     Local<Context> ctx = isolate->GetCurrentContext();
     v8::Local<v8::Object> global = ctx->Global();
     v8::Local<v8::Private> key = v8::Private::ForApi(
-        isolate, runtime_state.v8_string(V8StringId::Hook));
+        isolate, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Hook));
     if (info.Length() == 1 && info[0]->IsBoolean()) {
         global->SetPrivate(ctx, key, info[0]);
     }
@@ -428,7 +429,7 @@ void Faker::Register(Isolate* isolate, Local<FunctionTemplate>& global_inteface_
     prototype_template_Faker->Set(isolate, "set_arg", FunctionTemplate::New(isolate, SetArg));
 
     prototype_template_Faker->SetAccessorProperty(
-        runtime_state.v8_string(V8StringId::Hook),
+        runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Hook),
         FunctionTemplate::New(isolate, GetHook),
         FunctionTemplate::New(isolate, SetHook),
         PropertyAttribute(v8::DontEnum | v8::DontDelete));

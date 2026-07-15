@@ -11,59 +11,38 @@
 #endif
 
 #include <v8.h>
-#include <libplatform/libplatform.h>
 
-#include "v8_string_cache.h"
+#include "platform_state.h"
 
-#include <cstddef>
 #include <memory>
 #include <unordered_set>
 
-struct PythonObjectOwner;
+class IsolateState;
 
-class RuntimeState
+class RuntimeManager
 {
 public:
-    RuntimeState();
-    ~RuntimeState();
+    RuntimeManager();
+    ~RuntimeManager();
 
     bool initialize(PyObject* icu, PyObject* params);
     bool shutdown(bool report_error = true);
     bool require_initialized() const;
 
-    bool is_initialized() const { return isolate != nullptr; }
-    bool is_disposed() const { return disposed_; }
+    bool is_initialized() const;
+    bool is_disposed() const { return platform_.is_disposed(); }
 
-    void retain_v8_handle();
-    void release_v8_handle();
-    std::size_t live_v8_handles() const { return live_v8_handles_; }
-
-    PyObject* function_template_cache();
-    void clear_function_template_cache();
-    PyObject* javascript_name();
-    v8::Local<v8::String> v8_string(V8StringId id) const;
-
-    bool track_python_object(v8::Local<v8::Object> object, PyObject* py_object);
-    bool attach_exception_state(v8::Local<v8::Object> object,
-                                PyObject* exc_type,
-                                PyObject* exc_traceback);
-    void release_python_owner(PythonObjectOwner* owner);
-
-    v8::Isolate* isolate;
+    IsolateState* default_isolate() const { return default_isolate_.get(); }
+    IsolateState* create_isolate();
+    bool destroy_isolate(IsolateState* state, bool report_error = true);
+    IsolateState* find_isolate(v8::Isolate* isolate) const;
 
 private:
-    void clear_python_owners();
-
-    std::unique_ptr<v8::Platform> platform_;
-    std::unique_ptr<v8::ArrayBuffer::Allocator> allocator_;
-    std::unique_ptr<V8StringCache> v8_strings_;
-    std::size_t live_v8_handles_;
-    PyObject* function_template_cache_;
-    PyObject* javascript_name_;
-    std::unordered_set<PythonObjectOwner*> python_owners_;
-    bool disposed_;
+    PlatformState platform_;
+    std::unique_ptr<IsolateState> default_isolate_;
+    std::unordered_set<IsolateState*> custom_isolates_;
 };
 
-extern RuntimeState runtime_state;
+extern RuntimeManager runtime_manager;
 
 #endif

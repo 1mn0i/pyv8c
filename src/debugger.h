@@ -41,6 +41,7 @@ public:
     V8PyInspectorClient(debugger_c* debugger) : debugger_(debugger) {}
     Local<Context> ensureDefaultContextInGroup(int context_group_id) override
     {
+        Isolate* isolate = debugger_->context->isolate_state->isolate();
         return debugger_->context->js_context.Get(isolate);
     }
 

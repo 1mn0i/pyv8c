@@ -17,10 +17,10 @@
 #include "jsnull.h"
 #include "jsundefined.h"
 #include "runtime.h"
+#include "isolate_scope.h"
+#include "isolate_state.h"
 
 using namespace v8;
-
-extern Isolate *&isolate;
 
 #define HOOKHANDLE "faker"
 
@@ -42,14 +42,14 @@ static uint16_t string_buffer[STRING_BUFFER_SIZE] = {};
         printf("%s\n", *value);       \
     }
 
-#define IN_V8                   \
-    Locker locker(isolate);     \
-    Isolate::Scope is(isolate); \
+#define IN_ISOLATE(state)                    \
+    IsolateLockScope isolate_lock_scope(state); \
+    Isolate* isolate = isolate_lock_scope.isolate(); \
     USING_V8
 
-#define ESCAPING_IN_V8          \
-    Locker locker(isolate);     \
-    Isolate::Scope is(isolate); \
+#define ESCAPING_IN_ISOLATE(state)           \
+    IsolateLockScope isolate_lock_scope(state); \
+    Isolate* isolate = isolate_lock_scope.isolate(); \
     ESCAPING_V8
 
 #define USING_V8 \

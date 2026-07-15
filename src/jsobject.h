@@ -6,10 +6,14 @@
 
 using namespace v8;
 
+class IsolateState;
+
 typedef struct {
     PyObject_HEAD
+    IsolateState* isolate_state;
     Persistent<Object> object;
     PyObject* py_context;
+    PyObject* py_isolate;
 } js_object;
 
 extern PyTypeObject* js_object_type;

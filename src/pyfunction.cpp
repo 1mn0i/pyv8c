@@ -36,13 +36,14 @@ py_function_type_init()
 static void py_function_callback(const FunctionCallbackInfo<Value> &info);
 
 PyObject *
-py_function_new(PyObject *function)
+py_function_new(PyObject *function, IsolateState* isolate_state)
 {
-    IN_V8;
+    IN_ISOLATE(isolate_state);
 
     //py_function *self = (py_function *) py_function_type.tp_alloc(&py_function_type, 0);
     py_function* self = (py_function*)PyType_GenericAlloc(py_function_type, 0);
     PyErr_PROPAGATE(self);
+    self->isolate_state = isolate_state;
     self->js_template = new Persistent<FunctionTemplate>();
     Py_INCREF(function);
     self->function = function;
@@ -96,9 +97,9 @@ py_function_new(PyObject *function)
 }
 
 PyObject *
-py_function_to_template(PyObject *func)
+py_function_to_template(PyObject *func, IsolateState* isolate_state)
 {
-    PyObject* cache = runtime_state.function_template_cache();
+    PyObject* cache = isolate_state->function_template_cache();
     PyErr_PROPAGATE(cache);
 
     PyObject *templ = PyDict_GetItem(cache, func);
@@ -106,7 +107,7 @@ py_function_to_template(PyObject *func)
         return templ;
     }
 
-    templ = py_function_new(func);
+    templ = py_function_new(func, isolate_state);
     PyErr_PROPAGATE(templ);
     if (PyDict_SetItem(cache, func, templ) < 0) {
         Py_DECREF(templ);
@@ -131,6 +132,12 @@ py_function_dealloc(py_function *self)
 Local<Function> 
 py_template_to_function(py_function *self, Local<Context> context)
 {
+    Isolate* isolate = context->GetIsolate();
+    IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
+    if (self->isolate_state != isolate_state) {
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+        return Local<Function>();
+    }
     EscapableHandleScope hs(isolate);
     Local<Function> function;
     if (!self->js_template->Get(isolate)->GetFunction(context).ToLocal(&function)) {
@@ -150,6 +157,7 @@ py_template_to_function(py_function *self, Local<Context> context)
 static void 
 py_function_callback(const FunctionCallbackInfo<Value> &info)
 {
+    Isolate* isolate = info.GetIsolate();
     HandleScope hs(isolate);
     Local<Context> context = isolate->GetCurrentContext();
 

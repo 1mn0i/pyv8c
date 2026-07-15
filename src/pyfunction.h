@@ -8,6 +8,7 @@ using namespace v8;
 
 typedef struct {
     PyObject_HEAD
+    IsolateState* isolate_state;
     PyObject *function;
     PyObject *function_name;
     Persistent<FunctionTemplate> *js_template;
@@ -17,9 +18,9 @@ extern PyTypeObject* py_function_type;
 int py_function_type_init();
 
 void py_function_dealloc(py_function *self);
-PyObject *py_function_new(PyObject *func);
+PyObject *py_function_new(PyObject *func, IsolateState* isolate_state);
 
-PyObject *py_function_to_template(PyObject *func);
+PyObject *py_function_to_template(PyObject *func, IsolateState* isolate_state);
 Local<Function> py_template_to_function(py_function *self, Local<Context> context);
 
 #endif

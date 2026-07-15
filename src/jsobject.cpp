@@ -9,6 +9,7 @@
 #include "jsfunction.h"
 #include "jspromise.h"
 #include "jstypedarray.h"
+#include "timeout_guard.h"
 
 using namespace v8;
 
@@ -65,13 +66,23 @@ void
 js_object_set_persistent(js_object* self, Local<Object> object,
                          Local<Context> context, bool retain_context)
 {
+    Isolate* isolate = context->GetIsolate();
+    IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
+    self->isolate_state = isolate_state;
     self->object.Reset(isolate, object);
-    runtime_state.retain_v8_handle();
-    if (retain_context && !context.IsEmpty()) {
+    isolate_state->retain_v8_handle();
+    if (!context.IsEmpty()) {
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
-            self->py_context = (PyObject*)context_data.As<External>()->Value();
-            Py_INCREF(self->py_context);
+            context_c* py_context = (context_c*)context_data.As<External>()->Value();
+            if (retain_context) {
+                self->py_context = (PyObject*)py_context;
+                Py_INCREF(self->py_context);
+            }
+            if (py_context->py_isolate != nullptr) {
+                self->py_isolate = py_context->py_isolate;
+                Py_INCREF(self->py_isolate);
+            }
         }
     }
 }
@@ -90,7 +101,8 @@ int js_object_type_init()
 js_object *
 js_object_new(Local<Object> object, Local<Context> context)
 {
-    IN_V8;
+    IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+    IN_ISOLATE(isolate_state);
     Context::Scope cs(context);
     js_object *self;
     
@@ -120,7 +132,7 @@ js_object_weak_callback(const WeakCallbackInfo<js_object> &info)
     js_object *self = info.GetParameter();
     if (!self->object.IsEmpty()) {
         self->object.Reset();
-        runtime_state.release_v8_handle();
+        self->isolate_state->release_v8_handle();
     }
     Py_XDECREF(self);
 }
@@ -128,7 +140,8 @@ js_object_weak_callback(const WeakCallbackInfo<js_object> &info)
 js_object *
 js_object_weak_new(Local<Object> object, Local<Context> context)
 {
-    IN_V8;
+    IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+    IN_ISOLATE(isolate_state);
     Context::Scope cs(context);
     js_object *self;
     if (object->IsPromise()) {
@@ -170,7 +183,9 @@ js_object_getattro(js_object *self, PyObject *name)
             return attr_value;
     }
 
-    IN_V8;
+    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(self->isolate_state);
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     Local<Value> js_name = js_from_py(name, context);
@@ -244,7 +259,9 @@ js_object_setattro(js_object *self, PyObject *name, PyObject *value)
         }
     }
 
-    IN_V8;
+    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+        return -1;
+    IN_ISOLATE(self->isolate_state);
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
@@ -288,7 +305,9 @@ js_object_getiter(js_object *self)
 PyObject *
 js_object_dir(js_object *self)
 {
-    IN_V8;
+    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(self->isolate_state);
     Local<Object> object = self->object.Get(isolate);
     Local<Context> context = object->GetCreationContextChecked();
     Context::Scope cs(context);
@@ -351,11 +370,16 @@ js_object_eq(js_object* self, PyObject* other)
         Py_RETURN_FALSE;
     }
 
-    IN_V8;
+    js_object* other_object = (js_object*)other;
+    if (self->isolate_state != other_object->isolate_state)
+        Py_RETURN_FALSE;
+    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(self->isolate_state);
     JS_TRY;
 
     Local<Object> js_obj = self->object.Get(isolate);
-    Local<Object> js_obj_other = ((js_object*)other)->object.Get(isolate);
+    Local<Object> js_obj_other = other_object->object.Get(isolate);
     if (js_obj_other.IsEmpty() || js_obj.IsEmpty() || !js_obj->StrictEquals(js_obj_other)) {
         Py_RETURN_FALSE;
     }
@@ -365,7 +389,9 @@ js_object_eq(js_object* self, PyObject* other)
 PyObject *
 js_object_repr(js_object *self)
 {
-    IN_V8;
+    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(self->isolate_state);
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
@@ -386,8 +412,11 @@ js_object_dealloc(js_object *self)
 {
     if (!self->object.IsEmpty()) {
         self->object.Reset();
-        runtime_state.release_v8_handle();
+        if (self->isolate_state != nullptr)
+            self->isolate_state->release_v8_handle();
     }
     Py_XDECREF(self->py_context);
+    Py_XDECREF(self->py_isolate);
+    self->isolate_state = nullptr;
     TP_FREE_ABI3(js_object_type, self);
 }

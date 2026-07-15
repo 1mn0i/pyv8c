@@ -51,12 +51,17 @@ debugger_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 int 
 debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs)
 {
-    IN_V8;
-
     context_c* context;
     if (PyArg_ParseTuple(args, "O", &context) < 0) {
         return -1;
     }
+    if (!PyObject_TypeCheck((PyObject*)context, context_type) ||
+        context->isolate_state == nullptr || !context->isolate_state->require_active()) {
+        if (!PyErr_Occurred())
+            PyErr_SetString(PyExc_TypeError, "context must be an active Context instance");
+        return -1;
+    }
+    IN_ISOLATE(context->isolate_state);
 
     Py_INCREF(context);
     self->context = context;
@@ -64,7 +69,7 @@ debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs)
 
     if (context->has_debugger) {
         PyErr_SetString(PyExc_ValueError, "specified context already has a debugger attached");
-        return NULL;
+        return -1;
     }
     context->has_debugger = true;
 
@@ -126,7 +131,10 @@ debugger_send(debugger_c* self, PyObject* message)
         return NULL;
     }
 
-    IN_V8;
+    if (self->context == nullptr || self->context->isolate_state == nullptr ||
+        !self->context->isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(self->context->isolate_state);
     IN_CONTEXT(self->context->js_context.Get(isolate));
 
     //const uint8_t* command_bytes = (const uint8_t*)PyBytes_AS_STRING(message);
@@ -157,12 +165,16 @@ debugger_send(debugger_c* self, PyObject* message)
 void 
 debugger_dealloc(debugger_c* self)
 {
-    IN_V8;
-    self->session.reset();
-    self->inspector.reset();
+    IsolateState* isolate_state = self->context == nullptr ? nullptr : self->context->isolate_state;
+    if (isolate_state != nullptr && isolate_state->is_active()) {
+        IN_ISOLATE(isolate_state);
+        self->session.reset();
+        self->inspector.reset();
+    }
     delete self->client;
     delete self->channel;
-    self->context->has_debugger = false;
+    if (self->context != nullptr)
+        self->context->has_debugger = false;
     Py_XDECREF(self->context);
     //Py_TYPE(self)->tp_free((PyObject*)self);
     TP_FREE_ABI3(debugger_type, self);
