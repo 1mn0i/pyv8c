@@ -29,7 +29,7 @@ static PyType_Slot js_object_slots[] = {
     {Py_tp_dealloc, (void*)js_object_dealloc},
     {Py_tp_repr, (void*)js_object_repr},
     {Py_tp_methods, js_object_methods},
-    {Py_tp_doc, "v8 Object"},
+    {Py_tp_doc, (void*)"v8 Object"},
     {0, NULL} };
 
 static PyType_Spec js_object_spec = {
@@ -66,7 +66,7 @@ void
 js_object_set_persistent(js_object* self, Local<Object> object,
                          Local<Context> context, bool retain_context)
 {
-    Isolate* isolate = context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
     self->isolate_state = isolate_state;
     self->object.Reset(isolate, object);
@@ -74,7 +74,7 @@ js_object_set_persistent(js_object* self, Local<Object> object,
     if (!context.IsEmpty()) {
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
-            context_c* py_context = (context_c*)context_data.As<External>()->Value();
+            context_c* py_context = (context_c*)v8_compat::external_value(context_data);
             if (retain_context) {
                 self->py_context = (PyObject*)py_context;
                 Py_INCREF(self->py_context);
@@ -101,7 +101,7 @@ int js_object_type_init()
 js_object *
 js_object_new(Local<Object> object, Local<Context> context)
 {
-    IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+    IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
     IN_ISOLATE(isolate_state);
     Context::Scope cs(context);
     js_object *self;
@@ -140,7 +140,7 @@ js_object_weak_callback(const WeakCallbackInfo<js_object> &info)
 js_object *
 js_object_weak_new(Local<Object> object, Local<Context> context)
 {
-    IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+    IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
     IN_ISOLATE(isolate_state);
     Context::Scope cs(context);
     js_object *self;

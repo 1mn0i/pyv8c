@@ -2,6 +2,7 @@
 
 #include "isolate_scope.h"
 #include "pyclass.h"
+#include "v8_compat.h"
 
 #include <cassert>
 #include <new>
@@ -200,7 +201,7 @@ IsolateState::track_python_object(Local<Object> object, PyObject* py_object)
     owner->object.Reset(isolate_, object);
     owner->object.SetWeak(owner, python_object_weak_callback,
                           WeakCallbackType::kParameter);
-    object->SetInternalField(PYTHON_OWNER_FIELD, External::New(isolate_, owner));
+    object->SetInternalField(PYTHON_OWNER_FIELD, v8_compat::external_new(isolate_, owner));
     return true;
 }
 
@@ -213,7 +214,7 @@ IsolateState::attach_exception_state(Local<Object> object,
         return false;
     Local<Data> owner_value = object->GetInternalField(PYTHON_OWNER_FIELD);
     PythonObjectOwner* owner = static_cast<PythonObjectOwner*>(
-        owner_value.As<External>()->Value());
+        v8_compat::external_value(owner_value));
     if (owner == nullptr || owner->isolate_state != this)
         return false;
 
@@ -225,9 +226,9 @@ IsolateState::attach_exception_state(Local<Object> object,
     owner->exc_traceback = exc_traceback;
 
     object->SetInternalField(PYTHON_EXCEPTION_TYPE_FIELD,
-                             External::New(isolate_, exc_type));
+                             v8_compat::external_new(isolate_, exc_type));
     object->SetInternalField(PYTHON_TRACEBACK_FIELD,
-                             External::New(isolate_, exc_traceback));
+                             v8_compat::external_new(isolate_, exc_traceback));
     return true;
 }
 

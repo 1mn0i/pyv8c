@@ -30,7 +30,7 @@ static PyType_Slot isolate_slots[] = {
     {Py_tp_dealloc, (void*)isolate_dealloc},
     {Py_tp_methods, isolate_methods},
     {Py_tp_getset, isolate_getset},
-    {Py_tp_doc, "independent V8 isolate"},
+    {Py_tp_doc, (void*)"independent V8 isolate"},
     {0, nullptr},
 };
 

@@ -3,6 +3,7 @@
 #include <Python.h>
 
 #include "context.h"
+#include "v8_compat.h"
 
 #include <cerrno>
 
@@ -42,7 +43,7 @@ static double
 context_timeout(Local<Context> context)
 {
     context_c* py_context = static_cast<context_c*>(
-        context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value());
+        v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT)));
     return py_context->timeout;
 }
 
@@ -60,7 +61,7 @@ TimeoutGuard::TimeoutGuard(double timeout, Isolate* isolate)
 }
 
 TimeoutGuard::TimeoutGuard(Local<Context> context)
-    : TimeoutGuard(context_timeout(context), context->GetIsolate())
+    : TimeoutGuard(context_timeout(context), v8_compat::context_isolate(context))
 {
 }
 

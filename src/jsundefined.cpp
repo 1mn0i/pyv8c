@@ -12,7 +12,7 @@ PyObject* js_undefined_object = NULL;
 
 
 static PyType_Slot js_undefined_slots[] = {
-    {Py_tp_doc, ""},
+    {Py_tp_doc, (void*)""},
     {Py_tp_repr, (void*)js_undefined_repr},
     {Py_nb_bool, (void*)js_undefined_bool},
     {0, NULL} };

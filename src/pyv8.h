@@ -11,6 +11,7 @@
 
 
 #include <v8.h>
+#include "v8_compat.h"
 #include "polyfill.h"
 #include "exception.h"
 #include "abi3.h"

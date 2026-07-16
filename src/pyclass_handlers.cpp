@@ -87,7 +87,8 @@ py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
         js_throw_py();
         return;
     }
-    if (!py_class_init_js_object(info.Holder(), new_object, context)) {
+    if (!py_class_init_js_object(
+            v8_compat::callback_holder(info), new_object, context)) {
         Py_DECREF(new_object);
         js_throw_py();
         return;
@@ -99,8 +100,11 @@ py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
 void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
     SETUP;
 
-    py_class *self = (py_class *) info.Data().As<External>()->Value();
-    context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    py_class *self = (py_class *) v8_compat::external_value(info.Data());
+    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
+        context, CONTEXT_OBJECT_SLOT);
+    if (ctx_c == nullptr)
+        return;
     if (ctx_c->hook) {
         {
             faker::FakerHookConstruct construct_hook(info, PyUnicode_AsUTF8_abi3(self->cls_name), self->cls, ctx_c);
@@ -161,8 +165,18 @@ py_class_method_impl(const FunctionCallbackInfo<Value>& info,
             js_throw_py();
             return;
         }
-        context_c* incumbent_ctx = (context_c*)incumbent->GetEmbedderData(CONTEXT_OBJECT_SLOT)
-            .As<External>()->Value();
+        context_c* incumbent_ctx =
+            v8_compat::context_embedder_pointer<context_c>(
+                incumbent, CONTEXT_OBJECT_SLOT);
+        if (incumbent_ctx == nullptr) {
+            Py_DECREF(args);
+            Py_DECREF(callable);
+            Py_DECREF(method_name);
+            PyErr_SetString(PyExc_RuntimeError,
+                            "cross-origin callback has no Python context");
+            js_throw_py();
+            return;
+        }
         kwargs = PyDict_New();
         if (kwargs == NULL || PyDict_SetItemString(kwargs, "win", incumbent_ctx->py_global) < 0) {
             Py_XDECREF(kwargs);
@@ -205,7 +219,7 @@ get_method_callback_data(const FunctionCallbackInfo<Value>& info,
     }
 
     PyObject* callback_data =
-        (PyObject*)data.As<External>()->Value();
+        (PyObject*)v8_compat::external_value(data);
     PyObject* name = NULL;
     bool owns_name = false;
     if (PyTuple_Check(callback_data) && PyTuple_Size(callback_data) == 2) {
@@ -255,7 +269,10 @@ void py_class_cross_origin_method_callback(const FunctionCallbackInfo<Value>& in
     }
     //Local<Context> incumbent_ctx = isolate->GetIncumbentContext();
 
-    context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
+        context, CONTEXT_OBJECT_SLOT);
+    if (ctx_c == nullptr)
+        return;
     if (ctx_c->hook) {
         {
             faker::FakerHookOperation operation_hook(info, js_method_name.c_str(), self, ctx_c);
@@ -286,7 +303,10 @@ void py_class_method_callback(const FunctionCallbackInfo<Value>& info) {
     }
     //Local<Context> incumbent_ctx = isolate->GetIncumbentContext();
 
-    context_c* ctx_c = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
+        context, CONTEXT_OBJECT_SLOT);
+    if (ctx_c == nullptr)
+        return;
     if (ctx_c->hook) {
         {
             faker::FakerHookOperation operation_hook(info, js_method_name.c_str(), self, ctx_c);
@@ -306,7 +326,7 @@ void py_class_property_getter(Local<Name> js_name, Info(Value)) {
 
     PyObject* self = get_self(info);
 
-    PyObject* method = (PyObject*)info.Data().As<External>()->Value();
+    PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
     JS_PROPAGATE_PY(method);
     assert(PyFunction_Check_abi3(method));
 
@@ -333,7 +353,7 @@ void py_class_property_setter(Local<Name> js_name, Local<Value> js_value, Info(v
     SETUP;
 
     PyObject* self = get_self(info);
-    PyObject* method = (PyObject*)info.Data().As<External>()->Value();
+    PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
     JS_PROPAGATE_PY(method);
     assert(PyFunction_Check_abi3(method));
 
@@ -357,7 +377,7 @@ void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
     SETUP;
     PyObject* self = get_self(info);
 
-    PyObject* method = (PyObject*)info.Data().As<External>()->Value();
+    PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
     JS_PROPAGATE_PY(method);
     assert(PyFunction_Check_abi3(method));
 
@@ -388,7 +408,7 @@ void py_attribute_for_instance_set(const FunctionCallbackInfo<Value>& info) {
     }
     PyObject* self = get_self(info);
 
-    PyObject* method = (PyObject*)info.Data().As<External>()->Value();
+    PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
     JS_PROPAGATE_PY(method);
     assert(PyFunction_Check_abi3(method));
 
@@ -415,7 +435,12 @@ void py_attribute_for_instance_set(const FunctionCallbackInfo<Value>& info) {
     bool did_create;
     v8::Local<v8::Object> v8_receiver = info.This();
 
-    if (!v8_receiver->SetAccessor(context, V8String(isolate, js_name), py_class_property_getter, py_class_property_setter, info.Data()).To(&did_create)) {
+    if (!v8_receiver->SetNativeDataProperty(
+            context,
+            V8String(isolate, js_name),
+            py_class_property_getter,
+            py_class_property_setter,
+            info.Data()).To(&did_create)) {
         return;
     }
 }
@@ -430,7 +455,7 @@ void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info) {
 
     PyObject* self = get_self(info);
 
-    PyObject* method = (PyObject*)info.Data().As<External>()->Value();
+    PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
 
     if (self == Py_None && PyMethod_Check_abi3(method)) {
         self = PyMethod_GET_SELF_abi3(method);
@@ -536,13 +561,7 @@ property_setter_handler(PyObject* key,
         Py_DECREF(result);
         return Intercepted::kNo;
     }
-    Local<Value> js_result = js_from_py(result, context);
     Py_DECREF(result);
-    if (js_result.IsEmpty() || PyErr_Occurred()) {
-        js_throw_py();
-        return Intercepted::kNo;
-    }
-    info.GetReturnValue().Set(js_result);
     return Intercepted::kYes;
 }
 
@@ -720,7 +739,10 @@ indexed_enumerator_handler(const PropertyCallbackInfo<Array>& info,
 Intercepted named_getter(Local<Name> js_name, Info(Value)) { 
     SETUP
 
-    context_c* ctx_c = (context_c*)info.GetIsolate()->GetCurrentContext()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
+        context, CONTEXT_OBJECT_SLOT);
+    if (ctx_c == nullptr)
+        return Intercepted::kNo;
     PyObject* self = get_self(info);
 
     if (ctx_c->hook) {
@@ -744,7 +766,10 @@ Intercepted named_getter(Local<Name> js_name, Info(Value)) {
 Intercepted properties_named_getter(Local<Name> js_name, Info(Value)) {
     SETUP;
 
-    context_c* ctx_c = (context_c*)info.GetIsolate()->GetCurrentContext()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
+        context, CONTEXT_OBJECT_SLOT);
+    if (ctx_c == nullptr)
+        return Intercepted::kNo;
     PyObject* self = ctx_c->py_global;
 
     return property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_property_name_get__");
@@ -754,7 +779,10 @@ Intercepted properties_named_getter(Local<Name> js_name, Info(Value)) {
 Intercepted named_setter(Local<Name> js_name, Local<Value> js_value, Info(void)) {
     SETUP
 
-    context_c* ctx_c = (context_c*)info.GetIsolate()->GetCurrentContext()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
+        context, CONTEXT_OBJECT_SLOT);
+    if (ctx_c == nullptr)
+        return Intercepted::kNo;
     PyObject* self = get_self(info);
 
     if (ctx_c->hook) {
@@ -795,7 +823,10 @@ void named_enumerator(Info(Array)) {
 Intercepted indexed_getter(uint32_t index, Info(Value)) {
     SETUP;
 
-    context_c* ctx_c = (context_c*)info.GetIsolate()->GetCurrentContext()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
+        context, CONTEXT_OBJECT_SLOT);
+    if (ctx_c == nullptr)
+        return Intercepted::kNo;
     PyObject* self = get_self(info);
 
     if (ctx_c->hook) {
@@ -818,7 +849,10 @@ Intercepted indexed_getter(uint32_t index, Info(Value)) {
 Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
     SETUP;
 
-    context_c* ctx_c = (context_c*)info.GetIsolate()->GetCurrentContext()->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
+        context, CONTEXT_OBJECT_SLOT);
+    if (ctx_c == nullptr)
+        return Intercepted::kNo;
     PyObject* self = get_self(info);
 
     if (ctx_c->hook) {

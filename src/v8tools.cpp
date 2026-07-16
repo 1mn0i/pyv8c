@@ -15,7 +15,7 @@ namespace bindings {
             ->Get(context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Faker))
             .ToLocalChecked()
             .As<Object>();
-        PyObject* cb_name = (PyObject*)info.Data().As<External>()->Value();
+        PyObject* cb_name = (PyObject*)v8_compat::external_value(info.Data());
         Local<String> cb = V8String(isolate, PyUnicode_AsUTF8_abi3(cb_name));
         Local<Value> func = faker->Get(context, cb).ToLocalChecked();
         if (func.IsEmpty() || !func->IsFunction()) {
@@ -56,10 +56,9 @@ namespace bindings {
             return;
         }
 
-        Local<Value>* arguments = new Local<Value>[0];
         TryCatch try_catch(isolate);
-        MaybeLocal<Value> result = func.As<Function>()->Call(context, info.This(), 0, arguments);
-        delete[] arguments;
+        MaybeLocal<Value> result = func.As<Function>()->Call(
+            context, v8_compat::property_callback_receiver(info), 0, nullptr);
 
         if (try_catch.HasCaught()) {
             try_catch.ReThrow();
@@ -71,7 +70,7 @@ namespace bindings {
     void ConstructAccessorNameGetterCallback(Local<Name> property, const PropertyCallbackInfo<Value>& info) {
         v8::Isolate* isolate = info.GetIsolate();
         Local<Context> context = isolate->GetCurrentContext();
-        context_c* py_ctx = (context_c*)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+        context_c* py_ctx = (context_c*)v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
 
         String::Utf8Value property_name(isolate, property);
         PyObject* name = PyUnicode_FromString(*property_name);
@@ -211,7 +210,8 @@ namespace bindings {
         function_template = v8::FunctionTemplate::NewWithCFunctionOverloads(
             isolate, callback, GetConfigCallbackName<kind>(config), signature, length,
             v8::ConstructorBehavior::kThrow, v8_side_effect,
-            { v8_cfunction_table_data, v8_cfunction_table_size });
+            v8_compat::c_function_overloads(
+                v8_cfunction_table_data, v8_cfunction_table_size));
 
         function_template->SetClassName(name);
         function_template->SetAcceptAnyReceiver(
@@ -301,11 +301,11 @@ namespace bindings {
             if (cb_get_name != NULL && PyUnicode_Check(cb_get_name)) {
                 if (cb_type == unsigned(CallbackType::kPy)) {
                     PyObject* py_get_method = PyObject_GetAttr(cls, cb_get_name);
-                    v8_config.get_method = External::New(isolate, py_get_method);
+                    v8_config.get_method = v8_compat::external_new(isolate, py_get_method);
                     v8_config.callback_for_get = py_attribute_for_get;
                 }
                 else {
-                    v8_config.get_method = External::New(isolate, cb_get_name);
+                    v8_config.get_method = v8_compat::external_new(isolate, cb_get_name);
                     v8_config.callback_for_get = FakerJsFunctionCallback;
                 }
             }
@@ -315,16 +315,16 @@ namespace bindings {
                 if (v8_config.location == unsigned(FlagLocation::kInstance) && cb_type == unsigned(CallbackType::kPy)) {
                     PyObject* py_set_method = PyObject_GetAttr(cls, cb_set_name);
                     PyObject_SetAttrString(py_set_method, "__v8_raw_name__", PyUnicode_FromString(v8_config.name));
-                    v8_config.set_method = External::New(isolate, py_set_method);
+                    v8_config.set_method = v8_compat::external_new(isolate, py_set_method);
                     v8_config.callback_for_set = py_attribute_for_instance_set;
                 }
                 else if (v8_config.location == unsigned(FlagLocation::kPrototype) && cb_type == unsigned(CallbackType::kPy)) {
                     PyObject* py_set_method = PyObject_GetAttr(cls, cb_set_name);
-                    v8_config.set_method = External::New(isolate, py_set_method);
+                    v8_config.set_method = v8_compat::external_new(isolate, py_set_method);
                     v8_config.callback_for_set = py_attribute_for_property_set;
                 }
                 else {
-                    v8_config.set_method = External::New(isolate, cb_set_name);
+                    v8_config.set_method = v8_compat::external_new(isolate, cb_set_name);
                     v8_config.callback_for_set = FakerJsFunctionCallback;
                 }
             }
@@ -444,7 +444,7 @@ namespace bindings {
                         Py_DECREF(callback_data);
                         return false;
                     }
-                    v8_config.callback_data = External::New(isolate, callback_data);
+                    v8_config.callback_data = v8_compat::external_new(isolate, callback_data);
                     Py_DECREF(callback_data);
                     v8_config.callback = py_class_method_callback;
                     //if(strcmp(PyUnicode_AsUTF8_abi3(cb_name), "fn_postMessage")==0 && strcmp(world, "Window") == 0)
@@ -453,7 +453,7 @@ namespace bindings {
                     //    v8_config.callback = py_class_method_callback;
                 }
                 else {
-                    v8_config.callback_data = External::New(isolate, cb_name);
+                    v8_config.callback_data = v8_compat::external_new(isolate, cb_name);
                     v8_config.callback = FakerJsFunctionCallback;
                 }
             }
@@ -615,7 +615,7 @@ namespace bindings {
 
 
     void InstallExposedConstruct(v8::Local<v8::Context> context, v8::Local<v8::Object> instance_object, const char* name) {
-        v8::Isolate* isolate = context->GetIsolate();
+        v8::Isolate* isolate = v8_compat::context_isolate(context);
         instance_object
             ->SetLazyDataProperty(context, V8String(isolate, name),
                 ConstructAccessorNameGetterCallback, v8::Local<v8::Value>(),

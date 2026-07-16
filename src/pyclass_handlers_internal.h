@@ -10,24 +10,20 @@ get_handler_self(const Info& info, bool cross_origin)
 {
     Isolate* isolate = info.GetIsolate();
     Local<Context> context = isolate->GetCurrentContext();
-    Local<Object> js_self = info.Holder();
+    Local<Object> js_self = v8_compat::callback_holder(info);
     bool is_global = cross_origin
         ? js_self->Equals(context, context->Global()).FromMaybe(false)
         : js_self == context->Global();
-    if (is_global) {
-        Local<Value> prototype = js_self->GetPrototype();
-        if (!prototype->IsObject())
-            return Py_None;
-        js_self = prototype.As<Object>();
-    }
+    if (is_global)
+        js_self = v8_compat::global_template_object(context);
 
     if (js_self->InternalFieldCount() != OBJECT_INTERNAL_FIELDS)
         return Py_None;
     Local<Data> magic = js_self->GetInternalField(PYTHON_MAGIC_FIELD);
     if (magic != runtime_manager.find_isolate(isolate)->v8_string(V8StringId::PythonObjectMagic))
         return Py_None;
-    return (PyObject*)js_self->GetInternalField(PYTHON_OBJECT_FIELD)
-        .template As<External>()->Value();
+    return (PyObject*)v8_compat::external_value(
+        js_self->GetInternalField(PYTHON_OBJECT_FIELD));
 }
 
 template <class T>

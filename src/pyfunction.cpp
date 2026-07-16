@@ -12,7 +12,7 @@ PyTypeObject* py_function_type = NULL;
 
 static PyType_Slot py_function_slots[] = {
     {Py_tp_dealloc, (void*)py_function_dealloc},
-    {Py_tp_doc, ""},
+    {Py_tp_doc, (void*)""},
     {0, NULL} };
 
 static PyType_Spec py_function_spec = {
@@ -58,7 +58,7 @@ py_function_new(PyObject *function, IsolateState* isolate_state)
         return NULL;
     }
 
-    Local<External> js_self = External::New(isolate, self);
+    Local<External> js_self = v8_compat::external_new(isolate, self);
     Local<FunctionTemplate> js_template;
 
     int length = 0;
@@ -132,7 +132,7 @@ py_function_dealloc(py_function *self)
 Local<Function> 
 py_template_to_function(py_function *self, Local<Context> context)
 {
-    Isolate* isolate = context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
     if (self->isolate_state != isolate_state) {
         PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
@@ -161,7 +161,7 @@ py_function_callback(const FunctionCallbackInfo<Value> &info)
     HandleScope hs(isolate);
     Local<Context> context = isolate->GetCurrentContext();
 
-    py_function *self = (py_function *) info.Data().As<External>()->Value();
+    py_function *self = (py_function *) v8_compat::external_value(info.Data());
     PyObject *args = pys_from_jss(info, context);
     JS_PROPAGATE_PY(args);
     PyObject *result = PyObject_CallObject(self->function, args);

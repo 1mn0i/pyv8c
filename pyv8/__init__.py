@@ -36,8 +36,9 @@ incumbent_context = _pyv8.incumbent_context
 new = _pyv8.new
 v8_gc = _pyv8.v8_gc
 shutdown_v8 = _pyv8.shutdown_v8
+v8_version = _pyv8.v8_version
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 
 from .devtools import start_devtools

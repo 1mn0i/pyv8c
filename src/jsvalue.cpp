@@ -12,7 +12,7 @@ using namespace v8;
 static PyType_Slot js_value_slots[] = {
     {Py_tp_dealloc, (void *)js_value_dealloc},
     {Py_tp_repr, (void *)js_value_repr},
-    {Py_tp_doc, "v8 Value"},
+    {Py_tp_doc, (void*)"v8 Value"},
     {0, NULL}};
 
 static PyType_Spec js_value_spec = {
@@ -37,7 +37,7 @@ int js_value_type_init()
 js_value *
 js_value_new(Local<Value> value, Local<Context> context)
 {
-    IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+    IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
     IN_ISOLATE(isolate_state);
     Context::Scope cs(context);
     js_value *self;
@@ -50,7 +50,7 @@ js_value_new(Local<Value> value, Local<Context> context)
         isolate_state->retain_v8_handle();
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
-            context_c* py_context = (context_c*)context_data.As<External>()->Value();
+            context_c* py_context = (context_c*)v8_compat::external_value(context_data);
             self->py_context = (PyObject*)py_context;
             Py_INCREF(self->py_context);
             if (py_context->py_isolate != nullptr) {
@@ -75,7 +75,7 @@ void js_value_weak_callback(const WeakCallbackInfo<js_value> &info)
 js_value *
 js_value_weak_new(Local<Value> value, Local<Context> context)
 {
-    IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+    IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
     IN_ISOLATE(isolate_state);
     Context::Scope cs(context);
     js_value*self;
@@ -86,7 +86,7 @@ js_value_weak_new(Local<Value> value, Local<Context> context)
         isolate_state->retain_v8_handle();
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
-            context_c* py_context = (context_c*)context_data.As<External>()->Value();
+            context_c* py_context = (context_c*)v8_compat::external_value(context_data);
             if (py_context->py_isolate != nullptr) {
                 self->py_isolate = py_context->py_isolate;
                 Py_INCREF(self->py_isolate);

@@ -15,7 +15,7 @@ static PyType_Slot js_promise_slots[] = {
     {Py_tp_dealloc, (void*)js_promise_dealloc},
     {Py_tp_new, (void*)js_promise_new},
     {Py_tp_repr, (void*)js_promise_repr},
-    {Py_tp_doc, "v8 Promise"},
+    {Py_tp_doc, (void*)"v8 Promise"},
     {0, NULL} };
 
 static PyType_Spec js_promise_spec = {

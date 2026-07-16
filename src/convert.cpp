@@ -135,11 +135,11 @@ py_from_js_impl(Local<Value> value,
                 Local<Context> context,
                 JsToPyConversionContext* conversion)
 {
-    Isolate* isolate = context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
     if (value->IsSymbol())
     {
-        value = value.As<Symbol>()->Description(context->GetIsolate());
+        value = value.As<Symbol>()->Description(v8_compat::context_isolate(context));
     }
     if (value->IsNull())
     {
@@ -213,7 +213,7 @@ py_from_js_impl(Local<Value> value,
             context = obj_value->GetCreationContextChecked();
         }
         bool has_to_string_tag;
-        Maybe<bool> maybe_has_to_string_tag = obj_value->HasOwnProperty(context, Symbol::GetToStringTag(context->GetIsolate()));
+        Maybe<bool> maybe_has_to_string_tag = obj_value->HasOwnProperty(context, Symbol::GetToStringTag(v8_compat::context_isolate(context)));
         if (!maybe_has_to_string_tag.To(&has_to_string_tag))
         {
             PyErr_SetString(PyExc_RuntimeError, "failed to inspect JavaScript object");
@@ -293,7 +293,7 @@ py_from_js_impl(Local<Value> value,
             Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
             if (magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
             {
-                PyObject *object = (PyObject *)obj_value->GetInternalField(PYTHON_OBJECT_FIELD).As<External>()->Value();
+                PyObject *object = (PyObject *)v8_compat::external_value(obj_value->GetInternalField(PYTHON_OBJECT_FIELD));
                 Py_INCREF(object);
                 return object;
             }
@@ -322,7 +322,7 @@ py_from_js_impl(Local<Value> value,
 PyObject *
 py_from_js(Local<Value> value, Local<Context> context)
 {
-    IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+    IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
     IN_ISOLATE(isolate_state);
     return py_from_js_impl(value, context, nullptr);
 }
@@ -517,7 +517,7 @@ js_from_py_impl(PyObject *value,
 
     if (PyType_Check(value))
     {
-        context_c *ctx_c = (context_c *)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+        context_c *ctx_c = (context_c *)v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
         py_class *templ = (py_class *)py_class_to_template(value, ctx_c);
         if (templ->to_obj)
         {
@@ -584,7 +584,7 @@ js_from_py_impl(PyObject *value,
     }
 
     // python global_this -> js globalThis
-    context_c *ctx_c = (context_c *)context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    context_c *ctx_c = (context_c *)v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
     if (ctx_c->py_global != NULL && Py_TYPE(value) == Py_TYPE(ctx_c->py_global))
     {
         PyObject *ctx = PyObject_GetAttrString(value, "_ctx");
@@ -629,13 +629,13 @@ js_from_py(PyObject *value, Local<Context> context)
         PyErr_SetString(PyExc_RuntimeError, "an explicit isolate is required without a Context");
         return Local<Value>();
     }
-    return js_from_py(value, context, context->GetIsolate());
+    return js_from_py(value, context, v8_compat::context_isolate(context));
 }
 
 Local<Value>
 js_from_py(PyObject *value, Local<Context> context, Isolate* target_isolate)
 {
-    if (!context.IsEmpty() && context->GetIsolate() != target_isolate) {
+    if (!context.IsEmpty() && v8_compat::context_isolate(context) != target_isolate) {
         PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
         return Local<Value>();
     }
@@ -680,7 +680,7 @@ void jss_from_pys(PyObject *py_args, Local<Value> *js_args, Local<Context> conte
 Local<Object>
 pyexception_to_jsexception(PyObject *value, Local<Context> context)
 {
-    Isolate* isolate = context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
     Local<Object> exception;
     if (!PyExceptionInstance_Check(value))

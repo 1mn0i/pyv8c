@@ -28,7 +28,7 @@ static PyType_Slot js_typedarray_slots[] = {
     {Py_tp_dealloc, (void*)js_typedarray_dealloc},
     {Py_tp_new, (void*)js_typearray_new},
     {Py_tp_repr, (void*)js_typedarray_repr},
-    {Py_tp_doc, "v8 TypedArray"},
+    {Py_tp_doc, (void*)"v8 TypedArray"},
     {0, NULL} };
 
 static PyType_Spec js_typedarray_spec = {

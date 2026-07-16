@@ -55,9 +55,130 @@ python310 -m build --wheel
 
 生成的 `cp310-abi3` wheel 可安装到 CPython 3.10 及以上版本。
 
+### 选择并编译 V8 版本
+
+仓库默认复用 `V8_VERSION` 中记录的 V8 版本以及本地 `v8/` 目录，不会在普通
+`build_ext` 或 wheel 构建时访问网络。需要使用其他 V8 正式版本时，可以在打包命令中
+显式指定版本并启用下载：
+
+不知道具体 V8 tag 时，可以先查看精简后的版本列表，或直接使用交互菜单：
+
+```powershell
+# 列出各发布分支最新的 patch tag
+python setup.py list_v8_versions --limit=15
+
+# 选择版本，然后下载或复用对应的 V8
+python setup.py build_v8 --select
+
+# build_v8 会记住选择，后续打包不需要再次输入版本
+python310 -m build --wheel
+```
+
+列表中的 `default, tested` 表示当前项目默认验证版本；其他版本会标记为
+`unverified`，表示该 tag 可以下载和编译 V8，但绑定代码可能仍需适配对应版本的 C++
+API。交互选择保存在本地 `.pyv8-version` 中且不会提交 Git，删除该文件即可恢复
+`V8_VERSION` 中的项目默认值。
+
+CI 或非交互环境仍建议使用环境变量：
+
+```powershell
+# Windows PowerShell
+$env:PYV8_V8_VERSION = "13.1.201.22"
+$env:PYV8_BUILD_V8 = "1"
+$env:PYV8_V8_JOBS = "8"
+python310 -m build --wheel
+```
+
+```bash
+# Linux / macOS
+PYV8_V8_VERSION=13.1.201.22 \
+PYV8_BUILD_V8=1 \
+PYV8_V8_JOBS=8 \
+python3.10 -m build --wheel
+```
+
+构建器会自动安装 depot_tools、下载对应 V8 tag、执行 `gclient sync`，再通过 GN 和
+autoninja 编译 `v8_monolith`。不同版本保存在
+`.pyv8-build/versions/<version>/v8`，后续使用相同版本和 GN 参数时会直接复用缓存。
+
+也可以先单独准备 V8，再执行扩展构建：
+
+```powershell
+python setup.py build_v8 --v8-version=13.1.201.22 --v8-jobs=8
+$env:PYV8_V8_VERSION = "13.1.201.22"
+python setup.py build_ext --inplace
+```
+
+已有自行编译的 V8 时，不需要下载：
+
+```powershell
+$env:PYV8_V8_VERSION = "13.1.201.22"
+$env:PYV8_V8_HOME = "D:\v8-workspace\v8"
+$env:PYV8_V8_OUT = "D:\v8-workspace\v8\out\x64.release"
+$env:PYV8_ICU_DATA = "D:\v8-workspace\v8\out\x64.release\icudtl.dat"
+python310 -m build --wheel
+```
+
+可用环境变量：
+
+| 变量 | 作用 |
+| --- | --- |
+| `PYV8_V8_VERSION` | V8 正式版本 tag，例如 `12.5.99`。 |
+| `PYV8_BUILD_V8` | 设置为 `1` 时下载并编译所选版本。 |
+| `PYV8_FORCE_V8_BUILD` | 忽略匹配的构建缓存，强制重新编译。 |
+| `PYV8_V8_JOBS` | GN/Ninja 并行任务数。 |
+| `PYV8_BUILD_ROOT` | depot_tools 和版本缓存的根目录。 |
+| `PYV8_DEPOT_TOOLS` | 复用指定的 depot_tools。 |
+| `PYV8_PROXY` | 为 Git、depot_tools 和 CIPD 指定统一的 HTTP/HTTPS 代理。 |
+| `PYV8_NO_PROXY` | 设置为 `1` 时忽略环境变量和 Git 全局代理，强制直连。 |
+| `PYV8_VS_HOME` | Windows 下显式指定 Visual Studio 安装目录。 |
+| `PYV8_VS_VERSION` | 与 `PYV8_VS_HOME` 配套的版本年份，默认 `2022`。 |
+| `PYV8_WINDOWS_SDK` | Windows 下显式指定 Windows 10/11 SDK 根目录。 |
+| `PYV8_V8_HOME` | 使用指定的 V8 源码或预编译目录。 |
+| `PYV8_V8_OUT` | 指定包含 `obj/v8_monolith` 的输出目录。 |
+| `PYV8_ICU_DATA` | 指定与所选 V8 匹配的 `icudtl.dat`。 |
+| `PYV8_GN_ARGS` | 追加自定义 GN 参数。 |
+
+构建器会自动把 Git 的 `http.proxy` / `https.proxy` 配置传给 depot_tools 和 CIPD。
+如果 Git 与其他下载工具需要使用不同代理，可以显式设置：
+
+```powershell
+$env:PYV8_PROXY = "http://127.0.0.1:7890"
+python setup.py build_v8 --select
+```
+
+不需要代理时，可以通过命令参数强制直连。该参数会忽略当前进程代理和 Git
+全局 `http.proxy` / `https.proxy` 配置：
+
+```powershell
+python314 setup.py build_v8 --select --no-proxy
+python314 setup.py list_v8_versions --no-proxy
+```
+
+也可以显式指定代理，而不修改系统或 Git 配置：
+
+```powershell
+python314 setup.py build_v8 --select --proxy=http://127.0.0.1:7890
+```
+
+CI 或持续使用直连模式时可以设置环境变量：
+
+```powershell
+$env:PYV8_NO_PROXY = "1"
+python314 setup.py build_v8 --select
+```
+
+Windows 首次运行会安装 depot_tools 所需的 CIPD/Python 工具；成功后会禁用重复的
+depot_tools 自更新，避免每次构建都产生额外网络请求。
+
+V8 的 C++ API 会随版本变化。构建器可以选择和编译任意正式数字 tag，但当前源码默认
+验证的是 `V8_VERSION` 中的版本；升级较大的 V8 版本时，编译错误通常表示绑定代码也需要
+同步适配。
+
 ### 编译选项
 
-pyv8的扩展编译配置在`setup.py`文件中定义。如果需要自定义编译选项，可以修改此文件：
+pyv8 的扩展编译配置在 `setup.py` 和 `v8_build.py` 中定义。通常应优先使用上面的环境
+变量，不需要直接修改构建脚本：
 
 - 修改包含目录：`include_dirs`
 - 修改库目录：`library_dirs`
@@ -65,13 +186,7 @@ pyv8的扩展编译配置在`setup.py`文件中定义。如果需要自定义编
 - 修改编译参数：`extra_compile_args`
 - 修改链接参数：`extra_link_args`
 
-例如，在Windows上添加自定义包含目录：
-
-```python
-# 在setup.py中修改
-if os.name == 'nt':
-    include_dirs = ['src', 'v8/include', 'path/to/custom/include']
-```
+额外的编译器参数仍可在 `setup.py` 的 `extra_compile_args` 中维护。
 
 ## 开发与测试
 

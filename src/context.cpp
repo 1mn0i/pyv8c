@@ -49,7 +49,7 @@ static PyType_Slot context_slots[] = {
     {Py_tp_getattro, (void*)context_getattro},
     {Py_tp_setattro, (void*)context_setattro},
     {Py_tp_getset, context_getset},
-    {Py_tp_doc, "v8 context"},
+    {Py_tp_doc, (void*)"v8 context"},
     // We can't use Py_tp_as_mapping in Limited API
     // {Py_tp_as_mapping, &context_mapping_for_spec},
     {0, NULL} };
@@ -182,7 +182,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     //IN_CONTEXT(self->js_context.Get(isolate));
     context->SetEmbedderData(CTX_TYPE, V8String(isolate, PyUnicode_AsUTF8_abi3(ctx_type)));
     Py_DECREF(ctx_type);
-    context->SetEmbedderData(CONTEXT_OBJECT_SLOT, External::New(isolate, self));
+    context->SetEmbedderData(CONTEXT_OBJECT_SLOT, v8_compat::external_new(isolate, self));
     context->SetEmbedderData(OBJECT_PROTOTYPE_SLOT, Object::New(isolate)->GetPrototype());
     context->SetEmbedderData(ERROR_PROTOTYPE_SLOT, Exception::Error(String::Empty(isolate)).As<Object>()->GetPrototype());
 
@@ -211,7 +211,8 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     }
 
     if (global != NULL) {
-        if (!py_class_init_js_object(context->Global()->GetPrototype().As<Object>(), global, context)) {
+        if (!py_class_init_js_object(
+                v8_compat::global_template_object(context), global, context)) {
             Py_DECREF((PyObject*)self);
             return NULL;
         }
@@ -470,9 +471,9 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
 Local<Object> 
 context_get_cached_jsobject(Local<Context> js_context, PyObject *py_object)
 {
-    Isolate* isolate = js_context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(js_context);
     EscapableHandleScope hs(isolate);
-    context_c *self = (context_c *) js_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    context_c *self = (context_c *) v8_compat::external_value(js_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
     if (PyMapping_HasKey(self->js_object_cache, py_object)) {
         js_object *jsobj = (js_object *) PyObject_GetItem(self->js_object_cache, py_object);
         if (jsobj == NULL) {
@@ -486,9 +487,9 @@ context_get_cached_jsobject(Local<Context> js_context, PyObject *py_object)
 void 
 context_set_cached_jsobject(Local<Context> js_context, PyObject *py_object, Local<Object> object)
 {
-    Isolate* isolate = js_context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(js_context);
     EscapableHandleScope hs(isolate);
-    context_c *self = (context_c *) js_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    context_c *self = (context_c *) v8_compat::external_value(js_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
     js_object *jsobj = js_object_weak_new(object, js_context);
     if (jsobj == NULL) {
         return;
@@ -525,7 +526,8 @@ context_get_global(context_c *self, void *shit)
         return NULL;
     IN_ISOLATE(isolate_state);
     Local<Context> context = self->js_context.Get(isolate);
-    PyObject* pyobj= py_from_js(context->Global()->GetPrototype(), context);
+    PyObject* pyobj = py_from_js(
+        v8_compat::global_template_object(context), context);
     PyErr_PROPAGATE(pyobj);
     PyObject* result = context_js_obj(self, pyobj);
     Py_DECREF(pyobj);

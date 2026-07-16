@@ -16,7 +16,7 @@ static PyType_Slot js_function_slots[] = {
     {Py_tp_dealloc, (void*)js_function_dealloc},
     {Py_tp_repr, (void*)js_function_repr},
     {Py_tp_call, (void*)js_function_call},
-    {Py_tp_doc, ""},
+    {Py_tp_doc, (void*)""},
     {0, NULL} };
 
 static PyType_Spec js_function_spec = {

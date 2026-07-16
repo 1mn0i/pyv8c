@@ -7,8 +7,26 @@ This is a simplified setup.py that works with pyproject.toml.
 此文件仅包含扩展模块的配置。
 """
 import os
+import json
+import shutil
 import sys
-from setuptools import setup, Extension
+from pathlib import Path
+
+from setuptools import Command, Extension, setup
+from setuptools.command.build_ext import build_ext
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from v8_build import (  # noqa: E402
+    V8BuildConfig,
+    V8BuildError,
+    fetch_v8_versions,
+    print_v8_version_choices,
+    read_default_v8_version,
+    save_selected_v8_version,
+    select_v8_version,
+)
 
 # 获取源文件列表
 sources = \
@@ -16,20 +34,15 @@ sources = \
     list(map(lambda path: os.path.join('src/faker', path), filter(lambda path: path.endswith('.cpp'), os.listdir('src/faker'))))
 
 # 库配置
-v8_libraries = ['v8_monolith']
-libraries = list(v8_libraries)
+libraries = ['v8_monolith']
 
 # 平台特定配置
 if os.name == 'nt':
-    library_dirs = ['v8/out/win/x64.release/obj']
-    include_dirs = ['src', 'v8/include']
-    extra_compile_args = ["/O2", "/GL", "/MT", "/EHsc", "/Gy", "/Zi", "/std:c++17", "/Zc:__cplusplus"]
+    extra_compile_args = ["/O2", "/GL", "/MT", "/EHsc", "/Gy", "/Zi", "/std:c++20", "/Zc:__cplusplus"]
     extra_link_args = []
     libraries.extend(['Dbghelp', 'Shlwapi', 'Winmm', 'Advapi32'])
 else:
-    library_dirs = ['v8/out/linux/x64.release/obj']
-    include_dirs = ['src', 'v8/include']
-    extra_compile_args = ['-fpermissive', '-Wunused-variable']
+    extra_compile_args = ['-std=c++20', '-fpermissive', '-Wunused-variable']
     extra_link_args = []
 
 if sys.platform.startswith('linux'):
@@ -38,13 +51,247 @@ if sys.platform.startswith('linux'):
 if sys.platform.startswith('darwin'):
     extra_compile_args.append('-stdlib=libc++')
 
+
+class PyV8BuildExt(build_ext):
+    """Build the extension against a selected local or managed V8 version."""
+
+    user_options = build_ext.user_options + [
+        ('v8-version=', None, 'V8 Git tag to use'),
+        ('v8-home=', None, 'existing V8 source or binary directory'),
+        ('v8-output=', None, 'existing or generated V8 output directory'),
+        ('v8-jobs=', None, 'number of parallel V8 build jobs'),
+        ('proxy=', None, 'HTTP/HTTPS proxy used to download V8'),
+        ('no-proxy', None, 'download V8 without using environment or Git proxies'),
+        ('download-v8', None, 'download and build the selected V8 version'),
+        ('force-v8-build', None, 'rebuild V8 even when a matching cache exists'),
+    ]
+    boolean_options = build_ext.boolean_options + [
+        'no-proxy', 'download-v8', 'force-v8-build'
+    ]
+
+    def initialize_options(self):
+        super().initialize_options()
+        self.v8_version = None
+        self.v8_home = None
+        self.v8_output = None
+        self.v8_jobs = None
+        self.proxy = None
+        self.no_proxy = None
+        self.download_v8 = None
+        self.force_v8_build = None
+
+    def _configuration(self):
+        return V8BuildConfig.from_environment(
+            PROJECT_ROOT,
+            version=self.v8_version,
+            v8_home=self.v8_home,
+            output_dir=self.v8_output,
+            jobs=self.v8_jobs,
+            proxy=self.proxy,
+            no_proxy=True if self.no_proxy else None,
+            download_and_build=True if self.download_v8 else None,
+            force_build=True if self.force_v8_build else None,
+        )
+
+    def _configure_extensions(self, config):
+        for extension in self.extensions:
+            if extension.name != 'pyv8._pyv8':
+                continue
+            extension.include_dirs = list(extension.include_dirs or []) + [
+                str(config.include_dir)
+            ]
+            extension.library_dirs = list(extension.library_dirs or []) + [
+                str(config.library_dir)
+            ]
+
+    def _copy_icu_data(self, config):
+        source = config.icu_data_file()
+        if source is None:
+            raise V8BuildError(
+                'icudtl.dat was not found; set PYV8_ICU_DATA to the matching V8 ICU data file'
+            )
+        if self.inplace:
+            destination = PROJECT_ROOT / 'pyv8' / 'icudtl.dat'
+        else:
+            destination = Path(self.build_lib) / 'pyv8' / 'icudtl.dat'
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.resolve() != destination.resolve():
+            shutil.copy2(source, destination)
+
+    @staticmethod
+    def _build_fingerprint(config):
+        library_stat = config.library_file.stat()
+        return {
+            'version': config.version,
+            'v8_home': str(config.v8_home),
+            'output_dir': str(config.output_dir),
+            'gn_args': config.gn_args,
+            'library_size': library_stat.st_size,
+            'library_mtime_ns': library_stat.st_mtime_ns,
+        }
+
+    def _require_rebuild_for_changed_v8(self, config):
+        fingerprint = self._build_fingerprint(config)
+        fingerprint_file = PROJECT_ROOT / 'build' / 'pyv8-extension.json'
+        previous = None
+        if fingerprint_file.is_file():
+            try:
+                previous = json.loads(fingerprint_file.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                pass
+        if previous != fingerprint:
+            self.force = True
+        return fingerprint_file, fingerprint
+
+    def run(self):
+        try:
+            config = self._configuration()
+            config.prepare()
+            self._configure_extensions(config)
+            fingerprint_file, fingerprint = self._require_rebuild_for_changed_v8(config)
+            super().run()
+            self._copy_icu_data(config)
+            fingerprint_file.parent.mkdir(parents=True, exist_ok=True)
+            fingerprint_file.write_text(
+                json.dumps(fingerprint, indent=2, sort_keys=True) + '\n',
+                encoding='utf-8',
+            )
+        except V8BuildError as exc:
+            raise RuntimeError(f'V8 preparation failed: {exc}') from exc
+
+
+class BuildV8(Command):
+    """Download and compile one official V8 release tag."""
+
+    description = 'download and build a selected V8 release'
+    user_options = [
+        ('v8-version=', None, 'V8 Git tag to download and build'),
+        ('v8-home=', None, 'V8 checkout directory (must end with v8)'),
+        ('v8-output=', None, 'V8 output directory'),
+        ('v8-jobs=', None, 'number of parallel build jobs'),
+        ('proxy=', None, 'HTTP/HTTPS proxy used to download V8'),
+        ('no-proxy', None, 'download V8 without using environment or Git proxies'),
+        ('select', None, 'interactively select an official V8 release tag'),
+        ('force', 'f', 'rebuild an existing matching cache'),
+    ]
+    boolean_options = ['no-proxy', 'select', 'force']
+
+    def initialize_options(self):
+        self.v8_version = None
+        self.v8_home = None
+        self.v8_output = None
+        self.v8_jobs = None
+        self.proxy = None
+        self.no_proxy = False
+        self.select = False
+        self.force = False
+
+    def finalize_options(self):
+        if self.v8_jobs is not None:
+            self.v8_jobs = int(self.v8_jobs)
+        if self.select and self.v8_version:
+            raise ValueError('--select and --v8-version cannot be used together')
+        if self.proxy and self.no_proxy:
+            raise ValueError('--proxy and --no-proxy cannot be used together')
+
+    def run(self):
+        try:
+            selected_version = self.v8_version
+            if self.select:
+                selected_version = select_v8_version(
+                    fetch_v8_versions(
+                        proxy=self.proxy,
+                        no_proxy=True if self.no_proxy else None,
+                    ),
+                    read_default_v8_version(PROJECT_ROOT),
+                )
+
+            config_options = {
+                'version': selected_version,
+                'v8_home': self.v8_home,
+                'output_dir': self.v8_output,
+                'jobs': self.v8_jobs,
+                'proxy': self.proxy,
+                'no_proxy': True if self.no_proxy else None,
+                'force_build': bool(self.force),
+            }
+            config = None
+            reused_existing = False
+            if not self.force:
+                try:
+                    config = V8BuildConfig.from_environment(
+                        PROJECT_ROOT,
+                        download_and_build=False,
+                        **config_options,
+                    )
+                    config.prepare()
+                    reused_existing = True
+                except V8BuildError:
+                    config = None
+            if config is None:
+                config = V8BuildConfig.from_environment(
+                    PROJECT_ROOT,
+                    download_and_build=True,
+                    **config_options,
+                )
+                config.prepare()
+
+            save_selected_v8_version(PROJECT_ROOT, config.version)
+            if reused_existing:
+                print(
+                    f'Reusing existing V8 {config.version} from {config.v8_home} '
+                    '(use --force to rebuild)'
+                )
+            else:
+                print(f'V8 {config.version} build completed in {config.v8_home}')
+            print(f'V8 library: {config.library_file}')
+        except V8BuildError as exc:
+            raise RuntimeError(f'V8 build failed: {exc}') from exc
+
+
+class ListV8Versions(Command):
+    """List discoverable V8 release tags without downloading V8 source."""
+
+    description = 'list available V8 release choices'
+    user_options = [
+        ('limit=', None, 'maximum number of recommended release choices'),
+        ('proxy=', None, 'HTTP/HTTPS proxy used to query V8 versions'),
+        ('no-proxy', None, 'query V8 versions without environment or Git proxies'),
+    ]
+    boolean_options = ['no-proxy']
+
+    def initialize_options(self):
+        self.limit = 12
+        self.proxy = None
+        self.no_proxy = False
+
+    def finalize_options(self):
+        self.limit = int(self.limit)
+        if self.limit < 1:
+            raise ValueError('--limit must be at least 1')
+        if self.proxy and self.no_proxy:
+            raise ValueError('--proxy and --no-proxy cannot be used together')
+
+    def run(self):
+        try:
+            print_v8_version_choices(
+                fetch_v8_versions(
+                    proxy=self.proxy,
+                    no_proxy=True if self.no_proxy else None,
+                ),
+                read_default_v8_version(PROJECT_ROOT),
+                self.limit,
+            )
+        except V8BuildError as exc:
+            raise RuntimeError(f'failed to list V8 versions: {exc}') from exc
+
 # 设置扩展模块
 ext_modules = [
     Extension(
         'pyv8._pyv8',
         sources=sources,
-        include_dirs=include_dirs,
-        library_dirs=library_dirs,
+        include_dirs=['src'],
+        library_dirs=[],
         libraries=libraries,
         extra_compile_args=extra_compile_args,
         extra_link_args=extra_link_args,
@@ -57,5 +304,10 @@ ext_modules = [
 # 使用setuptools的setup函数
 setup(
     ext_modules=ext_modules,
+    cmdclass={
+        'build_ext': PyV8BuildExt,
+        'build_v8': BuildV8,
+        'list_v8_versions': ListV8Versions,
+    },
     options={'bdist_wheel': {'py_limited_api': 'cp310'}},
 )

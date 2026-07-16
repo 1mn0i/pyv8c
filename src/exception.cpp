@@ -17,7 +17,7 @@ static PyType_Slot js_exception_slots[] = {
     //{Py_tp_base, (void*)PyExc_Exception},
     {Py_tp_dealloc, (void*)js_exception_dealloc},
     {Py_tp_getset, js_exception_getsets},
-    {Py_tp_doc, "v8 Exception"},
+    {Py_tp_doc, (void*)"v8 Exception"},
     {0, NULL} };
 
 static PyType_Spec js_exception_spec = {
@@ -153,7 +153,7 @@ js_exception_new(Local<Value> exception, Local<Message> message)
     if (!context.IsEmpty()) {
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
-            self->py_context = (PyObject*)context_data.As<External>()->Value();
+            self->py_context = (PyObject*)v8_compat::external_value(context_data);
             Py_INCREF(self->py_context);
             context_c* py_context = (context_c*)self->py_context;
             if (py_context->py_isolate != nullptr) {
@@ -232,9 +232,9 @@ py_throw_js(Local<Value> js_exc, Local<Message> js_message)
     }
     if (is_python_object) {
         Local<Object> exc_object = js_exc.As<Object>();
-        PyObject* exc_type = (PyObject*)exc_object->GetInternalField(PYTHON_EXCEPTION_TYPE_FIELD).As<External>()->Value();
-        PyObject* exc_value = (PyObject*)exc_object->GetInternalField(PYTHON_OBJECT_FIELD).As<External>()->Value();
-        PyObject* exc_traceback = (PyObject*)exc_object->GetInternalField(PYTHON_TRACEBACK_FIELD).As<External>()->Value();
+        PyObject* exc_type = (PyObject*)v8_compat::external_value(exc_object->GetInternalField(PYTHON_EXCEPTION_TYPE_FIELD));
+        PyObject* exc_value = (PyObject*)v8_compat::external_value(exc_object->GetInternalField(PYTHON_OBJECT_FIELD));
+        PyObject* exc_traceback = (PyObject*)v8_compat::external_value(exc_object->GetInternalField(PYTHON_TRACEBACK_FIELD));
         if (exc_type == NULL && exc_traceback == NULL) {
             PyErr_SetObject((PyObject*)Py_TYPE(exc_value), exc_value);
         }

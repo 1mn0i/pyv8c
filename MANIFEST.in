@@ -1,0 +1,3 @@
+include V8_VERSION
+include v8_build.py
+recursive-include src *.h

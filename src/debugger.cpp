@@ -16,7 +16,7 @@ static PyType_Slot debugger_slots[] = {
     {Py_tp_new, (void*)debugger_new},
     {Py_tp_init, (void*)debugger_init},
     {Py_tp_methods, debugger_methods},
-    {Py_tp_doc, "v8 inspector"},
+    {Py_tp_doc, (void*)"v8 inspector"},
     {0, NULL} };
 
 static PyType_Spec debugger_spec = {

@@ -12,7 +12,7 @@ using namespace v8;
 PyTypeObject* script_type = NULL;
 
 static PyType_Slot script_slots[] = {
-    {Py_tp_doc, "v8 Script"},
+    {Py_tp_doc, (void*)"v8 Script"},
     {Py_tp_new, (void *)script_new},
     {Py_tp_dealloc, (void *)script_dealloc},
     {0, NULL}};
@@ -40,7 +40,7 @@ construct_script_name(Local<Context> context, Local<Value> js_name, int id)
 {
     PyObject *name;
     if (js_name.IsEmpty() || js_name->IsUndefined()) {
-        IsolateState* isolate_state = runtime_manager.find_isolate(context->GetIsolate());
+        IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
         name = isolate_state->javascript_name();
         PyErr_PROPAGATE(name);
         Py_INCREF(name);
@@ -118,7 +118,7 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 MaybeLocal<UnboundScript> 
 script_compile(Local<Context> context, PyObject *source, PyObject *filename)
 {
-    Isolate* isolate = context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(context);
     EscapableHandleScope hs(isolate);
     MaybeLocal<UnboundScript> maybe_script;
     // fucking god / c++

@@ -12,7 +12,7 @@ PyObject* js_null_object = NULL;
 
 
 static PyType_Slot null_slots[] = {
-    {Py_tp_doc, ""},
+    {Py_tp_doc, (void*)""},
     {Py_tp_repr, (void*)js_null_repr},
     {Py_nb_bool, (void*)js_null_bool},
     {0, NULL} };

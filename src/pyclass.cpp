@@ -155,7 +155,7 @@ PyTypeObject* py_class_type = NULL;
 
 static PyType_Slot py_class_slots[] = {
     {Py_tp_dealloc, (void*)py_class_dealloc},
-    {Py_tp_doc, "v8 Class"},
+    {Py_tp_doc, (void*)"v8 Class"},
     {0, NULL} };
 
 static PyType_Spec py_class_spec = {
@@ -271,7 +271,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         return NULL;
     }
 
-    Local<External> js_self = External::New(isolate, self);
+    Local<External> js_self = v8_compat::external_new(isolate, self);
     int templ_lenght = 0;
     if (config.length != NULL) {
         if (!PyLong_Check(config.length)) {
@@ -368,7 +368,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     {
         Py_INCREF(config.call);
         self->call_method = config.call;
-        templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_method_callback, External::New(isolate, self->call_method));
+        templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_method_callback, v8_compat::external_new(isolate, self->call_method));
     }
         
     if (config.undetectable)
@@ -436,65 +436,42 @@ py_class_new(PyObject *cls, context_c * py_ctx)
 
     if ((py_ctx->hook || config.name_get) && strcmp(world, "WindowProperties") != 0)
     {
-        NamedPropertyHandlerConfiguration callbacks(named_getter);
-        if (py_ctx->hook || config.name_set) {
-            callbacks.setter = named_setter;
-        }
-        if (config.name_query) {
-            callbacks.query = named_query;
-        }
-        if (config.name_enum) {
-            callbacks.enumerator = named_enumerator;
-        }
-        if (config.name_del) {
-            callbacks.deleter = named_deleter;
-        }
+        NamedPropertyHandlerConfiguration callbacks(
+            named_getter,
+            (py_ctx->hook || config.name_set) ? named_setter : nullptr,
+            config.name_query ? named_query : nullptr,
+            config.name_del ? named_deleter : nullptr,
+            config.name_enum ? named_enumerator : nullptr);
         templ->InstanceTemplate()->SetHandler(callbacks);
     }
 
     if ((py_ctx->hook || config.index_get) && strcmp(world, "WindowProperties") != 0)
     {
-        IndexedPropertyHandlerConfiguration callbacks;
-        callbacks.getter = indexed_getter;
-        if (py_ctx->hook || config.index_set) {
-            callbacks.setter = indexed_setter;
-        }
-        if (config.index_enum) {
-            callbacks.enumerator = indexed_enumerator;
-        }
-        if (config.index_query) {
-            callbacks.query = indexed_query;
-        }
-        if (config.index_del) {
-            callbacks.deleter = indexed_deleter;
-        }
+        IndexedPropertyHandlerConfiguration callbacks(
+            indexed_getter,
+            (py_ctx->hook || config.index_set) ? indexed_setter : nullptr,
+            config.index_query ? indexed_query : nullptr,
+            config.index_del ? indexed_deleter : nullptr,
+            config.index_enum ? indexed_enumerator : nullptr);
         templ->InstanceTemplate()->SetHandler(callbacks);
     }
 
     if (config.cross_origin_check)
     {   
         if (config.cross_origin_name_get){
-            NamedPropertyHandlerConfiguration cross_origin_named_callbacks(cross_origin_named_getter);
-            if (config.cross_origin_name_set)
-                cross_origin_named_callbacks.setter = cross_origin_named_setter;
-            if (config.cross_origin_name_query)
-                cross_origin_named_callbacks.query = cross_origin_named_query;
-            if (config.cross_origin_name_del)
-                cross_origin_named_callbacks.deleter = cross_origin_named_deleter;
-            if (config.cross_origin_name_enum)
-                cross_origin_named_callbacks.enumerator = cross_origin_named_enumerator;
+            NamedPropertyHandlerConfiguration cross_origin_named_callbacks(
+                cross_origin_named_getter,
+                config.cross_origin_name_set ? cross_origin_named_setter : nullptr,
+                config.cross_origin_name_query ? cross_origin_named_query : nullptr,
+                config.cross_origin_name_del ? cross_origin_named_deleter : nullptr,
+                config.cross_origin_name_enum ? cross_origin_named_enumerator : nullptr);
 
-            IndexedPropertyHandlerConfiguration cross_origin_index_callbacks;
-            if (config.cross_origin_index_get)
-                cross_origin_index_callbacks.getter = cross_origin_indexed_getter;
-            if (config.cross_origin_index_set)
-                cross_origin_index_callbacks.setter = cross_origin_indexed_setter;
-            if (config.cross_origin_index_query)
-                cross_origin_index_callbacks.query = cross_origin_indexed_query;
-            if (config.cross_origin_index_enum)
-                cross_origin_index_callbacks.enumerator = cross_origin_indexed_enumerator;
-            if (config.cross_origin_index_del)
-                cross_origin_index_callbacks.deleter = cross_origin_indexed_deleter;
+            IndexedPropertyHandlerConfiguration cross_origin_index_callbacks(
+                config.cross_origin_index_get ? cross_origin_indexed_getter : nullptr,
+                config.cross_origin_index_set ? cross_origin_indexed_setter : nullptr,
+                config.cross_origin_index_query ? cross_origin_indexed_query : nullptr,
+                config.cross_origin_index_del ? cross_origin_indexed_deleter : nullptr,
+                config.cross_origin_index_enum ? cross_origin_indexed_enumerator : nullptr);
             templ->InstanceTemplate()->SetAccessCheckCallbackAndHandler(cross_origin_access_check, cross_origin_named_callbacks, cross_origin_index_callbacks);
         }
         else{
@@ -628,7 +605,7 @@ add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObjec
 Local<Function> 
 py_class_get_constructor(Local<Context> context, py_class* self, py_class* parent)
 {
-    Isolate* isolate = context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(context);
     if (self->isolate_state == nullptr || self->isolate_state->isolate() != isolate) {
         PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
         return Local<Function>();
@@ -672,7 +649,7 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
 bool
 py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context)
 {
-    Isolate* isolate = context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
     if (!isolate_state->track_python_object(js_object, py_object)) {
         return false;
@@ -680,9 +657,9 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
     js_object->SetInternalField(
         PYTHON_MAGIC_FIELD,
         isolate_state->v8_string(V8StringId::PythonObjectMagic));
-    js_object->SetInternalField(PYTHON_OBJECT_FIELD, External::New(isolate, py_object));
-    js_object->SetInternalField(PYTHON_EXCEPTION_TYPE_FIELD, External::New(isolate, nullptr));
-    js_object->SetInternalField(PYTHON_TRACEBACK_FIELD, External::New(isolate, nullptr));
+    js_object->SetInternalField(PYTHON_OBJECT_FIELD, v8_compat::external_new(isolate, py_object));
+    js_object->SetInternalField(PYTHON_EXCEPTION_TYPE_FIELD, v8_compat::external_new(isolate, nullptr));
+    js_object->SetInternalField(PYTHON_TRACEBACK_FIELD, v8_compat::external_new(isolate, nullptr));
     // find out if the object is supposed to inherit from Error 
     // the information is in an internal field on the last prototype
     Local<Value> last_proto = js_object;
@@ -722,7 +699,7 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
 Local<Object> 
 py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> context)
 {
-    Isolate* isolate = context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(context);
     if (self->isolate_state == nullptr || self->isolate_state->isolate() != isolate) {
         PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
         return Local<Object>();
@@ -747,7 +724,7 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
 void 
 delete_constructor(py_class* self, Local<Context> context)
 {
-    Isolate* isolate = context->GetIsolate();
+    Isolate* isolate = v8_compat::context_isolate(context);
     if (!self->has_constructor) {
         self->has_constructor = 1;
         v8::Local<v8::FunctionTemplate> interface_template = self->templ.Get(isolate);

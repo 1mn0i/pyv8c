@@ -114,18 +114,16 @@ bool cross_origin_access_check(
     v8::Local<v8::Context> accessing_context,
     v8::Local<v8::Object> accessed_object,
     v8::Local<v8::Value> unused_data) {
-    context_c* accessing_ctx_c =
-        (context_c*)accessing_context->GetEmbedderData(CONTEXT_OBJECT_SLOT)
-            .As<External>()->Value();
+    context_c* accessing_ctx_c = (context_c*)v8_compat::external_value(
+        accessing_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
     PyObject* accessor = accessing_ctx_c->py_global;
 
     Local<Context> accessed_context;
     if (!accessed_object->GetCreationContext().ToLocal(&accessed_context))
         return false;
 
-    context_c* interviewee_ctx_c =
-        (context_c*)accessed_context->GetEmbedderData(CONTEXT_OBJECT_SLOT)
-            .As<External>()->Value();
+    context_c* interviewee_ctx_c = (context_c*)v8_compat::external_value(
+        accessed_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
     PyObject* interviewee = interviewee_ctx_c->py_global;
     if (PyObject_HasAttrString(interviewee, "__v8_cross_origin_check__")) {
         Py_INCREF(accessor);

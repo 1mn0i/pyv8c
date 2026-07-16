@@ -28,11 +28,11 @@ using namespace v8;
 static PyObject *
 py_initialize_v8(PyObject *self, PyObject *args, PyObject *kw)
 {
-    static char *keywords[] = {"icudtl_path", "params", NULL};
+    static const char *keywords[] = {"icudtl_path", "params", NULL};
     PyObject *icu = NULL;
     PyObject *params = NULL;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kw, "|OO", keywords, &icu, &params))
+    if (!PyArg_ParseTupleAndKeywords(args, kw, "|OO", (char**)keywords, &icu, &params))
     {
         return NULL;
     }
@@ -172,7 +172,7 @@ context_get_current(PyObject *self, PyObject *args)
     {
         Py_RETURN_NONE;
     }
-    PyObject *context = (PyObject *)current_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    PyObject *context = (PyObject *)v8_compat::external_value(current_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
     Py_INCREF(context);
     return context;
 }
@@ -194,7 +194,7 @@ context_get_incumbent(PyObject* self, PyObject* args)
     {
         Py_RETURN_NONE;
     }
-    PyObject* context = (PyObject*)current_context->GetEmbedderData(CONTEXT_OBJECT_SLOT).As<External>()->Value();
+    PyObject* context = (PyObject*)v8_compat::external_value(current_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
     Py_INCREF(context);
     return context;
 }
