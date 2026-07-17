@@ -4,6 +4,8 @@
 #include "context.h"
 #include "debugger.h"
 
+using namespace v8;
+
 
 PyMethodDef debugger_methods[] = {
     {"send", (PyCFunction)debugger_send, METH_O, NULL},

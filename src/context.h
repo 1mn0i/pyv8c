@@ -5,8 +5,6 @@
 #include <Python.h>
 #include <v8.h>
 
-using namespace v8;
-
 class IsolateState;
 
 typedef struct
@@ -15,7 +13,7 @@ typedef struct
 
     IsolateState* isolate_state;
     PyObject* py_isolate;
-    Persistent<Context> js_context;
+    v8::Persistent<v8::Context> js_context;
     PyObject* js_object_cache;
     PyObject* class_template_cache;
     PyObject* py_global;
@@ -43,8 +41,8 @@ PyObject* context_gc(context_c* self);
 #define ERROR_PROTOTYPE_SLOT 3
 #define CTX_TYPE 4
 
-Local<Object> context_get_cached_jsobject(Local<Context> context, PyObject* py_object);
-void context_set_cached_jsobject(Local<Context> context, PyObject* py_object, Local<Object> object);
+v8::Local<v8::Object> context_get_cached_jsobject(v8::Local<v8::Context> context, PyObject* py_object);
+void context_set_cached_jsobject(v8::Local<v8::Context> context, PyObject* py_object, v8::Local<v8::Object> object);
 
 PyObject* context_get_global(context_c* self, void* shit);
 

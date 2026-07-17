@@ -83,7 +83,7 @@ namespace faker {
             result = exception;                                       \
         }                                                             \
         else if (result.IsEmpty()) {                                  \
-            result = Undefined(info.GetIsolate()).As<v8::Value>();    \
+            result = v8::Undefined(info.GetIsolate()).As<v8::Value>(); \
         }                                                             \
         return result;                                                \
     }
@@ -143,8 +143,8 @@ class FakerHookGetter {
         void EndCall() {
             v8::Isolate* isolate = info.GetIsolate();
             v8::Local<v8::Value> property_value;
-            v8::Local<v8::String> ctx_type = ctx->GetEmbedderData(CTX_TYPE).As<String>();
-            String::Utf8Value ctx_type_char(isolate, ctx_type);
+            v8::Local<v8::String> ctx_type = ctx->GetEmbedderData(CTX_TYPE).As<v8::String>();
+            v8::String::Utf8Value ctx_type_char(isolate, ctx_type);
 
             if(PyObject_HasAttrString(self, "__v8_get_hook__")) {
                 property_value = info.Holder()->Get(ctx, v8_property_name).FromMaybe(v8::Undefined(isolate).As<v8::Value>());
@@ -247,8 +247,8 @@ class FakerHookSetter {
 
         void EndCall() {
             v8::Isolate* isolate = info.GetIsolate();
-            v8::Local<v8::String> ctx_type = ctx->GetEmbedderData(CTX_TYPE).As<String>();
-            String::Utf8Value ctx_type_char(isolate, ctx_type);
+            v8::Local<v8::String> ctx_type = ctx->GetEmbedderData(CTX_TYPE).As<v8::String>();
+            v8::String::Utf8Value ctx_type_char(isolate, ctx_type);
 
             if (PyObject_HasAttrString(self, "__v8_set_hook__")) {
                 PyObject* key = py_from_js(v8_property_name, ctx);
@@ -336,8 +336,8 @@ class FakerHookOperation {
                 v8::Isolate* isolate = info.GetIsolate();
                 v8::Local<v8::Array> args;
                 v8::Local<v8::Value> ret;
-                v8::Local<v8::String> ctx_type = ctx->GetEmbedderData(CTX_TYPE).As<String>();
-                String::Utf8Value ctx_type_char(isolate, ctx_type);
+                v8::Local<v8::String> ctx_type = ctx->GetEmbedderData(CTX_TYPE).As<v8::String>();
+                v8::String::Utf8Value ctx_type_char(isolate, ctx_type);
                 if (PyObject_HasAttrString(self, "__v8_method_hook__")) {
                     args = GetArgsArray();
                     ret = GetResultValue();
@@ -451,8 +451,8 @@ public:
         if (ghook) {
             v8::Isolate* isolate = info.GetIsolate();
 
-            v8::Local<v8::String> ctx_type = ctx->GetEmbedderData(CTX_TYPE).As<String>();
-            String::Utf8Value ctx_type_char(isolate, ctx_type);
+            v8::Local<v8::String> ctx_type = ctx->GetEmbedderData(CTX_TYPE).As<v8::String>();
+            v8::String::Utf8Value ctx_type_char(isolate, ctx_type);
 
             v8::Local<v8::Array> args;
             v8::Local<v8::Value> ret;

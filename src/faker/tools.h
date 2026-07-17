@@ -4,16 +4,14 @@
 #include <v8.h>
 
 
-using namespace v8;
-
 namespace faker {
 
 #define HOME_NAME "faker"
 
-#define V8String(isolate, str) String::NewFromUtf8(isolate, str).ToLocalChecked()
+#define V8String(isolate, str) v8::String::NewFromUtf8(isolate, str).ToLocalChecked()
 
 template <typename T>
-static T RsMaybe(Maybe<T> maybe) {
+static T RsMaybe(v8::Maybe<T> maybe) {
     T value;
     if (maybe.To(&value)) {
         return value;
@@ -24,8 +22,8 @@ static T RsMaybe(Maybe<T> maybe) {
 }
 
 template <typename T>
-static Local<T> RsMaybe(MaybeLocal<T> maybe) {
-    Local<T> value;
+static v8::Local<T> RsMaybe(v8::MaybeLocal<T> maybe) {
+    v8::Local<T> value;
     if (maybe.ToLocal(&value)) {
         return value;
     }
@@ -37,10 +35,10 @@ static Local<T> RsMaybe(MaybeLocal<T> maybe) {
 struct OperationItem {
     const char* name = "";
     int length = 0;
-    FunctionCallback callback = nullptr;
-    PropertyAttribute propertyAttribute;
+    v8::FunctionCallback callback = nullptr;
+    v8::PropertyAttribute propertyAttribute;
     //Local<Value> data;
-    SideEffectType sideEffectType = SideEffectType::kHasSideEffect;
+    v8::SideEffectType sideEffectType = v8::SideEffectType::kHasSideEffect;
 };
 
 template<typename T>
@@ -61,28 +59,28 @@ private:
 #define MAXARGSLENGTH   10
 
 
-void IllegalConstructorCallback(const FunctionCallbackInfo<Value>& info);
-void JsFunctionCallback(const FunctionCallbackInfo<Value>& info);
+void IllegalConstructorCallback(const v8::FunctionCallbackInfo<v8::Value>& info);
+void JsFunctionCallback(const v8::FunctionCallbackInfo<v8::Value>& info);
 
-void InstallOperations(Isolate* isolate, Local<ObjectTemplate> target, Configs<OperationItem> configs, Local<Signature> signature);
+void InstallOperations(v8::Isolate* isolate, v8::Local<v8::ObjectTemplate> target, Configs<OperationItem> configs, v8::Local<v8::Signature> signature);
 
 struct ConstantItem {
     const char* name = "";
     int value = 0;
-    PropertyAttribute propertyAttribute;
+    v8::PropertyAttribute propertyAttribute;
 };
 
-void InstallConstants(Isolate* isolate, Local<ObjectTemplate> target, Configs<ConstantItem> configs);
+void InstallConstants(v8::Isolate* isolate, v8::Local<v8::ObjectTemplate> target, Configs<ConstantItem> configs);
 
 struct AttributeItem {
     const char* name = "";
-    FunctionCallback get_callback = nullptr;
-    FunctionCallback set_callback = nullptr;
-    PropertyAttribute propertyAttribute;
-    SideEffectType sideEffectType = SideEffectType::kHasSideEffect;
+    v8::FunctionCallback get_callback = nullptr;
+    v8::FunctionCallback set_callback = nullptr;
+    v8::PropertyAttribute propertyAttribute;
+    v8::SideEffectType sideEffectType = v8::SideEffectType::kHasSideEffect;
 };
 
-void InstallAttributes(Isolate* isolate, Local<ObjectTemplate> target, Configs<AttributeItem> configs, Local<Signature> signature);
+void InstallAttributes(v8::Isolate* isolate, v8::Local<v8::ObjectTemplate> target, Configs<AttributeItem> configs, v8::Local<v8::Signature> signature);
 
 } //namespace faker 
 

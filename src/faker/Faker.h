@@ -11,10 +11,6 @@
 #include "tools.h"
 
 
-using namespace v8;
-
-
-
 class Faker
 {
 private:
@@ -22,22 +18,22 @@ private:
 	Faker(const Faker&) = delete;
 	~Faker();
 private:
-	static void Print(const FunctionCallbackInfo<Value>& info);
-	static void Read(const FunctionCallbackInfo<Value>& info);
-	static void V8Version(const FunctionCallbackInfo<Value>& info);
-	static void RunJS(const FunctionCallbackInfo<Value>& info);
-	static void RunJSFile(const FunctionCallbackInfo<Value>& info);
-	static void DocumentAll(const FunctionCallbackInfo<Value>& info);
-	static void NativeWrapper(const FunctionCallbackInfo<Value>& info);
-	static void GetArg(const FunctionCallbackInfo<Value>& info);
-	static void SetArg(const FunctionCallbackInfo<Value>& info);
-	static void CreateConstructor(const FunctionCallbackInfo<Value>& info);
-	static void GetHook(const FunctionCallbackInfo<Value>& info);
-	static void SetHook(const FunctionCallbackInfo<Value>& info);
-	static void StructuredClone(const FunctionCallbackInfo<Value>& info);
+	static void Print(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void Read(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void V8Version(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void RunJS(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void RunJSFile(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void DocumentAll(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void NativeWrapper(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void GetArg(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void SetArg(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void CreateConstructor(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void GetHook(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void SetHook(const v8::FunctionCallbackInfo<v8::Value>& info);
+	static void StructuredClone(const v8::FunctionCallbackInfo<v8::Value>& info);
 
 public:
-	static void Register(Isolate* isolate, Local<FunctionTemplate>& global_inteface_template);
+	static void Register(v8::Isolate* isolate, v8::Local<v8::FunctionTemplate>& global_inteface_template);
 };
 
 

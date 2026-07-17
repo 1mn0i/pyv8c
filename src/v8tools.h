@@ -7,8 +7,6 @@
 #include <v8.h>
 
 
-using namespace v8;
-
 #define Set_Config_Value(func, func_attr, config, config_attr)         \
     {                                                                  \
         PyObject* ret = PyObject_GetAttrString(func, func_attr);       \
@@ -24,9 +22,9 @@ using namespace v8;
 
 namespace bindings {
 
-    void FakerJsFunctionCallback(const FunctionCallbackInfo<Value>& info);
-    void FakerJsFunctionAccessorNameGetterCallback(Local<Name> property, const PropertyCallbackInfo<Value>& info);
-    void ConstructAccessorNameGetterCallback(Local<Name> property, const PropertyCallbackInfo<Value>& info);
+    void FakerJsFunctionCallback(const v8::FunctionCallbackInfo<v8::Value>& info);
+    void FakerJsFunctionAccessorNameGetterCallback(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
+    void ConstructAccessorNameGetterCallback(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
 
     enum class CallbackType {
         kPy = 0,
@@ -68,8 +66,8 @@ namespace bindings {
         const char* name;
         v8::FunctionCallback callback_for_get;
         v8::FunctionCallback callback_for_set;
-        Local<External> get_method;
-        Local<External> set_method;
+        v8::Local<v8::External> get_method;
+        v8::Local<v8::External> set_method;
         unsigned v8_property_attribute : 3;       // v8::PropertyAttribute
         unsigned location : 2;                    // FlagLocation
         unsigned receiver_check : 1;              // FlagReceiverCheck
@@ -83,7 +81,7 @@ namespace bindings {
         OperationConfig& operator=(const OperationConfig&) = delete;
 
         const char* name;
-        Local<Value> callback_data;
+        v8::Local<v8::Value> callback_data;
         v8::FunctionCallback callback;
         unsigned length : 8;
         unsigned v8_property_attribute : 3;  // v8::PropertyAttribute

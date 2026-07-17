@@ -2,6 +2,8 @@
 #include "../runtime.h"
 #include "../isolate_state.h"
 
+using namespace v8;
+
 
 // Extracts a C string from a V8 Utf8Value.
 const char* ToCString(const String::Utf8Value& value) {

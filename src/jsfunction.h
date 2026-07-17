@@ -5,11 +5,9 @@
 #include <v8.h>
 #include "jsobject.h"
 
-using namespace v8;
-
 typedef struct {
     js_object base;
-    Persistent<Value> js_this;
+    v8::Persistent<v8::Value> js_this;
 } js_function;
 
 extern PyTypeObject* js_function_type;

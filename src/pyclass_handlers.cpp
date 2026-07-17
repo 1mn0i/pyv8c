@@ -9,6 +9,8 @@
 #include "pyclass_handlers_internal.h"
 #include "faker/hook.h"
 
+using namespace v8;
+
 enum FlagConstructor {
     kDontAll = 0,
     kNew = 1 << 0,

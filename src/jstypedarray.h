@@ -5,8 +5,6 @@
 #include <v8.h>
 #include "jsobject.h"
 
-using namespace v8;
-
 typedef struct {
     js_object base;
 } js_typedarray;

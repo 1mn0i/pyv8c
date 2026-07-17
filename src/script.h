@@ -6,7 +6,7 @@
 typedef struct {
     PyObject_HEAD
     IsolateState* isolate_state;
-    Persistent<UnboundScript> script;
+    v8::Persistent<v8::UnboundScript> script;
     PyObject* py_isolate;
     PyObject *source;
     PyObject *script_name;
@@ -18,4 +18,4 @@ int script_type_init();
 PyObject *script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs);
 void script_dealloc(script_c *self);
 
-MaybeLocal<UnboundScript> script_compile(Local<Context> context, PyObject *source, PyObject *filename);
+v8::MaybeLocal<v8::UnboundScript> script_compile(v8::Local<v8::Context> context, PyObject *source, PyObject *filename);

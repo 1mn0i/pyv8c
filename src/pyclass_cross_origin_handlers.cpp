@@ -6,6 +6,8 @@
 #include "pyclass_cross_origin_handlers.h"
 #include "pyclass_handlers_internal.h"
 
+using namespace v8;
+
 #define SETUP                                                         \
     Isolate* isolate = info.GetIsolate();                             \
     HandleScope hs(isolate);                                          \

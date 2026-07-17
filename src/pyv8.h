@@ -21,8 +21,6 @@
 #include "isolate_scope.h"
 #include "isolate_state.h"
 
-using namespace v8;
-
 #define HOOKHANDLE "faker"
 
 #define STRING_BUFFER_SIZE 512
@@ -30,37 +28,37 @@ static uint16_t string_buffer[STRING_BUFFER_SIZE] = {};
 
 #define NORETURN __attribute__ ((noreturn))
 
-#define JSTR(str) String::NewFromUtf8(isolate, str).ToLocalChecked()
+#define JSTR(str) v8::String::NewFromUtf8(isolate, str).ToLocalChecked()
 
-#define V8String(isolate, str) String::NewFromUtf8(isolate, str).ToLocalChecked()
+#define V8String(isolate, str) v8::String::NewFromUtf8(isolate, str).ToLocalChecked()
 
 #define PYDUMP(obj) printf("%s\n", PyUnicode_AsUTF8_abi3(obj));
 
 
-#define JSDUMP(obj)                   \
-    {                                 \
-        String::Utf8Value value(obj); \
-        printf("%s\n", *value);       \
+#define JSDUMP(obj)                           \
+    {                                         \
+        v8::String::Utf8Value value(obj);     \
+        printf("%s\n", *value);               \
     }
 
-#define IN_ISOLATE(state)                    \
-    IsolateLockScope isolate_lock_scope(state); \
-    Isolate* isolate = isolate_lock_scope.isolate(); \
+#define IN_ISOLATE(state)                            \
+    IsolateLockScope isolate_lock_scope(state);       \
+    v8::Isolate* isolate = isolate_lock_scope.isolate(); \
     USING_V8
 
-#define ESCAPING_IN_ISOLATE(state)           \
-    IsolateLockScope isolate_lock_scope(state); \
-    Isolate* isolate = isolate_lock_scope.isolate(); \
+#define ESCAPING_IN_ISOLATE(state)                   \
+    IsolateLockScope isolate_lock_scope(state);       \
+    v8::Isolate* isolate = isolate_lock_scope.isolate(); \
     ESCAPING_V8
 
 #define USING_V8 \
-    HandleScope hs(isolate)
+    v8::HandleScope hs(isolate)
 
 #define ESCAPING_V8 \
-    EscapableHandleScope hs(isolate)
+    v8::EscapableHandleScope hs(isolate)
 
-#define IN_CONTEXT(ctx)           \
-    Local<Context> context = ctx; \
-    Context::Scope cs(context);
+#define IN_CONTEXT(ctx)               \
+    v8::Local<v8::Context> context = ctx; \
+    v8::Context::Scope cs(context);
 
 #endif

@@ -4,8 +4,6 @@
 #include <Python.h>
 #include <v8.h>
 
-using namespace v8;
-
 extern PyTypeObject* js_null_type;
 extern PyObject* js_null_object;
 

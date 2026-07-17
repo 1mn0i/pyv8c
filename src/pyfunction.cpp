@@ -7,6 +7,8 @@
 #include "convert.h"
 #include "pyfunction.h"
 
+using namespace v8;
+
 
 PyTypeObject* py_function_type = NULL;
 

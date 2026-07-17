@@ -3,43 +3,41 @@
 
 #include <v8.h>
 
-using namespace v8;
-
 bool cross_origin_access_check(
-    Local<Context> accessing_context,
-    Local<Object> accessed_object,
-    Local<Value> unused_data);
+    v8::Local<v8::Context> accessing_context,
+    v8::Local<v8::Object> accessed_object,
+    v8::Local<v8::Value> unused_data);
 
-Intercepted cross_origin_named_getter(
-    Local<Name> name,
-    const PropertyCallbackInfo<Value>& info);
-Intercepted cross_origin_named_setter(
-    Local<Name> name,
-    Local<Value> value,
-    const PropertyCallbackInfo<void>& info);
-Intercepted cross_origin_named_query(
-    Local<Name> name,
-    const PropertyCallbackInfo<Integer>& info);
-Intercepted cross_origin_named_deleter(
-    Local<Name> name,
-    const PropertyCallbackInfo<Boolean>& info);
+v8::Intercepted cross_origin_named_getter(
+    v8::Local<v8::Name> name,
+    const v8::PropertyCallbackInfo<v8::Value>& info);
+v8::Intercepted cross_origin_named_setter(
+    v8::Local<v8::Name> name,
+    v8::Local<v8::Value> value,
+    const v8::PropertyCallbackInfo<void>& info);
+v8::Intercepted cross_origin_named_query(
+    v8::Local<v8::Name> name,
+    const v8::PropertyCallbackInfo<v8::Integer>& info);
+v8::Intercepted cross_origin_named_deleter(
+    v8::Local<v8::Name> name,
+    const v8::PropertyCallbackInfo<v8::Boolean>& info);
 void cross_origin_named_enumerator(
-    const PropertyCallbackInfo<Array>& info);
+    const v8::PropertyCallbackInfo<v8::Array>& info);
 
-Intercepted cross_origin_indexed_getter(
+v8::Intercepted cross_origin_indexed_getter(
     uint32_t index,
-    const PropertyCallbackInfo<Value>& info);
-Intercepted cross_origin_indexed_setter(
+    const v8::PropertyCallbackInfo<v8::Value>& info);
+v8::Intercepted cross_origin_indexed_setter(
     uint32_t index,
-    Local<Value> value,
-    const PropertyCallbackInfo<void>& info);
-Intercepted cross_origin_indexed_query(
+    v8::Local<v8::Value> value,
+    const v8::PropertyCallbackInfo<void>& info);
+v8::Intercepted cross_origin_indexed_query(
     uint32_t index,
-    const PropertyCallbackInfo<Integer>& info);
-Intercepted cross_origin_indexed_deleter(
+    const v8::PropertyCallbackInfo<v8::Integer>& info);
+v8::Intercepted cross_origin_indexed_deleter(
     uint32_t index,
-    const PropertyCallbackInfo<Boolean>& info);
+    const v8::PropertyCallbackInfo<v8::Boolean>& info);
 void cross_origin_indexed_enumerator(
-    const PropertyCallbackInfo<Array>& info);
+    const v8::PropertyCallbackInfo<v8::Array>& info);
 
 #endif

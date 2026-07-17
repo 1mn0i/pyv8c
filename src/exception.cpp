@@ -7,6 +7,8 @@
 #include "pyclass.h"
 #include "convert.h"
 
+using namespace v8;
+
 PyGetSetDef js_exception_getsets[] = {
     {"value", (getter)js_exception_get_value, NULL, NULL},
     {NULL},

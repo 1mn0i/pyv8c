@@ -5,22 +5,19 @@
 #include <v8.h>
 #include "context.h"
 
-using namespace v8;
-
 typedef struct
 {
-    //PyBaseExceptionObject base;
-    PyObject_HEAD 
-    PyObject* dict; 
-    PyObject* args; 
-    PyObject* notes; 
-    PyObject* traceback; 
-    PyObject* context; 
-    PyObject* cause; 
+    PyObject_HEAD
+    PyObject* dict;
+    PyObject* args;
+    PyObject* notes;
+    PyObject* traceback;
+    PyObject* context;
+    PyObject* cause;
     char suppress_context;
     IsolateState* isolate_state;
-    Persistent<Value> exception;
-    Persistent<Message> message;
+    v8::Persistent<v8::Value> exception;
+    v8::Persistent<v8::Message> message;
     PyObject* py_context;
     PyObject* py_isolate;
 } js_exception;
@@ -29,14 +26,14 @@ extern PyTypeObject* js_terminated_type;
 int js_exception_type_init();
 int js_terminated_type_init();
 
-PyObject* js_exception_new(Local<Value> exception, Local<Message> message);
+PyObject* js_exception_new(v8::Local<v8::Value> exception, v8::Local<v8::Message> message);
 int js_exception_init(js_exception* self, PyObject* args, PyObject* kwargs);
 void js_exception_dealloc(js_exception* self);
 PyObject* js_exception_str(js_exception* self);
 PyObject* js_exception_get_value(js_exception* self, void* args);
 
-void py_throw_js(Local<Value> js_exc, Local<Message> js_message);
-#define JS_TRY TryCatch tc(isolate);
+void py_throw_js(v8::Local<v8::Value> js_exc, v8::Local<v8::Message> js_message);
+#define JS_TRY v8::TryCatch tc(isolate);
 #define PY_PROPAGATE_JS_RET(retval)                    \
     if (tc.HasCaught())                                \
     {                                                  \

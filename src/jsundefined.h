@@ -4,8 +4,6 @@
 #include <Python.h>
 #include <v8.h>
 
-using namespace v8;
-
 extern PyTypeObject* js_undefined_type;
 extern PyObject* js_undefined_object;
 

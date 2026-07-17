@@ -10,6 +10,8 @@
 #include "v8tools.h"
 #include "faker/Faker.h"
 
+using namespace v8;
+
 
 enum FlagIterator {
     iterator = 1 << 0,

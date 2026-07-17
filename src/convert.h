@@ -16,7 +16,7 @@ public:
     {
         if (length > kInlineCapacity)
         {
-            heap_values_.reset(new (std::nothrow) Local<Value>[length]);
+            heap_values_.reset(new (std::nothrow) v8::Local<v8::Value>[length]);
             values_ = heap_values_.get();
         }
     }
@@ -25,20 +25,20 @@ public:
     V8ValueArguments& operator=(const V8ValueArguments&) = delete;
 
     bool valid() const { return values_ != nullptr; }
-    Local<Value>* data() { return values_; }
+    v8::Local<v8::Value>* data() { return values_; }
 
 private:
-    Local<Value> inline_values_[kInlineCapacity];
-    std::unique_ptr<Local<Value>[]> heap_values_;
-    Local<Value>* values_;
+    v8::Local<v8::Value> inline_values_[kInlineCapacity];
+    std::unique_ptr<v8::Local<v8::Value>[]> heap_values_;
+    v8::Local<v8::Value>* values_;
 };
 
-PyObject *py_from_js(Local<Value> js_value, Local<Context> context);
-Local<Value> js_from_py(PyObject *py_value, Local<Context> context);
-Local<Value> js_from_py(PyObject *py_value, Local<Context> context, Isolate* isolate);
+PyObject *py_from_js(v8::Local<v8::Value> js_value, v8::Local<v8::Context> context);
+v8::Local<v8::Value> js_from_py(PyObject *py_value, v8::Local<v8::Context> context);
+v8::Local<v8::Value> js_from_py(PyObject *py_value, v8::Local<v8::Context> context, v8::Isolate* isolate);
 
-PyObject *pys_from_jss(const FunctionCallbackInfo<Value> &js_args, Local<Context> context);
-void jss_from_pys(PyObject *py_args, Local<Value> *js_args, Local<Context> context);
+PyObject *pys_from_jss(const v8::FunctionCallbackInfo<v8::Value> &js_args, v8::Local<v8::Context> context);
+void jss_from_pys(PyObject *py_args, v8::Local<v8::Value> *js_args, v8::Local<v8::Context> context);
 
-Local<Object> pyexception_to_jsexception(PyObject* value, Local<Context> context);
+v8::Local<v8::Object> pyexception_to_jsexception(PyObject* value, v8::Local<v8::Context> context);
 #endif

@@ -4,14 +4,12 @@
 #include <Python.h>
 #include <v8.h>
 
-using namespace v8;
-
 class IsolateState;
 
 typedef struct {
     PyObject_HEAD
     IsolateState* isolate_state;
-    Persistent<Object> object;
+    v8::Persistent<v8::Object> object;
     PyObject* py_context;
     PyObject* py_isolate;
 } js_object;
@@ -19,10 +17,10 @@ typedef struct {
 extern PyTypeObject* js_object_type;
 int js_object_type_init();
 
-js_object *js_object_new(Local<Object> object, Local<Context> context);
-js_object *js_object_weak_new(Local<Object> object, Local<Context> context);
-void js_object_set_persistent(js_object* self, Local<Object> object,
-                              Local<Context> context, bool retain_context);
+js_object *js_object_new(v8::Local<v8::Object> object, v8::Local<v8::Context> context);
+js_object *js_object_weak_new(v8::Local<v8::Object> object, v8::Local<v8::Context> context);
+void js_object_set_persistent(js_object* self, v8::Local<v8::Object> object,
+                              v8::Local<v8::Context> context, bool retain_context);
 PyObject *js_object_fake_new(PyTypeObject *type, PyObject *args, PyObject *kwargs);
 void js_object_dealloc(js_object *self);
 

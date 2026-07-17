@@ -8,7 +8,6 @@
 
 #include "pyv8.h"
 
-using namespace v8;
 using namespace v8_inspector;
 
 class V8PyInspectorClient;
@@ -39,9 +38,9 @@ class V8PyInspectorClient : public V8InspectorClient
 {
 public:
     V8PyInspectorClient(debugger_c* debugger) : debugger_(debugger) {}
-    Local<Context> ensureDefaultContextInGroup(int context_group_id) override
+    v8::Local<v8::Context> ensureDefaultContextInGroup(int context_group_id) override
     {
-        Isolate* isolate = debugger_->context->isolate_state->isolate();
+        v8::Isolate* isolate = debugger_->context->isolate_state->isolate();
         return debugger_->context->js_context.Get(isolate);
     }
 
