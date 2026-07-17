@@ -343,7 +343,12 @@ py_class_new(PyObject *cls, context_c * py_ctx)
 
     if (config.attributes != NULL)
     {
-        bindings::InstallAttributes(isolate, world, templ, sig, cls, config.attributes);
+        if (!bindings::InstallAttributes(
+                isolate, world, templ, sig, cls, config.attributes,
+                self->operation_callback_data)) {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
     }
         
     if (config.methods != NULL)
@@ -711,6 +716,8 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
     if (!object.IsEmpty()) {
         return hs.Escape(object);
     }
+    if (PyErr_Occurred())
+        return Local<Object>();
     if (!self->templ.Get(isolate)->InstanceTemplate()->NewInstance(context).ToLocal(&object)) {
         PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript object template");
         return Local<Object>();

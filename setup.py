@@ -10,6 +10,7 @@ import os
 import json
 import shutil
 import sys
+import sysconfig
 from pathlib import Path
 
 from setuptools import Command, Extension, setup
@@ -21,6 +22,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from v8_build import (  # noqa: E402
     V8BuildConfig,
     V8BuildError,
+    file_sha256,
     fetch_v8_versions,
     print_v8_version_choices,
     read_default_v8_version,
@@ -94,6 +96,12 @@ class PyV8BuildExt(build_ext):
         )
 
     def _configure_extensions(self, config):
+        icu_data = config.icu_data_file()
+        if icu_data is None:
+            raise V8BuildError(
+                'icudtl.dat was not found; set PYV8_ICU_DATA to the matching V8 ICU data file'
+            )
+        icu_sha256 = file_sha256(icu_data)
         for extension in self.extensions:
             if extension.name != 'pyv8._pyv8':
                 continue
@@ -103,6 +111,11 @@ class PyV8BuildExt(build_ext):
             extension.library_dirs = list(extension.library_dirs or []) + [
                 str(config.library_dir)
             ]
+            extension.define_macros = [
+                macro
+                for macro in (extension.define_macros or [])
+                if macro[0] != 'PYV8_ICU_DATA_SHA256'
+            ] + [('PYV8_ICU_DATA_SHA256', f'"{icu_sha256}"')]
 
     def _copy_icu_data(self, config):
         source = config.icu_data_file()
@@ -121,6 +134,11 @@ class PyV8BuildExt(build_ext):
     @staticmethod
     def _build_fingerprint(config):
         library_stat = config.library_file.stat()
+        icu_data = config.icu_data_file()
+        if icu_data is None:
+            raise V8BuildError(
+                'icudtl.dat was not found; set PYV8_ICU_DATA to the matching V8 ICU data file'
+            )
         return {
             'version': config.version,
             'v8_home': str(config.v8_home),
@@ -128,6 +146,7 @@ class PyV8BuildExt(build_ext):
             'gn_args': config.gn_args,
             'library_size': library_stat.st_size,
             'library_mtime_ns': library_stat.st_mtime_ns,
+            'icu_sha256': file_sha256(icu_data),
         }
 
     def _require_rebuild_for_changed_v8(self, config):
@@ -144,6 +163,11 @@ class PyV8BuildExt(build_ext):
         return fingerprint_file, fingerprint
 
     def run(self):
+        if sysconfig.get_config_var('Py_GIL_DISABLED'):
+            raise RuntimeError(
+                'pyv8 does not support free-threaded CPython builds; '
+                'use a GIL-enabled CPython interpreter'
+            )
         try:
             config = self._configuration()
             config.prepare()

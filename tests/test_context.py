@@ -103,6 +103,14 @@ class TestContext(unittest.TestCase):
         # 尝试执行一个无限循环
         with self.assertRaises(pyv8.JavaScriptTerminated):
             self.context.exec_js("while(true) {}")
+
+    def test_invalid_timeout_preserves_previous_value(self):
+        """timeout setter 转换失败时应返回 -1，并保留原来的超时值。"""
+
+        self.context.timeout = 1.5
+        with self.assertRaises(TypeError):
+            self.context.timeout = object()
+        self.assertEqual(self.context.timeout, 1.5)
     
     def test_new(self):
         """测试js的new关键字"""

@@ -63,33 +63,33 @@ namespace bindings {
     struct AttributeConfig {
         AttributeConfig& operator=(const AttributeConfig&) = delete;
 
-        const char* name;
-        v8::FunctionCallback callback_for_get;
-        v8::FunctionCallback callback_for_set;
+        const char* name = nullptr;
+        v8::FunctionCallback callback_for_get = nullptr;
+        v8::FunctionCallback callback_for_set = nullptr;
         v8::Local<v8::External> get_method;
         v8::Local<v8::External> set_method;
-        unsigned v8_property_attribute : 3;       // v8::PropertyAttribute
-        unsigned location : 2;                    // FlagLocation
-        unsigned receiver_check : 1;              // FlagReceiverCheck
-        unsigned cross_origin_check_for_get : 1;  // FlagCrossOriginCheck
-        unsigned cross_origin_check_for_set : 1;  // FlagCrossOriginCheck
-        unsigned v8_side_effect : 2;              // v8::SideEffectType
+        unsigned v8_property_attribute : 3 = 0;       // v8::PropertyAttribute
+        unsigned location : 2 = 0;                    // FlagLocation
+        unsigned receiver_check : 1 = 0;              // FlagReceiverCheck
+        unsigned cross_origin_check_for_get : 1 = 0;  // FlagCrossOriginCheck
+        unsigned cross_origin_check_for_set : 1 = 0;  // FlagCrossOriginCheck
+        unsigned v8_side_effect : 2 = 0;              // v8::SideEffectType
     };
 
     // Web IDL operation
     struct OperationConfig {
         OperationConfig& operator=(const OperationConfig&) = delete;
 
-        const char* name;
+        const char* name = nullptr;
         v8::Local<v8::Value> callback_data;
-        v8::FunctionCallback callback;
-        unsigned length : 8;
-        unsigned v8_property_attribute : 3;  // v8::PropertyAttribute
-        unsigned location : 2;               // FlagLocation
-        unsigned world : 2;                  // FlagWorld
-        unsigned receiver_check : 1;         // FlagReceiverCheck
-        unsigned cross_origin_check : 1;     // FlagCrossOriginCheck
-        unsigned v8_side_effect : 2;         // v8::SideEffectType
+        v8::FunctionCallback callback = nullptr;
+        unsigned length : 8 = 0;
+        unsigned v8_property_attribute : 3 = 0;  // v8::PropertyAttribute
+        unsigned location : 2 = 0;               // FlagLocation
+        unsigned world : 2 = 0;                  // FlagWorld
+        unsigned receiver_check : 1 = 0;         // FlagReceiverCheck
+        unsigned cross_origin_check : 1 = 0;     // FlagCrossOriginCheck
+        unsigned v8_side_effect : 2 = 0;         // v8::SideEffectType
     };
 
     struct ConstantValueConfig {
@@ -120,12 +120,13 @@ namespace bindings {
         v8::Local<v8::Signature> signature,
         AttributeConfig& config);
 
-    void InstallAttributes(v8::Isolate* isolate,
+    bool InstallAttributes(v8::Isolate* isolate,
         const char* world,
         v8::Local<v8::FunctionTemplate> interface_template,
         v8::Local<v8::Signature> signature,
         PyObject* cls,
-        PyObject* configs);
+        PyObject* configs,
+        PyObject* callback_data_owner);
 
     void InstallOperation(v8::Isolate* isolate,
         const char* world,

@@ -1,4 +1,5 @@
 import gc
+import sys
 import unittest
 import weakref
 
@@ -32,6 +33,41 @@ class TestLifecycleContracts(unittest.TestCase):
         self.assertTrue(self.context.exec_js("first === second"))
         self.assertTrue(self.context.exec_js("first === get_payload()"))
         self.assertTrue(self.context.exec_js("get_payload() === get_payload()"))
+
+    def test_global_wrapper_cache_does_not_leak_references(self):
+        """重复读取 Context.glob 不应持续增加缓存 wrapper 的引用计数。"""
+
+        global_object = self.context.glob
+        baseline = sys.getrefcount(global_object)
+
+        for _ in range(1000):
+            current = self.context.glob
+            self.assertIs(current, global_object)
+
+        del current
+        gc.collect()
+        self.assertEqual(sys.getrefcount(global_object), baseline)
+
+    def test_python_to_javascript_cache_lookup_releases_temporary_reference(self):
+        """命中 Python-to-JS wrapper 缓存后必须释放 GetItem 返回的新引用。"""
+
+        class Payload:
+            pass
+
+        payload = Payload()
+
+        def get_payload():
+            return payload
+
+        self.context.expose(payload=payload, get_payload=get_payload)
+        wrapper = self.context.js_obj(payload)
+        baseline = sys.getrefcount(wrapper)
+
+        self.context.exec_js(
+            "for (let index = 0; index < 1000; index++) get_payload();"
+        )
+        gc.collect()
+        self.assertEqual(sys.getrefcount(wrapper), baseline)
 
     def test_current_and_incumbent_context_inside_callback(self):
         """Python callback 中应能取得当前和 incumbent Context。"""

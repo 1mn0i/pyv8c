@@ -31,6 +31,17 @@ class TestV8BuildConfiguration(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    def test_file_sha256_reads_build_artifacts_in_chunks(self):
+        """构建产物指纹应稳定，并支持较大的 ICU 数据文件。"""
+
+        artifact = self.root / "artifact.bin"
+        artifact.write_bytes(b"pyv8" * 1024)
+
+        self.assertEqual(
+            v8_build.file_sha256(artifact),
+            "08e1ed84046e5749ce4d469e86d2da84056dc7f92532087f5febe1c536c3440f",
+        )
+
     @staticmethod
     def _write_headers(v8_home, version):
         parts = [int(part) for part in version.split(".")]

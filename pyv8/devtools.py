@@ -6,7 +6,7 @@ import threading
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
-from . import _pyv8
+from pyv8 import _pyv8
 
 
 class DevtoolsDebugger(_pyv8.Debugger):

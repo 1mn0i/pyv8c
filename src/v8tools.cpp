@@ -6,6 +6,69 @@ using namespace v8;
 
 namespace bindings {
 
+    static bool RequireConfigTuple(PyObject* config, Py_ssize_t expected_size,
+                                   const char* config_name) {
+        if (!PyTuple_Check(config) || PyTuple_Size(config) < expected_size) {
+            PyErr_Format(PyExc_TypeError,
+                         "%s must be at least a %zd-item tuple",
+                         config_name, expected_size);
+            return false;
+        }
+        return true;
+    }
+
+    static bool GetConfigString(PyObject* config, Py_ssize_t index,
+                                const char* field_name, bool allow_none,
+                                PyObject** value, const char** text) {
+        PyObject* item = PyTuple_GetItem(config, index);
+        if (allow_none && item == Py_None) {
+            *value = item;
+            *text = nullptr;
+            return true;
+        }
+        if (!PyUnicode_Check(item)) {
+            PyErr_Format(PyExc_TypeError, "%s must be a string%s",
+                         field_name, allow_none ? " or None" : "");
+            return false;
+        }
+        const char* utf8 = PyUnicode_AsUTF8_abi3(item);
+        if (utf8 == nullptr)
+            return false;
+        *value = item;
+        *text = utf8;
+        return true;
+    }
+
+    static bool GetConfigLong(PyObject* config, Py_ssize_t index,
+                              const char* field_name, long minimum,
+                              long maximum, long* value) {
+        PyObject* item = PyTuple_GetItem(config, index);
+        if (!PyLong_Check(item)) {
+            PyErr_Format(PyExc_TypeError, "%s must be an integer", field_name);
+            return false;
+        }
+        long parsed = PyLong_AsLong(item);
+        if (PyErr_Occurred())
+            return false;
+        if (parsed < minimum || parsed > maximum) {
+            PyErr_Format(PyExc_ValueError,
+                         "%s must be between %ld and %ld",
+                         field_name, minimum, maximum);
+            return false;
+        }
+        *value = parsed;
+        return true;
+    }
+
+    static bool RetainCallbackData(PyObject* owner, PyObject* callback_data) {
+        if (!PyList_Check(owner)) {
+            PyErr_SetString(PyExc_RuntimeError,
+                            "callback data owner is unavailable");
+            return false;
+        }
+        return PyList_Append(owner, callback_data) == 0;
+    }
+
 
     void FakerJsFunctionCallback(const FunctionCallbackInfo<Value>& info) {
         v8::Isolate* isolate = info.GetIsolate();
@@ -264,101 +327,133 @@ namespace bindings {
     }
 
 
-    void InstallAttributes(v8::Isolate* isolate,
+    bool InstallAttributes(v8::Isolate* isolate,
         const char* world,
         v8::Local<v8::FunctionTemplate> interface_template,
         v8::Local<v8::Signature> signature,
         PyObject* cls,
-        PyObject* configs) {
+        PyObject* configs,
+        PyObject* callback_data_owner) {
 
-        if (configs == NULL || !PyTuple_Check(configs))
-            return;
+        if (configs == NULL)
+            return true;
+        if (!PyTuple_Check(configs)) {
+            PyErr_SetString(PyExc_TypeError,
+                            "__v8_attribute__ must be a tuple");
+            return false;
+        }
 
-        int length = PySequence_Length(configs);
-        for (int i = 0; i < length; i++) {
+        Py_ssize_t length = PyTuple_Size(configs);
+        for (Py_ssize_t i = 0; i < length; i++) {
             PyObject* config = PyTuple_GetItem(configs, i);
-
-            if (config == NULL || !PyTuple_Check(config))
-                continue;
+            if (config == NULL ||
+                !RequireConfigTuple(config, 10, "attribute config"))
+                return false;
             
             AttributeConfig v8_config;
+            PyObject* attr_name;
+            PyObject* cb_get_name;
+            PyObject* cb_set_name;
+            const char* get_name;
+            const char* set_name;
+            long cb_type;
+            long location;
+            long property_attribute;
+            long receiver_check;
+            long cross_origin_get_check;
+            long cross_origin_set_check;
+            long side_effect;
+            if (!GetConfigString(config, 0, "attribute name", false,
+                                 &attr_name, &v8_config.name) ||
+                !GetConfigString(config, 1, "attribute getter", false,
+                                 &cb_get_name, &get_name) ||
+                !GetConfigString(config, 2, "attribute setter", true,
+                                 &cb_set_name, &set_name) ||
+                !GetConfigLong(config, 3, "attribute callback type", 0, 1,
+                               &cb_type) ||
+                !GetConfigLong(config, 4, "attribute location", 0, 2,
+                               &location) ||
+                !GetConfigLong(config, 5, "attribute property flags", 0, 7,
+                               &property_attribute) ||
+                !GetConfigLong(config, 6, "attribute receiver check", 0, 1,
+                               &receiver_check) ||
+                !GetConfigLong(config, 7, "attribute getter cross-origin check",
+                               0, 1, &cross_origin_get_check) ||
+                !GetConfigLong(config, 8, "attribute setter cross-origin check",
+                               0, 1, &cross_origin_set_check) ||
+                !GetConfigLong(config, 9, "attribute side effect", 0, 2,
+                               &side_effect))
+                return false;
 
-            PyObject* attr_name = PyTuple_GetItem(config, 0);
-            v8_config.name = PyUnicode_AsUTF8_abi3(attr_name);
+            v8_config.location = static_cast<unsigned>(location);
+            v8_config.v8_property_attribute =
+                static_cast<unsigned>(property_attribute);
+            v8_config.receiver_check = static_cast<unsigned>(receiver_check);
+            v8_config.cross_origin_check_for_get =
+                static_cast<unsigned>(cross_origin_get_check);
+            v8_config.cross_origin_check_for_set =
+                static_cast<unsigned>(cross_origin_set_check);
+            v8_config.v8_side_effect = static_cast<unsigned>(side_effect);
 
-            PyObject* type = PyTuple_GetItem(config, 3);
-            int cb_type;
-            if (type != NULL && PyLong_Check(type)) {
-                cb_type = PyLong_AsLong(type);
+            if (cb_type == static_cast<long>(CallbackType::kPy)) {
+                PyObject* py_get_method = PyObject_GetAttr(cls, cb_get_name);
+                if (py_get_method == NULL)
+                    return false;
+                if (!RetainCallbackData(callback_data_owner, py_get_method)) {
+                    Py_DECREF(py_get_method);
+                    return false;
+                }
+                v8_config.get_method =
+                    v8_compat::external_new(isolate, py_get_method);
+                v8_config.callback_for_get = py_attribute_for_get;
+                Py_DECREF(py_get_method);
+            }
+            else {
+                v8_config.get_method =
+                    v8_compat::external_new(isolate, cb_get_name);
+                v8_config.callback_for_get = FakerJsFunctionCallback;
             }
 
-            PyObject* location = PyTuple_GetItem(config, 4);
-            if (location != NULL && PyLong_Check(location)) {
-                v8_config.location = PyLong_AsLong(location);
-            }
-
-            PyObject* cb_get_name = PyTuple_GetItem(config, 1);
-            if (cb_get_name != NULL && PyUnicode_Check(cb_get_name)) {
-                if (cb_type == unsigned(CallbackType::kPy)) {
-                    PyObject* py_get_method = PyObject_GetAttr(cls, cb_get_name);
-                    v8_config.get_method = v8_compat::external_new(isolate, py_get_method);
-                    v8_config.callback_for_get = py_attribute_for_get;
+            if (set_name != nullptr) {
+                if (cb_type == static_cast<long>(CallbackType::kPy)) {
+                    PyObject* py_set_method = PyObject_GetAttr(cls, cb_set_name);
+                    if (py_set_method == NULL)
+                        return false;
+                    if (location == static_cast<long>(FlagLocation::kInstance)) {
+                        PyObject* raw_name = PyUnicode_FromString(v8_config.name);
+                        if (raw_name == NULL ||
+                            PyObject_SetAttrString(
+                                py_set_method, "__v8_raw_name__", raw_name) < 0) {
+                            Py_XDECREF(raw_name);
+                            Py_DECREF(py_set_method);
+                            return false;
+                        }
+                        Py_DECREF(raw_name);
+                        v8_config.callback_for_set =
+                            py_attribute_for_instance_set;
+                    }
+                    else {
+                        v8_config.callback_for_set =
+                            py_attribute_for_property_set;
+                    }
+                    if (!RetainCallbackData(
+                            callback_data_owner, py_set_method)) {
+                        Py_DECREF(py_set_method);
+                        return false;
+                    }
+                    v8_config.set_method =
+                        v8_compat::external_new(isolate, py_set_method);
+                    Py_DECREF(py_set_method);
                 }
                 else {
-                    v8_config.get_method = v8_compat::external_new(isolate, cb_get_name);
-                    v8_config.callback_for_get = FakerJsFunctionCallback;
-                }
-            }
-
-            PyObject* cb_set_name = PyTuple_GetItem(config, 2);
-            if (cb_set_name != NULL && PyUnicode_Check(cb_set_name)) {
-                if (v8_config.location == unsigned(FlagLocation::kInstance) && cb_type == unsigned(CallbackType::kPy)) {
-                    PyObject* py_set_method = PyObject_GetAttr(cls, cb_set_name);
-                    PyObject_SetAttrString(py_set_method, "__v8_raw_name__", PyUnicode_FromString(v8_config.name));
-                    v8_config.set_method = v8_compat::external_new(isolate, py_set_method);
-                    v8_config.callback_for_set = py_attribute_for_instance_set;
-                }
-                else if (v8_config.location == unsigned(FlagLocation::kPrototype) && cb_type == unsigned(CallbackType::kPy)) {
-                    PyObject* py_set_method = PyObject_GetAttr(cls, cb_set_name);
-                    v8_config.set_method = v8_compat::external_new(isolate, py_set_method);
-                    v8_config.callback_for_set = py_attribute_for_property_set;
-                }
-                else {
-                    v8_config.set_method = v8_compat::external_new(isolate, cb_set_name);
+                    v8_config.set_method =
+                        v8_compat::external_new(isolate, cb_set_name);
                     v8_config.callback_for_set = FakerJsFunctionCallback;
                 }
             }
-            else {
-                v8_config.callback_for_set = nullptr;
-            }
-
-            PyObject* property_attribute = PyTuple_GetItem(config, 5);
-            if (property_attribute != NULL && PyLong_Check(property_attribute)) {
-                v8_config.v8_property_attribute = PyLong_AsLong(property_attribute);
-            }
-
-            PyObject* receiver_check = PyTuple_GetItem(config, 6);
-            if (receiver_check != NULL && PyLong_Check(receiver_check)) {
-                v8_config.receiver_check = PyLong_AsLong(receiver_check);
-            }
-
-            PyObject* cross_origin_get_check = PyTuple_GetItem(config, 7);
-            if (cross_origin_get_check != NULL && PyLong_Check(cross_origin_get_check)) {
-                v8_config.cross_origin_check_for_get = PyLong_AsLong(cross_origin_get_check);
-            }
-
-            PyObject* cross_origin_set_check = PyTuple_GetItem(config, 8);
-            if (cross_origin_set_check != NULL && PyLong_Check(cross_origin_set_check)) {
-                v8_config.cross_origin_check_for_set = PyLong_AsLong(cross_origin_set_check);
-            }
-
-            PyObject* side_effect = PyTuple_GetItem(config, 9);
-            if (side_effect != NULL && PyLong_Check(side_effect)) {
-                v8_config.v8_side_effect = PyLong_AsLong(side_effect);
-            }
             InstallAttribute(isolate, world, interface_template, signature, v8_config);
-
         }
+        return true;
     }
 
     void InstallOperation(v8::Isolate* isolate,
@@ -403,84 +498,85 @@ namespace bindings {
         PyObject* cls,
         PyObject* configs,
         PyObject* callback_data_owner) {
-        if (configs == NULL || !PyTuple_Check(configs))
+        if (configs == NULL)
             return true;
+        if (!PyTuple_Check(configs)) {
+            PyErr_SetString(PyExc_TypeError,
+                            "__v8_method__ must be a tuple");
+            return false;
+        }
 
-        int length = PySequence_Length(configs);
-        for (int i = 0; i < length; i++) {
+        Py_ssize_t length = PyTuple_Size(configs);
+        for (Py_ssize_t i = 0; i < length; i++) {
 
             PyObject* config = PyTuple_GetItem(configs, i);
-            if (config == NULL || !PyTuple_Check(config))
-                continue;
+            if (config == NULL ||
+                !RequireConfigTuple(config, 9, "operation config"))
+                return false;
 
             OperationConfig v8_config;
+            PyObject* method_name;
+            PyObject* cb_name;
+            const char* callback_name;
+            long function_length;
+            long cb_type;
+            long location;
+            long property_attribute;
+            long receiver_check;
+            long cross_origin_check;
+            long side_effect;
+            if (!GetConfigString(config, 0, "operation name", false,
+                                 &method_name, &v8_config.name) ||
+                !GetConfigString(config, 1, "operation callback", false,
+                                 &cb_name, &callback_name) ||
+                !GetConfigLong(config, 2, "operation length", 0, 255,
+                               &function_length) ||
+                !GetConfigLong(config, 3, "operation callback type", 0, 1,
+                               &cb_type) ||
+                !GetConfigLong(config, 4, "operation location", 0, 2,
+                               &location) ||
+                !GetConfigLong(config, 5, "operation property flags", 0, 7,
+                               &property_attribute) ||
+                !GetConfigLong(config, 6, "operation receiver check", 0, 1,
+                               &receiver_check) ||
+                !GetConfigLong(config, 7, "operation cross-origin check", 0, 1,
+                               &cross_origin_check) ||
+                !GetConfigLong(config, 8, "operation side effect", 0, 2,
+                               &side_effect))
+                return false;
 
-            PyObject* method_name = PyTuple_GetItem(config, 0);
-            v8_config.name = PyUnicode_AsUTF8_abi3(method_name);
+            v8_config.length = static_cast<unsigned>(function_length);
+            v8_config.location = static_cast<unsigned>(location);
+            v8_config.v8_property_attribute =
+                static_cast<unsigned>(property_attribute);
+            v8_config.receiver_check = static_cast<unsigned>(receiver_check);
+            v8_config.cross_origin_check =
+                static_cast<unsigned>(cross_origin_check);
+            v8_config.v8_side_effect = static_cast<unsigned>(side_effect);
 
-
-            PyObject* type = PyTuple_GetItem(config, 3);
-            int cb_type;
-            if (type != NULL && PyLong_Check(type)) {
-                cb_type = PyLong_AsLong(type);
-            }
-
-            PyObject* location = PyTuple_GetItem(config, 4);
-            if (location != NULL && PyLong_Check(location)) {
-                v8_config.location = PyLong_AsLong(location);
-            }
-
-            PyObject* cb_name = PyTuple_GetItem(config, 1);
-            if (cb_name != NULL && PyUnicode_Check(cb_name)) {
-                if (cb_type == unsigned(CallbackType::kPy)) {
-                    PyObject* py_method = PyObject_GetAttr(cls, cb_name);
-                    if (py_method == NULL)
-                        return false;
-                    PyObject* callback_data = PyTuple_Pack(2, py_method, method_name);
-                    Py_DECREF(py_method);
-                    if (callback_data == NULL)
-                        return false;
-                    if (PyList_Append(callback_data_owner, callback_data) < 0) {
-                        Py_DECREF(callback_data);
-                        return false;
-                    }
-                    v8_config.callback_data = v8_compat::external_new(isolate, callback_data);
+            if (cb_type == static_cast<long>(CallbackType::kPy)) {
+                PyObject* py_method = PyObject_GetAttr(cls, cb_name);
+                if (py_method == NULL)
+                    return false;
+                PyObject* callback_data = PyTuple_Pack(
+                    2, py_method, method_name);
+                Py_DECREF(py_method);
+                if (callback_data == NULL)
+                    return false;
+                if (!RetainCallbackData(
+                        callback_data_owner, callback_data)) {
                     Py_DECREF(callback_data);
-                    v8_config.callback = py_class_method_callback;
-                    //if(strcmp(PyUnicode_AsUTF8_abi3(cb_name), "fn_postMessage")==0 && strcmp(world, "Window") == 0)
-                    //    v8_config.callback = py_class_cross_origin_method_callback;
-                    //else
-                    //    v8_config.callback = py_class_method_callback;
+                    return false;
                 }
-                else {
-                    v8_config.callback_data = v8_compat::external_new(isolate, cb_name);
-                    v8_config.callback = FakerJsFunctionCallback;
-                }
+                v8_config.callback_data =
+                    v8_compat::external_new(isolate, callback_data);
+                Py_DECREF(callback_data);
+                v8_config.callback = py_class_method_callback;
             }
-
-            PyObject* length = PyTuple_GetItem(config, 2);
-            if (length != NULL && PyLong_Check(length)) {
-                v8_config.length = PyLong_AsLong(length);
-            }
-
-            PyObject* property_attribute = PyTuple_GetItem(config, 5);
-            if (property_attribute != NULL && PyLong_Check(property_attribute)) {
-                v8_config.v8_property_attribute = PyLong_AsLong(property_attribute);
-            }
-
-            PyObject* receiver_check = PyTuple_GetItem(config, 6);
-            if (receiver_check != NULL && PyLong_Check(receiver_check)) {
-                v8_config.receiver_check = PyLong_AsLong(receiver_check);
-            }
-
-            PyObject* cross_origin_check = PyTuple_GetItem(config, 7);
-            if (cross_origin_check != NULL && PyLong_Check(cross_origin_check)) {
-                v8_config.cross_origin_check = PyLong_AsLong(cross_origin_check);
-            }
-
-            PyObject* side_effect = PyTuple_GetItem(config, 8);
-            if (side_effect != NULL && PyLong_Check(side_effect)) {
-                v8_config.v8_side_effect = PyLong_AsLong(side_effect);
+            else {
+                v8_config.callback_data =
+                    v8_compat::external_new(isolate, cb_name);
+                v8_config.callback = FakerJsFunctionCallback;
             }
 
             InstallOperation(isolate, world, interface_template, signature, v8_config);

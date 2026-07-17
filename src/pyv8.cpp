@@ -231,92 +231,135 @@ static PyMethodDef v8_methods[] = {
     {NULL},
 };
 
-#define FAIL NULL
+static bool
+require_supported_python_runtime()
+{
+#ifdef Py_GIL_DISABLED
+    PyErr_SetString(
+        PyExc_ImportError,
+        "pyv8 does not support free-threaded CPython builds");
+    return false;
+#else
+    PyThreadState* thread_state = PyThreadState_Get();
+    PyInterpreterState* interpreter =
+        PyThreadState_GetInterpreter(thread_state);
+    int64_t interpreter_id = PyInterpreterState_GetID(interpreter);
+    if (interpreter_id < 0)
+        return false;
+    if (interpreter_id != 0) {
+        PyErr_SetString(
+            PyExc_ImportError,
+            "pyv8 only supports the main Python interpreter because its V8 runtime is process-global");
+        return false;
+    }
+    return true;
+#endif
+}
+
+static int
+pyv8_module_exec(PyObject* module)
+{
+    if (!require_supported_python_runtime())
+        return -1;
+
+    if (cache_FunctionType_init() < 0)
+        return -1;
+
+    if (isolate_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "Isolate", (PyObject*)isolate_type) < 0)
+        return -1;
+
+    if (context_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "Context", (PyObject *)context_type) < 0)
+        return -1;
+
+    if (script_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "Script", (PyObject *)script_type) < 0)
+        return -1;
+
+    if (debugger_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "Debugger", (PyObject *)debugger_type) < 0)
+        return -1;
+
+    if (py_function_type_init() < 0)
+        return -1;
+
+    if (py_class_type_init() < 0)
+        return -1;
+
+    if (js_object_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "JSObject", (PyObject *)js_object_type) < 0)
+        return -1;
+
+    if (js_value_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "JSValue", (PyObject*)js_value_type) < 0)
+        return -1;
+
+    if (js_promise_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "JSPromise", (PyObject *)js_promise_type) < 0)
+        return -1;
+
+    if (js_typedarray_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "JSTypeArray", (PyObject *)js_typedarray_type) < 0)
+        return -1;
+
+    if (js_function_type_init() < 0)
+        return -1;
+
+    if (PyModule_AddObject(module, "JSFunction", (PyObject *)js_function_type) < 0)
+        return -1;
+
+    if (js_exception_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "JSException", (PyObject *)js_exception_type) < 0)
+        return -1;
+
+    if (js_terminated_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "JavaScriptTerminated", (PyObject *)js_terminated_type) < 0)
+        return -1;
+
+    if (js_null_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "Null", js_null_object) < 0)
+        return -1;
+
+    if (js_undefined_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "Undefined", js_undefined_object) < 0)
+        return -1;
+
+    return 0;
+}
+
+static PyModuleDef_Slot v8_module_slots[] = {
+    {Py_mod_exec, (void*)pyv8_module_exec},
+    {0, NULL},
+};
+
+static PyModuleDef v8_module_def = {
+    PyModuleDef_HEAD_INIT,
+    "_pyv8",
+    "V8 bindings for the main, GIL-enabled CPython interpreter.",
+    0,
+    v8_methods,
+    v8_module_slots,
+    NULL,
+    NULL,
+    NULL,
+};
 
 PyMODINIT_FUNC PyInit__pyv8()
 {
-    static struct PyModuleDef v8_module_def = {PyModuleDef_HEAD_INIT};
-    v8_module_def.m_name = "_pyv8";
-    v8_module_def.m_size = -1;
-    v8_module_def.m_methods = v8_methods;
-    PyObject *module = PyModule_Create(&v8_module_def);
-    if (module == NULL)
-        return FAIL;
-
-    if (cache_FunctionType_init() < 0)
-        return FAIL;
-
-    if (isolate_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "Isolate", (PyObject*)isolate_type) < 0)
-        return FAIL;
-
-    if (context_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "Context", (PyObject *)context_type) < 0)
-        return FAIL;
-
-    if (script_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "Script", (PyObject *)script_type) < 0)
-        return FAIL;
-
-    if (debugger_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "Debugger", (PyObject *)debugger_type) < 0)
-        return FAIL;
-
-    if (py_function_type_init() < 0)
-        return FAIL;
-
-    if (py_class_type_init() < 0)
-        return FAIL;
-
-    if (js_object_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "JSObject", (PyObject *)js_object_type) < 0)
-        return FAIL;
-
-    if (js_value_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "JSValue", (PyObject*)js_value_type) < 0)
-        return FAIL;
-
-    if (js_promise_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "JSPromise", (PyObject *)js_promise_type) < 0)
-        return FAIL;
-
-    if (js_typedarray_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "JSTypeArray", (PyObject *)js_typedarray_type) < 0)
-        return FAIL;
-
-    if (js_function_type_init() < 0)
-        return FAIL;
-
-    if (PyModule_AddObject(module, "JSFunction", (PyObject *)js_function_type) < 0)
-        return FAIL;
-
-    if (js_exception_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "JSException", (PyObject *)js_exception_type) < 0)
-        return FAIL;
-
-    if (js_terminated_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "JavaScriptTerminated", (PyObject *)js_terminated_type) < 0)
-        return FAIL;
-
-    if (js_null_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "Null", js_null_object) < 0)
-        return FAIL;
-
-    if (js_undefined_type_init() < 0)
-        return FAIL;
-    if (PyModule_AddObject(module, "Undefined", js_undefined_object) < 0)
-        return FAIL;
-
-    return module;
+    // Multi-phase initialization runs pyv8_module_exec in every interpreter,
+    // allowing the process-global RuntimeManager policy to be enforced.
+    return PyModuleDef_Init(&v8_module_def);
 }

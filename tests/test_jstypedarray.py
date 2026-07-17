@@ -74,5 +74,64 @@ class TestJSTypedArray(unittest.TestCase):
         self.assertEqual(subarray[1], 30)
         self.assertEqual(subarray[2], 40)
 
+    def test_invalid_typed_array_item_reports_python_exception(self):
+        """元素类型错误时不得返回没有设置异常的 NULL，也不得泄漏半初始化对象。"""
+
+        def make_invalid_array():
+            return pyv8.JSTypeArray(
+                [1, "invalid"], pyv8.ArrayType.Uint8Array
+            )
+
+        self.context.expose(make_invalid_array)
+        with self.assertRaisesRegex(TypeError, "item 1"):
+            self.context.exec_js("make_invalid_array()")
+        self.assertEqual(self.context.exec_js("40 + 2"), 42)
+
+    def test_invalid_typed_array_type_is_rejected(self):
+        """未知的 ArrayType 编号应转换为 ValueError。"""
+
+        def make_invalid_array():
+            return pyv8.JSTypeArray([1, 2, 3], 999)
+
+        self.context.expose(make_invalid_array)
+        with self.assertRaisesRegex(ValueError, "unsupported typed array type"):
+            self.context.exec_js("make_invalid_array()")
+
+    def test_plain_js_object_cannot_be_used_as_array_buffer(self):
+        """普通 JSObject 不得被盲目转换成 v8::ArrayBuffer。"""
+
+        plain_object = self.context.exec_js(
+            "new (class PlainObject { constructor() { this.value = 1; } })()"
+        )
+
+        def make_invalid_array():
+            return pyv8.JSTypeArray(
+                plain_object, pyv8.ArrayType.Uint8Array
+            )
+
+        self.context.expose(make_invalid_array)
+        with self.assertRaisesRegex(TypeError, "ArrayBuffer or ArrayBufferView"):
+            self.context.exec_js("make_invalid_array()")
+        self.assertEqual(self.context.exec_js("40 + 2"), 42)
+
+    def test_array_buffer_view_can_create_uint8_view(self):
+        """ArrayBufferView 输入应保留原视图的 byteOffset 和 byteLength。"""
+
+        source_view = self.context.exec_js(
+            "new Uint16Array(new ArrayBuffer(8), 2, 2)"
+        )
+
+        def make_byte_view():
+            return pyv8.JSTypeArray(
+                source_view, pyv8.ArrayType.Uint8Array
+            )
+
+        self.context.expose(make_byte_view)
+        result = self.context.exec_js(
+            "const view = make_byte_view(); "
+            "[view instanceof Uint8Array, view.byteOffset, view.byteLength]"
+        )
+        self.assertEqual(result, [True, 2, 4])
+
 if __name__ == "__main__":
     unittest.main()

@@ -519,11 +519,25 @@ js_from_py_impl(PyObject *value,
 
     if (PyType_Check(value))
     {
-        context_c *ctx_c = (context_c *)v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
+        context_c *ctx_c = v8_compat::context_embedder_pointer<context_c>(
+            context, CONTEXT_OBJECT_SLOT);
+        if (ctx_c == nullptr)
+        {
+            PyErr_SetString(PyExc_RuntimeError, "V8 context has no Python owner");
+            return Local<Value>();
+        }
         py_class *templ = (py_class *)py_class_to_template(value, ctx_c);
+        if (templ == NULL)
+        {
+            return Local<Value>();
+        }
         if (templ->to_obj)
         {
             const char *world = PyUnicode_AsUTF8_abi3(templ->cls_name);
+            if (world == NULL)
+            {
+                return Local<Value>();
+            }
             Local<String> v8_name = V8String(isolate, world);
             bool hook = ctx_c->hook;
             ctx_c->hook = false;

@@ -47,7 +47,7 @@ void context_set_cached_jsobject(v8::Local<v8::Context> context, PyObject* py_ob
 PyObject* context_get_global(context_c* self, void* shit);
 
 PyObject* context_get_timeout(context_c* self, void* shit);
-int* context_set_timeout(context_c* self, PyObject* value, void* shit);
+int context_set_timeout(context_c* self, PyObject* value, void* shit);
 
 PyObject* context_getattro(context_c* self, PyObject* name);
 PyObject* context_getitem(context_c* self, PyObject* name);

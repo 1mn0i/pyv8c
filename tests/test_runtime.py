@@ -4,6 +4,7 @@ import sys
 import textwrap
 import unittest
 import weakref
+from pathlib import Path
 
 import pyv8
 
@@ -91,6 +92,54 @@ class TestRuntimeLifecycle(unittest.TestCase):
 
         result = subprocess.run(
             [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_subinterpreter_import_is_explicitly_rejected(self):
+        """进程级 RuntimeManager 只能由主解释器加载。"""
+
+        package_root = Path(pyv8.__file__).resolve().parent.parent.as_posix()
+        code = textwrap.dedent(
+            f"""
+            import sys
+
+            try:
+                import _xxsubinterpreters as interpreters
+            except ModuleNotFoundError:
+                raise SystemExit(0)
+
+            sys.path.insert(0, {package_root!r})
+            import pyv8
+
+            interpreter = interpreters.create()
+            try:
+                subinterpreter_code = (
+                    "import sys; "
+                    "sys.path.insert(0, {package_root!r}); "
+                    "import pyv8"
+                )
+                try:
+                    interpreters.run_string(interpreter, subinterpreter_code)
+                except interpreters.RunFailedError as exc:
+                    message = str(exc)
+                    assert (
+                        "main Python interpreter" in message
+                        or "does not support loading in subinterpreters" in message
+                    ), message
+                else:
+                    raise AssertionError(
+                        "pyv8 import unexpectedly succeeded in a subinterpreter"
+                    )
+            finally:
+                interpreters.destroy(interpreter)
+            """
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", code],
             capture_output=True,
             text=True,
             timeout=30,

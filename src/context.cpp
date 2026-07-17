@@ -381,14 +381,14 @@ context_expose_module(context_c *self, PyObject *module)
 PyObject* 
 context_js_obj(context_c* self, PyObject* py_object)
 {
-    if (PyMapping_HasKey(self->js_object_cache, py_object)) {
-        PyObject* jsobj = PyObject_GetItem(self->js_object_cache, py_object);
-        if (jsobj == NULL) {
-            PyErr_WriteUnraisable(PyUnicode_InternFromString("pyv8env py_class_create_js_object getitem"));
-        }
-        Py_INCREF(jsobj);
+    PyObject* jsobj = PyObject_GetItem(self->js_object_cache, py_object);
+    if (jsobj != NULL) {
         return jsobj;
     }
+    if (!PyErr_ExceptionMatches(PyExc_KeyError) &&
+        !PyErr_ExceptionMatches(PyExc_TypeError))
+        return NULL;
+    PyErr_Clear();
     Py_RETURN_NONE;
 }
 
@@ -474,13 +474,16 @@ context_get_cached_jsobject(Local<Context> js_context, PyObject *py_object)
     Isolate* isolate = v8_compat::context_isolate(js_context);
     EscapableHandleScope hs(isolate);
     context_c *self = (context_c *) v8_compat::external_value(js_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
-    if (PyMapping_HasKey(self->js_object_cache, py_object)) {
-        js_object *jsobj = (js_object *) PyObject_GetItem(self->js_object_cache, py_object);
-        if (jsobj == NULL) {
-            PyErr_WriteUnraisable(PyUnicode_InternFromString("pyv8env py_class_create_js_object getitem"));
-        }
-        return hs.Escape(jsobj->object.Get(isolate));
+    js_object *jsobj = (js_object *) PyObject_GetItem(
+        self->js_object_cache, py_object);
+    if (jsobj != NULL) {
+        Local<Object> cached_object = jsobj->object.Get(isolate);
+        Py_DECREF((PyObject*)jsobj);
+        return hs.Escape(cached_object);
     }
+    if (PyErr_ExceptionMatches(PyExc_KeyError) ||
+        PyErr_ExceptionMatches(PyExc_TypeError))
+        PyErr_Clear();
     return Local<Object>();
 }
 
@@ -511,10 +514,13 @@ context_get_timeout(context_c *self, void *shit)
     return PyFloat_FromDouble(self->timeout);
 }
 
-int *
+int
 context_set_timeout(context_c *self, PyObject *value, void *shit)
 {
-    self->timeout = PyFloat_AsDouble(value);
+    double timeout = PyFloat_AsDouble(value);
+    if (PyErr_Occurred())
+        return -1;
+    self->timeout = timeout;
     return 0;
 }
 

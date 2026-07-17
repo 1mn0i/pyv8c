@@ -2,7 +2,104 @@
 
 #include "abi3.h"
 
+#include <cstring>
+
 using namespace v8;
+
+namespace
+{
+
+class PyOwnedRef
+{
+public:
+    explicit PyOwnedRef(PyObject* value = nullptr)
+        : value_(value)
+    {
+    }
+
+    ~PyOwnedRef()
+    {
+        Py_XDECREF(value_);
+    }
+
+    PyObject* get() const { return value_; }
+
+private:
+    PyObject* value_;
+};
+
+bool
+verify_icu_data_fingerprint(PyObject* path)
+{
+#ifndef PYV8_ICU_DATA_SHA256
+    return true;
+#else
+    PyOwnedRef hashlib(PyImport_ImportModule("hashlib"));
+    if (hashlib.get() == nullptr)
+        return false;
+    PyOwnedRef sha256(PyObject_GetAttrString(hashlib.get(), "sha256"));
+    if (sha256.get() == nullptr)
+        return false;
+    PyOwnedRef hasher(PyObject_CallObject(sha256.get(), nullptr));
+    if (hasher.get() == nullptr)
+        return false;
+
+    PyOwnedRef builtins(PyImport_ImportModule("builtins"));
+    if (builtins.get() == nullptr)
+        return false;
+    PyOwnedRef open_function(PyObject_GetAttrString(builtins.get(), "open"));
+    if (open_function.get() == nullptr)
+        return false;
+    PyOwnedRef mode(PyUnicode_FromString("rb"));
+    if (mode.get() == nullptr)
+        return false;
+    PyOwnedRef open_args(PyTuple_Pack(2, path, mode.get()));
+    if (open_args.get() == nullptr)
+        return false;
+    PyOwnedRef stream(PyObject_CallObject(open_function.get(), open_args.get()));
+    if (stream.get() == nullptr)
+        return false;
+
+    while (true)
+    {
+        PyOwnedRef chunk(PyObject_CallMethod(stream.get(), "read", "i", 1024 * 1024));
+        if (chunk.get() == nullptr)
+            return false;
+        if (!PyBytes_Check(chunk.get()))
+        {
+            PyErr_SetString(PyExc_TypeError, "ICU data stream returned a non-bytes value");
+            return false;
+        }
+        const Py_ssize_t chunk_size = PyBytes_Size(chunk.get());
+        if (chunk_size < 0)
+            return false;
+        if (chunk_size == 0)
+            break;
+        PyOwnedRef update_result(
+            PyObject_CallMethod(hasher.get(), "update", "O", chunk.get()));
+        if (update_result.get() == nullptr)
+            return false;
+    }
+
+    PyOwnedRef digest(PyObject_CallMethod(hasher.get(), "hexdigest", nullptr));
+    if (digest.get() == nullptr)
+        return false;
+    const char* actual_sha256 = PyUnicode_AsUTF8_abi3(digest.get());
+    if (actual_sha256 == nullptr)
+        return false;
+    if (std::strcmp(actual_sha256, PYV8_ICU_DATA_SHA256) != 0)
+    {
+        PyErr_Format(
+            PyExc_RuntimeError,
+            "ICU data does not match this _pyv8 build (V8 %s): expected SHA-256 %s, got %s; copy icudtl.dat together with _pyv8",
+            V8::GetVersion(), PYV8_ICU_DATA_SHA256, actual_sha256);
+        return false;
+    }
+    return true;
+#endif
+}
+
+}
 
 PlatformState::PlatformState()
     : initialized_(false), disposed_(false)
@@ -64,10 +161,22 @@ PlatformState::initialize(PyObject* icu, PyObject* params)
         }
     }
 
-    if (icudtl_path != nullptr)
-        V8::InitializeICU(icudtl_path);
-    else
-        V8::InitializeICU();
+    if (icu != nullptr && !verify_icu_data_fingerprint(icu))
+        return false;
+
+    const bool icu_initialized = icudtl_path != nullptr
+                                     ? V8::InitializeICU(icudtl_path)
+                                     : V8::InitializeICU();
+    if (!icu_initialized)
+    {
+        if (icudtl_path != nullptr)
+            PyErr_Format(PyExc_RuntimeError,
+                         "failed to initialize ICU from %s",
+                         icudtl_path);
+        else
+            PyErr_SetString(PyExc_RuntimeError, "failed to initialize bundled ICU data");
+        return false;
+    }
 
     platform_ = platform::NewDefaultPlatform();
     if (!platform_)

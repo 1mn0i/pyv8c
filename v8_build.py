@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -25,6 +26,16 @@ VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
 
 class V8BuildError(RuntimeError):
     """Raised when the selected V8 checkout or build is unusable."""
+
+
+def file_sha256(path: str | Path) -> str:
+    """Return a streaming SHA-256 digest for a build artifact."""
+
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _read_bool(value: str | None, default: bool = False) -> bool:

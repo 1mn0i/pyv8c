@@ -7,6 +7,8 @@
 #include "jstypedarray.h"
 #include "context.h"
 
+#include <limits>
+
 using namespace v8;
 
 
@@ -63,153 +65,223 @@ js_typedarray_type_init()
     return 0;
 }
 
+static bool
+parse_array_type(PyObject* value, ArrayType* array_type)
+{
+    if (!PyLong_Check(value)) {
+        PyErr_SetString(PyExc_TypeError, "typed must be an ArrayType integer");
+        return false;
+    }
+    long raw_type = PyLong_AsLong(value);
+    if (PyErr_Occurred())
+        return false;
+    if (raw_type < static_cast<long>(ArrayType::Uint32Array) ||
+        raw_type > static_cast<long>(ArrayType::Uint8ClampedArray)) {
+        PyErr_SetString(PyExc_ValueError, "unsupported typed array type");
+        return false;
+    }
+    *array_type = static_cast<ArrayType>(raw_type);
+    return true;
+}
+
+static size_t
+array_type_item_size(ArrayType array_type)
+{
+    switch (array_type) {
+    case ArrayType::Uint32Array:
+    case ArrayType::Int32Array:
+    case ArrayType::Float32Array:
+        return sizeof(uint32_t);
+    case ArrayType::Uint16Array:
+    case ArrayType::Int16Array:
+        return sizeof(uint16_t);
+    case ArrayType::Uint8Array:
+    case ArrayType::Int8Array:
+    case ArrayType::Uint8ClampedArray:
+        return sizeof(uint8_t);
+    case ArrayType::Float64Array:
+        return sizeof(double);
+    }
+    return 0;
+}
+
+static Local<Object>
+typed_array_from_list(Isolate* isolate, Local<Context> context,
+                      PyObject* data, ArrayType array_type)
+{
+    Py_ssize_t py_length = PyList_Size(data);
+    if (py_length < 0)
+        return Local<Object>();
+    if (static_cast<size_t>(py_length) >
+        static_cast<size_t>(std::numeric_limits<uint32_t>::max())) {
+        PyErr_SetString(PyExc_OverflowError, "typed array is too large");
+        return Local<Object>();
+    }
+
+    size_t item_size = array_type_item_size(array_type);
+    size_t length = static_cast<size_t>(py_length);
+    if (item_size == 0 ||
+        length > std::numeric_limits<size_t>::max() / item_size) {
+        PyErr_SetString(PyExc_OverflowError, "typed array allocation is too large");
+        return Local<Object>();
+    }
+
+    Local<ArrayBuffer> array_buffer = ArrayBuffer::New(
+        isolate, length * item_size);
+    if (array_buffer.IsEmpty()) {
+        PyErr_NoMemory();
+        return Local<Object>();
+    }
+
+    Local<Object> typed_array;
+    switch (array_type) {
+    case ArrayType::Uint32Array:
+        typed_array = Uint32Array::New(array_buffer, 0, length);
+        break;
+    case ArrayType::Uint16Array:
+        typed_array = Uint16Array::New(array_buffer, 0, length);
+        break;
+    case ArrayType::Uint8Array:
+        typed_array = Uint8Array::New(array_buffer, 0, length);
+        break;
+    case ArrayType::Int32Array:
+        typed_array = Int32Array::New(array_buffer, 0, length);
+        break;
+    case ArrayType::Int16Array:
+        typed_array = Int16Array::New(array_buffer, 0, length);
+        break;
+    case ArrayType::Int8Array:
+        typed_array = Int8Array::New(array_buffer, 0, length);
+        break;
+    case ArrayType::Float64Array:
+        typed_array = Float64Array::New(array_buffer, 0, length);
+        break;
+    case ArrayType::Float32Array:
+        typed_array = Float32Array::New(array_buffer, 0, length);
+        break;
+    case ArrayType::Uint8ClampedArray:
+        typed_array = Uint8ClampedArray::New(array_buffer, 0, length);
+        break;
+    }
+    if (typed_array.IsEmpty()) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to create V8 typed array");
+        return Local<Object>();
+    }
+
+    bool is_float_array = array_type == ArrayType::Float32Array ||
+                          array_type == ArrayType::Float64Array;
+    for (Py_ssize_t i = 0; i < py_length; ++i) {
+        PyObject* item = PyList_GetItem(data, i);
+        if (item == NULL)
+            return Local<Object>();
+        if (is_float_array) {
+            if (!PyFloat_Check(item) && !PyLong_Check(item)) {
+                PyErr_Format(PyExc_TypeError,
+                             "typed array item %zd must be a number", i);
+                return Local<Object>();
+            }
+        }
+        else if (!PyLong_Check(item)) {
+            PyErr_Format(PyExc_TypeError,
+                         "typed array item %zd must be an integer", i);
+            return Local<Object>();
+        }
+
+        double number = PyFloat_AsDouble(item);
+        if (PyErr_Occurred())
+            return Local<Object>();
+        bool set_worked;
+        if (!typed_array->Set(
+                context, static_cast<uint32_t>(i),
+                Number::New(isolate, number)).To(&set_worked) ||
+            !set_worked) {
+            PyErr_Format(PyExc_RuntimeError,
+                         "failed to set typed array item %zd", i);
+            return Local<Object>();
+        }
+    }
+    return typed_array;
+}
+
 PyObject * 
 js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 {
     if (!runtime_manager.require_initialized())
         return NULL;
-    IsolateState* isolate_state = current_isolate_state();
-    if (isolate_state == nullptr)
-        isolate_state = runtime_manager.default_isolate();
-    IN_ISOLATE(isolate_state);
 
     PyObject* data = NULL;
     PyObject* typed = NULL;
     static const char* keywords[] = {"data", "typed", NULL };
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "OO", (char**)keywords,&data, &typed) < 0) {
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwargs, "OO", (char**)keywords, &data, &typed))
+        return NULL;
+
+    if (!PyList_Check(data) && !PyObject_TypeCheck(data, js_object_type)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "data must be a list, ArrayBuffer, or ArrayBufferView");
         return NULL;
     }
-
-    if (!(PyList_Check(data) || PyObject_TypeCheck(data, js_object_type)) || !PyLong_Check(typed)) {
+    ArrayType array_type;
+    if (!parse_array_type(typed, &array_type))
         return NULL;
-    }
 
+    IsolateState* isolate_state = current_isolate_state();
+    if (isolate_state == nullptr)
+        isolate_state = runtime_manager.default_isolate();
+    IN_ISOLATE(isolate_state);
     Local<Context> current_context = isolate->GetCurrentContext();
     if (current_context.IsEmpty()) {
-        PyErr_SetString(PyExc_RuntimeError, "JSTypeArray requires an active V8 Context");
+        PyErr_SetString(PyExc_RuntimeError,
+                        "JSTypeArray requires an active V8 Context");
         return NULL;
     }
     IN_CONTEXT(current_context);
-    //js_object* self = (js_object*)type->tp_alloc(type, 0);
-    js_typedarray* self = (js_typedarray*)PyType_GenericAlloc(type, 0);
 
-
-    v8::Local<v8::ArrayBuffer> array_buffer;
-
+    Local<Object> typed_array;
     if (PyObject_TypeCheck(data, js_object_type)) {
         js_object* py_value = (js_object*)data;
         if (py_value->isolate_state != isolate_state) {
-            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
-            Py_DECREF((PyObject*)self);
+            PyErr_SetString(PyExc_RuntimeError,
+                            "JavaScript value belongs to another isolate");
             return NULL;
         }
-        array_buffer = py_value->object.Get(isolate).As<ArrayBuffer>();
-        auto ary = v8::Uint8Array::New(array_buffer, 0, array_buffer->ByteLength());
-        js_object_set_persistent((js_object*)self, ary, context, true);
-        return (PyObject*)self;
-    }
-
-    int length = PyList_Size(data);
-    ArrayType array_type = static_cast<ArrayType>(PyLong_AsLong(typed));
-    if (array_type == ArrayType::Uint32Array) {
-        array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(uint32_t));
-        auto ary = v8::Uint32Array::New(array_buffer, 0, length);
-        for (int i = 0; i < length; i++) {
-            PyObject* val = PyList_GetItem(data, i);
-            if (!PyLong_Check(val))
-                return NULL;
-            ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
+        Local<Object> source = py_value->object.Get(isolate);
+        Local<ArrayBuffer> array_buffer;
+        size_t byte_offset = 0;
+        size_t byte_length = 0;
+        if (source->IsArrayBuffer()) {
+            array_buffer = source.As<ArrayBuffer>();
+            byte_length = array_buffer->ByteLength();
         }
-        js_object_set_persistent((js_object*)self, ary, context, true);
-    }
-    else if (array_type == ArrayType::Uint16Array) {
-        array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(uint16_t));
-        auto ary = v8::Uint16Array::New(array_buffer, 0, length);
-        for (int i = 0; i < length; i++) {
-            PyObject* val = PyList_GetItem(data, i);
-            if (!PyLong_Check(val))
-                return NULL;
-            ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
+        else if (source->IsArrayBufferView()) {
+            Local<ArrayBufferView> view = source.As<ArrayBufferView>();
+            array_buffer = view->Buffer();
+            byte_offset = view->ByteOffset();
+            byte_length = view->ByteLength();
         }
-        js_object_set_persistent((js_object*)self, ary, context, true);
-    }
-    else if (array_type == ArrayType::Uint8Array) {
-
-        array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(uint8_t));
-        auto ary = v8::Uint8Array::New(array_buffer, 0, length);
-        for (int i = 0; i < length; i++) {
-            PyObject* val = PyList_GetItem(data, i);
-            if (!PyLong_Check(val))
-                return NULL;
-            ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
+        else {
+            PyErr_SetString(PyExc_TypeError,
+                            "JSObject data must wrap an ArrayBuffer or ArrayBufferView");
+            return NULL;
         }
-        js_object_set_persistent((js_object*)self, ary, context, true);
+        typed_array = Uint8Array::New(
+            array_buffer, byte_offset, byte_length);
     }
-    else if (array_type == ArrayType::Int32Array) {
-        array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(int32_t));
-        auto ary = v8::Int32Array::New(array_buffer, 0, length);
-        for (int i = 0; i < length; i++) {
-            PyObject* val = PyList_GetItem(data, i);
-            if (!PyLong_Check(val))
-                return NULL;
-            ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
-        }
-        js_object_set_persistent((js_object*)self, ary, context, true);
-    }
-    else if (array_type == ArrayType::Int16Array) {
-        array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(int16_t));
-        auto ary = v8::Int16Array::New(array_buffer, 0, length);
-        for (int i = 0; i < length; i++) {
-            PyObject* val = PyList_GetItem(data, i);
-            if (!PyLong_Check(val))
-                return NULL;
-            ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
-        }
-        js_object_set_persistent((js_object*)self, ary, context, true);
-    }
-    else if (array_type == ArrayType::Int8Array) {
-        array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(int8_t));
-        auto ary = v8::Int8Array::New(array_buffer, 0, length);
-        for (int i = 0; i < length; i++) {
-            PyObject* val = PyList_GetItem(data, i);
-            if (!PyLong_Check(val))
-                return NULL;
-            ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
-        }
-        js_object_set_persistent((js_object*)self, ary, context, true);
-    }
-    else if (array_type == ArrayType::Float64Array) {
-        array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(double));
-        auto ary = v8::Float64Array::New(array_buffer, 0, length);
-        for (int i = 0; i < length; i++) {
-            PyObject* val = PyList_GetItem(data, i);
-            if (!PyLong_Check(val))
-                return NULL;
-            ary->Set(isolate->GetCurrentContext(), i, v8::Number::New(isolate, PyLong_AsLong(val))).Check();
-        }
-        js_object_set_persistent((js_object*)self, ary, context, true);
-    }
-    else if (array_type == ArrayType::Float32Array) {
-        array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(float));
-        auto ary = v8::Float32Array::New(array_buffer, 0, length);
-        for (int i = 0; i < length; i++) {
-            PyObject* val = PyList_GetItem(data, i);
-            ary->Set(isolate->GetCurrentContext(), i, v8::Number::New(isolate, PyFloat_AsDouble(val))).Check();
-        }
-        js_object_set_persistent((js_object*)self, ary, context, true);
-    }
-    else if (array_type == ArrayType::Uint8ClampedArray) {
-        array_buffer = v8::ArrayBuffer::New(isolate, length * sizeof(uint8_t));
-        auto ary = v8::Uint8ClampedArray::New(array_buffer, 0, length);
-        for (int i = 0; i < length; i++) {
-            PyObject* val = PyList_GetItem(data, i);
-            ary->Set(isolate->GetCurrentContext(), i, v8::Uint32::New(isolate, PyLong_AsLong(val))).Check();
-        }
-        js_object_set_persistent((js_object*)self, ary, context, true);
-    }else{
+    else {
+        typed_array = typed_array_from_list(
+            isolate, context, data, array_type);
+        if (typed_array.IsEmpty())
             return NULL;
     }
-    
+
+    if (typed_array.IsEmpty()) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to create V8 typed array");
+        return NULL;
+    }
+    js_typedarray* self = (js_typedarray*)PyType_GenericAlloc(type, 0);
+    if (self == NULL)
+        return NULL;
+    js_object_set_persistent((js_object*)self, typed_array, context, true);
     return (PyObject*)self;
 }
 
