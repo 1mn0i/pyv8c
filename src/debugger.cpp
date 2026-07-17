@@ -119,6 +119,21 @@ V8PyInspectorClient::runMessageLoopOnPause(int /*context_group_id*/)
     call_self(debugger_, "run_loop");
 }
 
+void
+V8PyInspectorClient::runIfWaitingForDebugger(int /*context_group_id*/)
+{
+    // Python execution must wait until V8 finishes dispatching the CDP message.
+    run_if_waiting_requested_ = true;
+}
+
+bool
+V8PyInspectorClient::consumeRunIfWaitingForDebuggerRequest()
+{
+    bool requested = run_if_waiting_requested_;
+    run_if_waiting_requested_ = false;
+    return requested;
+}
+
 void 
 V8PyInspectorClient::quitMessageLoopOnPause()
 {
@@ -155,10 +170,12 @@ debugger_send(debugger_c* self, PyObject* message)
     if (stringview.get() == NULL) return NULL;
     self->session.get()->dispatchProtocolMessage(stringview.get()->string());
 
-    std::string msg((char*)command_bytes);
-    if (strstr(msg.c_str(), "Runtime.runIfWaitingForDebugger") != NULL) {
-        std::string_view ss = "run script";
-        self->session.get()->schedulePauseOnNextStatement({ (uint8_t*)ss.data(), ss.length() }, { (uint8_t*)ss.data(), ss.length() });
+    if (self->client->consumeRunIfWaitingForDebuggerRequest()) {
+        std::string_view reason = "run script";
+        StringView inspector_reason(
+            reinterpret_cast<const uint8_t*>(reason.data()), reason.size());
+        self->session->schedulePauseOnNextStatement(
+            inspector_reason, inspector_reason);
         call_self(self, "run_js");
     }
     Py_RETURN_TRUE;

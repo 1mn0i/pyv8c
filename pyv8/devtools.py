@@ -231,8 +231,7 @@ class DevtoolsDebugger(_pyv8.Debugger):
             self.server_thread.join(timeout=5)
 
 
-def start_devtools(context, *args, callback=None, port=9005):
-    host = "localhost"
+def start_devtools(context, *args, callback=None, port=9005, host="127.0.0.1"):
     debugger = DevtoolsDebugger(context, *args, callback=callback)
     debugger.start_server(host, port)
     print("Open Chrome DevTools and enter this URL:")
