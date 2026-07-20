@@ -480,6 +480,10 @@ void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info) {
 static PyObject*
 get_handler_method(PyObject* self, const char* method_name)
 {
+    if (self == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "Python object callback receiver is unavailable");
+        return NULL;
+    }
     PyObject* method = PyObject_GetAttrString(self, method_name);
     if (method == NULL && PyErr_ExceptionMatches(PyExc_AttributeError))
         PyErr_Clear();

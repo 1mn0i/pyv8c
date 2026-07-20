@@ -1,3 +1,5 @@
+import gc
+import sys
 import unittest
 import pyv8
 
@@ -24,6 +26,17 @@ class TestContext(unittest.TestCase):
 
         result = self.context.exec_js("(new Error).stack", "https://www.xxx.com/test.js")
         self.assertIn("https://www.xxx.com/test.js", result)
+
+    def test_exec_js_does_not_retain_transient_scripts(self):
+        """验证重复执行源码不会让 Context 永久持有临时 Script。"""
+
+        source = "40 + 2"
+        references_before = sys.getrefcount(source)
+        for _ in range(100):
+            self.assertEqual(self.context.exec_js(source), 42)
+        gc.collect()
+
+        self.assertEqual(sys.getrefcount(source), references_before)
     
     def test_glob(self):
         """测试glob属性"""

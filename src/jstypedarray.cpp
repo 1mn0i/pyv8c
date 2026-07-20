@@ -106,6 +106,45 @@ array_type_item_size(ArrayType array_type)
 }
 
 static Local<Object>
+typed_array_from_buffer(Local<ArrayBuffer> array_buffer,
+                       size_t byte_offset,
+                       size_t byte_length,
+                       ArrayType array_type)
+{
+    size_t item_size = array_type_item_size(array_type);
+    if (item_size == 0 || byte_offset % item_size != 0 ||
+        byte_length % item_size != 0) {
+        PyErr_SetString(PyExc_ValueError,
+                        "ArrayBuffer byte range is not aligned for the requested typed array");
+        return Local<Object>();
+    }
+
+    size_t length = byte_length / item_size;
+    switch (array_type) {
+    case ArrayType::Uint32Array:
+        return Uint32Array::New(array_buffer, byte_offset, length);
+    case ArrayType::Uint16Array:
+        return Uint16Array::New(array_buffer, byte_offset, length);
+    case ArrayType::Uint8Array:
+        return Uint8Array::New(array_buffer, byte_offset, length);
+    case ArrayType::Int32Array:
+        return Int32Array::New(array_buffer, byte_offset, length);
+    case ArrayType::Int16Array:
+        return Int16Array::New(array_buffer, byte_offset, length);
+    case ArrayType::Int8Array:
+        return Int8Array::New(array_buffer, byte_offset, length);
+    case ArrayType::Float64Array:
+        return Float64Array::New(array_buffer, byte_offset, length);
+    case ArrayType::Float32Array:
+        return Float32Array::New(array_buffer, byte_offset, length);
+    case ArrayType::Uint8ClampedArray:
+        return Uint8ClampedArray::New(array_buffer, byte_offset, length);
+    }
+    PyErr_SetString(PyExc_ValueError, "unsupported typed array type");
+    return Local<Object>();
+}
+
+static Local<Object>
 typed_array_from_list(Isolate* isolate, Local<Context> context,
                       PyObject* data, ArrayType array_type)
 {
@@ -264,8 +303,8 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
                             "JSObject data must wrap an ArrayBuffer or ArrayBufferView");
             return NULL;
         }
-        typed_array = Uint8Array::New(
-            array_buffer, byte_offset, byte_length);
+        typed_array = typed_array_from_buffer(
+            array_buffer, byte_offset, byte_length, array_type);
     }
     else {
         typed_array = typed_array_from_list(
@@ -288,7 +327,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 PyObject * 
 js_typedarray_repr(js_typedarray* self)
 {
-    if (self->base.isolate_state == nullptr || !self->base.isolate_state->require_active())
+    if (!js_object_require_active(&self->base))
         return NULL;
     IN_ISOLATE(self->base.isolate_state);
     Local<Object> object = self->base.object.Get(isolate);

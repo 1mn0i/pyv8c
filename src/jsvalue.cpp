@@ -103,7 +103,11 @@ js_value_weak_new(Local<Value> value, Local<Context> context)
 PyObject *
 js_value_repr(js_value *self)
 {
-    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+    if (self->isolate_state == nullptr) {
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value has no active V8 isolate");
+        return NULL;
+    }
+    if (!self->isolate_state->require_active())
         return NULL;
     IN_ISOLATE(self->isolate_state);
 

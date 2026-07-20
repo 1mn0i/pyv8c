@@ -47,7 +47,7 @@ int js_function_type_init()
 }
 
 PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) {
-    if (self->base.isolate_state == nullptr || !self->base.isolate_state->require_active())
+    if (!js_object_require_active(&self->base))
         return NULL;
     IN_ISOLATE(self->base.isolate_state);
     Local<Object> object = self->base.object.Get(isolate);
@@ -87,12 +87,15 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
 
 
 PyObject* js_function_repr(js_function* self) {
-    if (self->base.isolate_state == nullptr || !self->base.isolate_state->require_active())
+    if (!js_object_require_active(&self->base))
         return NULL;
     IN_ISOLATE(self->base.isolate_state);
     Local<Object> object = self->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
+    TimeoutGuard timeout_guard(context);
+    if (!timeout_guard.start())
+        return NULL;
     PyObject* repr = NULL;
     if (object->IsFunction()) {
         Local<Object> global = context->Global();
@@ -117,6 +120,9 @@ PyObject* js_function_repr(js_function* self) {
         //String::Utf8Value str(isolate, object->ToString(context).ToLocalChecked());
         repr = PyUnicode_DecodeUTF8(*str, str.length(), NULL);
     }
+
+    if (!timeout_guard.stop())
+        return NULL;
 
     PY_PROPAGATE_JS;
     return repr;

@@ -211,6 +211,15 @@ py_class_to_template(PyObject *cls, context_c* py_ctx)
         return NULL;
     }
     PyObject* cls_name = ((py_class*)templ)->cls_name;
+    PyObject* existing_name = PyDict_GetItem(py_ctx->class_template_cache, cls_name);
+    if (existing_name != NULL && existing_name != templ) {
+        PyDict_DelItem(py_ctx->class_template_cache, cls);
+        Py_DECREF(templ);
+        PyErr_Format(PyExc_ValueError,
+                     "JavaScript class name '%U' is already registered in this Context",
+                     cls_name);
+        return NULL;
+    }
     if (PyDict_SetItem(py_ctx->class_template_cache, cls_name, templ) < 0) {
         PyDict_DelItem(py_ctx->class_template_cache, cls);
         Py_DECREF(templ);
@@ -361,14 +370,20 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         }
     }
 
-    if (config.constant_values != NULL)
+    if (config.constant_values != NULL &&
+        !bindings::InstallConstantValues(
+            isolate, world, templ, sig, config.constant_values))
     {
-        bindings::InstallConstantValues(isolate, world, templ, sig, config.constant_values);
+        Py_DECREF((PyObject*)self);
+        return NULL;
     }
         
-    if (config.constant_callbacks != NULL)
+    if (config.constant_callbacks != NULL &&
+        !bindings::InstallConstantCallbacks(
+            isolate, world, templ, sig, config.constant_callbacks))
     {
-        bindings::InstallConstantCallbacks(isolate, world, templ, sig, config.constant_callbacks);
+        Py_DECREF((PyObject*)self);
+        return NULL;
     }
         
     if (config.call != NULL)

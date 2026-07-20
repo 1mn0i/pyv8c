@@ -5,32 +5,24 @@
 #include <v8.h>
 #include "context.h"
 
-typedef struct
+struct JsExceptionState
 {
-    PyObject_HEAD
-    PyObject* dict;
-    PyObject* args;
-    PyObject* notes;
-    PyObject* traceback;
-    PyObject* context;
-    PyObject* cause;
-    char suppress_context;
     IsolateState* isolate_state;
     v8::Persistent<v8::Value> exception;
     v8::Persistent<v8::Message> message;
     PyObject* py_context;
     PyObject* py_isolate;
-} js_exception;
+    bool retained_handle;
+};
+
 extern PyTypeObject* js_exception_type;
 extern PyTypeObject* js_terminated_type;
 int js_exception_type_init();
 int js_terminated_type_init();
 
 PyObject* js_exception_new(v8::Local<v8::Value> exception, v8::Local<v8::Message> message);
-int js_exception_init(js_exception* self, PyObject* args, PyObject* kwargs);
-void js_exception_dealloc(js_exception* self);
-PyObject* js_exception_str(js_exception* self);
-PyObject* js_exception_get_value(js_exception* self, void* args);
+JsExceptionState* js_exception_get_state(PyObject* exception);
+PyObject* js_exception_get_value(PyObject* self, void* args);
 
 void py_throw_js(v8::Local<v8::Value> js_exc, v8::Local<v8::Message> js_message);
 #define JS_TRY v8::TryCatch tc(isolate);

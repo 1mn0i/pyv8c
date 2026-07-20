@@ -148,14 +148,14 @@ namespace bindings {
         v8::Local<v8::Signature> signature,
         ConstantValueConfig& configs);
 
-    void InstallConstantValues(v8::Isolate* isolate,
+    bool InstallConstantValues(v8::Isolate* isolate,
         const char* world,
         v8::Local<v8::FunctionTemplate> interface_template,
         v8::Local<v8::Signature> signature,
         PyObject* configs);
 
 
-    void InstallConstantCallbacks(v8::Isolate* isolate,
+    bool InstallConstantCallbacks(v8::Isolate* isolate,
         const char* world,
         v8::Local<v8::FunctionTemplate> interface_template,
         v8::Local<v8::Signature> signature,

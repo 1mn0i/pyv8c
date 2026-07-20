@@ -28,6 +28,18 @@ class TestConversion(unittest.TestCase):
         js_float = self.context.exec_js("3.14")
         self.assertEqual(js_int, 42)
         self.assertAlmostEqual(js_float, 3.14)
+
+    def test_large_integer_conversion_does_not_truncate_on_lp64(self):
+        """验证超过 Int32 的 Python 整数不会在 C++ 层被截断。"""
+        self.context.expose(large_positive=3_000_000_000,
+                            large_negative=-3_000_000_000)
+        self.assertEqual(self.context.exec_js("large_positive"), 3_000_000_000)
+        self.assertEqual(self.context.exec_js("large_negative"), -3_000_000_000)
+
+    def test_unrepresentable_integer_conversion_reports_overflow(self):
+        """验证无法转换为 JavaScript Number 的超大整数会立即报错。"""
+        with self.assertRaises(OverflowError):
+            self.context.expose(too_large=10 ** 400)
     
     def test_string_conversion(self):
         """测试字符串类型转换"""

@@ -13,6 +13,11 @@ from websockets.asyncio.client import connect
 
 
 class TestDevtools(unittest.TestCase):
+    def test_debugger_requires_context_without_crashing(self):
+        """验证缺少 Context 时返回 Python 异常，而不是访问未初始化指针。"""
+        with self.assertRaises(TypeError):
+            pyv8.Debugger()
+
     def test_run_if_waiting_uses_inspector_callback(self):
         """CDP 方法应由 Inspector 解析，不能通过 JSON 文本搜索触发。"""
 

@@ -17,7 +17,6 @@ typedef struct
     PyObject* js_object_cache;
     PyObject* class_template_cache;
     PyObject* py_global;
-    PyObject* scripts;
     bool has_debugger;
     bool has_done;
     double timeout;

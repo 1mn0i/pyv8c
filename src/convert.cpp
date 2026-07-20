@@ -363,8 +363,16 @@ js_from_py_impl(PyObject *value,
         {
             return Local<Value>();
         }
+        if (len > INT_MAX)
+        {
+            PyErr_SetString(PyExc_OverflowError,
+                            "Python string is too large for a V8 string");
+            return Local<Value>();
+        }
         Local<String> js_value;
-        if (!String::NewFromUtf8(isolate, str, NewStringType::kNormal, len).ToLocal(&js_value))
+        if (!String::NewFromUtf8(
+                isolate, str, NewStringType::kNormal,
+                static_cast<int>(len)).ToLocal(&js_value))
         {
             PyErr_SetString(PyExc_RuntimeError, "failed to create JavaScript string");
             return Local<Value>();
@@ -396,15 +404,22 @@ js_from_py_impl(PyObject *value,
         }
         else if (PyLong_Check(value))
         {
-            long long_value = PyLong_AsLong(value);
-            if (PyErr_Occurred())
+            long long long_value = PyLong_AsLongLong(value);
+            if (!PyErr_Occurred() &&
+                long_value >= INT32_MIN && long_value <= INT32_MAX)
             {
-                PyErr_Clear();
-                js_value = Number::New(isolate, static_cast<double>(PyLong_AsLongLong(value)));
+                js_value = Integer::New(isolate, static_cast<int32_t>(long_value));
             }
             else
             {
-                js_value = Integer::New(isolate, long_value);
+                // JavaScript numbers can represent integers larger than Int32,
+                // but Python conversion must still report values that cannot be
+                // converted to a finite JavaScript Number.
+                PyErr_Clear();
+                double double_value = PyLong_AsDouble(value);
+                if (PyErr_Occurred())
+                    return Local<Value>();
+                js_value = Number::New(isolate, double_value);
             }
         }
         else
@@ -741,14 +756,19 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
     }
     if (PyObject_TypeCheck(value, js_exception_type))
     {
-        js_exception* py_exception = (js_exception*)value;
-        if (py_exception->isolate_state != isolate_state)
+        JsExceptionState* state = js_exception_get_state(value);
+        if (state == nullptr)
+        {
+            PyErr_Clear();
+            return exception;
+        }
+        if (state->isolate_state != isolate_state)
         {
             PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
         }
         else
         {
-            exception = py_exception->exception.Get(isolate).As<Object>();
+            exception = state->exception.Get(isolate).As<Object>();
         }
     }
     else if (strcmp(exc_type_name, "V8TypeError") == 0)

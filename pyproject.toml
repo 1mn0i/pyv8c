@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyv8"
-version = "2.1.1"
+version = "2.1.2"
 description = "Python bindings for the V8 JavaScript engine"
 readme = "README.md"
 authors = [

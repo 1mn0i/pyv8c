@@ -1,6 +1,10 @@
 #include "Faker.h"
 #include "../runtime.h"
 #include "../isolate_state.h"
+#include "../convert.h"
+
+#include <climits>
+#include <memory>
 
 using namespace v8;
 
@@ -15,23 +19,29 @@ MaybeLocal<String> ReadFile(Isolate* isolate, const char* name) {
     FILE* file = fopen(name, "rb");
     if (file == NULL) return MaybeLocal<String>();
 
-    fseek(file, 0, SEEK_END);
-    size_t size = ftell(file);
-    rewind(file);
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return MaybeLocal<String>();
+    }
+    long file_size = ftell(file);
+    if (file_size < 0 || file_size > INT_MAX || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return MaybeLocal<String>();
+    }
+    size_t size = static_cast<size_t>(file_size);
 
-    char* chars = new char[size + 1];
+    std::unique_ptr<char[]> chars(new (std::nothrow) char[size + 1]);
+    if (!chars) {
+        fclose(file);
+        return MaybeLocal<String>();
+    }
     chars[size] = '\0';
-    for (size_t i = 0; i < size;) {
-        i += fread(&chars[i], 1, size - i, file);
-        if (ferror(file)) {
-            fclose(file);
-            return MaybeLocal<String>();
-        }
+    if (fread(chars.get(), 1, size, file) != size || ferror(file)) {
+        fclose(file);
+        return MaybeLocal<String>();
     }
     fclose(file);
-    MaybeLocal<String> result = String::NewFromUtf8(isolate, chars, NewStringType::kNormal, static_cast<int>(size));
-    delete[] chars;
-    return result;
+    return String::NewFromUtf8(isolate, chars.get(), NewStringType::kNormal, static_cast<int>(size));
 }
 
 void ReportException(Isolate* isolate, TryCatch* try_catch) {
@@ -124,13 +134,18 @@ void DocumentAllCallback(const FunctionCallbackInfo<Value>& info) {
         info.GetReturnValue().SetNull();
     }
     else {
-        Local<Value> param[10];
+        V8ValueArguments arguments(info.Length());
+        if (!arguments.valid()) {
+            isolate->ThrowException(Exception::Error(V8String(isolate, "failed to allocate callback arguments")));
+            return;
+        }
         for (int i = 0; i < info.Length(); i++) {
-            param[i] = info[i];
+            arguments.data()[i] = info[i];
         }
         Local<Function> call_all = info.Data().As<Function>();
-        Local<Value> result = call_all->Call(context, Null(isolate), info.Length(), param).ToLocalChecked();
-        info.GetReturnValue().Set(result);
+        Local<Value> result;
+        if (call_all->Call(context, Null(isolate), info.Length(), arguments.data()).ToLocal(&result))
+            info.GetReturnValue().Set(result);
     }
 
 }
@@ -139,9 +154,13 @@ void NativeWrapperCallback(const FunctionCallbackInfo<Value>& info) {
     Isolate* isolate = info.GetIsolate();
     Local<Context> context = isolate->GetCurrentContext();
 
-    Local<Value> param[10];
+    V8ValueArguments arguments(info.Length());
+    if (!arguments.valid()) {
+        isolate->ThrowException(Exception::Error(V8String(isolate, "failed to allocate callback arguments")));
+        return;
+    }
     for (int i = 0; i < info.Length(); i++) {
-        param[i] = info[i];
+        arguments.data()[i] = info[i];
     }
 
     Local<Object> handler = info.Data().As<Object>();
@@ -151,7 +170,7 @@ void NativeWrapperCallback(const FunctionCallbackInfo<Value>& info) {
         .As<Function>();
 
     TryCatch tryCatch(isolate);
-    MaybeLocal<Value> maybe_result = func->Call(context, info.This(), info.Length(), param);
+    MaybeLocal<Value> maybe_result = func->Call(context, info.This(), info.Length(), arguments.data());
     Local<Value> result;
     if (tryCatch.HasCaught()) {
         result = tryCatch.Exception();
@@ -205,6 +224,11 @@ void Faker::RunJS(const FunctionCallbackInfo<Value>& info) {
         return;
     }
     HandleScope handle_scope(info.GetIsolate());
+    if (!info[0]->IsString()) {
+        info.GetIsolate()->ThrowException(
+            Exception::TypeError(V8String(info.GetIsolate(), "source must be a string")));
+        return;
+    }
     Local<String> source = info[0].As<String>();
     if (!ExecuteString(info.GetIsolate(), source, info[1], false, true)) {
         info.GetIsolate()->ThrowError("Error executing js");

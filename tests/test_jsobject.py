@@ -156,6 +156,29 @@ class TestJSObject(unittest.TestCase):
         
         # 它们应该相等
         self.assertEqual(obj1, obj2)
+        self.assertFalse(obj1 != obj2)
+        with self.assertRaises(TypeError):
+            _ = obj1 < obj2
+
+    def test_uninitialized_js_object_reports_runtime_error(self):
+        """验证手工创建的包装对象不会以无异常 NULL 返回给 Python。"""
+
+        class DetachedJSObject(pyv8.JSObject):
+            pass
+
+        detached = DetachedJSObject()
+        with self.assertRaisesRegex(RuntimeError, "no active V8 isolate"):
+            _ = detached.missing
+
+    def test_repr_honors_context_timeout(self):
+        """验证自定义 toString 不会让 Python repr 永久阻塞。"""
+        self.context.timeout = 0.05
+        value = self.context.glob
+        self.context.exec_js(
+            "globalThis.toString = function () { while (true) {} }"
+        )
+        with self.assertRaises(pyv8.JavaScriptTerminated):
+            repr(value)
     
     def test_js_object_function(self):
         """测试JavaScript对象函数调用"""

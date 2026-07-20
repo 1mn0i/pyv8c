@@ -6,6 +6,12 @@
 
 using namespace v8;
 
+struct DebuggerState
+{
+    std::unique_ptr<V8Inspector> inspector;
+    std::unique_ptr<V8InspectorSession> session;
+};
+
 
 PyMethodDef debugger_methods[] = {
     {"send", (PyCFunction)debugger_send, METH_O, NULL},
@@ -46,21 +52,36 @@ debugger_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
     debugger_c* self = (debugger_c*)PyType_GenericAlloc(type, 0);
 
     PyErr_PROPAGATE(self);
+    self->context = NULL;
     self->client = NULL; // indicate the object has not been initialized
+    self->channel = NULL;
+    self->state = NULL;
+    self->scripts = NULL;
     return (PyObject*)self;
 }
 
 int 
 debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs)
 {
-    context_c* context;
-    if (PyArg_ParseTuple(args, "O", &context) < 0) {
+    if (self->client != NULL || self->state != NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "Debugger is already initialized");
         return -1;
     }
+    PyObject* context_object = NULL;
+    static const char* keywords[] = {"context", NULL};
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwargs, "O:Debugger", const_cast<char**>(keywords), &context_object)) {
+        return -1;
+    }
+    context_c* context = (context_c*)context_object;
     if (!PyObject_TypeCheck((PyObject*)context, context_type) ||
         context->isolate_state == nullptr || !context->isolate_state->require_active()) {
         if (!PyErr_Occurred())
             PyErr_SetString(PyExc_TypeError, "context must be an active Context instance");
+        return -1;
+    }
+    if (context->has_debugger) {
+        PyErr_SetString(PyExc_ValueError, "specified context already has a debugger attached");
         return -1;
     }
     IN_ISOLATE(context->isolate_state);
@@ -68,18 +89,46 @@ debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs)
     Py_INCREF(context);
     self->context = context;
     Local<Context> js_context = context->js_context.Get(isolate);
-
-    if (context->has_debugger) {
-        PyErr_SetString(PyExc_ValueError, "specified context already has a debugger attached");
-        return -1;
-    }
     context->has_debugger = true;
 
-    self->client = new V8PyInspectorClient(self);
-    self->inspector = V8Inspector::create(isolate, self->client);
-    self->inspector->contextCreated(V8ContextInfo(js_context, 1, StringView()));
-    self->channel = new V8PyChannel(self);
-    self->session = self->inspector->connect(1, self->channel, StringView(), v8_inspector::V8Inspector::kFullyTrusted);
+    std::unique_ptr<DebuggerState> state(new (std::nothrow) DebuggerState());
+    std::unique_ptr<V8PyInspectorClient> client(new (std::nothrow) V8PyInspectorClient(self));
+    std::unique_ptr<V8PyChannel> channel(new (std::nothrow) V8PyChannel(self));
+    if (!state || !client || !channel) {
+        context->has_debugger = false;
+        Py_CLEAR(self->context);
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    self->client = client.get();
+    self->channel = channel.get();
+    self->state = state.get();
+    state->inspector = V8Inspector::create(isolate, self->client);
+    if (!state->inspector) {
+        self->client = NULL;
+        self->channel = NULL;
+        self->state = NULL;
+        context->has_debugger = false;
+        Py_CLEAR(self->context);
+        PyErr_SetString(PyExc_RuntimeError, "failed to create V8 inspector");
+        return -1;
+    }
+    state->inspector->contextCreated(V8ContextInfo(js_context, 1, StringView()));
+    state->session = state->inspector->connect(
+        1, self->channel, StringView(), v8_inspector::V8Inspector::kFullyTrusted);
+    if (!state->session) {
+        self->client = NULL;
+        self->channel = NULL;
+        self->state = NULL;
+        context->has_debugger = false;
+        Py_CLEAR(self->context);
+        PyErr_SetString(PyExc_RuntimeError, "failed to create V8 inspector session");
+        return -1;
+    }
+    client.release();
+    channel.release();
+    state.release();
 
     return 0;
 }
@@ -106,11 +155,19 @@ V8PyChannel::handle_message(const std::unique_ptr<StringBuffer>& message)
         string = PyUnicode_DecodeUTF16((const char*)stringview.characters16(), stringview.length() * 2, NULL, NULL);
 
     PyObject* self = (PyObject*)debugger_;
+    if (message == nullptr)
+        return;
     if (PyObject_HasAttrString(self, "handle")) {
-        if (PyObject_CallMethod(self, (char*)"handle", (char*)"O", string) == NULL) {
+        PyObject* result = string == nullptr ? NULL :
+            PyObject_CallMethod(self, (char*)"handle", (char*)"O", string);
+        if (result == NULL) {
             PyErr_WriteUnraisable(self);
         }
+        else {
+            Py_DECREF(result);
+        }
     }
+    Py_XDECREF(string);
 }
 
 void 
@@ -143,7 +200,7 @@ V8PyInspectorClient::quitMessageLoopOnPause()
 PyObject * 
 debugger_send(debugger_c* self, PyObject* message)
 {
-    if (self->client == NULL) {
+    if (self->client == NULL || self->state == NULL || self->state->session == nullptr) {
         PyErr_SetString(PyExc_RuntimeError, "__init__ has not yet been called");
         return NULL;
     }
@@ -168,13 +225,13 @@ debugger_send(debugger_c* self, PyObject* message)
     std::unique_ptr<StringBuffer> stringview = StringBuffer::create(StringView(command_bytes, length));
 
     if (stringview.get() == NULL) return NULL;
-    self->session.get()->dispatchProtocolMessage(stringview.get()->string());
+    self->state->session->dispatchProtocolMessage(stringview.get()->string());
 
     if (self->client->consumeRunIfWaitingForDebuggerRequest()) {
         std::string_view reason = "run script";
         StringView inspector_reason(
             reinterpret_cast<const uint8_t*>(reason.data()), reason.size());
-        self->session->schedulePauseOnNextStatement(
+        self->state->session->schedulePauseOnNextStatement(
             inspector_reason, inspector_reason);
         call_self(self, "run_js");
     }
@@ -187,8 +244,12 @@ debugger_dealloc(debugger_c* self)
     IsolateState* isolate_state = self->context == nullptr ? nullptr : self->context->isolate_state;
     if (isolate_state != nullptr && isolate_state->is_active()) {
         IN_ISOLATE(isolate_state);
-        self->session.reset();
-        self->inspector.reset();
+        delete self->state;
+        self->state = NULL;
+    }
+    else {
+        delete self->state;
+        self->state = NULL;
     }
     delete self->client;
     delete self->channel;

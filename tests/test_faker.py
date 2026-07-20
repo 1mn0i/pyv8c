@@ -107,5 +107,26 @@ class TestFaker(unittest.TestCase):
         with self.assertRaises(pyv8.JSException):
             self.context.fn5()
 
+    def test_callbacks_forward_more_than_ten_arguments(self):
+        """验证 Faker 回调不会因参数超过内置缓存大小而越界。"""
+        result = self.context.exec_js(r"""
+            const args = Array.from({length: 32}, (_, index) => index);
+            const documentAll = faker.new_document_all(function () {
+                return arguments.length;
+            });
+            const nativeWrapper = faker.native_wrapper({
+                cb: function () {
+                    return arguments.length;
+                }
+            });
+            [documentAll(...args), nativeWrapper(...args)];
+        """)
+        self.assertEqual(result, [32, 32])
+
+    def test_run_js_requires_string_source(self):
+        """验证 faker.run_js 对非字符串源码返回 JavaScript 类型错误。"""
+        with self.assertRaises(pyv8.JSException):
+            self.context.exec_js("faker.run_js(1, 'test.js')")
+
 if __name__ == "__main__":
     unittest.main()

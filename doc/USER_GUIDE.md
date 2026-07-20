@@ -1,6 +1,6 @@
 # pyv8 使用指南
 
-本文档对应 pyv8 2.1.1。默认验证环境为 CPython 3.10 至 3.14、V8 15.2.20.1。
+本文档对应 pyv8 2.1.2。默认验证环境为 CPython 3.10 至 3.14、V8 15.2.20.1。
 
 pyv8 的主要目标不是替代浏览器，而是提供一组足够底层的 Python/V8 桥接 API，
 用于构造接近 Chromium 行为的原型对象、构造器、属性描述符和 property interceptor。
@@ -39,7 +39,7 @@ Windows 是当前主要开发和完整测试平台。Windows 源码构建建议�
 ### 安装预编译 wheel
 
 ```bash
-python -m pip install path/to/pyv8-2.1.1-cp310-abi3-<platform>.whl
+python -m pip install path/to/pyv8-2.1.2-cp310-abi3-<platform>.whl
 ```
 
 `cp310-abi3` 表示同一 wheel 可以被 CPython 3.10 至 3.14 加载。ABI3 不会让二进制跨
@@ -1291,4 +1291,3 @@ ws=127.0.0.1:9005
 
 某个 Python 进程已经加载该文件，Windows 会锁定正在使用的 DLL。退出对应 Python、测试
 或 DevTools 进程后，再执行 `build_ext --inplace`。
-

@@ -116,24 +116,40 @@ bool cross_origin_access_check(
     v8::Local<v8::Context> accessing_context,
     v8::Local<v8::Object> accessed_object,
     v8::Local<v8::Value> unused_data) {
-    context_c* accessing_ctx_c = (context_c*)v8_compat::external_value(
-        accessing_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
+    context_c* accessing_ctx_c = v8_compat::context_embedder_pointer<context_c>(
+        accessing_context, CONTEXT_OBJECT_SLOT);
+    if (accessing_ctx_c == nullptr || accessing_ctx_c->py_global == nullptr)
+        return false;
     PyObject* accessor = accessing_ctx_c->py_global;
 
     Local<Context> accessed_context;
     if (!accessed_object->GetCreationContext().ToLocal(&accessed_context))
         return false;
 
-    context_c* interviewee_ctx_c = (context_c*)v8_compat::external_value(
-        accessed_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
+    context_c* interviewee_ctx_c = v8_compat::context_embedder_pointer<context_c>(
+        accessed_context, CONTEXT_OBJECT_SLOT);
+    if (interviewee_ctx_c == nullptr || interviewee_ctx_c->py_global == nullptr)
+        return false;
     PyObject* interviewee = interviewee_ctx_c->py_global;
-    if (PyObject_HasAttrString(interviewee, "__v8_cross_origin_check__")) {
-        Py_INCREF(accessor);
-        PyObject* value = PyObject_CallMethod(
-            interviewee, "__v8_cross_origin_check__", "O", accessor);
-        if (value == Py_False)
-            return false;
-        Py_XDECREF(value);
+    PyObject* checker = PyObject_GetAttrString(
+        interviewee, "__v8_cross_origin_check__");
+    if (checker == nullptr) {
+        if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+            PyErr_Clear();
+            return true;
+        }
+        PyErr_Clear();
+        return false;
     }
+    PyObject* value = PyObject_CallFunctionObjArgs(checker, accessor, nullptr);
+    Py_DECREF(checker);
+    if (value == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    bool allowed = value != Py_False;
+    Py_DECREF(value);
+    if (!allowed)
+        return false;
     return true;
 }

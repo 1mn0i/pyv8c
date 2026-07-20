@@ -133,5 +133,21 @@ class TestJSTypedArray(unittest.TestCase):
         )
         self.assertEqual(result, [True, 2, 4])
 
+    def test_array_buffer_view_preserves_requested_element_type(self):
+        """验证从 ArrayBuffer 创建视图时使用请求的元素类型。"""
+        source_view = self.context.exec_js(
+            "new Uint8Array(new ArrayBuffer(8), 0, 8)"
+        )
+
+        def make_int32_view():
+            return pyv8.JSTypeArray(source_view, pyv8.ArrayType.Int32Array)
+
+        self.context.expose(make_int32_view)
+        result = self.context.exec_js(
+            "const view = make_int32_view(); "
+            "[view instanceof Int32Array, view.length, view.byteLength]"
+        )
+        self.assertEqual(result, [True, 2, 8])
+
 if __name__ == "__main__":
     unittest.main()

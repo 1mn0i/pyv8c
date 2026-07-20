@@ -1,6 +1,7 @@
 #include <Python.h>
 #include "pyv8.h"
 #include <v8.h>
+#include <new>
 #include <sstream>
 
 #include "script.h"
@@ -16,20 +17,59 @@ PyGetSetDef js_exception_getsets[] = {
 
 // For ABI3 compatibility, we'll define the type using PyType_Spec
 static PyType_Slot js_exception_slots[] = {
-    //{Py_tp_base, (void*)PyExc_Exception},
-    {Py_tp_dealloc, (void*)js_exception_dealloc},
     {Py_tp_getset, js_exception_getsets},
     {Py_tp_doc, (void*)"v8 Exception"},
     {0, NULL} };
 
 static PyType_Spec js_exception_spec = {
     "_pyv8.JSException",
-    sizeof(js_exception),
+    0,
     0,
     Py_TPFLAGS_DEFAULT,
     js_exception_slots };
 
 PyTypeObject* js_exception_type = NULL;
+
+namespace
+{
+constexpr const char* kExceptionStateAttribute = "_pyv8_exception_state";
+constexpr const char* kExceptionStateCapsule = "pyv8.JSExceptionState";
+
+void release_exception_state(JsExceptionState* state)
+{
+    if (state == nullptr)
+        return;
+    state->exception.Reset();
+    state->message.Reset();
+    if (state->retained_handle && state->isolate_state != nullptr)
+        state->isolate_state->release_v8_handle();
+    Py_XDECREF(state->py_context);
+    Py_XDECREF(state->py_isolate);
+    delete state;
+}
+
+void exception_state_capsule_destructor(PyObject* capsule)
+{
+    void* pointer = PyCapsule_GetPointer(capsule, kExceptionStateCapsule);
+    if (pointer == nullptr) {
+        PyErr_Clear();
+        return;
+    }
+    release_exception_state(static_cast<JsExceptionState*>(pointer));
+}
+}
+
+JsExceptionState*
+js_exception_get_state(PyObject* exception)
+{
+    PyObject* capsule = PyObject_GetAttrString(exception, kExceptionStateAttribute);
+    if (capsule == nullptr)
+        return nullptr;
+    JsExceptionState* state = static_cast<JsExceptionState*>(
+        PyCapsule_GetPointer(capsule, kExceptionStateCapsule));
+    Py_DECREF(capsule);
+    return state;
+}
 
 int 
 js_exception_type_init()
@@ -107,7 +147,7 @@ extract_exception(Isolate* isolate, Local<Value> exception, Local<Message> messa
 
         oss << "\n";
         Local<StackTrace> stack_trace = message->GetStackTrace();
-        for (int i = 0; i < stack_trace->GetFrameCount(); i++)
+        for (int i = 0; !stack_trace.IsEmpty() && i < stack_trace->GetFrameCount(); i++)
         {
             v8::Handle<v8::StackFrame> frame = stack_trace->GetFrame(isolate, i);
             v8::String::Utf8Value funcName(isolate, frame->GetFunctionName()), scriptName(isolate, frame->GetScriptName());
@@ -145,75 +185,76 @@ js_exception_new(Local<Value> exception, Local<Message> message)
     HandleScope hs(isolate);
     Local<Context> no_ctx;
 
-    js_exception* self = (js_exception*)PyType_GenericAlloc(js_exception_type, 0);
-    PyErr_PROPAGATE(self);
-    self->isolate_state = isolate_state;
-    self->exception.Reset(isolate, exception);
-    self->message.Reset(isolate, message);
+    const std::string msg = extract_exception(isolate, exception, message);
+    PyObject* py_message = PyUnicode_DecodeUTF8(msg.c_str(), msg.size(), NULL);
+    if (py_message == NULL)
+        return NULL;
+    PyObject* self = PyObject_CallFunctionObjArgs(
+        (PyObject*)js_exception_type, py_message, NULL);
+    Py_DECREF(py_message);
+    if (self == NULL)
+        return NULL;
+
+    JsExceptionState* state = new (std::nothrow) JsExceptionState{
+        isolate_state, {}, {}, nullptr, nullptr, false};
+    if (state == nullptr) {
+        Py_DECREF(self);
+        PyErr_NoMemory();
+        return NULL;
+    }
+    state->exception.Reset(isolate, exception);
+    state->message.Reset(isolate, message);
     isolate_state->retain_v8_handle();
+    state->retained_handle = true;
     Local<Context> context = isolate->GetCurrentContext();
     if (!context.IsEmpty()) {
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
-            self->py_context = (PyObject*)v8_compat::external_value(context_data);
-            Py_INCREF(self->py_context);
-            context_c* py_context = (context_c*)self->py_context;
+            state->py_context = (PyObject*)v8_compat::external_value(context_data);
+            Py_INCREF(state->py_context);
+            context_c* py_context = (context_c*)state->py_context;
             if (py_context->py_isolate != nullptr) {
-                self->py_isolate = py_context->py_isolate;
-                Py_INCREF(self->py_isolate);
+                state->py_isolate = py_context->py_isolate;
+                Py_INCREF(state->py_isolate);
             }
         }
     }
-    const std::string msg = extract_exception(isolate, exception, message);
-    PyObject* py_message = PyUnicode_DecodeUTF8(msg.c_str(), msg.size(), NULL);
-    if (py_message == NULL) {
-        Py_DECREF((PyObject*)self);
+    PyObject* capsule = PyCapsule_New(
+        state, kExceptionStateCapsule, exception_state_capsule_destructor);
+    if (capsule == NULL) {
+        release_exception_state(state);
+        Py_DECREF(self);
         return NULL;
     }
-    self->args = PyTuple_New(1);
-    if (self->args == NULL) {
-        Py_DECREF(py_message);
-        Py_DECREF((PyObject*)self);
+    if (PyObject_SetAttrString(self, kExceptionStateAttribute, capsule) < 0) {
+        Py_DECREF(capsule);
+        Py_DECREF(self);
         return NULL;
     }
-    PyTuple_SetItem(self->args, 0, py_message);
-    return (PyObject*)self;
+    Py_DECREF(capsule);
+    return self;
 }
 
 PyObject * 
-js_exception_get_value(js_exception* self, void* args)
+js_exception_get_value(PyObject* self, void* args)
 {
-    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+    JsExceptionState* state = js_exception_get_state(self);
+    if (state == nullptr) {
+        if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+            PyErr_Clear();
+            PyErr_SetString(PyExc_RuntimeError,
+                            "JSException was not created from a V8 exception");
+        }
         return NULL;
-    IN_ISOLATE(self->isolate_state);
+    }
+    if (state->isolate_state == nullptr || !state->isolate_state->require_active())
+        return NULL;
+    IN_ISOLATE(state->isolate_state);
 
     const std::string msg = extract_exception(
-        isolate, self->exception.Get(isolate), self->message.Get(isolate));
+        isolate, state->exception.Get(isolate), state->message.Get(isolate));
     PyObject* py_message = PyUnicode_DecodeUTF8(msg.c_str(), msg.size(), NULL);
     return py_message;
-}
-
-
-void 
-js_exception_dealloc(js_exception* self)
-{
-    if (!self->exception.IsEmpty() || !self->message.IsEmpty()) {
-        self->exception.Reset();
-        self->message.Reset();
-        if (self->isolate_state != nullptr)
-            self->isolate_state->release_v8_handle();
-    }
-    Py_XDECREF(self->py_context);
-    Py_XDECREF(self->py_isolate);
-    self->isolate_state = nullptr;
-    Py_XDECREF(self->dict);
-    Py_XDECREF(self->args);
-    Py_XDECREF(self->notes);
-    Py_XDECREF(self->traceback);
-    Py_XDECREF(self->context);
-    Py_XDECREF(self->cause);
-    //Py_TYPE(self)->tp_free((PyObject*)self);
-    TP_FREE_ABI3(js_exception_type, self);
 }
 
 
@@ -317,13 +358,14 @@ js_throw_py()
 
     Local<Object> exception;
     if (PyObject_TypeCheck(exc_value, js_exception_type)) {
-        js_exception* py_exception = (js_exception*)exc_value;
-        if (py_exception->isolate_state != isolate_state) {
+        JsExceptionState* state = js_exception_get_state(exc_value);
+        if (state == nullptr || state->isolate_state != isolate_state) {
+            PyErr_Clear();
             exception = Exception::Error(
                 V8String(isolate, "JavaScript value belongs to another isolate")).As<Object>();
         }
         else {
-            exception = py_exception->exception.Get(isolate).As<Object>();
+            exception = state->exception.Get(isolate).As<Object>();
         }
     }
     else if (strcmp(exc_type_name, "V8TypeError") == 0)

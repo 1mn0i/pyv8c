@@ -33,10 +33,40 @@ class DevtoolsDebugger(_pyv8.Debugger):
         self.outgoing_queue = None
         self.ws_lock = threading.RLock()
 
-        signal.signal(signal.SIGTERM, self._signal_shutdown)
-        signal.signal(signal.SIGINT, self._signal_shutdown)
+        self._signal_handlers = {}
+        self._install_signal_handlers()
+
+    def _install_signal_handlers(self):
+        """只在主线程安装信号处理器，并保存宿主程序原有处理器。"""
+        if threading.current_thread() is not threading.main_thread():
+            return
+
+        signals = [signal.SIGTERM, signal.SIGINT]
         if hasattr(signal, "SIGBREAK"):
-            signal.signal(signal.SIGBREAK, self._signal_shutdown)
+            signals.append(signal.SIGBREAK)
+        for signal_number in signals:
+            try:
+                self._signal_handlers[signal_number] = signal.signal(
+                    signal_number, self._signal_shutdown
+                )
+            except (OSError, ValueError):
+                # A host application may have restricted signal installation;
+                # DevTools must remain usable without owning those signals.
+                continue
+
+    def _restore_signal_handlers(self):
+        if not self._signal_handlers or threading.current_thread() is not threading.main_thread():
+            return
+        handler = self._signal_shutdown.__func__
+        for signal_number, previous in list(self._signal_handlers.items()):
+            try:
+                current = signal.getsignal(signal_number)
+                if (getattr(current, "__self__", None) is self and
+                        getattr(current, "__func__", None) is handler):
+                    signal.signal(signal_number, previous)
+            except (OSError, ValueError):
+                pass
+        self._signal_handlers.clear()
 
     def _signal_shutdown(self, signum, _) -> None:
         self.shutdown()
@@ -226,9 +256,18 @@ class DevtoolsDebugger(_pyv8.Debugger):
             future.set_result(None)
 
     def close(self):
-        self.shutdown()
-        if self.server_thread is not None and self.server_thread.is_alive():
-            self.server_thread.join(timeout=5)
+        try:
+            self.shutdown()
+            if self.server_thread is not None and self.server_thread.is_alive():
+                self.server_thread.join(timeout=5)
+        finally:
+            self._restore_signal_handlers()
+
+    def __del__(self):
+        try:
+            self._restore_signal_handlers()
+        except BaseException:
+            pass
 
 
 def start_devtools(context, *args, callback=None, port=9005, host="127.0.0.1"):

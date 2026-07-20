@@ -5,7 +5,8 @@
 
 
 #define TP_FREE_ABI3(type, self)                                            \
-    freefunc free_func = (freefunc)PyType_GetSlot(type, Py_tp_free);        \
+    freefunc free_func = (freefunc)PyType_GetSlot(                          \
+        Py_TYPE((PyObject*)(self)), Py_tp_free);                            \
     if (free_func)                                                          \
         free_func(self);                                                    \
     else                                                                    \

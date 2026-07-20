@@ -165,6 +165,23 @@ class TestChromiumContracts(unittest.TestCase):
             [42, True, False, False, False, 4, False, False, 4],
         )
 
+    def test_invalid_constant_metadata_is_rejected(self):
+        """验证常量配置 tuple 长度错误时不会静默读取越界元素。"""
+
+        class InvalidConstant:
+            __v8_constants_value__ = (("BROKEN",),)
+
+        with self.assertRaisesRegex(TypeError, "exactly 2 items"):
+            self.context.expose(InvalidConstant)
+
+    def test_same_named_classes_are_rejected_in_one_context(self):
+        """验证同一 Context 不会让同名 Python 类互相覆盖模板。"""
+        first = type("DuplicateInterface", (), {})
+        second = type("DuplicateInterface", (), {})
+        self.context.expose(first)
+        with self.assertRaisesRegex(ValueError, "already registered"):
+            self.context.expose(second)
+
     def test_named_and_indexed_interceptor_contract(self):
         """named/indexed interceptor 的五种 handler 应能组合工作。"""
 

@@ -25,7 +25,7 @@ static PyType_Slot js_object_slots[] = {
     {Py_mp_subscript, (void*)js_object_getattro},  // __getitem__
     {Py_mp_ass_subscript, (void*)js_object_setattro},  // __setitem__
     {Py_tp_iter, (void*)js_object_getiter},
-    {Py_tp_richcompare, (void*)js_object_eq},
+    {Py_tp_richcompare, (void*)js_object_richcompare},
     {Py_tp_dealloc, (void*)js_object_dealloc},
     {Py_tp_repr, (void*)js_object_repr},
     {Py_tp_methods, js_object_methods},
@@ -41,6 +41,16 @@ static PyType_Spec js_object_spec = {
 
 
 PyTypeObject *js_object_type = NULL;
+
+bool
+js_object_require_active(const js_object* self)
+{
+    if (self == nullptr || self->isolate_state == nullptr) {
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript object has no active V8 isolate");
+        return false;
+    }
+    return self->isolate_state->require_active();
+}
 
 static bool
 js_object_should_try_python_attribute(js_object* self, PyObject* name)
@@ -183,7 +193,7 @@ js_object_getattro(js_object *self, PyObject *name)
             return attr_value;
     }
 
-    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+    if (!js_object_require_active(self))
         return NULL;
     IN_ISOLATE(self->isolate_state);
     Local<Object> object = self->object.Get(isolate);
@@ -259,7 +269,7 @@ js_object_setattro(js_object *self, PyObject *name, PyObject *value)
         }
     }
 
-    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+    if (!js_object_require_active(self))
         return -1;
     IN_ISOLATE(self->isolate_state);
     Local<Object> object = self->object.Get(isolate);
@@ -305,7 +315,7 @@ js_object_getiter(js_object *self)
 PyObject *
 js_object_dir(js_object *self)
 {
-    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+    if (!js_object_require_active(self))
         return NULL;
     IN_ISOLATE(self->isolate_state);
     Local<Object> object = self->object.Get(isolate);
@@ -363,41 +373,59 @@ js_object_dir(js_object *self)
     return py_properties;
 }
 
-PyObject * 
-js_object_eq(js_object* self, PyObject* other)
+PyObject *
+js_object_richcompare(js_object* self, PyObject* other, int operation)
 {
     if (!PyObject_TypeCheck(other, js_object_type)) {
-        Py_RETURN_FALSE;
+        Py_RETURN_NOTIMPLEMENTED;
+    }
+
+    if (operation != Py_EQ && operation != Py_NE) {
+        Py_RETURN_NOTIMPLEMENTED;
     }
 
     js_object* other_object = (js_object*)other;
-    if (self->isolate_state != other_object->isolate_state)
-        Py_RETURN_FALSE;
-    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+    if (!js_object_require_active(self) || !js_object_require_active(other_object)) {
         return NULL;
+    }
+    if (self->isolate_state != other_object->isolate_state) {
+        if (operation == Py_NE)
+            Py_RETURN_TRUE;
+        Py_RETURN_FALSE;
+    }
     IN_ISOLATE(self->isolate_state);
     JS_TRY;
 
     Local<Object> js_obj = self->object.Get(isolate);
     Local<Object> js_obj_other = other_object->object.Get(isolate);
-    if (js_obj_other.IsEmpty() || js_obj.IsEmpty() || !js_obj->StrictEquals(js_obj_other)) {
-        Py_RETURN_FALSE;
-    }
-    Py_RETURN_TRUE;
+    bool equals = !js_obj_other.IsEmpty() && !js_obj.IsEmpty() &&
+                  js_obj->StrictEquals(js_obj_other);
+    if (operation == Py_NE)
+        equals = !equals;
+    return PyBool_FromLong(equals ? 1 : 0);
 }
 
 PyObject *
 js_object_repr(js_object *self)
 {
-    if (self->isolate_state == nullptr || !self->isolate_state->require_active())
+    if (!js_object_require_active(self))
         return NULL;
     IN_ISOLATE(self->isolate_state);
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
+    TimeoutGuard timeout_guard(context);
+    if (!timeout_guard.start())
+        return NULL;
     Local<String> v8_str;
     MaybeLocal<String> maybe_v8_str = object->ToString(context);
+    if (!timeout_guard.stop())
+        return NULL;
     if (!maybe_v8_str.ToLocal(&v8_str)) {
+        if (tc.HasCaught() && !tc.CanContinue()) {
+            PyErr_SetNone((PyObject*)js_terminated_type);
+            return NULL;
+        }
         return PyUnicode_FromString("[error toString object]");
     }
 

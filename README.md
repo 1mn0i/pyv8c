@@ -7,7 +7,7 @@ pyv8 是一个基于 Google V8 的 CPython C++ 扩展，用于在 Python 中执�
 pyv8 更关注 Chromium-like 构造器、原型链、属性描述符、interceptor、cross-origin
 检查和调用 hook，为批量模拟浏览器内置对象提供底层 API。
 
-当前项目版本为 **2.1.1**，默认验证的 V8 版本记录在 `V8_VERSION`，当前为
+当前项目版本为 **2.1.2**，默认验证的 V8 版本记录在 `V8_VERSION`，当前为
 **15.2.20.1**。
 
 ## 核心能力
@@ -116,7 +116,7 @@ print(context.exec_js("sha256('payload')"))
 下载与目标操作系统和 CPU 架构匹配的 wheel，然后执行：
 
 ```bash
-python -m pip install path/to/pyv8-2.1.1-cp310-abi3-<platform>.whl
+python -m pip install path/to/pyv8-2.1.2-cp310-abi3-<platform>.whl
 ```
 
 `cp310-abi3` wheel 可以由 CPython 3.10 至 3.14 加载，但 Windows、Linux、macOS

@@ -1,6 +1,8 @@
 #include "v8tools.h"
 #include "convert.h"
 
+#include <climits>
+
 using namespace v8;
 
 
@@ -613,81 +615,132 @@ namespace bindings {
     }
 
 
-    void InstallConstantValues(v8::Isolate* isolate,
+    bool InstallConstantValues(v8::Isolate* isolate,
         const char* world,
         v8::Local<v8::FunctionTemplate> interface_template,
         v8::Local<v8::Signature> signature,
         PyObject* configs) {
         if (configs == NULL)
-            return;
+            return true;
 
-        if (!(PyList_Check(configs) || PyTuple_Check(configs)))
-            return;
+        if (!(PyList_Check(configs) || PyTuple_Check(configs))) {
+            PyErr_SetString(PyExc_TypeError, "constant values must be a list or tuple");
+            return false;
+        }
 
-        int length = PySequence_Length(configs);
-        for (int i = 0; i < length; i++) {
+        Py_ssize_t length = PySequence_Length(configs);
+        if (length < 0)
+            return false;
+        for (Py_ssize_t i = 0; i < length; i++) {
 
             PyObject* config = PySequence_GetItem(configs, i);
             if (config == NULL)
-                continue;
+                return false;
 
-            if (!(PyList_Check(config) || PyTuple_Check(config))) {
-                Py_XDECREF(config);
-                continue;
+            if (!(PyList_Check(config) || PyTuple_Check(config)) ||
+                PySequence_Size(config) != 2) {
+                Py_DECREF(config);
+                PyErr_Format(PyExc_TypeError,
+                             "constant value entry %zd must contain exactly 2 items", i);
+                return false;
             }
             ConstantValueConfig v8_config;
 
             PyObject* attr_name = PySequence_GetItem(config, 0);
-            v8_config.name = PyUnicode_AsUTF8_abi3(attr_name);
-            Py_XDECREF(attr_name);
-
             PyObject* attr_value = PySequence_GetItem(config, 1);
-            v8_config.value = PyLong_AsLong(attr_value);
-            Py_XDECREF(attr_value);
+            if (attr_name == NULL || attr_value == NULL || !PyUnicode_Check(attr_name) ||
+                !PyLong_Check(attr_value)) {
+                Py_XDECREF(attr_name);
+                Py_XDECREF(attr_value);
+                Py_DECREF(config);
+                if (!PyErr_Occurred())
+                    PyErr_SetString(PyExc_TypeError,
+                                    "constant value entry must be (str, int)");
+                return false;
+            }
+            v8_config.name = PyUnicode_AsUTF8_abi3(attr_name);
+            v8_config.value = PyLong_AsLongLong(attr_value);
+            if (v8_config.name == nullptr || PyErr_Occurred()) {
+                Py_DECREF(attr_name);
+                Py_DECREF(attr_value);
+                Py_DECREF(config);
+                return false;
+            }
+            if (v8_config.value < INT32_MIN || v8_config.value > UINT32_MAX) {
+                Py_DECREF(attr_name);
+                Py_DECREF(attr_value);
+                Py_DECREF(config);
+                PyErr_Format(PyExc_OverflowError,
+                             "constant value entry %zd is outside the V8 Integer range", i);
+                return false;
+            }
 
             InstallConstantValue(isolate, world, interface_template, signature, v8_config);
 
-            Py_XDECREF(config);
+            Py_DECREF(attr_name);
+            Py_DECREF(attr_value);
+            Py_DECREF(config);
         }
+        return true;
     }
 
 
-    void InstallConstantCallbacks(v8::Isolate* isolate,
+    bool InstallConstantCallbacks(v8::Isolate* isolate,
         const char* world,
         v8::Local<v8::FunctionTemplate> interface_template,
         v8::Local<v8::Signature> signature,
         PyObject* configs) {
         if (configs == NULL)
-            return;
+            return true;
 
-        if (!(PyList_Check(configs) || PyTuple_Check(configs)))
-            return;
+        if (!(PyList_Check(configs) || PyTuple_Check(configs))) {
+            PyErr_SetString(PyExc_TypeError, "constant callbacks must be a list or tuple");
+            return false;
+        }
 
         const bool has_prototype_template = !interface_template->PrototypeTemplate().IsEmpty();
         const v8::PropertyAttribute v8_property_attribute =
             static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontDelete);
 
-        int length = PySequence_Length(configs);
-        for (int i = 0; i < length; i++) {
+        Py_ssize_t length = PySequence_Length(configs);
+        if (length < 0)
+            return false;
+        for (Py_ssize_t i = 0; i < length; i++) {
 
             PyObject* config = PySequence_GetItem(configs, i);
             if (config == NULL)
-                continue;
+                return false;
 
-            if (!(PyList_Check(config) || PyTuple_Check(config))) {
-                Py_XDECREF(config);
-                continue;
+            if (!(PyList_Check(config) || PyTuple_Check(config)) ||
+                PySequence_Size(config) != 2) {
+                Py_DECREF(config);
+                PyErr_Format(PyExc_TypeError,
+                             "constant callback entry %zd must contain exactly 2 items", i);
+                return false;
             }
             ConstantCallbackConfig v8_config;
 
             PyObject* attr_name = PySequence_GetItem(config, 0);
-            v8_config.name = PyUnicode_AsUTF8_abi3(attr_name);
-            Py_XDECREF(attr_name);
-
             PyObject* attr_cb_name = PySequence_GetItem(config, 1);
+            if (attr_name == NULL || attr_cb_name == NULL || !PyUnicode_Check(attr_name) ||
+                !PyUnicode_Check(attr_cb_name)) {
+                Py_XDECREF(attr_name);
+                Py_XDECREF(attr_cb_name);
+                Py_DECREF(config);
+                if (!PyErr_Occurred())
+                    PyErr_SetString(PyExc_TypeError,
+                                    "constant callback entry must be (str, str)");
+                return false;
+            }
+            v8_config.name = PyUnicode_AsUTF8_abi3(attr_name);
             v8_config.callback_name = PyUnicode_AsUTF8_abi3(attr_cb_name);
             v8_config.callback = FakerJsFunctionAccessorNameGetterCallback;
-            Py_XDECREF(attr_cb_name);
+            if (v8_config.name == nullptr || v8_config.callback_name == nullptr) {
+                Py_DECREF(attr_name);
+                Py_DECREF(attr_cb_name);
+                Py_DECREF(config);
+                return false;
+            }
 
             v8::Local<v8::String> name = V8String(isolate, v8_config.name);
             if (has_prototype_template) {
@@ -699,8 +752,11 @@ namespace bindings {
                 name, v8_config.callback, V8String(isolate, v8_config.callback_name), v8_property_attribute,
                 v8::SideEffectType::kHasNoSideEffect);
 
-            Py_XDECREF(config);
+            Py_DECREF(attr_name);
+            Py_DECREF(attr_cb_name);
+            Py_DECREF(config);
         }
+        return true;
     }
 
     void InstallExposedConstruct(v8::Isolate* isolate, v8::Local<v8::ObjectTemplate> instance_template, const char* name) {

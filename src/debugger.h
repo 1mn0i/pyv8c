@@ -12,6 +12,7 @@ using namespace v8_inspector;
 
 class V8PyInspectorClient;
 class V8PyChannel;
+struct DebuggerState;
 
 typedef struct _debugger
 {
@@ -19,8 +20,7 @@ typedef struct _debugger
     context_c* context;
     V8PyInspectorClient* client;
     V8PyChannel* channel;
-    std::unique_ptr<V8Inspector> inspector;
-    std::unique_ptr<V8InspectorSession> session;
+    DebuggerState* state;
     PyObject* scripts;
 } debugger_c;
 

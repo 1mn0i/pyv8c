@@ -126,7 +126,6 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->js_object_cache = NULL;
     self->class_template_cache = PyDict_New();
     self->py_global = global;
-    self->scripts = NULL;
     self->has_debugger = false;
     self->has_done = false;
     self->timeout = timeout;
@@ -204,12 +203,6 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         return NULL;
     }
 
-    self->scripts = PySet_New(NULL);
-    if (self->scripts == NULL) {
-        Py_DECREF((PyObject*)self);
-        return NULL;
-    }
-
     if (global != NULL) {
         if (!py_class_init_js_object(
                 v8_compat::global_template_object(context), global, context)) {
@@ -230,7 +223,6 @@ context_dealloc(context_c *self)
             self->isolate_state->release_v8_handle();
     }
     Py_XDECREF(self->py_global);
-    Py_XDECREF(self->scripts);
 
     if (self->js_object_cache != NULL && PyObject_HasAttrString(self->js_object_cache, "items")) {
         PyObject* items = PyObject_CallMethod(self->js_object_cache, "items", nullptr);
@@ -433,10 +425,6 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     IN_CONTEXT(self->js_context.Get(isolate));
     JS_TRY
 
-    if (PySet_Add(self->scripts, program) < 0) {
-        Py_DECREF(program);
-        return NULL;
-    }
     Local<UnboundScript> unbound_script;
     if (self->has_debugger) {
         MaybeLocal<UnboundScript> maybe_script = script_compile(context, py_script->source, py_script->script_name);
