@@ -155,7 +155,7 @@ PYV8_V8_VERSION=15.2.20.1 \
 PYV8_V8_HOME=/opt/v8 \
 PYV8_V8_OUT=/opt/v8/out/x64.release \
 PYV8_ICU_DATA=/opt/v8/out/x64.release/icudtl.dat \
-python3.10 -m build --wheel
+python -m build --wheel
 ```
 
 `PYV8_V8_OUT` 中必须存在：
@@ -203,12 +203,8 @@ python setup.py build_v8
 python setup.py build_ext --inplace
 ```
 
-`PYV8_VS_HOME` 必须指向 Visual Studio 安装根目录（包含 `VC`、`Common7`），
-不是 `Common7` 子目录；`PYV8_WINDOWS_SDK` 必须指向包含 `Include`、`Lib`
-的 Windows SDK 根目录。当前 depot_tools 的 `autoninja.py` 可能要求 Python
-3.11 或更高版本，构建器在 Windows 上会优先使用已 bootstrap 的
-`.pyv8-build\depot_tools\.cipd_bin\vpython3.exe`，外层 Python 3.10 仍用于
-运行 `setup.py` 和编译 pyv8 扩展。
+`PYV8_VS_HOME` 必须指向 Visual Studio 安装根目录（包含 `VC`、`Common7`），；`PYV8_WINDOWS_SDK` 必须指向包含 `Include`、`Lib`
+的 Windows SDK 根目录。
 
 如果网络受限，可设置 `PYV8_PROXY` 或 `PYV8_NO_PROXY=1`。构建完成后，V8
 产物位于 `.pyv8-build\versions\15.2.20.1\v8\out\pyv8-x64.release`，其中
