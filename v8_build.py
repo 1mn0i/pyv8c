@@ -812,6 +812,15 @@ class V8BuildConfig:
         script = self.depot_tools_home / f"{name}.py"
         if not script.is_file():
             raise V8BuildError(f"depot_tools Python command was not found: {name}")
+        # Current depot_tools scripts may require a newer Python than the
+        # interpreter used to build the extension (for example StrEnum in
+        # autoninja). Prefer the hermetic vpython supplied by depot_tools on
+        # Windows, while retaining the normal interpreter fallback for tests,
+        # source checkouts without a bootstrap, and non-Windows platforms.
+        if os.name == "nt":
+            vpython = self.depot_tools_home / ".cipd_bin" / "vpython3.exe"
+            if vpython.is_file():
+                return [str(vpython), str(script), *arguments]
         return [sys.executable, str(script), *arguments]
 
     @staticmethod
@@ -900,7 +909,7 @@ class V8BuildConfig:
             '    "name": "v8",\n'
             f'    "url": "{V8_GIT_URL}",\n'
             '    "deps_file": "DEPS",\n'
-            '    "custom_deps": {{}},\n'
+            '    "custom_deps": {},\n'
             "  },\n"
             "]\n",
             encoding="utf-8",

@@ -185,6 +185,35 @@ python3.10 -m build --wheel
 | `PYV8_GN_ARGS` | 追加自定义 GN 参数 |
 | `PYV8_TARGET_CPU` | 目标 CPU，目前支持 `x64`、`arm64` |
 
+#### Windows 2026 构建示例
+
+项目的 V8 构建器会下载 `V8_VERSION` 指定的源码 tag，并使用 depot_tools
+同步依赖、生成 GN 配置和执行 Ninja。Windows 上可以显式固定 Visual Studio
+和 Windows SDK，避免机器上存在多个工具链时被自动探测到错误版本：
+
+```powershell
+$env:PYV8_V8_VERSION = "15.2.20.1"
+$env:PYV8_VS_HOME = "D:\soft\Microsoft\vs2026"
+$env:PYV8_VS_VERSION = "2026"
+$env:PYV8_WINDOWS_SDK = "D:\Windows Kits\10"
+$env:PYV8_BUILD_ROOT = "D:\code\pyv8env\_pyv8\.pyv8-build"
+$env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
+
+python setup.py build_v8
+python setup.py build_ext --inplace
+```
+
+`PYV8_VS_HOME` 必须指向 Visual Studio 安装根目录（包含 `VC`、`Common7`），
+不是 `Common7` 子目录；`PYV8_WINDOWS_SDK` 必须指向包含 `Include`、`Lib`
+的 Windows SDK 根目录。当前 depot_tools 的 `autoninja.py` 可能要求 Python
+3.11 或更高版本，构建器在 Windows 上会优先使用已 bootstrap 的
+`.pyv8-build\depot_tools\.cipd_bin\vpython3.exe`，外层 Python 3.10 仍用于
+运行 `setup.py` 和编译 pyv8 扩展。
+
+如果网络受限，可设置 `PYV8_PROXY` 或 `PYV8_NO_PROXY=1`。构建完成后，V8
+产物位于 `.pyv8-build\versions\15.2.20.1\v8\out\pyv8-x64.release`，其中
+`obj\v8_monolith.lib` 和同目录的 `icudtl.dat` 必须来自同一次构建。
+
 ### ICU 数据约束
 
 构建时会计算 `icudtl.dat` 的 SHA-256，并把结果编译进 `_pyv8`。导入 pyv8 时会在

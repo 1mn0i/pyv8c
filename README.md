@@ -161,6 +161,23 @@ python setup.py build_v8 --select --proxy=http://127.0.0.1:7890
 python310 -m build --wheel
 ```
 
+Windows 构建 V8 `15.2.20.1` 时，建议显式设置工具链路径：
+
+```powershell
+$env:PYV8_V8_VERSION = "15.2.20.1"
+$env:PYV8_VS_HOME = "D:\soft\Microsoft\vs2026"
+$env:PYV8_VS_VERSION = "2026"
+$env:PYV8_WINDOWS_SDK = "D:\Windows Kits\10"
+$env:PYV8_BUILD_ROOT = "D:\code\pyv8env\_pyv8\.pyv8-build"
+$env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
+python setup.py build_v8
+python setup.py build_ext --inplace
+```
+
+`PYV8_VS_HOME` 是 Visual Studio 安装根目录，不是 `Common7` 子目录；构建
+过程中 depot_tools 的 Python 脚本优先使用 `.cipd_bin\vpython3.exe`，因此
+外层 Python 3.10 也可以启动当前版本的 `autoninja.py`。
+
 详细的编译器要求、环境变量、自定义 V8 路径和 ICU 数据约束见
 [完整使用指南](doc/USER_GUIDE.md#安装与构建)。
 
