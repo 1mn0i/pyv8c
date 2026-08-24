@@ -1,0 +1,241 @@
+# pyv8c 工作记录
+
+本文按时间记录 pyv8c 的需求、实现、验证和遗留问题。它是历史记录，不是当前状态基线；当前库的真实状态以 [HANDOFF.md](HANDOFF.md) 为准。
+
+## 记录规则
+
+- 每次开发完成后在文末追加一个日期章节，不修改或删除既有记录。
+- 每条记录说明：目标、主要修改、验证结果、未完成事项。
+- 未验证的功能必须明确写成“未验证”或“仍有限制”，不能写成已完成。
+- `_pyv8/` 的修改也在这里记录，但代码提交仍在 `_pyv8` 自己的 Git 仓库完成。
+- 新增能力完成后，同步更新 `HANDOFF.md` 的当前状态；不要只更新工作记录。
+
+## 2026-08-24：当前文档结构整理
+
+### 目标
+
+将架构说明和开发历史分离，避免 HANDOFF.md 继续膨胀并混入过时过程信息。
+
+### 修改
+
+- `HANDOFF.md` 定位为当前库最新状态说明。
+- 新增本文件作为按时间追加的工作记录。
+- 在两个文件中说明相互职责和维护规则。
+
+### 验证
+
+- 已确认 `HANDOFF.md` 和本文件位于 `pyv8env/` 项目目录。
+- 本次只修改文档，未运行代码测试。
+
+## 2026-08-24：V8 15.2.20.1 Windows 构建环境
+
+### 目标
+
+使用项目源码下载并编译 V8 `15.2.20.1`，不使用旧的 `v8.7z` 快照。
+
+### 修改
+
+- 修复 `_pyv8/v8_build.py` 生成 `.gclient` 时的 `custom_deps` 格式错误。
+- Windows 上优先使用 depot_tools 的 `.cipd_bin/vpython3.exe` 执行 GN/autoninja，兼容外层 Python 3.10 与 depot_tools Python 3.11+ 要求。
+- 删除 `_pyv8/v8.7z`。
+- 在 `_pyv8/README.md` 和 `_pyv8/doc/USER_GUIDE.md` 增加 VS 2026、Windows SDK、depot_tools 和构建环境变量说明。
+- 使用的环境变量包括 `PYV8_V8_VERSION`、`PYV8_VS_HOME`、`PYV8_VS_VERSION`、`PYV8_WINDOWS_SDK`、`PYV8_BUILD_ROOT` 和 `DEPOT_TOOLS_WIN_TOOLCHAIN`。
+
+### 提交
+
+- `_pyv8` 已提交构建修复：`5ac3b46`。
+- `_pyv8` 文档修改已提交本地：`83d3027`；该提交是否推送以 `_pyv8` 仓库状态为准。
+
+### 验证和限制
+
+- V8 源码已同步到 `15.2.20.1`，GN 已成功生成 `x64 release` 构建目录。
+- Ninja 编译已启动并持续运行过；完成状态必须以最终 `setup.py build_v8` 退出码和 `v8_monolith.lib` 产物为准。
+- VS 2026 产生的 C++20 标准库弃用警告不是当前已确认的构建错误。
+
+## 2026-08-23 至 2026-08-24：pyv8c 主要能力建设
+
+### 已记录的主要目标和修改
+
+- 创建独立 `pyv8c` 项目，实现 Browser、BrowserContext、Page 和独立 pyv8 Context。
+- 建立显式接口注册表和 renderer baseline，固定 DOM/BOM JavaScript 原型链。
+- 实现 DOM 树、HTML 解析、集合对象、选择器、事件传播和页面生命周期事件。
+- 增加 fetch、XHR、History、iframe、Worker、Blob URL 和 WebSocket 基础能力。
+- 接入可选 cyCronet 真实网络后端，保留 resource_loader 优先级和 Page 线程安全任务队列。
+- 增加 `error.py`，统一 V8 Error、DOMException 和 DOM/BOM/网络异常映射。
+
+### 历史验证记录
+
+- 曾完成 pyv8c 单元、生命周期、网络、错误和 native smoke 测试组；历史记录中最高一次完整结果为 `21 passed`。
+- 曾成功构建 `pyv8c` 纯 Python wheel。
+- cyCronet 原生 HTTP/WebSocket 仍需安装实际依赖后使用本地 fixture server 完成端到端验证。
+
+### 当前已知限制
+
+详细限制以 `HANDOFF.md` 文末“真实遗留问题和后续方向”为准。本记录不复制限制清单，避免状态分叉。
+
+## 历史补录：pyv8c 初始架构和严格原型链
+
+### 目标
+
+在当前目录创建独立的 `pyv8c` 包，以 pyv8 为 JavaScript 执行引擎，提供 Chromium-like BOM/DOM；重点是严格可观察的 JavaScript 原型链，而不是只提供同名 Python 方法。
+
+### 修改
+
+- 创建 `Browser`、`BrowserContext`、`Page` 和独立 Page Context。
+- 以 Python DOM 节点作为唯一真相源，JS wrapper 通过 Page 级缓存暴露。
+- 建立显式接口注册表，禁止根据 Python MRO 自动推断 JavaScript 继承。
+- 固定 `EventTarget -> Node -> Document/Element/HTMLElement`、事件接口链和 Window/Document/BOM 对象模型。
+- 增加 `Object.getPrototypeOf`、`instanceof`、`constructor`、`Symbol.toStringTag` 等原型行为的测试基础。
+
+### 验证
+
+- 建立基础 DOM、原型链和 native 生命周期测试。
+- 初期测试结果记录为 `8 passed`。
+
+### 未完成事项
+
+- 当时仅覆盖首期接口，完整 renderer Web IDL、描述符、mixin 和所有构造器细节尚未实现。
+
+## 历史补录：DOM 集合、解析器、选择器和事件
+
+### 目标
+
+扩展 DOM 树操作、HTML 解析、集合对象、CSS 选择器和事件语义，使页面脚本能够进行常见 DOM 操作。
+
+### 修改
+
+- 增加 `DocumentFragment`、`NodeList`、`HTMLCollection`、`DOMTokenList`、`NamedNodeMap`、`Attr`。
+- 增加 `HTMLUnknownElement`、template、iframe、canvas、media、表单和表格元素映射。
+- 实现实时 `childNodes`、`children`、按标签/类名集合以及索引、`item()`、`namedItem()`。
+- HTML 解析支持 doctype、注释、属性、void 元素、自动闭合、template 内容和 script/style 等原始文本。
+- 选择器改为 AST 表示，支持标签、ID、class、属性比较符、后代/子代/兄弟组合器、分组和常见伪类；非法选择器抛出 SyntaxError。
+- 事件监听器记录 capture、once、passive、signal 和顺序，支持捕获、目标、冒泡、停止传播、默认行为和 `CustomEvent.detail`。
+- 增加 `tools/extract_interfaces.py` 和 `interface-baseline.json`，保存父接口、构造器、标签、成员归属和 mixin 元数据。
+
+### 验证
+
+- 增加 DOM 集合、选择器、事件和 native smoke 测试。
+- 集合、选择器和原型链回归纳入完整测试组。
+
+### 未完成事项
+
+- 完整 Blink 成员描述符、side-effect、Web IDL overload/union 和全部 parser insertion mode 仍未覆盖。
+
+## 历史补录：cyCronet、HTTP、XHR、History 和 WebSocket
+
+### 目标
+
+在保留默认离线行为的前提下，增加可选 cyCronet 真实网络后端和浏览器 WebSocket。
+
+### 修改
+
+- `Browser` 增加 `real_network`、`resource_loader`、`cycronet_options` 配置。
+- resource loader 优先于真实网络；Context 隔离 Cookie、连接和 WebSocket session。
+- 网络线程只通过 `Page.post_task()` 投递结果，不直接访问 V8。
+- 增加 `fetch`、`Request`、`Response`、`Headers`、异步 XHR、CookieJar、基础 CORS、redirect 和 opaque Response。
+- 增加 `History` 的 state、push/replaceState、back/forward/go 和 popstate 基础能力。
+- 登记并实现 `WebSocket`、`MessageEvent`、`CloseEvent`、`ErrorEvent` 的原型链和状态事件。
+- Page、Context、Browser 关闭时清理请求、WebSocket 和 Cronet session。
+- `pyproject.toml` 增加可选 `network` 依赖组。
+
+### 验证
+
+- 增加 fake Cronet、Page 队列、fetch、CORS、WebSocket 和资源 loader 优先级测试。
+- 历史完整测试结果记录为 `13 passed`。
+
+### 未完成事项
+
+- cyCronet 原生依赖在当时未完成本机端到端安装验证，真实 HTTP/WebSocket 需要本地 fixture server。
+- WebSocket Blob/ArrayBuffer 只有基础映射，不是完整 Blob 和二进制 structured clone。
+
+## 历史补录：Worker、Blob URL 和结构化克隆
+
+### 目标
+
+将 Worker 从基础表面扩展为可执行脚本源、独立 Context 和消息生命周期。
+
+### 修改
+
+- Worker 使用独立线程和独立 pyv8 isolate/Context，不共享页面 DOM wrapper。
+- 支持普通 URL 和 `URL.createObjectURL(new Blob([...]))` 生成的 Blob URL 脚本源。
+- Worker 全局对象支持 `self`、`globalThis`、`onmessage`、`onerror`、`postMessage()` 和 `close()`。
+- 页面与 Worker 之间通过线程安全队列传递消息；`terminate()` 停止 Worker。
+- 普通对象、数组、TypedArray、ArrayBuffer 和 Blob 二进制数据执行复制，不跨 isolate 传递句柄。
+- Blob URL 撤销或不存在时转换为 NetworkError。
+
+### 验证
+
+- 增加 Worker Blob URL、双向消息、TypedArray/ArrayBuffer、独立 Context 和 terminate 测试。
+- 历史完整测试结果记录为 `15 passed`。
+
+### 未完成事项
+
+- Worker 仍不是完整浏览器调度器；定时器、fetch、`importScripts`、模块 Worker、Map/Set/循环引用 clone 和 MessagePort 未完整实现。
+
+## 历史补录：页面生命周期和加载事件
+
+### 目标
+
+让 `set_content()`、资源加载、脚本执行、iframe 和 Page close 具备稳定且接近浏览器的生命周期事件顺序。
+
+### 修改
+
+- 引入 navigation generation 和资源等待集合。
+- `Document.readyState` 支持 `loading -> interactive -> complete`。
+- 通过 Page 队列派发 `readystatechange`、`DOMContentLoaded`、资源 load/error、Window load 和 pageshow。
+- 导航/关闭时派发 `beforeunload -> pagehide -> unload`；beforeunload 可取消导航。
+- 外部/内联经典脚本、link、img、media、iframe 进入资源跟踪；旧 generation 回调丢弃。
+- 增加 `HTMLImageElement`、`HTMLScriptElement`、`HTMLLinkElement`、`HTMLStyleElement` 基础属性和事件。
+
+### 验证
+
+- 增加 lifecycle 专项测试，覆盖 readyState、事件冒泡、资源事件、脚本异常和导航取消。
+- 历史完整测试结果记录为 `17 passed`。
+
+### 未完成事项
+
+- async/defer/module script、preload scanner、完整 HTML parser insertion mode、bfcache、布局和渲染仍未实现。
+
+## 历史补录：Error 和 DOMException
+
+### 目标
+
+让 BOM/DOM/网络/Worker/WebSocket 的非法参数和非法状态以 JavaScript 可识别的标准异常呈现。
+
+### 修改
+
+- 新增 `pyv8c/error.py`，包含 V8 Error 家族、DOMException、DOMError 和标准 DOMException 工厂。
+- 增加 `as_js_error()` 作为 Python、Page 队列、网络线程和 Promise 的统一异常转换边界。
+- 将 DOM 节点关系、属性名、选择器、History、XHR、WebSocket、Worker、Blob URL 和关闭状态错误迁移到标准 TypeError、SyntaxError 或 DOMException。
+- 登记 DOMException 接口并测试 constructor、length、name、message、code、instanceof 和 toStringTag。
+
+### 验证
+
+- 增加 `tests/test_errors.py`，覆盖构造器、DOM 非法调用、History SecurityError、fetch reject 和 Python/V8 桥接。
+- 历史完整测试结果记录为 `21 passed`。
+
+### 未完成事项
+
+- 复杂 Web IDL overload/union、精确 receiver 错误文本、完整异常源码栈和 renderer 中 DOMException 成员描述符仍有限制。
+
+## 后续记录模板
+
+复制以下结构追加到文件末尾：
+
+```markdown
+## YYYY-MM-DD：简短主题
+
+### 目标
+
+### 修改
+
+- 
+
+### 验证
+
+- 
+
+### 未完成事项
+
+- 无，或明确列出限制。
+```

@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+build/
+dist/
+*.log
+
+# Local V8/build state
+.pyv8-build/
+.pyv8-version
+.vs/
+*.pdb
+*.obj
+*.lib
+*.exp
+*.dll
