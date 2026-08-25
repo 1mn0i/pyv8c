@@ -1,11 +1,11 @@
 from urllib.parse import urljoin, urlsplit, urlunsplit
 import time
 from .dom import EventTarget
-from .interfaces import interface, js_attributes, js_methods
+from .interfaces import interface, js_attributes, js_methods, js_interface_methods
 from pyv8.tools import ConstructorConfig
 from pyv8.flag import FlagExposed
-from .network import Request, Response, current_page
-from .error import SecurityError, V8URIError, as_js_error
+from .network import Blob, Request, Response, current_page
+from .error import SecurityError, V8URIError, V8TypeError, InvalidStateError
 
 
 @interface("Location", None, constructible=False)
@@ -69,14 +69,65 @@ class Storage:
         except (IndexError, ValueError): return None
 
 
-@interface("URLSearchParams", None, constructible=True)
+@interface("URLSearchParams", None, constructible=True, length=1)
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
 class URLSearchParams:
-    def __init__(self, init="", **_):
+    __v8_method__ = js_methods(
+        ("append", "fn_append", 2, 0), ("delete", "fn_delete", 1, 0),
+        ("get", "fn_get", 1, 1), ("getAll", "fn_getAll", 1, 1),
+        ("has", "fn_has", 1, 1), ("set", "fn_set", 2, 0),
+        ("sort", "fn_sort", 0, 0), ("toString", "fn_toString", 0, 1),
+    )
+
+    def __init__(self, init="", _url=None, **_):
         from urllib.parse import parse_qsl
+        self._url = _url
         self._items = list(parse_qsl(str(init).lstrip("?"), keep_blank_values=True)) if not isinstance(init, dict) else list(init.items())
+
+    def _refresh(self):
+        if self._url is not None:
+            from urllib.parse import parse_qsl
+            self._items = list(parse_qsl(urlsplit(self._url.href).query, keep_blank_values=True))
+
+    def _commit(self):
+        if self._url is not None:
+            from urllib.parse import urlencode
+            self._url._set_search_from_params(urlencode(self._items))
+
+    def fn_append(self, name, value):
+        self._refresh(); self._items.append((str(name), str(value))); self._commit()
+
+    def fn_delete(self, name):
+        self._refresh(); name = str(name); self._items = [(k, v) for k, v in self._items if k != name]; self._commit()
+
+    def fn_get(self, name):
+        self._refresh(); name = str(name)
+        for key, value in self._items:
+            if key == name: return value
+        return pyv8.Null
+
+    def fn_getAll(self, name):
+        self._refresh(); name = str(name); return [value for key, value in self._items if key == name]
+
+    def fn_has(self, name):
+        self._refresh(); name = str(name); return any(key == name for key, _ in self._items)
+
+    def fn_set(self, name, value):
+        self._refresh(); name, value = str(name), str(value)
+        replaced = False; result = []
+        for key, old_value in self._items:
+            if key == name:
+                if not replaced: result.append((name, value)); replaced = True
+            else: result.append((key, old_value))
+        if not replaced: result.append((name, value))
+        self._items = result; self._commit()
+
+    def fn_sort(self):
+        self._refresh(); self._items.sort(key=lambda item: item[0]); self._commit()
+
     def fn_toString(self):
         from urllib.parse import urlencode
+        self._refresh()
         return urlencode(self._items)
 
 
@@ -84,12 +135,125 @@ class URLSearchParams:
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
 class URL:
     def __init__(self, url="", base=None, **_):
-        value = urljoin(str(base or "about:blank"), str(url))
-        if not value or any(ch.isspace() for ch in value): raise V8URIError("Invalid URL")
-        self.href = value
+        self.href = self._resolve(url, base)
+        self._search_params = None
+
+    @staticmethod
+    def _resolve(url, base=None):
+        raw = str(url)
+        if not raw or any(ch.isspace() for ch in raw):
+            raise V8TypeError("Invalid URL")
+        value = raw if base is None else urljoin(str(base), raw)
+        try:
+            parts = urlsplit(value)
+            if not parts.scheme or (parts.scheme in ("http", "https", "ws", "wss", "ftp") and not parts.netloc):
+                raise V8URIError("Invalid URL")
+            parts.port
+        except (ValueError, V8URIError) as exc:
+            if isinstance(exc, V8TypeError): raise
+            raise V8TypeError("Invalid URL") from exc
+        return urlunsplit(parts)
+
+    def _parts(self): return urlsplit(self.href)
+    def _replace(self, *, scheme=None, netloc=None, path=None, query=None, fragment=None):
+        parts = self._parts()
+        self.href = urlunsplit((scheme if scheme is not None else parts.scheme,
+                                netloc if netloc is not None else parts.netloc,
+                                path if path is not None else parts.path,
+                                query if query is not None else parts.query,
+                                fragment if fragment is not None else parts.fragment))
+
+    def _set_search_from_params(self, query): self._replace(query=str(query))
     def get_href(self): return self.href
-    __v8_attribute__ = js_attributes(("href", "get_href", "set_href", 0, 0))
-    def set_href(self, value): self.href = str(value)
+    def set_href(self, value): self.href = self._resolve(value, self.href)
+    def get_origin(self):
+        parts = self._parts()
+        if parts.scheme not in ("http", "https", "ws", "wss", "ftp") or not parts.netloc:
+            return "null"
+        host = parts.hostname or ""
+        if parts.port is not None:
+            host += ":" + str(parts.port)
+        return f"{parts.scheme}://{host}"
+    def get_protocol(self):
+        scheme = self._parts().scheme
+        return scheme + ":" if scheme else ""
+    def set_protocol(self, value): self._replace(scheme=str(value).rstrip(":"))
+    def get_username(self): return self._parts().username or ""
+    def set_username(self, value): self._set_credentials(username=str(value), password=self.get_password())
+    def get_password(self): return self._parts().password or ""
+    def set_password(self, value): self._set_credentials(username=self.get_username(), password=str(value))
+    def _set_credentials(self, *, username, password):
+        parts = self._parts(); host = parts.hostname or ""
+        if parts.port is not None: host += ":" + str(parts.port)
+        credentials = (username + (":" + password if password else "") + "@") if username or password else ""
+        self._replace(netloc=credentials + host)
+    def get_host(self): return self._parts().netloc.rsplit("@", 1)[-1]
+    def set_host(self, value): self._replace(netloc=str(value))
+    def get_hostname(self): return self._parts().hostname or ""
+    def set_hostname(self, value):
+        parts = self._parts(); credentials = parts.netloc.rsplit("@", 1)[0] + "@" if "@" in parts.netloc else ""
+        port = ":" + str(parts.port) if parts.port is not None else ""
+        self._replace(netloc=credentials + str(value) + port)
+    def get_port(self): return str(self._parts().port or "")
+    def set_port(self, value):
+        parts = self._parts(); credentials = parts.netloc.rsplit("@", 1)[0] + "@" if "@" in parts.netloc else ""
+        self._replace(netloc=credentials + (parts.hostname or "") + ((":" + str(value)) if str(value) else ""))
+    def get_pathname(self):
+        path = self._parts().path
+        return path or ("/" if self._parts().netloc else "")
+    def set_pathname(self, value): self._replace(path=str(value) or "/")
+    def get_search(self):
+        query = self._parts().query
+        return ("?" + query) if query else ""
+    def set_search(self, value): self._replace(query=str(value).lstrip("?"))
+    def get_hash(self):
+        fragment = self._parts().fragment
+        return ("#" + fragment) if fragment else ""
+    def set_hash(self, value): self._replace(fragment=str(value).lstrip("#"))
+    def get_searchParams(self):
+        if self._search_params is None:
+            self._search_params = URLSearchParams(self.get_search(), _url=self)
+        return self._search_params
+    def fn_toString(self): return self.href
+    def fn_toJSON(self): return self.href
+
+    @staticmethod
+    def fn_canParse(url, base=None):
+        try: URL(url, base)
+        except (V8URIError, TypeError, ValueError): return False
+        return True
+
+    @staticmethod
+    def fn_parse(url, base=None):
+        try: return URL(url, base)
+        except (V8URIError, TypeError, ValueError): return pyv8.Null
+
+    @staticmethod
+    def fn_createObjectURL(blob):
+        page = current_page()
+        if page is None or page.closed: raise InvalidStateError("The execution context is no longer active")
+        if not isinstance(blob, Blob): raise V8TypeError("The object is not a Blob")
+        return page.context_owner.create_blob_url(blob, page=page)
+
+    @staticmethod
+    def fn_revokeObjectURL(url):
+        page = current_page()
+        if page is None or page.closed: raise InvalidStateError("The execution context is no longer active")
+        page.context_owner.revoke_blob_url(str(url))
+
+    __v8_attribute__ = js_attributes(
+        ("href", "get_href", "set_href", 0, 0), ("origin", "get_origin", None, 0, 1),
+        ("protocol", "get_protocol", "set_protocol", 0, 0), ("username", "get_username", "set_username", 0, 0),
+        ("password", "get_password", "set_password", 0, 0), ("host", "get_host", "set_host", 0, 0),
+        ("hostname", "get_hostname", "set_hostname", 0, 0), ("port", "get_port", "set_port", 0, 0),
+        ("pathname", "get_pathname", "set_pathname", 0, 0), ("search", "get_search", "set_search", 0, 0),
+        ("searchParams", "get_searchParams", None, 0, 1), ("hash", "get_hash", "set_hash", 0, 0),
+    )
+    __v8_method__ = js_methods(("toString", "fn_toString", 0, 1), ("toJSON", "fn_toJSON", 0, 1)) + js_interface_methods(
+        ("canParse", "fn_canParse", 1, 1), ("parse", "fn_parse", 1, 1),
+        ("createObjectURL", "fn_createObjectURL", 1, 0),
+        ("revokeObjectURL", "fn_revokeObjectURL", 1, 0),
+    )
 
 
 @interface("History", None, constructible=False)
@@ -119,13 +283,13 @@ class History:
         self._index = target; self._page.window.location.href = self._entries[target][0]; self._page.window.fn_dispatchEvent(__import__("pyv8c.dom", fromlist=["Event"]).Event("popstate", {"bubbles": False}))
 
 
-@interface("WindowProperties", "EventTarget", constructible=False, tag="WindowProperties")
+@interface("WindowProperties", "EventTarget", constructible=False, tag="WindowProperties", exposed_in=())
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
 class WindowProperties(EventTarget):
     pass
 
 
-@interface("Window", "WindowProperties", constructible=False, tag="Window")
+@interface("Window", "WindowProperties", constructible=False, tag="Window", exposed_in=("Window",))
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
 class Window(WindowProperties):
     __v8_global_this__ = True
@@ -167,10 +331,14 @@ class Window(WindowProperties):
     def fn_queueMicrotask(self, callback): self._page.microtasks.append(callback)
     def fn_requestAnimationFrame(self, callback): return self._page.schedule(callback, 0, repeat=False)
     def fn_fetch(self, request, options=None):
-        req = request if isinstance(request, Request) else Request(request, options, page=self._page)
         promise, resolve, reject = self._page._make_promise()
+        try:
+            req = request if isinstance(request, Request) else Request(request, options, page=self._page)
+        except BaseException as exc:
+            self._page.post_task(lambda exc=exc: reject(self._page._js_error_value(exc)))
+            return promise
         self._page.load_resource_async(req.get_url(), {
             "method": req.get_method(), "headers": req.get_headers(), "body": req._body,
             "timeout": req._timeout, "credentials": req._credentials, "mode": req._mode, "redirect": req._redirect,
-        }, lambda response, error: reject(as_js_error(error)) if error else resolve(response))
+        }, lambda response, error: reject(self._page._js_error_value(error)) if error else resolve(response))
         return promise

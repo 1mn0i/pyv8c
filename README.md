@@ -16,5 +16,12 @@ print(page.evaluate("document.querySelector('#app').textContent"))
 browser.close()
 ```
 
-The first release intentionally focuses on deterministic BOM/DOM behavior and
-does not implement network loading, layout, rendering, workers, or iframes.
+The runtime also exposes public interfaces from the local Chromium baseline.
+Interfaces that do not yet have a Python implementation are generated as
+runtime stubs; calling one logs a `loguru` info message and returns
+`undefined`. Real implementations always override these stubs. Layout,
+rendering, and complete Chromium behavior remain out of scope.
+
+```python
+browser = Browser(generate_interface_stubs=True, expose_unimplemented=True)
+```

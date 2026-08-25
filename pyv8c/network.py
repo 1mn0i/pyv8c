@@ -304,13 +304,18 @@ class WebSocket(EventTarget):
         self._state_value = self.CLOSED; self.fn_dispatchEvent(CloseEvent("close", {"code": code, "reason": reason, "wasClean": was_clean})); self._page._owned_websockets.discard(ws)
 
 
-@interface("WorkerGlobalScope", "EventTarget", constructible=False)
+@interface("WorkerGlobalScope", "EventTarget", constructible=False, exposed_in=("Worker",))
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
 class WorkerGlobalScope(EventTarget):
     __v8_global_this__ = True
-    __v8_attribute__ = js_attributes(("onmessage", "get_onmessage", "set_onmessage", 0, 0), ("onerror", "get_onerror", "set_onerror", 0, 0))
+    __v8_attribute__ = js_attributes(
+        ("self", "get_self", None, 0, 1),
+        ("onmessage", "get_onmessage", "set_onmessage", 0, 0),
+        ("onerror", "get_onerror", "set_onerror", 0, 0),
+    )
     __v8_method__ = js_methods(("postMessage", "fn_postMessage", 1, 0), ("close", "fn_close", 0, 0))
     def __init__(self, runtime=None, **kw): super().__init__(page=None, **kw); self._runtime = runtime
+    def get_self(self): return self
     def get_onmessage(self): return self._handlers.get("onmessage", pyv8.Null)
     def set_onmessage(self, value): self._handlers["onmessage"] = value
     def get_onerror(self): return self._handlers.get("onerror", pyv8.Null)
@@ -319,7 +324,7 @@ class WorkerGlobalScope(EventTarget):
     def fn_close(self): self._runtime.stop()
 
 
-@interface("DedicatedWorkerGlobalScope", "WorkerGlobalScope", constructible=False)
+@interface("DedicatedWorkerGlobalScope", "WorkerGlobalScope", constructible=False, exposed_in=("Worker",))
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
 class DedicatedWorkerGlobalScope(WorkerGlobalScope): pass
 
@@ -335,10 +340,19 @@ class _WorkerRuntime:
             self._isolate = pyv8.Isolate()
             self._context = self._isolate.context(self._scope, hook=False, ctx_type="Worker")
             from .interfaces import expose_interfaces
-            expose_interfaces(self._context)
-            self._context.expose(self=self._scope, globalThis=self._scope)
+            expose_interfaces(
+                self._context,
+                context_type="Worker",
+                generate_stubs=self.page.context_owner.browser.generate_interface_stubs,
+                expose_unimplemented=self.page.context_owner.browser.expose_unimplemented,
+                stub_logging=self.page.context_owner.browser.stub_logging,
+            )
             if source:
-                self._context.exec_js(source, filename=self.script_url)
+                previous = current_page(); set_current_page(self.page)
+                try:
+                    self._context.exec_js(source, filename=self.script_url)
+                finally:
+                    set_current_page(previous)
         except BaseException as exc:
             self._report_error(exc)
         finally:
@@ -367,8 +381,8 @@ class _WorkerRuntime:
 
     def post_to_parent(self, value):
         try:
-            self._context.expose(__pyv8c_worker_value=value)
-            serialized = self._context.exec_js("JSON.stringify(__pyv8c_worker_value, (key, value) => { if (value instanceof ArrayBuffer) return {__pyv8c_arraybuffer:Array.from(new Uint8Array(value))}; if (ArrayBuffer.isView(value)) return {__pyv8c_arraybuffer:Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))}; return value; })")
+            serializer = self._context.exec_js("(value => JSON.stringify(value, (key, item) => { if (item instanceof ArrayBuffer) return {__pyv8c_arraybuffer:Array.from(new Uint8Array(item))}; if (ArrayBuffer.isView(item)) return {__pyv8c_arraybuffer:Array.from(new Uint8Array(item.buffer, item.byteOffset, item.byteLength))}; return item; }))")
+            serialized = serializer(value)
             value = _decode_clone_markers(json.loads(serialized))
         except Exception:
             value = structured_clone(value)

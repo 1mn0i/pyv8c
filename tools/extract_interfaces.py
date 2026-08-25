@@ -1,53 +1,271 @@
-"""Extract the parent interface names from the local Chromium V8 snapshot.
+"""Extract a reviewable interface snapshot from generated Blink bindings."""
+from __future__ import annotations
 
-This is deliberately conservative: generated Blink files are the source of
-truth, while the runtime registry in ``pyv8c.interfaces`` is hand-reviewed.
-"""
 import argparse
 import json
 import re
 from pathlib import Path
 
 
-PARENT = re.compile(r"parent_class->GetV8ClassTemplate|wrapper_type_info_\{", re.M)
-NAME = re.compile(r"V8([A-Za-z0-9_]+)::wrapper_type_info_")
-PARENT_NAME = re.compile(r"V8([A-Za-z0-9_]+)::GetWrapperTypeInfo\(\)")
+INTERFACE_DECL = re.compile(r"const\s+WrapperTypeInfo\s+V8(?P<binding>[A-Za-z0-9_]+)::wrapper_type_info_\s*\{")
+FUNCTION_DECL = re.compile(r"(?:void|v8::Local\s*<\s*v8::Value\s*>)\s+(?P<name>[A-Za-z0-9_]+(?:Operation|Constructor)Callback)\s*\([^)]*\)\s*\{")
+TABLE_DECL = re.compile(r"static\s+const\s+IDLMemberInstaller::(?P<kind>Attribute|Operation|ConstantValue)Config\s+(?P<name>k[A-Za-z0-9_]+Table)\s*\[\]\s*=\s*\{")
 
 
-def extract(root: Path):
+def _skip_string(text, index):
+    quote = text[index]
+    index += 1
+    while index < len(text):
+        if text[index] == "\\": index += 2
+        elif text[index] == quote: return index + 1
+        else: index += 1
+    return index
+
+
+def balanced_end(text, start, opening="{", closing="}"):
+    if start >= len(text) or text[start] != opening:
+        raise ValueError("unbalanced block")
+    depth = 0; index = start
+    while index < len(text):
+        char = text[index]
+        if char in ('"', "'"):
+            index = _skip_string(text, index); continue
+        if text.startswith("//", index):
+            newline = text.find("\n", index + 2); index = len(text) if newline < 0 else newline + 1; continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2); index = len(text) if end < 0 else end + 2; continue
+        if char == opening: depth += 1
+        elif char == closing:
+            depth -= 1
+            if depth == 0: return index + 1
+        index += 1
+    raise ValueError("unterminated block")
+
+
+def split_top_level(text, separator=","):
+    result, start, stack, index = [], 0, [], 0
+    while index < len(text):
+        char = text[index]
+        if char in ('"', "'"):
+            index = _skip_string(text, index); continue
+        if text.startswith("//", index):
+            newline = text.find("\n", index + 2); index = len(text) if newline < 0 else newline + 1; continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2); index = len(text) if end < 0 else end + 2; continue
+        if char in "({[<": stack.append(char)
+        elif char in "}])>" and stack: stack.pop()
+        elif char == separator and not stack:
+            result.append(text[start:index].strip()); start = index + 1
+        index += 1
+    result.append(text[start:].strip())
+    return result
+
+
+def _strip_unsigned(value):
+    value = value.strip()
+    value = re.sub(r"^unsigned\s*\(\s*", "", value)
+    return re.sub(r"\s*\)$", "", value).strip()
+
+
+def _flag(value, prefix):
+    match = re.search(re.escape(prefix) + r"::k([A-Za-z0-9_]+)", _strip_unsigned(value))
+    return match.group(1) if match else None
+
+
+def _table_entries(text, table_start):
+    end = balanced_end(text, table_start); body = text[table_start + 1:end - 1]; entries = []; index = 0
+    while index < len(body):
+        if body[index] == "{":
+            entry_end = balanced_end(body, index); fields = split_top_level(body[index + 1:entry_end - 1])
+            if fields and fields[0].startswith('"'): entries.append(fields)
+            index = entry_end
+        else: index += 1
+    return entries
+
+
+def _find_functions(text):
+    functions = {}
+    for match in FUNCTION_DECL.finditer(text):
+        try: end = balanced_end(text, text.find("{", match.start()))
+        except ValueError: continue
+        functions[match.group("name")] = text[match.end():end - 1]
+    return functions
+
+
+def _argument_types(body):
     result = {}
+    trait = re.compile(r"NativeValueTraits\s*<")
+    for match in trait.finditer(body):
+        depth, index = 1, match.end()
+        while index < len(body) and depth:
+            if body[index] == "<": depth += 1
+            elif body[index] == ">": depth -= 1
+            index += 1
+        if depth: continue
+        type_name = body[match.end():index - 1].strip(); conversion = body[index:index + 80]
+        if not re.match(r"::(?:ArgumentValue|NativeValue)", conversion): continue
+        info = re.search(r"info\s*\[\s*(\d+)\s*\]", body[index:index + 700])
+        if not info: continue
+        argument_index = int(info.group(1)); parameter = result.setdefault(argument_index, {
+            "index": argument_index, "idl_type": type_name, "optional": False,
+            "nullable": False, "default": None, "review": "generated-callback",
+        })
+        before = body[max(0, match.start() - 180):match.start()]; after = body[index:min(len(body), index + 500)]
+        parameter["optional"] |= "IsUndefined" in before or "IsUndefined" in after
+        parameter["nullable"] |= "Nullable" in type_name or "IsNull" in before or "IsNull" in after
+        default = re.search(r"\{\s*([^{};]+)\s*\}", after)
+        if default and parameter["optional"]: parameter["default"] = default.group(1).strip()
+    return [result[key] for key in sorted(result)]
+
+
+def extract_callback_signatures(text):
+    signatures = {}
+    for name, body in _find_functions(text).items():
+        required = re.search(r"NotEnoughArguments\s*\(\s*(\d+)", body)
+        parameters = _argument_types(body)
+        signatures[name] = {
+            "required": int(required.group(1)) if required else 0,
+            "parameters": parameters,
+            "review": "generated-callback" if parameters or required else "manual-review-required",
+            "source_evidence": "NotEnoughArguments/NativeValueTraits in generated callback",
+        }
+    return signatures
+
+
+def _member_from_table(kind, fields, signatures):
+    if len(fields) < 2: return None
+    name = fields[0].strip().strip('"')
+    if kind == "Attribute":
+        if len(fields) < 8: return {"name": name, "kind": "attribute", "review": "manual-review-required", "raw": fields}
+        location = _flag(fields[4], "IDLMemberInstaller::FlagLocation") or "Unknown"
+        return {"name": name, "kind": "attribute", "getter": fields[1].strip(),
+                "setter": None if fields[2].strip() == "nullptr" else fields[2].strip(),
+                "readonly": fields[2].strip() == "nullptr", "location": location.lower(),
+                "flags": _strip_unsigned(fields[3]), "world": _flag(fields[5], "IDLMemberInstaller::FlagWorld"),
+                "receiver": _flag(fields[6], "IDLMemberInstaller::FlagReceiverCheck"),
+                "cross_origin": _flag(fields[7], "IDLMemberInstaller::FlagCrossOriginCheck"),
+                "side_effect": _flag(fields[8], "v8::SideEffectType") if len(fields) > 8 else None,
+                "cached_accessor": _flag(fields[9], "V8PrivateProperty::CachedAccessor") if len(fields) > 9 else None}
+    if kind == "Operation":
+        if len(fields) < 6: return {"name": name, "kind": "operation", "review": "manual-review-required", "raw": fields}
+        callback, length = fields[1].strip(), int(fields[2].strip()); location = _flag(fields[4], "IDLMemberInstaller::FlagLocation") or "Unknown"
+        return {"name": name, "kind": "operation", "callback": callback, "length": length, "location": location.lower(),
+                "flags": _strip_unsigned(fields[3]), "world": _flag(fields[5], "IDLMemberInstaller::FlagWorld"),
+                "receiver": _flag(fields[6], "IDLMemberInstaller::FlagReceiverCheck") if len(fields) > 6 else None,
+                "cross_origin": _flag(fields[7], "IDLMemberInstaller::FlagCrossOriginCheck") if len(fields) > 7 else None,
+                "side_effect": _flag(fields[8], "v8::SideEffectType") if len(fields) > 8 else None,
+                "signature": signatures.get(callback, {"required": length, "parameters": [], "review": "manual-review-required",
+                                                         "source_evidence": "operation table without parseable callback"})}
+    return {"name": name, "kind": "constant", "value": fields[1].strip(), "location": "interface", "review": "manual-review-required"}
+
+
+def extract_members(text):
+    signatures = extract_callback_signatures(text); members = {"instance": [], "prototype": [], "interface": []}
+    for match in TABLE_DECL.finditer(text):
+        try: entries = _table_entries(text, text.find("{", match.start()))
+        except ValueError: continue
+        for fields in entries:
+            member = _member_from_table(match.group("kind"), fields, signatures)
+            if member is not None: members.setdefault(member.get("location", "interface"), []).append(member)
+    return members
+
+
+def _merge_members(target, incoming):
+    for location, entries in incoming.items():
+        known = {(item.get("kind"), item.get("name"), item.get("location")) for item in target[location]}
+        for entry in entries:
+            key = (entry.get("kind"), entry.get("name"), entry.get("location"))
+            if key not in known: target[location].append(entry); known.add(key)
+            elif entry.get("kind") == "operation":
+                existing = next(item for item in target[location] if (item.get("kind"), item.get("name"), item.get("location")) == key)
+                if existing.get("callback") != entry.get("callback"): existing.setdefault("overloads", []).append(entry)
+
+
+def _canonical_declaration(text, match):
+    end = balanced_end(text, text.find("{", match.start())); body = text[text.find("{", match.start()) + 1:end - 1]
+    tag = (re.search(r'"([A-Za-z0-9_]+)"', body) or [None, match.group("binding")])[1]
+    parent_match = re.search(r"V8([A-Za-z0-9_]+)::GetWrapperTypeInfo\(\)", body)
+    return tag, parent_match.group(1) if parent_match else None, bool(re.search(r"ConstructorCallback", text))
+
+
+def _exposure(text):
+    result = []
+    if re.search(r"IsWindow\(\)", text): result.append("Window")
+    if re.search(r"Is(?:Dedicated|Shared)?WorkerGlobalScope\(\)", text): result.append("Worker")
+    return result
+
+
+def _filename_interface(path, text):
+    """Infer the canonical interface for module-only binding fragments."""
+    match = re.search(r"V8([A-Za-z0-9_]+)::(?:Impl::|Install)", text)
+    if match:
+        binding = match.group(1)
+        # Generated aliases such as DOMURL are represented by V8URL.
+        if binding.startswith("DOM") and len(binding) > 3:
+            binding = binding[3:]
+        return binding
+    stem = path.stem
+    if stem.startswith("v8_"):
+        return "".join(part[:1].upper() + part[1:] for part in stem[3:].split("_"))
+    return None
+
+
+def extract(root):
+    result, parse_failures, duplicate_sources = {}, [], 0
     for path in sorted(root.rglob("v8_*.cc")):
         text = path.read_text(encoding="utf-8", errors="ignore")
-        name = NAME.search(text)
-        if not name:
+        declarations = list(INTERFACE_DECL.finditer(text))
+        if not declarations:
+            inferred = _filename_interface(path, text)
+            if inferred and inferred in result:
+                item = result[inferred]
+                relative = str(path).replace("/", "\\")
+                if relative not in item["sources"]:
+                    item["sources"].append(relative)
+                    duplicate_sources += 1
+                _merge_members(item["members"], extract_members(text))
+                item["exposed_in"] = sorted(set(item.get("exposed_in", ())) | set(_exposure(text)))
             continue
-        match = re.search(r"wrapper_type_info_\{(?P<body>.*?)};", text, re.S)
-        parent = None
-        if match:
-            parents = PARENT_NAME.findall(match.group("body"))
-            if parents:
-                parent = parents[-1]
-        interface_name = name.group(1)
-        result[interface_name] = {
-            "parent": parent,
-            "source": str(path),
-            "snapshot": "local-renderer",
-            "constructible": None,
-            "constructor": {"exposed": None, "allow_new": None, "allow_call": None, "length": None},
-            "tag": interface_name,
-            "members": {"instance": [], "prototype": [], "interface": []},
-            "mixins": [],
-        }
+        for declaration in declarations:
+            try:
+                name, parent, constructible = _canonical_declaration(text, declaration)
+                members = extract_members(text)
+                callback_signatures = extract_callback_signatures(text)
+            except (ValueError, TypeError): parse_failures.append(str(path)); continue
+            relative = str(path).replace("/", "\\"); item = result.get(name)
+            if item is None:
+                item = result[name] = {"parent": parent, "source": relative, "sources": [relative], "snapshot": "local-renderer",
+                    "constructible": constructible, "constructor": {"exposed": constructible, "allow_new": constructible,
+                    "allow_call": False if constructible else None, "length": next((sig.get("required", 0) for callback, sig in callback_signatures.items() if callback.endswith("ConstructorCallback")), None),
+                    "signature": next((sig for callback, sig in callback_signatures.items() if callback.endswith("ConstructorCallback")), {"review": "manual-review-required", "parameters": []}),
+                    "review": "generated-callback" if callback_signatures else "manual-review-required"},
+                    "tag": name, "members": {"instance": [], "prototype": [], "interface": []}, "mixins": [], "exposed_in": _exposure(text)}
+            else:
+                duplicate_sources += 1
+                if relative not in item["sources"]: item["sources"].append(relative)
+                if parent and not item.get("parent"): item["parent"] = parent
+                item["constructible"] |= constructible; item["constructor"]["exposed"] |= constructible; item["constructor"]["allow_new"] |= constructible
+                item["exposed_in"] = sorted(set(item.get("exposed_in", ())) | set(_exposure(text)))
+            _merge_members(item["members"], members)
+    for item in result.values():
+        item["sources"] = sorted(set(item["sources"]))
+        if not item["exposed_in"]: item.pop("exposed_in", None)
+    result["_report"] = {"interfaces": len(result), "member_total": sum(sum(len(values) for values in item["members"].values()) for item in result.values()),
+        "interfaces_with_members": sum(any(item["members"].values()) for item in result.values()),
+        "interfaces_with_signatures": sum(any(member.get("signature") for member in item["members"]["prototype"] + item["members"]["interface"]) for item in result.values()),
+        "manual_review_required": sum(1 for item in result.values() for values in item["members"].values() for member in values if member.get("review") == "manual-review-required" or member.get("signature", {}).get("review") == "manual-review-required"),
+        "duplicate_sources": duplicate_sources, "parse_failures": sorted(set(parse_failures))}
     return result
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("renderer", type=Path)
-    parser.add_argument("output", type=Path)
-    args = parser.parse_args()
-    args.output.write_text(json.dumps(extract(args.renderer), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    parser = argparse.ArgumentParser(); parser.add_argument("renderer", type=Path); parser.add_argument("output", type=Path); parser.add_argument("--report", action="store_true")
+    args = parser.parse_args(); extracted = extract(args.renderer); report = extracted.pop("_report")
+    output = {"_webidl": {"schema": 2, "source": "tools/extract_interfaces.py", "renderer_snapshot": "local-renderer",
+        "runtime_registry": "pyv8c.webidl.SIGNATURES", "constructor_registry": "pyv8c.webidl.CONSTRUCTORS",
+        "unresolved_policy": "manual-review-required", "notes": "All generated core/modules binding tables are scanned and merged.", "report": report}, **extracted}
+    args.output.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if args.report: print(json.dumps(report, indent=2, sort_keys=True))
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()

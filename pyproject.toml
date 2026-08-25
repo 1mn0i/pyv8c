@@ -7,7 +7,7 @@ name = "pyv8c"
 version = "0.1.0"
 description = "A deterministic Chromium-like BOM/DOM environment on pyv8"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["loguru>=0.7"]
 
 [project.optional-dependencies]
 network = ["cycronet>=144.4.7,<151"]

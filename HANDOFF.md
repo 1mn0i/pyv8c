@@ -148,7 +148,19 @@ WebSocket 非法状态       -> InvalidStateError
 
 所有异步边界统一使用 `as_js_error()` 转换异常；Cronet、Worker 和 Page 队列线程不得把 Python 异常直接抛入 V8。
 
-## 7. 构建和验证
+## 7. 动态接口桩和全局暴露
+
+`interface_runtime.py` 直接读取 `interface-baseline.json`，不为每个 Chromium 接口生成独立 Python 文件。运行时采用三层合并：baseline 描述接口表面，`interfaces.py` 中的真实实现覆盖同名接口和成员，剩余成员由统一桩生成器补齐。
+
+- 桩方法、getter、setter 和构造器通过 `loguru.logger.info` 输出“待实现”，方法和 getter 默认返回 `undefined`。
+- 真实类及其成员优先级最高；部分实现类只补充 baseline 中缺失的成员。
+- `prototype`、`interface`、`instance` 安装位置、构造器长度、标签和父接口来自 baseline 或真实装饰器元数据；已实现类的装饰器元数据优先于不完整的快照构造器字段。
+- 只向 Window/Worker 暴露 baseline 明确标记的公共接口；baseline 中的 renderer 内部接口、注册表、logger、Page/Browser/Context 和任何 `__pyv8c_*` 名称不会进入 JS 全局。
+- Window 和 Worker 的 `globalThis` 均由 V8 Context 提供；`window`、`self` 通过对应全局接口的只读属性返回全局对象，不使用 `context.expose()` 注入别名数据属性。
+- `Browser(generate_interface_stubs=True, expose_unimplemented=True)` 启用公共未实现接口桩；将 `expose_unimplemented=False` 可只暴露真实实现。
+- `loguru>=0.7` 是运行时依赖。复杂返回值、精确常量值和手工审核的 Web IDL 字段仍由真实实现逐步覆盖，桩不会伪造数值或 DOM 对象。
+
+## 8. 构建和验证
 
 当前目标 V8 版本为 `15.2.20.1`。Windows 构建环境：
 
@@ -183,7 +195,33 @@ python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 
 测试必须覆盖 native 生命周期、原型链、DOM identity、事件时序、错误映射、网络队列、iframe、Worker 和 WebSocket。真实网络测试使用本地 fixture server，不依赖公网。
 
-## 8. 真实遗留问题和后续方向
+## 8. 全局暴露规则与 URL 状态
+
+标准浏览器 Web API 仍按浏览器语义暴露，包括 `URL`、`Blob`、`fetch`、`Request`、`Response`、`WebSocket` 和 `Worker`。`window`、`self`、`globalThis` 只允许包含浏览器公共对象；Page、Browser、Context、网络后端和其他 Python 实现类不得暴露。
+
+内部 `__pyv8c_*` 名称严禁出现在任何 JS 全局对象中。Promise resolver 使用 IIFE 闭包返回，Worker structured clone 使用上下文内函数调用，Blob URL 通过 `URL` 的接口级静态方法访问，不再向全局写入临时桥接函数。
+
+`URL` 已按本地 renderer 快照登记到 `interface-baseline.json`，实现了构造器、URL 组成部分属性、`searchParams`、`toString()`、`toJSON()`、`canParse()`、`parse()`、`createObjectURL()` 和 `revokeObjectURL()`。`URL` 构造器长度、`new`/直接调用行为、prototype 成员位置和 `Symbol.toStringTag` 由接口注册表校验。
+
+Blob URL 当前严格使用 `blob:<serialized-origin>/<uuid-v4>` 格式，例如 `blob:https://github.com/2a405ce7-7b00-474b-8419-43372167ad40`；默认端口省略，凭据不进入 origin，opaque origin 使用 `null`。
+
+接口提取工具现在会合并 core/modules 生成 binding，记录 Window/Worker 暴露范围以及属性、prototype/interface 方法成员。重新生成基线时使用：
+
+```powershell
+python tools/extract_interfaces.py ..\_pyv8env\renderer interface-baseline.json
+```
+
+## 10. Web IDL 参数校验（当前状态）
+
+JS 可见构造器、方法和属性 setter 统一经过 `pyv8c/webidl.py` 校验层。签名由显式 `ParamSpec`/`MethodSpec` 登记，不从 Python 函数签名或 Python MRO 推断；接口继承只用于沿登记的 IDL 父链查找成员签名。
+
+当前已覆盖：必需参数数量、普通多余参数忽略、可选参数默认值、`undefined`/`null` 区分、DOMString/USVString、布尔、long/unsigned long/double、接口 receiver、dictionary、sequence、enum、callback、union、variadic 参数，以及构造器和 setter。`fetch()` 的参数错误通过 Page 任务队列 reject Promise，DOM 同步方法抛出标准 `V8TypeError`/`DOMException`。
+
+`tools/extract_interfaces.py` 现在从 renderer callback 的 `NotEnoughArguments` 和 `NativeValueTraits<...>::ArgumentValue` 提取操作签名；无法完整推导的签名标记为 `manual-review-required`。`interface-baseline.json` 顶层 `_webidl` 节点记录生成器、快照和运行时签名表来源。
+
+本轮验证：`30 passed`。剩余限制是复杂 overload/union、完整字典字段校验、全部 Web IDL 枚举和精确 Chromium 异常文本仍需按 renderer 逐项人工复核。
+
+## 9. 真实遗留问题和后续方向
 
 以下是当前仍未完成的能力。除非有代码和测试证据，不得将其描述为已实现：
 
@@ -198,3 +236,19 @@ python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 9. 布局、渲染、CSSOM、bfcache、Service Worker、浏览器确认对话框和完整 Chromium 进程调度不在当前范围。
 
 后续优先级：先完善接口基线/descriptor/错误测试，再验证 cyCronet 真实后端和异步资源队列，然后补齐 iframe 同源策略、Worker 调度和 structured clone，最后扩展更多 Web IDL 接口及非核心渲染能力。
+
+## 10. Chromium 接口基线提取（当前状态）
+
+`tools/extract_interfaces.py` 已重写为基于平衡括号扫描的 C++ binding 提取器。它扫描 `_pyv8env/renderer/core` 和 `modules` 下全部生成文件，解析 `WrapperTypeInfo`、父接口、暴露范围、`AttributeConfig`、`OperationConfig`、`ConstantValueConfig` 以及构造器/操作 callback 中的 `NotEnoughArguments` 和 `NativeValueTraits`。
+
+当前 `interface-baseline.json` 覆盖 renderer 快照中的全部接口，而不是只覆盖 pyv8c 已实现接口。最新生成报告为：1173 个接口、10362 个成员、1081 个含成员接口、602 个含签名接口、2351 个需人工审核字段、26 个重复来源、0 个解析失败。URL 与其他接口使用同一套 core/modules 合并逻辑。
+
+重新生成命令：
+
+```powershell
+python tools/extract_interfaces.py ..\_pyv8env/renderer interface-baseline.json --report
+```
+
+运行时仍只遍历 `INTERFACES` 中显式登记并实现的接口，不会因为接口存在于完整 baseline 就自动暴露。`validate_registry()` 会校验已实现接口的 baseline 存在性、父接口、tag、暴露范围交集、继承成员和 Web IDL 签名；未实现 renderer 接口只作为快照记录。
+
+提取器无法完整推导的复杂 overload、union、dictionary 字段和构造器细节会显式标记 `manual-review-required`，不能把空字段当作已确认结果。

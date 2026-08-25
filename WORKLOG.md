@@ -73,6 +73,45 @@
 
 详细限制以 `HANDOFF.md` 文末“真实遗留问题和后续方向”为准。本记录不复制限制清单，避免状态分叉。
 
+## 2026-08-26：基于 baseline 的动态接口桩
+
+### 目标
+
+在不生成大量接口 Python 文件的前提下，让 baseline 中已公开但尚未实现的接口拥有可观察的构造器、prototype 和成员表面。
+
+### 修改
+
+- 新增 `pyv8c/interface_runtime.py`，按父接口拓扑动态生成类，并合并真实实现。
+- 缺失方法、属性和构造器使用统一桩，直接通过 `loguru.logger.info` 输出“待实现”。
+- 修改 Window、Worker Context 暴露流程，按 `exposed_in` 过滤公共接口；内部对象和 `__pyv8c_*` 不暴露。
+- `Browser` 增加 `generate_interface_stubs`、`expose_unimplemented` 和 `stub_logging` 配置。
+- `loguru>=0.7` 加入运行时依赖；已实现接口元数据优先，修复 URL/DOMException 构造器回归。
+- 新增动态桩和全局隔离测试。
+
+### 验证
+
+- 动态桩专项测试通过。
+- URL、DOMException 和既有核心回归测试通过；完整测试需使用项目 Python 3.10、pyv8 和 loguru 环境执行。
+
+### 限制
+
+- baseline 中手工审核字段的返回类型、常量数值和复杂 overload 仍不能自动推导。
+- 桩只提供接口表面，不模拟复杂 DOM、布局、渲染或真实业务副作用。
+
+## 2026-08-26：移除全局对象别名注入
+
+### 修改
+
+- 为 `WorkerGlobalScope` 补充标准只读 `self` 属性，返回当前 Worker 全局对象。
+- 删除 Page 中对 `window/self/globalThis` 的显式 `context.expose()`。
+- 删除 Worker 中对 `self/globalThis` 的显式 `context.expose()`。
+- Window 和 Worker 现在统一由 V8 全局模板以及标准接口属性提供全局别名。
+
+### 验证
+
+- Window 验证 `window === self === globalThis`。
+- Worker 独立 Context 验证 `self === globalThis`、`typeof window === "undefined"`，且 `self` 不是显式注入的 own data property。
+
 ## 历史补录：pyv8c 初始架构和严格原型链
 
 ### 目标
@@ -218,6 +257,46 @@
 
 - 复杂 Web IDL overload/union、精确 receiver 错误文本、完整异常源码栈和 renderer 中 DOMException 成员描述符仍有限制。
 
+## 2026-08-25：全局暴露隔离与 URL 浏览器接口
+
+### 目标
+
+移除 pyv8c 内部桥接对象在 `window`、`globalThis` 和 Worker 全局中的泄漏，并把 `URL` 从临时脚本补丁改为正式浏览器接口。
+
+### 修改
+
+- `interfaces.py` 增加接口的 Window/Worker 暴露范围和 interface 级方法声明，`expose_interfaces()` 按上下文过滤公共接口。
+- `WindowProperties` 不再作为页面全局构造器，Worker-only scope 只在 Worker Context 暴露。
+- 删除 Blob URL 全局桥接函数；Promise resolver 和 Worker 序列化改为闭包/函数对象调用。
+- `URL` 实现组成部分属性、`searchParams`、`toString()`、`toJSON()`、`canParse()`、`parse()`、`createObjectURL()` 和 `revokeObjectURL()`。
+- `interface-baseline.json` 增加 URL 成员、构造器、暴露范围和 core/modules source；提取工具支持合并生成 binding 并记录成员位置。
+- 新增全局泄漏、URL 原型链、静态方法和 Blob URL 生命周期测试。
+
+### 验证
+
+- `24 passed`。
+- URL 和 Blob URL 静态方法通过 V8 Context 验证。
+- `Object.getOwnPropertyNames(globalThis)` 不包含 `__pyv8c_*`，`WindowProperties` 不再可见。
+
+### 未完成事项
+
+- WHATWG URL 的全部编码、协议特殊性和边界错误文本仍未完全覆盖。
+- MediaSource Blob URL、完整暴露条件和复杂 Web IDL overload 仍需继续补齐。
+
+## 2026-08-25：Blob URL 使用浏览器 origin 和 UUID 格式
+
+### 修改
+
+- `BrowserContext.create_blob_url()` 改为生成 `blob:<serialized-origin>/<uuid>`。
+- origin 从创建 URL 的 Page URL 计算，默认端口省略，凭据不进入 origin，非网络/opaque origin 使用 `null`。
+- UUID 改为标准带连字符的 UUID v4，不再使用 `blob:pyv8c/` 和无连字符的 `.hex`。
+- `URL.createObjectURL()` 将当前 Page 传给 Context，确保页面、iframe 和 Worker 使用正确的创建 origin。
+
+### 验证
+
+- `https://github.com/path/index.html` 页面生成的 URL 匹配 `blob:https://github.com/<uuid-v4>`。
+- 全量测试保持 `24 passed`。
+
 ## 后续记录模板
 
 复制以下结构追加到文件末尾：
@@ -239,3 +318,57 @@
 
 - 无，或明确列出限制。
 ```
+
+## 2026-08-25：全量 Web IDL 参数校验
+
+### 目标
+
+为当前已经暴露的 DOM、BOM、URL、网络、XHR、Worker、WebSocket、事件和集合接口建立统一的 JavaScript 参数校验边界。
+
+### 修改
+
+- 新增 `pyv8c/webidl.py`，登记构造器、方法和属性 setter 的 `ParamSpec`/`MethodSpec`。
+- 接入 `interfaces.py` 装饰器；已暴露操作没有显式签名时，运行时注册校验失败。
+- 实现必需/可选/variadic 参数、`undefined`/`null`、字符串、布尔、数字、接口、字典、序列、枚举、callback 和 union 的基础转换。
+- 普通额外参数按 Chromium 常见行为忽略；DOMTokenList 的 `add/remove` 保留 variadic 语义。
+- `fetch()` 参数错误转换为 Page 队列中的 rejected Promise；同步 DOM 方法继续抛标准 `TypeError`/`DOMException`。
+- 修正 `Headers`、`Storage`、`requestAnimationFrame`、URL/WebSocket setter 等签名登记。
+- 扩展 `tools/extract_interfaces.py`，提取 renderer callback 中的 `NotEnoughArguments` 和 `NativeValueTraits` 信息，并在 `interface-baseline.json` 记录签名来源和人工审核策略。
+- 新增 `tests/test_webidl_validation.py`，覆盖缺参、接口类型、variadic、字典、序列、构造器、setter、枚举和 fetch Promise reject。
+
+### 验证
+
+- `python -m pytest -q tests`：`30 passed`。
+- 已验证项目可正常创建 Page、解析 DOM、执行脚本和运行现有 native smoke 回归。
+
+### 未完成
+
+- 复杂 Web IDL overload/union、完整 dictionary 字段和全部 renderer 成员仍需逐接口人工复核。
+- 复杂异常文本、完整 Blob/ArrayBuffer structured clone、真实 cyCronet 端到端行为仍按原有遗留限制处理。
+
+## 2026-08-25：完整 Chromium 接口基线提取
+
+### 目标
+
+修复 `interface-baseline.json` 中只有 URL 成员较完整、其他核心接口属性和方法为空的问题。
+
+### 修改
+
+- 重写 `tools/extract_interfaces.py`，从全部 renderer core/modules 生成 binding 提取完整接口快照。
+- 使用平衡括号扫描器解析 C++ 表项，支持 `unsigned(...)` 包装、嵌套初始化、多个安装阶段和 callback 函数体。
+- 提取属性 getter/setter、位置、描述符标志、receiver、cross-origin、side-effect、cached accessor。
+- 提取操作 callback、length、位置、receiver、side-effect、参数转换和 `NotEnoughArguments` 信息。
+- 增加 `ConstantValueConfig`、core/modules 重复来源合并、alias canonical interface 和生成报告。
+- 重新生成 `interface-baseline.json`，覆盖全部 renderer 接口；URL 不再特殊处理。
+- 调整运行时基线校验：完整快照不会自动暴露未实现接口；已实现接口校验父链、tag、暴露交集、继承成员和显式 Web IDL 签名。
+- 新增 `tests/test_interface_extractor.py`，覆盖真实 binding 与嵌套 C++ fixture。
+
+### 验证
+
+- 提取报告：1173 interfaces、10362 members、1081 interfaces with members、602 interfaces with signatures、2351 manual-review-required、0 parse failures。
+- `python -m pytest -q tests`：`33 passed`。
+- wheel 构建已通过：`pyv8c-0.1.0-py3-none-any.whl`。
+
+### 未完成
+
+- 复杂 overload/union、完整 dictionary 字段、构造器 allow_call/allow_new 精确推导和常量真实值仍需人工审核。

@@ -133,14 +133,31 @@ def test_worker_executes_blob_script_and_uses_independent_queue():
     browser = Browser()
     page = browser.new_context().new_page()
     page.set_content("<body></body>", url="http://example.test/")
-    result = page.evaluate("(() => { const src = new Blob([\"self.onmessage = e => self.postMessage({value:e.data.value + 1, bytes:e.data.bytes});\"], {type:'text/javascript'}); const url=URL.createObjectURL(src); const w=new Worker(url); window.__workerInstance=w; w.onmessage=e=>window.__worker=e.data; w.onerror=e=>window.__workerError=e.message; w.postMessage({value:4, bytes:new Uint8Array([1,2,3])}); return [url.startsWith('blob:'), w instanceof Worker]; })()")
+    result = page.evaluate("(() => { const src = new Blob([\"self.onmessage = e => self.postMessage({value:e.data.value + 1, bytes:e.data.bytes, helper:typeof __pyv8c_worker_value, windowProps:typeof WindowProperties});\"], {type:'text/javascript'}); const url=URL.createObjectURL(src); const w=new Worker(url); window.__workerInstance=w; w.onmessage=e=>window.__worker=e.data; w.onerror=e=>window.__workerError=e.message; w.postMessage({value:4, bytes:new Uint8Array([1,2,3])}); return [url.startsWith('blob:'), w instanceof Worker]; })()")
     assert result == [True, True]
     page.run_until_idle(timeout=2)
     assert page.evaluate("[typeof __worker, typeof __workerError]") == ["object", "undefined"]
     assert page.evaluate("__worker.value") == 5
+    assert page.evaluate("[__worker.helper, __worker.windowProps]") == ["undefined", "undefined"]
     assert page.evaluate("Array.from(new Uint8Array(__worker.bytes))") == [1, 2, 3]
     page.evaluate("URL.revokeObjectURL(URL.createObjectURL(new Blob(['x'])))")
     page.evaluate("window.__workerBeforeTerminate = __worker; window.__workerInstance.terminate()")
     page.run_until_idle()
     assert page.evaluate("__worker === __workerBeforeTerminate") is True
+    browser.close()
+
+
+def test_worker_self_is_the_context_global_without_explicit_expose():
+    browser = Browser(stub_logging="off")
+    page = browser.new_context().new_page()
+    page.set_content("<body></body>", url="http://example.test/")
+    page.evaluate("""(() => {
+      const source = new Blob([
+        "postMessage([self === globalThis, typeof self, typeof globalThis, typeof window, Object.prototype.hasOwnProperty.call(globalThis, 'self')]);"
+      ], {type: 'text/javascript'});
+      const worker = new Worker(URL.createObjectURL(source));
+      worker.onmessage = event => window.__workerGlobals = event.data;
+    })()""")
+    page.run_until_idle(timeout=2)
+    assert page.evaluate("__workerGlobals") == [True, "object", "object", "undefined", False]
     browser.close()

@@ -3,12 +3,14 @@ import itertools
 import queue
 import threading
 import time
+import uuid
+from urllib.parse import urlsplit
 
 import pyv8
 
 from .bom import Window
 from .dom import Document, DocumentType, Event
-from .network import Blob, Response, Request, Headers, XMLHttpRequest, Worker, WebSocket, ErrorEvent, set_current_page
+from .network import Blob, Response, Request, Headers, XMLHttpRequest, Worker, WebSocket, ErrorEvent, set_current_page, current_page
 from .network_backend import CronetNetworkBackend, NetworkRequest, NetworkUnavailableError, same_origin
 from .interfaces import expose_interfaces
 from .parser import parse
@@ -47,12 +49,15 @@ class Page:
         self.network_backend = context.network_backend
         self.window = Window(page=self)
         self.context = pyv8.Context(self.window, hook=False, ctx_type="Window")
-        expose_interfaces(self.context)
+        expose_interfaces(
+            self.context,
+            context_type="Window",
+            generate_stubs=self.context_owner.browser.generate_interface_stubs,
+            expose_unimplemented=self.context_owner.browser.expose_unimplemented,
+            stub_logging=self.context_owner.browser.stub_logging,
+        )
         Worker._current_page = self
         XMLHttpRequest._current_page = self
-        self.context.expose(window=self.window, self=self.window, globalThis=self.window)
-        self.context.expose(__pyv8c_createObjectURL=self._create_blob_url, __pyv8c_revokeObjectURL=self._revoke_blob_url)
-        self.context.exec_js("URL.createObjectURL = function(blob) { return __pyv8c_createObjectURL(blob); }; URL.revokeObjectURL = function(url) { return __pyv8c_revokeObjectURL(url); };")
 
     @property
     def url(self): return self.window.location.href
@@ -82,7 +87,9 @@ class Page:
         event = Event(event_type, options or {})
         event._trusted = True
         if event_type in ("pagehide", "pageshow"): event._persisted = bool((options or {}).get("persisted", False))
-        target.fn_dispatchEvent(event)
+        previous = current_page(); set_current_page(self)
+        try: target.fn_dispatchEvent(event)
+        finally: set_current_page(previous)
         return event
 
     def _dispatch_beforeunload(self):
@@ -267,7 +274,7 @@ class Page:
 
     def _create_blob_url(self, blob):
         if not isinstance(blob, Blob): raise V8Error("parameter is not of type Blob")
-        return self.context_owner.create_blob_url(blob)
+        return self.context_owner.create_blob_url(blob, page=self)
 
     def _revoke_blob_url(self, url): self.context_owner.revoke_blob_url(str(url))
 
@@ -341,11 +348,29 @@ class Page:
                 self._network_condition.notify_all()
 
     def _make_promise(self):
-        ident = next(self._promise_counter)
-        resolve_name, reject_name = f"__pyv8c_resolve_{ident}", f"__pyv8c_reject_{ident}"
-        promise = self.context.exec_js(f"(() => {{ let r,j; const p=new Promise((a,b)=>{{r=a;j=b}}); globalThis.{resolve_name}=r; globalThis.{reject_name}=j; return p; }})()")
-        resolve, reject = self.context.exec_js(resolve_name), self.context.exec_js(reject_name)
-        return promise, resolve, reject
+        record = self.context.exec_js("(() => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j; }); return { promise, resolve, reject }; })()")
+        return record["promise"], record["resolve"], record["reject"]
+
+    def _js_error_value(self, exc):
+        """Materialize a rejected Promise reason as a native JS error object."""
+        error = as_js_error(exc)
+        name = getattr(error, "_name", None)
+        if not name:
+            name = {
+                "V8TypeError": "TypeError", "V8RangeError": "RangeError",
+                "V8ReferenceError": "ReferenceError", "V8SyntaxError": "SyntaxError",
+                "V8URIError": "URIError", "V8EvalError": "EvalError",
+            }.get(type(error).__name__, "Error")
+        message = str(error)
+        code = getattr(error, "_code", 0)
+        factory = self.context.exec_js("(name, message) => { const C = globalThis[name] || Error; return new C(message); }")
+        # DOMException's name is stored on the Python instance, while native
+        # Error subclasses use the constructor name.  Keep DOMException
+        # construction separate so its name/code remain observable.
+        if hasattr(error, "_name"):
+            dom_factory = self.context.exec_js("(message, name) => new DOMException(message, name)")
+            return dom_factory.call(None, message, name)
+        return factory.call(None, name, message, code)
 
     def promise_resolve(self, value):
         promise = self.context.exec_js("Promise")
@@ -365,11 +390,18 @@ class Page:
 
     def evaluate(self, script, filename=None):
         if self.closed: raise InvalidStateError("Page is closed")
-        set_current_page(self)
+        previous = current_page(); set_current_page(self)
         try:
             return self.context.exec_js(str(script), filename=filename)
         finally:
-            set_current_page(None)
+            set_current_page(previous)
+
+    def _run_callback(self, callback, *args):
+        previous = current_page(); set_current_page(self)
+        try:
+            return callback(*args)
+        finally:
+            set_current_page(previous)
 
     def schedule(self, callback, delay, repeat=False):
         ident = next(self._counter)
@@ -387,10 +419,10 @@ class Page:
             while True:
                 try: callback = self._posted.get_nowait()
                 except queue.Empty: break
-                if not self.closed: callback()
+                if not self.closed: self._run_callback(callback)
             while self.microtasks:
                 callback = self.microtasks.pop(0)
-                callback()
+                self._run_callback(callback)
             if not self._queue:
                 if self._posted.empty() and not self.microtasks:
                     if timeout and self._network_pending and time.monotonic() < deadline:
@@ -405,7 +437,7 @@ class Page:
                 continue
             delay, ident, callback, repeat = heapq.heappop(self._queue)
             if ident in self._cancelled: continue
-            callback()
+            self._run_callback(callback)
             if repeat and ident not in self._cancelled:
                 heapq.heappush(self._queue, (delay, ident, callback, repeat))
                 if len(self._queue) > 10000: break
@@ -441,9 +473,26 @@ class BrowserContext:
         self.browser, self.pages = browser, []
         self.network_backend = CronetNetworkBackend(options=browser.cycronet_options) if browser.real_network else None
         self._blob_urls = {}
-    def create_blob_url(self, blob):
-        import uuid
-        url = "blob:pyv8c/" + uuid.uuid4().hex
+    @staticmethod
+    def _serialized_origin(url):
+        """Return the browser serialized origin used in a Blob URL."""
+        try:
+            parts = urlsplit(str(url))
+            if parts.scheme not in ("http", "https", "ws", "wss", "ftp") or not parts.hostname:
+                return "null"
+            host = parts.hostname.lower()
+            if ":" in host and not host.startswith("["):
+                host = "[" + host + "]"
+            port = parts.port
+            default_port = {"http": 80, "https": 443, "ws": 80, "wss": 443, "ftp": 21}.get(parts.scheme)
+            suffix = (":" + str(port)) if port is not None and port != default_port else ""
+            return f"{parts.scheme.lower()}://{host}{suffix}"
+        except (TypeError, ValueError):
+            return "null"
+
+    def create_blob_url(self, blob, page=None):
+        origin = self._serialized_origin(getattr(page, "url", "about:blank"))
+        url = "blob:" + origin + "/" + str(uuid.uuid4())
         self._blob_urls[url] = (bytes(blob._data), blob.get_type())
         return url
     def resolve_blob_url(self, url):
@@ -461,7 +510,10 @@ class BrowserContext:
 
 
 class Browser:
-    def __init__(self, *, icudtl_path=None, v8_params=None, resource_loader=None, real_network=False, cycronet_options=None):
+    def __init__(self, *, icudtl_path=None, v8_params=None, resource_loader=None,
+                 real_network=False, cycronet_options=None,
+                 generate_interface_stubs=True, expose_unimplemented=True,
+                 stub_logging="info"):
         self._closed = False
         # pyv8 initializes its process-global V8 runtime during package import.
         # Keep the arguments for API compatibility; the underlying package owns ICU setup.
@@ -469,6 +521,9 @@ class Browser:
         self.resource_loader = resource_loader
         self.real_network = bool(real_network)
         self.cycronet_options = dict(cycronet_options or {})
+        self.generate_interface_stubs = bool(generate_interface_stubs)
+        self.expose_unimplemented = bool(expose_unimplemented)
+        self.stub_logging = str(stub_logging or "info")
     def new_context(self):
         if self._closed: raise InvalidStateError("Browser is closed")
         context = BrowserContext(self); self.contexts.append(context); return context
