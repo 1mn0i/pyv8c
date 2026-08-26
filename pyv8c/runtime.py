@@ -13,6 +13,7 @@ from .dom import Document, DocumentType, Event
 from .network import Blob, Response, Request, Headers, XMLHttpRequest, Worker, WebSocket, ErrorEvent, set_current_page, current_page
 from .network_backend import CronetNetworkBackend, NetworkRequest, NetworkUnavailableError, same_origin
 from .interfaces import expose_interfaces
+from .interface_runtime import BaselineRepository, InterfaceUniverse
 from .parser import parse
 from .error import InvalidStateError, NetworkError, SecurityError, V8Error, as_js_error
 
@@ -48,13 +49,17 @@ class Page:
         self.resource_loader = context.browser.resource_loader
         self.network_backend = context.network_backend
         self.window = Window(page=self)
-        self.context = pyv8.Context(self.window, hook=False, ctx_type="Window")
+        self.context = pyv8.Context(
+            self.window, hook=False, ctx_type="Window",
+            class_configs=context.browser.interface_universe.class_configs("Window", roots=("Window",)),
+        )
         expose_interfaces(
             self.context,
             context_type="Window",
             generate_stubs=self.context_owner.browser.generate_interface_stubs,
             expose_unimplemented=self.context_owner.browser.expose_unimplemented,
             stub_logging=self.context_owner.browser.stub_logging,
+            universe=self.context_owner.browser.interface_universe,
         )
         Worker._current_page = self
         XMLHttpRequest._current_page = self
@@ -513,7 +518,7 @@ class Browser:
     def __init__(self, *, icudtl_path=None, v8_params=None, resource_loader=None,
                  real_network=False, cycronet_options=None,
                  generate_interface_stubs=True, expose_unimplemented=True,
-                 stub_logging="info"):
+                 stub_logging="info", interface_baseline_path=None):
         self._closed = False
         # pyv8 initializes its process-global V8 runtime during package import.
         # Keep the arguments for API compatibility; the underlying package owns ICU setup.
@@ -524,11 +529,19 @@ class Browser:
         self.generate_interface_stubs = bool(generate_interface_stubs)
         self.expose_unimplemented = bool(expose_unimplemented)
         self.stub_logging = str(stub_logging or "info")
+        snapshot = BaselineRepository.load(interface_baseline_path)
+        self.interface_universe = InterfaceUniverse(
+            snapshot, stub_logging=self.stub_logging,
+            expose_unimplemented=self.expose_unimplemented,
+        )
+        self.interface_universe.validate()
+        self.interface_baseline_path = snapshot.path
+        self.interface_baseline_info = snapshot.info
     def new_context(self):
         if self._closed: raise InvalidStateError("Browser is closed")
         context = BrowserContext(self); self.contexts.append(context); return context
     def close(self):
+        if self._closed:
+            return
         for context in self.contexts: context.close()
         self.contexts.clear(); self._closed = True
-        try: pyv8.shutdown_v8()
-        except RuntimeError: pass

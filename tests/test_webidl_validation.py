@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from pyv8c import Browser
+from pyv8c.dom import DOMTokenList
 
 
 def _page(html="<body></body>"):
@@ -87,3 +90,32 @@ def test_fetch_argument_failures_are_rejected_promises():
     page.run_until_idle()
     assert page.evaluate("__fetch_error") == ["TypeError", True]
     browser.close()
+
+
+def test_browser_does_not_mutate_real_implementation_classes():
+    original_init = DOMTokenList.__dict__["__init__"]
+    original_contains = DOMTokenList.__dict__["fn_contains"]
+    original_keys = frozenset(DOMTokenList.__dict__)
+    browser = Browser(stub_logging="off")
+    try:
+        browser.new_context().new_page()
+        assert DOMTokenList.__dict__["__init__"] is original_init
+        assert DOMTokenList.__dict__["fn_contains"] is original_contains
+        assert frozenset(DOMTokenList.__dict__) == original_keys
+        assert not hasattr(original_contains, "__webidl_wrapped__")
+    finally:
+        browser.close()
+
+
+def test_webidl_module_has_no_interface_specific_runtime_registry():
+    source = (Path(__file__).resolve().parents[1] / "pyv8c" / "webidl.py").read_text(encoding="utf-8")
+    for forbidden in ("_install_signatures", "SIGNATURES", "CONSTRUCTORS"):
+        assert forbidden not in source
+
+
+def test_legacy_stub_marker_is_absent_from_runtime_sources():
+    workspace = Path(__file__).resolve().parents[2]
+    sources = list((workspace / "pyv8c" / "pyv8c").glob("*.py"))
+    sources.extend((workspace / "_pyv8" / "src").glob("*.cpp"))
+    legacy_marker = "__idl_" + "stub__"
+    assert all(legacy_marker not in path.read_text(encoding="utf-8") for path in sources)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 INTERFACE_DECL = re.compile(r"const\s+WrapperTypeInfo\s+V8(?P<binding>[A-Za-z0-9_]+)::wrapper_type_info_\s*\{")
-FUNCTION_DECL = re.compile(r"(?:void|v8::Local\s*<\s*v8::Value\s*>)\s+(?P<name>[A-Za-z0-9_]+(?:Operation|Constructor)Callback)\s*\([^)]*\)\s*\{")
+FUNCTION_DECL = re.compile(r"(?:void|v8::Local\s*<\s*v8::Value\s*>)\s+(?P<name>[A-Za-z0-9_]+Callback)\s*\([^)]*\)\s*\{")
 TABLE_DECL = re.compile(r"static\s+const\s+IDLMemberInstaller::(?P<kind>Attribute|Operation|ConstantValue)Config\s+(?P<name>k[A-Za-z0-9_]+Table)\s*\[\]\s*=\s*\{")
 
 
@@ -112,6 +112,7 @@ def _argument_types(body):
         })
         before = body[max(0, match.start() - 180):match.start()]; after = body[index:min(len(body), index + 500)]
         parameter["optional"] |= "IsUndefined" in before or "IsUndefined" in after
+        parameter["optional"] |= type_name.startswith("IDLOptional<")
         parameter["nullable"] |= "Nullable" in type_name or "IsNull" in before or "IsNull" in after
         default = re.search(r"\{\s*([^{};]+)\s*\}", after)
         if default and parameter["optional"]: parameter["default"] = default.group(1).strip()
@@ -126,7 +127,7 @@ def extract_callback_signatures(text):
         signatures[name] = {
             "required": int(required.group(1)) if required else 0,
             "parameters": parameters,
-            "review": "generated-callback" if parameters or required else "manual-review-required",
+            "status": "generated",
             "source_evidence": "NotEnoughArguments/NativeValueTraits in generated callback",
         }
     return signatures
@@ -138,25 +139,40 @@ def _member_from_table(kind, fields, signatures):
     if kind == "Attribute":
         if len(fields) < 8: return {"name": name, "kind": "attribute", "review": "manual-review-required", "raw": fields}
         location = _flag(fields[4], "IDLMemberInstaller::FlagLocation") or "Unknown"
-        return {"name": name, "kind": "attribute", "getter": fields[1].strip(),
-                "setter": None if fields[2].strip() == "nullptr" else fields[2].strip(),
+        setter = None if fields[2].strip() == "nullptr" else fields[2].strip()
+        result = {"name": name, "kind": "attribute", "getter": fields[1].strip(),
+                "setter": setter,
                 "readonly": fields[2].strip() == "nullptr", "location": location.lower(),
                 "flags": _strip_unsigned(fields[3]), "world": _flag(fields[5], "IDLMemberInstaller::FlagWorld"),
                 "receiver": _flag(fields[6], "IDLMemberInstaller::FlagReceiverCheck"),
                 "cross_origin": _flag(fields[7], "IDLMemberInstaller::FlagCrossOriginCheck"),
                 "side_effect": _flag(fields[8], "v8::SideEffectType") if len(fields) > 8 else None,
                 "cached_accessor": _flag(fields[9], "V8PrivateProperty::CachedAccessor") if len(fields) > 9 else None}
+        if setter:
+            result["setter_signature"] = signatures.get(setter, {
+                "required": 1, "parameters": [], "status": "unresolved",
+                "source_evidence": "attribute table without parseable setter callback",
+            })
+            if not result["setter_signature"].get("parameters"):
+                result["setter_signature"]["status"] = "unresolved"
+        return result
     if kind == "Operation":
         if len(fields) < 6: return {"name": name, "kind": "operation", "review": "manual-review-required", "raw": fields}
         callback, length = fields[1].strip(), int(fields[2].strip()); location = _flag(fields[4], "IDLMemberInstaller::FlagLocation") or "Unknown"
+        signature = dict(signatures.get(callback, {
+            "required": length, "parameters": [], "status": "unresolved",
+            "source_evidence": "operation table without parseable callback",
+        }))
+        if length and len(signature.get("parameters") or ()) < length:
+            signature["required"] = length
+            signature["status"] = "unresolved"
         return {"name": name, "kind": "operation", "callback": callback, "length": length, "location": location.lower(),
                 "flags": _strip_unsigned(fields[3]), "world": _flag(fields[5], "IDLMemberInstaller::FlagWorld"),
                 "receiver": _flag(fields[6], "IDLMemberInstaller::FlagReceiverCheck") if len(fields) > 6 else None,
                 "cross_origin": _flag(fields[7], "IDLMemberInstaller::FlagCrossOriginCheck") if len(fields) > 7 else None,
                 "side_effect": _flag(fields[8], "v8::SideEffectType") if len(fields) > 8 else None,
-                "signature": signatures.get(callback, {"required": length, "parameters": [], "review": "manual-review-required",
-                                                         "source_evidence": "operation table without parseable callback"})}
-    return {"name": name, "kind": "constant", "value": fields[1].strip(), "location": "interface", "review": "manual-review-required"}
+                "signature": signature}
+    return {"name": name, "kind": "constant", "value": fields[1].strip(), "location": "interface", "status": "unresolved"}
 
 
 def extract_members(text):
@@ -237,8 +253,8 @@ def extract(root):
                 item = result[name] = {"parent": parent, "source": relative, "sources": [relative], "snapshot": "local-renderer",
                     "constructible": constructible, "constructor": {"exposed": constructible, "allow_new": constructible,
                     "allow_call": False if constructible else None, "length": next((sig.get("required", 0) for callback, sig in callback_signatures.items() if callback.endswith("ConstructorCallback")), None),
-                    "signature": next((sig for callback, sig in callback_signatures.items() if callback.endswith("ConstructorCallback")), {"review": "manual-review-required", "parameters": []}),
-                    "review": "generated-callback" if callback_signatures else "manual-review-required"},
+                    "signature": next((sig for callback, sig in callback_signatures.items() if callback.endswith("ConstructorCallback")), {"status": "unresolved", "parameters": [], "source_evidence": "constructor callback not found"}),
+                    "status": "generated" if any(callback.endswith("ConstructorCallback") for callback in callback_signatures) else "unresolved"},
                     "tag": name, "members": {"instance": [], "prototype": [], "interface": []}, "mixins": [], "exposed_in": _exposure(text)}
             else:
                 duplicate_sources += 1
@@ -250,20 +266,124 @@ def extract(root):
     for item in result.values():
         item["sources"] = sorted(set(item["sources"]))
         if not item["exposed_in"]: item.pop("exposed_in", None)
-    result["_report"] = {"interfaces": len(result), "member_total": sum(sum(len(values) for values in item["members"].values()) for item in result.values()),
-        "interfaces_with_members": sum(any(item["members"].values()) for item in result.values()),
-        "interfaces_with_signatures": sum(any(member.get("signature") for member in item["members"]["prototype"] + item["members"]["interface"]) for item in result.values()),
-        "manual_review_required": sum(1 for item in result.values() for values in item["members"].values() for member in values if member.get("review") == "manual-review-required" or member.get("signature", {}).get("review") == "manual-review-required"),
-        "duplicate_sources": duplicate_sources, "parse_failures": sorted(set(parse_failures))}
+    result["_report"] = _report(result, duplicate_sources, parse_failures)
     return result
 
 
+def _signature_status(signature):
+    return (signature or {}).get("status", "unresolved")
+
+
+def _report(result, duplicate_sources=0, parse_failures=()):
+    interfaces = {name: item for name, item in result.items() if not name.startswith("_")}
+    signatures = []
+    for item in interfaces.values():
+        signatures.append((item.get("constructor") or {}).get("signature") or {})
+        for values in item["members"].values():
+            for member in values:
+                if member.get("kind") == "operation":
+                    signatures.append(member.get("signature") or {})
+                elif member.get("kind") == "attribute" and member.get("setter"):
+                    signatures.append(member.get("setter_signature") or {})
+    return {
+        "interfaces": len(interfaces),
+        "member_total": sum(sum(len(values) for values in item["members"].values()) for item in interfaces.values()),
+        "interfaces_with_members": sum(any(item["members"].values()) for item in interfaces.values()),
+        "interfaces_with_signatures": sum(any(member.get("signature") for values in item["members"].values() for member in values) for item in interfaces.values()),
+        "generated_signatures": sum(_signature_status(signature) == "generated" for signature in signatures),
+        "reviewed_signatures": sum(_signature_status(signature) == "manual-reviewed" for signature in signatures),
+        "unresolved_signatures": sum(_signature_status(signature) == "unresolved" for signature in signatures),
+        "manual_review_required": sum(_signature_status(signature) == "unresolved" for signature in signatures),
+        "duplicate_sources": duplicate_sources,
+        "parse_failures": sorted(set(parse_failures)),
+    }
+
+
+def apply_reviews(extracted, review_path):
+    """Merge generation-only reviewed signatures into a renderer snapshot."""
+    reviews = json.loads(Path(review_path).read_text(encoding="utf-8"))
+    interfaces = {name: item for name, item in extracted.items() if not name.startswith("_")}
+    for interface_name, signature in (reviews.get("constructors") or {}).items():
+        if interface_name not in interfaces:
+            raise ValueError(f"stale Web IDL constructor review: {interface_name}")
+        reviewed = dict(signature)
+        expected_sources = reviewed.pop("target_sources", None)
+        actual_sources = sorted(
+            source.replace("\\", "/").split("/renderer/", 1)[-1]
+            for source in interfaces[interface_name].get("sources", ())
+        )
+        if expected_sources is None or sorted(expected_sources) != actual_sources:
+            raise ValueError(f"stale Web IDL constructor source evidence: {interface_name}")
+        constructor_metadata = {
+            key: reviewed.pop(key) for key in ("exposed", "allow_new", "allow_call", "length")
+            if key in reviewed
+        }
+        reviewed["status"] = "manual-reviewed"
+        constructor = interfaces[interface_name]["constructor"]
+        constructor.update(constructor_metadata)
+        interfaces[interface_name]["constructible"] = bool(
+            constructor.get("allow_new") or constructor.get("allow_call")
+        )
+        constructor["signature"] = reviewed
+        constructor["status"] = "manual-reviewed"
+        if constructor.get("length") is None:
+            constructor["length"] = int(reviewed.get("required") or 0)
+    for key, signature in (reviews.get("members") or {}).items():
+        interface_name, separator, member_name = key.partition(".")
+        if not separator or interface_name not in interfaces:
+            raise ValueError(f"stale Web IDL member review: {key}")
+        reviewed = dict(signature)
+        expected_callbacks = reviewed.pop("target_callbacks", None)
+        reviewed["status"] = "manual-reviewed"
+        matches = []
+        candidates = [interface_name]
+        for candidate_name, item in interfaces.items():
+            cursor, seen = candidate_name, set()
+            while cursor and cursor not in seen:
+                seen.add(cursor)
+                if cursor == interface_name:
+                    candidates.append(candidate_name)
+                    break
+                cursor = interfaces.get(cursor, {}).get("parent")
+        for candidate_name in dict.fromkeys(candidates):
+            for location, values in interfaces[candidate_name]["members"].items():
+                matches.extend(
+                    (candidate_name, location, member) for member in values
+                    if member.get("name") == member_name and member.get("kind") in ("operation", "attribute")
+                )
+        if not matches:
+            raise ValueError(f"stale Web IDL member review: {key}")
+        actual_callbacks = sorted(
+            f"{candidate_name}|{location}|{member.get('kind')}|{member.get('callback') or member.get('setter')}"
+            for candidate_name, location, member in matches
+        )
+        if expected_callbacks is None or sorted(expected_callbacks) != actual_callbacks:
+            raise ValueError(f"stale Web IDL member callback evidence: {key}")
+        for _candidate_name, _location, member in matches:
+            if member.get("kind") == "attribute":
+                if not member.get("setter"):
+                    continue
+                member["setter_signature"] = dict(reviewed)
+            else:
+                member["signature"] = dict(reviewed)
+    previous = extracted.get("_report") or {}
+    extracted["_report"] = _report(
+        extracted,
+        previous.get("duplicate_sources", 0),
+        previous.get("parse_failures", ()),
+    )
+    return extracted
+
+
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument("renderer", type=Path); parser.add_argument("output", type=Path); parser.add_argument("--report", action="store_true")
-    args = parser.parse_args(); extracted = extract(args.renderer); report = extracted.pop("_report")
-    output = {"_webidl": {"schema": 2, "source": "tools/extract_interfaces.py", "renderer_snapshot": "local-renderer",
-        "runtime_registry": "pyv8c.webidl.SIGNATURES", "constructor_registry": "pyv8c.webidl.CONSTRUCTORS",
-        "unresolved_policy": "manual-review-required", "notes": "All generated core/modules binding tables are scanned and merged.", "report": report}, **extracted}
+    parser = argparse.ArgumentParser(); parser.add_argument("renderer", type=Path); parser.add_argument("output", type=Path); parser.add_argument("--reviews", type=Path, default=Path(__file__).with_name("webidl-reviews.json")); parser.add_argument("--report", action="store_true")
+    args = parser.parse_args(); extracted = extract(args.renderer)
+    if args.reviews:
+        apply_reviews(extracted, args.reviews)
+    report = extracted.pop("_report")
+    output = {"_webidl": {"schema": 3, "source": "tools/extract_interfaces.py", "renderer_snapshot": "local-renderer",
+        "signature_source": "interface-baseline.json", "unresolved_policy": "implemented-strict-stub-permissive",
+        "notes": "All generated core/modules binding tables are scanned; generation-only reviews are embedded into this snapshot.", "report": report}, **extracted}
     args.output.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if args.report: print(json.dumps(report, indent=2, sort_keys=True))
 

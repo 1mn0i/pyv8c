@@ -10,6 +10,28 @@
 - `_pyv8/` 的修改也在这里记录，但代码提交仍在 `_pyv8` 自己的 Git 仓库完成。
 - 新增能力完成后，同步更新 `HANDOFF.md` 的当前状态；不要只更新工作记录。
 
+## 记录模板
+
+复制以下结构追加到文件末尾：
+
+```markdown
+## YYYY-MM-DD：简短主题
+
+### 目标
+
+### 修改
+
+-
+
+### 验证
+
+-
+
+### 未完成事项
+
+- 无，或明确列出限制。
+```
+
 ## 2026-08-24：当前文档结构整理
 
 ### 目标
@@ -297,28 +319,6 @@
 - `https://github.com/path/index.html` 页面生成的 URL 匹配 `blob:https://github.com/<uuid-v4>`。
 - 全量测试保持 `24 passed`。
 
-## 后续记录模板
-
-复制以下结构追加到文件末尾：
-
-```markdown
-## YYYY-MM-DD：简短主题
-
-### 目标
-
-### 修改
-
-- 
-
-### 验证
-
-- 
-
-### 未完成事项
-
-- 无，或明确列出限制。
-```
-
 ## 2026-08-25：全量 Web IDL 参数校验
 
 ### 目标
@@ -372,3 +372,53 @@
 ### 未完成
 
 - 复杂 overload/union、完整 dictionary 字段、构造器 allow_call/allow_new 精确推导和常量真实值仍需人工审核。
+
+## 2026-08-26：可替换、多版本并存的接口基线
+
+### 修改
+
+- 将默认基线移动到包内 `pyv8c/baselines/interface-baseline.json`，并通过 package-data 随 wheel 发布。
+- `Browser` 新增 `interface_baseline_path`，并公开 `interface_baseline_path` 与 `interface_baseline_info`。
+- 新增 `BaselineRepository` 和 Browser 级 `InterfaceUniverse`；基线按路径和内容哈希缓存只读快照，动态类、成员配置和校验状态按 Browser 隔离。
+- 动态接口不再写入全局 `IMPLEMENTATIONS`，缺失成员不再修改真实 Python 类的 `__v8_method__` 或 `__v8_attribute__`。
+- `_pyv8.Context` 新增 `class_configs` 参数，C++ class template 创建时优先读取 Context-local overlay；overlay 支持构造器长度/行为、`Symbol.toStringTag`、成员表、回调 owner 和显式 JS 父接口。
+- Window、iframe 和 Worker Context 均使用所属 Browser 的 Universe；Browser 关闭不再关闭进程级 V8 runtime，避免破坏同进程中的其他 Browser 或后续 Browser。
+- 修正 overlay 桩回调执行路径，以及 Python helper 继承但 Web IDL 无父接口时的集合成员安装。
+- 补充 `HTMLIFrameElement` 的 `iframe` 标签映射别名。
+
+### 验证
+
+- `_pyv8` 使用 V8 `15.2.20.1` 执行 `python setup.py build_ext --inplace`，编译通过。
+- 多版本专项覆盖包内默认基线、相对/绝对自定义路径、内容冻结、非法文件、动态类和模板隔离、真实 DOM identity、Window/Worker/iframe 归属及关闭隔离。
+- `python -m pytest -q tests`：`48 passed`。
+- wheel 构建通过；清单仅包含 `pyv8c` 包和元数据，包内 baseline 已核验存在且未混入 `build/` 或 `tests/`。
+
+### 当前边界
+
+- 外部 baseline 必须是完整 renderer 快照，不支持运行中热切换；切换版本需创建新 Browser。
+- 复杂常量、overload、union 和完整 descriptor 仍受 baseline 的 `manual-review-required` 字段限制。
+
+## 2026-08-27：Baseline 驱动的 Web IDL 绑定
+
+### 修改
+
+- 删除运行时 `_install_signatures()`、`SIGNATURES` 和 `CONSTRUCTORS`；`webidl.py` 只保留通用 BindingPlan 编译、类型转换、overload 选择和异常生成。
+- `InterfaceUniverse` 按 Browser baseline 独立编译真实方法、属性 setter 和构造器，并通过 Context-local callback owner 执行，不再修改真实 Python 类。
+- `_pyv8` class config overlay 增加 `__v8_constructor_adapter__`，构造器 adapter 由 class template 持有并在 Context 销毁时释放。
+- 将 `__idl_stub__` 全量改名为 `__v8_idl_stub__`；新增 `__v8_direct_callback__`，彻底分离“IDL 桩身份”和“callback 调用约定”。
+- baseline 升级为 schema 3；签名状态统一为 `generated`、`manual-reviewed` 和 `unresolved`。
+- 新增仅供生成器使用的 `tools/webidl-reviews.json`。审核项固定 renderer callback/source 证据，证据漂移时拒绝生成；最终审核结果嵌入 baseline，运行时不加载审核 sidecar。
+- 已实现成员存在 unresolved 签名时 Browser 初始化失败；未实现动态桩允许宽松调用并继续输出待实现日志。
+- 修复 `HTMLIFrameElement` 的 `iframe` 大小写映射别名，并将接口参数错误改为包含接口、方法和参数位置的浏览器式诊断。
+
+### 验证
+
+- `_pyv8` 使用 V8 `15.2.20.1` 重新编译成功；constructor adapter 和 direct callback 专项测试通过，全量测试为 `163 passed`。
+- pyv8c 专项覆盖真实类不变性、双 Browser 签名隔离、unresolved 严格/宽松策略、审核证据漂移和 V8 元数据标记职责。
+- renderer 提取报告：1173 interfaces、10362 members、3458 generated signatures、220 reviewed signatures、2900 unresolved signatures、0 parse failures。
+- pyv8c 全量测试为 `56 passed`；静态扫描确认生产代码不存在 `_install_signatures`、模块级 `SIGNATURES`/`CONSTRUCTORS` 和旧 `__idl_stub__`。
+- wheel 构建通过：`pyv8-2.1.2-cp310-abi3-win_amd64.whl` 与 `pyv8c-0.1.0-py3-none-any.whl`；pyv8c wheel 包含 schema 3 baseline，不包含生成期审核 sidecar。
+
+### 当前边界
+
+- unresolved 签名集中在尚未实现的动态桩；复杂 dictionary 字段、union 分支和 overload 选择仍需继续增强提取器或完成生成期审核。

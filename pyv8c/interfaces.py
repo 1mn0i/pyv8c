@@ -1,13 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Type
-import json
-from pathlib import Path
 
-import pyv8
-from pyv8.tools import ConstructorConfig
 from pyv8.flag import (
     FlagConstructor,
-    FlagExposed,
     FlagLocation,
     FlagReceiverCheck,
     FlagCrossOriginCheck,
@@ -30,11 +25,9 @@ IMPLEMENTATIONS: Dict[str, Type] = {}
 
 
 def load_baseline(path=None):
-    path = Path(path) if path else Path(__file__).resolve().parents[1] / "interface-baseline.json"
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    """Load a baseline for tooling and backwards-compatible callers."""
+    from .interface_runtime import BaselineRepository
+    return dict(BaselineRepository.load(path).interfaces)
 
 
 def interface(name: str, parent: Optional[str], *, constructible=False, length=0,
@@ -55,10 +48,6 @@ def interface(name: str, parent: Optional[str], *, constructible=False, length=0
         cls.__v8_constructor__ = FlagConstructor.kNew if constructible else FlagConstructor.kDontAll
         cls.__v8_has_constructor__ = 1
         cls.__v8_to_string_tag__ = spec.tag
-        # Install Web IDL validation at the Python callback boundary.  Import
-        # lazily because the decorator is also used while error.py is loading.
-        from .webidl import install_interface_validators
-        install_interface_validators(cls, name)
         return cls
 
     return decorate
@@ -66,7 +55,6 @@ def interface(name: str, parent: Optional[str], *, constructible=False, length=0
 
 def validate_registry(baseline=None):
     baseline = baseline if baseline is not None else load_baseline()
-    from .webidl import CONSTRUCTORS, signature_for
     def baseline_members(interface_name):
         root_interface = interface_name
         names = set()
@@ -120,50 +108,44 @@ def validate_registry(baseline=None):
             public_name, _callback, length = member[0], member[1], member[2]
             if baseline and public_name not in available_members:
                 raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
-            # Renderer entries that cannot be converted to a complete Web IDL
-            # signature are allowed for generated shells. Real callbacks must
-            # still have an explicit signature in webidl.py.
-            if str(_callback).startswith("_pyv8c_stub_"):
-                continue
-            if signature_for(name, public_name) is None:
-                raise TypeError(f"{name}.{public_name} has no Web IDL parameter signature")
-            # The native table's length is retained for Function.length.  The
-            # explicit signature controls required/optional conversion here;
-            # older hand-written tables may include optional parameters in
-            # their length and are checked by the baseline snapshot tests.
-        if spec.constructible and name not in CONSTRUCTORS and not cls.__dict__.get("__idl_stub__", False):
-            raise TypeError(f"{name} has no Web IDL constructor signature")
 
 
 def expose_interfaces(context, context_type="Window", *, generate_stubs=True,
-                      expose_unimplemented=True, stub_logging="info"):
+                      expose_unimplemented=True, stub_logging="info", universe=None):
     """Expose public interfaces, filling baseline-only APIs with shells.
 
     The baseline contains renderer-only and conditionally exposed bindings;
     only entries explicitly exposed in the current execution context reach JS.
     """
+    if universe is None:
+        from .interface_runtime import BaselineRepository, InterfaceUniverse
+        universe = InterfaceUniverse(
+            BaselineRepository.load(), stub_logging=stub_logging,
+            expose_unimplemented=expose_unimplemented,
+        )
     if generate_stubs:
-        from .interface_runtime import ensure_runtime_interfaces, configure_stub_logging
-        configure_stub_logging(stub_logging)
-        ensure_runtime_interfaces(context_type, expose_unimplemented=expose_unimplemented)
-    validate_registry()
+        universe.validate()
+    else:
+        validate_registry(universe.baseline.interfaces)
     # Sort by inheritance depth so a generated/real parent template is known
     # before its child is installed by the native pyv8 bridge.
     def depth(name):
         value, seen = 0, set()
-        current = INTERFACES.get(name)
-        while current and current.parent and current.parent not in seen:
-            seen.add(current.parent)
+        parent = (
+            universe.baseline.interfaces.get(name, {}).get("parent")
+            if generate_stubs else getattr(INTERFACES.get(name), "parent", None)
+        )
+        while parent and parent not in seen:
+            seen.add(parent)
             value += 1
-            current = INTERFACES.get(current.parent)
+            parent = (
+                universe.baseline.interfaces.get(parent, {}).get("parent")
+                if generate_stubs else getattr(INTERFACES.get(parent), "parent", None)
+            )
         return value
-    for name in sorted(IMPLEMENTATIONS, key=depth):
-        spec = INTERFACES[name]
-        if context_type not in spec.exposed_in:
-            continue
-        if IMPLEMENTATIONS[name].__dict__.get("__idl_stub__", False) and not expose_unimplemented:
-            continue
-        context.expose(IMPLEMENTATIONS[name], name=name)
+    names = universe.exposed_names(context_type) if generate_stubs else [name for name, spec in INTERFACES.items() if context_type in spec.exposed_in]
+    for name in sorted(names, key=depth):
+        context.expose(universe.class_for(name) if generate_stubs else IMPLEMENTATIONS[name], name=name)
 
 
 def js_attributes(*items):

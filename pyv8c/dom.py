@@ -610,6 +610,7 @@ class HTMLIFrameElement(HTMLElement):
 
 HTML_CLASSES["HTMLTemplateElement"] = HTMLTemplateElement
 HTML_CLASSES["HTMLIFrameElement"] = HTMLIFrameElement
+HTML_CLASSES["HTMLIframeElement"] = HTMLIFrameElement
 
 
 @interface("Document", "Node")

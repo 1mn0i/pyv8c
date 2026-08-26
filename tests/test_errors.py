@@ -21,7 +21,11 @@ def test_python_v8_error_metadata_and_dom_errors():
         return results;
       })()
     """)
-    assert value[0][0:3] == ["TypeError", "The new child is not a Node", True]
+    assert value[0][0:3] == [
+        "TypeError",
+        "Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.",
+        True,
+    ]
     assert value[1] == ["NotFoundError", 8, True]
     # pyv8's direct Python SyntaxError bridge is exposed as a generic Error
     # when caught inside JS, while an uncaught selector error remains a JS

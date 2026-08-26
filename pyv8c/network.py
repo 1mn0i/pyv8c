@@ -338,7 +338,12 @@ class _WorkerRuntime:
             source = self.page.resolve_worker_source(self.script_url)
             self._scope = DedicatedWorkerGlobalScope(runtime=self)
             self._isolate = pyv8.Isolate()
-            self._context = self._isolate.context(self._scope, hook=False, ctx_type="Worker")
+            self._context = self._isolate.context(
+                self._scope, hook=False, ctx_type="Worker",
+                class_configs=self.page.context_owner.browser.interface_universe.class_configs(
+                    "Worker", roots=("DedicatedWorkerGlobalScope",),
+                ),
+            )
             from .interfaces import expose_interfaces
             expose_interfaces(
                 self._context,
@@ -346,6 +351,7 @@ class _WorkerRuntime:
                 generate_stubs=self.page.context_owner.browser.generate_interface_stubs,
                 expose_unimplemented=self.page.context_owner.browser.expose_unimplemented,
                 stub_logging=self.page.context_owner.browser.stub_logging,
+                universe=self.page.context_owner.browser.interface_universe,
             )
             if source:
                 previous = current_page(); set_current_page(self.page)

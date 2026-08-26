@@ -25,3 +25,38 @@ rendering, and complete Chromium behavior remain out of scope.
 ```python
 browser = Browser(generate_interface_stubs=True, expose_unimplemented=True)
 ```
+
+The default Chromium interface snapshot is bundled at
+`pyv8c/baselines/interface-baseline.json`. A Browser can instead pin a
+different complete snapshot:
+
+```python
+browser = Browser(interface_baseline_path="baselines/chromium-variant.json")
+print(browser.interface_baseline_path)
+print(browser.interface_baseline_info["sha256"])
+```
+
+The path is resolved when `Browser` is created and its contents are frozen for
+that Browser. Multiple Browser instances may use different snapshots in one
+process; their generated classes and V8 class-template configurations are
+isolated. Window, iframe, and Worker contexts use the snapshot owned by their
+Browser.
+
+Regenerate the bundled snapshot from the local renderer bindings with:
+
+```powershell
+python tools/extract_interfaces.py ..\_pyv8env\renderer pyv8c\baselines\interface-baseline.json --report
+```
+
+The bundled baseline uses schema 3 and is the only runtime source for Web IDL
+constructor, operation, and attribute-setter signatures. `pyv8c.webidl`
+contains only generic signature compilation and value conversion; it has no
+interface-specific registration table. Signatures that generated Blink code
+cannot express completely are reviewed in `tools/webidl-reviews.json` and
+embedded during generation. The review file is never loaded at runtime.
+
+Implemented members must have a generated or reviewed signature. Unresolved
+implemented members prevent Browser creation, while unresolved generated stubs
+remain callable and log that they are pending implementation. Context-local
+callback and constructor adapters keep real Python classes unchanged and allow
+different Browser instances to use different baseline versions safely.

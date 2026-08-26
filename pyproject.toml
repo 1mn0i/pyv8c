@@ -17,3 +17,8 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["pyv8c*"]
+exclude = ["build*", "dist*", "tests*"]
+
+[tool.setuptools.package-data]
+pyv8c = ["baselines/*.json"]
