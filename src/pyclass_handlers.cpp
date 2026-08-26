@@ -29,6 +29,28 @@ enum FlagConstructor {
 #define Info(T) const PropertyCallbackInfo<T> &info
 
 
+static bool
+is_direct_callback(PyObject* method, bool* result)
+{
+    int has_marker = PyObject_HasAttrString(method, "__v8_direct_callback__");
+    if (has_marker < 0)
+        return false;
+    if (has_marker == 0) {
+        *result = false;
+        return true;
+    }
+    PyObject* marker = PyObject_GetAttrString(method, "__v8_direct_callback__");
+    if (marker == NULL)
+        return false;
+    int truth = PyObject_IsTrue(marker);
+    Py_DECREF(marker);
+    if (truth < 0)
+        return false;
+    *result = truth != 0;
+    return true;
+}
+
+
 static void
 py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
                         Local<Context> context,
@@ -82,7 +104,10 @@ py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
         js_throw_py();
         return;
     }
-    PyObject* new_object = PyObject_Call(self->cls, args, kwargs);
+    PyObject* new_object = self->constructor_adapter != NULL
+        ? PyObject_CallFunctionObjArgs(
+            self->constructor_adapter, self->cls, args, kwargs, NULL)
+        : PyObject_Call(self->cls, args, kwargs);
     Py_DECREF(args);
     Py_DECREF(kwargs);
     if (new_object == NULL) {
@@ -135,8 +160,13 @@ py_class_method_impl(const FunctionCallbackInfo<Value>& info,
         js_throw_py();
         return;
     }
+    bool direct_callback = false;
+    if (!is_direct_callback(method, &direct_callback)) {
+        js_throw_py();
+        return;
+    }
     PyObject* callable;
-    if (self == Py_None) {
+    if (direct_callback || self == Py_None) {
         Py_INCREF(method);
         callable = method;
     }
@@ -155,6 +185,41 @@ py_class_method_impl(const FunctionCallbackInfo<Value>& info,
         Py_DECREF(method_name);
         js_throw_py();
         return;
+    }
+    if (direct_callback && self != Py_None) {
+        Py_ssize_t length = PyTuple_Size(args);
+        PyObject* with_self = PyTuple_New(length + 1);
+        if (with_self == NULL) {
+            Py_DECREF(args);
+            Py_DECREF(callable);
+            Py_DECREF(method_name);
+            js_throw_py();
+            return;
+        }
+        Py_INCREF(self);
+        if (PyTuple_SetItem(with_self, 0, self) < 0) {
+            Py_DECREF(with_self);
+            Py_DECREF(args);
+            Py_DECREF(callable);
+            Py_DECREF(method_name);
+            js_throw_py();
+            return;
+        }
+        for (Py_ssize_t index = 0; index < length; ++index) {
+            PyObject* value = PyTuple_GetItem(args, index);
+            Py_INCREF(value);
+            if (PyTuple_SetItem(with_self, index + 1, value) < 0) {
+                Py_DECREF(value);
+                Py_DECREF(with_self);
+                Py_DECREF(args);
+                Py_DECREF(callable);
+                Py_DECREF(method_name);
+                js_throw_py();
+                return;
+            }
+        }
+        Py_DECREF(args);
+        args = with_self;
     }
     PyObject* kwargs = NULL;
     if (cross_origin) {
@@ -383,6 +448,20 @@ void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
     JS_PROPAGATE_PY(method);
     assert(PyFunction_Check_abi3(method));
 
+    bool direct_callback = false;
+    if (!is_direct_callback(method, &direct_callback)) {
+        js_throw_py();
+        return;
+    }
+    if (direct_callback) {
+        PyObject* result = self == Py_None ? PyObject_CallNoArgs(method) :
+            PyObject_CallFunctionObjArgs(method, self, NULL);
+        JS_PROPAGATE_PY(result);
+        info.GetReturnValue().Set(js_from_py(result, context));
+        Py_XDECREF(result);
+        return;
+    }
+
     if (self == Py_None && PyMethod_Check_abi3(method)) {
         self = PyMethod_GET_SELF_abi3(method);
         PyObject* result = PyObject_CallFunction(method, "", NULL);
@@ -414,12 +493,27 @@ void py_attribute_for_instance_set(const FunctionCallbackInfo<Value>& info) {
     JS_PROPAGATE_PY(method);
     assert(PyFunction_Check_abi3(method));
 
+    bool direct_callback = false;
+    if (!is_direct_callback(method, &direct_callback)) {
+        js_throw_py();
+        return;
+    }
     if (self == Py_None && PyMethod_Check_abi3(method)) {
         self = PyMethod_GET_SELF_abi3(method);
     }
 
     PyObject* value = py_from_js(info[0], context);
     JS_PROPAGATE_PY(value);
+
+    if (direct_callback) {
+        PyObject* result = self == Py_None ?
+            PyObject_CallFunctionObjArgs(method, value, NULL) :
+            PyObject_CallFunctionObjArgs(method, self, value, NULL);
+        Py_DECREF(value);
+        JS_PROPAGATE_PY(result);
+        Py_XDECREF(result);
+        return;
+    }
 
     PyObject* method_name = PyObject_GetAttrString(method, "__name__");
     PyObject* result = PyObject_CallMethodOneArg_abi3(self, method_name, value);
@@ -459,6 +553,11 @@ void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info) {
 
     PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
 
+    bool direct_callback = false;
+    if (!is_direct_callback(method, &direct_callback)) {
+        js_throw_py();
+        return;
+    }
     if (self == Py_None && PyMethod_Check_abi3(method)) {
         self = PyMethod_GET_SELF_abi3(method);
     }
@@ -468,6 +567,16 @@ void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info) {
 
     PyObject* value = py_from_js(info[0], context);
     JS_PROPAGATE_PY(value);
+
+    if (direct_callback) {
+        PyObject* result = self == Py_None ?
+            PyObject_CallFunctionObjArgs(method, value, NULL) :
+            PyObject_CallFunctionObjArgs(method, self, value, NULL);
+        Py_DECREF(value);
+        JS_PROPAGATE_PY(result);
+        Py_XDECREF(result);
+        return;
+    }
 
     PyObject* method_name = PyObject_GetAttrString(method, "__name__");
     PyObject* result = PyObject_CallMethodOneArg_abi3(self, method_name, value);

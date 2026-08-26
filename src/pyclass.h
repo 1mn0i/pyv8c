@@ -11,6 +11,7 @@ typedef struct {
     PyObject *cls_name;
     PyObject *call_method;
     PyObject *operation_callback_data;
+    PyObject *constructor_adapter;
     PyObject *parent;
     int constructor_behavior;
     int unconstructable;

@@ -87,10 +87,12 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* hook = Py_False;
     PyObject* ctx_type = NULL;
     PyObject* py_isolate = Py_None;
-    static const char *keywords[] = {"global_this", "hook", "ctx_type", "timeout", "isolate", NULL};
+    PyObject* class_configs = Py_None;
+    static const char *keywords[] = {"global_this", "hook", "ctx_type", "timeout", "isolate", "class_configs", NULL};
 
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdO", (char **) keywords,
-                                    &global, &hook, &ctx_type, &timeout, &py_isolate) < 0) {
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOO", (char **) keywords,
+                                    &global, &hook, &ctx_type, &timeout, &py_isolate,
+                                    &class_configs) < 0) {
         return NULL;
     }
 
@@ -124,7 +126,23 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         self->py_isolate = py_isolate;
     }
     self->js_object_cache = NULL;
+    self->class_configs = NULL;
+    self->py_global = NULL;
     self->class_template_cache = PyDict_New();
+    self->class_configs = PyDict_New();
+    if (self->class_configs != NULL && class_configs != Py_None) {
+        if (!PyMapping_Check(class_configs)) {
+            PyErr_SetString(PyExc_TypeError, "class_configs must be a mapping or None");
+            Py_DECREF((PyObject*)self);
+            Py_XDECREF(global);
+            return NULL;
+        }
+        if (PyDict_Update(self->class_configs, class_configs) < 0) {
+            Py_DECREF((PyObject*)self);
+            Py_XDECREF(global);
+            return NULL;
+        }
+    }
     self->py_global = global;
     self->has_debugger = false;
     self->has_done = false;
@@ -136,7 +154,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     } else {
         Py_INCREF(ctx_type);
     }
-    if (ctx_type == NULL || self->class_template_cache == NULL) {
+    if (ctx_type == NULL || self->class_template_cache == NULL || self->class_configs == NULL) {
         Py_XDECREF(ctx_type);
         Py_DECREF((PyObject*)self);
         return NULL;
@@ -217,6 +235,7 @@ void
 context_dealloc(context_c *self)
 {
     Py_CLEAR(self->class_template_cache);
+    Py_CLEAR(self->class_configs);
     if (!self->js_context.IsEmpty()) {
         self->js_context.Reset();
         if (self->isolate_state != nullptr)

@@ -4,6 +4,7 @@ import subprocess
 import sys
 import textwrap
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import pyv8
@@ -21,7 +22,8 @@ class TestDevtools(unittest.TestCase):
     def test_run_if_waiting_uses_inspector_callback(self):
         """CDP 方法应由 Inspector 解析，不能通过 JSON 文本搜索触发。"""
 
-        code = textwrap.dedent(
+        package_root = str(Path(__file__).resolve().parents[1])
+        code = f"import sys; sys.path.insert(0, {package_root!r})\n" + textwrap.dedent(
             """
             import json
 

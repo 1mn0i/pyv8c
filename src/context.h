@@ -16,6 +16,7 @@ typedef struct
     v8::Persistent<v8::Context> js_context;
     PyObject* js_object_cache;
     PyObject* class_template_cache;
+    PyObject* class_configs;
     PyObject* py_global;
     bool has_debugger;
     bool has_done;

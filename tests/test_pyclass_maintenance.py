@@ -75,6 +75,95 @@ class TestPyClassMaintenance(unittest.TestCase):
             context.expose(target=InvalidOperation())
         self.assertEqual(context.exec_js("40 + 2"), 42)
 
+    def test_context_class_config_overlays_are_isolated(self):
+        class Window:
+            pass
+
+        class Interface:
+            __v8_constructor__ = 1
+            __v8_has_constructor__ = 1
+
+            def __init__(self, win=None):
+                pass
+
+        def first(self):
+            return "first"
+
+        def second(self):
+            return "second"
+
+        first.__v8_direct_callback__ = True
+        second.__v8_direct_callback__ = True
+        first.__name__ = "first_callback"
+        second.__name__ = "second_callback"
+        first_owner = type("FirstCallbacks", (), {"first_callback": first})
+        second_owner = type("SecondCallbacks", (), {"second_callback": second})
+        operation = lambda name, callback: (
+            name, callback, 0, 0, 1, 0, 0, 0, 0,
+        )
+
+        first_context = pyv8.Context(Window(), class_configs={Interface: {
+            "__v8_method__": (operation("marker", "first_callback"),),
+            "__v8_callback_owner__": first_owner,
+        }})
+        second_context = pyv8.Context(Window(), class_configs={Interface: {
+            "__v8_method__": (operation("otherMarker", "second_callback"),),
+            "__v8_callback_owner__": second_owner,
+        }})
+        first_context.expose(Interface)
+        second_context.expose(Interface)
+
+        self.assertEqual(first_context.exec_js("new Interface().marker()"), "first")
+        self.assertTrue(first_context.exec_js("typeof Interface.prototype.otherMarker === 'undefined'"))
+        self.assertEqual(second_context.exec_js("new Interface().otherMarker()"), "second")
+        self.assertTrue(second_context.exec_js("typeof Interface.prototype.marker === 'undefined'"))
+
+    def test_context_constructor_adapters_are_isolated(self):
+        class Window:
+            pass
+
+        class Interface:
+            __v8_constructor__ = 1
+            __v8_has_constructor__ = 1
+            __v8_method__ = (("marker", "get_marker", 0, 0, 1, 0, 0, 0, 0),)
+
+            def __init__(self, value="default", win=None):
+                self.value = value
+
+            def get_marker(self):
+                return self.value
+
+        def adapter(prefix):
+            def construct(cls, args, kwargs):
+                return cls(prefix + str(args[0]), **kwargs)
+            return construct
+
+        first_context = pyv8.Context(Window(), class_configs={Interface: {
+            "__v8_constructor_adapter__": adapter("first:"),
+        }})
+        second_context = pyv8.Context(Window(), class_configs={Interface: {
+            "__v8_constructor_adapter__": adapter("second:"),
+        }})
+        first_context.expose(Interface)
+        second_context.expose(Interface)
+
+        self.assertEqual(first_context.exec_js("new Interface('x').marker()"), "first:x")
+        self.assertEqual(second_context.exec_js("new Interface('x').marker()"), "second:x")
+
+    def test_invalid_context_constructor_adapter_is_rejected(self):
+        class Window:
+            pass
+
+        class Interface:
+            __v8_constructor__ = 1
+            __v8_has_constructor__ = 1
+
+        context = pyv8.Context(Window(), class_configs={Interface: {
+            "__v8_constructor_adapter__": "not-callable",
+        }})
+        with self.assertRaisesRegex(TypeError, "__v8_constructor_adapter__ must be callable"):
+            context.expose(Interface)
+
 
 if __name__ == "__main__":
     unittest.main()

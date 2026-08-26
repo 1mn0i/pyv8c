@@ -39,6 +39,10 @@ struct ClassConfig {
     PyObject* immutable = NULL;
     PyObject* has_constructor = NULL;
     PyObject* constructor_behavior = NULL;
+    PyObject* constructor_adapter = NULL;
+    PyObject* callback_owner = NULL;
+    PyObject* parent_class = NULL;
+    PyObject* to_string_tag = NULL;
 
     bool global_this = false;
     bool undetectable = false;
@@ -79,6 +83,10 @@ struct ClassConfig {
         Py_XDECREF(immutable);
         Py_XDECREF(has_constructor);
         Py_XDECREF(constructor_behavior);
+        Py_XDECREF(constructor_adapter);
+        Py_XDECREF(callback_owner);
+        Py_XDECREF(parent_class);
+        Py_XDECREF(to_string_tag);
     }
 };
 
@@ -105,49 +113,96 @@ class_config_get(PyObject* class_dict, const char* name, PyObject** result)
 }
 
 static bool
-class_config_load(PyObject* cls, ClassConfig* config)
+class_config_get_with_overlay(PyObject* class_dict, PyObject* overlay,
+                              const char* name, PyObject** result)
+{
+    if (overlay != NULL) {
+        bool has_key = false;
+        if (!class_config_has(overlay, name, &has_key))
+            return false;
+        if (has_key) {
+            *result = PyMapping_GetItemString(overlay, name);
+            return *result != NULL;
+        }
+    }
+    return class_config_get(class_dict, name, result);
+}
+
+static bool
+class_config_has_with_overlay(PyObject* class_dict, PyObject* overlay,
+                              const char* name, bool* result)
+{
+    if (overlay != NULL) {
+        bool has_key = false;
+        if (!class_config_has(overlay, name, &has_key))
+            return false;
+        if (has_key) {
+            *result = true;
+            return true;
+        }
+    }
+    return class_config_has(class_dict, name, result);
+}
+
+static bool
+class_config_load(PyObject* cls, context_c* py_ctx, ClassConfig* config)
 {
     config->class_dict = PyObject_GetAttrString(cls, "__dict__");
     if (config->class_dict == NULL)
         return false;
 
-    if (!class_config_get(config->class_dict, "__v8_length__", &config->length) ||
-        !class_config_get(config->class_dict, "__v8_attribute__", &config->attributes) ||
-        !class_config_get(config->class_dict, "__v8_method__", &config->methods) ||
-        !class_config_get(config->class_dict, "__v8_constants_value__", &config->constant_values) ||
-        !class_config_get(config->class_dict, "__v8_constants_callback__", &config->constant_callbacks) ||
-        !class_config_get(config->class_dict, "__call__", &config->call) ||
-        !class_config_get(config->class_dict, "__v8_array__", &config->array) ||
-        !class_config_get(config->class_dict, "__v8_immutable__", &config->immutable) ||
-        !class_config_get(config->class_dict, "__v8_has_constructor__", &config->has_constructor) ||
-        !class_config_get(config->class_dict, "__v8_constructor__", &config->constructor_behavior))
+    PyObject* overlay = NULL;
+    if (py_ctx->class_configs != NULL) {
+        overlay = PyDict_GetItemWithError(py_ctx->class_configs, cls);
+        if (overlay == NULL && PyErr_Occurred())
+            return false;
+        if (overlay != NULL && !PyMapping_Check(overlay)) {
+            PyErr_SetString(PyExc_TypeError, "class_configs values must be mappings");
+            return false;
+        }
+    }
+
+    if (!class_config_get_with_overlay(config->class_dict, overlay, "__v8_length__", &config->length) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_attribute__", &config->attributes) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_method__", &config->methods) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_constants_value__", &config->constant_values) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_constants_callback__", &config->constant_callbacks) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__call__", &config->call) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_array__", &config->array) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_immutable__", &config->immutable) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_has_constructor__", &config->has_constructor) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_constructor__", &config->constructor_behavior) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_constructor_adapter__", &config->constructor_adapter) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_callback_owner__", &config->callback_owner) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_parent_class__", &config->parent_class) ||
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_to_string_tag__", &config->to_string_tag))
         return false;
 
-    if (!class_config_has(config->class_dict, "__v8_global_this__", &config->global_this) ||
-        !class_config_has(config->class_dict, "__v8_undetectable__", &config->undetectable) ||
-        !class_config_has(config->class_dict, "__v8_as_obj__", &config->as_object) ||
-        !class_config_has(config->class_dict, "__v8_unconstructable__", &config->unconstructable) ||
-        !class_config_has(config->class_dict, "__v8_name_get__", &config->name_get) ||
-        !class_config_has(config->class_dict, "__v8_name_set__", &config->name_set) ||
-        !class_config_has(config->class_dict, "__v8_name_query__", &config->name_query) ||
-        !class_config_has(config->class_dict, "__v8_name_enum__", &config->name_enum) ||
-        !class_config_has(config->class_dict, "__v8_name_del__", &config->name_del) ||
-        !class_config_has(config->class_dict, "__v8_index_get__", &config->index_get) ||
-        !class_config_has(config->class_dict, "__v8_index_set__", &config->index_set) ||
-        !class_config_has(config->class_dict, "__v8_index_query__", &config->index_query) ||
-        !class_config_has(config->class_dict, "__v8_index_enum__", &config->index_enum) ||
-        !class_config_has(config->class_dict, "__v8_index_del__", &config->index_del) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_check__", &config->cross_origin_check) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_name_get__", &config->cross_origin_name_get) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_name_set__", &config->cross_origin_name_set) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_name_query__", &config->cross_origin_name_query) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_name_enum__", &config->cross_origin_name_enum) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_name_del__", &config->cross_origin_name_del) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_index_get__", &config->cross_origin_index_get) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_index_set__", &config->cross_origin_index_set) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_index_query__", &config->cross_origin_index_query) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_index_enum__", &config->cross_origin_index_enum) ||
-        !class_config_has(config->class_dict, "__v8_cross_origin_index_del__", &config->cross_origin_index_del))
+    if (!class_config_has_with_overlay(config->class_dict, overlay, "__v8_global_this__", &config->global_this) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_undetectable__", &config->undetectable) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_as_obj__", &config->as_object) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_unconstructable__", &config->unconstructable) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_name_get__", &config->name_get) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_name_set__", &config->name_set) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_name_query__", &config->name_query) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_name_enum__", &config->name_enum) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_name_del__", &config->name_del) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_index_get__", &config->index_get) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_index_set__", &config->index_set) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_index_query__", &config->index_query) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_index_enum__", &config->index_enum) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_index_del__", &config->index_del) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_check__", &config->cross_origin_check) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_name_get__", &config->cross_origin_name_get) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_name_set__", &config->cross_origin_name_set) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_name_query__", &config->cross_origin_name_query) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_name_enum__", &config->cross_origin_name_enum) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_name_del__", &config->cross_origin_name_del) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_index_get__", &config->cross_origin_index_get) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_index_set__", &config->cross_origin_index_set) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_index_query__", &config->cross_origin_index_query) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_index_enum__", &config->cross_origin_index_enum) ||
+        !class_config_has_with_overlay(config->class_dict, overlay, "__v8_cross_origin_index_del__", &config->cross_origin_index_del))
         return false;
 
     return true;
@@ -187,6 +242,7 @@ py_class_dealloc(py_class* self)
     Py_XDECREF(self->cls_name);
     Py_XDECREF(self->call_method);
     Py_XDECREF(self->operation_callback_data);
+    Py_XDECREF(self->constructor_adapter);
     //Py_XDECREF(self->parent);
     //Py_TYPE(self)->tp_free((PyObject*)self);
     TP_FREE_ABI3(py_class_type, self);
@@ -255,6 +311,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     self->cls_name = NULL;
     self->call_method = NULL;
     self->operation_callback_data = NULL;
+    self->constructor_adapter = NULL;
     self->parent = NULL;
     self->constructor_behavior = 0;
     self->unconstructable = 0;
@@ -277,7 +334,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     }
 
     ClassConfig config;
-    if (!class_config_load(cls, &config)) {
+    if (!class_config_load(cls, py_ctx, &config)) {
         Py_DECREF((PyObject*)self);
         return NULL;
     }
@@ -308,6 +365,15 @@ py_class_new(PyObject *cls, context_c * py_ctx)
             return NULL;
         }
     }
+    if (config.constructor_adapter != NULL) {
+        if (!PyCallable_Check(config.constructor_adapter)) {
+            PyErr_SetString(PyExc_TypeError, "__v8_constructor_adapter__ must be callable");
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+        Py_INCREF(config.constructor_adapter);
+        self->constructor_adapter = config.constructor_adapter;
+    }
     self->unconstructable = config.unconstructable;
 
     Local<FunctionTemplate> templ = FunctionTemplate::New(isolate, py_class_construct_callback, js_self,
@@ -319,6 +385,20 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         return NULL;
     }
     Local<String> v8_name = V8String(isolate, world);
+    Local<String> v8_tag = v8_name;
+    if (config.to_string_tag != NULL) {
+        if (!PyUnicode_Check(config.to_string_tag)) {
+            PyErr_SetString(PyExc_TypeError, "__v8_to_string_tag__ must be a string");
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+        const char* tag = PyUnicode_AsUTF8_abi3(config.to_string_tag);
+        if (tag == NULL) {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+        v8_tag = V8String(isolate, tag);
+    }
 
     Local<Signature> sig = Signature::New(isolate, templ);
     if (config.global_this) {
@@ -353,7 +433,9 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     if (config.attributes != NULL)
     {
         if (!bindings::InstallAttributes(
-                isolate, world, templ, sig, cls, config.attributes,
+                isolate, world, templ, sig,
+                config.callback_owner != NULL ? config.callback_owner : cls,
+                config.attributes,
                 self->operation_callback_data)) {
             Py_DECREF((PyObject*)self);
             return NULL;
@@ -363,7 +445,9 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     if (config.methods != NULL)
     {
         if (!bindings::InstallOperations(
-                isolate, world, templ, sig, cls, config.methods,
+                isolate, world, templ, sig,
+                config.callback_owner != NULL ? config.callback_owner : cls,
+                config.methods,
                 self->operation_callback_data)) {
             Py_DECREF((PyObject*)self);
             return NULL;
@@ -506,16 +590,20 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         templ->PrototypeTemplate()->SetHandler(name_callbacks);
     }
 
-    PyObject* bases = PyObject_GetAttrString(cls, "__bases__");
-    if (bases == NULL)
-    {
-        Py_DECREF((PyObject*)self);
-        return NULL;
-    }
-    //PyObject*  bases = ((PyTypeObject*)cls)->tp_bases;
-    PyObject* last_base = PyTuple_GetItem(bases, PyTuple_Size(bases) - 1);
+    PyObject* bases = NULL;
+    PyObject* last_base = config.parent_class;
     if (last_base == NULL) {
-        PyErr_Clear();
+        bases = PyObject_GetAttrString(cls, "__bases__");
+        if (bases == NULL)
+        {
+            Py_DECREF((PyObject*)self);
+            return NULL;
+        }
+        //PyObject*  bases = ((PyTypeObject*)cls)->tp_bases;
+        last_base = PyTuple_GetItem(bases, PyTuple_Size(bases) - 1);
+        if (last_base == NULL) {
+            PyErr_Clear();
+        }
     }
     Py_XDECREF(bases);
 
@@ -543,14 +631,14 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     {
         self->to_obj = 1;
         //v8::Local<v8::ObjectTemplate> namespace_object_template = templ.As<v8::ObjectTemplate>();
-        templ->Set(Symbol::GetToStringTag(isolate), v8_name, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
+        templ->Set(Symbol::GetToStringTag(isolate), v8_tag, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
     }
     else
     {
         self->to_obj = 0;
         templ->ReadOnlyPrototype();
         templ->SetClassName(v8_name);
-        templ->PrototypeTemplate()->Set(Symbol::GetToStringTag(isolate), v8_name, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
+        templ->PrototypeTemplate()->Set(Symbol::GetToStringTag(isolate), v8_tag, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
     }
 
     templ->InstanceTemplate()->SetInternalFieldCount(OBJECT_INTERNAL_FIELDS);
