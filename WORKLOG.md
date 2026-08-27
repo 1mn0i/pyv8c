@@ -424,6 +424,24 @@
 - unresolved 签名集中在尚未实现的动态桩；复杂 dictionary 字段、union 分支和 overload 选择仍需继续增强提取器或完成生成期审核。
 ## 2026-08-27：代码审查与生命周期修复
 
+## 2026-08-27：增量 HTML 解析与脚本调度
+
+### 变更
+
+- 增加 `IncrementalDOMParser`，解析过程可在 parser-blocking 外部脚本处暂停并在资源任务完成后恢复。
+- 解析期脚本资源从开始标签即发现；经典、async、defer 和 module 使用独立调度路径。
+- 增加静态 module import 的递归依赖优先执行；动态脚本插入默认异步，`async=false` 保持有序执行。
+- 增加 parser、async/defer、动态脚本和 module 顺序回归测试。
+
+### 验证
+
+- `tests/test_parser_scripts.py`、`tests/test_module_scripts.py`：3 passed。
+- pyv8c 全量回归：63 passed。
+
+### 边界
+
+- 未实现完整 V8 ES Module API、动态 `import()`、import maps、preload scanner、document.write 和完整 HTML insertion mode。
+
 针对审查发现的六项高优先级问题完成修复：Context/Page 关闭状态、基于 monotonic 的定时器、DOM parentNode 一致性、严格 Worker structured clone、Worker 生命周期计数和统一 Page 异步资源队列。同时修复 Cookie path 边界、多 Set-Cookie、cyCronet timeout 重试风险，并为 `_pyv8.Context` 增加幂等 `close()` 与 expose 错误路径清理。
 
 新增 `tests/test_runtime_invariants.py`，覆盖关闭后 API、定时器、DOM reparent、fixture 异步、clone 错误和 Cookie path。`tests/test_next_stage.py` 的 XHR fixture 断言已调整为异步时序。

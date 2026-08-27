@@ -268,6 +268,15 @@ python tools/extract_interfaces.py ..\_pyv8env\renderer pyv8c\baselines\interfac
 后续优先级：先完善接口基线/descriptor/错误测试，再验证 cyCronet 真实后端和异步资源队列，然后补齐 iframe 同源策略、Worker 调度和 structured clone，最后扩展更多 Web IDL 接口及非核心渲染能力。
 ## 13. 代码审查与本轮修复（2026-08-27）
 
+### 页面解析与脚本执行（2026-08-27）
+
+- 新增可恢复的增量 HTML parser。`Page.set_content()` 在调用线程推进解析；遇到 parser-blocking 经典外部脚本时暂停，资源结果经 Page task queue 完成后恢复，因此后续 DOM 不会提前出现。
+- 解析期间立即发现脚本、样式、图片、iframe 等资源；同步 fixture loader 也统一通过任务队列回调。
+- 经典内联脚本按文档顺序执行；外部经典脚本下载完成后执行并继续解析；`async` 脚本独立执行，不阻塞 DOMContentLoaded；`defer` 脚本保持文档顺序并阻塞 DOMContentLoaded。
+- `type="module"` 支持静态相对 `import` 的依赖优先执行和 DCL 等待；当前仍不支持完整 ES Module lexical environment、动态 `import()`、import maps 和 preload scanner。
+- DOM 动态插入的 `<script>` 默认异步；设置 `async=false` 的动态经典脚本进入有序队列。脚本 `src`/文本更新会触发资源发现。
+- 新增专项测试 `tests/test_parser_scripts.py` 和 `tests/test_module_scripts.py`。
+
 本轮针对 `pyv8c` 与 `_pyv8` 的生命周期、异步调度、DOM 树一致性、Worker 克隆和 native 释放路径进行了实现与回归验证。
 
 已完成：

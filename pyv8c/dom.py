@@ -324,6 +324,9 @@ class Node(EventTarget):
         self._replace_children(())
         if value is not None:
             self.append_child(Text(str(value), page=self._page))
+        if self._page is not None and getattr(self, "localName", "") == "script":
+            callback = getattr(self._page, "_dynamic_script_updated", None)
+            if callback is not None: callback(self)
     def get_nodeValue(self): return self.nodeValue if self.nodeValue is not None else pyv8.Null
     def set_nodeValue(self, value): self.nodeValue = value
 
@@ -349,6 +352,10 @@ class Node(EventTarget):
             self._children.append(node)
         else:
             self._children.insert(index, node)
+        page = getattr(self, "_page", None)
+        if page is not None and not getattr(page, "_parsing", False):
+            callback = getattr(page, "_node_adopted", None)
+            if callback is not None: callback(node)
         return node
 
     def _replace_children(self, nodes):
@@ -588,7 +595,11 @@ class HTMLScriptElement(HTMLElement):
         _resource_attr("async", "get_async", "set_async"), _resource_attr("defer", "get_defer", "set_defer"),
     )
     def get_src(self): return self.attributes.get("src", "")
-    def set_src(self, value): self.attributes["src"] = str(value)
+    def set_src(self, value):
+        self.attributes["src"] = str(value)
+        if self._page and not getattr(self._page, "_parsing", False):
+            callback = getattr(self._page, "_dynamic_script_updated", None)
+            if callback is not None: callback(self)
     def get_type(self): return self.attributes.get("type", "")
     def set_type(self, value): self.attributes["type"] = str(value)
     def get_async(self): return "async" in self.attributes

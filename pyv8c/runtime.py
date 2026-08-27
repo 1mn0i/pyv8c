@@ -4,6 +4,7 @@ import queue
 import threading
 import time
 import uuid
+import re
 from urllib.parse import urlsplit
 
 import pyv8
@@ -14,7 +15,7 @@ from .network import Blob, Response, Request, Headers, XMLHttpRequest, Worker, W
 from .network_backend import CronetNetworkBackend, NetworkRequest, NetworkUnavailableError, same_origin
 from .interfaces import expose_interfaces
 from .interface_runtime import BaselineRepository, InterfaceUniverse
-from .parser import parse
+from .parser import parse, IncrementalDOMParser
 from .error import InvalidStateError, NetworkError, SecurityError, V8Error, as_js_error
 
 
@@ -45,6 +46,10 @@ class Page:
         self._resource_counter = itertools.count(1)
         self._dom_blocking_scripts = 0
         self._script_queue = []
+        self._defer_scripts = []
+        self._module_cache = {}
+        self._parser = None
+        self._parser_generation = 0
         self._load_waiters = []
         self.document = Document(page=self, url=url, ready_state="complete")
         self.resource_loader = context.browser.resource_loader
@@ -78,15 +83,16 @@ class Page:
         self._navigation_generation += 1
         self._has_navigation = True
         self._parser_done = self._dom_content_loaded = self._document_load_fired = False
-        self._document_resources.clear(); self._dom_blocking_scripts = 0; self._script_queue = []
+        self._document_resources.clear(); self._dom_blocking_scripts = 0; self._script_queue = []; self._defer_scripts = []; self._module_cache = {}
         self.window.location.href = str(url)
         self.document = Document(page=self, url=str(url), ready_state="loading")
+        self._parser_generation = self._navigation_generation
+        self._parser = IncrementalDOMParser(self, self.document, str(html))
         self._parsing = True
-        try:
-            parse(str(html), self, self.document)
-        finally:
-            self._parsing = False
-        self._finish_document_parse()
+        # HTML parsing runs on the caller thread until a parser-blocking
+        # external script is encountered.  Lifecycle notifications remain
+        # queued, matching the browser's observable task boundary.
+        self._resume_parser(self._parser_generation)
         return self
 
     def _dispatch_page_event(self, event_type, target, options=None):
@@ -109,7 +115,40 @@ class Page:
 
     def _finish_document_parse(self):
         self._parser_done = True
-        self.post_task(self._maybe_fire_dom_content_loaded)
+        self._parsing = False
+        self.post_task(self._run_deferred_scripts)
+
+    def _parser_is_blocked(self):
+        return bool(self._dom_blocking_scripts)
+
+    def _resume_parser(self, generation=None):
+        if self.closed or generation != self._navigation_generation or self._parser is None:
+            return
+        if self._parser_is_blocked():
+            return
+        self._parsing = True
+        try:
+            complete = self._parser.run()
+        except BaseException as exc:
+            self._parsing = False
+            self._dispatch_script_error(None, exc)
+            complete = True
+        if complete and self._parser is not None and self._parser.done:
+            self._finish_document_parse()
+        else:
+            self._parsing = False
+
+    def _parser_script_start(self, node):
+        node._parser_script = True
+        node._resource_started = False
+        node._resource_done = False
+        node._resource_error = None
+        node._resource_response = None
+        # A script fetch starts when its start tag is seen.  The parser may
+        # still be collecting its raw text, but async/defer/module resources
+        # are allowed to progress concurrently with parsing.
+        if getattr(node, "get_src", lambda: "")():
+            self._discover_element_resource(node)
 
     def _maybe_fire_dom_content_loaded(self):
         if self.closed or not self._parser_done or self._dom_content_loaded or self._dom_blocking_scripts:
@@ -140,22 +179,103 @@ class Page:
 
     def _execute_script(self, node, source, filename=None):
         try:
-            self.evaluate(source, filename=filename or self.url)
+            if str(getattr(node, "get_type", lambda: "")() or "").lower() == "module":
+                self._execute_module(source, filename or self.url, set())
+            else:
+                self.evaluate(source, filename=filename or self.url)
             return True
         except BaseException as exc:
             self._dispatch_script_error(node, exc)
             return False
 
+    def _execute_module(self, source, filename, trail):
+        """Execute static module imports in dependency-first order.
+
+        V8's public extension currently exposes classic script execution only.
+        This adapter implements the useful static-import subset while keeping
+        all module work on the Page/V8 thread.
+        """
+        from urllib.parse import urljoin
+        key = str(filename)
+        if key in self._module_cache: return
+        if key in trail: return  # cyclic static imports are already evaluating
+        trail = set(trail); trail.add(key)
+        imports = re.findall(r"(^|;)\s*import\s+([\s\S]*?)\s+from\s+(['\"])([^'\"]+)\3\s*;?", source)
+        side_effects = re.findall(r"(?:^|;)\s*import\s*(['\"])([^'\"]+)\1\s*;?", source)
+        for _prefix, clause, _quote, specifier in imports:
+            dep_url = urljoin(key, specifier)
+            dep = self.load_resource(dep_url, {"method": "GET", "mode": "cors"})
+            body = dep.body.decode("utf-8", "replace") if isinstance(dep.body, bytes) else str(dep.body)
+            self._execute_module(body, dep.url or dep_url, trail)
+        for _quote, specifier in side_effects:
+            dep_url = urljoin(key, specifier)
+            dep = self.load_resource(dep_url, {"method": "GET", "mode": "cors"})
+            body = dep.body.decode("utf-8", "replace") if isinstance(dep.body, bytes) else str(dep.body)
+            self._execute_module(body, dep.url or dep_url, trail)
+        transformed = re.sub(r"(?:^|;)\s*import\s+([\s\S]*?)\s+from\s+(['\"])([^'\"]+)\2\s*;?", "", source)
+        transformed = re.sub(r"(?:^|;)\s*import\s*(['\"])([^'\"]+)\1\s*;?", "", transformed)
+        transformed = re.sub(r"\bexport\s+default\s+", "", transformed)
+        transformed = re.sub(r"\bexport\s+(?=(?:async\s+)?(?:function|class|const|let|var)\b)", "", transformed)
+        transformed = re.sub(r"\bexport\s*\{[^}]*\}\s*;?", "", transformed)
+        # Imported names are global lexical bindings after dependency
+        # evaluation.  Alias forms need a local declaration in this script.
+        for _prefix, clause, _quote, _specifier in imports:
+            for item in clause.strip().strip("{}").split(","):
+                item = item.strip()
+                if not item or item == "*": continue
+                if item.startswith("*"):
+                    continue
+                parts = re.split(r"\s+as\s+", item)
+                if len(parts) == 2:
+                    transformed = "const %s = %s;\n%s" % (parts[1].strip(), parts[0].strip(), transformed)
+        self.evaluate(transformed, filename=key)
+        self._module_cache[key] = True
+
     def _parser_script_complete(self, node, source):
         node._raw_text = source
+        script_type = str(getattr(node, "get_type", lambda: "")() or "").lower()
+        is_module = script_type == "module"
+        is_async = bool(getattr(node, "get_async", lambda: False)())
+        is_defer = bool(getattr(node, "get_defer", lambda: False)()) or is_module
+        node._resource_async = is_async
+        node._script_defer = is_defer
         if node.get_src():
+            if is_defer:
+                self._defer_scripts.append(node)
+            elif not is_async:
+                if not getattr(node, "_resource_queued", False):
+                    self._dom_blocking_scripts += 1; self._script_queue.append(node); node._resource_queued = True
             self._discover_element_resource(node)
         elif source:
-            if self._dom_blocking_scripts:
-                node._resource_done = True; node._resource_response = None; node._resource_error = None
-                node._inline_source = source; self._dom_blocking_scripts += 1; self._script_queue.append(node)
+            node._inline_source = source
+            if is_defer:
+                node._resource_done = True; self._defer_scripts.append(node)
+            elif is_async:
+                self.post_task(lambda n=node: self._execute_script(n, n._inline_source, self.url))
             else:
                 self._execute_script(node, source, self.url)
+
+    def _node_adopted(self, node):
+        if getattr(node, "localName", "") == "script":
+            self._dynamic_script_updated(node)
+
+    def _dynamic_script_updated(self, node):
+        if self.closed or getattr(node, "_resource_started", False) and getattr(node, "_dynamic_started", False):
+            return
+        node._dynamic_started = True
+        node._parser_script = False
+        node._script_defer = False
+        node._resource_started = False
+        if node.get_src():
+            # Dynamically inserted classic scripts are async by default. An
+            # explicit async=false script is kept in insertion order.
+            node._resource_async = bool(node.get_async())
+            if not node._resource_async:
+                self._dom_blocking_scripts += 1
+                self._script_queue.append(node)
+            self._track_document_resource(node, node.get_src(), {"method": "GET", "mode": "same-origin"}, "script")
+        elif getattr(node, "_raw_text", ""):
+            self.post_task(lambda n=node: self._execute_script(n, n._raw_text, self.url))
 
     def install_inline_handler(self, node, name, source):
         try:
@@ -173,7 +293,7 @@ class Page:
             node._resource_started = True; node._resource_kind = "script"
             async_script = bool(node.get_async()) if hasattr(node, "get_async") else "async" in node.attributes
             node._resource_async = async_script
-            if not async_script:
+            if not async_script and not getattr(node, "_script_defer", False) and not getattr(node, "_parser_script", False):
                 self._dom_blocking_scripts += 1; self._script_queue.append(node)
             self._track_document_resource(node, src, {"method": "GET", "mode": "same-origin"}, "script")
             return
@@ -206,7 +326,28 @@ class Page:
                 self._execute_script(node, body, response.url or self.url)
                 self._dispatch_page_event("load", node, {"bubbles": False})
             self._dom_blocking_scripts = max(0, self._dom_blocking_scripts - 1)
-        if self._parser_done: self._maybe_fire_dom_content_loaded()
+        if not self._dom_blocking_scripts and self._parser is not None and not self._parser.done:
+            self.post_task(lambda generation=self._navigation_generation: self._resume_parser(generation))
+        if self._parser_done: self._run_deferred_scripts()
+
+    def _run_deferred_scripts(self):
+        if self.closed or not self._parser_done:
+            return
+        while self._defer_scripts:
+            node = self._defer_scripts[0]
+            if not getattr(node, "_resource_done", False):
+                return
+            self._defer_scripts.pop(0)
+            response, error = node._resource_response, node._resource_error
+            if error:
+                self._dispatch_script_error(node, error)
+            else:
+                source = getattr(node, "_inline_source", "")
+                if response is not None:
+                    source = response.body.decode("utf-8", "replace") if isinstance(response.body, bytes) else str(response.body)
+                self._execute_script(node, source, (response.url if response is not None else self.url) or self.url)
+                if response is not None: self._dispatch_page_event("load", node, {"bubbles": False})
+        self._maybe_fire_dom_content_loaded()
 
     def _complete_document_resource(self, token, generation, response, error):
         item = self._document_resources.get(token)
@@ -218,6 +359,11 @@ class Page:
         self._document_resources.pop(token, None)
         if kind == "script" and not getattr(node, "_resource_async", False):
             node._resource_done, node._resource_response, node._resource_error = True, response, error
+            if getattr(node, "_script_defer", False):
+                self._document_resources.pop(token, None)
+                self._run_deferred_scripts()
+                self._maybe_fire_document_load()
+                return
             self._drain_script_queue(); self._maybe_fire_document_load(); return
         if error:
             if kind == "script": self._dispatch_script_error(node, error)
