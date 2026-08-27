@@ -432,6 +432,7 @@
 - 解析期脚本资源从开始标签即发现；经典、async、defer 和 module 使用独立调度路径。
 - 增加静态 module import 的递归依赖优先执行；动态脚本插入默认异步，`async=false` 保持有序执行。
 - 增加 parser、async/defer、动态脚本和 module 顺序回归测试。
+- 修正 detached script 的 `src` 赋值语义，避免尚未插入文档就发起资源请求。
 
 ### 验证
 

@@ -262,6 +262,18 @@ class Page:
     def _dynamic_script_updated(self, node):
         if self.closed or getattr(node, "_resource_started", False) and getattr(node, "_dynamic_started", False):
             return
+        # Setting src/text on a detached script does not fetch or execute it.
+        # The adoption callback will retry once it is connected to this
+        # document.
+        parent = getattr(node, "parentNode", None)
+        connected = False
+        while parent is not None:
+            if parent is self.document:
+                connected = True
+                break
+            parent = getattr(parent, "parentNode", None)
+        if not connected:
+            return
         node._dynamic_started = True
         node._parser_script = False
         node._script_defer = False

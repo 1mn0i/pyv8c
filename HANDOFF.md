@@ -275,6 +275,7 @@ python tools/extract_interfaces.py ..\_pyv8env\renderer pyv8c\baselines\interfac
 - 经典内联脚本按文档顺序执行；外部经典脚本下载完成后执行并继续解析；`async` 脚本独立执行，不阻塞 DOMContentLoaded；`defer` 脚本保持文档顺序并阻塞 DOMContentLoaded。
 - `type="module"` 支持静态相对 `import` 的依赖优先执行和 DCL 等待；当前仍不支持完整 ES Module lexical environment、动态 `import()`、import maps 和 preload scanner。
 - DOM 动态插入的 `<script>` 默认异步；设置 `async=false` 的动态经典脚本进入有序队列。脚本 `src`/文本更新会触发资源发现。
+- detached 的动态脚本仅保存属性；只有连接到当前 Document 后才开始加载或执行。
 - 新增专项测试 `tests/test_parser_scripts.py` 和 `tests/test_module_scripts.py`。
 
 本轮针对 `pyv8c` 与 `_pyv8` 的生命周期、异步调度、DOM 树一致性、Worker 克隆和 native 释放路径进行了实现与回归验证。

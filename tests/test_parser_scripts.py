@@ -37,3 +37,20 @@ def test_async_and_defer_order_and_dynamic_script_default_async():
     assert order.index("defer") < order.index("dcl")
     assert order.index("inserted") < order.index("dynamic")
     browser.close()
+
+
+def test_detached_dynamic_script_does_not_fetch_until_inserted():
+    calls = []
+    def loader(url, request):
+        calls.append(url)
+        return Response("window.__dynamic = (window.__dynamic || 0) + 1", {"url": url, "content-type": "text/javascript"})
+    browser = Browser(resource_loader=loader)
+    page = browser.new_context().new_page()
+    page.set_content("<body></body>", url="http://example.test/")
+    page.evaluate("window.__dynamic=0; const s=document.createElement('script'); s.src='/dynamic.js'; window.__detached=s")
+    assert calls == []
+    page.evaluate("document.body.appendChild(__detached)")
+    page.run_until_idle()
+    assert calls == ["http://example.test/dynamic.js"]
+    assert page.evaluate("__dynamic") == 1
+    browser.close()
