@@ -321,28 +321,62 @@ class Node(EventTarget):
     def get_lastChild(self): return self.lastChild
     def get_textContent(self): return "".join(n.get_textContent() or "" for n in self._children)
     def set_textContent(self, value):
-        self._children = []
+        self._replace_children(())
         if value is not None:
             self.append_child(Text(str(value), page=self._page))
     def get_nodeValue(self): return self.nodeValue if self.nodeValue is not None else pyv8.Null
     def set_nodeValue(self, value): self.nodeValue = value
 
-    def append_child(self, node):
+    @staticmethod
+    def _detach_from_parent(node):
+        parent = node.parentNode
+        if parent is not None:
+            try:
+                parent._children.remove(node)
+            except ValueError:
+                pass
+            node.parentNode = None
+
+    def _ensure_adoptable(self, node):
         if not isinstance(node, Node): raise V8TypeError("The new child is not a Node")
-        if isinstance(node, DocumentFragment):
-            for child in list(node._children): self.append_child(child)
-            return node
         if node is self or self.fn_contains(node): raise HierarchyRequestError("The new child element contains the parent.")
-        if node.parentNode is not None: node.parentNode._children.remove(node)
-        node.parentNode = self; self._children.append(node); return node
+
+    def _adopt_child(self, node, index=None):
+        self._ensure_adoptable(node)
+        self._detach_from_parent(node)
+        node.parentNode = self
+        if index is None:
+            self._children.append(node)
+        else:
+            self._children.insert(index, node)
+        return node
+
+    def _replace_children(self, nodes):
+        for child in self._children:
+            child.parentNode = None
+        self._children = []
+        for node in nodes:
+            self._adopt_child(node)
+
+    def append_child(self, node):
+        if isinstance(node, DocumentFragment):
+            for child in list(node._children):
+                self._adopt_child(child)
+            return node
+        return self._adopt_child(node)
     def fn_appendChild(self, node): return self.append_child(node)
     def fn_insertBefore(self, node, reference):
         if reference in (None, pyv8.Null, pyv8.Undefined): return self.append_child(node)
-        if not isinstance(node, Node): raise V8TypeError("The new child is not a Node")
         if reference not in self._children: raise NotFoundError("The reference node is not a child.")
-        if node is self or self.fn_contains(node): raise HierarchyRequestError("The new child element contains the parent.")
-        if node.parentNode is not None: node.parentNode._children.remove(node)
-        node.parentNode = self; self._children.insert(self._children.index(reference), node); return node
+        index = self._children.index(reference)
+        if isinstance(node, DocumentFragment):
+            for child in list(node._children):
+                self._adopt_child(child, index)
+                index += 1
+            return node
+        if node.parentNode is self and self._children.index(node) < index:
+            index -= 1
+        return self._adopt_child(node, index)
     def fn_removeChild(self, node):
         if node not in self._children: raise NotFoundError("The node to be removed is not a child.")
         self._children.remove(node); node.parentNode = None; return node
@@ -350,9 +384,17 @@ class Node(EventTarget):
         if not isinstance(new, Node) or not isinstance(old, Node):
             raise V8TypeError("Failed to execute 'replaceChild' on 'Node': parameter is not of type 'Node'.")
         if old not in self._children: raise NotFoundError("The node to be replaced is not a child.")
-        if new is self or self.fn_contains(new): raise HierarchyRequestError("The new child element contains the parent.")
         i = self._children.index(old)
-        self.fn_removeChild(old); self._children.insert(i, new); new.parentNode = self; return old
+        self.fn_removeChild(old)
+        if isinstance(new, DocumentFragment):
+            for child in list(new._children):
+                self._adopt_child(child, i)
+                i += 1
+            return old
+        if new.parentNode is self and self._children.index(new) < i:
+            i -= 1
+        self._adopt_child(new, i)
+        return old
     def fn_cloneNode(self, deep=False):
         clone = self._clone_shallow()
         if deep:
@@ -463,7 +505,7 @@ class Element(Node):
     def set_className(self, value): self.attributes["class"] = str(value)
     def get_innerHTML(self): return "".join(c.outer_html() for c in self._children)
     def set_innerHTML(self, value):
-        self._children = []
+        self._replace_children(())
         if self._page: self._page.document._parse_fragment(str(value), self)
     def get_outerHTML(self): return self.outer_html()
     def set_outerHTML(self, value):

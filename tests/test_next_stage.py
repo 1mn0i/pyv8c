@@ -29,6 +29,8 @@ def test_injected_resource_loader_and_xhr():
     def loader(url, request):
         return Response('{"ok":true}', {"status": 200, "url": url, "headers": {"content-type": "application/json"}})
     browser = Browser(resource_loader=loader); page = browser.new_context().new_page(); page.set_content("<body></body>", url="http://example.test/")
-    assert page.evaluate("(() => { const x=new XMLHttpRequest(); x.open('GET','/data'); x.send(); return [x.readyState,x.status,x.responseText]; })()") == [4, 200, '{"ok":true}']
+    assert page.evaluate("(() => { window.__xhr=new XMLHttpRequest(); __xhr.open('GET','/data'); __xhr.send(); return [__xhr.readyState,__xhr.status,__xhr.responseText]; })()") == [1, 0, '']
+    page.run_until_idle()
+    assert page.evaluate("[__xhr.readyState,__xhr.status,__xhr.responseText]") == [4, 200, '{"ok":true}']
     assert page.evaluate("fetch('/data') instanceof Promise") is True
     page.close(); browser.close()

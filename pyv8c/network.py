@@ -1,9 +1,7 @@
 from threading import local
-import copy
 import queue
 import threading
 from urllib.parse import urljoin
-import json
 
 import pyv8
 from pyv8.flag import FlagExposed
@@ -29,17 +27,74 @@ def current_page():
     return getattr(_page_local, "page", None)
 
 
-def structured_clone(value):
-    """Clone message data without crossing a V8 context or DOM wrapper."""
-    if isinstance(value, Blob): return bytes(value._data)
-    if isinstance(value, (bytes, bytearray, memoryview)): return bytes(value)
-    if type(value).__name__ in ("TypedArray", "JSTypeArray"):
-        try: return bytes(int(value[index]) & 255 for index in range(int(value.length)))
-        except Exception: return bytes(value)
-    if isinstance(value, dict): return {str(key): structured_clone(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)): return [structured_clone(item) for item in value]
-    try: return copy.deepcopy(value)
-    except Exception: return value
+def structured_clone(value, transfer=(), context=None):
+    """Clone only browser-transferable message values.
+
+    Python implementation details and DOM wrappers must never cross a worker
+    boundary.  ``transfer`` is intentionally validated now; ArrayBuffer
+    detachment requires a native pyv8 ownership primitive and is rejected until
+    that primitive exists rather than silently sharing mutable data.
+    """
+    if transfer not in (None, (), [], pyv8.Undefined, pyv8.Null):
+        raise DataCloneError("Transfer lists are not supported by this runtime")
+    active = set()
+
+    def clone(item):
+        if item is None or item is pyv8.Null or item is pyv8.Undefined:
+            return item
+        if isinstance(item, (bool, int, float, str)):
+            return item
+        if isinstance(item, Blob):
+            return Blob([bytes(item._data)], {"type": item.get_type()})
+        if isinstance(item, (bytes, bytearray, memoryview)):
+            return bytes(item)
+        if type(item).__name__ in ("TypedArray", "JSTypeArray"):
+            try:
+                return bytes(int(item[index]) & 255 for index in range(int(item.length)))
+            except Exception as exc:
+                raise DataCloneError("The TypedArray could not be cloned") from exc
+        # Plain JavaScript objects can be returned by the bridge as JSObject
+        # wrappers (not only as Python dicts), especially when they originate
+        # from a worker event callback.  Materialize their enumerable own
+        # properties while preserving the same cycle checks as dict/list.
+        if type(item).__name__ == "JSObject":
+            # ArrayBuffer values are represented by the bridge as JSObject.
+            # Read their bytes while the originating Context is active; an
+            # empty enumerable-property walk would otherwise turn them into
+            # an unrelated empty object.
+            if context is not None:
+                try:
+                    byte_length = getattr(item, "byteLength")
+                    converter = context.exec_js("buffer => Array.from(new Uint8Array(buffer))")
+                    return bytes(converter.call(None, item))
+                except (AttributeError, TypeError, ValueError):
+                    pass
+            marker = id(item)
+            if marker in active:
+                raise DataCloneError("Cyclic message data is not supported")
+            active.add(marker)
+            try:
+                try:
+                    keys = list(item)
+                    return {str(key): clone(item[key]) for key in keys}
+                except BaseException as exc:
+                    raise DataCloneError("The JavaScript object could not be cloned") from exc
+            finally:
+                active.remove(marker)
+        if isinstance(item, (dict, list, tuple)):
+            marker = id(item)
+            if marker in active:
+                raise DataCloneError("Cyclic message data is not supported")
+            active.add(marker)
+            try:
+                if isinstance(item, dict):
+                    return {str(key): clone(child) for key, child in item.items()}
+                return [clone(child) for child in item]
+            finally:
+                active.remove(marker)
+        raise DataCloneError(f"The object of type {type(item).__name__!r} could not be cloned")
+
+    return clone(value)
 
 
 def _decode_clone_markers(value):
@@ -235,10 +290,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
     def fn_send(self, body=None):
         if self.readyState != self.OPENED: raise InvalidStateError("XMLHttpRequest is not in the OPENED state")
         request = {"method": self._method, "headers": self._request_headers, "body": body, "timeout": self.timeout / 1000 if self.timeout else None}
-        if self._page and self._page.resource_loader:
-            try: self._finish(self._page.load_resource(self._url, request), None)
-            except BaseException as exc: self._finish(None, exc)
-        elif self._page:
+        if self._page:
             self._page.load_resource_async(self._url, request, self._finish)
     def _finish(self, response, error):
         if not self._page or self._page.closed: return
@@ -320,7 +372,7 @@ class WorkerGlobalScope(EventTarget):
     def set_onmessage(self, value): self._handlers["onmessage"] = value
     def get_onerror(self): return self._handlers.get("onerror", pyv8.Null)
     def set_onerror(self, value): self._handlers["onerror"] = value
-    def fn_postMessage(self, value): self._runtime.post_to_parent(structured_clone(value))
+    def fn_postMessage(self, value): self._runtime.post_to_parent(value)
     def fn_close(self): self._runtime.stop()
 
 
@@ -359,25 +411,27 @@ class _WorkerRuntime:
                     self._context.exec_js(source, filename=self.script_url)
                 finally:
                     set_current_page(previous)
+            self._ready.set()
+            while not self._stop.is_set():
+                try: value = self._queue.get(timeout=0.05)
+                except queue.Empty: continue
+                if value is None: break
+                try:
+                    self._scope.fn_dispatchEvent(MessageEvent("message", {"data": value, "origin": self.page.url}))
+                except BaseException as exc:
+                    self._report_error(exc)
         except BaseException as exc:
             self._report_error(exc)
-        finally:
             self._ready.set()
-        while not self._stop.is_set():
-            try: value = self._queue.get(timeout=0.05)
-            except queue.Empty: continue
-            if value is None: break
-            try:
-                self._scope.fn_dispatchEvent(MessageEvent("message", {"data": value, "origin": self.page.url}))
-            except BaseException as exc:
-                self._report_error(exc)
-        context = self._context
-        self._context = None; self._scope = None
-        del context
-        if self._isolate is not None:
-            try: self._isolate.close()
-            except RuntimeError: pass
-            self._isolate = None
+        finally:
+            context = self._context
+            self._context = None; self._scope = None
+            del context
+            if self._isolate is not None:
+                try: self._isolate.close()
+                except RuntimeError: pass
+                self._isolate = None
+            self.page.post_task(self.owner._runtime_finished)
 
     def _report_error(self, exc):
         self.page.post_task(lambda: self.owner._receive_error(exc))
@@ -387,12 +441,11 @@ class _WorkerRuntime:
 
     def post_to_parent(self, value):
         try:
-            serializer = self._context.exec_js("(value => JSON.stringify(value, (key, item) => { if (item instanceof ArrayBuffer) return {__pyv8c_arraybuffer:Array.from(new Uint8Array(item))}; if (ArrayBuffer.isView(item)) return {__pyv8c_arraybuffer:Array.from(new Uint8Array(item.buffer, item.byteOffset, item.byteLength))}; return item; }))")
-            serialized = serializer(value)
-            value = _decode_clone_markers(json.loads(serialized))
-        except Exception:
-            value = structured_clone(value)
-        self.page.post_task(lambda: (self.owner._receive_message(structured_clone(value)), self.page.complete_worker()))
+            value = structured_clone(value, context=self._context)
+        except BaseException as exc:
+            self._report_error(exc)
+            return
+        self.page.post_task(lambda: self.owner._receive_message(value))
 
     def stop(self):
         self._stop.set(); self._queue.put(None)
@@ -405,7 +458,7 @@ class Worker(EventTarget):
     __v8_attribute__ = js_attributes(("onmessage", "get_onmessage", "set_onmessage", 0, 0), ("onerror", "get_onerror", "set_onerror", 0, 0))
     __v8_method__ = js_methods(("postMessage", "fn_postMessage", 1, 0), ("terminate", "fn_terminate", 0, 0))
     def __init__(self, script_url="", **kw):
-        page = current_page(); super().__init__(page=page, **kw); self._page = page; self._terminated = False; self._script_url = urljoin(page.url, str(script_url)) if page and not str(script_url).startswith("blob:") else str(script_url)
+        page = current_page(); super().__init__(page=page, **kw); self._page = page; self._terminated = False; self._lifecycle_finished = False; self._script_url = urljoin(page.url, str(script_url)) if page and not str(script_url).startswith("blob:") else str(script_url)
         if page is not None: page._owned_workers.add(self); page.begin_worker()
         self._runtime = _WorkerRuntime(self, self._script_url)
     def get_onmessage(self): return self._handlers.get("onmessage", pyv8.Null)
@@ -413,13 +466,24 @@ class Worker(EventTarget):
     def get_onerror(self): return self._handlers.get("onerror", pyv8.Null)
     def set_onerror(self, value): self._handlers["onerror"] = value
     def fn_postMessage(self, value):
-        if not self._terminated: self._runtime.post_from_parent(value)
+        if self._terminated:
+            raise InvalidStateError("Worker has been terminated")
+        self._runtime.post_from_parent(value)
     def _receive_message(self, value):
         if not self._terminated: self.fn_dispatchEvent(MessageEvent("message", {"data": value, "origin": self._page.url}))
     def _receive_error(self, error):
         if not self._terminated:
             self.fn_dispatchEvent(ErrorEvent("error", {"message": str(error), "error": error}))
-            self._page.complete_worker()
+    def _finish_lifecycle(self):
+        if getattr(self, "_lifecycle_finished", False):
+            return
+        self._lifecycle_finished = True
+        self._page.complete_worker()
+        self._page._owned_workers.discard(self)
+    def _runtime_finished(self):
+        self._finish_lifecycle()
     def fn_terminate(self):
         if not self._terminated:
-            self._terminated = True; self._page.complete_worker(); self._runtime.stop(); self._page._owned_workers.discard(self)
+            self._terminated = True
+            self._runtime.stop()
+            self._finish_lifecycle()

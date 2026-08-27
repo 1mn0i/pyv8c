@@ -57,6 +57,10 @@ class CookieJar:
     def add_from_response(self, url, header):
         if not header:
             return
+        if isinstance(header, (list, tuple)):
+            for value in header:
+                self.add_from_response(url, value)
+            return
         parsed_url = urlsplit(url)
         cookie = SimpleCookie()
         try:
@@ -79,7 +83,11 @@ class CookieJar:
         with self._lock:
             for cookie in self._cookies.values():
                 domain_ok = host == cookie.domain if cookie.host_only else host == cookie.domain or host.endswith("." + cookie.domain)
-                if domain_ok and path.startswith(cookie.path) and (not cookie.secure or secure):
+                path_ok = path == cookie.path or (
+                    path.startswith(cookie.path)
+                    and (cookie.path.endswith("/") or path[len(cookie.path):].startswith("/"))
+                )
+                if domain_ok and path_ok and (not cookie.secure or secure):
                     values.append(f"{cookie.name}={cookie.value}")
         return "; ".join(values)
 
@@ -123,7 +131,10 @@ class CronetNetworkBackend:
     def _response(raw, url):
         headers = getattr(raw, "headers", {}) or {}
         if hasattr(headers, "items"):
-            headers = {str(k).lower(): str(v) for k, v in headers.items()}
+            headers = {
+                str(k).lower(): ([str(item) for item in v] if isinstance(v, (list, tuple)) else str(v))
+                for k, v in headers.items()
+            }
         else:
             headers = {}
         body = getattr(raw, "content", None)
@@ -157,12 +168,17 @@ class CronetNetworkBackend:
             if request.body is not None:
                 kwargs["data"] = request.body
             if request.timeout is not None:
-                kwargs["timeout"] = request.timeout
-            try:
-                raw = fn(request.url, **kwargs)
-            except TypeError:
-                kwargs.pop("timeout", None)
-                raw = fn(request.url, **kwargs)
+                try:
+                    parameters = inspect.signature(fn).parameters.values()
+                    accepts_timeout = any(
+                        parameter.kind is inspect.Parameter.VAR_KEYWORD or parameter.name == "timeout"
+                        for parameter in parameters
+                    )
+                except (TypeError, ValueError):
+                    accepts_timeout = True
+                if accepts_timeout:
+                    kwargs["timeout"] = request.timeout
+            raw = fn(request.url, **kwargs)
         response = self._response(raw, request.url)
         set_cookie = response.headers.get("set-cookie")
         if set_cookie:

@@ -266,3 +266,21 @@ python tools/extract_interfaces.py ..\_pyv8env\renderer pyv8c\baselines\interfac
 9. 布局、渲染、CSSOM、bfcache、Service Worker、浏览器确认对话框和完整 Chromium 进程调度不在当前范围。
 
 后续优先级：先完善接口基线/descriptor/错误测试，再验证 cyCronet 真实后端和异步资源队列，然后补齐 iframe 同源策略、Worker 调度和 structured clone，最后扩展更多 Web IDL 接口及非核心渲染能力。
+## 13. 代码审查与本轮修复（2026-08-27）
+
+本轮针对 `pyv8c` 与 `_pyv8` 的生命周期、异步调度、DOM 树一致性、Worker 克隆和 native 释放路径进行了实现与回归验证。
+
+已完成：
+
+- `BrowserContext.close()` 后禁止创建 Page、访问 Blob URL 或继续加载资源，统一抛出 `InvalidStateError`。
+- 定时器使用 `time.monotonic()` 绝对到期时间；`setTimeout` 延迟、`setInterval` 周期、取消和 `run_until_idle(timeout)` 等待语义已修复。
+- `textContent`、`innerHTML`、append/insert/replace、DocumentFragment 操作统一经过 detach/adopt/replace 路径，旧节点的 `parentNode` 与新父节点保持一致。
+- fixture `resource_loader` 和无后端网络失败统一通过 Page task queue 回调，避免在当前 JavaScript 调用栈内重入。
+- Worker 使用严格白名单 structured clone，拒绝循环对象、函数、DOM wrapper 和不支持的 Python 对象；ArrayBuffer/TypedArray 会在 Worker Context 内转换，失败映射为 `DataCloneError`。
+- Worker 生命周期计数与消息任务分离，terminate、初始化失败和线程退出只结束一次；Page 关闭时会回收 Worker。
+- Cookie path 使用路径边界匹配，并保留重复 `Set-Cookie` 响应头；cyCronet timeout 参数通过签名预检，运行期不因业务 `TypeError` 重试请求。
+- `_pyv8.Context.close()` 增加显式、幂等的 V8 Context 释放接口；`context.expose()` 参数失败路径补齐引用清理。
+
+验证结果：pyv8c `63 passed`，`_pyv8` `164 passed`；使用本地 V8 `15.2.20.1` 编译扩展成功。
+
+真实遗留问题：完整 transfer list 所有权转移、复杂 structured clone（Map/Set/循环可克隆对象）、CORS 预检与完整 Cookie 属性、cyCronet 真机端到端兼容性，以及按需创建全部 Chromium class template 尚未完成。页面布局、CSSOM、Service Worker、模块脚本和完整 Chromium 调度仍不在范围内。

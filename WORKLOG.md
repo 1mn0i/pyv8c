@@ -422,3 +422,10 @@
 ### 当前边界
 
 - unresolved 签名集中在尚未实现的动态桩；复杂 dictionary 字段、union 分支和 overload 选择仍需继续增强提取器或完成生成期审核。
+## 2026-08-27：代码审查与生命周期修复
+
+针对审查发现的六项高优先级问题完成修复：Context/Page 关闭状态、基于 monotonic 的定时器、DOM parentNode 一致性、严格 Worker structured clone、Worker 生命周期计数和统一 Page 异步资源队列。同时修复 Cookie path 边界、多 Set-Cookie、cyCronet timeout 重试风险，并为 `_pyv8.Context` 增加幂等 `close()` 与 expose 错误路径清理。
+
+新增 `tests/test_runtime_invariants.py`，覆盖关闭后 API、定时器、DOM reparent、fixture 异步、clone 错误和 Cookie path。`tests/test_next_stage.py` 的 XHR fixture 断言已调整为异步时序。
+
+验证：pyv8c `63 passed`，`_pyv8` `164 passed`；V8 `15.2.20.1`，Windows MSVC 2026，`build_ext --inplace` 成功。未完成项包括完整 transfer list、复杂 structured clone、CORS 预检、完整 Cookie 属性、cyCronet 真机兼容性和接口模板惰性加载。

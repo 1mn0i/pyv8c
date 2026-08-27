@@ -27,6 +27,7 @@ class Page:
         self._cancelled = set()
         self.microtasks = []
         self._posted = queue.Queue()
+        self._task_errors = []
         self._network_condition = threading.Condition()
         self._network_pending = 0
         self._worker_pending = 0
@@ -68,7 +69,7 @@ class Page:
     def url(self): return self.window.location.href
 
     def set_content(self, html, url="about:blank"):
-        if self.closed: raise InvalidStateError("Page is closed")
+        if self.closed or self.context_owner.closed: raise InvalidStateError("Page is closed")
         if self._has_navigation and not self._dispatch_beforeunload():
             return self
         if self._has_navigation:
@@ -246,6 +247,8 @@ class Page:
             callback(False)
 
     def load_resource(self, url, request=None):
+        if self.closed or self.context_owner.closed:
+            raise InvalidStateError("Page is closed")
         from urllib.parse import urljoin
         target = urljoin(self.url, str(url))
         request = request or {"method": "GET"}
@@ -298,11 +301,16 @@ class Page:
         allowed = "" if allowed is None or allowed is pyv8.Null else str(allowed)
         if allowed not in ("*", self.window.location.get_origin()):
             raise SecurityError("CORS check failed")
-        if request.get("credentials") == "include" and allowed == "*":
-            raise SecurityError("wildcard CORS origin cannot be used with credentials")
+        if request.get("credentials") == "include":
+            credentials = response.headers.fn_get("access-control-allow-credentials")
+            if allowed == "*" or str(credentials).lower() != "true":
+                raise SecurityError("credentialed CORS request was not allowed")
         return response
 
     def load_resource_async(self, url, request, callback):
+        if self.closed or self.context_owner.closed:
+            self.post_task(lambda: callback(None, InvalidStateError("Page is closed")))
+            return
         from urllib.parse import urljoin
         target = urljoin(self.url, str(url))
         req = NetworkRequest(target, str(request.get("method", "GET")).upper(), self._header_dict(request.get("headers")), request.get("body"), request.get("timeout"), request.get("credentials", "same-origin"), request.get("mode", "cors"), request.get("redirect", "follow"), self.url)
@@ -312,15 +320,19 @@ class Page:
                 if isinstance(result, Response): response = result; response._page = self
                 elif isinstance(result, dict): response = Response(result.get("body", ""), {**result, "url": target})
                 else: response = Response(str(result), {"url": target})
-                try: callback(self._apply_response_policy(response, request), None)
-                except BaseException as exc: callback(None, exc)
+                try:
+                    response, error = self._apply_response_policy(response, request), None
+                except BaseException as exc:
+                    response, error = None, exc
             except BaseException as exc:
-                callback(None, exc)
+                response, error = None, exc
+            # Fixture loaders use the same asynchronous boundary as Cronet.
+            self.post_task(lambda: callback(response, error))
             return
         if self.network_backend:
             self.network_backend.request_async(self, req, lambda raw, error: self._finish_async_response(raw, error, request, callback))
             return
-        callback(None, NetworkError("Network access requires an explicit resource_loader or real_network=True"))
+        self.post_task(lambda: callback(None, NetworkError("Network access requires an explicit resource_loader or real_network=True")))
 
     def _finish_async_response(self, raw, error, request, callback):
         if error:
@@ -394,7 +406,7 @@ class Page:
         return child
 
     def evaluate(self, script, filename=None):
-        if self.closed: raise InvalidStateError("Page is closed")
+        if self.closed or self.context_owner.closed: raise InvalidStateError("Page is closed")
         previous = current_page(); set_current_page(self)
         try:
             return self.context.exec_js(str(script), filename=filename)
@@ -408,26 +420,38 @@ class Page:
         finally:
             set_current_page(previous)
 
+    def _run_queued_callback(self, callback, *args):
+        """Keep one faulty task from aborting unrelated browser work."""
+        try:
+            return self._run_callback(callback, *args)
+        except BaseException as exc:
+            self._task_errors.append(as_js_error(exc))
+            return None
+
     def schedule(self, callback, delay, repeat=False):
         ident = next(self._counter)
-        heapq.heappush(self._queue, (delay, ident, callback, repeat))
+        try:
+            delay = max(0.0, float(delay))
+        except (TypeError, ValueError):
+            delay = 0.0
+        heapq.heappush(
+            self._queue,
+            (time.monotonic() + delay, ident, callback, delay if repeat else None),
+        )
         return ident
 
     def cancel(self, ident): self._cancelled.add(int(ident))
 
     def run_until_idle(self, timeout=0):
         deadline = time.monotonic() + float(timeout or 0)
-        if timeout and not (self.microtasks or self._queue or not self._posted.empty() or self._network_pending):
-            with self._network_condition:
-                self._network_condition.wait(min(0.01, max(0, deadline - time.monotonic())))
         while self.microtasks or self._queue or not self._posted.empty() or (timeout and (self._network_pending or self._worker_pending)):
             while True:
                 try: callback = self._posted.get_nowait()
                 except queue.Empty: break
-                if not self.closed: self._run_callback(callback)
+                if not self.closed: self._run_queued_callback(callback)
             while self.microtasks:
                 callback = self.microtasks.pop(0)
-                self._run_callback(callback)
+                self._run_queued_callback(callback)
             if not self._queue:
                 if self._posted.empty() and not self.microtasks:
                     if timeout and self._network_pending and time.monotonic() < deadline:
@@ -440,12 +464,19 @@ class Page:
                         if not self._posted.empty(): continue
                     break
                 continue
-            delay, ident, callback, repeat = heapq.heappop(self._queue)
+            due, ident, callback, interval = self._queue[0]
+            now = time.monotonic()
+            if due > now:
+                if not timeout or now >= deadline:
+                    break
+                with self._network_condition:
+                    self._network_condition.wait(min(due - now, max(0, deadline - now)))
+                continue
+            heapq.heappop(self._queue)
             if ident in self._cancelled: continue
-            self._run_callback(callback)
-            if repeat and ident not in self._cancelled:
-                heapq.heappush(self._queue, (delay, ident, callback, repeat))
-                if len(self._queue) > 10000: break
+            self._run_queued_callback(callback)
+            if interval is not None and ident not in self._cancelled:
+                heapq.heappush(self._queue, (max(due + interval, time.monotonic()), ident, callback, interval))
             if timeout and time.monotonic() >= deadline: break
 
     def wait_for_network(self, timeout=30):
@@ -465,6 +496,10 @@ class Page:
         self._owned_websockets.clear()
         for worker in list(self._owned_workers): worker.fn_terminate()
         self._owned_workers.clear()
+        self.context_owner._discard_page(self)
+        close_context = getattr(self.context, "close", None)
+        if callable(close_context):
+            close_context()
 
     def element_class(self, tag):
         from .dom import HTMLElement, HTML_CLASSES
@@ -478,6 +513,11 @@ class BrowserContext:
         self.browser, self.pages = browser, []
         self.network_backend = CronetNetworkBackend(options=browser.cycronet_options) if browser.real_network else None
         self._blob_urls = {}
+        self.closed = False
+
+    def _ensure_open(self):
+        if self.closed or self.browser._closed:
+            raise InvalidStateError("BrowserContext is closed")
     @staticmethod
     def _serialized_origin(url):
         """Return the browser serialized origin used in a Blob URL."""
@@ -496,18 +536,31 @@ class BrowserContext:
             return "null"
 
     def create_blob_url(self, blob, page=None):
+        self._ensure_open()
         origin = self._serialized_origin(getattr(page, "url", "about:blank"))
         url = "blob:" + origin + "/" + str(uuid.uuid4())
         self._blob_urls[url] = (bytes(blob._data), blob.get_type())
         return url
     def resolve_blob_url(self, url):
+        self._ensure_open()
         if url not in self._blob_urls: raise NetworkError("revoked or unknown Blob URL")
         return self._blob_urls[url]
-    def revoke_blob_url(self, url): self._blob_urls.pop(url, None)
+    def revoke_blob_url(self, url):
+        self._ensure_open()
+        self._blob_urls.pop(url, None)
     def new_page(self, url="about:blank"):
+        self._ensure_open()
         page = Page(self, url=url); self.pages.append(page); return page
+    def _discard_page(self, page):
+        try:
+            self.pages.remove(page)
+        except ValueError:
+            pass
     def close(self):
-        for page in self.pages: page.close()
+        if self.closed:
+            return
+        self.closed = True
+        for page in list(self.pages): page.close()
         self.pages.clear()
         self._blob_urls.clear()
         if self.network_backend:
