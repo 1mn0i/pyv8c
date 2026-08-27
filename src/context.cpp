@@ -20,6 +20,7 @@ PyMethodDef context_methods[] = {
     {"expose", (PyCFunction)context_expose, METH_VARARGS | METH_KEYWORDS, NULL},
     {"expose_module", (PyCFunction)context_expose_module, METH_O, NULL},
     {"gc", (PyCFunction)context_gc, METH_NOARGS, NULL},
+    {"close", (PyCFunction)context_close, METH_NOARGS, NULL},
     {NULL},
 };
 
@@ -231,8 +232,8 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     return (PyObject *) self;
 }
 
-void 
-context_dealloc(context_c *self)
+static void
+context_release(context_c *self)
 {
     Py_CLEAR(self->class_template_cache);
     Py_CLEAR(self->class_configs);
@@ -241,7 +242,7 @@ context_dealloc(context_c *self)
         if (self->isolate_state != nullptr)
             self->isolate_state->release_v8_handle();
     }
-    Py_XDECREF(self->py_global);
+    Py_CLEAR(self->py_global);
 
     if (self->js_object_cache != NULL && PyObject_HasAttrString(self->js_object_cache, "items")) {
         PyObject* items = PyObject_CallMethod(self->js_object_cache, "items", nullptr);
@@ -258,11 +259,24 @@ context_dealloc(context_c *self)
         }
     }
 
-    Py_XDECREF(self->js_object_cache);
-    Py_XDECREF(self->py_isolate);
+    Py_CLEAR(self->js_object_cache);
+    Py_CLEAR(self->py_isolate);
     self->isolate_state = nullptr;
 
-    //Py_TYPE(self)->tp_free((PyObject *) self);
+}
+
+PyObject*
+context_close(context_c *self, PyObject* ignored)
+{
+    (void)ignored;
+    context_release(self);
+    Py_RETURN_NONE;
+}
+
+void
+context_dealloc(context_c *self)
+{
+    context_release(self);
     TP_FREE_ABI3(context_type, self);
 }
 
@@ -282,11 +296,15 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
     for (int i = 0; i < args_size; i++)
     {
         PyObject *object = PySequence_GetItem(args, i);
-        PyErr_PROPAGATE(object);
+        if (object == NULL) {
+            Py_DECREF(args);
+            return NULL;
+        }
         if (!PyObject_HasAttrString(object, "__name__"))
         {
             PyErr_SetString(PyExc_TypeError, "Object passed to expose must have a __name__");
             Py_DECREF(object);
+            Py_DECREF(args);
             return NULL;
         }
         Py_DECREF(object);
@@ -294,9 +312,16 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
     for (int i = 0; i < args_size; i++)
     {
         PyObject *object = PySequence_GetItem(args, i);
-        PyErr_PROPAGATE(object);
+        if (object == NULL) {
+            Py_DECREF(args);
+            return NULL;
+        }
         PyObject *name = PyObject_GetAttrString(object, "__name__");
-        PyErr_PROPAGATE(name);
+        if (name == NULL) {
+            Py_DECREF(object);
+            Py_DECREF(args);
+            return NULL;
+        }
         Local<Value> js_name = js_from_py(name, context);
         Local<Value> js_object = js_from_py(object, context);
         if (js_name.IsEmpty() || js_object.IsEmpty() || PyErr_Occurred()) {

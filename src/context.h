@@ -34,6 +34,7 @@ PyObject* context_expose(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_expose_module(context_c* self, PyObject* module);
 PyObject* context_js_obj(context_c* self, PyObject* py_object);
 PyObject* context_gc(context_c* self);
+PyObject* context_close(context_c* self, PyObject* ignored);
 
 // Embedder data slots
 #define CONTEXT_OBJECT_SLOT 1

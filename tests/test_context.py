@@ -19,6 +19,13 @@ class TestContext(unittest.TestCase):
         """测试上下文创建"""
         self.assertIsInstance(self.context, pyv8.Context)
     
+    def test_close_releases_context_and_is_idempotent(self):
+        """Explicit closure rejects further V8 entry and is idempotent."""
+        self.context.close()
+        self.context.close()
+        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+            self.context.exec_js("1 + 1")
+
     def test_exec_js(self):
         """测试执行简单的JavaScript代码"""
         result = self.context.exec_js("1 + 1")
