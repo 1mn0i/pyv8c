@@ -11,9 +11,11 @@ dependencies = ["loguru>=0.7"]
 
 [project.optional-dependencies]
 network = ["cycronet>=144.4.7,<151"]
+browser = ["websockets>=11"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: launches a visible local browser"]
 
 [tool.setuptools.packages.find]
 where = ["."]

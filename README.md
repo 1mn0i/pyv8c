@@ -64,6 +64,30 @@ Regenerate the bundled snapshot from the local renderer bindings with:
 python tools/extract_interfaces.py ..\_pyv8env\renderer pyv8c\baselines\interface-baseline.json --report
 ```
 
+When a compiled Chromium renderer is unavailable, a schema 3 baseline can be
+collected from an installed Chrome or Edge executable. The collector opens a
+visible browser window (it never passes `--headless`), uses a temporary profile,
+reflects Window and Dedicated Worker globals through CDP, and closes the browser
+and removes the profile when collection finishes or is interrupted:
+
+```powershell
+python -m pip install -e ".[browser]"
+python tools/extract_browser_interfaces.py `
+  --browser "C:\Program Files\Google\Chrome\Application\chrome.exe" `
+  --output build\interface-baseline.browser.json
+```
+
+The executable path is required. `tools/runtime-signatures.json` carries the
+reviewed signatures used by implemented `pyv8c` members; `--reference-baseline`
+defaults to the bundled snapshot so non-reflectable runtime members (for
+example `Location` and Window timer functions) remain available. Validate a
+generated file before replacing the bundled baseline:
+
+```powershell
+$env:PYTHONPATH = "..\_pyv8;.;$env:PYTHONPATH"
+python -c "from pyv8c.interface_runtime import BaselineRepository, InterfaceUniverse; b=BaselineRepository.load('build/interface-baseline.browser.json'); InterfaceUniverse(b).validate(); print(b.info)"
+```
+
 The bundled baseline uses schema 3 and is the only runtime source for Web IDL
 constructor, operation, and attribute-setter signatures. `pyv8c.webidl`
 contains only generic signature compilation and value conversion; it has no

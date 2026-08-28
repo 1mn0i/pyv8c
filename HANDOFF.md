@@ -199,3 +199,21 @@ python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 10. 布局、渲染、CSSOM、bfcache、Service Worker 和完整 Chromium 进程/调度模型不在当前范围。
 
 后续优先级：先补齐已实现公共接口的 Web IDL/descriptor 测试，再完善真实 cyCronet 与跨源语义，然后扩展 iframe、Worker 和 native 生命周期，最后处理非核心接口及性能。
+## Browser CDP baseline collection
+
+`tools/extract_browser_interfaces.py` is the low-cost alternative to compiling
+Chromium renderer bindings. It requires an explicit Chrome or Edge executable,
+opens a visible browser window, creates an isolated temporary profile, reflects
+Window and Dedicated Worker globals through CDP, and always closes the process
+and removes the profile on success, failure, or Ctrl+C. It never uses
+`--headless` and does not require Playwright or Selenium.
+
+```powershell
+python -m pip install -e ".[browser]"
+python tools/extract_browser_interfaces.py --browser "C:\Program Files\Google\Chrome\Application\chrome.exe" --output build\interface-baseline.browser.json
+```
+
+`tools/runtime-signatures.json` contains the reviewed signatures for current
+Python implementations. Keep the bundled baseline as `--reference-baseline`
+until the generated file has passed `BaselineRepository.load()` and
+`InterfaceUniverse.validate()`.
