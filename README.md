@@ -58,34 +58,27 @@ process; their generated classes and V8 class-template configurations are
 isolated. Window, iframe, and Worker contexts use the snapshot owned by their
 Browser.
 
-Regenerate the bundled snapshot from the local renderer bindings with:
+Regenerate the bundled snapshot from the Chromium source checkout with:
 
 ```powershell
-python tools/extract_interfaces.py ..\_pyv8env\renderer pyv8c\baselines\interface-baseline.json --report
+python tools/extract_interfaces.py pyv8c\baselines\interface-baseline.json `
+  --chromium-root "D:\src\chromium" `
+  --build-dir "D:\src\chromium\src\out\Cronet145" `
+  --report
 ```
 
-When a compiled Chromium renderer is unavailable, a schema 3 baseline can be
-collected from an installed Chrome or Edge executable. The collector opens a
-visible browser window (it never passes `--headless`), uses a temporary profile,
-reflects Window and Dedicated Worker globals through CDP, and closes the browser
-and removes the profile when collection finishes or is interrupted:
+The extractor scans Chromium-generated Blink binding files under the GN output
+directory. If they do not exist, it invokes `autoninja` with target
+`blink_generate_bindings_all`; the required Windows toolchain variables are set
+from the environment and default to the local checkout paths.
+
+The equivalent explicit toolchain setup is:
 
 ```powershell
-python -m pip install -e ".[browser]"
-python tools/extract_browser_interfaces.py `
-  --browser "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-  --output build\interface-baseline.browser.json
-```
-
-The executable path is required. `tools/runtime-signatures.json` carries the
-reviewed signatures used by implemented `pyv8c` members; `--reference-baseline`
-defaults to the bundled snapshot so non-reflectable runtime members (for
-example `Location` and Window timer functions) remain available. Validate a
-generated file before replacing the bundled baseline:
-
-```powershell
-$env:PYTHONPATH = "..\_pyv8;.;$env:PYTHONPATH"
-python -c "from pyv8c.interface_runtime import BaselineRepository, InterfaceUniverse; b=BaselineRepository.load('build/interface-baseline.browser.json'); InterfaceUniverse(b).validate(); print(b.info)"
+$env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
+$env:vs2022_install = "D:\Microsoft\vs\2022\Community"
+$env:WINDOWSSDKDIR = "D:\Windows Kits\10"
+$env:PATH = "D:\src\depot_tools;" + $env:PATH
 ```
 
 The bundled baseline uses schema 3 and is the only runtime source for Web IDL
