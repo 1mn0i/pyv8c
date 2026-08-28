@@ -5,7 +5,7 @@ import threading
 import time
 import uuid
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import pyv8
 
@@ -16,7 +16,7 @@ from .network_backend import CronetNetworkBackend, NetworkRequest, NetworkUnavai
 from .interfaces import expose_interfaces
 from .interface_runtime import BaselineRepository, InterfaceUniverse
 from .parser import parse, IncrementalDOMParser
-from .error import InvalidStateError, NetworkError, SecurityError, V8Error, as_js_error
+from .error import InvalidStateError, NetworkError, SecurityError, TimeoutError, V8Error, as_js_error
 
 
 class Page:
@@ -51,10 +51,12 @@ class Page:
         self._parser = None
         self._parser_generation = 0
         self._load_waiters = []
+        self._pending_navigation = 0
         self.document = Document(page=self, url=url, ready_state="complete")
         self.resource_loader = context.browser.resource_loader
         self.network_backend = context.network_backend
         self.window = Window(page=self)
+        self.window.location.href = str(url)
         self.context = pyv8.Context(
             self.window, hook=False, ctx_type="Window",
             class_configs=context.browser.interface_universe.class_configs("Window", roots=("Window",)),
@@ -73,10 +75,13 @@ class Page:
     @property
     def url(self): return self.window.location.href
 
-    def set_content(self, html, url="about:blank"):
-        if self.closed or self.context_owner.closed: raise InvalidStateError("Page is closed")
-        if self._has_navigation and not self._dispatch_beforeunload():
-            return self
+    @url.setter
+    def url(self, value): self.goto(value)
+
+    def _navigation_allowed(self):
+        return not self._has_navigation or self._dispatch_beforeunload()
+
+    def _commit_content(self, html, url):
         if self._has_navigation:
             self._dispatch_page_event("pagehide", self.window, {"bubbles": False, "persisted": False})
             self._dispatch_page_event("unload", self.window, {"bubbles": False})
@@ -90,10 +95,75 @@ class Page:
         self._parser = IncrementalDOMParser(self, self.document, str(html))
         self._parsing = True
         # HTML parsing runs on the caller thread until a parser-blocking
-        # external script is encountered.  Lifecycle notifications remain
+        # external script is encountered. Lifecycle notifications remain
         # queued, matching the browser's observable task boundary.
         self._resume_parser(self._parser_generation)
         return self
+
+    def set_content(self, html, url="about:blank"):
+        if self.closed or self.context_owner.closed: raise InvalidStateError("Page is closed")
+        if not self._navigation_allowed():
+            return self
+        return self._commit_content(html, url)
+
+    @staticmethod
+    def _decode_html(response):
+        body = response.body
+        if not isinstance(body, bytes):
+            return str(body)
+        content_type = response.headers.fn_get("content-type")
+        match = re.search(r"charset\s*=\s*['\"]?([^\s;'\"]+)", str(content_type), re.I)
+        encoding = match.group(1) if match else "utf-8"
+        try:
+            return body.decode(encoding, "replace")
+        except LookupError:
+            return body.decode("utf-8", "replace")
+
+    def goto(self, url, *, timeout=30, wait_until="load"):
+        """Download and navigate to an HTML document."""
+        if self.closed or self.context_owner.closed:
+            raise InvalidStateError("Page is closed")
+        states = {
+            None: None,
+            "commit": None,
+            "domcontentloaded": lambda: self._dom_content_loaded,
+            "load": lambda: self._document_load_fired,
+        }
+        if wait_until not in states:
+            raise ValueError("wait_until must be 'commit', 'domcontentloaded', or 'load'")
+        target = urljoin(self.url, str(url))
+        if not self._navigation_allowed():
+            return None
+        timeout_value = None if timeout is None else max(0.0, float(timeout))
+        response = self.load_resource(target, {
+            "method": "GET", "mode": "navigate", "credentials": "include",
+            "timeout": timeout_value,
+        })
+        final_url = response.url or target
+        self._commit_content(self._decode_html(response), final_url)
+        ready = states[wait_until]
+        if ready is not None:
+            deadline = time.monotonic() + (30.0 if timeout_value is None else timeout_value)
+            while not ready() and time.monotonic() < deadline:
+                self.run_until_idle(timeout=min(0.05, max(0.0, deadline - time.monotonic())))
+            if not ready():
+                raise TimeoutError(f"Navigation to {target} timed out")
+        return response
+
+    def request_navigation(self, url):
+        """Queue navigation requested by the JavaScript Location object."""
+        if self.closed or self.context_owner.closed:
+            raise InvalidStateError("Page is closed")
+        target = urljoin(self.url, str(url))
+        self._pending_navigation += 1
+        request_id = self._pending_navigation
+
+        def navigate():
+            if request_id == self._pending_navigation and not self.closed:
+                self.goto(target)
+
+        self.post_task(navigate)
+        return target
 
     def _dispatch_page_event(self, event_type, target, options=None):
         event = Event(event_type, options or {})
@@ -450,6 +520,7 @@ class Page:
         return body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
 
     def _apply_response_policy(self, response, request):
+        if str(request.get("mode", "cors")) == "navigate": return response
         if same_origin(self.url, response.url): return response
         mode = str(request.get("mode", "cors"))
         if mode == "no-cors":
@@ -708,7 +779,14 @@ class BrowserContext:
         self._blob_urls.pop(url, None)
     def new_page(self, url="about:blank"):
         self._ensure_open()
-        page = Page(self, url=url); self.pages.append(page); return page
+        page = Page(self); self.pages.append(page)
+        if str(url) != "about:blank":
+            try:
+                page.goto(url)
+            except BaseException:
+                page.close()
+                raise
+        return page
     def _discard_page(self, page):
         try:
             self.pages.remove(page)

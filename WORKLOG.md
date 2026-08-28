@@ -245,3 +245,27 @@
 
 - 当前 module 是静态 import 适配层，不是完整 V8 ES Module 实现。
 - dynamic import、import maps、top-level await、document.write、preload scanner 和完整 HTML insertion mode 未实现。
+
+## 2026-08-28：URL 主文档导航
+
+### 目标
+
+设置页面 URL 时自动下载 HTML，并复用既有解析、脚本调度和生命周期实现。
+
+### 修改
+
+- 新增 `Page.goto(url, timeout=30, wait_until="load")`，支持等待 commit、DOMContentLoaded 或 load。
+- `BrowserContext.new_page(url)` 在 URL 不是 `about:blank` 时自动导航。
+- JavaScript 设置 `location.href` 或 `window.location` 时，将导航投递到 Page 任务队列。
+- 主文档使用 `resource_loader` 或 cyCronet 下载，支持响应最终 URL 和 HTTP charset 解码。
+- 顶层导航不套用 fetch CORS 检查；子资源继续沿用现有安全策略。
+- 新增 `test_navigation.py`，覆盖主文档、外部脚本、Location 导航、charset 和无网络后端错误。
+
+### 验证
+
+- pyv8c 全量测试：`70 passed`。
+
+### 限制
+
+- 默认仍不联网；真实 URL 需要 `Browser(real_network=True)` 和 cyCronet，或显式 `resource_loader`。
+- 主文档请求当前为同步入口；真实后端超时和取消能力仍受 cyCronet 适配层约束。

@@ -40,6 +40,8 @@ browser.close()
 - 定时器以 `time.monotonic()` 的绝对到期时间调度，页面关闭后未执行任务被丢弃。
 - Page/Context/Browser 关闭后继续使用会抛出 `InvalidStateError`；`Page.close()` 显式释放 `_pyv8.Context`。
 - navigation generation 改变后，旧文档资源和异步回调不能污染新文档。
+- `Page.goto(url)` 通过 `resource_loader` 或可选 cyCronet 后端下载主文档 HTML，并可等待 `DOMContentLoaded` 或 `load`。
+- `BrowserContext.new_page(url)` 自动导航；JavaScript 设置 `location.href` 或 `window.location` 时通过 Page 任务队列执行同一导航流程。
 
 文档生命周期顺序：
 
@@ -139,6 +141,7 @@ structured clone 失败       -> DataCloneError
 
 - 默认不联网；`resource_loader` 优先于所有后端。
 - `Browser(real_network=True)` 可选用 cyCronet；每个 BrowserContext 一个 session。
+- 顶层 HTML 导航使用 `mode=navigate`，不套用 fetch CORS 限制；响应 URL、HTTP charset、解析、子资源和页面生命周期均接入现有 Page 流程。
 - fetch、Request、Response、Headers、异步 XMLHttpRequest、redirect、基础 Cookie 和 CORS 已接入 Page 队列。
 - 同步 fixture loader 与 Cronet 结果使用相同异步边界；fetch/XHR 不阻塞文档 load。
 - iframe 使用独立 Page/Document/Context，父页面等待子页面 load；提供基础同源访问和父子关系。
@@ -174,10 +177,10 @@ python -m pytest -q tests
 python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 ```
 
-最近一次验证（2026-08-27）：
+最近一次验证（2026-08-28）：
 
 - `_pyv8`：`164 passed`，V8 `15.2.20.1`，`build_ext --inplace` 成功。
-- `pyv8c`：`66 passed`。
+- `pyv8c`：`70 passed`。
 - wheel：`pyv8-2.1.2-cp310-abi3-win_amd64.whl`、`pyv8c-0.1.0-py3-none-any.whl` 构建成功。
 
 ## 9. 真实遗留问题和后续方向

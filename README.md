@@ -16,6 +16,22 @@ print(page.evaluate("document.querySelector('#app').textContent"))
 browser.close()
 ```
 
+Navigate to a URL and download its HTML through the configured network backend:
+
+```python
+browser = Browser(real_network=True)
+page = browser.new_context().new_page("https://example.com/")
+# Equivalent: page = browser.new_context().new_page(); page.goto("https://example.com/")
+print(page.evaluate("document.title"))
+# Assigning page.url also performs a synchronous Python-side navigation.
+page.url = "https://example.com/next"
+browser.close()
+```
+
+Assigning `location.href` or `window.location` from JavaScript queues the same
+navigation. For deterministic or offline use, pass a `resource_loader` instead
+of enabling the optional real network backend.
+
 The runtime also exposes public interfaces from the local Chromium baseline.
 Interfaces that do not yet have a Python implementation are generated as
 runtime stubs; calling one logs a `loguru` info message and returns

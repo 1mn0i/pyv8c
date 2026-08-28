@@ -14,7 +14,12 @@ class Location:
     def __init__(self, href="about:blank", page=None, **_): self.href, self._page = href, page
     def _parts(self): return urlsplit(self.href)
     def get_href(self): return self.href
-    def set_href(self, value): self.href = urljoin(self.href, str(value))
+    def set_href(self, value):
+        target = urljoin(self.href, str(value))
+        if self._page is not None:
+            self._page.request_navigation(target)
+        else:
+            self.href = target
     def get_origin(self):
         p = self._parts(); return f"{p.scheme}://{p.netloc}" if p.scheme and p.netloc else "null"
     def get_protocol(self): return self._parts().scheme + ":"
