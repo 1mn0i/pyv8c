@@ -40,25 +40,6 @@ def read_default_chromium_version(project_root: str | Path = PROJECT_ROOT) -> st
     return version
 
 
-def read_selected_chromium_version(project_root: str | Path = PROJECT_ROOT) -> str:
-    root = Path(project_root)
-    local_version_file = root / ".chromium-version"
-    if local_version_file.is_file():
-        version = local_version_file.read_text(encoding="ascii").strip()
-        version_key(version)
-        return version
-    return read_default_chromium_version(root)
-
-
-def save_selected_chromium_version(
-    project_root: str | Path, version: str
-) -> Path:
-    version_key(version)
-    version_file = Path(project_root) / ".chromium-version"
-    version_file.write_text(version + "\n", encoding="ascii")
-    return version_file
-
-
 def version_key(version: str) -> tuple[int, int, int, int]:
     if not VERSION_PATTERN.fullmatch(version):
         raise ChromiumFetchError(
@@ -523,14 +504,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             versions = query_versions(args.proxy, args.no_proxy)
             version = select_version(versions, limit=args.limit)
         else:
-            version = os.environ.get("PYV8C_CHROMIUM_VERSION") or read_selected_chromium_version()
-            print(f"Using cached Chromium version: {version}")
+            version = os.environ.get("PYV8C_CHROMIUM_VERSION") or read_default_chromium_version()
+            print(f"Using default Chromium version: {version}")
         src = fetch_chromium(
             version, root=args.root, depot_tools=args.depot_tools, jobs=args.jobs,
             proxy=args.proxy, no_proxy=args.no_proxy,
         )
         build_dir = build_bindings(src, args.depot_tools, build_dir=args.build_dir, target=args.target)
-        save_selected_chromium_version(PROJECT_ROOT, version)
         print(f"Chromium {version} fetched to: {src}")
         print(f"Blink V8 bindings generated under: {build_dir}")
         return 0

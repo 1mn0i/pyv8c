@@ -71,3 +71,18 @@ def test_stub_identity_and_direct_callback_markers_are_separate():
         assert not hasattr(url_callback, "__v8_idl_stub__")
     finally:
         browser.close()
+
+
+def test_window_interfaces_are_materialized_on_demand():
+    browser = Browser(stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        eager = set(page.binding_session.materialized_interfaces)
+        assert len(eager) <= 20
+        assert "AbortController" not in eager
+        assert page.evaluate("typeof AbortController") == "function"
+        assert "AbortController" in page.binding_session.materialized_interfaces
+        assert page.evaluate("AbortController === AbortController") is True
+        assert page.evaluate("Object.getOwnPropertyNames(window).includes('AbortController')") is True
+    finally:
+        browser.close()

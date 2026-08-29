@@ -309,14 +309,30 @@ class _WorkerRuntime:
         try:
             source = self.page.resolve_worker_source(self.script_url)
             self._scope = DedicatedWorkerGlobalScope(runtime=self)
-            self._binding_session = self.page.context_owner.browser.interface_universe.binding_session(self.page)
-            self._isolate = pyv8.Isolate()
-            self._context = self._isolate.context(
-                self._scope, hook=False, ctx_type="Worker",
-                class_configs=self._binding_session.class_configs(
-                    "Worker", roots=("DedicatedWorkerGlobalScope",),
-                ),
+            browser = self.page.context_owner.browser
+            native_class_configs = browser.native_class_configs
+            self._binding_session = browser.interface_universe.binding_session(
+                self.page if native_class_configs else None,
+                isolate_classes=not native_class_configs,
             )
+            native_lazy_bindings = bool(getattr(pyv8.Context, "supports_live_class_configs", False))
+            worker_configs = self._binding_session.class_configs(
+                "Worker", roots=("DedicatedWorkerGlobalScope",),
+            )
+            if not native_class_configs:
+                worker_configs = {}
+                for name in self.page.context_owner.browser.interface_universe.exposed_names("Worker"):
+                    self._binding_session.materialize(name)
+                worker_configs.update(self._binding_session.configs)
+                for cls, config in worker_configs.items():
+                    self._binding_session.install_class_config(cls, config)
+            if not native_class_configs:
+                self._scope.__class__ = self._binding_session.class_for("DedicatedWorkerGlobalScope")
+            self._isolate = pyv8.Isolate()
+            context_kwargs = {"hook": False, "ctx_type": "Worker"}
+            if native_class_configs:
+                context_kwargs["class_configs"] = self._binding_session.configs
+            self._context = self._isolate.context(self._scope, **context_kwargs)
             from ..bindings.registry import expose_interfaces
             expose_interfaces(
                 self._context,
@@ -325,6 +341,8 @@ class _WorkerRuntime:
                 expose_unimplemented=self.page.context_owner.browser.expose_unimplemented,
                 stub_logging=self.page.context_owner.browser.stub_logging,
                 universe=self.page.context_owner.browser.interface_universe,
+                lazy_interfaces=False,
+                class_for=self._binding_session.class_for,
             )
             if source:
                 self._context.exec_js(source, filename=self.script_url)

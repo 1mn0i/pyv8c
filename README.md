@@ -1,6 +1,6 @@
 # pyv8c
 
-Baseline note: `pyv8c/baselines/interface-baseline.json` uses schema 5. The runtime consumes the full Chromium V8 binding metadata snapshot.
+Baseline note: `pyv8c/baselines/interface-baseline.zip` uses schema 5. The runtime extracts its JSON payload beside the archive on first use and reuses that local cache thereafter.
 
 ## 内部结构
 
@@ -21,6 +21,16 @@ core -> bindings -> dom -> bom/network/workers -> runtime
 Chromium-like BOM/DOM 运行时。它用 Python 对象保存 DOM 树，并通过显式的
 Web IDL 元数据把 Python 实现映射到 JavaScript 原型链，适合页面脚本测试、
 协议适配和离线自动化。
+
+启动性能可使用独立进程基准测量：
+
+```powershell
+python tools/benchmark_startup.py --runs 20
+```
+
+默认 Page 只预热核心接口，其余 Window 接口保留完整名称表并在首次访问时物化。
+开发或 CI 需要全量 Web IDL 校验时设置 `PYV8C_STRICT_VALIDATION=1`；设置
+`PYV8C_STARTUP_STATS=0` 可关闭启动统计。
 
 它不是完整浏览器：当前不包含布局、绘制、CSSOM、浏览器进程模型或完整的
 WHATWG/Chromium 行为。
@@ -167,9 +177,11 @@ assert page.evaluate("window.result") == "..."
 
 ## Chromium Web IDL 基线
 
-默认基线位于 `pyv8c/baselines/interface-baseline.json`，采用 schema 5；其中的
-构造器、操作和属性 setter 签名是运行时唯一依据。创建 Browser 时会读取并冻结
+默认基线发布为 `pyv8c/baselines/interface-baseline.zip`，采用 schema 5；其中的
+构造器、操作和属性 setter 签名是运行时唯一依据。创建 Browser 时会读取并建立只读
 基线内容，因此同一进程中的不同 Browser 可以安全使用不同版本：
+
+schema 5 各接口字段的完整说明见 [`doc/interface-baseline-fields.md`](doc/interface-baseline-fields.md)。
 
 ```python
 browser = Browser(interface_baseline_path="baselines/chromium-variant.json")
@@ -188,7 +200,6 @@ print(browser.interface_baseline_info["sha256"])
 DEPS 依赖，并执行 GN/autoninja 生成 Blink 的 `v8_*.cc` 绑定文件：
 脚本需要系统已安装 Git；Windows 上缺少 depot_tools 时会自动 clone 到指定路径。
 默认版本记录在项目根目录的 `CHROMIUM_VERSION`（当前为 `154.0.8030.0`），
-交互选择或显式拉取成功后会写入本地 `.chromium-version`，用来覆盖默认版本。
 默认目录布局为项目下的 `.chromium-build`：其中包含同级的 `chromium`
 （源码在 `chromium/src`）和 `depot_tools`。
 
@@ -196,11 +207,11 @@ DEPS 依赖，并执行 GN/autoninja 生成 Blink 的 `v8_*.cc` 绑定文件：
 # 查看每个 milestone 的最新 release tag
 python tools/fetch_chromium.py --list
 
-# 使用 CHROMIUM_VERSION（或已缓存的 .chromium-version）拉取到
+# 使用 CHROMIUM_VERSION 拉取到
 # pyv8c/.chromium-build/chromium/src
 python tools/fetch_chromium.py
 
-# 交互选择版本并缓存
+# 交互选择本次使用的版本
 python tools/fetch_chromium.py --select
 
 # 拉取指定版本
@@ -215,7 +226,7 @@ python tools/fetch_chromium.py `
 ```
 
 `--list` 显示每个 milestone 的最新 tag；不传 `--version` 或 `--select` 时使用
-缓存版本，不会每次重复查询远端。默认 workspace 可通过 `CHROMIUM_ROOT` 覆盖，
+`CHROMIUM_VERSION`，不会每次重复查询远端。默认 workspace 可通过 `CHROMIUM_ROOT` 覆盖，
 版本也可通过 `PYV8C_CHROMIUM_VERSION` 临时覆盖。depot_tools 可通过
 `DEPOT_TOOLS_ROOT` 覆盖；未覆盖时使用 `.chromium-build/depot_tools`，目录
 目录不存在时会自动 clone。已有 `src` checkout 必须干净且远端为官方 Chromium
@@ -225,10 +236,14 @@ python tools/fetch_chromium.py `
 拉取和生成完成后，把 `src/out/Cronet145` 下的 bindings 目录传给接口提取器：
 
 ```powershell
-python tools/extract_interfaces.py pyv8c\baselines\interface-baseline.json `
+python tools/extract_interfaces.py pyv8c\baselines\interface-baseline.zip `
   --bindings-dir "D:\code\pyv8env\pyv8c\.chromium-build\chromium\src\out\Cronet145\gen\third_party\blink\renderer\bindings" `
   --report
 ```
+
+默认 baseline 不包含 C++ callback 名称、默认 `world` 和每个接口的输入路径，且
+`_webidl.compact` 为 `true`。需要审计这些提取证据时传入统一的 `--audit` 参数；
+审计产物的 `compact` 为 `false`，不能直接作为运行时 baseline 加载。
 
 提取器只扫描已经生成的 Blink binding 文件，不执行构建。无法由生成代码完整表达的
 签名会在生成阶段依据 `tools/webidl-reviews.json` 审核并嵌入基线，审核文件不会在

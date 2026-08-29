@@ -11,7 +11,6 @@ dist/
 
 # Local Chromium source and version selection
 .chromium-build/
-.chromium-version
 
 # Local V8/build state
 .pyv8-build/
@@ -22,3 +21,6 @@ dist/
 *.lib
 *.exp
 *.dll
+
+# Extracted bundled-baseline cache. Releases only contain the ZIP artifact.
+pyv8c/baselines/*.json

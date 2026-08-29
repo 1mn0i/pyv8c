@@ -2,7 +2,10 @@ import itertools
 import time
 import uuid
 import re
+import os
+import json
 from urllib.parse import urljoin, urlsplit
+from types import MappingProxyType
 
 import pyv8
 
@@ -11,7 +14,9 @@ from ..dom.model import Document, DocumentType, Event
 from ..network.api import Blob, Response, Request, Headers, XMLHttpRequest, Worker, WebSocket, ErrorEvent
 from ..network.backend import CronetNetworkBackend, NetworkRequest, NetworkUnavailableError, same_origin
 from ..bindings.registry import expose_interfaces
-from ..bindings.universe import BaselineRepository, InterfaceUniverse
+from ..bindings.universe import (
+    DEFAULT_EAGER_INTERFACES, BaselineRepository, InterfaceUniverse,
+)
 from ..dom.parser import parse, IncrementalDOMParser
 from ..core.errors import InvalidStateError, NetworkError, SecurityError, TimeoutError, V8Error, as_js_error
 from .tasks import TaskQueue
@@ -19,6 +24,23 @@ from .controllers import (
     DocumentLifecycle, NavigationController, ResourceController,
     ScriptController, StateAlias,
 )
+
+
+class _ContextBootstrapProxy:
+    """Placeholder published while native Context installs templates."""
+
+    def __init__(self):
+        self.args = ()
+        self.kw = {}
+
+    def expose(self, *_args, **_kwargs):
+        return None
+
+    def exec_js(self, *_args, **_kwargs):
+        return None
+
+    def close(self):
+        return None
 
 
 class Page:
@@ -57,12 +79,36 @@ class Page:
         self.resource_loader = context.browser.resource_loader
         self.network_backend = context.network_backend
         self.window = Window(page=self)
-        self.binding_session = context.browser.interface_universe.binding_session(self)
-        self.window.location.href = str(url)
-        self.context = pyv8.Context(
-            self.window, hook=False, ctx_type="Window",
-            class_configs=self.binding_session.class_configs("Window", roots=("Window",)),
+        # A prebuilt extension without class-config overlays cannot safely
+        # retain Page-specific callback closures across simultaneous realms.
+        # Use realm-neutral wrappers there; native live overlays keep the
+        # full per-Page realm on rebuilt extensions.
+        binding_realm = self if context.browser.native_class_configs else None
+        self.binding_session = context.browser.interface_universe.binding_session(
+            binding_realm, isolate_classes=not context.browser.native_class_configs,
         )
+        if not context.browser.native_class_configs:
+            self.window.__class__ = self.binding_session.class_for("Window")
+        self.window.location.href = str(url)
+        self._native_lazy_bindings = self.context_owner.browser.native_lazy_bindings
+        # Native template installation can inspect the global object before
+        # Context.__init__ returns.  Publish a sentinel so Window callbacks
+        # never observe a partially initialized Page attribute.
+        self.context = _ContextBootstrapProxy()
+        binding_started = time.perf_counter_ns()
+        eager_configs = self.binding_session.class_configs(
+            "Window", roots=self.binding_session.universe.eager_names("Window"),
+        )
+        class_configs = self.binding_session.configs if self._native_lazy_bindings else eager_configs
+        binding_prepared = time.perf_counter_ns()
+        context_kwargs = {"hook": False, "ctx_type": "Window"}
+        if self.context_owner.browser.native_class_configs:
+            context_kwargs["class_configs"] = class_configs
+        else:
+            for cls, config in eager_configs.items():
+                self.binding_session.install_class_config(cls, config)
+        self.context = pyv8.Context(self.window, **context_kwargs)
+        context_created = time.perf_counter_ns()
         expose_interfaces(
             self.context,
             context_type="Window",
@@ -70,6 +116,40 @@ class Page:
             expose_unimplemented=self.context_owner.browser.expose_unimplemented,
             stub_logging=self.context_owner.browser.stub_logging,
             universe=self.context_owner.browser.interface_universe,
+            lazy_interfaces=True,
+            class_for=self.binding_session.class_for,
+        )
+        if os.environ.get("PYV8C_DISABLE_LAZY_BOOTSTRAP") != "1":
+            def lazy_interface(name):
+                name = str(name)
+                if name not in self.binding_session.interface_names("Window"):
+                    return None
+                value = self.binding_session.materialize(name)
+                self.context_owner.browser._record_startup(
+                    materialized_interfaces=len(self.binding_session.materialized_interfaces),
+                )
+                return value
+            lazy_interface.__name__ = "__pyv8c_lazy_interface"
+            self.context.expose(lazy_interface, name="__pyv8c_lazy_interface")
+            names = [
+                name for name in self.binding_session.interface_names("Window")
+                if name not in self.binding_session.universe.eager_names("Window")
+            ]
+            names_json = json.dumps(names, separators=(",", ":"))
+            self.context.exec_js(
+                "(() => { const get = globalThis.__pyv8c_lazy_interface; "
+                f"for (const name of {names_json}) {{ "
+                "if (!Object.prototype.hasOwnProperty.call(globalThis, name)) "
+                "Object.defineProperty(globalThis, name, {get: () => get(name), "
+                "enumerable: false, configurable: true}); } "
+                "delete globalThis.__pyv8c_lazy_interface; })()"
+            )
+        self.context_owner.browser._record_startup(
+            binding_plan_ms=(binding_prepared - binding_started) / 1_000_000,
+            context_create_ms=(context_created - binding_prepared) / 1_000_000,
+            eager_interfaces=len(self.binding_session.materialized_interfaces),
+            materialized_interfaces=len(self.binding_session.materialized_interfaces),
+            interface_names=len(self.binding_session.interface_names("Window")),
         )
 
     @property
@@ -667,6 +747,8 @@ class Page:
         close_context = getattr(self.context, "close", None)
         if callable(close_context):
             close_context()
+        if not self.context_owner.browser.native_class_configs:
+            self.binding_session.restore_class_configs()
 
     def element_class(self, tag):
         from ..dom.model import HTMLElement, HTML_CLASSES
@@ -745,7 +827,9 @@ class Browser:
     def __init__(self, *, icudtl_path=None, v8_params=None, resource_loader=None,
                  real_network=False, cycronet_options=None,
                  generate_interface_stubs=True, expose_unimplemented=True,
-                 stub_logging="info", interface_baseline_path=None):
+                 stub_logging="info", interface_baseline_path=None,
+                 eager_interfaces=None, strict_validation=None):
+        started = time.perf_counter_ns()
         self._closed = False
         # pyv8 initializes its process-global V8 runtime during package import.
         # Keep the arguments for API compatibility; the underlying package owns ICU setup.
@@ -756,14 +840,48 @@ class Browser:
         self.generate_interface_stubs = bool(generate_interface_stubs)
         self.expose_unimplemented = bool(expose_unimplemented)
         self.stub_logging = str(stub_logging or "info")
+        self.native_lazy_bindings = bool(getattr(pyv8.Context, "supports_live_class_configs", False))
+        self.native_class_configs = self.native_lazy_bindings
+        self._startup_stats = {}
+        strict = os.environ.get("PYV8C_STRICT_VALIDATION") == "1" if strict_validation is None else bool(strict_validation)
         snapshot = BaselineRepository.load(interface_baseline_path)
+        loaded = time.perf_counter_ns()
         self.interface_universe = InterfaceUniverse(
             snapshot, stub_logging=self.stub_logging,
             expose_unimplemented=self.expose_unimplemented,
+            eager_interfaces=DEFAULT_EAGER_INTERFACES if eager_interfaces is None else eager_interfaces,
+            strict_validation=strict,
+            # Python can still defer class creation on prebuilt extensions;
+            # native live overlays only improve the same session path.
+            lazy_interfaces=True,
         )
-        self.interface_universe.validate()
+        if strict:
+            validation_started = time.perf_counter_ns()
+            self.interface_universe.validate()
+            validation_finished = time.perf_counter_ns()
+        else:
+            validation_finished = validation_started = loaded
         self.interface_baseline_path = snapshot.path
         self.interface_baseline_info = snapshot.info
+        self._startup_stats.update(BaselineRepository._last_timings)
+        self._startup_stats.update({
+            "validation_ms": (validation_finished - validation_started) / 1_000_000,
+            "browser_init_ms": (validation_finished - started) / 1_000_000,
+            "interface_names": len(self.interface_universe.interface_names("Window")),
+            "eager_interfaces": len(self.interface_universe.eager_names("Window")),
+            "lazy_interfaces": max(0, len(self.interface_universe.interface_names("Window")) - len(self.interface_universe.eager_names("Window"))),
+            "materialized_interfaces": 0,
+            "binding_plan_ms": 0.0,
+            "context_create_ms": 0.0,
+        })
+
+    @property
+    def startup_stats(self):
+        return MappingProxyType(dict(self._startup_stats))
+
+    def _record_startup(self, **values):
+        if os.environ.get("PYV8C_STARTUP_STATS", "1") != "0":
+            self._startup_stats.update(values)
     def new_context(self):
         if self._closed: raise InvalidStateError("Browser is closed")
         context = BrowserContext(self); self.contexts.append(context); return context

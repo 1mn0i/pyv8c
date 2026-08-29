@@ -7,6 +7,8 @@ from hashlib import sha256
 import json
 import inspect
 import os
+import time
+import zipfile
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -27,7 +29,13 @@ from .webidl import BindingPlan, compile_binding, validate_arguments
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BASELINE_PATH = PACKAGE_ROOT / "baselines" / "interface-baseline.json"
+DEFAULT_BASELINE_PATH = PACKAGE_ROOT / "baselines" / "interface-baseline.zip"
+DEFAULT_EAGER_INTERFACES = (
+    "Window", "EventTarget", "Event", "Node", "Document", "Element",
+    "HTMLElement", "URL", "URLSearchParams", "DOMTokenList", "NodeList",
+    "HTMLCollection", "NamedNodeMap",
+)
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -49,21 +57,16 @@ class BaselineSnapshot:
         }
 
 
-def _freeze_json(value):
-    if isinstance(value, dict):
-        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(_freeze_json(item) for item in value)
-    return value
-
-
 class BaselineRepository:
     """Read immutable baseline snapshots, sharing only identical file contents."""
 
     _cache: dict[tuple[str, str], BaselineSnapshot] = {}
+    _stat_cache: dict[tuple[str, int, int], BaselineSnapshot] = {}
+    _last_timings: dict[str, float] = {}
 
     @staticmethod
     def load(path=None) -> BaselineSnapshot:
+        started = time.perf_counter_ns()
         if path is None:
             target = DEFAULT_BASELINE_PATH
             label = f"pyv8c:{target.relative_to(PACKAGE_ROOT).as_posix()}"
@@ -72,9 +75,51 @@ class BaselineRepository:
             label = str(target)
         if not target.is_file():
             raise FileNotFoundError(f"Chromium interface baseline does not exist: {target}")
+        if target.suffix.lower() not in (".zip", ".json"):
+            raise ValueError(f"Chromium interface baseline must be a .zip or .json file: {target}")
+        cache_target = target.with_suffix(".json") if target.suffix.lower() == ".zip" else target
+        stat = target.stat()
+        cache_stat = cache_target.stat() if cache_target.is_file() else None
+        stat_key = (
+            str(target.resolve()), stat.st_size, stat.st_mtime_ns,
+            cache_stat.st_size if cache_stat else -1,
+            cache_stat.st_mtime_ns if cache_stat else -1,
+        )
+        cached_by_stat = BaselineRepository._stat_cache.get(stat_key)
+        if cached_by_stat is not None:
+            BaselineRepository._last_timings = {
+                "baseline_read_ms": 0.0,
+                "baseline_decode_ms": 0.0,
+                "baseline_compile_ms": 0.0,
+                "baseline_cached": True,
+            }
+            return cached_by_stat
         try:
-            raw = target.read_bytes()
+            if target.suffix.lower() == ".zip":
+                if cache_stat is not None and cache_stat.st_mtime_ns >= stat.st_mtime_ns:
+                    raw = cache_target.read_bytes()
+                else:
+                    with zipfile.ZipFile(target) as archive:
+                        members = [
+                            info for info in archive.infolist()
+                            if not info.is_dir() and Path(info.filename).suffix.lower() == ".json"
+                        ]
+                        if len(members) != 1:
+                            raise ValueError(f"baseline archive must contain exactly one JSON file: {target}")
+                        member = members[0]
+                        member_path = Path(member.filename)
+                        if member_path.is_absolute() or ".." in member_path.parts:
+                            raise ValueError(f"baseline archive contains an unsafe member path: {member.filename}")
+                        raw = archive.read(member)
+                    try:
+                        cache_target.write_bytes(raw)
+                    except OSError as exc:
+                        raise OSError(f"cannot write baseline cache next to archive: {cache_target}") from exc
+            else:
+                raw = target.read_bytes()
+            decoded = time.perf_counter_ns()
             document = json.loads(raw.decode("utf-8"))
+            parsed = time.perf_counter_ns()
         except UnicodeDecodeError as exc:
             raise ValueError(f"Chromium interface baseline must be UTF-8 JSON: {target}") from exc
         except json.JSONDecodeError as exc:
@@ -83,23 +128,22 @@ class BaselineRepository:
             raise ValueError("Chromium interface baseline root must be an object")
         metadata = document.get("_webidl")
         schema = metadata.get("schema") if isinstance(metadata, dict) else None
-        interfaces = {name: value for name, value in document.items() if not name.startswith("_")}
-        if not isinstance(metadata, dict) or not interfaces:
-            raise ValueError("Chromium interface baseline must contain _webidl metadata and interfaces")
+        if not isinstance(metadata, dict):
+            raise ValueError("Chromium interface baseline must contain _webidl metadata")
         if schema != 5:
             raise ValueError(f"unsupported Chromium interface baseline schema {schema!r}; expected 5")
+        compact = metadata.get("compact")
+        if compact is not True:
+            raise ValueError(
+                "Chromium interface baseline is not a compact schema 5 runtime baseline; "
+                "regenerate without --audit"
+            )
+        interfaces = {name: value for name, value in document.items() if not name.startswith("_")}
+        if not interfaces:
+            raise ValueError("Chromium interface baseline must contain interfaces")
         for name, spec in interfaces.items():
-            if (
-                not isinstance(spec, dict)
-                or not isinstance(spec.get("members"), dict)
-                or not isinstance(spec.get("constructor"), dict)
-                or not isinstance(spec.get("tag"), str)
-                or "parent" not in spec
-            ):
+            if not isinstance(spec, dict):
                 raise ValueError(f"invalid interface entry {name!r} in Chromium interface baseline")
-            required = ("identity", "template", "handlers", "constants", "callbacks")
-            if any(key not in spec for key in required):
-                raise ValueError(f"schema 5 interface {name!r} is missing runtime metadata")
             parent = spec.get("parent")
             if parent is not None and (not isinstance(parent, str) or parent not in interfaces):
                 raise ValueError(f"interface {name!r} refers to unknown parent {parent!r}")
@@ -122,11 +166,23 @@ class BaselineRepository:
         digest = sha256(raw).hexdigest()
         key = (str(target.resolve()), digest)
         snapshot = BaselineRepository._cache.get(key)
+        cache_hit = snapshot is not None
         if snapshot is None:
+            # The decoded document is repository-owned and never mutated by
+            # runtime code. A top-level read-only view avoids recursively
+            # copying the 7.5 MB baseline during every cold process startup.
             snapshot = BaselineSnapshot(
-                label, digest, _freeze_json(metadata), _freeze_json(interfaces),
+                label, digest, MappingProxyType(metadata), MappingProxyType(interfaces),
             )
             BaselineRepository._cache[key] = snapshot
+        BaselineRepository._stat_cache[stat_key] = snapshot
+        frozen = time.perf_counter_ns()
+        BaselineRepository._last_timings = {
+            "baseline_read_ms": (decoded - started) / 1_000_000,
+            "baseline_decode_ms": (parsed - decoded) / 1_000_000,
+            "baseline_compile_ms": (frozen - parsed) / 1_000_000,
+            "baseline_cached": cache_hit,
+        }
         return snapshot
 
 
@@ -155,7 +211,7 @@ def _cross_origin(value):
 
 def _property_flags(member):
     flags = str(member.get("flags") or "")
-    result = V8Attribute.ReadOnly if member.get("readonly") or "DontWrite" in flags else 0
+    result = V8Attribute.ReadOnly if member.get("setter") is None or "DontWrite" in flags else 0
     if "DontEnum" in flags:
         result |= V8Attribute.DontEnum
     if "DontDelete" in flags:
@@ -166,13 +222,20 @@ def _property_flags(member):
 class InterfaceUniverse:
     """One isolated interface registry, binding plan, and class config set."""
 
-    def __init__(self, baseline: BaselineSnapshot, *, stub_logging="info", expose_unimplemented=True):
+    def __init__(self, baseline: BaselineSnapshot, *, stub_logging="info",
+                 expose_unimplemented=True, eager_interfaces=DEFAULT_EAGER_INTERFACES,
+                 strict_validation=False, lazy_interfaces=True):
         self.baseline = baseline
         self.stub_logging = str(stub_logging or "info").lower()
         self.expose_unimplemented = bool(expose_unimplemented)
+        self.eager_interfaces = tuple(dict.fromkeys(eager_interfaces or ()))
+        self.strict_validation = bool(strict_validation)
+        self.lazy_interfaces = bool(lazy_interfaces)
         self._classes: dict[str, type] = {}
         self._configs: dict[type, dict[str, Any]] = {}
         self._plans: dict[tuple[str, str, str], BindingPlan] = {}
+        self._parent_chains = {}
+        self._exposure_names = {}
 
     @property
     def info(self):
@@ -193,6 +256,17 @@ class InterfaceUniverse:
         for location in ("instance", "prototype", "interface"):
             for member in (spec.get("members") or {}).get(location, ()) or ():
                 yield location, member
+
+    def interface_names(self, context_type="Window"):
+        """Return the stable global name table without materializing classes."""
+        if context_type not in self._exposure_names:
+            self._exposure_names[context_type] = tuple(sorted(self.exposed_names(context_type)))
+        return self._exposure_names[context_type]
+
+    def eager_names(self, context_type="Window"):
+        exposed = set(self.interface_names(context_type))
+        names = set(name for name in self.eager_interfaces if name in exposed or name == "Window")
+        return tuple(name for name in self.interface_names(context_type) if name in names)
 
     def _member(self, interface_name, public_name, kind):
         seen, current = set(), interface_name
@@ -439,7 +513,7 @@ class InterfaceUniverse:
                     getter = self._stub_getter(name, member_name)
                     callbacks[getter.__name__] = getter
                     setter_name = None
-                    if member.get("setter") and not member.get("readonly"):
+                    if member.get("setter"):
                         plan = self.binding_plan(name, member_name, "attribute")
                         setter = self._stub_setter(name, member_name, plan)
                         callbacks[setter.__name__] = setter
@@ -486,7 +560,7 @@ class InterfaceUniverse:
             "__v8_to_string_tag__": spec.get("tag") or name,
         }
         template = spec.get("template") or {}
-        handlers = template.get("handlers") or spec.get("handlers") or {}
+        handlers = template.get("handlers") or {}
         named = handlers.get("named") or {}
         indexed = handlers.get("indexed") or {}
         cross = handlers.get("cross_origin") or {}
@@ -527,7 +601,9 @@ class InterfaceUniverse:
         # constant is present on both an inherited and overlay template; avoid
         # crashing page creation until that native duplicate check is rebuilt.
         if constants and os.environ.get("PYV8C_ENABLE_NATIVE_CONSTANTS") == "1" and "__v8_constants_value__" not in cls.__dict__:
-            config["__v8_constants_value__"] = tuple(constants)
+            constants = [item for item in constants if item[0] not in cls.__dict__]
+            if constants:
+                config["__v8_constants_value__"] = tuple(constants)
         constructor = spec.get("constructor") or {}
         length = constructor.get("length")
         if length is None:
@@ -543,14 +619,14 @@ class InterfaceUniverse:
                 behavior |= FlagConstructor.kCall
             config["__v8_constructor__"] = behavior
         stub = bool(cls.__dict__.get("__v8_idl_stub__", False))
-        if spec.get("constructible") or constructor.get("allow_new") or constructor.get("allow_call"):
+        if constructor.get("allow_new") or constructor.get("allow_call"):
             config["__v8_constructor_adapter__"] = self._constructor_adapter(name, stub, realm)
         if stub:
             config.update({
                 "__v8_length__": int(length or 0),
                 "__v8_constructor__": config.get(
                     "__v8_constructor__",
-                    FlagConstructor.kNew if spec.get("constructible") else FlagConstructor.kDontAll,
+                    FlagConstructor.kNew if (constructor.get("allow_new") or constructor.get("allow_call")) else FlagConstructor.kDontAll,
                 ),
                 "__v8_has_constructor__": 1,
             })
@@ -576,14 +652,17 @@ class InterfaceUniverse:
         return self._class_configs(context_type, roots=roots, cache=self._configs, realm=None)
 
     def _class_configs(self, context_type, *, roots=(), cache, realm):
-        names = set(self.exposed_names(context_type))
+        names = set(
+            self.exposed_names(context_type)
+            if not self.lazy_interfaces else self.eager_names(context_type)
+        )
         names.update(root for root in roots if isinstance(root, str))
         for name in tuple(names):
             names.update(self._walk_parent_names(name))
         return {self.class_for(name): self._class_config_for(name, cache, realm) for name in names}
 
-    def binding_session(self, realm=None):
-        return BindingSession(self, realm)
+    def binding_session(self, realm=None, *, isolate_classes=False):
+        return BindingSession(self, realm, isolate_classes=isolate_classes)
 
     def validate(self):
         from .registry import IMPLEMENTATIONS, INTERFACES, validate_registry
@@ -625,15 +704,117 @@ class InterfaceUniverse:
 class BindingSession:
     """Context-local class configs and callback owners for one V8 realm."""
 
-    def __init__(self, universe: InterfaceUniverse, realm=None):
+    def __init__(self, universe: InterfaceUniverse, realm=None, *, isolate_classes=False):
         self.universe = universe
         self.realm = realm
         self._configs: dict[type, dict[str, Any]] = {}
+        self._materialized: set[str] = set()
+        self._class_overlay_originals = {}
+        self._classes = {}
+        self.isolate_classes = bool(isolate_classes)
+
+    def interface_names(self, context_type="Window"):
+        return self.universe.interface_names(context_type)
+
+    def class_for(self, name):
+        base = self.universe.class_for(name)
+        if not self.isolate_classes:
+            return base
+        if name in self._classes:
+            return self._classes[name]
+        parent_name = self.universe._spec(name).get("parent")
+        parent = self.class_for(parent_name) if parent_name else object
+        attrs = {
+            key: value for key, value in base.__dict__.items()
+            if key not in ("__dict__", "__weakref__", "__module__")
+        }
+        attrs["__module__"] = base.__module__
+        cls = type(name, (parent,), attrs)
+        self._classes[name] = cls
+        return cls
+
+    @property
+    def materialized_interfaces(self):
+        return tuple(sorted(self._materialized))
+
+    @property
+    def configs(self):
+        """Live mapping consumed by native Context implementations."""
+        return self._configs
+
+    def install_class_config(self, cls, config):
+        """Apply an overlay for native extensions without class-config support."""
+        for key, value in config.items():
+            if key != "__v8_callback_owner__":
+                if (cls, key) not in self._class_overlay_originals:
+                    self._class_overlay_originals[(cls, key)] = cls.__dict__.get(key, _MISSING)
+                setattr(cls, key, value)
+        owner = config.get("__v8_callback_owner__")
+        if owner is not None:
+            for key, value in owner.__dict__.items():
+                if key.startswith("__v8_") or key.startswith("_pyv8c_"):
+                    if (cls, key) not in self._class_overlay_originals:
+                        self._class_overlay_originals[(cls, key)] = cls.__dict__.get(key, _MISSING)
+                    setattr(cls, key, value)
+        if (cls, "__v8_callback_owner__") not in self._class_overlay_originals:
+            self._class_overlay_originals[(cls, "__v8_callback_owner__")] = cls.__dict__.get("__v8_callback_owner__", _MISSING)
+        cls.__v8_callback_owner__ = cls
+
+    def restore_class_configs(self):
+        for (cls, key), original in reversed(tuple(self._class_overlay_originals.items())):
+            if original is _MISSING:
+                try:
+                    delattr(cls, key)
+                except AttributeError:
+                    pass
+            else:
+                setattr(cls, key, original)
+        self._class_overlay_originals.clear()
+
+    def materialize(self, name):
+        """Create one interface class/config pair on first access."""
+        chain = list(self.universe._walk_parent_names(name))
+        for interface_name in reversed(chain):
+            base_cls = self.universe.class_for(interface_name)
+            cls = self.class_for(interface_name)
+            config = self.universe._class_config_for(interface_name, self._configs, self.realm)
+            if self.isolate_classes and cls is not base_cls:
+                self._configs.pop(base_cls, None)
+                config = dict(config)
+                parent_name = self.universe._spec(interface_name).get("parent")
+                config["__v8_parent_class__"] = self.class_for(parent_name) if parent_name else object
+                self._configs[cls] = config
+            if cls.__dict__.get("__v8_idl_stub__"):
+                self.install_class_config(cls, config)
+            self._materialized.add(interface_name)
+        return self.class_for(name)
+
+    def materialize_constructor(self, name):
+        return self.materialize(name)
+
+    def materialize_member(self, interface, member):
+        self.materialize(interface)
+        return self.universe._member(interface, member, "operation")
 
     def class_config_for(self, name):
-        return self.universe._class_config_for(name, self._configs, self.realm)
+        self.materialize(name)
+        return self._configs[self.class_for(name)]
 
     def class_configs(self, context_type, *, roots=()):
-        return self.universe._class_configs(
+        configs = self.universe._class_configs(
             context_type, roots=roots, cache=self._configs, realm=self.realm,
         )
+        if self.isolate_classes:
+            isolated = {}
+            for base_cls, config in configs.items():
+                name = base_cls.__name__
+                cls = self.class_for(name)
+                item = dict(config)
+                parent_name = self.universe._spec(name).get("parent")
+                item["__v8_parent_class__"] = self.class_for(parent_name) if parent_name else object
+                self._configs.pop(base_cls, None)
+                self._configs[cls] = item
+                isolated[cls] = item
+            configs = isolated
+        self._materialized.update(cls.__name__ for cls in configs)
+        return configs

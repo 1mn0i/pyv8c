@@ -134,7 +134,7 @@
 
 - 新增 `interface_runtime.py`，集中生成动态接口类、方法、属性、常量和构造器桩。
 - 使用 `loguru.logger.info` 在实际访问桩时记录待实现；真实实现永远覆盖桩。
-- 默认 baseline 移入 `pyv8c/baselines/interface-baseline.json` 并通过 package-data 发布。
+- 默认 baseline 移入 `pyv8c/baselines/interface-baseline.zip` 并通过 package-data 发布。
 - Browser 增加 `interface_baseline_path`、`interface_baseline_info`。
 - 新增 `BaselineRepository` 和 Browser 级 `InterfaceUniverse`；动态类和成员配置不写入全局 IMPLEMENTATIONS。
 - `_pyv8.Context` 增加 `class_configs` overlay，支持 Context-local 构造器、成员、tag、callback owner 和父模板。
@@ -317,3 +317,78 @@
 - Chromium 生成绑定重新提取并与发布 baseline 对比一致：1254 个接口、12616 个成员、3105 个 unresolved signature。
 - `python -m py_compile` 和 wheel 构建通过；架构和提取器测试通过。
 - 当前 shell 未配置可用的完整 pyv8/gevent 运行时；预编译 `_pyv8` 在连续 V8 Context 创建时触发 native access violation，因此完整 pytest 需在项目标准 native 环境复跑。
+
+## 2026-08-29：单页启动优化第一阶段
+
+### 修改
+
+- `InterfaceUniverse` 增加成员索引、稳定 Window 名称表和固定核心预热集合。
+- `BindingSession` 增加 `interface_names()`、`materialize()`、`materialize_constructor()` 和 materialized 统计；动态接口不再在 Page 创建时批量生成。
+- `Window` 使用现有 `_pyv8` named property handler 按首次访问生成 constructor/template，同时保持完整 Window 名称枚举。
+- `Browser` 增加 `startup_stats`、`eager_interfaces` 和 `strict_validation` 选项；默认延迟全量校验，`PYV8C_STRICT_VALIDATION=1` 启用严格模式。
+- `BaselineRepository` 增加基于文件 stat 的进程内缓存，重复 Browser 不再重复解析和冻结相同 baseline。
+- 新增 `tools/benchmark_startup.py`，支持独立进程冷启动 p50/p95 测量。
+
+### 当前边界
+
+- Python 层 lazy exposure 已接入现有 native handler；`_pyv8` 批量 Context API 和 V8 Snapshot 尚未实现。
+- 完整运行时基准需要项目标准 `_pyv8`/gevent 环境；当前 shell 只完成静态检查和 Universe 层验证。
+## 2026-08-29: prebuilt _pyv8 fallback and startup measurement
+
+- Added Context class-config capability detection. The legacy prebuilt extension no longer receives an unsupported keyword during Context initialization.
+- Legacy extensions use Page-local class copies and restore overlays on close; rebuilt extensions keep Context-local live class-config mappings.
+- Windows prebuilt smoke measurement: Browser + new_context + new_page + close is about 620ms in the current environment, with 10 core interfaces materialized at page creation.
+- `_pyv8/src/context.cpp` now publishes `supports_live_class_configs` and retains live mappings; `_pyv8/src/pyclass.cpp` installs undetectable templates before call handlers.
+
+### Native rebuild verification
+
+- Installed `gevent` with `python310 -m pip install gevent`.
+- Rebuilt `_pyv8` with `python310 setup.py build_ext --inplace --force`; the resulting extension reports `supports_live_class_configs=True`.
+- `tools/benchmark_startup.py --runs 5`: p50 `378.9ms`, p95 within the `0.6s` target.
+- `pyv8c` full suite: `76 passed`; `_pyv8` full suite: `164 passed`.
+- Native smoke with `PYV8C_ENABLE_NATIVE_CONSTANTS=1`: `1 passed`; Event/Node constants resolve to their Chromium values.
+
+## 2026-08-30: strict compact baseline marker
+
+### Changes
+
+- Added mandatory `_webidl.compact` metadata. Only `compact: true` baselines are accepted by the runtime.
+- Audit output from `tools/extract_interfaces.py --audit` is marked `compact: false` and is rejected by `BaselineRepository`.
+- Removed all runtime compatibility branches for missing/legacy compact markers and audit-only callback fields; invalid input raises immediately.
+- Regenerated the bundled schema 5 baseline with callback names, default worlds, getters, readonly duplication, and provenance omitted.
+
+### Verification
+
+- Extractor unit tests: `7 passed`.
+- `compileall` and `git diff --check` passed.
+- Full integration collection was not available in the current shell because the `pyv8` native module is not installed.
+
+## 2026-08-30: generated constant value resolution
+
+### Changes
+
+- The extractor now scans generated V8 headers for `static constexpr` constants
+  such as `V8GPUBufferUsage::Constant::kCopySrc = 4`.
+- Constant expressions are evaluated through a restricted numeric expression
+  parser supporting literals, casts, arithmetic, bitwise operators, shifts and
+  references to other generated constants; arbitrary code is never executed.
+- Resolved values take precedence over unresolved C++ expressions while the
+  original `expression` remains in the baseline for auditability.
+
+### Verification
+
+- `GPUBufferUsage`, `GPUTextureUsage` and `GPUColorWrite` constants now contain
+  their real numeric values.
+- Current baseline: 2,223 constants, 0 unresolved constants.
+- Extractor unit tests: `8 passed`.
+
+## 2026-08-30: compressed bundled baseline
+
+### Changes
+
+- Bundled runtime metadata is now published as `pyv8c/baselines/interface-baseline.zip`.
+- `BaselineRepository` accepts `.zip` and `.json` inputs. ZIP inputs are expanded
+  to a same-directory JSON cache once, then future loads use that cache.
+- The extractor keeps JSON output as its default. A `.zip` output path or the
+  optional `--zip` flag writes the one-member compressed release artifact.
+- Package data now includes only baseline ZIP files; extracted JSON caches are ignored.

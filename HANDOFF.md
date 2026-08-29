@@ -1,231 +1,196 @@
-# pyv8c 当前状态
+# pyv8c 交接状态
 
-本文是后续开发的事实基线，只描述当前架构、可用能力、约束和真实遗留问题。每轮工作的历史记录放在 [WORKLOG.md](WORKLOG.md)。实现变化时同步更新两个文件，但不要在本文追加开发过程。
+本文只记录当前有效的工程事实，不是开发日志。历史变更请查阅
+[WORKLOG.md](WORKLOG.md)。架构、构建流程、验证基线或真实限制改变时，同步更新本文。
 
-## 1. 项目定位
+## 项目范围
 
-`pyv8c` 是基于 `_pyv8` 和 V8 `15.2.20.1` 的 Chromium-like BOM/DOM 运行时。目标是在 JavaScript 侧提供接近 Chromium 的接口继承、构造器、事件、DOM、异步队列和网络 API；不实现布局、绘制或 Chromium 多进程架构。
+`pyv8c` 是构建于相邻 `_pyv8` V8 扩展之上的 Chromium-like BOM/DOM 运行时。目标是
+JavaScript 可观察的 Web IDL 形状、DOM/BOM、页面生命周期、任务、导航和基础网络 API；
+不覆盖布局、渲染、CSSOM、Chromium 多进程模型或全部规范细节。
 
 ```python
 from pyv8c import Browser
 
 browser = Browser()
-context = browser.new_context()
-page = context.new_page()
-page.set_content("<body><div id='app'>hello</div></body>")
-print(page.evaluate("document.querySelector('#app').textContent"))
+page = browser.new_context().new_page()
+page.set_content("<main id='app'>ready</main>")
+assert page.evaluate("document.querySelector('#app').textContent") == "ready"
 browser.close()
 ```
 
-目录职责：
+`pyv8c` 与 `../_pyv8` 是独立 Git 仓库。顶层 `from pyv8c import ...` 是稳定 API；
+内部包路径不是兼容承诺。
 
-| 目录 | 职责 |
-| --- | --- |
-| `pyv8c/core/` | 错误类型和无领域依赖的 realm 协议 |
-| `pyv8c/bindings/` | schema 5 baseline、Web IDL、接口 registry、Context-local V8 overlay 和提取器 |
-| `pyv8c/dom/` | DOM、事件、解析和 selector |
-| `pyv8c/bom/` | Window、URL、History、Storage 等 BOM |
-| `pyv8c/network/` | Fetch/XHR/WebSocket、HTTP 数据模型和 transport |
-| `pyv8c/workers/` | Worker API 和 structured clone |
-| `pyv8c/runtime/` | Browser、Context、Page 与任务/导航/资源/脚本编排 |
-| `pyv8c/baselines/` | 随 wheel 发布的 Chromium 接口快照 |
-| `tests/` | 单元、集成和 native subprocess 测试 |
-| `tools/` | renderer binding 提取和基线审核工具 |
-| `../_pyv8/` | V8 Python 扩展，是 pyv8c 的核心依赖，允许按需修改 |
-| `../_pyv8env/` | 旧实现及 renderer binding 快照参考 |
-
-`_pyv8` 和 `pyv8c` 是独立 Git 仓库。底层修改必须同时验证 `_pyv8` 与 `pyv8c`，不能绕过接口注册、Context 隔离、wrapper identity 或 Page 任务队列。顶层 `pyv8c` 是稳定公共 API；内部领域包路径允许调整。
-
-## 2. 运行时和生命周期
-
-- `Browser` 管理 `BrowserContext`，并持有该 Browser 专属的 `InterfaceUniverse`。
-- `BrowserContext` 隔离 Page、Cookie、Blob URL、Cronet session、iframe 和网络资源。
-- 每个 `Page` 拥有独立 V8 Context、Window、Document、任务队列和 navigation generation。
-- `Page.post_task()` 是网络及 Worker 后台线程进入 V8 的唯一入口。
-- `Page.run_until_idle(timeout=0)` 默认只消费已就绪任务；正数 timeout 可等待网络、Worker 和定时器。
-- 定时器以 `time.monotonic()` 的绝对到期时间调度，页面关闭后未执行任务被丢弃。
-- Page/Context/Browser 关闭后继续使用会抛出 `InvalidStateError`；`Page.close()` 显式释放 `_pyv8.Context`。
-- navigation generation 改变后，旧文档资源和异步回调不能污染新文档。
-- `Page.goto(url)` 通过 `resource_loader` 或可选 cyCronet 后端下载主文档 HTML，并可等待 `DOMContentLoaded` 或 `load`。
-- `BrowserContext.new_page(url)` 自动导航；JavaScript 设置 `location.href` 或 `window.location` 时通过 Page 任务队列执行同一导航流程。
-
-文档生命周期顺序：
+## 目录与依赖方向
 
 ```text
-loading
-  -> parser 完成
-  -> defer/module 脚本完成
-  -> interactive + readystatechange
-  -> DOMContentLoaded
-  -> 文档资源完成
-  -> complete + readystatechange
-  -> window load
-  -> pageshow
+core -> bindings -> dom -> bom/network/workers -> runtime
 ```
 
-导航替换和关闭会派发 `beforeunload -> pagehide -> unload`。普通导航允许 `beforeunload` 取消；`Page.close()` 忽略取消结果。
+| 区域 | 职责 |
+| --- | --- |
+| `core/` | DOM/V8 错误和 realm service 协议。 |
+| `bindings/` | Chromium baseline、Web IDL 转换、registry、动态类、V8 overlay 和提取器。 |
+| `dom/` | 节点、事件、HTML parser 和 selector。 |
+| `bom/` | Window、Location、History、Storage、URL 和 URLSearchParams。 |
+| `network/` | Fetch、XHR、WebSocket、Blob、HTTP 模型和 transport。 |
+| `workers/` | Worker API 和 structured clone。 |
+| `runtime/` | Browser、BrowserContext、Page、任务队列和页面控制器。 |
+| `tools/` | Chromium 拉取、baseline 提取和启动基准工具。 |
 
-## 3. DOM、HTML 解析和脚本
+领域包不得反向依赖 `runtime`；通过 realm service 注入页面能力。不得重新引入全局
+current Page、类级 current Page 或跨 realm 的 callback owner。
 
-Python DOM 节点是唯一真相源。JS wrapper 只负责暴露，同一 Page 中相同节点必须保持 JS identity；不同 Page/Context 之间不得共享 DOM wrapper。
+## 运行时模型
 
-已实现的核心能力：
+- `Browser` 持有一个不可变 `BaselineSnapshot` 和一个 `InterfaceUniverse`。
+- `BrowserContext` 隔离 Page、Cookie、Blob URL、网络 session 和 frame。
+- 每个 `Page` 拥有 V8 Context、Window、Document、任务队列以及 navigation、lifecycle、
+  script、resource controller。
+- 每个 V8 Context 有独立 `BindingSession`；动态类、class config、callback owner 与 wrapper
+  状态均为 realm-local。
+- 网络和 Worker 后台回调只能通过 `Page.post_task()` 进入 Page 的 V8 Context。
+- Page、Context 或 Browser 关闭后不可复用，继续使用抛出 `InvalidStateError`；Page 关闭时释放
+  V8 Context。
 
-- `Document`、`DocumentType`、`DocumentFragment`、`Node`、`Element`、`HTMLElement`、Text、Comment 和常见 HTML 元素。
-- `NodeList`、`HTMLCollection`、`DOMTokenList`、`NamedNodeMap`、`Attr`、template content 和未知元素映射。
-- append/insert/remove/replace、fragment 插入、clone、`textContent`、`innerHTML`、`outerHTML` 和 parentNode 一致性。
-- 标签、ID、class、属性、后代/子代/兄弟组合器、分组及常用结构/逻辑伪类选择器；非法 selector 抛 `SyntaxError`。
-- HTML 标签、属性、文本、注释、doctype、void 元素、常见自动闭合以及 script/style/textarea/title 原始文本。
+文档生命周期：
 
-页面解析采用可恢复的增量 parser：
+```text
+loading -> parser complete -> defer/module complete -> interactive
+        -> DOMContentLoaded -> resources complete -> complete -> load -> pageshow
+```
 
-- `set_content()` 同步解析到第一个 parser-blocking 外部经典脚本，然后立即返回。
-- 外部经典脚本完成下载和执行后，从脚本之后继续解析，因此后续 DOM 不会提前出现。
-- 内联经典脚本按文档顺序执行；`async` 独立执行且不阻塞 DOMContentLoaded；`defer` 保持顺序并阻塞 DOMContentLoaded。
-- `type="module"` 当前支持静态相对 import 的递归加载和依赖优先执行，并按 defer 语义等待。
-- 动态插入的经典脚本默认异步；显式 `async=false` 使用有序队列。
-- detached script 设置 `src` 或文本不会加载，连接到当前 Document 后才开始。
-- 脚本、样式、图片、媒体和 iframe 资源成功/失败会派发元素级 `load/error`。
+导航替换和关闭派发 `beforeunload -> pagehide -> unload`。导航可被 `beforeunload` 取消；
+显式关闭页面忽略取消结果。
 
-## 4. 接口基线、原型链和动态桩
+## 接口 Baseline
 
-默认基线位于 `pyv8c/baselines/interface-baseline.json`，覆盖本地 renderer 快照中的全部接口。生成命令：
+bundled schema 5 baseline 位于 `pyv8c/baselines/interface-baseline.zip`。运行时首次使用时会在同目录展开 JSON 缓存；该缓存不提交也不打包。当前包含：
+
+- 1,254 个接口；10,393 个非 constant member record；2,223 个 constant。
+- 提取报告中的源成员数为 12,616，自动签名 3,992，审核签名 225，unresolved 签名 3,105。
+
+接口规范字段：
+
+```text
+parent, tag, exposed_in, constructor, template, members, constants
+```
+
+`template.handlers` 保存 named、indexed 和 cross-origin interceptor 的角色存在性。默认 baseline
+不保存 C++ callback 名称；使用 `--audit` 生成审计 baseline 时才恢复 callback、world 和 provenance。
+constant 只存在于 `constants`，不再重复出现在 `members`。
+
+默认 baseline 不含 callback 名称、默认 world 或逐接口 source provenance，并标记
+`_webidl.compact: true`；审计时统一显式生成：
 
 ```powershell
-python tools/extract_interfaces.py pyv8c\baselines\interface-baseline.json `
+$env:PYTHONPATH = "."
+python tools/extract_interfaces.py pyv8c\baselines\interface-baseline.zip `
   --bindings-dir ".chromium-build\chromium\src\out\Cronet145\gen\third_party\blink\renderer\bindings" `
   --chromium-root ".chromium-build\chromium" `
   --report
+
+# 仅审计产物携带输入文件来源。
+python tools/extract_interfaces.py audit-baseline.json --audit
 ```
 
-当前 baseline schema 为 5。包内 `_webidl.report` 记录：1254 个接口、12616 个成员、1151 个含成员接口、640 个含签名接口、3992 个自动签名、225 个审核签名、3105 个 unresolved 签名、32 个重复来源接口、0 个解析失败。
+`--audit` 产物标记为 `compact: false`，运行时会直接拒绝加载，不执行兼容迁移。
 
-核心规则：
+提取器读取生成的 `v8_*.cc`，以 Blink IDL 补充信息，并应用 `tools/webidl-reviews.json`。
+无法可靠解析的签名必须保持 unresolved，不能伪造转换规则或 constant 值。
 
-- 所有真实接口通过领域包的 `registration.py` 显式登记，JS 原型链不从 Python MRO 推断。
-- `Child.prototype.__proto__`、constructor、name、length、toStringTag、成员 location 和 descriptor 来自 baseline/显式元数据。
-- `Browser(interface_baseline_path=...)` 可选择外部完整 schema 5 快照；创建后内容冻结。
-- 每个 Browser 使用独立 `InterfaceUniverse`；多个版本的动态类、BindingPlan 和 Context overlay 不串扰。
-- `_pyv8.Context(class_configs=...)` 提供 Context-local 构造器、父模板、成员和 callback overlay。
-- 已实现类和成员优先；未实现公共接口及缺失成员由 `bindings/universe.py` 动态生成桩。
-- 桩仅在实际调用/读取时使用 `loguru.logger.info` 输出待实现并返回 `undefined`。
-- `__v8_idl_stub__` 只标记动态桩；`__v8_direct_callback__` 只控制 overlay receiver 调用约定。
+## Binding 与启动
 
-Web IDL 参数校验完全由当前 Browser 的 baseline 编译为 `BindingPlan`。`webidl.py` 只提供通用类型转换、optional/nullable/variadic、dictionary、sequence、enum、union、callback、overload 和异常生成，不维护接口名注册表。真实成员的签名必须为 `generated` 或 `manual-reviewed`；unresolved 只允许用于未实现动态桩。
+手写 Python 实现优先于 metadata stub。stub 保留构造器、prototype、descriptor、handler 和
+toStringTag 形状；未实现成员在实际调用时记录日志并返回 JavaScript `undefined`。
 
-## 5. 全局暴露和浏览器对象
-
-只有 baseline 标记为当前 Window/Worker execution context 公共接口的对象可以进入全局。禁止暴露 Page、Browser、Context、logger、注册表、网络后端或任何 `__pyv8c_*` 名称。
-
-- `window`、`self` 和 `globalThis` 由对应全局接口/V8 Context 提供，不通过临时 `context.expose()` 别名注入。
-- Promise resolver 使用闭包记录，不创建全局临时变量。
-- Window、Worker 和 iframe 都使用所属 Browser 的 InterfaceUniverse。
-- 已实现 `window`、document、location、navigator、screen、history、Storage、console、定时器、URL 和 URLSearchParams。
-
-`URL` 是正式注册接口，支持构造、组成属性、`searchParams`、`toString()`、`toJSON()`、`canParse()`、`parse()`、`createObjectURL()` 和 `revokeObjectURL()`。Blob URL 格式为：
+默认 eager 集合固定在 `bindings.universe.DEFAULT_EAGER_INTERFACES`：
 
 ```text
-blob:<serialized-origin>/<uuid-v4>
+Window, EventTarget, Event, Node, Document, Element, HTMLElement,
+URL, URLSearchParams, DOMTokenList, NodeList, HTMLCollection, NamedNodeMap
 ```
 
-例如 `blob:https://github.com/2a405ce7-7b00-474b-8419-43372167ad40`。opaque origin 使用 `null`。
+其他 Window 名称保持可观察，并在首次访问时物化。不要随意扩大默认 eager 集合，它是启动性能
+契约；调用方可通过 `Browser(eager_interfaces=...)` 增加预热接口。
 
-## 6. 事件和错误体系
-
-事件支持 capture、target、bubble、once、passive、`on<event>`、stopPropagation、stopImmediatePropagation、preventDefault 和基础 composedPath。Document 的事件路径可到达 Window。
-
-`error.py` 提供 V8 Error 桥接、`DOMException`、`DOMError`、标准 DOMException 工厂及 `as_js_error()`。JS API 不得直接泄漏 Python `RuntimeError`、`ValueError`、字符串异常或后台线程异常。
-
-```text
-参数/receiver 错误          -> TypeError / RangeError
-非法 selector/格式         -> SyntaxError
-DOM 关系或状态错误          -> NotFoundError / HierarchyRequestError / InvalidStateError
-跨源、CORS、History         -> SecurityError
-网络和无效 Blob URL         -> NetworkError
-同步 XHR                   -> NotSupportedError
-structured clone 失败       -> DataCloneError
-```
-
-## 7. 网络、iframe、Worker 和 WebSocket
-
-- 默认不联网；`resource_loader` 优先于所有后端。
-- `Browser(real_network=True)` 可选用 cyCronet；每个 BrowserContext 一个 session。
-- 顶层 HTML 导航使用 `mode=navigate`，不套用 fetch CORS 限制；响应 URL、HTTP charset、解析、子资源和页面生命周期均接入现有 Page 流程。
-- fetch、Request、Response、Headers、异步 XMLHttpRequest、redirect、基础 Cookie 和 CORS 已接入 Page 队列。
-- 同步 fixture loader 与 Cronet 结果使用相同异步边界；fetch/XHR 不阻塞文档 load。
-- iframe 使用独立 Page/Document/Context，父页面等待子页面 load；提供基础同源访问和父子关系。
-- Worker 使用独立线程、Isolate、Context 和消息队列，可加载 HTTP/fixture/Blob URL 脚本并 terminate。
-- structured clone 采用严格白名单，支持 primitive、数组、普通对象、ArrayBuffer/TypedArray 和 Blob；函数、DOM wrapper、循环引用及不支持对象抛 `DataCloneError`。
-- WebSocket 提供 readyState、文本/二进制消息、Blob/ArrayBuffer 基础映射、事件、send/close 和 Page/Context 清理。
-- History 支持 state、pushState、replaceState、back、forward、go、popstate 及 Location 同步。
-
-## 8. 构建和验证
-
-Windows V8 构建环境：
+`Browser.startup_stats` 提供耗时和物化计数：
 
 ```powershell
-$env:PYV8_V8_VERSION = "15.2.20.1"
-$env:PYV8_VS_HOME = "D:\soft\Microsoft\vs2026"
-$env:PYV8_VS_VERSION = "2026"
-$env:PYV8_WINDOWS_SDK = "D:\Windows Kits\10"
-$env:PYV8_BUILD_ROOT = "D:\code\pyv8env\_pyv8\.pyv8-build"
-$env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
-
-cd D:\code\pyv8env\_pyv8
-python setup.py build_v8
-python setup.py build_ext --inplace
+python tools/benchmark_startup.py --runs 20
 ```
 
-`PYV8_VS_HOME` 指向 Visual Studio 安装根目录，不是 `Common7`。Windows 构建器优先使用 depot_tools 的 `.cipd_bin\vpython3.exe` 执行 GN/autoninja。
+`PYV8C_STRICT_VALIDATION=1` 启动时执行全量校验；`PYV8C_STARTUP_STATS=0` 关闭统计。
+重新编译的 `_pyv8` 暴露 `Context.supports_live_class_configs`，可使用 Context-local live overlay；
+旧预编译扩展使用隔离的 Page class fallback。
 
-项目验证：
+## Chromium 与原生构建
+
+项目只使用已追踪的 `CHROMIUM_VERSION`，没有本地 `.chromium-version` 覆盖文件。版本优先级：
+
+```text
+--version / --select -> PYV8C_CHROMIUM_VERSION -> CHROMIUM_VERSION
+```
+
+```powershell
+python tools/fetch_chromium.py
+python tools/fetch_chromium.py --select
+python tools/fetch_chromium.py --version 154.0.8030.0
+```
+
+Windows 原生扩展使用本地 `_pyv8` checkout：
+
+```powershell
+cd D:\code\pyv8env\_pyv8
+python310 -m pip install gevent
+python310 setup.py build_ext --inplace --force
+```
+
+重新构建 V8 时，按 `../_pyv8` 文档配置 Visual Studio、Windows SDK、V8 版本和 depot_tools。
+只在完成当前原生重建后启用 native constant 安装：
+
+```powershell
+$env:PYV8C_ENABLE_NATIVE_CONSTANTS = "1"
+```
+
+## 验证
+
+运行 pyv8c 测试时使用本地构建的扩展：
 
 ```powershell
 $env:PYTHONPATH = "D:\code\pyv8env\_pyv8;D:\code\pyv8env\pyv8c"
-python -m pytest -q tests
-python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
+python310 -m pytest -q
+python310 -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 ```
 
-最近一次验证（2026-08-28）：
+最近验证结果：
 
-- `_pyv8`：`164 passed`，V8 `15.2.20.1`，`build_ext --inplace` 成功。
-- `pyv8c`：`70 passed`。
-- wheel：`pyv8-2.1.2-cp310-abi3-win_amd64.whl`、`pyv8c-0.1.0-py3-none-any.whl` 构建成功。
+- `_pyv8`：`164 passed`，通过 `python310 setup.py build_ext --inplace --force` 重建。
+- `pyv8c`：使用重建原生扩展时 `76 passed`。
+- 启动基准：5 次冷启动 p50 为 `378.9 ms`。
+- baseline extractor 与 baseline-version 回归子集：`16 passed`。
+- baseline 默认/audit 单元子集：`2 passed`。
 
-## 9. 真实遗留问题和后续方向
+交接前执行 `git diff --check`。通过静态测试或 extractor 子集不能替代 DOM/network/native
+集成覆盖。
 
-以下能力尚未完成，除非有代码和测试证据，不得在文档中描述为已实现：
+## 真实限制与优先级
 
-1. baseline 仍有大量 unresolved 签名和动态桩；复杂 Web IDL overload、union、dictionary、mixin 成员、descriptor 和精确 receiver 错误仍需补齐。
-2. 当前 module script 是静态 import 适配层，不具备完整 V8 ES Module record、独立 lexical environment、live binding、dynamic import、import maps、top-level await 和 module Worker。
-3. HTML parser 尚无完整 WHATWG insertion mode、`document.write()`、speculative preload scanner 和 Chromium 级错误恢复。
-4. CORS 预检、完整 Cookie/SameSite/过期策略、缓存、redirect 和 credentials 仍是基础实现；cyCronet 不同原生 wheel/DLL 的真实 HTTP/WebSocket 兼容性仍需端到端验证。
-5. Worker 尚缺完整定时器/fetch/importScripts、MessagePort、transfer list 所有权转移、Map/Set 和规范允许的循环 structured clone。
-6. WebSocket 的 Blob/ArrayBuffer、bufferedAmount、协议协商和关闭错误细节仍未完全对齐浏览器。
-7. iframe 的完整同源/跨源 WindowProxy、安全策略、frame tree 导航和沙箱属性未完成。
-8. Blob URL 的完整跨 iframe/Worker 共享、MediaSource 支持和所有生命周期边界未完成。
-9. 全量 Chromium interface template 仍在每个 Context 批量创建，需评估懒加载；native persistent handle 和故障注入覆盖仍需加强。
-10. 布局、渲染、CSSOM、bfcache、Service Worker 和完整 Chromium 进程/调度模型不在当前范围。
+1. 大部分 Chromium 接口仍是 metadata stub；3,105 个签名 unresolved。优先补充公开 API 的精确
+   签名、overload、descriptor、receiver error 和真实实现。
+2. 提取器是生成 C++ 文本解析加 IDL 补充，不是 C++ AST。Chromium generator 输出变化时，应补充
+   template 与 cross-origin fixture。
+3. module script 是 static-import 适配层，不是完整 V8 ES module：没有 live binding、dynamic import、
+   import maps、top-level await 或 module Worker。
+4. HTML parser 未实现完整 WHATWG insertion mode、`document.write`、speculative preload scanner 和
+   Chromium 级错误恢复。
+5. CORS preflight、Cookie/SameSite/expiry、cache、redirect、credentials 和真实 cyCronet
+   HTTP/WebSocket 行为仍不完整。
+6. Worker 缺少完整 timer/fetch/importScripts、MessagePort、transfer ownership、Map/Set 和规范允许的
+   cyclic structured clone。
+7. iframe WindowProxy/security、frame-tree navigation、sandbox 和所有 context 间 Blob URL 共享仍不完整。
+8. layout、rendering、CSSOM、bfcache、Service Worker 和 Chromium process scheduling 不在当前范围。
 
-后续优先级：先补齐已实现公共接口的 Web IDL/descriptor 测试，再完善真实 cyCronet 与跨源语义，然后扩展 iframe、Worker 和 native 生命周期，最后处理非核心接口及性能。
-
-## Chromium 绑定基线
-
-`tools/extract_interfaces.py` 现在读取 Chromium 生成的 Blink V8 绑定源文件。
-默认使用 `D:\src\chromium` 和 `src\out\Cronet145`，当生成文件不存在时会调用
-`autoninja -C <build-dir> blink_generate_bindings_all`，并生成用于构建 V8 模板的
-schema 5 基线。如果生成源文件已经存在，或需要跳过构建，可以使用
-`--bindings-dir` 或 `--no-build`。
-
-当前 schema 5 接口条目包含：
-
-- `identity`：接口名、父接口、tag、execution context 暴露范围和导出构造函数状态。
-- `constructor`：`allow_new`、`allow_call`、length、callback 和参数签名。
-- `template`：immutable、undetectable、global-this、array、call handler、access-check 及普通 handler。
-- `handlers`：named/indexed 与 cross-origin getter/setter/query/deleter/enumerator/definer。
-- `constants`：常量名称、原始表达式、解析值和 `resolved` 状态。
-- `callbacks`：callback 名称及 getter/setter/operation/constructor 等角色。
-
-基线由 `BaselineRepository` 以只读快照加载，`InterfaceUniverse` 将模板和 handler metadata 转换为 `_pyv8.Context(class_configs=...)` overlay；未实现 callback 由动态 Python stub 保留可观察接口形状。
-
-当前 Chromium snapshot 包含 1254 个接口、12616 个成员和 2223 个常量。旧预编译 `_pyv8` 下常量 native descriptor 默认关闭；重新编译包含最新 `pyclass.cpp` 后，可设置 `PYV8C_ENABLE_NATIVE_CONSTANTS=1` 启用常量安装。
+后续顺序：先强化已实现 public API 与 native overlay 的测试，再完善 CORS/真实网络，再扩展
+iframe/Worker 隔离；最后增加非核心接口实现，且不扩大默认启动期开销。

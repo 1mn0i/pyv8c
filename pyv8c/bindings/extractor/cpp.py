@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
+import zipfile
 from pathlib import Path
 
 
@@ -72,6 +74,18 @@ def split_top_level(text, separator=","):
     return result
 
 
+def _clean_callback_reference(value):
+    """Normalize a generated handler argument to its callback symbol.
+
+    Blink annotates handler tuple entries with comments such as ``// query``
+    and ``// enumerator``. Those comments are useful while reading generated
+    C++, but must not become part of the callback name in the baseline.
+    """
+    value = re.sub(r"//[^\r\n]*", "", value)
+    value = re.sub(r"/\*[\s\S]*?\*/", "", value)
+    return value.strip()
+
+
 def _strip_unsigned(value):
     value = value.strip()
     value = re.sub(r"^unsigned\s*\(\s*", "", value)
@@ -119,7 +133,7 @@ def _argument_types(body):
         if not info: continue
         argument_index = int(info.group(1)); parameter = result.setdefault(argument_index, {
             "index": argument_index, "idl_type": type_name, "optional": False,
-            "nullable": False, "default": None, "review": "generated-callback",
+            "nullable": False,
         })
         before = body[max(0, match.start() - 180):match.start()]; after = body[index:min(len(body), index + 500)]
         parameter["optional"] |= "IsUndefined" in before or "IsUndefined" in after
@@ -221,6 +235,85 @@ def _primitive_constant(expression):
     return None
 
 
+def _constant_expression_value(expression, definitions, resolving=()):
+    """Evaluate the small, numeric C++ expression subset used by generated constants."""
+    value = _primitive_constant(expression)
+    if value is not None:
+        return value
+    expression = str(expression).strip()
+    # Remove harmless C++ integer suffixes and the common cast wrappers.
+    expression = re.sub(r"\b(0[xX][0-9A-Fa-f]+|\d+)(?:ull|uLL|ULL|ll|LL|ul|UL|u|U|l|L)\b", r"\1", expression)
+    previous = None
+    while previous != expression:
+        previous = expression
+        expression = re.sub(
+            r"(?:static_cast|base::strict_cast)\s*<[^<>]+>\s*\(([^()]*)\)",
+            r"(\1)", expression,
+        )
+    names = set(re.findall(r"\b(?:V8[A-Za-z0-9_]+::Constant::)?k[A-Za-z0-9_]+\b", expression))
+    for name in sorted(names, key=len, reverse=True):
+        qualified = name if "::" in name else name
+        if qualified in resolving:
+            return None
+        short = qualified.rsplit("::", 1)[-1]
+        replacement = None
+        for key, candidate in definitions.items():
+            if key == qualified or key.rsplit("::", 1)[-1] == short:
+                replacement = _constant_expression_value(candidate, definitions, resolving + (key,))
+                if replacement is not None:
+                    break
+        if replacement is None:
+            continue
+        expression = re.sub(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])", str(replacement), expression)
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except SyntaxError:
+        return None
+
+    def evaluate(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub, ast.Invert)):
+            operand = evaluate(node.operand)
+            return +operand if isinstance(node.op, ast.UAdd) else -operand if isinstance(node.op, ast.USub) else ~operand
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.BitOr, ast.BitAnd, ast.BitXor, ast.LShift, ast.RShift, ast.FloorDiv, ast.Div)):
+            left, right = evaluate(node.left), evaluate(node.right)
+            if isinstance(node.op, ast.Add): return left + right
+            if isinstance(node.op, ast.Sub): return left - right
+            if isinstance(node.op, ast.Mult): return left * right
+            if isinstance(node.op, ast.BitOr): return left | right
+            if isinstance(node.op, ast.BitAnd): return left & right
+            if isinstance(node.op, ast.BitXor): return left ^ right
+            if isinstance(node.op, ast.LShift): return left << right
+            if isinstance(node.op, ast.RShift): return left >> right
+            if isinstance(node.op, ast.FloorDiv): return left // right
+            return left / right
+        return None
+
+    try:
+        result = evaluate(tree.body)
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+    return result if isinstance(result, (int, float)) and not isinstance(result, bool) else None
+
+
+def _constant_definitions(root):
+    """Collect generated ``V8Foo::Constant::kValue`` definitions from headers."""
+    definitions = {}
+    for path in sorted(Path(root).rglob("*.h")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        classes = re.findall(r"\bclass(?:\s+[A-Za-z_][A-Za-z0-9_]*)*\s+(V8[A-Za-z0-9_]+)\b", text)
+        if not classes:
+            continue
+        owner = classes[0]
+        for match in re.finditer(
+            r"\bstatic\s+constexpr\s+[A-Za-z0-9_:<>]+\s+(k[A-Za-z0-9_]+)\s*=\s*([^;]+);",
+            text,
+        ):
+            definitions[f"{owner}::Constant::{match.group(1)}"] = match.group(2).strip()
+    return definitions
+
+
 def extract_template(text):
     """Extract V8 template switches and interceptor callback names.
 
@@ -255,7 +348,7 @@ def extract_template(text):
             names = ("get", "set", "query", "del", "enum", "definer")
             data = {}
             for index, callback in enumerate(args[:len(names)]):
-                callback = callback.strip()
+                callback = _clean_callback_reference(callback)
                 if callback and callback != "nullptr":
                     data[names[index]] = callback
             if data:
@@ -278,7 +371,7 @@ def extract_template(text):
     return template
 
 
-def extract_constants(members):
+def extract_constants(members, definitions=None):
     """Normalize constant table entries with literal/expression dual form."""
     constants = []
     for location, values in members.items():
@@ -286,32 +379,12 @@ def extract_constants(members):
             if member.get("kind") != "constant":
                 continue
             expression = str(member.get("value", ""))
+            value = _constant_expression_value(expression, definitions or {})
             item = {"name": member.get("name"), "expression": expression,
-                    "resolved": _primitive_constant(expression) is not None,
-                    "value": _primitive_constant(expression), "location": location}
+                    "resolved": value is not None,
+                    "value": value, "location": location}
             constants.append(item)
     return constants
-
-
-def _callback_roles(item):
-    roles = {}
-    constructor = item.get("constructor") or {}
-    signature = constructor.get("signature") or {}
-    # Callback names are retained even when their body could not be decoded.
-    if constructor.get("callback"):
-        roles.setdefault(constructor["callback"], set()).add("constructor")
-    for values in (item.get("members") or {}).values():
-        for member in values:
-            callback = member.get("callback")
-            if callback:
-                roles.setdefault(callback, set()).add(member.get("kind", "member"))
-            setter = member.get("setter")
-            if setter:
-                roles.setdefault(setter, set()).add("setter")
-            getter = member.get("getter")
-            if getter:
-                roles.setdefault(getter, set()).add("getter")
-    return {name: {"roles": sorted(values)} for name, values in roles.items()}
 
 
 def _merge_members(target, incoming):
@@ -411,7 +484,6 @@ def _apply_idl_metadata(extracted, metadata):
         # only fills gaps and must not erase a callback discovered in source.
         item["constructor"]["allow_new"] = bool(item["constructor"].get("allow_new") or info["allow_new"])
         item["constructor"]["allow_call"] = bool(item["constructor"].get("allow_call") or info["allow_call"])
-        item["constructible"] = bool(item["constructor"].get("allow_new") or item["constructor"].get("allow_call"))
         if info.get("constants"):
             known = {entry.get("name"): entry for entry in item.get("constants", ())}
             for constant_name, constant in info["constants"].items():
@@ -438,6 +510,8 @@ def _filename_interface(path, text):
 
 
 def extract(root, idl_root=None):
+    root = Path(root)
+    constant_definitions = _constant_definitions(root)
     result, parse_failures, duplicate_sources = {}, [], 0
     for path in sorted(root.rglob("v8_*.cc")):
         text = path.read_text(encoding="utf-8", errors="ignore")
@@ -464,23 +538,19 @@ def extract(root, idl_root=None):
             if item is None:
                 exposure = _exposure(text)
                 constructor_callback = next((callback for callback in callback_signatures if callback.endswith("ConstructorCallback")), None)
-                item = result[name] = {"parent": parent, "source": relative, "sources": [relative], "snapshot": "chromium-generated-bindings",
-                    "constructible": constructible, "constructor": {"exposed": bool(exposure), "allow_new": constructible,
+                item = result[name] = {"parent": parent, "sources": [relative],
+                    "constructor": {"exposed": bool(exposure), "allow_new": constructible,
                     "allow_call": allow_call, "length": next((sig.get("required", 0) for callback, sig in callback_signatures.items() if callback.endswith("ConstructorCallback")), None),
                     "signature": next((sig for callback, sig in callback_signatures.items() if callback.endswith("ConstructorCallback")), {"status": "unresolved", "parameters": [], "source_evidence": "constructor callback not found"}),
-                    "status": "generated" if any(callback.endswith("ConstructorCallback") for callback in callback_signatures) else "unresolved",
                     "callback": constructor_callback},
-                    "tag": name, "members": {"instance": [], "prototype": [], "interface": []}, "mixins": [], "exposed_in": _exposure(text)}
-                item["identity"] = {"name": name, "parent": parent, "tag": name,
-                                    "exposed_in": _exposure(text), "exported_constructor": bool(exposure and constructible)}
+                    "tag": name, "members": {"instance": [], "prototype": [], "interface": []}, "exposed_in": _exposure(text)}
                 item["template"] = extract_template(text)
             else:
                 duplicate_sources += 1
                 if relative not in item["sources"]: item["sources"].append(relative)
                 if parent and not item.get("parent"): item["parent"] = parent
-                item["constructible"] |= constructible; item["constructor"]["exposed"] |= bool(_exposure(text)); item["constructor"]["allow_new"] |= constructible; item["constructor"]["allow_call"] |= allow_call
+                item["constructor"]["exposed"] |= bool(_exposure(text)); item["constructor"]["allow_new"] |= constructible; item["constructor"]["allow_call"] |= allow_call
                 item["exposed_in"] = sorted(set(item.get("exposed_in", ())) | set(_exposure(text)))
-                item.setdefault("identity", {}).update({"exposed_in": item["exposed_in"], "exported_constructor": bool(item["constructor"].get("exposed") and item["constructor"].get("allow_new"))})
                 item["template"] = _merge_template(item.get("template") or {}, extract_template(text))
             _merge_members(item["members"], members)
     for item in result.values():
@@ -488,23 +558,15 @@ def extract(root, idl_root=None):
             continue
         item["sources"] = sorted(set(item["sources"]))
         if not item["exposed_in"]: item.pop("exposed_in", None)
-        item.setdefault("identity", {}).update({"name": item.get("tag"), "parent": item.get("parent"),
-                                                  "tag": item.get("tag"), "exposed_in": item.get("exposed_in", ())})
-        item["identity"]["exported_constructor"] = bool((item.get("constructor") or {}).get("exposed") and (item.get("constructor") or {}).get("allow_new"))
-        extracted_constants = {entry.get("name"): entry for entry in extract_constants(item.get("members") or {})}
-        extracted_constants.update({entry.get("name"): entry for entry in item.get("constants", ())})
+        extracted_constants = {entry.get("name"): entry for entry in extract_constants(item.get("members") or {}, constant_definitions)}
+        for entry in item.get("constants", ()):
+            name = entry.get("name")
+            current = extracted_constants.get(name)
+            if current is None or (not current.get("resolved") and entry.get("resolved")):
+                extracted_constants[name] = entry
         item["constants"] = list(extracted_constants.values())
-        item["handlers"] = (item.get("template") or {}).get("handlers", {"named": {}, "indexed": {}, "cross_origin": {"named": {}, "indexed": {}}})
-        item["callbacks"] = _callback_roles(item)
     if idl_root is not None:
         _apply_idl_metadata(result, _idl_metadata(Path(idl_root)))
-        for name, item in result.items():
-            if name.startswith("_") or not isinstance(item, dict):
-                continue
-            item.setdefault("identity", {})["exported_constructor"] = bool(
-                (item.get("constructor") or {}).get("exposed") and
-                (item.get("constructor") or {}).get("allow_new")
-            )
     result["_report"] = _report(result, duplicate_sources, parse_failures)
     return result
 
@@ -568,11 +630,7 @@ def apply_reviews(extracted, review_path):
         reviewed["status"] = "manual-reviewed"
         constructor = interfaces[interface_name]["constructor"]
         constructor.update(constructor_metadata)
-        interfaces[interface_name]["constructible"] = bool(
-            constructor.get("allow_new") or constructor.get("allow_call")
-        )
         constructor["signature"] = reviewed
-        constructor["status"] = "manual-reviewed"
         if constructor.get("length") is None:
             constructor["length"] = int(reviewed.get("required") or 0)
     for key, signature in (reviews.get("members") or {}).items():
@@ -622,145 +680,99 @@ def apply_reviews(extracted, review_path):
     return extracted
 
 
-def _compact_signature(signature):
-    """Keep only the signature data consumed by :mod:`pyv8c.bindings.webidl`.
+def _compact_callback_metadata(item, *, include_audit):
+    """Remove source callback names while preserving runtime behavior flags."""
+    if include_audit:
+        return
+    (item.get("constructor") or {}).pop("callback", None)
+    template = item.get("template") or {}
+    if template.get("call_handler") is not None:
+        template["call_handler"] = 1
+    access_check = template.get("access_check")
+    if isinstance(access_check, dict) and access_check.get("callback") is not None:
+        access_check.pop("callback", None)
+        access_check["enabled"] = 1
+    handlers = template.get("handlers") or {}
+    for group in ("named", "indexed"):
+        for role in tuple((handlers.get(group) or {}).keys()):
+            handlers[group][role] = 1
+        cross = handlers.get("cross_origin") or {}
+        for role in tuple((cross.get(group) or {}).keys()):
+            cross[group][role] = 1
 
-    Extraction retains callback and source evidence until reviews have been
-    applied.  Those fields are useful for producing a baseline, but do not
-    participate in runtime binding and used to dominate the packaged JSON.
+
+def _compact_member_callback_metadata(member, *, include_audit):
+    if include_audit:
+        return
+    member.pop("getter", None)
+    member.pop("callback", None)
+    if member.get("world") in ("AllWorlds", "MainWorld"):
+        member.pop("world", None)
+    for overload in member.get("overloads") or ():
+        if isinstance(overload, dict):
+            _compact_member_callback_metadata(overload, include_audit=False)
+
+
+def schema5_baseline(extracted, *, include_audit=False):
+    """Build the schema 5 runtime snapshot.
+
+    The default output omits callback symbols, default world values, and
+    source provenance. ``include_audit`` retains those review-only details.
     """
-    signature = signature or {}
-    result = {}
-    status = signature.get("status") or signature.get("review")
-    if status == "manual-reviewed":
-        result["s"] = "m"
-    elif status != "generated":
-        result["s"] = "u"
-    if "required" in signature:
-        result["r"] = int(signature["required"])
-    if signature.get("max_args") is not None:
-        result["x"] = int(signature["max_args"])
-    if signature.get("variadic"):
-        result["v"] = 1
-    if signature.get("error_mode") and signature["error_mode"] != "throw":
-        result["e"] = signature["error_mode"]
-    parameters = []
-    for parameter in signature.get("parameters") or ():
-        item = {"t": parameter.get("type", parameter.get("idl_type", "any"))}
-        if parameter.get("optional"):
-            item["o"] = 1
-            # A default is observed only for an optional undefined argument.
-            # Preserve it there, but discard the extractor's irrelevant
-            # default:null entries for required parameters.
-            if "default" in parameter:
-                item["d"] = parameter["default"]
-        if parameter.get("nullable"):
-            item["n"] = 1
-        if parameter.get("variadic"):
-            item["v"] = 1
-        if parameter.get("enum"):
-            item["e"] = list(parameter["enum"])
-        parameters.append(item)
-    if parameters:
-        result["p"] = parameters
-    if signature.get("overloads"):
-        result["a"] = [_compact_signature(item) for item in signature["overloads"]]
-    return result
-
-
-def _compact_member_options(member):
-    """Encode only deviations from pyv8c's native-template defaults."""
-    result = {}
-    flags = str(member.get("flags") or "")
-    if flags and flags != "v8::None":
-        result["f"] = flags
-    if member.get("world") not in (None, "AllWorlds"):
-        result["w"] = member["world"]
-    if member.get("receiver") not in (None, "Check"):
-        result["r"] = member["receiver"]
-    if member.get("cross_origin") not in (None, "Check"):
-        result["x"] = member["cross_origin"]
-    if member.get("side_effect") not in (None, "HasSideEffect"):
-        result["e"] = member["side_effect"]
-    return result
-
-
-def compact_baseline(extracted):
-    """Produce schema 4, the compact runtime representation.
-
-    Schema 3 is an extraction/review representation.  Schema 4 intentionally
-    omits source paths, callback names, getter names, duplicate tags and other
-    generation-only metadata while preserving every field used to configure a
-    public runtime member.
-    """
-    output = {}
-    for name, item in extracted.items():
-        if name.startswith("_"):
-            continue
-        compact = {}
-        if item.get("parent"):
-            compact["p"] = item["parent"]
-        if item.get("exposed_in"):
-            compact["e"] = item["exposed_in"]
-        constructor = item.get("constructor") or {}
-        if constructor.get("allow_new") or constructor.get("allow_call"):
-            compact["c"] = [
-                int(constructor.get("length") or 0),
-                _compact_signature(constructor.get("signature")),
-                1 if constructor.get("allow_call") else 0,
-            ]
-        members = {}
-        for location, values in (item.get("members") or {}).items():
-            grouped = {}
-            for member in values:
-                kind = member.get("kind")
-                options = _compact_member_options(member)
-                if kind == "operation":
-                    value = [member["name"], int(member.get("length") or 0),
-                             _compact_signature(member.get("signature"))]
-                    if options:
-                        value.append(options)
-                    grouped.setdefault("o", []).append(value)
-                elif kind == "attribute":
-                    # All entries have getters.  A missing setter is exactly
-                    # the read-only state needed by the runtime.
-                    setter = member.get("setter")
-                    value = [member["name"],
-                             _compact_signature(member.get("setter_signature")) if setter else None]
-                    if options:
-                        value.append(options)
-                    grouped.setdefault("a", []).append(value)
-                elif kind == "constant":
-                    grouped.setdefault("c", []).append([member["name"], member.get("value")])
-            if grouped:
-                members[{"instance": "i", "prototype": "p", "interface": "s"}[location]] = grouped
-        if members:
-            compact["m"] = members
-        output[name] = compact
-    return output
-
-
-def schema5_baseline(extracted):
-    """Build the full runtime snapshot consumed by the dynamic class loader."""
     output = {}
     for name, source in extracted.items():
         if name.startswith("_"):
             continue
         item = json.loads(json.dumps(source))
-        identity = item.setdefault("identity", {})
-        identity.setdefault("name", name)
-        identity.setdefault("parent", item.get("parent"))
-        identity.setdefault("tag", item.get("tag") or name)
-        identity.setdefault("exposed_in", item.get("exposed_in", []))
+        item.pop("provenance", None)
+        sources = item.pop("sources", ())
+        item.setdefault("parent", None)
+        item.setdefault("tag", name)
+        item.setdefault("exposed_in", [])
         constructor = item.setdefault("constructor", {})
-        constructor.setdefault("exported", bool(identity.get("exported_constructor")))
+        constructor.setdefault("signature", {"status": "unresolved", "parameters": []})
         template = item.setdefault("template", extract_template(""))
-        template.setdefault("handlers", item.get("handlers") or {"named": {}, "indexed": {}, "cross_origin": {"named": {}, "indexed": {}}})
+        template.setdefault("handlers", {"named": {}, "indexed": {}, "cross_origin": {"named": {}, "indexed": {}}})
         item.setdefault("constants", extract_constants(item.get("members") or {}))
-        item.setdefault("callbacks", _callback_roles(item))
-        # Source paths are useful for review but do not duplicate source text.
-        item["provenance"] = {"sources": sorted(set(item.get("sources", []))),
-                              "snapshot": item.get("snapshot", "chromium-generated-bindings")}
+        for constant in item["constants"]:
+            constant.setdefault("location", "interface")
+        if not include_audit:
+            for constant in item["constants"]:
+                constant.pop("expression", None)
+        for location, members in item["members"].items():
+            runtime_members = []
+            for member in members:
+                if member.get("kind") == "constant":
+                    continue
+                member.pop("location", None)
+                if member.get("kind") == "attribute":
+                    if not include_audit:
+                        member.pop("readonly", None)
+                        member["setter"] = 1 if member.get("setter") else None
+                for signature_key in ("signature", "setter_signature"):
+                    signature = member.get(signature_key)
+                    if not isinstance(signature, dict):
+                        continue
+                    for parameter in signature.get("parameters") or ():
+                        parameter.pop("index", None)
+                        parameter.pop("review", None)
+                        if not parameter.get("optional"):
+                            parameter.pop("default", None)
+                _compact_member_callback_metadata(member, include_audit=include_audit)
+                runtime_members.append(member)
+            item["members"][location] = runtime_members
+        signature = constructor["signature"]
+        for parameter in signature.get("parameters") or ():
+            parameter.pop("index", None)
+            parameter.pop("review", None)
+            if not parameter.get("optional"):
+                parameter.pop("default", None)
+        _compact_callback_metadata(item, include_audit=include_audit)
+        if include_audit:
+            item["provenance"] = {
+                "sources": sorted(set(sources)),
+                "snapshot": "chromium-generated-bindings",
+            }
         output[name] = item
     return output
 
@@ -777,6 +789,32 @@ def generated_bindings_dir(build_dir: Path) -> Path:
     return candidates[0]
 
 
+def write_baseline(output_path: Path, document: dict, *, compress: bool = False) -> Path:
+    """Write a schema 5 baseline as JSON or a single-member ZIP archive.
+
+    A ``.zip`` output path always selects compression. ``--zip`` additionally
+    lets callers keep an existing ``.json`` command-line path while publishing
+    its ``.zip`` counterpart.
+    """
+    payload = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    output_path = Path(output_path)
+    use_zip = compress or output_path.suffix.lower() == ".zip"
+    if not use_zip:
+        output_path.write_bytes(payload)
+        return output_path
+
+    archive_path = output_path if output_path.suffix.lower() == ".zip" else output_path.with_suffix(".zip")
+    member_name = archive_path.with_suffix(".json").name
+    with zipfile.ZipFile(
+        archive_path,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=9,
+    ) as archive:
+        archive.writestr(member_name, payload)
+    return archive_path
+
+
 def main():
     parser = argparse.ArgumentParser(description="Parse Chromium-generated Blink V8 bindings into an interface baseline.")
     parser.add_argument("paths", nargs="+", type=Path,
@@ -789,6 +827,10 @@ def main():
                         help="existing generated bindings directory")
     parser.add_argument("--reviews", type=Path, default=PROJECT_ROOT / "tools" / "webidl-reviews.json")
     parser.add_argument("--report", action="store_true")
+    parser.add_argument("--audit", action="store_true",
+                        help="write a non-runtime audit snapshot with callback names, world metadata, and provenance")
+    parser.add_argument("--zip", action="store_true",
+                        help="write a compressed .zip baseline (also selected by a .zip output path)")
     args = parser.parse_args()
     if len(args.paths) not in (1, 2):
         parser.error("provide <output> or the legacy <bindings-dir> <output> form")
@@ -805,10 +847,12 @@ def main():
         apply_reviews(extracted, args.reviews)
     report = extracted.pop("_report")
     output = {"_webidl": {"schema": 5, "source": "tools/extract_interfaces.py",
-        "renderer_snapshot": str(renderer), "report": report}, **schema5_baseline(extracted)}
+        "renderer_snapshot": str(renderer), "report": report,
+        "compact": not args.audit},
+        **schema5_baseline(extracted, include_audit=args.audit)}
     # The published snapshot is machine-consumed. Compact serialization avoids
     # carrying indentation overhead on top of the compact schema itself.
-    output_path.write_text(json.dumps(output, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    write_baseline(output_path, output, compress=args.zip)
     if args.report: print(json.dumps(report, indent=2, sort_keys=True))
 
 

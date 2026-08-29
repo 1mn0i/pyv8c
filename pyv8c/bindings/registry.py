@@ -17,10 +17,8 @@ class InterfaceSpec:
     constructible: bool = False
     length: int = 0
     tag: str = ""
-    mixins: tuple[str, ...] = field(default_factory=tuple)
     exposed_in: tuple[str, ...] = ("Window", "Worker")
     template: dict = field(default_factory=dict)
-    handlers: dict = field(default_factory=dict)
     constants: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -67,12 +65,12 @@ def load_baseline(path=None):
 
 
 def interface(name: str, parent: Optional[str], *, constructible=False, length=0,
-              tag: Optional[str] = None, mixins=(), exposed_in=("Window", "Worker"),
-              template=None, handlers=None, constants=()):
+              tag: Optional[str] = None, exposed_in=("Window", "Worker"),
+              template=None, constants=()):
     """Attach Web IDL metadata without mutating a process-global registry."""
     spec = InterfaceSpec(name, parent, constructible, length, tag or name,
-                         tuple(mixins), tuple(exposed_in), dict(template or {}),
-                         dict(handlers or {}), tuple(constants))
+                         tuple(exposed_in), dict(template or {}),
+                         tuple(constants))
 
     def decorate(cls):
         cls.__idl_name__ = name
@@ -131,7 +129,7 @@ def validate_registry(baseline=None):
             if expected is not None and expected != spec.parent:
                 raise TypeError(f"{name} parent {spec.parent!r} does not match baseline {expected!r}")
             expected_exposure = baseline[name].get("exposed_in")
-            if expected_exposure is not None and not (set(expected_exposure) & set(spec.exposed_in)):
+            if expected_exposure and not (set(expected_exposure) & set(spec.exposed_in)):
                 raise TypeError(f"{name} exposure {spec.exposed_in!r} does not overlap baseline {expected_exposure!r}")
             expected_tag = baseline[name].get("tag")
             if expected_tag and expected_tag != spec.tag:
@@ -152,7 +150,8 @@ def validate_registry(baseline=None):
 
 
 def expose_interfaces(context, context_type="Window", *, generate_stubs=True,
-                      expose_unimplemented=True, stub_logging="info", universe=None):
+                      expose_unimplemented=True, stub_logging="info", universe=None,
+                      lazy_interfaces=None, class_for=None):
     """Expose public interfaces, filling baseline-only APIs with shells.
 
     The baseline contains renderer-only and conditionally exposed bindings;
@@ -164,7 +163,7 @@ def expose_interfaces(context, context_type="Window", *, generate_stubs=True,
             BaselineRepository.load(), stub_logging=stub_logging,
             expose_unimplemented=expose_unimplemented,
         )
-    if generate_stubs:
+    if generate_stubs and universe.strict_validation:
         universe.validate()
     else:
         validate_registry(universe.baseline.interfaces)
@@ -184,9 +183,15 @@ def expose_interfaces(context, context_type="Window", *, generate_stubs=True,
                 if generate_stubs else getattr(INTERFACES.get(parent), "parent", None)
             )
         return value
-    names = universe.exposed_names(context_type) if generate_stubs else [name for name, spec in INTERFACES.items() if context_type in spec.exposed_in]
+    if generate_stubs and lazy_interfaces is not False:
+        names = universe.eager_names(context_type)
+    elif generate_stubs:
+        names = universe.exposed_names(context_type)
+    else:
+        names = [name for name, spec in INTERFACES.items() if context_type in spec.exposed_in]
     for name in sorted(names, key=depth):
-        context.expose(universe.class_for(name) if generate_stubs else IMPLEMENTATIONS[name], name=name)
+        resolver = class_for or universe.class_for
+        context.expose(resolver(name) if generate_stubs else IMPLEMENTATIONS[name], name=name)
 
 
 def js_attributes(*items):

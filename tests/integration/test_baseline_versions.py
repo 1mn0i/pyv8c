@@ -1,17 +1,18 @@
 import copy
 import json
 from pathlib import Path
+import zipfile
 
 import pytest
 import pyv8
 
 from pyv8c import Browser
-BASELINE = Path(__file__).resolve().parents[2] / "pyv8c" / "baselines" / "interface-baseline.json"
+BASELINE = Path(__file__).resolve().parents[2] / "pyv8c" / "baselines" / "interface-baseline.zip"
 
 
 def _baseline_document():
-    document = json.loads(BASELINE.read_text(encoding="utf-8"))
-    return document
+    with zipfile.ZipFile(BASELINE) as archive:
+        return json.loads(archive.read("interface-baseline.json"))
 
 
 def _custom_baseline(path):
@@ -24,7 +25,6 @@ def _custom_baseline(path):
     members.remove(abort)
     replacement = copy.deepcopy(abort)
     replacement["name"] = "alternateAbort"
-    replacement["callback"] = "AlternateAbortOperationCallback"
     members.append(replacement)
     path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     return document
@@ -33,7 +33,7 @@ def _custom_baseline(path):
 def test_default_baseline_is_bundled_and_describes_snapshot():
     browser = Browser(stub_logging="off")
     try:
-        assert browser.interface_baseline_path == "pyv8c:baselines/interface-baseline.json"
+        assert browser.interface_baseline_path == "pyv8c:baselines/interface-baseline.zip"
         info = browser.interface_baseline_info
         assert info["interface_count"] > 1000
         assert len(info["sha256"]) == 64
@@ -71,7 +71,7 @@ def test_custom_baseline_path_is_absolute_and_snapshot_is_frozen(tmp_path, monke
     [
         ("[]", "root must be an object"),
         ("{}", "must contain _webidl metadata and interfaces"),
-        ('{"_webidl": {"schema": 5}, "Broken": {"parent": null}}', "invalid interface entry"),
+        ('{"_webidl": {"schema": 5}, "Broken": {"parent": null}}', "not a compact schema 5"),
     ],
 )
 def test_invalid_baseline_is_rejected_when_browser_is_created(tmp_path, content, error):
@@ -95,14 +95,23 @@ def test_old_baseline_schema_is_rejected_explicitly(tmp_path):
         Browser(interface_baseline_path=path)
 
 
+def test_non_compact_baseline_is_rejected_explicitly(tmp_path):
+    document = _baseline_document()
+    document["_webidl"]["compact"] = False
+    path = tmp_path / "audit.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError, match="not a compact schema 5"):
+        Browser(interface_baseline_path=path)
+
+
 def test_baseline_parent_cycle_is_rejected_when_browser_is_created(tmp_path):
     entry = lambda parent, tag: {
         "parent": parent, "members": {}, "constructor": {}, "tag": tag,
-        "identity": {}, "template": {}, "handlers": {}, "constants": [], "callbacks": {},
+        "template": {}, "constants": [],
     }
     path = tmp_path / "cycle.json"
     path.write_text(json.dumps({
-        "_webidl": {"schema": 5}, "First": entry("Second", "First"),
+        "_webidl": {"schema": 5, "compact": True}, "First": entry("Second", "First"),
         "Second": entry("First", "Second"),
     }), encoding="utf-8")
     with pytest.raises(ValueError, match="parent cycle"):
@@ -173,7 +182,7 @@ def test_unresolved_real_member_is_rejected_but_unresolved_stub_is_allowed(tmp_p
     path = tmp_path / "unresolved-real.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     with pytest.raises(TypeError, match=r"DOMTokenList\.contains has unresolved"):
-        Browser(interface_baseline_path=path, stub_logging="off")
+        Browser(interface_baseline_path=path, stub_logging="off", strict_validation=True)
 
     document = _baseline_document()
     abort = next(
