@@ -8,7 +8,7 @@ from threading import RLock
 from urllib.parse import urlsplit
 import importlib
 import inspect
-from .error import V8Error, InvalidStateError
+from ..core.errors import V8Error, InvalidStateError
 
 
 class NetworkUnavailableError(RuntimeError):

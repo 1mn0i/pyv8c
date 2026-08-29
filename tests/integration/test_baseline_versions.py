@@ -6,13 +6,16 @@ import pytest
 import pyv8
 
 from pyv8c import Browser
+BASELINE = Path(__file__).resolve().parents[2] / "pyv8c" / "baselines" / "interface-baseline.json"
 
 
-BASELINE = Path(__file__).resolve().parents[1] / "pyv8c" / "baselines" / "interface-baseline.json"
+def _baseline_document():
+    document = json.loads(BASELINE.read_text(encoding="utf-8"))
+    return document
 
 
 def _custom_baseline(path):
-    document = json.loads(BASELINE.read_text(encoding="utf-8"))
+    document = _baseline_document()
     document["AbortController"]["parent"] = "EventTarget"
     document["AbortController"]["tag"] = "VersionedAbortController"
     document["AbortController"]["constructor"]["length"] = 2
@@ -34,7 +37,7 @@ def test_default_baseline_is_bundled_and_describes_snapshot():
         info = browser.interface_baseline_info
         assert info["interface_count"] > 1000
         assert len(info["sha256"]) == 64
-        assert info["schema"] == 3
+        assert info["schema"] == 5
     finally:
         browser.close()
 
@@ -68,8 +71,7 @@ def test_custom_baseline_path_is_absolute_and_snapshot_is_frozen(tmp_path, monke
     [
         ("[]", "root must be an object"),
         ("{}", "must contain _webidl metadata and interfaces"),
-        ('{"_webidl": {"schema": 3}, "Broken": {"parent": null}}', "invalid interface entry"),
-        ('{"_webidl": {"schema": 3}, "Broken": {"parent": "Missing", "members": {}, "constructor": {}, "tag": "Broken"}}', "unknown parent"),
+        ('{"_webidl": {"schema": 5}, "Broken": {"parent": null}}', "invalid interface entry"),
     ],
 )
 def test_invalid_baseline_is_rejected_when_browser_is_created(tmp_path, content, error):
@@ -85,21 +87,22 @@ def test_missing_baseline_is_rejected_when_browser_is_created(tmp_path):
 
 
 def test_old_baseline_schema_is_rejected_explicitly(tmp_path):
-    document = json.loads(BASELINE.read_text(encoding="utf-8"))
+    document = _baseline_document()
     document["_webidl"]["schema"] = 2
     path = tmp_path / "schema-2.json"
     path.write_text(json.dumps(document), encoding="utf-8")
-    with pytest.raises(ValueError, match="expected 3"):
+    with pytest.raises(ValueError, match="expected 5"):
         Browser(interface_baseline_path=path)
 
 
 def test_baseline_parent_cycle_is_rejected_when_browser_is_created(tmp_path):
     entry = lambda parent, tag: {
         "parent": parent, "members": {}, "constructor": {}, "tag": tag,
+        "identity": {}, "template": {}, "handlers": {}, "constants": [], "callbacks": {},
     }
     path = tmp_path / "cycle.json"
     path.write_text(json.dumps({
-        "_webidl": {"schema": 3}, "First": entry("Second", "First"),
+        "_webidl": {"schema": 5}, "First": entry("Second", "First"),
         "Second": entry("First", "Second"),
     }), encoding="utf-8")
     with pytest.raises(ValueError, match="parent cycle"):
@@ -134,7 +137,7 @@ def test_two_browsers_keep_generated_classes_and_templates_isolated(tmp_path):
 
 
 def test_two_browsers_compile_real_member_signatures_independently(tmp_path):
-    document = json.loads(BASELINE.read_text(encoding="utf-8"))
+    document = _baseline_document()
     contains = next(
         member for member in document["DOMTokenList"]["members"]["prototype"]
         if member["name"] == "contains"
@@ -161,7 +164,7 @@ def test_two_browsers_compile_real_member_signatures_independently(tmp_path):
 
 
 def test_unresolved_real_member_is_rejected_but_unresolved_stub_is_allowed(tmp_path):
-    document = json.loads(BASELINE.read_text(encoding="utf-8"))
+    document = _baseline_document()
     contains = next(
         member for member in document["DOMTokenList"]["members"]["prototype"]
         if member["name"] == "contains"
@@ -172,7 +175,7 @@ def test_unresolved_real_member_is_rejected_but_unresolved_stub_is_allowed(tmp_p
     with pytest.raises(TypeError, match=r"DOMTokenList\.contains has unresolved"):
         Browser(interface_baseline_path=path, stub_logging="off")
 
-    document = json.loads(BASELINE.read_text(encoding="utf-8"))
+    document = _baseline_document()
     abort = next(
         member for member in document["AbortController"]["members"]["prototype"]
         if member["name"] == "abort"

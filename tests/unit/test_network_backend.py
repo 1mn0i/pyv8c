@@ -48,7 +48,7 @@ def install_fake_cycronet(monkeypatch):
 
 
 def test_real_network_requires_optional_dependency(monkeypatch):
-    monkeypatch.setattr("pyv8c.network_backend.importlib.import_module", lambda name: (_ for _ in ()).throw(ImportError("missing")))
+    monkeypatch.setattr("pyv8c.network.backend.importlib.import_module", lambda name: (_ for _ in ()).throw(ImportError("missing")))
     with pytest.raises(RuntimeError, match="cycronet"):
         Browser(real_network=True).new_context()
 

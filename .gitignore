@@ -9,6 +9,10 @@ build/
 dist/
 *.log
 
+# Local Chromium source and version selection
+.chromium-build/
+.chromium-version
+
 # Local V8/build state
 .pyv8-build/
 .pyv8-version

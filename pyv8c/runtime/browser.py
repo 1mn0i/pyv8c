@@ -1,7 +1,4 @@
-import heapq
 import itertools
-import queue
-import threading
 import time
 import uuid
 import re
@@ -9,57 +6,62 @@ from urllib.parse import urljoin, urlsplit
 
 import pyv8
 
-from .bom import Window
-from .dom import Document, DocumentType, Event
-from .network import Blob, Response, Request, Headers, XMLHttpRequest, Worker, WebSocket, ErrorEvent, set_current_page, current_page
-from .network_backend import CronetNetworkBackend, NetworkRequest, NetworkUnavailableError, same_origin
-from .interfaces import expose_interfaces
-from .interface_runtime import BaselineRepository, InterfaceUniverse
-from .parser import parse, IncrementalDOMParser
-from .error import InvalidStateError, NetworkError, SecurityError, TimeoutError, V8Error, as_js_error
+from ..bom.api import Window
+from ..dom.model import Document, DocumentType, Event
+from ..network.api import Blob, Response, Request, Headers, XMLHttpRequest, Worker, WebSocket, ErrorEvent
+from ..network.backend import CronetNetworkBackend, NetworkRequest, NetworkUnavailableError, same_origin
+from ..bindings.registry import expose_interfaces
+from ..bindings.universe import BaselineRepository, InterfaceUniverse
+from ..dom.parser import parse, IncrementalDOMParser
+from ..core.errors import InvalidStateError, NetworkError, SecurityError, TimeoutError, V8Error, as_js_error
+from .tasks import TaskQueue
+from .controllers import (
+    DocumentLifecycle, NavigationController, ResourceController,
+    ScriptController, StateAlias,
+)
 
 
 class Page:
+    _navigation_generation = StateAlias("navigation", "generation")
+    _has_navigation = StateAlias("navigation", "has_navigation")
+    _pending_navigation = StateAlias("navigation", "pending")
+    _parser = StateAlias("navigation", "parser")
+    _parser_generation = StateAlias("navigation", "parser_generation")
+    _parsing = StateAlias("navigation", "parsing")
+    _parser_done = StateAlias("navigation", "parser_done")
+    _dom_content_loaded = StateAlias("lifecycle", "dom_content_loaded")
+    _document_load_fired = StateAlias("lifecycle", "document_load_fired")
+    _load_waiters = StateAlias("lifecycle", "load_waiters")
+    _dom_blocking_scripts = StateAlias("scripts", "dom_blocking_scripts")
+    _script_queue = StateAlias("scripts", "queue")
+    _defer_scripts = StateAlias("scripts", "defer")
+    _module_cache = StateAlias("scripts", "module_cache")
+    _document_resources = StateAlias("resources", "resources")
+    _resource_counter = StateAlias("resources", "counter")
+
     def __init__(self, context, url="about:blank"):
         self.context_owner = context
         self.closed = False
-        self._queue = []
-        self._counter = itertools.count(1)
-        self._cancelled = set()
-        self.microtasks = []
-        self._posted = queue.Queue()
-        self._task_errors = []
-        self._network_condition = threading.Condition()
-        self._network_pending = 0
-        self._worker_pending = 0
+        self.navigation = NavigationController()
+        self.lifecycle = DocumentLifecycle()
+        self.scripts = ScriptController()
+        self.resources = ResourceController()
+        self.tasks = TaskQueue(self, self._run_queued_callback)
+        self.microtasks = self.tasks.microtasks
+        self._task_errors = self.tasks.errors
         self._promise_counter = itertools.count(1)
         self._owned_websockets = set()
         self._owned_workers = set()
         self._owned_frames = set()
-        self._navigation_generation = 0
-        self._has_navigation = False
-        self._parsing = False
-        self._parser_done = False
-        self._dom_content_loaded = False
-        self._document_load_fired = False
-        self._document_resources = {}
-        self._resource_counter = itertools.count(1)
-        self._dom_blocking_scripts = 0
-        self._script_queue = []
-        self._defer_scripts = []
-        self._module_cache = {}
-        self._parser = None
-        self._parser_generation = 0
-        self._load_waiters = []
-        self._pending_navigation = 0
         self.document = Document(page=self, url=url, ready_state="complete")
         self.resource_loader = context.browser.resource_loader
         self.network_backend = context.network_backend
         self.window = Window(page=self)
+        self.binding_session = context.browser.interface_universe.binding_session(self)
         self.window.location.href = str(url)
         self.context = pyv8.Context(
             self.window, hook=False, ctx_type="Window",
-            class_configs=context.browser.interface_universe.class_configs("Window", roots=("Window",)),
+            class_configs=self.binding_session.class_configs("Window", roots=("Window",)),
         )
         expose_interfaces(
             self.context,
@@ -69,8 +71,6 @@ class Page:
             stub_logging=self.context_owner.browser.stub_logging,
             universe=self.context_owner.browser.interface_universe,
         )
-        Worker._current_page = self
-        XMLHttpRequest._current_page = self
 
     @property
     def url(self): return self.window.location.href
@@ -169,9 +169,7 @@ class Page:
         event = Event(event_type, options or {})
         event._trusted = True
         if event_type in ("pagehide", "pageshow"): event._persisted = bool((options or {}).get("persisted", False))
-        previous = current_page(); set_current_page(self)
-        try: target.fn_dispatchEvent(event)
-        finally: set_current_page(previous)
+        target.fn_dispatchEvent(event)
         return event
 
     def _dispatch_beforeunload(self):
@@ -570,28 +568,19 @@ class Page:
         except BaseException as exc: callback(None, exc)
 
     def begin_network(self):
-        with self._network_condition:
-            self._network_pending += 1
+        self.tasks.begin_network()
 
     def begin_worker(self):
-        with self._network_condition:
-            self._worker_pending += 1
+        self.tasks.begin_worker()
 
     def complete_worker(self):
-        with self._network_condition:
-            self._worker_pending = max(0, self._worker_pending - 1)
-            self._network_condition.notify_all()
+        self.tasks.complete_worker()
 
     def complete_network(self):
-        with self._network_condition:
-            self._network_pending = max(0, self._network_pending - 1)
-            self._network_condition.notify_all()
+        self.tasks.complete_network()
 
     def post_task(self, callback):
-        if not self.closed:
-            self._posted.put(callback)
-            with self._network_condition:
-                self._network_condition.notify_all()
+        self.tasks.post(callback)
 
     def _make_promise(self):
         record = self.context.exec_js("(() => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j; }); return { promise, resolve, reject }; })()")
@@ -636,18 +625,10 @@ class Page:
 
     def evaluate(self, script, filename=None):
         if self.closed or self.context_owner.closed: raise InvalidStateError("Page is closed")
-        previous = current_page(); set_current_page(self)
-        try:
-            return self.context.exec_js(str(script), filename=filename)
-        finally:
-            set_current_page(previous)
+        return self.context.exec_js(str(script), filename=filename)
 
     def _run_callback(self, callback, *args):
-        previous = current_page(); set_current_page(self)
-        try:
-            return callback(*args)
-        finally:
-            set_current_page(previous)
+        return callback(*args)
 
     def _run_queued_callback(self, callback, *args):
         """Keep one faulty task from aborting unrelated browser work."""
@@ -658,55 +639,12 @@ class Page:
             return None
 
     def schedule(self, callback, delay, repeat=False):
-        ident = next(self._counter)
-        try:
-            delay = max(0.0, float(delay))
-        except (TypeError, ValueError):
-            delay = 0.0
-        heapq.heappush(
-            self._queue,
-            (time.monotonic() + delay, ident, callback, delay if repeat else None),
-        )
-        return ident
+        return self.tasks.schedule(callback, delay, repeat)
 
-    def cancel(self, ident): self._cancelled.add(int(ident))
+    def cancel(self, ident): self.tasks.cancel(ident)
 
     def run_until_idle(self, timeout=0):
-        deadline = time.monotonic() + float(timeout or 0)
-        while self.microtasks or self._queue or not self._posted.empty() or (timeout and (self._network_pending or self._worker_pending)):
-            while True:
-                try: callback = self._posted.get_nowait()
-                except queue.Empty: break
-                if not self.closed: self._run_queued_callback(callback)
-            while self.microtasks:
-                callback = self.microtasks.pop(0)
-                self._run_queued_callback(callback)
-            if not self._queue:
-                if self._posted.empty() and not self.microtasks:
-                    if timeout and self._network_pending and time.monotonic() < deadline:
-                        with self._network_condition:
-                            self._network_condition.wait(min(0.01, max(0, deadline - time.monotonic())))
-                        continue
-                    if timeout and time.monotonic() < deadline:
-                        with self._network_condition:
-                            self._network_condition.wait(min(0.01, max(0, deadline - time.monotonic())))
-                        if not self._posted.empty(): continue
-                    break
-                continue
-            due, ident, callback, interval = self._queue[0]
-            now = time.monotonic()
-            if due > now:
-                if not timeout or now >= deadline:
-                    break
-                with self._network_condition:
-                    self._network_condition.wait(min(due - now, max(0, deadline - now)))
-                continue
-            heapq.heappop(self._queue)
-            if ident in self._cancelled: continue
-            self._run_queued_callback(callback)
-            if interval is not None and ident not in self._cancelled:
-                heapq.heappush(self._queue, (max(due + interval, time.monotonic()), ident, callback, interval))
-            if timeout and time.monotonic() >= deadline: break
+        self.tasks.run_until_idle(timeout)
 
     def wait_for_network(self, timeout=30):
         self.run_until_idle(timeout=timeout)
@@ -717,7 +655,7 @@ class Page:
             self._dispatch_beforeunload()
             self._dispatch_page_event("pagehide", self.window, {"bubbles": False, "persisted": False})
             self._dispatch_page_event("unload", self.window, {"bubbles": False})
-        self.closed = True; self._queue.clear(); self.microtasks.clear(); self._document_resources.clear(); self._load_waiters.clear()
+        self.closed = True; self.tasks.close(); self._document_resources.clear(); self._load_waiters.clear()
         for frame in list(self._owned_frames): frame.close()
         self._owned_frames.clear()
         for ws in list(self._owned_websockets):
@@ -731,7 +669,7 @@ class Page:
             close_context()
 
     def element_class(self, tag):
-        from .dom import HTMLElement, HTML_CLASSES
+        from ..dom.model import HTMLElement, HTML_CLASSES
         return HTML_CLASSES.get("HTML" + str(tag).capitalize() + "Element", HTMLElement)
 
     def document_type(self): return DocumentType(page=self)

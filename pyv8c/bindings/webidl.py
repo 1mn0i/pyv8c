@@ -59,7 +59,7 @@ class BindingPlan:
 
 
 def _error(name, message):
-    from .error import DOMException, V8RangeError, V8TypeError, V8URIError
+    from ..core.errors import DOMException, V8RangeError, V8TypeError, V8URIError
     if name == "RangeError":
         return V8RangeError(message)
     if name == "URIError":
@@ -231,7 +231,7 @@ def _boolean(value):
 
 
 def _number(value, integer=False, unsigned=False):
-    from .error import V8RangeError
+    from ..core.errors import V8RangeError
     if _is_null(value) or _is_undefined(value) or isinstance(value, bool):
         raise _error("TypeError", "The provided value is not a number.")
     try:
@@ -255,7 +255,7 @@ def _interface(value, name, nullable=False):
         if nullable:
             return value
         raise _error("TypeError", f"The provided value is not of type '{name}'.")
-    from .interfaces import IMPLEMENTATIONS
+    from .registry import IMPLEMENTATIONS
     expected = IMPLEMENTATIONS.get(name)
     idl_names = {getattr(cls, "__idl_name__", None) for cls in type(value).__mro__}
     if (expected is None or not isinstance(value, expected)) and name not in idl_names:
@@ -341,7 +341,7 @@ def _convert(value, type_spec, *, nullable=False, enum=()):
 
 
 def validate_arguments(plan: BindingPlan, args):
-    from .error import V8TypeError
+    from ..core.errors import V8TypeError
 
     spec = plan.signature
     if spec.overloads:

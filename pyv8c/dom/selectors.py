@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from .dom import Element
+from .model import Element
 
 @dataclass
 class Simple:

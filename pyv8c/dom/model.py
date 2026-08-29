@@ -6,8 +6,8 @@ import pyv8
 from pyv8.flag import FlagExposed, V8Attribute
 from pyv8.tools import ConstructorConfig
 
-from .interfaces import interface, js_attributes, js_methods
-from .error import V8TypeError, V8SyntaxError, HierarchyRequestError, NotFoundError, InvalidCharacterError
+from ..bindings.registry import interface, js_attributes, js_methods
+from ..core.errors import V8TypeError, V8SyntaxError, HierarchyRequestError, NotFoundError, InvalidCharacterError
 
 
 def _js_call(fn, this, *args):

@@ -21,14 +21,20 @@ browser.close()
 
 | 目录 | 职责 |
 | --- | --- |
-| `pyv8c/` | Browser、Page、DOM/BOM、事件、网络和接口运行时 |
+| `pyv8c/core/` | 错误类型和无领域依赖的 realm 协议 |
+| `pyv8c/bindings/` | schema 5 baseline、Web IDL、接口 registry、Context-local V8 overlay 和提取器 |
+| `pyv8c/dom/` | DOM、事件、解析和 selector |
+| `pyv8c/bom/` | Window、URL、History、Storage 等 BOM |
+| `pyv8c/network/` | Fetch/XHR/WebSocket、HTTP 数据模型和 transport |
+| `pyv8c/workers/` | Worker API 和 structured clone |
+| `pyv8c/runtime/` | Browser、Context、Page 与任务/导航/资源/脚本编排 |
 | `pyv8c/baselines/` | 随 wheel 发布的 Chromium 接口快照 |
 | `tests/` | 单元、集成和 native subprocess 测试 |
 | `tools/` | renderer binding 提取和基线审核工具 |
 | `../_pyv8/` | V8 Python 扩展，是 pyv8c 的核心依赖，允许按需修改 |
 | `../_pyv8env/` | 旧实现及 renderer binding 快照参考 |
 
-`_pyv8` 和 `pyv8c` 是独立 Git 仓库。底层修改必须同时验证 `_pyv8` 与 `pyv8c`，不能绕过接口注册、Context 隔离、wrapper identity 或 Page 任务队列。
+`_pyv8` 和 `pyv8c` 是独立 Git 仓库。底层修改必须同时验证 `_pyv8` 与 `pyv8c`，不能绕过接口注册、Context 隔离、wrapper identity 或 Page 任务队列。顶层 `pyv8c` 是稳定公共 API；内部领域包路径允许调整。
 
 ## 2. 运行时和生命周期
 
@@ -86,19 +92,22 @@ Python DOM 节点是唯一真相源。JS wrapper 只负责暴露，同一 Page �
 默认基线位于 `pyv8c/baselines/interface-baseline.json`，覆盖本地 renderer 快照中的全部接口。生成命令：
 
 ```powershell
-python tools/extract_interfaces.py ..\_pyv8env\renderer pyv8c\baselines\interface-baseline.json --report
+python tools/extract_interfaces.py pyv8c\baselines\interface-baseline.json `
+  --bindings-dir ".chromium-build\chromium\src\out\Cronet145\gen\third_party\blink\renderer\bindings" `
+  --chromium-root ".chromium-build\chromium" `
+  --report
 ```
 
-当前 baseline schema 为 3。包内 `_webidl.report` 记录：1173 个接口、10362 个成员、1081 个含成员接口、612 个含签名接口、3458 个自动签名、220 个审核签名、2900 个 unresolved 签名、26 个重复来源接口、0 个解析失败。
+当前 baseline schema 为 5。包内 `_webidl.report` 记录：1254 个接口、12616 个成员、1151 个含成员接口、640 个含签名接口、3992 个自动签名、225 个审核签名、3105 个 unresolved 签名、32 个重复来源接口、0 个解析失败。
 
 核心规则：
 
-- 所有真实接口通过 `interfaces.py` 显式登记，JS 原型链不从 Python MRO 推断。
+- 所有真实接口通过领域包的 `registration.py` 显式登记，JS 原型链不从 Python MRO 推断。
 - `Child.prototype.__proto__`、constructor、name、length、toStringTag、成员 location 和 descriptor 来自 baseline/显式元数据。
-- `Browser(interface_baseline_path=...)` 可选择外部完整 schema 3 快照；创建后内容冻结。
+- `Browser(interface_baseline_path=...)` 可选择外部完整 schema 5 快照；创建后内容冻结。
 - 每个 Browser 使用独立 `InterfaceUniverse`；多个版本的动态类、BindingPlan 和 Context overlay 不串扰。
 - `_pyv8.Context(class_configs=...)` 提供 Context-local 构造器、父模板、成员和 callback overlay。
-- 已实现类和成员优先；未实现公共接口及缺失成员由 `interface_runtime.py` 动态生成桩。
+- 已实现类和成员优先；未实现公共接口及缺失成员由 `bindings/universe.py` 动态生成桩。
 - 桩仅在实际调用/读取时使用 `loguru.logger.info` 输出待实现并返回 `undefined`。
 - `__v8_idl_stub__` 只标记动态桩；`__v8_direct_callback__` 只控制 overlay receiver 调用约定。
 
@@ -205,5 +214,18 @@ python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 `tools/extract_interfaces.py` 现在读取 Chromium 生成的 Blink V8 绑定源文件。
 默认使用 `D:\src\chromium` 和 `src\out\Cronet145`，当生成文件不存在时会调用
 `autoninja -C <build-dir> blink_generate_bindings_all`，并生成用于构建 V8 模板的
-schema 3 基线。如果生成源文件已经存在，或需要跳过构建，可以使用
+schema 5 基线。如果生成源文件已经存在，或需要跳过构建，可以使用
 `--bindings-dir` 或 `--no-build`。
+
+当前 schema 5 接口条目包含：
+
+- `identity`：接口名、父接口、tag、execution context 暴露范围和导出构造函数状态。
+- `constructor`：`allow_new`、`allow_call`、length、callback 和参数签名。
+- `template`：immutable、undetectable、global-this、array、call handler、access-check 及普通 handler。
+- `handlers`：named/indexed 与 cross-origin getter/setter/query/deleter/enumerator/definer。
+- `constants`：常量名称、原始表达式、解析值和 `resolved` 状态。
+- `callbacks`：callback 名称及 getter/setter/operation/constructor 等角色。
+
+基线由 `BaselineRepository` 以只读快照加载，`InterfaceUniverse` 将模板和 handler metadata 转换为 `_pyv8.Context(class_configs=...)` overlay；未实现 callback 由动态 Python stub 保留可观察接口形状。
+
+当前 Chromium snapshot 包含 1254 个接口、12616 个成员和 2223 个常量。旧预编译 `_pyv8` 下常量 native descriptor 默认关闭；重新编译包含最新 `pyclass.cpp` 后，可设置 `PYV8C_ENABLE_NATIVE_CONSTANTS=1` 启用常量安装。

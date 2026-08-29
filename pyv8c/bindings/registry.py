@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Type
+from types import MappingProxyType
+from typing import Mapping, Optional, Type
 
 from pyv8.flag import (
     FlagConstructor,
@@ -18,29 +19,62 @@ class InterfaceSpec:
     tag: str = ""
     mixins: tuple[str, ...] = field(default_factory=tuple)
     exposed_in: tuple[str, ...] = ("Window", "Worker")
+    template: dict = field(default_factory=dict)
+    handlers: dict = field(default_factory=dict)
+    constants: tuple[str, ...] = field(default_factory=tuple)
 
 
-INTERFACES: Dict[str, InterfaceSpec] = {}
-IMPLEMENTATIONS: Dict[str, Type] = {}
+class InterfaceRegistry:
+    """Explicit registry of implemented browser interfaces."""
+
+    def __init__(self):
+        self._specs: dict[str, InterfaceSpec] = {}
+        self._implementations: dict[str, Type] = {}
+
+    @property
+    def specs(self) -> Mapping[str, InterfaceSpec]:
+        return MappingProxyType(self._specs)
+
+    @property
+    def implementations(self) -> Mapping[str, Type]:
+        return MappingProxyType(self._implementations)
+
+    def register(self, cls: Type):
+        spec = getattr(cls, "__idl_spec__", None)
+        if not isinstance(spec, InterfaceSpec):
+            raise TypeError(f"{cls!r} is not an interface declaration")
+        existing = self._implementations.get(spec.name)
+        if existing is not None and existing is not cls:
+            raise TypeError(f"duplicate interface: {spec.name}")
+        self._specs[spec.name] = spec
+        self._implementations[spec.name] = cls
+
+    def register_namespace(self, namespace):
+        for value in namespace.values():
+            if isinstance(value, type) and isinstance(getattr(value, "__idl_spec__", None), InterfaceSpec):
+                self.register(value)
+
+
+REGISTRY = InterfaceRegistry()
+INTERFACES = REGISTRY.specs
+IMPLEMENTATIONS = REGISTRY.implementations
 
 
 def load_baseline(path=None):
     """Load a baseline for tooling and backwards-compatible callers."""
-    from .interface_runtime import BaselineRepository
+    from .universe import BaselineRepository
     return dict(BaselineRepository.load(path).interfaces)
 
 
 def interface(name: str, parent: Optional[str], *, constructible=False, length=0,
-              tag: Optional[str] = None, mixins=(), exposed_in=("Window", "Worker")):
-    """Declare the Web IDL interface independently from Python inheritance."""
+              tag: Optional[str] = None, mixins=(), exposed_in=("Window", "Worker"),
+              template=None, handlers=None, constants=()):
+    """Attach Web IDL metadata without mutating a process-global registry."""
     spec = InterfaceSpec(name, parent, constructible, length, tag or name,
-                         tuple(mixins), tuple(exposed_in))
+                         tuple(mixins), tuple(exposed_in), dict(template or {}),
+                         dict(handlers or {}), tuple(constants))
 
     def decorate(cls):
-        if name in INTERFACES:
-            raise TypeError(f"duplicate interface: {name}")
-        INTERFACES[name] = spec
-        IMPLEMENTATIONS[name] = cls
         cls.__idl_name__ = name
         cls.__idl_parent__ = parent
         cls.__idl_spec__ = spec
@@ -102,6 +136,13 @@ def validate_registry(baseline=None):
             expected_tag = baseline[name].get("tag")
             if expected_tag and expected_tag != spec.tag:
                 raise TypeError(f"{name} tag {spec.tag!r} does not match baseline {expected_tag!r}")
+            expected_template = baseline[name].get("template") or {}
+            for key, value in spec.template.items():
+                if key in expected_template and expected_template[key] != value:
+                    raise TypeError(f"{name} template {key!r} does not match baseline")
+            expected_constants = {item.get("name") for item in baseline[name].get("constants", ())}
+            if spec.constants and not set(spec.constants).issubset(expected_constants):
+                raise TypeError(f"{name} constants are not present in Chromium interface baseline")
         cls_methods = getattr(cls, "__v8_method__", ()) or ()
         available_members = baseline_members(name)
         for member in cls_methods:
@@ -118,7 +159,7 @@ def expose_interfaces(context, context_type="Window", *, generate_stubs=True,
     only entries explicitly exposed in the current execution context reach JS.
     """
     if universe is None:
-        from .interface_runtime import BaselineRepository, InterfaceUniverse
+        from .universe import BaselineRepository, InterfaceUniverse
         universe = InterfaceUniverse(
             BaselineRepository.load(), stub_logging=stub_logging,
             expose_unimplemented=expose_unimplemented,

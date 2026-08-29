@@ -1,11 +1,11 @@
 from urllib.parse import urljoin, urlsplit, urlunsplit
-import time
-from .dom import EventTarget
-from .interfaces import interface, js_attributes, js_methods, js_interface_methods
-from pyv8.tools import ConstructorConfig
 from pyv8.flag import FlagExposed
-from .network import Blob, Request, Response, current_page
-from .error import SecurityError, V8URIError, V8TypeError, InvalidStateError
+from pyv8.tools import ConstructorConfig
+
+from ..dom.model import EventTarget
+from ..bindings.registry import interface, js_attributes, js_methods, js_interface_methods
+from ..network.api import Blob, Request, Response
+from ..core.errors import SecurityError, V8URIError, V8TypeError, InvalidStateError
 
 
 @interface("Location", None, constructible=False)
@@ -139,7 +139,8 @@ class URLSearchParams:
 @interface("URL", None, constructible=True, length=1)
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
 class URL:
-    def __init__(self, url="", base=None, **_):
+    def __init__(self, url="", base=None, _realm=None, **_):
+        self._realm = _realm
         self.href = self._resolve(url, base)
         self._search_params = None
 
@@ -234,15 +235,15 @@ class URL:
         except (V8URIError, TypeError, ValueError): return pyv8.Null
 
     @staticmethod
-    def fn_createObjectURL(blob):
-        page = current_page()
+    def fn_createObjectURL(_realm, blob):
+        page = _realm
         if page is None or page.closed: raise InvalidStateError("The execution context is no longer active")
         if not isinstance(blob, Blob): raise V8TypeError("The object is not a Blob")
         return page.context_owner.create_blob_url(blob, page=page)
 
     @staticmethod
-    def fn_revokeObjectURL(url):
-        page = current_page()
+    def fn_revokeObjectURL(_realm, url):
+        page = _realm
         if page is None or page.closed: raise InvalidStateError("The execution context is no longer active")
         page.context_owner.revoke_blob_url(str(url))
 
@@ -272,12 +273,12 @@ class History:
     def _url(self, value): return urljoin(self._page.url, str(value))
     def fn_pushState(self, state, unused="", url=None):
         target = self._url(url) if url is not None else self._page.url
-        from .network_backend import same_origin
+        from ..network.backend import same_origin
         if not same_origin(self._page.url, target): raise SecurityError("A history state URL must be same-origin")
         self._entries = self._entries[:self._index + 1] + [(target, state)]; self._index += 1; self._page.window.location.href = target
     def fn_replaceState(self, state, unused="", url=None):
         target = self._url(url) if url is not None else self._page.url
-        from .network_backend import same_origin
+        from ..network.backend import same_origin
         if not same_origin(self._page.url, target): raise SecurityError("A history state URL must be same-origin")
         self._entries[self._index] = (target, state); self._page.window.location.href = target
     def fn_back(self): return self.fn_go(-1)

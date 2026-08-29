@@ -3,9 +3,10 @@ import time
 import pytest
 
 from pyv8c import Browser, Response
-from pyv8c.error import DOMException
-from pyv8c.network import structured_clone
-from pyv8c.network_backend import CookieJar
+from pyv8c.bindings.universe import BaselineRepository, InterfaceUniverse
+from pyv8c.core.errors import DOMException
+from pyv8c.workers.clone import structured_clone
+from pyv8c.network.backend import CookieJar
 
 
 def new_page(*, loader=None):
@@ -26,6 +27,21 @@ def test_closed_context_rejects_new_pages_and_blob_access():
     with pytest.raises(DOMException, match="BrowserContext is closed"):
         context.resolve_blob_url("blob:null/not-present")
     browser.close()
+
+
+def test_binding_sessions_are_isolated_per_realm():
+    universe = InterfaceUniverse(BaselineRepository.load(), stub_logging="off")
+    first_realm = object()
+    second_realm = object()
+    first = universe.binding_session(first_realm)
+    second = universe.binding_session(second_realm)
+    assert first is not second
+    first_config = first.class_config_for("AbortController")
+    second_config = second.class_config_for("AbortController")
+    assert first_config is not second_config
+    assert first_config["__v8_callback_owner__"] is not second_config["__v8_callback_owner__"]
+    assert first.realm is first_realm
+    assert second.realm is second_realm
 
 
 def test_timers_respect_delay_repeat_and_cancellation():

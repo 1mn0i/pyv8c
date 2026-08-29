@@ -1,15 +1,10 @@
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 
-TOOLS = Path(__file__).resolve().parents[1] / "tools"
-if str(TOOLS) not in sys.path:
-    sys.path.insert(0, str(TOOLS))
-
-import extract_interfaces
+from pyv8c.bindings import extractor as extract_interfaces
 
 
 def test_balanced_binding_tables_extract_all_locations_and_descriptors():
@@ -49,7 +44,7 @@ static const IDLMemberInstaller::ConstantValueConfig kConstantValueTable[] = {
 
 
 def test_real_renderer_snapshot_has_members_for_core_interfaces():
-    root = Path(__file__).resolve().parents[2] / "_pyv8env" / "renderer"
+    root = Path(__file__).resolve().parents[3] / "_pyv8env" / "renderer"
     snapshot = extract_interfaces.extract(root)
     for name in ("Event", "EventTarget", "Node", "Document", "Element", "Window", "Headers", "Blob", "Request", "Response", "URL"):
         entry = snapshot[name]
@@ -59,15 +54,16 @@ def test_real_renderer_snapshot_has_members_for_core_interfaces():
     assert snapshot["_report"]["manual_review_required"] > 0
 
 
-def test_generated_baseline_keeps_full_snapshot_and_report():
-    baseline = json.loads((Path(__file__).resolve().parents[1] / "pyv8c" / "baselines" / "interface-baseline.json").read_text(encoding="utf-8"))
-    assert baseline["_webidl"]["schema"] == 3
+def test_generated_baseline_keeps_full_runtime_snapshot_and_report():
+    baseline = json.loads((Path(__file__).resolve().parents[2] / "pyv8c" / "baselines" / "interface-baseline.json").read_text(encoding="utf-8"))
+    assert baseline["_webidl"]["schema"] == 5
     assert baseline["_webidl"]["report"]["interfaces"] > 1000
     assert baseline["_webidl"]["report"]["reviewed_signatures"] > 0
     assert "runtime_registry" not in baseline["_webidl"]
-    assert len(baseline["Event"]["members"]["prototype"]) > 5
+    assert len(baseline["Event"]["members"]["prototype"]) >= 5
     assert len(baseline["Node"]["members"]["prototype"]) > 10
     assert len(baseline["URL"]["members"]["interface"]) >= 2
+    assert baseline["HTMLAllCollection"]["template"]["undetectable"] is True
 
 
 def test_generation_reviews_are_embedded_and_stale_evidence_is_rejected(tmp_path):

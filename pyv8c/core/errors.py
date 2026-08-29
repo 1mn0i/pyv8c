@@ -6,11 +6,6 @@ boundary so JavaScript observes native Error objects instead of opaque
 Python exceptions.
 """
 
-from .interfaces import interface, js_attributes
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
-
-
 class V8Error(Exception):
     __v8_error__ = True
 
@@ -68,15 +63,8 @@ _DOM_CODES = {
 }
 
 
-@interface("DOMException", None, constructible=True, length=2, tag="DOMException")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
 class DOMException(RuntimeError):
     __v8_error__ = True
-    __v8_attribute__ = js_attributes(
-        ("name", "get_name", None, 0, 1),
-        ("message", "get_message", None, 0, 1),
-        ("code", "get_code", None, 0, 1),
-    )
 
     INDEX_SIZE_ERR = 1
     DOMSTRING_SIZE_ERR = 2
@@ -115,14 +103,8 @@ class DOMException(RuntimeError):
     def get_code(self): return self._code
 
 
-@interface("DOMError", None, constructible=True, length=2, tag="DOMError")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
 class DOMError(Exception):
     __v8_error__ = True
-    __v8_attribute__ = js_attributes(
-        ("name", "get_name", None, 0, 1),
-        ("message", "get_message", None, 0, 1),
-    )
 
     def __init__(self, message="", name="Error", **_):
         self._message = "" if message is None else str(message)

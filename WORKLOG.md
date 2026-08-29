@@ -269,3 +269,51 @@
 
 - 默认仍不联网；真实 URL 需要 `Browser(real_network=True)` 和 cyCronet，或显式 `resource_loader`。
 - 主文档请求当前为同步入口；真实后端超时和取消能力仍受 cyCronet 适配层约束。
+
+## 2026-08-29：Schema 5 完整 V8 binding metadata
+
+### 目标
+
+补齐后续生成和运行时所需的 Chromium V8 template、拦截器、常量和构造器元数据。
+
+### 修改
+
+- 重写 `tools/extract_interfaces.py`，提取 `identity`、构造器、template、handlers、constants 和 callbacks。
+- 新增 schema 5 baseline，记录 named/indexed `SetHandler`、cross-origin access-check、`MarkAsUndetectable`、immutable、global-this 及构造器导出状态。
+- 常量同时保留原始表达式和静态解析值，无法解析时标记 `resolved=false`。
+- `interface_runtime.py` 支持 schema 5，动态生成普通及 cross-origin interceptor stub，并映射 `_pyv8` class-config overlay。
+- `interfaces.py` 增加 template、handler 和 constant metadata 校验。
+- `_pyv8/src/pyclass.cpp` 调整 undetectable 与 call handler 安装顺序。
+
+### 验证
+
+- 当前 Chromium snapshot：1254 个接口、12616 个成员、2223 个常量。
+- schema 5 可由 `BaselineRepository` 加载，Browser 页面基础接口暴露通过。
+- extractor fixture 和动态 stub 测试通过。
+
+### 限制
+
+- 当前工作区使用旧预编译 `_pyv8`；常量 native descriptor 默认关闭，重新编译后设置 `PYV8C_ENABLE_NATIVE_CONSTANTS=1` 启用。
+- `_pyv8` 源码修改尚未在当前工作区重新编译验证。
+
+## 2026-08-29：领域包与运行时编排重排
+
+### 目标
+
+将平铺模块按单向领域依赖重组，降低 Browser/Page、接口 metadata 和网络对象之间的隐式耦合。
+
+### 修改
+
+- 建立 `core`、`bindings`、`dom`、`bom`、`network`、`workers`、`runtime` 包；顶层 `pyv8c` 继续作为公共 API。
+- schema 5 成为唯一 baseline 输入，删除 schema 3/4 运行时展开路径。
+- interface decorator 不再直接写全局表；bootstrap 显式注册各领域实现并导出只读 registry。
+- 新增 `BindingSession`，每个 Window/Worker Context 独立持有 class-config 和 callback owner。
+- 删除 `current_page` 线程局部和类级当前页面状态，网络、URL、Worker 构造器通过 `_realm` 注入访问 Page 服务。
+- Page 将任务队列与 navigation、lifecycle、script、resource 状态拆入独立控制器；测试重排为 unit/integration/native。
+
+### 验证
+
+- 新增架构测试，冻结顶层 API 并检查 core、领域包和 extractor 的导入边界。
+- Chromium 生成绑定重新提取并与发布 baseline 对比一致：1254 个接口、12616 个成员、3105 个 unresolved signature。
+- `python -m py_compile` 和 wheel 构建通过；架构和提取器测试通过。
+- 当前 shell 未配置可用的完整 pyv8/gevent 运行时；预编译 `_pyv8` 在连续 V8 Context 创建时触发 native access violation，因此完整 pytest 需在项目标准 native 环境复跑。

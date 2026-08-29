@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import inspect
+import os
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -24,7 +26,8 @@ from pyv8.flag import (
 from .webidl import BindingPlan, compile_binding, validate_arguments
 
 
-DEFAULT_BASELINE_PATH = Path(__file__).resolve().parent / "baselines" / "interface-baseline.json"
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_BASELINE_PATH = PACKAGE_ROOT / "baselines" / "interface-baseline.json"
 
 
 @dataclass(frozen=True)
@@ -63,7 +66,7 @@ class BaselineRepository:
     def load(path=None) -> BaselineSnapshot:
         if path is None:
             target = DEFAULT_BASELINE_PATH
-            label = f"pyv8c:{target.relative_to(Path(__file__).resolve().parent).as_posix()}"
+            label = f"pyv8c:{target.relative_to(PACKAGE_ROOT).as_posix()}"
         else:
             target = Path(path).expanduser().resolve()
             label = str(target)
@@ -79,9 +82,12 @@ class BaselineRepository:
         if not isinstance(document, dict):
             raise ValueError("Chromium interface baseline root must be an object")
         metadata = document.get("_webidl")
+        schema = metadata.get("schema") if isinstance(metadata, dict) else None
         interfaces = {name: value for name, value in document.items() if not name.startswith("_")}
         if not isinstance(metadata, dict) or not interfaces:
             raise ValueError("Chromium interface baseline must contain _webidl metadata and interfaces")
+        if schema != 5:
+            raise ValueError(f"unsupported Chromium interface baseline schema {schema!r}; expected 5")
         for name, spec in interfaces.items():
             if (
                 not isinstance(spec, dict)
@@ -91,6 +97,9 @@ class BaselineRepository:
                 or "parent" not in spec
             ):
                 raise ValueError(f"invalid interface entry {name!r} in Chromium interface baseline")
+            required = ("identity", "template", "handlers", "constants", "callbacks")
+            if any(key not in spec for key in required):
+                raise ValueError(f"schema 5 interface {name!r} is missing runtime metadata")
             parent = spec.get("parent")
             if parent is not None and (not isinstance(parent, str) or parent not in interfaces):
                 raise ValueError(f"interface {name!r} refers to unknown parent {parent!r}")
@@ -110,9 +119,6 @@ class BaselineRepository:
 
         for name in interfaces:
             visit(name)
-        schema = metadata.get("schema")
-        if schema != 3:
-            raise ValueError(f"unsupported Chromium interface baseline schema {schema!r}; expected 3")
         digest = sha256(raw).hexdigest()
         key = (str(target.resolve()), digest)
         snapshot = BaselineRepository._cache.get(key)
@@ -273,8 +279,19 @@ class InterfaceUniverse:
         constructor.__v8_idl_stub__ = True
         return constructor
 
+    def _stub_handler(self, interface_name, method_name):
+        def handler(*args):
+            # Returning None tells V8 that the interceptor did not handle it.
+            if method_name.endswith("enum__"):
+                return ()
+            if method_name.endswith("query__") or method_name.endswith("del__"):
+                return None
+            return None
+        handler.__name__ = f"_pyv8c_stub_{method_name}_{interface_name}"
+        return self._mark_direct(handler, stub=True)
+
     def class_for(self, name):
-        from .interfaces import IMPLEMENTATIONS
+        from .registry import IMPLEMENTATIONS
         if name in self._classes:
             return self._classes[name]
         spec = self._spec(name)
@@ -283,7 +300,7 @@ class InterfaceUniverse:
         implementation = IMPLEMENTATIONS.get(name)
         if implementation is None:
             cls = type(name, (parent,), {
-                "__module__": "pyv8c.interfaces",
+                "__module__": "pyv8c.bindings.generated",
                 "__init__": self._stub_constructor(name),
                 "__idl_name__": name,
                 "__idl_parent__": parent_name,
@@ -322,7 +339,7 @@ class InterfaceUniverse:
         page.post_task(lambda: reject(page._js_error_value(exc)))
         return promise
 
-    def _method_wrapper(self, cls, interface_name, public_name, callback_name, plan, *, static):
+    def _method_wrapper(self, cls, interface_name, public_name, callback_name, plan, *, static, realm=None):
         raw = self._raw_callback(cls, callback_name)
 
         def callback(*args):
@@ -334,6 +351,10 @@ class InterfaceUniverse:
                 if plan.error_mode == "reject-promise" and receiver is not None:
                     return self._reject_conversion(receiver, exc)
                 raise
+            if static and realm is not None:
+                parameters = inspect.signature(raw).parameters
+                if parameters and next(iter(parameters)) == "_realm":
+                    return raw(realm, *converted)
             return raw(*converted) if static else raw(receiver, *converted)
 
         callback.__name__ = f"_pyv8c_binding_{interface_name}_{public_name}"
@@ -349,19 +370,22 @@ class InterfaceUniverse:
         setter.__name__ = f"_pyv8c_binding_set_{interface_name}_{public_name}"
         return self._mark_direct(setter)
 
-    def _constructor_adapter(self, interface_name, stub):
+    def _constructor_adapter(self, interface_name, stub, realm=None):
         plan = self.binding_plan(interface_name, "constructor", "constructor")
 
         def construct(cls, args, kwargs):
             converted = validate_arguments(plan, tuple(args)) if plan.resolved else tuple(args)
-            return cls(*converted, **dict(kwargs))
+            options = dict(kwargs)
+            if realm is not None and "_realm" in inspect.signature(cls).parameters:
+                options["_realm"] = realm
+            return cls(*converted, **options)
 
         construct.__name__ = f"_pyv8c_construct_{interface_name}"
         if stub:
             construct.__v8_idl_stub__ = True
         return construct
 
-    def _member_configs(self, name, cls):
+    def _member_configs(self, name, cls, realm=None):
         spec = self._spec(name)
         direct_members = [member for _location_name, member in self._own_members(name)]
         operation_names = {member.get("name") for member in direct_members if member.get("kind") == "operation"}
@@ -376,7 +400,7 @@ class InterfaceUniverse:
             public_name, callback_name = config[0], config[1]
             static = config[4] == FlagLocation.kInterface
             plan = self.binding_plan(name, public_name)
-            wrapper = self._method_wrapper(cls, name, public_name, callback_name, plan, static=static)
+            wrapper = self._method_wrapper(cls, name, public_name, callback_name, plan, static=static, realm=realm)
             callbacks[wrapper.__name__] = wrapper
             item = list(config)
             item[1] = wrapper.__name__
@@ -427,15 +451,32 @@ class InterfaceUniverse:
                         _cross_origin(member.get("cross_origin")), _side_effect(member.get("side_effect")),
                     ))
                     configured_attributes.add(member_name)
+        # Interceptor callbacks are discovered from the native template. Add
+        # safe Python stubs so ClassConfig can install the corresponding V8
+        # handlers even when no hand-written implementation exists.
+        handler_methods = (
+            "__v8_name_get__", "__v8_name_set__", "__v8_name_query__", "__v8_name_del__", "__v8_name_enum__",
+            "__v8_index_get__", "__v8_index_set__", "__v8_index_query__", "__v8_index_del__", "__v8_index_enum__",
+            "__v8_cross_origin_check__", "__v8_cross_origin_name_get__", "__v8_cross_origin_name_set__",
+            "__v8_cross_origin_name_query__", "__v8_cross_origin_name_del__", "__v8_cross_origin_name_enum__",
+            "__v8_cross_origin_index_get__", "__v8_cross_origin_index_set__", "__v8_cross_origin_index_query__",
+            "__v8_cross_origin_index_del__", "__v8_cross_origin_index_enum__",
+        )
+        for method_name in handler_methods:
+            if not any(method_name in base.__dict__ for base in cls.__mro__):
+                callbacks[method_name] = self._stub_handler(name, method_name)
         callback_owner = type(f"_{name}Callbacks_{id(self):x}", (cls,), callbacks)
         return tuple(wrapped_methods), tuple(wrapped_attributes), callback_owner
 
     def class_config_for(self, name):
+        return self._class_config_for(name, self._configs, None)
+
+    def _class_config_for(self, name, cache, realm):
         cls = self.class_for(name)
-        if cls in self._configs:
-            return self._configs[cls]
+        if cls in cache:
+            return cache[cls]
         spec = self._spec(name)
-        methods, attributes, callback_owner = self._member_configs(name, cls)
+        methods, attributes, callback_owner = self._member_configs(name, cls, realm)
         parent_name = spec.get("parent")
         config = {
             "__v8_method__": methods,
@@ -444,6 +485,49 @@ class InterfaceUniverse:
             "__v8_parent_class__": self.class_for(parent_name) if parent_name else object,
             "__v8_to_string_tag__": spec.get("tag") or name,
         }
+        template = spec.get("template") or {}
+        handlers = template.get("handlers") or spec.get("handlers") or {}
+        named = handlers.get("named") or {}
+        indexed = handlers.get("indexed") or {}
+        cross = handlers.get("cross_origin") or {}
+        cross_named = cross.get("named") or {}
+        cross_indexed = cross.get("indexed") or {}
+        for key, method_name in (("get", "__v8_name_get__"), ("set", "__v8_name_set__"), ("query", "__v8_name_query__"), ("del", "__v8_name_del__"), ("enum", "__v8_name_enum__")):
+            if key in named: config[method_name] = True
+        for key, method_name in (("get", "__v8_index_get__"), ("set", "__v8_index_set__"), ("query", "__v8_index_query__"), ("del", "__v8_index_del__"), ("enum", "__v8_index_enum__")):
+            if key in indexed: config[method_name] = True
+        for key, method_name in (("get", "__v8_cross_origin_name_get__"), ("set", "__v8_cross_origin_name_set__"), ("query", "__v8_cross_origin_name_query__"), ("del", "__v8_cross_origin_name_del__"), ("enum", "__v8_cross_origin_name_enum__")):
+            if key in cross_named: config[method_name] = True
+        for key, method_name in (("get", "__v8_cross_origin_index_get__"), ("set", "__v8_cross_origin_index_set__"), ("query", "__v8_cross_origin_index_query__"), ("del", "__v8_cross_origin_index_del__"), ("enum", "__v8_cross_origin_index_enum__")):
+            if key in cross_indexed: config[method_name] = True
+        if template.get("access_check") or cross_named or cross_indexed:
+            config["__v8_cross_origin_check__"] = True
+        for source_key, config_key in (("immutable_proto", "__v8_immutable__"), ("undetectable", "__v8_undetectable__"), ("global_this", "__v8_global_this__"), ("as_object", "__v8_as_obj__"), ("unconstructable", "__v8_unconstructable__")):
+            # Older prebuilt _pyv8 binaries assert when an undetectable
+            # template also receives a native call handler. Keep the metadata
+            # intact and defer that combination to binaries with the ordering
+            # fix; ordinary undetectable interfaces still install normally.
+            if template.get(source_key) and not (config_key == "__v8_undetectable__" and template.get("call_handler")):
+                config[config_key] = 1
+        constants = []
+        constant_names = set()
+        for constant in spec.get("constants") or ():
+            if constant.get("name") in constant_names:
+                continue
+            if constant.get("resolved") and isinstance(constant.get("value"), int):
+                constants.append((constant.get("name"), constant.get("value")))
+                constant_names.add(constant.get("name"))
+        if not constants:
+            for _loc, member in self._own_members(name):
+                if member.get("kind") == "constant" and isinstance(member.get("value"), int) and member.get("name") not in constant_names:
+                    constants.append((member.get("name"), member.get("value")))
+                    constant_names.add(member.get("name"))
+        # Keep values in the baseline for consumers that install descriptors
+        # explicitly. The bundled prebuilt _pyv8 currently DCHECKs when a
+        # constant is present on both an inherited and overlay template; avoid
+        # crashing page creation until that native duplicate check is rebuilt.
+        if constants and os.environ.get("PYV8C_ENABLE_NATIVE_CONSTANTS") == "1" and "__v8_constants_value__" not in cls.__dict__:
+            config["__v8_constants_value__"] = tuple(constants)
         constructor = spec.get("constructor") or {}
         length = constructor.get("length")
         if length is None:
@@ -460,7 +544,7 @@ class InterfaceUniverse:
             config["__v8_constructor__"] = behavior
         stub = bool(cls.__dict__.get("__v8_idl_stub__", False))
         if spec.get("constructible") or constructor.get("allow_new") or constructor.get("allow_call"):
-            config["__v8_constructor_adapter__"] = self._constructor_adapter(name, stub)
+            config["__v8_constructor_adapter__"] = self._constructor_adapter(name, stub, realm)
         if stub:
             config.update({
                 "__v8_length__": int(length or 0),
@@ -470,7 +554,7 @@ class InterfaceUniverse:
                 ),
                 "__v8_has_constructor__": 1,
             })
-        self._configs[cls] = config
+        cache[cls] = config
         return config
 
     def _walk_parent_names(self, name):
@@ -481,7 +565,7 @@ class InterfaceUniverse:
             name = self._spec(name).get("parent")
 
     def exposed_names(self, context_type):
-        from .interfaces import IMPLEMENTATIONS
+        from .registry import IMPLEMENTATIONS
         return [
             name for name, spec in self.baseline.interfaces.items()
             if context_type in (spec.get("exposed_in") or ())
@@ -489,14 +573,20 @@ class InterfaceUniverse:
         ]
 
     def class_configs(self, context_type, *, roots=()):
+        return self._class_configs(context_type, roots=roots, cache=self._configs, realm=None)
+
+    def _class_configs(self, context_type, *, roots=(), cache, realm):
         names = set(self.exposed_names(context_type))
         names.update(root for root in roots if isinstance(root, str))
         for name in tuple(names):
             names.update(self._walk_parent_names(name))
-        return {self.class_for(name): self.class_config_for(name) for name in names}
+        return {self.class_for(name): self._class_config_for(name, cache, realm) for name in names}
+
+    def binding_session(self, realm=None):
+        return BindingSession(self, realm)
 
     def validate(self):
-        from .interfaces import IMPLEMENTATIONS, INTERFACES, validate_registry
+        from .registry import IMPLEMENTATIONS, INTERFACES, validate_registry
         validate_registry(self.baseline.interfaces)
         for name, interface_spec in INTERFACES.items():
             cls = IMPLEMENTATIONS[name]
@@ -521,7 +611,7 @@ class InterfaceUniverse:
                     raise TypeError(f"{name} constructor has unresolved Web IDL signature")
 
     def report(self, context_type="Window"):
-        from .interfaces import IMPLEMENTATIONS
+        from .registry import IMPLEMENTATIONS
         report = {"implemented": [], "generated": [], "exposed": [], "skipped": []}
         for name, spec in self.baseline.interfaces.items():
             if context_type not in (spec.get("exposed_in") or ()):
@@ -530,3 +620,20 @@ class InterfaceUniverse:
                 report["exposed"].append(name)
                 (report["implemented"] if name in IMPLEMENTATIONS else report["generated"]).append(name)
         return report
+
+
+class BindingSession:
+    """Context-local class configs and callback owners for one V8 realm."""
+
+    def __init__(self, universe: InterfaceUniverse, realm=None):
+        self.universe = universe
+        self.realm = realm
+        self._configs: dict[type, dict[str, Any]] = {}
+
+    def class_config_for(self, name):
+        return self.universe._class_config_for(name, self._configs, self.realm)
+
+    def class_configs(self, context_type, *, roots=()):
+        return self.universe._class_configs(
+            context_type, roots=roots, cache=self._configs, realm=self.realm,
+        )

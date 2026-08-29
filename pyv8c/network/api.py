@@ -1,4 +1,3 @@
-from threading import local
 import queue
 import threading
 from urllib.parse import urljoin
@@ -7,94 +6,14 @@ import pyv8
 from pyv8.flag import FlagExposed
 from pyv8.tools import ConstructorConfig
 
-from .dom import EventTarget, Event
-from .interfaces import interface, js_attributes, js_methods
-from .network_backend import NetworkRequest, NetworkUnavailableError
-from .error import (
+from ..dom.model import EventTarget, Event
+from ..bindings.registry import interface, js_attributes, js_methods
+from .backend import NetworkRequest, NetworkUnavailableError
+from ..core.errors import (
     V8TypeError, V8SyntaxError, InvalidStateError, NotSupportedError, NetworkError,
     DataCloneError, as_js_error,
 )
-
-
-_page_local = local()
-
-
-def set_current_page(page):
-    _page_local.page = page
-
-
-def current_page():
-    return getattr(_page_local, "page", None)
-
-
-def structured_clone(value, transfer=(), context=None):
-    """Clone only browser-transferable message values.
-
-    Python implementation details and DOM wrappers must never cross a worker
-    boundary.  ``transfer`` is intentionally validated now; ArrayBuffer
-    detachment requires a native pyv8 ownership primitive and is rejected until
-    that primitive exists rather than silently sharing mutable data.
-    """
-    if transfer not in (None, (), [], pyv8.Undefined, pyv8.Null):
-        raise DataCloneError("Transfer lists are not supported by this runtime")
-    active = set()
-
-    def clone(item):
-        if item is None or item is pyv8.Null or item is pyv8.Undefined:
-            return item
-        if isinstance(item, (bool, int, float, str)):
-            return item
-        if isinstance(item, Blob):
-            return Blob([bytes(item._data)], {"type": item.get_type()})
-        if isinstance(item, (bytes, bytearray, memoryview)):
-            return bytes(item)
-        if type(item).__name__ in ("TypedArray", "JSTypeArray"):
-            try:
-                return bytes(int(item[index]) & 255 for index in range(int(item.length)))
-            except Exception as exc:
-                raise DataCloneError("The TypedArray could not be cloned") from exc
-        # Plain JavaScript objects can be returned by the bridge as JSObject
-        # wrappers (not only as Python dicts), especially when they originate
-        # from a worker event callback.  Materialize their enumerable own
-        # properties while preserving the same cycle checks as dict/list.
-        if type(item).__name__ == "JSObject":
-            # ArrayBuffer values are represented by the bridge as JSObject.
-            # Read their bytes while the originating Context is active; an
-            # empty enumerable-property walk would otherwise turn them into
-            # an unrelated empty object.
-            if context is not None:
-                try:
-                    byte_length = getattr(item, "byteLength")
-                    converter = context.exec_js("buffer => Array.from(new Uint8Array(buffer))")
-                    return bytes(converter.call(None, item))
-                except (AttributeError, TypeError, ValueError):
-                    pass
-            marker = id(item)
-            if marker in active:
-                raise DataCloneError("Cyclic message data is not supported")
-            active.add(marker)
-            try:
-                try:
-                    keys = list(item)
-                    return {str(key): clone(item[key]) for key in keys}
-                except BaseException as exc:
-                    raise DataCloneError("The JavaScript object could not be cloned") from exc
-            finally:
-                active.remove(marker)
-        if isinstance(item, (dict, list, tuple)):
-            marker = id(item)
-            if marker in active:
-                raise DataCloneError("Cyclic message data is not supported")
-            active.add(marker)
-            try:
-                if isinstance(item, dict):
-                    return {str(key): clone(child) for key, child in item.items()}
-                return [clone(child) for child in item]
-            finally:
-                active.remove(marker)
-        raise DataCloneError(f"The object of type {type(item).__name__!r} could not be cloned")
-
-    return clone(value)
+from ..workers.clone import structured_clone
 
 
 def _decode_clone_markers(value):
@@ -141,7 +60,8 @@ class Headers:
 class Blob:
     __v8_attribute__ = js_attributes(("size", "get_size", None, 0, 1), ("type", "get_type", None, 0, 1))
     __v8_method__ = js_methods(("slice", "fn_slice", 3, 1), ("text", "fn_text", 0, 1), ("arrayBuffer", "fn_arrayBuffer", 0, 1))
-    def __init__(self, parts=None, options=None, **_):
+    def __init__(self, parts=None, options=None, _realm=None, **_):
+        self._realm = _realm
         parts = parts if isinstance(parts, (list, tuple)) else ([] if parts in (None, pyv8.Null, pyv8.Undefined) else [parts])
         data = bytearray()
         for part in parts:
@@ -155,11 +75,11 @@ class Blob:
     def fn_slice(self, start=0, end=pyv8.Undefined, content_type=""):
         size = len(self._data); start = int(start); end = size if end is pyv8.Undefined else int(end)
         start = max(size + start, 0) if start < 0 else min(start, size); end = max(size + end, 0) if end < 0 else min(end, size)
-        return Blob([self._data[min(start, end):max(start, end)]], {"type": str(content_type).lower()})
+        return Blob([self._data[min(start, end):max(start, end)]], {"type": str(content_type).lower()}, _realm=self._realm)
     def fn_text(self):
-        value = self._data.decode("utf-8", "replace"); return current_page().promise_resolve(value) if current_page() else value
+        value = self._data.decode("utf-8", "replace"); return self._realm.promise_resolve(value) if self._realm else value
     def fn_arrayBuffer(self):
-        return current_page().promise_resolve(self._data) if current_page() else self._data
+        return self._realm.promise_resolve(self._data) if self._realm else self._data
 
 
 @interface("Request", None, constructible=True, length=1)
@@ -170,9 +90,9 @@ class Request:
         ("headers", "get_headers", None, 0, 1), ("mode", "get_mode", None, 0, 1),
         ("credentials", "get_credentials", None, 0, 1),
     )
-    def __init__(self, url="", options=None, page=None, **_):
+    def __init__(self, url="", options=None, page=None, _realm=None, **_):
         options = options if isinstance(options, dict) else {}
-        self._page = page or current_page()
+        self._page = page or _realm
         base = self._page.url if self._page else "about:blank"
         self._url = urljoin(base, str(url))
         self._method = str(options.get("method", "GET")).upper()
@@ -201,9 +121,9 @@ class Response:
         ("headers", "get_headers", None, 0, 1), ("bodyUsed", "get_bodyUsed", None, 0, 1),
     )
     __v8_method__ = js_methods(("text", "fn_text", 0, 1), ("json", "fn_json", 0, 1), ("arrayBuffer", "fn_arrayBuffer", 0, 1))
-    def __init__(self, body="", options=None, page=None, **_):
+    def __init__(self, body="", options=None, page=None, _realm=None, **_):
         options = options if isinstance(options, dict) else {}
-        self._page = page or current_page(); self.body = body
+        self._page = page or _realm; self.body = body
         self.status = int(options.get("status", 200)); self.status_text = str(options.get("statusText", options.get("reason", "")))
         self.url = str(options.get("url", "")); self.headers = Headers(options.get("headers")); self.redirected = bool(options.get("redirected", False)); self.type = str(options.get("type", "basic")); self.body_used = False
     def get_status(self): return self.status
@@ -270,8 +190,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         ("response", "get_response", None, 0, 1),
     )
     __v8_method__ = js_methods(("open", "fn_open", 2, 0), ("send", "fn_send", 0, 0), ("setRequestHeader", "fn_setRequestHeader", 2, 0), ("getResponseHeader", "fn_getResponseHeader", 1, 1), ("abort", "fn_abort", 0, 0))
-    def __init__(self, page=None, **kw):
-        super().__init__(page=page or current_page(), **kw); self._method = "GET"; self._url = ""; self._async = True; self._request_headers = Headers(); self._response = None; self.readyState = self.UNSENT; self.status = 0; self.status_text = ""; self.responseText = ""; self.response = None; self.timeout = 0
+    def __init__(self, page=None, _realm=None, **kw):
+        super().__init__(page=page or _realm, **kw); self._method = "GET"; self._url = ""; self._async = True; self._request_headers = Headers(); self._response = None; self.readyState = self.UNSENT; self.status = 0; self.status_text = ""; self.responseText = ""; self.response = None; self.timeout = 0
     def get_readyState(self): return self.readyState
     def get_status(self): return self.status
     def get_statusText(self): return self.status_text
@@ -307,8 +227,8 @@ class WebSocket(EventTarget):
     CONNECTING, OPEN, CLOSING, CLOSED = 0, 1, 2, 3
     __v8_attribute__ = js_attributes(("url", "get_url", None, 0, 1), ("protocol", "get_protocol", None, 0, 1), ("readyState", "get_readyState", None, 0, 1), ("extensions", "get_extensions", None, 0, 1), ("binaryType", "get_binaryType", "set_binaryType", 0, 0), ("bufferedAmount", "get_bufferedAmount", None, 0, 1), ("onopen", "get_onopen", "set_onopen", 0, 0), ("onmessage", "get_onmessage", "set_onmessage", 0, 0), ("onerror", "get_onerror", "set_onerror", 0, 0), ("onclose", "get_onclose", "set_onclose", 0, 0))
     __v8_method__ = js_methods(("send", "fn_send", 1, 0), ("close", "fn_close", 2, 0))
-    def __init__(self, url="", protocols=None, **kw):
-        page = current_page(); super().__init__(page=page, **kw)
+    def __init__(self, url="", protocols=None, _realm=None, **kw):
+        page = _realm; super().__init__(page=page, **kw)
         if not page or not page.network_backend: raise NetworkUnavailableError("WebSocket requires real_network=True")
         self._page, self._url, self._protocol, self._extensions = page, str(url), "", ""; self._state_value = self.CONNECTING; self._binary_type = "blob"; self._buffered = 0; self._ws = None; self._protocols = protocols
         callbacks = {"open": self._on_open, "message": self._on_message, "error": self._on_error, "close": self._on_close}
@@ -389,14 +309,15 @@ class _WorkerRuntime:
         try:
             source = self.page.resolve_worker_source(self.script_url)
             self._scope = DedicatedWorkerGlobalScope(runtime=self)
+            self._binding_session = self.page.context_owner.browser.interface_universe.binding_session(self.page)
             self._isolate = pyv8.Isolate()
             self._context = self._isolate.context(
                 self._scope, hook=False, ctx_type="Worker",
-                class_configs=self.page.context_owner.browser.interface_universe.class_configs(
+                class_configs=self._binding_session.class_configs(
                     "Worker", roots=("DedicatedWorkerGlobalScope",),
                 ),
             )
-            from .interfaces import expose_interfaces
+            from ..bindings.registry import expose_interfaces
             expose_interfaces(
                 self._context,
                 context_type="Worker",
@@ -406,11 +327,7 @@ class _WorkerRuntime:
                 universe=self.page.context_owner.browser.interface_universe,
             )
             if source:
-                previous = current_page(); set_current_page(self.page)
-                try:
-                    self._context.exec_js(source, filename=self.script_url)
-                finally:
-                    set_current_page(previous)
+                self._context.exec_js(source, filename=self.script_url)
             self._ready.set()
             while not self._stop.is_set():
                 try: value = self._queue.get(timeout=0.05)
@@ -457,8 +374,8 @@ class _WorkerRuntime:
 class Worker(EventTarget):
     __v8_attribute__ = js_attributes(("onmessage", "get_onmessage", "set_onmessage", 0, 0), ("onerror", "get_onerror", "set_onerror", 0, 0))
     __v8_method__ = js_methods(("postMessage", "fn_postMessage", 1, 0), ("terminate", "fn_terminate", 0, 0))
-    def __init__(self, script_url="", **kw):
-        page = current_page(); super().__init__(page=page, **kw); self._page = page; self._terminated = False; self._lifecycle_finished = False; self._script_url = urljoin(page.url, str(script_url)) if page and not str(script_url).startswith("blob:") else str(script_url)
+    def __init__(self, script_url="", _realm=None, **kw):
+        page = _realm; super().__init__(page=page, **kw); self._page = page; self._terminated = False; self._lifecycle_finished = False; self._script_url = urljoin(page.url, str(script_url)) if page and not str(script_url).startswith("blob:") else str(script_url)
         if page is not None: page._owned_workers.add(self); page.begin_worker()
         self._runtime = _WorkerRuntime(self, self._script_url)
     def get_onmessage(self): return self._handlers.get("onmessage", pyv8.Null)

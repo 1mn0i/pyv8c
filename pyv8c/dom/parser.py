@@ -1,7 +1,7 @@
 from html.parser import HTMLParser
 from html import unescape
 import re
-from .dom import Document, Element, Text, Comment
+from .model import Document, Element, Text, Comment
 
 
 class DOMParser(HTMLParser):
@@ -52,7 +52,7 @@ class DOMParser(HTMLParser):
     def handle_comment(self, data): self.target.append_child(Comment(data, page=self.page))
     def handle_decl(self, decl):
         if decl.lower().startswith("doctype"):
-            from .dom import DocumentType
+            from .model import DocumentType
             name = decl.split(None, 1)[1].strip() if len(decl.split(None, 1)) > 1 else "html"
             self.target.append_child(DocumentType(name=name, page=self.page))
 
@@ -160,7 +160,7 @@ class IncrementalDOMParser:
                 else: self.target.append_child(Text(unescape(value), page=self.page))
             elif kind == "comment": self.target.append_child(Comment(value, page=self.page))
             elif kind == "decl":
-                from .dom import DocumentType
+                from .model import DocumentType
                 parts = value.split(None, 1); self.target.append_child(DocumentType(name=parts[1].strip() if len(parts) > 1 else "html", page=self.page))
             if self.page._parser_is_blocked(): return False
         self.done = True; return True

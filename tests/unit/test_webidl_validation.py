@@ -108,13 +108,13 @@ def test_browser_does_not_mutate_real_implementation_classes():
 
 
 def test_webidl_module_has_no_interface_specific_runtime_registry():
-    source = (Path(__file__).resolve().parents[1] / "pyv8c" / "webidl.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[2] / "pyv8c" / "bindings" / "webidl.py").read_text(encoding="utf-8")
     for forbidden in ("_install_signatures", "SIGNATURES", "CONSTRUCTORS"):
         assert forbidden not in source
 
 
 def test_legacy_stub_marker_is_absent_from_runtime_sources():
-    workspace = Path(__file__).resolve().parents[2]
+    workspace = Path(__file__).resolve().parents[3]
     sources = list((workspace / "pyv8c" / "pyv8c").glob("*.py"))
     sources.extend((workspace / "_pyv8" / "src").glob("*.cpp"))
     legacy_marker = "__idl_" + "stub__"
