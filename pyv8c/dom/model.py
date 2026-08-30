@@ -24,15 +24,16 @@ class NodeList:
     __v8_method__ = js_methods(("item", "fn_item", 1, 1))
     def __init__(self, owner=None, getter=None, values=None, **_):
         self._owner, self._getter, self._values = owner, getter, values
-    def _list(self):
-        return list(self._getter()) if self._getter else list(self._values or ())
-    def get_length(self): return len(self._list())
+    def _items(self):
+        items = self._getter() if self._getter else (self._values or ())
+        return items if hasattr(items, "__len__") and hasattr(items, "__getitem__") else tuple(items)
+    def get_length(self): return len(self._items())
     def fn_item(self, index):
-        try: return self._list()[int(index)]
+        try: return self._items()[int(index)]
         except (IndexError, ValueError, TypeError): return pyv8.Null
-    def __iter__(self): return iter(self._list())
-    def __getitem__(self, index): return self._list()[index]
-    def __len__(self): return len(self._list())
+    def __iter__(self): return iter(self._items())
+    def __getitem__(self, index): return self._items()[index]
+    def __len__(self): return len(self._items())
     __v8_index_get__ = lambda self, index: self.fn_item(index)
     __v8_index_query__ = lambda self, index: int(index) < len(self)
     __v8_index_enum__ = lambda self: list(range(len(self)))
@@ -44,7 +45,7 @@ class HTMLCollection(NodeList):
     __v8_method__ = js_methods(("item", "fn_item", 1, 1), ("namedItem", "fn_namedItem", 1, 1))
     def fn_namedItem(self, name):
         value = str(name)
-        return next((n for n in self._list() if getattr(n, "get_id", lambda: "")() == value or
+        return next((n for n in self._items() if getattr(n, "get_id", lambda: "")() == value or
                      getattr(n, "attributes", {}).get("name") == value), pyv8.Null)
 
 

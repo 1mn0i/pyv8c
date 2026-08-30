@@ -5,6 +5,7 @@ import itertools
 import queue
 import threading
 import time
+from collections import deque
 
 
 class TaskQueue:
@@ -14,7 +15,7 @@ class TaskQueue:
         self.timers = []
         self.counter = itertools.count(1)
         self.cancelled = set()
-        self.microtasks = []
+        self.microtasks = deque()
         self.posted = queue.Queue()
         self.errors = []
         self.condition = threading.Condition()
@@ -73,7 +74,7 @@ class TaskQueue:
                 if not self.owner.closed:
                     self.callback_runner(callback)
             while self.microtasks:
-                self.callback_runner(self.microtasks.pop(0))
+                self.callback_runner(self.microtasks.popleft())
             if not self.timers:
                 if self.posted.empty() and not self.microtasks:
                     if timeout and time.monotonic() < deadline:

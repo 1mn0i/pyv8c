@@ -817,8 +817,7 @@ def write_baseline(output_path: Path, document: dict, *, compress: bool = False)
 
 def main():
     parser = argparse.ArgumentParser(description="Parse Chromium-generated Blink V8 bindings into an interface baseline.")
-    parser.add_argument("paths", nargs="+", type=Path,
-                        help="output path; legacy form also accepts <bindings-dir> <output>")
+    parser.add_argument("output", type=Path, help="output path")
     parser.add_argument("--chromium-root", type=Path, default=DEFAULT_CHROMIUM_ROOT,
                         help="Chromium checkout root (default: %(default)s)")
     parser.add_argument("--build-dir", type=Path, default=None,
@@ -832,16 +831,11 @@ def main():
     parser.add_argument("--zip", action="store_true",
                         help="write a compressed .zip baseline (also selected by a .zip output path)")
     args = parser.parse_args()
-    if len(args.paths) not in (1, 2):
-        parser.error("provide <output> or the legacy <bindings-dir> <output> form")
     build_dir = args.build_dir or (args.chromium_root / "src" / "out" / "Cronet145")
-    legacy_renderer = args.paths[0] if len(args.paths) == 2 else None
-    output_path = args.paths[-1]
-    renderer = args.bindings_dir or legacy_renderer or generated_bindings_dir(build_dir)
+    output_path = args.output
+    renderer = args.bindings_dir or generated_bindings_dir(build_dir)
     if not any(renderer.rglob("v8_*.cc")):
         parser.error(f"generated Blink bindings not found under {renderer}; run fetch_chromium.py first")
-    if not any(renderer.rglob("v8_*.cc")):
-        parser.error(f"binding generation completed but no v8_*.cc files were found under {renderer}")
     extracted = extract(renderer, args.chromium_root / "src" / "third_party" / "blink" / "renderer")
     if args.reviews:
         apply_reviews(extracted, args.reviews)

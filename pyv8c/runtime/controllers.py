@@ -1,10 +1,11 @@
 """State owners used by the Page orchestration facade."""
 
 import itertools
+from collections import deque
 
 
 class StateAlias:
-    """Explicitly route a legacy Page state name to its owning controller."""
+    """Expose controller-owned state through the Page facade."""
 
     def __init__(self, component, attribute):
         self.component = component
@@ -40,8 +41,8 @@ class DocumentLifecycle:
 class ScriptController:
     def __init__(self):
         self.dom_blocking_scripts = 0
-        self.queue = []
-        self.defer = []
+        self.queue = deque()
+        self.defer = deque()
         self.module_cache = {}
 
     def reset(self):

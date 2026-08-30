@@ -2,6 +2,7 @@ import pytest
 
 pytest.importorskip("pyv8")
 from pyv8c import Browser, INTERFACES
+from pyv8c.dom.selectors import parse
 
 
 def test_interface_registry_is_explicit():
@@ -50,3 +51,17 @@ def test_page_lifecycle_and_bom():
     page.close()
     with pytest.raises(RuntimeError): page.evaluate("1 + 1")
     context.close(); browser.close()
+
+
+def test_queue_microtasks_and_selector_parsing_are_reused():
+    browser = Browser()
+    page = browser.new_context().new_page()
+    try:
+        page.set_content("<body><div class='item'></div><div class='item'></div></body>")
+        page.evaluate("window.__order = []; for (let i = 0; i < 64; i++) queueMicrotask(() => __order.push(i))")
+        page.run_until_idle()
+        assert page.evaluate("[__order.length, __order[0], __order[63]]") == [64, 0, 63]
+        assert page.evaluate("document.querySelectorAll('.item').length") == 2
+        assert parse("body > .item") is parse("body > .item")
+    finally:
+        browser.close()

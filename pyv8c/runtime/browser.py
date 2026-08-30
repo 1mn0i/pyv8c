@@ -156,7 +156,8 @@ class Page:
         self._navigation_generation += 1
         self._has_navigation = True
         self._parser_done = self._dom_content_loaded = self._document_load_fired = False
-        self._document_resources.clear(); self._dom_blocking_scripts = 0; self._script_queue = []; self._defer_scripts = []; self._module_cache = {}
+        self._document_resources.clear()
+        self.scripts.reset()
         self.window.location.href = str(url)
         self.document = Document(page=self, url=str(url), ready_state="loading")
         self._parser_generation = self._navigation_generation
@@ -463,7 +464,7 @@ class Page:
 
     def _drain_script_queue(self):
         while self._script_queue and getattr(self._script_queue[0], "_resource_done", False):
-            node = self._script_queue.pop(0)
+            node = self._script_queue.popleft()
             response, error = node._resource_response, node._resource_error
             if error:
                 self._dispatch_script_error(node, error)
@@ -485,7 +486,7 @@ class Page:
             node = self._defer_scripts[0]
             if not getattr(node, "_resource_done", False):
                 return
-            self._defer_scripts.pop(0)
+            self._defer_scripts.popleft()
             response, error = node._resource_response, node._resource_error
             if error:
                 self._dispatch_script_error(node, error)
@@ -810,7 +811,7 @@ class BrowserContext:
 
 
 class Browser:
-    def __init__(self, *, icudtl_path=None, v8_params=None, resource_loader=None,
+    def __init__(self, *, resource_loader=None,
                  real_network=False, cycronet_options=None,
                  generate_interface_stubs=True, expose_unimplemented=True,
                  stub_logging="info", interface_baseline_path=None,
@@ -818,7 +819,6 @@ class Browser:
         started = time.perf_counter_ns()
         self._closed = False
         # pyv8 initializes its process-global V8 runtime during package import.
-        # Keep the arguments for API compatibility; the underlying package owns ICU setup.
         self.contexts = []
         self.resource_loader = resource_loader
         self.real_network = bool(real_network)
@@ -835,8 +835,6 @@ class Browser:
             expose_unimplemented=self.expose_unimplemented,
             eager_interfaces=DEFAULT_EAGER_INTERFACES if eager_interfaces is None else eager_interfaces,
             strict_validation=strict,
-            # Python can still defer class creation on prebuilt extensions;
-            # native live overlays only improve the same session path.
             lazy_interfaces=True,
         )
         if strict:

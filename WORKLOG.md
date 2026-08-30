@@ -293,8 +293,8 @@
 
 ### 限制
 
-- 当前工作区使用旧预编译 `_pyv8`；常量 native descriptor 默认关闭，重新编译后设置 `PYV8C_ENABLE_NATIVE_CONSTANTS=1` 启用。
-- `_pyv8` 源码修改尚未在当前工作区重新编译验证。
+- 当前工作区需要使用重新编译的 `_pyv8`；Context-local class-config overlay 与 native constants 已作为默认运行时能力启用。
+- `_pyv8` 已完成当前源码重编译和 Browser/native smoke 验证。
 
 ## 2026-08-29：领域包与运行时编排重排
 
@@ -353,7 +353,7 @@
   with Context-local `class_configs` support.
 - `tools/benchmark_startup.py --runs 5`: p50 `378.9ms`, p95 within the `0.6s` target.
 - `pyv8c` full suite: `76 passed`; `_pyv8` full suite: `164 passed`.
-- Native smoke with `PYV8C_ENABLE_NATIVE_CONSTANTS=1`: `1 passed`; Event/Node constants resolve to their Chromium values.
+- Native smoke: `1 passed`; Event/Node constants resolve to their Chromium values with the default configuration.
 
 ## 2026-08-30: strict compact baseline marker
 

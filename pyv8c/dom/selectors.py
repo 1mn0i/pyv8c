@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from .model import Element
 
 @dataclass
@@ -89,13 +90,40 @@ def _parse_group(text):
     if not compounds or len(relations) != len(compounds) - 1: raise SyntaxError("Invalid combinator")
     return compounds, relations
 
-def parse(selector):
+@lru_cache(maxsize=512)
+def _parse_cached(selector):
     if not isinstance(selector, str) or not selector.strip(): raise SyntaxError("Invalid selector")
-    return [_parse_group(group) for group in _groups(selector)]
+    return tuple(_parse_group(group) for group in _groups(selector))
 
-def _siblings(node, of_type=False):
-    values = [x for x in getattr(node.parentNode, "_children", ()) if isinstance(x, Element)] if node.parentNode else []
-    return [x for x in values if not of_type or x.localName == node.localName]
+def parse(selector):
+    if not isinstance(selector, str):
+        raise SyntaxError("Invalid selector")
+    return _parse_cached(selector)
+
+def _sibling_position(node, of_type=False):
+    parent = node.parentNode
+    if parent is None:
+        return 0, 0
+    position = count = 0
+    for child in parent._children:
+        if not isinstance(child, Element) or (of_type and child.localName != node.localName):
+            continue
+        count += 1
+        if child is node:
+            position = count
+    return position, count
+
+def _previous_element(node, predicate=None):
+    parent = node.parentNode
+    if parent is None:
+        return None
+    previous = None
+    for sibling in parent._children:
+        if sibling is node:
+            return previous
+        if isinstance(sibling, Element) and (predicate is None or predicate(sibling)):
+            previous = sibling
+    return None
 
 def _nth(pos, expr):
     expr = (expr or "").strip().lower().replace(" ", "")
@@ -110,16 +138,18 @@ def _nth(pos, expr):
 
 def _simple_match(node, simple):
     if not isinstance(node, Element) or (simple.tag != "*" and node.localName != simple.tag): return False
-    if any(node.get_id() != value for value in simple.ids) or any(x not in set(node.get_className().split()) for x in simple.classes): return False
+    if any(node.get_id() != value for value in simple.ids): return False
+    classes = set(node.get_className().split())
+    if any(value not in classes for value in simple.classes): return False
     for name, op, wanted in simple.attrs:
         actual = node.attributes.get(name)
         if actual is None: return False
         if op and not {"=": actual == wanted, "^=": actual.startswith(wanted), "$=": actual.endswith(wanted), "*=": wanted in actual, "~=": wanted in actual.split(), "|=": actual == wanted or actual.startswith(wanted + "-")}[op]: return False
     for name, arg in simple.pseudos:
-        siblings = _siblings(node, name.endswith("of-type")); pos = siblings.index(node) + 1 if node in siblings else 0
-        if name == "first-child" and pos != 1 or name == "last-child" and pos != len(siblings): return False
+        pos, sibling_count = _sibling_position(node, name.endswith("of-type"))
+        if name == "first-child" and pos != 1 or name == "last-child" and pos != sibling_count: return False
         if name in ("nth-child", "nth-of-type") and not _nth(pos, arg): return False
-        if name in ("first-of-type", "last-of-type") and (pos != 1 if name.startswith("first") else pos != len(siblings)): return False
+        if name in ("first-of-type", "last-of-type") and (pos != 1 if name.startswith("first") else pos != sibling_count): return False
         if name == "empty" and getattr(node, "_children", ()): return False
         if name == "root" and getattr(node.parentNode, "nodeType", None) not in (None, 9): return False
         if name in ("not", "is", "where"):
@@ -134,9 +164,11 @@ def _matches_ast(node, ast):
         relation = relations[index]
         if relation == ">": current = current.parentNode
         elif relation == "+":
-            values = list(getattr(current.parentNode, "_children", ())); current = values[values.index(current) - 1] if current in values and values.index(current) else None
+            current = _previous_element(current)
         elif relation == "~":
-            values = list(getattr(current.parentNode, "_children", ())); current = next((x for x in reversed(values[:values.index(current)]) if isinstance(x, Element) and _simple_match(x, compounds[index])), None)
+            current = _previous_element(
+                current, lambda item: _simple_match(item, compounds[index]),
+            )
             if current is not None: continue
         else:
             current = current.parentNode

@@ -148,11 +148,7 @@ python310 setup.py build_ext --inplace --force
 ```
 
 重新构建 V8 时，按 `../_pyv8` 文档配置 Visual Studio、Windows SDK、V8 版本和 depot_tools。
-只在完成当前原生重建后启用 native constant 安装：
-
-```powershell
-$env:PYV8C_ENABLE_NATIVE_CONSTANTS = "1"
-```
+native constants 和 Context-local class-config overlay 在当前重建的 `_pyv8` 中默认启用。
 
 ## 验证
 

@@ -58,12 +58,6 @@ INTERFACES = REGISTRY.specs
 IMPLEMENTATIONS = REGISTRY.implementations
 
 
-def load_baseline(path=None):
-    """Load a baseline for tooling and backwards-compatible callers."""
-    from .universe import BaselineRepository
-    return dict(BaselineRepository.load(path).interfaces)
-
-
 def interface(name: str, parent: Optional[str], *, constructible=False, length=0,
               tag: Optional[str] = None, exposed_in=("Window", "Worker"),
               template=None, constants=()):
@@ -86,7 +80,9 @@ def interface(name: str, parent: Optional[str], *, constructible=False, length=0
 
 
 def validate_registry(baseline=None):
-    baseline = baseline if baseline is not None else load_baseline()
+    if baseline is None:
+        from .universe import BaselineRepository
+        baseline = dict(BaselineRepository.load().interfaces)
     def baseline_members(interface_name):
         root_interface = interface_name
         names = set()

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 import inspect
-import os
 import time
 import zipfile
 from pathlib import Path
@@ -233,6 +232,7 @@ class InterfaceUniverse:
         self._plans: dict[tuple[str, str, str], BindingPlan] = {}
         self._parent_chains = {}
         self._exposure_names = {}
+        self._parameter_names: dict[object, tuple[str, ...]] = {}
 
     @property
     def info(self):
@@ -402,6 +402,13 @@ class InterfaceUniverse:
                 return raw.__func__ if isinstance(raw, (staticmethod, classmethod)) else raw
         raise TypeError(f"callback {cls.__name__}.{name} is missing")
 
+    def _parameters_for(self, callback):
+        names = self._parameter_names.get(callback)
+        if names is None:
+            names = tuple(inspect.signature(callback).parameters)
+            self._parameter_names[callback] = names
+        return names
+
     def _reject_conversion(self, receiver, exc):
         page = getattr(receiver, "_page", None)
         if page is None:
@@ -412,6 +419,8 @@ class InterfaceUniverse:
 
     def _method_wrapper(self, cls, interface_name, public_name, callback_name, plan, *, static, realm=None):
         raw = self._raw_callback(cls, callback_name)
+        parameters = self._parameters_for(raw)
+        inject_realm = static and realm is not None and parameters[:1] == ("_realm",)
 
         def callback(*args):
             receiver = None if static else args[0]
@@ -422,10 +431,8 @@ class InterfaceUniverse:
                 if plan.error_mode == "reject-promise" and receiver is not None:
                     return self._reject_conversion(receiver, exc)
                 raise
-            if static and realm is not None:
-                parameters = inspect.signature(raw).parameters
-                if parameters and next(iter(parameters)) == "_realm":
-                    return raw(realm, *converted)
+            if inject_realm:
+                return raw(realm, *converted)
             return raw(*converted) if static else raw(receiver, *converted)
 
         callback.__name__ = f"_pyv8c_binding_{interface_name}_{public_name}"
@@ -447,7 +454,7 @@ class InterfaceUniverse:
         def construct(cls, args, kwargs):
             converted = validate_arguments(plan, tuple(args)) if plan.resolved else tuple(args)
             options = dict(kwargs)
-            if realm is not None and "_realm" in inspect.signature(cls).parameters:
+            if realm is not None and "_realm" in self._parameters_for(cls):
                 options["_realm"] = realm
             return cls(*converted, **options)
 
@@ -574,11 +581,7 @@ class InterfaceUniverse:
         if template.get("access_check") or cross_named or cross_indexed:
             config["__v8_cross_origin_check__"] = True
         for source_key, config_key in (("immutable_proto", "__v8_immutable__"), ("undetectable", "__v8_undetectable__"), ("global_this", "__v8_global_this__"), ("as_object", "__v8_as_obj__"), ("unconstructable", "__v8_unconstructable__")):
-            # Older prebuilt _pyv8 binaries assert when an undetectable
-            # template also receives a native call handler. Keep the metadata
-            # intact and defer that combination to binaries with the ordering
-            # fix; ordinary undetectable interfaces still install normally.
-            if template.get(source_key) and not (config_key == "__v8_undetectable__" and template.get("call_handler")):
+            if template.get(source_key):
                 config[config_key] = 1
         constants = []
         constant_names = set()
@@ -593,11 +596,7 @@ class InterfaceUniverse:
                 if member.get("kind") == "constant" and isinstance(member.get("value"), int) and member.get("name") not in constant_names:
                     constants.append((member.get("name"), member.get("value")))
                     constant_names.add(member.get("name"))
-        # Keep values in the baseline for consumers that install descriptors
-        # explicitly. The bundled prebuilt _pyv8 currently DCHECKs when a
-        # constant is present on both an inherited and overlay template; avoid
-        # crashing page creation until that native duplicate check is rebuilt.
-        if constants and os.environ.get("PYV8C_ENABLE_NATIVE_CONSTANTS") == "1" and "__v8_constants_value__" not in cls.__dict__:
+        if constants:
             constants = [item for item in constants if item[0] not in cls.__dict__]
             if constants:
                 config["__v8_constants_value__"] = tuple(constants)
