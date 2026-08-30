@@ -28,7 +28,11 @@ public:
 
     PyObject* find(Local<Object> object)
     {
-        for (const Entry& entry : visited_)
+        const int identity_hash = object->GetIdentityHash();
+        auto bucket = visited_.find(identity_hash);
+        if (bucket == visited_.end())
+            return NULL;
+        for (const Entry& entry : bucket->second)
         {
             if (entry.object.Get(isolate_)->StrictEquals(object))
             {
@@ -43,7 +47,7 @@ public:
     {
         try
         {
-            visited_.emplace_back(isolate_, object, result);
+            visited_[object->GetIdentityHash()].emplace_back(isolate_, object, result);
         }
         catch (const std::bad_alloc&)
         {
@@ -70,7 +74,9 @@ private:
         PyObject* result;
     };
 
-    std::vector<Entry> visited_;
+    // V8 identity hashes make lookups constant-time on average. StrictEquals
+    // remains the final check because identity hashes are not unique.
+    std::unordered_map<int, std::vector<Entry>> visited_;
     Isolate* isolate_;
 };
 
