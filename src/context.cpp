@@ -72,11 +72,6 @@ int context_type_init()
     {
         return -1;
     }
-    // pyv8c uses a live mapping for lazy interface materialization. Older
-    // binaries do not expose this marker and are handled by its eager fallback.
-    if (PyObject_SetAttrString((PyObject*)context_type,
-                               "supports_live_class_configs", Py_True) < 0)
-        return -1;
     // We don't want to DECREF here because we need to keep the type object alive
     return 0;
 }
