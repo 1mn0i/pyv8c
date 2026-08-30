@@ -72,6 +72,11 @@ int context_type_init()
     {
         return -1;
     }
+    // pyv8c uses a live mapping for lazy interface materialization. Older
+    // binaries do not expose this marker and are handled by its eager fallback.
+    if (PyObject_SetAttrString((PyObject*)context_type,
+                               "supports_live_class_configs", Py_True) < 0)
+        return -1;
     // We don't want to DECREF here because we need to keep the type object alive
     return 0;
 }
@@ -130,8 +135,16 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->class_configs = NULL;
     self->py_global = NULL;
     self->class_template_cache = PyDict_New();
-    self->class_configs = PyDict_New();
-    if (self->class_configs != NULL && class_configs != Py_None) {
+    if (class_configs != Py_None && PyDict_Check(class_configs)) {
+        // Keep the caller's mapping alive so Python can add realm-specific
+        // class overlays when a lazy interface is first accessed.
+        Py_INCREF(class_configs);
+        self->class_configs = class_configs;
+    }
+    else {
+        self->class_configs = PyDict_New();
+    }
+    if (self->class_configs != NULL && class_configs != Py_None && !PyDict_Check(class_configs)) {
         if (!PyMapping_Check(class_configs)) {
             PyErr_SetString(PyExc_TypeError, "class_configs must be a mapping or None");
             Py_DECREF((PyObject*)self);

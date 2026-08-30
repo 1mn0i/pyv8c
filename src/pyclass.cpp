@@ -470,16 +470,16 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         return NULL;
     }
         
+    if (config.undetectable)
+    {
+        templ->InstanceTemplate()->MarkAsUndetectable();
+    }
+
     if (config.call != NULL)
     {
         Py_INCREF(config.call);
         self->call_method = config.call;
         templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_method_callback, v8_compat::external_new(isolate, self->call_method));
-    }
-        
-    if (config.undetectable)
-    {
-        templ->InstanceTemplate()->MarkAsUndetectable();
     }
         
     if (config.array != NULL)
