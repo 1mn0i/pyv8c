@@ -310,28 +310,16 @@ class _WorkerRuntime:
             source = self.page.resolve_worker_source(self.script_url)
             self._scope = DedicatedWorkerGlobalScope(runtime=self)
             browser = self.page.context_owner.browser
-            native_class_configs = browser.native_class_configs
-            self._binding_session = browser.interface_universe.binding_session(
-                self.page if native_class_configs else None,
-                isolate_classes=not native_class_configs,
-            )
-            native_lazy_bindings = bool(getattr(pyv8.Context, "supports_live_class_configs", False))
+            self._binding_session = browser.interface_universe.binding_session(self.page)
             worker_configs = self._binding_session.class_configs(
                 "Worker", roots=("DedicatedWorkerGlobalScope",),
             )
-            if not native_class_configs:
-                worker_configs = {}
-                for name in self.page.context_owner.browser.interface_universe.exposed_names("Worker"):
-                    self._binding_session.materialize(name)
-                worker_configs.update(self._binding_session.configs)
-                for cls, config in worker_configs.items():
-                    self._binding_session.install_class_config(cls, config)
-            if not native_class_configs:
-                self._scope.__class__ = self._binding_session.class_for("DedicatedWorkerGlobalScope")
             self._isolate = pyv8.Isolate()
-            context_kwargs = {"hook": False, "ctx_type": "Worker"}
-            if native_class_configs:
-                context_kwargs["class_configs"] = self._binding_session.configs
+            context_kwargs = {
+                "hook": False,
+                "ctx_type": "Worker",
+                "class_configs": self._binding_session.configs,
+            }
             self._context = self._isolate.context(self._scope, **context_kwargs)
             from ..bindings.registry import expose_interfaces
             expose_interfaces(

@@ -122,8 +122,8 @@ python tools/benchmark_startup.py --runs 20
 ```
 
 `PYV8C_STRICT_VALIDATION=1` 启动时执行全量校验；`PYV8C_STARTUP_STATS=0` 关闭统计。
-重新编译的 `_pyv8` 暴露 `Context.supports_live_class_configs`，可使用 Context-local live overlay；
-旧预编译扩展使用隔离的 Page class fallback。
+`_pyv8.Context` 必须支持 Context-local `class_configs` overlay；每个 Page 和 Worker
+直接使用独立的 `BindingSession`，不再提供旧扩展的 class 回退路径。
 
 ## Chromium 与原生构建
 

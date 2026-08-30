@@ -335,15 +335,22 @@
 - 完整运行时基准需要项目标准 `_pyv8`/gevent 环境；当前 shell 只完成静态检查和 Universe 层验证。
 ## 2026-08-29: prebuilt _pyv8 fallback and startup measurement
 
-- Added Context class-config capability detection. The legacy prebuilt extension no longer receives an unsupported keyword during Context initialization.
-- Legacy extensions use Page-local class copies and restore overlays on close; rebuilt extensions keep Context-local live class-config mappings.
+- Context-local class-config mappings are now a required `_pyv8` runtime contract.
 - Windows prebuilt smoke measurement: Browser + new_context + new_page + close is about 620ms in the current environment, with 10 core interfaces materialized at page creation.
-- `_pyv8/src/context.cpp` now publishes `supports_live_class_configs` and retains live mappings; `_pyv8/src/pyclass.cpp` installs undetectable templates before call handlers.
+- `_pyv8/src/context.cpp` retains Context-local class-config mappings; `_pyv8/src/pyclass.cpp` installs undetectable templates before call handlers.
 
 ### Native rebuild verification
 
 - Installed `gevent` with `python310 -m pip install gevent`.
-- Rebuilt `_pyv8` with `python310 setup.py build_ext --inplace --force`; the resulting extension reports `supports_live_class_configs=True`.
+- Rebuilt `_pyv8` with `python310 setup.py build_ext --inplace --force`; Context-local class-config overlays are required at runtime.
+
+## 2026-08-30: remove live-config capability probing
+
+- Removed `Context.supports_live_class_configs` and the associated feature probe.
+- Page and Worker realms now always pass their independent `BindingSession.configs`
+  mapping to `_pyv8.Context`.
+- Removed the legacy Python class-overlay/isolation fallback. Use a rebuilt `_pyv8`
+  with Context-local `class_configs` support.
 - `tools/benchmark_startup.py --runs 5`: p50 `378.9ms`, p95 within the `0.6s` target.
 - `pyv8c` full suite: `76 passed`; `_pyv8` full suite: `164 passed`.
 - Native smoke with `PYV8C_ENABLE_NATIVE_CONSTANTS=1`: `1 passed`; Event/Node constants resolve to their Chromium values.

@@ -79,18 +79,8 @@ class Page:
         self.resource_loader = context.browser.resource_loader
         self.network_backend = context.network_backend
         self.window = Window(page=self)
-        # A prebuilt extension without class-config overlays cannot safely
-        # retain Page-specific callback closures across simultaneous realms.
-        # Use realm-neutral wrappers there; native live overlays keep the
-        # full per-Page realm on rebuilt extensions.
-        binding_realm = self if context.browser.native_class_configs else None
-        self.binding_session = context.browser.interface_universe.binding_session(
-            binding_realm, isolate_classes=not context.browser.native_class_configs,
-        )
-        if not context.browser.native_class_configs:
-            self.window.__class__ = self.binding_session.class_for("Window")
+        self.binding_session = context.browser.interface_universe.binding_session(self)
         self.window.location.href = str(url)
-        self._native_lazy_bindings = self.context_owner.browser.native_lazy_bindings
         # Native template installation can inspect the global object before
         # Context.__init__ returns.  Publish a sentinel so Window callbacks
         # never observe a partially initialized Page attribute.
@@ -99,14 +89,12 @@ class Page:
         eager_configs = self.binding_session.class_configs(
             "Window", roots=self.binding_session.universe.eager_names("Window"),
         )
-        class_configs = self.binding_session.configs if self._native_lazy_bindings else eager_configs
         binding_prepared = time.perf_counter_ns()
-        context_kwargs = {"hook": False, "ctx_type": "Window"}
-        if self.context_owner.browser.native_class_configs:
-            context_kwargs["class_configs"] = class_configs
-        else:
-            for cls, config in eager_configs.items():
-                self.binding_session.install_class_config(cls, config)
+        context_kwargs = {
+            "hook": False,
+            "ctx_type": "Window",
+            "class_configs": self.binding_session.configs,
+        }
         self.context = pyv8.Context(self.window, **context_kwargs)
         context_created = time.perf_counter_ns()
         expose_interfaces(
@@ -747,8 +735,6 @@ class Page:
         close_context = getattr(self.context, "close", None)
         if callable(close_context):
             close_context()
-        if not self.context_owner.browser.native_class_configs:
-            self.binding_session.restore_class_configs()
 
     def element_class(self, tag):
         from ..dom.model import HTMLElement, HTML_CLASSES
@@ -840,8 +826,6 @@ class Browser:
         self.generate_interface_stubs = bool(generate_interface_stubs)
         self.expose_unimplemented = bool(expose_unimplemented)
         self.stub_logging = str(stub_logging or "info")
-        self.native_lazy_bindings = bool(getattr(pyv8.Context, "supports_live_class_configs", False))
-        self.native_class_configs = self.native_lazy_bindings
         self._startup_stats = {}
         strict = os.environ.get("PYV8C_STRICT_VALIDATION") == "1" if strict_validation is None else bool(strict_validation)
         snapshot = BaselineRepository.load(interface_baseline_path)

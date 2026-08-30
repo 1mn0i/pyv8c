@@ -35,9 +35,6 @@ DEFAULT_EAGER_INTERFACES = (
     "HTMLElement", "URL", "URLSearchParams", "DOMTokenList", "NodeList",
     "HTMLCollection", "NamedNodeMap",
 )
-_MISSING = object()
-
-
 @dataclass(frozen=True)
 class BaselineSnapshot:
     path: str
@@ -661,8 +658,8 @@ class InterfaceUniverse:
             names.update(self._walk_parent_names(name))
         return {self.class_for(name): self._class_config_for(name, cache, realm) for name in names}
 
-    def binding_session(self, realm=None, *, isolate_classes=False):
-        return BindingSession(self, realm, isolate_classes=isolate_classes)
+    def binding_session(self, realm=None):
+        return BindingSession(self, realm)
 
     def validate(self):
         from .registry import IMPLEMENTATIONS, INTERFACES, validate_registry
@@ -704,34 +701,17 @@ class InterfaceUniverse:
 class BindingSession:
     """Context-local class configs and callback owners for one V8 realm."""
 
-    def __init__(self, universe: InterfaceUniverse, realm=None, *, isolate_classes=False):
+    def __init__(self, universe: InterfaceUniverse, realm=None):
         self.universe = universe
         self.realm = realm
         self._configs: dict[type, dict[str, Any]] = {}
         self._materialized: set[str] = set()
-        self._class_overlay_originals = {}
-        self._classes = {}
-        self.isolate_classes = bool(isolate_classes)
 
     def interface_names(self, context_type="Window"):
         return self.universe.interface_names(context_type)
 
     def class_for(self, name):
-        base = self.universe.class_for(name)
-        if not self.isolate_classes:
-            return base
-        if name in self._classes:
-            return self._classes[name]
-        parent_name = self.universe._spec(name).get("parent")
-        parent = self.class_for(parent_name) if parent_name else object
-        attrs = {
-            key: value for key, value in base.__dict__.items()
-            if key not in ("__dict__", "__weakref__", "__module__")
-        }
-        attrs["__module__"] = base.__module__
-        cls = type(name, (parent,), attrs)
-        self._classes[name] = cls
-        return cls
+        return self.universe.class_for(name)
 
     @property
     def materialized_interfaces(self):
@@ -742,50 +722,12 @@ class BindingSession:
         """Live mapping consumed by native Context implementations."""
         return self._configs
 
-    def install_class_config(self, cls, config):
-        """Apply an overlay for native extensions without class-config support."""
-        for key, value in config.items():
-            if key != "__v8_callback_owner__":
-                if (cls, key) not in self._class_overlay_originals:
-                    self._class_overlay_originals[(cls, key)] = cls.__dict__.get(key, _MISSING)
-                setattr(cls, key, value)
-        owner = config.get("__v8_callback_owner__")
-        if owner is not None:
-            for key, value in owner.__dict__.items():
-                if key.startswith("__v8_") or key.startswith("_pyv8c_"):
-                    if (cls, key) not in self._class_overlay_originals:
-                        self._class_overlay_originals[(cls, key)] = cls.__dict__.get(key, _MISSING)
-                    setattr(cls, key, value)
-        if (cls, "__v8_callback_owner__") not in self._class_overlay_originals:
-            self._class_overlay_originals[(cls, "__v8_callback_owner__")] = cls.__dict__.get("__v8_callback_owner__", _MISSING)
-        cls.__v8_callback_owner__ = cls
-
-    def restore_class_configs(self):
-        for (cls, key), original in reversed(tuple(self._class_overlay_originals.items())):
-            if original is _MISSING:
-                try:
-                    delattr(cls, key)
-                except AttributeError:
-                    pass
-            else:
-                setattr(cls, key, original)
-        self._class_overlay_originals.clear()
-
     def materialize(self, name):
         """Create one interface class/config pair on first access."""
         chain = list(self.universe._walk_parent_names(name))
         for interface_name in reversed(chain):
-            base_cls = self.universe.class_for(interface_name)
             cls = self.class_for(interface_name)
             config = self.universe._class_config_for(interface_name, self._configs, self.realm)
-            if self.isolate_classes and cls is not base_cls:
-                self._configs.pop(base_cls, None)
-                config = dict(config)
-                parent_name = self.universe._spec(interface_name).get("parent")
-                config["__v8_parent_class__"] = self.class_for(parent_name) if parent_name else object
-                self._configs[cls] = config
-            if cls.__dict__.get("__v8_idl_stub__"):
-                self.install_class_config(cls, config)
             self._materialized.add(interface_name)
         return self.class_for(name)
 
@@ -804,17 +746,5 @@ class BindingSession:
         configs = self.universe._class_configs(
             context_type, roots=roots, cache=self._configs, realm=self.realm,
         )
-        if self.isolate_classes:
-            isolated = {}
-            for base_cls, config in configs.items():
-                name = base_cls.__name__
-                cls = self.class_for(name)
-                item = dict(config)
-                parent_name = self.universe._spec(name).get("parent")
-                item["__v8_parent_class__"] = self.class_for(parent_name) if parent_name else object
-                self._configs.pop(base_cls, None)
-                self._configs[cls] = item
-                isolated[cls] = item
-            configs = isolated
         self._materialized.update(cls.__name__ for cls in configs)
         return configs
