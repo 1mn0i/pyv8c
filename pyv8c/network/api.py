@@ -322,7 +322,6 @@ class _WorkerRuntime:
                 expose_unimplemented=self.page.context_owner.browser.expose_unimplemented,
                 stub_logging=self.page.context_owner.browser.stub_logging,
                 universe=self.page.context_owner.browser.interface_universe,
-                lazy_interfaces=True,
                 class_for=self._binding_session.class_for,
             )
             # Workers used to build every exposed interface up front. Declare the
@@ -353,7 +352,7 @@ class _WorkerRuntime:
                 try: self._isolate.close()
                 except RuntimeError: pass
                 self._isolate = None
-            self.page.post_task(self.owner._runtime_finished)
+            self.page.post_task(self.owner._finish_lifecycle)
 
     def _report_error(self, exc):
         self.page.post_task(lambda: self.owner._receive_error(exc))
@@ -402,8 +401,6 @@ class Worker(EventTarget):
         self._lifecycle_finished = True
         self._page.complete_worker()
         self._page._owned_workers.discard(self)
-    def _runtime_finished(self):
-        self._finish_lifecycle()
     def fn_terminate(self):
         if not self._terminated:
             self._terminated = True

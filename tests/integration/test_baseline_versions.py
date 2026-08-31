@@ -70,7 +70,7 @@ def test_custom_baseline_path_is_absolute_and_snapshot_is_frozen(tmp_path, monke
     ("content", "error"),
     [
         ("[]", "root must be an object"),
-        ("{}", "must contain _webidl metadata and interfaces"),
+        ("{}", "must contain _webidl metadata"),
         ('{"_webidl": {"schema": 5}, "Broken": {"parent": null}}', "not a compact schema 5"),
     ],
 )

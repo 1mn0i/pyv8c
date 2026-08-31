@@ -99,7 +99,6 @@ class Page:
             expose_unimplemented=self.context_owner.browser.expose_unimplemented,
             stub_logging=self.context_owner.browser.stub_logging,
             universe=self.context_owner.browser.interface_universe,
-            lazy_interfaces=True,
             class_for=self.binding_session.class_for,
         )
         # Declare every remaining exposed name on the global object. Native
@@ -340,7 +339,7 @@ class Browser:
                  real_network=False, cycronet_options=None,
                  generate_interface_stubs=True, expose_unimplemented=True,
                  stub_logging="info", interface_baseline_path=None,
-                 eager_interfaces=None, strict_validation=None):
+                 eager_interfaces=None, lazy_interfaces=True, strict_validation=False):
         started = time.perf_counter_ns()
         self._closed = False
         # pyv8 initializes its process-global V8 runtime during package import.
@@ -352,17 +351,16 @@ class Browser:
         self.expose_unimplemented = bool(expose_unimplemented)
         self.stub_logging = str(stub_logging or "info")
         self._startup_stats = {}
-        strict = os.environ.get("PYV8C_STRICT_VALIDATION") == "1" if strict_validation is None else bool(strict_validation)
         snapshot = BaselineRepository.load(interface_baseline_path)
         loaded = time.perf_counter_ns()
         self.interface_universe = InterfaceUniverse(
             snapshot, stub_logging=self.stub_logging,
             expose_unimplemented=self.expose_unimplemented,
             eager_interfaces=DEFAULT_EAGER_INTERFACES if eager_interfaces is None else eager_interfaces,
-            strict_validation=strict,
-            lazy_interfaces=True,
+            strict_validation=strict_validation,
+            lazy_interfaces=lazy_interfaces,
         )
-        if strict:
+        if strict_validation:
             validation_started = time.perf_counter_ns()
             self.interface_universe.validate()
             validation_finished = time.perf_counter_ns()

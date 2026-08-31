@@ -599,8 +599,8 @@ class InterfaceUniverse:
     def _resolve_names(self, context_type, roots=()):
         """Interface names (including ancestors) a context_type must install."""
         names = set(
-            self.exposed_names(context_type)
-            if not self.lazy_interfaces else self.eager_names(context_type)
+            self.eager_names(context_type)
+            if self.lazy_interfaces else self.exposed_names(context_type)
         )
         names.update(root for root in roots if isinstance(root, str))
         for name in tuple(names):
@@ -691,10 +691,14 @@ class BindingSession:
     def lazy_names(self, context_type="Window"):
         """Exposed names that are declared on the realm but not pre-built."""
         if context_type not in self._lazy_names:
-            eager = set(self.universe.eager_names(context_type))
-            self._lazy_names[context_type] = tuple(
-                name for name in self.interface_names(context_type) if name not in eager
-            )
+            if not self.universe.lazy_interfaces:
+                # Everything is materialized up front; nothing to declare lazily.
+                self._lazy_names[context_type] = ()
+            else:
+                eager = set(self.universe.eager_names(context_type))
+                self._lazy_names[context_type] = tuple(
+                    name for name in self.interface_names(context_type) if name not in eager
+                )
         return self._lazy_names[context_type]
 
     def lazy_factory(self, context_type="Window", on_materialize=None):

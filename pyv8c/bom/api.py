@@ -4,7 +4,7 @@ import pyv8
 from pyv8.flag import FlagExposed
 from pyv8.tools import ConstructorConfig
 
-from ..dom.model import EventTarget
+from ..dom.model import Event, EventTarget
 from ..bindings.registry import interface, js_attributes, js_methods, js_interface_methods
 from ..network.api import Blob, Request, Response
 from ..core.errors import SecurityError, V8URIError, V8TypeError, InvalidStateError
@@ -158,7 +158,6 @@ class URL:
                 raise V8URIError("Invalid URL")
             parts.port
         except (ValueError, V8URIError) as exc:
-            if isinstance(exc, V8TypeError): raise
             raise V8TypeError("Invalid URL") from exc
         return urlunsplit(parts)
 
@@ -289,7 +288,7 @@ class History:
     def fn_go(self, delta=0):
         target = max(0, min(len(self._entries) - 1, self._index + int(delta)))
         if target == self._index: return
-        self._index = target; self._page.window.location.href = self._entries[target][0]; self._page.window.fn_dispatchEvent(__import__("pyv8c.dom", fromlist=["Event"]).Event("popstate", {"bubbles": False}))
+        self._index = target; self._page.window.location.href = self._entries[target][0]; self._page.window.fn_dispatchEvent(Event("popstate", {"bubbles": False}))
 
 
 @interface("WindowProperties", "EventTarget", constructible=False, tag="WindowProperties", exposed_in=())

@@ -516,3 +516,84 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
   按职责分文件，行为零变化。
 - 若后续要把外部调用方改为直接使用 controller（`page.navigation.goto(...)`），
   需另行评估，属二期。
+
+## 2026-08-31：冗余清理第二轮（死参数与死代码移除）
+
+### 目标
+
+清除上一轮拆分后遗留的恒真参数、无引用 helper 和 `__import__` hack，收敛接口
+注册表面的无效自由度。
+
+### 修改
+
+- `bindings/universe.py`：删除恒为 `True` 的 `lazy_interfaces` 参数；
+  `_resolve_names` 恒走 eager 名单；`_stub_handler` 收敛为 enum 拦截器返回 `()`、
+  其余返回 `None`。
+- `bindings/registry.py`：`InterfaceSpec` 与 `interface()` 装饰器删除无消费者的
+  `constants` 字段及对 baseline 的重复校验；`expose_interfaces` 删除
+  `lazy_interfaces` 参数。
+- `runtime/browser.py`：`InterfaceUniverse` 构造不再传 `lazy_interfaces`；
+  `_run_callback` 内联进 `_run_queued_callback`。
+- `network/api.py`：Worker 暴露接口不再传 `lazy_interfaces`；删除
+  `_runtime_finished`，`fn_terminate` 与生命周期回调直连 `_finish_lifecycle`。
+- `bom/api.py`：`History.fn_go` 改用直接导入的 `Event`，移除 `__import__`
+  hack；`URL._resolve` 异常路径去掉冗余 `isinstance` 判断。
+- `_pyv8/pyv8/tools.py`：删除全库无引用的 `impl_warp`、`attr_warp`、
+  `CtxTypeIndex` 并同步 `__all__`；`pyv8/__init__.py` 的 `_HELPER_EXPORTS`
+  同步收敛。
+- `tests/integration/test_baseline_versions.py`：`{}`-empty 用例的错误 regex
+  与 `baseline.py` 实际错误信息对齐（`must contain _webidl metadata`），
+  消除上一轮记录的遗留失败。
+
+### 验证
+
+- `pyv8c` 全量 `109 passed`（`PYTHONPATH` 指向本地 `_pyv8`），上一轮的
+  1 个 baseline regex 失败已清零。
+- `startup_stats` 中 `lazy_interfaces` 键保留为惰性物化计数指标，
+  与被删除的同名参数无关。
+
+### 限制
+
+- `InterfaceSpec` 形状变化属内部 API，无兼容承诺；外部若以关键字传入
+  `constants` / `lazy_interfaces` 会直接 `TypeError`。
+
+## 2026-08-31：恢复 lazy_interfaces 开关并修复传参链路
+
+### 目标
+
+上一轮把 `lazy_interfaces` 当恒真参数删除，实际它承载「全量物化
+（`lazy_interfaces=False`）」模式。本轮恢复该开关，修完整条传参链路，
+并消除全量物化路径上的 native 崩溃。
+
+### 修改
+
+- `bindings/universe.py`：`InterfaceUniverse` 恢复 `lazy_interfaces` 参数；
+  `BindingSession.lazy_names()` 在 `lazy_interfaces=False` 时返回空元组
+  （全部接口已随 `class_configs` 物化，`declare_lazy` 不再对已暴露名字重复装
+  accessor）；`_resolve_names` 条件改写为正向表述。
+- `bindings/registry.py`：`expose_interfaces` 删除 `lazy_interfaces` 参数，
+  直接读 `universe.lazy_interfaces`（消灭 `is not False` 判断与调用方重复传参）。
+- `runtime/browser.py` / `network/api.py`：Page 与 Worker 调用
+  `expose_interfaces` 时不再传 `lazy_interfaces`。
+- `_pyv8/src/pyclass.cpp` + `pyclass_handlers.cpp`（新增 `py_class_noop_call`）：
+  修复 undetectable 模板缺 instance call handler 的 V8 CHECK 崩溃
+  （`Check failed: !IsUndefined(obj->GetInstanceCallHandler())`）。V8 要求
+  undetectable 对象（`document.all` 式 legacy 接口，唯一实例为
+  `HTMLAllCollection`）带 call handler；无真实 `__call__` 时 native 安装 no-op
+  handler，调用返回 `undefined`。此前任何 undetectable 类一实例化即进程崩溃，
+  与惰性/全量路径无关。
+
+### 验证
+
+- 最小复现确认：仅 `__v8_undetectable__ = 1` 的类 expose 即崩溃；修复后通过。
+- `Browser(lazy_interfaces=False)` 全量物化路径：`lazy_names()` 为空、
+  1045 个 Window 接口直接可访问（`typeof Storage` / `AbortController` /
+  `HTMLAllCollection` 均为 `"function"`）、DOM evaluate 正常。
+- 默认惰性路径不回归：`lazy_names("Window")` 非空、首访物化正常。
+- `_pyv8` 重建后 `177 passed`；`pyv8c` 全量 `109 passed`。
+- 启动基准 `--runs 5`：p50 `91.4 ms`，无回退。
+
+### 限制
+
+- no-op call handler 使无 `__call__` 的 undetectable 对象可调用并返回
+  `undefined`；真实实现 `document.all` 时应提供真正的 `__call__`。

@@ -142,7 +142,13 @@ session.materialized_interfaces
 - 物化失败的**不会**写入模板缓存，下次访问会重试。
 - `declare_lazy` 的 `skip` 参数用于保护 eager 名称：缺了它，每个名称都要做一次 global
   属性查找并触发 Window 的 Python 命名拦截器（实测 1032 个名称约 42ms；传 `skip` 后约 1.7ms）。
-- Worker 与 Page 走同一条惰性路径；Worker 曾使用 `lazy_interfaces=False` 全量物化。
+- Worker 与 Page 走同一条惰性路径。`Browser(lazy_interfaces=False)` 可显式选择全量物化：
+  `class_configs`、`expose_interfaces` 直接构建全部暴露接口，`lazy_names()` 返回空，
+  `declare_lazy` 不注册任何 accessor。`expose_interfaces` 不再有 `lazy_interfaces`
+  参数，统一读 `universe.lazy_interfaces`。
+- V8 要求 undetectable 模板（`document.all` 式 legacy 接口，如 `HTMLAllCollection`）
+  带 instance call handler：无真实 `__call__` 时 `_pyv8` 自动安装 no-op handler，
+  调用返回 `undefined`，否则模板实例化会触发 V8 CHECK 崩溃。
 
 `Browser.startup_stats` 提供耗时和物化计数：`lazy_registered`（声明数）、
 `lazy_materialized`（已按需物化数）、`lazy_register_ms`。冷启动的
@@ -203,10 +209,9 @@ python310 -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 
 - `_pyv8`：`177 passed`（原 164 + 新增 native 懒物化 13），通过
   `python310 setup.py build_ext --inplace --force` 重建。
-- `pyv8c`：`108 passed`，`1 pre-existing failed`（`test_baseline_versions`
-  的 `{}`-empty 用例断言 regex `must contain _webidl metadata and interfaces` 与实现
-  实际错误信息 `must contain _webidl metadata` 不匹配；baseline.py 迁移原样保留该错误
-  文本，非本轮回归）。
+- `pyv8c`：`109 passed`（`test_baseline_versions` 的 `{}`-empty 用例 regex 已与
+  `baseline.py` 实际错误信息 `must contain _webidl metadata` 对齐，上一轮记录的
+  遗留失败清零）。
 - 本轮拆分新增文件：`bindings/baseline.py`（BaselineRepository/BaselineSnapshot/缓存）、
   `dom/collections.py`（NodeList/HTMLCollection/DOMTokenList）、`dom/events.py`
   （Event 家族与 EventTarget）；原模块 re-export 公开名保持导入兼容。
@@ -218,8 +223,18 @@ python310 -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
   收敛重复逻辑（`Response.body_text`、`ResourceController._network_request`/
   `_response_from_loader`、`EventTarget._get_handler` 复用、`History._validate_target`、
   名称校验正则提升为模块级常量）。
-- 启动基准：`python tools/benchmark_startup.py --runs 5` p50 为 `98.2 ms`
+- 第二轮清理：删除恒真参数 `lazy_interfaces`（`InterfaceUniverse` /
+  `expose_interfaces`）与 `InterfaceSpec.constants` 字段及其 baseline 重复校验；
+  `_stub_handler` 收敛；`_run_callback` 内联；Worker 删除 `_runtime_finished`；
+  `bom/api.py` 移除 `__import__` hack；`_pyv8/pyv8/tools.py` 删除无引用的
+  `impl_warp` / `attr_warp` / `CtxTypeIndex`。`InterfaceSpec` 形状属内部 API，
+  无兼容承诺。
+- 启动基准：`python tools/benchmark_startup.py --runs 5` p50 为 `91.4 ms`
   （懒物化接线前 `378.9 ms`）。
+- `lazy_interfaces` 传参链路修复后：`Browser(lazy_interfaces=False)` 全量物化
+  路径可用（1045 个 Window 接口直接物化，`lazy_names()` 为空）；同时修复
+  `_pyv8` undetectable 模板缺 instance call handler 的 V8 CHECK 崩溃
+  （触发点为暴露 `HTMLAllCollection`），`_pyv8` 重建后 `177 passed`。
 - baseline 加载：二进制缓存命中时 `21.3 ms`（冷加载 `73.5 ms`，约 3.4x）；
   损坏缓存自动回落 JSON 并重建，启动不失败。
 

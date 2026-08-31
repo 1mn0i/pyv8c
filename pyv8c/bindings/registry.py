@@ -147,7 +147,7 @@ def validate_registry(baseline=None):
 
 def expose_interfaces(context, context_type="Window", *, generate_stubs=True,
                       expose_unimplemented=True, stub_logging="info", universe=None,
-                      lazy_interfaces=None, class_for=None):
+                      class_for=None):
     """Expose public interfaces, filling baseline-only APIs with shells.
 
     The baseline contains renderer-only and conditionally exposed bindings;
@@ -180,7 +180,7 @@ def expose_interfaces(context, context_type="Window", *, generate_stubs=True,
                 if generate_stubs else getattr(INTERFACES.get(parent), "parent", None)
             )
         return value
-    if generate_stubs and lazy_interfaces is not False:
+    if generate_stubs and universe.lazy_interfaces:
         names = universe.eager_names(context_type)
     elif generate_stubs:
         names = universe.exposed_names(context_type)
