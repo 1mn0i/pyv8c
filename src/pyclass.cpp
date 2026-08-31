@@ -473,6 +473,13 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     if (config.undetectable)
     {
         templ->InstanceTemplate()->MarkAsUndetectable();
+        if (config.call == NULL) {
+            // V8 requires an instance call handler on undetectable objects
+            // (legacy document.all-style objects are callable). Without one,
+            // instantiating the template trips a V8 CHECK. Invoking such an
+            // object without a real __call__ simply returns undefined.
+            templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_noop_call);
+        }
     }
 
     if (config.call != NULL)

@@ -145,6 +145,13 @@ void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
     }
 }
 
+// Placeholder instance call handler for undetectable objects that have no
+// real __call__: V8 requires an instance call handler on undetectable
+// templates, and calling such an object simply yields undefined.
+void py_class_noop_call(const FunctionCallbackInfo<Value>& info) {
+    // Intentionally empty: return value stays undefined.
+}
+
 static void
 py_class_method_impl(const FunctionCallbackInfo<Value>& info,
                      Local<Context> context,

@@ -31,12 +31,14 @@ from v8_build import (  # noqa: E402
 )
 
 # 获取源文件列表
-sources = \
-    list(map(lambda path: os.path.join('src', path), filter(lambda path: path.endswith('.cpp'), os.listdir('src')))) + \
-    list(map(lambda path: os.path.join('src/faker', path), filter(lambda path: path.endswith('.cpp'), os.listdir('src/faker'))))
+sources = sorted(
+    str(path.relative_to(PROJECT_ROOT)).replace(os.sep, "/")
+    for source_dir in (PROJECT_ROOT / "src", PROJECT_ROOT / "src" / "faker")
+    for path in source_dir.glob("*.cpp")
+)
 
 # 库配置
-libraries = ['v8_monolith']
+libraries = ["v8_monolith"]
 
 # 平台特定配置
 if os.name == 'nt':

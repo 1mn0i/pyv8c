@@ -1,4 +1,3 @@
-from functools import wraps
 from .flag import *
 
 __hook_exclude_name = (
@@ -90,30 +89,8 @@ class ConstructorConfig:
         return f'construct_{self.exposed}{self.constructor}{self.length}{int(self.v8_array)}{int(self.immutable)}{int(self.has_constructor)}'
 
 
-def impl_warp(cls):
-    father = cls.__base__
-    for name in cls.__dict__:
-        if name == '__module__':
-            continue
-        setattr(father, name, cls.__dict__[name])
-    return father
-
-
-def attr_warp(**attrs):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
-        for name, value in attrs.items():
-            setattr(wrapper, name, value)
-        return wrapper
-    return decorator
-
-
-class CtxTypeIndex:
-    count = 0
-
-    @classmethod
-    def get(cls):
-        cls.count += 1
-        return cls.count
+__all__ = [
+    "ConstructorConfig", "exposed_constructs",
+    "__v8_construct_hook__", "__v8_get_hook__",
+    "__v8_method_hook__", "__v8_set_hook__",
+]

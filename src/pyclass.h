@@ -42,6 +42,7 @@ enum PythonObjectInternalField {
 void py_class_construct_callback(const v8::FunctionCallbackInfo<v8::Value>& info);
 void py_class_method_callback(const v8::FunctionCallbackInfo<v8::Value>& info);
 void py_class_cross_origin_method_callback(const v8::FunctionCallbackInfo<v8::Value>& info);
+void py_class_noop_call(const v8::FunctionCallbackInfo<v8::Value>& info);
 
 // Handlers
 v8::Intercepted properties_named_getter(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info);

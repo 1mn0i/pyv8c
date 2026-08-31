@@ -57,3 +57,10 @@ class FlagArrayProto:
     keys = 1 << 2
     values = 1 << 3
     forEach = 1 << 4
+
+
+__all__ = [
+    "CallbackType", "FlagImmutable", "V8Attribute", "FlagLocation",
+    "FlagReceiverCheck", "FlagCrossOriginCheck", "FlagExposed",
+    "FlagConstructor", "SideEffectType", "FlagArrayProto",
+]
