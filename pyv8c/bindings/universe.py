@@ -299,6 +299,12 @@ class InterfaceUniverse:
         constructor.__v8_idl_stub__ = True
         return constructor
 
+    def _stub_call_handler(self, interface_name):
+        def call_handler(*_args):
+            return pyv8.Undefined
+        call_handler.__name__ = f"_pyv8c_stub_call_{interface_name}"
+        return self._mark_direct(call_handler, stub=True)
+
     def _stub_handler(self, interface_name, method_name):
         def handler(*args):
             # Returning None tells V8 that the interceptor did not handle it.
@@ -520,6 +526,8 @@ class InterfaceUniverse:
         for source_key, config_key in (("immutable_proto", "__v8_immutable__"), ("undetectable", "__v8_undetectable__"), ("global_this", "__v8_global_this__"), ("as_object", "__v8_as_obj__"), ("unconstructable", "__v8_unconstructable__")):
             if template.get(source_key):
                 config[config_key] = 1
+        if template.get("call_handler"):
+            config["__call__"] = self._stub_call_handler(name)
         constants = []
         constant_names = set()
         for constant in spec.get("constants") or ():

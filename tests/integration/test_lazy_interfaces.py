@@ -58,6 +58,16 @@ def test_first_access_materialises_a_constructor():
         browser.close()
 
 
+def test_undetectable_callable_interface_materialises_safely():
+    browser = Browser(real_network=False, stub_logging="off")
+    page = browser.new_context().new_page()
+    try:
+        assert page.evaluate("typeof HTMLAllCollection") == "function"
+        assert page.evaluate("HTMLAllCollection.prototype[Symbol.toStringTag]") == "HTMLAllCollection"
+    finally:
+        browser.close()
+
+
 def test_repeated_access_does_not_rematerialise():
     browser = Browser(stub_logging="off")
     page = browser.new_context().new_page()
