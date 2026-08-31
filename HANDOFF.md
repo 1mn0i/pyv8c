@@ -268,4 +268,4 @@ iframe/Worker 隔离；最后增加非核心接口实现，且不扩大默认启
 - `_pyv8` 的 `ClassConfig` 读取与 overlay 校验已移至 `src/pyclass_config.cpp`，并保留已跟踪的 `pyv8/_pyv8.pyd`。
 - `HTMLAllCollection` 复现脚本正常输出 `function HTMLAllCollection() { [native code] }`，不再触发 V8 DCHECK。
 - 最新验证：`_pyv8` 全量 `177 passed`，`pyv8c` 全量 `112 passed`。
-- 已推送 GitHub：`pyv8c` 提交 `1980864`，`_pyv8` 提交 `429ec5e`；两个工作区均干净。
+- 已推送 GitHub：`pyv8c` 功能提交 `1980864`、文档提交 `538f98f`，`_pyv8` 提交 `429ec5e`；两个工作区均干净。

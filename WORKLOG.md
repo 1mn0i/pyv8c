@@ -620,5 +620,6 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
 ### 提交与发布
 
 - `pyv8c`：`1980864 refactor: split binding catalog and page resource ownership`。
+- 文档：`538f98f docs: update handoff and worklog`。
 - `_pyv8`：`429ec5e refactor: isolate native class configuration loading`。
 - 两个提交均已推送到 GitHub，远端分支与本地 HEAD 一致，工作区干净。
