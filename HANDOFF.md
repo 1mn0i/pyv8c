@@ -48,6 +48,10 @@ current Page、类级 current Page 或跨 realm 的 callback owner。
 - `BrowserContext` 隔离 Page、Cookie、Blob URL、网络 session 和 frame。
 - 每个 `Page` 拥有 V8 Context、Window、Document、任务队列以及 navigation、lifecycle、
   script、resource controller。
+- `Page` 是薄门面：逻辑分别位于 `runtime/navigation.py`、`runtime/lifecycle.py`、
+  `runtime/scripting.py`、`runtime/resource_loading.py`（controller 通过 `Page` 聚合，
+  状态经 `runtime/state.py` 的 `StateAlias` 暴露在 `Page` 上），`Browser` /
+  `BrowserContext` 也在同文件。
 - 每个 V8 Context 有独立 `BindingSession`；动态类、class config、callback owner 与 wrapper
   状态均为 realm-local。
 - 网络和 Worker 后台回调只能通过 `Page.post_task()` 进入 Page 的 V8 Context。

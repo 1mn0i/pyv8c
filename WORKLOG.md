@@ -460,3 +460,59 @@
 
 - 惰性访问只在 JS 首次访问该名字时物化；`Object.getOwnPropertyNames(window)` 依旧覆盖
   全部暴露名（不可枚举属性），物化发生在取值时。
+
+## 2026-08-31: Page 门面拆分（方案 B）
+
+### 目标
+
+`runtime/browser.py` 此前 905 行、`Page` 单类约 726 行 / 79 个方法，五种职责
+（导航、解析、脚本、资源、生命周期）物理混在一起。`controllers.py` 里的
+controller 只是纯状态容器。本轮把逻辑搬进 controller，`Page` 收敛为薄门面。
+
+### 修改
+
+- `runtime/state.py`（新增）：`StateAlias` 描述符从 `controllers.py` 移入，
+  继续把 controller 状态暴露在 `Page` 上（`_has_navigation` 等用法不变）。
+- `runtime/navigation.py`（新增）：`NavigationController`——导航（`goto` /
+  `set_content` / `commit_content` / `request_navigation` / `navigation_allowed` /
+  `dispatch_beforeunload` 调用链）与文档解析（`resume_parser` /
+  `parser_is_blocked` / `finish_document_parse` / `parser_script_start` /
+  `parser_script_complete` / `element_class`）。
+- `runtime/lifecycle.py`（新增）：`DocumentLifecycle`——事件分派
+  （`dispatch_page_event` / `dispatch_script_error` / `dispatch_beforeunload`）与
+  ready-state 迁移（`maybe_fire_dom_content_loaded` / `maybe_fire_document_load` /
+  `when_loaded`）。
+- `runtime/scripting.py`（新增）：`ScriptController`——脚本执行与模块适配
+  （`execute_script` / `execute_module` / `evaluate`）、解析/动态脚本协调
+  （`drain_script_queue` / `run_deferred_scripts` / `node_adopted` /
+  `install_inline_handler`）、realm JS helper（`make_promise` /
+  `js_error_value` / `promise_resolve` 及 `_js_script_cache`）。
+- `runtime/resource_loading.py`（新增）：`ResourceController`——同步/异步加载
+  （`load_resource` / `load_resource_async` / CORS 策略）、子资源追踪
+  （`discover_element_resource` / `track_document_resource` /
+  `complete_document_resource` / iframe / worker source）。
+- `runtime/browser.py`：`Page` 保留 `__init__`、`StateAlias`、`url`、`close`、
+  任务门面与被外部调用的公开方法（每行转发到对应 controller）；私有逻辑方法
+  全部搬走。`Browser` / `BrowserContext` 不变。
+- `runtime/controllers.py`（删除）：逻辑与状态已拆入上述四个文件，无其他引用。
+
+controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚本队列与
+生命周期）；`resource_loading.py` 创建子页时延迟导入 `Page` 以避免循环导入。
+
+### 验证
+
+- 全量 `84 passed`（`--ignore` 三个 baseline 环境问题文件后 exit=0）；排除后与
+  重构前 108 总数守恒（三个文件含 12+10+2 个测试）。
+- 三个 baseline 文件（`test_baseline_versions` / `test_interface_extractor` /
+  `test_fetch_chromium`）未改动，其 WinError 448 / empty-`{}` 失败为 Windows
+  junction 清理的既有环境问题，与本轮无关。
+- 启动基准 `--runs 5`：p50 `97.7 ms`（拆分前 `107.6 ms`，无回退）。
+- 修复过程记录：首轮遗漏 `_discover_element_resource` 门面转发导致解析中断
+  （`document.body` 为 null），补上后受影响的 7 个集成文件 26 个用例全过。
+
+### 限制
+
+- `Page` 实例仍保留全部 controller 引用与状态别名，属性空间未变；只是源码
+  按职责分文件，行为零变化。
+- 若后续要把外部调用方改为直接使用 controller（`page.navigation.goto(...)`），
+  需另行评估，属二期。
