@@ -42,6 +42,16 @@ def test_domain_packages_do_not_depend_on_runtime_or_extractor_cli():
                 assert not module.startswith("bindings.extractor"), path
 
 
+def test_bindings_do_not_depend_on_runtime():
+    """bindings must reach realm services through core, never through Page."""
+    for path in (ROOT / "bindings").glob("*.py"):
+        for _level, module in _imports(path):
+            assert not module.startswith("runtime"), path
+        source = path.read_text(encoding="utf-8")
+        assert "_make_promise" not in source, path
+        assert "_js_error_value" not in source, path
+
+
 def test_no_implicit_current_page_state_remains():
     forbidden = ("current_page", "set_current_page", "_current_page")
     for path in ROOT.rglob("*.py"):

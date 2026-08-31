@@ -319,6 +319,7 @@ class _WorkerRuntime:
                 "hook": False,
                 "ctx_type": "Worker",
                 "class_configs": self._binding_session.configs,
+                "lazy_factory": self._binding_session.lazy_factory("Worker"),
             }
             self._context = self._isolate.context(self._scope, **context_kwargs)
             from ..bindings.registry import expose_interfaces
@@ -329,8 +330,14 @@ class _WorkerRuntime:
                 expose_unimplemented=self.page.context_owner.browser.expose_unimplemented,
                 stub_logging=self.page.context_owner.browser.stub_logging,
                 universe=self.page.context_owner.browser.interface_universe,
-                lazy_interfaces=False,
+                lazy_interfaces=True,
                 class_for=self._binding_session.class_for,
+            )
+            # Workers used to build every exposed interface up front. Declare the
+            # remainder lazily so creating a Worker stays cheap.
+            self._context.declare_lazy(
+                self._binding_session.lazy_names("Worker"),
+                skip=browser.interface_universe.eager_names("Worker"),
             )
             if source:
                 self._context.exec_js(source, filename=self.script_url)

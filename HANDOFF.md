@@ -112,18 +112,51 @@ Window, EventTarget, Event, Node, Document, Element, HTMLElement,
 URL, URLSearchParams, DOMTokenList, NodeList, HTMLCollection, NamedNodeMap
 ```
 
-其他 Window 名称保持可观察，并在首次访问时物化。不要随意扩大默认 eager 集合，它是启动性能
-契约；调用方可通过 `Browser(eager_interfaces=...)` 增加预热接口。
+其余暴露名称由 native 惰性访问器提供，并在首次访问时物化（见下节）。不要随意扩大默认
+eager 集合，它是启动性能契约；调用方可通过 `Browser(eager_interfaces=...)` 增加预热接口。
 
-`Browser.startup_stats` 提供耗时和物化计数：
+### 惰性接口物化
+
+Page 与 Worker 创建时会调用 `_pyv8.Context.declare_lazy(names, skip=eager_names)`，
+为每个非 eager 名称在 global 对象上装一个不可枚举的 accessor，整个过程不构建任何
+FunctionTemplate，也不生成任何 Python stub。首次访问该名称时 native 回调
+`BindingSession.lazy_factory()`，物化接口并回填模板缓存，之后同类访问直接命中缓存。
+
+```python
+session = page.binding_session
+session.lazy_names("Window")   # 已声明但未物化的名称
+session.lazy_factory("Window") # 交给 native 的回调
+session.materialized_interfaces
+```
+
+契约要点：
+
+- 工厂返回 `None` 表示该名称不属于此 realm，JS 侧解析为 `undefined`；工厂抛错时按
+  V8 异常语义处理（`try/catch` 可捕获，未捕获则抛给 `exec_js` 的调用方）。
+- 物化失败的**不会**写入模板缓存，下次访问会重试。
+- `declare_lazy` 的 `skip` 参数用于保护 eager 名称：缺了它，每个名称都要做一次 global
+  属性查找并触发 Window 的 Python 命名拦截器（实测 1032 个名称约 42ms；传 `skip` 后约 1.7ms）。
+- Worker 与 Page 走同一条惰性路径；Worker 曾使用 `lazy_interfaces=False` 全量物化。
+
+`Browser.startup_stats` 提供耗时和物化计数：`lazy_registered`（声明数）、
+`lazy_materialized`（已按需物化数）、`lazy_register_ms`。冷启动的
+`lazy_materialized` 应为 0。
 
 ```powershell
 python tools/benchmark_startup.py --runs 20
 ```
 
 `PYV8C_STRICT_VALIDATION=1` 启动时执行全量校验；`PYV8C_STARTUP_STATS=0` 关闭统计。
-`_pyv8.Context` 必须支持 Context-local `class_configs` overlay；每个 Page 和 Worker
-直接使用独立的 `BindingSession`，不再提供旧扩展的 class 回退路径。
+`_pyv8.Context` 必须支持 Context-local `class_configs` overlay 与 `declare_lazy`；
+每个 Page 和 Worker 直接使用独立的 `BindingSession`，不再提供旧扩展的 class 回退路径。
+
+### Baseline 缓存
+
+`BaselineRepository` 在 baseline 旁维护两级缓存：展开的 JSON（`.json`）和二进制
+pickle 快照（`.pyv8ccache`）。二进制缓存带 magic + schema + sha256 校验头，只在源
+字节完全相同时命中，命中后跳过 JSON 解析、接口投影和父链成环检查；任何读取异常都
+静默回落到 JSON 路径并重建缓存，启动永远不会因缓存损坏失败。两个缓存文件都不提交、
+不打包（见 `.gitignore`）。
 
 ## Chromium 与原生构建
 
@@ -155,18 +188,24 @@ native constants 和 Context-local class-config overlay 在当前重建的 `_pyv
 运行 pyv8c 测试时使用本地构建的扩展：
 
 ```powershell
-$env:PYTHONPATH = "D:\code\pyv8env\_pyv8;D:\code\pyv8env\pyv8c"
+$env:PYTHONPATH = "d:\src\pyv8env\_pyv8;d:\src\pyv8env\pyv8c"
 python310 -m pytest -q
 python310 -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 ```
 
-最近验证结果：
+最近验证结果（2026-08-31）：
 
-- `_pyv8`：`164 passed`，通过 `python310 setup.py build_ext --inplace --force` 重建。
-- `pyv8c`：使用重建原生扩展时 `76 passed`。
-- 启动基准：5 次冷启动 p50 为 `378.9 ms`。
-- baseline extractor 与 baseline-version 回归子集：`16 passed`。
-- baseline 默认/audit 单元子集：`2 passed`。
+- `_pyv8`：`177 passed`（原 164 + 新增 native 懒物化 13），通过
+  `python310 setup.py build_ext --inplace --force` 重建。
+- `pyv8c`：`108 passed`，`1 pre-existing failed`（`test_baseline_versions`
+  的 `{}`-empty 用例受 git 外 temp 目录权限影响，非本轮回归）。
+- 新增测试：`tests/unit/test_webidl_precompiled.py`（13）、
+  `tests/unit/test_architecture.py` 边界断言、
+  `tests/integration/test_lazy_interfaces.py`（懒物化行为）。
+- 启动基准：`python tools/benchmark_startup.py --runs 5` p50 为 `98.2 ms`
+  （懒物化接线前 `378.9 ms`）。
+- baseline 加载：二进制缓存命中时 `21.3 ms`（冷加载 `73.5 ms`，约 3.4x）；
+  损坏缓存自动回落 JSON 并重建，启动不失败。
 
 交接前执行 `git diff --check`。通过静态测试或 extractor 子集不能替代 DOM/network/native
 集成覆盖。

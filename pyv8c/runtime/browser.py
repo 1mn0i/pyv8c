@@ -3,7 +3,6 @@ import time
 import uuid
 import re
 import os
-import json
 from urllib.parse import urljoin, urlsplit
 from types import MappingProxyType
 
@@ -44,6 +43,18 @@ class _ContextBootstrapProxy:
 
 
 class Page:
+    # JavaScript helpers compiled once per realm; see Page._js_scripts.
+    _JS_HELPER_SOURCES = {
+        "make_promise": (
+            "(() => { let resolve, reject;"
+            " const promise = new Promise((yes, no) => { resolve = yes; reject = no; });"
+            " return { promise, resolve, reject }; })()"
+        ),
+        "error_factory": "(name, message) => new (globalThis[name] || Error)(message)",
+        "dom_error_factory": "(message, name) => new DOMException(message, name)",
+        "promise_resolve": "(value) => Promise.resolve(value)",
+    }
+
     _navigation_generation = StateAlias("navigation", "generation")
     _has_navigation = StateAlias("navigation", "has_navigation")
     _pending_navigation = StateAlias("navigation", "pending")
@@ -72,6 +83,7 @@ class Page:
         self.microtasks = self.tasks.microtasks
         self._task_errors = self.tasks.errors
         self._promise_counter = itertools.count(1)
+        self._js_script_cache = None
         self._owned_websockets = set()
         self._owned_workers = set()
         self._owned_frames = set()
@@ -94,6 +106,9 @@ class Page:
             "hook": False,
             "ctx_type": "Window",
             "class_configs": self.binding_session.configs,
+            "lazy_factory": self.binding_session.lazy_factory(
+                "Window", on_materialize=self._record_lazy_materialized,
+            ),
         }
         self.context = pyv8.Context(self.window, **context_kwargs)
         context_created = time.perf_counter_ns()
@@ -107,37 +122,22 @@ class Page:
             lazy_interfaces=True,
             class_for=self.binding_session.class_for,
         )
-        if os.environ.get("PYV8C_DISABLE_LAZY_BOOTSTRAP") != "1":
-            def lazy_interface(name):
-                name = str(name)
-                if name not in self.binding_session.interface_names("Window"):
-                    return None
-                value = self.binding_session.materialize(name)
-                self.context_owner.browser._record_startup(
-                    materialized_interfaces=len(self.binding_session.materialized_interfaces),
-                )
-                return value
-            lazy_interface.__name__ = "__pyv8c_lazy_interface"
-            self.context.expose(lazy_interface, name="__pyv8c_lazy_interface")
-            names = [
-                name for name in self.binding_session.interface_names("Window")
-                if name not in self.binding_session.universe.eager_names("Window")
-            ]
-            names_json = json.dumps(names, separators=(",", ":"))
-            self.context.exec_js(
-                "(() => { const get = globalThis.__pyv8c_lazy_interface; "
-                f"for (const name of {names_json}) {{ "
-                "if (!Object.prototype.hasOwnProperty.call(globalThis, name)) "
-                "Object.defineProperty(globalThis, name, {get: () => get(name), "
-                "enumerable: false, configurable: true}); } "
-                "delete globalThis.__pyv8c_lazy_interface; })()"
-            )
+        # Declare every remaining exposed name on the global object. Native
+        # accessors materialise the interface on first property access, so this
+        # costs no template construction and creates no Python stubs.
+        lazy_names = self.binding_session.lazy_names("Window")
+        lazy_registered = self.context.declare_lazy(
+            lazy_names, skip=self.binding_session.universe.eager_names("Window"),
+        )
+        lazy_registered_at = time.perf_counter_ns()
         self.context_owner.browser._record_startup(
             binding_plan_ms=(binding_prepared - binding_started) / 1_000_000,
             context_create_ms=(context_created - binding_prepared) / 1_000_000,
+            lazy_register_ms=(lazy_registered_at - context_created) / 1_000_000,
             eager_interfaces=len(self.binding_session.materialized_interfaces),
             materialized_interfaces=len(self.binding_session.materialized_interfaces),
             interface_names=len(self.binding_session.interface_names("Window")),
+            lazy_registered=lazy_registered,
         )
 
     @property
@@ -145,6 +145,14 @@ class Page:
 
     @url.setter
     def url(self, value): self.goto(value)
+
+    def _record_lazy_materialized(self, name):
+        """Keep startup stats in sync with on-demand interface materialisation."""
+        self.context_owner.browser._record_startup(
+            materialized_interfaces=len(self.binding_session.materialized_interfaces),
+            lazy_materialized=len(self.binding_session.materialized_interfaces)
+            - len(self.binding_session.universe.eager_names("Window")),
+        )
 
     def _navigation_allowed(self):
         return not self._has_navigation or self._dispatch_beforeunload()
@@ -651,11 +659,29 @@ class Page:
     def post_task(self, callback):
         self.tasks.post(callback)
 
-    def _make_promise(self):
-        record = self.context.exec_js("(() => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j; }); return { promise, resolve, reject }; })()")
+    @property
+    def _js_scripts(self):
+        """Compile the realm's JavaScript helpers exactly once.
+
+        ``exec_js`` builds a fresh ``Script`` for every source string, and that
+        construction costs several times more than evaluating an already
+        compiled one. Fetch, XHR and every rejected Promise go through these
+        helpers, so they are compiled once per realm and re-evaluated after.
+        """
+        scripts = self._js_script_cache
+        if scripts is None:
+            scripts = {
+                key: pyv8.Script(self.context, source)
+                for key, source in self._JS_HELPER_SOURCES.items()
+            }
+            self._js_script_cache = scripts
+        return scripts
+
+    def make_promise(self):
+        record = self.context.exec_js(self._js_scripts["make_promise"])
         return record["promise"], record["resolve"], record["reject"]
 
-    def _js_error_value(self, exc):
+    def js_error_value(self, exc):
         """Materialize a rejected Promise reason as a native JS error object."""
         error = as_js_error(exc)
         name = getattr(error, "_name", None)
@@ -666,20 +692,19 @@ class Page:
                 "V8URIError": "URIError", "V8EvalError": "EvalError",
             }.get(type(error).__name__, "Error")
         message = str(error)
-        code = getattr(error, "_code", 0)
-        factory = self.context.exec_js("(name, message) => { const C = globalThis[name] || Error; return new C(message); }")
+        scripts = self._js_scripts
         # DOMException's name is stored on the Python instance, while native
         # Error subclasses use the constructor name.  Keep DOMException
         # construction separate so its name/code remain observable.
         if hasattr(error, "_name"):
-            dom_factory = self.context.exec_js("(message, name) => new DOMException(message, name)")
-            return dom_factory.call(None, message, name)
-        return factory.call(None, name, message, code)
+            factory = self.context.exec_js(scripts["dom_error_factory"])
+            return factory.call(None, message, name)
+        factory = self.context.exec_js(scripts["error_factory"])
+        return factory.call(None, name, message)
 
     def promise_resolve(self, value):
-        promise = self.context.exec_js("Promise")
-        resolve = self.context.exec_js("Promise.resolve")
-        return resolve.call(promise, value)
+        factory = self.context.exec_js(self._js_scripts["promise_resolve"])
+        return factory.call(None, value)
 
     def load_iframe(self, iframe):
         target = iframe.get_src() or "about:blank"
@@ -724,6 +749,8 @@ class Page:
             self._dispatch_beforeunload()
             self._dispatch_page_event("pagehide", self.window, {"bubbles": False, "persisted": False})
             self._dispatch_page_event("unload", self.window, {"bubbles": False})
+        # Drop cached JS scripts before the V8 context goes away.
+        self._js_script_cache = None
         self.closed = True; self.tasks.close(); self._document_resources.clear(); self._load_waiters.clear()
         for frame in list(self._owned_frames): frame.close()
         self._owned_frames.clear()
@@ -855,6 +882,9 @@ class Browser:
             "materialized_interfaces": 0,
             "binding_plan_ms": 0.0,
             "context_create_ms": 0.0,
+            "lazy_register_ms": 0.0,
+            "lazy_registered": 0,
+            "lazy_materialized": 0,
         })
 
     @property

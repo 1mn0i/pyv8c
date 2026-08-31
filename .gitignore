@@ -22,5 +22,6 @@ dist/
 *.exp
 *.dll
 
-# Extracted bundled-baseline cache. Releases only contain the ZIP artifact.
+# Extracted bundled-baseline caches. Releases only contain the ZIP artifact.
 pyv8c/baselines/*.json
+pyv8c/baselines/*.pyv8ccache

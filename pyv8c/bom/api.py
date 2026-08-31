@@ -337,14 +337,14 @@ class Window(WindowProperties):
     def fn_queueMicrotask(self, callback): self._page.microtasks.append(callback)
     def fn_requestAnimationFrame(self, callback): return self._page.schedule(callback, 0, repeat=False)
     def fn_fetch(self, request, options=None):
-        promise, resolve, reject = self._page._make_promise()
+        promise, resolve, reject = self._page.make_promise()
         try:
             req = request if isinstance(request, Request) else Request(request, options, page=self._page)
         except BaseException as exc:
-            self._page.post_task(lambda exc=exc: reject(self._page._js_error_value(exc)))
+            self._page.post_task(lambda exc=exc: reject(self._page.js_error_value(exc)))
             return promise
         self._page.load_resource_async(req.get_url(), {
             "method": req.get_method(), "headers": req.get_headers(), "body": req._body,
             "timeout": req._timeout, "credentials": req._credentials, "mode": req._mode, "redirect": req._redirect,
-        }, lambda response, error: reject(self._page._js_error_value(error)) if error else resolve(response))
+        }, lambda response, error: reject(self._page.js_error_value(error)) if error else resolve(response))
         return promise

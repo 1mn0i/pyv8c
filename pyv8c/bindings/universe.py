@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 import inspect
+import pickle
 import time
 import zipfile
 from pathlib import Path
@@ -53,12 +54,59 @@ class BaselineSnapshot:
         }
 
 
+# Binary cache header. Bump the version whenever the cached payload shape
+# changes; anything unreadable is simply rebuilt from the JSON baseline.
+_BINARY_CACHE_MAGIC = b"pyv8c-baseline/1"
+_BINARY_CACHE_SUFFIX = ".pyv8ccache"
+
+
 class BaselineRepository:
     """Read immutable baseline snapshots, sharing only identical file contents."""
 
     _cache: dict[tuple[str, str], BaselineSnapshot] = {}
     _stat_cache: dict[tuple[str, int, int], BaselineSnapshot] = {}
     _last_timings: dict[str, float] = {}
+
+    @staticmethod
+    def _read_binary_cache(path, digest):
+        """Return the cached ``(metadata, interfaces)`` pair, or ``None``.
+
+        A cache is only usable when it was produced from byte-identical source
+        and declares the supported schema. Any corruption or I/O problem makes
+        it fall back to the JSON path rather than failing startup.
+        """
+        try:
+            with open(path, "rb") as handle:
+                if handle.read(len(_BINARY_CACHE_MAGIC)) != _BINARY_CACHE_MAGIC:
+                    return None
+                header = pickle.load(handle)
+                if not isinstance(header, dict) or header.get("digest") != digest:
+                    return None
+                if header.get("schema") != 5:
+                    return None
+                payload = pickle.load(handle)
+        except Exception:
+            return None
+        if not isinstance(payload, tuple) or len(payload) != 2:
+            return None
+        metadata, interfaces = payload
+        if not isinstance(metadata, dict) or not isinstance(interfaces, dict):
+            return None
+        return metadata, interfaces
+
+    @staticmethod
+    def _write_binary_cache(path, digest, metadata, interfaces):
+        """Best-effort cache write; startup must never depend on it."""
+        try:
+            with open(path, "wb") as handle:
+                handle.write(_BINARY_CACHE_MAGIC)
+                pickle.dump({"digest": digest, "schema": 5}, handle,
+                            protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump((metadata, interfaces), handle,
+                            protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception:
+            return False
+        return True
 
     @staticmethod
     def load(path=None) -> BaselineSnapshot:
@@ -90,6 +138,7 @@ class BaselineRepository:
                 "baseline_cached": True,
             }
             return cached_by_stat
+        binary_cache = target.with_suffix(_BINARY_CACHE_SUFFIX)
         try:
             if target.suffix.lower() == ".zip":
                 if cache_stat is not None and cache_stat.st_mtime_ns >= stat.st_mtime_ns:
@@ -114,52 +163,70 @@ class BaselineRepository:
             else:
                 raw = target.read_bytes()
             decoded = time.perf_counter_ns()
-            document = json.loads(raw.decode("utf-8"))
-            parsed = time.perf_counter_ns()
         except UnicodeDecodeError as exc:
             raise ValueError(f"Chromium interface baseline must be UTF-8 JSON: {target}") from exc
         except json.JSONDecodeError as exc:
             raise ValueError(f"invalid Chromium interface baseline JSON: {target}") from exc
-        if not isinstance(document, dict):
-            raise ValueError("Chromium interface baseline root must be an object")
-        metadata = document.get("_webidl")
-        schema = metadata.get("schema") if isinstance(metadata, dict) else None
-        if not isinstance(metadata, dict):
-            raise ValueError("Chromium interface baseline must contain _webidl metadata")
-        if schema != 5:
-            raise ValueError(f"unsupported Chromium interface baseline schema {schema!r}; expected 5")
-        compact = metadata.get("compact")
-        if compact is not True:
-            raise ValueError(
-                "Chromium interface baseline is not a compact schema 5 runtime baseline; "
-                "regenerate without --audit"
-            )
-        interfaces = {name: value for name, value in document.items() if not name.startswith("_")}
-        if not interfaces:
-            raise ValueError("Chromium interface baseline must contain interfaces")
-        for name, spec in interfaces.items():
-            if not isinstance(spec, dict):
-                raise ValueError(f"invalid interface entry {name!r} in Chromium interface baseline")
-            parent = spec.get("parent")
-            if parent is not None and (not isinstance(parent, str) or parent not in interfaces):
-                raise ValueError(f"interface {name!r} refers to unknown parent {parent!r}")
-        visiting, visited = set(), set()
-
-        def visit(name):
-            if name in visiting:
-                raise ValueError(f"interface parent cycle detected at {name!r}")
-            if name in visited:
-                return
-            visiting.add(name)
-            parent = interfaces[name].get("parent")
-            if parent is not None:
-                visit(parent)
-            visiting.remove(name)
-            visited.add(name)
-
-        for name in interfaces:
-            visit(name)
         digest = sha256(raw).hexdigest()
+
+        cached_payload = (BaselineRepository._read_binary_cache(binary_cache, digest)
+                          if binary_cache.is_file() else None)
+        if cached_payload is not None:
+            # Skip JSON parsing, the interface projection and the cycle walk:
+            # the cache is only valid for byte-identical source that already
+            # passed every check.
+            metadata, interfaces = cached_payload
+            parsed = time.perf_counter_ns()
+        else:
+            try:
+                document = json.loads(raw.decode("utf-8"))
+            except UnicodeDecodeError as exc:
+                raise ValueError(f"Chromium interface baseline must be UTF-8 JSON: {target}") from exc
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"invalid Chromium interface baseline JSON: {target}") from exc
+            parsed = time.perf_counter_ns()
+            if not isinstance(document, dict):
+                raise ValueError("Chromium interface baseline root must be an object")
+            metadata = document.get("_webidl")
+            schema = metadata.get("schema") if isinstance(metadata, dict) else None
+            if not isinstance(metadata, dict):
+                raise ValueError("Chromium interface baseline must contain _webidl metadata")
+            if schema != 5:
+                raise ValueError(f"unsupported Chromium interface baseline schema {schema!r}; expected 5")
+            compact = metadata.get("compact")
+            if compact is not True:
+                raise ValueError(
+                    "Chromium interface baseline is not a compact schema 5 runtime baseline; "
+                    "regenerate without --audit"
+                )
+            interfaces = {name: value for name, value in document.items() if not name.startswith("_")}
+            if not interfaces:
+                raise ValueError("Chromium interface baseline must contain interfaces")
+            for name, spec in interfaces.items():
+                if not isinstance(spec, dict):
+                    raise ValueError(f"invalid interface entry {name!r} in Chromium interface baseline")
+                parent = spec.get("parent")
+                if parent is not None and (not isinstance(parent, str) or parent not in interfaces):
+                    raise ValueError(f"interface {name!r} refers to unknown parent {parent!r}")
+            visiting, visited = set(), set()
+
+            def visit(name):
+                if name in visiting:
+                    raise ValueError(f"interface parent cycle detected at {name!r}")
+                if name in visited:
+                    return
+                visiting.add(name)
+                parent = interfaces[name].get("parent")
+                if parent is not None:
+                    visit(parent)
+                visiting.remove(name)
+                visited.add(name)
+
+            for name in interfaces:
+                visit(name)
+            BaselineRepository._write_binary_cache(
+                binary_cache, digest, metadata, interfaces,
+            )
         key = (str(target.resolve()), digest)
         snapshot = BaselineRepository._cache.get(key)
         cache_hit = snapshot is not None
@@ -178,6 +245,7 @@ class BaselineRepository:
             "baseline_decode_ms": (parsed - decoded) / 1_000_000,
             "baseline_compile_ms": (frozen - parsed) / 1_000_000,
             "baseline_cached": cache_hit,
+            "baseline_binary_cache": cached_payload is not None,
         }
         return snapshot
 
@@ -227,11 +295,15 @@ class InterfaceUniverse:
         self.eager_interfaces = tuple(dict.fromkeys(eager_interfaces or ()))
         self.strict_validation = bool(strict_validation)
         self.lazy_interfaces = bool(lazy_interfaces)
+        # Realm-independent caches. Configs are owned by each BindingSession.
         self._classes: dict[str, type] = {}
-        self._configs: dict[type, dict[str, Any]] = {}
         self._plans: dict[tuple[str, str, str], BindingPlan] = {}
         self._parent_chains = {}
         self._exposure_names = {}
+        self._handler_cache = {}
+        self._children_index: dict[str, tuple[str, ...]] | None = None
+        self._exposure_index: dict[str, frozenset[str]] | None = None
+        self._interface_order: dict[str, int] | None = None
         self._parameter_names: dict[object, tuple[str, ...]] = {}
 
     @property
@@ -247,6 +319,44 @@ class InterfaceUniverse:
             return self.baseline.interfaces[name]
         except KeyError as exc:
             raise TypeError(f"interface {name!r} is missing from Chromium interface baseline") from exc
+
+    def _interface_positions(self):
+        """Stable document order, used to keep index traversals deterministic."""
+        if self._interface_order is None:
+            self._interface_order = {
+                name: position
+                for position, name in enumerate(self.baseline.interfaces)
+            }
+        return self._interface_order
+
+    def _children_of_index(self):
+        """parent -> direct children, built once from the baseline."""
+        if self._children_index is None:
+            index: dict[str, list[str]] = {}
+            for name, spec in self.baseline.interfaces.items():
+                parent = spec.get("parent")
+                if parent:
+                    index.setdefault(parent, []).append(name)
+            self._children_index = {key: tuple(value) for key, value in index.items()}
+        return self._children_index
+
+    def _descendants(self, name):
+        """All transitive descendants of ``name``, in document order.
+
+        Blink installs some shared members on concrete descendants, so member
+        lookup has to search downwards as well as up the parent chain.
+        """
+        index = self._children_of_index()
+        seen = set()
+        queue = list(index.get(name, ()))
+        while queue:
+            current = queue.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            queue.extend(index.get(current, ()))
+        positions = self._interface_positions()
+        return sorted(seen, key=lambda item: positions[item])
 
     def _own_members(self, interface_name):
         spec = self._spec(interface_name)
@@ -282,17 +392,65 @@ class InterfaceUniverse:
             current = self._spec(current).get("parent")
         # Blink sometimes installs WorkerGlobalScope members in a concrete
         # descendant binding table. Keep this lookup explicit and deterministic.
-        for candidate_name, candidate_spec in self.baseline.interfaces.items():
-            cursor, descendants = candidate_name, set()
-            while cursor and cursor not in descendants:
-                descendants.add(cursor)
-                if cursor == interface_name:
-                    for location, member in self._own_members(candidate_name):
-                        if member.get("name") == public_name and member.get("kind") == kind:
-                            return candidate_name, location, member
-                    break
-                cursor = candidate_spec.get("parent") if cursor == candidate_name else self._spec(cursor).get("parent")
+        for candidate_name in self._descendants(interface_name):
+            for location, member in self._own_members(candidate_name):
+                if member.get("name") == public_name and member.get("kind") == kind:
+                    return candidate_name, location, member
         return None
+
+    # (baseline handler key, __v8_*__ method name) per interceptor family.
+    _HANDLER_FAMILIES = (
+        ("named", (
+            ("get", "__v8_name_get__"), ("set", "__v8_name_set__"),
+            ("query", "__v8_name_query__"), ("del", "__v8_name_del__"),
+            ("enum", "__v8_name_enum__"),
+        )),
+        ("indexed", (
+            ("get", "__v8_index_get__"), ("set", "__v8_index_set__"),
+            ("query", "__v8_index_query__"), ("del", "__v8_index_del__"),
+            ("enum", "__v8_index_enum__"),
+        )),
+    )
+    _CROSS_ORIGIN_FAMILIES = (
+        ("named", (
+            ("get", "__v8_cross_origin_name_get__"), ("set", "__v8_cross_origin_name_set__"),
+            ("query", "__v8_cross_origin_name_query__"), ("del", "__v8_cross_origin_name_del__"),
+            ("enum", "__v8_cross_origin_name_enum__"),
+        )),
+        ("indexed", (
+            ("get", "__v8_cross_origin_index_get__"), ("set", "__v8_cross_origin_index_set__"),
+            ("query", "__v8_cross_origin_index_query__"), ("del", "__v8_cross_origin_index_del__"),
+            ("enum", "__v8_cross_origin_index_enum__"),
+        )),
+    )
+
+    def _declared_handlers(self, name):
+        """The ``__v8_*__`` handler names the baseline declares for an interface.
+
+        Only these handlers are installed on the V8 template, and only these
+        receive a Python stub. Installing all twenty for every interface
+        created tens of thousands of unused closures.
+        """
+        cached = self._handler_cache.get(name)
+        if cached is not None:
+            return cached
+        template = self._spec(name).get("template") or {}
+        handlers = template.get("handlers") or {}
+        cross = handlers.get("cross_origin") or {}
+        cross_named = cross.get("named") or {}
+        cross_indexed = cross.get("indexed") or {}
+        enabled = []
+        for family, mapping in self._HANDLER_FAMILIES:
+            keys = handlers.get(family) or {}
+            enabled.extend(name for key, name in mapping if key in keys)
+        for family, mapping in self._CROSS_ORIGIN_FAMILIES:
+            keys = cross.get(family) or {}
+            enabled.extend(name for key, name in mapping if key in keys)
+        if template.get("access_check") or cross_named or cross_indexed:
+            enabled.append("__v8_cross_origin_check__")
+        result = tuple(enabled)
+        self._handler_cache[name] = result
+        return result
 
     def binding_plan(self, interface_name, public_name, kind="operation"):
         key = (interface_name, public_name, kind)
@@ -410,11 +568,14 @@ class InterfaceUniverse:
         return names
 
     def _reject_conversion(self, receiver, exc):
-        page = getattr(receiver, "_page", None)
-        if page is None:
+        # Resolve the realm through the core protocol so bindings never depends
+        # on runtime internals such as Page privates.
+        from ..core.realm import realm_of
+        realm = realm_of(receiver)
+        if realm is None:
             raise exc
-        promise, _resolve, reject = page._make_promise()
-        page.post_task(lambda: reject(page._js_error_value(exc)))
+        promise, _resolve, reject = realm.make_promise()
+        realm.post_task(lambda: reject(realm.js_error_value(exc)))
         return promise
 
     def _method_wrapper(self, cls, interface_name, public_name, callback_name, plan, *, static, realm=None):
@@ -529,25 +690,22 @@ class InterfaceUniverse:
                         _cross_origin(member.get("cross_origin")), _side_effect(member.get("side_effect")),
                     ))
                     configured_attributes.add(member_name)
-        # Interceptor callbacks are discovered from the native template. Add
-        # safe Python stubs so ClassConfig can install the corresponding V8
-        # handlers even when no hand-written implementation exists.
-        handler_methods = (
-            "__v8_name_get__", "__v8_name_set__", "__v8_name_query__", "__v8_name_del__", "__v8_name_enum__",
-            "__v8_index_get__", "__v8_index_set__", "__v8_index_query__", "__v8_index_del__", "__v8_index_enum__",
-            "__v8_cross_origin_check__", "__v8_cross_origin_name_get__", "__v8_cross_origin_name_set__",
-            "__v8_cross_origin_name_query__", "__v8_cross_origin_name_del__", "__v8_cross_origin_name_enum__",
-            "__v8_cross_origin_index_get__", "__v8_cross_origin_index_set__", "__v8_cross_origin_index_query__",
-            "__v8_cross_origin_index_del__", "__v8_cross_origin_index_enum__",
-        )
-        for method_name in handler_methods:
+        # Add safe Python stubs so ClassConfig can install the V8 handlers the
+        # baseline actually declares. Interfaces without handlers get none.
+        for method_name in self._declared_handlers(name):
             if not any(method_name in base.__dict__ for base in cls.__mro__):
                 callbacks[method_name] = self._stub_handler(name, method_name)
         callback_owner = type(f"_{name}Callbacks_{id(self):x}", (cls,), callbacks)
         return tuple(wrapped_methods), tuple(wrapped_attributes), callback_owner
 
     def class_config_for(self, name):
-        return self._class_config_for(name, self._configs, None)
+        """Build a config for inspection outside of any realm.
+
+        Deliberately uncached. Only a :class:`BindingSession` owns configs,
+        because member wrappers may capture the realm they were built for and
+        sharing them across realms would leak one realm into another.
+        """
+        return self._class_config_for(name, {}, None)
 
     def _class_config_for(self, name, cache, realm):
         cls = self.class_for(name)
@@ -563,23 +721,9 @@ class InterfaceUniverse:
             "__v8_parent_class__": self.class_for(parent_name) if parent_name else object,
             "__v8_to_string_tag__": spec.get("tag") or name,
         }
+        for method_name in self._declared_handlers(name):
+            config[method_name] = True
         template = spec.get("template") or {}
-        handlers = template.get("handlers") or {}
-        named = handlers.get("named") or {}
-        indexed = handlers.get("indexed") or {}
-        cross = handlers.get("cross_origin") or {}
-        cross_named = cross.get("named") or {}
-        cross_indexed = cross.get("indexed") or {}
-        for key, method_name in (("get", "__v8_name_get__"), ("set", "__v8_name_set__"), ("query", "__v8_name_query__"), ("del", "__v8_name_del__"), ("enum", "__v8_name_enum__")):
-            if key in named: config[method_name] = True
-        for key, method_name in (("get", "__v8_index_get__"), ("set", "__v8_index_set__"), ("query", "__v8_index_query__"), ("del", "__v8_index_del__"), ("enum", "__v8_index_enum__")):
-            if key in indexed: config[method_name] = True
-        for key, method_name in (("get", "__v8_cross_origin_name_get__"), ("set", "__v8_cross_origin_name_set__"), ("query", "__v8_cross_origin_name_query__"), ("del", "__v8_cross_origin_name_del__"), ("enum", "__v8_cross_origin_name_enum__")):
-            if key in cross_named: config[method_name] = True
-        for key, method_name in (("get", "__v8_cross_origin_index_get__"), ("set", "__v8_cross_origin_index_set__"), ("query", "__v8_cross_origin_index_query__"), ("del", "__v8_cross_origin_index_del__"), ("enum", "__v8_cross_origin_index_enum__")):
-            if key in cross_indexed: config[method_name] = True
-        if template.get("access_check") or cross_named or cross_indexed:
-            config["__v8_cross_origin_check__"] = True
         for source_key, config_key in (("immutable_proto", "__v8_immutable__"), ("undetectable", "__v8_undetectable__"), ("global_this", "__v8_global_this__"), ("as_object", "__v8_as_obj__"), ("unconstructable", "__v8_unconstructable__")):
             if template.get(source_key):
                 config[config_key] = 1
@@ -636,18 +780,31 @@ class InterfaceUniverse:
             yield name
             name = self._spec(name).get("parent")
 
+    def _exposed_index(self):
+        """``exposed_in`` context -> interface names, built once."""
+        if self._exposure_index is None:
+            index: dict[str, set[str]] = {}
+            for name, spec in self.baseline.interfaces.items():
+                for context in (spec.get("exposed_in") or ()):
+                    index.setdefault(context, set()).add(name)
+            self._exposure_index = {key: frozenset(value) for key, value in index.items()}
+        return self._exposure_index
+
     def exposed_names(self, context_type):
         from .registry import IMPLEMENTATIONS
+        exposed = self._exposed_index().get(context_type)
+        if not exposed:
+            return []
+        # Iterate the baseline so the result keeps document order.
+        if self.expose_unimplemented:
+            return [name for name in self.baseline.interfaces if name in exposed]
         return [
-            name for name, spec in self.baseline.interfaces.items()
-            if context_type in (spec.get("exposed_in") or ())
-            and (self.expose_unimplemented or name in IMPLEMENTATIONS)
+            name for name in self.baseline.interfaces
+            if name in exposed and name in IMPLEMENTATIONS
         ]
 
-    def class_configs(self, context_type, *, roots=()):
-        return self._class_configs(context_type, roots=roots, cache=self._configs, realm=None)
-
-    def _class_configs(self, context_type, *, roots=(), cache, realm):
+    def _resolve_names(self, context_type, roots=()):
+        """Interface names (including ancestors) a context_type must install."""
         names = set(
             self.exposed_names(context_type)
             if not self.lazy_interfaces else self.eager_names(context_type)
@@ -655,6 +812,10 @@ class InterfaceUniverse:
         names.update(root for root in roots if isinstance(root, str))
         for name in tuple(names):
             names.update(self._walk_parent_names(name))
+        return names
+
+    def _class_configs(self, context_type, *, roots=(), cache, realm):
+        names = self._resolve_names(context_type, roots)
         return {self.class_for(name): self._class_config_for(name, cache, realm) for name in names}
 
     def binding_session(self, realm=None):
@@ -705,6 +866,7 @@ class BindingSession:
         self.realm = realm
         self._configs: dict[type, dict[str, Any]] = {}
         self._materialized: set[str] = set()
+        self._lazy_names: dict[str, tuple[str, ...]] = {}
 
     def interface_names(self, context_type="Window"):
         return self.universe.interface_names(context_type)
@@ -742,8 +904,41 @@ class BindingSession:
         return self._configs[self.class_for(name)]
 
     def class_configs(self, context_type, *, roots=()):
+        names = self.universe._resolve_names(context_type, roots)
         configs = self.universe._class_configs(
             context_type, roots=roots, cache=self._configs, realm=self.realm,
         )
-        self._materialized.update(cls.__name__ for cls in configs)
+        # Track interface names, not Python class names: a real implementation
+        # class may not be named after the interface it implements.
+        self._materialized.update(names)
         return configs
+
+    def lazy_names(self, context_type="Window"):
+        """Exposed names that are declared on the realm but not pre-built."""
+        if context_type not in self._lazy_names:
+            eager = set(self.universe.eager_names(context_type))
+            self._lazy_names[context_type] = tuple(
+                name for name in self.interface_names(context_type) if name not in eager
+            )
+        return self._lazy_names[context_type]
+
+    def lazy_factory(self, context_type="Window", on_materialize=None):
+        """Build the callable the native Context invokes on first access.
+
+        Returning ``None`` tells the native accessor the name does not belong to
+        this realm, which keeps it resolved as ``undefined``. ``on_materialize``
+        is notified with each name that was built on demand.
+        """
+        allowed = set(self.lazy_names(context_type))
+
+        def factory(name):
+            name = str(name)
+            if name not in allowed:
+                return None
+            cls = self.materialize(name)
+            if on_materialize is not None:
+                on_materialize(name)
+            return cls
+
+        factory.__name__ = "__pyv8c_lazy_interface"
+        return factory

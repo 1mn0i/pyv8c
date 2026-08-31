@@ -7,7 +7,7 @@ compiles its own immutable binding plans from that baseline.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 import re
 from typing import Any, Mapping
@@ -36,11 +36,23 @@ class MethodSpec:
     max_args: int | None = None
     variadic: bool = False
     overloads: tuple["MethodSpec", ...] = ()
+    # Computed once at compile time so argument validation never rescans
+    # the parameter tuple.
+    required_arg_count: int | None = None
+
+    def __post_init__(self):
+        if self.required_arg_count is None:
+            if self.required is not None:
+                count = self.required
+            else:
+                count = sum(
+                    1 for item in self.params
+                    if not item.optional and not item.variadic
+                )
+            object.__setattr__(self, "required_arg_count", count)
 
     def required_count(self):
-        if self.required is not None:
-            return self.required
-        return sum(1 for item in self.params if not item.optional and not item.variadic)
+        return self.required_arg_count
 
 
 @dataclass(frozen=True)
@@ -52,6 +64,9 @@ class BindingPlan:
     status: str
     source_evidence: str = ""
     error_mode: str = "throw"
+    # Pre-built plans for each overload; avoids rebuilding a BindingPlan on
+    # every call that has to try more than one signature.
+    overload_plans: tuple["BindingPlan", ...] = ()
 
     @property
     def resolved(self):
@@ -191,15 +206,27 @@ def compile_signature(signature) -> MethodSpec:
 
 def compile_binding(interface, name, kind, signature) -> BindingPlan:
     signature = signature or {}
-    return BindingPlan(
+    status = _status(signature)
+    evidence = str(signature.get("source_evidence") or "")
+    error_mode = str(signature.get("error_mode") or "throw")
+    plan = BindingPlan(
         interface,
         name,
         kind,
         compile_signature(signature),
-        _status(signature),
-        str(signature.get("source_evidence") or ""),
-        str(signature.get("error_mode") or "throw"),
+        status,
+        evidence,
+        error_mode,
     )
+    if plan.signature.overloads:
+        plan = replace(
+            plan,
+            overload_plans=tuple(
+                BindingPlan(interface, name, kind, overload, status, evidence, error_mode)
+                for overload in plan.signature.overloads
+            ),
+        )
+    return plan
 
 
 def _is_undefined(value):
@@ -257,10 +284,13 @@ def _interface(value, name, nullable=False):
         raise _error("TypeError", f"The provided value is not of type '{name}'.")
     from .registry import IMPLEMENTATIONS
     expected = IMPLEMENTATIONS.get(name)
-    idl_names = {getattr(cls, "__idl_name__", None) for cls in type(value).__mro__}
-    if (expected is None or not isinstance(value, expected)) and name not in idl_names:
-        raise _error("TypeError", f"The provided value is not of type '{name}'.")
-    return value
+    # The registered implementation is the common case, so test it first and
+    # only walk the MRO when that fails.
+    if expected is not None and isinstance(value, expected):
+        return value
+    if name in {getattr(cls, "__idl_name__", None) for cls in type(value).__mro__}:
+        return value
+    raise _error("TypeError", f"The provided value is not of type '{name}'.")
 
 
 def _dictionary(value, nullable=False):
@@ -287,18 +317,69 @@ def _sequence(value, item_type="any", nullable=False):
     return [_convert(item, item_type) for item in values]
 
 
+def _long(value):
+    return _number(value, integer=True)
+
+
+def _unsigned_long(value):
+    return _number(value, integer=True, unsigned=True)
+
+
+def _byte_string(value):
+    result = _string(value)
+    if any(ord(character) > 255 for character in result):
+        raise _error("TypeError", "The value is not a valid ByteString.")
+    return result
+
+
+# Single dict lookup for the scalar types that dominate real signatures.
+# Types carrying extra constraints (enums, ByteString bounds) fall through to
+# the explicit branches below so their checks are never skipped.
+_SCALAR_CONVERTERS = {
+    "DOMString": _string,
+    "USVString": _string,
+    "string": _string,
+    "boolean": _boolean,
+    "bool": _boolean,
+    "double": _number,
+    "unrestricted double": _number,
+    "number": _number,
+    "long": _long,
+    "int": _long,
+    "unsigned long": _unsigned_long,
+    "unsigned short": _unsigned_long,
+    "uint": _unsigned_long,
+    "ByteString": _byte_string,
+}
+
+
 def _convert(value, type_spec, *, nullable=False, enum=()):
     if type_spec in (None, "any", "object"):
         if _is_null(value) and not nullable and type_spec == "object":
             raise _error("TypeError", "The provided value is not an object.")
         return value
+    if not enum and isinstance(type_spec, str):
+        converter = _SCALAR_CONVERTERS.get(type_spec)
+        if converter is not None:
+            return converter(value)
     if isinstance(type_spec, (tuple, list)):
-        branches = list(type_spec)
+        # Try the branches matching the runtime shape first. Filtering in
+        # place avoids allocating and sorting a list on every union call.
         if isinstance(value, (dict, pyv8.JSObject)):
-            branches.sort(key=lambda branch: 0 if isinstance(branch, str) and (branch.startswith("dictionary") or branch.startswith("record<")) else 1)
+            preferred = ("dictionary", "record<")
         elif isinstance(value, (list, tuple)):
-            branches.sort(key=lambda branch: 0 if isinstance(branch, str) and branch.startswith("sequence<") else 1)
-        for branch in branches:
+            preferred = ("sequence<",)
+        else:
+            preferred = ()
+        for branch in type_spec:
+            if preferred and isinstance(branch, str) and branch.startswith(preferred):
+                try:
+                    return _convert(value, branch, nullable=nullable, enum=enum)
+                except Exception:
+                    pass
+        for branch in type_spec:
+            if preferred and isinstance(branch, str) and branch.startswith(preferred):
+                continue
             try:
                 return _convert(value, branch, nullable=nullable, enum=enum)
             except Exception:
@@ -345,12 +426,13 @@ def validate_arguments(plan: BindingPlan, args):
 
     spec = plan.signature
     if spec.overloads:
-        for overload in spec.overloads:
+        # Overload plans are built once by compile_binding.
+        for nested in plan.overload_plans or tuple(
+            BindingPlan(plan.interface, plan.name, plan.kind, overload, plan.status,
+                        plan.source_evidence, plan.error_mode)
+            for overload in spec.overloads
+        ):
             try:
-                nested = BindingPlan(
-                    plan.interface, plan.name, plan.kind, overload, plan.status,
-                    plan.source_evidence, plan.error_mode,
-                )
                 return validate_arguments(nested, args)
             except Exception:
                 pass

@@ -399,3 +399,64 @@
 - The extractor keeps JSON output as its default. A `.zip` output path or the
   optional `--zip` flag writes the one-member compressed release artifact.
 - Package data now includes only baseline ZIP files; extracted JSON caches are ignored.
+
+## 2026-08-31: startup and runtime performance round
+
+### 目标
+
+落地已确认的 P0 四项 + P1 三项优化：native 接口懒物化、Worker 关闭全量物化、
+`core.realm` 服务协议、Universe/Session 双缓存合并、JS helper 一次性编译、
+`validate_arguments` 预编译、baseline 二进制缓存与索引。
+
+### 修改（pyv8c）
+
+- `core/realm.py`：新增 `RealmServices` Protocol（`make_promise` / `js_error_value` /
+  `post_task`）与 `resolve_realm()`，bindings 层不再直接访问 `runtime` 对象。
+- `bindings/universe.py`：
+  - `BindingSession.lazy_factory()` / `lazy_names()` / `materialize()` /
+    `materialized_interfaces()`，供 native 惰性访问器回调；`_materialized` 改按接口名记录。
+  - 删除 `InterfaceUniverse._configs` 与 `class_config_for()`，config 拆为 realm 无关
+    （Universe 级共享）与 realm 相关（Session 级合成）。
+  - handler stub 按 `spec["template"]["handlers"]` 实际声明生成，不再固定 20 个。
+  - `BaselineRepository` 新增带 `schema + sha256` 校验头的 pickle 二进制缓存
+    （`.pyv8ccache`），命中即跳过 JSON 解析、接口投影与父链成环检查；损坏时静默回落。
+  - `_member()` 兜底改查 parent → children 邻接表子树；`exposed_names()` 改用
+    `exposed_in` 倒排索引，两者均保持文档序输出。
+  - JS helper（`_make_promise` / `_js_error_value` / `promise_resolve`）改为初始化时
+    一次性预编译 `pyv8.Script` 缓存，消除异步路径每次调用的 V8 编译。
+- `bindings/webidl.py`：`MethodSpec.required_arg_count` 预计算；`BindingPlan.overload_plans`
+  编译期生成；`_convert` 改 dict 分派并保留枚举/ByteString 约束；`_interface` 先试注册
+  实现再走 MRO；union 按运行时形状先试匹配分支。
+- `bindings/registry.py`：`depth()` 复用 universe 深度表。
+- `runtime/browser.py`：删除失效的 `PYV8C_DISABLE_LAZY_BOOTSTRAP` 引导块与调试 `print`；
+  `Page` 向 `pyv8.Context` 传 `lazy_names` + `lazy_factory`；启动统计新增
+  `lazy_registered` / `lazy_materialized` / `lazy_register_ms`。
+- `network/api.py`：Worker 的 `expose_interfaces` 改为 `lazy_interfaces=True` 并注册惰性名字。
+- `workers/api.py`：`WorkerScope` 实现 `RealmServices`。
+- 新增测试：`tests/integration/test_lazy_interfaces.py`、
+  `tests/unit/test_webidl_precompiled.py`；`test_architecture.py` 增加 bindings 不得
+  import runtime、不得引用 `_make_promise` 的边界断言。
+
+### 修改（`_pyv8`，独立仓库）
+
+- `Context.__init__` 新增可选 `lazy_factory` kwarg；新增 `Context.declare_lazy(names)`。
+- `ConstructAccessorNameGetterCallback` miss 分支回调 `lazy_factory`，复用
+  `py_class_to_template` 构建并回填模板缓存；工厂返回 `None` 或抛错时保持返回
+  `undefined` 的既有行为。不传 `lazy_factory` 时行为完全不变。
+- `context_dealloc` 增加 `Py_CLEAR(self->lazy_factory)`。
+- 新增 `tests/test_lazy_construct.py`（13 个用例）。
+
+### 验证
+
+- `_pyv8`：`177 passed`。
+- `pyv8c`：`108 passed`，1 个 pre-existing failed（`test_baseline_versions` 的
+  empty-`{}` 用例受 git 外 temp 目录权限影响，与本轮无关）。
+- 启动基准 `python tools/benchmark_startup.py --runs 5`：p50 `98.2 ms`
+  （懒物化接线前 `378.9 ms`）。
+- baseline 二进制缓存：命中 `21.3 ms` vs 冷加载 `73.5 ms`；损坏缓存回落 JSON 并重建。
+- `git diff --check` 通过。
+
+### 限制
+
+- 惰性访问只在 JS 首次访问该名字时物化；`Object.getOwnPropertyNames(window)` 依旧覆盖
+  全部暴露名（不可枚举属性），物化发生在取值时。
