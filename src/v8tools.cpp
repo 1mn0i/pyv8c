@@ -136,12 +136,53 @@ namespace bindings {
         v8::Isolate* isolate = info.GetIsolate();
         Local<Context> context = isolate->GetCurrentContext();
         context_c* py_ctx = (context_c*)v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
+        if (py_ctx == nullptr) {
+            info.GetReturnValue().SetUndefined();
+            return;
+        }
 
         String::Utf8Value property_name(isolate, property);
         PyObject* name = PyUnicode_FromString(*property_name);
+        if (name == NULL) {
+            js_throw_py();
+            return;
+        }
         PyObject* py_cls = PyDict_GetItem(py_ctx->class_template_cache, name);
+        if (py_cls == NULL && py_ctx->lazy_factory != NULL) {
+            // Lazy materialisation: ask Python for the class behind this name,
+            // build its template and remember it so later accesses resolve from
+            // the cache without another Python round trip.
+            PyObject* cls = PyObject_CallFunctionObjArgs(py_ctx->lazy_factory, name, NULL);
+            if (cls == NULL) {
+                Py_DECREF(name);
+                js_throw_py();
+                return;
+            }
+            if (cls != Py_None) {
+                py_cls = py_class_to_template(cls, py_ctx);
+                Py_DECREF(cls);
+                if (py_cls == NULL) {
+                    Py_DECREF(name);
+                    js_throw_py();
+                    return;
+                }
+                // py_class_to_template keys the cache by the Python class
+                // __name__, while this accessor looks interfaces up by their IDL
+                // name. Alias the entry when the two differ.
+                PyObject* existing = PyDict_GetItem(py_ctx->class_template_cache, name);
+                if (existing == NULL &&
+                    PyDict_SetItem(py_ctx->class_template_cache, name, py_cls) < 0) {
+                    Py_DECREF(name);
+                    js_throw_py();
+                    return;
+                }
+            }
+            else {
+                Py_DECREF(cls);
+            }
+        }
         if (py_cls == NULL) {
-            Py_XDECREF(name);
+            Py_DECREF(name);
             info.GetReturnValue().SetUndefined();
             return;
         }

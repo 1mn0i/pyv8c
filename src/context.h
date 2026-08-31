@@ -17,6 +17,9 @@ typedef struct
     PyObject* js_object_cache;
     PyObject* class_template_cache;
     PyObject* class_configs;
+    // Optional callable used to materialise lazily declared interface names.
+    // Called with an interface name, returns the Python class or None.
+    PyObject* lazy_factory;
     PyObject* py_global;
     bool has_debugger;
     bool has_done;
@@ -33,6 +36,7 @@ PyObject* context_run(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_expose(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_expose_module(context_c* self, PyObject* module);
 PyObject* context_js_obj(context_c* self, PyObject* py_object);
+PyObject* context_declare_lazy(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_gc(context_c* self);
 PyObject* context_close(context_c* self, PyObject* ignored);
 

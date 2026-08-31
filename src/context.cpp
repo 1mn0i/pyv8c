@@ -7,6 +7,7 @@
 #include "convert.h"
 #include "jsobject.h"
 #include "pyclass.h"
+#include "v8tools.h"
 #include "pyfunction.h"
 #include "jsfunction.h"
 #include "isolate.h"
@@ -19,6 +20,7 @@ PyMethodDef context_methods[] = {
     {"js_obj", (PyCFunction)context_js_obj, METH_O, NULL},
     {"expose", (PyCFunction)context_expose, METH_VARARGS | METH_KEYWORDS, NULL},
     {"expose_module", (PyCFunction)context_expose_module, METH_O, NULL},
+    {"declare_lazy", (PyCFunction)context_declare_lazy, METH_VARARGS | METH_KEYWORDS, NULL},
     {"gc", (PyCFunction)context_gc, METH_NOARGS, NULL},
     {"close", (PyCFunction)context_close, METH_NOARGS, NULL},
     {NULL},
@@ -89,11 +91,17 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* ctx_type = NULL;
     PyObject* py_isolate = Py_None;
     PyObject* class_configs = Py_None;
-    static const char *keywords[] = {"global_this", "hook", "ctx_type", "timeout", "isolate", "class_configs", NULL};
+    PyObject* lazy_factory = Py_None;
+    static const char *keywords[] = {"global_this", "hook", "ctx_type", "timeout", "isolate", "class_configs", "lazy_factory", NULL};
 
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOO", (char **) keywords,
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOO", (char **) keywords,
                                     &global, &hook, &ctx_type, &timeout, &py_isolate,
-                                    &class_configs) < 0) {
+                                    &class_configs, &lazy_factory) < 0) {
+        return NULL;
+    }
+
+    if (lazy_factory != Py_None && !PyCallable_Check(lazy_factory)) {
+        PyErr_SetString(PyExc_TypeError, "lazy_factory must be callable or None");
         return NULL;
     }
 
@@ -128,6 +136,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     }
     self->js_object_cache = NULL;
     self->class_configs = NULL;
+    self->lazy_factory = NULL;
     self->py_global = NULL;
     self->class_template_cache = PyDict_New();
     if (class_configs != Py_None && PyDict_Check(class_configs)) {
@@ -151,6 +160,10 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
             Py_XDECREF(global);
             return NULL;
         }
+    }
+    if (lazy_factory != Py_None) {
+        Py_INCREF(lazy_factory);
+        self->lazy_factory = lazy_factory;
     }
     self->py_global = global;
     self->has_debugger = false;
@@ -245,6 +258,7 @@ context_release(context_c *self)
 {
     Py_CLEAR(self->class_template_cache);
     Py_CLEAR(self->class_configs);
+    Py_CLEAR(self->lazy_factory);
     if (!self->js_context.IsEmpty()) {
         self->js_context.Reset();
         if (self->isolate_state != nullptr)
@@ -372,6 +386,95 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
     }
 
     Py_RETURN_NONE;
+}
+
+PyObject *
+context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
+{
+    PyObject* names = NULL;
+    PyObject* skip = Py_None;
+    static const char *keywords[] = {"names", "skip", NULL};
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|O", (char **) keywords,
+                                    &names, &skip) < 0) {
+        return NULL;
+    }
+
+    IsolateState* isolate_state = context_require_isolate(self);
+    if (isolate_state == nullptr)
+        return NULL;
+    IN_ISOLATE(isolate_state);
+    Local<Context> context = self->js_context.Get(isolate);
+    Local<Object> global = context->Global();
+
+    // Names the caller already installed as concrete properties. Testing
+    // membership here avoids a global property lookup per name, which would
+    // otherwise invoke Python interceptors for every declared interface.
+    PyObject* skip_set = NULL;
+    if (skip != Py_None) {
+        PyObject* skip_seq = PySequence_Fast(skip, "declare_lazy skip must be a sequence");
+        PyErr_PROPAGATE(skip_seq);
+        skip_set = PySet_New(skip_seq);
+        Py_DECREF(skip_seq);
+        PyErr_PROPAGATE(skip_set);
+    }
+
+    PyObject* sequence = PySequence_Fast(names, "declare_lazy requires a sequence of interface names");
+    if (sequence == NULL) {
+        Py_XDECREF(skip_set);
+        return NULL;
+    }
+    Py_ssize_t size = PySequence_Size(sequence);
+    if (size < 0) {
+        Py_DECREF(sequence);
+        Py_XDECREF(skip_set);
+        return NULL;
+    }
+
+    Py_ssize_t declared = 0;
+    for (Py_ssize_t i = 0; i < size; i++)
+    {
+        PyObject* item = PySequence_GetItem(sequence, i);
+        if (item == NULL) {
+            Py_DECREF(sequence);
+            Py_XDECREF(skip_set);
+            return NULL;
+        }
+        if (!PyUnicode_Check(item)) {
+            PyErr_Format(PyExc_TypeError,
+                         "declare_lazy names must be strings, got a non-string at index %zd",
+                         i);
+            Py_DECREF(item);
+            Py_DECREF(sequence);
+            Py_XDECREF(skip_set);
+            return NULL;
+        }
+        bool skipped = false;
+        if (skip_set != NULL) {
+            int contained = PySet_Contains(skip_set, item);
+            if (contained < 0) {
+                Py_DECREF(item);
+                Py_DECREF(sequence);
+                Py_XDECREF(skip_set);
+                return NULL;
+            }
+            skipped = contained == 1;
+        }
+        const char* text = PyUnicode_AsUTF8_abi3(item);
+        Py_DECREF(item);
+        if (text == nullptr) {
+            Py_DECREF(sequence);
+            Py_XDECREF(skip_set);
+            return NULL;
+        }
+        if (skipped) {
+            continue;
+        }
+        bindings::InstallExposedConstruct(context, global, text);
+        declared++;
+    }
+    Py_DECREF(sequence);
+    Py_XDECREF(skip_set);
+    return PyLong_FromSsize_t(declared);
 }
 
 PyObject *
