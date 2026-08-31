@@ -63,3 +63,25 @@ def test_extractor_does_not_import_browser_runtime():
         source = path.read_text(encoding="utf-8")
         assert "runtime.browser" not in source
         assert "from pyv8c import Browser" not in source
+
+
+def test_binding_facade_uses_separate_catalog_and_schema_helpers():
+    universe_source = (ROOT / "bindings" / "universe.py").read_text(encoding="utf-8")
+    extractor_source = (ROOT / "bindings" / "extractor" / "cpp.py").read_text(encoding="utf-8")
+    assert "InterfaceCatalog" in universe_source
+    assert "SignatureCache" in universe_source
+    assert "apply_template_flags" in universe_source
+    assert "from ..schema import write_baseline" in extractor_source
+    assert "class InterfaceCatalog" in (ROOT / "bindings" / "catalog.py").read_text(encoding="utf-8")
+    assert "class SignatureCache" in (ROOT / "bindings" / "wrappers.py").read_text(encoding="utf-8")
+
+
+def test_domain_code_uses_page_resource_ownership_api():
+    for package in ("dom", "bom", "network", "workers", "runtime"):
+        for path in (ROOT / package).rglob("*.py"):
+            if path.name == "browser.py":
+                continue
+            source = path.read_text(encoding="utf-8")
+            assert "_owned_websockets" not in source, path
+            assert "_owned_workers" not in source, path
+            assert "_owned_frames" not in source, path

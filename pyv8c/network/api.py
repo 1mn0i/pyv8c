@@ -224,7 +224,7 @@ class WebSocket(EventTarget):
         if not page or not page.network_backend: raise NetworkUnavailableError("WebSocket requires real_network=True")
         self._page, self._url, self._protocol, self._extensions = page, str(url), "", ""; self._state_value = self.CONNECTING; self._binary_type = "blob"; self._buffered = 0; self._ws = None; self._protocols = protocols
         callbacks = {"open": self._on_open, "message": self._on_message, "error": self._on_error, "close": self._on_close}
-        self._ws = page.network_backend.websocket(page, self._url, protocols, callbacks); page._owned_websockets.add(self._ws)
+        self._ws = page.network_backend.websocket(page, self._url, protocols, callbacks); page._track_websocket(self._ws)
     def get_url(self): return self._url
     def get_protocol(self): return self._protocol
     def get_readyState(self): return self._state_value
@@ -265,7 +265,7 @@ class WebSocket(EventTarget):
         self.fn_dispatchEvent(MessageEvent("message", {"data": value, "origin": self._page.url, "source": self._page.window}))
     def _on_error(self, ws, error, net_error=None): self.fn_dispatchEvent(ErrorEvent("error", {"message": str(error)}))
     def _on_close(self, ws, code, reason, was_clean=True):
-        self._state_value = self.CLOSED; self.fn_dispatchEvent(CloseEvent("close", {"code": code, "reason": reason, "wasClean": was_clean})); self._page._owned_websockets.discard(ws)
+        self._state_value = self.CLOSED; self.fn_dispatchEvent(CloseEvent("close", {"code": code, "reason": reason, "wasClean": was_clean})); self._page._discard_websocket(ws)
 
 
 @interface("WorkerGlobalScope", "EventTarget", constructible=False, exposed_in=("Worker",))
@@ -380,7 +380,7 @@ class Worker(EventTarget):
     __v8_method__ = js_methods(("postMessage", "fn_postMessage", 1, 0), ("terminate", "fn_terminate", 0, 0))
     def __init__(self, script_url="", _realm=None, **kw):
         page = _realm; super().__init__(page=page, **kw); self._page = page; self._terminated = False; self._lifecycle_finished = False; self._script_url = urljoin(page.url, str(script_url)) if page and not str(script_url).startswith("blob:") else str(script_url)
-        if page is not None: page._owned_workers.add(self); page.begin_worker()
+        if page is not None: page._track_worker(self); page.begin_worker()
         self._runtime = _WorkerRuntime(self, self._script_url)
     def get_onmessage(self): return self._get_handler("onmessage")
     def set_onmessage(self, value): self._set_handler("onmessage", value)
@@ -400,7 +400,7 @@ class Worker(EventTarget):
             return
         self._lifecycle_finished = True
         self._page.complete_worker()
-        self._page._owned_workers.discard(self)
+        self._page._discard_worker(self)
     def fn_terminate(self):
         if not self._terminated:
             self._terminated = True

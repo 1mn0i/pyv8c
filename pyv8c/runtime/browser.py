@@ -229,6 +229,22 @@ class Page:
             self._task_errors.append(as_js_error(exc))
             return None
 
+    # Keep resource ownership behind the Page facade.
+    def _track_websocket(self, websocket):
+        self._owned_websockets.add(websocket)
+
+    def _discard_websocket(self, websocket):
+        self._owned_websockets.discard(websocket)
+
+    def _track_worker(self, worker):
+        self._owned_workers.add(worker)
+
+    def _discard_worker(self, worker):
+        self._owned_workers.discard(worker)
+
+    def _track_frame(self, frame):
+        self._owned_frames.add(frame)
+
     def close(self):
         if self.closed:
             return

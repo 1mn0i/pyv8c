@@ -8,7 +8,6 @@ materialization, binding plans, generated API shells) and the realm-local
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
 import pyv8
@@ -29,6 +28,9 @@ from .baseline import (
     BaselineSnapshot,
 )
 from .webidl import BindingPlan, compile_binding, validate_arguments
+from .catalog import InterfaceCatalog
+from .config import apply_template_flags
+from .wrappers import SignatureCache
 
 __all__ = [
     "DEFAULT_BASELINE_PATH",
@@ -94,12 +96,10 @@ class InterfaceUniverse:
         # Realm-independent caches. Configs are owned by each BindingSession.
         self._classes: dict[str, type] = {}
         self._plans: dict[tuple[str, str, str], BindingPlan] = {}
+        self._catalog = InterfaceCatalog(baseline)
         self._exposure_names = {}
         self._handler_cache = {}
-        self._children_index: dict[str, tuple[str, ...]] | None = None
-        self._exposure_index: dict[str, frozenset[str]] | None = None
-        self._interface_order: dict[str, int] | None = None
-        self._parameter_names: dict[object, tuple[str, ...]] = {}
+        self._parameter_cache = SignatureCache()
 
     def _log(self, message, *args):
         if self.stub_logging not in ("off", "none", "disabled"):
@@ -113,23 +113,11 @@ class InterfaceUniverse:
 
     def _interface_positions(self):
         """Stable document order, used to keep index traversals deterministic."""
-        if self._interface_order is None:
-            self._interface_order = {
-                name: position
-                for position, name in enumerate(self.baseline.interfaces)
-            }
-        return self._interface_order
+        return self._catalog.positions()
 
     def _children_of_index(self):
         """parent -> direct children, built once from the baseline."""
-        if self._children_index is None:
-            index: dict[str, list[str]] = {}
-            for name, spec in self.baseline.interfaces.items():
-                parent = spec.get("parent")
-                if parent:
-                    index.setdefault(parent, []).append(name)
-            self._children_index = {key: tuple(value) for key, value in index.items()}
-        return self._children_index
+        return self._catalog.children()
 
     def _descendants(self, name):
         """All transitive descendants of ``name``, in document order.
@@ -137,17 +125,7 @@ class InterfaceUniverse:
         Blink installs some shared members on concrete descendants, so member
         lookup has to search downwards as well as up the parent chain.
         """
-        index = self._children_of_index()
-        seen = set()
-        queue = list(index.get(name, ()))
-        while queue:
-            current = queue.pop()
-            if current in seen:
-                continue
-            seen.add(current)
-            queue.extend(index.get(current, ()))
-        positions = self._interface_positions()
-        return sorted(seen, key=lambda item: positions[item])
+        return self._catalog.descendants(name)
 
     def _own_members(self, interface_name):
         spec = self._spec(interface_name)
@@ -358,11 +336,7 @@ class InterfaceUniverse:
         raise TypeError(f"callback {cls.__name__}.{name} is missing")
 
     def _parameters_for(self, callback):
-        names = self._parameter_names.get(callback)
-        if names is None:
-            names = tuple(inspect.signature(callback).parameters)
-            self._parameter_names[callback] = names
-        return names
+        return self._parameter_cache.names(callback)
 
     def _reject_conversion(self, receiver, exc):
         # Resolve the realm through the core protocol so bindings never depends
@@ -523,9 +497,7 @@ class InterfaceUniverse:
         for method_name in self._declared_handlers(name):
             config[method_name] = True
         template = spec.get("template") or {}
-        for source_key, config_key in (("immutable_proto", "__v8_immutable__"), ("undetectable", "__v8_undetectable__"), ("global_this", "__v8_global_this__"), ("as_object", "__v8_as_obj__"), ("unconstructable", "__v8_unconstructable__")):
-            if template.get(source_key):
-                config[config_key] = 1
+        apply_template_flags(config, template)
         if template.get("call_handler"):
             config["__call__"] = self._stub_call_handler(name)
         constants = []
@@ -575,34 +547,13 @@ class InterfaceUniverse:
         return config
 
     def _walk_parent_names(self, name):
-        seen = set()
-        while name and name not in seen:
-            seen.add(name)
-            yield name
-            name = self._spec(name).get("parent")
-
-    def _exposed_index(self):
-        """``exposed_in`` context -> interface names, built once."""
-        if self._exposure_index is None:
-            index: dict[str, set[str]] = {}
-            for name, spec in self.baseline.interfaces.items():
-                for context in (spec.get("exposed_in") or ()):
-                    index.setdefault(context, set()).add(name)
-            self._exposure_index = {key: frozenset(value) for key, value in index.items()}
-        return self._exposure_index
+        yield from self._catalog.walk_parent_names(name)
 
     def exposed_names(self, context_type):
         from .registry import IMPLEMENTATIONS
-        exposed = self._exposed_index().get(context_type)
-        if not exposed:
-            return []
-        # Iterate the baseline so the result keeps document order.
-        if self.expose_unimplemented:
-            return [name for name in self.baseline.interfaces if name in exposed]
-        return [
-            name for name in self.baseline.interfaces
-            if name in exposed and name in IMPLEMENTATIONS
-        ]
+        return list(self._catalog.exposed_names(
+            context_type, self.expose_unimplemented, IMPLEMENTATIONS,
+        ))
 
     def _resolve_names(self, context_type, roots=()):
         """Interface names (including ancestors) a context_type must install."""

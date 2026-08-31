@@ -6,8 +6,9 @@ import ast
 import json
 import os
 import re
-import zipfile
 from pathlib import Path
+
+from ..schema import write_baseline
 
 
 INTERFACE_DECL = re.compile(r"const\s+WrapperTypeInfo\s+V8(?P<binding>[A-Za-z0-9_]+)::wrapper_type_info_\s*\{")
@@ -786,32 +787,6 @@ def generated_bindings_dir(build_dir: Path) -> Path:
         if any(candidate.rglob("v8_*.cc")):
             return candidate
     return candidates[0]
-
-
-def write_baseline(output_path: Path, document: dict, *, compress: bool = False) -> Path:
-    """Write a schema 5 baseline as JSON or a single-member ZIP archive.
-
-    A ``.zip`` output path always selects compression. ``--zip`` additionally
-    lets callers keep an existing ``.json`` command-line path while publishing
-    its ``.zip`` counterpart.
-    """
-    payload = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-    output_path = Path(output_path)
-    use_zip = compress or output_path.suffix.lower() == ".zip"
-    if not use_zip:
-        output_path.write_bytes(payload)
-        return output_path
-
-    archive_path = output_path if output_path.suffix.lower() == ".zip" else output_path.with_suffix(".zip")
-    member_name = archive_path.with_suffix(".json").name
-    with zipfile.ZipFile(
-        archive_path,
-        "w",
-        compression=zipfile.ZIP_DEFLATED,
-        compresslevel=9,
-    ) as archive:
-        archive.writestr(member_name, payload)
-    return archive_path
 
 
 def main():

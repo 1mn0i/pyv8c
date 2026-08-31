@@ -237,7 +237,7 @@ class ResourceController:
         target = iframe.get_src() or "about:blank"
         child = Page(page.context_owner, url=target)
         iframe._child_page = child
-        page._owned_frames.add(child)
+        page._track_frame(child)
         try:
             child.set_content(response.body_text(), url=target)
             child.lifecycle.when_loaded(callback)
