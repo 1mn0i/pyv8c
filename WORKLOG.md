@@ -597,3 +597,28 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
 
 - no-op call handler 使无 `__call__` 的 undetectable 对象可调用并返回
   `undefined`；真实实现 `document.all` 时应提供真正的 `__call__`。
+
+## 2026-09-01：架构拆分、native 配置清理与发布同步
+
+### 修改
+
+- 新增 `bindings/catalog.py`、`bindings/config.py`、`bindings/wrappers.py` 和
+  `bindings/schema.py`，将 baseline 索引、模板 flag、签名缓存和 baseline 写出职责拆开。
+- `InterfaceUniverse` 保留 facade，复用独立 catalog 和签名缓存；extractor 复用统一的
+  schema 写出入口。
+- Page 新增资源登记/移除方法，WebSocket、Worker 和 iframe 资源不再跨层访问 Page 私有集合。
+- `_pyv8` 新增 `src/pyclass_config.cpp/.h`，移除 `pyclass.cpp` 中重复的 ClassConfig 读取实现。
+
+### 验证
+
+- `_pyv8`：`python -m pytest -q`，`177 passed`。
+- `pyv8c`：使用本地 `_pyv8` 扩展运行全量测试，`112 passed`。
+- `HTMLAllCollection` 复现脚本输出正常，未再触发
+  `Check failed: !IsUndefined(obj->GetInstanceCallHandler())`。
+- native 扩展通过 `build_ext --inplace --force` 重建。
+
+### 提交与发布
+
+- `pyv8c`：`1980864 refactor: split binding catalog and page resource ownership`。
+- `_pyv8`：`429ec5e refactor: isolate native class configuration loading`。
+- 两个提交均已推送到 GitHub，远端分支与本地 HEAD 一致，工作区干净。

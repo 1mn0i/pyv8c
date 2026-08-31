@@ -260,3 +260,12 @@ python310 -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 
 后续顺序：先强化已实现 public API 与 native overlay 的测试，再完善 CORS/真实网络，再扩展
 iframe/Worker 隔离；最后增加非核心接口实现，且不扩大默认启动期开销。
+
+## 当前状态（2026-09-01）
+
+- 完成 bindings catalog/config/wrappers/schema 拆分；`InterfaceUniverse` 继续作为组合 facade。
+- Page 资源所有权统一通过 `_track_*` / `_discard_*` facade 方法管理，network/resource 层不再直接操作 Page 私有集合。
+- `_pyv8` 的 `ClassConfig` 读取与 overlay 校验已移至 `src/pyclass_config.cpp`，并保留已跟踪的 `pyv8/_pyv8.pyd`。
+- `HTMLAllCollection` 复现脚本正常输出 `function HTMLAllCollection() { [native code] }`，不再触发 V8 DCHECK。
+- 最新验证：`_pyv8` 全量 `177 passed`，`pyv8c` 全量 `112 passed`。
+- 已推送 GitHub：`pyv8c` 提交 `1980864`，`_pyv8` 提交 `429ec5e`；两个工作区均干净。
