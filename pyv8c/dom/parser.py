@@ -1,7 +1,7 @@
 from html.parser import HTMLParser
 from html import unescape
 import re
-from .model import Document, Element, Text, Comment
+from .model import Element, Text, Comment
 
 
 class DOMParser(HTMLParser):

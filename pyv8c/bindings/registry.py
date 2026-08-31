@@ -81,7 +81,7 @@ def interface(name: str, parent: Optional[str], *, constructible=False, length=0
 
 def validate_registry(baseline=None):
     if baseline is None:
-        from .universe import BaselineRepository
+        from .baseline import BaselineRepository
         baseline = dict(BaselineRepository.load().interfaces)
     def baseline_members(interface_name):
         root_interface = interface_name
@@ -154,7 +154,8 @@ def expose_interfaces(context, context_type="Window", *, generate_stubs=True,
     only entries explicitly exposed in the current execution context reach JS.
     """
     if universe is None:
-        from .universe import BaselineRepository, InterfaceUniverse
+        from .baseline import BaselineRepository
+        from .universe import InterfaceUniverse
         universe = InterfaceUniverse(
             BaselineRepository.load(), stub_logging=stub_logging,
             expose_unimplemented=expose_unimplemented,

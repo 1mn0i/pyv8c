@@ -23,6 +23,31 @@ class ResourceController:
 
     # -- synchronous loading -------------------------------------------
 
+    @staticmethod
+    def _network_request(target, request, page):
+        return NetworkRequest(
+            target,
+            str(request.get("method", "GET")).upper(),
+            ResourceController.header_dict(request.get("headers")),
+            request.get("body"),
+            request.get("timeout"),
+            request.get("credentials", "same-origin"),
+            request.get("mode", "cors"),
+            request.get("redirect", "follow"),
+            page.url,
+        )
+
+    @staticmethod
+    def _response_from_loader(result, target):
+        """Wrap a resource_loader result into a Response."""
+        if isinstance(result, Response):
+            if not result.url:
+                result.url = target
+            return result
+        if isinstance(result, dict):
+            return Response(result.get("body", ""), {**result, "url": target})
+        return Response(str(result), {"url": target})
+
     def load_resource(self, url, request=None):
         page = self.page
         if page.closed or page.context_owner.closed:
@@ -33,26 +58,9 @@ class ResourceController:
             body, content_type = page.context_owner.resolve_blob_url(target)
             return Response(body, {"url": target, "headers": {"content-type": content_type}})
         if page.resource_loader:
-            result = page.resource_loader(target, request)
-            if isinstance(result, Response):
-                if not result.url:
-                    result.url = target
-                return result
-            if isinstance(result, dict):
-                return Response(result.get("body", ""), {**result, "url": target})
-            return Response(str(result), {"url": target})
+            return self._response_from_loader(page.resource_loader(target, request), target)
         if page.network_backend:
-            req = NetworkRequest(
-                target,
-                str(request.get("method", "GET")).upper(),
-                self.header_dict(request.get("headers")),
-                request.get("body"),
-                request.get("timeout"),
-                request.get("credentials", "same-origin"),
-                request.get("mode", "cors"),
-                request.get("redirect", "follow"),
-                page.url,
-            )
+            req = self._network_request(target, request, page)
             raw = page.network_backend.request_sync(req)
             return self.apply_response_policy(self.response_object(raw), request)
         if target.startswith("about:blank") or target == page.url:
@@ -104,27 +112,11 @@ class ResourceController:
             page.post_task(lambda: callback(None, InvalidStateError("Page is closed")))
             return
         target = urljoin(page.url, str(url))
-        req = NetworkRequest(
-            target,
-            str(request.get("method", "GET")).upper(),
-            self.header_dict(request.get("headers")),
-            request.get("body"),
-            request.get("timeout"),
-            request.get("credentials", "same-origin"),
-            request.get("mode", "cors"),
-            request.get("redirect", "follow"),
-            page.url,
-        )
+        req = self._network_request(target, request, page)
         if page.resource_loader:
             try:
-                result = page.resource_loader(target, request)
-                if isinstance(result, Response):
-                    response = result
-                    response._page = page
-                elif isinstance(result, dict):
-                    response = Response(result.get("body", ""), {**result, "url": target})
-                else:
-                    response = Response(str(result), {"url": target})
+                response = self._response_from_loader(page.resource_loader(target, request), target)
+                response._page = page
                 try:
                     response, error = self.apply_response_policy(response, request), None
                 except BaseException as exc:
@@ -226,8 +218,7 @@ class ResourceController:
                 page.lifecycle.dispatch_page_event("error", node, {"bubbles": False})
         else:
             if kind == "script":
-                body = response.body.decode("utf-8", "replace") if isinstance(response.body, bytes) else str(response.body)
-                page.scripts.execute_script(node, body, response.url or page.url)
+                page.scripts.execute_script(node, response.body_text(), response.url or page.url)
             page.lifecycle.dispatch_page_event("load", node, {"bubbles": False})
         page.lifecycle.maybe_fire_document_load()
 
@@ -248,8 +239,7 @@ class ResourceController:
         iframe._child_page = child
         page._owned_frames.add(child)
         try:
-            body = response.body.decode("utf-8", "replace") if isinstance(response.body, bytes) else str(response.body)
-            child.set_content(body, url=target)
+            child.set_content(response.body_text(), url=target)
             child.lifecycle.when_loaded(callback)
         except BaseException:
             callback(False)
@@ -265,11 +255,9 @@ class ResourceController:
         child = Page(page.context_owner, url=target)
         iframe._child_page = child
         response = self.load_resource(target, {"method": "GET"})
-        body = response.body.decode("utf-8", "replace") if isinstance(response.body, bytes) else str(response.body)
-        child.set_content(body, url=target)
+        child.set_content(response.body_text(), url=target)
         return child
 
     def resolve_worker_source(self, script_url):
         response = self.load_resource(script_url, {"method": "GET", "mode": "same-origin"})
-        body = response.body
-        return body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
+        return response.body_text()

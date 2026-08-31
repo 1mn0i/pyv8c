@@ -18,7 +18,6 @@ IDL_INTERFACE_DECL = re.compile(
     r"(?:(?P<attrs>\[[\s\S]*?\])\s*)?interface(?:\s+mixin)?\s+"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*(?P<parent>[A-Za-z_][A-Za-z0-9_]*))?\s*\{")
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CHROMIUM_ROOT = Path(
     os.environ.get("CHROMIUM_ROOT", PROJECT_ROOT / ".chromium-build" / "chromium")

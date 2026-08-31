@@ -1,4 +1,6 @@
 from urllib.parse import urljoin, urlsplit, urlunsplit
+
+import pyv8
 from pyv8.flag import FlagExposed
 from pyv8.tools import ConstructorConfig
 
@@ -271,15 +273,16 @@ class History:
     def get_length(self): return len(self._entries)
     def get_state(self): return self._entries[self._index][1]
     def _url(self, value): return urljoin(self._page.url, str(value))
-    def fn_pushState(self, state, unused="", url=None):
-        target = self._url(url) if url is not None else self._page.url
+    def _validate_target(self, url):
         from ..network.backend import same_origin
+        target = self._url(url) if url is not None else self._page.url
         if not same_origin(self._page.url, target): raise SecurityError("A history state URL must be same-origin")
+        return target
+    def fn_pushState(self, state, unused="", url=None):
+        target = self._validate_target(url)
         self._entries = self._entries[:self._index + 1] + [(target, state)]; self._index += 1; self._page.window.location.href = target
     def fn_replaceState(self, state, unused="", url=None):
-        target = self._url(url) if url is not None else self._page.url
-        from ..network.backend import same_origin
-        if not same_origin(self._page.url, target): raise SecurityError("A history state URL must be same-origin")
+        target = self._validate_target(url)
         self._entries[self._index] = (target, state); self._page.window.location.href = target
     def fn_back(self): return self.fn_go(-1)
     def fn_forward(self): return self.fn_go(1)

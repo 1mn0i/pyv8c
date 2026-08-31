@@ -1,3 +1,4 @@
+import json
 import queue
 import threading
 from urllib.parse import urljoin
@@ -8,20 +9,11 @@ from pyv8.tools import ConstructorConfig
 
 from ..dom.model import EventTarget, Event
 from ..bindings.registry import interface, js_attributes, js_methods
-from .backend import NetworkRequest, NetworkUnavailableError
+from .backend import NetworkUnavailableError
 from ..core.errors import (
-    V8TypeError, V8SyntaxError, InvalidStateError, NotSupportedError, NetworkError,
-    DataCloneError, as_js_error,
+    V8SyntaxError, InvalidStateError, NotSupportedError,
 )
 from ..workers.clone import structured_clone
-
-
-def _decode_clone_markers(value):
-    if isinstance(value, dict) and set(value) == {"__pyv8c_arraybuffer"}:
-        return bytes(int(item) & 255 for item in value["__pyv8c_arraybuffer"])
-    if isinstance(value, dict): return {key: _decode_clone_markers(item) for key, item in value.items()}
-    if isinstance(value, list): return [_decode_clone_markers(item) for item in value]
-    return value
 
 
 def _bytes_from_value(value):
@@ -52,7 +44,6 @@ class Headers:
         key = str(key).lower(); self._data[key] = self._data.get(key, "") + (", " if key in self._data else "") + str(value)
     def fn_delete(self, key): self._data.pop(str(key).lower(), None)
     def fn_has(self, key): return str(key).lower() in self._data
-    def items(self): return self._data.items()
 
 
 @interface("Blob", None, constructible=True, length=1)
@@ -107,8 +98,6 @@ class Request:
     def get_headers(self): return self._headers
     def get_mode(self): return self._mode
     def get_credentials(self): return self._credentials
-    def backend_request(self):
-        return NetworkRequest(self._url, self._method, dict(self._headers.items()), self._body, self._timeout, self._credentials, self._mode, self._redirect, self._page.url if self._page else None)
 
 
 @interface("Response", None, constructible=True, length=1)
@@ -134,9 +123,12 @@ class Response:
     def get_type(self): return self.type
     def get_headers(self): return self.headers
     def get_bodyUsed(self): return self.body_used
+    def body_text(self):
+        """Decode the raw body as UTF-8 text; non-bytes bodies are stringified."""
+        return self.body.decode("utf-8", "replace") if isinstance(self.body, bytes) else str(self.body)
     def _body_value(self):
         self.body_used = True
-        return self.body.decode("utf-8", "replace") if isinstance(self.body, bytes) else str(self.body)
+        return self.body_text()
     def _result(self, value): return self._page.promise_resolve(value) if self._page else value
     def fn_text(self): return self._result(self._body_value())
     def fn_json(self): return self._result(json.loads(self._body_value()))
@@ -242,14 +234,14 @@ class WebSocket(EventTarget):
         if str(value) not in ("blob", "arraybuffer"): raise V8SyntaxError("invalid binaryType")
         self._binary_type = str(value)
     def get_bufferedAmount(self): return self._buffered
-    def get_onopen(self): return self._handlers.get("onopen", pyv8.Null)
-    def set_onopen(self, value): self._handlers["onopen"] = value
-    def get_onmessage(self): return self._handlers.get("onmessage", pyv8.Null)
-    def set_onmessage(self, value): self._handlers["onmessage"] = value
-    def get_onerror(self): return self._handlers.get("onerror", pyv8.Null)
-    def set_onerror(self, value): self._handlers["onerror"] = value
-    def get_onclose(self): return self._handlers.get("onclose", pyv8.Null)
-    def set_onclose(self, value): self._handlers["onclose"] = value
+    def get_onopen(self): return self._get_handler("onopen")
+    def set_onopen(self, value): self._set_handler("onopen", value)
+    def get_onmessage(self): return self._get_handler("onmessage")
+    def set_onmessage(self, value): self._set_handler("onmessage", value)
+    def get_onerror(self): return self._get_handler("onerror")
+    def set_onerror(self, value): self._set_handler("onerror", value)
+    def get_onclose(self): return self._get_handler("onclose")
+    def set_onclose(self, value): self._set_handler("onclose", value)
     def fn_send(self, value):
         if self._state_value != self.OPEN: raise InvalidStateError("WebSocket is not open")
         binary = _bytes_from_value(value)
@@ -288,10 +280,10 @@ class WorkerGlobalScope(EventTarget):
     __v8_method__ = js_methods(("postMessage", "fn_postMessage", 1, 0), ("close", "fn_close", 0, 0))
     def __init__(self, runtime=None, **kw): super().__init__(page=None, **kw); self._runtime = runtime
     def get_self(self): return self
-    def get_onmessage(self): return self._handlers.get("onmessage", pyv8.Null)
-    def set_onmessage(self, value): self._handlers["onmessage"] = value
-    def get_onerror(self): return self._handlers.get("onerror", pyv8.Null)
-    def set_onerror(self, value): self._handlers["onerror"] = value
+    def get_onmessage(self): return self._get_handler("onmessage")
+    def set_onmessage(self, value): self._set_handler("onmessage", value)
+    def get_onerror(self): return self._get_handler("onerror")
+    def set_onerror(self, value): self._set_handler("onerror", value)
     def fn_postMessage(self, value): self._runtime.post_to_parent(value)
     def fn_close(self): self._runtime.stop()
 
@@ -391,10 +383,10 @@ class Worker(EventTarget):
         page = _realm; super().__init__(page=page, **kw); self._page = page; self._terminated = False; self._lifecycle_finished = False; self._script_url = urljoin(page.url, str(script_url)) if page and not str(script_url).startswith("blob:") else str(script_url)
         if page is not None: page._owned_workers.add(self); page.begin_worker()
         self._runtime = _WorkerRuntime(self, self._script_url)
-    def get_onmessage(self): return self._handlers.get("onmessage", pyv8.Null)
-    def set_onmessage(self, value): self._handlers["onmessage"] = value
-    def get_onerror(self): return self._handlers.get("onerror", pyv8.Null)
-    def set_onerror(self, value): self._handlers["onerror"] = value
+    def get_onmessage(self): return self._get_handler("onmessage")
+    def set_onmessage(self, value): self._set_handler("onmessage", value)
+    def get_onerror(self): return self._get_handler("onerror")
+    def set_onerror(self, value): self._set_handler("onerror", value)
     def fn_postMessage(self, value):
         if self._terminated:
             raise InvalidStateError("Worker has been terminated")

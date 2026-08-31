@@ -1,5 +1,3 @@
-import time
-
 import pytest
 
 from pyv8c import Browser, Response

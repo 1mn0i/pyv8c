@@ -7,7 +7,6 @@ root: ``Page`` forwards its public API and delegates behaviour to those
 controllers, so each concern can be read and tested on its own.
 """
 
-import itertools
 import os
 import time
 import uuid
@@ -50,22 +49,10 @@ class _ContextBootstrapProxy:
 
 
 class Page:
-    _navigation_generation = StateAlias("navigation", "generation")
+    # Only the aliases that are actually consumed outside the controllers are
+    # kept: close() reads _has_navigation and dom adoption checks _parsing.
     _has_navigation = StateAlias("navigation", "has_navigation")
-    _pending_navigation = StateAlias("navigation", "pending")
-    _parser = StateAlias("navigation", "parser")
-    _parser_generation = StateAlias("navigation", "parser_generation")
     _parsing = StateAlias("navigation", "parsing")
-    _parser_done = StateAlias("navigation", "parser_done")
-    _dom_content_loaded = StateAlias("lifecycle", "dom_content_loaded")
-    _document_load_fired = StateAlias("lifecycle", "document_load_fired")
-    _load_waiters = StateAlias("lifecycle", "load_waiters")
-    _dom_blocking_scripts = StateAlias("scripts", "dom_blocking_scripts")
-    _script_queue = StateAlias("scripts", "queue")
-    _defer_scripts = StateAlias("scripts", "defer")
-    _module_cache = StateAlias("scripts", "module_cache")
-    _document_resources = StateAlias("resources", "resources")
-    _resource_counter = StateAlias("resources", "counter")
 
     def __init__(self, context, url="about:blank"):
         self.context_owner = context
@@ -77,7 +64,6 @@ class Page:
         self.tasks = TaskQueue(self, self._run_queued_callback)
         self.microtasks = self.tasks.microtasks
         self._task_errors = self.tasks.errors
-        self._promise_counter = itertools.count(1)
         self._owned_websockets = set()
         self._owned_workers = set()
         self._owned_frames = set()
@@ -220,9 +206,6 @@ class Page:
 
     def run_until_idle(self, timeout=0):
         self.tasks.run_until_idle(timeout)
-
-    def wait_for_network(self, timeout=30):
-        self.run_until_idle(timeout=timeout)
 
     def begin_network(self):
         self.tasks.begin_network()

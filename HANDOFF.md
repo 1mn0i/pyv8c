@@ -31,8 +31,8 @@ core -> bindings -> dom -> bom/network/workers -> runtime
 | 区域 | 职责 |
 | --- | --- |
 | `core/` | DOM/V8 错误和 realm service 协议。 |
-| `bindings/` | Chromium baseline、Web IDL 转换、registry、动态类、V8 overlay 和提取器。 |
-| `dom/` | 节点、事件、HTML parser 和 selector。 |
+| `bindings/` | Chromium baseline（`baseline.py`：快照加载与两级磁盘缓存）、Web IDL 转换、registry、动态类、V8 overlay 和提取器。 |
+| `dom/` | 节点（`model.py`）、集合视图（`collections.py`）、事件模型（`events.py`）、HTML parser 和 selector。 |
 | `bom/` | Window、Location、History、Storage、URL 和 URLSearchParams。 |
 | `network/` | Fetch、XHR、WebSocket、Blob、HTTP 模型和 transport。 |
 | `workers/` | Worker API 和 structured clone。 |
@@ -45,6 +45,8 @@ current Page、类级 current Page 或跨 realm 的 callback owner。
 ## 运行时模型
 
 - `Browser` 持有一个不可变 `BaselineSnapshot` 和一个 `InterfaceUniverse`。
+- `BaselineRepository`/`BaselineSnapshot` 定义在 `bindings/baseline.py`（universe re-export 保持
+  旧导入路径可用）；`InterfaceUniverse` 与 `BindingSession` 留在 `bindings/universe.py`。
 - `BrowserContext` 隔离 Page、Cookie、Blob URL、网络 session 和 frame。
 - 每个 `Page` 拥有 V8 Context、Window、Document、任务队列以及 navigation、lifecycle、
   script、resource controller。
@@ -197,15 +199,25 @@ python310 -m pytest -q
 python310 -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 ```
 
-最近验证结果（2026-08-31）：
+最近验证结果（2026-08-31，全库冗余清理与架构拆分后）：
 
 - `_pyv8`：`177 passed`（原 164 + 新增 native 懒物化 13），通过
   `python310 setup.py build_ext --inplace --force` 重建。
 - `pyv8c`：`108 passed`，`1 pre-existing failed`（`test_baseline_versions`
-  的 `{}`-empty 用例受 git 外 temp 目录权限影响，非本轮回归）。
-- 新增测试：`tests/unit/test_webidl_precompiled.py`（13）、
-  `tests/unit/test_architecture.py` 边界断言、
-  `tests/integration/test_lazy_interfaces.py`（懒物化行为）。
+  的 `{}`-empty 用例断言 regex `must contain _webidl metadata and interfaces` 与实现
+  实际错误信息 `must contain _webidl metadata` 不匹配；baseline.py 迁移原样保留该错误
+  文本，非本轮回归）。
+- 本轮拆分新增文件：`bindings/baseline.py`（BaselineRepository/BaselineSnapshot/缓存）、
+  `dom/collections.py`（NodeList/HTMLCollection/DOMTokenList）、`dom/events.py`
+  （Event 家族与 EventTarget）；原模块 re-export 公开名保持导入兼容。
+- 本轮清理：删除死代码（`InterfaceUniverse.report`/`info`、`BindingSession.materialize_*`、
+  `Page.wait_for_network`/14 个未用 StateAlias/`_promise_counter`、`_decode_clone_markers`、
+  `Request.backend_request`/`Headers.items`、`Node.DOCUMENT_POSITION_*`、`serialize`、
+  `extractor/idl.py`/`schema.py` 空壳、`cpp.PACKAGE_ROOT`）；修复 `NamedNodeMap._list`→
+  `_items`、`bom/api.py` 缺 `import pyv8`、`network/api.py` 缺 `import json` 三处悬空引用；
+  收敛重复逻辑（`Response.body_text`、`ResourceController._network_request`/
+  `_response_from_loader`、`EventTarget._get_handler` 复用、`History._validate_target`、
+  名称校验正则提升为模块级常量）。
 - 启动基准：`python tools/benchmark_startup.py --runs 5` p50 为 `98.2 ms`
   （懒物化接线前 `378.9 ms`）。
 - baseline 加载：二进制缓存命中时 `21.3 ms`（冷加载 `73.5 ms`，约 3.4x）；

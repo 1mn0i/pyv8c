@@ -128,13 +128,11 @@ class ScriptController:
         for _prefix, clause, _quote, specifier in imports:
             dep_url = urljoin(key, specifier)
             dep = self.page.resources.load_resource(dep_url, {"method": "GET", "mode": "cors"})
-            body = dep.body.decode("utf-8", "replace") if isinstance(dep.body, bytes) else str(dep.body)
-            self.execute_module(body, dep.url or dep_url, trail)
+            self.execute_module(dep.body_text(), dep.url or dep_url, trail)
         for _quote, specifier in side_effects:
             dep_url = urljoin(key, specifier)
             dep = self.page.resources.load_resource(dep_url, {"method": "GET", "mode": "cors"})
-            body = dep.body.decode("utf-8", "replace") if isinstance(dep.body, bytes) else str(dep.body)
-            self.execute_module(body, dep.url or dep_url, trail)
+            self.execute_module(dep.body_text(), dep.url or dep_url, trail)
         transformed = re.sub(r"(?:^|;)\s*import\s+([\s\S]*?)\s+from\s+(['\"])([^'\"]+)\2\s*;?", "", source)
         transformed = re.sub(r"(?:^|;)\s*import\s*(['\"])([^'\"]+)\1\s*;?", "", transformed)
         transformed = re.sub(r"\bexport\s+default\s+", "", transformed)
@@ -211,8 +209,7 @@ class ScriptController:
             elif response is None:
                 self.execute_script(node, getattr(node, "_inline_source", ""), page.url)
             else:
-                body = response.body.decode("utf-8", "replace") if isinstance(response.body, bytes) else str(response.body)
-                self.execute_script(node, body, response.url or page.url)
+                self.execute_script(node, response.body_text(), response.url or page.url)
                 page.lifecycle.dispatch_page_event("load", node, {"bubbles": False})
             self.dom_blocking_scripts = max(0, self.dom_blocking_scripts - 1)
         if not self.dom_blocking_scripts and page.navigation.parser is not None and not page.navigation.parser.done:
@@ -235,7 +232,7 @@ class ScriptController:
             else:
                 source = getattr(node, "_inline_source", "")
                 if response is not None:
-                    source = response.body.decode("utf-8", "replace") if isinstance(response.body, bytes) else str(response.body)
+                    source = response.body_text()
                 self.execute_script(node, source, (response.url if response is not None else page.url) or page.url)
                 if response is not None:
                     page.lifecycle.dispatch_page_event("load", node, {"bubbles": False})
