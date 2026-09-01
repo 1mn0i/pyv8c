@@ -15,7 +15,7 @@ from pyv8.flag import FlagExposed, V8Attribute
 from ..bindings.registry import interface, js_attributes, js_methods
 from ..core.errors import V8TypeError, HierarchyRequestError, NotFoundError, InvalidCharacterError
 
-from .collections import NodeList, HTMLCollection, DOMTokenList
+from .collections import NodeList, HTMLCollection, HTMLAllCollection, DOMTokenList
 from .events import (
     Event,
     UIEvent,
@@ -26,7 +26,7 @@ from .events import (
 )
 
 __all__ = [
-    "NodeList", "HTMLCollection", "DOMTokenList",
+    "NodeList", "HTMLCollection", "HTMLAllCollection", "DOMTokenList",
     "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "CustomEvent", "EventTarget",
     "Node", "DocumentFragment", "Attr", "NamedNodeMap", "CharacterData", "Text",
     "Comment", "DocumentType", "Element", "HTMLElement", "HTML_CLASSES",
@@ -427,6 +427,7 @@ class Document(Node):
         ("head", "get_head", None, 0, 1), ("defaultView", "get_defaultView", None, 0, 1),
         ("childNodes", "get_childNodes", None, 0, 1), ("readyState", "get_readyState", None, 0, 1),
         ("hidden", "get_hidden", None, 0, 1), ("visibilityState", "get_visibilityState", None, 0, 1),
+        ("all", "get_all", None, 0, 1),
     )
     __v8_method__ = js_methods(
         ("createElement", "fn_createElement", 1, 0), ("createTextNode", "fn_createTextNode", 1, 0),
@@ -454,6 +455,27 @@ class Document(Node):
     def get_readyState(self): return self.ready_state
     def get_hidden(self): return self.hidden
     def get_visibilityState(self): return "hidden" if self.hidden else "visible"
+    def get_all(self):
+        # One cached live view per document, like Chromium: the object identity
+        # is stable while the element list is always recomputed.
+        value = getattr(self, "_all_view", None)
+        if value is None:
+            self._materialize_interface("HTMLAllCollection")
+            value = self._all_view = HTMLAllCollection(owner=self, getter=self._all_elements)
+        return value
+    def _all_elements(self):
+        return [x for x in self._walk() if isinstance(x, Element)]
+    def _materialize_interface(self, name):
+        """Build a lazily declared interface before handing out one of its objects.
+
+        ``document.all`` returns a real ``HTMLAllCollection``, so the native
+        template has to exist even though the interface is not part of the
+        eager startup set.
+        """
+        session = getattr(getattr(self, "_page", None), "binding_session", None)
+        if session is None or name in session.materialized_interfaces:
+            return
+        session.materialize(name)
     def fn_createElement(self, name): return self._new_element(str(name))
     def fn_createTextNode(self, value): return Text(str(value), page=self._page)
     def fn_createComment(self, value): return Comment(str(value), page=self._page)

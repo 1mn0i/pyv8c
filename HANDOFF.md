@@ -33,6 +33,7 @@ core -> bindings -> dom -> bom/network/workers -> runtime
 | `core/` | DOM/V8 错误和 realm service 协议。 |
 | `bindings/` | Chromium baseline（`baseline.py`：快照加载与两级磁盘缓存）、Web IDL 转换、registry、动态类、V8 overlay 和提取器。 |
 | `dom/` | 节点（`model.py`）、集合视图（`collections.py`）、事件模型（`events.py`）、HTML parser 和 selector。 |
+| `tests/browser/` | 浏览器对象的类型与功能检查：每个对象按类型、使用、等待三组验证 JS 可观察形状。 |
 | `bom/` | Window、Location、History、Storage、URL 和 URLSearchParams。 |
 | `network/` | Fetch、XHR、WebSocket、Blob、HTTP 模型和 transport。 |
 | `workers/` | Worker API 和 structured clone。 |
@@ -149,6 +150,8 @@ session.materialized_interfaces
 - V8 要求 undetectable 模板（`document.all` 式 legacy 接口，如 `HTMLAllCollection`）
   带 instance call handler：无真实 `__call__` 时 `_pyv8` 自动安装 no-op handler，
   调用返回 `undefined`，否则模板实例化会触发 V8 CHECK 崩溃。
+- `bindings/universe.py` 只在类没有真实 `__call__` 时才安装该 no-op handler，
+  手写 legacy caller 优先；`HTMLAllCollection.__call__` 即走这条路径。
 
 `Browser.startup_stats` 提供耗时和物化计数：`lazy_registered`（声明数）、
 `lazy_materialized`（已按需物化数）、`lazy_register_ms`。冷启动的
@@ -194,6 +197,30 @@ python310 setup.py build_ext --inplace --force
 
 重新构建 V8 时，按 `../_pyv8` 文档配置 Visual Studio、Windows SDK、V8 版本和 depot_tools。
 native constants 和 Context-local class-config overlay 在当前重建的 `_pyv8` 中默认启用。
+
+## document.all
+
+`Document.all` 返回按文档缓存的 live `HTMLAllCollection`（`dom/collections.py`）。
+该接口在 baseline 中没有父接口，因此自带完整实现；模板标记为 undetectable，
+并带有真实的 legacy caller。
+
+```text
+typeof document.all            -> "undefined"       (undetectable，但仍可正常使用)
+Object.prototype.toString.call -> [object HTMLAllCollection]
+document.all[0] / item(0)      -> 树序第一个元素（html）
+document.all.app / namedItem() -> id 或 name 匹配的元素
+document.all.dup（多个匹配）   -> live HTMLCollection
+document.all('app')            -> legacy call，等价于 item()
+Object.keys(document.all)      -> 只有索引（[LegacyUnenumerableNamedProperties]）
+```
+
+命名属性先匹配 `id` 再匹配 `name`；单个匹配返回元素，多个匹配返回
+`HTMLCollection`，未命中时属性访问为 `undefined` 而 `item()`/`namedItem()` 返回
+`null`。集合是 live 的：节点增删或 id 改动后，缓存的 `document.all` 引用与最新
+读取结果保持一致。
+
+`HTMLAllCollection` 不在默认 eager 集合内；`Document.get_all()` 通过
+`BindingSession.materialize()` 在首次使用时物化，避免扩大启动开销。
 
 ## 验证
 
@@ -266,6 +293,8 @@ iframe/Worker 隔离；最后增加非核心接口实现，且不扩大默认启
 - 完成 bindings catalog/config/wrappers/schema 拆分；`InterfaceUniverse` 继续作为组合 facade。
 - Page 资源所有权统一通过 `_track_*` / `_discard_*` facade 方法管理，network/resource 层不再直接操作 Page 私有集合。
 - `_pyv8` 的 `ClassConfig` 读取与 overlay 校验已移至 `src/pyclass_config.cpp`，并保留已跟踪的 `pyv8/_pyv8.pyd`。
-- `HTMLAllCollection` 复现脚本正常输出 `function HTMLAllCollection() { [native code] }`，不再触发 V8 DCHECK。
-- 最新验证：`_pyv8` 全量 `177 passed`，`pyv8c` 全量 `112 passed`。
-- 已推送 GitHub：`pyv8c` 功能提交 `1980864`、文档提交 `538f98f`，`_pyv8` 提交 `429ec5e`；两个工作区均干净。
+- `document.all` 已实现为真实 `HTMLAllCollection`（undetectable、legacy call、live 集合），
+  不再受 no-op call handler 限制；新增 `tests/browser/` 目录承载浏览器对象类型与功能检查。
+- 最新验证：`_pyv8` 全量 `177 passed`，`pyv8c` 全量 `142 passed`（含 `tests/browser` 30 项）。
+- 已推送 GitHub：`pyv8c` 功能提交 `1980864`、文档提交 `538f98f`，`_pyv8` 提交 `429ec5e`；
+  本次 `document.all` 改动尚未提交，工作区有未提交修改。

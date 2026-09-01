@@ -34,6 +34,13 @@ class V8EvalError(Exception):
     __v8_error__ = True
 
 
+class LegacyPropertyError(V8TypeError):
+    """A legacy interceptor failure that is silent outside strict mode."""
+
+    __v8_interceptor_failure__ = True
+    __v8_error_name__ = "TypeError"
+
+
 _DOM_CODES = {
     "IndexSizeError": 1,
     "DOMStringSizeError": 2,
@@ -156,6 +163,7 @@ def as_js_error(exc, *, default="Error"):
 __all__ = [
     "V8Error", "V8TypeError", "V8RangeError", "V8ReferenceError", "V8SyntaxError",
     "V8URIError", "V8EvalError", "DOMException", "DOMError", "dom_exception",
+    "LegacyPropertyError",
     "IndexSizeError", "InvalidCharacterError", "HierarchyRequestError", "NotFoundError",
     "NotSupportedError", "InvalidStateError", "InvalidAccessError", "SecurityError",
     "NetworkError", "AbortError", "TimeoutError", "QuotaExceededError", "DataCloneError",

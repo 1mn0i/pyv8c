@@ -623,3 +623,41 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
 - 文档：`538f98f docs: update handoff and worklog`。
 - `_pyv8`：`429ec5e refactor: isolate native class configuration loading`。
 - 两个提交均已推送到 GitHub，远端分支与本地 HEAD 一致，工作区干净。
+
+## 2026-09-01：实现 document.all（HTMLAllCollection）
+
+### 修改
+
+- `dom/collections.py`：新增手写 `HTMLAllCollection`（无 IDL 父接口，tag 为
+  `HTMLAllCollection`），提供 `length`、`item()`、`namedItem()`、legacy `__call__`
+  以及 baseline 声明的 named/indexed interceptor。
+- `dom/model.py`：`Document.all` 由 stub 改为真实 getter，返回按文档缓存的 live
+  `HTMLAllCollection`；新增 `_materialize_interface()` 在首次使用时物化惰性接口，
+  不扩大默认 eager 集合。
+- `bindings/universe.py`：baseline `call_handler` 不再无条件覆盖 `__call__`——
+  手写 legacy caller（`document.all`）优先，只有没有真实 `__call__` 的接口才安装
+  no-op handler。这消除了上一轮记录的限制。
+- `tests/browser/`（新增目录）：浏览器对象类型与功能检查，`test_document_all.py`
+  按类型、使用、等待三组覆盖 `document.all`。
+
+### 行为要点
+
+- 类型：`typeof document.all === "undefined"`（undetectable）、
+  `[object HTMLAllCollection]`、`instanceof HTMLAllCollection`、
+  falsy 且 `== null`、`new HTMLAllCollection()` / `HTMLAllCollection()` 抛
+  `Illegal constructor`。
+- 使用：索引按树序、`item()` 字符串参数走命名查找、`namedItem()` 少参抛
+  `TypeError`、重复 id/name 返回 live `HTMLCollection`、未命中时属性访问为
+  `undefined` 而 `item()`/`namedItem()` 为 `null`、legacy 调用 `document.all(name)`。
+- 命名属性遵循 `[LegacyUnenumerableNamedProperties]`：可访问但
+  `Object.keys` / `Object.getOwnPropertyNames` / `for-in` 只暴露索引。
+- 等待：视图 live，`setTimeout` 任务、`run_until_idle()` 之后的新增/删除/改 id
+  立即可见，缓存引用与 `document.all` 始终一致。
+
+### 验证
+
+- `pyv8c`：全量 `142 passed`（原 112 + 新增 30）。
+- 覆盖三条绑定路径：默认惰性（首次访问 `document.all` 时物化）、
+  `lazy_interfaces=False` 全量物化、`strict_validation=True`。
+- 启动基准 `--runs 10`：p50 `100.5 ms`（本次会话 baseline 二进制缓存缺失，
+  `baseline_decode_ms` 约 27 ms；eager 集合与 `lazy_register` 未受影响）。

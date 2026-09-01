@@ -16,5 +16,9 @@ def apply_template_flags(config, template):
     for source, target in TEMPLATE_FLAGS:
         if template.get(source):
             config[target] = 1
+    # ``array`` is the baseline marker for Web IDL indexed collections.  The
+    # native bridge uses the same bit layout as FlagArrayProto; the baseline
+    # currently only needs the iterator bit.
+    if template.get("array"):
+        config["__v8_array__"] = 1
     return config
-

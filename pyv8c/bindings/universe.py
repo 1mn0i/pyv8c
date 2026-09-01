@@ -217,6 +217,15 @@ class InterfaceUniverse:
             enabled.extend(name for key, name in mapping if key in keys)
         if template.get("access_check") or cross_named or cross_indexed:
             enabled.append("__v8_cross_origin_check__")
+        # Hand-written implementations may provide a callback that is not
+        # represented in compact baseline metadata (for example an indexed
+        # query used to expose a correct readonly descriptor). Preserve those
+        # explicit callbacks instead of silently dropping them.
+        cls = self.class_for(name)
+        for _family, mapping in self._HANDLER_FAMILIES + self._CROSS_ORIGIN_FAMILIES:
+            for _key, method_name in mapping:
+                if method_name not in enabled and any(method_name in base.__dict__ for base in cls.__mro__):
+                    enabled.append(method_name)
         result = tuple(enabled)
         self._handler_cache[name] = result
         return result
@@ -326,6 +335,11 @@ class InterfaceUniverse:
                     configs.append(item)
                     configured.add(item[0])
         return configs
+
+    @staticmethod
+    def _declares_callback(cls, name):
+        """True when the class or one of its bases defines ``name`` itself."""
+        return any(name in base.__dict__ for base in cls.__mro__)
 
     @staticmethod
     def _raw_callback(cls, name):
@@ -498,7 +512,9 @@ class InterfaceUniverse:
             config[method_name] = True
         template = spec.get("template") or {}
         apply_template_flags(config, template)
-        if template.get("call_handler"):
+        # A hand-written legacy caller (document.all) must win over the stub;
+        # only interfaces without a real __call__ need the no-op handler.
+        if template.get("call_handler") and not self._declares_callback(cls, "__call__"):
             config["__call__"] = self._stub_call_handler(name)
         constants = []
         constant_names = set()

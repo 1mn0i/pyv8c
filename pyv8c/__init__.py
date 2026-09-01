@@ -14,7 +14,7 @@ __all__ = [
     "Document", "Node", "Element", "HTMLElement", "Text", "Comment", "DocumentType",
     "CharacterData", "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "CustomEvent", "EventTarget", "WindowProperties", "Location", "Navigator", "Screen", "Storage", "URL",
     "URLSearchParams",
-    "NodeList", "HTMLCollection", "DOMTokenList", "NamedNodeMap", "Attr", "DocumentFragment", "HTMLTemplateElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLScriptElement", "HTMLLinkElement", "HTMLStyleElement",
+    "NodeList", "HTMLCollection", "HTMLAllCollection", "DOMTokenList", "NamedNodeMap", "Attr", "DocumentFragment", "HTMLTemplateElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLScriptElement", "HTMLLinkElement", "HTMLStyleElement",
     "Blob", "Headers", "Request", "Response", "XMLHttpRequest", "Worker", "WorkerGlobalScope", "DedicatedWorkerGlobalScope",
     "WebSocket", "MessageEvent", "CloseEvent", "ErrorEvent",
     "V8Error", "V8TypeError", "V8RangeError", "V8ReferenceError", "V8SyntaxError", "V8URIError", "V8EvalError",
