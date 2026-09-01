@@ -308,7 +308,7 @@ class _WorkerRuntime:
             )
             self._isolate = pyv8.Isolate()
             context_kwargs = {
-                "hook": False,
+                "hook": bool(self.page.hook),
                 "ctx_type": "Worker",
                 "class_configs": self._binding_session.configs,
                 "lazy_factory": self._binding_session.lazy_factory("Worker"),

@@ -54,8 +54,11 @@ class Page:
     _has_navigation = StateAlias("navigation", "has_navigation")
     _parsing = StateAlias("navigation", "parsing")
 
-    def __init__(self, context, url="about:blank"):
+    def __init__(self, context, url="about:blank", *, hook=None):
         self.context_owner = context
+        # A page can override the browser default without changing the
+        # configuration used by other pages in the same browser.
+        self.hook = context.browser.hook if hook is None else bool(hook)
         self.closed = False
         self.navigation = NavigationController(self)
         self.lifecycle = DocumentLifecycle(self)
@@ -83,7 +86,7 @@ class Page:
         )
         binding_prepared = time.perf_counter_ns()
         context_kwargs = {
-            "hook": False,
+            "hook": self.hook,
             "ctx_type": "Window",
             "class_configs": self.binding_session.configs,
             "lazy_factory": self.binding_session.lazy_factory(
@@ -322,9 +325,9 @@ class BrowserContext:
         self._ensure_open()
         self._blob_urls.pop(url, None)
 
-    def new_page(self, url="about:blank"):
+    def new_page(self, url="about:blank", *, hook=None):
         self._ensure_open()
-        page = Page(self)
+        page = Page(self, hook=hook)
         self.pages.append(page)
         if str(url) != "about:blank":
             try:
@@ -355,7 +358,7 @@ class BrowserContext:
 
 class Browser:
     def __init__(self, *, resource_loader=None,
-                 real_network=False, cycronet_options=None,
+                 real_network=False, cycronet_options=None, hook=False,
                  generate_interface_stubs=True, expose_unimplemented=True,
                  stub_logging="info", interface_baseline_path=None,
                  eager_interfaces=None, lazy_interfaces=True, strict_validation=False):
@@ -366,6 +369,7 @@ class Browser:
         self.resource_loader = resource_loader
         self.real_network = bool(real_network)
         self.cycronet_options = dict(cycronet_options or {})
+        self.hook = bool(hook)
         self.generate_interface_stubs = bool(generate_interface_stubs)
         self.expose_unimplemented = bool(expose_unimplemented)
         self.stub_logging = str(stub_logging or "info")

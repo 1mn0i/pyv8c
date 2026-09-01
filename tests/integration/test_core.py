@@ -1,14 +1,32 @@
 import pytest
+from unittest.mock import patch
 
 pytest.importorskip("pyv8")
 from pyv8c import Browser, INTERFACES
 from pyv8c.dom.selectors import parse
+import pyv8c.runtime.browser as browser_runtime
 
 
 def test_interface_registry_is_explicit():
     assert INTERFACES["HTMLElement"].parent == "Element"
     assert INTERFACES["Element"].parent == "Node"
     assert INTERFACES["Node"].parent == "EventTarget"
+
+
+def test_browser_hook_is_forwarded_to_page_context():
+    with patch.object(browser_runtime.pyv8, "Context", wraps=browser_runtime.pyv8.Context) as context_ctor:
+        browser = Browser(hook=True)
+        try:
+            page = browser.new_context().new_page()
+            assert page.hook is True
+            assert context_ctor.call_args.kwargs["hook"] is True
+
+            context_ctor.reset_mock()
+            overridden = browser.new_context().new_page(hook=False)
+            assert overridden.hook is False
+            assert context_ctor.call_args.kwargs["hook"] is False
+        finally:
+            browser.close()
 
 
 def test_dom_prototype_chain_and_identity():
