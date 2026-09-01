@@ -33,13 +33,13 @@ def test_variadic_optional_and_dictionary_arguments():
     browser, page = _page()
     value = page.evaluate("""(() => {
       const list = document.body.classList;
-      let missing;
-      try { list.add(); } catch (e) { missing = [e.name, e instanceof TypeError]; }
+      list.add();
+      const afterEmptyAdd = list.value;
       list.add('one', 'two');
       document.body.addEventListener('x', () => {}, {once: true, capture: false});
-      return [missing, list.value];
+      return [afterEmptyAdd, list.value];
     })()""")
-    assert value == [["TypeError", True], "one two"]
+    assert value == ["", "one two"]
     browser.close()
 
 

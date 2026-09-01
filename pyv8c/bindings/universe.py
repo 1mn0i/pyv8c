@@ -508,6 +508,9 @@ class InterfaceUniverse:
             "__v8_parent_class__": self.class_for(parent_name) if parent_name else object,
             "__v8_to_string_tag__": spec.get("tag") or name,
         }
+        array_flags = int(getattr(cls, "__v8_array__", 0) or 0)
+        if array_flags:
+            config["__v8_array__"] = array_flags
         for method_name in self._declared_handlers(name):
             config[method_name] = True
         template = spec.get("template") or {}

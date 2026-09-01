@@ -550,7 +550,7 @@
           "variadic": true
         }
       ],
-      "required": 1,
+      "required": 0,
       "source_evidence": "migrated from the validated pyv8c Web IDL behavior table",
       "status": "manual-reviewed",
       "target_callbacks": [
@@ -591,7 +591,7 @@
           "variadic": true
         }
       ],
-      "required": 1,
+      "required": 0,
       "source_evidence": "migrated from the validated pyv8c Web IDL behavior table",
       "status": "manual-reviewed",
       "target_callbacks": [

@@ -637,7 +637,7 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
 - `bindings/universe.py`：baseline `call_handler` 不再无条件覆盖 `__call__`——
   手写 legacy caller（`document.all`）优先，只有没有真实 `__call__` 的接口才安装
   no-op handler。这消除了上一轮记录的限制。
-- `tests/browser/`（新增目录）：浏览器对象类型与功能检查，`test_document_all.py`
+- `tests/browser/`（新增目录）：浏览器对象类型与功能检查，`test_collections.py`
   按类型、使用、等待三组覆盖 `document.all`。
 
 ### 行为要点

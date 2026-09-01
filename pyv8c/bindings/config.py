@@ -20,5 +20,5 @@ def apply_template_flags(config, template):
     # native bridge uses the same bit layout as FlagArrayProto; the baseline
     # currently only needs the iterator bit.
     if template.get("array"):
-        config["__v8_array__"] = 1
+        config.setdefault("__v8_array__", 1)
     return config

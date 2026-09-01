@@ -49,6 +49,10 @@ class MethodSpec:
                     1 for item in self.params
                     if not item.optional and not item.variadic
                 )
+            for index, item in enumerate(self.params):
+                if item.variadic:
+                    count = min(count, index)
+                    break
             object.__setattr__(self, "required_arg_count", count)
 
     def required_count(self):
@@ -252,7 +256,8 @@ def _boolean(value):
         return value
     if isinstance(value, (int, float)):
         return value != 0 and not (isinstance(value, float) and math.isnan(value))
-    if isinstance(value, str):
+    string_input = isinstance(value, str)
+    if string_input:
         return bool(value)
     return True
 
@@ -264,6 +269,8 @@ def _number(value, integer=False, unsigned=False):
     try:
         result = float(value)
     except (TypeError, ValueError, OverflowError) as exc:
+        if string_input:
+            return 0
         raise _error("TypeError", "The provided value is not a number.") from exc
     if not math.isfinite(result):
         raise _error("RangeError", "The number is not finite.")
@@ -322,7 +329,29 @@ def _long(value):
 
 
 def _unsigned_long(value):
-    return _number(value, integer=True, unsigned=True)
+    # Plain Web IDL integer conversion wraps modulo 2^32. Only declarations
+    # carrying [EnforceRange] reject negative or out-of-range values.
+    if _is_null(value) or _is_undefined(value):
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return 0
+        lowered = value.lower()
+        if lowered.startswith(("0x", "0o", "0b")):
+            try:
+                value = int(value, 0)
+            except ValueError:
+                return 0
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise _error("TypeError", "The provided value is not a number.") from exc
+    if not math.isfinite(result) or result == 0:
+        return 0
+    return math.trunc(result) % (2 ** 32)
 
 
 def _byte_string(value):

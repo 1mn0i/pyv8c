@@ -7,15 +7,76 @@ they read through owner-supplied getters, which keeps them importable by
 
 import pyv8
 from pyv8.tools import ConstructorConfig
-from pyv8.flag import FlagExposed, V8Attribute
+from pyv8.flag import FlagArrayProto, FlagExposed, V8Attribute
 
 from ..bindings.registry import interface, js_attributes, js_methods
-from ..core.errors import V8TypeError, InvalidCharacterError, LegacyPropertyError
+from ..core.errors import (
+    V8TypeError,
+    InvalidCharacterError,
+    LegacyPropertyError,
+    dom_exception,
+)
+
+
+class _ReadOnlyIndexedCollection:
+    """Shared Web IDL indexed-property behavior for readonly collections."""
+
+    def _indexed_items(self):
+        raise NotImplementedError
+
+    def _item_at(self, index):
+        try:
+            index = int(index)
+        except (TypeError, ValueError, OverflowError):
+            return pyv8.Null
+        items = self._indexed_items()
+        return items[index] if 0 <= index < len(items) else pyv8.Null
+
+    def _has_index(self, index):
+        return self._item_at(index) is not pyv8.Null
+
+    def _interface_name(self):
+        return getattr(type(self), "__idl_name__", type(self).__name__)
+
+    def __v8_index_get__(self, index):
+        value = self._item_at(index)
+        return None if value is pyv8.Null else value
+
+    def __v8_index_set__(self, index, value):
+        if self._has_index(index):
+            raise LegacyPropertyError.indexed(
+                "set", index, self._interface_name(),
+                "Indexed property setter is not supported.",
+            )
+        return None
+
+    def __v8_index_query__(self, index):
+        return V8Attribute.ReadOnly if self._has_index(index) else None
+
+    def __v8_index_del__(self, index):
+        if self._has_index(index):
+            raise LegacyPropertyError.indexed(
+                "delete", index, self._interface_name(),
+                "Indexed property deleter is not supported.",
+            )
+        return None
+
+    def __v8_index_enum__(self):
+        return len(self._indexed_items())
+
+
+_ITERABLE_FLAGS = (
+    FlagArrayProto.iterator | FlagArrayProto.entries | FlagArrayProto.keys
+    | FlagArrayProto.values | FlagArrayProto.forEach
+)
 
 
 @interface("NodeList", None, constructible=False, tag="NodeList")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
-class NodeList:
+@ConstructorConfig(
+    exposed=FlagExposed.kYes, constructor=0, has_constructor=1,
+    v8_array=_ITERABLE_FLAGS,
+)
+class NodeList(_ReadOnlyIndexedCollection):
     """A live list view. The owner remains the source of truth."""
     __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1))
     __v8_method__ = js_methods(("item", "fn_item", 1, 1))
@@ -24,16 +85,12 @@ class NodeList:
     def _items(self):
         items = self._getter() if self._getter else (self._values or ())
         return items if hasattr(items, "__len__") and hasattr(items, "__getitem__") else tuple(items)
+    def _indexed_items(self): return self._items()
     def get_length(self): return len(self._items())
-    def fn_item(self, index):
-        try: return self._items()[int(index)]
-        except (IndexError, ValueError, TypeError): return pyv8.Null
+    def fn_item(self, index): return self._item_at(index)
     def __iter__(self): return iter(self._items())
     def __getitem__(self, index): return self._items()[index]
     def __len__(self): return len(self._items())
-    __v8_index_get__ = lambda self, index: self.fn_item(index)
-    __v8_index_query__ = lambda self, index: int(index) < len(self)
-    __v8_index_enum__ = lambda self: list(range(len(self)))
 
 
 def _node_id(node):
@@ -43,7 +100,7 @@ def _node_id(node):
     return str(value) if value else ""
 
 
-def _node_name(node):
+def _all_node_name(node):
     tag = str(getattr(node, "localName", "")).lower()
     if tag not in {"a", "button", "embed", "form", "frame", "frameset",
                    "iframe", "img", "input", "map", "meta", "object",
@@ -52,20 +109,96 @@ def _node_name(node):
     return str(getattr(node, "attributes", {}).get("name") or "")
 
 
+def _collection_node_name(node):
+    """The HTML ``name`` attribute used by HTMLCollection named lookup."""
+    return str(getattr(node, "attributes", {}).get("name") or "")
+
+
+def _supported_names(items, name_getter):
+    """Return unique IDs and names in tree order, as required by Web IDL."""
+    names = []
+    seen = set()
+    for node in items:
+        for value in (_node_id(node), name_getter(node)):
+            if value and value not in seen:
+                seen.add(value)
+                names.append(value)
+    return names
+
+
+# Legacy named properties do not override ordinary prototype properties.
+# These are the string keys installed on the collection prototypes and on
+# Object.prototype; symbol-based iterator members cannot collide with names.
+_OBJECT_PROTOTYPE_NAMES = frozenset((
+    "constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty",
+    "__lookupGetter__", "__lookupSetter__", "isPrototypeOf",
+    "propertyIsEnumerable", "toString", "valueOf", "__proto__",
+    "toLocaleString",
+))
+_HTML_COLLECTION_PROTOTYPE_NAMES = _OBJECT_PROTOTYPE_NAMES | {
+    "length", "item", "namedItem",
+}
+
+
 @interface("HTMLCollection", None, constructible=False, tag="HTMLCollection")
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
 class HTMLCollection(NodeList):
+    _NAME_ATTRIBUTES = V8Attribute.ReadOnly | V8Attribute.DontEnum
     __v8_method__ = js_methods(("item", "fn_item", 1, 1), ("namedItem", "fn_namedItem", 1, 1))
     def fn_namedItem(self, name):
         value = str(name)
+        if not value:
+            return pyv8.Null
         return next((n for n in self._items()
-                     if _node_id(n) == value or _node_name(n) == value), pyv8.Null)
+                     if _node_id(n) == value or _collection_node_name(n) == value), pyv8.Null)
+
+    def _supported_names(self):
+        return _supported_names(self._items(), _collection_node_name)
+
+    def _visible_names(self):
+        return [
+            name for name in self._supported_names()
+            if name not in _HTML_COLLECTION_PROTOTYPE_NAMES
+        ]
+
+    def __v8_name_get__(self, name):
+        if not isinstance(name, str) or name not in self._visible_names():
+            return None
+        value = self.fn_namedItem(name)
+        return None if value is pyv8.Null else value
+
+    def __v8_name_set__(self, name, value):
+        name = _dom_string(name)
+        if name in self._visible_names():
+            raise LegacyPropertyError.named(
+                "set", name, self._interface_name(),
+                "Named property setter is not supported.",
+            )
+        return None
+
+    def __v8_name_query__(self, name):
+        if not isinstance(name, str):
+            return None
+        return self._NAME_ATTRIBUTES if name in self._visible_names() else None
+
+    def __v8_name_del__(self, name):
+        name = _dom_string(name)
+        if name in self._visible_names():
+            raise LegacyPropertyError.named(
+                "delete", name, self._interface_name(),
+                "Named property deleter is not supported.",
+            )
+        return None
+
+    def __v8_name_enum__(self):
+        return self._visible_names()
 
 
 # ``HTMLAllCollection`` is declared ``[LegacyUnenumerableNamedProperties]``:
 # the named properties exist and are reachable, but their descriptors are
 # non-enumerable (so they are omitted by ``Object.keys`` and ``for-in``).
 _ALL_NAME_ATTRIBUTES = V8Attribute.ReadOnly | V8Attribute.DontEnum
+_ALL_INTERFACE = "HTMLAllCollection"
 
 
 def _dom_string(value):
@@ -102,7 +235,7 @@ def _array_index_name(value):
 
 @interface("HTMLAllCollection", None, constructible=False, tag="HTMLAllCollection")
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
-class HTMLAllCollection:
+class HTMLAllCollection(_ReadOnlyIndexedCollection):
     """The legacy ``document.all`` view: undetectable, callable and live.
 
     Chromium marks the interface undetectable, so ``typeof document.all`` is
@@ -128,7 +261,7 @@ class HTMLAllCollection:
         """Elements whose ``id`` or ``name`` equals ``name``, in tree order."""
         if not name:
             return []
-        return [n for n in self._items() if _node_id(n) == name or _node_name(n) == name]
+        return [n for n in self._items() if _node_id(n) == name or _all_node_name(n) == name]
 
     def _named(self, name):
         # Chromium returns the single match, a live HTMLCollection when several
@@ -173,22 +306,32 @@ class HTMLAllCollection:
 
     # -- named interceptor ----------------------------------------------
     def __v8_name_get__(self, name):
-        if not isinstance(name, str):
+        if not isinstance(name, str) or name in _HTML_COLLECTION_PROTOTYPE_NAMES:
             return None
         value = self._named(name)
         return None if value is pyv8.Null else value
 
     def __v8_name_set__(self, name, value):
-        if self._matches(_dom_string(name)):
-            raise LegacyPropertyError("Named property setter is not supported.")
+        name = _dom_string(name)
+        if name not in _HTML_COLLECTION_PROTOTYPE_NAMES and self._matches(name):
+            raise LegacyPropertyError.named(
+                "set", name, _ALL_INTERFACE,
+                "Named property setter is not supported.",
+            )
         return None
     def __v8_name_query__(self, name):
         if not isinstance(name, str):
             return None
+        if name in _HTML_COLLECTION_PROTOTYPE_NAMES:
+            return None
         return _ALL_NAME_ATTRIBUTES if self._matches(name) else None
     def __v8_name_del__(self, name):
-        if self._matches(_dom_string(name)):
-            raise LegacyPropertyError("Named property deleter is not supported.")
+        name = _dom_string(name)
+        if name not in _HTML_COLLECTION_PROTOTYPE_NAMES and self._matches(name):
+            raise LegacyPropertyError.named(
+                "delete", name, _ALL_INTERFACE,
+                "Named property deleter is not supported.",
+            )
         return None
     def __v8_name_enum__(self):
         # OwnPropertyKeys includes legacy names; LegacyUnenumerable controls
@@ -196,68 +339,124 @@ class HTMLAllCollection:
         names = []
         seen = set()
         for node in self._items():
-            for value in (_node_id(node), _node_name(node)):
-                if value and value not in seen:
+            for value in (_node_id(node), _all_node_name(node)):
+                if (value and value not in seen
+                        and value not in _HTML_COLLECTION_PROTOTYPE_NAMES):
                     seen.add(value); names.append(value)
         return names
 
     # -- indexed interceptor --------------------------------------------
-    def __v8_index_get__(self, index):
-        value = self.fn_item(index)
-        return None if value is pyv8.Null else value
-    def __v8_index_set__(self, index, value):
-        raise LegacyPropertyError("Indexed property setter is not supported.")
-    def __v8_index_query__(self, index):
-        try:
-            return V8Attribute.ReadOnly if 0 <= int(index) < len(self._items()) else None
-        except (TypeError, ValueError):
-            return None
-    def __v8_index_del__(self, index):
-        try:
-            supported = 0 <= int(index) < len(self._items())
-        except (TypeError, ValueError):
-            supported = False
-        if supported:
-            raise LegacyPropertyError("Index property deleter is not supported.")
-        return True
-    def __v8_index_enum__(self): return len(self._items())
+    def _indexed_items(self): return self._items()
 
     def __iter__(self): return iter(self._items())
     def __len__(self): return len(self._items())
 
 
 @interface("DOMTokenList", None, constructible=False, tag="DOMTokenList")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
-class DOMTokenList:
+@ConstructorConfig(
+    exposed=FlagExposed.kYes, constructor=0, has_constructor=1,
+    v8_array=_ITERABLE_FLAGS,
+)
+class DOMTokenList(_ReadOnlyIndexedCollection):
     __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1), ("value", "get_value", "set_value", 0, 0))
-    __v8_method__ = js_methods(("item", "fn_item", 1, 1), ("contains", "fn_contains", 1, 1),
-                               ("add", "fn_add", 1, 0), ("remove", "fn_remove", 1, 0),
-                               ("toggle", "fn_toggle", 1, 0), ("replace", "fn_replace", 2, 0))
-    def __init__(self, element=None, attr="class", **_): self._element, self._attr = element, attr
-    def _tokens(self): return [x for x in str(self._element.attributes.get(self._attr, "")).split() if x]
+    __v8_method__ = js_methods(
+        ("item", "fn_item", 1, 1), ("contains", "fn_contains", 1, 1),
+        ("add", "fn_add", 0, 0), ("remove", "fn_remove", 0, 0),
+        ("toggle", "fn_toggle", 1, 0), ("replace", "fn_replace", 2, 0),
+        ("supports", "fn_supports", 1, 0), ("toString", "fn_toString", 0, 1),
+    )
+    _ASCII_WHITESPACE = " \t\n\f\r"
+
+    def __init__(self, element=None, attr="class", supported_tokens=None, **_):
+        self._element = element
+        self._attr = attr
+        self._supported_tokens = (
+            None if supported_tokens is None
+            else frozenset(str(token).lower() for token in supported_tokens)
+        )
+
+    def _raw_value(self):
+        return str(self._element.attributes.get(self._attr, ""))
+
+    def _tokens(self):
+        value = self._raw_value()
+        tokens = []
+        current = []
+        for character in value:
+            if character in self._ASCII_WHITESPACE:
+                if current:
+                    token = "".join(current)
+                    if token not in tokens:
+                        tokens.append(token)
+                    current = []
+            else:
+                current.append(character)
+        if current:
+            token = "".join(current)
+            if token not in tokens:
+                tokens.append(token)
+        return tokens
+
+    def _indexed_items(self): return self._tokens()
+
     def _validate(self, token):
         token = str(token)
-        if not token: raise V8TypeError("The token provided must not be empty.")
-        if any(ch.isspace() for ch in token):
+        if not token:
+            raise dom_exception("SyntaxError", "The token provided must not be empty.")
+        if any(ch in self._ASCII_WHITESPACE for ch in token):
             raise InvalidCharacterError("The token provided contains HTML space characters, which are not valid in tokens.")
         return token
-    def _set(self, values): self._element.attributes[self._attr] = " ".join(dict.fromkeys(values))
+
+    def _update(self, values):
+        values = list(dict.fromkeys(values))
+        if values or self._attr in self._element.attributes:
+            self._element.attributes[self._attr] = " ".join(values)
+
     def get_length(self): return len(self._tokens())
-    def get_value(self): return " ".join(self._tokens())
-    def set_value(self, value): self._set([self._validate(token) for token in str(value).split()])
-    def fn_item(self, index):
-        try: return self._tokens()[int(index)]
-        except (IndexError, ValueError, TypeError): return pyv8.Null
+    def get_value(self): return self._raw_value()
+    def set_value(self, value): self._element.attributes[self._attr] = str(value)
+    def fn_item(self, index): return self._item_at(index)
     def fn_contains(self, token): return self._validate(token) in self._tokens()
-    def fn_add(self, *tokens): self._set(self._tokens() + [self._validate(x) for x in tokens])
-    def fn_remove(self, *tokens): self._set([x for x in self._tokens() if x not in {self._validate(t) for t in tokens}])
+
+    def fn_add(self, *tokens):
+        tokens = [self._validate(token) for token in tokens]
+        self._update(self._tokens() + tokens)
+
+    def fn_remove(self, *tokens):
+        tokens = set(self._validate(token) for token in tokens)
+        self._update(token for token in self._tokens() if token not in tokens)
+
     def fn_toggle(self, token, force=pyv8.Undefined):
-        token = self._validate(token); present = token in self._tokens()
-        if force is not pyv8.Undefined: present = not bool(force)
-        if present: self.fn_remove(token); return False
-        self.fn_add(token); return True
+        token = self._validate(token)
+        values = self._tokens()
+        present = token in values
+        if present:
+            if force is pyv8.Undefined or not force:
+                self._update(value for value in values if value != token)
+                return False
+            return True
+        if force is pyv8.Undefined or force:
+            self._update(values + [token])
+            return True
+        return False
+
     def fn_replace(self, old, new):
-        values = self._tokens(); old, new = self._validate(old), self._validate(new)
-        if old not in values: return False
-        self._set([new if x == old else x for x in values]); return True
+        old, new = self._validate(old), self._validate(new)
+        values = self._tokens()
+        if old not in values:
+            return False
+        if old != new:
+            if new in values:
+                values.remove(old)
+            else:
+                values[values.index(old)] = new
+        self._update(values)
+        return True
+
+    def fn_supports(self, token):
+        if self._supported_tokens is None:
+            raise V8TypeError("DOMTokenList has no supported tokens.")
+        return str(token).lower() in self._supported_tokens
+
+    def fn_toString(self): return self.get_value()
     def __iter__(self): return iter(self._tokens())

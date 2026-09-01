@@ -40,6 +40,24 @@ class LegacyPropertyError(V8TypeError):
     __v8_interceptor_failure__ = True
     __v8_error_name__ = "TypeError"
 
+    @classmethod
+    def named(cls, operation, name, interface, detail):
+        """Build Chromium's named-property exception message."""
+        preposition = "on" if operation == "set" else "from"
+        return cls(
+            f"Failed to {operation} a named property '{name}' {preposition} "
+            f"'{interface}': {detail}"
+        )
+
+    @classmethod
+    def indexed(cls, operation, index, interface, detail):
+        """Build Chromium's indexed-property exception message."""
+        preposition = "on" if operation == "set" else "from"
+        return cls(
+            f"Failed to {operation} an indexed property [{index}] {preposition} "
+            f"'{interface}': {detail}"
+        )
+
 
 _DOM_CODES = {
     "IndexSizeError": 1,
