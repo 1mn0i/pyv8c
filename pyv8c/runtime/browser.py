@@ -17,7 +17,7 @@ import pyv8
 
 from ..bom.api import Window
 from ..dom.model import Document
-from ..network.backend import CronetNetworkBackend
+from ..network.backend import CookieJar, CronetNetworkBackend
 from ..bindings.registry import expose_interfaces
 from ..bindings.universe import (
     DEFAULT_EAGER_INTERFACES, BaselineRepository, InterfaceUniverse,
@@ -277,7 +277,10 @@ class Page:
 class BrowserContext:
     def __init__(self, browser):
         self.browser, self.pages = browser, []
+        self.cookies = CookieJar()
         self.network_backend = CronetNetworkBackend(options=browser.cycronet_options) if browser.real_network else None
+        if self.network_backend is not None:
+            self.network_backend.cookies = self.cookies
         self._blob_urls = {}
         self.closed = False
 

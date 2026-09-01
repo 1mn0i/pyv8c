@@ -661,3 +661,25 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
   `lazy_interfaces=False` 全量物化、`strict_validation=True`。
 - 启动基准 `--runs 10`：p50 `100.5 ms`（本次会话 baseline 二进制缓存缺失，
   `baseline_decode_ms` 约 27 ms；eager 集合与 `lazy_register` 未受影响）。
+
+## 2026-09-01：document.cookie 与 context 级 CookieJar
+
+### 修改
+
+- `Document.prototype.cookie` 接入 `BrowserContext.cookies`，同一 context 的 Page 共享
+  cookie，真实网络后端启用时复用同一 CookieJar。
+- `network/backend.py` 扩展 CookieJar：支持默认路径、domain/path 匹配、Secure、HttpOnly、
+  Max-Age、Expires、过期清理、稳定排序和脚本对 HttpOnly cookie 的覆盖保护。
+- 非 HTTP(S) URL 的 document cookie 读取为空，写入不改变状态。实际状态变化时使用
+  `logger.debug` 记录当前页面可见的 cookie 字符串。
+- `tools/webidl-reviews.json` 和 bundled baseline 为 `Document.cookie` setter 添加了
+  一个必需 `DOMString` 参数的已审核签名，严格校验路径可用。
+- 新增 `tests/browser/test_document_cookie.py`；通过标准库 `ThreadingHTTPServer` 的本地
+  回环地址执行导航测试，避免依赖 `example.test` 或公网网络。
+
+### 验证
+
+- `tests/browser/test_collections.py`、`tests/browser/test_document_cookie.py` 与既有
+  CookieJar 集成测试：`56 passed`。
+- `pyv8c` 全量：`161 passed in 28.72s`，使用本地 `_pyv8` 扩展。
+- `python -m py_compile` 与 `git diff --check` 通过。

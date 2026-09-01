@@ -645,6 +645,19 @@
         "DOMTokenList|prototype|attribute|ValueAttributeSetCallback"
       ]
     },
+    "Document.cookie": {
+      "parameters": [
+        {
+          "type": "DOMString"
+        }
+      ],
+      "required": 1,
+      "source_evidence": "HTML Standard document.cookie setter accepts one DOMString assignment",
+      "status": "manual-reviewed",
+      "target_callbacks": [
+        "Document|prototype|attribute|CookieAttributeSetCallback"
+      ]
+    },
     "Document.createAttribute": {
       "parameters": [
         {

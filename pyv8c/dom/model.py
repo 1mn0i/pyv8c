@@ -427,6 +427,7 @@ class Document(Node):
         ("head", "get_head", None, 0, 1), ("defaultView", "get_defaultView", None, 0, 1),
         ("childNodes", "get_childNodes", None, 0, 1), ("readyState", "get_readyState", None, 0, 1),
         ("hidden", "get_hidden", None, 0, 1), ("visibilityState", "get_visibilityState", None, 0, 1),
+        ("cookie", "get_cookie", "set_cookie", 0, 0),
         ("all", "get_all", None, 0, 1),
     )
     __v8_method__ = js_methods(
@@ -455,6 +456,15 @@ class Document(Node):
     def get_readyState(self): return self.ready_state
     def get_hidden(self): return self.hidden
     def get_visibilityState(self): return "hidden" if self.hidden else "visible"
+    def get_cookie(self):
+        page = self._page
+        context = getattr(getattr(page, "context_owner", None), "cookies", None)
+        return context.document_for(self.url) if context is not None else ""
+    def set_cookie(self, value):
+        page = self._page
+        context = getattr(getattr(page, "context_owner", None), "cookies", None)
+        if context is not None:
+            context.set_from_document(self.url, value)
     def get_all(self):
         # One cached live view per document, like Chromium: the object identity
         # is stable while the element list is always recomputed.

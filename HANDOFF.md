@@ -222,6 +222,24 @@ Object.keys(document.all)      -> 只有索引（[LegacyUnenumerableNamedPropert
 `HTMLAllCollection` 不在默认 eager 集合内；`Document.get_all()` 通过
 `BindingSession.materialize()` 在首次使用时物化，避免扩大启动开销。
 
+## document.cookie
+
+`Document.prototype.cookie` 是可枚举、可配置的原型访问器。cookie 状态属于
+`BrowserContext`，因此同一 context 中的页面共享状态，不同 context 相互隔离；真实网络
+后端启用时也复用该 CookieJar。
+
+- 支持脚本读写、域和路径匹配、`Secure`、`HttpOnly`、`Max-Age`、`Expires` 以及同名
+  cookie 的更新或删除。
+- `document.cookie` 只返回当前 URL 可见且非 `HttpOnly` 的条目；请求头读取包含
+  `HttpOnly` 条目，并按路径长度、创建顺序排列。
+- 非 HTTP(S) 的不透明 URL（例如 `about:blank`）读取为空，脚本写入被忽略。
+- 状态实际变化时，`pyv8c.network.backend` 使用 `logger.debug` 记录当前页面可见的
+  cookie 字符串。
+
+浏览器测试 `tests/browser/test_document_cookie.py` 用标准库
+`ThreadingHTTPServer` 启动 `127.0.0.1` 随机端口的本地 HTTP 服务，再通过
+`Browser(resource_loader=...)` 导航；不依赖公网域名或外部网络。
+
 ## 验证
 
 运行 pyv8c 测试时使用本地构建的扩展：
@@ -295,6 +313,7 @@ iframe/Worker 隔离；最后增加非核心接口实现，且不扩大默认启
 - `_pyv8` 的 `ClassConfig` 读取与 overlay 校验已移至 `src/pyclass_config.cpp`，并保留已跟踪的 `pyv8/_pyv8.pyd`。
 - `document.all` 已实现为真实 `HTMLAllCollection`（undetectable、legacy call、live 集合），
   不再受 no-op call handler 限制；新增 `tests/browser/` 目录承载浏览器对象类型与功能检查。
-- 最新验证：`_pyv8` 全量 `177 passed`，`pyv8c` 全量 `142 passed`（含 `tests/browser` 30 项）。
-- 已推送 GitHub：`pyv8c` 功能提交 `1980864`、文档提交 `538f98f`，`_pyv8` 提交 `429ec5e`；
-  本次 `document.all` 改动尚未提交，工作区有未提交修改。
+- 集合兼容性提交 `fc571af` 与 `_pyv8` 桥接提交 `b707eef` 已推送到 GitHub。
+- 最新验证：`_pyv8` 全量 `180 passed`；`pyv8c` 全量 `161 passed`，其中包含
+  `tests/browser/test_collections.py` 的 44 项集合测试和 `test_document_cookie.py` 的 5 项测试。
+- 当前工作区包含尚待提交的 `document.cookie` 实现、baseline 更新、浏览器测试和本次文档更新。
