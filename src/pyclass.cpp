@@ -364,23 +364,42 @@ py_class_new(PyObject *cls, context_c * py_ctx)
 
     if ((py_ctx->hook || config.name_get) && strcmp(world, "WindowProperties") != 0)
     {
+        auto handler_flags = v8::PropertyHandlerFlags::kNone;
+        if (config.undetectable) {
+            handler_flags = static_cast<v8::PropertyHandlerFlags>(
+                int32_t(v8::PropertyHandlerFlags::kNonMasking) |
+                int32_t(v8::PropertyHandlerFlags::kOnlyInterceptStrings) |
+                int32_t(v8::PropertyHandlerFlags::kHasNoSideEffect));
+        }
         NamedPropertyHandlerConfiguration callbacks(
             named_getter,
             (py_ctx->hook || config.name_set) ? named_setter : nullptr,
             config.name_query ? named_query : nullptr,
             config.name_del ? named_deleter : nullptr,
-            config.name_enum ? named_enumerator : nullptr);
+            config.name_enum ? named_enumerator : nullptr,
+            named_definer,
+            named_descriptor,
+            v8::Local<v8::Value>(),
+            handler_flags);
         templ->InstanceTemplate()->SetHandler(callbacks);
     }
 
     if ((py_ctx->hook || config.index_get) && strcmp(world, "WindowProperties") != 0)
     {
+        auto handler_flags = v8::PropertyHandlerFlags::kNone;
+        if (config.undetectable) {
+            handler_flags = v8::PropertyHandlerFlags::kHasNoSideEffect;
+        }
         IndexedPropertyHandlerConfiguration callbacks(
             indexed_getter,
             (py_ctx->hook || config.index_set) ? indexed_setter : nullptr,
             config.index_query ? indexed_query : nullptr,
             config.index_del ? indexed_deleter : nullptr,
-            config.index_enum ? indexed_enumerator : nullptr);
+            config.index_enum ? indexed_enumerator : nullptr,
+            indexed_definer,
+            indexed_descriptor,
+            v8::Local<v8::Value>(),
+            handler_flags);
         templ->InstanceTemplate()->SetHandler(callbacks);
     }
 

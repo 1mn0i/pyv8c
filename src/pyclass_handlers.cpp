@@ -599,6 +599,89 @@ get_handler_method(PyObject* self, const char* method_name)
     return method;
 }
 
+Intercepted property_getter_handler(
+    PyObject* key, const PropertyCallbackInfo<Value>& info,
+    Local<Context> context, PyObject* self, const char* method_name);
+
+// Legacy platform objects report failed writes/deletes through the V8
+// callback result.  Python callbacks cannot see ShouldThrowOnError(), so a
+// marked exception is suppressed in sloppy mode and propagated in strict
+// mode by the native bridge.
+static bool
+consume_legacy_property_error(bool should_throw)
+{
+    if (!PyErr_Occurred())
+        return false;
+    PyObject *exc_type = NULL, *exc_value = NULL, *exc_traceback = NULL;
+    PyErr_Fetch(&exc_type, &exc_value, &exc_traceback);
+    PyErr_NormalizeException(&exc_type, &exc_value, &exc_traceback);
+    int marked = exc_value != NULL && PyObject_HasAttrString(
+        exc_value, "__v8_interceptor_failure__");
+    // fprintf(stderr, "legacy marked=%d strict=%d\\n", marked, should_throw);
+    if (marked && !should_throw) {
+        Py_XDECREF(exc_type);
+        Py_XDECREF(exc_value);
+        Py_XDECREF(exc_traceback);
+        return true;
+    }
+    PyErr_Restore(exc_type, exc_value, exc_traceback);
+    return false;
+}
+
+static bool
+property_query_value(PyObject* key, PyObject* self, const char* method_name,
+                     long* attributes)
+{
+    PyObject* method = get_handler_method(self, method_name);
+    if (method == NULL) {
+        if (!PyErr_Occurred())
+            return false;
+        return false;
+    }
+    PyObject* result = PyObject_CallFunctionObjArgs(method, key, NULL);
+    Py_DECREF(method);
+    if (result == NULL)
+        return false;
+    if (result == Py_None) {
+        Py_DECREF(result);
+        return false;
+    }
+    if (!PyLong_Check(result)) {
+        Py_DECREF(result);
+        return false;
+    }
+    *attributes = PyLong_AsLong(result);
+    Py_DECREF(result);
+    return !PyErr_Occurred();
+}
+
+static Intercepted
+property_descriptor(PyObject* key, const PropertyCallbackInfo<Value>& info,
+                    Local<Context> context, PyObject* self,
+                    const char* method_name, bool enumerable)
+{
+    Intercepted intercepted = property_getter_handler(
+        key, info, context, self, method_name);
+    if (intercepted == Intercepted::kNo)
+        return intercepted;
+    Local<Value> value = info.GetReturnValue().Get();
+    Local<Object> descriptor = Object::New(info.GetIsolate());
+    bool worked;
+    if (!descriptor->Set(context, V8String(info.GetIsolate(), "value"), value).To(&worked) ||
+        !descriptor->Set(context, V8String(info.GetIsolate(), "writable"),
+                          Boolean::New(info.GetIsolate(), false)).To(&worked) ||
+        !descriptor->Set(context, V8String(info.GetIsolate(), "enumerable"),
+                          Boolean::New(info.GetIsolate(), enumerable)).To(&worked) ||
+        !descriptor->Set(context, V8String(info.GetIsolate(), "configurable"),
+                          Boolean::New(info.GetIsolate(), true)).To(&worked)) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to create property descriptor");
+        js_throw_py();
+        return Intercepted::kYes;
+    }
+    info.GetReturnValue().Set(descriptor);
+    return Intercepted::kYes;
+}
+
 Intercepted
 property_getter_handler(PyObject* key,
                         const PropertyCallbackInfo<Value>& info,
@@ -669,6 +752,8 @@ property_setter_handler(PyObject* key,
     Py_DECREF(key);
     Py_DECREF(value);
     if (result == NULL) {
+        if (consume_legacy_property_error(info.ShouldThrowOnError()))
+            return Intercepted::kYes;
         js_throw_py();
         return Intercepted::kNo;
     }
@@ -701,6 +786,10 @@ property_deleter_handler(PyObject* key,
     Py_DECREF(method);
     Py_DECREF(key);
     if (result == NULL) {
+        if (consume_legacy_property_error(info.ShouldThrowOnError())) {
+            info.GetReturnValue().Set(false);
+            return Intercepted::kYes;
+        }
         js_throw_py();
         return Intercepted::kNo;
     }
@@ -1003,4 +1092,84 @@ void indexed_enumerator(Info(Array)) {
     SETUP;
     PyObject* self = get_self(info);
     indexed_enumerator_handler(info, context, self, "__v8_index_enum__");
+}
+
+Intercepted named_descriptor(Local<Name> js_name, Info(Value)) {
+    SETUP;
+    Local<Object> receiver = info.Holder();
+    if (receiver->GetRealNamedPropertyAttributesInPrototypeChain(context, js_name).IsJust())
+        return Intercepted::kNo;
+    PyObject* self = get_self(info);
+    PyObject* key = py_from_js(js_name, context);
+    if (key == NULL) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    return property_descriptor(key, info, context, self, "__v8_name_get__", false);
+}
+
+Intercepted indexed_descriptor(uint32_t index, Info(Value)) {
+    SETUP;
+    PyObject* self = get_self(info);
+    PyObject* key = PyLong_FromSize_t(index);
+    if (key == NULL) {
+        js_throw_py();
+        return Intercepted::kNo;
+    }
+    return property_descriptor(key, info, context, self, "__v8_index_get__", true);
+}
+
+static Intercepted
+property_definer(PyObject* key, const PropertyDescriptor& desc,
+                 const PropertyCallbackInfo<Boolean>& info,
+                 PyObject* self, const char* query_method,
+                 const char* error_message)
+{
+    long attributes = 0;
+    bool exists = property_query_value(key, self, query_method, &attributes);
+    if (PyErr_Occurred()) {
+        js_throw_py();
+        return Intercepted::kYes;
+    }
+    if (!exists)
+        return Intercepted::kNo;
+    info.GetReturnValue().Set(false);
+    if (info.ShouldThrowOnError()) {
+        Isolate* isolate = info.GetIsolate();
+        info.GetIsolate()->ThrowException(
+            Exception::TypeError(JSTR(error_message)));
+    }
+    return Intercepted::kYes;
+}
+
+Intercepted named_definer(Local<Name> js_name, const PropertyDescriptor& desc,
+                          const PropertyCallbackInfo<Boolean>& info) {
+    SETUP;
+    PyObject* self = get_self(info);
+    PyObject* key = py_from_js(js_name, context);
+    if (key == NULL) {
+        js_throw_py();
+        return Intercepted::kYes;
+    }
+    Intercepted result = property_definer(
+        key, desc, info, self, "__v8_name_query__",
+        "Named property setter is not supported.");
+    Py_DECREF(key);
+    return result;
+}
+
+Intercepted indexed_definer(uint32_t index, const PropertyDescriptor& desc,
+                            const PropertyCallbackInfo<Boolean>& info) {
+    SETUP;
+    PyObject* self = get_self(info);
+    PyObject* key = PyLong_FromSize_t(index);
+    if (key == NULL) {
+        js_throw_py();
+        return Intercepted::kYes;
+    }
+    Intercepted result = property_definer(
+        key, desc, info, self, "__v8_index_query__",
+        "Indexed property setter is not supported.");
+    Py_DECREF(key);
+    return result;
 }

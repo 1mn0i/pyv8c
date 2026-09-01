@@ -342,6 +342,17 @@ js_throw_py()
     }
 
     PyObject* exc_cls_name = PyObject_GetAttrString(exc_type, "__name__");
+    PyObject* js_error_name = exc_value == NULL
+        ? NULL : PyObject_GetAttrString(exc_value, "__v8_error_name__");
+    if (js_error_name != NULL && PyUnicode_Check(js_error_name)) {
+        Py_XDECREF(exc_cls_name);
+        exc_cls_name = js_error_name;
+        js_error_name = NULL;
+    }
+    else if (js_error_name == NULL && PyErr_Occurred()) {
+        PyErr_Clear();
+    }
+    Py_XDECREF(js_error_name);
     const char* exc_type_name = "";
     if (exc_cls_name != NULL) {
         const char* type_name = PyUnicode_AsUTF8_abi3(exc_cls_name);
@@ -368,7 +379,8 @@ js_throw_py()
             exception = state->exception.Get(isolate).As<Object>();
         }
     }
-    else if (strcmp(exc_type_name, "V8TypeError") == 0)
+    else if (strcmp(exc_type_name, "V8TypeError") == 0 ||
+             strcmp(exc_type_name, "TypeError") == 0)
     {
         exception = Exception::TypeError(V8String(isolate, exc_message)).As<Object>();
     }

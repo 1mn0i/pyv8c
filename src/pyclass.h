@@ -51,12 +51,16 @@ v8::Intercepted named_setter(v8::Local<v8::Name> name, v8::Local<v8::Value> valu
 v8::Intercepted named_query(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Integer>& info);
 v8::Intercepted named_deleter(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Boolean>& info);
 void named_enumerator(const v8::PropertyCallbackInfo<v8::Array>& info);
+v8::Intercepted named_definer(v8::Local<v8::Name> name, const v8::PropertyDescriptor& desc, const v8::PropertyCallbackInfo<v8::Boolean>& info);
+v8::Intercepted named_descriptor(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info);
 
 v8::Intercepted indexed_getter(uint32_t index, const v8::PropertyCallbackInfo<v8::Value>& info);
 v8::Intercepted indexed_setter(uint32_t index, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void>& info);
 v8::Intercepted indexed_query(uint32_t index, const v8::PropertyCallbackInfo<v8::Integer>& info);
 v8::Intercepted indexed_deleter(uint32_t index, const v8::PropertyCallbackInfo<v8::Boolean>& info);
 void indexed_enumerator(const v8::PropertyCallbackInfo<v8::Array>& info);
+v8::Intercepted indexed_definer(uint32_t index, const v8::PropertyDescriptor& desc, const v8::PropertyCallbackInfo<v8::Boolean>& info);
+v8::Intercepted indexed_descriptor(uint32_t index, const v8::PropertyCallbackInfo<v8::Value>& info);
 
 void py_class_property_getter(v8::Local<v8::Name> js_name, const v8::PropertyCallbackInfo<v8::Value>& info);
 void py_class_property_setter(v8::Local<v8::Name> js_name, v8::Local<v8::Value> js_value, const v8::PropertyCallbackInfo<void>& info);
