@@ -56,6 +56,63 @@ class TestBridgeResilience(unittest.TestCase):
             )
             self.assertEqual(result, [expected_name, f"{key} boom"])
 
+    def test_explicit_python_exception_name_mapping(self):
+        """__v8_error_name__ overrides class-name based Error selection."""
+
+        for error_name in (
+            "Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError"
+        ):
+            with self.subTest(error_name=error_name):
+                exception_type = type(
+                    "DomainFailure",
+                    (Exception,),
+                    {
+                        "__v8_error__": True,
+                        "__v8_error_name__": error_name,
+                    },
+                )
+
+                def fail(exception_type=exception_type):
+                    raise exception_type("explicit mapping")
+
+                self.context.expose(fail=fail)
+                result = self.context.exec_js(
+                    "try { fail(); } catch (error) { [error.name, error.message]; }"
+                )
+                self.assertEqual(result, [error_name, "explicit mapping"])
+
+    def test_interceptor_failure_marker_respects_strict_mode(self):
+        """Marked setter/deleter failures are silent only in sloppy mode."""
+
+        class LegacyWriteFailure(Exception):
+            __v8_error__ = True
+            __v8_error_name__ = "TypeError"
+            __v8_interceptor_failure__ = True
+
+        class LegacyTarget:
+            def __v8_name_get__(self, name):
+                return None
+
+            def __v8_name_set__(self, name, value):
+                raise LegacyWriteFailure("legacy write rejected")
+
+            def __v8_name_del__(self, name):
+                raise LegacyWriteFailure("legacy delete rejected")
+
+        self.context.expose(target=LegacyTarget())
+        self.assertEqual(self.context.exec_js("target.value = 1"), 1)
+        self.assertFalse(self.context.exec_js("delete target.value"))
+        result = self.context.exec_js(
+            """
+            try {
+                (function () { "use strict"; target.value = 1; })();
+            } catch (error) {
+                [error.name, error.message];
+            }
+            """
+        )
+        self.assertEqual(result, ["TypeError", "legacy write rejected"])
+
     def test_python_exception_rethrow_restores_original_type(self):
         """Python 异常经过 JavaScript catch/rethrow 后应恢复原异常。"""
 

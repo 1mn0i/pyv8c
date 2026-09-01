@@ -344,10 +344,12 @@ js_throw_py()
     PyObject* exc_cls_name = PyObject_GetAttrString(exc_type, "__name__");
     PyObject* js_error_name = exc_value == NULL
         ? NULL : PyObject_GetAttrString(exc_value, "__v8_error_name__");
+    bool has_explicit_js_error_name = false;
     if (js_error_name != NULL && PyUnicode_Check(js_error_name)) {
         Py_XDECREF(exc_cls_name);
         exc_cls_name = js_error_name;
         js_error_name = NULL;
+        has_explicit_js_error_name = true;
     }
     else if (js_error_name == NULL && PyErr_Occurred()) {
         PyErr_Clear();
@@ -380,22 +382,26 @@ js_throw_py()
         }
     }
     else if (strcmp(exc_type_name, "V8TypeError") == 0 ||
-             strcmp(exc_type_name, "TypeError") == 0)
+             (has_explicit_js_error_name && strcmp(exc_type_name, "TypeError") == 0))
     {
         exception = Exception::TypeError(V8String(isolate, exc_message)).As<Object>();
     }
-    else if (strcmp(exc_type_name, "V8Error") == 0) {
+    else if (strcmp(exc_type_name, "V8Error") == 0 ||
+             (has_explicit_js_error_name && strcmp(exc_type_name, "Error") == 0)) {
         exception = Exception::Error(V8String(isolate, exc_message)).As<Object>();
     }
-    else if (strcmp(exc_type_name, "V8RangeError") == 0)
+    else if (strcmp(exc_type_name, "V8RangeError") == 0 ||
+             (has_explicit_js_error_name && strcmp(exc_type_name, "RangeError") == 0))
     {
         exception = Exception::RangeError(V8String(isolate, exc_message)).As<Object>();
     }
-    else if (strcmp(exc_type_name, "V8ReferenceError") == 0)
+    else if (strcmp(exc_type_name, "V8ReferenceError") == 0 ||
+             (has_explicit_js_error_name && strcmp(exc_type_name, "ReferenceError") == 0))
     {
         exception = Exception::ReferenceError(V8String(isolate, exc_message)).As<Object>();
     }
-    else if (strcmp(exc_type_name, "V8SyntaxError") == 0)
+    else if (strcmp(exc_type_name, "V8SyntaxError") == 0 ||
+             (has_explicit_js_error_name && strcmp(exc_type_name, "SyntaxError") == 0))
     {
         exception = Exception::SyntaxError(V8String(isolate, exc_message)).As<Object>();
     }

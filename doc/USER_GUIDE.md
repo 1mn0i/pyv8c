@@ -799,6 +799,31 @@ class IndexedCollection:
 Handler 抛出的 Python 异常会传播到 JavaScript；若未被 JavaScript 捕获，会恢复到 Python
 调用方。一次 handler 失败不应破坏后续 Context 执行。
 
+Setter/deleter handler 还支持内部失败标记 `__v8_interceptor_failure__`。当异常实例或其
+类型将该属性设为真时，原生桥按照 `PropertyCallbackInfo::ShouldThrowOnError()` 处理：
+
+- 非严格模式下清除异常，将操作视为已拦截的失败；
+- 严格模式下将异常继续抛给 JavaScript；
+- 该标记仅用于 named/indexed setter 和 deleter，不应标记普通业务异常。
+
+```python
+class LegacyPropertyError(Exception):
+    __v8_error__ = True
+    __v8_error_name__ = "TypeError"
+    __v8_interceptor_failure__ = True
+
+
+class LegacyCollection:
+    def __v8_index_set__(self, index, value):
+        raise LegacyPropertyError(
+            f"Failed to set an indexed property [{index}] on "
+            "'LegacyCollection': Indexed property setter is not supported."
+        )
+```
+
+此时 `collection[0] = value` 在非严格模式静默失败，在严格模式产生 JavaScript
+`TypeError`。单独使用 `__v8_error_name__` 不会启用这种严格模式分流。
+
 ## Cross-origin 与 hook
 
 ### Cross-origin access check
@@ -992,6 +1017,20 @@ assert result == ["TypeError", "invalid payload", "string"]
 
 支持按 Python 异常类名映射到 `TypeError`、`RangeError`、`ReferenceError`、`SyntaxError`
 和普通 `Error`。Python 异常经过 JavaScript catch/rethrow 后，pyv8 会尽量恢复原异常类型。
+
+当 Python 类名不适合使用 `V8TypeError` 等约定名称时，可以通过字符串属性
+`__v8_error_name__` 显式指定 JavaScript Error 类型：
+
+```python
+class ValidationFailure(Exception):
+    __v8_error__ = True
+    __v8_error_name__ = "TypeError"
+```
+
+`__v8_error__` 将异常标记为预期的 JavaScript-facing 错误，并阻止原生桥把它作为意外
+Python 异常打印 traceback；`__v8_error_name__` 只覆盖 JavaScript Error 构造器的选择，
+不改变异常的传播时机。目前支持的映射名称为 `Error`、`TypeError`、`RangeError`、
+`ReferenceError` 和 `SyntaxError`。
 
 ### 执行超时
 

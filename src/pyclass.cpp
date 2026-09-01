@@ -322,11 +322,11 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         if ((flag & FlagIterator::entries) != 0)
             templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "entries"), v8::kArrayProto_entries, v8::None);
         if ((flag & FlagIterator::keys) != 0)
-            templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "keys"), v8::kArrayProto_entries, v8::None);
+            templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "keys"), v8::kArrayProto_keys, v8::None);
         if ((flag & FlagIterator::values) != 0)
-            templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "values"), v8::kArrayProto_entries, v8::None);
+            templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "values"), v8::kArrayProto_values, v8::None);
         if ((flag & FlagIterator::forEach) != 0)
-            templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "forEach"), v8::kArrayProto_entries, v8::None);
+            templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "forEach"), v8::kArrayProto_forEach, v8::None);
     }
 
     if (config.immutable != NULL)

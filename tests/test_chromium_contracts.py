@@ -266,6 +266,48 @@ class TestChromiumContracts(unittest.TestCase):
             )
         )
 
+    def test_array_prototype_intrinsics_keep_their_native_semantics(self):
+        class IterableCollection:
+            __v8_array__ = (
+                pyv8.FlagArrayProto.iterator | pyv8.FlagArrayProto.entries
+                | pyv8.FlagArrayProto.keys | pyv8.FlagArrayProto.values
+                | pyv8.FlagArrayProto.forEach
+            )
+
+            def __init__(self):
+                self.values = ["a", "b"]
+
+            def __v8_name_get__(self, name):
+                return len(self.values) if name == "length" else None
+
+            def __v8_index_get__(self, index):
+                return self.values[index] if index < len(self.values) else None
+
+        self.context.expose(collection=IterableCollection())
+        result = self.context.exec_js(
+            """
+            (() => {
+                const visited = [];
+                collection.forEach((value, index, owner) => {
+                    visited.push([value, index, owner === collection]);
+                });
+                return [
+                    Array.from(collection.keys()),
+                    Array.from(collection.values()),
+                    Array.from(collection.entries()),
+                    visited
+                ];
+            })()
+            """
+        )
+        self.assertEqual(
+            result,
+            [
+                [0, 1], ["a", "b"], [[0, "a"], [1, "b"]],
+                [["a", 0, True], ["b", 1, True]],
+            ],
+        )
+
     def test_generated_browser_api_graph(self):
         """大量带 accessor、operation 和 interceptor 的模板应可组合安装。"""
 
