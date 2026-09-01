@@ -8,6 +8,8 @@ from ..dom.model import Event, EventTarget
 from ..bindings.registry import interface, js_attributes, js_methods, js_interface_methods
 from ..network.api import Blob, Request, Response
 from ..core.errors import SecurityError, V8URIError, V8TypeError, InvalidStateError
+from ..core.environment import BrowserEnvironment
+from .navigator import Navigator
 
 
 @interface("Location", None, constructible=False)
@@ -34,24 +36,16 @@ class Location:
     __v8_attribute__ = js_attributes(*[(n, "get_" + n, "set_href" if n == "href" else None, 0, 0) for n in ("href", "origin", "protocol", "host", "hostname", "port", "pathname", "search", "hash")])
 
 
-@interface("Navigator", None)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
-class Navigator:
-    __v8_attribute__ = js_attributes(("userAgent", "get_userAgent", None, 0, 1), ("platform", "get_platform", None, 0, 1), ("language", "get_language", None, 0, 1), ("languages", "get_languages", None, 0, 1), ("onLine", "get_onLine", None, 0, 1))
-    def __init__(self, user_agent="Mozilla/5.0 Chrome/118.0.0.0 Safari/537.36", **_): self.user_agent = user_agent
-    def get_userAgent(self): return self.user_agent
-    def get_platform(self): return "Win32"
-    def get_language(self): return "en-US"
-    def get_languages(self): return ["en-US", "en"]
-    def get_onLine(self): return True
-
-
 @interface("Screen", "EventTarget")
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
 class Screen(EventTarget):
     __v8_attribute__ = js_attributes(*[(n, "get_" + n, None, 0, 1) for n in ("width", "height", "availWidth", "availHeight", "colorDepth", "pixelDepth")])
-    def __init__(self, **_):
-        super().__init__(**_); self.width = self.availWidth = 1920; self.height = self.availHeight = 1080; self.colorDepth = self.pixelDepth = 24
+    def __init__(self, environment=None, **_):
+        super().__init__(**_)
+        config = BrowserEnvironment.from_value(environment).screen
+        self.width, self.height = config.width, config.height
+        self.availWidth, self.availHeight = config.avail_width, config.avail_height
+        self.colorDepth, self.pixelDepth = config.color_depth, config.pixel_depth
     def get_width(self): return self.width
     def get_height(self): return self.height
     def get_availWidth(self): return self.availWidth
@@ -308,6 +302,8 @@ class Window(WindowProperties):
         ("localStorage", "get_localStorage", None, 0, 1), ("sessionStorage", "get_sessionStorage", None, 0, 1),
         ("history", "get_history", None, 0, 1),
         ("innerWidth", "get_innerWidth", None, 0, 1), ("innerHeight", "get_innerHeight", None, 0, 1),
+        ("outerWidth", "get_outerWidth", None, 0, 1), ("outerHeight", "get_outerHeight", None, 0, 1),
+        ("devicePixelRatio", "get_devicePixelRatio", None, 0, 1),
     )
     __v8_method__ = js_methods(
         ("setTimeout", "fn_setTimeout", 1, 0), ("clearTimeout", "fn_clearTimeout", 1, 0),
@@ -317,8 +313,13 @@ class Window(WindowProperties):
     )
     def __init__(self, page=None, **kw):
         super().__init__(page=page, **kw); self._page = page
-        self.location = Location(page=page); self.navigator = Navigator(); self.screen = Screen()
-        self.localStorage, self.sessionStorage = Storage(), Storage(); self.innerWidth, self.innerHeight = 1280, 720
+        environment = getattr(page, "environment", None)
+        viewport = BrowserEnvironment.from_value(environment).viewport
+        self.location = Location(page=page); self.navigator = Navigator(page=page, environment=environment); self.screen = Screen(environment=environment)
+        self.localStorage, self.sessionStorage = Storage(), Storage()
+        self.innerWidth, self.innerHeight = viewport.width, viewport.height
+        self.outerWidth, self.outerHeight = viewport.width, viewport.height
+        self.devicePixelRatio = viewport.device_scale_factor
         self.history = History(page=page)
     def get_window(self): return self
     def get_self(self): return self
@@ -332,6 +333,9 @@ class Window(WindowProperties):
     def get_history(self): return self.history
     def get_innerWidth(self): return self.innerWidth
     def get_innerHeight(self): return self.innerHeight
+    def get_outerWidth(self): return self.outerWidth
+    def get_outerHeight(self): return self.outerHeight
+    def get_devicePixelRatio(self): return self.devicePixelRatio
     def fn_setTimeout(self, callback, delay=0): return self._page.schedule(callback, float(delay) / 1000.0, repeat=False)
     def fn_clearTimeout(self, ident): self._page.cancel(int(ident))
     def fn_setInterval(self, callback, delay=0): return self._page.schedule(callback, float(delay) / 1000.0, repeat=True)

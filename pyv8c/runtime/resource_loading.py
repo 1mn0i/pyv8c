@@ -25,6 +25,7 @@ class ResourceController:
 
     @staticmethod
     def _network_request(target, request, page):
+        request = ResourceController._request_with_environment_headers(request, page)
         return NetworkRequest(
             target,
             str(request.get("method", "GET")).upper(),
@@ -36,6 +37,19 @@ class ResourceController:
             request.get("redirect", "follow"),
             page.url,
         )
+
+    @staticmethod
+    def _request_with_environment_headers(request, page):
+        request = dict(request or {})
+        headers = ResourceController.header_dict(request.get("headers"))
+        names = {str(key).lower() for key in headers}
+        environment = page.environment
+        if "user-agent" not in names:
+            headers["User-Agent"] = environment.user_agent
+        if "accept-language" not in names:
+            headers["Accept-Language"] = ", ".join(environment.languages)
+        request["headers"] = headers
+        return request
 
     @staticmethod
     def _response_from_loader(result, target):
@@ -53,7 +67,7 @@ class ResourceController:
         if page.closed or page.context_owner.closed:
             raise InvalidStateError("Page is closed")
         target = urljoin(page.url, str(url))
-        request = request or {"method": "GET"}
+        request = self._request_with_environment_headers(request or {"method": "GET"}, page)
         if target.startswith("blob:"):
             body, content_type = page.context_owner.resolve_blob_url(target)
             return Response(body, {"url": target, "headers": {"content-type": content_type}})
@@ -112,6 +126,7 @@ class ResourceController:
             page.post_task(lambda: callback(None, InvalidStateError("Page is closed")))
             return
         target = urljoin(page.url, str(url))
+        request = self._request_with_environment_headers(request, page)
         req = self._network_request(target, request, page)
         if page.resource_loader:
             try:
@@ -235,7 +250,7 @@ class ResourceController:
 
         page = self.page
         target = iframe.get_src() or "about:blank"
-        child = Page(page.context_owner, url=target)
+        child = Page(page.context_owner, url=target, environment=page.environment)
         iframe._child_page = child
         page._track_frame(child)
         try:
@@ -252,7 +267,7 @@ class ResourceController:
         if page.navigation.has_navigation and not page.navigation.parsing:
             self.discover_element_resource(iframe)
             return getattr(iframe, "_child_page", None)
-        child = Page(page.context_owner, url=target)
+        child = Page(page.context_owner, url=target, environment=page.environment)
         iframe._child_page = child
         response = self.load_resource(target, {"method": "GET"})
         child.set_content(response.body_text(), url=target)

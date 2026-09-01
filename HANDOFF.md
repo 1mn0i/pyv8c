@@ -35,6 +35,9 @@ core -> bindings -> dom -> bom/network/workers -> runtime
 | `dom/` | 节点（`model.py`）、集合视图（`collections.py`）、事件模型（`events.py`）、HTML parser 和 selector。 |
 | `tests/browser/` | 浏览器对象的类型与功能检查：每个对象按类型、使用、等待三组验证 JS 可观察形状。 |
 | `bom/` | Window、Location、History、Storage、URL 和 URLSearchParams。 |
+| `core/environment.py` | 不可变 BrowserEnvironment；为 Browser、Page、iframe 和 Worker 提供统一环境快照。 |
+| `core/collections.py` | 与领域无关的 Web IDL 只读索引属性 Mixin，供 DOM 与 BOM 集合复用。 |
+| `bom/navigator.py` | Navigator、Geolocation、PluginArray、Plugin、MimeTypeArray 和 MimeType 的浏览器兼容实现。 |
 | `network/` | Fetch、XHR、WebSocket、Blob、HTTP 模型和 transport。 |
 | `workers/` | Worker API 和 structured clone。 |
 | `runtime/` | Browser、BrowserContext、Page、任务队列和页面控制器。 |

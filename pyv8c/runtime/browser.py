@@ -23,6 +23,7 @@ from ..bindings.universe import (
     DEFAULT_EAGER_INTERFACES, BaselineRepository, InterfaceUniverse,
 )
 from ..core.errors import InvalidStateError, NetworkError, as_js_error
+from ..core.environment import BrowserEnvironment
 from .tasks import TaskQueue
 from .state import StateAlias
 from .navigation import NavigationController
@@ -54,8 +55,9 @@ class Page:
     _has_navigation = StateAlias("navigation", "has_navigation")
     _parsing = StateAlias("navigation", "parsing")
 
-    def __init__(self, context, url="about:blank", *, hook=None):
+    def __init__(self, context, url="about:blank", *, hook=None, environment=None):
         self.context_owner = context
+        self.environment = context.browser.environment.overlay(environment)
         # A page can override the browser default without changing the
         # configuration used by other pages in the same browser.
         self.hook = context.browser.hook if hook is None else bool(hook)
@@ -73,7 +75,7 @@ class Page:
         self.document = Document(page=self, url=url, ready_state="complete")
         self.resource_loader = context.browser.resource_loader
         self.network_backend = context.network_backend
-        self.window = Window(page=self)
+        self.window = Window(page=self, environment=self.environment)
         self.binding_session = context.browser.interface_universe.binding_session(self)
         self.window.location.href = str(url)
         # Native template installation can inspect the global object before
@@ -325,9 +327,9 @@ class BrowserContext:
         self._ensure_open()
         self._blob_urls.pop(url, None)
 
-    def new_page(self, url="about:blank", *, hook=None):
+    def new_page(self, url="about:blank", *, hook=None, environment=None):
         self._ensure_open()
-        page = Page(self, hook=hook)
+        page = Page(self, hook=hook, environment=environment)
         self.pages.append(page)
         if str(url) != "about:blank":
             try:
@@ -359,6 +361,7 @@ class BrowserContext:
 class Browser:
     def __init__(self, *, resource_loader=None,
                  real_network=False, cycronet_options=None, hook=False,
+                 environment=None,
                  generate_interface_stubs=True, expose_unimplemented=True,
                  stub_logging="info", interface_baseline_path=None,
                  eager_interfaces=None, lazy_interfaces=True, strict_validation=False):
@@ -370,6 +373,7 @@ class Browser:
         self.real_network = bool(real_network)
         self.cycronet_options = dict(cycronet_options or {})
         self.hook = bool(hook)
+        self.environment = BrowserEnvironment.from_value(environment)
         self.generate_interface_stubs = bool(generate_interface_stubs)
         self.expose_unimplemented = bool(expose_unimplemented)
         self.stub_logging = str(stub_logging or "info")

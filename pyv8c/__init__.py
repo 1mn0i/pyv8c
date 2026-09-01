@@ -10,9 +10,9 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
-    "Browser", "BrowserContext", "Page", "INTERFACES", "validate_registry", "Window",
+    "Browser", "BrowserContext", "Page", "BrowserEnvironment", "ViewportConfig", "ScreenConfig", "GeolocationConfig", "PluginConfig", "MimeTypeConfig", "INTERFACES", "validate_registry", "Window",
     "Document", "Node", "Element", "HTMLElement", "Text", "Comment", "DocumentType",
-    "CharacterData", "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "CustomEvent", "EventTarget", "WindowProperties", "Location", "Navigator", "Screen", "Storage", "URL",
+    "CharacterData", "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "CustomEvent", "EventTarget", "WindowProperties", "Location", "Navigator", "Screen", "Storage", "URL", "Plugin", "PluginArray", "MimeType", "MimeTypeArray",
     "URLSearchParams",
     "NodeList", "HTMLCollection", "HTMLAllCollection", "DOMTokenList", "NamedNodeMap", "Attr", "DocumentFragment", "HTMLTemplateElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLScriptElement", "HTMLLinkElement", "HTMLStyleElement",
     "Blob", "Headers", "Request", "Response", "XMLHttpRequest", "Worker", "WorkerGlobalScope", "DedicatedWorkerGlobalScope",
@@ -33,7 +33,7 @@ def _load_public_api():
         return
 
     modules = (
-        ".runtime", ".bindings.registry", ".dom", ".bom", ".network", ".core.errors",
+        ".runtime", ".bindings.registry", ".dom", ".bom", ".network", ".core.environment", ".core.errors",
     )
     for module_name in modules:
         module = import_module(module_name, __name__)

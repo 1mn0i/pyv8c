@@ -16,53 +16,7 @@ from ..core.errors import (
     LegacyPropertyError,
     dom_exception,
 )
-
-
-class _ReadOnlyIndexedCollection:
-    """Shared Web IDL indexed-property behavior for readonly collections."""
-
-    def _indexed_items(self):
-        raise NotImplementedError
-
-    def _item_at(self, index):
-        try:
-            index = int(index)
-        except (TypeError, ValueError, OverflowError):
-            return pyv8.Null
-        items = self._indexed_items()
-        return items[index] if 0 <= index < len(items) else pyv8.Null
-
-    def _has_index(self, index):
-        return self._item_at(index) is not pyv8.Null
-
-    def _interface_name(self):
-        return getattr(type(self), "__idl_name__", type(self).__name__)
-
-    def __v8_index_get__(self, index):
-        value = self._item_at(index)
-        return None if value is pyv8.Null else value
-
-    def __v8_index_set__(self, index, value):
-        if self._has_index(index):
-            raise LegacyPropertyError.indexed(
-                "set", index, self._interface_name(),
-                "Indexed property setter is not supported.",
-            )
-        return None
-
-    def __v8_index_query__(self, index):
-        return V8Attribute.ReadOnly if self._has_index(index) else None
-
-    def __v8_index_del__(self, index):
-        if self._has_index(index):
-            raise LegacyPropertyError.indexed(
-                "delete", index, self._interface_name(),
-                "Indexed property deleter is not supported.",
-            )
-        return None
-
-    def __v8_index_enum__(self):
-        return len(self._indexed_items())
+from ..core.indexed_properties import ReadOnlyIndexedPropertyMixin
 
 
 _ITERABLE_FLAGS = (
@@ -76,7 +30,7 @@ _ITERABLE_FLAGS = (
     exposed=FlagExposed.kYes, constructor=0, has_constructor=1,
     v8_array=_ITERABLE_FLAGS,
 )
-class NodeList(_ReadOnlyIndexedCollection):
+class NodeList(ReadOnlyIndexedPropertyMixin):
     """A live list view. The owner remains the source of truth."""
     __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1))
     __v8_method__ = js_methods(("item", "fn_item", 1, 1))
@@ -235,7 +189,7 @@ def _array_index_name(value):
 
 @interface("HTMLAllCollection", None, constructible=False, tag="HTMLAllCollection")
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
-class HTMLAllCollection(_ReadOnlyIndexedCollection):
+class HTMLAllCollection(ReadOnlyIndexedPropertyMixin):
     """The legacy ``document.all`` view: undetectable, callable and live.
 
     Chromium marks the interface undetectable, so ``typeof document.all`` is
@@ -357,7 +311,7 @@ class HTMLAllCollection(_ReadOnlyIndexedCollection):
     exposed=FlagExposed.kYes, constructor=0, has_constructor=1,
     v8_array=_ITERABLE_FLAGS,
 )
-class DOMTokenList(_ReadOnlyIndexedCollection):
+class DOMTokenList(ReadOnlyIndexedPropertyMixin):
     __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1), ("value", "get_value", "set_value", 0, 0))
     __v8_method__ = js_methods(
         ("item", "fn_item", 1, 1), ("contains", "fn_contains", 1, 1),

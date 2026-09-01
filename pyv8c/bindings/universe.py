@@ -44,7 +44,8 @@ __all__ = [
 DEFAULT_EAGER_INTERFACES = (
     "Window", "EventTarget", "Event", "Node", "Document", "Element",
     "HTMLElement", "URL", "URLSearchParams", "DOMTokenList", "NodeList",
-    "HTMLCollection", "NamedNodeMap",
+    "HTMLCollection", "NamedNodeMap", "PluginArray", "Plugin", "MimeTypeArray",
+    "MimeType",
 )
 
 

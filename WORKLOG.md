@@ -683,3 +683,22 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
   CookieJar 集成测试：`56 passed`。
 - `pyv8c` 全量：`161 passed in 28.72s`，使用本地 `_pyv8` 扩展。
 - `python -m py_compile` 与 `git diff --check` 通过。
+## 2026-09-01：Browser 环境参数
+
+- 新增不可变 `BrowserEnvironment`、`ViewportConfig`、`ScreenConfig` 和
+  `GeolocationConfig`，由 `Browser(environment=...)` 提供默认值，
+  `BrowserContext.new_page(environment=...)` 支持页面级 Mapping 覆盖。
+- Navigator、Window viewport、Screen、iframe 和 Worker 都读取同一 Page 快照；
+  默认网络头会补充 `User-Agent` 与 `Accept-Language`，显式 headers 优先。
+- `navigator.geolocation` 使用配置坐标并经 Page 任务队列异步回调；`timezone`
+  当前仅为每个 Browser/Page 的元数据，不修改进程级 ICU/Intl 状态。
+
+## 2026-09-01：Navigator plugins
+
+- `BrowserEnvironment.plugins` 新增不可变 `PluginConfig` 与 `MimeTypeConfig`。
+  默认值按当前 Chrome 的内置 PDF Viewer 快照提供五个 Plugin 和两个 MIME type。
+- 新增浏览器兼容的 `PluginArray`、`Plugin`、`MimeTypeArray`、`MimeType`：支持
+  索引、命名访问、迭代、只读描述符和 `PluginArray.refresh()`，同时保留 Chrome
+  的 Plugin MIME 对象与 `navigator.mimeTypes` 对象身份差异。
+- 抽取 `core.indexed_properties.ReadOnlyIndexedPropertyMixin`，消除 BOM 对 DOM
+  私有集合实现的反向依赖。

@@ -274,12 +274,18 @@ class WorkerGlobalScope(EventTarget):
     __v8_global_this__ = True
     __v8_attribute__ = js_attributes(
         ("self", "get_self", None, 0, 1),
+        ("navigator", "get_navigator", None, 0, 1),
         ("onmessage", "get_onmessage", "set_onmessage", 0, 0),
         ("onerror", "get_onerror", "set_onerror", 0, 0),
     )
     __v8_method__ = js_methods(("postMessage", "fn_postMessage", 1, 0), ("close", "fn_close", 0, 0))
-    def __init__(self, runtime=None, **kw): super().__init__(page=None, **kw); self._runtime = runtime
+    def __init__(self, runtime=None, environment=None, **kw):
+        super().__init__(page=None, **kw)
+        self._runtime = runtime
+        from ..bom.navigator import Navigator
+        self.navigator = Navigator(environment=environment)
     def get_self(self): return self
+    def get_navigator(self): return self.navigator
     def get_onmessage(self): return self._get_handler("onmessage")
     def set_onmessage(self, value): self._set_handler("onmessage", value)
     def get_onerror(self): return self._get_handler("onerror")
@@ -300,7 +306,7 @@ class _WorkerRuntime:
     def _run(self):
         try:
             source = self.page.resolve_worker_source(self.script_url)
-            self._scope = DedicatedWorkerGlobalScope(runtime=self)
+            self._scope = DedicatedWorkerGlobalScope(runtime=self, environment=self.page.environment)
             browser = self.page.context_owner.browser
             self._binding_session = browser.interface_universe.binding_session(self.page)
             worker_configs = self._binding_session.class_configs(

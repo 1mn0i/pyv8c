@@ -90,6 +90,55 @@ print(page.evaluate("document.readyState"))  # complete
 browser.close()
 ```
 
+## Browser environment
+
+`BrowserEnvironment` provides an immutable browser-profile snapshot. Pass it to
+`Browser(environment=...)` for the default profile, or to
+`BrowserContext.new_page(environment=...)` for a page-specific overlay. Worker
+and iframe realms inherit their parent page's final snapshot.
+
+```python
+from pyv8c import Browser, BrowserEnvironment, ViewportConfig, GeolocationConfig
+
+environment = BrowserEnvironment(
+    user_agent="ExampleBrowser/1.0",
+    platform="Linux x86_64",
+    language="zh-CN",
+    languages=("zh-CN", "en"),
+    viewport=ViewportConfig(width=390, height=844, device_scale_factor=3),
+    geolocation=GeolocationConfig(
+        permission="granted", latitude=31.2304, longitude=121.4737, accuracy=10,
+    ),
+)
+browser = Browser(environment=environment)
+page = browser.new_context().new_page()
+```
+
+The environment controls Navigator values, viewport/screen properties and the
+Window-only `navigator.geolocation` API. Geolocation callbacks are asynchronous
+and are delivered by `page.run_until_idle()`. A mapping with snake_case keys is
+also accepted; page mappings overlay the Browser default. Default `User-Agent`
+and `Accept-Language` headers are added to navigation, fetch, XHR, and document
+resource requests only when the caller did not explicitly provide those headers.
+`timezone` is stored in `Browser.environment` and `Page.environment`; it does
+not yet change V8/ICU `Intl` formatting.
+
+`environment.plugins` defaults to the current Chrome PDF Viewer snapshot. It
+can be replaced with immutable `PluginConfig`/`MimeTypeConfig` objects or the
+equivalent snake_case mappings; `navigator.plugins` and `navigator.mimeTypes`
+then expose browser-compatible indexed and named collections.
+
+```python
+from pyv8c import Browser, PluginConfig, MimeTypeConfig
+
+browser = Browser(environment={
+    "plugins": [PluginConfig(
+        "Example PDF", "example-pdf", "Example document viewer",
+        (MimeTypeConfig("application/x-example-pdf", "expdf", "Example PDF"),),
+    )],
+})
+```
+
 `Page.evaluate(script, filename=None)` 同步执行 JavaScript，并返回转换后的
 Python 值。关闭顺序通常只需要调用 `browser.close()`，它会级联关闭 Context、
 Page、iframe、Worker、WebSocket 和 V8 Context。

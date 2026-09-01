@@ -1,0 +1,160 @@
+import pytest
+
+pytest.importorskip("pyv8")
+
+from pyv8c import (
+    Browser,
+    BrowserEnvironment,
+    GeolocationConfig,
+    ScreenConfig,
+    ViewportConfig,
+)
+
+
+def test_environment_defaults_and_mapping_overlay_are_immutable():
+    default = BrowserEnvironment()
+    assert default.language == default.languages[0]
+    assert default.languages
+    assert default.viewport.width == 1280
+
+    custom = default.overlay({"languages": ["zh-CN", "en"], "viewport": {"width": 390}})
+    assert custom.language == "zh-CN"
+    assert custom.languages == ("zh-CN", "en")
+    assert custom.viewport == ViewportConfig(width=390, height=720)
+    with pytest.raises(Exception):
+        custom.viewport = ViewportConfig()
+    with pytest.raises(ValueError):
+        BrowserEnvironment(geolocation=GeolocationConfig(permission="granted", latitude=91, longitude=0))
+
+
+def test_environment_drives_navigator_viewport_and_screen():
+    browser = Browser(environment={
+        "user_agent": "Example UA",
+        "platform": "Linux x86_64",
+        "languages": ["zh-CN", "en"],
+        "hardware_concurrency": 12,
+        "device_memory": 4,
+        "max_touch_points": 5,
+        "viewport": {"width": 390, "height": 844, "device_scale_factor": 3},
+        "screen": {"width": 1080, "height": 2400, "avail_width": 1080, "avail_height": 2300},
+    })
+    try:
+        page = browser.new_context().new_page()
+        assert page.evaluate("[navigator.userAgent, navigator.platform, navigator.language, navigator.languages, navigator.hardwareConcurrency, navigator.deviceMemory, navigator.maxTouchPoints, innerWidth, innerHeight, outerWidth, outerHeight, devicePixelRatio, screen.width, screen.availHeight]") == [
+            "Example UA", "Linux x86_64", "zh-CN", ["zh-CN", "en"], 12, 4, 5,
+            390, 844, 390, 844, 3, 1080, 2300,
+        ]
+    finally:
+        browser.close()
+
+
+def test_page_environment_override_and_iframe_inheritance():
+    browser = Browser(
+        environment={"user_agent": "Browser UA"},
+        resource_loader=lambda url, request: {"body": "<body>frame</body>", "url": url},
+    )
+    try:
+        context = browser.new_context()
+        first = context.new_page(environment={"user_agent": "Page UA", "viewport": {"width": 800}})
+        second = context.new_page()
+        assert first.evaluate("[navigator.userAgent, innerWidth]") == ["Page UA", 800]
+        assert second.evaluate("navigator.userAgent") == "Browser UA"
+        iframe = first.document.fn_createElement("iframe")
+        iframe.set_src("https://example.test/frame")
+        child = first.resources.load_iframe(iframe)
+        assert child.window.navigator.get_userAgent() == "Page UA"
+    finally:
+        browser.close()
+
+
+def test_geolocation_is_async_and_clear_watch_cancels_pending_callback():
+    browser = Browser(environment={
+        "geolocation": {"permission": "granted", "latitude": 31.2, "longitude": 121.5, "accuracy": 5},
+    })
+    try:
+        page = browser.new_context().new_page()
+        assert page.evaluate("navigator.geolocation.getCurrentPosition(p => globalThis.geo = [p.coords.latitude, p.coords.longitude, p.coords.accuracy]); 'queued'") == "queued"
+        assert page.evaluate("typeof geo") == "undefined"
+        page.run_until_idle()
+        assert page.evaluate("geo") == [31.2, 121.5, 5]
+
+        assert page.evaluate("(() => { globalThis.cancelled = 0; const id = navigator.geolocation.watchPosition(() => cancelled++); navigator.geolocation.clearWatch(id); return id; })()") == 1
+        page.run_until_idle()
+        assert page.evaluate("cancelled") == 0
+    finally:
+        browser.close()
+
+
+@pytest.mark.parametrize(
+    ("geolocation", "expected"),
+    [
+        ({"permission": "denied"}, [1, "User denied Geolocation"]),
+        ({"permission": "granted"}, [2, "Unable to determine the position"]),
+    ],
+)
+def test_geolocation_reports_permission_and_position_errors(geolocation, expected):
+    browser = Browser(environment={"geolocation": geolocation})
+    try:
+        page = browser.new_context().new_page()
+        page.evaluate("navigator.geolocation.getCurrentPosition(() => globalThis.geoError = ['success'], error => globalThis.geoError = [error.code, error.message])")
+        page.run_until_idle()
+        assert page.evaluate("geoError") == expected
+    finally:
+        browser.close()
+
+
+def test_resource_loader_gets_environment_headers_and_explicit_headers_win():
+    calls = []
+
+    def loader(url, request):
+        calls.append(request)
+        return {"body": "ok", "url": url}
+
+    browser = Browser(resource_loader=loader, environment={"user_agent": "Env UA", "languages": ["fr-FR", "en"]})
+    try:
+        page = browser.new_context().new_page("https://example.test/")
+        calls.clear()
+        page.resources.load_resource("/one")
+        page.resources.load_resource("/two", {"headers": {"user-agent": "Explicit UA", "ACCEPT-LANGUAGE": "de"}})
+        assert calls[0]["headers"] == {"User-Agent": "Env UA", "Accept-Language": "fr-FR, en"}
+        assert calls[1]["headers"] == {"user-agent": "Explicit UA", "ACCEPT-LANGUAGE": "de"}
+    finally:
+        browser.close()
+
+
+def test_worker_inherits_page_environment_snapshot():
+    source = "self.onmessage = () => self.postMessage([navigator.userAgent, navigator.language, navigator.maxTouchPoints]);"
+    browser = Browser(
+        resource_loader=lambda url, request: {"body": source, "url": url},
+        environment={"user_agent": "Browser UA", "languages": ["en-US"], "max_touch_points": 0},
+    )
+    try:
+        page = browser.new_context().new_page(environment={"user_agent": "Worker UA", "languages": ["ja-JP"], "max_touch_points": 2})
+        page.evaluate("const worker = new Worker('https://example.test/worker.js'); worker.onmessage = event => globalThis.workerEnvironment = event.data; worker.postMessage(null);")
+        page.run_until_idle(2)
+        assert page.evaluate("workerEnvironment") == ["Worker UA", "ja-JP", 2]
+    finally:
+        browser.close()
+
+
+def test_fetch_and_xhr_receive_environment_headers():
+    calls = []
+
+    def loader(url, request):
+        calls.append((url, request["headers"]))
+        return {"body": "ok", "url": url, "headers": {"access-control-allow-origin": "*"}}
+
+    browser = Browser(resource_loader=loader, environment={"user_agent": "Async UA", "languages": ["ko-KR", "en"]})
+    try:
+        page = browser.new_context().new_page("https://example.test/")
+        calls.clear()
+        page.evaluate("fetch('/fetch').then(() => globalThis.fetchDone = true)")
+        page.evaluate("const xhr = new XMLHttpRequest(); xhr.open('GET', '/xhr'); xhr.onload = () => globalThis.xhrDone = true; xhr.send()")
+        page.run_until_idle(1)
+        assert page.evaluate("[fetchDone, xhrDone]") == [True, True]
+        assert [headers for _, headers in calls] == [
+            {"User-Agent": "Async UA", "Accept-Language": "ko-KR, en"},
+            {"User-Agent": "Async UA", "Accept-Language": "ko-KR, en"},
+        ]
+    finally:
+        browser.close()
