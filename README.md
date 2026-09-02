@@ -158,7 +158,7 @@ python setup.py build_v8 --select --proxy=http://127.0.0.1:7890
 构建 ABI3 wheel：
 
 ```bash
-python -m build --wheel
+python310 -m build --wheel
 ```
 
 Windows 构建 V8 `15.2.20.1` 时，建议显式设置工具链路径：

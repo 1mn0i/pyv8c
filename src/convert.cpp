@@ -162,8 +162,8 @@ py_from_js_impl(Local<Value> value,
     if (value->IsBoolean())
     {
         if (value.As<Boolean>()->Value())
-            Py_RETURN_TRUE;
-        Py_RETURN_FALSE;
+            PYV8_RETURN_TRUE;
+        PYV8_RETURN_FALSE;
     }
 
     if (value->IsString())
@@ -324,7 +324,7 @@ py_from_js_impl(Local<Value> value,
     // i'm not quite ready to turn this into an assert quite yet
     // i'll do that when I've special-cased every primitive type
     printf("cannot convert\n");
-    Py_RETURN_NONE;
+    PYV8_RETURN_NONE;
 }
 
 PyObject *

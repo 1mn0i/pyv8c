@@ -292,7 +292,7 @@ context_close(context_c *self, PyObject* ignored)
 {
     (void)ignored;
     context_release(self);
-    Py_RETURN_NONE;
+    PYV8_RETURN_NONE;
 }
 
 void
@@ -385,7 +385,7 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
         }
     }
 
-    Py_RETURN_NONE;
+    PYV8_RETURN_NONE;
 }
 
 PyObject *
@@ -536,7 +536,7 @@ context_js_obj(context_c* self, PyObject* py_object)
         !PyErr_ExceptionMatches(PyExc_TypeError))
         return NULL;
     PyErr_Clear();
-    Py_RETURN_NONE;
+    PYV8_RETURN_NONE;
 }
 
 PyObject *
@@ -734,5 +734,5 @@ context_gc(context_c *self)
         return NULL;
     IN_ISOLATE(isolate_state);
     isolate->RequestGarbageCollectionForTesting(Isolate::GarbageCollectionType::kFullGarbageCollection);
-    Py_RETURN_NONE;
+    PYV8_RETURN_NONE;
 }

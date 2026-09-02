@@ -81,7 +81,7 @@ trigger_low_memory_notification(PyObject *self, PyObject *args)
     IsolateState* isolate_state = runtime_manager.default_isolate();
     IN_ISOLATE(isolate_state);
     isolate->LowMemoryNotification();
-    Py_RETURN_NONE;
+    PYV8_RETURN_NONE;
 }
 
 PyObject *
@@ -170,7 +170,7 @@ context_get_current(PyObject *self, PyObject *args)
     Local<Context> current_context = isolate->GetCurrentContext();
     if (current_context.IsEmpty())
     {
-        Py_RETURN_NONE;
+        PYV8_RETURN_NONE;
     }
     PyObject *context = (PyObject *)v8_compat::external_value(current_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
     Py_INCREF(context);
@@ -192,7 +192,7 @@ context_get_incumbent(PyObject* self, PyObject* args)
     Local<Context> current_context = isolate->GetIncumbentContext();
     if (current_context.IsEmpty())
     {
-        Py_RETURN_NONE;
+        PYV8_RETURN_NONE;
     }
     PyObject* context = (PyObject*)v8_compat::external_value(current_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
     Py_INCREF(context);
@@ -214,7 +214,7 @@ v8_gc(PyObject *self, PyObject *args)
     IsolateState* isolate_state = runtime_manager.default_isolate();
     IN_ISOLATE(isolate_state);
     isolate->RequestGarbageCollectionForTesting(Isolate::GarbageCollectionType::kFullGarbageCollection);
-    Py_RETURN_NONE;
+    PYV8_RETURN_NONE;
 }
 
 static PyMethodDef v8_methods[] = {

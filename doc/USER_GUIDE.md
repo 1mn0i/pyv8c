@@ -155,7 +155,7 @@ PYV8_V8_VERSION=15.2.20.1 \
 PYV8_V8_HOME=/opt/v8 \
 PYV8_V8_OUT=/opt/v8/out/x64.release \
 PYV8_ICU_DATA=/opt/v8/out/x64.release/icudtl.dat \
-python -m build --wheel
+python310 -m build --wheel
 ```
 
 `PYV8_V8_OUT` 中必须存在：

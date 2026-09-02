@@ -160,6 +160,14 @@ class TestJSObject(unittest.TestCase):
         with self.assertRaises(TypeError):
             _ = obj1 < obj2
 
+        # Rich-comparison slots return Py_NotImplemented for unsupported
+        # operations.  Exercise the path repeatedly so a borrowed singleton
+        # returned by a newer CPython header cannot silently corrupt its
+        # reference count on older runtimes.
+        for _ in range(1000):
+            with self.assertRaises(TypeError):
+                _ = obj1 < obj2
+
     def test_uninitialized_js_object_reports_runtime_error(self):
         """验证手工创建的包装对象不会以无异常 NULL 返回给 Python。"""
 

@@ -107,11 +107,11 @@ static PyObject*
 isolate_close(isolate_c* self, PyObject* args)
 {
     if (self->state == nullptr)
-        Py_RETURN_FALSE;
+        PYV8_RETURN_FALSE;
     if (!runtime_manager.destroy_isolate(self->state, true))
         return nullptr;
     self->state = nullptr;
-    Py_RETURN_TRUE;
+    PYV8_RETURN_TRUE;
 }
 
 static PyObject*
@@ -142,7 +142,7 @@ isolate_gc(isolate_c* self, PyObject* args)
     IN_ISOLATE(state);
     isolate->RequestGarbageCollectionForTesting(
         Isolate::GarbageCollectionType::kFullGarbageCollection);
-    Py_RETURN_NONE;
+    PYV8_RETURN_NONE;
 }
 
 static PyObject*

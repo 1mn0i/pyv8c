@@ -377,11 +377,11 @@ PyObject *
 js_object_richcompare(js_object* self, PyObject* other, int operation)
 {
     if (!PyObject_TypeCheck(other, js_object_type)) {
-        Py_RETURN_NOTIMPLEMENTED;
+        PYV8_RETURN_NOTIMPLEMENTED;
     }
 
     if (operation != Py_EQ && operation != Py_NE) {
-        Py_RETURN_NOTIMPLEMENTED;
+        PYV8_RETURN_NOTIMPLEMENTED;
     }
 
     js_object* other_object = (js_object*)other;
@@ -390,8 +390,8 @@ js_object_richcompare(js_object* self, PyObject* other, int operation)
     }
     if (self->isolate_state != other_object->isolate_state) {
         if (operation == Py_NE)
-            Py_RETURN_TRUE;
-        Py_RETURN_FALSE;
+            PYV8_RETURN_TRUE;
+        PYV8_RETURN_FALSE;
     }
     IN_ISOLATE(self->isolate_state);
     JS_TRY;

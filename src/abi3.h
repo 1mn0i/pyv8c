@@ -4,6 +4,25 @@
 #include <Python.h>
 
 
+// CPython 3.12 changed the Py_RETURN_* macros for immortal singletons to
+// return borrowed pointers.  That implementation is correct for 3.12+, but
+// it is not safe when an abi3 extension built with those headers is loaded by
+// Python 3.10 or 3.11.  Keep the new-reference contract explicit in our
+// source and use the stable ABI function rather than a version-dependent
+// header macro.
+static inline PyObject *
+PyV8_NewRef(PyObject *value)
+{
+    Py_IncRef(value);
+    return value;
+}
+
+#define PYV8_RETURN_TRUE return PyV8_NewRef(Py_True)
+#define PYV8_RETURN_FALSE return PyV8_NewRef(Py_False)
+#define PYV8_RETURN_NONE return PyV8_NewRef(Py_None)
+#define PYV8_RETURN_NOTIMPLEMENTED return PyV8_NewRef(Py_NotImplemented)
+
+
 #define TP_FREE_ABI3(type, self)                                            \
     freefunc free_func = (freefunc)PyType_GetSlot(                          \
         Py_TYPE((PyObject*)(self)), Py_tp_free);                            \
@@ -18,8 +37,8 @@ typedef PyObject* (*vectorcallfuncabi3)(PyObject* callable, PyObject* const* arg
 
 typedef struct {
     PyObject_HEAD
-    PyObject* im_func;  
-    PyObject* im_self; 
+    PyObject* im_func;
+    PyObject* im_self;
     PyObject* im_weakreflist;
     vectorcallfuncabi3 vectorcall;
 } PyMethodObjectAbi3;

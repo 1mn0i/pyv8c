@@ -17,6 +17,8 @@ from setuptools import Command, Extension, setup
 from setuptools.command.build_ext import build_ext
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+ABI3_MINIMUM_PYTHON = (3, 10)
+ABI3_BUILD_OVERRIDE = 'PYV8_ALLOW_NEWER_ABI3_BUILD'
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from v8_build import (  # noqa: E402
@@ -165,6 +167,16 @@ class PyV8BuildExt(build_ext):
         return fingerprint_file, fingerprint
 
     def run(self):
+        build_python = sys.version_info[:2]
+        if (build_python != ABI3_MINIMUM_PYTHON and
+                os.environ.get(ABI3_BUILD_OVERRIDE) != '1'):
+            required = '.'.join(map(str, ABI3_MINIMUM_PYTHON))
+            actual = '.'.join(map(str, build_python))
+            raise RuntimeError(
+                f'pyv8 abi3 wheels must be built with Python {required} '
+                f'headers (current build interpreter is {actual}); '
+                f'set {ABI3_BUILD_OVERRIDE}=1 only for local non-release builds'
+            )
         if sysconfig.get_config_var('Py_GIL_DISABLED'):
             raise RuntimeError(
                 'pyv8 does not support free-threaded CPython builds; '
