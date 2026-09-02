@@ -1,3 +1,5 @@
+from loguru import logger
+
 from .flag import *
 
 __hook_exclude_name = (
@@ -19,7 +21,7 @@ def __v8_get_hook__(self, name, value=None, error=None, ctx_type=''):
     msg = f"{ctx_type} getter: {self.__class__.__name__}.{name} -> {value}"
     if error:
         msg += f", error: {error}"
-    print(msg)
+    logger.debug(msg)
 
 
 def __v8_set_hook__(self, name, value, error, ctx_type=''):
@@ -28,7 +30,7 @@ def __v8_set_hook__(self, name, value, error, ctx_type=''):
     msg = f"{ctx_type} setter: {self.__class__.__name__}.{name} = {value}"
     if error:
         msg += f", error: {error}"
-    print(msg)
+    logger.debug(msg)
 
 
 def __v8_method_hook__(self, func_name, arguments, value, has_error, ctx_type=''):
@@ -37,7 +39,7 @@ def __v8_method_hook__(self, func_name, arguments, value, has_error, ctx_type=''
         msg += f" -> error: {value}"
     else:
         msg += f" -> {value}"
-    print(msg)
+    logger.debug(msg)
 
 
 def __v8_construct_hook__(name, arguments, value, has_error, is_construct_call, ctx_type=''):
@@ -47,7 +49,7 @@ def __v8_construct_hook__(name, arguments, value, has_error, is_construct_call, 
         msg = f"{ctx_type} construct: {name}{tuple(arguments)} -> {value}"
     if has_error:
         msg += f", has_error: {has_error}"
-    print(msg)
+    logger.debug(msg)
 
 exposed_constructs = {}
 

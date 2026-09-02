@@ -3,6 +3,7 @@
 #include <v8.h>
 #include "context.h"
 #include "debugger.h"
+#include <cstring>
 
 using namespace v8;
 
@@ -15,6 +16,8 @@ struct DebuggerState
 
 PyMethodDef debugger_methods[] = {
     {"send", (PyCFunction)debugger_send, METH_O, NULL},
+    {"schedule_pause_on_next_statement", (PyCFunction)debugger_schedule_pause, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"disconnect", (PyCFunction)debugger_disconnect, METH_NOARGS, NULL},
     {NULL},
 };
 PyTypeObject *debugger_type = NULL;
@@ -147,6 +150,8 @@ call_self(debugger_c* self, const char* method)
 void 
 V8PyChannel::handle_message(const std::unique_ptr<StringBuffer>& message)
 {
+    if (message == nullptr)
+        return;
     const StringView& stringview = message->string();
     PyObject* string;
     if (stringview.is8Bit())
@@ -155,8 +160,6 @@ V8PyChannel::handle_message(const std::unique_ptr<StringBuffer>& message)
         string = PyUnicode_DecodeUTF16((const char*)stringview.characters16(), stringview.length() * 2, NULL, NULL);
 
     PyObject* self = (PyObject*)debugger_;
-    if (message == nullptr)
-        return;
     if (PyObject_HasAttrString(self, "handle")) {
         PyObject* result = string == nullptr ? NULL :
             PyObject_CallMethod(self, (char*)"handle", (char*)"O", string);
@@ -197,7 +200,7 @@ V8PyInspectorClient::quitMessageLoopOnPause()
     call_self(debugger_, "quit_loop");
 }
 
-PyObject * 
+PyObject *
 debugger_send(debugger_c* self, PyObject* message)
 {
     if (self->client == NULL || self->state == NULL || self->state->session == nullptr) {
@@ -206,8 +209,10 @@ debugger_send(debugger_c* self, PyObject* message)
     }
 
     if (self->context == nullptr || self->context->isolate_state == nullptr ||
-        !self->context->isolate_state->require_active())
+        !self->context->isolate_state->require_active()) {
+        PyErr_SetString(PyExc_RuntimeError, "Debugger context is not active");
         return NULL;
+    }
     IN_ISOLATE(self->context->isolate_state);
     IN_CONTEXT(self->context->js_context.Get(isolate));
 
@@ -233,14 +238,58 @@ debugger_send(debugger_c* self, PyObject* message)
             reinterpret_cast<const uint8_t*>(reason.data()), reason.size());
         self->state->session->schedulePauseOnNextStatement(
             inspector_reason, inspector_reason);
-        call_self(self, "run_js");
+        if (PyObject_HasAttrString((PyObject*)self, "on_run_if_waiting_for_debugger"))
+            call_self(self, "on_run_if_waiting_for_debugger");
+        else
+            call_self(self, "run_js");
     }
-    Py_RETURN_TRUE;
+    PYV8_RETURN_TRUE;
+}
+
+PyObject *
+debugger_schedule_pause(debugger_c* self, PyObject* args, PyObject* kwargs)
+{
+    const char* reason = "pause on next statement";
+    static const char* keywords[] = {"reason", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|s:schedule_pause_on_next_statement",
+                                     const_cast<char**>(keywords), &reason))
+        return NULL;
+    if (self->state == NULL || self->state->session == nullptr || self->context == nullptr ||
+        self->context->isolate_state == nullptr || !self->context->isolate_state->require_active()) {
+        PyErr_SetString(PyExc_RuntimeError, "Debugger is not active");
+        return NULL;
+    }
+    IN_ISOLATE(self->context->isolate_state);
+    IN_CONTEXT(self->context->js_context.Get(isolate));
+    StringView inspector_reason(reinterpret_cast<const uint8_t*>(reason), strlen(reason));
+    self->state->session->schedulePauseOnNextStatement(inspector_reason, inspector_reason);
+    PYV8_RETURN_NONE;
+}
+
+PyObject *
+debugger_disconnect(debugger_c* self, PyObject* ignored)
+{
+    (void)ignored;
+    if (self->state == NULL)
+        PYV8_RETURN_NONE;
+    IsolateState* isolate_state = self->context == nullptr ? nullptr : self->context->isolate_state;
+    if (isolate_state != nullptr && isolate_state->require_active()) {
+        IN_ISOLATE(isolate_state);
+        if (self->state->session != nullptr && self->state->inspector != nullptr && self->context != nullptr &&
+            !self->context->js_context.IsEmpty())
+            self->state->inspector->contextDestroyed(self->context->js_context.Get(isolate));
+        self->state->session.reset();
+    } else {
+        self->state->session.reset();
+    }
+    PYV8_RETURN_NONE;
 }
 
 void 
 debugger_dealloc(debugger_c* self)
 {
+    PyObject* disconnected = debugger_disconnect(self, NULL);
+    Py_XDECREF(disconnected);
     IsolateState* isolate_state = self->context == nullptr ? nullptr : self->context->isolate_state;
     if (isolate_state != nullptr && isolate_state->is_active()) {
         IN_ISOLATE(isolate_state);
