@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from pyv8c import Browser
-from pyv8c.dom import DOMTokenList
+from pyv8c.web.dom import DOMTokenList
 
 
 def _page(html="<body></body>"):
@@ -108,7 +108,7 @@ def test_browser_does_not_mutate_real_implementation_classes():
 
 
 def test_webidl_module_has_no_interface_specific_runtime_registry():
-    source = (Path(__file__).resolve().parents[2] / "pyv8c" / "bindings" / "webidl.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[2] / "pyv8c" / "engine" / "webidl.py").read_text(encoding="utf-8")
     for forbidden in ("_install_signatures", "SIGNATURES", "CONSTRUCTORS"):
         assert forbidden not in source
 

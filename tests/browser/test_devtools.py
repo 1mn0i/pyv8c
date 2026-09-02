@@ -9,7 +9,7 @@ import pytest
 from websockets.asyncio.client import connect
 
 from pyv8c import Browser
-from pyv8c.core.errors import DOMException
+from pyv8c.foundation.errors import DOMException
 
 
 async def _request(ws, payload):

@@ -7,7 +7,7 @@ Baseline note: `pyv8c/baselines/interface-baseline.zip` uses schema 5. The runti
 顶层 `pyv8c` 是唯一稳定的 Python 导入面。实现按单向领域层次组织：
 
 ```text
-core -> bindings -> dom -> bom/network/workers -> runtime
+foundation -> engine -> web -> platform
 ```
 
 - `core`：错误类型和 realm 协议。

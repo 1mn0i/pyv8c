@@ -7,7 +7,7 @@ import pyv8c
 
 
 ROOT = Path(__file__).resolve().parents[2] / "pyv8c"
-DOMAIN_PACKAGES = {"dom", "bom", "network", "workers"}
+DOMAIN_PACKAGES = {"web/dom", "web/bom", "web/fetch", "web/network", "web/workers"}
 
 
 def _imports(path):
@@ -29,24 +29,24 @@ def test_public_top_level_api_is_available():
 
 
 def test_core_has_no_relative_dependency_on_higher_layers():
-    for path in (ROOT / "core").glob("*.py"):
+    for path in (ROOT / "foundation").glob("*.py"):
         for level, module in _imports(path):
-            assert not (level > 1 or module.startswith(("bindings", "dom", "bom", "network", "workers", "runtime"))), path
+            assert not (level > 1 or module.startswith(("engine", "web", "platform"))), path
 
 
 def test_domain_packages_do_not_depend_on_runtime_or_extractor_cli():
     for package in DOMAIN_PACKAGES:
         for path in (ROOT / package).glob("*.py"):
             for _level, module in _imports(path):
-                assert not module.startswith("runtime"), path
-                assert not module.startswith("bindings.extractor"), path
+                assert not module.startswith("platform"), path
+                assert not module.startswith("engine.extractor"), path
 
 
 def test_bindings_do_not_depend_on_runtime():
     """bindings must reach realm services through core, never through Page."""
-    for path in (ROOT / "bindings").glob("*.py"):
+    for path in (ROOT / "engine").glob("*.py"):
         for _level, module in _imports(path):
-            assert not module.startswith("runtime"), path
+            assert not module.startswith("platform"), path
         source = path.read_text(encoding="utf-8")
         assert "_make_promise" not in source, path
         assert "_js_error_value" not in source, path
@@ -59,29 +59,71 @@ def test_no_implicit_current_page_state_remains():
 
 
 def test_extractor_does_not_import_browser_runtime():
-    for path in (ROOT / "bindings" / "extractor").glob("*.py"):
+    for path in (ROOT / "engine" / "extractor").glob("*.py"):
         source = path.read_text(encoding="utf-8")
-        assert "runtime.browser" not in source
+        assert "platform.browser" not in source
         assert "from pyv8c import Browser" not in source
 
 
 def test_binding_facade_uses_separate_catalog_and_schema_helpers():
-    universe_source = (ROOT / "bindings" / "universe.py").read_text(encoding="utf-8")
-    extractor_source = (ROOT / "bindings" / "extractor" / "cpp.py").read_text(encoding="utf-8")
+    universe_source = (ROOT / "engine" / "universe.py").read_text(encoding="utf-8")
+    extractor_source = (ROOT / "engine" / "extractor" / "cpp.py").read_text(encoding="utf-8")
     assert "InterfaceCatalog" in universe_source
     assert "SignatureCache" in universe_source
     assert "apply_template_flags" in universe_source
     assert "from ..schema import write_baseline" in extractor_source
-    assert "class InterfaceCatalog" in (ROOT / "bindings" / "catalog.py").read_text(encoding="utf-8")
-    assert "class SignatureCache" in (ROOT / "bindings" / "wrappers.py").read_text(encoding="utf-8")
+    assert "class InterfaceCatalog" in (ROOT / "engine" / "catalog.py").read_text(encoding="utf-8")
+    assert "class SignatureCache" in (ROOT / "engine" / "wrappers.py").read_text(encoding="utf-8")
+
+
+def test_layering_has_no_upward_imports():
+    forbidden = {
+        "foundation": ("engine", "web", "platform"),
+        "engine": ("web", "platform"),
+        "web": ("platform",),
+    }
+    for layer, names in forbidden.items():
+        for path in (ROOT / layer).rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            for name in names:
+                assert f"pyv8c.{name}" not in source, path
+                assert f"from ..{name}" not in source, path
+
+
+def test_runtime_interface_catalog_is_frozen_after_bootstrap():
+    from pyv8c.engine.registry import REGISTRY
+    from pyv8c.platform.bootstrap import bootstrap_interfaces
+
+    bootstrap_interfaces()
+    assert REGISTRY.frozen
+
+
+def test_page_exposes_narrow_realm_services():
+    from pyv8c import Browser
+    from pyv8c.foundation.realm import ContextServices, RealmServices, ResourceServices
+
+    browser = Browser(stub_logging="off")
+    page = browser.new_context().new_page()
+    try:
+        assert isinstance(page, RealmServices)
+        assert isinstance(page, ResourceServices)
+        assert isinstance(page.context_services, ContextServices)
+        assert page.network_available is False
+        assert page.interface_materialized("Document")
+    finally:
+        browser.close()
 
 
 def test_domain_code_uses_page_resource_ownership_api():
-    for package in ("dom", "bom", "network", "workers", "runtime"):
-        for path in (ROOT / package).rglob("*.py"):
-            if path.name == "browser.py":
-                continue
-            source = path.read_text(encoding="utf-8")
-            assert "_owned_websockets" not in source, path
-            assert "_owned_workers" not in source, path
-            assert "_owned_frames" not in source, path
+    for path in (ROOT / "web").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for token in ("context_owner", "network_backend", "binding_session", "_owned_websockets", "_owned_workers", "_owned_frames"):
+            assert token not in source, (path, token)
+
+
+def test_web_capability_split_has_no_legacy_mixed_modules():
+    assert not (ROOT / "web" / "fetch" / "backend.py").exists()
+    assert not (ROOT / "web" / "fetch" / "api.py").exists()
+    assert "class CookieJar" in (ROOT / "web" / "network" / "cookies.py").read_text(encoding="utf-8")
+    assert "class CronetNetworkBackend" in (ROOT / "web" / "network" / "backend.py").read_text(encoding="utf-8")
+    assert "class WorkerRuntime" in (ROOT / "web" / "workers" / "runtime.py").read_text(encoding="utf-8")

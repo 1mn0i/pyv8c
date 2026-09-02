@@ -1,10 +1,10 @@
 import pytest
 
 from pyv8c import Browser, Response
-from pyv8c.bindings.universe import BaselineRepository, InterfaceUniverse
-from pyv8c.core.errors import DOMException
-from pyv8c.workers.clone import structured_clone
-from pyv8c.network.backend import CookieJar
+from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse
+from pyv8c.foundation.errors import DOMException
+from pyv8c.web.workers.clone import structured_clone
+from pyv8c.web.network.cookies import CookieJar
 
 
 def new_page(*, loader=None):

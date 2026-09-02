@@ -5,8 +5,8 @@ import zipfile
 import pytest
 
 
-from pyv8c.bindings import extractor as extract_interfaces
-from pyv8c.bindings.extractor.cpp import (
+from pyv8c.engine import extractor as extract_interfaces
+from pyv8c.engine.extractor.cpp import (
     _constant_definitions,
     extract_constants,
     extract_template,

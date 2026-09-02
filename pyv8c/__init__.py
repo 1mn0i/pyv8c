@@ -31,17 +31,11 @@ def _load_public_api():
     global _PUBLIC_API_LOADED
     if _PUBLIC_API_LOADED:
         return
-
-    modules = (
-        ".runtime", ".bindings.registry", ".dom", ".bom", ".network", ".core.environment", ".core.errors",
-    )
-    for module_name in modules:
-        module = import_module(module_name, __name__)
-        for name in __all__:
-            if hasattr(module, name):
-                globals()[name] = getattr(module, name)
-
-    import_module(".runtime.bootstrap", __name__).bootstrap_interfaces()
+    facade = import_module(".api", __name__)
+    facade._load_public_api()
+    for name in __all__:
+        if hasattr(facade, name):
+            globals()[name] = getattr(facade, name)
     _PUBLIC_API_LOADED = True
 
 

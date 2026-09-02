@@ -25,22 +25,23 @@ browser.close()
 ## 目录与依赖方向
 
 ```text
-core -> bindings -> dom -> bom/network/workers -> runtime
+foundation -> engine -> web -> platform
 ```
 
 | 区域 | 职责 |
 | --- | --- |
-| `core/` | DOM/V8 错误和 realm service 协议。 |
-| `bindings/` | Chromium baseline（`baseline.py`：快照加载与两级磁盘缓存）、Web IDL 转换、registry、动态类、V8 overlay 和提取器。 |
-| `dom/` | 节点（`model.py`）、集合视图（`collections.py`）、事件模型（`events.py`）、HTML parser 和 selector。 |
+| `foundation/` | DOM/V8 错误、环境快照、realm service 协议、任务队列和通用索引属性。 |
+| `engine/` | Chromium baseline（`baseline.py`：快照加载与两级磁盘缓存）、Web IDL 转换、registry、动态类、V8 overlay 和提取器。 |
+| `web/dom/` | 节点（`model.py`）、集合视图（`collections.py`）、事件模型（`events.py`）、HTML parser 和 selector。 |
 | `tests/browser/` | 浏览器对象的类型与功能检查：每个对象按类型、使用、等待三组验证 JS 可观察形状。 |
-| `bom/` | Window、Location、History、Storage、URL 和 URLSearchParams。 |
-| `core/environment.py` | 不可变 BrowserEnvironment；为 Browser、Page、iframe 和 Worker 提供统一环境快照。 |
-| `core/collections.py` | 与领域无关的 Web IDL 只读索引属性 Mixin，供 DOM 与 BOM 集合复用。 |
-| `bom/navigator.py` | Navigator、Geolocation、PluginArray、Plugin、MimeTypeArray 和 MimeType 的浏览器兼容实现。 |
-| `network/` | Fetch、XHR、WebSocket、Blob、HTTP 模型和 transport。 |
-| `workers/` | Worker API 和 structured clone。 |
-| `runtime/` | Browser、BrowserContext、Page、任务队列和页面控制器。 |
+| `web/bom/` | Window、Location、History、Storage、URL 和 URLSearchParams。 |
+| `foundation/environment.py` | 不可变 BrowserEnvironment；为 Browser、Page、iframe 和 Worker 提供统一环境快照。 |
+| `foundation/indexed_properties.py` | 与领域无关的 Web IDL 只读索引属性 Mixin，供 DOM 与 BOM 集合复用。 |
+| `web/bom/navigator.py` | Navigator、Geolocation、PluginArray、Plugin、MimeTypeArray 和 MimeType 的浏览器兼容实现。 |
+| `web/fetch/` | Headers、Blob、Request/Response、事件和 XMLHttpRequest。 |
+| `web/network/` | HTTP transport、CookieJar 和 WebSocket。 |
+| `web/workers/` | Worker API、Worker runtime 和 structured clone。 |
+| `platform/` | Browser、BrowserContext、Page、realm 装配、导航、生命周期、脚本、资源和 DevTools。 |
 | `tools/` | Chromium 拉取、baseline 提取和启动基准工具。 |
 
 领域包不得反向依赖 `runtime`；通过 realm service 注入页面能力。不得重新引入全局
@@ -49,14 +50,14 @@ current Page、类级 current Page 或跨 realm 的 callback owner。
 ## 运行时模型
 
 - `Browser` 持有一个不可变 `BaselineSnapshot` 和一个 `InterfaceUniverse`。
-- `BaselineRepository`/`BaselineSnapshot` 定义在 `bindings/baseline.py`（universe re-export 保持
-  旧导入路径可用）；`InterfaceUniverse` 与 `BindingSession` 留在 `bindings/universe.py`。
+- `BaselineRepository`/`BaselineSnapshot` 定义在 `engine/baseline.py`（universe re-export 保持
+  运行时导入边界）；`InterfaceUniverse` 与 `BindingSession` 留在 `engine/universe.py`。
 - `BrowserContext` 隔离 Page、Cookie、Blob URL、网络 session 和 frame。
 - 每个 `Page` 拥有 V8 Context、Window、Document、任务队列以及 navigation、lifecycle、
   script、resource controller。
-- `Page` 是薄门面：逻辑分别位于 `runtime/navigation.py`、`runtime/lifecycle.py`、
-  `runtime/scripting.py`、`runtime/resource_loading.py`（controller 通过 `Page` 聚合，
-  状态经 `runtime/state.py` 的 `StateAlias` 暴露在 `Page` 上），`Browser` /
+- `Page` 是薄门面：逻辑分别位于 `platform/navigation.py`、`platform/lifecycle.py`、
+  `platform/scripting.py`、`platform/resource_loading.py`（controller 通过 `Page` 聚合，
+  状态经 `platform/state.py` 的 `StateAlias` 暴露在 `Page` 上），`Browser` /
   `BrowserContext` 也在同文件。
 - 每个 V8 Context 有独立 `BindingSession`；动态类、class config、callback owner 与 wrapper
   状态均为 realm-local。
@@ -153,7 +154,7 @@ session.materialized_interfaces
 - V8 要求 undetectable 模板（`document.all` 式 legacy 接口，如 `HTMLAllCollection`）
   带 instance call handler：无真实 `__call__` 时 `_pyv8` 自动安装 no-op handler，
   调用返回 `undefined`，否则模板实例化会触发 V8 CHECK 崩溃。
-- `bindings/universe.py` 只在类没有真实 `__call__` 时才安装该 no-op handler，
+- `engine/universe.py` 只在类没有真实 `__call__` 时才安装该 no-op handler，
   手写 legacy caller 优先；`HTMLAllCollection.__call__` 即走这条路径。
 
 `Browser.startup_stats` 提供耗时和物化计数：`lazy_registered`（声明数）、
@@ -203,7 +204,7 @@ native constants 和 Context-local class-config overlay 在当前重建的 `_pyv
 
 ## document.all
 
-`Document.all` 返回按文档缓存的 live `HTMLAllCollection`（`dom/collections.py`）。
+`Document.all` 返回按文档缓存的 live `HTMLAllCollection`（`web/dom/collections.py`）。
 该接口在 baseline 中没有父接口，因此自带完整实现；模板标记为 undetectable，
 并带有真实的 legacy caller。
 
@@ -236,7 +237,7 @@ Object.keys(document.all)      -> 只有索引（[LegacyUnenumerableNamedPropert
 - `document.cookie` 只返回当前 URL 可见且非 `HttpOnly` 的条目；请求头读取包含
   `HttpOnly` 条目，并按路径长度、创建顺序排列。
 - 非 HTTP(S) 的不透明 URL（例如 `about:blank`）读取为空，脚本写入被忽略。
-- 状态实际变化时，`pyv8c.network.backend` 使用 `logger.debug` 记录当前页面可见的
+- 状态实际变化时，`pyv8c.web.network.backend` 使用 `logger.debug` 记录当前页面可见的
   cookie 字符串。
 
 浏览器测试 `tests/browser/test_document_cookie.py` 用标准库
@@ -334,7 +335,7 @@ handle.close()
 browser.close()
 ```
 
-实现位置为 `pyv8c/runtime/devtools.py`，`BrowserContext` 负责句柄生命周期，
+实现位置为 `pyv8c/platform/devtools.py`，`BrowserContext` 负责句柄生命周期，
 `Page`、iframe 和 Worker 负责 Target 注册/销毁。Runtime/Debugger 消息通过
 session ID 路由；Worker 消息必须经过其线程队列，不能从 WebSocket 线程直接调用
 Worker 的 V8 Context。

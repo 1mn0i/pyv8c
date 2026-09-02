@@ -726,7 +726,19 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
 ### 首脚本暂停与 Inspector 调度
 
 - `_pyv8/src/debugger.cpp` 新增 `schedule_pause_on_next_statement()`、`disconnect()`，修复空 Inspector 消息解引用，并重建原生扩展。
-- `pyv8c/runtime/devtools.py` 增加 `start_paused`、`startup_timeout`、`wait_for_connection()`、启动闸门和暂停队列。
+- `pyv8c/platform/devtools.py` 增加 `start_paused`、`startup_timeout`、`wait_for_connection()`、启动闸门和暂停队列。
 - Page/iframe/Worker 的 CDP 命令改为通过 Target 队列串行处理；Worker 在创建 Inspector 后才执行启动脚本。
 - `Page` 增加 V8 访问锁，`NavigationController` 在首个脚本前等待调试闸门。
 - 新增首脚本等待、暂停和恢复测试；专项测试 `6 passed`，手工 WebSocket 流程验证通过。
+## 2026-09-02: PageRealm extraction and second-stage boundary cleanup
+
+- 将 `Page` 的 V8 Context 创建、`BindingSession`、接口暴露与 lazy 注册集中到 `platform.browser.PageRealm`；`Page` 保留 `context`、`binding_session` 等兼容门面，关闭顺序统一经 realm 执行。
+- 架构测试改为检查 `foundation -> engine -> web -> platform` 依赖方向，并扫描新目录中的 extractor 与领域代码，禁止访问 Page/Context 私有资源状态。
+- 完整 `pyv8c` 测试：`189 passed`。
+- 独立进程冷启动基准（20 次）：p50 `326.1 ms`，p95 `345.8 ms`；懒加载断言保持 `lazy_materialized == 0`，eager/lazy 注册计数未改变。
+- 将 Worker Isolate/Context、BindingSession、接口暴露与销毁迁移到 `platform.realms.WorkerRealm`；Worker 线程仅保留消息循环和生命周期回调。专项 Worker/DevTools 测试与 native smoke 通过。
+- WorkerRealm 接入后的独立进程冷启动复测（20 次）：p50 `247.1 ms`，p95 `293.7 ms`。
+- 代码审查清理：移除 `platform.browser` 已无使用的 V8/接口暴露导入，消除 `PageRealm` 重复导出和未使用的 eager 配置变量；清除本地生成的 baseline JSON/cache 与 wheel 检查目录。目标源码包仅保留 `foundation`、`engine`、`web`、`platform` 及 `baselines`。
+- 按 Web 能力拆分网络与 Worker：Fetch 数据类型、事件、XHR 分别位于 `web/fetch` 子模块；HTTP/Cookie/WebSocket 位于 `web/network`；Worker API 与线程 runtime 位于 `web/workers/api.py`、`web/workers/runtime.py`。`fetch/api.py` 仅保留聚合导出。
+- 拆分后完整测试：`189 passed`；冷启动复测（20 次）p50 `248.0 ms`、p95 `290.1 ms`，eager `18`、lazy 注册 `1028`、冷启动 `lazy_materialized == 0` 保持不变。
+- 最终移除旧的 `web/fetch/api.py` 聚合文件，改由 `web/fetch/__init__.py` 直接导出拆分后的 API；架构守护测试新增后完整套件为 `190 passed`。

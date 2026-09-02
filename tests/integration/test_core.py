@@ -3,8 +3,8 @@ from unittest.mock import patch
 
 pytest.importorskip("pyv8")
 from pyv8c import Browser, INTERFACES
-from pyv8c.dom.selectors import parse
-import pyv8c.runtime.browser as browser_runtime
+from pyv8c.web.dom.selectors import parse
+import pyv8c.platform.browser as browser_runtime
 
 
 def test_interface_registry_is_explicit():

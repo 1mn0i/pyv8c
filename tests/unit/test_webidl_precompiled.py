@@ -7,7 +7,7 @@ observable behaviour so the caches cannot silently change semantics.
 
 import pytest
 
-from pyv8c.bindings.webidl import (
+from pyv8c.engine.webidl import (
     BindingPlan,
     MethodSpec,
     ParamSpec,
