@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import threading
+import time
 
 import pytest
 from websockets.asyncio.client import connect
@@ -97,3 +99,114 @@ def test_page_close_removes_target(devtools_page):
             assert event["method"] == "Target.targetDestroyed"
 
     asyncio.run(check())
+
+
+def test_start_paused_waits_before_first_script_and_resumes():
+    browser = Browser(stub_logging="off")
+    context = browser.new_context()
+    page = context.new_page()
+    handle = context.start_devtools(page, start_paused=True, startup_timeout=3)
+    completed = threading.Event()
+    errors = []
+
+    def navigate():
+        try:
+            page.set_content("<script>globalThis.answer = 42;</script>")
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            completed.set()
+
+    thread = threading.Thread(target=navigate)
+    thread.start()
+    try:
+        time.sleep(0.05)
+        assert not completed.is_set()
+
+        async def resume():
+            async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
+                await ws.send(json.dumps({"id": 1, "method": "Runtime.runIfWaitingForDebugger"}))
+
+        asyncio.run(resume())
+        thread.join(2)
+        assert completed.is_set()
+        assert errors == []
+        assert page.evaluate("answer") == 42
+    finally:
+        handle.close()
+        browser.close()
+
+
+def test_debugger_pause_loop_routes_resume():
+    browser = Browser(stub_logging="off")
+    context = browser.new_context()
+    page = context.new_page()
+    handle = context.start_devtools(page, start_paused=True, startup_timeout=3)
+    completed = threading.Event()
+
+    def navigate():
+        page.set_content(
+            "<script>globalThis.answer = 1; debugger; globalThis.answer = 2;</script>"
+        )
+        completed.set()
+
+    thread = threading.Thread(target=navigate)
+    thread.start()
+    try:
+        async def debug():
+            async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
+                await ws.send(json.dumps({"id": 1, "method": "Target.getTargets"}))
+                targets = json.loads(await ws.recv())["result"]["targetInfos"]
+                target_id = targets[0]["targetId"]
+                await ws.send(json.dumps({
+                    "id": 2, "method": "Target.attachToTarget",
+                    "params": {"targetId": target_id},
+                }))
+                await ws.recv()
+                attached = json.loads(await ws.recv())
+                session_id = attached["params"]["sessionId"]
+                for ident, method in ((3, "Runtime.enable"), (4, "Debugger.enable"),
+                                      (5, "Runtime.runIfWaitingForDebugger")):
+                    await ws.send(json.dumps({
+                        "id": ident, "method": method, "sessionId": session_id,
+                    }))
+                while True:
+                    message = json.loads(await asyncio.wait_for(ws.recv(), 2))
+                    if message.get("method") == "Debugger.paused":
+                        await ws.send(json.dumps({
+                            "id": 6, "method": "Debugger.resume", "sessionId": session_id,
+                        }))
+                        return
+
+        asyncio.run(debug())
+        thread.join(2)
+        assert completed.is_set()
+        assert page.evaluate("answer") == 2
+    finally:
+        handle.close()
+        browser.close()
+
+
+def test_start_paused_timeout_releases_navigation():
+    browser = Browser(stub_logging="off")
+    context = browser.new_context()
+    page = context.new_page()
+    handle = context.start_devtools(page, start_paused=True, startup_timeout=0.05)
+    errors = []
+
+    def navigate():
+        try:
+            page.set_content("<script>globalThis.answer = 1;</script>")
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=navigate)
+    thread.start()
+    try:
+        thread.join(2)
+        assert not thread.is_alive()
+        assert len(errors) == 1
+        assert "timed out" in str(errors[0])
+    finally:
+        handle.close()
+        browser.close()

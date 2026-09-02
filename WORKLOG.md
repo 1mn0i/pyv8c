@@ -723,3 +723,10 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
 
 - 当前协议范围是 V8 原生 Runtime/Debugger 加最小 Target 路由，不实现完整 Chrome 浏览器级 `Page`、`Network`、`/json` 发现接口。
 - 一个调试句柄只允许一个 Chrome DevTools WebSocket 客户端；调试范围是指定 Page 及其 iframe/Worker 后代，不包含同一 Context 的其他独立 Page。
+### 首脚本暂停与 Inspector 调度
+
+- `_pyv8/src/debugger.cpp` 新增 `schedule_pause_on_next_statement()`、`disconnect()`，修复空 Inspector 消息解引用，并重建原生扩展。
+- `pyv8c/runtime/devtools.py` 增加 `start_paused`、`startup_timeout`、`wait_for_connection()`、启动闸门和暂停队列。
+- Page/iframe/Worker 的 CDP 命令改为通过 Target 队列串行处理；Worker 在创建 Inspector 后才执行启动脚本。
+- `Page` 增加 V8 访问锁，`NavigationController` 在首个脚本前等待调试闸门。
+- 新增首脚本等待、暂停和恢复测试；专项测试 `6 passed`，手工 WebSocket 流程验证通过。

@@ -339,6 +339,9 @@ class _WorkerRuntime:
             devtools = getattr(self.page.context_owner, "_devtools", None)
             if devtools is not None:
                 devtools.register_worker(self)
+                if self.debug_target is not None:
+                    self.debug_target._create_debugger()
+                    self.debug_target.wait_for_startup()
             if source:
                 self._context.exec_js(source, filename=self.script_url)
             self._ready.set()

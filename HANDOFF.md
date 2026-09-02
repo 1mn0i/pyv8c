@@ -352,3 +352,10 @@ Worker 的 V8 Context。
 
 已知限制：当前不是完整 Chrome CDP 浏览器实现，不包含 Page/Network 域、HTTP `/json`
 发现接口、认证/TLS 和多客户端广播；未实现的 CDP 方法返回 `-32601`。
+## 2026-09-02：DevTools 首脚本暂停与 Inspector 控制
+
+- `_pyv8.Debugger` 新增 `schedule_pause_on_next_statement()` 和 `disconnect()`，并修复 Inspector 空消息处理顺序。
+- `DevToolsHandle` 新增 `wait_for_connection()`；`BrowserContext.start_devtools()` 新增 `start_paused` 与 `startup_timeout`。
+- Page/iframe Target 增加启动闸门和暂停消息队列；Worker 在 Inspector 创建后再执行首个脚本。
+- 页面脚本与 Inspector 发送使用 Page 的 V8 锁，避免并发访问 Context。
+- 验证：pyv8c DevTools 专项测试 `6 passed`，并手工验证首脚本等待、`Debugger.paused` 和 `Debugger.resume`。

@@ -9,6 +9,7 @@ controllers, so each concern can be read and tested on its own.
 
 import os
 import time
+import threading
 import uuid
 from types import MappingProxyType
 from urllib.parse import urlsplit
@@ -63,6 +64,7 @@ class Page:
         # configuration used by other pages in the same browser.
         self.hook = context.browser.hook if hook is None else bool(hook)
         self.closed = False
+        self._v8_lock = threading.RLock()
         self.navigation = NavigationController(self)
         self.lifecycle = DocumentLifecycle(self)
         self.scripts = ScriptController(self)
@@ -354,14 +356,18 @@ class BrowserContext:
         except ValueError:
             pass
 
-    def start_devtools(self, page, *, host="127.0.0.1", port=0):
+    def start_devtools(self, page, *, host="127.0.0.1", port=0,
+                       start_paused=False, startup_timeout=None):
         self._ensure_open()
         if page not in self.pages or page.closed:
             raise InvalidStateError("Page does not belong to this BrowserContext")
         if self._devtools is not None:
             raise InvalidStateError("BrowserContext already has DevTools attached")
         from .devtools import start_devtools
-        handle = start_devtools(self, page, host=host, port=port)
+        handle = start_devtools(
+            self, page, host=host, port=port,
+            start_paused=start_paused, startup_timeout=startup_timeout,
+        )
         self._devtools = handle._server
         return handle
 

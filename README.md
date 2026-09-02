@@ -112,6 +112,20 @@ browser.close()
 一个 `BrowserContext` 同时只能有一个调试句柄，服务默认只监听
 `127.0.0.1`。`handle.wait(timeout)` 可用于等待服务线程结束。
 
+需要调试首个脚本时，在导航前使用 `start_paused=True`。页面会在首个脚本前等待 Chrome
+连接并发送 `Runtime.runIfWaitingForDebugger`；`startup_timeout` 可避免无限等待。
+
+```python
+page = context.new_page()
+handle = context.start_devtools(page, start_paused=True, startup_timeout=60)
+print(handle.url)
+page.goto("http://127.0.0.1:8000/index.html")
+```
+
+`handle.wait_for_connection(timeout)` 只等待客户端连接；`handle.wait(timeout)` 等待服务线程结束。
+一个 `BrowserContext` 同时只能有一个调试句柄，服务默认只监听 `127.0.0.1`，且只允许一个
+WebSocket 客户端。当前协议范围是 V8 `Runtime`/`Debugger` 及必要的 `Target` 路由。
+
 ## Browser environment
 
 `BrowserEnvironment` provides an immutable browser-profile snapshot. Pass it to

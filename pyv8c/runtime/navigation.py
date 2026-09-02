@@ -48,6 +48,9 @@ class NavigationController:
         if devtools is not None:
             devtools.target_info_changed(self.page)
         self.page.document = Document(page=self.page, url=str(url), ready_state="loading")
+        target = getattr(self.page, "_devtools_target", None)
+        if target is not None:
+            target.wait_for_startup()
         self.parser_generation = self.generation
         self.parser = IncrementalDOMParser(self.page, self.page.document, str(html))
         self.parsing = True

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue
 import threading
+import time
 import uuid
 from urllib.parse import quote
 
@@ -12,11 +14,13 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 import pyv8
+from ..core.errors import TimeoutError
 
 class DevToolsTarget:
     """A debuggable page, iframe, or worker realm."""
 
-    def __init__(self, server, realm, kind="page", parent=None, *, worker_runtime=None):
+    def __init__(self, server, realm, kind="page", parent=None, *, worker_runtime=None,
+                 start_paused=False, startup_timeout=None):
         self.server = server
         self.realm = realm
         self.kind = kind
@@ -26,6 +30,14 @@ class DevToolsTarget:
         self.sessions = set()
         self.debugger = None
         self.closed = False
+        self.start_paused = bool(start_paused)
+        self.startup_timeout = startup_timeout
+        self._startup_released = threading.Event()
+        self._startup_released.set() if not self.start_paused else None
+        self._startup_queue = queue.Queue()
+        self._paused = False
+        self._pause_queue = None
+        self._pause_lock = threading.RLock()
         if worker_runtime is None:
             self._create_debugger()
 
@@ -60,42 +72,128 @@ class DevToolsTarget:
             def handle(self, message):
                 target.server.emit_from_target(target, message)
 
+            def run_js(self):
+                target._on_run_if_waiting()
+
+            def on_run_if_waiting_for_debugger(self):
+                target._on_run_if_waiting()
+
+            def run_loop(self):
+                target._run_pause_loop()
+
+            def quit_loop(self):
+                target._stop_pause_loop()
+
         context = getattr(self.realm, "context", None) or getattr(self.realm, "_context", None)
         if context is not None:
             self.debugger = Inspector(context)
+
+    def _on_run_if_waiting(self):
+        self._startup_released.set()
+
+    def _release_startup(self):
+        self._startup_released.set()
+        self._startup_queue.put(None)
+
+    def wait_for_startup(self):
+        if self.closed or not self.start_paused:
+            return
+        timeout = self.startup_timeout
+        deadline = None if timeout is None else time.monotonic() + float(timeout)
+        while not self._startup_released.is_set() and not self.closed:
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            if remaining == 0.0:
+                raise TimeoutError("DevTools connection timed out before the first script")
+            try:
+                message = self._startup_queue.get(timeout=remaining)
+            except queue.Empty:
+                raise TimeoutError("DevTools connection timed out before the first script")
+            if message is None:
+                return
+            self._send_on_owner(message)
+
+    def _run_pause_loop(self):
+        with self._pause_lock:
+            self._paused = True
+            queue_ref = queue.Queue()
+            self._pause_queue = queue_ref
+        try:
+            while not self.closed:
+                message = queue_ref.get()
+                if message is None:
+                    return
+                self._send_on_owner(message)
+        finally:
+            with self._pause_lock:
+                self._paused = False
+                self._pause_queue = None
+
+    def _stop_pause_loop(self):
+        with self._pause_lock:
+            if self._pause_queue is not None:
+                self._pause_queue.put(None)
+        self._startup_released.set()
+
+    def _send_on_owner(self, message):
+        if self.debugger is None or self.closed:
+            return
+        lock = getattr(self.realm, "_v8_lock", None)
+        try:
+            if lock is None:
+                self.debugger.send(message.encode("utf-8"))
+            else:
+                with lock:
+                    self.debugger.send(message.encode("utf-8"))
+        except BaseException as exc:
+            self.server._send({"method": "Runtime.exceptionThrown", "params": {
+                "exceptionDetails": {"text": str(exc)}}})
 
     def send(self, message):
         if self.closed:
             return
         if self.worker_runtime is not None:
+            with self._pause_lock:
+                if self._paused and self._pause_queue is not None:
+                    self._pause_queue.put(message)
+                    return
             self.worker_runtime.enqueue_debugger(message, self)
         elif self.debugger is not None:
-            try:
-                self.debugger.send(message.encode("utf-8"))
-            except BaseException as exc:
-                self.server._send({"method": "Runtime.exceptionThrown", "params": {"exceptionDetails": {"text": str(exc)}}})
+            if self.start_paused and not self._startup_released.is_set():
+                self._startup_queue.put(message)
+                return
+            with self._pause_lock:
+                if self._paused and self._pause_queue is not None:
+                    self._pause_queue.put(message)
+                    return
+            self._send_on_owner(message)
 
     def close(self):
         if self.closed:
             return
         self.closed = True
+        self._release_startup()
         self.sessions.clear()
         debugger, self.debugger = self.debugger, None
         if debugger is not None:
             if self.worker_runtime is not None:
                 self.worker_runtime.enqueue_debugger_close(debugger)
             else:
+                disconnect = getattr(debugger, "disconnect", None)
+                if callable(disconnect):
+                    disconnect()
                 del debugger
 
 
 class DevToolsServer:
     """Single-client WebSocket server and Target/session router."""
 
-    def __init__(self, context, page, host, port):
+    def __init__(self, context, page, host, port, *, start_paused=False, startup_timeout=None):
         self.context = context
         self.root_page = page
         self.host = host
         self.requested_port = int(port)
+        self.start_paused = bool(start_paused)
+        self.startup_timeout = startup_timeout
         self.port = None
         self.targets = {}
         self._target_by_realm = {}
@@ -104,6 +202,7 @@ class DevToolsServer:
         self._loop = None
         self._server = None
         self._websocket = None
+        self._connected = threading.Event()
         self._outgoing = None
         self._started = threading.Event()
         self._shutdown = threading.Event()
@@ -142,6 +241,7 @@ class DevToolsServer:
                 return
             self._websocket = websocket
             self._outgoing = asyncio.Queue()
+            self._connected.set()
         sender = asyncio.create_task(self._sender(websocket, self._outgoing))
         try:
             async for message in websocket:
@@ -152,9 +252,13 @@ class DevToolsServer:
                 if self._websocket is websocket:
                     self._websocket = None
                     self._outgoing = None
+                    self._connected.clear()
             for session_id, target in list(self._sessions.items()):
                 target.sessions.discard(session_id)
             self._sessions.clear()
+            for target in list(self.targets.values()):
+                target._release_startup()
+                target._stop_pause_loop()
 
     async def _sender(self, websocket, outgoing):
         try:
@@ -193,7 +297,11 @@ class DevToolsServer:
             existing = self._target_by_realm.get(page)
             if existing and not existing.closed:
                 return existing
-            target = DevToolsTarget(self, page, kind, parent)
+            target = DevToolsTarget(
+                self, page, kind, parent,
+                start_paused=self.start_paused if page is self.root_page else False,
+                startup_timeout=self.startup_timeout,
+            )
             self.targets[target.target_id] = target
             self._target_by_realm[page] = target
         self._send({"method": "Target.targetCreated", "params": {"targetInfo": target.descriptor()}})
@@ -201,11 +309,14 @@ class DevToolsServer:
 
     def register_worker(self, runtime):
         with self._lock:
-            target = DevToolsTarget(self, runtime, "worker", self._target_by_realm.get(runtime.page), worker_runtime=runtime)
+            target = DevToolsTarget(
+                self, runtime, "worker", self._target_by_realm.get(runtime.page),
+                worker_runtime=runtime, start_paused=self.start_paused,
+                startup_timeout=self.startup_timeout,
+            )
             self.targets[target.target_id] = target
             self._target_by_realm[runtime] = target
             runtime.debug_target = target
-            runtime.enqueue_debugger_init(target)
         self._send({"method": "Target.targetCreated", "params": {"targetInfo": target.descriptor()}})
         return target
 
@@ -326,11 +437,23 @@ class DevToolsHandle:
     def wait(self, timeout=None):
         self._server._thread.join(timeout)
 
+    def wait_for_connection(self, timeout=None):
+        return self._server._connected.wait(timeout)
 
-def start_devtools(context, page, *, host="127.0.0.1", port=0):
-    server = DevToolsServer(context, page, host, port)
-    server.start()
-    page._devtools_target = server.register_page(page)
+
+def start_devtools(context, page, *, host="127.0.0.1", port=0,
+                   start_paused=False, startup_timeout=None):
+    server = DevToolsServer(
+        context, page, host, port,
+        start_paused=start_paused,
+        startup_timeout=startup_timeout,
+    )
+    try:
+        server.start()
+        page._devtools_target = server.register_page(page)
+    except BaseException:
+        server.close()
+        raise
     return DevToolsHandle(server)
 
 
