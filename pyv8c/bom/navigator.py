@@ -275,12 +275,19 @@ class Navigator:
         ("mimeTypes", "get_mimeTypes", None, 0, 1),
     )
 
-    def __init__(self, user_agent=None, page=None, environment=None, **_):
+    def __init__(self, user_agent=None, page=None, environment=None, worker=False, **_):
         self._environment = BrowserEnvironment.from_value(environment)
+        self._worker = bool(worker)
         if user_agent is not None:
             self._environment = BrowserEnvironment.from_value({"user_agent": user_agent}, base=self._environment)
-        self._geolocation = Geolocation(page=page, environment=self._environment) if page is not None else pyv8.Null
-        self._plugins, self._mime_types = create_plugin_collections(self._environment)
+        self._geolocation = (
+            Geolocation(page=page, environment=self._environment)
+            if page is not None and not self._worker else pyv8.Undefined
+        )
+        self._plugins, self._mime_types = (
+            create_plugin_collections(self._environment)
+            if not self._worker else (pyv8.Undefined, pyv8.Undefined)
+        )
 
     def get_userAgent(self): return self._environment.user_agent
     def get_platform(self): return self._environment.platform

@@ -108,3 +108,15 @@ class TaskQueue:
         self.timers.clear()
         self.microtasks.clear()
         self.cancelled.clear()
+        # Async network/worker completions may arrive after the Page closes.
+        # Drop their wait state as part of teardown so a closed page cannot
+        # retain stale pending work or keep a waiter blocked indefinitely.
+        self.network_pending = 0
+        self.worker_pending = 0
+        while True:
+            try:
+                self.posted.get_nowait()
+            except queue.Empty:
+                break
+        with self.condition:
+            self.condition.notify_all()

@@ -127,6 +127,18 @@ class ResourceController:
             return
         target = urljoin(page.url, str(url))
         request = self._request_with_environment_headers(request, page)
+        if target.startswith("blob:"):
+            try:
+                body, content_type = page.context_owner.resolve_blob_url(target)
+                response, error = Response(
+                    body,
+                    {"url": target, "headers": {"content-type": content_type}},
+                    page=page,
+                ), None
+            except BaseException as exc:
+                response, error = None, exc
+            page.post_task(lambda: callback(response, error))
+            return
         req = self._network_request(target, request, page)
         if page.resource_loader:
             try:

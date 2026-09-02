@@ -13,6 +13,8 @@ from pyv8c import (
 
 def test_environment_defaults_and_mapping_overlay_are_immutable():
     default = BrowserEnvironment()
+    assert default.user_agent.startswith("Mozilla/5.0 ")
+    assert not default.user_agent.startswith("'")
     assert default.language == default.languages[0]
     assert default.languages
     assert default.viewport.width == 1280
@@ -137,6 +139,18 @@ def test_worker_inherits_page_environment_snapshot():
         browser.close()
 
 
+def test_worker_navigator_does_not_expose_window_only_surfaces():
+    source = "self.postMessage([typeof navigator.plugins, typeof navigator.mimeTypes, typeof navigator.geolocation]);"
+    browser = Browser(resource_loader=lambda url, request: {"body": source, "url": url})
+    try:
+        page = browser.new_context().new_page()
+        page.evaluate("const worker = new Worker('https://example.test/worker.js'); worker.onmessage = event => globalThis.workerSurfaces = event.data;")
+        page.run_until_idle(1)
+        assert page.evaluate("workerSurfaces") == ["undefined", "undefined", "undefined"]
+    finally:
+        browser.close()
+
+
 def test_fetch_and_xhr_receive_environment_headers():
     calls = []
 
@@ -156,5 +170,17 @@ def test_fetch_and_xhr_receive_environment_headers():
             {"User-Agent": "Async UA", "Accept-Language": "ko-KR, en"},
             {"User-Agent": "Async UA", "Accept-Language": "ko-KR, en"},
         ]
+    finally:
+        browser.close()
+
+
+def test_fetch_blob_url_uses_context_storage_async():
+    browser = Browser(environment={"user_agent": "Blob UA"})
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://example.test/")
+        assert page.evaluate("(() => { const u = URL.createObjectURL(new Blob(['blob-body'])); fetch(u).then(r => r.text()).then(v => globalThis.blobFetch = v); return u; })()").startswith("blob:")
+        page.run_until_idle(1)
+        assert page.evaluate("blobFetch") == "blob-body"
     finally:
         browser.close()

@@ -283,7 +283,7 @@ class WorkerGlobalScope(EventTarget):
         super().__init__(page=None, **kw)
         self._runtime = runtime
         from ..bom.navigator import Navigator
-        self.navigator = Navigator(environment=environment)
+        self.navigator = Navigator(environment=environment, worker=True)
     def get_self(self): return self
     def get_navigator(self): return self.navigator
     def get_onmessage(self): return self._get_handler("onmessage")
