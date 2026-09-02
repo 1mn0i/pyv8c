@@ -30,6 +30,7 @@ from .navigation import NavigationController
 from .lifecycle import DocumentLifecycle
 from .scripting import ScriptController
 from .resource_loading import ResourceController
+from .devtools import DevToolsHandle, DevToolsServer
 
 
 class _ContextBootstrapProxy:
@@ -82,6 +83,7 @@ class Page:
         # Context.__init__ returns.  Publish a sentinel so Window callbacks
         # never observe a partially initialized Page attribute.
         self.context = _ContextBootstrapProxy()
+        self._devtools_target = None
         binding_started = time.perf_counter_ns()
         eager_configs = self.binding_session.class_configs(
             "Window", roots=self.binding_session.universe.eager_names("Window"),
@@ -96,6 +98,8 @@ class Page:
             ),
         }
         self.context = pyv8.Context(self.window, **context_kwargs)
+        if self.hook:
+            self.context.exec_js("faker.hook=true;")
         context_created = time.perf_counter_ns()
         expose_interfaces(
             self.context,
@@ -259,6 +263,10 @@ class Page:
             self.lifecycle.dispatch_page_event("unload", self.window, {"bubbles": False})
         # Drop cached JS scripts before the V8 context goes away.
         self.scripts.clear_js_helpers()
+        if self._devtools_target is not None:
+            if self.context_owner._devtools is not None:
+                self.context_owner._devtools.unregister(self)
+            self._devtools_target = None
         self.closed = True
         self.tasks.close()
         self.resources.reset()
@@ -288,6 +296,7 @@ class BrowserContext:
             self.network_backend.cookies = self.cookies
         self._blob_urls = {}
         self.closed = False
+        self._devtools = None
 
     def _ensure_open(self):
         if self.closed or self.browser._closed:
@@ -345,6 +354,17 @@ class BrowserContext:
         except ValueError:
             pass
 
+    def start_devtools(self, page, *, host="127.0.0.1", port=0):
+        self._ensure_open()
+        if page not in self.pages or page.closed:
+            raise InvalidStateError("Page does not belong to this BrowserContext")
+        if self._devtools is not None:
+            raise InvalidStateError("BrowserContext already has DevTools attached")
+        from .devtools import start_devtools
+        handle = start_devtools(self, page, host=host, port=port)
+        self._devtools = handle._server
+        return handle
+
     def close(self):
         if self.closed:
             return
@@ -352,6 +372,9 @@ class BrowserContext:
         for page in list(self.pages):
             page.close()
         self.pages.clear()
+        if self._devtools is not None:
+            self._devtools.close()
+            self._devtools = None
         self._blob_urls.clear()
         if self.network_backend:
             self.network_backend.close()

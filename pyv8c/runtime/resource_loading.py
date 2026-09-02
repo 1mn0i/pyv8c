@@ -253,6 +253,9 @@ class ResourceController:
         child = Page(page.context_owner, url=target, environment=page.environment)
         iframe._child_page = child
         page._track_frame(child)
+        devtools = getattr(page.context_owner, "_devtools", None)
+        if devtools is not None:
+            child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
         try:
             child.set_content(response.body_text(), url=target)
             child.lifecycle.when_loaded(callback)
@@ -269,6 +272,10 @@ class ResourceController:
             return getattr(iframe, "_child_page", None)
         child = Page(page.context_owner, url=target, environment=page.environment)
         iframe._child_page = child
+        page._track_frame(child)
+        devtools = getattr(page.context_owner, "_devtools", None)
+        if devtools is not None:
+            child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
         response = self.load_resource(target, {"method": "GET"})
         child.set_content(response.body_text(), url=target)
         return child

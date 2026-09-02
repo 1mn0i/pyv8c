@@ -10,9 +10,9 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
-    "Browser", "BrowserContext", "Page", "BrowserEnvironment", "ViewportConfig", "ScreenConfig", "GeolocationConfig", "PluginConfig", "MimeTypeConfig", "INTERFACES", "validate_registry", "Window",
+    "Browser", "BrowserContext", "Page", "DevToolsHandle", "DevToolsTarget", "DevToolsServer", "BrowserEnvironment", "ViewportConfig", "ScreenConfig", "GeolocationConfig", "PluginConfig", "MimeTypeConfig", "INTERFACES", "validate_registry", "Window",
     "Document", "Node", "Element", "HTMLElement", "Text", "Comment", "DocumentType",
-    "CharacterData", "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "CustomEvent", "EventTarget", "WindowProperties", "Location", "Navigator", "Screen", "Storage", "URL", "Plugin", "PluginArray", "MimeType", "MimeTypeArray",
+    "CharacterData", "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "CustomEvent", "EventTarget", "WindowProperties", "Location", "Navigator", "Screen", "Storage", "URL", "Plugin", "PluginArray", "MimeType", "MimeTypeArray", "HTMLMetaElement",
     "URLSearchParams",
     "NodeList", "HTMLCollection", "HTMLAllCollection", "DOMTokenList", "NamedNodeMap", "Attr", "DocumentFragment", "HTMLTemplateElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLScriptElement", "HTMLLinkElement", "HTMLStyleElement",
     "Blob", "Headers", "Request", "Response", "XMLHttpRequest", "Worker", "WorkerGlobalScope", "DedicatedWorkerGlobalScope",

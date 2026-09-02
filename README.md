@@ -90,6 +90,28 @@ print(page.evaluate("document.readyState"))  # complete
 browser.close()
 ```
 
+## DevTools 调试
+
+`BrowserContext.start_devtools(page)` 会在本地启动非阻塞的 V8 Inspector
+WebSocket 服务，并返回可粘贴到 Chrome 的 `devtools://` 地址。页面会继续执行；
+连接后可使用 Runtime/Debugger 进行求值、断点、暂停和单步调试。指定页面创建的
+iframe 和 Worker 会作为独立 Target 自动加入同一调试会话。
+
+```python
+browser = Browser()
+context = browser.new_context()
+page = context.new_page()
+handle = context.start_devtools(page)
+print(handle.url)
+
+# 业务代码继续运行；关闭句柄会停止 WebSocket 服务。
+handle.close()
+browser.close()
+```
+
+一个 `BrowserContext` 同时只能有一个调试句柄，服务默认只监听
+`127.0.0.1`。`handle.wait(timeout)` 可用于等待服务线程结束。
+
 ## Browser environment
 
 `BrowserEnvironment` provides an immutable browser-profile snapshot. Pass it to

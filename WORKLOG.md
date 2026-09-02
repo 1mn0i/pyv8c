@@ -702,3 +702,24 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
   的 Plugin MIME 对象与 `navigator.mimeTypes` 对象身份差异。
 - 抽取 `core.indexed_properties.ReadOnlyIndexedPropertyMixin`，消除 BOM 对 DOM
   私有集合实现的反向依赖。
+## 2026-09-02：pyv8c DevTools 调试模式
+
+### 实现
+
+- 新增 `runtime/devtools.py`，基于 `_pyv8.Debugger` 和 V8 Inspector 提供非阻塞 WebSocket/CDP bridge。
+- `BrowserContext.start_devtools(page, host="127.0.0.1", port=0)` 返回 `DevToolsHandle`，支持 `url`、`host`、`port`、`close()` 和 `wait()`。
+- 实现 `Target.getTargets`、发现、attach/detach、activate、close、auto-attach，以及 `Runtime.*`/`Debugger.*` 消息路由。
+- 主页面和 iframe 使用独立 Inspector Target；Worker 的调试命令通过 Worker 所在线程队列执行，避免跨线程直接访问 V8 Isolate。
+- 页面、iframe、Worker、Context 关闭时自动清理 Target；同一 Context 只允许一个调试句柄，第二个 WebSocket 客户端以 `1013` 关闭。
+- 更新 `pyproject.toml`，将 `websockets>=14` 纳入运行依赖，并在 README 增加使用示例。
+
+### 验证
+
+- `tests/browser/test_devtools.py`：4 passed。
+- pyv8c 全量测试：`181 passed`。
+- `git diff --check`：通过。
+
+### 边界
+
+- 当前协议范围是 V8 原生 Runtime/Debugger 加最小 Target 路由，不实现完整 Chrome 浏览器级 `Page`、`Network`、`/json` 发现接口。
+- 一个调试句柄只允许一个 Chrome DevTools WebSocket 客户端；调试范围是指定 Page 及其 iframe/Worker 后代，不包含同一 Context 的其他独立 Page。

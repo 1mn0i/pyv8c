@@ -44,6 +44,9 @@ class NavigationController:
         self.page.resources.reset()
         self.page.scripts.reset()
         self.page.window.location.href = str(url)
+        devtools = getattr(self.page.context_owner, "_devtools", None)
+        if devtools is not None:
+            devtools.target_info_changed(self.page)
         self.page.document = Document(page=self.page, url=str(url), ready_state="loading")
         self.parser_generation = self.generation
         self.parser = IncrementalDOMParser(self.page, self.page.document, str(html))

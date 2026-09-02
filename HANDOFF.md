@@ -320,3 +320,35 @@ iframe/Worker 隔离；最后增加非核心接口实现，且不扩大默认启
 - 最新验证：`_pyv8` 全量 `180 passed`；`pyv8c` 全量 `161 passed`，其中包含
   `tests/browser/test_collections.py` 的 44 项集合测试和 `test_document_cookie.py` 的 5 项测试。
 - 当前工作区包含尚待提交的 `document.cookie` 实现、baseline 更新、浏览器测试和本次文档更新。
+## 当前状态（2026-09-02）：pyv8c DevTools 调试
+
+已完成基于 `_pyv8` V8 Inspector 的非阻塞 DevTools bridge。入口为：
+
+```python
+browser = Browser()
+context = browser.new_context()
+page = context.new_page()
+handle = context.start_devtools(page)
+print(handle.url)
+handle.close()
+browser.close()
+```
+
+实现位置为 `pyv8c/runtime/devtools.py`，`BrowserContext` 负责句柄生命周期，
+`Page`、iframe 和 Worker 负责 Target 注册/销毁。Runtime/Debugger 消息通过
+session ID 路由；Worker 消息必须经过其线程队列，不能从 WebSocket 线程直接调用
+Worker 的 V8 Context。
+
+已支持：
+
+- 主页面、iframe、Worker 的 Target 查询和生命周期通知。
+- `Target.setDiscoverTargets`、`getTargets`、`attachToTarget`、`detachFromTarget`、
+  `activateTarget`、`closeTarget`、`setAutoAttach`。
+- V8 `Runtime.*` 和 `Debugger.*` 转发，页面立即执行，连接后可调试。
+- 非阻塞 `DevToolsHandle.close()` / `wait()`，随机端口和 Chrome `devtools://` URL。
+- Context 重复启动、第二客户端连接、Page/Context/Worker 关闭清理。
+
+验证结果：`pyv8c` 全量测试 `181 passed`，DevTools 专项测试 `4 passed`。
+
+已知限制：当前不是完整 Chrome CDP 浏览器实现，不包含 Page/Network 域、HTTP `/json`
+发现接口、认证/TLS 和多客户端广播；未实现的 CDP 方法返回 `-32601`。

@@ -47,6 +47,37 @@ class NodeList(ReadOnlyIndexedPropertyMixin):
     def __len__(self): return len(self._items())
 
 
+@interface("NamedNodeMap", None, constructible=False, tag="NamedNodeMap")
+@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+class NamedNodeMap(NodeList):
+    """Live attribute collection owned by an Element."""
+    __v8_method__ = js_methods(
+        ("item", "fn_item", 1, 1), ("getNamedItem", "fn_getNamedItem", 1, 1),
+        ("setNamedItem", "fn_setNamedItem", 1, 0), ("removeNamedItem", "fn_removeNamedItem", 1, 0),
+    )
+    def __init__(self, element=None, **_):
+        self._element = element
+        super().__init__(getter=self._attribute_items)
+    def _attribute_items(self):
+        from .model import Attr
+        return [Attr(k, v, ownerElement=self._element, page=self._element._page)
+                for k, v in self._element.attributes.items()]
+    def fn_getNamedItem(self, name):
+        return next((item for item in self._items() if item.get_name() == str(name)), pyv8.Null)
+    def fn_setNamedItem(self, attr):
+        from .model import Attr
+        if not isinstance(attr, Attr): raise V8TypeError("parameter is not of type Attr")
+        old = self.fn_getNamedItem(attr.get_name())
+        self._element.attributes[attr.get_name()] = attr.get_value()
+        return old
+    def fn_removeNamedItem(self, name):
+        from ..core.errors import NotFoundError
+        name = str(name)
+        if name not in self._element.attributes: raise NotFoundError("The attribute was not found.")
+        from .model import Attr
+        return Attr(name, self._element.attributes.pop(name), ownerElement=self._element, page=self._element._page)
+
+
 def _node_id(node):
     """The ``id`` of any node-like object, without importing the node model."""
     getter = getattr(node, "get_id", None)
