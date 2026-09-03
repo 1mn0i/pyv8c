@@ -791,3 +791,51 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
 
 - engine 注入通道 `_realm` 参数名保留（属 binding engine 约定，与显式 `services` 参数并存于 Request/Response/XHR/WebSocket/Worker 构造器）。
 - 本次为纯命名/边界收敛，未改变任何运行时行为。
+## 2026-09-03：InterfaceUniverse 拆分为组合根 + 协作者模块
+
+### 目标
+
+消除 engine 层最后的结构性债务：`universe.py`（700 行）单类混合 baseline 查询、binding plan、stub 生成、wrapper 生成、class config 装配五种职责。拆分后 `InterfaceUniverse` 降级为纯编排组合根，对外 API 完全不变（platform/registry/测试零改动）。
+
+### 修改
+
+- 新增 `engine/stubs.py`：`StubFactory`（原 6 个 `_stub_*` 工厂 + `_log`）与模块级 `mark_direct`。
+- 扩展 `engine/wrappers.py`：`BindingWrapperFactory`（原 `_method_wrapper`/`_setter_wrapper`/`_constructor_adapter`/`_reject_conversion`/`_raw_callback`），`SignatureCache` 移入工厂。
+- 新增 `engine/assembly.py`：`ClassConfigBuilder`（原 `_declared_handlers`/`_member_configs`/`_class_config_for` + `_handler_cache`）、模块级 flag 转换函数、`HANDLER_FAMILIES`/`CROSS_ORIGIN_FAMILIES`/`own_configs`/`declares_callback`/`raw_callback`。
+- 新增 `engine/sessions.py`：`BindingSession` 整体迁移；`class_configs` 内联原 `universe._class_configs` 批量物化。
+- `engine/universe.py` 700→205 行：`__init__` 组装 stubs/wrappers/assembly 三协作者；`_resolve_names`/`_walk_parent_names` 公开化为 `resolve_names`/`walk_parent_names`；`class_config_for(name, cache=None, realm=None)` 双用法（检视/物化）；删除死方法 `_interface_positions`/`_children_of_index` 与 `_descendants` 薄委托（`_member` 直用 catalog）；`BindingSession` re-export。
+- 架构测试：`test_binding_facade_uses_separate_catalog_and_schema_helpers` 断言更新到新模块；新增 `test_universe_stays_a_composition_root` 防工厂方法体回流。
+
+### 验证
+
+- 全量测试 `193 passed`（192 基线 + 1 新守护）。
+- 启动基准 `p50=95.7ms`（对照重构前当日基线 ~108ms，无回退）。
+- `rg` 确认 universe.py 无 `_stub_method`/`_member_configs`/`_class_config_for`/`class BindingSession` 残留；全部文件 LF 行尾；`git diff --check` 干净。
+
+### 限制
+
+- `_realm` 注入协议、10 项 attribute tuple wire shape、stub 日志格式逐字节保持，本轮零行为变更。
+- `ClassConfigBuilder`/`BindingWrapperFactory` 持有 universe 实例引用（构造注入），与 Page→controllers 模式一致。
+- callback_owner 动态类名后缀改用 builder 实例 `id`（原 universe `id`），每 universe 一 builder，唯一性语义等价。
+## 2026-09-03：拆分遗留小气味修复（协作者私有访问 + realm 四步重复）
+
+### 目标
+
+清除上轮 InterfaceUniverse 拆分引入/暴露的两个小气味：`assembly.py` 跨模块访问 universe 私有方法；`PageRealm`/`WorkerRealm` context 创建尾部四步模式重复。
+
+### 修改
+
+- `engine/universe.py`：`_spec`/`_own_members` 公开化为 `spec`/`own_members`（协作者查询面，加 docstring），全部内部调用点同步；`_member` 保持私有（仅 `binding_plan` 内部使用）。
+- `engine/assembly.py`：5 处 `self.universe._spec`/`._own_members` 改公开调用。
+- `platform/realms.py`：提取模块级 `_context_kwargs`（hook/ctx_type/class_configs/lazy_factory 装配）与 `_declare_realm_interfaces`（expose_interfaces + declare_lazy 尾部），两个 realm 共用；`PageRealm` 保留启动计时与 faker hook 语义，`WorkerRealm` 保留 isolate 生命周期。
+- 架构测试：新增 `test_universe_collaborators_use_public_surface_only`，禁止 stubs/wrappers/assembly/sessions 出现 `self.universe._`。
+
+### 验证
+
+- 全量测试 `194 passed`（193 基线 + 1 新守护）。
+- 启动基准 `p50=96.9ms`，无回退。
+- `rg` 确认无私有访问残留；`git diff --check` 干净。
+
+### 限制
+
+- platform 层 controllers 访问 `page._owned` 等组合根私有属既定设计模式（同层组合根），未纳入本轮范围。

@@ -53,7 +53,12 @@ current Page、类级 current Page 或跨 realm 的 callback owner。
   自己的冻结 `InterfaceRegistry`（`bootstrap_interfaces()` 返回模块级缓存的默认注册表，
   不存在进程级可变全局）。
 - `BaselineRepository`/`BaselineSnapshot` 定义在 `engine/baseline.py`（universe re-export 保持
-  运行时导入边界）；`InterfaceUniverse` 与 `BindingSession` 留在 `engine/universe.py`。
+  运行时导入边界）。`InterfaceUniverse` 是 `engine/universe.py` 的纯组合根：stub 生成在
+  `engine/stubs.py`（`StubFactory`）、callback wrapper 在 `engine/wrappers.py`
+  （`BindingWrapperFactory`）、class config 装配在 `engine/assembly.py`
+  （`ClassConfigBuilder`）、realm 会话在 `engine/sessions.py`（`BindingSession`，universe
+  re-export）。对外 API（`binding_session`/`eager_names`/`class_for`/`class_config_for`/
+  `validate` 等）不变，由架构测试守护组合根不再长出工厂方法体。
 - `BrowserContext` 隔离 Page、Cookie、Blob URL、网络 session 和 frame。
 - 每个 `Page` 拥有 V8 Context、Window、Document、任务队列以及 navigation、lifecycle、
   script、resource controller。

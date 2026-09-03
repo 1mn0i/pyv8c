@@ -6,6 +6,31 @@ import time
 from ..engine.registry import expose_interfaces
 
 
+def _context_kwargs(session, context_type, hook, on_materialize=None):
+    """Shared native Context arguments assembled from one binding session."""
+    return {
+        "hook": hook,
+        "ctx_type": context_type,
+        "class_configs": session.configs,
+        "lazy_factory": session.lazy_factory(context_type, on_materialize=on_materialize),
+    }
+
+
+def _declare_realm_interfaces(context, session, *, context_type, generate_stubs, universe):
+    """Expose eager interfaces and declare lazy names on a fresh context."""
+    expose_interfaces(
+        context,
+        context_type=context_type,
+        generate_stubs=generate_stubs,
+        universe=universe,
+        class_for=session.class_for,
+    )
+    return context.declare_lazy(
+        session.lazy_names(context_type),
+        skip=universe.eager_names(context_type),
+    )
+
+
 class WorkerRealm:
     """Own the worker isolate, context, and binding session."""
 
@@ -21,23 +46,14 @@ class WorkerRealm:
         config = self.config
         session = config.session
         self.isolate = pyv8.Isolate()
-        context_kwargs = {
-            "hook": config.hook,
-            "ctx_type": "Worker",
-            "class_configs": session.configs,
-            "lazy_factory": session.lazy_factory("Worker"),
-        }
-        self.context = self.isolate.context(scope, **context_kwargs)
-        expose_interfaces(
-            self.context,
+        self.context = self.isolate.context(
+            scope, **_context_kwargs(session, "Worker", config.hook),
+        )
+        _declare_realm_interfaces(
+            self.context, session,
             context_type="Worker",
             generate_stubs=config.generate_stubs,
             universe=config.universe,
-            class_for=session.class_for,
-        )
-        self.context.declare_lazy(
-            session.lazy_names("Worker"),
-            skip=config.universe.eager_names("Worker"),
         )
         return self.context
 
@@ -70,29 +86,18 @@ class PageRealm:
             "Window", roots=self.binding_session.universe.eager_names("Window"),
         )
         binding_prepared = time.perf_counter_ns()
-        context_kwargs = {
-            "hook": page.hook,
-            "ctx_type": "Window",
-            "class_configs": self.binding_session.configs,
-            "lazy_factory": self.binding_session.lazy_factory(
-                "Window", on_materialize=self._record_lazy_materialized,
-            ),
-        }
-        self.context = pyv8.Context(page.window, **context_kwargs)
+        self.context = pyv8.Context(page.window, **_context_kwargs(
+            self.binding_session, "Window", page.hook,
+            on_materialize=self._record_lazy_materialized,
+        ))
         if page.hook:
             self.context.exec_js("faker.hook=true;")
         context_created = time.perf_counter_ns()
-        browser = page.context_owner.browser
-        expose_interfaces(
-            self.context,
+        lazy_registered = _declare_realm_interfaces(
+            self.context, self.binding_session,
             context_type="Window",
             generate_stubs=browser.generate_interface_stubs,
             universe=browser.interface_universe,
-            class_for=self.binding_session.class_for,
-        )
-        lazy_names = self.binding_session.lazy_names("Window")
-        lazy_registered = self.context.declare_lazy(
-            lazy_names, skip=self.binding_session.universe.eager_names("Window"),
         )
         lazy_registered_at = time.perf_counter_ns()
         browser._record_startup(

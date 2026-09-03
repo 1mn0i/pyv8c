@@ -68,12 +68,35 @@ def test_extractor_does_not_import_browser_runtime():
 def test_binding_facade_uses_separate_catalog_and_schema_helpers():
     universe_source = (ROOT / "engine" / "universe.py").read_text(encoding="utf-8")
     extractor_source = (ROOT / "engine" / "extractor" / "cpp.py").read_text(encoding="utf-8")
+    wrappers_source = (ROOT / "engine" / "wrappers.py").read_text(encoding="utf-8")
+    assembly_source = (ROOT / "engine" / "assembly.py").read_text(encoding="utf-8")
     assert "InterfaceCatalog" in universe_source
-    assert "SignatureCache" in universe_source
-    assert "apply_template_flags" in universe_source
+    assert "class SignatureCache" in wrappers_source
+    assert "class BindingWrapperFactory" in wrappers_source
+    assert "class ClassConfigBuilder" in assembly_source
+    assert "apply_template_flags" in assembly_source
     assert "from ..schema import write_baseline" in extractor_source
     assert "class InterfaceCatalog" in (ROOT / "engine" / "catalog.py").read_text(encoding="utf-8")
-    assert "class SignatureCache" in (ROOT / "engine" / "wrappers.py").read_text(encoding="utf-8")
+    assert "class StubFactory" in (ROOT / "engine" / "stubs.py").read_text(encoding="utf-8")
+    assert "class BindingSession" in (ROOT / "engine" / "sessions.py").read_text(encoding="utf-8")
+
+
+def test_universe_stays_a_composition_root():
+    """Stub/wrapper/assembly/session bodies must not creep back into universe.py."""
+    universe_source = (ROOT / "engine" / "universe.py").read_text(encoding="utf-8")
+    for token in (
+        "_stub_method", "_member_configs", "_class_config_for", "_declared_handlers",
+        "class StubFactory", "class BindingWrapperFactory", "class ClassConfigBuilder",
+        "class BindingSession", "def _stub_", "mark_direct",
+    ):
+        assert token not in universe_source, token
+
+
+def test_universe_collaborators_use_public_surface_only():
+    """stubs/wrappers/assembly/sessions must not reach into universe privates."""
+    for name in ("stubs", "wrappers", "assembly", "sessions"):
+        source = (ROOT / "engine" / f"{name}.py").read_text(encoding="utf-8")
+        assert "self.universe._" not in source, name
 
 
 def test_layering_has_no_upward_imports():
