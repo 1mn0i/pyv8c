@@ -214,7 +214,7 @@ def test_worker_and_iframe_reuse_their_browser_universe(tmp_path):
         page = browser.new_context().new_page()
         page.set_content("<iframe src='about:blank'></iframe>", url="http://example.test/")
         page.run_until_idle(timeout=1)
-        frame_page = page.document.fn_querySelector("iframe")._child_page
+        frame_page = next(iter(page._owned.frames))
         assert frame_page.context_owner.browser.interface_universe is browser.interface_universe
         assert frame_page.evaluate("[typeof AbortController.prototype.abort, typeof AbortController.prototype.alternateAbort]") == ["undefined", "function"]
 

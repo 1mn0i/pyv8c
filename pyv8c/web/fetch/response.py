@@ -23,9 +23,9 @@ class Response:
         ("arrayBuffer", "fn_arrayBuffer", 0, 1),
     )
 
-    def __init__(self, body="", options=None, page=None, _realm=None, **_):
+    def __init__(self, body="", options=None, services=None, _realm=None, **_):
         options = options if isinstance(options, dict) else {}
-        self._page = page or _realm
+        self._services = services or _realm
         self.body = body
         self.status = int(options.get("status", 200))
         self.status_text = str(options.get("statusText", options.get("reason", "")))
@@ -52,7 +52,7 @@ class Response:
         return self.body_text()
 
     def _result(self, value):
-        return self._page.promise_resolve(value) if self._page else value
+        return self._services.promise_resolve(value) if self._services else value
 
     def fn_text(self): return self._result(self._body_value())
     def fn_json(self): return self._result(json.loads(self._body_value()))

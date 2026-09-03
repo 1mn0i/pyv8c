@@ -26,7 +26,6 @@ def _load_public_api():
         for name in _PUBLIC_NAMES:
             if hasattr(module, name):
                 globals()[name] = getattr(module, name)
-    import_module(".platform.bootstrap", __package__).bootstrap_interfaces()
     _PUBLIC_API_LOADED = True
 
 

@@ -28,18 +28,18 @@ class WebSocket(EventTarget):
     __v8_method__ = js_methods(("send", "fn_send", 1, 0), ("close", "fn_close", 2, 0))
 
     def __init__(self, url="", protocols=None, _realm=None, **kw):
-        page = _realm
-        super().__init__(page=page, **kw)
-        if not page or not page.network_available:
+        services = _realm
+        super().__init__(services=services, **kw)
+        if not services or not services.network_available:
             raise NetworkUnavailableError("WebSocket requires real_network=True")
-        self._page, self._url = page, str(url)
+        self._services, self._url = services, str(url)
         self._protocol = self._extensions = ""
         self._state_value, self._binary_type, self._buffered = self.CONNECTING, "blob", 0
         self._ws, self._protocols = None, protocols
         callbacks = {"open": self._on_open, "message": self._on_message,
                      "error": self._on_error, "close": self._on_close}
-        self._ws = page.websocket(self._url, protocols, callbacks)
-        page._track_websocket(self._ws)
+        self._ws = services.websocket(self._url, protocols, callbacks)
+        services._track_websocket(self._ws)
 
     def get_url(self): return self._url
     def get_protocol(self): return self._protocol
@@ -89,7 +89,7 @@ class WebSocket(EventTarget):
         else:
             value = bytes_from_value(data) or b""
         self.fn_dispatchEvent(MessageEvent("message", {
-            "data": value, "origin": self._page.url, "source": self._page.window,
+            "data": value, "origin": self._services.url, "source": self._services.window,
         }))
 
     def _on_error(self, ws, error, net_error=None):
@@ -100,7 +100,7 @@ class WebSocket(EventTarget):
         self.fn_dispatchEvent(CloseEvent("close", {
             "code": code, "reason": reason, "wasClean": was_clean,
         }))
-        self._page._discard_websocket(ws)
+        self._services._discard_websocket(ws)
 
 
 __all__ = ["WebSocket"]

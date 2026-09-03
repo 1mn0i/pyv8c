@@ -91,11 +91,11 @@ def test_layering_has_no_upward_imports():
 
 
 def test_runtime_interface_catalog_is_frozen_after_bootstrap():
-    from pyv8c.engine.registry import REGISTRY
     from pyv8c.platform.bootstrap import bootstrap_interfaces
 
-    bootstrap_interfaces()
-    assert REGISTRY.frozen
+    registry = bootstrap_interfaces()
+    assert registry.frozen
+    assert bootstrap_interfaces() is registry
 
 
 def test_page_exposes_narrow_realm_services():
@@ -105,11 +105,11 @@ def test_page_exposes_narrow_realm_services():
     browser = Browser(stub_logging="off")
     page = browser.new_context().new_page()
     try:
-        assert isinstance(page, RealmServices)
-        assert isinstance(page, ResourceServices)
-        assert isinstance(page.context_services, ContextServices)
-        assert page.network_available is False
-        assert page.interface_materialized("Document")
+        assert isinstance(page.services, RealmServices)
+        assert isinstance(page.services, ResourceServices)
+        assert isinstance(page.services.context_services, ContextServices)
+        assert page.services.network_available is False
+        assert page.services.interface_materialized("Document")
     finally:
         browser.close()
 
@@ -117,8 +117,49 @@ def test_page_exposes_narrow_realm_services():
 def test_domain_code_uses_page_resource_ownership_api():
     for path in (ROOT / "web").rglob("*.py"):
         source = path.read_text(encoding="utf-8")
-        for token in ("context_owner", "network_backend", "binding_session", "_owned_websockets", "_owned_workers", "_owned_frames"):
+        for token in (
+            "context_owner", "network_backend", "binding_session",
+            "_owned_websockets", "_owned_workers", "_owned_frames",
+            "binding_configuration(", "resource_loader",
+            "self._page", "self.page",
+        ):
             assert token not in source, (path, token)
+
+
+def test_page_services_surface_is_structurally_narrow():
+    """PageServices must not grow escape hatches into platform internals."""
+    from pyv8c import Browser
+
+    source = (ROOT / "platform" / "services.py").read_text(encoding="utf-8")
+    for token in ("self.context_owner", "self.network_backend", "self.binding_session", "self.page"):
+        assert token not in source, token
+
+    browser = Browser(stub_logging="off")
+    page = browser.new_context().new_page()
+    try:
+        services = page.services
+        for name in ("context_owner", "network_backend", "binding_session", "page", "realm", "context", "browser"):
+            assert not hasattr(services, name), name
+    finally:
+        browser.close()
+
+
+def test_page_keeps_only_user_facing_api():
+    """Web-serving forwards must not creep back onto the Page facade."""
+    from pyv8c.platform.browser import Page
+
+    for name in (
+        "post_task", "schedule", "cancel", "begin_network", "complete_network",
+        "begin_worker", "complete_worker", "make_promise", "js_error_value",
+        "promise_resolve", "install_inline_handler", "load_resource",
+        "load_resource_async", "load_iframe", "resolve_worker_source",
+        "websocket", "close_websocket", "network_available", "cookie_jar",
+        "context_services", "binding_services", "devtools_server",
+        "worker_configuration", "create_worker_realm", "new_child_page",
+        "materialize_interface", "interface_materialized", "request_navigation",
+        "element_class", "_node_adopted", "_parser_script_start",
+    ):
+        assert not hasattr(Page, name), name
 
 
 def test_web_capability_split_has_no_legacy_mixed_modules():

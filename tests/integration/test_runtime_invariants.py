@@ -28,7 +28,11 @@ def test_closed_context_rejects_new_pages_and_blob_access():
 
 
 def test_binding_sessions_are_isolated_per_realm():
-    universe = InterfaceUniverse(BaselineRepository.load(), stub_logging="off")
+    from pyv8c.platform.bootstrap import bootstrap_interfaces
+    universe = InterfaceUniverse(
+        BaselineRepository.load(), registry=bootstrap_interfaces(),
+        stub_logging="off",
+    )
     first_realm = object()
     second_realm = object()
     first = universe.binding_session(first_realm)

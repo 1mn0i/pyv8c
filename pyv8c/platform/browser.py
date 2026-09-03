@@ -25,15 +25,17 @@ from ..web.network.cookies import CookieJar
 from ..engine.universe import (
     DEFAULT_EAGER_INTERFACES, BaselineRepository, InterfaceUniverse,
 )
-from ..foundation.errors import InvalidStateError, NetworkError, as_js_error
+from ..foundation.errors import InvalidStateError, NetworkError
 from ..foundation.environment import BrowserEnvironment
 from ..foundation.tasks import TaskQueue
-from .state import StateAlias
+from .state import StateAlias, Ownership
+from .services import PageServices
+from .bootstrap import bootstrap_interfaces
 from .navigation import NavigationController
 from .lifecycle import DocumentLifecycle
 from .scripting import ScriptController
 from .resource_loading import ResourceController
-from .realms import PageRealm, WorkerRealm
+from .realms import PageRealm
 
 
 class _ContextBootstrapProxy:
@@ -54,10 +56,9 @@ class _ContextBootstrapProxy:
 
 
 class Page:
-    # Only the aliases that are actually consumed outside the controllers are
-    # kept: close() reads _has_navigation and dom adoption checks _parsing.
+    # Only the alias actually consumed outside the controllers is kept:
+    # close() reads _has_navigation.
     _has_navigation = StateAlias("navigation", "has_navigation")
-    _parsing = StateAlias("navigation", "parsing")
 
     def __init__(self, context, url="about:blank", *, hook=None, environment=None):
         self.context_owner = context
@@ -71,16 +72,20 @@ class Page:
         self.lifecycle = DocumentLifecycle(self)
         self.scripts = ScriptController(self)
         self.resources = ResourceController(self)
-        self.tasks = TaskQueue(self, self._run_queued_callback)
-        self.microtasks = self.tasks.microtasks
-        self._task_errors = self.tasks.errors
-        self._owned_websockets = set()
-        self._owned_workers = set()
-        self._owned_frames = set()
-        self.document = Document(page=self, url=url, ready_state="complete")
+        self.tasks = TaskQueue(self)
+        self._owned = Ownership()
+        # Web-facing objects never see this Page; they receive the narrow
+        # PageServices surface assembled from the controllers above.
+        self.services = PageServices(
+            context, self.environment, self.hook, self._owned,
+            self.navigation, self.scripts, self.resources, self.tasks,
+        )
+        self.document = Document(services=self.services, url=url, ready_state="complete")
         self.resource_loader = context.browser.resource_loader
         self.network_backend = context.network_backend
-        self.window = Window(page=self, environment=self.environment)
+        self.window = Window(services=self.services, environment=self.environment)
+        self.services.window = self.window
+        self.services.document = self.document
         self.window.location.href = str(url)
         # Native template installation can inspect the global object before
         # Context.__init__ returns.  Publish a sentinel so Window callbacks
@@ -88,6 +93,7 @@ class Page:
         self.context = _ContextBootstrapProxy()
         self._devtools_target = None
         self.realm = PageRealm(self)
+        self.services.bind_realm(self.realm)
         self.context = self.realm.context
 
     @property
@@ -102,97 +108,10 @@ class Page:
     def url(self, value):
         self.goto(value)
 
-    def _record_lazy_materialized(self, name):
-        """Keep startup stats in sync with on-demand interface materialisation."""
-        self.context_owner.browser._record_startup(
-            materialized_interfaces=len(self.binding_session.materialized_interfaces),
-            lazy_materialized=len(self.binding_session.materialized_interfaces)
-            - len(self.binding_session.universe.eager_names("Window")),
-        )
-
-    # -- realm service boundary --------------------------------------
-    # Web-facing objects use these narrow methods instead of traversing the
-    # BrowserContext/Page implementation graph.  They are intentionally thin
-    # forwards, so the existing hot paths retain the same allocations.
-    @property
-    def cookie_jar(self):
-        return self.context_owner.cookies
-
-    @property
-    def context_services(self):
-        return self.context_owner
-
-    @property
-    def binding_services(self):
-        return self.context_owner.browser
-
-    def load_resource(self, url, request=None):
-        return self.resources.load_resource(url, request)
-
-    def websocket(self, url, protocols, callbacks):
-        backend = self.network_backend
-        if backend is None:
-            return None
-        return backend.websocket(self, url, protocols, callbacks)
-
-    @property
-    def network_available(self):
-        return self.network_backend is not None
-
-    @property
-    def resource_loader_service(self):
-        return self.resource_loader
-
-    def worker_configuration(self):
-        browser = self.context_owner.browser
-        session = browser.interface_universe.binding_session(self)
-        return {
-            "browser": browser,
-            "session": session,
-            "universe": browser.interface_universe,
-            "environment": self.environment,
-            "hook": bool(self.hook),
-            "generate_stubs": browser.generate_interface_stubs,
-            "expose_unimplemented": browser.expose_unimplemented,
-            "stub_logging": browser.stub_logging,
-            "devtools": self.devtools_server,
-        }
-
-    def create_worker_realm(self, config):
-        return WorkerRealm(self, config)
-
-    def close_websocket(self, websocket):
-        if self.network_backend is not None:
-            self.network_backend.close_websocket(websocket)
-
-    def new_child_page(self, url, *, environment=None):
-        return Page(self.context_owner, url=url, environment=environment or self.environment)
-
-    def binding_configuration(self, context_type):
-        browser = self.context_owner.browser
-        session = browser.interface_universe.binding_session(self)
-        return {
-            "browser": browser,
-            "session": session,
-            "universe": browser.interface_universe,
-            "generate_stubs": browser.generate_interface_stubs,
-            "expose_unimplemented": browser.expose_unimplemented,
-            "stub_logging": browser.stub_logging,
-            "hook": bool(self.hook),
-            "context_type": context_type,
-        }
-
-    def materialize_interface(self, name):
-        return self.binding_session.materialize(name)
-
-    def interface_materialized(self, name):
-        return name in self.binding_session.materialized_interfaces
-
-    @property
-    def devtools_server(self):
-        return self.context_owner._devtools
-
-    # -- navigation facade ---------------------------------------------
+    # -- public API ------------------------------------------------------
+    # Everything else web-facing code needs is served by ``self.services``
+    # (PageServices); controllers reach each other through the Page attributes
+    # directly.  Only user-facing forwards remain here.
 
     def set_content(self, html, url="about:blank"):
         return self.navigation.set_content(html, url)
@@ -200,107 +119,11 @@ class Page:
     def goto(self, url, *, timeout=30, wait_until="load"):
         return self.navigation.goto(url, timeout=timeout, wait_until=wait_until)
 
-    def request_navigation(self, url):
-        return self.navigation.request_navigation(url)
-
-    def element_class(self, tag):
-        return self.navigation.element_class(tag)
-
-    def _parser_script_start(self, node):
-        return self.navigation.parser_script_start(node)
-
-    def _parser_script_complete(self, node, source):
-        return self.navigation.parser_script_complete(node, source)
-
-    def _parser_is_blocked(self):
-        return self.navigation.parser_is_blocked()
-
-    # -- scripting facade ----------------------------------------------
-
     def evaluate(self, script, filename=None):
         return self.scripts.evaluate(script, filename=filename)
 
-    def install_inline_handler(self, node, name, source):
-        return self.scripts.install_inline_handler(node, name, source)
-
-    def _node_adopted(self, node):
-        return self.scripts.node_adopted(node)
-
-    def make_promise(self):
-        return self.scripts.make_promise()
-
-    def js_error_value(self, exc):
-        return self.scripts.js_error_value(exc)
-
-    def promise_resolve(self, value):
-        return self.scripts.promise_resolve(value)
-
-    # -- resource facade ------------------------------------------------
-
-    def load_resource_async(self, url, request, callback):
-        return self.resources.load_resource_async(url, request, callback)
-
-    def _discover_element_resource(self, node):
-        return self.resources.discover_element_resource(node)
-
-    def load_iframe(self, iframe):
-        return self.resources.load_iframe(iframe)
-
-    def resolve_worker_source(self, script_url):
-        return self.resources.resolve_worker_source(script_url)
-
-    # -- task facade ----------------------------------------------------
-
-    def post_task(self, callback):
-        self.tasks.post(callback)
-
-    def schedule(self, callback, delay, repeat=False):
-        return self.tasks.schedule(callback, delay, repeat)
-
-    def cancel(self, ident):
-        self.tasks.cancel(ident)
-
     def run_until_idle(self, timeout=0):
         self.tasks.run_until_idle(timeout)
-
-    def begin_network(self):
-        self.tasks.begin_network()
-
-    def complete_network(self):
-        self.tasks.complete_network()
-
-    def begin_worker(self):
-        self.tasks.begin_worker()
-
-    def complete_worker(self):
-        self.tasks.complete_worker()
-
-    def _run_callback(self, callback, *args):
-        return callback(*args)
-
-    def _run_queued_callback(self, callback, *args):
-        """Keep one faulty task from aborting unrelated browser work."""
-        try:
-            return self._run_callback(callback, *args)
-        except BaseException as exc:
-            self._task_errors.append(as_js_error(exc))
-            return None
-
-    # Keep resource ownership behind the Page facade.
-    def _track_websocket(self, websocket):
-        self._owned_websockets.add(websocket)
-
-    def _discard_websocket(self, websocket):
-        self._owned_websockets.discard(websocket)
-
-    def _track_worker(self, worker):
-        self._owned_workers.add(worker)
-
-    def _discard_worker(self, worker):
-        self._owned_workers.discard(worker)
-
-    def _track_frame(self, frame):
-        self._owned_frames.add(frame)
 
     def close(self):
         if self.closed:
@@ -319,16 +142,13 @@ class Page:
         self.tasks.close()
         self.resources.reset()
         self.lifecycle.load_waiters.clear()
-        for frame in list(self._owned_frames):
+        for frame in self._owned.drain("frames"):
             frame.close()
-        self._owned_frames.clear()
-        for ws in list(self._owned_websockets):
+        for ws in self._owned.drain("websockets"):
             if self.network_backend:
                 self.network_backend.close_websocket(ws)
-        self._owned_websockets.clear()
-        for worker in list(self._owned_workers):
+        for worker in self._owned.drain("workers"):
             worker.fn_terminate()
-        self._owned_workers.clear()
         self.context_owner._discard_page(self)
         self.realm.close()
 
@@ -460,7 +280,8 @@ class Browser:
         snapshot = BaselineRepository.load(interface_baseline_path)
         loaded = time.perf_counter_ns()
         self.interface_universe = InterfaceUniverse(
-            snapshot, stub_logging=self.stub_logging,
+            snapshot, registry=bootstrap_interfaces(),
+            stub_logging=self.stub_logging,
             expose_unimplemented=self.expose_unimplemented,
             eager_interfaces=DEFAULT_EAGER_INTERFACES if eager_interfaces is None else eager_interfaces,
             strict_validation=strict_validation,

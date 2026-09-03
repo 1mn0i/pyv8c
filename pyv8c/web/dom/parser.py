@@ -8,8 +8,8 @@ class DOMParser(HTMLParser):
     void = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
     auto_close = {"li": {"li"}, "dt": {"dt", "dd"}, "dd": {"dt", "dd"}, "p": {"p", "div", "section", "article", "ul", "ol"}}
     raw_text_tags = {"script", "style", "textarea", "title"}
-    def __init__(self, page, root):
-        super().__init__(convert_charrefs=False); self.page, self.stack = page, [root]
+    def __init__(self, services, root):
+        super().__init__(convert_charrefs=False); self.services, self.stack = services, [root]
     @property
     def current(self): return self.stack[-1]
     @property
@@ -18,15 +18,15 @@ class DOMParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
         if tag in self.auto_close and isinstance(self.current, Element) and self.current.localName in self.auto_close[tag]: self.stack.pop()
-        cls = self.page.element_class(tag)
+        cls = self.services.element_class(tag)
         attributes = {k.lower(): (v or "") for k, v in attrs}
-        node = cls(tag, page=self.page, attributes=attributes); node._raw_text = ""
+        node = cls(tag, services=self.services, attributes=attributes); node._raw_text = ""
         for name, value in attrs:
             if str(name).lower().startswith("on"):
-                self.page.install_inline_handler(node, str(name).lower(), value or "")
+                self.services.install_inline_handler(node, str(name).lower(), value or "")
         self.target.append_child(node)
         if tag not in ("script", "style", "textarea", "title"):
-            self.page._discover_element_resource(node)
+            self.services._discover_element_resource(node)
         if tag not in self.void: self.stack.append(node)
     def handle_startendtag(self, tag, attrs): self.handle_starttag(tag, attrs); self.handle_endtag(tag)
     def handle_endtag(self, tag):
@@ -35,26 +35,26 @@ class DOMParser(HTMLParser):
             if isinstance(self.stack[i], Element) and self.stack[i].localName == tag:
                 node = self.stack[i]
                 if tag == "script":
-                    self.page._parser_script_complete(node, getattr(node, "_raw_text", ""))
+                    self.services._parser_script_complete(node, getattr(node, "_raw_text", ""))
                     if getattr(node, "_raw_text", ""):
-                        node.append_child(Text(node._raw_text, page=self.page))
+                        node.append_child(Text(node._raw_text, services=self.services))
                 elif tag in self.raw_text_tags and getattr(node, "_raw_text", ""):
-                    node.append_child(Text(node._raw_text, page=self.page))
+                    node.append_child(Text(node._raw_text, services=self.services))
                 del self.stack[i:]; return
     def handle_data(self, data):
         if not data: return
         if self.current.__class__.__name__ in ("HTMLScriptElement", "HTMLStyleElement", "HTMLTextAreaElement") or getattr(self.current, "localName", "") == "title":
             self.current._raw_text = getattr(self.current, "_raw_text", "") + data
             return
-        self.target.append_child(Text(data, page=self.page))
+        self.target.append_child(Text(data, services=self.services))
     def handle_entityref(self, name): self.handle_data(unescape("&" + name + ";"))
     def handle_charref(self, name): self.handle_data(unescape("&#" + name + ";"))
-    def handle_comment(self, data): self.target.append_child(Comment(data, page=self.page))
+    def handle_comment(self, data): self.target.append_child(Comment(data, services=self.services))
     def handle_decl(self, decl):
         if decl.lower().startswith("doctype"):
             from .model import DocumentType
             name = decl.split(None, 1)[1].strip() if len(decl.split(None, 1)) > 1 else "html"
-            self.target.append_child(DocumentType(name=name, page=self.page))
+            self.target.append_child(DocumentType(name=name, services=self.services))
 
 
 def _iter_tokens(source):
@@ -112,8 +112,8 @@ class IncrementalDOMParser:
     """Resumable parser used for parser-blocking script execution."""
     void = DOMParser.void; auto_close = DOMParser.auto_close; raw_text_tags = DOMParser.raw_text_tags
 
-    def __init__(self, page, root, source):
-        self.page, self.root = page, root
+    def __init__(self, services, root, source):
+        self.services, self.root = services, root
         self.tokens = list(_iter_tokens(str(source)))
         self.index, self.stack, self.done = 0, [root], False
 
@@ -127,13 +127,13 @@ class IncrementalDOMParser:
         tag, attrs = helper.tag, helper.attrs
         if not tag: return
         if tag in self.auto_close and isinstance(self.current, Element) and self.current.localName in self.auto_close[tag]: self.stack.pop()
-        node = self.page.element_class(tag)(tag, page=self.page, attributes={k.lower(): (v or "") for k, v in attrs})
+        node = self.services.element_class(tag)(tag, services=self.services, attributes={k.lower(): (v or "") for k, v in attrs})
         node._raw_text = ""
         for name, value in attrs:
-            if str(name).lower().startswith("on"): self.page.install_inline_handler(node, str(name).lower(), value or "")
+            if str(name).lower().startswith("on"): self.services.install_inline_handler(node, str(name).lower(), value or "")
         self.target.append_child(node)
-        if tag == "script": self.page._parser_script_start(node)
-        elif tag not in self.raw_text_tags: self.page._discover_element_resource(node)
+        if tag == "script": self.services._parser_script_start(node)
+        elif tag not in self.raw_text_tags: self.services._discover_element_resource(node)
         if tag not in self.void and not raw.rstrip().endswith("/>"): self.stack.append(node)
 
     def _end(self, tag):
@@ -143,11 +143,11 @@ class IncrementalDOMParser:
             if isinstance(node, Element) and node.localName == tag:
                 if tag == "script":
                     source = getattr(node, "_raw_text", "")
-                    self.page._parser_script_complete(node, source)
-                    if source: node.append_child(Text(source, page=self.page))
+                    self.services._parser_script_complete(node, source)
+                    if source: node.append_child(Text(source, services=self.services))
                 elif tag in self.raw_text_tags:
                     source = getattr(node, "_raw_text", "")
-                    if source: node.append_child(Text(source, page=self.page))
+                    if source: node.append_child(Text(source, services=self.services))
                 del self.stack[i:]; return
 
     def run(self):
@@ -157,18 +157,18 @@ class IncrementalDOMParser:
             elif kind == "end": self._end(value)
             elif kind == "data":
                 if self.current.__class__.__name__ in ("HTMLScriptElement", "HTMLStyleElement", "HTMLTextAreaElement") or getattr(self.current, "localName", "") == "title": self.current._raw_text = getattr(self.current, "_raw_text", "") + value
-                else: self.target.append_child(Text(unescape(value), page=self.page))
-            elif kind == "comment": self.target.append_child(Comment(value, page=self.page))
+                else: self.target.append_child(Text(unescape(value), services=self.services))
+            elif kind == "comment": self.target.append_child(Comment(value, services=self.services))
             elif kind == "decl":
                 from .model import DocumentType
-                parts = value.split(None, 1); self.target.append_child(DocumentType(name=parts[1].strip() if len(parts) > 1 else "html", page=self.page))
-            if self.page._parser_is_blocked(): return False
+                parts = value.split(None, 1); self.target.append_child(DocumentType(name=parts[1].strip() if len(parts) > 1 else "html", services=self.services))
+            if self.services._parser_is_blocked(): return False
         self.done = True; return True
 
 
-def parse(html, page, document):
-    parser = DOMParser(page, document); parser.feed(html); parser.close(); return document
+def parse(html, services, document):
+    parser = DOMParser(services, document); parser.feed(html); parser.close(); return document
 
 
-def parse_fragment(html, page, parent):
-    parser = DOMParser(page, parent); parser.feed(html); parser.close(); return parent
+def parse_fragment(html, services, parent):
+    parser = DOMParser(services, parent); parser.feed(html); parser.close(); return parent

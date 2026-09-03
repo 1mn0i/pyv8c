@@ -204,8 +204,8 @@ class Geolocation:
         ("clearWatch", "fn_clearWatch", 1, 0),
     )
 
-    def __init__(self, page=None, environment=None, **_):
-        self._page = page
+    def __init__(self, services=None, environment=None, **_):
+        self._services = services
         self._environment = BrowserEnvironment.from_value(environment)
         self._watchers = {}
         self._next_watch = 1
@@ -239,8 +239,8 @@ class Geolocation:
                     error(self._error(2, "Unable to determine the position"))
                 return
             success(position)
-        if self._page is not None:
-            self._page.post_task(callback)
+        if self._services is not None:
+            self._services.post_task(callback)
 
     def fn_getCurrentPosition(self, success, error=None, options=None):
         if not callable(success):
@@ -275,14 +275,14 @@ class Navigator:
         ("mimeTypes", "get_mimeTypes", None, 0, 1),
     )
 
-    def __init__(self, user_agent=None, page=None, environment=None, worker=False, **_):
+    def __init__(self, user_agent=None, services=None, environment=None, worker=False, **_):
         self._environment = BrowserEnvironment.from_value(environment)
         self._worker = bool(worker)
         if user_agent is not None:
             self._environment = BrowserEnvironment.from_value({"user_agent": user_agent}, base=self._environment)
         self._geolocation = (
-            Geolocation(page=page, environment=self._environment)
-            if page is not None and not self._worker else pyv8.Undefined
+            Geolocation(services=services, environment=self._environment)
+            if services is not None and not self._worker else pyv8.Undefined
         )
         self._plugins, self._mime_types = (
             create_plugin_collections(self._environment)

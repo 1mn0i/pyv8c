@@ -3,7 +3,7 @@
 ``engine`` needs a small set of services from the realm an object lives in
 (creating promises, converting errors, posting tasks). It consumes them through
 :class:`RealmServices` so it never imports ``platform`` or reaches into Page
-privates. ``Page`` and future worker scopes implement the protocol.
+privates. ``PageServices`` (and future worker scopes) implement the protocol.
 """
 
 from typing import Any, Protocol, runtime_checkable
@@ -48,11 +48,12 @@ __all__ = ["RealmServices", "ResourceServices", "ContextServices", "realm_of"]
 def realm_of(obj) -> Any:
     """Return the realm an interface object belongs to, or ``None``.
 
-    Objects receive the realm through injection (``_realm``) or, for
-    historically page-bound types, as ``_page``. Both point at the same
-    :class:`RealmServices` implementation.
+    Objects receive the realm through injection (``_realm``, used by the
+    binding engine when constructing instances) or as ``_services`` (the
+    PageServices surface handed in by platform code). Both point at the
+    same :class:`RealmServices` implementation.
     """
     realm = getattr(obj, "_realm", None)
     if realm is not None:
         return realm
-    return getattr(obj, "_page", None)
+    return getattr(obj, "_services", None)

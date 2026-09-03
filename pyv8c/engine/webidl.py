@@ -289,13 +289,13 @@ def _interface(value, name, nullable=False):
         if nullable:
             return value
         raise _error("TypeError", f"The provided value is not of type '{name}'.")
-    from .registry import IMPLEMENTATIONS
-    expected = IMPLEMENTATIONS.get(name)
-    # The registered implementation is the common case, so test it first and
-    # only walk the MRO when that fails.
-    if expected is not None and isinstance(value, expected):
+    # Interface identity follows the __idl_name__ chain on the value's class
+    # MRO; real implementations and generated stubs both carry it, so no
+    # registry lookup is needed on this hot path.
+    cls = type(value)
+    if getattr(cls, "__idl_name__", None) == name:
         return value
-    if name in {getattr(cls, "__idl_name__", None) for cls in type(value).__mro__}:
+    if any(getattr(base, "__idl_name__", None) == name for base in cls.__mro__[1:]):
         return value
     raise _error("TypeError", f"The provided value is not of type '{name}'.")
 

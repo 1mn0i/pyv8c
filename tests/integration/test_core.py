@@ -2,15 +2,20 @@ import pytest
 from unittest.mock import patch
 
 pytest.importorskip("pyv8")
-from pyv8c import Browser, INTERFACES
+from pyv8c import Browser
 from pyv8c.web.dom.selectors import parse
 import pyv8c.platform.browser as browser_runtime
 
 
 def test_interface_registry_is_explicit():
-    assert INTERFACES["HTMLElement"].parent == "Element"
-    assert INTERFACES["Element"].parent == "Node"
-    assert INTERFACES["Node"].parent == "EventTarget"
+    browser = Browser(stub_logging="off")
+    try:
+        interfaces = browser.interface_universe.registry.specs
+        assert interfaces["HTMLElement"].parent == "Element"
+        assert interfaces["Element"].parent == "Node"
+        assert interfaces["Node"].parent == "EventTarget"
+    finally:
+        browser.close()
 
 
 def test_browser_hook_is_forwarded_to_page_context():

@@ -19,10 +19,10 @@ class WorkerRealm:
     def initialize(self, scope):
         self.scope = scope
         config = self.config
-        session = config["session"]
+        session = config.session
         self.isolate = pyv8.Isolate()
         context_kwargs = {
-            "hook": config["hook"],
+            "hook": config.hook,
             "ctx_type": "Worker",
             "class_configs": session.configs,
             "lazy_factory": session.lazy_factory("Worker"),
@@ -31,15 +31,13 @@ class WorkerRealm:
         expose_interfaces(
             self.context,
             context_type="Worker",
-            generate_stubs=config["generate_stubs"],
-            expose_unimplemented=config["expose_unimplemented"],
-            stub_logging=config["stub_logging"],
-            universe=config["universe"],
+            generate_stubs=config.generate_stubs,
+            universe=config.universe,
             class_for=session.class_for,
         )
         self.context.declare_lazy(
             session.lazy_names("Worker"),
-            skip=config["universe"].eager_names("Worker"),
+            skip=config.universe.eager_names("Worker"),
         )
         return self.context
 
@@ -64,7 +62,9 @@ class PageRealm:
     def __init__(self, page):
         self.page = page
         browser = page.context_owner.browser
-        self.binding_session = browser.interface_universe.binding_session(page)
+        # Web objects constructed through this session receive PageServices,
+        # never the platform Page itself.
+        self.binding_session = browser.interface_universe.binding_session(page.services)
         binding_started = time.perf_counter_ns()
         self.binding_session.class_configs(
             "Window", roots=self.binding_session.universe.eager_names("Window"),
@@ -75,7 +75,7 @@ class PageRealm:
             "ctx_type": "Window",
             "class_configs": self.binding_session.configs,
             "lazy_factory": self.binding_session.lazy_factory(
-                "Window", on_materialize=page._record_lazy_materialized,
+                "Window", on_materialize=self._record_lazy_materialized,
             ),
         }
         self.context = pyv8.Context(page.window, **context_kwargs)
@@ -87,8 +87,6 @@ class PageRealm:
             self.context,
             context_type="Window",
             generate_stubs=browser.generate_interface_stubs,
-            expose_unimplemented=browser.expose_unimplemented,
-            stub_logging=browser.stub_logging,
             universe=browser.interface_universe,
             class_for=self.binding_session.class_for,
         )
@@ -105,6 +103,14 @@ class PageRealm:
             materialized_interfaces=len(self.binding_session.materialized_interfaces),
             interface_names=len(self.binding_session.interface_names("Window")),
             lazy_registered=lazy_registered,
+        )
+
+    def _record_lazy_materialized(self, name):
+        """Keep startup stats in sync with on-demand interface materialisation."""
+        self.page.context_owner.browser._record_startup(
+            materialized_interfaces=len(self.binding_session.materialized_interfaces),
+            lazy_materialized=len(self.binding_session.materialized_interfaces)
+            - len(self.binding_session.universe.eager_names("Window")),
         )
 
     def close(self):

@@ -72,6 +72,6 @@ class DocumentLifecycle:
 
     def when_loaded(self, callback):
         if self.document_load_fired:
-            self.page.post_task(lambda: callback(True))
+            self.page.tasks.post(lambda: callback(True))
         else:
             self.load_waiters.append(callback)

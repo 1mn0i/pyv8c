@@ -17,13 +17,13 @@ from .navigator import Navigator
 @interface("Location", None, constructible=False)
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
 class Location:
-    def __init__(self, href="about:blank", page=None, **_): self.href, self._page = href, page
+    def __init__(self, href="about:blank", services=None, **_): self.href, self._services = href, services
     def _parts(self): return urlsplit(self.href)
     def get_href(self): return self.href
     def set_href(self, value):
         target = urljoin(self.href, str(value))
-        if self._page is not None:
-            self._page.request_navigation(target)
+        if self._services is not None:
+            self._services.request_navigation(target)
         else:
             self.href = target
     def get_origin(self):
@@ -233,16 +233,16 @@ class URL:
 
     @staticmethod
     def fn_createObjectURL(_realm, blob):
-        page = _realm
-        if page is None or page.closed: raise InvalidStateError("The execution context is no longer active")
+        services = _realm
+        if services is None or services.closed: raise InvalidStateError("The execution context is no longer active")
         if not isinstance(blob, Blob): raise V8TypeError("The object is not a Blob")
-        return page.context_services.create_blob_url(blob, page=page)
+        return services.context_services.create_blob_url(blob, page=services)
 
     @staticmethod
     def fn_revokeObjectURL(_realm, url):
-        page = _realm
-        if page is None or page.closed: raise InvalidStateError("The execution context is no longer active")
-        page.context_services.revoke_blob_url(str(url))
+        services = _realm
+        if services is None or services.closed: raise InvalidStateError("The execution context is no longer active")
+        services.context_services.revoke_blob_url(str(url))
 
     __v8_attribute__ = js_attributes(
         ("href", "get_href", "set_href", 0, 0), ("origin", "get_origin", None, 0, 1),
@@ -264,27 +264,27 @@ class URL:
 class History:
     __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1), ("state", "get_state", None, 0, 1))
     __v8_method__ = js_methods(("pushState", "fn_pushState", 3, 0), ("replaceState", "fn_replaceState", 3, 0), ("back", "fn_back", 0, 0), ("forward", "fn_forward", 0, 0), ("go", "fn_go", 1, 0))
-    def __init__(self, page=None, **_): self._page, self._entries, self._index = page, [(getattr(page, "url", "about:blank"), None)], 0
+    def __init__(self, services=None, **_): self._services, self._entries, self._index = services, [(getattr(services, "url", "about:blank"), None)], 0
     def get_length(self): return len(self._entries)
     def get_state(self): return self._entries[self._index][1]
-    def _url(self, value): return urljoin(self._page.url, str(value))
+    def _url(self, value): return urljoin(self._services.url, str(value))
     def _validate_target(self, url):
         from ..network.backend import same_origin
-        target = self._url(url) if url is not None else self._page.url
-        if not same_origin(self._page.url, target): raise SecurityError("A history state URL must be same-origin")
+        target = self._url(url) if url is not None else self._services.url
+        if not same_origin(self._services.url, target): raise SecurityError("A history state URL must be same-origin")
         return target
     def fn_pushState(self, state, unused="", url=None):
         target = self._validate_target(url)
-        self._entries = self._entries[:self._index + 1] + [(target, state)]; self._index += 1; self._page.window.location.href = target
+        self._entries = self._entries[:self._index + 1] + [(target, state)]; self._index += 1; self._services.window.location.href = target
     def fn_replaceState(self, state, unused="", url=None):
         target = self._validate_target(url)
-        self._entries[self._index] = (target, state); self._page.window.location.href = target
+        self._entries[self._index] = (target, state); self._services.window.location.href = target
     def fn_back(self): return self.fn_go(-1)
     def fn_forward(self): return self.fn_go(1)
     def fn_go(self, delta=0):
         target = max(0, min(len(self._entries) - 1, self._index + int(delta)))
         if target == self._index: return
-        self._index = target; self._page.window.location.href = self._entries[target][0]; self._page.window.fn_dispatchEvent(Event("popstate", {"bubbles": False}))
+        self._index = target; self._services.window.location.href = self._entries[target][0]; self._services.window.fn_dispatchEvent(Event("popstate", {"bubbles": False}))
 
 
 @interface("WindowProperties", "EventTarget", constructible=False, tag="WindowProperties", exposed_in=())
@@ -313,19 +313,19 @@ class Window(WindowProperties):
         ("queueMicrotask", "fn_queueMicrotask", 1, 0), ("requestAnimationFrame", "fn_requestAnimationFrame", 1, 0),
         ("fetch", "fn_fetch", 1, 0),
     )
-    def __init__(self, page=None, **kw):
-        super().__init__(page=page, **kw); self._page = page
-        environment = getattr(page, "environment", None)
+    def __init__(self, services=None, **kw):
+        super().__init__(services=services, **kw); self._services = services
+        environment = getattr(services, "environment", None)
         viewport = BrowserEnvironment.from_value(environment).viewport
-        self.location = Location(page=page); self.navigator = Navigator(page=page, environment=environment); self.screen = Screen(environment=environment)
+        self.location = Location(services=services); self.navigator = Navigator(services=services, environment=environment); self.screen = Screen(environment=environment)
         self.localStorage, self.sessionStorage = Storage(), Storage()
         self.innerWidth, self.innerHeight = viewport.width, viewport.height
         self.outerWidth, self.outerHeight = viewport.width, viewport.height
         self.devicePixelRatio = viewport.device_scale_factor
-        self.history = History(page=page)
+        self.history = History(services=services)
     def get_window(self): return self
     def get_self(self): return self
-    def get_document(self): return self._page.document
+    def get_document(self): return self._services.document
     def get_location(self): return self.location
     def set_location(self, value): self.location.set_href(value)
     def get_navigator(self): return self.navigator
@@ -338,21 +338,21 @@ class Window(WindowProperties):
     def get_outerWidth(self): return self.outerWidth
     def get_outerHeight(self): return self.outerHeight
     def get_devicePixelRatio(self): return self.devicePixelRatio
-    def fn_setTimeout(self, callback, delay=0): return self._page.schedule(callback, float(delay) / 1000.0, repeat=False)
-    def fn_clearTimeout(self, ident): self._page.cancel(int(ident))
-    def fn_setInterval(self, callback, delay=0): return self._page.schedule(callback, float(delay) / 1000.0, repeat=True)
-    def fn_clearInterval(self, ident): self._page.cancel(int(ident))
-    def fn_queueMicrotask(self, callback): self._page.microtasks.append(callback)
-    def fn_requestAnimationFrame(self, callback): return self._page.schedule(callback, 0, repeat=False)
+    def fn_setTimeout(self, callback, delay=0): return self._services.schedule(callback, float(delay) / 1000.0, repeat=False)
+    def fn_clearTimeout(self, ident): self._services.cancel(int(ident))
+    def fn_setInterval(self, callback, delay=0): return self._services.schedule(callback, float(delay) / 1000.0, repeat=True)
+    def fn_clearInterval(self, ident): self._services.cancel(int(ident))
+    def fn_queueMicrotask(self, callback): self._services.microtasks.append(callback)
+    def fn_requestAnimationFrame(self, callback): return self._services.schedule(callback, 0, repeat=False)
     def fn_fetch(self, request, options=None):
-        promise, resolve, reject = self._page.make_promise()
+        promise, resolve, reject = self._services.make_promise()
         try:
-            req = request if isinstance(request, Request) else Request(request, options, page=self._page)
+            req = request if isinstance(request, Request) else Request(request, options, services=self._services)
         except BaseException as exc:
-            self._page.post_task(lambda exc=exc: reject(self._page.js_error_value(exc)))
+            self._services.post_task(lambda exc=exc: reject(self._services.js_error_value(exc)))
             return promise
-        self._page.load_resource_async(req.get_url(), {
+        self._services.load_resource_async(req.get_url(), {
             "method": req.get_method(), "headers": req.get_headers(), "body": req._body,
             "timeout": req._timeout, "credentials": req._credentials, "mode": req._mode, "redirect": req._redirect,
-        }, lambda response, error: reject(self._page.js_error_value(error)) if error else resolve(response))
+        }, lambda response, error: reject(self._services.js_error_value(error)) if error else resolve(response))
         return promise

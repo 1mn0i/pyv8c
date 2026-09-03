@@ -60,7 +60,7 @@ class NamedNodeMap(NodeList):
         super().__init__(getter=self._attribute_items)
     def _attribute_items(self):
         from .model import Attr
-        return [Attr(k, v, ownerElement=self._element, page=self._element._page)
+        return [Attr(k, v, ownerElement=self._element, services=self._element._services)
                 for k, v in self._element.attributes.items()]
     def fn_getNamedItem(self, name):
         return next((item for item in self._items() if item.get_name() == str(name)), pyv8.Null)
@@ -75,7 +75,7 @@ class NamedNodeMap(NodeList):
         name = str(name)
         if name not in self._element.attributes: raise NotFoundError("The attribute was not found.")
         from .model import Attr
-        return Attr(name, self._element.attributes.pop(name), ownerElement=self._element, page=self._element._page)
+        return Attr(name, self._element.attributes.pop(name), ownerElement=self._element, services=self._element._services)
 
 
 def _node_id(node):

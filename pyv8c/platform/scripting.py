@@ -94,7 +94,7 @@ class ScriptController:
     # -- script execution ----------------------------------------------
 
     def evaluate(self, script, filename=None):
-        if self.page.closed or self.page.context_services.closed:
+        if self.page.closed or self.page.context_owner.closed:
             raise InvalidStateError("Page is closed")
         target = getattr(self.page, "_devtools_target", None)
         if target is not None:
@@ -194,7 +194,7 @@ class ScriptController:
                 node, node.get_src(), {"method": "GET", "mode": "same-origin"}, "script"
             )
         elif getattr(node, "_raw_text", ""):
-            page.post_task(lambda n=node: self.execute_script(n, n._raw_text, page.url))
+            page.tasks.post(lambda n=node: self.execute_script(n, n._raw_text, page.url))
 
     def install_inline_handler(self, node, name, source):
         try:
@@ -217,7 +217,7 @@ class ScriptController:
                 page.lifecycle.dispatch_page_event("load", node, {"bubbles": False})
             self.dom_blocking_scripts = max(0, self.dom_blocking_scripts - 1)
         if not self.dom_blocking_scripts and page.navigation.parser is not None and not page.navigation.parser.done:
-            page.post_task(lambda generation=page.navigation.generation: page.navigation.resume_parser(generation))
+            page.tasks.post(lambda generation=page.navigation.generation: page.navigation.resume_parser(generation))
         if page.navigation.parser_done:
             self.run_deferred_scripts()
 

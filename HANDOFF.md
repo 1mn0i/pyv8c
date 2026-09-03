@@ -41,7 +41,7 @@ foundation -> engine -> web -> platform
 | `web/fetch/` | Headers、Blob、Request/Response、事件和 XMLHttpRequest。 |
 | `web/network/` | HTTP transport、CookieJar 和 WebSocket。 |
 | `web/workers/` | Worker API、Worker runtime 和 structured clone。 |
-| `platform/` | Browser、BrowserContext、Page、realm 装配、导航、生命周期、脚本、资源和 DevTools。 |
+| `platform/` | Browser、BrowserContext、Page、`PageServices`（web 层唯一可见的服务面）、realm 装配、导航、生命周期、脚本、资源和 DevTools。 |
 | `tools/` | Chromium 拉取、baseline 提取和启动基准工具。 |
 
 领域包不得反向依赖 `runtime`；通过 realm service 注入页面能力。不得重新引入全局
@@ -49,19 +49,28 @@ current Page、类级 current Page 或跨 realm 的 callback owner。
 
 ## 运行时模型
 
-- `Browser` 持有一个不可变 `BaselineSnapshot` 和一个 `InterfaceUniverse`。
+- `Browser` 持有一个不可变 `BaselineSnapshot` 和一个 `InterfaceUniverse`；universe 持有
+  自己的冻结 `InterfaceRegistry`（`bootstrap_interfaces()` 返回模块级缓存的默认注册表，
+  不存在进程级可变全局）。
 - `BaselineRepository`/`BaselineSnapshot` 定义在 `engine/baseline.py`（universe re-export 保持
   运行时导入边界）；`InterfaceUniverse` 与 `BindingSession` 留在 `engine/universe.py`。
 - `BrowserContext` 隔离 Page、Cookie、Blob URL、网络 session 和 frame。
 - 每个 `Page` 拥有 V8 Context、Window、Document、任务队列以及 navigation、lifecycle、
   script、resource controller。
-- `Page` 是薄门面：逻辑分别位于 `platform/navigation.py`、`platform/lifecycle.py`、
-  `platform/scripting.py`、`platform/resource_loading.py`（controller 通过 `Page` 聚合，
-  状态经 `platform/state.py` 的 `StateAlias` 暴露在 `Page` 上），`Browser` /
-  `BrowserContext` 也在同文件。
+- `Page` 是组合根 + 用户 facade：逻辑位于 `platform/navigation.py`、`platform/lifecycle.py`、
+  `platform/scripting.py`、`platform/resource_loading.py` 与 `platform/realms.py`；
+  公开方法只剩 `goto`/`set_content`/`evaluate`/`run_until_idle`/`close` 与 `url`、
+  `binding_session` 访问器。任务错误收集在 `foundation/tasks.py` 的 `TaskQueue`，
+  资源所有权在 `platform/state.py` 的 `Ownership`，worker 配置是
+  `platform/services.py` 的 frozen `WorkerContext`。
+- web 层对象（DOM/BOM/fetch/network/workers）构造时接收 `platform/services.py` 的
+  `PageServices`，不持有 Page 引用；`PageServices` 实现 `foundation/realm.py` 的
+  `RealmServices`/`ResourceServices` 协议，且不暴露 `context_owner`、`network_backend`、
+  `binding_session` 等平台内部（由架构测试守护）。
 - 每个 V8 Context 有独立 `BindingSession`；动态类、class config、callback owner 与 wrapper
   状态均为 realm-local。
-- 网络和 Worker 后台回调只能通过 `Page.post_task()` 进入 Page 的 V8 Context。
+- 网络和 Worker 后台回调只能经任务队列（`PageServices.post_task()` → `TaskQueue.post`）
+  进入 Page 的 V8 Context。
 - Page、Context 或 Browser 关闭后不可复用，继续使用抛出 `InvalidStateError`；Page 关闭时释放
   V8 Context。
 
@@ -360,3 +369,31 @@ Worker 的 V8 Context。
 - Page/iframe Target 增加启动闸门和暂停消息队列；Worker 在 Inspector 创建后再执行首个脚本。
 - 页面脚本与 Inspector 发送使用 Page 的 V8 锁，避免并发访问 Context。
 - 验证：pyv8c DevTools 专项测试 `6 passed`，并手工验证首脚本等待、`Debugger.paused` 和 `Debugger.resume`。
+
+## 当前状态（2026-09-03）：结构性债务重构完成
+
+针对架构评审确认的两项结构性缺点完成一轮重构（无兼容性负担，全库重构）：
+
+- **registry 去全局化**：删除 `engine/registry.py` 的模块级 `REGISTRY`/`INTERFACES`/
+  `IMPLEMENTATIONS`；`InterfaceUniverse` 以必填参数持有冻结 `InterfaceRegistry`，
+  `validate`/`expose_interfaces`/webidl 校验全部改为实例方法；`bootstrap_interfaces()`
+  返回模块级缓存的冻结默认注册表；顶层 `INTERFACES`/`validate_registry` 公共导出移除。
+- **Page 内部收敛**：任务错误收集移入 `TaskQueue.run_callback`；三类资源所有权收敛为
+  `Ownership`（track/discard/drain）；worker 配置改为 frozen `WorkerContext` dataclass；
+  惰性物化统计上报移入 `PageRealm._record_lazy_materialized`。
+- **PageServices 边界**：新增 `platform/services.py` 的 `PageServices`，web 层全部对象
+  （dom/bom/fetch/network/workers）改为接收 services，不再持有 Page；`Page` 移除约 45 个
+  web 服务 facade，只保留 `goto`/`set_content`/`evaluate`/`run_until_idle`/`close` 与
+  `url`、`binding_session` 访问器；controllers 之间直接互访，不再经过 Page 转发。
+- **架构测试强化**：新增 `PageServices` 结构性窄面断言、`Page` 用户 API 白名单断言
+  （facade 不得回流）、web 层禁止 token 追加 `binding_configuration(`、`resource_loader`。
+
+验证结果（2026-09-03）：
+
+- 全量测试 `192 passed`（含新增 2 项架构测试）。
+- 启动基准（20 次）：重构后 p50 `108.4 ms`，重构前（stash 对比）p50 `111.1 ms`，
+  无回退；与历史 `97 ms` 基线的差异为机器状态漂移，同机对照无性能损失。
+- `rg` 检查：web 层无 `context_owner`/`network_backend`/`binding_session`/`resource_loader`
+  引用；platform 层无残留 facade 调用。
+
+本轮重构尚未提交 Git；`platform/services.py` 为新增文件。

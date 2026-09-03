@@ -109,8 +109,8 @@ class EventTarget:
         ("dispatchEvent", "fn_dispatchEvent", 1, 0),
     )
 
-    def __init__(self, page=None, **_):
-        self._page = page
+    def __init__(self, services=None, **_):
+        self._services = services
         self._listeners = {}
         self._listener_order = 0
         self._handlers = {}
@@ -156,7 +156,7 @@ class EventTarget:
             path.append(node)
             node = getattr(node, "parentNode", None)
             if node is None and getattr(path[-1], "nodeType", None) == _DOCUMENT_NODE:
-                node = getattr(getattr(path[-1], "_page", None), "window", None)
+                node = getattr(getattr(path[-1], "_services", None), "window", None)
         event._path = list(path)
         for target in reversed(path[1:]):
             event.eventPhase, event.currentTarget = 1, target

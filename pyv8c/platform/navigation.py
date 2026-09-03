@@ -47,12 +47,13 @@ class NavigationController:
         devtools = getattr(self.page.context_owner, "_devtools", None)
         if devtools is not None:
             devtools.target_info_changed(self.page)
-        self.page.document = Document(page=self.page, url=str(url), ready_state="loading")
+        self.page.document = Document(services=self.page.services, url=str(url), ready_state="loading")
+        self.page.services.document = self.page.document
         target = getattr(self.page, "_devtools_target", None)
         if target is not None:
             target.wait_for_startup()
         self.parser_generation = self.generation
-        self.parser = IncrementalDOMParser(self.page, self.page.document, str(html))
+        self.parser = IncrementalDOMParser(self.page.services, self.page.document, str(html))
         self.parsing = True
         # HTML parsing runs on the caller thread until a parser-blocking
         # external script is encountered. Lifecycle notifications remain
@@ -61,7 +62,7 @@ class NavigationController:
         return self.page
 
     def set_content(self, html, url="about:blank"):
-        if self.page.closed or self.page.context_services.closed:
+        if self.page.closed or self.page.context_owner.closed:
             raise InvalidStateError("Page is closed")
         if not self.navigation_allowed():
             return self.page
@@ -82,7 +83,7 @@ class NavigationController:
 
     def goto(self, url, *, timeout=30, wait_until="load"):
         """Download and navigate to an HTML document."""
-        if self.page.closed or self.page.context_services.closed:
+        if self.page.closed or self.page.context_owner.closed:
             raise InvalidStateError("Page is closed")
         states = {
             None: None,
@@ -116,7 +117,7 @@ class NavigationController:
 
     def request_navigation(self, url):
         """Queue navigation requested by the JavaScript Location object."""
-        if self.page.closed or self.page.context_services.closed:
+        if self.page.closed or self.page.context_owner.closed:
             raise InvalidStateError("Page is closed")
         target = urljoin(self.page.url, str(url))
         self.pending += 1
@@ -126,7 +127,7 @@ class NavigationController:
             if request_id == self.pending and not self.page.closed:
                 self.goto(target)
 
-        self.page.post_task(navigate)
+        self.page.tasks.post(navigate)
         return target
 
     # -- parser --------------------------------------------------------
@@ -137,7 +138,7 @@ class NavigationController:
     def finish_document_parse(self):
         self.parser_done = True
         self.parsing = False
-        self.page.post_task(self.page.scripts.run_deferred_scripts)
+        self.page.tasks.post(self.page.scripts.run_deferred_scripts)
 
     def resume_parser(self, generation=None):
         if self.page.closed or generation != self.generation or self.parser is None:
@@ -192,7 +193,7 @@ class NavigationController:
                 node._resource_done = True
                 scripts.defer.append(node)
             elif is_async:
-                self.page.post_task(lambda n=node: scripts.execute_script(n, n._inline_source, self.page.url))
+                self.page.tasks.post(lambda n=node: scripts.execute_script(n, n._inline_source, self.page.url))
             else:
                 scripts.execute_script(node, source, self.page.url)
 

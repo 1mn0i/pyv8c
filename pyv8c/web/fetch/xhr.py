@@ -33,8 +33,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         ("abort", "fn_abort", 0, 0),
     )
 
-    def __init__(self, page=None, _realm=None, **kw):
-        super().__init__(page=page or _realm, **kw)
+    def __init__(self, services=None, _realm=None, **kw):
+        super().__init__(services=services or _realm, **kw)
         self._method = "GET"
         self._url = ""
         self._async = True
@@ -80,11 +80,11 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             "method": self._method, "headers": self._request_headers, "body": body,
             "timeout": self.timeout / 1000 if self.timeout else None,
         }
-        if self._page:
-            self._page.load_resource_async(self._url, request, self._finish)
+        if self._services:
+            self._services.load_resource_async(self._url, request, self._finish)
 
     def _finish(self, response, error):
-        if not self._page or self._page.closed:
+        if not self._services or self._services.closed:
             return
         if error:
             self.status = 0

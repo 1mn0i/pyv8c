@@ -742,3 +742,52 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
 - 按 Web 能力拆分网络与 Worker：Fetch 数据类型、事件、XHR 分别位于 `web/fetch` 子模块；HTTP/Cookie/WebSocket 位于 `web/network`；Worker API 与线程 runtime 位于 `web/workers/api.py`、`web/workers/runtime.py`。`fetch/api.py` 仅保留聚合导出。
 - 拆分后完整测试：`189 passed`；冷启动复测（20 次）p50 `248.0 ms`、p95 `290.1 ms`，eager `18`、lazy 注册 `1028`、冷启动 `lazy_materialized == 0` 保持不变。
 - 最终移除旧的 `web/fetch/api.py` 聚合文件，改由 `web/fetch/__init__.py` 直接导出拆分后的 API；架构守护测试新增后完整套件为 `190 passed`。
+
+## 2026-09-03：结构性债务重构（registry 去全局化 + PageServices 边界）
+
+### 目标
+
+消除架构评审确认的两项结构性缺点：registry 进程级全局与 Page 上帝对象。项目处于开发阶段，无兼容性负担。
+
+### 修改
+
+- **Phase 1 registry 去全局化**：删除 `engine/registry.py` 模块级 `REGISTRY`/`INTERFACES`/`IMPLEMENTATIONS`；`InterfaceUniverse` 必填参数持有冻结 `InterfaceRegistry`，`validate_registry` 改为实例方法 `InterfaceRegistry.validate`，`expose_interfaces` 经 `universe.registry` 取用；`bootstrap_interfaces()` 返回模块级缓存的冻结默认注册表；`engine/webidl.py` 校验改收 registry 参数；顶层 `INTERFACES`/`IMPLEMENTATIONS`/`validate_registry` 公共导出删除。
+- **Phase 2 Page 内部收敛**：任务错误收集（`_run_callback`/`_run_queued_callback`）移入 `TaskQueue.run_callback`；三类 owned 集合收敛为 `platform/state.py` 的 `Ownership`；worker 配置 dict 改为 frozen `WorkerContext` dataclass；`_record_lazy_materialized` 移入 `PageRealm`。
+- **Phase 3 PageServices 边界**：新增 `platform/services.py` 的 `PageServices`（实现 `RealmServices`/`ResourceServices` 协议，不持有 Page 引用）；web 层全部对象改收 services；`Page` 移除约 45 个 web 服务 facade（navigation/scripting/resource/task 转发、realm service boundary、ownership tracker），仅保留 `goto`/`set_content`/`evaluate`/`run_until_idle`/`close` 与 `url`、`binding_session`；controllers 间直接互访（`page.tasks.post`、`page.context_owner`、`page._owned`）；iframe 子页面创建改在 `ResourceController` 内直接构造 `Page`。
+- **Phase 4 架构测试与文档**：`test_architecture.py` 新增 `PageServices` 结构性窄面断言（不得暴露 `context_owner`/`network_backend`/`binding_session`/`page`）、`Page` 用户 API 白名单断言（web 服务 facade 不得回流）；web 层禁止 token 追加 `binding_configuration(`、`resource_loader`；更新 `foundation/realm.py` 协议文档。
+
+### 验证
+
+- 全量测试：`192 passed`（新增 2 项架构测试，含原有 190 项）。
+- 启动基准（20 次）：重构后 p50 `108.4 ms` / p95 `123.9 ms`；stash 对照重构前 p50 `111.1 ms`，无回退（与历史 `97 ms` 基线差异为当日机器状态漂移）。
+- `rg`：web 层零命中 `context_owner`/`network_backend`/`binding_session`/`resource_loader`；platform 层无残留 facade 调用；`REGISTRY`/`INTERFACES`/`IMPLEMENTATIONS` 全局仅剩注册表内部实现。
+
+### 限制
+
+- `PageServices` 仍是显式协议面而非接口自动推导；新增 web 服务需求需同步扩展协议与实现。
+- `worker_configuration` 组装保留在 `PageServices`（web 层经 services 调用获取 `WorkerContext`），未下沉到 Worker 创建链直接传参。
+- 本轮重构未提交 Git；`platform/services.py` 为新增文件。
+
+## 2026-09-03：web 层服务引用命名收敛
+
+### 目标
+
+清除 PageServices 边界重构遗留的命名债：web 层对象实际持有的是 PageServices，但构造参数叫 `page=`、属性叫 `self._page`，阅读时会产生持有平台 Page 的错误心智模型。
+
+### 修改
+
+- web 层 13 个文件（dom/model、elements、events、collections、selectors、parser，bom/api、navigator，fetch/request、response、xhr，network/websocket，workers/api、runtime）统一改为构造参数 `services=`、属性 `self._services`；parser 与 WorkerRuntime 的 `self.page` 同步改为 `self.services`。
+- `foundation/realm.py` 的 `realm_of()` 回退属性从 `_page` 改为 `_services`，与注入通道 `_realm` 的文档说明同步更新。
+- 顺带修复 iframe 边界泄漏：`HTMLIFrameElement._child_page` 原持有真实子 `Page`，改为 `_child_services` 持有子页面的 services，web 层不再触碰平台 Page。
+- 架构测试 `test_domain_code_uses_page_resource_ownership_api` 追加 `self._page`/`self.page` 禁止 token；`test_baseline_versions.py` 改经 `page._owned.frames` 取子页面。
+- 归一化 `web/dom/events.py` 行尾为 LF（仓库内最后一个 CRLF 文件）。
+
+### 验证
+
+- 全量测试 `192 passed`；`git diff --check` 干净。
+- `rg 'self\._page\b|\bpage=self\.'` 在源码目录零命中；web 层无任何 Page 引用。
+
+### 限制
+
+- engine 注入通道 `_realm` 参数名保留（属 binding engine 约定，与显式 `services` 参数并存于 Request/Response/XHR/WebSocket/Worker 构造器）。
+- 本次为纯命名/边界收敛，未改变任何运行时行为。

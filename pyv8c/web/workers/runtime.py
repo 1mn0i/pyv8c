@@ -10,7 +10,7 @@ from .clone import structured_clone
 class WorkerRuntime:
     def __init__(self, owner, script_url):
         self.owner = owner
-        self.page = owner._page
+        self.services = owner._services
         self.script_url = str(script_url)
         self._queue = queue.Queue()
         self._debugger_queue = queue.Queue()
@@ -26,13 +26,13 @@ class WorkerRuntime:
 
     def _run(self):
         try:
-            config = self.page.worker_configuration()
-            source = self.page.resolve_worker_source(self.script_url)
+            config = self.services.worker_configuration()
+            source = self.services.resolve_worker_source(self.script_url)
             from .api import DedicatedWorkerGlobalScope
-            self._scope = DedicatedWorkerGlobalScope(runtime=self, environment=config["environment"])
-            self._realm = self.page.create_worker_realm(config)
+            self._scope = DedicatedWorkerGlobalScope(runtime=self, environment=config.environment)
+            self._realm = self.services.create_worker_realm(config)
             self._context = self._realm.initialize(self._scope)
-            devtools = config["devtools"]
+            devtools = config.devtools
             if devtools is not None:
                 devtools.register_worker(self)
                 if self.debug_target is not None:
@@ -61,7 +61,7 @@ class WorkerRuntime:
                     break
                 try:
                     self._scope.fn_dispatchEvent(MessageEvent("message", {
-                        "data": value, "origin": self.page.url,
+                        "data": value, "origin": self.services.url,
                     }))
                 except BaseException as exc:
                     self._report_error(exc)
@@ -69,7 +69,7 @@ class WorkerRuntime:
             self._report_error(exc)
             self._ready.set()
         finally:
-            devtools = self.page.devtools_server
+            devtools = self.services.devtools_server
             if devtools is not None:
                 devtools.unregister(self)
             if self._realm is not None:
@@ -77,10 +77,10 @@ class WorkerRuntime:
                 self._realm = None
             self._context = None
             self._scope = None
-            self.page.post_task(self.owner._finish_lifecycle)
+            self.services.post_task(self.owner._finish_lifecycle)
 
     def _report_error(self, exc):
-        self.page.post_task(lambda: self.owner._receive_error(exc))
+        self.services.post_task(lambda: self.owner._receive_error(exc))
 
     def post_from_parent(self, value):
         if not self._stop.is_set():
@@ -104,7 +104,7 @@ class WorkerRuntime:
         except BaseException as exc:
             self._report_error(exc)
             return
-        self.page.post_task(lambda: self.owner._receive_message(value))
+        self.services.post_task(lambda: self.owner._receive_message(value))
 
     def stop(self):
         self._stop.set()

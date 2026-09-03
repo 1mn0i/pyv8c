@@ -65,15 +65,15 @@ class ResourceController:
 
     def load_resource(self, url, request=None):
         page = self.page
-        if page.closed or page.context_services.closed:
+        if page.closed or page.context_owner.closed:
             raise InvalidStateError("Page is closed")
         target = urljoin(page.url, str(url))
         request = self._request_with_environment_headers(request or {"method": "GET"}, page)
         if target.startswith("blob:"):
-            body, content_type = page.context_services.resolve_blob_url(target)
+            body, content_type = page.context_owner.resolve_blob_url(target)
             return Response(body, {"url": target, "headers": {"content-type": content_type}})
-        if page.resource_loader_service:
-            return self._response_from_loader(page.resource_loader_service(target, request), target)
+        if page.resource_loader:
+            return self._response_from_loader(page.resource_loader(target, request), target)
         if page.network_backend:
             req = self._network_request(target, request, page)
             raw = page.network_backend.request_sync(req)
@@ -99,7 +99,7 @@ class ResourceController:
                 "status": raw.status, "statusText": raw.status_text, "url": raw.url,
                 "headers": raw.headers, "redirected": raw.redirected, "type": raw.type,
             },
-            page=self.page,
+            services=self.page.services,
         )
 
     def apply_response_policy(self, response, request):
@@ -123,28 +123,28 @@ class ResourceController:
 
     def load_resource_async(self, url, request, callback):
         page = self.page
-        if page.closed or page.context_services.closed:
-            page.post_task(lambda: callback(None, InvalidStateError("Page is closed")))
+        if page.closed or page.context_owner.closed:
+            page.tasks.post(lambda: callback(None, InvalidStateError("Page is closed")))
             return
         target = urljoin(page.url, str(url))
         request = self._request_with_environment_headers(request, page)
         if target.startswith("blob:"):
             try:
-                body, content_type = page.context_services.resolve_blob_url(target)
+                body, content_type = page.context_owner.resolve_blob_url(target)
                 response, error = Response(
                     body,
                     {"url": target, "headers": {"content-type": content_type}},
-                    page=page,
+                    services=page.services,
                 ), None
             except BaseException as exc:
                 response, error = None, exc
-            page.post_task(lambda: callback(response, error))
+            page.tasks.post(lambda: callback(response, error))
             return
         req = self._network_request(target, request, page)
-        if page.resource_loader_service:
+        if page.resource_loader:
             try:
-                response = self._response_from_loader(page.resource_loader_service(target, request), target)
-                response._page = page
+                response = self._response_from_loader(page.resource_loader(target, request), target)
+                response._services = page.services
                 try:
                     response, error = self.apply_response_policy(response, request), None
                 except BaseException as exc:
@@ -152,14 +152,14 @@ class ResourceController:
             except BaseException as exc:
                 response, error = None, exc
             # Fixture loaders use the same asynchronous boundary as Cronet.
-            page.post_task(lambda: callback(response, error))
+            page.tasks.post(lambda: callback(response, error))
             return
         if page.network_backend:
             page.network_backend.request_async(
-                page, req, lambda raw, error: self.finish_async_response(raw, error, request, callback)
+                page.services, req, lambda raw, error: self.finish_async_response(raw, error, request, callback)
             )
             return
-        page.post_task(
+        page.tasks.post(
             lambda: callback(None, NetworkError("Network access requires an explicit resource_loader or real_network=True"))
         )
 
@@ -215,7 +215,7 @@ class ResourceController:
         self.resources[token] = (generation, node, kind)
 
         def done(response, error):
-            page.post_task(lambda: self.complete_document_resource(token, generation, response, error))
+            page.tasks.post(lambda: self.complete_document_resource(token, generation, response, error))
 
         self.load_resource_async(url, request, done)
 
@@ -263,10 +263,10 @@ class ResourceController:
 
         page = self.page
         target = iframe.get_src() or "about:blank"
-        child = page.new_child_page(target)
-        iframe._child_page = child
-        page._track_frame(child)
-        devtools = page.devtools_server
+        child = Page(page.context_owner, url=target, environment=page.environment)
+        iframe._child_services = child.services
+        page._owned.track("frames", child)
+        devtools = page.context_owner._devtools
         if devtools is not None:
             child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
         try:
@@ -276,17 +276,17 @@ class ResourceController:
             callback(False)
 
     def load_iframe(self, iframe):
-        from .browser import Page
-
         page = self.page
         target = iframe.get_src() or "about:blank"
         if page.navigation.has_navigation and not page.navigation.parsing:
             self.discover_element_resource(iframe)
-            return getattr(iframe, "_child_page", None)
-        child = page.new_child_page(target)
-        iframe._child_page = child
-        page._track_frame(child)
-        devtools = page.devtools_server
+            return getattr(iframe, "_child_services", None)
+        from .browser import Page
+
+        child = Page(page.context_owner, url=target, environment=page.environment)
+        iframe._child_services = child.services
+        page._owned.track("frames", child)
+        devtools = page.context_owner._devtools
         if devtools is not None:
             child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
         response = self.load_resource(target, {"method": "GET"})

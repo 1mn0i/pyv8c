@@ -5,15 +5,12 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
-    "INTERFACES", "IMPLEMENTATIONS", "validate_registry",
     "BaselineRepository", "BaselineSnapshot", "BindingSession", "InterfaceUniverse",
 ]
 
 
 def __getattr__(name):
-    if name in {"INTERFACES", "IMPLEMENTATIONS", "validate_registry"}:
-        module = import_module(".registry", __name__)
-    elif name in {"BaselineRepository", "BaselineSnapshot"}:
+    if name in {"BaselineRepository", "BaselineSnapshot"}:
         module = import_module(".baseline", __name__)
     elif name in {"BindingSession", "InterfaceUniverse"}:
         module = import_module(".universe", __name__)

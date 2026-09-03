@@ -23,7 +23,7 @@ class WorkerGlobalScope(EventTarget):
     __v8_method__ = js_methods(("postMessage", "fn_postMessage", 1, 0), ("close", "fn_close", 0, 0))
 
     def __init__(self, runtime=None, environment=None, **kw):
-        super().__init__(page=None, **kw)
+        super().__init__(services=None, **kw)
         self._runtime = runtime
         from ..bom.navigator import Navigator
         self.navigator = Navigator(environment=environment, worker=True)
@@ -54,15 +54,15 @@ class Worker(EventTarget):
     __v8_method__ = js_methods(("postMessage", "fn_postMessage", 1, 0), ("terminate", "fn_terminate", 0, 0))
 
     def __init__(self, script_url="", _realm=None, **kw):
-        page = _realm
-        super().__init__(page=page, **kw)
-        self._page = page
+        services = _realm
+        super().__init__(services=services, **kw)
+        self._services = services
         self._terminated = False
         self._lifecycle_finished = False
-        self._script_url = urljoin(page.url, str(script_url)) if page and not str(script_url).startswith("blob:") else str(script_url)
-        if page is not None:
-            page._track_worker(self)
-            page.begin_worker()
+        self._script_url = urljoin(services.url, str(script_url)) if services and not str(script_url).startswith("blob:") else str(script_url)
+        if services is not None:
+            services._track_worker(self)
+            services.begin_worker()
         from .runtime import WorkerRuntime
         self._runtime = WorkerRuntime(self, self._script_url)
 
@@ -78,7 +78,7 @@ class Worker(EventTarget):
 
     def _receive_message(self, value):
         if not self._terminated:
-            self.fn_dispatchEvent(MessageEvent("message", {"data": value, "origin": self._page.url}))
+            self.fn_dispatchEvent(MessageEvent("message", {"data": value, "origin": self._services.url}))
 
     def _receive_error(self, error):
         if not self._terminated:
@@ -87,8 +87,8 @@ class Worker(EventTarget):
     def _finish_lifecycle(self):
         if getattr(self, "_lifecycle_finished", False): return
         self._lifecycle_finished = True
-        self._page.complete_worker()
-        self._page._discard_worker(self)
+        self._services.complete_worker()
+        self._services._discard_worker(self)
 
     def fn_terminate(self):
         if not self._terminated:

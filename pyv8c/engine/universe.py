@@ -85,10 +85,11 @@ def _property_flags(member):
 class InterfaceUniverse:
     """One isolated interface registry, binding plan, and class config set."""
 
-    def __init__(self, baseline: BaselineSnapshot, *, stub_logging="info",
+    def __init__(self, baseline: BaselineSnapshot, *, registry, stub_logging="info",
                  expose_unimplemented=True, eager_interfaces=DEFAULT_EAGER_INTERFACES,
                  strict_validation=False, lazy_interfaces=True):
         self.baseline = baseline
+        self.registry = registry
         self.stub_logging = str(stub_logging or "info").lower()
         self.expose_unimplemented = bool(expose_unimplemented)
         self.eager_interfaces = tuple(dict.fromkeys(eager_interfaces or ()))
@@ -305,13 +306,12 @@ class InterfaceUniverse:
         return self._mark_direct(handler, stub=True)
 
     def class_for(self, name):
-        from .registry import IMPLEMENTATIONS
         if name in self._classes:
             return self._classes[name]
         spec = self._spec(name)
         parent_name = spec.get("parent")
         parent = self.class_for(parent_name) if parent_name else object
-        implementation = IMPLEMENTATIONS.get(name)
+        implementation = self.registry.implementations.get(name)
         if implementation is None:
             cls = type(name, (parent,), {
                 "__module__": "pyv8c.engine.generated",
@@ -570,9 +570,8 @@ class InterfaceUniverse:
         yield from self._catalog.walk_parent_names(name)
 
     def exposed_names(self, context_type):
-        from .registry import IMPLEMENTATIONS
         return list(self._catalog.exposed_names(
-            context_type, self.expose_unimplemented, IMPLEMENTATIONS,
+            context_type, self.expose_unimplemented, self.registry.implementations,
         ))
 
     def _resolve_names(self, context_type, roots=()):
@@ -594,10 +593,9 @@ class InterfaceUniverse:
         return BindingSession(self, realm)
 
     def validate(self):
-        from .registry import IMPLEMENTATIONS, INTERFACES, validate_registry
-        validate_registry(self.baseline.interfaces)
-        for name, interface_spec in INTERFACES.items():
-            cls = IMPLEMENTATIONS[name]
+        self.registry.validate(self.baseline.interfaces)
+        for name, interface_spec in self.registry.specs.items():
+            cls = self.registry.implementations[name]
             direct_members = [member for _location_name, member in self._own_members(name)]
             operation_names = {member.get("name") for member in direct_members if member.get("kind") == "operation"}
             attribute_names = {member.get("name") for member in direct_members if member.get("kind") == "attribute"}

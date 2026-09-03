@@ -7,11 +7,12 @@ import threading
 import time
 from collections import deque
 
+from .errors import as_js_error
+
 
 class TaskQueue:
-    def __init__(self, owner, callback_runner):
+    def __init__(self, owner):
         self.owner = owner
-        self.callback_runner = callback_runner
         self.timers = []
         self.counter = itertools.count(1)
         self.cancelled = set()
@@ -21,6 +22,14 @@ class TaskQueue:
         self.condition = threading.Condition()
         self.network_pending = 0
         self.worker_pending = 0
+
+    def run_callback(self, callback, *args):
+        """Run one queued task, keeping a faulty task from aborting the rest."""
+        try:
+            return callback(*args)
+        except BaseException as exc:
+            self.errors.append(as_js_error(exc))
+            return None
 
     def begin_network(self):
         with self.condition:
@@ -72,9 +81,9 @@ class TaskQueue:
                 except queue.Empty:
                     break
                 if not self.owner.closed:
-                    self.callback_runner(callback)
+                    self.run_callback(callback)
             while self.microtasks:
-                self.callback_runner(self.microtasks.popleft())
+                self.run_callback(self.microtasks.popleft())
             if not self.timers:
                 if self.posted.empty() and not self.microtasks:
                     if timeout and time.monotonic() < deadline:
@@ -95,7 +104,7 @@ class TaskQueue:
             heapq.heappop(self.timers)
             if ident in self.cancelled:
                 continue
-            self.callback_runner(callback)
+            self.run_callback(callback)
             if interval is not None and ident not in self.cancelled:
                 heapq.heappush(
                     self.timers,

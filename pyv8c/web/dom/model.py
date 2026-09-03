@@ -60,8 +60,8 @@ class Node(EventTarget):
         ("hasChildNodes", "fn_hasChildNodes", 0, 1), ("isEqualNode", "fn_isEqualNode", 1, 0),
     )
 
-    def __init__(self, page=None, node_type=0, node_name="", value=None, **kw):
-        super().__init__(page=page, **kw)
+    def __init__(self, services=None, node_type=0, node_name="", value=None, **kw):
+        super().__init__(services=services, **kw)
         self.nodeType, self.nodeName, self.nodeValue = node_type, node_name, value
         self.parentNode = None
         self._children = []
@@ -86,7 +86,7 @@ class Node(EventTarget):
     def set_textContent(self, value):
         self._replace_children(())
         if value is not None:
-            self.append_child(Text(str(value), page=self._page))
+            self.append_child(Text(str(value), services=self._services))
     def get_nodeValue(self): return self.nodeValue if self.nodeValue is not None else pyv8.Null
     def set_nodeValue(self, value): self.nodeValue = value
 
@@ -112,9 +112,9 @@ class Node(EventTarget):
             self._children.append(node)
         else:
             self._children.insert(index, node)
-        page = getattr(self, "_page", None)
-        if page is not None and not getattr(page, "_parsing", False):
-            callback = getattr(page, "_node_adopted", None)
+        services = getattr(self, "_services", None)
+        if services is not None and not getattr(services, "_parsing", False):
+            callback = getattr(services, "_node_adopted", None)
             if callback is not None: callback(node)
         return node
 
@@ -167,7 +167,7 @@ class Node(EventTarget):
         if deep:
             for child in self._children: clone.append_child(child.fn_cloneNode(True))
         return clone
-    def _clone_shallow(self): return Node(page=self._page, node_type=self.nodeType, node_name=self.nodeName, value=self.nodeValue)
+    def _clone_shallow(self): return Node(services=self._services, node_type=self.nodeType, node_name=self.nodeName, value=self.nodeValue)
     def fn_contains(self, other): return other is self or any(c.fn_contains(other) for c in self._children)
     def fn_hasChildNodes(self): return bool(self._children)
     def fn_isEqualNode(self, other): return isinstance(other, Node) and self.outer_html() == other.outer_html()
@@ -177,9 +177,9 @@ class Node(EventTarget):
 @interface("DocumentFragment", "Node")
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
 class DocumentFragment(Node):
-    def __init__(self, page=None, **kw):
-        super().__init__(page=page, node_type=Node.DOCUMENT_FRAGMENT_NODE, node_name="#document-fragment", **kw)
-    def _clone_shallow(self): return DocumentFragment(page=self._page)
+    def __init__(self, services=None, **kw):
+        super().__init__(services=services, node_type=Node.DOCUMENT_FRAGMENT_NODE, node_name="#document-fragment", **kw)
+    def _clone_shallow(self): return DocumentFragment(services=self._services)
 
 
 @interface("Attr", "Node", constructible=False, tag="Attr")
@@ -187,8 +187,8 @@ class DocumentFragment(Node):
 class Attr(Node):
     __v8_attribute__ = js_attributes(("name", "get_name", None, 0, 1), ("value", "get_value", "set_value", 0, 0),
                                      ("specified", "get_specified", None, 0, 1))
-    def __init__(self, name="", value="", ownerElement=None, page=None, **kw):
-        super().__init__(page=page, node_type=Node.ATTRIBUTE_NODE, node_name=str(name), value=str(value), **kw)
+    def __init__(self, name="", value="", ownerElement=None, services=None, **kw):
+        super().__init__(services=services, node_type=Node.ATTRIBUTE_NODE, node_name=str(name), value=str(value), **kw)
         self.ownerElement = ownerElement
     def get_name(self): return self.nodeName
     def get_value(self): return self.nodeValue or ""
@@ -199,7 +199,7 @@ class Attr(Node):
 @interface("CharacterData", "Node")
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
 class CharacterData(Node):
-    def __init__(self, data="", page=None, **kw): super().__init__(page=page, node_type=Node.TEXT_NODE, node_name="#text", value=str(data), **kw)
+    def __init__(self, data="", services=None, **kw): super().__init__(services=services, node_type=Node.TEXT_NODE, node_name="#text", value=str(data), **kw)
     def get_textContent(self): return self.nodeValue or ""
     def set_textContent(self, value): self.nodeValue = str(value)
     def outer_html(self): return escape(self.nodeValue or "")
@@ -214,15 +214,15 @@ class Text(CharacterData):
 @interface("Comment", "CharacterData")
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
 class Comment(CharacterData):
-    def __init__(self, data="", page=None, **kw): super().__init__(data, page=page, **kw); self.nodeType, self.nodeName = Node.COMMENT_NODE, "#comment"
+    def __init__(self, data="", services=None, **kw): super().__init__(data, services=services, **kw); self.nodeType, self.nodeName = Node.COMMENT_NODE, "#comment"
     def outer_html(self): return "<!--" + (self.nodeValue or "") + "-->"
 
 
 @interface("DocumentType", "Node")
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
 class DocumentType(Node):
-    def __init__(self, name="html", page=None, **kw):
-        super().__init__(page=page, node_type=Node.DOCUMENT_TYPE_NODE, node_name=name, value=None, **kw)
+    def __init__(self, name="html", services=None, **kw):
+        super().__init__(services=services, node_type=Node.DOCUMENT_TYPE_NODE, node_name=name, value=None, **kw)
     def outer_html(self): return "<!DOCTYPE " + self.nodeName + ">"
 
 
@@ -255,8 +255,8 @@ class Document(Node):
         ("querySelector", "fn_querySelector", 1, 1),
         ("querySelectorAll", "fn_querySelectorAll", 1, 1),
     )
-    def __init__(self, page=None, url="about:blank", ready_state="complete", **kw):
-        super().__init__(page=page, node_type=Node.DOCUMENT_NODE, node_name="#document", **kw)
+    def __init__(self, services=None, url="about:blank", ready_state="complete", **kw):
+        super().__init__(services=services, node_type=Node.DOCUMENT_NODE, node_name="#document", **kw)
         self.url = url; self._parser = None; self.ready_state = str(ready_state); self.hidden = False
     def get_URL(self): return self.url
     def get_documentElement(self): return next((x for x in self._children if isinstance(x, Element) and x.localName == "html"), pyv8.Null)
@@ -269,17 +269,17 @@ class Document(Node):
         html = self.get_documentElement()
         if html is not pyv8.Null: return html.fn_querySelector("head")
         return next((x for x in self._walk() if isinstance(x, Element) and x.localName == "head"), pyv8.Null)
-    def get_defaultView(self): return self._page.window if self._page else pyv8.Null
+    def get_defaultView(self): return self._services.window if self._services else pyv8.Null
     def get_readyState(self): return self.ready_state
     def get_hidden(self): return self.hidden
     def get_visibilityState(self): return "hidden" if self.hidden else "visible"
     def get_cookie(self):
-        page = self._page
-        context = getattr(page, "cookie_jar", None)
+        services = self._services
+        context = getattr(services, "cookie_jar", None)
         return context.document_for(self.url) if context is not None else ""
     def set_cookie(self, value):
-        page = self._page
-        context = getattr(page, "cookie_jar", None)
+        services = self._services
+        context = getattr(services, "cookie_jar", None)
         if context is not None:
             context.set_from_document(self.url, value)
     def get_all(self):
@@ -299,15 +299,15 @@ class Document(Node):
         template has to exist even though the interface is not part of the
         eager startup set.
         """
-        page = getattr(self, "_page", None)
-        if page is None or page.interface_materialized(name):
+        services = getattr(self, "_services", None)
+        if services is None or services.interface_materialized(name):
             return
-        page.materialize_interface(name)
+        services.materialize_interface(name)
     def fn_createElement(self, name): return self._new_element(str(name))
-    def fn_createTextNode(self, value): return Text(str(value), page=self._page)
-    def fn_createComment(self, value): return Comment(str(value), page=self._page)
-    def fn_createDocumentFragment(self): return DocumentFragment(page=self._page)
-    def fn_createAttribute(self, name): return Attr(self._validate_name(name), "", page=self._page)
+    def fn_createTextNode(self, value): return Text(str(value), services=self._services)
+    def fn_createComment(self, value): return Comment(str(value), services=self._services)
+    def fn_createDocumentFragment(self): return DocumentFragment(services=self._services)
+    def fn_createAttribute(self, name): return Attr(self._validate_name(name), "", services=self._services)
     def fn_getElementById(self, value): return next((x for x in self._walk() if isinstance(x, Element) and x.get_id() == str(value)), pyv8.Null)
     def fn_getElementsByTagName(self, value):
         value = str(value).lower()
@@ -324,7 +324,7 @@ class Document(Node):
         return value
     def _new_element(self, tag):
         tag = self._validate_name(tag)
-        return HTML_CLASSES.get("HTML" + tag.capitalize() + "Element", HTML_CLASSES["HTMLUnknownElement"])(tag, page=self._page)
+        return HTML_CLASSES.get("HTML" + tag.capitalize() + "Element", HTML_CLASSES["HTMLUnknownElement"])(tag, services=self._services)
     def _walk(self, root=None):
         root = root or self
         for child in root._children:
@@ -341,8 +341,8 @@ class Document(Node):
         return matches(node, selector)
     def _parse_fragment(self, html, parent):
         from .parser import parse_fragment
-        parse_fragment(html, self._page, parent)
+        parse_fragment(html, self._services, parent)
     def _parse_one(self, html):
-        tmp = Document(page=self._page, url=self.url)
+        tmp = Document(services=self._services, url=self.url)
         self._parse_fragment(html, tmp)
-        return next(iter(tmp._children), Text("", page=self._page))
+        return next(iter(tmp._children), Text("", services=self._services))

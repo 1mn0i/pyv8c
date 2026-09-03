@@ -18,10 +18,10 @@ class Request:
         ("credentials", "get_credentials", None, 0, 1),
     )
 
-    def __init__(self, url="", options=None, page=None, _realm=None, **_):
+    def __init__(self, url="", options=None, services=None, _realm=None, **_):
         options = options if isinstance(options, dict) else {}
-        self._page = page or _realm
-        base = self._page.url if self._page else "about:blank"
+        self._services = services or _realm
+        base = self._services.url if self._services else "about:blank"
         self._url = urljoin(base, str(url))
         self._method = str(options.get("method", "GET")).upper()
         self._headers = Headers(options.get("headers"))
