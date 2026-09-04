@@ -1,5 +1,7 @@
 import pytest
 
+pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+
 from pyv8c import Browser, DOMException, V8TypeError
 
 

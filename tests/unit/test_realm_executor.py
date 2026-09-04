@@ -3,6 +3,8 @@ import time
 
 import pytest
 
+pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+
 from pyv8c import Browser
 from pyv8c.foundation.executor import RealmExecutor
 from pyv8c.foundation.errors import RealmBusyError

@@ -14,7 +14,8 @@ through the same handle, so the realm token they are given must carry task
 posting without importing ``platform``.
 """
 
-from typing import Any, MutableSequence, Protocol, runtime_checkable
+from collections.abc import MutableSequence
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable

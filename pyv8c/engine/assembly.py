@@ -183,7 +183,7 @@ class ClassConfigBuilder:
             configured_methods.add(public_name)
         wrapped_attributes = []
         for config in attributes:
-            public_name, getter_name, setter_name = config[0], config[1], config[2]
+            public_name, _getter_name, setter_name = config[0], config[1], config[2]
             item = list(config)
             if setter_name:
                 plan = self.universe.binding_plan(name, public_name, "attribute")

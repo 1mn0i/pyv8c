@@ -16,9 +16,21 @@ from __future__ import annotations
 import os
 import queue
 import threading
-from concurrent.futures import Future, TimeoutError as FutureTimeoutError
+from collections.abc import Callable
+from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
+
+from loguru import logger
 
 from .errors import RealmBusyError
+
+#: Exceptions that must interrupt the process rather than be logged by a
+#: background thread.
+_CONTROL_EXCEPTIONS = (KeyboardInterrupt, SystemExit)
+
+#: A queued owner-thread command: the optional result Future, then the
+#: callable and the arguments it was submitted with.
+Command = tuple[Future[object] | None, Callable[..., object], tuple[object, ...], dict[str, object]]
 
 
 def _env_flag(name, default=True):
@@ -63,7 +75,7 @@ class RealmExecutor:
     """Run all V8 and realm tasks on one dedicated thread."""
 
     def __init__(self, name="pyv8c-realm", *, auto_pump=None, default_timeout=_UNSET):
-        self._commands = queue.Queue()
+        self._commands: queue.Queue[Command] = queue.Queue()
         self._closed = threading.Event()
         self._submit_lock = threading.Lock()
         self._ready = threading.Event()
@@ -74,6 +86,7 @@ class RealmExecutor:
         self._pause_lock = threading.Lock()
         self.auto_pump = _env_flag("PYV8C_AUTO_PUMP") if auto_pump is None else bool(auto_pump)
         self.default_timeout = _default_call_timeout() if default_timeout is _UNSET else default_timeout
+        self._error_sink = None
         self._close_diagnostics = []
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         # Start without waiting for the thread to be scheduled.  The command
@@ -101,9 +114,22 @@ class RealmExecutor:
     def is_owner_thread(self):
         return threading.get_ident() == self._owner_ident
 
+    def set_error_sink(self, sink):
+        """Install the reporter for exceptions raised by ``post()`` commands.
+
+        Defaults to the attached :class:`~pyv8c.foundation.tasks.TaskQueue`
+        error sink, which records the error and forwards it to the realm's
+        reporter.
+        """
+        self._error_sink = sink
+
     def attach_task_queue(self, task_queue):
         """Attach the queue after services and the Realm exist."""
         self._task_queue = task_queue
+        # Route fire-and-forget exceptions into the realm's error reporting so
+        # a failing network, worker or iframe callback stays observable.
+        if self._error_sink is None:
+            self._error_sink = getattr(task_queue, "report_error", None)
         # The queue wakes this thread directly; without it a timer or a
         # network delivery could only be noticed on the safety timeout.
         setter = getattr(task_queue, "set_wakeup", None)
@@ -137,7 +163,7 @@ class RealmExecutor:
             return callback(*args, **kwargs)
         if timeout is _UNSET:
             timeout = self.default_timeout
-        future = Future()
+        future: Future[object] = Future()
         with self._submit_lock:
             if self.closed:
                 raise RuntimeError("realm executor is closed")
@@ -186,12 +212,38 @@ class RealmExecutor:
             return
         try:
             result = callback(*args, **kwargs)
-        except BaseException as exc:  # noqa: BLE001 - mirrored onto the future
-            if future is not None:
-                future.set_exception(exc)
+        except BaseException as exc:  # noqa: BLE001 - reported below or mirrored
+            if future is None:
+                # post() carries no Future, so this exception has nowhere to
+                # go: mirroring it onto a Future would silently drop it.
+                self._report_exception(exc)
+                return
+            future.set_exception(exc)
         else:
             if future is not None:
                 future.set_result(result)
+
+    def _report_exception(self, exc):
+        """Handle an exception raised by a fire-and-forget command.
+
+        Control exceptions are re-raised so a ``Ctrl-C`` reaching the realm
+        interrupts the process instead of being written to a log; the owner
+        loop marks the executor closed before letting one escape.
+        """
+        if isinstance(exc, _CONTROL_EXCEPTIONS):
+            raise exc
+        reported = False
+        sink = self._error_sink
+        if sink is None and self._task_queue is not None:
+            sink = getattr(self._task_queue, "report_error", None)
+        if sink is not None:
+            try:
+                sink(exc)
+                reported = True
+            except BaseException:  # noqa: BLE001 - reporting must not break the loop
+                reported = False
+        if not reported:
+            logger.opt(exception=exc).error("realm command failed")
 
     def _idle_timeout(self):
         """How long the loop may sleep before it must look again."""
@@ -229,7 +281,14 @@ class RealmExecutor:
                 if command is _STOP:
                     self._closed.set()
                     return
-                self._execute(command)
+                try:
+                    self._execute(command)
+                except _CONTROL_EXCEPTIONS:
+                    # _report_exception re-raises these.  Letting one escape
+                    # would leave the realm marked open while its owner thread
+                    # dies, so close it first and then propagate.
+                    self._closed.set()
+                    raise
             if self._closed.is_set():
                 break
             if self._run_turn():
@@ -246,7 +305,9 @@ class RealmExecutor:
             if self.closed:
                 return
             self._closed.set()
-            self._commands.put(_STOP)
+            # The stop sentinel shares the command queue although it is not a
+            # command tuple; identity checks separate it in _run/_next_command.
+            self._commands.put(_STOP)  # type: ignore[arg-type]
             # Complete callers waiting on commands that will no longer run.
             while True:
                 try:

@@ -11,9 +11,49 @@ dependencies = ["loguru>=0.7", "websockets>=14"]
 
 [project.optional-dependencies]
 network = ["cycronet>=144.4.7,<151"]
+dev = [
+    "pytest>=7.4",
+    "pytest-timeout>=2.2",
+    "pytest-repeat>=0.9",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
+# Safety net against a wedged realm: no single test may hang the suite.
+timeout = 300
+markers = [
+    "native: requires the compiled _pyv8 extension",
+    "race: timing-sensitive concurrency regression; run repeatedly with pytest-repeat",
+    "slow: long-running stress coverage",
+]
+
+[tool.ruff]
+target-version = "py310"
+# The codebase predates an 88-column formatter and stays readable at 120.
+line-length = 120
+
+[tool.ruff.lint]
+# Staged gate: the CI lint job checks `pyv8c/foundation` first.  BLE001 stays
+# enabled on purpose -- the A1/A3 defects were blind `except BaseException`
+# sinks -- and each surviving blind catch carries an inline `# noqa: BLE001`.
+select = ["E", "F", "W", "I", "B", "UP", "BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# Re-export shims are the legitimate use of `import *`.
+"pyv8c/**/__init__.py" = ["F403"]
+
+[tool.mypy]
+# First phase: `pyv8c/foundation` must type-check cleanly; the rest of the
+# package is non-blocking until annotations land there.
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+no_implicit_optional = true
+files = ["pyv8c/foundation"]
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -3,6 +3,7 @@
 import ast
 from pathlib import Path
 
+import pytest
 import pyv8c
 
 
@@ -114,6 +115,7 @@ def test_layering_has_no_upward_imports():
 
 
 def test_runtime_interface_catalog_is_frozen_after_bootstrap():
+    pytest.importorskip("pyv8", reason="imports platform modules bound to the native extension")
     from pyv8c.platform.bootstrap import bootstrap_interfaces
 
     registry = bootstrap_interfaces()
@@ -122,6 +124,7 @@ def test_runtime_interface_catalog_is_frozen_after_bootstrap():
 
 
 def test_page_exposes_narrow_realm_services():
+    pytest.importorskip("pyv8", reason="constructs a live Browser")
     from pyv8c import Browser
     from pyv8c.foundation.realm import ContextServices, DocumentServices, RealmServices, ResourceServices, TaskServices, WorkerServices
 
@@ -179,6 +182,7 @@ def test_domain_code_uses_page_resource_ownership_api():
 
 def test_page_services_surface_is_structurally_narrow():
     """PageServices must not grow escape hatches into platform internals."""
+    pytest.importorskip("pyv8", reason="constructs a live Browser")
     from pyv8c import Browser
 
     source = (ROOT / "platform" / "services.py").read_text(encoding="utf-8")
@@ -197,6 +201,7 @@ def test_page_services_surface_is_structurally_narrow():
 
 def test_page_keeps_only_user_facing_api():
     """Web-serving forwards must not creep back onto the Page facade."""
+    pytest.importorskip("pyv8", reason="imports platform modules bound to the native extension")
     from pyv8c.platform.browser import Page
 
     for name in (

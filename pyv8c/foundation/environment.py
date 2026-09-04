@@ -1,11 +1,13 @@
 """Immutable browser-environment configuration shared by all realms."""
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from types import MappingProxyType
-from typing import Mapping
 
-
-DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+)
 DEFAULT_LANGUAGES = ("zh-CN", "en", "en-US")
 
 
@@ -50,7 +52,9 @@ class PluginConfig:
             object.__setattr__(self, name, value)
         values = self.mime_types
         if isinstance(values, Mapping):
-            values = (values,)
+            # Runtime callers may pass a lone mapping for a single entry even
+            # though the dataclass annotation says sequence.
+            values = (values,)  # type: ignore[assignment]
         try:
             values = tuple(MimeTypeConfig.from_value(value) for value in values)
         except TypeError:
@@ -127,7 +131,10 @@ class ViewportConfig:
     def __post_init__(self):
         object.__setattr__(self, "width", _positive_int(self.width, "viewport.width"))
         object.__setattr__(self, "height", _positive_int(self.height, "viewport.height"))
-        object.__setattr__(self, "device_scale_factor", _positive_float(self.device_scale_factor, "viewport.device_scale_factor"))
+        object.__setattr__(
+            self, "device_scale_factor",
+            _positive_float(self.device_scale_factor, "viewport.device_scale_factor"),
+        )
         object.__setattr__(self, "mobile", bool(self.mobile))
         object.__setattr__(self, "touch", bool(self.touch))
 
@@ -257,7 +264,10 @@ class BrowserEnvironment:
             raise ValueError("language must not be empty")
         object.__setattr__(self, "language", language)
         object.__setattr__(self, "on_line", bool(self.on_line))
-        object.__setattr__(self, "hardware_concurrency", _positive_int(self.hardware_concurrency, "hardware_concurrency"))
+        object.__setattr__(
+            self, "hardware_concurrency",
+            _positive_int(self.hardware_concurrency, "hardware_concurrency"),
+        )
         object.__setattr__(self, "device_memory", _positive_float(self.device_memory, "device_memory"))
         object.__setattr__(self, "max_touch_points", _non_negative_int(self.max_touch_points, "max_touch_points"))
         object.__setattr__(self, "viewport", ViewportConfig.from_value(self.viewport))
@@ -269,7 +279,9 @@ class BrowserEnvironment:
         object.__setattr__(self, "geolocation", GeolocationConfig.from_value(self.geolocation))
         plugins = self.plugins
         if isinstance(plugins, Mapping):
-            plugins = (plugins,)
+            # Runtime callers may pass a lone mapping for a single entry even
+            # though the dataclass annotation says sequence.
+            plugins = (plugins,)  # type: ignore[assignment]
         try:
             plugins = tuple(PluginConfig.from_value(plugin) for plugin in plugins)
         except TypeError:

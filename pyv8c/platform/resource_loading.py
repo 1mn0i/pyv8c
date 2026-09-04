@@ -263,8 +263,11 @@ class ResourceController:
             if not handle.cancelled:
                 page.tasks.post(lambda: self.complete_document_resource(token, generation, response, error, handle))
 
-        handle._transport = self.load_resource_async(url, request, done)
+        # Register before issuing the request: a fast response runs ``done`` on
+        # another thread, and untracking a handle that was never tracked would
+        # silently leave its cancel callback behind until the page closes.
         page.services._track_resource(handle)
+        handle._transport = self.load_resource_async(url, request, done)
         return handle
 
     def complete_document_resource(self, token, generation, response, error, handle=None):

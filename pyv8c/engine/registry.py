@@ -128,7 +128,7 @@ class InterfaceRegistry:
             cls_methods = getattr(cls, "__v8_method__", ()) or ()
             available_members = baseline_members(name)
             for member in cls_methods:
-                public_name, _callback, length = member[0], member[1], member[2]
+                public_name, _callback, _length = member[0], member[1], member[2]
                 if baseline and public_name not in available_members:
                     raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
 

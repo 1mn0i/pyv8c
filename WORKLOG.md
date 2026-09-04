@@ -67,11 +67,48 @@ realm-local binding 成为后续重构的稳定基础。
   Browser 关闭会继续清理其他页面并报告首个异常。
 - 资源正常完成后从 `ResourceScope` 反注册，iframe 子页面关闭时同步移除父页面所有权。
 
+### 2026-09-04 并发/生命周期竞态修复（A1-A4）
+
+- A1 DevTools 跨线程断连：`DevToolsTarget` 抽出唯一 `_resolve_owner()`，`send()`/
+  `_send_on_owner()`/`close()` 三段 owner 查找统一（此前 `close()` 只查
+  `self.realm.executor`，对 Page 恒为 None，导致从调用者线程直接断连 V8 Debugger）。
+  owner 不可达或已关闭时跳过 disconnect 并记入 `close_diagnostics`，由 native
+  deallocator 兜底；`Debugger.disconnect` 只在 owner 线程经 `owner.call` 执行。
+- A2 事件循环丢失唤醒：`TaskQueue` 增加 `_signal_seq` 投递序号门禁，
+  `pump_until`/`run_until_idle` 在 `run_turn()` 后持锁比较序号，变化则跳过 `wait`
+  立即再转一轮，消除「检查-等待」窗口内 `notify_all()` 蒸发；长定时器不再把导航
+  等待拖到定时器到期。`PYV8C_AUTO_PUMP=0` 旧语义不受影响。
+- A3 异步异常出口：`TaskQueue` 新增公开 `report_error()`；`RealmExecutor` 增加
+  `_error_sink`/`set_error_sink()`，`attach_task_queue()` 默认接 `report_error`；
+  `post()` 路径异常上报错误出口而非静默吞没，`SystemExit`/`KeyboardInterrupt` 重抛
+  不写日志。foundation executor 与 platform devtools 的日志由 stdlib `logging`
+  统一改为 `loguru`（loguru 本就是 pyproject 运行时依赖，foundation 未新增包；
+  executor 降级记录用 `logger.opt(exception=exc)`）。
+- A4 资源登记顺序：`platform/resource_loading.py` 先登记到 `ResourceScope` 再发起
+  请求；`platform/services.py` 的 `load_resource_async` 改为本地状态机 + 补登记，
+  消除「先发起、后登记」窗口下的句柄永久滞留。web 层调用点零改动。
+- 全仓枚举 `load_resource_async`/`_track_resource`/`_untrack_resource` 调用点后确认
+  修复无遗漏登记路径。
+
+### 2026-09-04 工程保障与文档收敛
+
+- 新增 `tests/conftest.py`（`browser`/`page`/`browser_factory`/`thread_leak_check`
+  fixture、pyv8 缺失跳过钩子）；`pyproject.toml` 声明 `native`/`race`/`slow` markers
+  并开 `--strict-markers` 与全局 timeout；仅迁移本轮受益文件到 fixture。
+- 新增 `tests/integration/test_race_regressions.py`：A1-A4 四组定向竞态回归，
+  标记 `race` + `native`，可用 `pytest -m race --count 20` 重复运行。
+- 新增 `[tool.ruff]`/`[tool.mypy]` 分阶段配置与 `.github/workflows/ci.yml`
+  （lint/unit/full 三 job；full 缓存 `_pyv8` 构建并在其上跑 race 重复）。
+- 文档收敛：`PYV8C_ARCHITECTURE_REVIEW.md` 的未决项并入 HANDOFF（新增「未决项
+  （按优先级）」含明确排除的 B 档与 P2 模型层），历史过程并入本日志后删除该评审
+  文档。
+
 ### 验证
 
 - 本周重构前基线：`224 passed`。
-- 当前修复后：`226 passed`，包括 DevTools 暂停/恢复、executor 超时取消、事件循环、
-  生命周期压力、Cookie、DOM 集合和 native smoke 测试。
+- 修复后全量：`236 passed`（原 226 + A1-A4 竞态回归 10），包括 DevTools 暂停/恢复、
+  executor 超时取消、事件循环、生命周期压力、Cookie、DOM 集合和 native smoke 测试。
+- `pytest -m race --count 20` 重复运行无回潮；`PYV8C_AUTO_PUMP=0` 旧语义专测通过。
 
 ## 当前未完成项
 

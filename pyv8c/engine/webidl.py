@@ -269,8 +269,9 @@ def _number(value, integer=False, unsigned=False):
     try:
         result = float(value)
     except (TypeError, ValueError, OverflowError) as exc:
-        if string_input:
-            return 0
+        # Conversion failure means the value does not fit a numeric branch;
+        # overload/union resolution must see a raised TypeError, not a
+        # silently coerced zero.
         raise _error("TypeError", "The provided value is not a number.") from exc
     if not math.isfinite(result):
         raise _error("RangeError", "The number is not finite.")

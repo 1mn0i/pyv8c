@@ -14,9 +14,9 @@ import uuid
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
-# Kept as a module attribute for diagnostics and existing Context-construction
-# instrumentation; PageRealm uses the same native module object.
-import pyv8
+# Kept as a module attribute: tests patch ``pyv8c.platform.browser.pyv8``
+# to instrument native Context construction on the PageRealm path.
+import pyv8  # noqa: F401 - patch target for native Context instrumentation tests
 from loguru import logger
 
 from ..web.bom.api import Window
@@ -29,7 +29,7 @@ from ..engine.universe import (
 from ..foundation.errors import InvalidStateError, NetworkError
 from ..foundation.environment import BrowserEnvironment
 from ..foundation.tasks import TaskQueue
-from ..foundation.lifecycle import LifecycleState, ResourceScope
+from ..foundation.lifecycle import ResourceScope
 from .state import StateAlias, Ownership
 from .services import PageServices
 from .bootstrap import bootstrap_interfaces

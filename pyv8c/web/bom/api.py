@@ -8,7 +8,6 @@ from ..dom.model import Event, EventTarget
 from ...engine.registry import interface, js_attributes, js_methods, js_interface_methods
 from ..fetch.blob import Blob
 from ..fetch.request import Request
-from ..fetch.response import Response
 from ...foundation.errors import SecurityError, V8URIError, V8TypeError, InvalidStateError
 from ...foundation.environment import BrowserEnvironment
 from .navigator import Navigator

@@ -1,0 +1,324 @@
+"""Deterministic regressions for the four concurrency/lifecycle defects.
+
+Functional tests cannot catch these defects because reproducing them needs a
+specific interleaving, which almost never occurs in a single happy-path run:
+
+- A1 -- ``DevToolsTarget.close()`` used to resolve its realm owner with a
+  single attribute lookup that never succeeds for a Page (the executor lives
+  on ``Page.realm``).  ``Debugger.disconnect`` therefore ran on whichever
+  thread happened to close the target, breaking the single-owner invariant.
+- A2 -- ``TaskQueue.pump_until`` could sleep out a delivery whose notification
+  landed in the window between turning the loop and acquiring the wait lock.
+- A3 -- an exception raised by a ``RealmExecutor.post()`` command has no
+  Future to mirror onto and used to vanish inside the owner thread.
+- A4 -- a fetch/XHR or document-subresource response that completed before its
+  handle was registered left the cancel callback registered for the lifetime
+  of the page.
+
+These are marked ``race``; CI re-runs them with ``pytest-repeat --count`` so a
+scheduling change cannot hide behind one lucky pass.
+"""
+from __future__ import annotations
+
+import threading
+import time
+from types import SimpleNamespace
+
+import pytest
+
+pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+
+from pyv8c import Browser
+from pyv8c.foundation.errors import V8Error
+from pyv8c.foundation.executor import RealmExecutor
+from pyv8c.platform.resource_loading import RequestHandle
+
+pytestmark = [pytest.mark.race, pytest.mark.native]
+
+
+class _RecordingDebugger:
+    """Stand-in for a pyv8.Debugger that records where calls ran."""
+
+    def __init__(self):
+        self.disconnect_calls = []
+        self.send_calls = []
+
+    def disconnect(self):
+        self.disconnect_calls.append(threading.get_ident())
+
+    def send(self, data):
+        self.send_calls.append(data)
+
+
+class _PageLike:
+    """Mimics a Page: its executor is reachable through ``realm.executor``."""
+
+    def __init__(self, executor):
+        self.realm = SimpleNamespace(executor=executor)
+
+
+class _DummyNode:
+    attributes = {}
+
+
+def _response_for(url):
+    return {"status": 200, "url": str(url), "body": "ok", "headers": {"content-type": "text/plain"}}
+
+
+# -- A1: Debugger.disconnect must run on (or never run off) the owner thread -
+
+
+def test_devtools_close_disconnects_on_the_realm_owner_thread():
+    """A1: a page target must detach its inspector on the realm owner thread.
+
+    Previously ``close()`` looked for the owner only at ``realm.executor``,
+    which never resolves for a Page, so the disconnect ran on the closing
+    thread instead of the owner thread that owns V8.
+    """
+    from pyv8c.platform.devtools import DevToolsTarget
+
+    executor = RealmExecutor(name="race-dev-owner")
+    try:
+        owner_ident = executor.call(threading.get_ident)
+        debugger = _RecordingDebugger()
+        target = DevToolsTarget(None, _PageLike(executor))
+        target.debugger = debugger
+
+        target.close()
+
+        assert debugger.disconnect_calls == [owner_ident], (
+            "Debugger.disconnect did not run on the realm owner thread"
+        )
+        assert target.close_diagnostics == ()
+    finally:
+        executor.close()
+
+
+def test_devtools_close_skips_disconnect_when_owner_is_unresolvable():
+    """A1: an ownerless target must skip the disconnect, not run it off-thread."""
+    from pyv8c.platform.devtools import DevToolsTarget
+
+    debugger = _RecordingDebugger()
+    target = DevToolsTarget(None, object())  # no .realm/.executor anywhere
+    target.debugger = debugger
+
+    target.close()
+
+    assert debugger.disconnect_calls == []
+    assert len(target.close_diagnostics) == 1
+    assert "skipped" in target.close_diagnostics[0]["message"]
+
+
+def test_devtools_close_skips_disconnect_when_owner_is_already_closed():
+    """A1: closing after the owner died must record a diagnostic, not crash."""
+    from pyv8c.platform.devtools import DevToolsTarget
+
+    executor = RealmExecutor(name="race-dev-dead-owner")
+    executor.close()
+
+    debugger = _RecordingDebugger()
+    target = DevToolsTarget(None, _PageLike(executor))
+    target.debugger = debugger
+
+    target.close()
+
+    assert debugger.disconnect_calls == []
+    assert len(target.close_diagnostics) == 1
+
+
+def test_devtools_page_close_records_no_disconnect_diagnostics(browser):
+    """A1: closing a live devtools page detaches on the owner without noise."""
+    context = browser.new_context()
+    page = context.new_page()
+    handle = context.start_devtools(page)
+    try:
+        target = handle._server._target_by_realm.get(page)
+        assert target is not None and target.debugger is not None
+
+        page.close()
+
+        assert target.closed
+        assert target.close_diagnostics == ()
+    finally:
+        handle.close()
+
+
+# -- A2: a delivery racing the pump's wait must not be slept past -------
+
+
+def test_pump_until_does_not_sleep_out_a_delivery_that_races_the_wait():
+    """A2: a task delivered behind the last turn must wake the pump promptly.
+
+    The sequence gate is sampled before the turn, so a delivery that lands at
+    any point in the iteration is visible at the wait decision.  Without the
+    gate the pump sleeps the full next-timer bound (50 ms here) and only then
+    re-checks, which turns a microseconds-wide race into a stall.
+    """
+    from pyv8c.foundation.tasks import TaskQueue
+
+    queue = TaskQueue()
+    consumed = []
+    real_run_turn = queue.run_turn
+    delivered = {"done": False}
+
+    def run_turn_then_deliver(*, allow_parser=True):
+        if not delivered["done"]:
+            # The turn has nothing to do, but a producer delivers immediately
+            # behind it -- the exact window a lost notification used to sleep.
+            delivered["done"] = True
+            queue.post(lambda: consumed.append("ok"))
+            return False
+        return real_run_turn(allow_parser=allow_parser)
+
+    queue.run_turn = run_turn_then_deliver
+    started = time.monotonic()
+    try:
+        assert queue.pump_until(lambda: bool(consumed), timeout=5) is True
+        elapsed = time.monotonic() - started
+        assert consumed == ["ok"]
+        # The no-timer safety bound is 50 ms; the unfixed pump slept all of it.
+        assert elapsed < 0.03, f"pump_until slept {elapsed * 1000:.0f}ms past the delivery"
+    finally:
+        queue.close()
+
+
+# -- A3: post() exceptions must surface instead of vanishing -------
+
+
+def test_post_exception_reaches_the_realm_error_sink():
+    """A3: a fire-and-forget command must not swallow its own exception."""
+    from pyv8c.foundation.tasks import TaskQueue
+
+    queue = TaskQueue()
+    executor = RealmExecutor(name="race-error-sink")
+    try:
+        executor.attach_task_queue(queue)
+        seen = []
+        queue.set_error_sink(seen.append)
+        assert executor.post(lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not seen:
+            time.sleep(0.01)
+
+        assert seen, "post() exception was swallowed by the owner thread"
+        assert isinstance(seen[0], V8Error)
+        assert "boom" in str(seen[0])
+    finally:
+        executor.close()
+
+
+def test_post_control_exception_marks_the_executor_closed():
+    """A3: SystemExit must interrupt the owner loop instead of being logged."""
+    caught = []
+
+    def capture(args):
+        caught.append(args.exc_value)
+
+    previous_hook = threading.excepthook
+    threading.excepthook = capture
+    executor = RealmExecutor(name="race-control-exit")
+    try:
+        assert executor.post(lambda: (_ for _ in ()).throw(SystemExit(3)))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not executor.closed:
+            time.sleep(0.01)
+        assert executor.closed, "owner thread swallowed SystemExit and kept running"
+        assert len(caught) == 1 and isinstance(caught[0], SystemExit), (
+            "SystemExit was logged away instead of escaping the owner thread"
+        )
+    finally:
+        threading.excepthook = previous_hook
+        executor.close()
+
+
+# -- A4: a handle must never be left registered after its delivery ------
+
+
+def test_fetch_completion_beating_registration_does_not_strand_the_handle(browser, monkeypatch):
+    """A4: a response that beats its registration must still be untracked.
+
+    The facet tracks the handle only after ``load_resource_async`` returns,
+    and a response can complete on the issuing thread before that happens.
+    The state machine converges both orders on exactly one untrack.
+    """
+    context = browser.new_context()
+    page = context.new_page()
+    try:
+        controller = page.services._resources
+        facet = page.services.resource_services
+        responses = []
+        untracked = []
+        real_untrack = facet._untrack_resource
+
+        def synchronous(url, request, callback):
+            handle = RequestHandle()
+            callback(_response_for(url), None)  # completes on this thread
+            return handle
+
+        def spied_untrack(handle):
+            untracked.append(handle)
+            real_untrack(handle)
+
+        monkeypatch.setattr(controller, "load_resource_async", synchronous)
+        monkeypatch.setattr(facet, "_untrack_resource", spied_untrack)
+
+        handle = page.services.load_resource_async(
+            "http://127.0.0.1:9/x", {"method": "GET"}, lambda r, e: responses.append((r, e))
+        )
+
+        assert handle is not None
+        assert len(responses) == 1 and responses[0][1] is None
+        assert len(untracked) == 1, "completion-before-registration lost the untrack"
+        assert ("resources", id(handle)) not in page.services._registrations, (
+            "handle stayed registered after a synchronous completion"
+        )
+    finally:
+        page.close()
+
+
+def test_document_resource_is_tracked_before_its_request_is_issued(browser, monkeypatch):
+    """A4: document subresources register first so delivery can untrack.
+
+    The old order issued the request and only then registered the handle, so a
+    synchronous completion called ``_untrack_resource`` before the handle had a
+    scope callback and silently stranded the registration.
+    """
+    context = browser.new_context()
+    page = context.new_page()
+    try:
+        controller = page.services._resources
+        facet = page.services.resource_services
+        order = []
+        real_track = facet._track_resource
+
+        def spied_track(handle):
+            order.append("track")
+            real_track(handle)
+
+        def recording_issue(url, request, callback):
+            order.append("issue")
+            return RequestHandle()
+
+        monkeypatch.setattr(facet, "_track_resource", spied_track)
+        monkeypatch.setattr(controller, "load_resource_async", recording_issue)
+
+        controller.track_document_resource(
+            _DummyNode(), "http://127.0.0.1:9/doc.js", {"method": "GET"}, "script"
+        )
+
+        assert order == ["track", "issue"], f"document resource registered after issue: {order}"
+    finally:
+        page.close()
+
+
+def test_race_teardown_returns_to_thread_baseline(thread_leak_check, browser):
+    """A1+A4 teardown must not leak owner, server, or network threads."""
+    for _ in range(3):
+        context = browser.new_context()
+        page = context.new_page()
+        handle = context.start_devtools(page)
+        handle.close()
+        page.close()
+
+    thread_leak_check(tolerance=0, timeout=15)

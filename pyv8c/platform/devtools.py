@@ -8,14 +8,15 @@ import queue
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
 from concurrent.futures import Future
+from dataclasses import dataclass, field
 from urllib.parse import quote
 
+import pyv8
+from loguru import logger
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
-import pyv8
 from ..foundation.errors import TimeoutError
 from ..foundation.lifecycle import ResourceScope
 
@@ -60,8 +61,18 @@ class DevToolsTarget:
         self._paused = False
         self._pause_queue = None
         self._pause_lock = threading.RLock()
+        self._close_diagnostics = []
         if worker_runtime is None:
             self._create_debugger()
+
+    @property
+    def close_diagnostics(self):
+        """Teardown problems that must not abort ``close()``.
+
+        Skipping or failing an inspector disconnect leaves the realm usable,
+        so it is recorded here instead of being raised or silently dropped.
+        """
+        return tuple(self._close_diagnostics)
 
     @property
     def url(self):
@@ -183,14 +194,70 @@ class DevToolsTarget:
         envelope.future.set_exception(exc)
         self.server._command_failed(envelope, str(exc))
 
+    def _resolve_owner(self):
+        """Return the executor owning this target's realm, or ``None``.
+
+        ``send``, ``_send_on_owner`` and ``close`` must share one lookup.  They
+        previously disagreed: ``close`` only tried ``self.realm.executor``,
+        which never resolves for a page target because a ``Page`` exposes its
+        executor through ``Page.realm``.  Every page target therefore fell
+        through to running ``Debugger.disconnect`` on whichever thread
+        happened to be closing, breaking the single-owner invariant.
+        """
+        realm = self.realm
+        for candidate in (
+            getattr(getattr(realm, "realm", None), "executor", None),  # Page -> PageRealm
+            getattr(realm, "executor", None),                          # worker realm
+            getattr(self.worker_runtime, "executor", None),            # worker runtime
+        ):
+            if candidate is not None:
+                return candidate
+        return None
+
+    def _record_close_diagnostic(self, message):
+        entry = {"target": self.target_id, "kind": self.kind, "message": message}
+        self._close_diagnostics.append(entry)
+        logger.warning("devtools target {} ({}): {}", self.target_id, self.kind, message)
+
+    def _disconnect_debugger(self, debugger):
+        """Detach the V8 inspector from the realm owner thread.
+
+        ``Debugger.disconnect`` enters V8, so issuing it from an unrelated
+        thread breaks the single-owner invariant the runtime is built on.  When
+        no owner can be resolved the call is skipped: the native deallocator
+        already disconnects on the last reference, and by then the isolate is
+        being torn down anyway.  Skipping is strictly safer than racing it.
+        """
+        def guarded():
+            try:
+                disconnect = getattr(debugger, "disconnect", None)
+                if callable(disconnect):
+                    disconnect()
+            except BaseException as exc:  # noqa: BLE001 - surfaced as a diagnostic
+                self._record_close_diagnostic(f"inspector disconnect failed: {exc!r}")
+
+        owner = self._resolve_owner()
+        if owner is None or owner.closed:
+            self._record_close_diagnostic(
+                "inspector disconnect skipped; realm owner is unavailable"
+            )
+            return
+        if owner.is_owner_thread():
+            guarded()
+            return
+        try:
+            owner.call(guarded, timeout=5)
+        except BaseException as exc:  # noqa: BLE001 - surfaced as a diagnostic
+            # A wedged or shutting-down owner must not abort teardown; the
+            # deallocator still releases the session on the last reference.
+            self._record_close_diagnostic(f"inspector disconnect not scheduled: {exc!r}")
+
     def _send_on_owner(self, message, envelope=None):
         if self.debugger is None or self.closed:
             self._fail_command(envelope, RuntimeError("target is closed"))
             return
         try:
-            owner = getattr(getattr(self.realm, "realm", None), "executor", None)
-            if owner is None:
-                owner = getattr(self.realm, "executor", None)
+            owner = self._resolve_owner()
             if owner is not None and not owner.is_owner_thread():
                 # Inspector calls must never synchronously block the WebSocket
                 # thread.  In particular Runtime.evaluate("debugger; ...")
@@ -199,8 +266,7 @@ class DevToolsTarget:
                 if not owner.post(self._send_on_owner, message, envelope):
                     self._fail_command(envelope, RuntimeError("realm executor is closed"))
                 return
-            else:
-                self.debugger.send(message.encode("utf-8"))
+            self.debugger.send(message.encode("utf-8"))
         except BaseException as exc:
             self._fail_command(envelope, exc)
             self.server._send({"method": "Runtime.exceptionThrown", "params": {
@@ -267,7 +333,7 @@ class DevToolsTarget:
                 if self._paused and self._pause_queue is not None:
                     self._pause_queue.put((message, envelope))
                     return
-            owner = getattr(self.worker_runtime, "executor", None)
+            owner = self._resolve_owner()
             if owner is not None:
                 if not owner.post(self._send_on_owner, message, envelope):
                     self._fail_command(envelope, RuntimeError("realm executor is closed"))
@@ -281,9 +347,7 @@ class DevToolsTarget:
                 if self._paused and self._pause_queue is not None:
                     self._pause_queue.put((message, envelope))
                     return
-            owner = getattr(getattr(self.realm, "realm", None), "executor", None)
-            if owner is None:
-                owner = getattr(self.realm, "executor", None)
+            owner = self._resolve_owner()
             if owner is not None and not owner.is_owner_thread():
                 if not owner.post(self._send_on_owner, message, envelope):
                     self._fail_command(envelope, RuntimeError("realm executor is closed"))
@@ -302,18 +366,7 @@ class DevToolsTarget:
         self._pending.clear()
         debugger, self.debugger = self.debugger, None
         if debugger is not None:
-            def disconnect_debugger():
-                disconnect = getattr(debugger, "disconnect", None)
-                if callable(disconnect):
-                    disconnect()
-            owner = getattr(self.realm, "executor", None)
-            if owner is not None and not owner.is_owner_thread() and not owner.closed:
-                try:
-                    owner.call(disconnect_debugger, timeout=5)
-                except BaseException:
-                    pass
-            else:
-                disconnect_debugger()
+            self._disconnect_debugger(debugger)
             del debugger
         self._scope.close()
 

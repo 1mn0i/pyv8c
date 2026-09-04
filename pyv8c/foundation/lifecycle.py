@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from enum import Enum
 import threading
+from enum import Enum
 
 
 class LifecycleState(str, Enum):
@@ -69,8 +69,9 @@ class ResourceScope:
         for callback in callbacks:
             try:
                 callback()
-            except BaseException:
-                # Cleanup must continue; owners can report callback failures.
+            except BaseException:  # noqa: BLE001 - cleanup must continue
+                # Owners can report callback failures; aborting teardown here
+                # would strand every resource below this one.
                 pass
         with self._lock:
             self._state = LifecycleState.CLOSED

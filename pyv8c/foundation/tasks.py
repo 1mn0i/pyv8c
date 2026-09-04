@@ -22,7 +22,8 @@ import queue
 import threading
 import time
 from collections import deque
-from typing import Any, Callable, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Protocol, runtime_checkable
 
 from .errors import as_js_error
 
@@ -67,18 +68,21 @@ class TaskQueue:
     def __init__(self, host=None, *, error_sink: Callable[[BaseException], None] | None = None):
         self._host = host if host is not None else _NullTaskHost()
         self._error_sink = error_sink
-        self.timers = []
+        self.timers: list[tuple[float, int, Callable[..., object], float | None]] = []
         self.counter = itertools.count(1)
-        self.cancelled = set()
-        self.microtasks = deque()
-        self.posted = queue.Queue()
-        self.errors = []
+        self.cancelled: set[int] = set()
+        self.microtasks: deque[Callable[..., object]] = deque()
+        self.posted: queue.Queue[Callable[..., object]] = queue.Queue()
+        self.errors: list[BaseException] = []
         self.condition = threading.Condition()
         self.network_pending = 0
         self.worker_pending = 0
-        self._parser = deque()
+        self._parser: deque[Callable[..., object]] = deque()
         self._closed = False
         self._wakeup = None
+        # Bumped on every delivery so waiters can detect work that arrived
+        # between "I looked" and "I slept".  See pump_until().
+        self._signal_seq = 0
 
     # -- host ------------------------------------------------------------
 
@@ -100,8 +104,14 @@ class TaskQueue:
         self._wakeup = wakeup
 
     def _signal(self):
-        """Wake waiters on this queue and, through it, the realm executor."""
+        """Wake waiters on this queue and, through it, the realm executor.
+
+        The sequence is bumped *inside* the lock so a waiter that samples it
+        before sleeping can tell whether anything arrived in between; a
+        notification delivered while nobody waits would otherwise be lost.
+        """
         with self.condition:
+            self._signal_seq += 1
             self.condition.notify_all()
         wakeup = self._wakeup
         if wakeup is not None:
@@ -113,9 +123,18 @@ class TaskQueue:
         """Run one queued task, keeping a faulty task from aborting the rest."""
         try:
             return callback(*args)
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 - reported below
             self._report_error(exc)
             return None
+
+    def report_error(self, exc):
+        """Record an exception against this realm and notify the sink.
+
+        Public counterpart of :meth:`_report_error`, for collaborators such as
+        :class:`~pyv8c.foundation.executor.RealmExecutor` that need the same
+        bookkeeping without reaching into a private method.
+        """
+        self._report_error(exc)
 
     def _report_error(self, exc):
         """Record a task exception and hand it to the realm's reporter."""
@@ -126,8 +145,7 @@ class TaskQueue:
         if sink is not None:
             try:
                 sink(error)
-            except BaseException:
-                # Reporting must never break the turn that produced the error.
+            except BaseException:  # noqa: BLE001 - reporting must never break the turn
                 pass
 
     def drain_task_errors(self):
@@ -287,9 +305,17 @@ class TaskQueue:
         deadline and interrupted by any arriving task, so a caller waiting for
         a document lifecycle state wakes on the event that produces it rather
         than re-checking on a fixed interval.
+
+        The sleep is gated on the delivery sequence, sampled *before* the
+        turn: a delivery that lands at any point in the iteration after the
+        sample but before the sleep bumps the sequence, and the gate then
+        skips the sleep instead of sleeping out a notification nobody
+        received.  Sampling after ``run_turn()`` would leave deliveries that
+        raced between the turn and the sample undetected.
         """
         deadline = time.monotonic() + float(timeout or 0)
         while True:
+            seq = self._signal_seq
             if predicate():
                 return True
             if self.closed:
@@ -305,7 +331,7 @@ class TaskQueue:
             hint = self.next_deadline()
             wait_for = min(hint, remaining) if hint is not None else min(0.05, remaining)
             with self.condition:
-                if not self.closed:
+                if not self.closed and self._signal_seq == seq:
                     self.condition.wait(max(0.0, wait_for))
 
     def run_until_idle(self, timeout=0):
@@ -317,6 +343,11 @@ class TaskQueue:
         """
         deadline = time.monotonic() + float(timeout or 0)
         while True:
+            # Sampled before the drain: a delivery that lands while this
+            # iteration runs bumps the sequence, so the gate below skips the
+            # sleep and the loop re-drains instead of sleeping out a
+            # notification nobody received.
+            seq = self._signal_seq
             while self.run_turn():
                 if timeout and time.monotonic() >= deadline:
                     return
@@ -332,7 +363,7 @@ class TaskQueue:
                 return
             wait_for = min(0.01, remaining) if deadline_hint is None else min(deadline_hint, remaining)
             with self.condition:
-                if not self.closed:
+                if not self.closed and self._signal_seq == seq:
                     self.condition.wait(max(0.0, wait_for))
 
     def close(self):

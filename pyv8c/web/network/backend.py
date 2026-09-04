@@ -7,8 +7,8 @@ from threading import RLock
 from urllib.parse import urlsplit
 import importlib
 import inspect
-import time
-from loguru import logger
+# Tests patch cookie-change logging through this module attribute.
+from loguru import logger  # noqa: F401 - patch target for cookie-change logging tests
 from ...foundation.errors import InvalidStateError
 from .cookies import CookieJar
 

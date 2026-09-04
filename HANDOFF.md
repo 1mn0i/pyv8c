@@ -67,6 +67,11 @@ Page 的 `TaskQueue` 由 executor 自动驱动，按 parser、posted、microtask
 `RealmExecutor.call()` 有超时保护。尚未开始的超时命令会取消，不会在调用方返回后产生幽灵
 副作用；已经开始执行的 Python/V8 回调无法被安全抢占，会以 `already running` 诊断。
 
+`RealmExecutor.post()` 携带的异常不镜像到 Future，而是走错误出口：默认接到
+`TaskQueue.report_error`（可经 `set_error_sink` 覆盖），记录后不会静默丢失；
+`SystemExit`/`KeyboardInterrupt` 会重新抛出而不是写日志。事件循环的等待采用投递序号
+门禁：`run_turn()` 与条件等待之间到达的投递不会丢唤醒，`wait` 只作安全上限。
+
 ### PageServices 能力边界
 
 `PageServices` 是 platform 组合根，持有六个窄能力对象：
@@ -80,6 +85,8 @@ Page 的 `TaskQueue` 由 executor 自动驱动，按 parser、posted、microtask
 Page、资源请求、iframe、Worker、WebSocket、DevTools target 和 TaskQueue 都遵循
 `OPEN -> CLOSING -> CLOSED` 的幂等关闭语义。异步请求使用 `RequestHandle` 和导航
 generation；完成或取消后从 Page 的 `ResourceScope` 反注册，关闭页面时统一取消。
+资源句柄在发起请求前（或返回后补登记）即纳入 `ResourceScope`，登记与完成交错时
+也保证能反注册，不会留下永久滞留的句柄。
 
 关闭顺序是：停止接收新任务，解除 DevTools 暂停，取消资源/Worker，清理 owner 队列，
 断开 Inspector，最后销毁 Context/Isolate。关闭操作会继续清理其他独立页面，最终报告首个
@@ -122,6 +129,12 @@ browser.close()
 主页面、iframe 和 Worker 各自拥有 target；断开 WebSocket 会取消该连接的全部 pending
 事务，防止旧响应发送给重连客户端。
 
+Inspector 属于 V8，`Debugger.send`/`disconnect` 必须回到 realm owner 线程执行。
+`DevToolsTarget._resolve_owner()` 统一解析 Page -> PageRealm、Worker realm、
+`worker_runtime` 三段的 executor，`send`/`_send_on_owner`/`close` 共用。关闭时若 owner
+不可达或已关闭，则跳过断开调用并把原因记入 `close_diagnostics`（native deallocator 在
+最后一个引用释放时仍会断开），绝不从调用者线程直接触碰 V8 Debugger。
+
 需要捕获首个脚本时：
 
 ```python
@@ -154,19 +167,38 @@ $env:PYTHONPATH = "D:\src\pyv8env\_pyv8;D:\src\pyv8env\pyv8c"
 python -m pytest -q
 ```
 
-当前工作区验证结果：`226 passed`。若未设置 `_pyv8` 的 `PYTHONPATH`，测试收集会因
-`ModuleNotFoundError: pyv8` 失败，这属于环境问题而非 pyv8c 测试结果。
+当前工作区验证结果：`236 passed`（含 A1-A4 竞态回归）。竞态用例以
+`pytest -m race --count 20` 重复运行验证不回潮。若未设置 `_pyv8` 的 `PYTHONPATH`，
+测试收集会因 `ModuleNotFoundError: pyv8` 失败，这属于环境问题而非 pyv8c 测试结果。
+完整 CI 需要能编译 `_pyv8` 的原生工具链，纯 Python 的 lint/unit 阶段不需要。
 
-## 当前限制与后续重点
+## 未决项（按优先级）
+
+以下为评审确认但尚未实现的缺口。带「本轮明确不做」的条目只是登记在案，
+不改变当前分层与代码结构。
+
+### B 档：结构重构（本轮明确不做）
+
+1. Page 组合根职责去化：controller 仍经 `self.page` 反引用取协作者，目标是改为构造时
+   显式注入（navigation/lifecycle/scripting/resource_loading 各自只持有所需 facet）。
+2. 能力协议对齐：`foundation/realm.py` 的 realm capability 协议与 web 层实际消费面存在
+   偏差，需按真实使用重对齐后再扩展。
+3. 上述重构进行前，A1-A4 建立的单 owner、错误出口与资源登记不变量不得回退。
+
+### P2：模型层
 
 1. iframe 目前以独立 Page realm 建模，尚未收敛为完整的 Frame/WindowProxy/origin 模型。
-2. 自定义同步 `resource_loader` 如果自身阻塞，`goto(timeout=...)` 无法强制抢占其 Python
-   回调；真实网络请求已有异步 transport 和取消句柄。
-3. Worker 虽使用统一 `RealmExecutor` 协议，但仍保留独立 Isolate 和专用生命周期路径，
-   需要继续加强压力测试与原生层稳定性验证。
-4. `requestAnimationFrame` 尚未使用独立 frame clock；网络策略、缓存和完整浏览器级 CDP
-   `Page`/`Network` 域仍未实现。
-5. `_pyv8` 原生扩展必须与运行 Python 版本和 ABI 一致；跨 Python 版本复用 `.pyd` 不受支持。
+2. `requestAnimationFrame` 尚未使用独立 frame clock。
+3. 网络策略/缓存与传输层尚未分离；自定义同步 `resource_loader` 若自身阻塞，
+   `goto(timeout=...)` 无法强制抢占其 Python 回调（真实网络请求已有异步 transport
+   和取消句柄）。
 
-后续改动优先补齐请求取消/导航代际检查、Frame/Origin 模型和原生 Inspector 压力测试，
+### P3：观察与验证
+
+1. Worker 虽使用统一 `RealmExecutor` 协议，但仍保留独立 Isolate 和专用生命周期路径，
+   需要继续加强 Windows Debug/ASAN、多 Worker 并发与重复关闭场景的压力验证。
+2. 请求取消/导航代际检查、完整浏览器级 CDP `Page`/`Network` 域仍未实现。
+3. `_pyv8` 原生扩展必须与运行 Python 版本和 ABI 一致；跨 Python 版本复用 `.pyd` 不受支持。
+
+后续改动优先补齐 Frame/Origin 模型、原生 Inspector 压力测试与 B 档结构重构，
 同时保持 capability 边界、单 owner 线程和全量回归测试不退化。

@@ -14,17 +14,10 @@ structurally enforced boundary is the one web code crosses: no web module
 touches a Page attribute, a network backend or the interface universe.
 """
 
+import threading
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from ..foundation.realm import (
-    ContextServices,
-    DocumentServices,
-    RealmServices,
-    ResourceServices,
-    TaskServices,
-    WorkerServices,
-)
 from .state import Ownership
 
 
@@ -122,19 +115,34 @@ class _ResourceCapability:
         return self._owner._resources.load_resource(url, request)
 
     def load_resource_async(self, url, request, callback):
-        holder = {}
+        # A request can finish before this call returns: the network thread
+        # pool invokes ``complete`` independently of whoever issued the
+        # request.  Registering afterwards therefore lost the race -- the
+        # delivery untracked a handle that had no registration yet, and the
+        # cancel callback stayed behind until the page closed.  The state
+        # machine below makes the two orders converge on one untrack.
+        state = {"handle": None, "tracked": False, "done": False}
+        lock = threading.Lock()
 
         def complete(response, error):
-            handle = holder.get("handle")
+            with lock:
+                state["done"] = True
+                handle, tracked = state["handle"], state["tracked"]
             try:
                 callback(response, error)
             finally:
-                if handle is not None:
+                if handle is not None and tracked:
                     self._untrack_resource(handle)
 
         handle = self._owner._resources.load_resource_async(url, request, complete)
-        holder["handle"] = handle
-        self._track_resource(handle)
+        with lock:
+            state["handle"] = handle
+            if handle is not None:
+                self._track_resource(handle)
+                state["tracked"] = True
+            completed_early = state["done"]
+        if completed_early and handle is not None:
+            self._untrack_resource(handle)
         return handle
 
     def load_iframe(self, iframe):
