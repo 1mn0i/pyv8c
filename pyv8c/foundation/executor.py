@@ -146,10 +146,19 @@ class RealmExecutor:
         try:
             return future.result(timeout=timeout)
         except FutureTimeoutError:
-            future.add_done_callback(_swallow)
+            # A command which is still queued can be cancelled safely.  This
+            # prevents a timed-out navigation/evaluate from running later and
+            # mutating a page after its caller has already handled the error.
+            # Once execution has started Python/V8 has no safe pre-emption
+            # point; in that case retain the late-result drain and report the
+            # timeout without pretending the callback was interrupted.
+            cancelled = future.cancel()
+            if not cancelled:
+                future.add_done_callback(_swallow)
             raise RealmBusyError(
                 f"realm executor did not complete {getattr(callback, '__name__', callback)!r} "
                 f"within {timeout}s"
+                + (" (command cancelled)" if cancelled else " (already running)")
             ) from None
 
     def post(self, callback, *args, **kwargs):
@@ -171,6 +180,10 @@ class RealmExecutor:
 
     def _execute(self, command):
         future, callback, args, kwargs = command
+        if future is not None and not future.set_running_or_notify_cancel():
+            # The caller timed out while this command was waiting in the
+            # queue.  Do not execute it as a ghost side effect.
+            return
         try:
             result = callback(*args, **kwargs)
         except BaseException as exc:  # noqa: BLE001 - mirrored onto the future
@@ -241,7 +254,8 @@ class RealmExecutor:
                 except queue.Empty:
                     break
                 if isinstance(command, tuple) and command and command[0] is not None:
-                    command[0].set_exception(RuntimeError("realm executor is closed"))
+                    if not command[0].done():
+                        command[0].set_exception(RuntimeError("realm executor is closed"))
         self.wakeup()
         if not self.is_owner_thread():
             self._thread.join(timeout)

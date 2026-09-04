@@ -220,6 +220,47 @@ def test_debugger_pause_loop_routes_resume():
         browser.close()
 
 
+def test_devtools_resume_can_be_received_while_runtime_evaluate_is_paused(devtools_page):
+    """The WebSocket reader must remain live while V8 is in its pause loop."""
+    _, page, handle = devtools_page
+
+    async def check():
+        async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
+            targets = await _request(ws, {"id": 1, "method": "Target.getTargets"})
+            target_id = targets["result"]["targetInfos"][0]["targetId"]
+            await ws.send(json.dumps({"id": 2, "method": "Target.attachToTarget",
+                                       "params": {"targetId": target_id}}))
+            attached_response = json.loads(await asyncio.wait_for(ws.recv(), 2))
+            assert attached_response["id"] == 2
+            attached_event = json.loads(await asyncio.wait_for(ws.recv(), 2))
+            session_id = attached_event["params"]["sessionId"]
+            await ws.send(json.dumps({"id": 3, "method": "Runtime.enable",
+                                       "sessionId": session_id}))
+            await ws.send(json.dumps({"id": 4, "method": "Debugger.enable",
+                                       "sessionId": session_id}))
+            # Do not wait for the evaluate response before reading again: it
+            # pauses at `debugger` and requires a second command to progress.
+            await ws.send(json.dumps({"id": 5, "method": "Runtime.evaluate",
+                                       "sessionId": session_id,
+                                       "params": {"expression": "debugger; 7"}}))
+            paused = None
+            while paused is None:
+                message = json.loads(await asyncio.wait_for(ws.recv(), 2))
+                if message.get("method") == "Debugger.paused":
+                    paused = message
+            await ws.send(json.dumps({"id": 6, "method": "Debugger.resume",
+                                       "sessionId": session_id}))
+            while True:
+                response = json.loads(await asyncio.wait_for(ws.recv(), 2))
+                if response.get("id") == 6:
+                    assert "error" not in response
+                if response.get("id") == 5:
+                    assert response["result"]["result"]["value"] == 7
+                    return
+
+    asyncio.run(check())
+
+
 def test_start_paused_timeout_releases_navigation():
     browser = Browser(stub_logging="off")
     context = browser.new_context()

@@ -222,18 +222,26 @@ class TaskQueue:
 
     def _run_due_timers(self):
         ran = False
-        while self.timers and self.timers[0][0] <= time.monotonic():
+        # A repeating zero-delay timer must not monopolise the realm.  One
+        # timer callback per turn gives posted work, inspector commands and
+        # microtasks a chance to run between callbacks.
+        if self.timers and self.timers[0][0] <= time.monotonic():
             due, ident, callback, interval = heapq.heappop(self.timers)
             if ident in self.cancelled:
-                continue
-            self.run_callback(callback)
-            ran = True
-            if interval is not None and ident not in self.cancelled and not self._closed:
-                heapq.heappush(
-                    self.timers,
-                    (max(due + interval, time.monotonic()), ident, callback, interval),
-                )
-            self._drain_microtasks()
+                self.cancelled.discard(ident)
+            else:
+                self.run_callback(callback)
+                ran = True
+                if interval is not None and ident not in self.cancelled and not self._closed:
+                    # The HTML timer algorithm clamps a repeating timer to a
+                    # positive delay.  Avoid re-queuing an interval at the
+                    # same monotonic timestamp for delay=0.
+                    interval = max(interval, 0.001)
+                    heapq.heappush(
+                        self.timers,
+                        (max(due + interval, time.monotonic() + interval), ident, callback, interval),
+                    )
+                self._drain_microtasks()
         return ran
 
     def run_turn(self, *, allow_parser: bool = True) -> bool:

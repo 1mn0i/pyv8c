@@ -177,11 +177,12 @@ class Page:
         self.realm.executor.call(self.tasks.run_until_idle, timeout)
 
     def close(self):
-        callbacks = self._resource_scope.begin_close()
-        if callbacks is None:
-            return
         with self._close_lock:
-            if self.closed or self._closing:
+            if self.closed:
+                return
+            # A concurrent close is already doing the owner-thread teardown;
+            # leave the scope OPEN so a failed owner call can be retried.
+            if self._closing:
                 return
             self._closing = True
         # A paused inspector loop or a start-paused gate blocks the realm
@@ -196,9 +197,13 @@ class Page:
         try:
             return self.realm.executor.call(self._close_owner)
         finally:
-            self._resource_scope.close()
             with self._close_lock:
                 self._closing = False
+            # _close_owner closes the scope after all owner-thread cleanup.
+            # If dispatch timed out before it started, retain OPEN state and
+            # allow a subsequent close() to retry instead of losing resources.
+            if self.closed:
+                self._resource_scope.close()
 
     def _close_owner(self):
         if self.closed:
@@ -218,14 +223,26 @@ class Page:
         self.resources.reset()
         self.lifecycle.load_waiters.clear()
         for frame in self._owned.drain("frames"):
+            self.services._discard_frame(frame)
             frame.close()
         for ws in self._owned.drain("websockets"):
+            self.services.context_services.discard_websocket(ws)
             if self.network_backend:
                 self.network_backend.close_websocket(ws)
         for worker in self._owned.drain("workers"):
+            self.services.discard_worker(worker)
             worker.fn_terminate()
         self.context_owner._discard_page(self)
         self.realm.close()
+        parent_cleanup = getattr(self, "_parent_scope_cleanup", None)
+        if callable(parent_cleanup):
+            parent_cleanup()
+            self._parent_scope_cleanup = None
+        # Close callbacks that were not explicitly drained (for example,
+        # asynchronous resource cancellation handles).  This is idempotent
+        # and guarantees eventual cleanup even when close() was initiated by
+        # another thread and its waiting call timed out.
+        self._resource_scope.close()
 
 
 class BrowserContext:
@@ -320,8 +337,16 @@ class BrowserContext:
         if self.closed:
             return
         self.closed = True
+        first_error = None
         for page in list(self.pages):
-            page.close()
+            try:
+                page.close()
+            except BaseException as exc:
+                # Teardown is best effort across independent pages.  Do not
+                # leave later pages, DevTools or the network backend alive
+                # merely because one realm reported an error.
+                if first_error is None:
+                    first_error = exc
         self.pages.clear()
         if self._devtools is not None:
             self._devtools.close()
@@ -330,6 +355,8 @@ class BrowserContext:
         if self.network_backend:
             self.network_backend.close()
             self.network_backend = None
+        if first_error is not None:
+            raise first_error
 
 
 class Browser:
@@ -403,7 +430,14 @@ class Browser:
     def close(self):
         if self._closed:
             return
+        first_error = None
         for context in self.contexts:
-            context.close()
+            try:
+                context.close()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
         self.contexts.clear()
         self._closed = True
+        if first_error is not None:
+            raise first_error

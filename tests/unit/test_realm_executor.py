@@ -5,6 +5,7 @@ import pytest
 
 from pyv8c import Browser
 from pyv8c.foundation.executor import RealmExecutor
+from pyv8c.foundation.errors import RealmBusyError
 
 
 def test_executor_runs_calls_on_one_owner_thread_and_closes_waiters():
@@ -37,3 +38,21 @@ def test_page_close_stops_realm_executor():
     page.close()
     assert page.realm.executor.closed
     browser.close()
+
+
+def test_timed_out_queued_command_is_not_executed_later():
+    executor = RealmExecutor(name="test-cancel")
+    entered = threading.Event()
+    release = threading.Event()
+    side_effect = []
+    try:
+        executor.post(lambda: (entered.set(), release.wait(2)))
+        assert entered.wait(1)
+        with pytest.raises(RealmBusyError, match="command cancelled"):
+            executor.call(lambda: side_effect.append("ghost"), timeout=0.01)
+        release.set()
+        time.sleep(0.05)
+        assert side_effect == []
+    finally:
+        release.set()
+        executor.close()

@@ -27,6 +27,7 @@ class CommandEnvelope:
     request_id: object
     session_id: str | None
     target_id: str
+    connection_id: int | None = None
     future: Future = field(default_factory=Future)
     cancelled: bool = False
 
@@ -191,13 +192,20 @@ class DevToolsTarget:
             if owner is None:
                 owner = getattr(self.realm, "executor", None)
             if owner is not None and not owner.is_owner_thread():
-                owner.call(self.debugger.send, message.encode("utf-8"), timeout=10)
+                # Inspector calls must never synchronously block the WebSocket
+                # thread.  In particular Runtime.evaluate("debugger; ...")
+                # enters V8's pause loop; waiting here would prevent the
+                # subsequent Debugger.resume from being received.
+                if not owner.post(self._send_on_owner, message, envelope):
+                    self._fail_command(envelope, RuntimeError("realm executor is closed"))
+                return
             else:
                 self.debugger.send(message.encode("utf-8"))
         except BaseException as exc:
             self._fail_command(envelope, exc)
             self.server._send({"method": "Runtime.exceptionThrown", "params": {
-                "exceptionDetails": {"text": str(exc)}}})
+                "exceptionDetails": {"text": str(exc)}},
+                }, connection_id=getattr(envelope, "connection_id", None))
 
     def submit(self, envelope, message):
         if self.closed:
@@ -207,6 +215,17 @@ class DevToolsTarget:
             self._pending[(envelope.session_id, envelope.request_id)] = envelope
         self.send(message, envelope)
         return envelope.future
+
+    def cancel_pending(self, connection_id=None):
+        """Cancel requests belonging to a disconnected WebSocket client."""
+        with self._pause_lock:
+            pending = [
+                (key, envelope) for key, envelope in self._pending.items()
+                if connection_id is None or envelope.connection_id == connection_id
+            ]
+            for key, envelope in pending:
+                self._pending.pop(key, None)
+                envelope.cancel()
 
     def resolve_response(self, request_id, payload):
         """Resolve the oldest matching transaction for this target."""
@@ -250,7 +269,8 @@ class DevToolsTarget:
                     return
             owner = getattr(self.worker_runtime, "executor", None)
             if owner is not None:
-                owner.post(self._send_on_owner, message, envelope)
+                if not owner.post(self._send_on_owner, message, envelope):
+                    self._fail_command(envelope, RuntimeError("realm executor is closed"))
             else:
                 self._send_on_owner(message, envelope)
         elif self.debugger is not None:
@@ -261,7 +281,14 @@ class DevToolsTarget:
                 if self._paused and self._pause_queue is not None:
                     self._pause_queue.put((message, envelope))
                     return
-            self._send_on_owner(message, envelope)
+            owner = getattr(getattr(self.realm, "realm", None), "executor", None)
+            if owner is None:
+                owner = getattr(self.realm, "executor", None)
+            if owner is not None and not owner.is_owner_thread():
+                if not owner.post(self._send_on_owner, message, envelope):
+                    self._fail_command(envelope, RuntimeError("realm executor is closed"))
+            else:
+                self._send_on_owner(message, envelope)
 
     def close(self):
         if self._scope.begin_close() is None:
@@ -310,6 +337,8 @@ class DevToolsServer:
         self._server = None
         self._websocket = None
         self._connected = threading.Event()
+        self._connection_seq = 0
+        self._connection_id = None
         self._outgoing = None
         self._started = threading.Event()
         self._shutdown = threading.Event()
@@ -348,20 +377,32 @@ class DevToolsServer:
                 return
             self._websocket = websocket
             self._outgoing = asyncio.Queue()
+            self._connection_seq += 1
+            connection_id = self._connection_seq
+            self._connection_id = connection_id
             self._connected.set()
         sender = asyncio.create_task(self._sender(websocket, self._outgoing))
         try:
             async for message in websocket:
-                self._dispatch(message)
+                # _dispatch only validates/routs and now posts V8 work to the
+                # owning RealmExecutor.  Keep this loop receptive to resume
+                # and evaluate commands while a target is paused.
+                self._dispatch(message, connection_id)
         finally:
             sender.cancel()
             with self._lock:
                 if self._websocket is websocket:
                     self._websocket = None
                     self._outgoing = None
+                    self._connection_id = None
                     self._connected.clear()
             for session_id, target in list(self._sessions.items()):
                 target.sessions.discard(session_id)
+            # Requests on the root target commonly have no sessionId.  Cancel
+            # every target's envelopes, not only targets referenced by a
+            # session, so a reconnect cannot inherit stale responses.
+            for target in list(self.targets.values()):
+                target.cancel_pending(connection_id)
             self._sessions.clear()
             for target in list(self.targets.values()):
                 target._release_startup()
@@ -375,9 +416,11 @@ class DevToolsServer:
         except (asyncio.CancelledError, ConnectionClosed):
             return
 
-    def _send(self, payload):
+    def _send(self, payload, connection_id=None):
         with self._lock:
             loop, outgoing = self._loop, self._outgoing
+            if connection_id is not None and connection_id != self._connection_id:
+                return
         if loop is not None and outgoing is not None:
             message = json.dumps(payload, separators=(",", ":"))
             if threading.current_thread() is self._thread:
@@ -391,8 +434,13 @@ class DevToolsServer:
         except (TypeError, ValueError):
             return
         request_id = payload.get("id")
-        if request_id is not None and target.resolve_response(request_id, payload) is not None:
-            self._send(payload)
+        if request_id is not None:
+            envelope = target.resolve_response(request_id, payload)
+            # An unmatched id is a late response for a cancelled request (or
+            # a stale inspector packet after reconnect).  Never forward it to
+            # the next client as if it were a fresh event.
+            if envelope is not None:
+                self._send(payload, connection_id=getattr(envelope, "connection_id", None))
             return
         matched = False
         for session_id, bound in list(self._sessions.items()):
@@ -408,11 +456,13 @@ class DevToolsServer:
         with self._lock:
             target = self.targets.get(envelope.target_id)
         if target is not None:
-            target._pending.pop((envelope.session_id, envelope.request_id), None)
+            with target._pause_lock:
+                target._pending.pop((envelope.session_id, envelope.request_id), None)
         self._reply(
             {"id": envelope.request_id},
             error={"code": -32000, "message": message},
             session_id=envelope.session_id,
+            connection_id=envelope.connection_id,
         )
 
     def register_page(self, page, kind="page", parent=None):
@@ -455,7 +505,7 @@ class DevToolsServer:
         target.close()
         self._send({"method": "Target.targetDestroyed", "params": {"targetId": target.target_id}})
 
-    def _reply(self, request, result=None, error=None, session_id=None):
+    def _reply(self, request, result=None, error=None, session_id=None, connection_id=None):
         payload = {"id": request.get("id")}
         if error is not None:
             payload["error"] = error
@@ -463,9 +513,9 @@ class DevToolsServer:
             payload["result"] = result or {}
         if session_id:
             payload["sessionId"] = session_id
-        self._send(payload)
+        self._send(payload, connection_id=connection_id)
 
-    def _dispatch(self, raw):
+    def _dispatch(self, raw, connection_id=None):
         try:
             request = json.loads(raw)
         except (TypeError, ValueError):
@@ -474,27 +524,27 @@ class DevToolsServer:
         params = request.get("params") or {}
         session_id = request.get("sessionId")
         if method == "Target.getTargets":
-            self._reply(request, {"targetInfos": [t.descriptor() for t in self.targets.values() if not t.closed]})
+            self._reply(request, {"targetInfos": [t.descriptor() for t in self.targets.values() if not t.closed]}, connection_id=connection_id)
             return
         if method == "Target.setDiscoverTargets":
             if params.get("discover", False):
                 for target in self.targets.values():
                     if not target.closed:
                         self._send({"method": "Target.targetCreated", "params": {"targetInfo": target.descriptor()}})
-            self._reply(request, {})
+            self._reply(request, {}, connection_id=connection_id)
             return
         if method == "Target.setAutoAttach":
-            self._reply(request, {})
+            self._reply(request, {}, connection_id=connection_id)
             return
         if method == "Target.attachToTarget":
             target = self.targets.get(params.get("targetId"))
             if target is None:
-                self._reply(request, error={"code": -32000, "message": "No such target"})
+                self._reply(request, error={"code": -32000, "message": "No such target"}, connection_id=connection_id)
                 return
             sid = uuid.uuid4().hex
             self._sessions[sid] = target
             target.sessions.add(sid)
-            self._reply(request, {"sessionId": sid})
+            self._reply(request, {"sessionId": sid}, connection_id=connection_id)
             self._send({"method": "Target.attachedToTarget", "params": {"sessionId": sid, "targetInfo": target.descriptor(), "waitingForDebugger": False}})
             return
         if method == "Target.detachFromTarget":
@@ -503,10 +553,10 @@ class DevToolsServer:
             if target:
                 target.sessions.discard(sid)
                 self._send({"method": "Target.detachedFromTarget", "params": {"sessionId": sid, "targetId": target.target_id}})
-            self._reply(request, {})
+            self._reply(request, {}, connection_id=connection_id)
             return
         if method == "Target.activateTarget":
-            self._reply(request, {})
+            self._reply(request, {}, connection_id=connection_id)
             return
         if method == "Target.closeTarget":
             target = self.targets.get(params.get("targetId"))
@@ -514,11 +564,11 @@ class DevToolsServer:
                 close = getattr(target.realm, "close", None) or getattr(target.realm, "fn_terminate", None)
                 if close:
                     close()
-            self._reply(request, {"success": bool(target)})
+            self._reply(request, {"success": bool(target)}, connection_id=connection_id)
             return
         target = self._sessions.get(session_id) if session_id else self._target_by_realm.get(self.root_page)
         if target is None:
-            self._reply(request, error={"code": -32000, "message": "Target not found"}, session_id=session_id)
+            self._reply(request, error={"code": -32000, "message": "Target not found"}, session_id=session_id, connection_id=connection_id)
             return
         if method.startswith("Runtime.") or method.startswith("Debugger."):
             inspector_request = dict(request)
@@ -527,13 +577,14 @@ class DevToolsServer:
                 request_id=request.get("id"),
                 session_id=session_id,
                 target_id=target.target_id,
+                connection_id=connection_id,
             )
             target.submit(
                 envelope,
                 json.dumps(inspector_request, separators=(",", ":")),
             )
             return
-        self._reply(request, error={"code": -32601, "message": "Method not found"}, session_id=session_id)
+        self._reply(request, error={"code": -32601, "message": "Method not found"}, session_id=session_id, connection_id=connection_id)
 
     def close(self):
         if self._shutdown.is_set():

@@ -149,16 +149,16 @@ class _ResourceCapability:
     def _track_resource(self, handle):
         if handle is not None:
             callback = handle.cancel
-            if self._owner._scope.add(callback):
-                try:
-                    handle._scope_callback = callback
-                except AttributeError:
-                    pass
+            self._owner._register_owned("resources", handle, callback)
+            try:
+                handle._scope_callback = callback
+            except AttributeError:
+                pass
 
     def _untrack_resource(self, handle):
         callback = getattr(handle, "_scope_callback", None)
         if callback is not None:
-            self._owner._scope.remove(callback)
+            self._owner._unregister_owned("resources", handle)
             try:
                 handle._scope_callback = None
             except AttributeError:
@@ -229,10 +229,11 @@ class _WorkerCapability:
 
     def track_worker(self, worker):
         self._owner._ownership.track("workers", worker)
-        self._owner._scope.add(worker.fn_terminate)
+        self._owner._register_owned("workers", worker, worker.fn_terminate)
 
     def discard_worker(self, worker):
         self._owner._ownership.discard("workers", worker)
+        self._owner._unregister_owned("workers", worker)
 
 
 class _ContextCapability:
@@ -274,14 +275,22 @@ class _ContextCapability:
 
     def track_websocket(self, websocket):
         self._owner._ownership.track("websockets", websocket)
-        self._owner._scope.add(lambda ws=websocket: self.close_websocket(ws))
+        self._owner._register_owned(
+            "websockets", websocket,
+            lambda ws=websocket: self.close_websocket(ws),
+        )
 
     def discard_websocket(self, websocket):
         self._owner._ownership.discard("websockets", websocket)
+        self._owner._unregister_owned("websockets", websocket)
 
     def track_frame(self, frame):
         self._owner._ownership.track("frames", frame)
-        self._owner._scope.add(frame.close)
+        self._owner._register_owned("frames", frame, frame.close)
+        try:
+            frame._parent_scope_cleanup = lambda child=frame: self._owner._discard_frame(child)
+        except AttributeError:
+            pass
 
 
 class PageServices:
@@ -302,6 +311,9 @@ class PageServices:
         self.environment = environment
         self.hook = hook
         self._ownership = ownership
+        # Keep the exact callback object so resources can unregister from the
+        # scope when they complete normally instead of accumulating closures.
+        self._registrations = {}
         self._navigation = navigation
         self._scripts = scripts
         self._resources = resources
@@ -321,6 +333,25 @@ class PageServices:
         self.document_services = _DocumentCapability(self)
         self.worker_services = _WorkerCapability(self)
         self.context_services = _ContextCapability(self)
+
+    def _register_owned(self, kind, resource, callback):
+        key = (kind, id(resource))
+        previous = self._registrations.get(key)
+        if previous is not None:
+            return previous[1]
+        if self._scope.add(callback):
+            self._registrations[key] = (resource, callback)
+        return callback
+
+    def _unregister_owned(self, kind, resource):
+        key = (kind, id(resource))
+        registration = self._registrations.pop(key, None)
+        if registration is not None:
+            self._scope.remove(registration[1])
+
+    def _discard_frame(self, frame):
+        self._ownership.discard("frames", frame)
+        self._unregister_owned("frames", frame)
 
     # -- realm identity -------------------------------------------------
 
