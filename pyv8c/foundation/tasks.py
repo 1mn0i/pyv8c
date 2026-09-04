@@ -22,6 +22,7 @@ class TaskQueue:
         self.condition = threading.Condition()
         self.network_pending = 0
         self.worker_pending = 0
+        self._closed = False
 
     def run_callback(self, callback, *args):
         """Run one queued task, keeping a faulty task from aborting the rest."""
@@ -50,12 +51,14 @@ class TaskQueue:
             self.condition.notify_all()
 
     def post(self, callback):
-        if not self.owner.closed:
+        if not self.owner.closed and not self._closed:
             self.posted.put(callback)
             with self.condition:
                 self.condition.notify_all()
 
     def schedule(self, callback, delay, repeat=False):
+        if self._closed:
+            return 0
         ident = next(self.counter)
         try:
             delay = max(0.0, float(delay))
@@ -69,6 +72,47 @@ class TaskQueue:
 
     def cancel(self, ident):
         self.cancelled.add(int(ident))
+
+    def _run_background_once(self, *, include_posted=True):
+        """Drain background-safe work without blocking the realm executor.
+
+        The executor uses ``include_posted=False`` so network and worker
+        deliveries retain their explicit ``run_until_idle`` boundary while
+        ordinary timers continue to behave like browser task sources.
+        """
+        if self._closed or self.owner.closed:
+            return
+        # A parser-blocking external script deliberately keeps the document
+        # observable in the loading state until the embedding API pumps the
+        # queue (the same boundary used by the legacy synchronous API).
+        navigation = getattr(self.owner, "navigation", None)
+        if navigation is not None and navigation.parser_is_blocked():
+            return
+        if include_posted:
+            while True:
+                try:
+                    callback = self.posted.get_nowait()
+                except queue.Empty:
+                    break
+                if not self.owner.closed:
+                    self.run_callback(callback)
+            while self.microtasks:
+                self.run_callback(self.microtasks.popleft())
+        now = time.monotonic()
+        while self.timers and self.timers[0][0] <= now:
+            due, ident, callback, interval = heapq.heappop(self.timers)
+            if ident in self.cancelled:
+                continue
+            self.run_callback(callback)
+            if interval is not None and ident not in self.cancelled and not self._closed:
+                heapq.heappush(
+                    self.timers,
+                    (max(due + interval, time.monotonic()), ident, callback, interval),
+                )
+            now = time.monotonic()
+        if include_posted:
+            while self.microtasks:
+                self.run_callback(self.microtasks.popleft())
 
     def run_until_idle(self, timeout=0):
         deadline = time.monotonic() + float(timeout or 0)
@@ -114,6 +158,7 @@ class TaskQueue:
                 break
 
     def close(self):
+        self._closed = True
         self.timers.clear()
         self.microtasks.clear()
         self.cancelled.clear()

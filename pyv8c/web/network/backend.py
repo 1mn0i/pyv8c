@@ -17,6 +17,28 @@ class NetworkUnavailableError(RuntimeError):
     pass
 
 
+class RequestHandle:
+    """Thread-safe cancellation handle for a network Future."""
+
+    def __init__(self):
+        self._cancelled = False
+        self._lock = RLock()
+        self.future = None
+        self._scope_callback = None
+
+    @property
+    def cancelled(self):
+        with self._lock:
+            return self._cancelled
+
+    def cancel(self):
+        with self._lock:
+            self._cancelled = True
+            future = self.future
+        if future is not None:
+            future.cancel()
+
+
 @dataclass
 class NetworkRequest:
     url: str
@@ -134,23 +156,29 @@ class CronetNetworkBackend:
         return self._call(request)
 
     def request_async(self, page, request, callback):
+        handle = RequestHandle()
         with self._lock:
             if self._closed:
                 page.post_task(lambda: callback(None, RuntimeError("network backend is closed")))
-                return
+                return handle
             page.begin_network()
             future = self.executor.submit(self._call, request)
+            handle.future = future
 
         def complete(done):
             try:
                 result, error = done.result(), None
             except BaseException as exc:
                 result, error = None, exc
-            if page.closed:
+            if handle.cancelled or page.closed:
                 page.complete_network()
                 return
-            page.post_task(lambda: (page.complete_network(), callback(result, error)))
+            page.post_task(
+                lambda: (page.complete_network(), callback(result, error))
+                if not handle.cancelled else page.complete_network()
+            )
         future.add_done_callback(complete)
+        return handle
 
     def websocket(self, page, url, protocols, callbacks, options=None):
         if self._closed:

@@ -839,3 +839,21 @@ controller 之间通过 `self.page.<sibling>` 协作（如资源完成回调脚�
 ### 限制
 
 - platform 层 controllers 访问 `page._owned` 等组合根私有属既定设计模式（同层组合根），未纳入本轮范围。
+
+## 2026-09-03：DevTools 事务与统一资源作用域
+
+### 目标
+
+落地 P1 中的两项架构改造：CDP 命令统一事务化，并将网络、iframe、Worker 资源统一管理。
+
+### 修改
+
+- 新增 `CommandEnvelope`，统一承载 request/session/target 标识、取消状态和 `Future`；Inspector 响应根据 target 匹配并完成对应事务。
+- 目标关闭、Debugger 断开或执行失败时，所有挂起事务均以明确 CDP 错误完成，不再静默丢失。
+- `Runtime.runIfWaitingForDebugger` 在首脚本闸门中投递到 Realm owner 线程，可在保持 WebSocket 连接时释放页面。
+- 新增 `ResourceScope.remove()`；Page、iframe、Worker、WebSocket 和 Fetch/XHR 请求均注册到 Page 作用域，请求完成后注销，关闭时统一取消。
+- 后台执行器仅自动消费定时器；网络和 Worker posted 回调仍保持 `run_until_idle()` 边界。
+
+### 验证
+
+- `python -m pytest -q`：`202 passed`。

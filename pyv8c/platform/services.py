@@ -131,7 +131,20 @@ class PageServices:
         return self._resources.load_resource(url, request)
 
     def load_resource_async(self, url, request, callback):
-        return self._resources.load_resource_async(url, request, callback)
+        holder = {}
+
+        def complete(response, error):
+            handle = holder.get("handle")
+            try:
+                callback(response, error)
+            finally:
+                if handle is not None:
+                    self._untrack_resource(handle)
+
+        handle = self._resources.load_resource_async(url, request, complete)
+        holder["handle"] = handle
+        self._track_resource(handle)
+        return handle
 
     def load_iframe(self, iframe):
         return self._resources.load_iframe(iframe)
@@ -211,18 +224,39 @@ class PageServices:
 
     def _track_websocket(self, websocket):
         self._ownership.track("websockets", websocket)
+        self._tasks.owner._resource_scope.add(lambda ws=websocket: self.close_websocket(ws))
 
     def _discard_websocket(self, websocket):
         self._ownership.discard("websockets", websocket)
 
     def _track_worker(self, worker):
         self._ownership.track("workers", worker)
+        self._tasks.owner._resource_scope.add(worker.fn_terminate)
 
     def _discard_worker(self, worker):
         self._ownership.discard("workers", worker)
 
     def _track_frame(self, frame):
         self._ownership.track("frames", frame)
+        self._tasks.owner._resource_scope.add(frame.close)
+
+    def _track_resource(self, handle):
+        if handle is not None:
+            callback = handle.cancel
+            if self._tasks.owner._resource_scope.add(callback):
+                try:
+                    handle._scope_callback = callback
+                except AttributeError:
+                    pass
+
+    def _untrack_resource(self, handle):
+        callback = getattr(handle, "_scope_callback", None)
+        if callback is not None:
+            self._tasks.owner._resource_scope.remove(callback)
+            try:
+                handle._scope_callback = None
+            except AttributeError:
+                pass
 
 
 __all__ = ["PageServices", "WorkerContext"]

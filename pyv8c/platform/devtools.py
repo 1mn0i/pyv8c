@@ -8,6 +8,8 @@ import queue
 import threading
 import time
 import uuid
+from dataclasses import dataclass, field
+from concurrent.futures import Future
 from urllib.parse import quote
 
 from websockets.asyncio.server import serve
@@ -15,6 +17,23 @@ from websockets.exceptions import ConnectionClosed
 
 import pyv8
 from ..foundation.errors import TimeoutError
+from ..foundation.lifecycle import ResourceScope
+
+
+@dataclass
+class CommandEnvelope:
+    """One CDP request tracked until Inspector response or target close."""
+
+    request_id: object
+    session_id: str | None
+    target_id: str
+    future: Future = field(default_factory=Future)
+    cancelled: bool = False
+
+    def cancel(self):
+        self.cancelled = True
+        if not self.future.done():
+            self.future.cancel()
 
 class DevToolsTarget:
     """A debuggable page, iframe, or worker realm."""
@@ -30,6 +49,8 @@ class DevToolsTarget:
         self.sessions = set()
         self.debugger = None
         self.closed = False
+        self._scope = ResourceScope()
+        self._pending = {}
         self.start_paused = bool(start_paused)
         self.startup_timeout = startup_timeout
         self._startup_released = threading.Event()
@@ -110,7 +131,11 @@ class DevToolsTarget:
                 raise TimeoutError("DevTools connection timed out before the first script")
             if message is None:
                 return
-            self._send_on_owner(message)
+            if isinstance(message, tuple):
+                message, envelope = message
+            else:
+                envelope = None
+            self._send_on_owner(message, envelope)
 
     def _run_pause_loop(self):
         with self._pause_lock:
@@ -122,7 +147,11 @@ class DevToolsTarget:
                 message = queue_ref.get()
                 if message is None:
                     return
-                self._send_on_owner(message)
+                if isinstance(message, tuple):
+                    message, envelope = message
+                else:
+                    envelope = None
+                self._send_on_owner(message, envelope)
         finally:
             with self._pause_lock:
                 self._paused = False
@@ -134,54 +163,120 @@ class DevToolsTarget:
                 self._pause_queue.put(None)
         self._startup_released.set()
 
-    def _send_on_owner(self, message):
-        if self.debugger is None or self.closed:
+    def _fail_command(self, envelope, exc):
+        if envelope is None or envelope.future.done():
             return
-        lock = getattr(self.realm, "_v8_lock", None)
+        envelope.cancelled = True
+        envelope.future.set_exception(exc)
+        self.server._command_failed(envelope, str(exc))
+
+    def _send_on_owner(self, message, envelope=None):
+        if self.debugger is None or self.closed:
+            self._fail_command(envelope, RuntimeError("target is closed"))
+            return
         try:
-            if lock is None:
-                self.debugger.send(message.encode("utf-8"))
+            owner = getattr(getattr(self.realm, "realm", None), "executor", None)
+            if owner is None:
+                owner = getattr(self.realm, "executor", None)
+            if owner is not None and not owner.is_owner_thread():
+                owner.call(self.debugger.send, message.encode("utf-8"), timeout=10)
             else:
-                with lock:
-                    self.debugger.send(message.encode("utf-8"))
+                self.debugger.send(message.encode("utf-8"))
         except BaseException as exc:
+            self._fail_command(envelope, exc)
             self.server._send({"method": "Runtime.exceptionThrown", "params": {
                 "exceptionDetails": {"text": str(exc)}}})
 
-    def send(self, message):
+    def submit(self, envelope, message):
         if self.closed:
+            self._fail_command(envelope, RuntimeError("target is closed"))
+            return envelope.future
+        with self._pause_lock:
+            self._pending[(envelope.session_id, envelope.request_id)] = envelope
+        self.send(message, envelope)
+        return envelope.future
+
+    def resolve_response(self, request_id, payload):
+        """Resolve the oldest matching transaction for this target."""
+        with self._pause_lock:
+            match = next(
+                ((key, envelope) for key, envelope in self._pending.items()
+                 if envelope.request_id == request_id),
+                None,
+            )
+            if match is None:
+                return None
+            key, envelope = match
+            self._pending.pop(key, None)
+        if envelope.session_id:
+            payload["sessionId"] = envelope.session_id
+        if not envelope.future.done():
+            envelope.future.set_result(payload)
+        return envelope
+
+    def send(self, message, envelope=None):
+        if self.closed:
+            self._fail_command(envelope, RuntimeError("target is closed"))
             return
+        waiting_command = False
+        if self.start_paused and not self._startup_released.is_set():
+            try:
+                waiting_command = json.loads(message).get("method") == "Runtime.runIfWaitingForDebugger"
+            except (TypeError, ValueError):
+                pass
+            if waiting_command:
+                # The realm owner is blocked in wait_for_startup().  Queue the
+                # release command before the sentinel so it executes on that
+                # owner thread and the native Inspector callback opens the gate.
+                self._startup_queue.put((message, envelope))
+                self._startup_queue.put(None)
+                return
         if self.worker_runtime is not None:
             with self._pause_lock:
                 if self._paused and self._pause_queue is not None:
-                    self._pause_queue.put(message)
+                    self._pause_queue.put((message, envelope))
                     return
-            self.worker_runtime.enqueue_debugger(message, self)
+            owner = getattr(self.worker_runtime, "executor", None)
+            if owner is not None:
+                owner.post(self._send_on_owner, message, envelope)
+            else:
+                self._send_on_owner(message, envelope)
         elif self.debugger is not None:
             if self.start_paused and not self._startup_released.is_set():
-                self._startup_queue.put(message)
+                self._startup_queue.put((message, envelope))
                 return
             with self._pause_lock:
                 if self._paused and self._pause_queue is not None:
-                    self._pause_queue.put(message)
+                    self._pause_queue.put((message, envelope))
                     return
-            self._send_on_owner(message)
+            self._send_on_owner(message, envelope)
 
     def close(self):
-        if self.closed:
+        if self._scope.begin_close() is None:
             return
         self.closed = True
+        self._stop_pause_loop()
         self._release_startup()
         self.sessions.clear()
+        for envelope in tuple(self._pending.values()):
+            self._fail_command(envelope, RuntimeError("target was closed"))
+        self._pending.clear()
         debugger, self.debugger = self.debugger, None
         if debugger is not None:
-            if self.worker_runtime is not None:
-                self.worker_runtime.enqueue_debugger_close(debugger)
-            else:
+            def disconnect_debugger():
                 disconnect = getattr(debugger, "disconnect", None)
                 if callable(disconnect):
                     disconnect()
-                del debugger
+            owner = getattr(self.realm, "executor", None)
+            if owner is not None and not owner.is_owner_thread() and not owner.closed:
+                try:
+                    owner.call(disconnect_debugger, timeout=5)
+                except BaseException:
+                    pass
+            else:
+                disconnect_debugger()
+            del debugger
+        self._scope.close()
 
 
 class DevToolsServer:
@@ -283,14 +378,30 @@ class DevToolsServer:
             payload = json.loads(message)
         except (TypeError, ValueError):
             return
+        request_id = payload.get("id")
+        if request_id is not None and target.resolve_response(request_id, payload) is not None:
+            self._send(payload)
+            return
         matched = False
         for session_id, bound in list(self._sessions.items()):
             if bound is target:
                 matched = True
-                payload["sessionId"] = session_id
-                self._send(payload)
+                event = dict(payload)
+                event["sessionId"] = session_id
+                self._send(event)
         if not matched:
             self._send(payload)
+
+    def _command_failed(self, envelope, message):
+        with self._lock:
+            target = self.targets.get(envelope.target_id)
+        if target is not None:
+            target._pending.pop((envelope.session_id, envelope.request_id), None)
+        self._reply(
+            {"id": envelope.request_id},
+            error={"code": -32000, "message": message},
+            session_id=envelope.session_id,
+        )
 
     def register_page(self, page, kind="page", parent=None):
         with self._lock:
@@ -400,7 +511,15 @@ class DevToolsServer:
         if method.startswith("Runtime.") or method.startswith("Debugger."):
             inspector_request = dict(request)
             inspector_request.pop("sessionId", None)
-            target.send(json.dumps(inspector_request, separators=(",", ":")))
+            envelope = CommandEnvelope(
+                request_id=request.get("id"),
+                session_id=session_id,
+                target_id=target.target_id,
+            )
+            target.submit(
+                envelope,
+                json.dumps(inspector_request, separators=(",", ":")),
+            )
             return
         self._reply(request, error={"code": -32601, "message": "Method not found"}, session_id=session_id)
 
@@ -457,4 +576,4 @@ def start_devtools(context, page, *, host="127.0.0.1", port=0,
     return DevToolsHandle(server)
 
 
-__all__ = ["DevToolsHandle", "DevToolsTarget", "DevToolsServer", "start_devtools"]
+__all__ = ["CommandEnvelope", "DevToolsHandle", "DevToolsTarget", "DevToolsServer", "start_devtools"]

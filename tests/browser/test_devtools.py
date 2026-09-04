@@ -137,6 +137,39 @@ def test_start_paused_waits_before_first_script_and_resumes():
         browser.close()
 
 
+def test_run_if_waiting_command_releases_gate_before_socket_closes():
+    browser = Browser(stub_logging="off")
+    context = browser.new_context()
+    page = context.new_page()
+    handle = context.start_devtools(page, start_paused=True, startup_timeout=3)
+    completed = threading.Event()
+
+    def navigate():
+        page.set_content("<script>globalThis.answer = 42;</script>")
+        completed.set()
+
+    thread = threading.Thread(target=navigate)
+    thread.start()
+    try:
+        time.sleep(0.05)
+        assert not completed.is_set()
+
+        async def resume_and_wait():
+            async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
+                await ws.send(json.dumps({"id": 7, "method": "Runtime.runIfWaitingForDebugger"}))
+                response = json.loads(await asyncio.wait_for(ws.recv(), 2))
+                assert response["id"] == 7
+                assert "error" not in response
+
+        asyncio.run(resume_and_wait())
+        thread.join(2)
+        assert completed.is_set()
+        assert page.evaluate("answer") == 42
+    finally:
+        handle.close()
+        browser.close()
+
+
 def test_debugger_pause_loop_routes_resume():
     browser = Browser(stub_logging="off")
     context = browser.new_context()

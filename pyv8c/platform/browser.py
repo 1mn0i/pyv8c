@@ -28,6 +28,7 @@ from ..engine.universe import (
 from ..foundation.errors import InvalidStateError, NetworkError
 from ..foundation.environment import BrowserEnvironment
 from ..foundation.tasks import TaskQueue
+from ..foundation.lifecycle import LifecycleState, ResourceScope
 from .state import StateAlias, Ownership
 from .services import PageServices
 from .bootstrap import bootstrap_interfaces
@@ -67,7 +68,9 @@ class Page:
         # configuration used by other pages in the same browser.
         self.hook = context.browser.hook if hook is None else bool(hook)
         self.closed = False
-        self._v8_lock = threading.RLock()
+        self._resource_scope = ResourceScope()
+        self._close_lock = threading.Lock()
+        self._closing = False
         self.navigation = NavigationController(self)
         self.lifecycle = DocumentLifecycle(self)
         self.scripts = ScriptController(self)
@@ -94,6 +97,7 @@ class Page:
         self._devtools_target = None
         self.realm = PageRealm(self)
         self.services.bind_realm(self.realm)
+        self.realm.executor.attach_task_queue(self.tasks)
         self.context = self.realm.context
 
     @property
@@ -114,18 +118,45 @@ class Page:
     # directly.  Only user-facing forwards remain here.
 
     def set_content(self, html, url="about:blank"):
-        return self.navigation.set_content(html, url)
+        return self.realm.executor.call(self.navigation.set_content, html, url)
 
     def goto(self, url, *, timeout=30, wait_until="load"):
-        return self.navigation.goto(url, timeout=timeout, wait_until=wait_until)
+        return self.realm.executor.call(
+            self.navigation.goto, url, timeout=timeout, wait_until=wait_until,
+        )
 
     def evaluate(self, script, filename=None):
-        return self.scripts.evaluate(script, filename=filename)
+        return self.realm.executor.call(
+            self.scripts.evaluate, script, filename=filename,
+        )
 
     def run_until_idle(self, timeout=0):
-        self.tasks.run_until_idle(timeout)
+        self.realm.executor.call(self.tasks.run_until_idle, timeout)
 
     def close(self):
+        callbacks = self._resource_scope.begin_close()
+        if callbacks is None:
+            return
+        with self._close_lock:
+            if self.closed or self._closing:
+                return
+            self._closing = True
+        # A paused inspector loop blocks the realm owner. Wake it before
+        # synchronously asking that owner to perform the teardown.
+        if not self.realm.executor.is_owner_thread():
+            target = self._devtools_target
+            if target is not None:
+                stop = getattr(target, "_stop_pause_loop", None)
+                if callable(stop):
+                    stop()
+        try:
+            return self.realm.executor.call(self._close_owner)
+        finally:
+            self._resource_scope.close()
+            with self._close_lock:
+                self._closing = False
+
+    def _close_owner(self):
         if self.closed:
             return
         if self._has_navigation:

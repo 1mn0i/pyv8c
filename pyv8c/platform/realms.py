@@ -4,6 +4,7 @@ import pyv8
 import time
 
 from ..engine.registry import expose_interfaces
+from ..foundation.executor import RealmExecutor
 
 
 def _context_kwargs(session, context_type, hook, on_materialize=None):
@@ -77,10 +78,17 @@ class PageRealm:
 
     def __init__(self, page):
         self.page = page
+        self.executor = RealmExecutor(name="pyv8c-page")
         browser = page.context_owner.browser
         # Web objects constructed through this session receive PageServices,
         # never the platform Page itself.
         self.binding_session = browser.interface_universe.binding_session(page.services)
+        page.services.bind_realm(self)
+        self.executor.call(self._initialize)
+
+    def _initialize(self):
+        page = self.page
+        browser = page.context_owner.browser
         binding_started = time.perf_counter_ns()
         self.binding_session.class_configs(
             "Window", roots=self.binding_session.universe.eager_names("Window"),
@@ -119,9 +127,18 @@ class PageRealm:
         )
 
     def close(self):
-        close_context = getattr(self.context, "close", None)
-        if callable(close_context):
-            close_context()
+        def close_context():
+            context = self.context
+            self.context = None
+            close = getattr(context, "close", None)
+            if callable(close):
+                close()
+        if self.executor.closed:
+            return
+        try:
+            self.executor.call(close_context)
+        finally:
+            self.executor.close()
 
 
 __all__ = ["PageRealm", "WorkerRealm"]

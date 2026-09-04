@@ -1,8 +1,9 @@
 """Worker thread and message-loop implementation."""
 
-import queue
 import threading
 
+from ...foundation.executor import RealmExecutor
+from ...foundation.lifecycle import ResourceScope
 from ..fetch.events import MessageEvent
 from .clone import structured_clone
 
@@ -12,16 +13,15 @@ class WorkerRuntime:
         self.owner = owner
         self.services = owner._services
         self.script_url = str(script_url)
-        self._queue = queue.Queue()
-        self._debugger_queue = queue.Queue()
         self._stop = threading.Event()
+        self._lifecycle_scope = ResourceScope()
         self._ready = threading.Event()
-        self._thread = threading.Thread(target=self._run, name="pyv8c-worker", daemon=True)
+        self.executor = RealmExecutor(name="pyv8c-worker")
         self._realm = None
         self._context = None
         self._scope = None
         self.debug_target = None
-        self._thread.start()
+        self.executor.post(self._run)
         self._ready.wait(5)
 
     def _run(self):
@@ -41,62 +41,41 @@ class WorkerRuntime:
             if source:
                 self._context.exec_js(source, filename=self.script_url)
             self._ready.set()
-            while not self._stop.is_set():
-                try:
-                    debugger_message, target = self._debugger_queue.get_nowait()
-                except queue.Empty:
-                    pass
-                else:
-                    if debugger_message is None:
-                        target._create_debugger()
-                    elif debugger_message == "__close__":
-                        del target
-                    elif target.debugger is not None:
-                        target.debugger.send(debugger_message.encode("utf-8"))
-                try:
-                    value = self._queue.get(timeout=0.05)
-                except queue.Empty:
-                    continue
-                if value is None:
-                    break
-                try:
-                    self._scope.fn_dispatchEvent(MessageEvent("message", {
-                        "data": value, "origin": self.services.url,
-                    }))
-                except BaseException as exc:
-                    self._report_error(exc)
         except BaseException as exc:
             self._report_error(exc)
             self._ready.set()
-        finally:
-            devtools = self.services.devtools_server
-            if devtools is not None:
-                devtools.unregister(self)
-            if self._realm is not None:
-                self._realm.close()
-                self._realm = None
-            self._context = None
-            self._scope = None
-            self.services.post_task(self.owner._finish_lifecycle)
+            self._stop.set()
+            self._cleanup_owner()
+            self._lifecycle_scope.close()
+            self.executor.close()
+
+    def _dispatch_message(self, value):
+        if self._stop.is_set() or self._scope is None:
+            return
+        try:
+            self._scope.fn_dispatchEvent(MessageEvent("message", {
+                "data": value, "origin": self.services.url,
+            }))
+        except BaseException as exc:
+            self._report_error(exc)
+
+    def _cleanup_owner(self):
+        devtools = self.services.devtools_server
+        if devtools is not None:
+            devtools.unregister(self)
+        if self._realm is not None:
+            self._realm.close()
+            self._realm = None
+        self._context = None
+        self._scope = None
+        self.services.post_task(self.owner._finish_lifecycle)
 
     def _report_error(self, exc):
         self.services.post_task(lambda: self.owner._receive_error(exc))
 
     def post_from_parent(self, value):
         if not self._stop.is_set():
-            self._queue.put(structured_clone(value))
-
-    def enqueue_debugger(self, message, target):
-        if not self._stop.is_set():
-            self._debugger_queue.put((message, target))
-
-    def enqueue_debugger_init(self, target):
-        if not self._stop.is_set():
-            self._debugger_queue.put((None, target))
-
-    def enqueue_debugger_close(self, debugger):
-        if not self._stop.is_set():
-            self._debugger_queue.put(("__close__", debugger))
+            self.executor.post(self._dispatch_message, structured_clone(value))
 
     def post_to_parent(self, value):
         try:
@@ -107,10 +86,22 @@ class WorkerRuntime:
         self.services.post_task(lambda: self.owner._receive_message(value))
 
     def stop(self):
+        if self._lifecycle_scope.begin_close() is None:
+            return
         self._stop.set()
-        self._queue.put(None)
-        if threading.current_thread() is not self._thread:
-            self._thread.join(timeout=5)
+        target = self.debug_target
+        if target is not None:
+            release = getattr(target, "_release_startup", None)
+            if callable(release):
+                release()
+            wake_pause = getattr(target, "_stop_pause_loop", None)
+            if callable(wake_pause):
+                wake_pause()
+        try:
+            self.executor.call(self._cleanup_owner, timeout=5)
+        finally:
+            self.executor.close()
+            self._lifecycle_scope.close()
 
 
 __all__ = ["WorkerRuntime"]

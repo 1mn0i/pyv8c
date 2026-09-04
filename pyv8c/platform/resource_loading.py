@@ -1,6 +1,7 @@
 """Resource loading and network responses for a single Page."""
 
 import itertools
+import threading
 from urllib.parse import urljoin
 
 import pyv8
@@ -9,6 +10,35 @@ from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
 from ..web.network.backend import NetworkRequest, same_origin
+
+
+class RequestHandle:
+    """Cancellation state for one page-owned asynchronous resource."""
+
+    __slots__ = ("_cancelled", "_done", "_transport", "_scope_callback")
+
+    def __init__(self):
+        self._cancelled = threading.Event()
+        self._done = threading.Event()
+        self._transport = None
+        self._scope_callback = None
+
+    @property
+    def cancelled(self):
+        return self._cancelled.is_set()
+
+    @property
+    def done(self):
+        return self._done.is_set()
+
+    def cancel(self):
+        self._cancelled.set()
+        transport = self._transport
+        if transport is not None:
+            transport.cancel()
+
+    def finish(self):
+        self._done.set()
 
 
 class ResourceController:
@@ -20,6 +50,8 @@ class ResourceController:
         self.counter = itertools.count(1)
 
     def reset(self):
+        for _generation, _node, _kind, handle in self.resources.values():
+            handle.cancel()
         self.resources.clear()
 
     # -- synchronous loading -------------------------------------------
@@ -123,9 +155,17 @@ class ResourceController:
 
     def load_resource_async(self, url, request, callback):
         page = self.page
+        handle = RequestHandle()
+
+        def deliver(response, error):
+            if handle.cancelled:
+                return
+            handle.finish()
+            callback(response, error)
+
         if page.closed or page.context_owner.closed:
-            page.tasks.post(lambda: callback(None, InvalidStateError("Page is closed")))
-            return
+            page.tasks.post(lambda: deliver(None, InvalidStateError("Page is closed")))
+            return handle
         target = urljoin(page.url, str(url))
         request = self._request_with_environment_headers(request, page)
         if target.startswith("blob:"):
@@ -138,8 +178,8 @@ class ResourceController:
                 ), None
             except BaseException as exc:
                 response, error = None, exc
-            page.tasks.post(lambda: callback(response, error))
-            return
+            page.tasks.post(lambda: deliver(response, error))
+            return handle
         req = self._network_request(target, request, page)
         if page.resource_loader:
             try:
@@ -152,16 +192,18 @@ class ResourceController:
             except BaseException as exc:
                 response, error = None, exc
             # Fixture loaders use the same asynchronous boundary as Cronet.
-            page.tasks.post(lambda: callback(response, error))
-            return
+            page.tasks.post(lambda: deliver(response, error))
+            return handle
         if page.network_backend:
-            page.network_backend.request_async(
-                page.services, req, lambda raw, error: self.finish_async_response(raw, error, request, callback)
+            handle._transport = page.network_backend.request_async(
+                page.services, req,
+                lambda raw, error: self.finish_async_response(raw, error, request, deliver),
             )
-            return
+            return handle
         page.tasks.post(
-            lambda: callback(None, NetworkError("Network access requires an explicit resource_loader or real_network=True"))
+            lambda: deliver(None, NetworkError("Network access requires an explicit resource_loader or real_network=True"))
         )
+        return handle
 
     def finish_async_response(self, raw, error, request, callback):
         if error:
@@ -212,23 +254,30 @@ class ResourceController:
         page = self.page
         token = next(self.counter)
         generation = page.navigation.generation
-        self.resources[token] = (generation, node, kind)
+        handle = RequestHandle()
+        self.resources[token] = (generation, node, kind, handle)
 
         def done(response, error):
-            page.tasks.post(lambda: self.complete_document_resource(token, generation, response, error))
+            handle.finish()
+            page.services._untrack_resource(handle)
+            if not handle.cancelled:
+                page.tasks.post(lambda: self.complete_document_resource(token, generation, response, error, handle))
 
-        self.load_resource_async(url, request, done)
+        handle._transport = self.load_resource_async(url, request, done)
+        page.services._track_resource(handle)
+        return handle
 
-    def complete_document_resource(self, token, generation, response, error):
+    def complete_document_resource(self, token, generation, response, error, handle=None):
         page = self.page
         item = self.resources.get(token)
-        if item is None or generation != page.navigation.generation or page.closed:
+        if item is None or generation != page.navigation.generation or page.closed or (handle is not None and handle.cancelled):
             return
-        _generation, node, kind = item
+        _generation, node, kind, _handle = item
         if kind == "iframe" and not error:
             self.load_iframe_response(node, response, lambda ok: self.finish_iframe_resource(token, generation, node, ok))
             return
         self.resources.pop(token, None)
+        _handle.finish()
         if kind == "script" and not getattr(node, "_resource_async", False):
             node._resource_done, node._resource_response, node._resource_error = True, response, error
             if getattr(node, "_script_defer", False):
@@ -254,7 +303,9 @@ class ResourceController:
         page = self.page
         if generation != page.navigation.generation or page.closed:
             return
-        self.resources.pop(token, None)
+        item = self.resources.pop(token, None)
+        if item is not None:
+            item[3].finish()
         page.lifecycle.dispatch_page_event("load" if ok else "error", node, {"bubbles": False})
         page.lifecycle.maybe_fire_document_load()
 
@@ -265,7 +316,7 @@ class ResourceController:
         target = iframe.get_src() or "about:blank"
         child = Page(page.context_owner, url=target, environment=page.environment)
         iframe._child_services = child.services
-        page._owned.track("frames", child)
+        page.services._track_frame(child)
         devtools = page.context_owner._devtools
         if devtools is not None:
             child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
@@ -285,7 +336,7 @@ class ResourceController:
 
         child = Page(page.context_owner, url=target, environment=page.environment)
         iframe._child_services = child.services
-        page._owned.track("frames", child)
+        page.services._track_frame(child)
         devtools = page.context_owner._devtools
         if devtools is not None:
             child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)

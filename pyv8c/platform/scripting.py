@@ -99,8 +99,7 @@ class ScriptController:
         target = getattr(self.page, "_devtools_target", None)
         if target is not None:
             target.wait_for_startup()
-        with self.page._v8_lock:
-            return self.page.context.exec_js(str(script), filename=filename)
+        return self.page.context.exec_js(str(script), filename=filename)
 
     def execute_script(self, node, source, filename=None):
         try:

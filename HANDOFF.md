@@ -402,3 +402,10 @@ Worker 的 V8 Context。
   引用；platform 层无残留 facade 调用。
 
 本轮重构尚未提交 Git；`platform/services.py` 为新增文件。
+
+## 2026-09-03 DevTools 事务与资源作用域改造
+
+- CDP Runtime/Debugger 请求统一包装为 `CommandEnvelope`，携带 request/session/target 和 `Future`。Inspector 回复只完成匹配目标的事务；Target 关闭会完成挂起事务并返回 CDP 错误。
+- `Runtime.runIfWaitingForDebugger` 会在 Realm owner 线程执行，可在首脚本闸门开启后保持连接并继续页面。
+- Page 的 `ResourceScope` 统一登记异步网络请求、iframe、Worker 和 WebSocket；请求完成后移除登记，Page/Context 关闭时统一取消。
+- 全量回归已验证 `202 passed`。
