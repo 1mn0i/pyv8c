@@ -18,15 +18,15 @@ class DOMParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
         if tag in self.auto_close and isinstance(self.current, Element) and self.current.localName in self.auto_close[tag]: self.stack.pop()
-        cls = self.services.element_class(tag)
+        cls = self.services.document_services.element_class(tag)
         attributes = {k.lower(): (v or "") for k, v in attrs}
         node = cls(tag, services=self.services, attributes=attributes); node._raw_text = ""
         for name, value in attrs:
             if str(name).lower().startswith("on"):
-                self.services.install_inline_handler(node, str(name).lower(), value or "")
+                self.services.document_services.install_inline_handler(node, str(name).lower(), value or "")
         self.target.append_child(node)
         if tag not in ("script", "style", "textarea", "title"):
-            self.services._discover_element_resource(node)
+            self.services.resource_services.discover_element_resource(node)
         if tag not in self.void: self.stack.append(node)
     def handle_startendtag(self, tag, attrs): self.handle_starttag(tag, attrs); self.handle_endtag(tag)
     def handle_endtag(self, tag):
@@ -35,7 +35,7 @@ class DOMParser(HTMLParser):
             if isinstance(self.stack[i], Element) and self.stack[i].localName == tag:
                 node = self.stack[i]
                 if tag == "script":
-                    self.services._parser_script_complete(node, getattr(node, "_raw_text", ""))
+                    self.services.document_services.parser_script_complete(node, getattr(node, "_raw_text", ""))
                     if getattr(node, "_raw_text", ""):
                         node.append_child(Text(node._raw_text, services=self.services))
                 elif tag in self.raw_text_tags and getattr(node, "_raw_text", ""):
@@ -127,13 +127,13 @@ class IncrementalDOMParser:
         tag, attrs = helper.tag, helper.attrs
         if not tag: return
         if tag in self.auto_close and isinstance(self.current, Element) and self.current.localName in self.auto_close[tag]: self.stack.pop()
-        node = self.services.element_class(tag)(tag, services=self.services, attributes={k.lower(): (v or "") for k, v in attrs})
+        node = self.services.document_services.element_class(tag)(tag, services=self.services, attributes={k.lower(): (v or "") for k, v in attrs})
         node._raw_text = ""
         for name, value in attrs:
-            if str(name).lower().startswith("on"): self.services.install_inline_handler(node, str(name).lower(), value or "")
+            if str(name).lower().startswith("on"): self.services.document_services.install_inline_handler(node, str(name).lower(), value or "")
         self.target.append_child(node)
-        if tag == "script": self.services._parser_script_start(node)
-        elif tag not in self.raw_text_tags: self.services._discover_element_resource(node)
+        if tag == "script": self.services.document_services.parser_script_start(node)
+        elif tag not in self.raw_text_tags: self.services.resource_services.discover_element_resource(node)
         if tag not in self.void and not raw.rstrip().endswith("/>"): self.stack.append(node)
 
     def _end(self, tag):
@@ -143,7 +143,7 @@ class IncrementalDOMParser:
             if isinstance(node, Element) and node.localName == tag:
                 if tag == "script":
                     source = getattr(node, "_raw_text", "")
-                    self.services._parser_script_complete(node, source)
+                    self.services.document_services.parser_script_complete(node, source)
                     if source: node.append_child(Text(source, services=self.services))
                 elif tag in self.raw_text_tags:
                     source = getattr(node, "_raw_text", "")
@@ -162,7 +162,7 @@ class IncrementalDOMParser:
             elif kind == "decl":
                 from .model import DocumentType
                 parts = value.split(None, 1); self.target.append_child(DocumentType(name=parts[1].strip() if len(parts) > 1 else "html", services=self.services))
-            if self.services._parser_is_blocked(): return False
+            if self.services.document_services.parser_is_blocked(): return False
         self.done = True; return True
 
 

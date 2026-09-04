@@ -34,6 +34,19 @@ class V8EvalError(Exception):
     __v8_error__ = True
 
 
+class RealmBusyError(RuntimeError):
+    """The realm owner thread did not pick up a command in time.
+
+    Raised instead of blocking forever when a realm is wedged (paused
+    inspector, runaway script, blocked teardown) so callers and test runs
+    fail with a diagnosable error rather than hanging.
+    """
+
+
+class TaskAbortedError(RuntimeError):
+    """A queued task was dropped because its realm closed or cancelled it."""
+
+
 class LegacyPropertyError(V8TypeError):
     """A legacy interceptor failure that is silent outside strict mode."""
 
@@ -181,7 +194,7 @@ def as_js_error(exc, *, default="Error"):
 __all__ = [
     "V8Error", "V8TypeError", "V8RangeError", "V8ReferenceError", "V8SyntaxError",
     "V8URIError", "V8EvalError", "DOMException", "DOMError", "dom_exception",
-    "LegacyPropertyError",
+    "LegacyPropertyError", "RealmBusyError", "TaskAbortedError",
     "IndexSizeError", "InvalidCharacterError", "HierarchyRequestError", "NotFoundError",
     "NotSupportedError", "InvalidStateError", "InvalidAccessError", "SecurityError",
     "NetworkError", "AbortError", "TimeoutError", "QuotaExceededError", "DataCloneError",

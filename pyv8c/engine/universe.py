@@ -11,6 +11,8 @@ realm-local :class:`BindingSession`).
 
 from __future__ import annotations
 
+import threading
+
 from .baseline import (
     DEFAULT_BASELINE_PATH,
     BaselineRepository,
@@ -54,6 +56,11 @@ class InterfaceUniverse:
         self.strict_validation = bool(strict_validation)
         self.lazy_interfaces = bool(lazy_interfaces)
         # Realm-independent caches. Configs are owned by each BindingSession.
+        # One re-entrant lock guards every read-modify-write cache sequence so
+        # concurrent materialisation across realms can never observe a torn
+        # cache (two distinct class objects for one interface name, a plan
+        # inserted twice, or an exposure table computed twice).
+        self._lock = threading.RLock()
         self._classes: dict[str, type] = {}
         self._plans: dict[tuple[str, str, str], BindingPlan] = {}
         self._catalog = InterfaceCatalog(baseline)
@@ -81,9 +88,17 @@ class InterfaceUniverse:
 
     def interface_names(self, context_type="Window"):
         """Return the stable global name table without materializing classes."""
-        if context_type not in self._exposure_names:
-            self._exposure_names[context_type] = tuple(sorted(self.exposed_names(context_type)))
-        return self._exposure_names[context_type]
+        with self._lock:
+            cached = self._exposure_names.get(context_type)
+        if cached is not None:
+            return cached
+        names = tuple(sorted(self.exposed_names(context_type)))
+        with self._lock:
+            cached = self._exposure_names.get(context_type)
+            if cached is not None:
+                return cached
+            self._exposure_names[context_type] = names
+            return names
 
     def eager_names(self, context_type="Window"):
         exposed = set(self.interface_names(context_type))
@@ -115,8 +130,10 @@ class InterfaceUniverse:
 
     def binding_plan(self, interface_name, public_name, kind="operation"):
         key = (interface_name, public_name, kind)
-        if key in self._plans:
-            return self._plans[key]
+        with self._lock:
+            plan = self._plans.get(key)
+            if plan is not None:
+                return plan
         if kind == "constructor":
             signature = (self.spec(interface_name).get("constructor") or {}).get("signature")
         else:
@@ -126,28 +143,41 @@ class InterfaceUniverse:
             _owner, _location_name, member = found
             signature = member.get("setter_signature") if kind == "attribute" else member.get("signature")
         plan = compile_binding(interface_name, public_name, kind, signature)
-        self._plans[key] = plan
-        return plan
+        with self._lock:
+            existing = self._plans.get(key)
+            if existing is not None:
+                return existing
+            self._plans[key] = plan
+            return plan
 
     def class_for(self, name):
-        if name in self._classes:
-            return self._classes[name]
-        spec = self.spec(name)
-        parent_name = spec.get("parent")
-        parent = self.class_for(parent_name) if parent_name else object
-        implementation = self.registry.implementations.get(name)
-        if implementation is None:
-            cls = type(name, (parent,), {
-                "__module__": "pyv8c.engine.generated",
-                "__init__": self._stubs.constructor(name),
-                "__idl_name__": name,
-                "__idl_parent__": parent_name,
-                "__v8_idl_stub__": True,
-            })
-        else:
-            cls = implementation
-        self._classes[name] = cls
-        return cls
+        """Return the one canonical class object per interface name.
+
+        The lock makes class creation idempotent under concurrent access from
+        several realms: without it, two pages materialising the same lazy
+        interface could build two distinct classes and break cross-realm
+        ``instanceof`` because the native template cache keys on the class.
+        """
+        with self._lock:
+            cls = self._classes.get(name)
+            if cls is not None:
+                return cls
+            spec = self.spec(name)
+            parent_name = spec.get("parent")
+            parent = self.class_for(parent_name) if parent_name else object
+            implementation = self.registry.implementations.get(name)
+            if implementation is None:
+                cls = type(name, (parent,), {
+                    "__module__": "pyv8c.engine.generated",
+                    "__init__": self._stubs.constructor(name),
+                    "__idl_name__": name,
+                    "__idl_parent__": parent_name,
+                    "__v8_idl_stub__": True,
+                })
+            else:
+                cls = implementation
+            self._classes[name] = cls
+            return cls
 
     def class_config_for(self, name, cache=None, realm=None):
         """Assemble the config of one interface.

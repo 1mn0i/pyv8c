@@ -30,7 +30,7 @@ class WebSocket(EventTarget):
     def __init__(self, url="", protocols=None, _realm=None, **kw):
         services = _realm
         super().__init__(services=services, **kw)
-        if not services or not services.network_available:
+        if not services or not services.context_services.network_available:
             raise NetworkUnavailableError("WebSocket requires real_network=True")
         self._services, self._url = services, str(url)
         self._protocol = self._extensions = ""
@@ -38,8 +38,8 @@ class WebSocket(EventTarget):
         self._ws, self._protocols = None, protocols
         callbacks = {"open": self._on_open, "message": self._on_message,
                      "error": self._on_error, "close": self._on_close}
-        self._ws = services.websocket(self._url, protocols, callbacks)
-        services._track_websocket(self._ws)
+        self._ws = services.context_services.websocket(self._url, protocols, callbacks)
+        services.context_services.track_websocket(self._ws)
 
     def get_url(self): return self._url
     def get_protocol(self): return self._protocol
@@ -89,7 +89,8 @@ class WebSocket(EventTarget):
         else:
             value = bytes_from_value(data) or b""
         self.fn_dispatchEvent(MessageEvent("message", {
-            "data": value, "origin": self._services.url, "source": self._services.window,
+            "data": value, "origin": self._services.realm_services.url,
+            "source": self._services.document_services.window,
         }))
 
     def _on_error(self, ws, error, net_error=None):
@@ -100,7 +101,7 @@ class WebSocket(EventTarget):
         self.fn_dispatchEvent(CloseEvent("close", {
             "code": code, "reason": reason, "wasClean": was_clean,
         }))
-        self._services._discard_websocket(ws)
+        self._services.context_services.discard_websocket(ws)
 
 
 __all__ = ["WebSocket"]

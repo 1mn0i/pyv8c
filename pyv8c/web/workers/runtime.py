@@ -15,24 +15,32 @@ class WorkerRuntime:
         self.script_url = str(script_url)
         self._stop = threading.Event()
         self._lifecycle_scope = ResourceScope()
-        self._ready = threading.Event()
         self.executor = RealmExecutor(name="pyv8c-worker")
         self._realm = None
         self._context = None
         self._scope = None
+        self._devtools = None
         self.debug_target = None
+        # Start asynchronously and return immediately.  ``new Worker()`` runs
+        # on the page owner thread while it is inside the V8 constructor
+        # callback; blocking there until the worker realm is fully initialised
+        # lets that realm contend for the same V8 lock / GIL the owner still
+        # holds, which deadlocks as soon as a second realm is also live.
+        # Worker messages are still ordered correctly: ``_run`` was posted
+        # first, so every later ``_dispatch_message`` runs after the scope
+        # exists (or is dropped while ``_stop`` is set after a failed start).
         self.executor.post(self._run)
-        self._ready.wait(5)
 
     def _run(self):
         try:
-            config = self.services.worker_configuration()
-            source = self.services.resolve_worker_source(self.script_url)
+            config = self.services.worker_services.worker_configuration()
+            source = self.services.resource_services.resolve_worker_source(self.script_url)
             from .api import DedicatedWorkerGlobalScope
             self._scope = DedicatedWorkerGlobalScope(runtime=self, environment=config.environment)
-            self._realm = self.services.create_worker_realm(config)
+            self._realm = self.services.worker_services.create_worker_realm(config)
             self._context = self._realm.initialize(self._scope)
             devtools = config.devtools
+            self._devtools = devtools
             if devtools is not None:
                 devtools.register_worker(self)
                 if self.debug_target is not None:
@@ -40,10 +48,8 @@ class WorkerRuntime:
                     self.debug_target.wait_for_startup()
             if source:
                 self._context.exec_js(source, filename=self.script_url)
-            self._ready.set()
         except BaseException as exc:
             self._report_error(exc)
-            self._ready.set()
             self._stop.set()
             self._cleanup_owner()
             self._lifecycle_scope.close()
@@ -54,13 +60,13 @@ class WorkerRuntime:
             return
         try:
             self._scope.fn_dispatchEvent(MessageEvent("message", {
-                "data": value, "origin": self.services.url,
+                "data": value, "origin": self.services.realm_services.url,
             }))
         except BaseException as exc:
             self._report_error(exc)
 
     def _cleanup_owner(self):
-        devtools = self.services.devtools_server
+        devtools = self._devtools
         if devtools is not None:
             devtools.unregister(self)
         if self._realm is not None:
@@ -68,10 +74,10 @@ class WorkerRuntime:
             self._realm = None
         self._context = None
         self._scope = None
-        self.services.post_task(self.owner._finish_lifecycle)
+        self.services.task_services.post_task(self.owner._finish_lifecycle)
 
     def _report_error(self, exc):
-        self.services.post_task(lambda: self.owner._receive_error(exc))
+        self.services.task_services.post_task(lambda: self.owner._receive_error(exc))
 
     def post_from_parent(self, value):
         if not self._stop.is_set():
@@ -83,7 +89,7 @@ class WorkerRuntime:
         except BaseException as exc:
             self._report_error(exc)
             return
-        self.services.post_task(lambda: self.owner._receive_message(value))
+        self.services.task_services.post_task(lambda: self.owner._receive_message(value))
 
     def stop(self):
         if self._lifecycle_scope.begin_close() is None:
@@ -98,7 +104,12 @@ class WorkerRuntime:
             if callable(wake_pause):
                 wake_pause()
         try:
-            self.executor.call(self._cleanup_owner, timeout=5)
+            try:
+                self.executor.call(self._cleanup_owner, timeout=5)
+            except RuntimeError:
+                # The worker thread failed to start and already cleaned up and
+                # closed its executor before this terminate arrived.
+                pass
         finally:
             self.executor.close()
             self._lifecycle_scope.close()

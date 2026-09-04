@@ -269,17 +269,17 @@ class Document(Node):
         html = self.get_documentElement()
         if html is not pyv8.Null: return html.fn_querySelector("head")
         return next((x for x in self._walk() if isinstance(x, Element) and x.localName == "head"), pyv8.Null)
-    def get_defaultView(self): return self._services.window if self._services else pyv8.Null
+    def get_defaultView(self): return self._services.document_services.window if self._services else pyv8.Null
     def get_readyState(self): return self.ready_state
     def get_hidden(self): return self.hidden
     def get_visibilityState(self): return "hidden" if self.hidden else "visible"
     def get_cookie(self):
         services = self._services
-        context = getattr(services, "cookie_jar", None)
+        context = getattr(getattr(services, "context_services", None), "cookie_jar", None)
         return context.document_for(self.url) if context is not None else ""
     def set_cookie(self, value):
         services = self._services
-        context = getattr(services, "cookie_jar", None)
+        context = getattr(getattr(services, "context_services", None), "cookie_jar", None)
         if context is not None:
             context.set_from_document(self.url, value)
     def get_all(self):
@@ -299,10 +299,10 @@ class Document(Node):
         template has to exist even though the interface is not part of the
         eager startup set.
         """
-        services = getattr(self, "_services", None)
-        if services is None or services.interface_materialized(name):
+        realm = getattr(getattr(self, "_services", None), "realm_services", None)
+        if realm is None or realm.interface_materialized(name):
             return
-        services.materialize_interface(name)
+        realm.materialize_interface(name)
     def fn_createElement(self, name): return self._new_element(str(name))
     def fn_createTextNode(self, value): return Text(str(value), services=self._services)
     def fn_createComment(self, value): return Comment(str(value), services=self._services)

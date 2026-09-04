@@ -2,8 +2,13 @@ from pyv8c import Browser, Response
 
 
 def test_document_lifecycle_and_resource_events_are_queued():
+    paused = []
+
     def loader(url, request):
         if url.endswith("/ext.js"):
+            # Sampled while the blocking script is outstanding: it has not
+            # executed yet and the document is still in its loading phase.
+            paused.append(page.evaluate("[document.readyState, typeof window.__external]"))
             return Response("window.__order.push('external'); window.__external = true", {"url": url, "content-type": "text/javascript"})
         return Response("", {"url": url})
 
@@ -23,7 +28,7 @@ def test_document_lifecycle_and_resource_events_are_queued():
         </head><body><img src='/image.png'><script>document.querySelector('img').addEventListener('load', () => __events.push('image-load'));</script></body></html>
     """, url="http://example.test/")
 
-    assert page.evaluate("document.readyState") == "loading"
+    assert paused == [["loading", "undefined"]]
     page.run_until_idle()
     events = page.evaluate("__events")
     assert page.evaluate("[document.readyState, window.__external, window.__order]") == ["complete", True, ["first", "external", "after-external"]]

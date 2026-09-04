@@ -58,8 +58,11 @@ def test_real_network_fetch_is_delivered_on_page_queue(monkeypatch):
     browser = Browser(real_network=True, cycronet_options={"verify": True})
     page = browser.new_context().new_page()
     page.set_content("<body></body>", url="http://example.test/")
-    page.evaluate("fetch('/data').then(r => r.text()).then(v => window.__result = v)")
-    assert page.evaluate("typeof window.__result") == "undefined"
+    # The response is delivered on the page task queue, never inline: even a
+    # fixture-short round trip resolves after the current script has ended.
+    assert page.evaluate(
+        "fetch('/data').then(r => r.text()).then(v => window.__result = v), typeof window.__result"
+    ) == "undefined"
     page.run_until_idle(timeout=2)
     assert page.evaluate("window.__result") == "cronet-ok"
     browser.close()

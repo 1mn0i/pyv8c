@@ -49,10 +49,10 @@ class Element(Node):
     def get_innerHTML(self): return "".join(c.outer_html() for c in self._children)
     def set_innerHTML(self, value):
         self._replace_children(())
-        if self._services: self._services.document._parse_fragment(str(value), self)
+        if self._services: self._services.document_services.document._parse_fragment(str(value), self)
     def get_outerHTML(self): return self.outer_html()
     def set_outerHTML(self, value):
-        if self.parentNode: self.parentNode.fn_replaceChild(self._services.document._parse_one(str(value)), self)
+        if self.parentNode: self.parentNode.fn_replaceChild(self._services.document_services.document._parse_one(str(value)), self)
     def get_children(self): return HTMLCollection(owner=self, getter=lambda: [c for c in self._children if isinstance(c, Element)])
     def get_classList(self):
         value = getattr(self, "_class_list", None)
@@ -70,9 +70,9 @@ class Element(Node):
         self.attributes[name.lower()] = str(value)
     def fn_removeAttribute(self, name): self.attributes.pop(str(name).lower(), None)
     def fn_hasAttribute(self, name): return str(name).lower() in self.attributes
-    def fn_querySelector(self, selector): return self._services.document.query_selector(selector, self) if self._services else pyv8.Null
-    def fn_querySelectorAll(self, selector): return self._services.document.query_selector_all(selector, self) if self._services else []
-    def fn_matches(self, selector): return self._services.document.matches(self, selector) if self._services else False
+    def fn_querySelector(self, selector): return self._services.document_services.document.query_selector(selector, self) if self._services else pyv8.Null
+    def fn_querySelectorAll(self, selector): return self._services.document_services.document.query_selector_all(selector, self) if self._services else []
+    def fn_matches(self, selector): return self._services.document_services.document.matches(self, selector) if self._services else False
     def fn_closest(self, selector):
         n = self
         while isinstance(n, Element):
@@ -112,7 +112,7 @@ class HTMLImageElement(HTMLElement):
     def get_src(self): return self.attributes.get("src", "")
     def set_src(self, value):
         self.attributes["src"] = str(value)
-        if self._services: self._services._discover_element_resource(self)
+        if self._services: self._services.resource_services.discover_element_resource(self)
     def get_alt(self): return self.attributes.get("alt", "")
     def set_alt(self, value): self.attributes["alt"] = str(value)
 
@@ -203,9 +203,11 @@ class HTMLIFrameElement(HTMLElement):
     def get_src(self): return self.attributes.get("src", "")
     def set_src(self, value):
         self.attributes["src"] = str(value)
-        if self._services and hasattr(self._services, "load_iframe"): self._services.load_iframe(self)
-    def get_contentDocument(self): return self._child_services.document if self._child_services else pyv8.Null
-    def get_contentWindow(self): return self._child_services.window if self._child_services else pyv8.Null
+        if self._services:
+            resource_services = self._services.resource_services
+            if resource_services is not None: resource_services.load_iframe(self)
+    def get_contentDocument(self): return self._child_services.document_services.document if self._child_services else pyv8.Null
+    def get_contentWindow(self): return self._child_services.document_services.window if self._child_services else pyv8.Null
 
 
 HTML_CLASSES = {

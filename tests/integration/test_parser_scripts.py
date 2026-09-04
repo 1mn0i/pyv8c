@@ -3,16 +3,24 @@ from pyv8c import Browser, Response
 
 def test_parser_blocking_external_script_pauses_and_resumes_parser():
     calls = []
+    paused = []
 
     def loader(url, request):
         calls.append(url)
+        # Sampled while the request is outstanding: the parser must still be
+        # blocked, so the element after <script> is not in the document yet.
+        # Checking here (instead of after set_content returns) keeps the
+        # assertion independent of how far the event loop has progressed.
+        paused.append(page.evaluate(
+            "[document.querySelector('#after') === null, document.readyState]"
+        ))
         return Response("window.__order.push('external:' + document.querySelector('#before').id);", {"url": url, "content-type": "text/javascript"})
 
     browser = Browser(resource_loader=loader)
     page = browser.new_context().new_page()
     page.evaluate("window.__order=[]")
     page.set_content("<body><div id='before'></div><script src='/a.js'></script><div id='after'></div></body>", url="http://example.test/")
-    assert page.evaluate("[document.querySelector('#before') !== null, document.querySelector('#after') === null, document.readyState]") == [True, True, "loading"]
+    assert paused == [[True, "loading"]]
     page.run_until_idle()
     assert page.evaluate("[document.querySelector('#after') !== null, __order, document.readyState]") == [True, ["external:before"], "complete"]
     assert calls == ["http://example.test/a.js"]

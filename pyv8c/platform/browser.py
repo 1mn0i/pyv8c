@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 # Kept as a module attribute for diagnostics and existing Context-construction
 # instrumentation; PageRealm uses the same native module object.
 import pyv8
+from loguru import logger
 
 from ..web.bom.api import Window
 from ..web.dom.model import Document
@@ -37,6 +38,25 @@ from .lifecycle import DocumentLifecycle
 from .scripting import ScriptController
 from .resource_loading import ResourceController
 from .realms import PageRealm
+
+
+class _TaskHostAdapter:
+    """Minimal host surface handed to the page's TaskQueue.
+
+    ``TaskQueue`` (foundation) may only ask its host the two TaskHost
+    questions.  Holding a ``Page`` there would let foundation reach the
+    whole platform object, so the queue receives this adapter instead: its
+    only members are the protocol ones.
+    """
+
+    def __init__(self, page):
+        self._page = page
+
+    def is_closed(self):
+        return self._page.closed
+
+    def parser_blocked(self):
+        return self._page.navigation.parser_is_blocked()
 
 
 class _ContextBootstrapProxy:
@@ -75,13 +95,20 @@ class Page:
         self.lifecycle = DocumentLifecycle(self)
         self.scripts = ScriptController(self)
         self.resources = ResourceController(self)
-        self.tasks = TaskQueue(self)
+        # The task queue lives in foundation and may only ask its host the two
+        # TaskHost questions; hand it a narrow adapter instead of this Page.
+        self.tasks = TaskQueue(_TaskHostAdapter(self))
+        # Task exceptions are currently invisible: surface them the way a
+        # browser does, as an ErrorEvent on the realm's window.
+        self._reporting_task_error = False
+        self.tasks.set_error_sink(self._report_task_error)
         self._owned = Ownership()
         # Web-facing objects never see this Page; they receive the narrow
         # PageServices surface assembled from the controllers above.
         self.services = PageServices(
             context, self.environment, self.hook, self._owned,
             self.navigation, self.scripts, self.resources, self.tasks,
+            self._resource_scope,
         )
         self.document = Document(services=self.services, url=url, ready_state="complete")
         self.resource_loader = context.browser.resource_loader
@@ -99,6 +126,22 @@ class Page:
         self.services.bind_realm(self.realm)
         self.realm.executor.attach_task_queue(self.tasks)
         self.context = self.realm.context
+
+    # -- task error reporting --------------------------------------------
+    # TaskQueue routes task exceptions here through its error sink so a faulty
+    # timer or callback surfaces on the window instead of vanishing.
+
+    def _report_task_error(self, error):
+        """Mirror a task exception onto the realm as an ``error`` event."""
+        if self.closed or self._reporting_task_error:
+            return
+        self._reporting_task_error = True
+        try:
+            self.lifecycle.dispatch_script_error(None, error)
+        except BaseException:
+            logger.debug("failed to report task error", exc_info=True)
+        finally:
+            self._reporting_task_error = False
 
     @property
     def binding_session(self):
@@ -141,14 +184,15 @@ class Page:
             if self.closed or self._closing:
                 return
             self._closing = True
-        # A paused inspector loop blocks the realm owner. Wake it before
-        # synchronously asking that owner to perform the teardown.
+        # A paused inspector loop or a start-paused gate blocks the realm
+        # owner. Wake it before synchronously asking that owner to perform
+        # the teardown.
         if not self.realm.executor.is_owner_thread():
             target = self._devtools_target
             if target is not None:
-                stop = getattr(target, "_stop_pause_loop", None)
-                if callable(stop):
-                    stop()
+                wake = getattr(target, "wake_waiting_owner", None)
+                if callable(wake):
+                    wake()
         try:
             return self.realm.executor.call(self._close_owner)
         finally:

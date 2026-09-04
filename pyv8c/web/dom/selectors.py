@@ -181,5 +181,5 @@ def matches(node, selector): return any(_matches_ast(node, group) for group in p
 def select(root, selector):
     ast = parse(selector); nodes = []
     if isinstance(root, Element) and any(_matches_ast(root, group) for group in ast): nodes.append(root)
-    nodes.extend(n for n in root._services.document._walk(root) if isinstance(n, Element) and any(_matches_ast(n, group) for group in ast))
+    nodes.extend(n for n in root._services.document_services.document._walk(root) if isinstance(n, Element) and any(_matches_ast(n, group) for group in ast))
     return nodes

@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 import pyv8
 
 from ..foundation.errors import InvalidStateError, as_js_error
+from ..foundation.tasks import TaskSource
 
 
 class ScriptController:
@@ -216,7 +217,10 @@ class ScriptController:
                 page.lifecycle.dispatch_page_event("load", node, {"bubbles": False})
             self.dom_blocking_scripts = max(0, self.dom_blocking_scripts - 1)
         if not self.dom_blocking_scripts and page.navigation.parser is not None and not page.navigation.parser.done:
-            page.tasks.post(lambda generation=page.navigation.generation: page.navigation.resume_parser(generation))
+            page.tasks.post(
+                lambda generation=page.navigation.generation: page.navigation.resume_parser(generation),
+                TaskSource.PARSER,
+            )
         if page.navigation.parser_done:
             self.run_deferred_scripts()
 

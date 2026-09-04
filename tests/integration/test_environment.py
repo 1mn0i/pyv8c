@@ -75,8 +75,11 @@ def test_geolocation_is_async_and_clear_watch_cancels_pending_callback():
     })
     try:
         page = browser.new_context().new_page()
-        assert page.evaluate("navigator.geolocation.getCurrentPosition(p => globalThis.geo = [p.coords.latitude, p.coords.longitude, p.coords.accuracy]); 'queued'") == "queued"
-        assert page.evaluate("typeof geo") == "undefined"
+        # The position callback is delivered on the page task queue, never
+        # inline, so it is still pending when the requesting script ends.
+        assert page.evaluate(
+            "navigator.geolocation.getCurrentPosition(p => globalThis.geo = [p.coords.latitude, p.coords.longitude, p.coords.accuracy]); typeof geo"
+        ) == "undefined"
         page.run_until_idle()
         assert page.evaluate("geo") == [31.2, 121.5, 5]
 

@@ -4,10 +4,16 @@ A :class:`BindingSession` owns the class configs of one V8 realm.  Member
 wrappers may capture the realm they were built for, so configs are never
 shared across realms: each session receives its own config cache and
 materializes interface class/config pairs on demand.
+
+Materialization is *commit based*: configs are staged into a private dict and
+then pushed to the native Context through ``Context.update_configs``.  The
+native side never shares the Python live mapping, so it cannot observe a
+partially built overlay while it walks ``class_configs``.
 """
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import Any
 
 
@@ -20,6 +26,17 @@ class BindingSession:
         self._configs: dict[type, dict[str, Any]] = {}
         self._materialized: set[str] = set()
         self._lazy_names: dict[str, tuple[str, ...]] = {}
+        self._context = None
+
+    def attach_context(self, context):
+        """Record the native Context that received our initial configs.
+
+        Called once the realm Context exists.  From that point on every newly
+        materialized config is committed through ``context.update_configs``
+        instead of being written into the mapping snapshot the native side
+        already holds.
+        """
+        self._context = context
 
     def interface_names(self, context_type="Window"):
         return self.universe.interface_names(context_type)
@@ -33,16 +50,39 @@ class BindingSession:
 
     @property
     def configs(self):
-        """Live mapping consumed by native Context implementations."""
-        return self._configs
+        """Read-only view of the configs materialized for this realm.
+
+        The native Context receives an independent copy at construction time
+        and is kept in sync through :meth:`materialize`'s commit step; callers
+        must not mutate the mapping behind this view.
+        """
+        return MappingProxyType(self._configs)
+
+    def _commit(self, staged):
+        """Push newly built configs to the attached native Context."""
+        self._configs.update(staged)
+        context = self._context
+        if context is not None:
+            update = getattr(context, "update_configs", None)
+            if update is not None:
+                update(staged)
 
     def materialize(self, name):
-        """Create one interface class/config pair on first access."""
+        """Create one interface class/config pair on first access.
+
+        Configs for every ancestor that is not materialized yet are staged in
+        a private dict and committed atomically to the native Context; the
+        Python live mapping is never handed to the native side.
+        """
         chain = list(self.universe.walk_parent_names(name))
+        staged = {}
         for interface_name in reversed(chain):
             cls = self.class_for(interface_name)
-            config = self.universe.class_config_for(interface_name, self._configs, self.realm)
+            if cls not in self._configs:
+                self.universe.class_config_for(interface_name, staged, self.realm)
             self._materialized.add(interface_name)
+        if staged:
+            self._commit(staged)
         return self.class_for(name)
 
     def class_config_for(self, name):

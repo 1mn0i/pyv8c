@@ -1,10 +1,10 @@
 """Navigation and HTML document parsing for a single Page."""
 
 import re
-import time
 from urllib.parse import urljoin
 
 from ..foundation.errors import InvalidStateError, TimeoutError
+from ..foundation.tasks import TaskSource
 from ..web.dom.model import Document
 from ..web.dom.parser import IncrementalDOMParser
 
@@ -108,10 +108,12 @@ class NavigationController:
         self.commit_content(self.decode_html(response), final_url)
         ready = states[wait_until]
         if ready is not None:
-            deadline = time.monotonic() + (30.0 if timeout_value is None else timeout_value)
-            while not ready() and time.monotonic() < deadline:
-                self.page.run_until_idle(timeout=min(0.05, max(0.0, deadline - time.monotonic())))
-            if not ready():
+            # Pump on the realm owner thread until the lifecycle state flips.
+            # The pump sleeps on the task-queue condition and is woken by the
+            # very delivery that advances the document, so this is a wait on
+            # the lifecycle state rather than a fixed-interval poll.
+            limit = 30.0 if timeout_value is None else timeout_value
+            if not self.page.tasks.pump_until(ready, timeout=limit):
                 raise TimeoutError(f"Navigation to {target} timed out")
         return response
 
@@ -138,7 +140,7 @@ class NavigationController:
     def finish_document_parse(self):
         self.parser_done = True
         self.parsing = False
-        self.page.tasks.post(self.page.scripts.run_deferred_scripts)
+        self.page.tasks.post(self.page.scripts.run_deferred_scripts, TaskSource.PARSER)
 
     def resume_parser(self, generation=None):
         if self.page.closed or generation != self.generation or self.parser is None:

@@ -41,7 +41,7 @@ foundation -> engine -> web -> platform
 | `web/fetch/` | Headers、Blob、Request/Response、事件和 XMLHttpRequest。 |
 | `web/network/` | HTTP transport、CookieJar 和 WebSocket。 |
 | `web/workers/` | Worker API、Worker runtime 和 structured clone。 |
-| `platform/` | Browser、BrowserContext、Page、`PageServices`（web 层唯一可见的服务面）、realm 装配、导航、生命周期、脚本、资源和 DevTools。 |
+| `platform/` | Browser、BrowserContext、Page、`PageServices`（组合根，暴露六个能力 facet）、realm 装配、导航、生命周期、脚本、资源和 DevTools。 |
 | `tools/` | Chromium 拉取、baseline 提取和启动基准工具。 |
 
 领域包不得反向依赖 `runtime`；通过 realm service 注入页面能力。不得重新引入全局
@@ -68,14 +68,20 @@ current Page、类级 current Page 或跨 realm 的 callback owner。
   `binding_session` 访问器。任务错误收集在 `foundation/tasks.py` 的 `TaskQueue`，
   资源所有权在 `platform/state.py` 的 `Ownership`，worker 配置是
   `platform/services.py` 的 frozen `WorkerContext`。
-- web 层对象（DOM/BOM/fetch/network/workers）构造时接收 `platform/services.py` 的
-  `PageServices`，不持有 Page 引用；`PageServices` 实现 `foundation/realm.py` 的
-  `RealmServices`/`ResourceServices` 协议，且不暴露 `context_owner`、`network_backend`、
-  `binding_session` 等平台内部（由架构测试守护）。
+- `foundation/realm.py` 定义六个窄能力协议：`RealmServices` / `TaskServices` /
+  `ResourceServices` / `DocumentServices` / `WorkerServices` / `ContextServices`。
+  `platform/services.py` 的 `PageServices` 是组合根：构造并持有六个能力 facet 对象
+  （`realm_services` / `task_services` / `resource_services` / `document_services` /
+  `worker_services` / `context_services`），自身也实现六个协议供 platform controller
+  与 binding session 使用。web 层各包按需接收能力对象（DOM 用 Document+Resource，
+  fetch 用 Realm+Resource，network 用 Realm+Context+Task，bom 用五个，workers 用
+  Realm+Task+Worker+Resource+Context），不持有 Page 引用；`PageServices` 与能力 facet
+  均不暴露 `context_owner`、`network_backend`、`binding_session` 等平台内部
+  （由架构测试守护）。
 - 每个 V8 Context 有独立 `BindingSession`；动态类、class config、callback owner 与 wrapper
   状态均为 realm-local。
-- 网络和 Worker 后台回调只能经任务队列（`PageServices.post_task()` → `TaskQueue.post`）
-  进入 Page 的 V8 Context。
+- 网络和 Worker 后台回调只能经任务队列（`TaskServices.post_task()` → `TaskQueue.post`）
+  进入 Page 的 V8 Context；posted 回调由 realm executor 在空闲时自动逐条消费。
 - Page、Context 或 Browser 关闭后不可复用，继续使用抛出 `InvalidStateError`；Page 关闭时释放
   V8 Context。
 
@@ -409,3 +415,30 @@ Worker 的 V8 Context。
 - `Runtime.runIfWaitingForDebugger` 会在 Realm owner 线程执行，可在首脚本闸门开启后保持连接并继续页面。
 - Page 的 `ResourceScope` 统一登记异步网络请求、iframe、Worker 和 WebSocket；请求完成后移除登记，Page/Context 关闭时统一取消。
 - 全量回归已验证 `202 passed`。
+
+## 2026-09-04：事件循环完整性、能力协议与提交式快照
+
+- **事件循环完整性**：`foundation/tasks.py` 引入 `TaskSource`（command / parser /
+  posted / timer / microtask）与 `run_turn()`：每轮取一个 posted task、做 microtask
+  checkpoint、执行到期 timer、再做 checkpoint；parser 阻塞改由 `TaskSource.PARSER`
+  优先级表达，不再反向特判。`foundation/executor.py` 由 5 ms 忙轮询改为
+  `threading.Event` 事件驱动等待（超时取下一 timer 到期剩余时间），空闲 realm 零唤醒。
+- **自动泵送**：realm owner 线程空闲时自动消费 posted 回调，`fetch()`、Worker 消息、
+  iframe 完成不再依赖显式 `run_until_idle()`；后者退化为同步等待句。`PYV8C_AUTO_PUMP=0`
+  可退回旧语义。`goto()` 改为等待 lifecycle Future，移除 0.05 s 忙轮询。
+- **能力协议拆分**：`PageServices` 转为组合根，六个能力协议（Realm/Task/Resource/
+  Document/Worker/Context）在 `foundation/realm.py` 定义；web 五个包全部按能力对象
+  迁移完成；`TaskQueue.owner` / `self._tasks.owner` 属性级后门已切断，改为 `TaskHost`。
+  收尾清理了 `services.py` 中无调用方的下划线转发别名。
+- **提交式快照**：`engine/universe.py` 的 `class_for()` 加 `RLock` + 双重检查，保证同名
+  并发物化得到同一 class 对象；`ClassConfigBuilder.build()` 写入临时 dict；native 新增
+  `Context.update_configs()` 显式提交点，Python 不再原地改写 native 持有的 live dict。
+- **新增测试**：`tests/integration/test_event_loop.py`（不 pump 时 fetch 自动 resolve、
+  checkpoint 顺序、timer 精度、`PYV8C_AUTO_PUMP=0` 回退）、`test_lifecycle_stress.py`
+  （并发 evaluate/goto/close、DevTools 暂停期间操作、Worker terminate 与 close 并发、
+  网络晚到、线程泄漏检查）、`test_binding_snapshot.py`（并发物化同一 class、模板缓存一致）。
+- **验证**：pyv8c 全量 `224 passed`；`_pyv8` 重建后 `187 passed`；启动基准（20 次）
+  p50 `99.2 ms`（基线 `108.4 ms`，无回退）。
+- 环境备注：本机 Windows 上 pytest 的 `cleanup_dead_symlinks()` 会因 WinError 448
+  （`\\?\` symlink 解析）抛异常并吞掉汇总行，已对 `_pytest/pathlib.py` 打了本地补丁
+  （容忍 OSError），非项目代码改动。

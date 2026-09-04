@@ -72,10 +72,10 @@ class Blob:
 
     def fn_text(self):
         value = self._data.decode("utf-8", "replace")
-        return self._realm.promise_resolve(value) if self._realm else value
+        return self._realm.realm_services.promise_resolve(value) if self._realm else value
 
     def fn_arrayBuffer(self):
-        return self._realm.promise_resolve(self._data) if self._realm else self._data
+        return self._realm.realm_services.promise_resolve(self._data) if self._realm else self._data
 
 
 __all__ = ["Blob", "bytes_from_value"]

@@ -59,10 +59,10 @@ class Worker(EventTarget):
         self._services = services
         self._terminated = False
         self._lifecycle_finished = False
-        self._script_url = urljoin(services.url, str(script_url)) if services and not str(script_url).startswith("blob:") else str(script_url)
+        self._script_url = urljoin(services.realm_services.url, str(script_url)) if services and not str(script_url).startswith("blob:") else str(script_url)
         if services is not None:
-            services._track_worker(self)
-            services.begin_worker()
+            services.worker_services.track_worker(self)
+            services.task_services.begin_worker()
         from .runtime import WorkerRuntime
         self._runtime = WorkerRuntime(self, self._script_url)
 
@@ -78,7 +78,7 @@ class Worker(EventTarget):
 
     def _receive_message(self, value):
         if not self._terminated:
-            self.fn_dispatchEvent(MessageEvent("message", {"data": value, "origin": self._services.url}))
+            self.fn_dispatchEvent(MessageEvent("message", {"data": value, "origin": self._services.realm_services.url}))
 
     def _receive_error(self, error):
         if not self._terminated:
@@ -87,8 +87,8 @@ class Worker(EventTarget):
     def _finish_lifecycle(self):
         if getattr(self, "_lifecycle_finished", False): return
         self._lifecycle_finished = True
-        self._services.complete_worker()
-        self._services._discard_worker(self)
+        self._services.task_services.complete_worker()
+        self._services.worker_services.discard_worker(self)
 
     def fn_terminate(self):
         if not self._terminated:

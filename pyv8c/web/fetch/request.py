@@ -21,7 +21,7 @@ class Request:
     def __init__(self, url="", options=None, services=None, _realm=None, **_):
         options = options if isinstance(options, dict) else {}
         self._services = services or _realm
-        base = self._services.url if self._services else "about:blank"
+        base = self._services.realm_services.url if self._services else "about:blank"
         self._url = urljoin(base, str(url))
         self._method = str(options.get("method", "GET")).upper()
         self._headers = Headers(options.get("headers"))

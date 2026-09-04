@@ -81,10 +81,10 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             "timeout": self.timeout / 1000 if self.timeout else None,
         }
         if self._services:
-            self._services.load_resource_async(self._url, request, self._finish)
+            self._services.resource_services.load_resource_async(self._url, request, self._finish)
 
     def _finish(self, response, error):
-        if not self._services or self._services.closed:
+        if not self._services or self._services.realm_services.closed:
             return
         if error:
             self.status = 0

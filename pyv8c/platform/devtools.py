@@ -163,6 +163,18 @@ class DevToolsTarget:
                 self._pause_queue.put(None)
         self._startup_released.set()
 
+    def wake_waiting_owner(self):
+        """Release a start-paused gate and any inspector pause loop.
+
+        A realm owner blocked in ``wait_for_startup`` reads the startup queue,
+        not the pause queue, so ``_stop_pause_loop`` alone cannot unblock a
+        navigation that is gated before its first script.  ``Page.close`` calls
+        this so teardown never waits out ``startup_timeout`` (or wedges a realm
+        started with no timeout at all).
+        """
+        self._stop_pause_loop()
+        self._release_startup()
+
     def _fail_command(self, envelope, exc):
         if envelope is None or envelope.future.done():
             return

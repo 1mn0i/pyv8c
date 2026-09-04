@@ -8,6 +8,8 @@ template flags, constants, and constructor behaviour.
 
 from __future__ import annotations
 
+import threading
+
 from pyv8.flag import (
     CallbackType,
     FlagConstructor,
@@ -113,6 +115,7 @@ class ClassConfigBuilder:
         self.universe = universe
         self.stubs = stubs
         self.wrappers = wrappers
+        self._lock = threading.RLock()
         self._handler_cache = {}
 
     def declared_handlers(self, name):
@@ -122,9 +125,10 @@ class ClassConfigBuilder:
         receive a Python stub. Installing all twenty for every interface
         created tens of thousands of unused closures.
         """
-        cached = self._handler_cache.get(name)
-        if cached is not None:
-            return cached
+        with self._lock:
+            cached = self._handler_cache.get(name)
+            if cached is not None:
+                return cached
         template = self.universe.spec(name).get("template") or {}
         handlers = template.get("handlers") or {}
         cross = handlers.get("cross_origin") or {}
@@ -149,8 +153,12 @@ class ClassConfigBuilder:
                 if method_name not in enabled and any(method_name in base.__dict__ for base in cls.__mro__):
                     enabled.append(method_name)
         result = tuple(enabled)
-        self._handler_cache[name] = result
-        return result
+        with self._lock:
+            existing = self._handler_cache.get(name)
+            if existing is not None:
+                return existing
+            self._handler_cache[name] = result
+            return result
 
     def member_configs(self, name, cls, realm=None):
         spec = self.universe.spec(name)

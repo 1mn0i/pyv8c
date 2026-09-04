@@ -50,6 +50,7 @@ class WorkerRealm:
         self.context = self.isolate.context(
             scope, **_context_kwargs(session, "Worker", config.hook),
         )
+        session.attach_context(self.context)
         _declare_realm_interfaces(
             self.context, session,
             context_type="Worker",
@@ -98,6 +99,7 @@ class PageRealm:
             self.binding_session, "Window", page.hook,
             on_materialize=self._record_lazy_materialized,
         ))
+        self.binding_session.attach_context(self.context)
         if page.hook:
             self.context.exec_js("faker.hook=true;")
         context_created = time.perf_counter_ns()

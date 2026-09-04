@@ -240,7 +240,7 @@ class Geolocation:
                 return
             success(position)
         if self._services is not None:
-            self._services.post_task(callback)
+            self._services.task_services.post_task(callback)
 
     def fn_getCurrentPosition(self, success, error=None, options=None):
         if not callable(success):

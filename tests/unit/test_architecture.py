@@ -123,18 +123,46 @@ def test_runtime_interface_catalog_is_frozen_after_bootstrap():
 
 def test_page_exposes_narrow_realm_services():
     from pyv8c import Browser
-    from pyv8c.foundation.realm import ContextServices, RealmServices, ResourceServices
+    from pyv8c.foundation.realm import ContextServices, DocumentServices, RealmServices, ResourceServices, TaskServices, WorkerServices
 
     browser = Browser(stub_logging="off")
     page = browser.new_context().new_page()
     try:
-        assert isinstance(page.services, RealmServices)
-        assert isinstance(page.services, ResourceServices)
+        # PageServices, the composition root, carries the realm, task,
+        # resource, document and worker surfaces itself...
+        for protocol in (RealmServices, TaskServices, ResourceServices, DocumentServices, WorkerServices):
+            assert isinstance(page.services, protocol), protocol
+        # ...and context services live on the context capability object,
+        # which also keeps the historical ``context_services`` spelling.
         assert isinstance(page.services.context_services, ContextServices)
+        assert isinstance(page.services.realm_services, RealmServices)
+        assert isinstance(page.services.task_services, TaskServices)
+        assert isinstance(page.services.resource_services, ResourceServices)
+        assert isinstance(page.services.document_services, DocumentServices)
+        assert isinstance(page.services.worker_services, WorkerServices)
         assert page.services.network_available is False
         assert page.services.interface_materialized("Document")
     finally:
         browser.close()
+
+
+def test_foundation_and_services_have_no_owner_backdoors():
+    """TaskQueue must not reach the Page (or any host) through an owner field."""
+    tasks_source = (ROOT / "foundation" / "tasks.py").read_text(encoding="utf-8")
+    assert "self.owner" not in tasks_source
+    assert "TaskHost" in tasks_source
+
+    services_source = (ROOT / "platform" / "services.py").read_text(encoding="utf-8")
+    assert "_tasks.owner" not in services_source
+    assert "_host.owner" not in services_source
+
+
+def test_task_queue_exposes_event_loop_and_error_contract():
+    from pyv8c.foundation.tasks import TaskQueue, TaskSource
+
+    for member in ("run_turn", "next_deadline", "drain_task_errors", "pump_until"):
+        assert hasattr(TaskQueue, member), member
+    assert TaskSource.PARSER.value == "parser"
 
 
 def test_domain_code_uses_page_resource_ownership_api():

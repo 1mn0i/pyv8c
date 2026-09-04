@@ -251,14 +251,23 @@ browser.close()
 `type="module"` 走独立调度路径。当前 module 支持静态 `import` 的依赖优先加载，
 不是完整的 V8 ES Module 实现。
 
-异步操作可显式推进：
+每个 realm（页面、iframe、Worker）拥有专属执行线程，空闲时自动按浏览器语义
+推进事件循环：posted 任务（网络 / Worker / iframe 回调）逐条执行，每条之后做
+一次 microtask checkpoint，timer 到期会被精确唤醒。因此异步流程自己会跑，无需
+显式驱动——执行完上面的 `fetch` 求值后，不调用任何 API，Promise 链也会在
+realm 线程上 resolve 并写入 `window.result`。
+
+`run_until_idle()` 已退化为同步等待句：阻塞到队列空闲或超时，不承担调度职责，
+仅供测试驱动器使用：
 
 ```python
 page.evaluate("fetch('/data').then(r => r.text()).then(v => window.result = v)")
-page.run_until_idle()             # 处理已就绪的任务
-page.run_until_idle(timeout=2)    # 最多等待网络/Worker 任务 2 秒
+page.run_until_idle(timeout=2)             # 期间事件循环照常推进
 assert page.evaluate("window.result") == "..."
 ```
+
+设置环境变量 `PYV8C_AUTO_PUMP=0` 可退回旧语义（posted 回调只在显式推进时
+执行），用于行为对比与回归定位。
 
 ## Chromium Web IDL 基线
 

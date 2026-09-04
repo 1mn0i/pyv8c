@@ -3,20 +3,29 @@
 ``engine`` needs a small set of services from the realm an object lives in
 (creating promises, converting errors, posting tasks). It consumes them through
 :class:`RealmServices` so it never imports ``platform`` or reaches into Page
-privates. ``PageServices`` (and future worker scopes) implement the protocol.
+privates.  The web layer is served by the other five narrow protocols, each
+covering one slice of the realm a page exposes; ``PageServices`` implements
+them all and hands the narrow capability objects to web code so no package
+ever receives (or can reach) the full platform surface.
+
+``RealmServices`` deliberately keeps ``post_task``: ``engine`` rejection
+wrappers resolve a promise on the object's realm and schedule the rejection
+through the same handle, so the realm token they are given must carry task
+posting without importing ``platform``.
 """
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, MutableSequence, Protocol, runtime_checkable
 
 
 @runtime_checkable
 class RealmServices(Protocol):
-    closed: bool
+    """Identity, scripting and error materialisation of one JS realm."""
+
     url: str
+    closed: bool
 
     def post_task(self, callback) -> None: ...
     def promise_resolve(self, value: Any) -> Any: ...
-    def load_resource(self, url, request=None) -> Any: ...
     def make_promise(self) -> Any:
         """Return ``(promise, resolve, reject)`` in this realm's context."""
         ...
@@ -25,24 +34,70 @@ class RealmServices(Protocol):
         """Materialise a Python exception as a native JS error object."""
         ...
 
-    def worker_configuration(self) -> Any: ...
-    def create_worker_realm(self, config) -> Any: ...
+
+@runtime_checkable
+class TaskServices(Protocol):
+    """Task sources of one realm event loop."""
+
+    def post_task(self, callback) -> None: ...
+    def schedule(self, callback, delay: float, repeat: bool = False) -> int: ...
+    def cancel(self, ident: int) -> None: ...
+    @property
+    def microtasks(self) -> MutableSequence: ...
+    def begin_network(self) -> None: ...
+    def complete_network(self) -> None: ...
+    def begin_worker(self) -> None: ...
+    def complete_worker(self) -> None: ...
 
 
 @runtime_checkable
 class ResourceServices(Protocol):
+    """Loading documents, subresources and worker sources for a realm."""
+
     def load_resource(self, url, request=None) -> Any: ...
-    def load_resource_async(self, url, request, callback) -> None: ...
+    def load_resource_async(self, url, request, callback) -> Any: ...
+    def resolve_worker_source(self, script_url: str) -> str: ...
+    def load_iframe(self, iframe) -> Any: ...
+    def discover_element_resource(self, node) -> None: ...
+
+
+@runtime_checkable
+class DocumentServices(Protocol):
+    """Document, window and parser hooks of the realm's active document."""
+
+    window: Any
+    document: Any
+
+    def element_class(self, tag: str) -> type: ...
+    def install_inline_handler(self, node, name, source) -> None: ...
+    def parser_script_start(self, node) -> None: ...
+    def parser_script_complete(self, node, source) -> None: ...
+    def parser_is_blocked(self) -> bool: ...
+
+
+@runtime_checkable
+class WorkerServices(Protocol):
+    """Spawning and tracking dedicated workers of one realm."""
+
+    def worker_configuration(self) -> Any: ...
+    def create_worker_realm(self, config) -> Any: ...
+    def track_worker(self, worker) -> None: ...
+    def discard_worker(self, worker) -> None: ...
 
 
 @runtime_checkable
 class ContextServices(Protocol):
+    """Browser-context level services: blob URLs, cookies, networking."""
+
     def create_blob_url(self, blob, realm=None) -> str: ...
     def revoke_blob_url(self, url) -> None: ...
     def resolve_blob_url(self, url) -> Any: ...
 
 
-__all__ = ["RealmServices", "ResourceServices", "ContextServices", "realm_of"]
+__all__ = [
+    "RealmServices", "TaskServices", "ResourceServices", "DocumentServices",
+    "WorkerServices", "ContextServices", "realm_of",
+]
 
 
 def realm_of(obj) -> Any:
@@ -50,8 +105,8 @@ def realm_of(obj) -> Any:
 
     Objects receive the realm through injection (``_realm``, used by the
     binding engine when constructing instances) or as ``_services`` (the
-    PageServices surface handed in by platform code). Both point at the
-    same :class:`RealmServices` implementation.
+    capability surface handed in by platform code).  Both point at a
+    :class:`RealmServices` implementation.
     """
     realm = getattr(obj, "_realm", None)
     if realm is not None:

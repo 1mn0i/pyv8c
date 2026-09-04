@@ -156,7 +156,7 @@ class EventTarget:
             path.append(node)
             node = getattr(node, "parentNode", None)
             if node is None and getattr(path[-1], "nodeType", None) == _DOCUMENT_NODE:
-                node = getattr(getattr(path[-1], "_services", None), "window", None)
+                node = getattr(getattr(getattr(path[-1], "_services", None), "document_services", None), "window", None)
         event._path = list(path)
         for target in reversed(path[1:]):
             event.eventPhase, event.currentTarget = 1, target

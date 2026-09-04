@@ -2,10 +2,15 @@ from pyv8c import Browser, Response
 
 
 def test_static_module_imports_execute_dependency_before_entry_and_block_dcl():
+    deferred = []
+
     def loader(url, request):
         if url.endswith("/dep.js"):
             return Response("window.__order.push('dep'); const answer = 41;", {"url": url, "content-type": "text/javascript"})
         if url.endswith("/main.js"):
+            # Sampled when the module graph is fetched: nothing has executed
+            # yet, because module execution is deferred until after parsing.
+            deferred.append(page.evaluate("__order"))
             return Response("import { answer as value } from './dep.js'; window.__order.push('main:' + value);", {"url": url, "content-type": "text/javascript"})
         return Response("", {"url": url})
 
@@ -15,7 +20,7 @@ def test_static_module_imports_execute_dependency_before_entry_and_block_dcl():
     page.set_content("<body><script type='module' src='/main.js'></script><div id='after'></div></body>", url="http://example.test/")
     # Module fetch/execution is deferred; parsing itself continues.
     assert page.evaluate("document.querySelector('#after') !== null")
-    assert page.evaluate("__order") == []
+    assert deferred == [[]]
     page.run_until_idle()
     assert page.evaluate("__order") == ["dep", "main:41", "dcl"]
     browser.close()

@@ -52,7 +52,7 @@ class Response:
         return self.body_text()
 
     def _result(self, value):
-        return self._services.promise_resolve(value) if self._services else value
+        return self._services.realm_services.promise_resolve(value) if self._services else value
 
     def fn_text(self): return self._result(self._body_value())
     def fn_json(self): return self._result(json.loads(self._body_value()))
