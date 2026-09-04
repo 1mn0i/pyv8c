@@ -1,6 +1,8 @@
 #ifndef PYV8_ISOLATE_SCOPE_H
 #define PYV8_ISOLATE_SCOPE_H
 
+#include <memory>
+
 #include <v8.h>
 
 class IsolateState;
@@ -22,8 +24,8 @@ private:
     IsolateState* state_;
     IsolateState* previous_;
     v8::Isolate* isolate_;
-    v8::Locker locker_;
-    v8::Isolate::Scope isolate_scope_;
+    std::unique_ptr<v8::Locker> locker_;
+    bool entered_;
 };
 
 #endif

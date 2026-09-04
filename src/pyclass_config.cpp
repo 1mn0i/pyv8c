@@ -64,6 +64,12 @@ bool class_config_load(PyObject* cls, context_c* py_ctx, ClassConfig* config)
             PyErr_SetString(PyExc_TypeError, "class_configs values must be mappings");
             return false;
         }
+        // Promote the borrowed dict entry to an owned reference for the rest
+        // of this function.  The commit path (Context.update_configs) may
+        // replace an overlay for the same class while this in-flight
+        // ClassConfig is being filled; keeping our own reference guarantees
+        // the struct never points at a recycled value object.
+        Py_XINCREF(overlay);
     }
     if (!class_config_get_with_overlay(config->class_dict, overlay, "__v8_length__", &config->length) ||
         !class_config_get_with_overlay(config->class_dict, overlay, "__v8_attribute__", &config->attributes) ||
@@ -78,7 +84,7 @@ bool class_config_load(PyObject* cls, context_c* py_ctx, ClassConfig* config)
         !class_config_get_with_overlay(config->class_dict, overlay, "__v8_constructor_adapter__", &config->constructor_adapter) ||
         !class_config_get_with_overlay(config->class_dict, overlay, "__v8_callback_owner__", &config->callback_owner) ||
         !class_config_get_with_overlay(config->class_dict, overlay, "__v8_parent_class__", &config->parent_class) ||
-        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_to_string_tag__", &config->to_string_tag)) return false;
+        !class_config_get_with_overlay(config->class_dict, overlay, "__v8_to_string_tag__", &config->to_string_tag)) goto config_load_failed;
 
 #define CONFIG_FLAG(field, key) !class_config_has_with_overlay(config->class_dict, overlay, key, &config->field)
     if (CONFIG_FLAG(global_this, "__v8_global_this__") || CONFIG_FLAG(undetectable, "__v8_undetectable__") || CONFIG_FLAG(as_object, "__v8_as_obj__") ||
@@ -90,7 +96,14 @@ bool class_config_load(PyObject* cls, context_c* py_ctx, ClassConfig* config)
         CONFIG_FLAG(cross_origin_name_query, "__v8_cross_origin_name_query__") || CONFIG_FLAG(cross_origin_name_enum, "__v8_cross_origin_name_enum__") ||
         CONFIG_FLAG(cross_origin_name_del, "__v8_cross_origin_name_del__") || CONFIG_FLAG(cross_origin_index_get, "__v8_cross_origin_index_get__") ||
         CONFIG_FLAG(cross_origin_index_set, "__v8_cross_origin_index_set__") || CONFIG_FLAG(cross_origin_index_query, "__v8_cross_origin_index_query__") ||
-        CONFIG_FLAG(cross_origin_index_enum, "__v8_cross_origin_index_enum__") || CONFIG_FLAG(cross_origin_index_del, "__v8_cross_origin_index_del__")) return false;
+        CONFIG_FLAG(cross_origin_index_enum, "__v8_cross_origin_index_enum__") || CONFIG_FLAG(cross_origin_index_del, "__v8_cross_origin_index_del__")) goto config_load_failed;
 #undef CONFIG_FLAG
+    Py_XDECREF(overlay);
     return true;
+
+config_load_failed:
+    // class_dict and any partially filled members are owned by the caller's
+    // ClassConfig and released by its destructor; only overlay is local.
+    Py_XDECREF(overlay);
+    return false;
 }

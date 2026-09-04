@@ -21,6 +21,7 @@ PyMethodDef context_methods[] = {
     {"expose", (PyCFunction)context_expose, METH_VARARGS | METH_KEYWORDS, NULL},
     {"expose_module", (PyCFunction)context_expose_module, METH_O, NULL},
     {"declare_lazy", (PyCFunction)context_declare_lazy, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"update_configs", (PyCFunction)context_update_configs, METH_O, NULL},
     {"gc", (PyCFunction)context_gc, METH_NOARGS, NULL},
     {"close", (PyCFunction)context_close, METH_NOARGS, NULL},
     {NULL},
@@ -386,6 +387,48 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
     }
 
     PYV8_RETURN_NONE;
+}
+
+PyObject *
+context_update_configs(context_c *self, PyObject *mapping)
+{
+    if (self->class_configs == NULL || !PyDict_Check(self->class_configs)) {
+        PyErr_SetString(PyExc_RuntimeError, "V8 context is no longer active");
+        return NULL;
+    }
+    // PyDict_Update below drives the argument through keys()/getitem, so we
+    // need a real mapping protocol object, not merely something indexable
+    // (lists pass PyMapping_Check but would raise 'list' has no attribute
+    // 'keys').
+    if (!PyDict_Check(mapping) && !PyObject_HasAttrString(mapping, "keys")) {
+        PyErr_SetString(PyExc_TypeError, "update_configs requires a mapping of class configs");
+        return NULL;
+    }
+    // Count keys that are not materialised in this context yet.  The commit
+    // protocol only ever sends new overlays (one interface materialised by one
+    // realm), so a replacement of an already-known class is a caller bug that
+    // the count makes observable rather than silently destructive.
+    PyObject* iter = PyObject_GetIter(mapping);
+    if (iter == NULL) return NULL;
+    Py_ssize_t added = 0;
+    PyObject* key;
+    while ((key = PyIter_Next(iter)) != NULL) {
+        int contained = PyDict_Contains(self->class_configs, key);
+        if (contained < 0) {
+            Py_DECREF(key);
+            Py_DECREF(iter);
+            return NULL;
+        }
+        if (contained == 0) added++;
+        Py_DECREF(key);
+    }
+    Py_DECREF(iter);
+    if (PyErr_Occurred()) return NULL;
+    // Atomic merge into the dict this context owns.  Python keeps GIL for the
+    // whole call, so a concurrent class_config_load either sees the overlay
+    // before or after the update, never a half-merged state.
+    if (PyDict_Update(self->class_configs, mapping) < 0) return NULL;
+    return PyLong_FromSsize_t(added);
 }
 
 PyObject *

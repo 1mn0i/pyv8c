@@ -16,6 +16,12 @@ typedef struct
     v8::Persistent<v8::Context> js_context;
     PyObject* js_object_cache;
     PyObject* class_template_cache;
+    // Realm class config overlays keyed by Python class. At construction the
+    // context copies the caller's mapping into its own dict, so Python never
+    // mutates a mapping this context still shares. Later materialisations are
+    // committed incrementally through Context.update_configs(); class_config_load
+    // holds its own reference to each overlay while a ClassConfig is in flight,
+    // so a same-class replacement can never invalidate it (GIL serialises both).
     PyObject* class_configs;
     // Optional callable used to materialise lazily declared interface names.
     // Called with an interface name, returns the Python class or None.
@@ -37,6 +43,7 @@ PyObject* context_expose(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_expose_module(context_c* self, PyObject* module);
 PyObject* context_js_obj(context_c* self, PyObject* py_object);
 PyObject* context_declare_lazy(context_c* self, PyObject* args, PyObject* kwargs);
+PyObject* context_update_configs(context_c* self, PyObject* mapping);
 PyObject* context_gc(context_c* self);
 PyObject* context_close(context_c* self, PyObject* ignored);
 
