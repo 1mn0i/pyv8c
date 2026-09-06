@@ -2,6 +2,14 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from .model import Element
+from ...foundation.errors import V8SyntaxError
+
+
+# Selector parser failures cross the Python/V8 binding boundary.  Raising the
+# project's marked error type lets V8 materialize a native SyntaxError that
+# page scripts can catch, instead of printing a Python traceback and exposing
+# a generic Error.
+SyntaxError = V8SyntaxError
 
 @dataclass
 class Simple:
@@ -62,7 +70,8 @@ def _simple(text):
             if not m: raise SyntaxError("Invalid pseudo-class")
             name, i = m.group(1).lower(), i + m.end(); arg = None
             if i < len(text) and text[i] == "(": arg, i = _balanced(text, i)
-            if name not in {"first-child", "last-child", "nth-child", "first-of-type", "last-of-type", "nth-of-type", "not", "is", "where", "empty", "root"}: raise SyntaxError("Unsupported pseudo-class: " + name)
+            if name not in {"first-child", "last-child", "nth-child", "first-of-type", "last-of-type", "nth-of-type", "not", "is", "where", "empty", "root", "checked", "enabled", "disabled"}: raise SyntaxError("Unsupported pseudo-class: " + name)
+            if name in {"checked", "enabled", "disabled"} and arg is not None: raise SyntaxError(f":{name} does not accept an argument")
             pseudos.append((name, arg)); continue
         raise SyntaxError("Invalid selector token")
     return Simple(tag, tuple(ids), tuple(classes), tuple(attrs), tuple(pseudos))
@@ -136,6 +145,28 @@ def _nth(pos, expr):
     a = -1 if m.group(1) == "-" else 1 if m.group(1) in ("", "+") else int(m.group(1)); b = int(m.group(2) or 0)
     return pos >= b if a == 0 else (pos - b) * a >= 0 and (pos - b) % a == 0
 
+_FORM_CONTROL_TAGS = {"button", "input", "select", "textarea", "option", "optgroup", "fieldset"}
+
+def _is_disabled(node):
+    if node.localName not in _FORM_CONTROL_TAGS:
+        return False
+    if "disabled" in getattr(node, "attributes", {}):
+        return True
+    parent = node.parentNode
+    while isinstance(parent, Element):
+        if parent.localName in {"optgroup", "fieldset"} and "disabled" in getattr(parent, "attributes", {}):
+            return True
+        parent = parent.parentNode
+    return False
+
+def _is_checked(node):
+    if node.localName == "option":
+        return "selected" in getattr(node, "attributes", {})
+    if node.localName != "input":
+        return False
+    input_type = str(getattr(node, "attributes", {}).get("type", "text")).lower()
+    return input_type in {"checkbox", "radio"} and "checked" in node.attributes
+
 def _simple_match(node, simple):
     if not isinstance(node, Element) or (simple.tag != "*" and node.localName != simple.tag): return False
     if any(node.get_id() != value for value in simple.ids): return False
@@ -152,6 +183,9 @@ def _simple_match(node, simple):
         if name in ("first-of-type", "last-of-type") and (pos != 1 if name.startswith("first") else pos != sibling_count): return False
         if name == "empty" and getattr(node, "_children", ()): return False
         if name == "root" and getattr(node.parentNode, "nodeType", None) not in (None, 9): return False
+        if name == "checked" and not _is_checked(node): return False
+        if name == "disabled" and not _is_disabled(node): return False
+        if name == "enabled" and (node.localName not in _FORM_CONTROL_TAGS or _is_disabled(node)): return False
         if name in ("not", "is", "where"):
             result = any(_matches_ast(node, group) for group in parse(arg or ""))
             if (name == "not" and result) or (name != "not" and not result): return False

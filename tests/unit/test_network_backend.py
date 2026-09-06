@@ -55,6 +55,23 @@ def test_real_network_requires_optional_dependency(monkeypatch):
         Browser(real_network=True).new_context()
 
 
+def test_max_workers_is_consumed_by_backend_not_cycronet(monkeypatch):
+    class StrictClient:
+        def __init__(self, *, timeout_ms):
+            self.options = {"timeout_ms": timeout_ms}
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "cycronet", types.SimpleNamespace(CronetClient=StrictClient))
+    browser = Browser(real_network=True, cycronet_options={"max_workers": 16, "timeout_ms": 5000})
+    context = browser.new_context()
+    backend = context.network_backend
+    assert backend.client.options == {"timeout_ms": 5000}
+    assert backend.executor._max_workers == 16
+    browser.close()
+
+
 def test_real_network_fetch_is_delivered_on_page_queue(monkeypatch):
     install_fake_cycronet(monkeypatch)
     browser = Browser(real_network=True, cycronet_options={"verify": True})
@@ -67,6 +84,22 @@ def test_real_network_fetch_is_delivered_on_page_queue(monkeypatch):
     ) == "undefined"
     page.run_until_idle(timeout=2)
     assert page.evaluate("window.__result") == "cronet-ok"
+    browser.close()
+
+
+def test_network_download_url_is_logged_at_debug_level(monkeypatch):
+    install_fake_cycronet(monkeypatch)
+    messages = []
+    monkeypatch.setattr(
+        "pyv8c.web.network.backend.logger.debug",
+        lambda message, *values: messages.append((message, values)),
+    )
+    browser = Browser(real_network=True)
+    page = browser.new_context().new_page()
+    page.set_content("<body></body>", url="http://example.test/")
+    page.evaluate("fetch('/download').then(r => r.text())")
+    page.run_until_idle(timeout=2)
+    assert ("network download: {} {}", ("GET", "http://example.test/download")) in messages
     browser.close()
 
 

@@ -29,10 +29,7 @@ def test_python_v8_error_metadata_and_dom_errors():
         True,
     ]
     assert value[1] == ["NotFoundError", 8, True]
-    # pyv8's direct Python SyntaxError bridge is exposed as a generic Error
-    # when caught inside JS, while an uncaught selector error remains a JS
-    # exception for the Python caller.
-    assert value[2] == ["Error", False]
+    assert value[2] == ["SyntaxError", True]
     browser.close()
 
 

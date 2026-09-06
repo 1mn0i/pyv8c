@@ -127,6 +127,66 @@ def test_resource_loader_gets_environment_headers_and_explicit_headers_win():
         browser.close()
 
 
+def test_resource_interceptor_filters_images_and_styles_and_cache_reuses_loader(tmp_path):
+    calls = []
+
+    def loader(url, request):
+        calls.append((url, request.get("resource_type")))
+        return {"body": "cached", "url": url, "headers": {"content-type": "text/javascript"}}
+
+    def interceptor(url, request):
+        if request.get("resource_type") in {"image", "style"}:
+            return False
+
+    browser = Browser(resource_loader=loader, resource_interceptor=interceptor, cache_dir=tmp_path / "cache")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body><img src='/a.png'><link rel='stylesheet' href='/a.css'></body>", url="http://example.test/")
+        page.evaluate("fetch('/app.js').then(r => r.text()).then(v => window.__one=v); fetch('/app.js').then(r => r.text()).then(v => window.__two=v)")
+        page.run_until_idle(timeout=2)
+        assert page.evaluate("[__one, __two]") == ["cached", "cached"]
+        assert [kind for _url, kind in calls].count("fetch") == 1
+        assert all(kind not in {"image", "style"} for _url, kind in calls)
+    finally:
+        browser.close()
+
+
+def test_resource_cache_persists_across_browser_restart(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "resource-cache"
+    first_calls = []
+
+    def first_loader(url, request):
+        first_calls.append(url)
+        return {"body": "persisted-js", "url": url, "headers": {"content-type": "text/javascript"}}
+
+    browser = Browser(resource_loader=first_loader, cache_dir=cache_dir)
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="http://cache.test/")
+        assert page.resources.load_resource("/app.js").body_text() == "persisted-js"
+        assert first_calls == ["http://cache.test/app.js"]
+        assert len(list((cache_dir / "cache.test").glob("*.json"))) == 1
+    finally:
+        browser.close()
+
+    def unavailable_loader(url, request):
+        raise AssertionError("persistent cache was not used")
+
+    messages = []
+    monkeypatch.setattr(
+        "pyv8c.platform.resource_loading.logger.debug",
+        lambda message, value: messages.append((message, value)),
+    )
+    browser = Browser(resource_loader=unavailable_loader, cache_dir=cache_dir)
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="http://cache.test/")
+        assert page.resources.load_resource("/app.js").body_text() == "persisted-js"
+        assert ("resource cache hit: {}", "http://cache.test/app.js") in messages
+    finally:
+        browser.close()
+
+
 def test_worker_inherits_page_environment_snapshot():
     source = "self.onmessage = () => self.postMessage([navigator.userAgent, navigator.language, navigator.maxTouchPoints]);"
     browser = Browser(

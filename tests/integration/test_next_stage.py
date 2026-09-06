@@ -14,7 +14,40 @@ def test_live_collections_and_selector_ast():
     assert page.evaluate("[document.querySelector('#a').children.length, document.querySelector('#a').classList.contains('one'), document.querySelector('#a').attributes.length]") == [2, True, 2]
     assert page.evaluate("document.querySelectorAll('div > span:first-of-type').length") == 1
     assert page.evaluate("document.querySelectorAll('span:not(:first-child)').length") == 1
-    with pytest.raises(Exception): page.evaluate("document.querySelector('div[')")
+    with pytest.raises(BaseException): page.evaluate("document.querySelector('div[')")
+    page.close(); browser.close()
+
+
+def test_form_state_pseudo_classes():
+    browser, page = page_with("""
+      <form>
+        <input id='checked' type='checkbox' checked>
+        <input id='unchecked' type='radio'>
+        <input id='disabled-input' disabled>
+        <button id='enabled-button'>go</button>
+        <button id='disabled-button' disabled>stop</button>
+        <select><option id='selected' selected>yes</option><option id='other'>no</option></select>
+        <select><optgroup disabled><option id='group-disabled'>no</option></optgroup></select>
+      </form>
+    """)
+    assert page.evaluate("[document.querySelectorAll(':checked').length, document.querySelectorAll('input:checked').length, document.querySelectorAll('option:checked').length]") == [2, 1, 1]
+    assert page.evaluate("[document.querySelectorAll('input:enabled').length, document.querySelectorAll('button:enabled').length, document.querySelectorAll(':disabled').length]") == [2, 1, 4]
+    assert page.evaluate("[document.querySelectorAll('option:enabled').length, document.querySelector('#checked').matches(':checked'), document.querySelector('#disabled-input').matches(':enabled'), document.querySelector('#group-disabled').matches(':disabled')]") == [2, True, False, True]
+    with pytest.raises(BaseException):
+        page.evaluate("document.querySelector('input:checked(foo)')")
+    page.close(); browser.close()
+
+
+def test_invalid_selector_is_native_syntax_error():
+    browser, page = page_with()
+    assert page.evaluate("""
+      (() => {
+        try { document.querySelector('*,:x'); }
+        catch (error) { return [error.name, error instanceof SyntaxError]; }
+        return ['missing', false];
+      })()
+    """) == ["SyntaxError", True]
+    assert page.tasks.drain_task_errors() == ()
     page.close(); browser.close()
 
 

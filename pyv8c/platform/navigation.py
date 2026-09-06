@@ -101,6 +101,7 @@ class NavigationController:
             target,
             {
                 "method": "GET", "mode": "navigate", "credentials": "include",
+                "resource_type": "document",
                 "timeout": timeout_value,
             },
         )

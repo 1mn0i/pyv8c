@@ -2,9 +2,17 @@
 
 import itertools
 import threading
-from urllib.parse import urljoin
+import base64
+import hashlib
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
 import pyv8
+from loguru import logger
 
 from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
 from ..web.fetch.headers import Headers
@@ -54,6 +62,130 @@ class ResourceController:
             handle.cancel()
         self.resources.clear()
 
+    def _cache_key(self, target, request):
+        if not self.page.cache_enabled:
+            return None
+        method = str(request.get("method", "GET")).upper()
+        if method not in ("GET", "HEAD") or str(request.get("cache", "default")) in ("no-store", "reload", "no-cache"):
+            return None
+        return (
+            method,
+            target,
+            str(request.get("mode", "cors")),
+            str(request.get("credentials", "same-origin")),
+        )
+
+    def _cached_response(self, target, request):
+        key = self._cache_key(target, request)
+        if key is None:
+            return None
+        context = self.page.context_owner
+        with context.resource_cache_lock:
+            cached = self._read_disk_cache(context, key)
+        if cached is None:
+            return None
+        logger.debug("resource cache hit: {}", target)
+        return Response(
+            cached["body"],
+            {name: value for name, value in cached.items() if name != "body"},
+            services=self.page.services,
+        )
+
+    @staticmethod
+    def _disk_cache_path(context, key):
+        cache_dir = context.resource_cache_dir
+        if cache_dir is None:
+            return None
+        digest = hashlib.sha256(json.dumps(key, ensure_ascii=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        target = str(key[1]) if len(key) > 1 else ""
+        parsed = urlsplit(target)
+        domain = parsed.hostname or "unknown"
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        default_port = {"http": 80, "https": 443}.get(parsed.scheme.lower())
+        if port is not None and port != default_port:
+            domain = f"{domain}_{port}"
+        domain = re.sub(r"[^A-Za-z0-9._-]+", "_", domain).strip("._") or "unknown"
+        return Path(cache_dir) / domain / (digest + ".json")
+
+    def _read_disk_cache(self, context, key):
+        path = self._disk_cache_path(context, key)
+        if path is None or not path.is_file():
+            return None
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            body = base64.b64decode(record["body"])
+            if record.get("body_encoding") != "bytes":
+                body = body.decode("utf-8")
+            payload = {
+                "body": body,
+                "status": int(record.get("status", 200)),
+                "statusText": str(record.get("statusText", "")),
+                "url": str(record.get("url", "")),
+                "headers": dict(record.get("headers", {})),
+                "redirected": bool(record.get("redirected", False)),
+                "type": str(record.get("type", "basic")),
+            }
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        return payload
+
+    def _store_response(self, target, request, response):
+        key = self._cache_key(target, request)
+        if key is None or response is None:
+            return
+        context = self.page.context_owner
+        payload = {
+            "body": response.body,
+            "status": response.status,
+            "statusText": response.status_text,
+            "url": response.url or target,
+            "headers": dict(response.headers._data),
+            "redirected": response.redirected,
+            "type": response.type,
+        }
+        with context.resource_cache_lock:
+            path = self._disk_cache_path(context, key)
+            if path is not None:
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    body = payload["body"]
+                    body_encoding = "bytes" if isinstance(body, (bytes, bytearray, memoryview)) else "text"
+                    body_bytes = bytes(body) if body_encoding == "bytes" else str(body).encode("utf-8")
+                    record = {name: value for name, value in payload.items() if name != "body"}
+                    record.update({
+                        "body": base64.b64encode(body_bytes).decode("ascii"),
+                        "body_encoding": body_encoding,
+                    })
+                    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+                        json.dump(record, stream, ensure_ascii=True, separators=(",", ":"))
+                        temporary = stream.name
+                    os.replace(temporary, path)
+                except (OSError, TypeError, ValueError):
+                    try:
+                        if "temporary" in locals():
+                            os.unlink(temporary)
+                    except OSError:
+                        pass
+
+    def _intercept(self, target, request):
+        interceptor = self.page.resource_interceptor
+        if not callable(interceptor):
+            return None
+        decision = interceptor(target, dict(request))
+        if decision is None or decision is True:
+            return None
+        if decision is False:
+            return Response("", {
+                "status": 200, "url": target,
+                "headers": {"content-type": "text/plain"},
+            }, services=self.page.services)
+        response = self._response_from_loader(decision, target)
+        response._services = self.page.services
+        return response
+
     # -- synchronous loading -------------------------------------------
 
     @staticmethod
@@ -101,15 +233,25 @@ class ResourceController:
             raise InvalidStateError("Page is closed")
         target = urljoin(page.url, str(url))
         request = self._request_with_environment_headers(request or {"method": "GET"}, page)
+        intercepted = self._intercept(target, request)
+        if intercepted is not None:
+            return intercepted
+        cached = self._cached_response(target, request)
+        if cached is not None:
+            return cached
         if target.startswith("blob:"):
             body, content_type = page.context_owner.resolve_blob_url(target)
             return Response(body, {"url": target, "headers": {"content-type": content_type}})
         if page.resource_loader:
-            return self._response_from_loader(page.resource_loader(target, request), target)
+            response = self._response_from_loader(page.resource_loader(target, request), target)
+            self._store_response(target, request, response)
+            return response
         if page.network_backend:
             req = self._network_request(target, request, page)
             raw = page.network_backend.request_sync(req)
-            return self.apply_response_policy(self.response_object(raw), request)
+            response = self.apply_response_policy(self.response_object(raw), request)
+            self._store_response(target, request, response)
+            return response
         if target.startswith("about:blank") or target == page.url:
             return Response("", {"url": target})
         raise NetworkError("Network access requires an explicit resource_loader")
@@ -168,6 +310,18 @@ class ResourceController:
             return handle
         target = urljoin(page.url, str(url))
         request = self._request_with_environment_headers(request, page)
+        try:
+            intercepted = self._intercept(target, request)
+        except BaseException as exc:
+            page.tasks.post(lambda exc=exc: deliver(None, exc))
+            return handle
+        if intercepted is not None:
+            page.tasks.post(lambda: deliver(intercepted, None))
+            return handle
+        cached = self._cached_response(target, request)
+        if cached is not None:
+            page.tasks.post(lambda: deliver(cached, None))
+            return handle
         if target.startswith("blob:"):
             try:
                 body, content_type = page.context_owner.resolve_blob_url(target)
@@ -187,6 +341,7 @@ class ResourceController:
                 response._services = page.services
                 try:
                     response, error = self.apply_response_policy(response, request), None
+                    self._store_response(target, request, response)
                 except BaseException as exc:
                     response, error = None, exc
             except BaseException as exc:
@@ -210,7 +365,9 @@ class ResourceController:
             callback(None, error)
             return
         try:
-            callback(self.apply_response_policy(self.response_object(raw), request), None)
+            response = self.apply_response_policy(self.response_object(raw), request)
+            self._store_response(response.url, request, response)
+            callback(response, None)
         except BaseException as exc:
             callback(None, exc)
 
@@ -232,7 +389,7 @@ class ResourceController:
             if not async_script and not getattr(node, "_script_defer", False) and not getattr(node, "_parser_script", False):
                 page.scripts.dom_blocking_scripts += 1
                 page.scripts.queue.append(node)
-            self.track_document_resource(node, src, {"method": "GET", "mode": "same-origin"}, "script")
+            self.track_document_resource(node, src, {"method": "GET", "mode": "same-origin", "resource_type": "script"}, "script")
             return
         if tag == "link" and "stylesheet" not in str(node.attributes.get("rel", "")).lower().split():
             return
@@ -248,7 +405,8 @@ class ResourceController:
             return
         node._resource_started = True
         node._resource_kind = tag
-        self.track_document_resource(node, src, {"method": "GET"}, tag)
+        resource_type = "style" if tag == "link" else "image" if tag == "img" else "media" if tag in ("audio", "video", "source") else tag
+        self.track_document_resource(node, src, {"method": "GET", "resource_type": resource_type}, tag)
 
     def track_document_resource(self, node, url, request, kind):
         page = self.page

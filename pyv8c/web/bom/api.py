@@ -353,5 +353,6 @@ class Window(WindowProperties):
         self._services.resource_services.load_resource_async(req.get_url(), {
             "method": req.get_method(), "headers": req.get_headers(), "body": req._body,
             "timeout": req._timeout, "credentials": req._credentials, "mode": req._mode, "redirect": req._redirect,
+            "resource_type": "fetch",
         }, lambda response, error: reject(self._services.realm_services.js_error_value(error)) if error else resolve(response))
         return promise

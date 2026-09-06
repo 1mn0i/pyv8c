@@ -11,6 +11,7 @@ import os
 import time
 import threading
 import uuid
+from pathlib import Path
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
@@ -84,6 +85,7 @@ class Page:
     def __init__(self, context, url="about:blank", *, hook=None, environment=None):
         self.context_owner = context
         self.environment = context.browser.environment.overlay(environment)
+        self.resource_interceptor = context.browser.resource_interceptor
         # A page can override the browser default without changing the
         # configuration used by other pages in the same browser.
         self.hook = context.browser.hook if hook is None else bool(hook)
@@ -112,6 +114,8 @@ class Page:
         )
         self.document = Document(services=self.services, url=url, ready_state="complete")
         self.resource_loader = context.browser.resource_loader
+        self.resource_interceptor = context.browser.resource_interceptor
+        self.cache_enabled = context.browser.cache_enabled
         self.network_backend = context.network_backend
         self.window = Window(services=self.services, environment=self.environment)
         self.services.window = self.window
@@ -249,6 +253,8 @@ class BrowserContext:
     def __init__(self, browser):
         self.browser, self.pages = browser, []
         self.cookies = CookieJar()
+        self.resource_cache_dir = browser.cache_dir if browser.cache_enabled else None
+        self.resource_cache_lock = threading.RLock()
         self.network_backend = CronetNetworkBackend(options=browser.cycronet_options) if browser.real_network else None
         if self.network_backend is not None:
             self.network_backend.cookies = self.cookies
@@ -362,6 +368,8 @@ class BrowserContext:
 class Browser:
     def __init__(self, *, resource_loader=None,
                  real_network=False, cycronet_options=None, hook=False,
+                 resource_interceptor=None, cache=True,
+                 cache_dir=None,
                  environment=None,
                  generate_interface_stubs=True, expose_unimplemented=True,
                  stub_logging="info", interface_baseline_path=None,
@@ -371,6 +379,9 @@ class Browser:
         # pyv8 initializes its process-global V8 runtime during package import.
         self.contexts = []
         self.resource_loader = resource_loader
+        self.resource_interceptor = resource_interceptor
+        self.cache_enabled = bool(cache)
+        self.cache_dir = Path(cache_dir).expanduser() if cache_dir is not None else None
         self.real_network = bool(real_network)
         self.cycronet_options = dict(cycronet_options or {})
         self.hook = bool(hook)

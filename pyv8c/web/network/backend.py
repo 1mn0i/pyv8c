@@ -75,12 +75,16 @@ class CronetNetworkBackend:
     """Owns one optional cycronet client and never calls V8 from workers."""
     def __init__(self, *, options=None):
         self.options = dict(options or {})
+        # ``max_workers`` configures this bridge's Python executor; it is not
+        # a cycronet client option.  Remove it before constructing the client
+        # so strict cycronet implementations do not reject the extra keyword.
+        max_workers = int(self.options.pop("max_workers", 4))
         try:
             self.cycronet = importlib.import_module("cycronet")
         except ImportError as exc:
             raise NetworkUnavailableError("real_network=True requires the optional 'cycronet' package") from exc
         self.client = self._new_client()
-        self.executor = ThreadPoolExecutor(max_workers=int(self.options.pop("max_workers", 8)), thread_name_prefix="pyv8c-cronet")
+        self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="pyv8c-cronet")
         self.cookies = CookieJar()
         self._websockets = set()
         self._closed = False
@@ -119,6 +123,7 @@ class CronetNetworkBackend:
     def _call(self, request: NetworkRequest):
         if self._closed:
             raise InvalidStateError("network backend is closed")
+        logger.debug("network download: {} {}", request.method, request.url)
         headers = dict(request.headers)
         cookie = self.cookies.header_for(request.url) if request.credentials != "omit" and (request.credentials == "include" or not request.origin or same_origin(request.origin, request.url)) else ""
         if cookie and "cookie" not in {k.lower() for k in headers}:
