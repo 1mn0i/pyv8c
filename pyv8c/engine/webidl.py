@@ -436,6 +436,12 @@ def _convert(value, type_spec, *, nullable=False, enum=()):
         return _sequence(value, type_spec[9:-1])
     if isinstance(type_spec, str) and (type_spec.startswith("record<") or type_spec.startswith("dictionary")):
         return _dictionary(value, nullable=nullable)
+    if type_spec == "EventHandler":
+        # HTML event-handler setters use CreateOrNull, not the ordinary
+        # callback converter: even non-callable objects can occupy the slot.
+        if _is_null(value) or _is_undefined(value) or isinstance(value, (str, bool, int, float)):
+            return pyv8.Null
+        return value
     if type_spec in ("callback", "Function"):
         if _is_null(value) and nullable:
             return value

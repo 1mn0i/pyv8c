@@ -214,6 +214,17 @@ Cookie 状态属于 `BrowserContext`，同一 Context 的页面共享 Cookie，�
 变化时使用 `logger.debug` 记录当前页面可见的 cookie 值。非 HTTP(S) 的不透明 URL（例如
 `about:blank`）不会读写脚本 Cookie。
 
+### Window / iframe 同源策略
+
+Window 访问检查自动启用，无需调用底层 Context API。同源按 scheme、规范化 hostname、有效端口比较；
+about:blank iframe 继承父页面 origin。跨源敏感属性、未知属性和非允许写入抛出真正的
+DOMException（name="SecurityError"、code=18）。跨源 location 允许导航写入，不允许读取 URL。
+
+iframe 的 top/parent/self/window 保持稳定身份；同源访问转发到实际子页面，导航后重新检查 origin。
+postMessage 支持异步消息、targetOrigin 检查以及 origin/source。详细白名单和兼容性边界见
+[Window security](doc/WINDOW_SECURITY.md)。这是浏览器行为兼容层，不是运行敌意代码的安全沙箱，
+也不宣称完整一比一复刻 Chrome。
+
 ## 配置与启动性能
 
 `BrowserEnvironment` 可配置 User-Agent、语言、viewport、screen、geolocation、plugins
@@ -263,12 +274,14 @@ python -m pytest -q
 - 生命周期压力与 DevTools 暂停/恢复；
 - binding 快照隔离与 realm 线程泄漏基线断言。
 
-当前工作区全量验证结果为 `236 passed`（`pytest -m race --count 20` 无回潮）。
+Window 安全回归位于 `tests/integration/test_window_security.py`；原生访问检查回归位于
+独立 `_pyv8` 仓库的 `tests/test_window_access_checks.py`。请以当前运行的 pytest 结果为准。
 lint/unit 阶段不需要原生扩展；完整 `full` 阶段依赖能编译 `_pyv8` 的工具链。
 
 ## 当前限制
 
-- iframe 目前以独立 Page realm 建模，尚未完整实现浏览器的 Frame/WindowProxy/origin 模型。
+- iframe 已实现基础 WindowProxy/origin 访问策略；完整导航 realm 更换、document.domain、
+  sandbox、COOP/COEP、site isolation 等仍不支持，详见 Window security 文档。
 - `requestAnimationFrame` 尚未使用独立 frame clock。
 - 完整网络策略、缓存、渲染和浏览器级 CDP `Page`/`Network` 域尚未实现。
 - Worker 仍保留独立 Isolate 和专用生命周期路径，需要持续进行 Windows Debug/ASAN 压力

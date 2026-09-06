@@ -269,7 +269,12 @@ class Document(Node):
         html = self.get_documentElement()
         if html is not pyv8.Null: return html.fn_querySelector("head")
         return next((x for x in self._walk() if isinstance(x, Element) and x.localName == "head"), pyv8.Null)
-    def get_defaultView(self): return self._services.document_services.window if self._services else pyv8.Null
+    def get_defaultView(self):
+        if self._services is None:
+            return pyv8.Null
+        from ..bom.window import Window
+        target = self._services.document_services.window
+        return Window._accessor_window(target)._view(target)
     def get_readyState(self): return self.ready_state
     def get_hidden(self): return self.hidden
     def get_visibilityState(self): return "hidden" if self.hidden else "visible"

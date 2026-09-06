@@ -1,0 +1,115 @@
+'''Regression tests for direct Window bindings and interceptor removal.'''
+
+import pytest
+
+from pyv8c import Browser
+from pyv8c.web.bom.window import Window
+
+
+@pytest.fixture
+def page():
+    browser = Browser(cache=False, stub_logging="off", strict_validation=True)
+    page = browser.new_context().new_page()
+    page.set_content('<div id="namedElement"></div>', url="http://a.test/")
+    try:
+        yield page
+    finally:
+        browser.close()
+
+
+def test_window_config_has_no_ordinary_named_handlers():
+    browser = Browser(cache=False, stub_logging="off", strict_validation=True)
+    try:
+        universe = browser.interface_universe
+        config = universe.class_config_for("Window")
+        owner = config["__v8_callback_owner__"]
+        for suffix in ("get", "set", "query", "del", "enum"):
+            name = "__v8_name_" + suffix + "__"
+            assert name not in config
+            assert not any(name in base.__dict__ for base in owner.__mro__)
+        assert config["__v8_index_get__"]
+        assert config["__v8_cross_origin_check__"]
+        assert config["__v8_cross_origin_name_get__"]
+        assert universe.binding_plan("Window", "postMessage").resolved
+        assert universe.binding_plan("Window", "onmessage", "attribute").resolved
+        assert "postMessage" in {item[0] for item in Window.__v8_method__}
+        assert "onmessage" in {item[0] for item in Window.__v8_attribute__}
+    finally:
+        browser.close()
+
+
+def test_normal_access_never_calls_python_named_handler(page, monkeypatch):
+    calls = []
+    original = Window.__getattribute__
+
+    def traced(self, name):
+        if name in ("__v8_name_get__", "__v8_name_set__"):
+            calls.append(name)
+        return original(self, name)
+
+    monkeypatch.setattr(Window, "__getattribute__", traced)
+    assert page.evaluate('''(() => {
+        for (let i = 0; i < 100; i++) {
+            window.answer = i;
+            window.document; window.postMessage; window.onmessage;
+            window.missingProperty;
+        }
+        return [answer, namedElement.id];
+    })()''') == [99, "namedElement"]
+    assert calls == []
+
+
+def test_message_member_descriptors_and_identity(page):
+    assert page.evaluate('''(() => {
+        const m = Object.getOwnPropertyDescriptor(window, 'postMessage');
+        const e = Object.getOwnPropertyDescriptor(window, 'onmessage');
+        const handler = () => {};
+        onmessage = handler;
+        return [postMessage.name, postMessage.length, postMessage === postMessage,
+            m.value === postMessage, m.writable, m.enumerable, m.configurable,
+            typeof e.get, typeof e.set, e.enumerable, e.configurable,
+            onmessage === handler];
+    })()''') == ['postMessage', 1, True, True, True, True, True,
+                  'function', 'function', True, True, True]
+
+
+@pytest.mark.parametrize("arguments", [
+    '"message"', '"message", "*"', '"message", "*", []',
+    '"message", {}', '"message", {targetOrigin: "*", transfer: []}',
+    '"message", null', '"message", undefined',
+])
+def test_post_message_overloads(page, arguments):
+    page.evaluate('window.received = []; onmessage = e => received.push(e.data)')
+    page.evaluate('postMessage(' + arguments + ')')
+    page.run_until_idle(timeout=1)
+    assert page.evaluate('received') == ['message']
+
+
+@pytest.mark.parametrize("arguments,error", [
+    ('', 'TypeError'),
+    ('1, "*", null', 'TypeError'),
+    ('1, {targetOrigin: "*"}, []', 'SyntaxError'),
+    ('1, "not-an-origin"', 'SyntaxError'),
+])
+def test_post_message_rejects_invalid_arguments(page, arguments, error):
+    assert page.evaluate('''(() => {
+        try { postMessage(''' + arguments + '''); return 'allowed'; }
+        catch (e) { return e.name; }
+    })()''') == error
+
+
+@pytest.mark.parametrize("value", ['null', 'undefined', '42', 'false', '"text"'])
+def test_onmessage_non_object_becomes_null(page, value):
+    assert page.evaluate('onmessage = ' + value + '; onmessage === null')
+
+
+def test_post_message_target_filter(page):
+    page.evaluate('window.received = []; onmessage = e => received.push(e.data); '
+                  'postMessage("drop", {targetOrigin:"http://other.test"})')
+    page.run_until_idle(timeout=1)
+    assert page.evaluate('received') == []
+
+
+def test_non_callable_onmessage_is_not_invoked(page):
+    page.evaluate('onmessage = {}')
+    assert page.evaluate('''dispatchEvent(new Event('message'))''')

@@ -43,6 +43,7 @@ class NavigationController:
         self.parser_done = lifecycle.dom_content_loaded = lifecycle.document_load_fired = False
         self.page.resources.reset()
         self.page.scripts.reset()
+        self.page._update_origin(url)
         self.page.window.location.href = str(url)
         devtools = getattr(self.page.context_owner, "_devtools", None)
         if devtools is not None:

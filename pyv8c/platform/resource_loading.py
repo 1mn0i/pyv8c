@@ -322,6 +322,9 @@ class ResourceController:
         if cached is not None:
             page.tasks.post(lambda: deliver(cached, None))
             return handle
+        if target.split("#", 1)[0] == "about:blank":
+            page.tasks.post(lambda: deliver(Response("", {"url": target}, services=page.services), None))
+            return handle
         if target.startswith("blob:"):
             try:
                 body, content_type = page.context_owner.resolve_blob_url(target)
@@ -406,7 +409,10 @@ class ResourceController:
         node._resource_started = True
         node._resource_kind = tag
         resource_type = "style" if tag == "link" else "image" if tag == "img" else "media" if tag in ("audio", "video", "source") else tag
-        self.track_document_resource(node, src, {"method": "GET", "resource_type": resource_type}, tag)
+        request = {"method": "GET", "resource_type": resource_type}
+        if tag == "iframe":
+            request["mode"] = "navigate"
+        self.track_document_resource(node, src, request, tag)
 
     def track_document_resource(self, node, url, request, kind):
         page = self.page
@@ -474,13 +480,16 @@ class ResourceController:
         from .browser import Page
 
         page = self.page
-        target = iframe.get_src() or "about:blank"
-        child = Page(page.context_owner, url=target, environment=page.environment)
-        iframe._child_services = child.services
-        page.services._track_frame(child)
-        devtools = page.context_owner._devtools
-        if devtools is not None:
-            child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
+        target = response.url or urljoin(page.url, iframe.get_src() or "about:blank")
+        child_services = getattr(iframe, "_child_services", None)
+        child = child_services._page_realm.page if child_services is not None else None
+        if child is None or child.closed:
+            child = Page(page.context_owner, url=target, environment=page.environment, parent=page)
+            iframe._child_services = child.services
+            page.services._track_frame(child)
+            devtools = page.context_owner._devtools
+            if devtools is not None:
+                child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
         try:
             child.set_content(response.body_text(), url=target)
             child.lifecycle.when_loaded(callback)
@@ -489,13 +498,13 @@ class ResourceController:
 
     def load_iframe(self, iframe):
         page = self.page
-        target = iframe.get_src() or "about:blank"
+        target = urljoin(page.url, iframe.get_src() or "about:blank")
         if page.navigation.has_navigation and not page.navigation.parsing:
             self.discover_element_resource(iframe)
             return getattr(iframe, "_child_services", None)
         from .browser import Page
 
-        child = Page(page.context_owner, url=target, environment=page.environment)
+        child = Page(page.context_owner, url=target, environment=page.environment, parent=page)
         iframe._child_services = child.services
         page.services._track_frame(child)
         devtools = page.context_owner._devtools

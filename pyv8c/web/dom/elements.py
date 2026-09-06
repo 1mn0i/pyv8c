@@ -199,15 +199,30 @@ class HTMLIFrameElement(HTMLElement):
         ("contentWindow", "get_contentWindow", None, 0, 1),
     )
     def __init__(self, tag_name="iframe", services=None, **kw):
-        super().__init__(tag_name, services=services, **kw); self._child_services = None
+        super().__init__(tag_name, services=services, **kw)
+        self._child_services = None
     def get_src(self): return self.attributes.get("src", "")
     def set_src(self, value):
         self.attributes["src"] = str(value)
+        self._resource_started = False
         if self._services:
             resource_services = self._services.resource_services
             if resource_services is not None: resource_services.load_iframe(self)
-    def get_contentDocument(self): return self._child_services.document_services.document if self._child_services else pyv8.Null
-    def get_contentWindow(self): return self._child_services.document_services.window if self._child_services else pyv8.Null
+    def get_contentDocument(self):
+        if self._child_services is None:
+            return pyv8.Null
+        from ..bom.window import Window
+        accessor = Window._accessor_window(self._services.document_services.window)
+        if accessor._origin != self._child_services._origin:
+            return pyv8.Null
+        return self._child_services.document_services.document
+    def get_contentWindow(self):
+        if self._child_services is None:
+            return pyv8.Null
+        child_window = self._child_services.document_services.window
+        from ..bom.window import Window
+        parent_window = Window._accessor_window(self._services.document_services.window)
+        return parent_window._view(child_window)
 
 
 HTML_CLASSES = {

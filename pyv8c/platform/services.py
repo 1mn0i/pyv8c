@@ -72,6 +72,30 @@ class _RealmCapability:
     def interface_materialized(self, name):
         return self._owner.interface_materialized(name)
 
+    def window_property(self, operation, name, value=None):
+        """Operate on a same-origin Window in its owning realm."""
+        realm = self._owner._page_realm
+        def apply():
+            target = realm.context.js_obj(self._owner.window)
+            if operation == "get":
+                try:
+                    return target[name]
+                except AttributeError:
+                    import pyv8
+                    return pyv8.Undefined
+            if operation == "set":
+                target[name] = value
+            elif operation == "delete":
+                del target[name]
+            elif operation == "query":
+                return 0 if name in dir(target) else None
+        # Cross-window property access is synchronous and can originate in a
+        # V8 callback that already holds the shared isolate lock.  Posting to
+        # another executor would wait on that same lock and deadlock.  The
+        # native JSObject operation enters its saved Context reentrantly.
+        return apply()
+
+
 
 class _TaskCapability:
     """Event-loop task sources (implements TaskServices)."""
@@ -333,6 +357,7 @@ class PageServices:
         self.window = None
         self.document = None
         self._page_realm = None
+        self._origin = ("opaque", object())
 
         # Narrow capabilities handed to web packages.
         self.realm_services = _RealmCapability(self)

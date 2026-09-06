@@ -51,6 +51,19 @@ def test_invalid_selector_is_native_syntax_error():
     page.close(); browser.close()
 
 
+def test_window_top_resolves_to_the_outermost_frame():
+    browser = Browser(resource_loader=lambda url, request: {"body": "<body>frame</body>", "url": url})
+    page = browser.new_context().new_page()
+    page.set_content("<iframe src='/frame.html'></iframe>", url="http://example.test/")
+    page.run_until_idle(timeout=1)
+    frame_page = next(iter(page._owned.frames))
+    assert page.evaluate("window.top === window") is True
+    assert page.evaluate("document.querySelector('iframe').contentWindow.top === window") is True
+    assert frame_page.evaluate("window.top === window") is False
+    assert frame_page.evaluate("window.top === window.parent") is True
+    page.close(); browser.close()
+
+
 def test_event_options_and_history():
     browser, page = page_with()
     assert page.evaluate("(() => { let n=0; const f=()=>n++; document.body.addEventListener('x',f,{once:true}); document.body.dispatchEvent(new Event('x')); document.body.dispatchEvent(new Event('x')); return n; })()") == 1

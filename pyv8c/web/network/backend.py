@@ -63,12 +63,32 @@ class NetworkResponse:
     type: str = "basic"
 
 
+def origin_tuple(value, *, inherited=None):
+    """Return the browser origin triple for a URL."""
+    raw = str(value)
+    parts = urlsplit(raw)
+    scheme = parts.scheme.lower()
+    if scheme == "about" and parts.path.lower() == "blank" and inherited is not None:
+        return tuple(inherited)
+    if scheme == "blob":
+        embedded_origin = origin_tuple(raw[5:], inherited=inherited)
+        if embedded_origin[0] != "opaque":
+            return embedded_origin
+        if inherited is not None:
+            return tuple(inherited)
+    if scheme in ("http", "https", "ws", "wss", "ftp") and parts.hostname:
+        default = {"http": 80, "https": 443, "ws": 80, "wss": 443, "ftp": 21}.get(scheme)
+        try:
+            port = parts.port
+        except ValueError:
+            return "opaque", object()
+        hostname = parts.hostname.encode("idna").decode("ascii").lower()
+        return scheme, hostname, port if port is not None else default
+    return "opaque", object()
+
+
 def same_origin(left, right):
-    a, b = urlsplit(str(left)), urlsplit(str(right))
-    def origin(value):
-        port = value.port or (443 if value.scheme == "https" else 80 if value.scheme == "http" else None)
-        return value.scheme.lower(), (value.hostname or "").lower(), port
-    return origin(a) == origin(b)
+    return origin_tuple(left) == origin_tuple(right)
 
 
 class CronetNetworkBackend:

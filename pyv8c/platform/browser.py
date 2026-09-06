@@ -20,9 +20,9 @@ from urllib.parse import urlsplit
 import pyv8  # noqa: F401 - patch target for native Context instrumentation tests
 from loguru import logger
 
-from ..web.bom.api import Window
+from ..web.bom.window import Window
 from ..web.dom.model import Document
-from ..web.network.backend import CronetNetworkBackend
+from ..web.network.backend import CronetNetworkBackend, origin_tuple
 from ..web.network.cookies import CookieJar
 from ..engine.universe import (
     DEFAULT_EAGER_INTERFACES, BaselineRepository, InterfaceUniverse,
@@ -82,8 +82,14 @@ class Page:
     # close() reads _has_navigation.
     _has_navigation = StateAlias("navigation", "has_navigation")
 
-    def __init__(self, context, url="about:blank", *, hook=None, environment=None):
+    def __init__(self, context, url="about:blank", *, hook=None, environment=None, parent=None, origin=None):
         self.context_owner = context
+        self.parent_page = parent
+        self.top_page = parent.top_page if parent is not None else self
+        self.origin = tuple(origin) if origin is not None else origin_tuple(
+            url, inherited=getattr(parent, "origin", None)
+        )
+        self.origin = context._blob_origins.get(str(url), self.origin)
         self.environment = context.browser.environment.overlay(environment)
         self.resource_interceptor = context.browser.resource_interceptor
         # A page can override the browser default without changing the
@@ -112,6 +118,7 @@ class Page:
             self.navigation, self.scripts, self.resources, self.tasks,
             self._resource_scope,
         )
+        self.services._origin = self.origin
         self.document = Document(services=self.services, url=url, ready_state="complete")
         self.resource_loader = context.browser.resource_loader
         self.resource_interceptor = context.browser.resource_interceptor
@@ -130,6 +137,21 @@ class Page:
         self.services.bind_realm(self.realm)
         self.realm.executor.attach_task_queue(self.tasks)
         self.context = self.realm.context
+        Window._bind_context(self.context, self.window)
+        if parent is not None:
+            self.window._set_frame_parent(parent.window)
+
+    def _update_origin(self, url):
+        self.origin = origin_tuple(url, inherited=getattr(self.parent_page, "origin", None))
+        self.origin = self.context_owner._blob_origins.get(str(url), self.origin)
+        self.services._origin = self.origin
+        self.window._origin = self.origin
+        # The native access-check callback resolves the accessing realm from
+        # this table.  Navigation can change the origin after the Context has
+        # already been created, so keep the bound entry in sync.
+        entry = Window._context_origins.get(id(self.context))
+        if entry is not None:
+            Window._context_origins[id(self.context)] = (entry[0], self.origin)
 
     # -- task error reporting --------------------------------------------
     # TaskQueue routes task exceptions here through its error sink so a faulty
@@ -237,6 +259,7 @@ class Page:
             self.services.discard_worker(worker)
             worker.fn_terminate()
         self.context_owner._discard_page(self)
+        Window._unbind_context(self.context)
         self.realm.close()
         parent_cleanup = getattr(self, "_parent_scope_cleanup", None)
         if callable(parent_cleanup):
@@ -259,6 +282,7 @@ class BrowserContext:
         if self.network_backend is not None:
             self.network_backend.cookies = self.cookies
         self._blob_urls = {}
+        self._blob_origins = {}
         self.closed = False
         self._devtools = None
 
@@ -288,6 +312,8 @@ class BrowserContext:
         origin = self._serialized_origin(getattr(page, "url", "about:blank"))
         url = "blob:" + origin + "/" + str(uuid.uuid4())
         self._blob_urls[url] = (bytes(blob._data), blob.get_type())
+        creator_origin = getattr(page, "_origin", getattr(page, "origin", None))
+        self._blob_origins[url] = creator_origin if creator_origin is not None else origin_tuple(getattr(page, "url", "about:blank"))
         return url
 
     def resolve_blob_url(self, url):
@@ -299,6 +325,7 @@ class BrowserContext:
     def revoke_blob_url(self, url):
         self._ensure_open()
         self._blob_urls.pop(url, None)
+        self._blob_origins.pop(url, None)
 
     # Context-level services exposed to realm objects.  Keeping these methods
     # here makes cookie/blob ownership explicit without exposing storage fields.
@@ -358,6 +385,7 @@ class BrowserContext:
             self._devtools.close()
             self._devtools = None
         self._blob_urls.clear()
+        self._blob_origins.clear()
         if self.network_backend:
             self.network_backend.close()
             self.network_backend = None

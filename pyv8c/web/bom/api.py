@@ -7,18 +7,21 @@ from pyv8.tools import ConstructorConfig
 from ..dom.model import Event, EventTarget
 from ...engine.registry import interface, js_attributes, js_methods, js_interface_methods
 from ..fetch.blob import Blob
-from ..fetch.request import Request
 from ...foundation.errors import SecurityError, V8URIError, V8TypeError, InvalidStateError
 from ...foundation.environment import BrowserEnvironment
-from .navigator import Navigator
 
 
 @interface("Location", None, constructible=False)
 @ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
 class Location:
     def __init__(self, href="about:blank", services=None, **_): self.href, self._services = href, services
-    def _parts(self): return urlsplit(self.href)
-    def get_href(self): return self.href
+    def _require_access(self):
+        if self._services is not None:
+            target = self._services.document_services.window
+            if target is not None:
+                target._require_same_origin()
+    def _parts(self): self._require_access(); return urlsplit(self.href)
+    def get_href(self): self._require_access(); return self.href
     def set_href(self, value):
         target = urljoin(self.href, str(value))
         if self._services is not None:
@@ -286,73 +289,5 @@ class History:
         self._index = target; self._services.document_services.window.location.href = self._entries[target][0]; self._services.document_services.window.fn_dispatchEvent(Event("popstate", {"bubbles": False}))
 
 
-@interface("WindowProperties", "EventTarget", constructible=False, tag="WindowProperties", exposed_in=())
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
-class WindowProperties(EventTarget):
-    pass
-
-
-@interface("Window", "WindowProperties", constructible=False, tag="Window", exposed_in=("Window",))
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
-class Window(WindowProperties):
-    __v8_global_this__ = True
-    __v8_attribute__ = js_attributes(
-        ("window", "get_window", None, 0, 1), ("self", "get_self", None, 0, 1),
-        ("document", "get_document", None, 0, 1), ("location", "get_location", "set_location", 0, 0),
-        ("navigator", "get_navigator", None, 0, 1), ("screen", "get_screen", None, 0, 1),
-        ("localStorage", "get_localStorage", None, 0, 1), ("sessionStorage", "get_sessionStorage", None, 0, 1),
-        ("history", "get_history", None, 0, 1),
-        ("innerWidth", "get_innerWidth", None, 0, 1), ("innerHeight", "get_innerHeight", None, 0, 1),
-        ("outerWidth", "get_outerWidth", None, 0, 1), ("outerHeight", "get_outerHeight", None, 0, 1),
-        ("devicePixelRatio", "get_devicePixelRatio", None, 0, 1),
-    )
-    __v8_method__ = js_methods(
-        ("setTimeout", "fn_setTimeout", 1, 0), ("clearTimeout", "fn_clearTimeout", 1, 0),
-        ("setInterval", "fn_setInterval", 1, 0), ("clearInterval", "fn_clearInterval", 1, 0),
-        ("queueMicrotask", "fn_queueMicrotask", 1, 0), ("requestAnimationFrame", "fn_requestAnimationFrame", 1, 0),
-        ("fetch", "fn_fetch", 1, 0),
-    )
-    def __init__(self, services=None, **kw):
-        super().__init__(services=services, **kw); self._services = services
-        environment = getattr(getattr(services, "realm_services", None), "environment", None)
-        viewport = BrowserEnvironment.from_value(environment).viewport
-        self.location = Location(services=services); self.navigator = Navigator(services=services, environment=environment); self.screen = Screen(environment=environment)
-        self.localStorage, self.sessionStorage = Storage(), Storage()
-        self.innerWidth, self.innerHeight = viewport.width, viewport.height
-        self.outerWidth, self.outerHeight = viewport.width, viewport.height
-        self.devicePixelRatio = viewport.device_scale_factor
-        self.history = History(services=services)
-    def get_window(self): return self
-    def get_self(self): return self
-    def get_document(self): return self._services.document_services.document
-    def get_location(self): return self.location
-    def set_location(self, value): self.location.set_href(value)
-    def get_navigator(self): return self.navigator
-    def get_screen(self): return self.screen
-    def get_localStorage(self): return self.localStorage
-    def get_sessionStorage(self): return self.sessionStorage
-    def get_history(self): return self.history
-    def get_innerWidth(self): return self.innerWidth
-    def get_innerHeight(self): return self.innerHeight
-    def get_outerWidth(self): return self.outerWidth
-    def get_outerHeight(self): return self.outerHeight
-    def get_devicePixelRatio(self): return self.devicePixelRatio
-    def fn_setTimeout(self, callback, delay=0): return self._services.task_services.schedule(callback, float(delay) / 1000.0, repeat=False)
-    def fn_clearTimeout(self, ident): self._services.task_services.cancel(int(ident))
-    def fn_setInterval(self, callback, delay=0): return self._services.task_services.schedule(callback, float(delay) / 1000.0, repeat=True)
-    def fn_clearInterval(self, ident): self._services.task_services.cancel(int(ident))
-    def fn_queueMicrotask(self, callback): self._services.task_services.microtasks.append(callback)
-    def fn_requestAnimationFrame(self, callback): return self._services.task_services.schedule(callback, 0, repeat=False)
-    def fn_fetch(self, request, options=None):
-        promise, resolve, reject = self._services.realm_services.make_promise()
-        try:
-            req = request if isinstance(request, Request) else Request(request, options, services=self._services)
-        except BaseException as exc:
-            self._services.realm_services.post_task(lambda exc=exc: reject(self._services.realm_services.js_error_value(exc)))
-            return promise
-        self._services.resource_services.load_resource_async(req.get_url(), {
-            "method": req.get_method(), "headers": req.get_headers(), "body": req._body,
-            "timeout": req._timeout, "credentials": req._credentials, "mode": req._mode, "redirect": req._redirect,
-            "resource_type": "fetch",
-        }, lambda response, error: reject(self._services.realm_services.js_error_value(error)) if error else resolve(response))
-        return promise
+# Compatibility re-exports; implementations live in window.py.
+from .window import Window, WindowProperties, WindowProxy  # noqa: E402,F401

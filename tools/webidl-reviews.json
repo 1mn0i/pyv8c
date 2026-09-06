@@ -2385,6 +2385,37 @@
         "Window|instance|operation|RequestAnimationFrameOperationCallback"
       ]
     },
+    "Window.onmessage": {
+      "parameters": [{"nullable": true, "type": "EventHandler"}],
+      "required": 1,
+      "source_evidence": "WindowEventHandlers.onmessage; Blink JSEventHandler::CreateOrNull preserves objects and maps non-objects to null",
+      "status": "manual-reviewed",
+      "target_callbacks": ["Window|instance|attribute|OnmessageAttributeSetCallback"]
+    },
+    "Window.postMessage": {
+      "required": 1,
+      "overloads": [
+        {
+          "required": 1,
+          "max_args": 2,
+          "parameters": [
+            {"type": "any"},
+            {"optional": true, "nullable": true, "type": "dictionary", "default": {}}
+          ]
+        },
+        {
+          "required": 2,
+          "parameters": [
+            {"type": "any"},
+            {"type": "USVString"},
+            {"optional": true, "type": "sequence<object>", "default": []}
+          ]
+        }
+      ],
+      "source_evidence": "core/frame/window.idl and generated PostMessageOperationCallback: 1 argument/options; 2 null, undefined or object/options; 3+ arguments/USVString and transfer",
+      "status": "manual-reviewed",
+      "target_callbacks": ["Window|instance|operation|PostMessageOperationCallback"]
+    },
     "Window.setInterval": {
       "parameters": [
         {

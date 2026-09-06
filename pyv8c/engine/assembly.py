@@ -152,6 +152,11 @@ class ClassConfigBuilder:
             for _key, method_name in mapping:
                 if method_name not in enabled and any(method_name in base.__dict__ for base in cls.__mro__):
                     enabled.append(method_name)
+        # Snapshot native interceptors need not become Python interceptors.
+        # In particular Window uses a separate named-properties prototype.
+        if getattr(cls, "__v8_disable_named_handlers__", False):
+            named_handlers = {method for _key, method in HANDLER_FAMILIES[0][1]}
+            enabled = [method for method in enabled if method not in named_handlers]
         result = tuple(enabled)
         with self._lock:
             existing = self._handler_cache.get(name)

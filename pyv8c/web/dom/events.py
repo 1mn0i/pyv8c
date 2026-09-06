@@ -184,7 +184,9 @@ class EventTarget:
             if event._immediate:
                 return
         handler = self._handlers.get("on" + event.type)
-        if not capture and handler not in (None, pyv8.Null, pyv8.Undefined):
+        # EventHandler slots may hold non-callable objects; Blink invokes
+        # only their effective function, not the object itself.
+        if not capture and callable(handler):
             if event.type == "error" and self.__class__.__name__ == "Window":
                 _js_call(handler, self, getattr(event, "message", ""), "", 0, 0, getattr(event, "error", pyv8.Null))
             else:
