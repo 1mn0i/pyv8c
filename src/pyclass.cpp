@@ -427,8 +427,20 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     }
 
     if (strcmp(world, "WindowProperties") == 0) {
-        NamedPropertyHandlerConfiguration name_callbacks(properties_named_getter);
+        NamedPropertyHandlerConfiguration name_callbacks(
+            properties_named_getter, nullptr,
+            properties_named_query, properties_named_deleter,
+            properties_named_enumerator, properties_named_definer,
+            properties_named_descriptor, Local<Value>(),
+            PropertyHandlerFlags::kOnlyInterceptStrings);
         templ->PrototypeTemplate()->SetHandler(name_callbacks);
+        IndexedPropertyHandlerConfiguration index_callbacks(
+            properties_indexed_getter, nullptr,
+            properties_indexed_query, properties_indexed_deleter,
+            properties_named_enumerator, properties_indexed_definer,
+            properties_indexed_descriptor);
+        templ->PrototypeTemplate()->SetHandler(index_callbacks);
+        templ->PrototypeTemplate()->SetImmutableProto();
     }
 
     PyObject* bases = NULL;
@@ -686,12 +698,7 @@ delete_constructor(py_class* self, Local<Context> context)
             v8::Local<v8::Value> prototype_value;
             if (function->Get(context, V8String(isolate, "prototype")).ToLocal(&prototype_value)) {
                 v8::Local<v8::Object> prototype_object = prototype_value.As<v8::Object>();
-                bool delete_worked;
-                prototype_object
-                    ->Delete(
-                        context,
-                        self->isolate_state->v8_string(V8StringId::Constructor))
-                    .To(&delete_worked);
+                properties_delete_constructor(prototype_object, context);
             }
         }
     }

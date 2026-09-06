@@ -45,6 +45,17 @@ void py_class_cross_origin_method_callback(const v8::FunctionCallbackInfo<v8::Va
 
 // Handlers
 v8::Intercepted properties_named_getter(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info);
+v8::Intercepted properties_named_query(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Integer>&);
+v8::Intercepted properties_named_deleter(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Boolean>&);
+void properties_named_enumerator(const v8::PropertyCallbackInfo<v8::Array>&);
+void properties_delete_constructor(v8::Local<v8::Object>, v8::Local<v8::Context>);
+v8::Intercepted properties_indexed_getter(uint32_t, const v8::PropertyCallbackInfo<v8::Value>&);
+v8::Intercepted properties_indexed_query(uint32_t, const v8::PropertyCallbackInfo<v8::Integer>&);
+v8::Intercepted properties_indexed_deleter(uint32_t, const v8::PropertyCallbackInfo<v8::Boolean>&);
+v8::Intercepted properties_indexed_descriptor(uint32_t, const v8::PropertyCallbackInfo<v8::Value>&);
+v8::Intercepted properties_indexed_definer(uint32_t, const v8::PropertyDescriptor&, const v8::PropertyCallbackInfo<v8::Boolean>&);
+v8::Intercepted properties_named_descriptor(v8::Local<v8::Name>, const v8::PropertyCallbackInfo<v8::Value>&);
+v8::Intercepted properties_named_definer(v8::Local<v8::Name>, const v8::PropertyDescriptor&, const v8::PropertyCallbackInfo<v8::Boolean>&);
 
 v8::Intercepted named_getter(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info);
 v8::Intercepted named_setter(v8::Local<v8::Name> name, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void>& info);

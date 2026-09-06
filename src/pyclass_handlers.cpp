@@ -967,16 +967,101 @@ Intercepted named_getter(Local<Name> js_name, Info(Value)) {
     }
 }
 
+// Named-properties objects belong to their creation realm, not whichever
+// realm happens to invoke a borrowed prototype. Bypass interceptors when
+// checking ordinary properties to avoid recursion through this handler.
+template <class T>
+static PyObject* properties_owner(const PropertyCallbackInfo<T>& info, Local<Name> name) {
+    Local<Context> owner;
+    Local<Object> holder = v8_compat::callback_holder(info);
+    if (!holder->GetCreationContext().ToLocal(&owner)) return Py_None;
+    auto* ctx = v8_compat::context_embedder_pointer<context_c>(owner, CONTEXT_OBJECT_SLOT);
+    if (ctx == nullptr || ctx->py_global == nullptr) return Py_None;
+    Local<Object> global = owner->Global();
+    if (global->HasRealNamedProperty(owner, name).FromMaybe(false)) return Py_None;
+    Local<Value> proto = global->GetPrototype();
+    while (proto->IsObject()) {
+        auto object = proto.As<Object>();
+        if (object != holder && object->HasRealNamedProperty(owner, name).FromMaybe(false))
+            return Py_None;
+        proto = object->GetPrototype();
+    }
+    return ctx->py_global;
+}
+
 Intercepted properties_named_getter(Local<Name> js_name, Info(Value)) {
     SETUP;
-
-    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
-        context, CONTEXT_OBJECT_SLOT);
-    if (ctx_c == nullptr)
-        return Intercepted::kNo;
-    PyObject* self = ctx_c->py_global;
-
+    PyObject* self = properties_owner(info, js_name);
     return property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_property_name_get__");
+}
+
+Intercepted properties_named_query(Local<Name> name, Info(Integer)) {
+    SETUP;
+    return property_query_handler(py_from_js(name, context), info,
+        properties_owner(info, name), "__v8_property_name_query__");
+}
+
+Intercepted properties_named_descriptor(Local<Name> name, Info(Value)) {
+    SETUP;
+    auto result = property_getter_handler(py_from_js(name, context), info, context,
+        properties_owner(info, name), "__v8_property_name_get__");
+    if (result == Intercepted::kNo) return result;
+    Local<Value> value = info.GetReturnValue().Get();
+    Local<Object> descriptor = Object::New(isolate);
+    if (!descriptor->CreateDataProperty(context, JSTR("value"), value).FromMaybe(false) ||
+        !descriptor->CreateDataProperty(context, JSTR("writable"), True(isolate)).FromMaybe(false) ||
+        !descriptor->CreateDataProperty(context, JSTR("enumerable"), True(isolate)).FromMaybe(false) ||
+        !descriptor->CreateDataProperty(context, JSTR("configurable"), True(isolate)).FromMaybe(false))
+        return Intercepted::kYes;
+    info.GetReturnValue().Set(descriptor);
+    return Intercepted::kYes;
+}
+
+static thread_local bool deleting_synthetic_constructor = false;
+
+void properties_delete_constructor(Local<Object> prototype, Local<Context> context) {
+    const bool previous = deleting_synthetic_constructor;
+    deleting_synthetic_constructor = true;
+    bool worked;
+    prototype->Delete(context, V8String(v8_compat::context_isolate(context), "constructor")).To(&worked);
+    deleting_synthetic_constructor = previous;
+}
+
+Intercepted properties_named_deleter(Local<Name>, Info(Boolean)) {
+    SETUP;
+    if (deleting_synthetic_constructor) return Intercepted::kNo;
+    info.GetReturnValue().Set(false);
+    if (info.ShouldThrowOnError()) info.GetIsolate()->ThrowException(
+        Exception::TypeError(JSTR("Cannot delete properties on WindowProperties")));
+    return Intercepted::kYes;
+}
+
+Intercepted properties_named_definer(Local<Name>, const PropertyDescriptor&, Info(Boolean)) {
+    SETUP;
+    info.GetReturnValue().Set(false);
+    if (info.ShouldThrowOnError()) info.GetIsolate()->ThrowException(
+        Exception::TypeError(JSTR("Cannot define properties on WindowProperties")));
+    return Intercepted::kYes;
+}
+
+void properties_named_enumerator(Info(Array)) {
+    info.GetReturnValue().Set(Array::New(info.GetIsolate(), 0));
+}
+
+Intercepted properties_indexed_getter(uint32_t index, Info(Value)) {
+    return properties_named_getter(V8String(info.GetIsolate(), std::to_string(index).c_str()), info);
+}
+Intercepted properties_indexed_query(uint32_t index, Info(Integer)) {
+    return properties_named_query(V8String(info.GetIsolate(), std::to_string(index).c_str()), info);
+}
+Intercepted properties_indexed_descriptor(uint32_t index, Info(Value)) {
+    return properties_named_descriptor(V8String(info.GetIsolate(), std::to_string(index).c_str()), info);
+}
+Intercepted properties_indexed_deleter(uint32_t index, Info(Boolean)) {
+    return properties_named_deleter(V8String(info.GetIsolate(), std::to_string(index).c_str()), info);
+}
+Intercepted properties_indexed_definer(uint32_t index, const PropertyDescriptor& desc, Info(Boolean)) {
+    return properties_named_definer(V8String(info.GetIsolate(), std::to_string(index).c_str()), desc, info);
 }
 
 

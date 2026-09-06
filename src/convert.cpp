@@ -220,6 +220,20 @@ py_from_js_impl(Local<Value> value,
         {
             context = obj_value->GetCreationContextChecked();
         }
+        // Native-backed objects already carry their Python identity. Inspect
+        // it before probing JS properties: Window security interceptors may
+        // reject even a Symbol.toStringTag query on a cross-origin facade.
+        if (obj_value->InternalFieldCount() == OBJECT_INTERNAL_FIELDS)
+        {
+            Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
+            if (magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
+            {
+                PyObject* object = (PyObject*)v8_compat::external_value(
+                    obj_value->GetInternalField(PYTHON_OBJECT_FIELD));
+                Py_INCREF(object);
+                return object;
+            }
+        }
         bool has_to_string_tag;
         Maybe<bool> maybe_has_to_string_tag = obj_value->HasOwnProperty(context, Symbol::GetToStringTag(v8_compat::context_isolate(context)));
         if (!maybe_has_to_string_tag.To(&has_to_string_tag))

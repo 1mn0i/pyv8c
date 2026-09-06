@@ -2,6 +2,7 @@
 
 #include "pyv8.h"
 #include "convert.h"
+#include "exception.h"
 #include "pyclass.h"
 #include "pyclass_cross_origin_handlers.h"
 #include "pyclass_handlers_internal.h"
@@ -144,7 +145,11 @@ bool cross_origin_access_check(
     PyObject* value = PyObject_CallFunctionObjArgs(checker, accessor, nullptr);
     Py_DECREF(checker);
     if (value == nullptr) {
-        PyErr_Clear();
+        // Keep the Python exception pending in the accessing JS realm.  In
+        // particular, browser embedders must be able to report SecurityError
+        // as a DOMException rather than V8's generic "no access" TypeError.
+        Context::Scope scope(accessing_context);
+        js_throw_py();
         return false;
     }
     bool allowed = value != Py_False;

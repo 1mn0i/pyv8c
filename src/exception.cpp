@@ -405,6 +405,35 @@ js_throw_py()
     {
         exception = Exception::SyntaxError(V8String(isolate, exc_message)).As<Object>();
     }
+    else if (strcmp(exc_type_name, "DOMException") == 0)
+    {
+        Local<Value> ctor_value;
+        if (context->Global()->Get(context, V8String(isolate, "DOMException")).ToLocal(&ctor_value) &&
+            ctor_value->IsFunction()) {
+            Local<Function> ctor = ctor_value.As<Function>();
+            PyObject* name_obj = PyObject_GetAttrString(exc_value, "_name");
+            const char* name = "Error";
+            if (name_obj != nullptr && PyUnicode_Check(name_obj)) {
+                const char* value = PyUnicode_AsUTF8_abi3(name_obj);
+                if (value != nullptr) name = value;
+            }
+            Local<Value> args[] = { V8String(isolate, exc_message), V8String(isolate, name) };
+            Local<Object> created;
+            if (ctor->NewInstance(context, 2, args).ToLocal(&created)) {
+                exception = created;
+                PyObject* code_obj = PyObject_GetAttrString(exc_value, "_code");
+                if (code_obj != nullptr) {
+                    int code = (int)PyLong_AsLong(code_obj);
+                    PyErr_Clear();
+                    exception->Set(context, V8String(isolate, "code"), Integer::New(isolate, code));
+                    Py_DECREF(code_obj);
+                }
+            }
+            Py_XDECREF(name_obj);
+        }
+        if (exception.IsEmpty())
+            exception = Exception::Error(V8String(isolate, exc_message)).As<Object>();
+    }
     else {
         Local<Value> js_exception_value = js_from_py(exc_value, context);
         if (js_exception_value.IsEmpty() || !js_exception_value->IsObject()) {
