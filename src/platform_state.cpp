@@ -9,25 +9,6 @@ using namespace v8;
 namespace
 {
 
-class PyOwnedRef
-{
-public:
-    explicit PyOwnedRef(PyObject* value = nullptr)
-        : value_(value)
-    {
-    }
-
-    ~PyOwnedRef()
-    {
-        Py_XDECREF(value_);
-    }
-
-    PyObject* get() const { return value_; }
-
-private:
-    PyObject* value_;
-};
-
 bool
 verify_icu_data_fingerprint(PyObject* path)
 {

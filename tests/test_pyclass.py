@@ -147,8 +147,7 @@ class TestPyClass(unittest.TestCase):
     
     def test_class_skip_inherit(self):
         """测试类跳过原型继承继承"""
-        is_call_addEventListener = False
-    
+
         class EventTarget: pass
 
         class WindowProperties(EventTarget):

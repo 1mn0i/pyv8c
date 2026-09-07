@@ -33,7 +33,6 @@ void debugger_dealloc(debugger_c* self);
 PyObject* debugger_send(debugger_c* self, PyObject* message);
 PyObject* debugger_schedule_pause(debugger_c* self, PyObject* args, PyObject* kwargs);
 PyObject* debugger_disconnect(debugger_c* self, PyObject* ignored);
-void debugger_run_js(debugger_c* self, PyObject* args, PyObject* kwargs);
 PyObject* debugger_handle(debugger_c* self, PyObject* message);
 
 class V8PyInspectorClient : public V8InspectorClient

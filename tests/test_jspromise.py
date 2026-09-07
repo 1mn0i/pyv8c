@@ -1,6 +1,5 @@
 import unittest
 import pyv8
-import time
 
 class TestJSPromise(unittest.TestCase):
     """测试JavaScript Promise的使用"""

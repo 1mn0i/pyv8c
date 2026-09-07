@@ -68,7 +68,7 @@ class DevtoolsDebugger(_pyv8.Debugger):
                 pass
         self._signal_handlers.clear()
 
-    def _signal_shutdown(self, signum, _) -> None:
+    def _signal_shutdown(self, _signum, _) -> None:
         self.shutdown()
 
     def start_server(self, host, port):

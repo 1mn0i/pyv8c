@@ -7,19 +7,6 @@
 #include <v8.h>
 
 
-#define Set_Config_Value(func, func_attr, config, config_attr)         \
-    {                                                                  \
-        PyObject* ret = PyObject_GetAttrString(func, func_attr);       \
-        if (ret == NULL || !PyLong_Check(ret)) {                       \
-            config.config_attr = 0;                                    \
-        }                                                              \
-        else {                                                         \
-            config.config_attr = PyLong_AsLong(ret);                   \
-        }                                                              \
-        Py_XDECREF(ret);                                               \
-    }
-
-
 namespace bindings {
 
     void FakerJsFunctionCallback(const v8::FunctionCallbackInfo<v8::Value>& info);

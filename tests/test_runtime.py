@@ -3,7 +3,6 @@ import subprocess
 import sys
 import textwrap
 import unittest
-import weakref
 from pathlib import Path
 
 import pyv8

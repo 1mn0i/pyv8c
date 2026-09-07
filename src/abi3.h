@@ -3,6 +3,28 @@
 
 #include <Python.h>
 
+class PyOwnedRef
+{
+public:
+    explicit PyOwnedRef(PyObject* value = nullptr)
+        : value_(value)
+    {
+    }
+
+    PyOwnedRef(const PyOwnedRef&) = delete;
+    PyOwnedRef& operator=(const PyOwnedRef&) = delete;
+
+    ~PyOwnedRef()
+    {
+        Py_XDECREF(value_);
+    }
+
+    PyObject* get() const { return value_; }
+
+private:
+    PyObject* value_;
+};
+
 
 // CPython 3.12 changed the Py_RETURN_* macros for immortal singletons to
 // return borrowed pointers.  That implementation is correct for 3.12+, but
@@ -73,6 +95,5 @@ PyObject_CallMethodOneArg_abi3(PyObject* self, PyObject* name, PyObject* arg) {
     return PyObject_CallMethodObjArgs(self, name, arg, NULL);
 }
 
-void print_pyobject(PyObject* obj, const char* name);
 
 #endif

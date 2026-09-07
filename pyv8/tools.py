@@ -5,7 +5,7 @@ from .flag import *
 __hook_exclude_name = (
     "dir", "dirxml", "profile", "profileEnd", "clear", "table", "keys", "values",
     "debug", "undebug", "inspect", "copy", "queryObjects", 'monitor', 'unmonitor',
-    "$", "$$", "$_", "$0", "$1", "$2", "$3", "$4", "$", "$x", "DataVie",
+    "$", "$$", "$_", "$0", "$1", "$2", "$3", "$4", "$x", "DataView",
     "String", "Array", "Date", "Object", "window", "Symbol", "Number", "Function",
     "Symbol.toPrimitive", "Symbol.toStringTag",
     "parseFloat", "parseInt", "Math", "BigInt", "RegExp", "console", "isNaN", "Boolean",
