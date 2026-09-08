@@ -6,7 +6,7 @@
 #include "jsobject.h"
 #include "pyfunction.h"
 #include "pyclass.h"
-#include "pyclass_config.h"
+#include "idl_spec.h"
 #include "pyclass_cross_origin_handlers.h"
 #include "v8tools.h"
 #include "faker/Faker.h"
@@ -59,8 +59,8 @@ py_class_dealloc(py_class* self)
 {
     self->templ.Reset();
     Py_XDECREF(self->cls);
+    Py_XDECREF(self->idl_spec);
     Py_XDECREF(self->cls_name);
-    Py_XDECREF(self->call_method);
     Py_XDECREF(self->operation_callback_data);
     Py_XDECREF(self->constructor_adapter);
     //Py_XDECREF(self->parent);
@@ -68,35 +68,77 @@ py_class_dealloc(py_class* self)
     TP_FREE_ABI3(py_class_type, self);
 }
 
-PyObject *
-py_class_to_template(PyObject *cls, context_c* py_ctx)
+PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
 {
-    if (py_ctx->class_template_cache == NULL) {
+    if (py_ctx->class_template_cache == NULL)
+    {
         PyErr_SetString(PyExc_RuntimeError, "context class template cache is unavailable");
         return NULL;
     }
     PyObject *templ = PyDict_GetItem(py_ctx->class_template_cache, cls);
-    if (templ != NULL) {
+    if (templ != NULL)
+    {
         return templ;
+    }
+    if (py_ctx->lazy_factory != nullptr && PyDict_Contains(py_ctx->class_configs, cls) == 0 &&
+        PySet_Contains(py_ctx->resolving_classes, cls) == 0)
+    {
+        PyObject *name = PyObject_GetAttrString(cls, "__name__");
+        if (name == nullptr)
+            return nullptr;
+        int declared = PySet_Contains(py_ctx->lazy_names, name);
+        if (declared < 0)
+        {
+            Py_DECREF(name);
+            return nullptr;
+        }
+        if (declared == 1)
+        {
+            if (PySet_Add(py_ctx->resolving_classes, cls) < 0)
+            {
+                Py_DECREF(name);
+                return nullptr;
+            }
+            PyObject *resolved = PyObject_CallFunctionObjArgs(py_ctx->lazy_factory, name, nullptr);
+            Py_DECREF(name);
+            PySet_Discard(py_ctx->resolving_classes, cls);
+            if (resolved == nullptr)
+                return nullptr;
+            if (resolved != Py_None && resolved != cls)
+            {
+                Py_DECREF(resolved);
+                PyErr_SetString(PyExc_TypeError,
+                                "lazy factory returned a different class for the requested type");
+                return nullptr;
+            }
+            Py_DECREF(resolved);
+            templ = PyDict_GetItemWithError(py_ctx->class_template_cache, cls);
+            if (templ != nullptr || PyErr_Occurred())
+                return templ;
+        }
+        else
+            Py_DECREF(name);
     }
     templ = py_class_new(cls, py_ctx);
     PyErr_PROPAGATE(templ);
 
-    if (PyDict_SetItem(py_ctx->class_template_cache, cls, templ) < 0) {
+    if (PyDict_SetItem(py_ctx->class_template_cache, cls, templ) < 0)
+    {
         Py_DECREF(templ);
         return NULL;
     }
-    PyObject* cls_name = ((py_class*)templ)->cls_name;
-    PyObject* existing_name = PyDict_GetItem(py_ctx->class_template_cache, cls_name);
-    if (existing_name != NULL && existing_name != templ) {
+    PyObject *cls_name = ((py_class *)templ)->cls_name;
+    PyObject *existing_name = PyDict_GetItem(py_ctx->class_template_cache, cls_name);
+    if (existing_name != NULL && existing_name != templ)
+    {
         PyDict_DelItem(py_ctx->class_template_cache, cls);
         Py_DECREF(templ);
-        PyErr_Format(PyExc_ValueError,
-                     "JavaScript class name '%U' is already registered in this Context",
+        PyErr_Format(PyExc_ValueError, "JavaScript class name '%U' is already registered in this Context",
                      cls_name);
         return NULL;
     }
-    if (PyDict_SetItem(py_ctx->class_template_cache, cls_name, templ) < 0) {
+    if (PyDict_SetItem(py_ctx->class_template_cache, cls_name, templ) < 0)
+    {
         PyDict_DelItem(py_ctx->class_template_cache, cls);
         Py_DECREF(templ);
         return NULL;
@@ -104,7 +146,6 @@ py_class_to_template(PyObject *cls, context_c* py_ctx)
     Py_DECREF(templ);
     return PyDict_GetItem(py_ctx->class_template_cache, cls);
 }
-
 int add_to_template(PyObject* cls, context_c* py_ctx, PyObject* member_name, PyObject* member_value, Local<FunctionTemplate> templ, Local<Signature> sig, const char* world);
 
 
@@ -128,8 +169,8 @@ py_class_new(PyObject *cls, context_c * py_ctx)
 
     self->isolate_state = isolate_state;
     self->cls = NULL;
+    self->idl_spec = NULL;
     self->cls_name = NULL;
-    self->call_method = NULL;
     self->operation_callback_data = NULL;
     self->constructor_adapter = NULL;
     self->parent = NULL;
@@ -153,48 +194,22 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         return NULL;
     }
 
-    ClassConfig config;
-    if (!class_config_load(cls, py_ctx, &config)) {
-        Py_DECREF((PyObject*)self);
-        return NULL;
+    PyObject* registered = PyDict_GetItemWithError(py_ctx->class_configs, cls);
+    if (registered != nullptr) Py_INCREF(registered);
+    else if (!PyErr_Occurred()) registered = idl_spec_for(cls);
+    if (registered != nullptr) {
+        self->idl_spec = idl_spec_resolve(registered, cls);
+        Py_DECREF(registered);
     }
-
+    if (PyErr_Occurred()) { Py_DECREF((PyObject*)self); return nullptr; }
+    IdlSpec defaults;
+    const IdlSpec& config = self->idl_spec == nullptr ? defaults : *(IdlSpec*)self->idl_spec;
     Local<External> js_self = v8_compat::external_new(isolate, self);
-    int templ_lenght = 0;
-    if (config.length != NULL) {
-        if (!PyLong_Check(config.length)) {
-            PyErr_SetString(PyExc_TypeError, "__v8_length__ must be an integer");
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-        templ_lenght = PyLong_AsLong(config.length);
-        if (PyErr_Occurred()) {
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-    }
-    if (config.constructor_behavior != NULL) {
-        if (!PyLong_Check(config.constructor_behavior)) {
-            PyErr_SetString(PyExc_TypeError, "__v8_constructor__ must be an integer");
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-        self->constructor_behavior = PyLong_AsLong(config.constructor_behavior);
-        if (PyErr_Occurred()) {
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-    }
-    if (config.constructor_adapter != NULL) {
-        if (!PyCallable_Check(config.constructor_adapter)) {
-            PyErr_SetString(PyExc_TypeError, "__v8_constructor_adapter__ must be callable");
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-        Py_INCREF(config.constructor_adapter);
-        self->constructor_adapter = config.constructor_adapter;
-    }
+    int templ_lenght = (int)config.length;
+    self->constructor_behavior = (int)config.constructor_behavior;
     self->unconstructable = config.unconstructable;
+    self->constructor_adapter = config.constructor_adapter;
+    Py_XINCREF(self->constructor_adapter);
 
     Local<FunctionTemplate> templ = FunctionTemplate::New(isolate, py_class_construct_callback, js_self,
             Local<Signature>(), templ_lenght, ConstructorBehavior::kAllow);
@@ -207,11 +222,6 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     Local<String> v8_name = V8String(isolate, world);
     Local<String> v8_tag = v8_name;
     if (config.to_string_tag != NULL) {
-        if (!PyUnicode_Check(config.to_string_tag)) {
-            PyErr_SetString(PyExc_TypeError, "__v8_to_string_tag__ must be a string");
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
         const char* tag = PyUnicode_AsUTF8_abi3(config.to_string_tag);
         if (tag == NULL) {
             Py_DECREF((PyObject*)self);
@@ -225,36 +235,35 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         Faker::Register(isolate, templ);
     }
 
-    PyObject* keys = PyMapping_Keys(config.class_dict);
-    if (!keys) {
-        Py_DECREF((PyObject*)self);
-        return NULL; 
-    }
-    Py_ssize_t num_keys = PyList_Size(keys);
-    for (Py_ssize_t i = 0; i < num_keys; i++) 
-    {
-        PyObject* member_name = PyList_GetItem(keys, i);
-        PyObject* member_value = PyObject_GetItem(config.class_dict, member_name);
-        if (member_value == NULL) {
-            Py_DECREF(keys);
-            Py_DECREF((PyObject*)self);
-            return NULL;
+    if (self->idl_spec == nullptr) {
+        PyObject* class_dict = PyObject_GetAttrString(cls, "__dict__");
+        PyObject* items = class_dict == nullptr ? nullptr : PyMapping_Items(class_dict);
+        Py_XDECREF(class_dict);
+        if (items == nullptr) { Py_DECREF((PyObject*)self); return nullptr; }
+        for (Py_ssize_t index = 0; index < PyList_Size(items); ++index) {
+            PyObject* item = PyList_GetItem(items, index);
+            if (PyUnicode_CompareWithASCIIString(PyTuple_GetItem(item, 0), "__call__") == 0) {
+                defaults.call = PyTuple_GetItem(item, 1);
+                if (PyList_Append(self->operation_callback_data, defaults.call) < 0) {
+                    Py_DECREF(items);
+                    Py_DECREF((PyObject*)self);
+                    return nullptr;
+                }
+            }
+            if (add_to_template(cls, py_ctx, PyTuple_GetItem(item, 0), PyTuple_GetItem(item, 1), templ, sig, world) < 0) {
+                Py_DECREF(items);
+                Py_DECREF((PyObject*)self);
+                return nullptr;
+            }
         }
-        if (add_to_template(cls, py_ctx, member_name, member_value, templ, sig, world) < 0) {
-            Py_DECREF(member_value);
-            Py_DECREF(keys);
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-        Py_DECREF(member_value);
+        Py_DECREF(items);
     }
-    Py_XDECREF(keys);
 
     if (config.attributes != NULL)
     {
         if (!bindings::InstallAttributes(
                 isolate, world, templ, sig,
-                config.callback_owner != NULL ? config.callback_owner : cls,
+                cls,
                 config.attributes,
                 self->operation_callback_data)) {
             Py_DECREF((PyObject*)self);
@@ -266,7 +275,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     {
         if (!bindings::InstallOperations(
                 isolate, world, templ, sig,
-                config.callback_owner != NULL ? config.callback_owner : cls,
+                cls,
                 config.methods,
                 self->operation_callback_data)) {
             Py_DECREF((PyObject*)self);
@@ -274,17 +283,17 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         }
     }
 
-    if (config.constant_values != NULL &&
+    if (config.constants_value != NULL &&
         !bindings::InstallConstantValues(
-            isolate, world, templ, sig, config.constant_values))
+            isolate, world, templ, sig, config.constants_value))
     {
         Py_DECREF((PyObject*)self);
         return NULL;
     }
         
-    if (config.constant_callbacks != NULL &&
+    if (config.constants_callback != NULL &&
         !bindings::InstallConstantCallbacks(
-            isolate, world, templ, sig, config.constant_callbacks))
+            isolate, world, templ, sig, config.constants_callback))
     {
         Py_DECREF((PyObject*)self);
         return NULL;
@@ -292,9 +301,18 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         
     if (config.call != NULL)
     {
-        Py_INCREF(config.call);
-        self->call_method = config.call;
-        templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_method_callback, v8_compat::external_new(isolate, self->call_method));
+        PyObject* args = PyTuple_New(0);
+        PyObject* kwargs = Py_BuildValue("{s:s,s:O}", "name", "__call__", "callback", config.call);
+        PyObject* data = args != nullptr && kwargs != nullptr ? PyObject_Call((PyObject*)method_spec_type, args, kwargs) : nullptr;
+        Py_XDECREF(args);
+        Py_XDECREF(kwargs);
+        if (data == nullptr || PyList_Append(self->operation_callback_data, data) < 0) {
+            Py_XDECREF(data);
+            Py_DECREF((PyObject*)self);
+            return nullptr;
+        }
+        templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_method_callback, v8_compat::external_new(isolate, data));
+        Py_DECREF(data);
     }
 
     // V8 requires a callable instance template before an undetectable
@@ -304,18 +322,9 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         templ->InstanceTemplate()->MarkAsUndetectable();
     }
         
-    if (config.array != NULL)
+    if (config.array != 0)
     {
-        if (!PyLong_Check(config.array)) {
-            PyErr_SetString(PyExc_TypeError, "__v8_array__ must be an integer");
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-        int flag = PyLong_AsLong(config.array);
-        if (PyErr_Occurred()) {
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
+        int flag = (int)config.array;
 
         if ((flag & FlagIterator::iterator) != 0)
             templ->PrototypeTemplate()->SetIntrinsicDataProperty(v8::Symbol::GetIterator(isolate), v8::kArrayProto_values, v8::DontEnum);
@@ -329,18 +338,9 @@ py_class_new(PyObject *cls, context_c * py_ctx)
             templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "forEach"), v8::kArrayProto_forEach, v8::None);
     }
 
-    if (config.immutable != NULL)
+    if (config.immutable != 0)
     {
-        if (!PyLong_Check(config.immutable)) {
-            PyErr_SetString(PyExc_TypeError, "__v8_immutable__ must be an integer");
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-        int flag = PyLong_AsLong(config.immutable);
-        if (PyErr_Occurred()) {
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
+        int flag = (int)config.immutable;
 
         if ((flag & FlagImmutable::instance) != 0)
             templ->InstanceTemplate()->SetImmutableProto();
@@ -348,18 +348,9 @@ py_class_new(PyObject *cls, context_c * py_ctx)
             templ->PrototypeTemplate()->SetImmutableProto();
     }
 
-    if (config.has_constructor != NULL)
+    if (config.has_constructor != 0)
     {
-        if (!PyLong_Check(config.has_constructor)) {
-            PyErr_SetString(PyExc_TypeError, "__v8_has_constructor__ must be an integer");
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-        self->has_constructor = PyLong_AsLong(config.has_constructor);
-        if (PyErr_Occurred()) {
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
+        self->has_constructor = (int)config.has_constructor;
     }
 
     if ((py_ctx->hook || config.name_get) && strcmp(world, "WindowProperties") != 0)
@@ -525,7 +516,9 @@ add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObjec
         return 0;
     }
 
-    if (PyObject_HasAttrString(member_value, "__v8_hidden__")) {
+    bool hidden = false;
+    if (!idl_spec_flag(member_value, "hidden", &hidden)) return -1;
+    if (hidden) {
         return 0;
     }
 
@@ -577,7 +570,8 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
     delete_constructor(self, context);
     Local<Function> js_parent;
     if (parent != NULL) {
-        if(PyObject_HasAttrString(parent->cls, "__v8_skip_inherit__"))
+        bool skip_inherit = parent->idl_spec != nullptr && ((IdlSpec*)parent->idl_spec)->skip_inherit;
+        if (skip_inherit)
             parent = (py_class *)parent->parent;
 
         if (parent != NULL) {

@@ -8,8 +8,8 @@ typedef struct {
     PyObject_HEAD
     IsolateState* isolate_state;
     PyObject *cls;
+    PyObject *idl_spec;
     PyObject *cls_name;
-    PyObject *call_method;
     PyObject *operation_callback_data;
     PyObject *constructor_adapter;
     PyObject *parent;
@@ -29,6 +29,7 @@ PyObject* py_class_to_template(PyObject* cls, context_c *py_ctx);
 v8::Local<v8::Function> py_class_get_constructor(v8::Local<v8::Context> context, py_class* self, py_class* parent);
 v8::Local<v8::Object> py_class_create_js_object(py_class *self, PyObject *py_object, v8::Local<v8::Context> context);
 bool py_class_init_js_object(v8::Local<v8::Object> js_object, PyObject *py_object, v8::Local<v8::Context> context);
+PyObject* py_class_handler(PyObject* receiver, const char* name, context_c* context);
 void delete_constructor(py_class* self, v8::Local<v8::Context> context);
 enum PythonObjectInternalField {
     PYTHON_MAGIC_FIELD = 0,
@@ -41,7 +42,6 @@ enum PythonObjectInternalField {
 
 void py_class_construct_callback(const v8::FunctionCallbackInfo<v8::Value>& info);
 void py_class_method_callback(const v8::FunctionCallbackInfo<v8::Value>& info);
-void py_class_cross_origin_method_callback(const v8::FunctionCallbackInfo<v8::Value>& info);
 
 // Handlers
 v8::Intercepted properties_named_getter(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info);

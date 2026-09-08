@@ -15,7 +15,7 @@ _pyv8.init_v8(
 )
 
 _NATIVE_EXPORTS = (
-    "Context", "Isolate", "Script", "Debugger", "JSObject", "JSValue",
+    "IdlSpec", "AttributeSpec", "MethodSpec", "ConstantSpec", "ConstantCallbackSpec", "Context", "Isolate", "Script", "Debugger", "JSObject", "JSValue",
     "JSPromise", "JSTypeArray", "JSFunction", "JSException",
     "JavaScriptTerminated", "Null", "Undefined", "current_context",
     "incumbent_context", "new", "v8_gc", "shutdown_v8", "v8_version",
@@ -44,8 +44,7 @@ class ArrayType:
 _HELPER_EXPORTS = {
     "CallbackType", "FlagImmutable", "V8Attribute", "FlagLocation",
     "FlagReceiverCheck", "FlagCrossOriginCheck", "FlagExposed",
-    "FlagConstructor", "SideEffectType", "FlagArrayProto", "ConstructorConfig",
-    "exposed_constructs",
+    "FlagConstructor", "SideEffectType", "FlagArrayProto",
     "__v8_construct_hook__", "__v8_get_hook__", "__v8_method_hook__", "__v8_set_hook__",
 }
 __all__ = [*_NATIVE_EXPORTS, "ArrayType", "start_devtools", "__version__"]

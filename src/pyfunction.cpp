@@ -6,6 +6,7 @@
 #include "context.h"
 #include "convert.h"
 #include "pyfunction.h"
+#include "idl_spec.h"
 
 using namespace v8;
 
@@ -49,44 +50,26 @@ py_function_new(PyObject *function, IsolateState* isolate_state)
     self->js_template = new Persistent<FunctionTemplate>();
     Py_INCREF(function);
     self->function = function;
-    if (PyObject_HasAttrString(function, "__v8_name__")) {
-        self->function_name = PyObject_GetAttrString(function, "__v8_name__");
-    }
-    else {
+    PyObject* spec = idl_spec_for(function);
+    if (spec == NULL && PyErr_Occurred()) { Py_DECREF((PyObject*)self); return NULL; }
+    IdlSpec defaults;
+    const IdlSpec& config = spec == nullptr ? defaults : *(IdlSpec*)spec;
+    PyObject* name = config.name;
+    if (name != NULL) {
+        Py_INCREF(name);
+        self->function_name = name;
+    } else {
         self->function_name = PyObject_GetAttrString(function, "__name__");
     }
-    if (self->function_name == NULL) {
+    int length = (int)config.length;
+    bool throw_on_construct = spec != nullptr && (config.constructor_behavior & 1) == 0;
+    Py_XDECREF(spec);
+    if (self->function_name == NULL || PyErr_Occurred()) {
         Py_DECREF((PyObject*)self);
         return NULL;
     }
-
     Local<External> js_self = v8_compat::external_new(isolate, self);
     Local<FunctionTemplate> js_template;
-
-    int length = 0;
-    if (PyObject_HasAttrString(function, "__v8_length__"))
-    {
-        PyObject* len = PyObject_GetAttrString(function, "__v8_length__");
-        if (PyNumber_Check(len))
-            length = (int)PyLong_AsLong(len);
-        Py_XDECREF(len);
-    }
-
-    bool throw_on_construct = false;
-    if (PyObject_HasAttrString(function, "__v8_constructor_behavior__")) {
-        PyObject* behavior = PyObject_GetAttrString(function, "__v8_constructor_behavior__");
-        if (behavior == NULL) {
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-        int truth = PyObject_IsTrue(behavior);
-        Py_XDECREF(behavior);
-        if (truth < 0) {
-            Py_DECREF((PyObject*)self);
-            return NULL;
-        }
-        throw_on_construct = truth == 0;
-    }
 
     if (throw_on_construct) {
         js_template = FunctionTemplate::New(isolate, py_function_callback, js_self, Local<Signature>(), length, ConstructorBehavior::kThrow);

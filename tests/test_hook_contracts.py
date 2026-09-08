@@ -1,3 +1,4 @@
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 import unittest
 
 import pyv8
@@ -8,7 +9,9 @@ class TestHookContracts(unittest.TestCase):
 
     def setUp(self):
         class Window:
-            __v8_global_this__ = True
+            __v8_idl_spec__ = IdlSpec(
+                global_this=True,
+            )
 
         self.context = pyv8.Context(Window(), hook=True, ctx_type="Top")
 
@@ -21,33 +24,35 @@ class TestHookContracts(unittest.TestCase):
         events = []
 
         class HookTarget:
-            __v8_constructor__ = pyv8.FlagConstructor.kNew
-            __v8_has_constructor__ = 1
-            __v8_attribute__ = (
-                (
-                    "value",
-                    "get_value",
-                    "set_value",
-                    pyv8.CallbackType.kPy,
-                    pyv8.FlagLocation.kPrototype,
-                    pyv8.V8Attribute.kNone,
-                    pyv8.FlagReceiverCheck.kCheck,
-                    pyv8.FlagCrossOriginCheck.kCheck,
-                    pyv8.FlagCrossOriginCheck.kCheck,
-                    pyv8.SideEffectType.kHasSideEffect,
+            __v8_idl_spec__ = IdlSpec(
+                constructor_behavior=pyv8.FlagConstructor.kNew,
+                has_constructor=1,
+                attributes=(
+                    AttributeSpec(
+                        name="value",
+                        getter="get_value",
+                        setter="set_value",
+                        callback_type=pyv8.CallbackType.kPy,
+                        location=pyv8.FlagLocation.kPrototype,
+                        property_flags=pyv8.V8Attribute.kNone,
+                        receiver_check=pyv8.FlagReceiverCheck.kCheck,
+                        cross_origin_get_check=pyv8.FlagCrossOriginCheck.kCheck,
+                        cross_origin_set_check=pyv8.FlagCrossOriginCheck.kCheck,
+                        side_effect=pyv8.SideEffectType.kHasSideEffect,
+                    ),
                 ),
-            )
-            __v8_method__ = (
-                (
-                    "add",
-                    "fn_add",
-                    2,
-                    pyv8.CallbackType.kPy,
-                    pyv8.FlagLocation.kPrototype,
-                    pyv8.V8Attribute.kNone,
-                    pyv8.FlagReceiverCheck.kCheck,
-                    pyv8.FlagCrossOriginCheck.kCheck,
-                    pyv8.SideEffectType.kHasSideEffect,
+                methods=(
+                    MethodSpec(
+                        name="add",
+                        callback="fn_add",
+                        length=2,
+                        callback_type=pyv8.CallbackType.kPy,
+                        location=pyv8.FlagLocation.kPrototype,
+                        property_flags=pyv8.V8Attribute.kNone,
+                        receiver_check=pyv8.FlagReceiverCheck.kCheck,
+                        cross_origin_check=pyv8.FlagCrossOriginCheck.kCheck,
+                        side_effect=pyv8.SideEffectType.kHasSideEffect,
+                    ),
                 ),
             )
 
@@ -132,8 +137,20 @@ class TestHookContracts(unittest.TestCase):
             __v8_error__ = True
 
         class ThrowingTarget:
-            __v8_method__ = (
-                ("fail", "fn_fail", 0, 0, 1, 0, 0, 0, 0),
+            __v8_idl_spec__ = IdlSpec(
+                methods=(
+                    MethodSpec(
+                        name="fail",
+                        callback="fn_fail",
+                        length=0,
+                        callback_type=0,
+                        location=1,
+                        property_flags=0,
+                        receiver_check=0,
+                        cross_origin_check=0,
+                        side_effect=0,
+                    ),
+                ),
             )
 
             def fn_fail(self):
@@ -164,9 +181,31 @@ class TestHookContracts(unittest.TestCase):
         names = []
 
         class AliasTarget:
-            __v8_method__ = (
-                ("firstAlias", "shared", 0, 0, 1, 0, 0, 0, 0),
-                ("secondAlias", "shared", 0, 0, 1, 0, 0, 0, 0),
+            __v8_idl_spec__ = IdlSpec(
+                methods=(
+                    MethodSpec(
+                        name="firstAlias",
+                        callback="shared",
+                        length=0,
+                        callback_type=0,
+                        location=1,
+                        property_flags=0,
+                        receiver_check=0,
+                        cross_origin_check=0,
+                        side_effect=0,
+                    ),
+                    MethodSpec(
+                        name="secondAlias",
+                        callback="shared",
+                        length=0,
+                        callback_type=0,
+                        location=1,
+                        property_flags=0,
+                        receiver_check=0,
+                        cross_origin_check=0,
+                        side_effect=0,
+                    ),
+                ),
             )
 
             def shared(self):
@@ -195,13 +234,36 @@ class TestHookContracts(unittest.TestCase):
 
         class BrokenHookTarget:
             active_hook = None
-            __v8_constructor__ = pyv8.FlagConstructor.kNew
-            __v8_has_constructor__ = 1
-            __v8_attribute__ = (
-                ("value", "get_value", "set_value", 0, 1, 0, 0, 0, 0, 0),
-            )
-            __v8_method__ = (
-                ("ping", "fn_ping", 0, 0, 1, 0, 0, 0, 0),
+            __v8_idl_spec__ = IdlSpec(
+                constructor_behavior=pyv8.FlagConstructor.kNew,
+                has_constructor=1,
+                attributes=(
+                    AttributeSpec(
+                        name="value",
+                        getter="get_value",
+                        setter="set_value",
+                        callback_type=0,
+                        location=1,
+                        property_flags=0,
+                        receiver_check=0,
+                        cross_origin_get_check=0,
+                        cross_origin_set_check=0,
+                        side_effect=0,
+                    ),
+                ),
+                methods=(
+                    MethodSpec(
+                        name="ping",
+                        callback="fn_ping",
+                        length=0,
+                        callback_type=0,
+                        location=1,
+                        property_flags=0,
+                        receiver_check=0,
+                        cross_origin_check=0,
+                        side_effect=0,
+                    ),
+                ),
             )
 
             def __init__(self, win=None):

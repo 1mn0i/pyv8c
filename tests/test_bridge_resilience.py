@@ -1,3 +1,4 @@
+from pyv8 import IdlSpec
 import math
 import unittest
 
@@ -90,6 +91,11 @@ class TestBridgeResilience(unittest.TestCase):
             __v8_interceptor_failure__ = True
 
         class LegacyTarget:
+            __v8_idl_spec__ = IdlSpec(
+                name_get="__v8_name_get__",
+                name_set="__v8_name_set__",
+                name_del="__v8_name_del__",
+            )
             def __v8_name_get__(self, name):
                 return None
 
@@ -208,6 +214,18 @@ class TestBridgeResilience(unittest.TestCase):
                 if self.active_handler == handler:
                     raise InterceptorFailure(f"{handler} boom")
 
+            __v8_idl_spec__ = IdlSpec(
+                name_get="__v8_name_get__",
+                name_set="__v8_name_set__",
+                name_query="__v8_name_query__",
+                name_del="__v8_name_del__",
+                name_enum="__v8_name_enum__",
+                index_get="__v8_index_get__",
+                index_set="__v8_index_set__",
+                index_query="__v8_index_query__",
+                index_del="__v8_index_del__",
+                index_enum="__v8_index_enum__",
+            )
             def __v8_name_get__(self, name):
                 self._raise_if_active("name_get")
                 return None

@@ -83,6 +83,7 @@ int cache_FunctionType_init();
 
 int PyFunction_Check_abi3(PyObject* op);
 int PyMethod_Check_abi3(PyObject* op);
+PyObject* PyMethod_New_abi3(PyObject* callback, PyObject* receiver);
 
 
 static inline PyObject *

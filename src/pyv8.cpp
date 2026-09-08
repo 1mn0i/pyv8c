@@ -1,5 +1,6 @@
 #include <Python.h>
 #include "pyv8.h"
+#include "idl_spec.h"
 #include <v8.h>
 #include <cstring>
 
@@ -51,26 +52,36 @@ py_shutdown_v8(PyObject *self, PyObject *args)
     return PyBool_FromLong(shut_down);
 }
 
-PyObject *
-mark_hidden(PyObject *self, PyObject *thing)
+static PyObject* mark_spec_flag(PyObject* thing, const char* key)
 {
-    if (PyObject_SetAttrString(thing, "__v8_hidden__", Py_True) < 0)
-    {
-        return NULL;
-    }
+    PyObject* original = idl_spec_for(thing);
+    if (original == nullptr && PyErr_Occurred()) return nullptr;
+    if (original == nullptr) original = PyObject_CallObject((PyObject*)idl_spec_type, nullptr);
+    if (original == nullptr) return nullptr;
+    PyObject* changes = PyDict_New();
+    if (changes == nullptr) { Py_DECREF(original); return nullptr; }
+    int result = PyDict_SetItemString(changes, key, Py_True);
+    PyObject* spec = result == 0 ? idl_spec_replace(original, changes) : nullptr;
+    Py_DECREF(changes);
+    Py_DECREF(original);
+    if (spec == nullptr) return nullptr;
+    result = PyObject_SetAttrString(thing, "__v8_idl_spec__", spec);
+    Py_DECREF(spec);
+    if (result < 0) return NULL;
     Py_INCREF(thing);
     return thing;
 }
 
 PyObject *
+mark_hidden(PyObject *self, PyObject *thing)
+{
+    return mark_spec_flag(thing, "hidden");
+}
+
+PyObject *
 mark_unconstructable(PyObject *self, PyObject *thing)
 {
-    if (PyObject_SetAttrString(thing, "__v8_unconstructable__", Py_True) < 0)
-    {
-        return NULL;
-    }
-    Py_INCREF(thing);
-    return thing;
+    return mark_spec_flag(thing, "unconstructable");
 }
 
 PyObject *
@@ -260,6 +271,9 @@ static int
 pyv8_module_exec(PyObject* module)
 {
     if (!require_supported_python_runtime())
+        return -1;
+
+    if (idl_spec_init(module) < 0)
         return -1;
 
     if (cache_FunctionType_init() < 0)

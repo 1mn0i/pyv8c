@@ -10,6 +10,7 @@ The commit protocol only adds new classes, but the Context must stay coherent
 even if a caller re-commits an overlay for a class whose template is already
 cached (template snapshots are immutable once built).
 """
+from pyv8 import IdlSpec, MethodSpec
 import unittest
 
 import pyv8
@@ -17,18 +18,22 @@ from pyv8.flag import FlagConstructor
 
 
 class Window:
-    __v8_global_this__ = True
+    __v8_idl_spec__ = IdlSpec(
+        global_this=True,
+    )
 
 
 def operation(name, callback):
-    return (name, callback, 0, 0, 1, 0, 0, 0, 0)
+    return MethodSpec(name=name, callback=callback)
 
 
 def make_widget_class():
     class Widget:
-        __v8_has_constructor__ = 1
-        __v8_constructor__ = FlagConstructor.kNew
-        __v8_to_string_tag__ = "Widget"
+        __v8_idl_spec__ = IdlSpec(
+            has_constructor=1,
+            constructor_behavior=FlagConstructor.kNew,
+            to_string_tag="Widget",
+        )
 
         def __init__(self, value="base", **kwargs):
             self._value = value
@@ -44,18 +49,16 @@ def marker_callback(value):
     def fn_marker(receiver):
         return value
 
-    fn_marker.__v8_direct_callback__ = True
     fn_marker.__name__ = "fn_marker"
     return fn_marker
 
 
 def widget_overlay(widget, value, marker="marker"):
-    owner = type("Owner", (), {"fn_marker": marker_callback(value)})
+    callback = marker_callback(value)
     return {
-        widget: {
-            "__v8_method__": (operation(marker, "fn_marker"),),
-            "__v8_callback_owner__": owner,
-        }
+        widget: widget.__v8_idl_spec__.replace(
+            methods=(operation(marker, callback),),
+        )
     }
 
 
@@ -84,22 +87,24 @@ class TestUpdateConfigs(unittest.TestCase):
     def test_update_configs_returns_added_count(self):
         widget = make_widget_class()
         other = type("Other", (object,), {})
-        context = pyv8.Context(Window(), class_configs={widget: {}})
+        context = pyv8.Context(Window(), class_configs={widget: widget.__v8_idl_spec__})
         self.addCleanup(context.close)
 
-        self.assertEqual(context.update_configs({other: {}}), 1)
+        other_spec = IdlSpec()
+        self.assertEqual(context.update_configs({other: other_spec}), 1)
         # Re-committing an existing class is idempotent from the count's view.
-        self.assertEqual(context.update_configs({other: {}}), 0)
+        self.assertEqual(context.update_configs({other: other_spec}), 0)
         self.assertEqual(context.update_configs({}), 0)
 
     def test_update_configs_merges_with_constructor_snapshot(self):
         widget = make_widget_class()
-        context = pyv8.Context(Window(), class_configs={widget: {}})
+        context = pyv8.Context(Window(), class_configs={widget: widget.__v8_idl_spec__})
         self.addCleanup(context.close)
 
-        self.assertEqual(context.update_configs(widget_overlay(widget, "late")), 0)
+        with self.assertRaisesRegex(RuntimeError, "already registered"):
+            context.update_configs(widget_overlay(widget, "late"))
         context.expose(widget)
-        self.assertEqual(context.exec_js("new Widget('x').marker()"), "late")
+        self.assertTrue(context.exec_js("typeof Widget.prototype.marker === 'undefined'"))
 
     def test_update_configs_requires_a_mapping(self):
         context = pyv8.Context(Window())
@@ -126,7 +131,8 @@ class TestUpdateConfigs(unittest.TestCase):
 
         # Re-commit with a different behaviour; the existing template is cached
         # and must still report v1 rather than crashing or half-updating.
-        context.update_configs(widget_overlay(widget, "v2"))
+        with self.assertRaisesRegex(RuntimeError, "already registered"):
+            context.update_configs(widget_overlay(widget, "v2"))
         self.assertEqual(context.exec_js("new Widget('x').marker()"), "v1")
 
     def test_late_commit_is_visible_to_a_fresh_context(self):

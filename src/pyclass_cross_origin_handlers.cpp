@@ -132,8 +132,8 @@ bool cross_origin_access_check(
     if (interviewee_ctx_c == nullptr || interviewee_ctx_c->py_global == nullptr)
         return false;
     PyObject* interviewee = interviewee_ctx_c->py_global;
-    PyObject* checker = PyObject_GetAttrString(
-        interviewee, "__v8_cross_origin_check__");
+    PyObject* checker = py_class_handler(
+        interviewee, "__v8_cross_origin_check__", interviewee_ctx_c);
     if (checker == nullptr) {
         if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
             PyErr_Clear();

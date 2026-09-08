@@ -635,7 +635,12 @@ js_from_py_impl(PyObject *value,
     }
 
     // python global_this -> js globalThis
-    context_c *ctx_c = (context_c *)v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
+    context_c *ctx_c = context.IsEmpty() ? nullptr :
+        v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (ctx_c == nullptr) {
+        PyErr_SetString(PyExc_RuntimeError, "Python objects require a V8 context");
+        return Local<Value>();
+    }
     if (ctx_c->py_global != NULL && Py_TYPE(value) == Py_TYPE(ctx_c->py_global))
     {
         PyObject *ctx = PyObject_GetAttrString(value, "_ctx");

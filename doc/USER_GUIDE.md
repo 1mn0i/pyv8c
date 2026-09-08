@@ -228,7 +228,9 @@ import pyv8
 
 
 class Window:
-    __v8_global_this__ = True
+    __v8_idl_spec__ = pyv8.IdlSpec(
+        global_this=True,
+    )
 
 
 context = pyv8.Context(
@@ -531,9 +533,11 @@ import pyv8
 
 
 class DOMPoint:
-    __v8_constructor__ = pyv8.FlagConstructor.kNew
-    __v8_has_constructor__ = 1
-    __v8_length__ = 2
+    __v8_idl_spec__ = pyv8.IdlSpec(
+        constructor_behavior=pyv8.FlagConstructor.kNew,
+        has_constructor=1,
+        length=2,
+    )
 
     def __init__(self, x=0, y=0, win=None):
         self.x = x
@@ -551,16 +555,16 @@ Python 构造器会额外收到 `win=<当前 Context 的 Python global_this>` �
 
 | 属性 | 作用 |
 | --- | --- |
-| `__v8_length__` | JavaScript 构造器的 `length` |
-| `__v8_constructor__` | 是否允许 `new Interface()` 和直接调用 |
-| `__v8_has_constructor__` | 是否在 prototype 上安装 `constructor` |
-| `__v8_global_this__` | 标记全局 Window-like 类并注册 Faker 支持 |
-| `__v8_skip_inherit__` | 子类建立原型链时跳过该中间基类 |
-| `__v8_undetectable__` | 使用 V8 undetectable object 行为 |
-| `__v8_unconstructable__` | 构造时抛出“不是构造器”错误 |
-| `__v8_array__` | 安装 Array 原型相关 intrinsic 方法 |
-| `__v8_immutable__` | 将实例或 prototype 的原型标记为 immutable |
-| `__call__` | 让实例在 JavaScript 中可以作为函数调用 |
+| `IdlSpec.length` | JavaScript 构造器的 `length` |
+| `IdlSpec.constructor_behavior` | 是否允许 `new Interface()` 和直接调用 |
+| `IdlSpec.has_constructor` | 是否在 prototype 上安装 `constructor` |
+| `IdlSpec.global_this` | 标记全局 Window-like 类并注册 Faker 支持 |
+| `IdlSpec.skip_inherit` | 子类建立原型链时跳过该中间基类 |
+| `IdlSpec.undetectable` | 使用 V8 undetectable object 行为 |
+| `IdlSpec.unconstructable` | 构造时抛出“不是构造器”错误 |
+| `IdlSpec.array` | 安装 Array 原型相关 intrinsic 方法 |
+| `IdlSpec.immutable` | 将实例或 prototype 的原型标记为 immutable |
+| `IdlSpec.call` | 让实例在 JavaScript 中可以作为函数调用 |
 
 `FlagConstructor`：
 
@@ -571,86 +575,32 @@ Python 构造器会额外收到 `win=<当前 Context 的 Python global_this>` �
 | `kCall` | 允许函数调用；当前实现也接受 `new` |
 | `kAll` | 允许构造和函数调用 |
 
-### Attribute 配置
+### Attribute 与 Operation 配置
 
-`__v8_attribute__` 必须是 tuple，每个 attribute 也是至少 10 项的 tuple：
-
-```python
-class NavigatorLike:
-    __v8_attribute__ = (
-        (
-            "userAgent",                          # JavaScript 属性名
-            "get_user_agent",                    # Python getter 名
-            None,                                 # Python setter 名或 None
-            pyv8.CallbackType.kPy,                # callback 类型
-            pyv8.FlagLocation.kPrototype,         # 安装位置
-            pyv8.V8Attribute.DontEnum,            # descriptor flags
-            pyv8.FlagReceiverCheck.kCheck,        # receiver 检查
-            pyv8.FlagCrossOriginCheck.kCheck,     # getter cross-origin
-            pyv8.FlagCrossOriginCheck.kCheck,     # setter cross-origin
-            pyv8.SideEffectType.kHasNoSideEffect, # side effect
-        ),
-    )
-
-    def get_user_agent(self):
-        return "pyv8-browser/1.0"
-```
-
-字段顺序：
-
-| 序号 | 字段 |
-| --- | --- |
-| 1 | JavaScript 属性名 |
-| 2 | getter callback 名 |
-| 3 | setter callback 名或 `None` |
-| 4 | `CallbackType` |
-| 5 | `FlagLocation` |
-| 6 | `V8Attribute` 位标志 |
-| 7 | `FlagReceiverCheck` |
-| 8 | getter `FlagCrossOriginCheck` |
-| 9 | setter `FlagCrossOriginCheck` |
-| 10 | `SideEffectType` |
-
-### Operation 配置
-
-`__v8_method__` 必须是 tuple，每个 operation 是至少 9 项的 tuple：
+显式 IDL 成员使用不可变的具名描述；不再接受位置元组。
 
 ```python
+import pyv8
+
 class Calculator:
-    __v8_method__ = (
-        (
-            "add",
-            "fn_add",
-            2,
-            pyv8.CallbackType.kPy,
-            pyv8.FlagLocation.kPrototype,
-            pyv8.V8Attribute.kNone,
-            pyv8.FlagReceiverCheck.kCheck,
-            pyv8.FlagCrossOriginCheck.kCheck,
-            pyv8.SideEffectType.kHasNoSideEffect,
-        ),
+    __v8_idl_spec__ = pyv8.IdlSpec(
+        attributes=(pyv8.AttributeSpec(name="value", getter="get_value"),),
+        methods=(pyv8.MethodSpec(name="add", callback="fn_add", length=2),),
     )
+
+    def get_value(self):
+        return 42
 
     def fn_add(self, left, right):
         return left + right
 ```
 
-字段顺序：
+`getter`、`setter` 和 `callback` 接受 Python 回调名或 callable。名称在绑定时解析一次；
+显式 IDL 路径不会反射安装未声明的成员。`callback_type=CallbackType.kJs` 使用 Faker 回调名。
+getter/setter 分别使用 `cross_origin_get_check` / `cross_origin_set_check` 配置跨域规则。
 
-| 序号 | 字段 |
-| --- | --- |
-| 1 | JavaScript operation 名 |
-| 2 | Python callback 名 |
-| 3 | JavaScript function `length`，范围 0 至 255 |
-| 4 | `CallbackType` |
-| 5 | `FlagLocation` |
-| 6 | `V8Attribute` 位标志 |
-| 7 | `FlagReceiverCheck` |
-| 8 | `FlagCrossOriginCheck` |
-| 9 | `SideEffectType` |
-
-`CallbackType.kPy` 表示调用 Python 类方法。`CallbackType.kJs` 用于调用
-`globalThis.faker` 中的 JavaScript patch callback，属于补环境高级接口。
+描述对象只读，使用 `spec.replace(**changes)` 创建新配置并共享未变化的成员。
+完整字段、注册限制和破坏性迁移说明见 [IDL_SPEC.md](IDL_SPEC.md)。
 
 ### 安装位置和 descriptor flags
 
@@ -684,17 +634,20 @@ flags = (
 ### 常量
 
 ```python
+import pyv8
 class ReadyState:
-    __v8_constants_value__ = (
-        ("UNSENT", 0),
-        ("OPENED", 1),
-        ("DONE", 4),
+    __v8_idl_spec__ = pyv8.IdlSpec(
+        constants_value=(
+            pyv8.ConstantSpec(name="UNSENT", value=0),
+            pyv8.ConstantSpec(name="OPENED", value=1),
+            pyv8.ConstantSpec(name="DONE", value=4),
+        ),
     )
 ```
 
 常量会安装在 interface object 和 prototype 上，并使用只读、不可删除的 descriptor。
 
-`__v8_constants_callback__` 用于从 `faker` JavaScript callback 延迟获取常量，属于高级
+`IdlSpec.constants_callback` 用于从 `faker` JavaScript callback 延迟获取常量，属于高级
 补环境接口。
 
 ### 原型继承
@@ -728,10 +681,12 @@ assert context.exec_js("Element.__proto__.name") == "Node"
 定义下列方法中的任意组合即可安装 named interceptor：
 
 ```python
+import pyv8
 class NamedCollection:
     def __init__(self):
         self.values = {"first": 1}
 
+    __v8_idl_spec__ = pyv8.IdlSpec(name_get="__v8_name_get__", name_set="__v8_name_set__", name_query="__v8_name_query__", name_del="__v8_name_del__", name_enum="__v8_name_enum__")
     def __v8_name_get__(self, name):
         return self.values.get(name)
 
@@ -755,19 +710,21 @@ class NamedCollection:
 
 | Handler | 返回值 |
 | --- | --- |
-| `__v8_name_get__` | 属性值；`None` 表示未拦截 |
-| `__v8_name_set__` | 非 `None` 表示已处理 |
-| `__v8_name_query__` | `V8Attribute` 整数；`None` 表示不存在 |
-| `__v8_name_del__` | `bool` 删除结果 |
-| `__v8_name_enum__` | 名称序列；`None` 表示不提供枚举结果 |
+| `IdlSpec.name_get` | 属性值；`None` 表示未拦截 |
+| `IdlSpec.name_set` | 非 `None` 表示已处理 |
+| `IdlSpec.name_query` | `V8Attribute` 整数；`None` 表示不存在 |
+| `IdlSpec.name_del` | `bool` 删除结果 |
+| `IdlSpec.name_enum` | 名称序列；`None` 表示不提供枚举结果 |
 
 ### Indexed property handler
 
 ```python
+import pyv8
 class IndexedCollection:
     def __init__(self):
         self.values = [10, 20]
 
+    __v8_idl_spec__ = pyv8.IdlSpec(index_get="__v8_index_get__", index_set="__v8_index_set__", index_query="__v8_index_query__", index_del="__v8_index_del__", index_enum="__v8_index_enum__")
     def __v8_index_get__(self, index):
         if 0 <= index < len(self.values):
             return self.values[index]
@@ -794,7 +751,7 @@ class IndexedCollection:
         return len(self.values)
 ```
 
-`__v8_index_enum__` 返回要枚举的连续索引数量，V8 将生成 `0` 到 `length - 1`。
+`IdlSpec.index_enum` 返回要枚举的连续索引数量，V8 将生成 `0` 到 `length - 1`。
 
 Handler 抛出的 Python 异常会传播到 JavaScript；若未被 JavaScript 捕获，会恢复到 Python
 调用方。一次 handler 失败不应破坏后续 Context 执行。
@@ -807,6 +764,7 @@ Setter/deleter handler 还支持内部失败标记 `__v8_interceptor_failure__`�
 - 该标记仅用于 named/indexed setter 和 deleter，不应标记普通业务异常。
 
 ```python
+import pyv8
 class LegacyPropertyError(Exception):
     __v8_error__ = True
     __v8_error_name__ = "TypeError"
@@ -814,6 +772,7 @@ class LegacyPropertyError(Exception):
 
 
 class LegacyCollection:
+    __v8_idl_spec__ = pyv8.IdlSpec(index_set="__v8_index_set__")
     def __v8_index_set__(self, index, value):
         raise LegacyPropertyError(
             f"Failed to set an indexed property [{index}] on "
@@ -831,7 +790,9 @@ class LegacyCollection:
 Window-like 对象可以定义访问检查：
 
 ```python
+import pyv8
 class Window:
+    __v8_idl_spec__ = pyv8.IdlSpec(cross_origin_check="__v8_cross_origin_check__")
     def __v8_cross_origin_check__(self, accessor):
         # self 是被访问对象，accessor 是发起访问的 Python global object。
         return self.origin == accessor.origin
@@ -841,16 +802,16 @@ class Window:
 
 需要在拒绝普通访问时提供受限属性，可以实现独立 cross-origin handler：
 
-- `__v8_cross_origin_name_get__`
-- `__v8_cross_origin_name_set__`
-- `__v8_cross_origin_name_query__`
-- `__v8_cross_origin_name_del__`
-- `__v8_cross_origin_name_enum__`
-- `__v8_cross_origin_index_get__`
-- `__v8_cross_origin_index_set__`
-- `__v8_cross_origin_index_query__`
-- `__v8_cross_origin_index_del__`
-- `__v8_cross_origin_index_enum__`
+- `IdlSpec.cross_origin_name_get`
+- `IdlSpec.cross_origin_name_set`
+- `IdlSpec.cross_origin_name_query`
+- `IdlSpec.cross_origin_name_del`
+- `IdlSpec.cross_origin_name_enum`
+- `IdlSpec.cross_origin_index_get`
+- `IdlSpec.cross_origin_index_set`
+- `IdlSpec.cross_origin_index_query`
+- `IdlSpec.cross_origin_index_del`
+- `IdlSpec.cross_origin_index_enum`
 
 这些方法的参数和返回约定与普通 named/indexed handler 相同。
 
@@ -899,19 +860,15 @@ class HookTarget:
         )
 ```
 
-`pyv8.tools.ConstructorConfig` 可以写入常用构造器元数据，并自动安装默认打印 hook：
+构造器配置直接写入不可变 `IdlSpec`，hook 保持独立运行时能力，不再隐式安装。
 
 ```python
-from pyv8.tools import ConstructorConfig
-
-
-@ConstructorConfig(
-    constructor=pyv8.FlagConstructor.kNew,
-    length=0,
-    immutable=pyv8.FlagImmutable.instance | pyv8.FlagImmutable.prototype,
-)
 class Window:
-    __v8_global_this__ = True
+    __v8_idl_spec__ = pyv8.IdlSpec(
+        global_this=True,
+        constructor_behavior=pyv8.FlagConstructor.kNew,
+        immutable=pyv8.FlagImmutable.instance | pyv8.FlagImmutable.prototype,
+    )
 ```
 
 Hook 自身抛出的异常会传播给调用方，因此生产日志 hook 不应吞掉关键状态，也不应执行
@@ -1158,7 +1115,9 @@ import pyv8
 
 
 class Window:
-    __v8_global_this__ = True
+    __v8_idl_spec__ = pyv8.IdlSpec(
+        global_this=True,
+    )
 
 
 def run_target(context):

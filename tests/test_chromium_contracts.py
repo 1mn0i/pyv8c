@@ -1,3 +1,4 @@
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec, ConstantSpec
 import unittest
 
 import pyv8
@@ -19,9 +20,11 @@ class TestChromiumContracts(unittest.TestCase):
         """构造器元数据和 prototype.constructor 应接近原生接口对象。"""
 
         class ChromiumConstructor:
-            __v8_constructor__ = pyv8.FlagConstructor.kAll
-            __v8_has_constructor__ = 1
-            __v8_length__ = 2
+            __v8_idl_spec__ = IdlSpec(
+                constructor_behavior=pyv8.FlagConstructor.kAll,
+                has_constructor=1,
+                length=2,
+            )
 
             def __init__(self, first=None, second=None, win=None):
                 self.first = first
@@ -56,18 +59,21 @@ class TestChromiumContracts(unittest.TestCase):
         """原型 getter 应保留 descriptor flag 并拒绝非法 receiver。"""
 
         class NavigatorLike:
-            __v8_attribute__ = (
-                (
-                    "userAgent",
-                    "get_user_agent",
-                    None,
-                    pyv8.CallbackType.kPy,
-                    pyv8.FlagLocation.kPrototype,
-                    pyv8.V8Attribute.DontEnum | pyv8.V8Attribute.DontDelete,
-                    pyv8.FlagReceiverCheck.kCheck,
-                    pyv8.FlagCrossOriginCheck.kCheck,
-                    pyv8.FlagCrossOriginCheck.kCheck,
-                    pyv8.SideEffectType.kHasNoSideEffect,
+            __v8_idl_spec__ = IdlSpec(
+                attributes=(
+                    AttributeSpec(
+                        name="userAgent",
+                        getter="get_user_agent",
+                        setter=None,
+                        callback_type=pyv8.CallbackType.kPy,
+                        location=pyv8.FlagLocation.kPrototype,
+                        property_flags=pyv8.V8Attribute.DontEnum
+                        | pyv8.V8Attribute.DontDelete,
+                        receiver_check=pyv8.FlagReceiverCheck.kCheck,
+                        cross_origin_get_check=pyv8.FlagCrossOriginCheck.kCheck,
+                        cross_origin_set_check=pyv8.FlagCrossOriginCheck.kCheck,
+                        side_effect=pyv8.SideEffectType.kHasNoSideEffect,
+                    ),
                 ),
             )
 
@@ -105,21 +111,23 @@ class TestChromiumContracts(unittest.TestCase):
         """interface operation 与 Web IDL 常量应安装在正确位置并保留标志。"""
 
         class InterfaceContract:
-            __v8_constructor__ = pyv8.FlagConstructor.kNew
-            __v8_constants_value__ = (("READY", 4),)
-            __v8_method__ = (
-                (
-                    "parse",
-                    "fn_parse",
-                    1,
-                    pyv8.CallbackType.kPy,
-                    pyv8.FlagLocation.kInterface,
-                    pyv8.V8Attribute.ReadOnly
-                    | pyv8.V8Attribute.DontEnum
-                    | pyv8.V8Attribute.DontDelete,
-                    pyv8.FlagReceiverCheck.kDoNotCheck,
-                    pyv8.FlagCrossOriginCheck.kCheck,
-                    pyv8.SideEffectType.kHasNoSideEffect,
+            __v8_idl_spec__ = IdlSpec(
+                constructor_behavior=pyv8.FlagConstructor.kNew,
+                constants_value=(ConstantSpec(name="READY", value=4),),
+                methods=(
+                    MethodSpec(
+                        name="parse",
+                        callback="fn_parse",
+                        length=1,
+                        callback_type=pyv8.CallbackType.kPy,
+                        location=pyv8.FlagLocation.kInterface,
+                        property_flags=pyv8.V8Attribute.ReadOnly
+                        | pyv8.V8Attribute.DontEnum
+                        | pyv8.V8Attribute.DontDelete,
+                        receiver_check=pyv8.FlagReceiverCheck.kDoNotCheck,
+                        cross_origin_check=pyv8.FlagCrossOriginCheck.kCheck,
+                        side_effect=pyv8.SideEffectType.kHasNoSideEffect,
+                    ),
                 ),
             )
 
@@ -168,11 +176,9 @@ class TestChromiumContracts(unittest.TestCase):
     def test_invalid_constant_metadata_is_rejected(self):
         """验证常量配置 tuple 长度错误时不会静默读取越界元素。"""
 
-        class InvalidConstant:
-            __v8_constants_value__ = (("BROKEN",),)
-
-        with self.assertRaisesRegex(TypeError, "exactly 2 items"):
-            self.context.expose(InvalidConstant)
+        with self.assertRaisesRegex(TypeError, "IdlSpec.constants_value"):
+            IdlSpec(constants_value=(("BROKEN",),))
+        self.assertEqual(self.context.exec_js("40 + 2"), 42)
 
     def test_same_named_classes_are_rejected_in_one_context(self):
         """验证同一 Context 不会让同名 Python 类互相覆盖模板。"""
@@ -190,6 +196,18 @@ class TestChromiumContracts(unittest.TestCase):
                 self.named = {"visible": 1, "hidden": 2}
                 self.indexed = [10, 20]
 
+            __v8_idl_spec__ = IdlSpec(
+                name_get="__v8_name_get__",
+                name_set="__v8_name_set__",
+                name_query="__v8_name_query__",
+                name_del="__v8_name_del__",
+                name_enum="__v8_name_enum__",
+                index_get="__v8_index_get__",
+                index_set="__v8_index_set__",
+                index_query="__v8_index_query__",
+                index_del="__v8_index_del__",
+                index_enum="__v8_index_enum__",
+            )
             def __v8_name_get__(self, name):
                 return self.named.get(name)
 
@@ -268,10 +286,14 @@ class TestChromiumContracts(unittest.TestCase):
 
     def test_array_prototype_intrinsics_keep_their_native_semantics(self):
         class IterableCollection:
-            __v8_array__ = (
-                pyv8.FlagArrayProto.iterator | pyv8.FlagArrayProto.entries
-                | pyv8.FlagArrayProto.keys | pyv8.FlagArrayProto.values
-                | pyv8.FlagArrayProto.forEach
+            __v8_idl_spec__ = IdlSpec(
+                name_get="__v8_name_get__",
+                index_get="__v8_index_get__",
+                array=pyv8.FlagArrayProto.iterator
+                | pyv8.FlagArrayProto.entries
+                | pyv8.FlagArrayProto.keys
+                | pyv8.FlagArrayProto.values
+                | pyv8.FlagArrayProto.forEach,
             )
 
             def __init__(self):
@@ -311,33 +333,8 @@ class TestChromiumContracts(unittest.TestCase):
     def test_generated_browser_api_graph(self):
         """大量带 accessor、operation 和 interceptor 的模板应可组合安装。"""
 
-        attribute_config = (
-            (
-                "kind",
-                "get_kind",
-                None,
-                pyv8.CallbackType.kPy,
-                pyv8.FlagLocation.kPrototype,
-                pyv8.V8Attribute.DontEnum,
-                pyv8.FlagReceiverCheck.kCheck,
-                pyv8.FlagCrossOriginCheck.kCheck,
-                pyv8.FlagCrossOriginCheck.kCheck,
-                pyv8.SideEffectType.kHasNoSideEffect,
-            ),
-        )
-        method_config = (
-            (
-                "matches",
-                "fn_matches",
-                1,
-                pyv8.CallbackType.kPy,
-                pyv8.FlagLocation.kPrototype,
-                pyv8.V8Attribute.kNone,
-                pyv8.FlagReceiverCheck.kCheck,
-                pyv8.FlagCrossOriginCheck.kCheck,
-                pyv8.SideEffectType.kHasNoSideEffect,
-            ),
-        )
+        attribute_config = (AttributeSpec(name="kind", getter="get_kind", property_flags=pyv8.V8Attribute.DontEnum, side_effect=1),)
+        method_config = (MethodSpec(name="matches", callback="fn_matches", length=1, side_effect=1),)
 
         def get_kind(self):
             return self._kind
@@ -357,8 +354,9 @@ class TestChromiumContracts(unittest.TestCase):
                 f"BrowserApi{index}",
                 (),
                 {
-                    "__v8_attribute__": attribute_config,
-                    "__v8_method__": method_config,
+                    "__v8_idl_spec__": IdlSpec(
+                        attributes=attribute_config, methods=method_config, name_get="__v8_name_get__",
+                    ),
                     "get_kind": get_kind,
                     "fn_matches": fn_matches,
                     "__v8_name_get__": name_get,

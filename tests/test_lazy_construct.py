@@ -5,6 +5,7 @@ requested name without building a FunctionTemplate. The first property access
 calls the optional lazy_factory, builds the real template and caches it, so
 later accesses never re-enter Python.
 """
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 import unittest
 
 import pyv8
@@ -20,39 +21,43 @@ from pyv8.flag import (
 
 
 class Window:
-    __v8_global_this__ = True
+    __v8_idl_spec__ = IdlSpec(
+        global_this=True,
+    )
 
 
 def make_widget_class():
     class Widget:
-        __v8_has_constructor__ = 1
-        __v8_constructor__ = FlagConstructor.kNew
-        __v8_to_string_tag__ = "Widget"
-        __v8_method__ = (
-            (
-                "describe",
-                "fn_describe",
-                0,
-                CallbackType.kPy,
-                FlagLocation.kPrototype,
-                0,
-                FlagReceiverCheck.kCheck,
-                FlagCrossOriginCheck.kDoNotCheck,
-                SideEffectType.kHasSideEffect,
+        __v8_idl_spec__ = IdlSpec(
+            has_constructor=1,
+            constructor_behavior=FlagConstructor.kNew,
+            to_string_tag="Widget",
+            methods=(
+                MethodSpec(
+                    name="describe",
+                    callback="fn_describe",
+                    length=0,
+                    callback_type=CallbackType.kPy,
+                    location=FlagLocation.kPrototype,
+                    property_flags=0,
+                    receiver_check=FlagReceiverCheck.kCheck,
+                    cross_origin_check=FlagCrossOriginCheck.kDoNotCheck,
+                    side_effect=SideEffectType.kHasSideEffect,
+                ),
             ),
-        )
-        __v8_attribute__ = (
-            (
-                "label",
-                "get_label",
-                None,
-                CallbackType.kPy,
-                FlagLocation.kInstance,
-                V8Attribute.ReadOnly,
-                FlagReceiverCheck.kCheck,
-                FlagCrossOriginCheck.kDoNotCheck,
-                FlagCrossOriginCheck.kDoNotCheck,
-                SideEffectType.kHasNoSideEffect,
+            attributes=(
+                AttributeSpec(
+                    name="label",
+                    getter="get_label",
+                    setter=None,
+                    callback_type=CallbackType.kPy,
+                    location=FlagLocation.kInstance,
+                    property_flags=V8Attribute.ReadOnly,
+                    receiver_check=FlagReceiverCheck.kCheck,
+                    cross_origin_get_check=FlagCrossOriginCheck.kDoNotCheck,
+                    cross_origin_set_check=FlagCrossOriginCheck.kDoNotCheck,
+                    side_effect=SideEffectType.kHasNoSideEffect,
+                ),
             ),
         )
 

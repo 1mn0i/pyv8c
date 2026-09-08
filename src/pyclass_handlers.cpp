@@ -6,6 +6,7 @@
 #include "pyv8.h"
 #include "convert.h"
 #include "pyclass.h"
+#include "idl_spec.h"
 #include "pyclass_handlers_internal.h"
 #include "faker/hook.h"
 
@@ -27,28 +28,6 @@ enum FlagConstructor {
 
 
 #define Info(T) const PropertyCallbackInfo<T> &info
-
-
-static bool
-is_direct_callback(PyObject* method, bool* result)
-{
-    int has_marker = PyObject_HasAttrString(method, "__v8_direct_callback__");
-    if (has_marker < 0)
-        return false;
-    if (has_marker == 0) {
-        *result = false;
-        return true;
-    }
-    PyObject* marker = PyObject_GetAttrString(method, "__v8_direct_callback__");
-    if (marker == NULL)
-        return false;
-    int truth = PyObject_IsTrue(marker);
-    Py_DECREF(marker);
-    if (truth < 0)
-        return false;
-    *result = truth != 0;
-    return true;
-}
 
 
 static void
@@ -145,249 +124,96 @@ void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
     }
 }
 
-static void
-py_class_method_impl(const FunctionCallbackInfo<Value>& info,
-                     Local<Context> context,
-                     PyObject* self,
-                     PyObject* method,
-                     bool cross_origin)
+static void py_class_method_impl(const FunctionCallbackInfo<Value> &info, Local<Context> context,
+                                 PyObject *receiver, MethodSpec *binding)
 {
-    Isolate* isolate = info.GetIsolate();
-    PyObject* method_name = PyObject_GetAttrString(method, "__name__");
-    if (method_name == NULL || !PyUnicode_Check(method_name)) {
-        Py_XDECREF(method_name);
-        PyErr_SetString(PyExc_TypeError, "Python callback must have a string __name__");
-        js_throw_py();
-        return;
-    }
-    bool direct_callback = false;
-    if (!is_direct_callback(method, &direct_callback)) {
-        js_throw_py();
-        return;
-    }
-    PyObject* callable;
-    if (direct_callback || self == Py_None) {
-        Py_INCREF(method);
-        callable = method;
-    }
-    else {
-        callable = PyObject_GetAttr(self, method_name);
-    }
-    if (callable == NULL) {
-        Py_DECREF(method_name);
-        js_throw_py();
-        return;
-    }
-
-    PyObject* args = pys_from_jss(info, context);
-    if (args == NULL) {
+    PyObject *callable = binding->callback;
+    Py_INCREF(callable);
+    int offset = binding->pass_receiver && receiver != Py_None ? 1 : 0;
+    PyObject *args = PyTuple_New(info.Length() + offset);
+    if (args == nullptr)
+    {
         Py_DECREF(callable);
-        Py_DECREF(method_name);
         js_throw_py();
         return;
     }
-    if (direct_callback && self != Py_None) {
-        Py_ssize_t length = PyTuple_Size(args);
-        PyObject* with_self = PyTuple_New(length + 1);
-        if (with_self == NULL) {
+    if (offset)
+    {
+        Py_INCREF(receiver);
+        if (PyTuple_SetItem(args, 0, receiver) < 0)
+        {
             Py_DECREF(args);
             Py_DECREF(callable);
-            Py_DECREF(method_name);
-            js_throw_py();
-            return;
-        }
-        Py_INCREF(self);
-        if (PyTuple_SetItem(with_self, 0, self) < 0) {
-            Py_DECREF(with_self);
-            Py_DECREF(args);
-            Py_DECREF(callable);
-            Py_DECREF(method_name);
-            js_throw_py();
-            return;
-        }
-        for (Py_ssize_t index = 0; index < length; ++index) {
-            PyObject* value = PyTuple_GetItem(args, index);
-            Py_INCREF(value);
-            if (PyTuple_SetItem(with_self, index + 1, value) < 0) {
-                Py_DECREF(value);
-                Py_DECREF(with_self);
-                Py_DECREF(args);
-                Py_DECREF(callable);
-                Py_DECREF(method_name);
-                js_throw_py();
-                return;
-            }
-        }
-        Py_DECREF(args);
-        args = with_self;
-    }
-    PyObject* kwargs = NULL;
-    if (cross_origin) {
-        Local<Context> incumbent = isolate->GetIncumbentContext();
-        if (incumbent.IsEmpty()) {
-            Py_DECREF(args);
-            Py_DECREF(callable);
-            Py_DECREF(method_name);
-            PyErr_SetString(PyExc_RuntimeError, "cross-origin callback has no incumbent context");
-            js_throw_py();
-            return;
-        }
-        context_c* incumbent_ctx =
-            v8_compat::context_embedder_pointer<context_c>(
-                incumbent, CONTEXT_OBJECT_SLOT);
-        if (incumbent_ctx == nullptr) {
-            Py_DECREF(args);
-            Py_DECREF(callable);
-            Py_DECREF(method_name);
-            PyErr_SetString(PyExc_RuntimeError,
-                            "cross-origin callback has no Python context");
-            js_throw_py();
-            return;
-        }
-        kwargs = PyDict_New();
-        if (kwargs == NULL || PyDict_SetItemString(kwargs, "win", incumbent_ctx->py_global) < 0) {
-            Py_XDECREF(kwargs);
-            Py_DECREF(args);
-            Py_DECREF(callable);
-            Py_DECREF(method_name);
             js_throw_py();
             return;
         }
     }
-
-    PyObject* result = PyObject_Call(callable, args, kwargs);
-    Py_XDECREF(kwargs);
+    for (int index = 0; index < info.Length(); ++index)
+    {
+        PyObject *value = py_from_js(info[index], context);
+        if (value == nullptr || PyTuple_SetItem(args, index + offset, value) < 0)
+        {
+            Py_DECREF(args);
+            Py_DECREF(callable);
+            js_throw_py();
+            return;
+        }
+    }
+    PyObject *result = PyObject_CallObject(callable, args);
     Py_DECREF(args);
     Py_DECREF(callable);
-    Py_DECREF(method_name);
-    if (result == NULL) {
+    if (result == nullptr)
+    {
         js_throw_py();
         return;
     }
-    Local<Value> js_result = js_from_py(result, context);
+    Local<Value> converted = js_from_py(result, context);
     Py_DECREF(result);
-    if (js_result.IsEmpty() || PyErr_Occurred()) {
+    if (converted.IsEmpty() || PyErr_Occurred())
+    {
         js_throw_py();
         return;
     }
-    info.GetReturnValue().Set(js_result);
+    info.GetReturnValue().Set(converted);
 }
 
-static bool
-get_method_callback_data(const FunctionCallbackInfo<Value>& info,
-                         PyObject** method,
-                         std::string* js_name)
+void py_class_method_callback(const FunctionCallbackInfo<Value> &info)
 {
-    Local<Value> data = info.Data();
-    if (!data->IsExternal()) {
-        PyErr_SetString(PyExc_RuntimeError, "invalid Python method callback data");
-        js_throw_py();
-        return false;
-    }
-
-    PyObject* callback_data =
-        (PyObject*)v8_compat::external_value(data);
-    PyObject* name = NULL;
-    bool owns_name = false;
-    if (PyTuple_Check(callback_data) && PyTuple_Size(callback_data) == 2) {
-        *method = PyTuple_GetItem(callback_data, 0);
-        name = PyTuple_GetItem(callback_data, 1);
-    }
-    else {
-        *method = callback_data;
-        name = PyObject_GetAttrString(*method, "__name__");
-        owns_name = true;
-    }
-
-    if (name == NULL || !PyUnicode_Check(name)) {
-        if (owns_name)
-            Py_XDECREF(name);
-        PyErr_SetString(PyExc_TypeError, "Python callback must have a string name");
-        js_throw_py();
-        return false;
-    }
-    const char* name_utf8 = PyUnicode_AsUTF8_abi3(name);
-    if (name_utf8 != NULL)
-        *js_name = name_utf8;
-    if (owns_name)
-        Py_DECREF(name);
-    if (name_utf8 == NULL) {
-        js_throw_py();
-        return false;
-    }
-    return true;
-}
-
-
-void py_class_cross_origin_method_callback(const FunctionCallbackInfo<Value>& info) {
     SETUP;
-
-    PyObject* self = get_self(info);
-
-    PyObject* method;
-    std::string js_method_name;
-    if (!get_method_callback_data(info, &method, &js_method_name))
+    auto *binding = (MethodSpec *)v8_compat::external_value(info.Data());
+    PyObject *receiver = binding->pass_receiver ? get_self(info) : Py_None;
+    if (receiver == nullptr)
+    {
+        js_throw_py();
         return;
-    JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check_abi3(method));
-
-    if (self == Py_None && PyMethod_Check_abi3(method)) {
-        self = PyMethod_GET_SELF_abi3(method);
     }
-    //Local<Context> incumbent_ctx = isolate->GetIncumbentContext();
-
-    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
-        context, CONTEXT_OBJECT_SLOT);
-    if (ctx_c == nullptr)
+    context_c *owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (owner == nullptr)
         return;
-    if (ctx_c->hook) {
+    if (owner->hook)
+    {
+        const char *name = PyUnicode_AsUTF8_abi3(binding->name);
+        if (name == nullptr)
         {
-            faker::FakerHookOperation operation_hook(info, js_method_name.c_str(), self, ctx_c);
-            py_class_method_impl(info, context, self, method, true);
+            js_throw_py();
+            return;
+        }
+        PyObject *hook_receiver = receiver;
+        if (hook_receiver == Py_None && PyMethod_Check_abi3(binding->callback))
+            hook_receiver = PyMethod_GET_SELF_abi3(binding->callback);
+        {
+            faker::FakerHookOperation operation_hook(info, name, hook_receiver, owner);
+            py_class_method_impl(info, context, receiver, binding);
         }
         if (PyErr_Occurred())
             js_throw_py();
     }
-    else {
-        py_class_method_impl(info, context, self, method, true);
+    else
+    {
+        py_class_method_impl(info, context, receiver, binding);
     }
 }
-
-void py_class_method_callback(const FunctionCallbackInfo<Value>& info) {
-    SETUP;
-    
-    PyObject* self = get_self(info);
-
-    PyObject* method;
-    std::string js_method_name;
-    if (!get_method_callback_data(info, &method, &js_method_name))
-        return;
-    JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check_abi3(method));
-
-    if (self == Py_None && PyMethod_Check_abi3(method)) {
-        self = PyMethod_GET_SELF_abi3(method);
-    }
-    //Local<Context> incumbent_ctx = isolate->GetIncumbentContext();
-
-    context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
-        context, CONTEXT_OBJECT_SLOT);
-    if (ctx_c == nullptr)
-        return;
-    if (ctx_c->hook) {
-        {
-            faker::FakerHookOperation operation_hook(info, js_method_name.c_str(), self, ctx_c);
-            py_class_method_impl(info, context, self, method, false);
-        }
-        if (PyErr_Occurred())
-            js_throw_py();
-    }
-    else {
-        py_class_method_impl(info, context, self, method, false);
-    }
-}
-
-// --- Interceptors ---                                                      
+// --- Interceptors ---
 void py_class_property_getter(Local<Name> js_name, Info(Value)) {
     SETUP;
 
@@ -395,7 +221,7 @@ void py_class_property_getter(Local<Name> js_name, Info(Value)) {
 
     PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
     JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check_abi3(method));
+
 
     if (self == Py_None && PyMethod_Check_abi3(method)) {
         self = PyMethod_GET_SELF_abi3(method);
@@ -422,7 +248,7 @@ void py_class_property_setter(Local<Name> js_name, Local<Value> js_value, Info(v
     PyObject* self = get_self(info);
     PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
     JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check_abi3(method));
+
 
     if (self == Py_None && PyMethod_Check_abi3(method)) {
         self = PyMethod_GET_SELF_abi3(method);
@@ -442,161 +268,90 @@ void py_class_property_setter(Local<Name> js_name, Local<Value> js_value, Info(v
 
 void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
     SETUP;
-    PyObject* self = get_self(info);
-
-    PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
-    JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check_abi3(method));
-
-    bool direct_callback = false;
-    if (!is_direct_callback(method, &direct_callback)) {
-        js_throw_py();
-        return;
-    }
-    if (direct_callback) {
-        PyObject* result = self == Py_None ? PyObject_CallNoArgs(method) :
-            PyObject_CallFunctionObjArgs(method, self, NULL);
-        JS_PROPAGATE_PY(result);
-        info.GetReturnValue().Set(js_from_py(result, context));
-        Py_XDECREF(result);
-        return;
-    }
-
-    if (self == Py_None && PyMethod_Check_abi3(method)) {
-        self = PyMethod_GET_SELF_abi3(method);
-        PyObject* result = PyObject_CallFunction(method, "", NULL);
-        JS_PROPAGATE_PY(result);
-        info.GetReturnValue().Set(js_from_py(result, context));
-        Py_XDECREF(result);
-        return;
-    }
-
-    PyObject* method_name = PyObject_GetAttrString(method, "__name__");
-    PyObject* result = PyObject_CallMethodNoArgs_abi3(self, method_name);
-    Py_XDECREF(method_name);
-
+    auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
+    PyObject* self = binding->getter_receiver ? get_self(info) : Py_None;
+    PyObject* result = self == Py_None ? PyObject_CallNoArgs(binding->getter) :
+        PyObject_CallFunctionObjArgs(binding->getter, self, nullptr);
     JS_PROPAGATE_PY(result);
-
-    info.GetReturnValue().Set(js_from_py(result, context));
-    Py_XDECREF(result);
+    auto value = js_from_py(result, context);
+    Py_DECREF(result);
+    if (value.IsEmpty() || PyErr_Occurred()) { js_throw_py(); return; }
+    info.GetReturnValue().Set(value);
 }
 
-void py_attribute_for_instance_set(const FunctionCallbackInfo<Value>& info) {
+static void attribute_set(const FunctionCallbackInfo<Value>& info, bool instance) {
     SETUP;
     if (info.Length() < 1) {
-        info.GetIsolate()->ThrowException(v8::Exception::TypeError(V8String(info.GetIsolate(), "1 argument required, but only 0 present")));
+        isolate->ThrowException(v8::Exception::TypeError(V8String(isolate, "1 argument required, but only 0 present")));
         return;
     }
-    PyObject* self = get_self(info);
-
-    PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
-    JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check_abi3(method));
-
-    bool direct_callback = false;
-    if (!is_direct_callback(method, &direct_callback)) {
-        js_throw_py();
-        return;
-    }
-    if (self == Py_None && PyMethod_Check_abi3(method)) {
-        self = PyMethod_GET_SELF_abi3(method);
-    }
-
+    auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
+    PyObject* self = binding->setter_receiver ? get_self(info) : Py_None;
     PyObject* value = py_from_js(info[0], context);
     JS_PROPAGATE_PY(value);
-
-    if (direct_callback) {
-        PyObject* result = self == Py_None ?
-            PyObject_CallFunctionObjArgs(method, value, NULL) :
-            PyObject_CallFunctionObjArgs(method, self, value, NULL);
-        Py_DECREF(value);
-        JS_PROPAGATE_PY(result);
-        Py_XDECREF(result);
-        return;
-    }
-
-    PyObject* method_name = PyObject_GetAttrString(method, "__name__");
-    PyObject* result = PyObject_CallMethodOneArg_abi3(self, method_name, value);
-
-    Py_XDECREF(value);
-    Py_XDECREF(method_name);
-    Py_XDECREF(result);
+    PyObject* result = self == Py_None ? PyObject_CallFunctionObjArgs(binding->setter, value, nullptr) :
+        PyObject_CallFunctionObjArgs(binding->setter, self, value, nullptr);
+    Py_DECREF(value);
     JS_PROPAGATE_PY(result);
-
-    PyObject* raw_name = PyObject_GetAttrString(method, "__v8_raw_name__");
-    const char* js_name = PyUnicode_AsUTF8_abi3(raw_name);
-    Py_XDECREF(raw_name);
-
-    // [Replaceable]
-    bool did_create;
-    v8::Local<v8::Object> v8_receiver = info.This();
-
-    if (!v8_receiver->SetNativeDataProperty(
-            context,
-            V8String(isolate, js_name),
-            py_class_property_getter,
-            py_class_property_setter,
-            info.Data()).To(&did_create)) {
-        return;
+    Py_DECREF(result);
+    if (instance && binding->replaceable) {
+        const char* name = PyUnicode_AsUTF8_abi3(binding->name);
+        if (name == nullptr) { js_throw_py(); return; }
+        auto replaced = info.This()->CreateDataProperty(context, V8String(isolate, name), info[0]);
+        if (replaced.IsNothing()) return;
     }
 }
 
-void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info) {
-    SETUP;
+void py_attribute_for_instance_set(const FunctionCallbackInfo<Value>& info) { attribute_set(info, true); }
+void py_attribute_for_property_set(const FunctionCallbackInfo<Value>& info) { attribute_set(info, false); }
 
-    if (info.Length() < 1) {
-        info.GetIsolate()->ThrowException(v8::Exception::TypeError(V8String(info.GetIsolate(), "1 argument required, but only 0 present")));
-        return;
-    }
-
-    PyObject* self = get_self(info);
-
-    PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
-
-    bool direct_callback = false;
-    if (!is_direct_callback(method, &direct_callback)) {
-        js_throw_py();
-        return;
-    }
-    if (self == Py_None && PyMethod_Check_abi3(method)) {
-        self = PyMethod_GET_SELF_abi3(method);
-    }
-
-    JS_PROPAGATE_PY(method);
-    assert(PyFunction_Check_abi3(method));
-
-    PyObject* value = py_from_js(info[0], context);
-    JS_PROPAGATE_PY(value);
-
-    if (direct_callback) {
-        PyObject* result = self == Py_None ?
-            PyObject_CallFunctionObjArgs(method, value, NULL) :
-            PyObject_CallFunctionObjArgs(method, self, value, NULL);
-        Py_DECREF(value);
-        JS_PROPAGATE_PY(result);
-        Py_XDECREF(result);
-        return;
-    }
-
-    PyObject* method_name = PyObject_GetAttrString(method, "__name__");
-    PyObject* result = PyObject_CallMethodOneArg_abi3(self, method_name, value);
-    Py_XDECREF(value);
-    Py_XDECREF(method_name);
-    Py_XDECREF(result);
-    JS_PROPAGATE_PY(result);
-}
-
-static PyObject*
-get_handler_method(PyObject* self, const char* method_name)
+PyObject* py_class_handler(PyObject* receiver, const char* name, context_c* context)
 {
-    if (self == NULL) {
-        PyErr_SetString(PyExc_RuntimeError, "Python object callback receiver is unavailable");
-        return NULL;
+    if (receiver == nullptr) { PyErr_SetString(PyExc_RuntimeError, "callback receiver is unavailable"); return nullptr; }
+    PyObject* cached = context == nullptr ? nullptr : PyDict_GetItemWithError(context->class_template_cache, (PyObject*)Py_TYPE(receiver));
+    if (cached != nullptr && ((py_class*)cached)->idl_spec != nullptr) {
+        const auto& spec = *(IdlSpec*)((py_class*)cached)->idl_spec;
+        PyObject* callback = nullptr;
+        bool recognized = true;
+        if (std::strcmp(name, "__v8_name_get__") == 0) callback = spec.name_get;
+        else if (std::strcmp(name, "__v8_name_set__") == 0) callback = spec.name_set;
+        else if (std::strcmp(name, "__v8_name_query__") == 0) callback = spec.name_query;
+        else if (std::strcmp(name, "__v8_name_enum__") == 0) callback = spec.name_enum;
+        else if (std::strcmp(name, "__v8_name_del__") == 0) callback = spec.name_del;
+        else if (std::strcmp(name, "__v8_index_get__") == 0) callback = spec.index_get;
+        else if (std::strcmp(name, "__v8_index_set__") == 0) callback = spec.index_set;
+        else if (std::strcmp(name, "__v8_index_query__") == 0) callback = spec.index_query;
+        else if (std::strcmp(name, "__v8_index_enum__") == 0) callback = spec.index_enum;
+        else if (std::strcmp(name, "__v8_index_del__") == 0) callback = spec.index_del;
+        else if (std::strcmp(name, "__v8_cross_origin_check__") == 0) callback = spec.cross_origin_check;
+        else if (std::strcmp(name, "__v8_cross_origin_name_get__") == 0) callback = spec.cross_origin_name_get;
+        else if (std::strcmp(name, "__v8_cross_origin_name_set__") == 0) callback = spec.cross_origin_name_set;
+        else if (std::strcmp(name, "__v8_cross_origin_name_query__") == 0) callback = spec.cross_origin_name_query;
+        else if (std::strcmp(name, "__v8_cross_origin_name_enum__") == 0) callback = spec.cross_origin_name_enum;
+        else if (std::strcmp(name, "__v8_cross_origin_name_del__") == 0) callback = spec.cross_origin_name_del;
+        else if (std::strcmp(name, "__v8_cross_origin_index_get__") == 0) callback = spec.cross_origin_index_get;
+        else if (std::strcmp(name, "__v8_cross_origin_index_set__") == 0) callback = spec.cross_origin_index_set;
+        else if (std::strcmp(name, "__v8_cross_origin_index_query__") == 0) callback = spec.cross_origin_index_query;
+        else if (std::strcmp(name, "__v8_cross_origin_index_enum__") == 0) callback = spec.cross_origin_index_enum;
+        else if (std::strcmp(name, "__v8_cross_origin_index_del__") == 0) callback = spec.cross_origin_index_del;
+        else recognized = false;
+        if (recognized) {
+            if (callback == nullptr) return nullptr;
+            if (PyMethod_Check_abi3(callback)) { Py_INCREF(callback); return callback; }
+            return PyMethod_New_abi3(callback, receiver);
+        }
     }
-    PyObject* method = PyObject_GetAttrString(self, method_name);
-    if (method == NULL && PyErr_ExceptionMatches(PyExc_AttributeError))
-        PyErr_Clear();
+    PyObject* method = PyObject_GetAttrString(receiver, name);
+    if (method == nullptr && PyErr_ExceptionMatches(PyExc_AttributeError)) PyErr_Clear();
     return method;
+}
+
+static PyObject* get_handler_method(PyObject* self, const char* name)
+{
+    auto* isolate = v8::Isolate::GetCurrent();
+    auto current = isolate->GetCurrentContext();
+    auto* context = v8_compat::context_embedder_pointer<context_c>(current, CONTEXT_OBJECT_SLOT);
+    return py_class_handler(self, name, context);
 }
 
 Intercepted property_getter_handler(

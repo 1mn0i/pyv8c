@@ -1,4 +1,5 @@
 """Native access-check callbacks, denial, exception forwarding and teardown."""
+from pyv8 import IdlSpec, AttributeSpec
 
 import gc
 import weakref
@@ -16,8 +17,24 @@ class DOMException(Exception):
 
 
 class CheckedWindow:
-    __v8_global_this__ = True
-    __v8_attribute__ = (("secret", "get_secret", None, 0, 0, 0, 0, 0, 0, 0),)
+    __v8_idl_spec__ = IdlSpec(
+        cross_origin_check="__v8_cross_origin_check__",
+        global_this=True,
+        attributes=(
+            AttributeSpec(
+                name="secret",
+                getter="get_secret",
+                setter=None,
+                callback_type=0,
+                location=0,
+                property_flags=0,
+                receiver_check=0,
+                cross_origin_get_check=0,
+                cross_origin_set_check=0,
+                side_effect=0,
+            ),
+        ),
+    )
 
     def __init__(self, origin, *, throws=False):
         self.origin = origin
@@ -100,6 +117,9 @@ def test_multiple_checked_contexts_release_python_globals():
 
 def test_native_backed_object_conversion_does_not_probe_guarded_properties():
     class Guarded:
+        __v8_idl_spec__ = IdlSpec(
+            name_query="__v8_name_query__",
+        )
         def __v8_name_query__(self, name):
             raise RuntimeError('property inspection is forbidden')
 

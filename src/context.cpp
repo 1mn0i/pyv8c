@@ -3,6 +3,7 @@
 #include <v8.h>
 
 #include "context.h"
+#include "idl_spec.h"
 #include "script.h"
 #include "convert.h"
 #include "jsobject.h"
@@ -138,13 +139,14 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->js_object_cache = NULL;
     self->class_configs = NULL;
     self->lazy_factory = NULL;
+    self->resolving_classes = PySet_New(nullptr);
+    self->lazy_names = PySet_New(nullptr);
     self->py_global = NULL;
     self->class_template_cache = PyDict_New();
     if (class_configs != Py_None && PyDict_Check(class_configs)) {
         // Keep the caller's mapping alive so Python can add realm-specific
         // class overlays when a lazy interface is first accessed.
-        Py_INCREF(class_configs);
-        self->class_configs = class_configs;
+        self->class_configs = PyDict_Copy(class_configs);
     }
     else {
         self->class_configs = PyDict_New();
@@ -177,7 +179,12 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     } else {
         Py_INCREF(ctx_type);
     }
-    if (ctx_type == NULL || self->class_template_cache == NULL || self->class_configs == NULL) {
+    if (self->class_configs != NULL && !idl_spec_validate_configs(self->class_configs)) {
+        Py_XDECREF(ctx_type);
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
+    if (ctx_type == NULL || self->class_template_cache == NULL || self->class_configs == NULL || self->resolving_classes == nullptr || self->lazy_names == nullptr) {
         Py_XDECREF(ctx_type);
         Py_DECREF((PyObject*)self);
         return NULL;
@@ -260,6 +267,8 @@ context_release(context_c *self)
     Py_CLEAR(self->class_template_cache);
     Py_CLEAR(self->class_configs);
     Py_CLEAR(self->lazy_factory);
+    Py_CLEAR(self->resolving_classes);
+    Py_CLEAR(self->lazy_names);
     if (!self->js_context.IsEmpty()) {
         self->js_context.Reset();
         if (self->isolate_state != nullptr)
@@ -389,48 +398,79 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
     PYV8_RETURN_NONE;
 }
 
-PyObject *
-context_update_configs(context_c *self, PyObject *mapping)
+PyObject *context_update_configs(context_c *self, PyObject *mapping)
 {
-    if (self->class_configs == NULL || !PyDict_Check(self->class_configs)) {
+    if (self->class_configs == NULL || !PyDict_Check(self->class_configs))
+    {
         PyErr_SetString(PyExc_RuntimeError, "V8 context is no longer active");
         return NULL;
     }
-    // PyDict_Update below drives the argument through keys()/getitem, so we
-    // need a real mapping protocol object, not merely something indexable
-    // (lists pass PyMapping_Check but would raise 'list' has no attribute
-    // 'keys').
-    if (!PyDict_Check(mapping) && !PyObject_HasAttrString(mapping, "keys")) {
+    if (!PyDict_Check(mapping) && !PyObject_HasAttrString(mapping, "keys"))
+    {
         PyErr_SetString(PyExc_TypeError, "update_configs requires a mapping of class configs");
         return NULL;
     }
-    // Count keys that are not materialised in this context yet.  The commit
-    // protocol only ever sends new overlays (one interface materialised by one
-    // realm), so a replacement of an already-known class is a caller bug that
-    // the count makes observable rather than silently destructive.
-    PyObject* iter = PyObject_GetIter(mapping);
-    if (iter == NULL) return NULL;
+    PyObject *snapshot = PyDict_New();
+    if (snapshot == NULL)
+        return NULL;
+    if (PyDict_Update(snapshot, mapping) < 0 || !idl_spec_validate_configs(snapshot))
+    {
+        Py_DECREF(snapshot);
+        return NULL;
+    }
     Py_ssize_t added = 0;
-    PyObject* key;
-    while ((key = PyIter_Next(iter)) != NULL) {
+    Py_ssize_t position = 0;
+    PyObject *key = NULL;
+    PyObject *value = NULL;
+    while (PyDict_Next(snapshot, &position, &key, &value))
+    {
         int contained = PyDict_Contains(self->class_configs, key);
-        if (contained < 0) {
-            Py_DECREF(key);
-            Py_DECREF(iter);
+        if (contained < 0)
+        {
+            Py_DECREF(snapshot);
             return NULL;
         }
-        if (contained == 0) added++;
-        Py_DECREF(key);
+        if (contained == 0)
+        {
+            int installed = PyDict_Contains(self->class_template_cache, key);
+            if (installed < 0)
+            {
+                Py_DECREF(snapshot);
+                return nullptr;
+            }
+            if (installed)
+            {
+                Py_DECREF(snapshot);
+                PyErr_SetString(PyExc_RuntimeError,
+                                "IDL configuration must be registered before template installation");
+                return nullptr;
+            }
+            added++;
+        }
+        else if (PyDict_GetItemWithError(self->class_configs, key) != value)
+        {
+            Py_DECREF(snapshot);
+            PyErr_SetString(PyExc_RuntimeError, "IDL configuration is already registered for this type");
+            return nullptr;
+        }
     }
-    Py_DECREF(iter);
-    if (PyErr_Occurred()) return NULL;
-    // Atomic merge into the dict this context owns.  Python keeps GIL for the
-    // whole call, so a concurrent class_config_load either sees the overlay
-    // before or after the update, never a half-merged state.
-    if (PyDict_Update(self->class_configs, mapping) < 0) return NULL;
+    if (added == 0)
+    {
+        Py_DECREF(snapshot);
+        return PyLong_FromLong(0);
+    }
+    PyObject *updated = PyDict_Copy(self->class_configs);
+    if (updated == nullptr || PyDict_Update(updated, snapshot) < 0)
+    {
+        Py_XDECREF(updated);
+        Py_DECREF(snapshot);
+        return nullptr;
+    }
+    Py_DECREF(snapshot);
+    Py_DECREF(self->class_configs);
+    self->class_configs = updated;
     return PyLong_FromSsize_t(added);
 }
-
 PyObject *
 context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
 {
@@ -503,6 +543,12 @@ context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
             skipped = contained == 1;
         }
         const char* text = PyUnicode_AsUTF8_abi3(item);
+        if (!skipped && text != nullptr && PySet_Add(self->lazy_names, item) < 0) {
+            Py_DECREF(item);
+            Py_DECREF(sequence);
+            Py_XDECREF(skip_set);
+            return nullptr;
+        }
         Py_DECREF(item);
         if (text == nullptr) {
             Py_DECREF(sequence);

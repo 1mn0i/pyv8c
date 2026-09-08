@@ -1,3 +1,4 @@
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 import unittest
 import pyv8
 
@@ -8,9 +9,21 @@ class TestMultipleContext(unittest.TestCase):
         """测试iframe"""
         class Document:
 
-            __v8_method__ = (
-                ("createElement", "fn_createElement", 1, 0, 1, 0, 0, 0, 0),
-                )
+            __v8_idl_spec__ = IdlSpec(
+                methods=(
+                    MethodSpec(
+                        name="createElement",
+                        callback="fn_createElement",
+                        length=1,
+                        callback_type=0,
+                        location=1,
+                        property_flags=0,
+                        receiver_check=0,
+                        cross_origin_check=0,
+                        side_effect=0,
+                    ),
+                ),
+            )
             
             def fn_createElement(self, *args, **kw):
                 name = str(args[0])
@@ -18,12 +31,36 @@ class TestMultipleContext(unittest.TestCase):
                     return HTMLIFrameElement()
 
         class Window: 
-            __v8_global_this__ = True
-            
-            __v8_attribute__ = (
-                ("window", "get_window", None, 0, 0, 4, 0, 1, 0, 1),
-                ("document", "get_document", None, 0, 0, 4, 0, 0, 0, 1),
-                )
+            __v8_idl_spec__ = IdlSpec(
+                cross_origin_check="__v8_cross_origin_check__",
+                global_this=True,
+                attributes=(
+                    AttributeSpec(
+                        name="window",
+                        getter="get_window",
+                        setter=None,
+                        callback_type=0,
+                        location=0,
+                        property_flags=4,
+                        receiver_check=0,
+                        cross_origin_get_check=1,
+                        cross_origin_set_check=0,
+                        side_effect=1,
+                    ),
+                    AttributeSpec(
+                        name="document",
+                        getter="get_document",
+                        setter=None,
+                        callback_type=0,
+                        location=0,
+                        property_flags=4,
+                        receiver_check=0,
+                        cross_origin_get_check=0,
+                        cross_origin_set_check=0,
+                        side_effect=1,
+                    ),
+                ),
+            )
 
             # 控制是否允许跨域访问 accessor为访问对象 self为被访问对象
             # accessor（window）想要访问 self（window） 中的属性时，会调用这个方法
@@ -46,9 +83,22 @@ class TestMultipleContext(unittest.TestCase):
             def __init__(self, win=None):
                 self._contentWindow = None
 
-            __v8_attribute__ = (
-                ("contentWindow", "get_contentWindow", None, 0, 1, 0, 0, 0, 0, 1),
-                )
+            __v8_idl_spec__ = IdlSpec(
+                attributes=(
+                    AttributeSpec(
+                        name="contentWindow",
+                        getter="get_contentWindow",
+                        setter=None,
+                        callback_type=0,
+                        location=1,
+                        property_flags=0,
+                        receiver_check=0,
+                        cross_origin_get_check=0,
+                        cross_origin_set_check=0,
+                        side_effect=1,
+                    ),
+                ),
+            )
             
             def get_contentWindow(self):
                 if self._contentWindow is None:

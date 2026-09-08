@@ -48,7 +48,9 @@ import pyv8
 
 
 class Window:
-    __v8_global_this__ = True
+    __v8_idl_spec__ = pyv8.IdlSpec(
+        global_this=True,
+    )
 
 
 context = pyv8.Context(Window, ctx_type="Top")
@@ -77,18 +79,13 @@ class Window:
 
 
 class Navigator:
-    __v8_attribute__ = (
-        (
-            "userAgent",
-            "get_user_agent",
-            None,
-            pyv8.CallbackType.kPy,
-            pyv8.FlagLocation.kPrototype,
-            pyv8.V8Attribute.DontEnum,
-            pyv8.FlagReceiverCheck.kCheck,
-            pyv8.FlagCrossOriginCheck.kCheck,
-            pyv8.FlagCrossOriginCheck.kCheck,
-            pyv8.SideEffectType.kHasNoSideEffect,
+    __v8_idl_spec__ = pyv8.IdlSpec(
+        attributes=(
+            pyv8.AttributeSpec(
+                name="userAgent", getter="get_user_agent",
+                property_flags=pyv8.V8Attribute.DontEnum,
+                side_effect=pyv8.SideEffectType.kHasNoSideEffect,
+            ),
         ),
     )
 
@@ -108,6 +105,8 @@ context.expose(sha256, navigator=Navigator())
 print(context.exec_js("navigator.userAgent"))
 print(context.exec_js("sha256('payload')"))
 ```
+
+IDL 映射统一使用 C++ 定义的 `pyv8.IdlSpec`，完整字段与 realm 装配契约见 [IDL_SPEC.md](doc/IDL_SPEC.md)。
 
 ## 安装
 
@@ -184,7 +183,9 @@ import pyv8
 
 
 class Window:
-    __v8_global_this__ = True
+    __v8_idl_spec__ = pyv8.IdlSpec(
+        global_this=True,
+    )
 
 
 def run_script(context):
