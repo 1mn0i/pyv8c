@@ -31,11 +31,14 @@ def bootstrap_interfaces(registry: InterfaceRegistry | None = None):
             return registry
         if _registration_functions is None:
             from ..engine.builtin_errors import register as register_errors
-            from ..web.dom.registration import register as register_dom
-            from ..web.fetch.registration import register as register_network
             from ..web.bom.registration import register as register_bom
+            from ..web.dom.registration import register as register_dom
+            from ..web.fetch.registration import register as register_fetch
+            from ..web.network.registration import register as register_network
+            from ..web.workers.registration import register as register_workers
             _registration_functions = (
-                register_errors, register_dom, register_network, register_bom,
+                register_errors, register_dom, register_fetch, register_network,
+                register_workers, register_bom,
             )
         for register in _registration_functions:
             register(registry)

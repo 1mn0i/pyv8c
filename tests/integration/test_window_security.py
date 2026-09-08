@@ -4,7 +4,7 @@ import pytest
 
 from pyv8c import Browser
 from pyv8c.web.bom.api import Window
-from pyv8c.web.network.backend import origin_tuple
+from pyv8c.foundation.urls import origin_tuple
 
 
 @pytest.fixture

@@ -31,14 +31,19 @@ Blob URL、网络会话和 DevTools 会话的隔离；Page API 不应绕过 Cont
 foundation -> engine -> web -> platform
 ```
 
-- `foundation/`：错误类型、不可变环境配置、realm capability 协议、任务队列、索引属性。
+- `foundation/`：错误类型、不可变环境配置、realm capability 协议、任务队列、索引属性，
+  以及 URL/origin 原语（`urls.py`：special scheme、默认端口表、origin 计算与序列化）。
 - `engine/`：Chromium baseline、Web IDL 解析/校验、接口 registry、动态类、wrapper 和 V8
-  class-config 装配。
+  class-config 装配，以及核心错误类型的注册。
 - `web/dom/`：节点树、HTML parser、selector、事件和 DOM 集合。
 - `web/bom/`：Window、Location、History、Storage、URL、Navigator、定时器等。
 - `web/fetch/`：Request、Response、Headers、Blob、fetch 和 XHR。
 - `web/network/`：HTTP transport、CookieJar、WebSocket。
 - `web/workers/`：Worker API、独立 Worker realm 和 structured clone。
+
+每个 `web/*` 子包用自己的 `registration.py` 注册本包接口，`platform/bootstrap.py`
+按 `errors -> dom -> fetch -> network -> workers -> bom` 的顺序组合；包之间不再跨包
+代注册。
 - `platform/`：Browser/Context/Page 组合根、PageServices、PageRealm、导航、生命周期、
   脚本、资源加载和 DevTools CDP bridge。
 - `tests/`：按 browser、integration、unit、native 分层的行为与架构测试。

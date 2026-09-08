@@ -11,9 +11,60 @@ DEFAULT_USER_AGENT = (
 DEFAULT_LANGUAGES = ("zh-CN", "en", "en-US")
 
 
+def _number_validator(label, cast, boundary, boundary_message):
+    """Build a ``(value, name) -> number`` validator with one boundary check."""
+
+    def validate(value, name):
+        if isinstance(value, bool):
+            raise TypeError(f"{name} must be {label}")
+        try:
+            number = cast(value)
+        except (TypeError, ValueError):
+            raise TypeError(f"{name} must be {label}") from None
+        if not boundary(number):
+            raise ValueError(f"{name} {boundary_message}")
+        return number
+
+    return validate
+
+
+_positive_int = _number_validator("an integer", int, lambda value: value > 0, "must be greater than zero")
+_non_negative_int = _number_validator("an integer", int, lambda value: value >= 0, "must not be negative")
+_positive_float = _number_validator("a number", float, lambda value: value > 0, "must be greater than zero")
+_non_negative_float = _number_validator("a number", float, lambda value: value >= 0, "must not be negative")
+
+
+class _ConfigMapping:
+    """Shared ``from_value`` for the frozen environment configuration records.
+
+    Every nested configuration accepts an instance, a mapping of field values,
+    and (for the optional ones) ``None`` meaning "use the defaults".
+    """
+
+    #: Label used in the type error, e.g. ``"viewport"``.
+    _config_label = "config"
+    #: ``str.format`` template for the type error.
+    _type_error = "{label} must be a {name} or mapping"
+    #: When true, ``None`` builds a default record instead of raising.
+    _none_default = False
+
+    @classmethod
+    def from_value(cls, value):
+        if value is None and cls._none_default:
+            return cls()
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, Mapping):
+            raise TypeError(cls._type_error.format(label=cls._config_label, name=cls.__name__))
+        return cls(**dict(value))
+
+
 @dataclass(frozen=True)
-class MimeTypeConfig:
+class MimeTypeConfig(_ConfigMapping):
     """A browser MIME type advertised by a built-in plugin."""
+
+    _config_label = "plugin mime_types entries"
+    _type_error = "{label} must be {name} instances or mappings"
 
     type: str
     suffixes: str = ""
@@ -26,18 +77,13 @@ class MimeTypeConfig:
                 raise ValueError("mime type must not be empty")
             object.__setattr__(self, name, value)
 
-    @classmethod
-    def from_value(cls, value):
-        if isinstance(value, cls):
-            return value
-        if not isinstance(value, Mapping):
-            raise TypeError("plugin mime_types entries must be MimeTypeConfig instances or mappings")
-        return cls(**dict(value))
-
 
 @dataclass(frozen=True)
-class PluginConfig:
+class PluginConfig(_ConfigMapping):
     """A browser plugin and the MIME types it exposes."""
+
+    _config_label = "plugins entries"
+    _type_error = "{label} must be {name} instances or mappings"
 
     name: str
     filename: str = ""
@@ -63,14 +109,6 @@ class PluginConfig:
             raise ValueError("plugin mime_types must not contain duplicate types")
         object.__setattr__(self, "mime_types", values)
 
-    @classmethod
-    def from_value(cls, value):
-        if isinstance(value, cls):
-            return value
-        if not isinstance(value, Mapping):
-            raise TypeError("plugins entries must be PluginConfig instances or mappings")
-        return cls(**dict(value))
-
 
 _PDF_MIME_TYPES = (
     MimeTypeConfig("application/pdf", "pdf", "Portable Document Format"),
@@ -84,44 +122,11 @@ DEFAULT_PLUGINS = (
     PluginConfig("WebKit built-in PDF", "internal-pdf-viewer", "Portable Document Format", _PDF_MIME_TYPES),
 )
 
-def _positive_int(value, name):
-    if isinstance(value, bool):
-        raise TypeError(f"{name} must be an integer")
-    try:
-        value = int(value)
-    except (TypeError, ValueError):
-        raise TypeError(f"{name} must be an integer") from None
-    if value <= 0:
-        raise ValueError(f"{name} must be greater than zero")
-    return value
-
-
-def _non_negative_int(value, name):
-    if isinstance(value, bool):
-        raise TypeError(f"{name} must be an integer")
-    try:
-        value = int(value)
-    except (TypeError, ValueError):
-        raise TypeError(f"{name} must be an integer") from None
-    if value < 0:
-        raise ValueError(f"{name} must not be negative")
-    return value
-
-
-def _positive_float(value, name):
-    if isinstance(value, bool):
-        raise TypeError(f"{name} must be a number")
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        raise TypeError(f"{name} must be a number") from None
-    if value <= 0:
-        raise ValueError(f"{name} must be greater than zero")
-    return value
-
-
 @dataclass(frozen=True)
-class ViewportConfig:
+class ViewportConfig(_ConfigMapping):
+    _config_label = "viewport"
+    _none_default = True
+
     width: int = 1280
     height: int = 720
     device_scale_factor: float = 1.0
@@ -138,19 +143,12 @@ class ViewportConfig:
         object.__setattr__(self, "mobile", bool(self.mobile))
         object.__setattr__(self, "touch", bool(self.touch))
 
-    @classmethod
-    def from_value(cls, value):
-        if value is None:
-            return cls()
-        if isinstance(value, cls):
-            return value
-        if not isinstance(value, Mapping):
-            raise TypeError("viewport must be a ViewportConfig or mapping")
-        return cls(**dict(value))
-
 
 @dataclass(frozen=True)
-class ScreenConfig:
+class ScreenConfig(_ConfigMapping):
+    _config_label = "screen"
+    _none_default = True
+
     width: int = 1920
     height: int = 1080
     avail_width: int = 1920
@@ -165,19 +163,12 @@ class ScreenConfig:
             value = _positive_int(getattr(self, name), f"screen.{name}")
             object.__setattr__(self, name, value)
 
-    @classmethod
-    def from_value(cls, value):
-        if value is None:
-            return cls()
-        if isinstance(value, cls):
-            return value
-        if not isinstance(value, Mapping):
-            raise TypeError("screen must be a ScreenConfig or mapping")
-        return cls(**dict(value))
-
 
 @dataclass(frozen=True)
-class GeolocationConfig:
+class GeolocationConfig(_ConfigMapping):
+    _config_label = "geolocation"
+    _none_default = True
+
     permission: str = "denied"
     latitude: float | None = None
     longitude: float | None = None
@@ -201,28 +192,6 @@ class GeolocationConfig:
         if self.accuracy is not None:
             accuracy = _non_negative_float(self.accuracy, "geolocation.accuracy")
             object.__setattr__(self, "accuracy", accuracy)
-
-    @classmethod
-    def from_value(cls, value):
-        if value is None:
-            return cls()
-        if isinstance(value, cls):
-            return value
-        if not isinstance(value, Mapping):
-            raise TypeError("geolocation must be a GeolocationConfig or mapping")
-        return cls(**dict(value))
-
-
-def _non_negative_float(value, name):
-    if isinstance(value, bool):
-        raise TypeError(f"{name} must be a number")
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        raise TypeError(f"{name} must be a number") from None
-    if value < 0:
-        raise ValueError(f"{name} must not be negative")
-    return value
 
 
 @dataclass(frozen=True)

@@ -13,7 +13,6 @@ import threading
 import uuid
 from pathlib import Path
 from types import MappingProxyType
-from urllib.parse import urlsplit
 
 # Kept as a module attribute: tests patch ``pyv8c.platform.browser.pyv8``
 # to instrument native Context construction on the PageRealm path.
@@ -22,7 +21,8 @@ from loguru import logger
 
 from ..web.bom.window import Window
 from ..web.dom.model import Document
-from ..web.network.backend import CronetNetworkBackend, origin_tuple
+from ..foundation.urls import origin_string, origin_tuple
+from ..web.network.backend import CronetNetworkBackend
 from ..web.network.cookies import CookieJar
 from ..engine.universe import (
     DEFAULT_EAGER_INTERFACES, BaselineRepository, InterfaceUniverse,
@@ -31,7 +31,7 @@ from ..foundation.errors import InvalidStateError, NetworkError
 from ..foundation.environment import BrowserEnvironment
 from ..foundation.tasks import TaskQueue
 from ..foundation.lifecycle import ResourceScope
-from .state import StateAlias, Ownership
+from .state import Ownership
 from .services import PageServices
 from .bootstrap import bootstrap_interfaces
 from .navigation import NavigationController
@@ -78,10 +78,6 @@ class _ContextBootstrapProxy:
 
 
 class Page:
-    # Only the alias actually consumed outside the controllers is kept:
-    # close() reads _has_navigation.
-    _has_navigation = StateAlias("navigation", "has_navigation")
-
     def __init__(self, context, url="about:blank", *, hook=None, environment=None, parent=None, origin=None):
         self.context_owner = context
         self.parent_page = parent
@@ -234,7 +230,7 @@ class Page:
     def _close_owner(self):
         if self.closed:
             return
-        if self._has_navigation:
+        if self.navigation.has_navigation:
             self.lifecycle.dispatch_beforeunload()
             self.lifecycle.dispatch_page_event("pagehide", self.window, {"bubbles": False, "persisted": False})
             self.lifecycle.dispatch_page_event("unload", self.window, {"bubbles": False})
@@ -249,14 +245,14 @@ class Page:
         self.resources.reset()
         self.lifecycle.load_waiters.clear()
         for frame in self._owned.drain("frames"):
-            self.services._discard_frame(frame)
+            self.services.context_services.discard_frame(frame)
             frame.close()
         for ws in self._owned.drain("websockets"):
             self.services.context_services.discard_websocket(ws)
             if self.network_backend:
                 self.network_backend.close_websocket(ws)
         for worker in self._owned.drain("workers"):
-            self.services.discard_worker(worker)
+            self.services.worker_services.discard_worker(worker)
             worker.fn_terminate()
         self.context_owner._discard_page(self)
         Window._unbind_context(self.context)
@@ -290,30 +286,20 @@ class BrowserContext:
         if self.closed or self.browser._closed:
             raise InvalidStateError("BrowserContext is closed")
 
-    @staticmethod
-    def _serialized_origin(url):
-        """Return the browser serialized origin used in a Blob URL."""
-        try:
-            parts = urlsplit(str(url))
-            if parts.scheme not in ("http", "https", "ws", "wss", "ftp") or not parts.hostname:
-                return "null"
-            host = parts.hostname.lower()
-            if ":" in host and not host.startswith("["):
-                host = "[" + host + "]"
-            port = parts.port
-            default_port = {"http": 80, "https": 443, "ws": 80, "wss": 443, "ftp": 21}.get(parts.scheme)
-            suffix = (":" + str(port)) if port is not None and port != default_port else ""
-            return f"{parts.scheme.lower()}://{host}{suffix}"
-        except (TypeError, ValueError):
-            return "null"
+    def create_blob_url(self, blob, realm=None):
+        """Mint a ``blob:`` URL whose origin is the creating realm's origin.
 
-    def create_blob_url(self, blob, page=None):
+        The blob inherits the *creator* origin rather than one derived from the
+        serialized URL: two opaque origins must stay distinct, so a fresh
+        ``origin_tuple`` would make ``blob:null/...`` documents look unrelated
+        to the page that created them.
+        """
         self._ensure_open()
-        origin = self._serialized_origin(getattr(page, "url", "about:blank"))
-        url = "blob:" + origin + "/" + str(uuid.uuid4())
+        url_source = "about:blank" if realm is None else getattr(realm, "url", "about:blank")
+        url = "blob:" + origin_string(url_source) + "/" + str(uuid.uuid4())
         self._blob_urls[url] = (bytes(blob._data), blob.get_type())
-        creator_origin = getattr(page, "_origin", getattr(page, "origin", None))
-        self._blob_origins[url] = creator_origin if creator_origin is not None else origin_tuple(getattr(page, "url", "about:blank"))
+        creator_origin = None if realm is None else getattr(realm, "origin", None)
+        self._blob_origins[url] = creator_origin if creator_origin is not None else origin_tuple(url_source)
         return url
 
     def resolve_blob_url(self, url):

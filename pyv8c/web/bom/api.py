@@ -1,18 +1,20 @@
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
+from pyv8.flag import FlagLocation, FlagReceiverCheck, FlagCrossOriginCheck
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pyv8
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
+
+
 
 from ..dom.model import Event, EventTarget
-from ...engine.registry import interface, js_attributes, js_methods, js_interface_methods
+from ...engine.registry import interface
 from ..fetch.blob import Blob
 from ...foundation.errors import SecurityError, V8URIError, V8TypeError, InvalidStateError
 from ...foundation.environment import BrowserEnvironment
+from ...foundation.urls import SPECIAL_SCHEMES
 
 
-@interface("Location", None, constructible=False)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('Location', None)
 class Location:
     def __init__(self, href="about:blank", services=None, **_): self.href, self._services = href, services
     def _require_access(self):
@@ -37,13 +39,51 @@ class Location:
     def get_pathname(self): return self._parts().path or "/"
     def get_search(self): return ("?" + self._parts().query) if self._parts().query else ""
     def get_hash(self): return ("#" + self._parts().fragment) if self._parts().fragment else ""
-    __v8_attribute__ = js_attributes(*[(n, "get_" + n, "set_href" if n == "href" else None, 0, 0) for n in ("href", "origin", "protocol", "host", "hostname", "port", "pathname", "search", "hash")])
+    __v8_idl_spec__ = IdlSpec(
+        attributes=tuple(
+            (
+                AttributeSpec(
+                    name=n,
+                    getter="get_" + n,
+                    setter="set_href" if n == "href" else None,
+                )
+                for n in (
+                    "href",
+                    "origin",
+                    "protocol",
+                    "host",
+                    "hostname",
+                    "port",
+                    "pathname",
+                    "search",
+                    "hash",
+                )
+            )
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
 
 
-@interface("Screen", "EventTarget")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('Screen', 'EventTarget')
 class Screen(EventTarget):
-    __v8_attribute__ = js_attributes(*[(n, "get_" + n, None, 0, 1) for n in ("width", "height", "availWidth", "availHeight", "colorDepth", "pixelDepth")])
+    __v8_idl_spec__ = IdlSpec(
+        attributes=tuple(
+            (
+                AttributeSpec(name=n, getter="get_" + n, side_effect=1)
+                for n in (
+                    "width",
+                    "height",
+                    "availWidth",
+                    "availHeight",
+                    "colorDepth",
+                    "pixelDepth",
+                )
+            )
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
     def __init__(self, environment=None, **_):
         super().__init__(**_)
         config = BrowserEnvironment.from_value(environment).screen
@@ -58,11 +98,20 @@ class Screen(EventTarget):
     def get_pixelDepth(self): return self.pixelDepth
 
 
-@interface("Storage", None)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('Storage', None)
 class Storage:
-    __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1))
-    __v8_method__ = js_methods(("getItem", "fn_getItem", 1, 1), ("setItem", "fn_setItem", 2, 0), ("removeItem", "fn_removeItem", 1, 0), ("clear", "fn_clear", 0, 0), ("key", "fn_key", 1, 1))
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
+        methods=(
+            MethodSpec(name="getItem", callback="fn_getItem", length=1, side_effect=1),
+            MethodSpec(name="setItem", callback="fn_setItem", length=2),
+            MethodSpec(name="removeItem", callback="fn_removeItem", length=1),
+            MethodSpec(name="clear", callback="fn_clear"),
+            MethodSpec(name="key", callback="fn_key", length=1, side_effect=1),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
     def __init__(self, **_): self._data = {}
     def get_length(self): return len(self._data)
     def fn_getItem(self, key): return self._data.get(str(key), None)
@@ -74,14 +123,22 @@ class Storage:
         except (IndexError, ValueError): return None
 
 
-@interface("URLSearchParams", None, constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('URLSearchParams', None)
 class URLSearchParams:
-    __v8_method__ = js_methods(
-        ("append", "fn_append", 2, 0), ("delete", "fn_delete", 1, 0),
-        ("get", "fn_get", 1, 1), ("getAll", "fn_getAll", 1, 1),
-        ("has", "fn_has", 1, 1), ("set", "fn_set", 2, 0),
-        ("sort", "fn_sort", 0, 0), ("toString", "fn_toString", 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        methods=(
+            MethodSpec(name="append", callback="fn_append", length=2),
+            MethodSpec(name="delete", callback="fn_delete", length=1),
+            MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
+            MethodSpec(name="getAll", callback="fn_getAll", length=1, side_effect=1),
+            MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
+            MethodSpec(name="set", callback="fn_set", length=2),
+            MethodSpec(name="sort", callback="fn_sort"),
+            MethodSpec(name="toString", callback="fn_toString", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
 
     def __init__(self, init="", _url=None, **_):
@@ -136,8 +193,7 @@ class URLSearchParams:
         return urlencode(self._items)
 
 
-@interface("URL", None, constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('URL', None)
 class URL:
     def __init__(self, url="", base=None, _realm=None, **_):
         self._realm = _realm
@@ -152,7 +208,7 @@ class URL:
         value = raw if base is None else urljoin(str(base), raw)
         try:
             parts = urlsplit(value)
-            if not parts.scheme or (parts.scheme in ("http", "https", "ws", "wss", "ftp") and not parts.netloc):
+            if not parts.scheme or (parts.scheme in SPECIAL_SCHEMES and not parts.netloc):
                 raise V8URIError("Invalid URL")
             parts.port
         except (ValueError, V8URIError) as exc:
@@ -173,7 +229,7 @@ class URL:
     def set_href(self, value): self.href = self._resolve(value, self.href)
     def get_origin(self):
         parts = self._parts()
-        if parts.scheme not in ("http", "https", "ws", "wss", "ftp") or not parts.netloc:
+        if parts.scheme not in SPECIAL_SCHEMES or not parts.netloc:
             return "null"
         host = parts.hostname or ""
         if parts.port is not None:
@@ -238,7 +294,7 @@ class URL:
         services = _realm
         if services is None or services.realm_services.closed: raise InvalidStateError("The execution context is no longer active")
         if not isinstance(blob, Blob): raise V8TypeError("The object is not a Blob")
-        return services.context_services.create_blob_url(blob, page=services)
+        return services.context_services.create_blob_url(blob, realm=services.realm_services)
 
     @staticmethod
     def fn_revokeObjectURL(_realm, url):
@@ -246,32 +302,102 @@ class URL:
         if services is None or services.realm_services.closed: raise InvalidStateError("The execution context is no longer active")
         services.context_services.revoke_blob_url(str(url))
 
-    __v8_attribute__ = js_attributes(
-        ("href", "get_href", "set_href", 0, 0), ("origin", "get_origin", None, 0, 1),
-        ("protocol", "get_protocol", "set_protocol", 0, 0), ("username", "get_username", "set_username", 0, 0),
-        ("password", "get_password", "set_password", 0, 0), ("host", "get_host", "set_host", 0, 0),
-        ("hostname", "get_hostname", "set_hostname", 0, 0), ("port", "get_port", "set_port", 0, 0),
-        ("pathname", "get_pathname", "set_pathname", 0, 0), ("search", "get_search", "set_search", 0, 0),
-        ("searchParams", "get_searchParams", None, 0, 1), ("hash", "get_hash", "set_hash", 0, 0),
-    )
-    __v8_method__ = js_methods(("toString", "fn_toString", 0, 1), ("toJSON", "fn_toJSON", 0, 1)) + js_interface_methods(
-        ("canParse", "fn_canParse", 1, 1), ("parse", "fn_parse", 1, 1),
-        ("createObjectURL", "fn_createObjectURL", 1, 0),
-        ("revokeObjectURL", "fn_revokeObjectURL", 1, 0),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="href", getter="get_href", setter="set_href"),
+            AttributeSpec(name="origin", getter="get_origin", side_effect=1),
+            AttributeSpec(
+                name="protocol", getter="get_protocol", setter="set_protocol"
+            ),
+            AttributeSpec(
+                name="username", getter="get_username", setter="set_username"
+            ),
+            AttributeSpec(
+                name="password", getter="get_password", setter="set_password"
+            ),
+            AttributeSpec(name="host", getter="get_host", setter="set_host"),
+            AttributeSpec(
+                name="hostname", getter="get_hostname", setter="set_hostname"
+            ),
+            AttributeSpec(name="port", getter="get_port", setter="set_port"),
+            AttributeSpec(
+                name="pathname", getter="get_pathname", setter="set_pathname"
+            ),
+            AttributeSpec(name="search", getter="get_search", setter="set_search"),
+            AttributeSpec(
+                name="searchParams", getter="get_searchParams", side_effect=1
+            ),
+            AttributeSpec(name="hash", getter="get_hash", setter="set_hash"),
+        ),
+        methods=(
+            MethodSpec(name="toString", callback="fn_toString", side_effect=1),
+            MethodSpec(name="toJSON", callback="fn_toJSON", side_effect=1),
+        )
+        + (
+            MethodSpec(
+                name="canParse",
+                callback="fn_canParse",
+                length=1,
+                side_effect=1,
+                location=FlagLocation.kInterface,
+                receiver_check=FlagReceiverCheck.kDoNotCheck,
+                cross_origin_check=FlagCrossOriginCheck.kDoNotCheck,
+            ),
+            MethodSpec(
+                name="parse",
+                callback="fn_parse",
+                length=1,
+                side_effect=1,
+                location=FlagLocation.kInterface,
+                receiver_check=FlagReceiverCheck.kDoNotCheck,
+                cross_origin_check=FlagCrossOriginCheck.kDoNotCheck,
+            ),
+            MethodSpec(
+                name="createObjectURL",
+                callback="fn_createObjectURL",
+                length=1,
+                location=FlagLocation.kInterface,
+                receiver_check=FlagReceiverCheck.kDoNotCheck,
+                cross_origin_check=FlagCrossOriginCheck.kDoNotCheck,
+            ),
+            MethodSpec(
+                name="revokeObjectURL",
+                callback="fn_revokeObjectURL",
+                length=1,
+                location=FlagLocation.kInterface,
+                receiver_check=FlagReceiverCheck.kDoNotCheck,
+                cross_origin_check=FlagCrossOriginCheck.kDoNotCheck,
+            ),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
 
 
-@interface("History", None, constructible=False)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('History', None)
 class History:
-    __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1), ("state", "get_state", None, 0, 1))
-    __v8_method__ = js_methods(("pushState", "fn_pushState", 3, 0), ("replaceState", "fn_replaceState", 3, 0), ("back", "fn_back", 0, 0), ("forward", "fn_forward", 0, 0), ("go", "fn_go", 1, 0))
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="length", getter="get_length", side_effect=1),
+            AttributeSpec(name="state", getter="get_state", side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="pushState", callback="fn_pushState", length=3),
+            MethodSpec(name="replaceState", callback="fn_replaceState", length=3),
+            MethodSpec(name="back", callback="fn_back"),
+            MethodSpec(name="forward", callback="fn_forward"),
+            MethodSpec(name="go", callback="fn_go", length=1),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
     def __init__(self, services=None, **_): self._services, self._entries, self._index = services, [(getattr(getattr(services, "realm_services", None), "url", "about:blank"), None)], 0
     def get_length(self): return len(self._entries)
     def get_state(self): return self._entries[self._index][1]
     def _url(self, value): return urljoin(self._services.realm_services.url, str(value))
     def _validate_target(self, url):
-        from ..network.backend import same_origin
+        from ...foundation.urls import same_origin
         target = self._url(url) if url is not None else self._services.realm_services.url
         if not same_origin(self._services.realm_services.url, target): raise SecurityError("A history state URL must be same-origin")
         return target

@@ -1,36 +1,52 @@
 """XMLHttpRequest implementation."""
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 
 import pyv8
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
 
-from ...engine.registry import interface, js_attributes, js_methods
+
+
+from ...engine.registry import interface
 from ...foundation.errors import InvalidStateError, NotSupportedError
 from ..dom.events import Event, EventTarget
 from .events import ErrorEvent
 from .headers import Headers
 
 
-@interface("XMLHttpRequestEventTarget", "EventTarget")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('XMLHttpRequestEventTarget', 'EventTarget')
 class XMLHttpRequestEventTarget(EventTarget):
+    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
     pass
 
 
-@interface("XMLHttpRequest", "XMLHttpRequestEventTarget", constructible=True)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('XMLHttpRequest', 'XMLHttpRequestEventTarget')
 class XMLHttpRequest(XMLHttpRequestEventTarget):
     UNSENT, OPENED, HEADERS_RECEIVED, LOADING, DONE = 0, 1, 2, 3, 4
-    __v8_attribute__ = js_attributes(
-        ("readyState", "get_readyState", None, 0, 1), ("status", "get_status", None, 0, 1),
-        ("statusText", "get_statusText", None, 0, 1), ("responseText", "get_responseText", None, 0, 1),
-        ("response", "get_response", None, 0, 1),
-    )
-    __v8_method__ = js_methods(
-        ("open", "fn_open", 2, 0), ("send", "fn_send", 0, 0),
-        ("setRequestHeader", "fn_setRequestHeader", 2, 0),
-        ("getResponseHeader", "fn_getResponseHeader", 1, 1),
-        ("abort", "fn_abort", 0, 0),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
+            AttributeSpec(name="status", getter="get_status", side_effect=1),
+            AttributeSpec(name="statusText", getter="get_statusText", side_effect=1),
+            AttributeSpec(
+                name="responseText", getter="get_responseText", side_effect=1
+            ),
+            AttributeSpec(name="response", getter="get_response", side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="open", callback="fn_open", length=2),
+            MethodSpec(name="send", callback="fn_send"),
+            MethodSpec(
+                name="setRequestHeader", callback="fn_setRequestHeader", length=2
+            ),
+            MethodSpec(
+                name="getResponseHeader",
+                callback="fn_getResponseHeader",
+                length=1,
+                side_effect=1,
+            ),
+            MethodSpec(name="abort", callback="fn_abort"),
+        ),
+        constructor_behavior=1,
+        has_constructor=1,
     )
 
     def __init__(self, services=None, _realm=None, **kw):

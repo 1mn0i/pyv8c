@@ -22,18 +22,17 @@ def test_window_config_has_no_ordinary_named_handlers():
     try:
         universe = browser.interface_universe
         config = universe.class_config_for("Window")
-        owner = config["__v8_callback_owner__"]
         for suffix in ("get", "set", "query", "del", "enum"):
             name = "__v8_name_" + suffix + "__"
-            assert name not in config
-            assert not any(name in base.__dict__ for base in owner.__mro__)
-        assert config["__v8_index_get__"]
-        assert config["__v8_cross_origin_check__"]
-        assert config["__v8_cross_origin_name_get__"]
+            assert getattr(config, name[5:-2]) is None
+            assert not any(name in base.__dict__ for base in Window.__mro__)
+        assert config.index_get
+        assert config.cross_origin_check
+        assert config.cross_origin_name_get
         assert universe.binding_plan("Window", "postMessage").resolved
         assert universe.binding_plan("Window", "onmessage", "attribute").resolved
-        assert "postMessage" in {item[0] for item in Window.__v8_method__}
-        assert "onmessage" in {item[0] for item in Window.__v8_attribute__}
+        assert "postMessage" in {item.name for item in Window.__v8_idl_spec__.methods}
+        assert "onmessage" in {item.name for item in Window.__v8_idl_spec__.attributes}
     finally:
         browser.close()
 

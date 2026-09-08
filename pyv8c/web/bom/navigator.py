@@ -1,13 +1,14 @@
 """Navigator, geolocation, and browser-compatible plugin collections."""
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 
 import math
 import time
 
 import pyv8
-from pyv8.flag import FlagArrayProto, FlagExposed, V8Attribute
-from pyv8.tools import ConstructorConfig
+from pyv8.flag import FlagArrayProto, V8Attribute
 
-from ...engine.registry import interface, js_attributes, js_methods
+
+from ...engine.registry import interface
 from ...foundation.indexed_properties import ReadOnlyIndexedPropertyMixin
 from ...foundation.environment import BrowserEnvironment, MimeTypeConfig
 from ...foundation.errors import LegacyPropertyError, V8TypeError
@@ -40,6 +41,14 @@ def _unsigned_long(value):
 
 class _LegacyNamedCollection(ReadOnlyIndexedPropertyMixin):
     """Readonly indexed and named properties shared by plugin collections."""
+
+    __v8_idl_spec__ = IdlSpec(
+        name_get="__v8_name_get__",
+        name_set="__v8_name_set__",
+        name_query="__v8_name_query__",
+        name_del="__v8_name_del__",
+        name_enum="__v8_name_enum__",
+    )
 
     _prototype_names = _OBJECT_PROTOTYPE_NAMES | {"length", "item", "namedItem"}
 
@@ -95,14 +104,28 @@ class _LegacyNamedCollection(ReadOnlyIndexedPropertyMixin):
             )
         return str(args[0])
 
+    # Declared per subclass through ``__v8_idl_spec__``;
+    # the bodies only depend on ``_indexed_items``/``_named_item`` and the
+    # registered interface name, so they live here once.
+    def get_length(self): return len(self._indexed_items())
+    def fn_item(self, *args): return self._item_at(self._item_argument(args, self._interface_name()))
+    def fn_namedItem(self, *args): return self._named_item(self._named_argument(args, self._interface_name()))
 
-@interface("MimeType", None, constructible=False, tag="MimeType", exposed_in=("Window",))
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+
+@interface('MimeType', None, exposed_in=('Window',))
 class MimeType:
-    __v8_attribute__ = js_attributes(
-        ("type", "get_type", None, 0, 1), ("suffixes", "get_suffixes", None, 0, 1),
-        ("description", "get_description", None, 0, 1),
-        ("enabledPlugin", "get_enabledPlugin", None, 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="type", getter="get_type", side_effect=1),
+            AttributeSpec(name="suffixes", getter="get_suffixes", side_effect=1),
+            AttributeSpec(name="description", getter="get_description", side_effect=1),
+            AttributeSpec(
+                name="enabledPlugin", getter="get_enabledPlugin", side_effect=1
+            ),
+        ),
+        constructor_behavior=0,
+        to_string_tag="MimeType",
+        has_constructor=1,
     )
 
     def __init__(self, config=None, enabled_plugin=None, **_):
@@ -115,14 +138,26 @@ class MimeType:
     def get_enabledPlugin(self): return self._enabled_plugin if self._enabled_plugin is not None else pyv8.Null
 
 
-@interface("Plugin", None, constructible=False, tag="Plugin", exposed_in=("Window",))
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1, v8_array=_ITERABLE_FLAGS)
+@interface('Plugin', None, exposed_in=('Window',))
 class Plugin(_LegacyNamedCollection):
-    __v8_attribute__ = js_attributes(
-        ("name", "get_name", None, 0, 1), ("filename", "get_filename", None, 0, 1),
-        ("description", "get_description", None, 0, 1), ("length", "get_length", None, 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="name", getter="get_name", side_effect=1),
+            AttributeSpec(name="filename", getter="get_filename", side_effect=1),
+            AttributeSpec(name="description", getter="get_description", side_effect=1),
+            AttributeSpec(name="length", getter="get_length", side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
+            MethodSpec(
+                name="namedItem", callback="fn_namedItem", length=1, side_effect=1
+            ),
+        ),
+        constructor_behavior=0,
+        to_string_tag="Plugin",
+        has_constructor=1,
+        array=_ITERABLE_FLAGS,
     )
-    __v8_method__ = js_methods(("item", "fn_item", 1, 1), ("namedItem", "fn_namedItem", 1, 1))
 
     def __init__(self, config, **_):
         self._config = config
@@ -135,19 +170,24 @@ class Plugin(_LegacyNamedCollection):
     def get_name(self): return self._config.name
     def get_filename(self): return self._config.filename
     def get_description(self): return self._config.description
-    def get_length(self): return len(self._mime_types)
-    def fn_item(self, *args): return self._item_at(self._item_argument(args, "Plugin"))
-    def fn_namedItem(self, *args): return self._named_item(self._named_argument(args, "Plugin"))
 
 
-@interface("PluginArray", None, constructible=False, tag="PluginArray", exposed_in=("Window",))
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1, v8_array=_ITERABLE_FLAGS)
+@interface('PluginArray', None, exposed_in=('Window',))
 class PluginArray(_LegacyNamedCollection):
     _prototype_names = _LegacyNamedCollection._prototype_names | {"refresh"}
-    __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1))
-    __v8_method__ = js_methods(
-        ("item", "fn_item", 1, 1), ("namedItem", "fn_namedItem", 1, 1),
-        ("refresh", "fn_refresh", 0, 0),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
+        methods=(
+            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
+            MethodSpec(
+                name="namedItem", callback="fn_namedItem", length=1, side_effect=1
+            ),
+            MethodSpec(name="refresh", callback="fn_refresh"),
+        ),
+        constructor_behavior=0,
+        to_string_tag="PluginArray",
+        has_constructor=1,
+        array=_ITERABLE_FLAGS,
     )
 
     def __init__(self, configs=(), **_):
@@ -157,17 +197,24 @@ class PluginArray(_LegacyNamedCollection):
     def _supported_names(self): return [item.get_name() for item in self._plugins]
     def _named_item(self, name):
         return next((item for item in self._plugins if item.get_name() == name), pyv8.Null)
-    def get_length(self): return len(self._plugins)
-    def fn_item(self, *args): return self._item_at(self._item_argument(args, "PluginArray"))
-    def fn_namedItem(self, *args): return self._named_item(self._named_argument(args, "PluginArray"))
     def fn_refresh(self, reload_documents=False): return None
 
 
-@interface("MimeTypeArray", None, constructible=False, tag="MimeTypeArray", exposed_in=("Window",))
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1, v8_array=_ITERABLE_FLAGS)
+@interface('MimeTypeArray', None, exposed_in=('Window',))
 class MimeTypeArray(_LegacyNamedCollection):
-    __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1))
-    __v8_method__ = js_methods(("item", "fn_item", 1, 1), ("namedItem", "fn_namedItem", 1, 1))
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
+        methods=(
+            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
+            MethodSpec(
+                name="namedItem", callback="fn_namedItem", length=1, side_effect=1
+            ),
+        ),
+        constructor_behavior=0,
+        to_string_tag="MimeTypeArray",
+        has_constructor=1,
+        array=_ITERABLE_FLAGS,
+    )
 
     def __init__(self, plugins=(), **_):
         items, seen = [], set()
@@ -183,9 +230,6 @@ class MimeTypeArray(_LegacyNamedCollection):
     def _supported_names(self): return [item.get_type() for item in self._mime_types]
     def _named_item(self, name):
         return next((item for item in self._mime_types if item.get_type() == name), pyv8.Null)
-    def get_length(self): return len(self._mime_types)
-    def fn_item(self, *args): return self._item_at(self._item_argument(args, "MimeTypeArray"))
-    def fn_namedItem(self, *args): return self._named_item(self._named_argument(args, "MimeTypeArray"))
 
 
 def create_plugin_collections(environment):
@@ -195,13 +239,18 @@ def create_plugin_collections(environment):
     return plugins, MimeTypeArray(plugins._plugins)
 
 
-@interface("Geolocation", None, exposed_in=("Window",))
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('Geolocation', None, exposed_in=('Window',))
 class Geolocation:
-    __v8_method__ = js_methods(
-        ("getCurrentPosition", "fn_getCurrentPosition", 3, 0),
-        ("watchPosition", "fn_watchPosition", 3, 0),
-        ("clearWatch", "fn_clearWatch", 1, 0),
+    __v8_idl_spec__ = IdlSpec(
+        methods=(
+            MethodSpec(
+                name="getCurrentPosition", callback="fn_getCurrentPosition", length=3
+            ),
+            MethodSpec(name="watchPosition", callback="fn_watchPosition", length=3),
+            MethodSpec(name="clearWatch", callback="fn_clearWatch", length=1),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
     )
 
     def __init__(self, services=None, environment=None, **_):
@@ -263,16 +312,32 @@ class Geolocation:
     def fn_clearWatch(self, ident): self._watchers.pop(int(ident), None)
 
 
-@interface("Navigator", None)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('Navigator', None)
 class Navigator:
-    __v8_attribute__ = js_attributes(
-        ("userAgent", "get_userAgent", None, 0, 1), ("platform", "get_platform", None, 0, 1),
-        ("language", "get_language", None, 0, 1), ("languages", "get_languages", None, 0, 1),
-        ("onLine", "get_onLine", None, 0, 1), ("hardwareConcurrency", "get_hardwareConcurrency", None, 0, 1),
-        ("deviceMemory", "get_deviceMemory", None, 0, 1), ("maxTouchPoints", "get_maxTouchPoints", None, 0, 1),
-        ("geolocation", "get_geolocation", None, 0, 1), ("plugins", "get_plugins", None, 0, 1),
-        ("mimeTypes", "get_mimeTypes", None, 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="userAgent", getter="get_userAgent", side_effect=1),
+            AttributeSpec(name="platform", getter="get_platform", side_effect=1),
+            AttributeSpec(name="language", getter="get_language", side_effect=1),
+            AttributeSpec(name="languages", getter="get_languages", side_effect=1),
+            AttributeSpec(name="onLine", getter="get_onLine", side_effect=1),
+            AttributeSpec(
+                name="hardwareConcurrency",
+                getter="get_hardwareConcurrency",
+                side_effect=1,
+            ),
+            AttributeSpec(
+                name="deviceMemory", getter="get_deviceMemory", side_effect=1
+            ),
+            AttributeSpec(
+                name="maxTouchPoints", getter="get_maxTouchPoints", side_effect=1
+            ),
+            AttributeSpec(name="geolocation", getter="get_geolocation", side_effect=1),
+            AttributeSpec(name="plugins", getter="get_plugins", side_effect=1),
+            AttributeSpec(name="mimeTypes", getter="get_mimeTypes", side_effect=1),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
     )
 
     def __init__(self, user_agent=None, services=None, environment=None, worker=False, **_):

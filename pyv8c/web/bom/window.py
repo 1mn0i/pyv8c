@@ -1,12 +1,14 @@
 """Window, its named-properties prototype, and realm-aware WindowProxy."""
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 
 import pyv8
-from pyv8.flag import FlagExposed, FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck, CallbackType, SideEffectType
-from pyv8.tools import ConstructorConfig
+from pyv8.flag import FlagCrossOriginCheck, FlagLocation, SideEffectType
 
-from ...engine.registry import interface, js_attributes, js_methods
+
+from ...engine.registry import interface
 from ...foundation.environment import BrowserEnvironment
 from ...foundation.errors import SecurityError
+from ...foundation.urls import origin_tuple, serialize_origin
 from ..dom.model import EventTarget
 from ..fetch.request import Request
 from .api import History, Location, Screen, Storage
@@ -15,8 +17,8 @@ from .navigator import Navigator
 __all__ = ["Window", "WindowProperties", "WindowProxy"]
 
 
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=0)
-@interface("WindowProperties", "EventTarget", constructible=False, tag="WindowProperties", exposed_in=())
+
+@interface('WindowProperties', 'EventTarget', exposed_in=())
 class WindowProperties(EventTarget):
     """The named-properties object between Window and EventTarget prototypes.
 
@@ -24,6 +26,9 @@ class WindowProperties(EventTarget):
     when its prototype is borrowed by a different realm. They intentionally
     use a separate callback family from Window's own named interceptors.
     """
+    __v8_idl_spec__ = IdlSpec(
+        constructor_behavior=0, has_constructor=0, to_string_tag="WindowProperties"
+    )
 
     _NAMED_TAGS = frozenset(("embed", "form", "img", "object"))
 
@@ -61,55 +66,85 @@ class WindowProperties(EventTarget):
 
 def _window_attribute(name, getter, setter=None, *, cross_origin=False, flags=0, side_effect=SideEffectType.kHasSideEffect):
     check = FlagCrossOriginCheck.kCheck if cross_origin else FlagCrossOriginCheck.kDoNotCheck
-    return (name, getter, setter, CallbackType.kPy, FlagLocation.kInstance,
-            flags, FlagReceiverCheck.kCheck, check, check, side_effect)
+    return AttributeSpec(name=name, getter=getter, setter=setter, location=FlagLocation.kInstance,
+                         property_flags=flags, cross_origin_get_check=check,
+                         cross_origin_set_check=check, side_effect=side_effect)
 
 
 def _window_method(name, callback, length=0, *, cross_origin=False, side_effect=SideEffectType.kHasSideEffect):
     check = FlagCrossOriginCheck.kCheck if cross_origin else FlagCrossOriginCheck.kDoNotCheck
-    return (name, callback, length, CallbackType.kPy, FlagLocation.kInstance,
-            0, FlagReceiverCheck.kCheck, check, side_effect)
+    return MethodSpec(name=name, callback=callback, length=length, location=FlagLocation.kInstance,
+                      cross_origin_check=check, side_effect=side_effect)
 
 
-@interface("Window", "WindowProperties", constructible=False, tag="Window", exposed_in=("Window",))
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('Window', 'WindowProperties', exposed_in=('Window',))
 class Window(WindowProperties):
-    __v8_global_this__ = True
+    __v8_idl_spec__ = IdlSpec(
+        global_this=True,
+        attributes=(
+            _window_attribute("window", "get_window"),
+            _window_attribute("self", "get_self"),
+            _window_attribute("parent", "get_parent"),
+            _window_attribute("top", "get_top"),
+            _window_attribute("frames", "get_frames"),
+            _window_attribute("length", "get_length"),
+            _window_attribute("closed", "get_closed"),
+            _window_attribute("opener", "get_opener"),
+            _window_attribute("location", "get_location", "set_location"),
+            _window_attribute(
+                "onmessage", "get_onmessage", "set_onmessage", cross_origin=True
+            ),
+            _window_attribute("document", "get_document", cross_origin=True),
+            _window_attribute("navigator", "get_navigator", cross_origin=True),
+            _window_attribute("screen", "get_screen", cross_origin=True),
+            _window_attribute("localStorage", "get_localStorage", cross_origin=True),
+            _window_attribute(
+                "sessionStorage", "get_sessionStorage", cross_origin=True
+            ),
+            _window_attribute("history", "get_history", cross_origin=True),
+            _window_attribute("innerWidth", "get_innerWidth", cross_origin=True),
+            _window_attribute("innerHeight", "get_innerHeight", cross_origin=True),
+            _window_attribute("outerWidth", "get_outerWidth", cross_origin=True),
+            _window_attribute("outerHeight", "get_outerHeight", cross_origin=True),
+            _window_attribute(
+                "devicePixelRatio", "get_devicePixelRatio", cross_origin=True
+            ),
+        ),
+        methods=(
+            _window_method("setTimeout", "fn_setTimeout", 1, cross_origin=True),
+            _window_method("clearTimeout", "fn_clearTimeout", 1, cross_origin=True),
+            _window_method("setInterval", "fn_setInterval", 1, cross_origin=True),
+            _window_method("clearInterval", "fn_clearInterval", 1, cross_origin=True),
+            _window_method("queueMicrotask", "fn_queueMicrotask", 1, cross_origin=True),
+            _window_method(
+                "requestAnimationFrame",
+                "fn_requestAnimationFrame",
+                1,
+                cross_origin=True,
+            ),
+            _window_method("fetch", "fn_fetch", 1, cross_origin=True),
+            _window_method("close", "fn_close"),
+            _window_method("focus", "fn_focus"),
+            _window_method("blur", "fn_blur"),
+            _window_method("postMessage", "fn_postMessage", 1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="Window",
+        has_constructor=1,
+        cross_origin_check="__v8_cross_origin_check__",
+        cross_origin_name_get="__v8_cross_origin_name_get__",
+        cross_origin_name_set="__v8_cross_origin_name_set__",
+        cross_origin_name_query="__v8_cross_origin_name_query__",
+        cross_origin_name_del="__v8_cross_origin_name_del__",
+        cross_origin_name_enum="__v8_cross_origin_name_enum__",
+        cross_origin_index_get="__v8_cross_origin_index_get__",
+        cross_origin_index_set="__v8_cross_origin_index_set__",
+        cross_origin_index_del="__v8_cross_origin_index_del__",
+        index_get="__v8_index_get__",
+    )
     # Ordinary members use Web IDL bindings; dynamic names live on
     # WindowProperties, not a generic Python interceptor on Window.
-    __v8_disable_named_handlers__ = True
     _context_origins = {}
-    __v8_attribute__ = (
-        _window_attribute("window", "get_window"), _window_attribute("self", "get_self"),
-        _window_attribute("parent", "get_parent"), _window_attribute("top", "get_top"),
-        _window_attribute("frames", "get_frames"), _window_attribute("length", "get_length"),
-        _window_attribute("closed", "get_closed"), _window_attribute("opener", "get_opener"),
-        _window_attribute("location", "get_location", "set_location"),
-        _window_attribute("onmessage", "get_onmessage", "set_onmessage", cross_origin=True),
-        _window_attribute("document", "get_document", cross_origin=True),
-        _window_attribute("navigator", "get_navigator", cross_origin=True),
-        _window_attribute("screen", "get_screen", cross_origin=True),
-        _window_attribute("localStorage", "get_localStorage", cross_origin=True),
-        _window_attribute("sessionStorage", "get_sessionStorage", cross_origin=True),
-        _window_attribute("history", "get_history", cross_origin=True),
-        _window_attribute("innerWidth", "get_innerWidth", cross_origin=True),
-        _window_attribute("innerHeight", "get_innerHeight", cross_origin=True),
-        _window_attribute("outerWidth", "get_outerWidth", cross_origin=True),
-        _window_attribute("outerHeight", "get_outerHeight", cross_origin=True),
-        _window_attribute("devicePixelRatio", "get_devicePixelRatio", cross_origin=True),
-    )
-    __v8_method__ = (
-        _window_method("setTimeout", "fn_setTimeout", 1, cross_origin=True),
-        _window_method("clearTimeout", "fn_clearTimeout", 1, cross_origin=True),
-        _window_method("setInterval", "fn_setInterval", 1, cross_origin=True),
-        _window_method("clearInterval", "fn_clearInterval", 1, cross_origin=True),
-        _window_method("queueMicrotask", "fn_queueMicrotask", 1, cross_origin=True),
-        _window_method("requestAnimationFrame", "fn_requestAnimationFrame", 1, cross_origin=True),
-        _window_method("fetch", "fn_fetch", 1, cross_origin=True),
-        _window_method("close", "fn_close"), _window_method("focus", "fn_focus"),
-        _window_method("blur", "fn_blur"),
-        _window_method("postMessage", "fn_postMessage", 1),
-    )
     def __init__(self, services=None, **kw):
         super().__init__(services=services, **kw); self._services = services
         self._origin = getattr(services, "_origin", ("opaque", object()))
@@ -263,7 +298,6 @@ class Window(WindowProperties):
         self._post_message(self, message, target_origin, transfer)
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
-        from ..network.backend import origin_tuple
         from ..workers.clone import structured_clone
         from ..fetch.events import MessageEvent
         from ...foundation.errors import V8SyntaxError
@@ -285,14 +319,7 @@ class Window(WindowProperties):
             if expected_origin[0] == "opaque":
                 raise V8SyntaxError("Invalid target origin in postMessage")
         data = structured_clone(message, transfer)
-        origin = source._origin
-        if origin[0] == "opaque":
-            serialized = "null"
-        else:
-            scheme, host, port = origin
-            host = "[" + host + "]" if ":" in host else host
-            default = {"http": 80, "https": 443, "ws": 80, "wss": 443, "ftp": 21}.get(scheme)
-            serialized = scheme + "://" + host + (":" + str(port) if port != default else "")
+        serialized = serialize_origin(source._origin)
 
         def deliver():
             if self.get_closed() or (expected_origin is not None and expected_origin != self._origin):
@@ -311,18 +338,23 @@ class _CrossOriginLocation:
     does not expose the target URL or its parsed components to the caller.
     """
 
-    __v8_attribute__ = js_attributes(
-        ("href", "get_href", "set_href", 0, 0),
-        ("origin", "get_origin", None, 0, 0),
-        ("protocol", "get_protocol", None, 0, 0),
-        ("host", "get_host", None, 0, 0),
-        ("hostname", "get_hostname", None, 0, 0),
-        ("port", "get_port", None, 0, 0),
-        ("pathname", "get_pathname", None, 0, 0),
-        ("search", "get_search", None, 0, 0),
-        ("hash", "get_hash", None, 0, 0),
+    __v8_idl_spec__ = IdlSpec(
+        name_get="__v8_name_get__",
+        name_set="__v8_name_set__",
+        name_del="__v8_name_del__",
+        attributes=(
+            AttributeSpec(name="href", getter="get_href", setter="set_href"),
+            AttributeSpec(name="origin", getter="get_origin"),
+            AttributeSpec(name="protocol", getter="get_protocol"),
+            AttributeSpec(name="host", getter="get_host"),
+            AttributeSpec(name="hostname", getter="get_hostname"),
+            AttributeSpec(name="port", getter="get_port"),
+            AttributeSpec(name="pathname", getter="get_pathname"),
+            AttributeSpec(name="search", getter="get_search"),
+            AttributeSpec(name="hash", getter="get_hash"),
+        ),
+        methods=(MethodSpec(name="replace", callback="fn_replace", length=1),),
     )
-    __v8_method__ = js_methods(("replace", "fn_replace", 1, 0))
 
     def __init__(self, location):
         self._location = location
@@ -366,22 +398,34 @@ class WindowProxy:
     cross-origin surface.
     """
 
-    __v8_attribute__ = js_attributes(
-        ("window", "get_window", None, 0, 1),
-        ("self", "get_self", None, 0, 1),
-        ("top", "get_top", None, 0, 1),
-        ("parent", "get_parent", None, 0, 1),
-        ("opener", "get_opener", None, 0, 1),
-        ("frames", "get_frames", None, 0, 1),
-        ("length", "get_length", None, 0, 1),
-        ("closed", "get_closed", None, 0, 1),
-        ("location", "get_location", "set_location", 0, 0),
-    )
-    __v8_method__ = js_methods(
-        ("close", "fn_close", 0, 0),
-        ("focus", "fn_focus", 0, 0),
-        ("blur", "fn_blur", 0, 0),
-        ("postMessage", "fn_postMessage", 2, 0),
+    __v8_idl_spec__ = IdlSpec(
+        name_get="__v8_name_get__",
+        name_set="__v8_name_set__",
+        name_query="__v8_name_query__",
+        name_del="__v8_name_del__",
+        name_enum="__v8_name_enum__",
+        index_get="__v8_index_get__",
+        index_set="__v8_index_set__",
+        index_del="__v8_index_del__",
+        attributes=(
+            AttributeSpec(name="window", getter="get_window", side_effect=1),
+            AttributeSpec(name="self", getter="get_self", side_effect=1),
+            AttributeSpec(name="top", getter="get_top", side_effect=1),
+            AttributeSpec(name="parent", getter="get_parent", side_effect=1),
+            AttributeSpec(name="opener", getter="get_opener", side_effect=1),
+            AttributeSpec(name="frames", getter="get_frames", side_effect=1),
+            AttributeSpec(name="length", getter="get_length", side_effect=1),
+            AttributeSpec(name="closed", getter="get_closed", side_effect=1),
+            AttributeSpec(
+                name="location", getter="get_location", setter="set_location"
+            ),
+        ),
+        methods=(
+            MethodSpec(name="close", callback="fn_close"),
+            MethodSpec(name="focus", callback="fn_focus"),
+            MethodSpec(name="blur", callback="fn_blur"),
+            MethodSpec(name="postMessage", callback="fn_postMessage", length=2),
+        ),
     )
 
     def __init__(self, parent_window, child_window):

@@ -14,6 +14,14 @@ class ReadOnlyIndexedPropertyMixin:
     collection objects in any browser subsystem.
     """
 
+    __v8_idl_spec__ = pyv8.IdlSpec(
+        index_get="__v8_index_get__",
+        index_set="__v8_index_set__",
+        index_query="__v8_index_query__",
+        index_del="__v8_index_del__",
+        index_enum="__v8_index_enum__",
+    )
+
     def _indexed_items(self):
         raise NotImplementedError
 
@@ -29,7 +37,7 @@ class ReadOnlyIndexedPropertyMixin:
         return self._item_at(index) is not pyv8.Null
 
     def _interface_name(self):
-        return getattr(type(self), "__idl_name__", type(self).__name__)
+        return getattr(getattr(type(self), "__idl_spec__", None), "name", type(self).__name__)
 
     def __v8_index_get__(self, index):
         value = self._item_at(index)

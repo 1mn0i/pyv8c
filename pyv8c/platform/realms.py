@@ -46,6 +46,7 @@ class WorkerRealm:
         self.scope = scope
         config = self.config
         session = config.session
+        session.class_configs("Worker", roots=(scope.__idl_spec__.name,))
         self.isolate = pyv8.Isolate()
         self.context = self.isolate.context(
             scope, **_context_kwargs(session, "Worker", config.hook),
@@ -100,8 +101,6 @@ class PageRealm:
             on_materialize=self._record_lazy_materialized,
         ))
         self.binding_session.attach_context(self.context)
-        if page.hook:
-            self.context.exec_js("faker.hook=true;")
         context_created = time.perf_counter_ns()
         lazy_registered = _declare_realm_interfaces(
             self.context, self.binding_session,
@@ -119,6 +118,8 @@ class PageRealm:
             interface_names=len(self.binding_session.interface_names("Window")),
             lazy_registered=lazy_registered,
         )
+        if page.hook:
+            self.context.exec_js("faker.hook=true;")
 
     def _record_lazy_materialized(self, name):
         """Keep startup stats in sync with on-demand interface materialisation."""

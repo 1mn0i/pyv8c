@@ -178,15 +178,20 @@ Inspector。命令通过目标 Realm 的 `RealmExecutor` 投递，暂停期间�
 foundation -> engine -> web -> platform
 ```
 
-- `foundation`：错误、环境配置、Realm capability 协议、任务队列和通用索引属性。
+- `foundation`：错误、环境配置、Realm capability 协议、任务队列、通用索引属性和
+  URL/origin 原语。
 - `engine`：Chromium baseline、Web IDL、接口 registry、stub、wrapper 和 class-config。
 - `web`：DOM、BOM、Fetch、Network、Worker 等面向脚本的对象。
 - `platform`：Browser/Context/Page 组合根、Realm 装配、导航、生命周期、资源和 DevTools。
+  每个 `web/*` 子包自带 `registration.py`，由 `platform/bootstrap.py` 按依赖顺序组合。
 
 每个 Page、iframe 和 Worker 都有独立 V8 Context、BindingSession 和 owner executor。所有
 V8 操作必须在所属 Realm 的执行线程完成；网络和 Worker 回调先进入任务队列，再进入 V8。
 PageServices 以六个窄能力 facet（Realm、Task、Resource、Document、Worker、Context）向
 Web 层注入能力，禁止 Web 层持有 Page 或全局 current Page。
+`PageServices` 只负责组装，不再重复转发各能力的方法；调用方通过对应的
+`*_services` 属性访问协议。绑定层使用 `realm_of()` 获取 Realm facet，
+DOM 节点采纳通知通过 `document_services.node_adopted()` 传递。
 
 页面、请求、iframe、Worker、WebSocket、DevTools target 和 TaskQueue 使用幂等的
 `OPEN -> CLOSING -> CLOSED` 生命周期。资源请求在完成或取消后从 `ResourceScope` 反注册。

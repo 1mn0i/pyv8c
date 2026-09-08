@@ -1,26 +1,36 @@
 """Worker Web API and global scope types."""
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 
 from urllib.parse import urljoin
 
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
 
-from ...engine.registry import interface, js_attributes, js_methods
+
+
+from ...engine.registry import interface
 from ...foundation.errors import InvalidStateError
 from ..dom.events import EventTarget
 from ..fetch.events import ErrorEvent, MessageEvent
 
 
-@interface("WorkerGlobalScope", "EventTarget", constructible=False, exposed_in=("Worker",))
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('WorkerGlobalScope', 'EventTarget', exposed_in=('Worker',))
 class WorkerGlobalScope(EventTarget):
-    __v8_global_this__ = True
-    __v8_attribute__ = js_attributes(
-        ("self", "get_self", None, 0, 1), ("navigator", "get_navigator", None, 0, 1),
-        ("onmessage", "get_onmessage", "set_onmessage", 0, 0),
-        ("onerror", "get_onerror", "set_onerror", 0, 0),
+    __v8_idl_spec__ = IdlSpec(
+        global_this=True,
+        attributes=(
+            AttributeSpec(name="self", getter="get_self", side_effect=1),
+            AttributeSpec(name="navigator", getter="get_navigator", side_effect=1),
+            AttributeSpec(
+                name="onmessage", getter="get_onmessage", setter="set_onmessage"
+            ),
+            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
+        ),
+        methods=(
+            MethodSpec(name="postMessage", callback="fn_postMessage", length=1),
+            MethodSpec(name="close", callback="fn_close"),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
     )
-    __v8_method__ = js_methods(("postMessage", "fn_postMessage", 1, 0), ("close", "fn_close", 0, 0))
 
     def __init__(self, runtime=None, environment=None, **kw):
         super().__init__(services=None, **kw)
@@ -38,20 +48,29 @@ class WorkerGlobalScope(EventTarget):
     def fn_close(self): self._runtime.stop()
 
 
-@interface("DedicatedWorkerGlobalScope", "WorkerGlobalScope", constructible=False, exposed_in=("Worker",))
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('DedicatedWorkerGlobalScope', 'WorkerGlobalScope', exposed_in=('Worker',))
 class DedicatedWorkerGlobalScope(WorkerGlobalScope):
+    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
     pass
 
 
-@interface("Worker", "EventTarget", constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('Worker', 'EventTarget')
 class Worker(EventTarget):
-    __v8_attribute__ = js_attributes(
-        ("onmessage", "get_onmessage", "set_onmessage", 0, 0),
-        ("onerror", "get_onerror", "set_onerror", 0, 0),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(
+                name="onmessage", getter="get_onmessage", setter="set_onmessage"
+            ),
+            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
+        ),
+        methods=(
+            MethodSpec(name="postMessage", callback="fn_postMessage", length=1),
+            MethodSpec(name="terminate", callback="fn_terminate"),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
-    __v8_method__ = js_methods(("postMessage", "fn_postMessage", 1, 0), ("terminate", "fn_terminate", 0, 0))
 
     def __init__(self, script_url="", _realm=None, **kw):
         services = _realm

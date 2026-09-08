@@ -59,15 +59,15 @@ def test_stub_identity_and_direct_callback_markers_are_separate():
         assert "__v8_idl_stub__" not in url.__dict__
 
         abort_config = universe.class_config_for("AbortController")
-        abort_item = next(item for item in abort_config["__v8_method__"] if item[0] == "abort")
-        abort_callback = getattr(abort_config["__v8_callback_owner__"], abort_item[1])
-        assert abort_callback.__v8_direct_callback__ is True
+        abort_item = next(item for item in abort_config.methods if item.name == "abort")
+        abort_callback = abort_item.callback
+        assert not hasattr(abort_callback, "__v8_direct_callback__")
         assert abort_callback.__v8_idl_stub__ is True
 
         url_config = universe.class_config_for("URL")
-        to_string = next(item for item in url_config["__v8_method__"] if item[0] == "toString")
-        url_callback = getattr(url_config["__v8_callback_owner__"], to_string[1])
-        assert url_callback.__v8_direct_callback__ is True
+        to_string = next(item for item in url_config.methods if item.name == "toString")
+        url_callback = to_string.callback
+        assert not hasattr(url_callback, "__v8_direct_callback__")
         assert not hasattr(url_callback, "__v8_idl_stub__")
     finally:
         browser.close()

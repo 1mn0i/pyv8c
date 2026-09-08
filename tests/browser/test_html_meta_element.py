@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip("pyv8")
 import pyv8
-from pyv8c import Browser, HTMLMetaElement
+from pyv8c import Browser
 
 
 @pytest.fixture

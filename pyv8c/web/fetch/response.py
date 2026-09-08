@@ -1,26 +1,36 @@
 """Fetch response model."""
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 
 import json
 
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
 
-from ...engine.registry import interface, js_attributes, js_methods
+
+
+from ...engine.registry import interface
 from .headers import Headers
 
 
-@interface("Response", None, constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('Response', None)
 class Response:
-    __v8_attribute__ = js_attributes(
-        ("status", "get_status", None, 0, 1), ("statusText", "get_statusText", None, 0, 1),
-        ("ok", "get_ok", None, 0, 1), ("url", "get_url", None, 0, 1),
-        ("redirected", "get_redirected", None, 0, 1), ("type", "get_type", None, 0, 1),
-        ("headers", "get_headers", None, 0, 1), ("bodyUsed", "get_bodyUsed", None, 0, 1),
-    )
-    __v8_method__ = js_methods(
-        ("text", "fn_text", 0, 1), ("json", "fn_json", 0, 1),
-        ("arrayBuffer", "fn_arrayBuffer", 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="status", getter="get_status", side_effect=1),
+            AttributeSpec(name="statusText", getter="get_statusText", side_effect=1),
+            AttributeSpec(name="ok", getter="get_ok", side_effect=1),
+            AttributeSpec(name="url", getter="get_url", side_effect=1),
+            AttributeSpec(name="redirected", getter="get_redirected", side_effect=1),
+            AttributeSpec(name="type", getter="get_type", side_effect=1),
+            AttributeSpec(name="headers", getter="get_headers", side_effect=1),
+            AttributeSpec(name="bodyUsed", getter="get_bodyUsed", side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="text", callback="fn_text", side_effect=1),
+            MethodSpec(name="json", callback="fn_json", side_effect=1),
+            MethodSpec(name="arrayBuffer", callback="fn_arrayBuffer", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
 
     def __init__(self, body="", options=None, services=None, _realm=None, **_):

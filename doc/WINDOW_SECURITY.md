@@ -89,7 +89,7 @@ window.name 变更、popup target name、跨源导航后的所有名字可见性
 
 ## 普通成员绑定与性能
 
-Window 的 postMessage 通过 __v8_method__ 注册，onmessage 通过 __v8_attribute__ 注册。
+Window 的 postMessage 通过 __v8_idl_spec__.methods 注册，onmessage 通过 __v8_idl_spec__.attributes 注册。
 它们使用 baseline 中经过 review 的签名和常规参数校验，不通过通用 named handler 分发。
 postMessage 支持 origin + transfer 和 options 两种调用形式；非空 transfer 的现有限制不变。
 onmessage 使用 EventHandler 转换，非对象值清空为 null，非函数对象不会作为函数调用。

@@ -8,10 +8,9 @@ capability objects from ``foundation.realm`` -- ``realm_services``,
 ``web/fetch``, ``web/network``, ``web/bom``, ``web/workers``) reach platform
 functionality only through those capability facets, never through the Page.
 
-``PageServices`` itself also implements the six protocols so the platform
-controllers and the binding session can keep using the wide surface; the
-structurally enforced boundary is the one web code crosses: no web module
-touches a Page attribute, a network backend or the interface universe.
+``PageServices`` is only an assembly object. Protocol implementations live on
+the individual capability objects, which prevents a second, wide forwarding
+surface from drifting away from the contracts web code actually consumes.
 """
 
 import threading
@@ -54,6 +53,10 @@ class _RealmCapability:
     def environment(self):
         return self._owner.environment
 
+    @property
+    def origin(self):
+        return self._owner._origin
+
     def post_task(self, callback):
         self._owner._tasks.post(callback)
 
@@ -67,10 +70,10 @@ class _RealmCapability:
         return self._owner._scripts.js_error_value(exc)
 
     def materialize_interface(self, name):
-        return self._owner.materialize_interface(name)
+        return self._owner._page_realm.binding_session.materialize(name)
 
     def interface_materialized(self, name):
-        return self._owner.interface_materialized(name)
+        return name in self._owner._page_realm.binding_session.materialized_interfaces
 
     def window_property(self, operation, name, value=None):
         """Operate on a same-origin Window in its owning realm."""
@@ -102,6 +105,10 @@ class _TaskCapability:
 
     def __init__(self, owner):
         self._owner = owner
+
+    @property
+    def closed(self):
+        return self._owner._tasks.closed
 
     def post_task(self, callback):
         self._owner._tasks.post(callback)
@@ -226,6 +233,9 @@ class _DocumentCapability:
     def parser_is_blocked(self):
         return self._owner._navigation.parser_is_blocked()
 
+    def node_adopted(self, node):
+        return self._owner._scripts.node_adopted(node)
+
     def request_navigation(self, url):
         return self._owner._navigation.request_navigation(url)
 
@@ -252,7 +262,7 @@ class _WorkerCapability:
             generate_stubs=browser.generate_interface_stubs,
             expose_unimplemented=browser.expose_unimplemented,
             stub_logging=browser.stub_logging,
-            devtools=self._owner.devtools_server,
+            devtools=self._owner._context._devtools,
         )
 
     def create_worker_realm(self, config):
@@ -274,11 +284,8 @@ class _ContextCapability:
     def __init__(self, owner):
         self._owner = owner
 
-    def create_blob_url(self, blob, realm=None, page=None):
-        # ``page=`` is the historical spelling used by web/bom; the protocol
-        # documents ``realm=``.  Both refer to the page whose URL becomes the
-        # blob's origin.
-        return self._owner._context.create_blob_url(blob, page=page if page is not None else realm)
+    def create_blob_url(self, blob, realm=None):
+        return self._owner._context.create_blob_url(blob, realm=realm)
 
     def revoke_blob_url(self, url):
         self._owner._context.revoke_blob_url(url)
@@ -298,7 +305,7 @@ class _ContextCapability:
         backend = self._owner._context.network_backend
         if backend is None:
             return None
-        return backend.websocket(self._owner, url, protocols, callbacks)
+        return backend.websocket(self._owner.task_services, url, protocols, callbacks)
 
     def close_websocket(self, websocket):
         backend = self._owner._context.network_backend
@@ -316,11 +323,15 @@ class _ContextCapability:
         self._owner._ownership.discard("websockets", websocket)
         self._owner._unregister_owned("websockets", websocket)
 
+    def discard_frame(self, frame):
+        self._owner._ownership.discard("frames", frame)
+        self._owner._unregister_owned("frames", frame)
+
     def track_frame(self, frame):
         self._owner._ownership.track("frames", frame)
         self._owner._register_owned("frames", frame, frame.close)
         try:
-            frame._parent_scope_cleanup = lambda child=frame: self._owner._discard_frame(child)
+            frame._parent_scope_cleanup = lambda child=frame: self.discard_frame(child)
         except AttributeError:
             pass
 
@@ -330,11 +341,8 @@ class PageServices:
 
     Holds controllers, the owning context, and late-bound window/document
     references — never the Page itself, so web code cannot traverse into
-    platform internals by construction.  Web packages consume the narrow
-    capability facets below (``realm_services`` .. ``context_services``);
-    the protocol method spellings that follow exist so platform controllers
-    and the binding session can keep a single service object.  They are thin
-    delegates to the facets and must not grow new logic.
+    platform internals by construction. Web packages consume the narrow
+    capability facets below (``realm_services`` .. ``context_services``).
     """
 
     def __init__(self, context, environment, hook, ownership: Ownership,
@@ -382,165 +390,8 @@ class PageServices:
         if registration is not None:
             self._scope.remove(registration[1])
 
-    def _discard_frame(self, frame):
-        self._ownership.discard("frames", frame)
-        self._unregister_owned("frames", frame)
-
-    # -- realm identity -------------------------------------------------
-
-    @property
-    def url(self):
-        return self.window.location.href
-
-    @property
-    def closed(self):
-        return self._tasks.closed
-
-    # -- task scheduling --------------------------------------------------
-
-    def post_task(self, callback):
-        self.task_services.post_task(callback)
-
-    def schedule(self, callback, delay, repeat=False):
-        return self.task_services.schedule(callback, delay, repeat)
-
-    def cancel(self, ident):
-        self.task_services.cancel(ident)
-
-    @property
-    def microtasks(self):
-        return self.task_services.microtasks
-
-    def begin_network(self):
-        self.task_services.begin_network()
-
-    def complete_network(self):
-        self.task_services.complete_network()
-
-    def begin_worker(self):
-        self.task_services.begin_worker()
-
-    def complete_worker(self):
-        self.task_services.complete_worker()
-
-    # -- scripting ----------------------------------------------------------
-
-    def make_promise(self):
-        return self.realm_services.make_promise()
-
-    def promise_resolve(self, value):
-        return self.realm_services.promise_resolve(value)
-
-    def js_error_value(self, exc):
-        return self.realm_services.js_error_value(exc)
-
-    def install_inline_handler(self, node, name, source):
-        return self.document_services.install_inline_handler(node, name, source)
-
-    def _node_adopted(self, node):
-        return self._scripts.node_adopted(node)
-
-    # -- navigation and parser hooks ----------------------------------------
-
-    def element_class(self, tag):
-        return self.document_services.element_class(tag)
-
-    def request_navigation(self, url):
-        return self.document_services.request_navigation(url)
-
-    @property
-    def _parsing(self):
-        # Historical spelling still consulted by web/dom/model through
-        # ``getattr``; the protocol property is ``document_services.parsing``.
-        return self.document_services.parsing
-
-    # Public protocol spellings (DocumentServices / WorkerServices).
-
-    def parser_script_start(self, node):
-        return self.document_services.parser_script_start(node)
-
-    def parser_script_complete(self, node, source):
-        return self.document_services.parser_script_complete(node, source)
-
-    def parser_is_blocked(self):
-        return self.document_services.parser_is_blocked()
-
-    def discover_element_resource(self, node):
-        return self.resource_services.discover_element_resource(node)
-
-    # -- resources -----------------------------------------------------------
-
-    def load_resource(self, url, request=None):
-        return self.resource_services.load_resource(url, request)
-
-    def load_resource_async(self, url, request, callback):
-        return self.resource_services.load_resource_async(url, request, callback)
-
-    def load_iframe(self, iframe):
-        return self.resource_services.load_iframe(iframe)
-
-    def resolve_worker_source(self, script_url):
-        return self.resource_services.resolve_worker_source(script_url)
-
-    # -- context and browser services ----------------------------------------
-
-    @property
-    def cookie_jar(self):
-        return self.context_services.cookie_jar
-
-    @property
-    def binding_services(self):
-        return self._context.browser
-
-    @property
-    def devtools_server(self):
-        return self._context._devtools
-
-    def websocket(self, url, protocols, callbacks):
-        return self.context_services.websocket(url, protocols, callbacks)
-
-    def close_websocket(self, websocket):
-        self.context_services.close_websocket(websocket)
-
-    @property
-    def network_available(self):
-        return self.context_services.network_available
-
-    # -- workers --------------------------------------------------------------
-
-    def worker_configuration(self):
-        return self.worker_services.worker_configuration()
-
-    def create_worker_realm(self, config):
-        return self.worker_services.create_worker_realm(config)
-
-    def track_worker(self, worker):
-        self.worker_services.track_worker(worker)
-
-    def discard_worker(self, worker):
-        self.worker_services.discard_worker(worker)
-
-    # -- interface materialisation ----------------------------------------------
-
     def bind_realm(self, page_realm):
         self._page_realm = page_realm
-
-    def materialize_interface(self, name):
-        return self._page_realm.binding_session.materialize(name)
-
-    def interface_materialized(self, name):
-        return name in self._page_realm.binding_session.materialized_interfaces
-
-    # -- ownership ---------------------------------------------------------------
-
-    def _track_frame(self, frame):
-        self.context_services.track_frame(frame)
-
-    def _track_resource(self, handle):
-        self.resource_services._track_resource(handle)
-
-    def _untrack_resource(self, handle):
-        self.resource_services._untrack_resource(handle)
 
 
 __all__ = ["PageServices", "WorkerContext"]

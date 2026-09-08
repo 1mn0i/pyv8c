@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import statistics
 import subprocess
 import sys
-import time
 
 
 CHILD = r'''
@@ -59,7 +59,7 @@ def main():
     summary = {
         "runs": len(samples),
         "p50_ms": statistics.median(totals),
-        "p95_ms": sorted(totals)[max(0, int(len(totals) * 0.95) - 1)],
+        "p95_ms": sorted(totals)[max(0, math.ceil(len(totals) * 0.95) - 1)],
         "min_ms": min(totals),
         "max_ms": max(totals),
         "samples": samples,

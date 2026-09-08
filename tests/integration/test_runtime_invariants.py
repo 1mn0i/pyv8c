@@ -1,4 +1,5 @@
 import pytest
+from pyv8 import IdlSpec
 
 from pyv8c import Browser, Response
 from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse
@@ -40,8 +41,10 @@ def test_binding_sessions_are_isolated_per_realm():
     assert first is not second
     first_config = first.class_config_for("AbortController")
     second_config = second.class_config_for("AbortController")
-    assert first_config is not second_config
-    assert first_config["__v8_callback_owner__"] is not second_config["__v8_callback_owner__"]
+    assert isinstance(first_config, IdlSpec)
+    assert isinstance(second_config, IdlSpec)
+    assert first_config is second_config
+    assert first.configs is not second.configs
     assert first.realm is first_realm
     assert second.realm is second_realm
 
@@ -122,3 +125,21 @@ def test_cookie_path_match_uses_path_boundary_and_preserves_repeated_set_cookie(
     jar.add_from_response("http://example.test/foo/start", ["first=one; Path=/foo", "root=yes; Path=/"])
     assert jar.header_for("http://example.test/foo/next") == "first=one; root=yes"
     assert jar.header_for("http://example.test/foobar") == "root=yes"
+
+@pytest.mark.parametrize("name", ["Node", "Element", "Window"])
+def test_native_specs_do_not_mutate_interface_declarations(name):
+    from pyv8c.platform.bootstrap import bootstrap_interfaces
+
+    universe = InterfaceUniverse(
+        BaselineRepository.load(), registry=bootstrap_interfaces(), stub_logging="off",
+    )
+    interface = universe.class_for(name)
+    declaration = interface.__dict__["__v8_idl_spec__"]
+    assert isinstance(declaration, IdlSpec)
+    before = (declaration.methods, declaration.attributes, declaration.length)
+    config = universe.binding_session(object()).class_config_for(name)
+    assert isinstance(config, IdlSpec)
+    assert config is not declaration
+    assert (declaration.methods, declaration.attributes, declaration.length) == before
+    assert all(callable(member.callback) for member in config.methods)
+    assert not hasattr(config, "callback_owner")

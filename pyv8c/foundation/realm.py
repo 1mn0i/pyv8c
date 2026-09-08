@@ -4,9 +4,8 @@
 (creating promises, converting errors, posting tasks). It consumes them through
 :class:`RealmServices` so it never imports ``platform`` or reaches into Page
 privates.  The web layer is served by the other five narrow protocols, each
-covering one slice of the realm a page exposes; ``PageServices`` implements
-them all and hands the narrow capability objects to web code so no package
-ever receives (or can reach) the full platform surface.
+covering one slice of the realm a page exposes. ``PageServices`` assembles
+the capability objects rather than implementing their protocols itself.
 
 ``RealmServices`` deliberately keeps ``post_task``: ``engine`` rejection
 wrappers resolve a promise on the object's realm and schedule the rejection
@@ -23,6 +22,7 @@ class RealmServices(Protocol):
     """Identity, scripting and error materialisation of one JS realm."""
 
     url: str
+    origin: Any
     closed: bool
 
     def post_task(self, callback) -> None: ...
@@ -39,6 +39,8 @@ class RealmServices(Protocol):
 @runtime_checkable
 class TaskServices(Protocol):
     """Task sources of one realm event loop."""
+
+    closed: bool
 
     def post_task(self, callback) -> None: ...
     def schedule(self, callback, delay: float, repeat: bool = False) -> int: ...
@@ -68,9 +70,11 @@ class DocumentServices(Protocol):
 
     window: Any
     document: Any
+    parsing: bool
 
     def element_class(self, tag: str) -> type: ...
     def install_inline_handler(self, node, name, source) -> None: ...
+    def node_adopted(self, node) -> None: ...
     def parser_script_start(self, node) -> None: ...
     def parser_script_complete(self, node, source) -> None: ...
     def parser_is_blocked(self) -> bool: ...
@@ -104,12 +108,12 @@ __all__ = [
 def realm_of(obj) -> Any:
     """Return the realm an interface object belongs to, or ``None``.
 
-    Objects receive the realm through injection (``_realm``, used by the
-    binding engine when constructing instances) or as ``_services`` (the
-    capability surface handed in by platform code).  Both point at a
-    :class:`RealmServices` implementation.
+    Objects receive either a realm capability directly or the page's service
+    bundle through injection (``_realm``) or ``_services``. The bundle keeps
+    the web-facing capabilities together, while this helper returns only its
+    ``realm_services`` facet to the binding engine.
     """
-    realm = getattr(obj, "_realm", None)
-    if realm is not None:
-        return realm
-    return getattr(obj, "_services", None)
+    services = getattr(obj, "_realm", None)
+    if services is None:
+        services = getattr(obj, "_services", None)
+    return getattr(services, "realm_services", services)

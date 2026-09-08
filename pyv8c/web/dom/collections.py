@@ -4,12 +4,13 @@ These classes deliberately have no dependency on the node model itself:
 they read through owner-supplied getters, which keeps them importable by
 :meth:`dom.model` without a cycle.
 """
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 
 import pyv8
-from pyv8.tools import ConstructorConfig
-from pyv8.flag import FlagArrayProto, FlagExposed, V8Attribute
 
-from ...engine.registry import interface, js_attributes, js_methods
+from pyv8.flag import FlagArrayProto, V8Attribute
+
+from ...engine.registry import interface
 from ...foundation.errors import (
     V8TypeError,
     InvalidCharacterError,
@@ -25,15 +26,17 @@ _ITERABLE_FLAGS = (
 )
 
 
-@interface("NodeList", None, constructible=False, tag="NodeList")
-@ConstructorConfig(
-    exposed=FlagExposed.kYes, constructor=0, has_constructor=1,
-    v8_array=_ITERABLE_FLAGS,
-)
+@interface('NodeList', None)
 class NodeList(ReadOnlyIndexedPropertyMixin):
     """A live list view. The owner remains the source of truth."""
-    __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1))
-    __v8_method__ = js_methods(("item", "fn_item", 1, 1))
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
+        methods=(MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),),
+        constructor_behavior=0,
+        to_string_tag="NodeList",
+        has_constructor=1,
+        array=_ITERABLE_FLAGS,
+    )
     def __init__(self, owner=None, getter=None, values=None, **_):
         self._owner, self._getter, self._values = owner, getter, values
     def _items(self):
@@ -47,13 +50,21 @@ class NodeList(ReadOnlyIndexedPropertyMixin):
     def __len__(self): return len(self._items())
 
 
-@interface("NamedNodeMap", None, constructible=False, tag="NamedNodeMap")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('NamedNodeMap', None)
 class NamedNodeMap(NodeList):
     """Live attribute collection owned by an Element."""
-    __v8_method__ = js_methods(
-        ("item", "fn_item", 1, 1), ("getNamedItem", "fn_getNamedItem", 1, 1),
-        ("setNamedItem", "fn_setNamedItem", 1, 0), ("removeNamedItem", "fn_removeNamedItem", 1, 0),
+    __v8_idl_spec__ = IdlSpec(
+        methods=(
+            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
+            MethodSpec(
+                name="getNamedItem", callback="fn_getNamedItem", length=1, side_effect=1
+            ),
+            MethodSpec(name="setNamedItem", callback="fn_setNamedItem", length=1),
+            MethodSpec(name="removeNamedItem", callback="fn_removeNamedItem", length=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="NamedNodeMap",
+        has_constructor=1,
     )
     def __init__(self, element=None, **_):
         self._element = element
@@ -125,11 +136,25 @@ _HTML_COLLECTION_PROTOTYPE_NAMES = _OBJECT_PROTOTYPE_NAMES | {
 }
 
 
-@interface("HTMLCollection", None, constructible=False, tag="HTMLCollection")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('HTMLCollection', None)
 class HTMLCollection(NodeList):
     _NAME_ATTRIBUTES = V8Attribute.ReadOnly | V8Attribute.DontEnum
-    __v8_method__ = js_methods(("item", "fn_item", 1, 1), ("namedItem", "fn_namedItem", 1, 1))
+    __v8_idl_spec__ = IdlSpec(
+        methods=(
+            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
+            MethodSpec(
+                name="namedItem", callback="fn_namedItem", length=1, side_effect=1
+            ),
+        ),
+        constructor_behavior=0,
+        to_string_tag="HTMLCollection",
+        has_constructor=1,
+        name_get="__v8_name_get__",
+        name_set="__v8_name_set__",
+        name_query="__v8_name_query__",
+        name_del="__v8_name_del__",
+        name_enum="__v8_name_enum__",
+    )
     def fn_namedItem(self, name):
         value = str(name)
         if not value:
@@ -218,8 +243,7 @@ def _array_index_name(value):
     return index if index < 2 ** 32 - 1 else None
 
 
-@interface("HTMLAllCollection", None, constructible=False, tag="HTMLAllCollection")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=0, has_constructor=1)
+@interface('HTMLAllCollection', None)
 class HTMLAllCollection(ReadOnlyIndexedPropertyMixin):
     """The legacy ``document.all`` view: undetectable, callable and live.
 
@@ -233,8 +257,23 @@ class HTMLAllCollection(ReadOnlyIndexedPropertyMixin):
     and carries the full named/indexed interceptor set the Chromium baseline
     declares for it.
     """
-    __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1))
-    __v8_method__ = js_methods(("item", "fn_item", 0, 1), ("namedItem", "fn_namedItem", 1, 1))
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
+        methods=(
+            MethodSpec(name="item", callback="fn_item", side_effect=1),
+            MethodSpec(
+                name="namedItem", callback="fn_namedItem", length=1, side_effect=1
+            ),
+        ),
+        constructor_behavior=0,
+        to_string_tag="HTMLAllCollection",
+        has_constructor=1,
+        name_get="__v8_name_get__",
+        name_set="__v8_name_set__",
+        name_query="__v8_name_query__",
+        name_del="__v8_name_del__",
+        name_enum="__v8_name_enum__",
+    )
     def __init__(self, owner=None, getter=None, **_):
         self._owner, self._getter = owner, getter
 
@@ -337,18 +376,29 @@ class HTMLAllCollection(ReadOnlyIndexedPropertyMixin):
     def __len__(self): return len(self._items())
 
 
-@interface("DOMTokenList", None, constructible=False, tag="DOMTokenList")
-@ConstructorConfig(
-    exposed=FlagExposed.kYes, constructor=0, has_constructor=1,
-    v8_array=_ITERABLE_FLAGS,
-)
+@interface('DOMTokenList', None)
 class DOMTokenList(ReadOnlyIndexedPropertyMixin):
-    __v8_attribute__ = js_attributes(("length", "get_length", None, 0, 1), ("value", "get_value", "set_value", 0, 0))
-    __v8_method__ = js_methods(
-        ("item", "fn_item", 1, 1), ("contains", "fn_contains", 1, 1),
-        ("add", "fn_add", 0, 0), ("remove", "fn_remove", 0, 0),
-        ("toggle", "fn_toggle", 1, 0), ("replace", "fn_replace", 2, 0),
-        ("supports", "fn_supports", 1, 0), ("toString", "fn_toString", 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="length", getter="get_length", side_effect=1),
+            AttributeSpec(name="value", getter="get_value", setter="set_value"),
+        ),
+        methods=(
+            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
+            MethodSpec(
+                name="contains", callback="fn_contains", length=1, side_effect=1
+            ),
+            MethodSpec(name="add", callback="fn_add"),
+            MethodSpec(name="remove", callback="fn_remove"),
+            MethodSpec(name="toggle", callback="fn_toggle", length=1),
+            MethodSpec(name="replace", callback="fn_replace", length=2),
+            MethodSpec(name="supports", callback="fn_supports", length=1),
+            MethodSpec(name="toString", callback="fn_toString", side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="DOMTokenList",
+        has_constructor=1,
+        array=_ITERABLE_FLAGS,
     )
     _ASCII_WHITESPACE = " \t\n\f\r"
 

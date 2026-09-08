@@ -149,3 +149,36 @@ def test_unknown_global_name_is_not_materialised():
         assert page.evaluate("typeof DefinitelyNotAnInterface") == "undefined"
     finally:
         browser.close()
+
+
+def test_instances_marshalled_before_global_access_keep_mixin_members():
+    browser = Browser(stub_logging="off")
+    page = browser.new_context().new_page()
+    try:
+        # document.createTextNode() marshals the first Text/CharacterData
+        # instance to JS without the realm ever reading the global `Text`
+        # constructor first. The FunctionTemplate must be built from the
+        # committed overlay, otherwise the ChildNode mixin members
+        # (remove/before/...) silently disappear from the cached prototype.
+        assert page.evaluate(
+            "(() => { const t = document.createTextNode('x'); "
+            "return [typeof t.remove, typeof Text.prototype.remove, "
+            "typeof CharacterData.prototype.remove]; })()"
+        ) == ["function", "function", "function"]
+    finally:
+        browser.close()
+
+
+def test_lazy_text_node_can_remove_itself_after_append():
+    browser = Browser(stub_logging="off")
+    page = browser.new_context().new_page()
+    try:
+        result = page.evaluate(
+            "(() => { const span = document.createElement('span'); "
+            "const t = document.createTextNode('x'); span.append(t); "
+            "const before = span.childNodes.length; t.remove(); "
+            "return [before, span.childNodes.length, span.textContent]; })()"
+        )
+        assert result == [1, 0, ""]
+    finally:
+        browser.close()

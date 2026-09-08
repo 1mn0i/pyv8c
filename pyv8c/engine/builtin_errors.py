@@ -1,24 +1,20 @@
-"""V8 registration metadata for core Python error types."""
+"""Native declarations for browser exception objects."""
 
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
+from pyv8 import IdlSpec, AttributeSpec
 
-from .registry import interface, js_attributes
+from .registry import interface
 from ..foundation import errors
 
 
 def register(registry):
-    interface("DOMException", None, constructible=True, length=2, tag="DOMException")(errors.DOMException)
-    errors.DOMException.__v8_attribute__ = js_attributes(
-        ("name", "get_name", None, 0, 1),
-        ("message", "get_message", None, 0, 1),
-        ("code", "get_code", None, 0, 1),
-    )
-    ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)(errors.DOMException)
-    interface("DOMError", None, constructible=True, length=2, tag="DOMError")(errors.DOMError)
-    errors.DOMError.__v8_attribute__ = js_attributes(
-        ("name", "get_name", None, 0, 1),
-        ("message", "get_message", None, 0, 1),
-    )
-    ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)(errors.DOMError)
-    registry.register_namespace(vars(errors))
+    for name in ("DOMException", "DOMError"):
+        cls = getattr(errors, name)
+        if "__idl_spec__" not in cls.__dict__:
+            interface(name, None)(cls)
+            attributes = [AttributeSpec(name=field, getter="get_" + field, side_effect=1)
+                          for field in (("name", "message", "code") if name == "DOMException" else ("name", "message"))]
+            cls.__v8_idl_spec__ = IdlSpec(
+                attributes=tuple(attributes), length=2, constructor_behavior=1,
+                has_constructor=1, to_string_tag=name,
+            )
+        registry.register(cls)

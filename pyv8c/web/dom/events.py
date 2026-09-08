@@ -1,12 +1,13 @@
 """DOM event model: events and the target dispatch pipeline."""
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 
 import time
 
 import pyv8
-from pyv8.tools import ConstructorConfig
-from pyv8.flag import FlagExposed
 
-from ...engine.registry import interface, js_attributes, js_methods
+
+
+from ...engine.registry import interface
 from ...foundation.errors import V8TypeError
 
 
@@ -19,19 +20,47 @@ def _js_call(fn, this, *args):
     return fn(*args)
 
 
-@interface("Event", None, constructible=True, length=1, tag="Event")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('Event', None)
 class Event:
-    __v8_attribute__ = js_attributes(
-        ("type", "get_type", None, 0, 1), ("target", "get_target", None, 0, 1),
-        ("currentTarget", "get_currentTarget", None, 0, 1), ("bubbles", "get_bubbles", None, 0, 1),
-        ("cancelable", "get_cancelable", None, 0, 1), ("defaultPrevented", "get_defaultPrevented", None, 0, 1),
-        ("eventPhase", "get_eventPhase", None, 0, 1), ("cancelBubble", "get_cancelBubble", "set_cancelBubble", 0, 0),
-        ("timeStamp", "get_timeStamp", None, 0, 1), ("isTrusted", "get_isTrusted", None, 0, 1),
-        ("composed", "get_composed", None, 0, 1), ("returnValue", "get_returnValue", "set_returnValue", 0, 0),
-        ("persisted", "get_persisted", None, 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="type", getter="get_type", side_effect=1),
+            AttributeSpec(name="target", getter="get_target", side_effect=1),
+            AttributeSpec(
+                name="currentTarget", getter="get_currentTarget", side_effect=1
+            ),
+            AttributeSpec(name="bubbles", getter="get_bubbles", side_effect=1),
+            AttributeSpec(name="cancelable", getter="get_cancelable", side_effect=1),
+            AttributeSpec(
+                name="defaultPrevented", getter="get_defaultPrevented", side_effect=1
+            ),
+            AttributeSpec(name="eventPhase", getter="get_eventPhase", side_effect=1),
+            AttributeSpec(
+                name="cancelBubble",
+                getter="get_cancelBubble",
+                setter="set_cancelBubble",
+            ),
+            AttributeSpec(name="timeStamp", getter="get_timeStamp", side_effect=1),
+            AttributeSpec(name="isTrusted", getter="get_isTrusted", side_effect=1),
+            AttributeSpec(name="composed", getter="get_composed", side_effect=1),
+            AttributeSpec(
+                name="returnValue", getter="get_returnValue", setter="set_returnValue"
+            ),
+            AttributeSpec(name="persisted", getter="get_persisted", side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="preventDefault", callback="fn_preventDefault"),
+            MethodSpec(name="stopPropagation", callback="fn_stopPropagation"),
+            MethodSpec(
+                name="stopImmediatePropagation", callback="fn_stopImmediatePropagation"
+            ),
+            MethodSpec(name="composedPath", callback="fn_composedPath", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        to_string_tag="Event",
+        has_constructor=1,
     )
-    __v8_method__ = js_methods(("preventDefault", "fn_preventDefault", 0, 0), ("stopPropagation", "fn_stopPropagation", 0, 0), ("stopImmediatePropagation", "fn_stopImmediatePropagation", 0, 0), ("composedPath", "fn_composedPath", 0, 1))
     def __init__(self, event_type="", options=None, **_):
         options = options if isinstance(options, dict) else {}
         self.type, self.bubbles, self.cancelable = str(event_type), bool(options.get("bubbles", False)), bool(options.get("cancelable", False))
@@ -62,28 +91,42 @@ class Event:
     def fn_composedPath(self): return list(self._path)
 
 
-@interface("UIEvent", "Event", constructible=True, length=1, tag="UIEvent")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('UIEvent', 'Event')
 class UIEvent(Event):
+    __v8_idl_spec__ = IdlSpec(
+        constructor_behavior=1, length=1, to_string_tag="UIEvent", has_constructor=1
+    )
     pass
 
 
-@interface("MouseEvent", "UIEvent", constructible=True, length=1, tag="MouseEvent")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('MouseEvent', 'UIEvent')
 class MouseEvent(UIEvent):
+    __v8_idl_spec__ = IdlSpec(
+        constructor_behavior=1, length=1, to_string_tag="MouseEvent", has_constructor=1
+    )
     pass
 
 
-@interface("KeyboardEvent", "UIEvent", constructible=True, length=1, tag="KeyboardEvent")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('KeyboardEvent', 'UIEvent')
 class KeyboardEvent(UIEvent):
+    __v8_idl_spec__ = IdlSpec(
+        constructor_behavior=1,
+        length=1,
+        to_string_tag="KeyboardEvent",
+        has_constructor=1,
+    )
     pass
 
 
-@interface("CustomEvent", "Event", constructible=True, length=1, tag="CustomEvent")
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('CustomEvent', 'Event')
 class CustomEvent(Event):
-    __v8_attribute__ = js_attributes(("detail", "get_detail", None, 0, 1))
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="detail", getter="get_detail", side_effect=1),),
+        constructor_behavior=1,
+        length=1,
+        to_string_tag="CustomEvent",
+        has_constructor=1,
+    )
     def __init__(self, event_type="", options=None, **kw):
         super().__init__(event_type, options, **kw)
         options = options if isinstance(options, dict) else {}
@@ -91,22 +134,43 @@ class CustomEvent(Event):
     def get_detail(self): return self.detail
 
 
-@interface("EventTarget", None, constructible=True)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('EventTarget', None)
 class EventTarget:
-    __v8_attribute__ = js_attributes(
-        ("onload", "get_onload", "set_onload", 0, 0),
-        ("onerror", "get_onerror", "set_onerror", 0, 0),
-        ("onreadystatechange", "get_onreadystatechange", "set_onreadystatechange", 0, 0),
-        ("onpageshow", "get_onpageshow", "set_onpageshow", 0, 0),
-        ("onpagehide", "get_onpagehide", "set_onpagehide", 0, 0),
-        ("onunload", "get_onunload", "set_onunload", 0, 0),
-        ("onbeforeunload", "get_onbeforeunload", "set_onbeforeunload", 0, 0),
-    )
-    __v8_method__ = js_methods(
-        ("addEventListener", "fn_addEventListener", 2, 0),
-        ("removeEventListener", "fn_removeEventListener", 2, 0),
-        ("dispatchEvent", "fn_dispatchEvent", 1, 0),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="onload", getter="get_onload", setter="set_onload"),
+            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
+            AttributeSpec(
+                name="onreadystatechange",
+                getter="get_onreadystatechange",
+                setter="set_onreadystatechange",
+            ),
+            AttributeSpec(
+                name="onpageshow", getter="get_onpageshow", setter="set_onpageshow"
+            ),
+            AttributeSpec(
+                name="onpagehide", getter="get_onpagehide", setter="set_onpagehide"
+            ),
+            AttributeSpec(
+                name="onunload", getter="get_onunload", setter="set_onunload"
+            ),
+            AttributeSpec(
+                name="onbeforeunload",
+                getter="get_onbeforeunload",
+                setter="set_onbeforeunload",
+            ),
+        ),
+        methods=(
+            MethodSpec(
+                name="addEventListener", callback="fn_addEventListener", length=2
+            ),
+            MethodSpec(
+                name="removeEventListener", callback="fn_removeEventListener", length=2
+            ),
+            MethodSpec(name="dispatchEvent", callback="fn_dispatchEvent", length=1),
+        ),
+        constructor_behavior=1,
+        has_constructor=1,
     )
 
     def __init__(self, services=None, **_):

@@ -74,7 +74,7 @@ def test_binding_facade_uses_separate_catalog_and_schema_helpers():
     assert "InterfaceCatalog" in universe_source
     assert "class SignatureCache" in wrappers_source
     assert "class BindingWrapperFactory" in wrappers_source
-    assert "class ClassConfigBuilder" in assembly_source
+    assert "class InterfaceCompiler" in assembly_source
     assert "apply_template_flags" in assembly_source
     assert "from ..schema import write_baseline" in extractor_source
     assert "class InterfaceCatalog" in (ROOT / "engine" / "catalog.py").read_text(encoding="utf-8")
@@ -123,6 +123,33 @@ def test_runtime_interface_catalog_is_frozen_after_bootstrap():
     assert bootstrap_interfaces() is registry
 
 
+@pytest.mark.parametrize("attribute", ["_realm", "_services"])
+@pytest.mark.parametrize("bundled", [False, True])
+def test_realm_of_returns_the_realm_capability(attribute, bundled):
+    from types import SimpleNamespace
+
+    from pyv8c.foundation.realm import realm_of
+
+    capability = object()
+    services = SimpleNamespace(realm_services=capability) if bundled else capability
+    subject = SimpleNamespace(**{attribute: services})
+    assert realm_of(subject) is capability
+
+
+def test_realm_of_prefers_injection_and_falls_back_to_services():
+    from types import SimpleNamespace
+
+    from pyv8c.foundation.realm import realm_of
+
+    injected = object()
+    fallback = object()
+    subject = SimpleNamespace(_realm=injected, _services=SimpleNamespace(realm_services=fallback))
+    assert realm_of(subject) is injected
+    subject._realm = None
+    assert realm_of(subject) is fallback
+    assert realm_of(object()) is None
+
+
 def test_page_exposes_narrow_realm_services():
     pytest.importorskip("pyv8", reason="constructs a live Browser")
     from pyv8c import Browser
@@ -131,20 +158,17 @@ def test_page_exposes_narrow_realm_services():
     browser = Browser(stub_logging="off")
     page = browser.new_context().new_page()
     try:
-        # PageServices, the composition root, carries the realm, task,
-        # resource, document and worker surfaces itself...
-        for protocol in (RealmServices, TaskServices, ResourceServices, DocumentServices, WorkerServices):
-            assert isinstance(page.services, protocol), protocol
-        # ...and context services live on the context capability object,
-        # which also keeps the historical ``context_services`` spelling.
         assert isinstance(page.services.context_services, ContextServices)
         assert isinstance(page.services.realm_services, RealmServices)
         assert isinstance(page.services.task_services, TaskServices)
         assert isinstance(page.services.resource_services, ResourceServices)
         assert isinstance(page.services.document_services, DocumentServices)
         assert isinstance(page.services.worker_services, WorkerServices)
-        assert page.services.network_available is False
-        assert page.services.interface_materialized("Document")
+        for protocol in (ContextServices, RealmServices, TaskServices, ResourceServices,
+                         DocumentServices, WorkerServices):
+            assert not isinstance(page.services, protocol)
+        assert page.services.context_services.network_available is False
+        assert page.services.realm_services.interface_materialized("Document")
     finally:
         browser.close()
 

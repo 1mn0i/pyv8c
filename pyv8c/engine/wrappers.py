@@ -11,7 +11,6 @@ from __future__ import annotations
 import inspect
 
 from .webidl import validate_arguments
-from .stubs import mark_direct
 
 
 class SignatureCache:
@@ -68,7 +67,7 @@ class BindingWrapperFactory:
             return raw(*converted) if static else raw(receiver, *converted)
 
         callback.__name__ = f"_pyv8c_binding_{interface_name}_{public_name}"
-        return mark_direct(callback)
+        return callback
 
     def setter(self, cls, interface_name, public_name, callback_name, plan):
         raw = self._raw_callback(cls, callback_name)
@@ -78,15 +77,18 @@ class BindingWrapperFactory:
             return raw(receiver, *converted)
 
         setter.__name__ = f"_pyv8c_binding_set_{interface_name}_{public_name}"
-        return mark_direct(setter)
+        return setter
 
     def constructor_adapter(self, interface_name, stub, realm=None):
         plan = self.universe.binding_plan(interface_name, "constructor", "constructor")
 
+        implementation = self.universe.class_for(interface_name)
+        inject_realm = "_realm" in self._parameters_for(implementation)
+
         def construct(cls, args, kwargs):
             converted = validate_arguments(plan, tuple(args)) if plan.resolved else tuple(args)
             options = dict(kwargs)
-            if realm is not None and "_realm" in self._parameters_for(cls):
+            if realm is not None and inject_realm:
                 options["_realm"] = realm
             return cls(*converted, **options)
 
@@ -97,6 +99,8 @@ class BindingWrapperFactory:
 
     @staticmethod
     def _raw_callback(cls, name):
+        if callable(name):
+            return name
         for base in cls.__mro__:
             if name in base.__dict__:
                 raw = base.__dict__[name]

@@ -21,7 +21,6 @@ CHROMIUM_GIT_URL = "https://chromium.googlesource.com/chromium/src.git"
 DEPOT_TOOLS_GIT_URL = "https://chromium.googlesource.com/chromium/tools/depot_tools.git"
 VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_VERSION_FILE = PROJECT_ROOT / "CHROMIUM_VERSION"
 DEFAULT_BUILD_ROOT = PROJECT_ROOT / ".chromium-build"
 DEFAULT_WORKSPACE = DEFAULT_BUILD_ROOT / "chromium"
 DEFAULT_DEPOT_TOOLS = DEFAULT_BUILD_ROOT / "depot_tools"

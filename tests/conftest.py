@@ -62,12 +62,6 @@ def make_browser(**options):
 
 
 @pytest.fixture
-def browser_factory():
-    """Return :func:`make_browser`, letting a test supply its own options."""
-    return make_browser
-
-
-@pytest.fixture
 def browser():
     """A quiet offline Browser, closed on teardown."""
     instance = make_browser()
@@ -112,28 +106,4 @@ def thread_leak_check():
     yield check
 
 
-def wait_until(page, expression, until=True, timeout=8.0, interval=0.01):
-    """Poll ``expression`` until it evaluates equal to ``until``.
 
-    JS ``null``/``undefined`` surface as their own pyv8 types (never ``None``)
-    and ``0``/``false``/``''`` are legitimate values, so pending state must be
-    expressed as a distinct value and compared with ``==`` rather than
-    truthiness.
-    """
-    deadline = time.monotonic() + timeout
-    last = None
-    while time.monotonic() < deadline:
-        last = page.evaluate(expression)
-        if last == until:
-            return last
-        time.sleep(interval)
-    return last
-
-
-def run_threads(threads, timeout=20):
-    """Start and join *threads*, asserting none of them wedges."""
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout)
-    assert not any(t.is_alive() for t in threads), "one or more threads wedged"

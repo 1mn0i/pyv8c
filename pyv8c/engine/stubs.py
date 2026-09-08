@@ -1,8 +1,7 @@
 """Generated API shells for baseline interfaces without a hand-written class.
 
-Every stub is a direct callback marked ``__v8_idl_stub__`` so the native
-bridge can distinguish "declared but unimplemented" members from real
-implementations.  Logging is controlled per :class:`InterfaceUniverse`
+Generated stubs carry ``__v8_idl_stub__`` for Python diagnostics. Native
+installation treats them exactly like other explicit callbacks.  Logging is controlled per :class:`InterfaceUniverse`
 via ``stub_logging``.
 """
 
@@ -14,11 +13,9 @@ from loguru import logger
 from .webidl import validate_arguments
 
 
-def mark_direct(callback, *, stub=False):
-    """Flag a callback so the native bridge skips generic conversion."""
-    callback.__v8_direct_callback__ = True
-    if stub:
-        callback.__v8_idl_stub__ = True
+def mark_stub(callback):
+    """Mark generated placeholders for Python diagnostics only."""
+    callback.__v8_idl_stub__ = True
     return callback
 
 
@@ -40,14 +37,14 @@ class StubFactory:
             self._log("pyv8c: {}.{}() 待实现", interface_name, member_name)
             return pyv8.Undefined
         callback.__name__ = f"_pyv8c_stub_method_{interface_name}_{member_name}"
-        return mark_direct(callback, stub=True)
+        return mark_stub(callback)
 
     def getter(self, interface_name, member_name):
         def getter(*_args):
             self._log("pyv8c: {}.{} getter 待实现", interface_name, member_name)
             return pyv8.Undefined
         getter.__name__ = f"_pyv8c_stub_get_{interface_name}_{member_name}"
-        return mark_direct(getter, stub=True)
+        return mark_stub(getter)
 
     def setter(self, interface_name, member_name, plan):
         def setter(*args):
@@ -56,7 +53,7 @@ class StubFactory:
                 validate_arguments(plan, values)
             self._log("pyv8c: {}.{} setter 待实现", interface_name, member_name)
         setter.__name__ = f"_pyv8c_stub_set_{interface_name}_{member_name}"
-        return mark_direct(setter, stub=True)
+        return mark_stub(setter)
 
     def constructor(self, interface_name):
         def constructor(_self, *_args, **_kwargs):
@@ -69,7 +66,7 @@ class StubFactory:
         def call_handler(*_args):
             return pyv8.Undefined
         call_handler.__name__ = f"_pyv8c_stub_call_{interface_name}"
-        return mark_direct(call_handler, stub=True)
+        return mark_stub(call_handler)
 
     def handler(self, interface_name, method_name):
         def handler(*args):
@@ -80,4 +77,4 @@ class StubFactory:
                 return None
             return None
         handler.__name__ = f"_pyv8c_stub_{method_name}_{interface_name}"
-        return mark_direct(handler, stub=True)
+        return mark_stub(handler)

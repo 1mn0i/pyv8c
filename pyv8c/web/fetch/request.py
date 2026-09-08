@@ -1,21 +1,28 @@
 """Fetch request model."""
+from pyv8 import IdlSpec, AttributeSpec
 
 from urllib.parse import urljoin
 
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
 
-from ...engine.registry import interface, js_attributes
+
+
+from ...engine.registry import interface
 from .headers import Headers
 
 
-@interface("Request", None, constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('Request', None)
 class Request:
-    __v8_attribute__ = js_attributes(
-        ("url", "get_url", None, 0, 1), ("method", "get_method", None, 0, 1),
-        ("headers", "get_headers", None, 0, 1), ("mode", "get_mode", None, 0, 1),
-        ("credentials", "get_credentials", None, 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="url", getter="get_url", side_effect=1),
+            AttributeSpec(name="method", getter="get_method", side_effect=1),
+            AttributeSpec(name="headers", getter="get_headers", side_effect=1),
+            AttributeSpec(name="mode", getter="get_mode", side_effect=1),
+            AttributeSpec(name="credentials", getter="get_credentials", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
 
     def __init__(self, url="", options=None, services=None, _realm=None, **_):

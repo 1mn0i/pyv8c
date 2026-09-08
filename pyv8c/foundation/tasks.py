@@ -286,18 +286,6 @@ class TaskQueue:
         worked = self._drain_microtasks() or worked
         return worked
 
-    def has_ready_work(self):
-        """Anything a turn would execute right now, excluding future timers."""
-        if self.closed:
-            return False
-        if self.microtasks:
-            return True
-        if self.posted.qsize():
-            return True
-        if self._parser and not self._host.parser_blocked():
-            return True
-        return bool(self.timers) and self.timers[0][0] <= time.monotonic()
-
     def pump_until(self, predicate, timeout=0):
         """Turn the loop until ``predicate()`` holds or *timeout* expires.
 

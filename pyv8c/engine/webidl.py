@@ -153,7 +153,9 @@ def normalize_type(type_spec):
             )
         if kind == "enum":
             return "enum:" + "|".join(type_spec.get("values", ()))
-        if kind in ("dictionary", "callback", "interface"):
+        if kind == "callback":
+            return "callback"
+        if kind in ("dictionary", "interface"):
             return type_spec.get("name") or kind
         return kind or "any"
     if not isinstance(type_spec, str):
@@ -170,10 +172,16 @@ def normalize_type(type_spec):
     if inner is not None:
         parts = _split_template_arguments(inner)
         return "record<{}>".format(",".join(str(normalize_type(item)) for item in parts))
+    if value in ("V8PositionCallback", "V8PositionErrorCallback"):
+        return "callback"
+    if value == "PositionOptions":
+        return "dictionary"
     return _BLINK_TYPES.get(value, type_spec)
 
 
 def _default(value):
+    if value == "nullptr":
+        return None
     if value == "false":
         return False
     if value == "true":
@@ -246,6 +254,8 @@ def _string(value):
         return "undefined"
     if value is pyv8.Null or value is None:
         return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
     return str(value)
 
 
@@ -290,13 +300,13 @@ def _interface(value, name, nullable=False):
         if nullable:
             return value
         raise _error("TypeError", f"The provided value is not of type '{name}'.")
-    # Interface identity follows the __idl_name__ chain on the value's class
+    # Interface identity follows the __idl_spec__ registration chain on the value's class
     # MRO; real implementations and generated stubs both carry it, so no
     # registry lookup is needed on this hot path.
     cls = type(value)
-    if getattr(cls, "__idl_name__", None) == name:
+    if getattr(getattr(cls, "__idl_spec__", None), "name", None) == name:
         return value
-    if any(getattr(base, "__idl_name__", None) == name for base in cls.__mro__[1:]):
+    if any(getattr(getattr(base, "__idl_spec__", None), "name", None) == name for base in cls.__mro__[1:]):
         return value
     raise _error("TypeError", f"The provided value is not of type '{name}'.")
 

@@ -17,7 +17,8 @@ from loguru import logger
 from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
-from ..web.network.backend import NetworkRequest, same_origin
+from ..foundation.urls import same_origin
+from ..web.network.backend import NetworkRequest
 
 
 class RequestHandle:
@@ -354,7 +355,7 @@ class ResourceController:
             return handle
         if page.network_backend:
             handle._transport = page.network_backend.request_async(
-                page.services, req,
+                page.services.task_services, req,
                 lambda raw, error: self.finish_async_response(raw, error, request, deliver),
             )
             return handle
@@ -386,7 +387,6 @@ class ResourceController:
             if not src:
                 return
             node._resource_started = True
-            node._resource_kind = "script"
             async_script = bool(node.get_async()) if hasattr(node, "get_async") else "async" in node.attributes
             node._resource_async = async_script
             if not async_script and not getattr(node, "_script_defer", False) and not getattr(node, "_parser_script", False):
@@ -407,7 +407,6 @@ class ResourceController:
         if not src:
             return
         node._resource_started = True
-        node._resource_kind = tag
         resource_type = "style" if tag == "link" else "image" if tag == "img" else "media" if tag in ("audio", "video", "source") else tag
         request = {"method": "GET", "resource_type": resource_type}
         if tag == "iframe":
@@ -423,14 +422,14 @@ class ResourceController:
 
         def done(response, error):
             handle.finish()
-            page.services._untrack_resource(handle)
+            page.services.resource_services._untrack_resource(handle)
             if not handle.cancelled:
                 page.tasks.post(lambda: self.complete_document_resource(token, generation, response, error, handle))
 
         # Register before issuing the request: a fast response runs ``done`` on
         # another thread, and untracking a handle that was never tracked would
         # silently leave its cancel callback behind until the page closes.
-        page.services._track_resource(handle)
+        page.services.resource_services._track_resource(handle)
         handle._transport = self.load_resource_async(url, request, done)
         return handle
 
@@ -476,20 +475,26 @@ class ResourceController:
         page.lifecycle.dispatch_page_event("load" if ok else "error", node, {"bubbles": False})
         page.lifecycle.maybe_fire_document_load()
 
-    def load_iframe_response(self, iframe, response, callback):
+    def _child_frame_page(self, iframe, target):
+        """Return the live child page for ``iframe``, creating it on demand."""
         from .browser import Page
 
         page = self.page
-        target = response.url or urljoin(page.url, iframe.get_src() or "about:blank")
         child_services = getattr(iframe, "_child_services", None)
         child = child_services._page_realm.page if child_services is not None else None
         if child is None or child.closed:
             child = Page(page.context_owner, url=target, environment=page.environment, parent=page)
             iframe._child_services = child.services
-            page.services._track_frame(child)
+            page.services.context_services.track_frame(child)
             devtools = page.context_owner._devtools
             if devtools is not None:
                 child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
+        return child
+
+    def load_iframe_response(self, iframe, response, callback):
+        page = self.page
+        target = response.url or urljoin(page.url, iframe.get_src() or "about:blank")
+        child = self._child_frame_page(iframe, target)
         try:
             child.set_content(response.body_text(), url=target)
             child.lifecycle.when_loaded(callback)
@@ -502,14 +507,7 @@ class ResourceController:
         if page.navigation.has_navigation and not page.navigation.parsing:
             self.discover_element_resource(iframe)
             return getattr(iframe, "_child_services", None)
-        from .browser import Page
-
-        child = Page(page.context_owner, url=target, environment=page.environment, parent=page)
-        iframe._child_services = child.services
-        page.services._track_frame(child)
-        devtools = page.context_owner._devtools
-        if devtools is not None:
-            child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
+        child = self._child_frame_page(iframe, target)
         response = self.load_resource(target, {"method": "GET"})
         child.set_content(response.body_text(), url=target)
         return child

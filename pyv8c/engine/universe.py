@@ -5,24 +5,26 @@ this module keeps the per-Browser :class:`InterfaceUniverse` composition
 root.  The collaborators it assembles are: :mod:`.catalog` (hierarchy and
 exposure indexes), :mod:`.stubs` (generated API shells for unimplemented
 members), :mod:`.wrappers` (argument-validating callback wrappers),
-:mod:`.assembly` (native ClassConfig assembly) and :mod:`.sessions` (the
+:mod:`.assembly` (immutable IDL compilation) and :mod:`.sessions` (the
 realm-local :class:`BindingSession`).
 """
 
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 
 from .baseline import (
     DEFAULT_BASELINE_PATH,
     BaselineRepository,
     BaselineSnapshot,
 )
-from .webidl import BindingPlan, compile_binding
+from .webidl import BindingPlan, MethodSpec, ParamSpec, compile_binding
 from .catalog import InterfaceCatalog
 from .stubs import StubFactory
 from .wrappers import BindingWrapperFactory
-from .assembly import ClassConfigBuilder, own_configs
+from .assembly import InterfaceCompiler
+from .registry import InterfaceSpec
 from .sessions import BindingSession
 
 __all__ = [
@@ -41,6 +43,37 @@ DEFAULT_EAGER_INTERFACES = (
     "MimeType",
 )
 
+#: Chromium declares these as ``(Node or DOMString)...``, but the generated
+#: binding tables collapse a trailing variadic list into an empty parameter
+#: table, so the extracted baseline records no parameters at all.  Without a
+#: variadic parameter the argument-validating wrapper would drop every
+#: argument and the operations could never see their nodes.  The override is
+#: applied only where the baseline really has no parameters, so a future
+#: extraction that recovers the list keeps precedence.
+#: Signatures the generated Chromium tables cannot express at all. Blink
+#: types ``insertAdjacentHTML``'s markup as ``V8UnionStringOrTrustedHTML``;
+#: this runtime has no trusted types, so the union collapses to the plain
+#: string branch a page actually passes.
+_SIGNATURE_OVERRIDES = {
+    ("Element", "insertAdjacentHTML"): MethodSpec(
+        (ParamSpec("DOMString"), ParamSpec("DOMString")), 2, None, False,
+    ),
+}
+
+_VARIADIC_PARAMETER_MEMBERS = frozenset((
+    ("Element", "append"), ("Element", "prepend"), ("Element", "replaceChildren"),
+    ("Element", "before"), ("Element", "after"), ("Element", "replaceWith"),
+    ("CharacterData", "before"), ("CharacterData", "after"),
+    ("CharacterData", "replaceWith"),
+    ("DocumentType", "before"), ("DocumentType", "after"),
+    ("DocumentType", "replaceWith"),
+    ("Document", "append"), ("Document", "prepend"), ("Document", "replaceChildren"),
+    ("DocumentFragment", "append"), ("DocumentFragment", "prepend"),
+    ("DocumentFragment", "replaceChildren"),
+))
+
+_VARIADIC_SPEC = MethodSpec((ParamSpec("any", variadic=True),), 0, None, True)
+
 
 class InterfaceUniverse:
     """One isolated interface registry, binding plan, and class config set."""
@@ -54,6 +87,7 @@ class InterfaceUniverse:
         self.expose_unimplemented = bool(expose_unimplemented)
         self.eager_interfaces = tuple(dict.fromkeys(eager_interfaces or ()))
         self.strict_validation = bool(strict_validation)
+        self._validated = False
         self.lazy_interfaces = bool(lazy_interfaces)
         # Realm-independent caches. Configs are owned by each BindingSession.
         # One re-entrant lock guards every read-modify-write cache sequence so
@@ -67,10 +101,10 @@ class InterfaceUniverse:
         self._exposure_names = {}
         # Collaborator factories: stubs generate unimplemented-member shells,
         # wrappers adapt hand-written callbacks with argument validation, and
-        # the assembler merges both into the native ClassConfig wire shape.
+        # the compiler combines both into immutable native descriptions.
         self._stubs = StubFactory(self.stub_logging)
         self._wrappers = BindingWrapperFactory(self)
-        self._assembly = ClassConfigBuilder(self, self._stubs, self._wrappers)
+        self._assembly = InterfaceCompiler(self, self._stubs, self._wrappers, self._lock)
 
     def spec(self, name):
         """The raw baseline spec of one interface (collaborator query surface)."""
@@ -143,6 +177,12 @@ class InterfaceUniverse:
             _owner, _location_name, member = found
             signature = member.get("setter_signature") if kind == "attribute" else member.get("signature")
         plan = compile_binding(interface_name, public_name, kind, signature)
+        override = _SIGNATURE_OVERRIDES.get((interface_name, public_name))
+        if override is not None and plan.resolved:
+            plan = replace(plan, signature=override, overload_plans=())
+        elif (not plan.signature.params and plan.resolved
+                and (interface_name, public_name) in _VARIADIC_PARAMETER_MEMBERS):
+            plan = replace(plan, signature=_VARIADIC_SPEC, overload_plans=())
         with self._lock:
             existing = self._plans.get(key)
             if existing is not None:
@@ -170,8 +210,7 @@ class InterfaceUniverse:
                 cls = type(name, (parent,), {
                     "__module__": "pyv8c.engine.generated",
                     "__init__": self._stubs.constructor(name),
-                    "__idl_name__": name,
-                    "__idl_parent__": parent_name,
+                    "__idl_spec__": InterfaceSpec(name, parent_name),
                     "__v8_idl_stub__": True,
                 })
             else:
@@ -179,15 +218,8 @@ class InterfaceUniverse:
             self._classes[name] = cls
             return cls
 
-    def class_config_for(self, name, cache=None, realm=None):
-        """Assemble the config of one interface.
-
-        Called without a cache for inspection outside of any realm;
-        :class:`BindingSession` passes its own cache plus the realm so member
-        wrappers can capture it.  Configs are owned by sessions, never shared
-        across realms.
-        """
-        return self._assembly.build(name, {} if cache is None else cache, realm)
+    def class_config_for(self, name, realm=None):
+        return self._assembly.bind(name, realm)
 
     def walk_parent_names(self, name):
         """The interface plus its ancestor chain, innermost first."""
@@ -213,25 +245,8 @@ class InterfaceUniverse:
         return BindingSession(self, realm)
 
     def validate(self):
-        self.registry.validate(self.baseline.interfaces)
-        for name, interface_spec in self.registry.specs.items():
-            cls = self.registry.implementations[name]
-            direct_members = [member for _location_name, member in self.own_members(name)]
-            operation_names = {member.get("name") for member in direct_members if member.get("kind") == "operation"}
-            attribute_names = {member.get("name") for member in direct_members if member.get("kind") == "attribute"}
-            for config in own_configs(cls, "__v8_method__", operation_names):
-                plan = self.binding_plan(name, config[0])
-                if not plan.resolved:
-                    raise TypeError(
-                        f"{name}.{config[0]} has unresolved Web IDL signature"
-                        + (f": {plan.source_evidence}" if plan.source_evidence else "")
-                    )
-            for config in own_configs(cls, "__v8_attribute__", attribute_names):
-                if config[2]:
-                    plan = self.binding_plan(name, config[0], "attribute")
-                    if not plan.resolved:
-                        raise TypeError(f"{name}.{config[0]} setter has unresolved Web IDL signature")
-            if interface_spec.constructible:
-                plan = self.binding_plan(name, "constructor", "constructor")
-                if not plan.resolved:
-                    raise TypeError(f"{name} constructor has unresolved Web IDL signature")
+        with self._lock:
+            if not self._validated:
+                for name in self.baseline.interfaces:
+                    self._assembly.compile(name)
+                self._validated = True

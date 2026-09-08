@@ -1,10 +1,11 @@
 """Blob data type and byte conversion helpers."""
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 
 import pyv8
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
 
-from ...engine.registry import interface, js_attributes, js_methods
+
+
+from ...engine.registry import interface
 
 
 def bytes_from_value(value):
@@ -26,15 +27,21 @@ def bytes_from_value(value):
         return None
 
 
-@interface("Blob", None, constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('Blob', None)
 class Blob:
-    __v8_attribute__ = js_attributes(
-        ("size", "get_size", None, 0, 1), ("type", "get_type", None, 0, 1),
-    )
-    __v8_method__ = js_methods(
-        ("slice", "fn_slice", 3, 1), ("text", "fn_text", 0, 1),
-        ("arrayBuffer", "fn_arrayBuffer", 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="size", getter="get_size", side_effect=1),
+            AttributeSpec(name="type", getter="get_type", side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="slice", callback="fn_slice", length=3, side_effect=1),
+            MethodSpec(name="text", callback="fn_text", side_effect=1),
+            MethodSpec(name="arrayBuffer", callback="fn_arrayBuffer", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
 
     def __init__(self, parts=None, options=None, _realm=None, **_):

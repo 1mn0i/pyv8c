@@ -1,19 +1,26 @@
 """Fetch header collection."""
+from pyv8 import IdlSpec, MethodSpec
 
 import pyv8
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
-
-from ...engine.registry import interface, js_methods
 
 
-@interface("Headers", None, constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+
+from ...engine.registry import interface
+
+
+@interface('Headers', None)
 class Headers:
-    __v8_method__ = js_methods(
-        ("get", "fn_get", 1, 1), ("set", "fn_set", 2, 0),
-        ("append", "fn_append", 2, 0), ("delete", "fn_delete", 1, 0),
-        ("has", "fn_has", 1, 1),
+    __v8_idl_spec__ = IdlSpec(
+        methods=(
+            MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
+            MethodSpec(name="set", callback="fn_set", length=2),
+            MethodSpec(name="append", callback="fn_append", length=2),
+            MethodSpec(name="delete", callback="fn_delete", length=1),
+            MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
 
     def __init__(self, init=None, **_):

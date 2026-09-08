@@ -99,10 +99,6 @@ class RealmExecutor:
         self._thread.start()
 
     @property
-    def thread(self):
-        return self._thread
-
-    @property
     def closed(self):
         return self._closed.is_set()
 

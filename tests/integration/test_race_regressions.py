@@ -28,7 +28,6 @@ import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 
-from pyv8c import Browser
 from pyv8c.foundation.errors import V8Error
 from pyv8c.foundation.executor import RealmExecutor
 from pyv8c.platform.resource_loading import RequestHandle
@@ -263,7 +262,7 @@ def test_fetch_completion_beating_registration_does_not_strand_the_handle(browse
         monkeypatch.setattr(controller, "load_resource_async", synchronous)
         monkeypatch.setattr(facet, "_untrack_resource", spied_untrack)
 
-        handle = page.services.load_resource_async(
+        handle = facet.load_resource_async(
             "http://127.0.0.1:9/x", {"method": "GET"}, lambda r, e: responses.append((r, e))
         )
 

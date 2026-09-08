@@ -1,9 +1,10 @@
 """WebSocket Web API backed by the network transport service."""
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
 
-from ...engine.registry import interface, js_attributes, js_methods
+
+
+from ...engine.registry import interface
 from ...foundation.errors import InvalidStateError, V8SyntaxError
 from ..dom.events import Event, EventTarget
 from ..fetch.blob import Blob, bytes_from_value
@@ -11,21 +12,36 @@ from ..fetch.events import CloseEvent, ErrorEvent, MessageEvent
 from .backend import NetworkUnavailableError
 
 
-@interface("WebSocket", "EventTarget", constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('WebSocket', 'EventTarget')
 class WebSocket(EventTarget):
     CONNECTING, OPEN, CLOSING, CLOSED = 0, 1, 2, 3
-    __v8_attribute__ = js_attributes(
-        ("url", "get_url", None, 0, 1), ("protocol", "get_protocol", None, 0, 1),
-        ("readyState", "get_readyState", None, 0, 1), ("extensions", "get_extensions", None, 0, 1),
-        ("binaryType", "get_binaryType", "set_binaryType", 0, 0),
-        ("bufferedAmount", "get_bufferedAmount", None, 0, 1),
-        ("onopen", "get_onopen", "set_onopen", 0, 0),
-        ("onmessage", "get_onmessage", "set_onmessage", 0, 0),
-        ("onerror", "get_onerror", "set_onerror", 0, 0),
-        ("onclose", "get_onclose", "set_onclose", 0, 0),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="url", getter="get_url", side_effect=1),
+            AttributeSpec(name="protocol", getter="get_protocol", side_effect=1),
+            AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
+            AttributeSpec(name="extensions", getter="get_extensions", side_effect=1),
+            AttributeSpec(
+                name="binaryType", getter="get_binaryType", setter="set_binaryType"
+            ),
+            AttributeSpec(
+                name="bufferedAmount", getter="get_bufferedAmount", side_effect=1
+            ),
+            AttributeSpec(name="onopen", getter="get_onopen", setter="set_onopen"),
+            AttributeSpec(
+                name="onmessage", getter="get_onmessage", setter="set_onmessage"
+            ),
+            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
+            AttributeSpec(name="onclose", getter="get_onclose", setter="set_onclose"),
+        ),
+        methods=(
+            MethodSpec(name="send", callback="fn_send", length=1),
+            MethodSpec(name="close", callback="fn_close", length=2),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
-    __v8_method__ = js_methods(("send", "fn_send", 1, 0), ("close", "fn_close", 2, 0))
 
     def __init__(self, url="", protocols=None, _realm=None, **kw):
         services = _realm
@@ -35,7 +51,7 @@ class WebSocket(EventTarget):
         self._services, self._url = services, str(url)
         self._protocol = self._extensions = ""
         self._state_value, self._binary_type, self._buffered = self.CONNECTING, "blob", 0
-        self._ws, self._protocols = None, protocols
+        self._ws = None
         callbacks = {"open": self._on_open, "message": self._on_message,
                      "error": self._on_error, "close": self._on_close}
         self._ws = services.context_services.websocket(self._url, protocols, callbacks)

@@ -4,6 +4,5 @@ from . import api, navigator, window
 
 
 def register(registry):
-    registry.register_namespace(vars(api))
-    registry.register_namespace(vars(navigator))
-    registry.register_namespace(vars(window))
+    for module in (api, navigator, window):
+        registry.register_namespace(vars(module))

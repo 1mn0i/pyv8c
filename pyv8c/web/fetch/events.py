@@ -1,19 +1,25 @@
 """Events shared by Fetch, WebSocket, XHR, and Worker APIs."""
+from pyv8 import IdlSpec, AttributeSpec
 
 import pyv8
-from pyv8.flag import FlagExposed
-from pyv8.tools import ConstructorConfig
 
-from ...engine.registry import interface, js_attributes
+
+
+from ...engine.registry import interface
 from ..dom.events import Event
 
 
-@interface("MessageEvent", "Event", constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('MessageEvent', 'Event')
 class MessageEvent(Event):
-    __v8_attribute__ = js_attributes(
-        ("data", "get_data", None, 0, 1), ("origin", "get_origin", None, 0, 1),
-        ("source", "get_source", None, 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="data", getter="get_data", side_effect=1),
+            AttributeSpec(name="origin", getter="get_origin", side_effect=1),
+            AttributeSpec(name="source", getter="get_source", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
 
     def __init__(self, event_type="message", options=None, **kw):
@@ -28,12 +34,17 @@ class MessageEvent(Event):
     def get_source(self): return self.source
 
 
-@interface("CloseEvent", "Event", constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('CloseEvent', 'Event')
 class CloseEvent(Event):
-    __v8_attribute__ = js_attributes(
-        ("code", "get_code", None, 0, 1), ("reason", "get_reason", None, 0, 1),
-        ("wasClean", "get_wasClean", None, 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="code", getter="get_code", side_effect=1),
+            AttributeSpec(name="reason", getter="get_reason", side_effect=1),
+            AttributeSpec(name="wasClean", getter="get_wasClean", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
 
     def __init__(self, event_type="close", options=None, **kw):
@@ -48,11 +59,16 @@ class CloseEvent(Event):
     def get_wasClean(self): return self.was_clean
 
 
-@interface("ErrorEvent", "Event", constructible=True, length=1)
-@ConstructorConfig(exposed=FlagExposed.kYes, constructor=1, has_constructor=1)
+@interface('ErrorEvent', 'Event')
 class ErrorEvent(Event):
-    __v8_attribute__ = js_attributes(
-        ("message", "get_message", None, 0, 1), ("error", "get_error", None, 0, 1),
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="message", getter="get_message", side_effect=1),
+            AttributeSpec(name="error", getter="get_error", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
     )
 
     def __init__(self, event_type="error", options=None, **kw):

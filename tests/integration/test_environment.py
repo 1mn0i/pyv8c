@@ -6,7 +6,6 @@ from pyv8c import (
     Browser,
     BrowserEnvironment,
     GeolocationConfig,
-    ScreenConfig,
     ViewportConfig,
 )
 
