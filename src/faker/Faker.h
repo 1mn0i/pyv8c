@@ -28,8 +28,7 @@ private:
 	static void GetArg(const v8::FunctionCallbackInfo<v8::Value>& info);
 	static void SetArg(const v8::FunctionCallbackInfo<v8::Value>& info);
 	static void CreateConstructor(const v8::FunctionCallbackInfo<v8::Value>& info);
-	static void GetHook(const v8::FunctionCallbackInfo<v8::Value>& info);
-	static void SetHook(const v8::FunctionCallbackInfo<v8::Value>& info);
+
 	static void StructuredClone(const v8::FunctionCallbackInfo<v8::Value>& info);
 
 public:

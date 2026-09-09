@@ -1,6 +1,8 @@
 #include "v8tools.h"
 #include "idl_spec.h"
 #include "convert.h"
+#include "faker/trace.h"
+#include "pyclass_handlers_internal.h"
 
 #include <climits>
 
@@ -14,7 +16,7 @@ namespace bindings {
     }
 
 
-    void FakerJsFunctionCallback(const FunctionCallbackInfo<Value>& info) {
+    static void FakerJsFunctionImpl(const FunctionCallbackInfo<Value>& info, PyObject* cb_name) {
         v8::Isolate* isolate = info.GetIsolate();
         Local<Context> context = isolate->GetCurrentContext();
         Local<Object> global = context->Global();
@@ -22,7 +24,7 @@ namespace bindings {
             ->Get(context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Faker))
             .ToLocalChecked()
             .As<Object>();
-        PyObject* cb_name = (PyObject*)v8_compat::external_value(info.Data());
+
         Local<String> cb = V8String(isolate, PyUnicode_AsUTF8_abi3(cb_name));
         Local<Value> func = faker->Get(context, cb).ToLocalChecked();
         if (func.IsEmpty() || !func->IsFunction()) {
@@ -46,6 +48,26 @@ namespace bindings {
             return;
         }
         info.GetReturnValue().Set(result.ToLocalChecked());
+    }
+
+    template<int kind>
+    static void FakerJsBindingCallback(const FunctionCallbackInfo<Value>& info) {
+        PyObject* name;
+        PyObject* callback;
+        if constexpr (kind == 2) {
+            auto* binding = (MethodSpec*)v8_compat::external_value(info.Data());
+            name = binding->name;
+            callback = binding->callback;
+        } else {
+            auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
+            name = binding->name;
+            callback = kind == 0 ? binding->getter : binding->setter;
+        }
+        auto* owner = v8_compat::context_embedder_pointer<context_c>(
+            info.GetIsolate()->GetCurrentContext(), CONTEXT_OBJECT_SLOT);
+        if (!context_trace_enabled(owner)) { FakerJsFunctionImpl(info, callback); return; }
+        faker::TraceScope observation(info, kind, name, get_self(info), owner);
+        FakerJsFunctionImpl(info, callback);
     }
 
     void FakerJsFunctionAccessorNameGetterCallback(Local<Name> property, const PropertyCallbackInfo<Value>& info) {
@@ -336,11 +358,11 @@ namespace bindings {
             config.cross_origin_check_for_get = (unsigned)spec->cross_origin_get_check;
             config.cross_origin_check_for_set = (unsigned)spec->cross_origin_set_check;
             config.v8_side_effect = (unsigned)spec->side_effect;
-            config.get_method = v8_compat::external_new(isolate, spec->callback_type == 0 ? resolved : spec->getter);
-            config.callback_for_get = spec->callback_type == 0 ? py_attribute_for_get : FakerJsFunctionCallback;
+            config.get_method = v8_compat::external_new(isolate, resolved);
+            config.callback_for_get = spec->callback_type == 0 ? py_attribute_for_get : FakerJsBindingCallback<0>;
             if (spec->setter != nullptr) {
-                config.set_method = v8_compat::external_new(isolate, spec->callback_type == 0 ? resolved : spec->setter);
-                config.callback_for_set = spec->callback_type == 0 ? (spec->location == 0 ? py_attribute_for_instance_set : py_attribute_for_property_set) : FakerJsFunctionCallback;
+                config.set_method = v8_compat::external_new(isolate, resolved);
+                config.callback_for_set = spec->callback_type == 0 ? (spec->location == 0 ? py_attribute_for_instance_set : py_attribute_for_property_set) : FakerJsBindingCallback<1>;
             }
             bool valid = config.name != nullptr;
             if (valid) InstallAttribute(isolate, world, interface_template, signature, config);
@@ -402,8 +424,8 @@ namespace bindings {
             config.receiver_check = (unsigned)spec->receiver_check;
             config.cross_origin_check = (unsigned)spec->cross_origin_check;
             config.v8_side_effect = (unsigned)spec->side_effect;
-            config.callback_data = v8_compat::external_new(isolate, spec->callback_type == 0 ? resolved : spec->callback);
-            config.callback = spec->callback_type == 0 ? py_class_method_callback : FakerJsFunctionCallback;
+            config.callback_data = v8_compat::external_new(isolate, resolved);
+            config.callback = spec->callback_type == 0 ? py_class_method_callback : FakerJsBindingCallback<2>;
             bool valid = config.name != nullptr;
             if (valid) InstallOperation(isolate, world, interface_template, signature, config);
             Py_DECREF(resolved);

@@ -13,13 +13,13 @@ class TestPyClassMaintenance(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "IdlSpec.length"):
             IdlSpec(length="invalid")
 
-    def test_hook_handler_without_python_method_is_safe(self):
-        """hook 模式下缺少 Python handler 时应安全回退到普通 JS 行为。"""
+    def test_trace_handler_without_python_method_is_safe(self):
+        """trace 模式下缺少 Python handler 时应安全回退到普通 JS 行为。"""
 
         class Window:
             pass
 
-        context = pyv8.Context(Window(), hook=True)
+        context = pyv8.Context(Window(), trace=True)
 
         # named handler 已安装，但 Window 没有对应 Python 方法。
         self.assertTrue(context.exec_js("globalThis.missing === undefined"))

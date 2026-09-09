@@ -20,12 +20,7 @@ constexpr std::array<std::string_view, kStringCount> kStringValues = {
     "name",
     "faker",
     "raw_tostring",
-    "hook",
     "cb",
-    "getter",
-    "setter",
-    "method",
-    "construct",
 };
 }
 

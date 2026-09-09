@@ -574,22 +574,22 @@ js_from_py_impl(PyObject *value,
                 return Local<Value>();
             }
             Local<String> v8_name = V8String(isolate, world);
-            bool hook = ctx_c->hook;
-            ctx_c->hook = false;
+            bool trace = ctx_c->trace;
+            ctx_c->trace = false;
             if (templ->to_obj == 1)
             {
                 v8::Local<v8::ObjectTemplate> object_template = templ->templ.Get(isolate).As<v8::ObjectTemplate>();
                 Local<Object> new_instance;
                 if (!object_template->NewInstance(context).ToLocal(&new_instance))
                 {
-                    ctx_c->hook = hook;
+                    ctx_c->trace = trace;
                     PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript object template");
                     return Local<Value>();
                 }
                 bool set_worked;
                 if (!context->Global()->Set(context, v8_name, new_instance).To(&set_worked))
                 {
-                    ctx_c->hook = hook;
+                    ctx_c->trace = trace;
                     PyErr_SetString(PyExc_RuntimeError, "failed to expose JavaScript object template");
                     return Local<Value>();
                 }
@@ -598,11 +598,11 @@ js_from_py_impl(PyObject *value,
             Local<Value> obj;
             if (!context->Global()->Get(context, v8_name).ToLocal(&obj))
             {
-                ctx_c->hook = hook;
+                ctx_c->trace = trace;
                 PyErr_SetString(PyExc_RuntimeError, "failed to retrieve JavaScript object template");
                 return Local<Value>();
             }
-            ctx_c->hook = hook;
+            ctx_c->trace = trace;
             return obj;
         }
         Local<Function> constructor = py_class_get_constructor(context, templ, (py_class *)templ->parent);

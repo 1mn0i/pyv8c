@@ -162,7 +162,7 @@
     <ClInclude Include="debugger.h" />
     <ClInclude Include="exception.h" />
     <ClInclude Include="faker\Faker.h" />
-    <ClInclude Include="faker\hook.h" />
+    <ClInclude Include="faker\trace.h" />
     <ClInclude Include="faker\tools.h" />
     <ClInclude Include="isolate.h" />
     <ClInclude Include="isolate_scope.h" />

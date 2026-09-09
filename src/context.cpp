@@ -13,6 +13,7 @@
 #include "jsfunction.h"
 #include "isolate.h"
 #include "timeout_guard.h"
+#include "faker/trace.h"
 
 using namespace v8;
 
@@ -41,6 +42,7 @@ context_require_isolate(context_c* self)
 // Python is wrong. The first entry is not modifiable and should be const char *
 PyGetSetDef context_getset[] = {
     {(char*)"glob", (getter)context_get_global, NULL, NULL, NULL},
+    {(char*)"trace", (getter)context_get_trace, (setter)context_set_trace, NULL, NULL},
     {(char*)"timeout", (getter)context_get_timeout, (setter)context_set_timeout, NULL, NULL},
     {NULL},
 };
@@ -89,16 +91,18 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 
     double timeout = 0;
     PyObject* global = NULL;
-    PyObject* hook = Py_False;
+    PyObject* trace = Py_False;
     PyObject* ctx_type = NULL;
     PyObject* py_isolate = Py_None;
     PyObject* class_configs = Py_None;
     PyObject* lazy_factory = Py_None;
-    static const char *keywords[] = {"global_this", "hook", "ctx_type", "timeout", "isolate", "class_configs", "lazy_factory", NULL};
+    PyObject* trace_callback = Py_None;
+    PyObject* traceable = Py_False;
+    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "class_configs", "lazy_factory", "trace_callback", "traceable", NULL};
 
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOO", (char **) keywords,
-                                    &global, &hook, &ctx_type, &timeout, &py_isolate,
-                                    &class_configs, &lazy_factory) < 0) {
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOOOO", (char **) keywords,
+                                    &global, &trace, &ctx_type, &timeout, &py_isolate,
+                                    &class_configs, &lazy_factory, &trace_callback, &traceable) < 0) {
         return NULL;
     }
 
@@ -107,6 +111,10 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         return NULL;
     }
 
+    if (trace_callback != Py_None && !PyCallable_Check(trace_callback)) {
+        PyErr_SetString(PyExc_TypeError, "trace_callback must be callable or None");
+        return nullptr;
+    }
     IsolateState* isolate_state = isolate_state_from_python(py_isolate, true);
     if (isolate_state == nullptr)
         return NULL;
@@ -172,7 +180,23 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->has_debugger = false;
     self->has_done = false;
     self->timeout = timeout;
-    self->hook = hook == Py_True;
+    self->trace = trace == Py_True;
+    self->traceable = self->trace || traceable == Py_True;
+    self->trace_depth = 0;
+    if (trace_callback != Py_None) {
+        Py_INCREF(trace_callback);
+        self->trace_callback = trace_callback;
+    } else if (self->traceable) {
+        PyObject* module = PyImport_ImportModule("pyv8.trace");
+        if (module != nullptr) {
+            self->trace_callback = PyObject_GetAttrString(module, "log_trace");
+            Py_DECREF(module);
+        }
+        if (self->trace_callback == nullptr) {
+            Py_DECREF((PyObject*)self);
+            return nullptr;
+        }
+    }
 
     if (ctx_type == NULL) {
         ctx_type = PyUnicode_FromString("Top");
@@ -190,6 +214,16 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         return NULL;
     }
     
+    if (self->trace_callback != nullptr) {
+        self->trace_event_names = Py_BuildValue("(ssss)", "get", "set", "method", "construct");
+        self->trace_context_type = ctx_type;
+        Py_INCREF(ctx_type);
+        if (self->trace_event_names == nullptr) {
+            Py_DECREF(ctx_type);
+            Py_DECREF((PyObject*)self);
+            return nullptr;
+        }
+    }
     MaybeLocal<ObjectTemplate> global_template;
     if (global != NULL) {
 
@@ -222,6 +256,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 
     IN_CONTEXT(Context::New(isolate, NULL, global_template));
     self->js_context.Reset(isolate, context);
+
     isolate_state->retain_v8_handle();
     self->has_done = true;
 
@@ -267,6 +302,10 @@ context_release(context_c *self)
     Py_CLEAR(self->class_template_cache);
     Py_CLEAR(self->class_configs);
     Py_CLEAR(self->lazy_factory);
+
+    Py_CLEAR(self->trace_callback);
+    Py_CLEAR(self->trace_context_type);
+    Py_CLEAR(self->trace_event_names);
     Py_CLEAR(self->resolving_classes);
     Py_CLEAR(self->lazy_names);
     if (!self->js_context.IsEmpty()) {
@@ -315,6 +354,7 @@ context_dealloc(context_c *self)
 PyObject *
 context_expose(context_c *self, PyObject *args, PyObject *kwargs)
 {
+    faker::TraceSilence silence(self);
     IsolateState* isolate_state = context_require_isolate(self);
     if (isolate_state == nullptr)
         return NULL;
@@ -738,6 +778,31 @@ context_set_cached_jsobject(Local<Context> js_context, PyObject *py_object, Loca
         }
     }
     Py_DECREF((PyObject *)jsobj);
+}
+
+PyObject*
+context_get_trace(context_c* self, void*)
+{
+    return PyBool_FromLong(self->trace);
+}
+
+int
+context_set_trace(context_c* self, PyObject* value, void*)
+{
+    if (value == nullptr || !PyBool_Check(value)) {
+        PyErr_SetString(PyExc_TypeError, "trace must be a bool");
+        return -1;
+    }
+    auto* state = context_require_isolate(self);
+    if (state == nullptr) return -1;
+    IN_ISOLATE(state);
+    if (context_require_isolate(self) == nullptr) return -1;
+    if (value == Py_True && !self->traceable) {
+        PyErr_SetString(PyExc_RuntimeError, "create Context with trace=True or traceable=True before enabling trace");
+        return -1;
+    }
+    self->trace = value == Py_True;
+    return 0;
 }
 
 PyObject *

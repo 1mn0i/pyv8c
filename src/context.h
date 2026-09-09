@@ -26,11 +26,23 @@ typedef struct
     bool has_debugger;
     bool has_done;
     double timeout;
-    bool hook;
+    bool trace;
+    bool traceable;
+    unsigned int trace_depth;
+
+    PyObject* trace_callback;
+    PyObject* trace_context_type;
+    PyObject* trace_event_names;
 } context_c;
+
+inline bool context_trace_enabled(context_c* context) {
+    return context != nullptr && context->trace && context->trace_callback != nullptr && context->trace_depth == 0;
+}
 
 extern PyTypeObject* context_type;
 int context_type_init();
+PyObject* context_get_trace(context_c* self, void* closure);
+int context_set_trace(context_c* self, PyObject* value, void* closure);
 
 void context_dealloc(context_c* self);
 PyObject* context_new(PyTypeObject* type, PyObject* args, PyObject* kwargs);

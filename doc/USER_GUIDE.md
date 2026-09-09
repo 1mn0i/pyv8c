@@ -13,7 +13,7 @@ pyv8 的主要目标不是替代浏览器，而是提供一组足够底层的 Py
 - [JavaScript 对象与函数](#javascript-对象与函数)
 - [Chromium-like 类与原型](#chromium-like-类与原型)
 - [Property interceptor](#property-interceptor)
-- [Cross-origin 与 hook](#cross-origin-与-hook)
+- [Cross-origin 与 trace](#cross-origin-与-trace)
 - [TypedArray 与 Promise](#typedarray-与-promise)
 - [异常与超时](#异常与超时)
 - [多 Isolate 与生命周期](#多-isolate-与生命周期)
@@ -235,7 +235,7 @@ class Window:
 
 context = pyv8.Context(
     Window,
-    hook=False,
+    trace=False,
     ctx_type="Top",
     timeout=1.0,
 )
@@ -246,8 +246,10 @@ context = pyv8.Context(
 | 参数 | 说明 |
 | --- | --- |
 | `global_this` | Python 类或实例，用作 JavaScript 全局对象的底层实现 |
-| `hook` | 是否安装补环境 hook/interceptor |
-| `ctx_type` | 传给 hook 的上下文标签，例如 `Top`、`Iframe` |
+| `trace` | 是否立即开启原生绑定观察 |
+| `traceable` | 初始关闭时是否配置后续开启观察的能力 |
+| `trace_callback` | Context 级事件回调，省略时使用默认日志 |
+| `ctx_type` | 传给 trace 的上下文标签，例如 `Top`、`Iframe` |
 | `timeout` | 默认脚本超时秒数，`0` 表示不限制 |
 | `isolate` | 指定自定义 `pyv8.Isolate`，省略时使用默认 Isolate |
 
@@ -783,7 +785,7 @@ class LegacyCollection:
 此时 `collection[0] = value` 在非严格模式静默失败，在严格模式产生 JavaScript
 `TypeError`。单独使用 `__v8_error_name__` 不会启用这种严格模式分流。
 
-## Cross-origin 与 hook
+## Cross-origin 与 trace
 
 ### Cross-origin access check
 
@@ -821,58 +823,57 @@ Attribute 和 operation 配置中的 `FlagCrossOriginCheck` 决定对应 functio
 - `kCheck`：执行 receiver/cross-origin 检查
 - `kDoNotCheck`：允许任意 receiver
 
-### 补环境 hook
+### 补环境 trace
 
-创建 Context 时启用 hook：
+Trace 是原生绑定边界上的 RAII 观察作用域：业务回调仍只执行一次，退出时读取已有参数、返回值和异常。
 
-```python
-context = pyv8.Context(Window(), hook=True, ctx_type="Top")
-context.exec_js("faker.hook = true")
-```
+`trace` 控制当前观察状态；`traceable` 保留为创建时配置观察回调的显式选项，不再表示安装拦截器：
 
-对象可以实现四类 hook：
-
-```python
-class HookTarget:
-    def __v8_get_hook__(self, name, value, error, ctx_type):
-        print("get", ctx_type, name, value, error)
-
-    def __v8_set_hook__(self, name, value, error, ctx_type):
-        print("set", ctx_type, name, value, error)
-
-    def __v8_method_hook__(
-        self, name, arguments, value, has_error, ctx_type
-    ):
-        print("method", ctx_type, name, list(arguments), value, has_error)
-
-    @staticmethod
-    def __v8_construct_hook__(
-        name, arguments, value, has_error, is_construct_call, ctx_type
-    ):
-        print(
-            "construct",
-            ctx_type,
-            name,
-            list(arguments),
-            value,
-            has_error,
-            is_construct_call,
-        )
-```
-
-构造器配置直接写入不可变 `IdlSpec`，hook 保持独立运行时能力，不再隐式安装。
+- `trace=True`：立即观察，之后可以暂停/恢复。
+- `trace=False, traceable=True`：初始关闭，之后可以开启。
+- 两者均为 `False`：不启用观察能力；之后开启会抛出 RuntimeError。
+- `context.trace = False/True` 必须赋 bool，不重建对象；关闭 Context 后不允许切换。
 
 ```python
-class Window:
-    __v8_idl_spec__ = pyv8.IdlSpec(
-        global_this=True,
-        constructor_behavior=pyv8.FlagConstructor.kNew,
-        immutable=pyv8.FlagImmutable.instance | pyv8.FlagImmutable.prototype,
-    )
+def trace(event, receiver, name, arguments, value, error, is_construct, ctx_type):
+    message = pyv8.format_trace(event, receiver, name, arguments, value, error, is_construct, ctx_type)
+    if message is not None:
+        print(message)
+
+context = pyv8.Context(Window(), traceable=True, trace_callback=trace, ctx_type="Top")
+context.trace = True
+context.exec_js("/* 观察原生绑定操作 */")
+context.trace = False
 ```
 
-Hook 自身抛出的异常会传播给调用方，因此生产日志 hook 不应吞掉关键状态，也不应执行
-容易递归触发同一 hook 的 JavaScript。
+回调契约：
+
+- `event`：`get`、`set`、`method`、`construct`。
+- `receiver`：Python 对象；构造事件为类；无法解析时为 `None`。
+- `name`：JS 属性/方法/构造器名称，索引访问为整数。
+- `arguments`：方法与构造事件为 tuple，属性事件为 `None`。
+- `value`：读取结果、写入值、调用结果。get/method/construct 失败时为 `pyv8.Undefined`；set 失败时仍保留写入值，不额外读取写入后的属性。
+- `error`：成功时为 `pyv8.Undefined`，失败时为原异常值的 Python 表示。
+- `is_construct`：是否通过 `new` 调用。
+- `ctx_type`：创建时配置的上下文标记。
+
+**观察范围**：Python/JS 实现的 IDL 属性和方法、原生构造器，以及真正处理操作的业务 named/indexed getter/setter。
+业务 handler 返回未处理时，原始 V8 查找继续；不会为了获得后续结果主动读取或伪造事件。
+纯 JS 自定义属性、纯 JS accessor、普通方法属性的读取、常量读取，以及进入绑定回调前被 V8 拒绝的操作不在观察范围。
+例如 `document.createElement(...)` 和 `element.id` 会产生事件，但 `element.extra = 1` 不会。
+
+**值转换**：标量按值转换；原生 Python 对象保留身份；其他 JS 对象（包括数组、Proxy、异常对象）以 JSObject 系列引用传递。
+不遍历对象或数组，不调用 getter、Proxy trap 或 `toString`。这些引用不是深拷贝快照；后续对象变化仍然可见。
+默认 `format_trace` 只显示复杂对象的类型，不自动展开内容。
+
+未传回调时使用 `pyv8.trace.log_trace`，通过标准 logging 的 `pyv8.trace` logger 输出 INFO 日志。
+原生层缓存回调和事件名称，关闭时跳过观察作用域与值转换，不改变对象模板。
+回调同步运行在当前 realm 线程，独立重入计数抑制回调内部再次产生 trace 事件。
+回调返回值被忽略；回调自身的 Python/JS 异常被隔离，不替换业务结果或原异常；终止执行时不再派发。
+需要诊断回调错误时，请在回调内部自行捕获并记录。
+
+自定义回调仍是用户代码：显式读取 JSObject 属性、打印它、修改 receiver 或执行 JS 都可能产生副作用。
+要保持被动观察，请只保存事件或使用安全的 `format_trace`，不要在回调内主动访问/修改 JS 对象。
 
 ## TypedArray 与 Promise
 

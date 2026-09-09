@@ -65,7 +65,7 @@
       <Filter>faker</Filter>
     </ClInclude>
     <ClInclude Include="v8tools.h" />
-    <ClInclude Include="faker\hook.h">
+    <ClInclude Include="faker\trace.h">
       <Filter>faker</Filter>
     </ClInclude>
     <ClInclude Include="abi3.h" />

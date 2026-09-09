@@ -8,7 +8,7 @@
 #include "pyclass.h"
 #include "idl_spec.h"
 #include "pyclass_handlers_internal.h"
-#include "faker/hook.h"
+#include "faker/trace.h"
 
 using namespace v8;
 
@@ -111,9 +111,9 @@ void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
         context, CONTEXT_OBJECT_SLOT);
     if (ctx_c == nullptr)
         return;
-    if (ctx_c->hook) {
+    if (context_trace_enabled(ctx_c)) {
         {
-            faker::FakerHookConstruct construct_hook(info, PyUnicode_AsUTF8_abi3(self->cls_name), self->cls, ctx_c);
+            faker::TraceScope construct_trace(info, 3, self->cls_name, self->cls, ctx_c);
             py_class_construct_impl(info, context, self, ctx_c);
         }
         if (PyErr_Occurred())
@@ -190,19 +190,13 @@ void py_class_method_callback(const FunctionCallbackInfo<Value> &info)
     context_c *owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
     if (owner == nullptr)
         return;
-    if (owner->hook)
+    if (context_trace_enabled(owner))
     {
-        const char *name = PyUnicode_AsUTF8_abi3(binding->name);
-        if (name == nullptr)
+        PyObject *trace_receiver = receiver;
+        if (trace_receiver == Py_None && PyMethod_Check_abi3(binding->callback))
+            trace_receiver = PyMethod_GET_SELF_abi3(binding->callback);
         {
-            js_throw_py();
-            return;
-        }
-        PyObject *hook_receiver = receiver;
-        if (hook_receiver == Py_None && PyMethod_Check_abi3(binding->callback))
-            hook_receiver = PyMethod_GET_SELF_abi3(binding->callback);
-        {
-            faker::FakerHookOperation operation_hook(info, name, hook_receiver, owner);
+            faker::TraceScope operation_trace(info, 2, binding->name, trace_receiver, owner);
             py_class_method_impl(info, context, receiver, binding);
         }
         if (PyErr_Occurred())
@@ -266,7 +260,7 @@ void py_class_property_setter(Local<Name> js_name, Local<Value> js_value, Info(v
     JS_PROPAGATE_PY(result);
 }
 
-void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
+static void attribute_get_impl(const FunctionCallbackInfo<Value>& info) {
     SETUP;
     auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
     PyObject* self = binding->getter_receiver ? get_self(info) : Py_None;
@@ -279,7 +273,17 @@ void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
     info.GetReturnValue().Set(value);
 }
 
-static void attribute_set(const FunctionCallbackInfo<Value>& info, bool instance) {
+void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
+    SETUP;
+    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (!context_trace_enabled(owner)) { attribute_get_impl(info); return; }
+    auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
+    PyObject* receiver = binding->getter_receiver ? get_self(info) : Py_None;
+    faker::TraceScope observation(info, 0, binding->name, receiver, owner);
+    attribute_get_impl(info);
+}
+
+static void attribute_set_impl(const FunctionCallbackInfo<Value>& info, bool instance) {
     SETUP;
     if (info.Length() < 1) {
         isolate->ThrowException(v8::Exception::TypeError(V8String(isolate, "1 argument required, but only 0 present")));
@@ -300,6 +304,16 @@ static void attribute_set(const FunctionCallbackInfo<Value>& info, bool instance
         auto replaced = info.This()->CreateDataProperty(context, V8String(isolate, name), info[0]);
         if (replaced.IsNothing()) return;
     }
+}
+
+static void attribute_set(const FunctionCallbackInfo<Value>& info, bool instance) {
+    SETUP;
+    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (!context_trace_enabled(owner)) { attribute_set_impl(info, instance); return; }
+    auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
+    PyObject* receiver = binding->setter_receiver ? get_self(info) : Py_None;
+    faker::TraceScope observation(info, 1, binding->name, receiver, owner);
+    attribute_set_impl(info, instance);
 }
 
 void py_attribute_for_instance_set(const FunctionCallbackInfo<Value>& info) { attribute_set(info, true); }
@@ -438,7 +452,7 @@ property_descriptor(PyObject* key, const PropertyCallbackInfo<Value>& info,
 }
 
 Intercepted
-property_getter_handler(PyObject* key,
+property_getter_handler_impl(PyObject* key,
                         const PropertyCallbackInfo<Value>& info,
                         Local<Context> context,
                         PyObject* self,
@@ -477,7 +491,7 @@ property_getter_handler(PyObject* key,
 }
 
 Intercepted
-property_setter_handler(PyObject* key,
+property_setter_handler_impl(PyObject* key,
                         Local<Value> js_value,
                         const PropertyCallbackInfo<void>& info,
                         Local<Context> context,
@@ -518,6 +532,31 @@ property_setter_handler(PyObject* key,
     }
     Py_DECREF(result);
     return Intercepted::kYes;
+}
+
+Intercepted property_getter_handler(PyObject* key, const PropertyCallbackInfo<Value>& info,
+                                    Local<Context> context, PyObject* self, const char* method_name) {
+    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (!context_trace_enabled(owner)) return property_getter_handler_impl(key, info, context, self, method_name);
+    Py_XINCREF(key);
+    faker::TraceEvent observation(info.GetIsolate(), owner, self);
+    auto result = property_getter_handler_impl(key, info, context, self, method_name);
+    if (result == Intercepted::kYes || observation.failed())
+        observation.emit(0, key, info.GetReturnValue().Get());
+    Py_XDECREF(key);
+    return result;
+}
+
+Intercepted property_setter_handler(PyObject* key, Local<Value> value, const PropertyCallbackInfo<void>& info,
+                                    Local<Context> context, PyObject* self, const char* method_name) {
+    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (!context_trace_enabled(owner)) return property_setter_handler_impl(key, value, info, context, self, method_name);
+    Py_XINCREF(key);
+    faker::TraceEvent observation(info.GetIsolate(), owner, self);
+    auto result = property_setter_handler_impl(key, value, info, context, self, method_name);
+    if (result == Intercepted::kYes || observation.failed()) observation.emit(1, key, value);
+    Py_XDECREF(key);
+    return result;
 }
 
 Intercepted
@@ -695,7 +734,7 @@ indexed_enumerator_handler(const PropertyCallbackInfo<Array>& info,
 }
 
 
-Intercepted named_getter(Local<Name> js_name, Info(Value)) { 
+Intercepted named_getter(Local<Name> js_name, Info(Value)) {
     SETUP
 
     context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
@@ -704,22 +743,8 @@ Intercepted named_getter(Local<Name> js_name, Info(Value)) {
         return Intercepted::kNo;
     PyObject* self = get_self(info);
 
-    if (ctx_c->hook) {
-        Intercepted result;
-        {
-            faker::FakerHookGetter hook(info, js_name, self, ctx_c);
-            result = property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_name_get__");
-        }
-        if (PyErr_Occurred()) {
-            js_throw_py();
-            return Intercepted::kYes;
-        }
-        return result;
-    }
-    else
-    {
-        return property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_name_get__");
-    }
+
+    return property_getter_handler(py_from_js(js_name, context), info, context, self, "__v8_name_get__");
 }
 
 // Named-properties objects belong to their creation realm, not whichever
@@ -829,21 +854,8 @@ Intercepted named_setter(Local<Name> js_name, Local<Value> js_value, Info(void))
         return Intercepted::kNo;
     PyObject* self = get_self(info);
 
-    if (ctx_c->hook) {
-        Intercepted result;
-        {
-            faker::FakerHookSetter hook(info, js_name, js_value, self, ctx_c);
-            result = property_setter_handler(py_from_js(js_name, context), js_value, info, context, self, "__v8_name_set__");
-        }
-        if (PyErr_Occurred()) {
-            js_throw_py();
-            return Intercepted::kYes;
-        }
-        return result;
-    }
-    else {
-        return property_setter_handler(py_from_js(js_name, context), js_value, info, context, self, "__v8_name_set__");
-    }
+
+    return property_setter_handler(py_from_js(js_name, context), js_value, info, context, self, "__v8_name_set__");
 }
 
 Intercepted named_deleter(Local<Name> js_name, Info(Boolean)) {
@@ -873,21 +885,8 @@ Intercepted indexed_getter(uint32_t index, Info(Value)) {
         return Intercepted::kNo;
     PyObject* self = get_self(info);
 
-    if (ctx_c->hook) {
-        Intercepted result;
-        {
-            faker::FakerHookGetter hook(info, index, self, ctx_c);
-            result = property_getter_handler(PyLong_FromSize_t(index), info, context, self, "__v8_index_get__");
-        }
-        if (PyErr_Occurred()) {
-            js_throw_py();
-            return Intercepted::kYes;
-        }
-        return result;
-    }
-    else {
-        return property_getter_handler(PyLong_FromSize_t(index), info, context, self, "__v8_index_get__");
-    }
+
+    return property_getter_handler(PyLong_FromSize_t(index), info, context, self, "__v8_index_get__");
 }
 
 Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
@@ -899,21 +898,8 @@ Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
         return Intercepted::kNo;
     PyObject* self = get_self(info);
 
-    if (ctx_c->hook) {
-        Intercepted result;
-        {
-            faker::FakerHookSetter hook(info, index, js_value, self, ctx_c);
-            result = property_setter_handler(PyLong_FromSize_t(index), js_value, info, context, self, "__v8_index_set__");
-        }
-        if (PyErr_Occurred()) {
-            js_throw_py();
-            return Intercepted::kYes;
-        }
-        return result;
-    }
-    else {
-        return property_setter_handler(PyLong_FromSize_t(index), js_value, info, context, self, "__v8_index_set__");
-    }
+
+    return property_setter_handler(PyLong_FromSize_t(index), js_value, info, context, self, "__v8_index_set__");
 }
 
 Intercepted indexed_deleter(uint32_t index, Info(Boolean)) {
@@ -985,6 +971,7 @@ property_definer(PyObject* key, const PropertyDescriptor& desc,
 Intercepted named_definer(Local<Name> js_name, const PropertyDescriptor& desc,
                           const PropertyCallbackInfo<Boolean>& info) {
     SETUP;
+
     PyObject* self = get_self(info);
     PyObject* key = py_from_js(js_name, context);
     if (key == NULL) {
@@ -1001,6 +988,7 @@ Intercepted named_definer(Local<Name> js_name, const PropertyDescriptor& desc,
 Intercepted indexed_definer(uint32_t index, const PropertyDescriptor& desc,
                             const PropertyCallbackInfo<Boolean>& info) {
     SETUP;
+
     PyObject* self = get_self(info);
     PyObject* key = PyLong_FromSize_t(index);
     if (key == NULL) {

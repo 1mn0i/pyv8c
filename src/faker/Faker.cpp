@@ -367,30 +367,7 @@ void Faker::CreateConstructor(const FunctionCallbackInfo<Value>& info) {
 }
 
 
-void Faker::GetHook(const FunctionCallbackInfo<Value>& info) {
-    Isolate* isolate = info.GetIsolate();
-    Local<Context> ctx = isolate->GetCurrentContext();
-    v8::Local<v8::Object> global = ctx->Global();
-    v8::Local<v8::Private> key = v8::Private::ForApi(
-        isolate, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Hook));
-    v8::MaybeLocal<v8::Value> maybe_value = global->GetPrivate(ctx, key);
-    bool hook = false;
-    if (!maybe_value.IsEmpty()) {
-        hook = maybe_value.ToLocalChecked()->IsTrue();
-    }
-    info.GetReturnValue().Set(Boolean::New(isolate, hook));
-}
 
-void Faker::SetHook(const FunctionCallbackInfo<Value>& info) {
-    Isolate* isolate = info.GetIsolate();
-    Local<Context> ctx = isolate->GetCurrentContext();
-    v8::Local<v8::Object> global = ctx->Global();
-    v8::Local<v8::Private> key = v8::Private::ForApi(
-        isolate, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Hook));
-    if (info.Length() == 1 && info[0]->IsBoolean()) {
-        global->SetPrivate(ctx, key, info[0]);
-    }
-}
 
 
 void Faker::StructuredClone(const FunctionCallbackInfo<Value>& info) {
@@ -454,11 +431,7 @@ void Faker::Register(Isolate* isolate, Local<FunctionTemplate>& global_inteface_
     prototype_template_Faker->Set(isolate, "get_arg", FunctionTemplate::New(isolate, GetArg));
     prototype_template_Faker->Set(isolate, "set_arg", FunctionTemplate::New(isolate, SetArg));
 
-    prototype_template_Faker->SetAccessorProperty(
-        runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Hook),
-        FunctionTemplate::New(isolate, GetHook),
-        FunctionTemplate::New(isolate, SetHook),
-        PropertyAttribute(v8::DontEnum | v8::DontDelete));
+
 
     //prototype_template_Faker->Set(isolate, "create_constructor", FunctionTemplate::New(isolate, CreateConstructor));
 

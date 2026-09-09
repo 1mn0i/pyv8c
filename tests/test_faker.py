@@ -26,7 +26,7 @@ class TestFaker(unittest.TestCase):
                 return None
 
 
-        self.context = pyv8.Context(Window(), hook=True)
+        self.context = pyv8.Context(Window(), trace=True)
 
     def tearDown(self):
         """测试结束后清理上下文"""

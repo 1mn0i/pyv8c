@@ -9,7 +9,7 @@
 
 namespace bindings {
 
-    void FakerJsFunctionCallback(const v8::FunctionCallbackInfo<v8::Value>& info);
+
     void FakerJsFunctionAccessorNameGetterCallback(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
     void ConstructAccessorNameGetterCallback(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
 

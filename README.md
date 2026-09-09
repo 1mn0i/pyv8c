@@ -5,7 +5,7 @@ pyv8 是一个基于 Google V8 的 CPython C++ 扩展，用于在 Python 中执�
 
 本项目主要面向 JavaScript 逆向和浏览器补环境场景。相比只提供 `eval()` 的运行器，
 pyv8 更关注 Chromium-like 构造器、原型链、属性描述符、interceptor、cross-origin
-检查和调用 hook，为批量模拟浏览器内置对象提供底层 API。
+检查和调用追踪（trace），为批量模拟浏览器内置对象提供底层 API。
 
 当前项目版本为 **2.1.2**，默认验证的 V8 版本记录在 `V8_VERSION`，当前为
 **15.2.20.1**。
@@ -18,7 +18,7 @@ pyv8 更关注 Chromium-like 构造器、原型链、属性描述符、intercept
 - 配置 Web IDL 风格的 attribute、operation 和 constant
 - 实现 named/indexed property interceptor
 - 支持 cross-origin access check 和独立 cross-origin handler
-- 记录 getter、setter、method 和 constructor hook
+- 记录 getter、setter、method 和 constructor 的 trace 事件
 - 操作 JavaScript 对象、函数、Promise 和 TypedArray
 - 创建多个相互隔离的 V8 Isolate
 - 在 Python 与 JavaScript 之间可靠传播异常
@@ -215,7 +215,7 @@ Chrome 130 及以上版本的 CSP 要求 WebSocket 使用 `127.0.0.1`，因此�
 - [Python/JavaScript 类型转换](doc/USER_GUIDE.md#类型转换)
 - [Chromium-like 类与原型](doc/USER_GUIDE.md#chromium-like-类与原型)
 - [Property interceptor](doc/USER_GUIDE.md#property-interceptor)
-- [Cross-origin 与 hook](doc/USER_GUIDE.md#cross-origin-与-hook)
+- [Cross-origin 与 trace](doc/USER_GUIDE.md#cross-origin-与-trace)
 - [多 Isolate 和生命周期](doc/USER_GUIDE.md#多-isolate-与生命周期)
 - [DevTools 调试](doc/USER_GUIDE.md#devtools-调试)
 - [常见问题](doc/USER_GUIDE.md#常见问题)

@@ -92,7 +92,7 @@ before native registration and publishes its state only on success.
   from explicit IDL declarations. No compatibility layer is supplied.
 
 Objects without IdlSpec still use ordinary Python reflection and generic bridge
-protocols. Hook and exception protocols remain separate runtime capabilities.
+protocols. Trace and exception protocols remain separate runtime capabilities.
 
 Generic class reflection cannot install arbitrary Python object instances as
 template constants without a realm. This unsupported path now raises RuntimeError

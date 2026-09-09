@@ -18,12 +18,7 @@ enum class V8StringId : std::uint8_t
     Name,
     Faker,
     RawToString,
-    Hook,
     Callback,
-    Getter,
-    Setter,
-    Method,
-    Construct,
     Count,
 };
 

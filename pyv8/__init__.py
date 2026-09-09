@@ -6,7 +6,7 @@ import os
 
 from . import _pyv8
 from .flag import *  # noqa: F401,F403 - flag constants are public API
-from .tools import *  # noqa: F401,F403 - decorators/hooks are public API
+
 
 
 _pyv8.init_v8(
@@ -25,6 +25,7 @@ globals().update({name: getattr(_pyv8, name) for name in _NATIVE_EXPORTS})
 __version__ = "2.1.2"
 
 from .devtools import start_devtools
+from .trace import format_trace, log_trace
 
 
 class ArrayType:
@@ -45,7 +46,7 @@ _HELPER_EXPORTS = {
     "CallbackType", "FlagImmutable", "V8Attribute", "FlagLocation",
     "FlagReceiverCheck", "FlagCrossOriginCheck", "FlagExposed",
     "FlagConstructor", "SideEffectType", "FlagArrayProto",
-    "__v8_construct_hook__", "__v8_get_hook__", "__v8_method_hook__", "__v8_set_hook__",
+    "format_trace", "log_trace",
 }
 __all__ = [*_NATIVE_EXPORTS, "ArrayType", "start_devtools", "__version__"]
 __all__ += sorted(_HELPER_EXPORTS)
