@@ -78,7 +78,7 @@ class _ContextBootstrapProxy:
 
 
 class Page:
-    def __init__(self, context, url="about:blank", *, hook=None, environment=None, parent=None, origin=None):
+    def __init__(self, context, url="about:blank", *, trace=None, environment=None, parent=None, origin=None):
         self.context_owner = context
         self.parent_page = parent
         self.top_page = parent.top_page if parent is not None else self
@@ -90,7 +90,7 @@ class Page:
         self.resource_interceptor = context.browser.resource_interceptor
         # A page can override the browser default without changing the
         # configuration used by other pages in the same browser.
-        self.hook = context.browser.hook if hook is None else bool(hook)
+        self._trace = context.browser.trace if trace is None else bool(trace)
         self.closed = False
         self._resource_scope = ResourceScope()
         self._close_lock = threading.Lock()
@@ -110,7 +110,7 @@ class Page:
         # Web-facing objects never see this Page; they receive the narrow
         # PageServices surface assembled from the controllers above.
         self.services = PageServices(
-            context, self.environment, self.hook, self._owned,
+            context, self.environment, self.trace, self._owned,
             self.navigation, self.scripts, self.resources, self.tasks,
             self._resource_scope,
         )
@@ -136,6 +136,24 @@ class Page:
         Window._bind_context(self.context, self.window)
         if parent is not None:
             self.window._set_frame_parent(parent.window)
+
+    @property
+    def trace(self):
+        return self._trace
+
+    @trace.setter
+    def trace(self, enabled):
+        if not isinstance(enabled, bool):
+            raise TypeError("trace must be a bool")
+
+        def update():
+            if self.closed or self.context_owner.closed:
+                raise RuntimeError("page is closed")
+            self.context.trace = enabled
+            self._trace = enabled
+            self.services.trace = enabled
+
+        self.realm.executor.call(update)
 
     def _update_origin(self, url):
         self.origin = origin_tuple(url, inherited=getattr(self.parent_page, "origin", None))
@@ -319,9 +337,9 @@ class BrowserContext:
     def cookie_jar(self):
         return self.cookies
 
-    def new_page(self, url="about:blank", *, hook=None, environment=None):
+    def new_page(self, url="about:blank", *, trace=None, environment=None):
         self._ensure_open()
-        page = Page(self, hook=hook, environment=environment)
+        page = Page(self, trace=trace, environment=environment)
         self.pages.append(page)
         if str(url) != "about:blank":
             try:
@@ -381,13 +399,16 @@ class BrowserContext:
 
 class Browser:
     def __init__(self, *, resource_loader=None,
-                 real_network=False, cycronet_options=None, hook=False,
+                 real_network=False, cycronet_options=None, trace=False, trace_callback=None, traceable=False,
                  resource_interceptor=None, cache=True,
                  cache_dir=None,
                  environment=None,
                  generate_interface_stubs=True, expose_unimplemented=True,
                  stub_logging="info", interface_baseline_path=None,
                  eager_interfaces=None, lazy_interfaces=True, strict_validation=False):
+        if trace_callback is not None and not callable(trace_callback):
+            raise TypeError("trace_callback must be callable or None")
+        self.trace_callback = trace_callback
         started = time.perf_counter_ns()
         self._closed = False
         # pyv8 initializes its process-global V8 runtime during package import.
@@ -398,7 +419,8 @@ class Browser:
         self.cache_dir = Path(cache_dir).expanduser() if cache_dir is not None else None
         self.real_network = bool(real_network)
         self.cycronet_options = dict(cycronet_options or {})
-        self.hook = bool(hook)
+        self.trace = bool(trace)
+        self.traceable = bool(traceable) or self.trace
         self.environment = BrowserEnvironment.from_value(environment)
         self.generate_interface_stubs = bool(generate_interface_stubs)
         self.expose_unimplemented = bool(expose_unimplemented)

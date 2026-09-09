@@ -28,7 +28,7 @@ class WorkerContext:
     session: Any
     universe: Any
     environment: Any
-    hook: bool
+    trace: bool
     generate_stubs: bool
     expose_unimplemented: bool
     stub_logging: str
@@ -258,7 +258,7 @@ class _WorkerCapability:
             session=session,
             universe=browser.interface_universe,
             environment=self._owner.environment,
-            hook=bool(self._owner.hook),
+            trace=bool(self._owner.trace),
             generate_stubs=browser.generate_interface_stubs,
             expose_unimplemented=browser.expose_unimplemented,
             stub_logging=browser.stub_logging,
@@ -345,11 +345,11 @@ class PageServices:
     capability facets below (``realm_services`` .. ``context_services``).
     """
 
-    def __init__(self, context, environment, hook, ownership: Ownership,
+    def __init__(self, context, environment, trace, ownership: Ownership,
                  navigation, scripts, resources, tasks, scope):
         self._context = context
         self.environment = environment
-        self.hook = hook
+        self.trace = trace
         self._ownership = ownership
         # Keep the exact callback object so resources can unregister from the
         # scope when they complete normally instead of accumulating closures.

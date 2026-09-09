@@ -18,18 +18,18 @@ def test_interface_registry_is_explicit():
         browser.close()
 
 
-def test_browser_hook_is_forwarded_to_page_context():
+def test_browser_trace_is_forwarded_to_page_context():
     with patch.object(browser_runtime.pyv8, "Context", wraps=browser_runtime.pyv8.Context) as context_ctor:
-        browser = Browser(hook=True)
+        browser = Browser(trace=True)
         try:
             page = browser.new_context().new_page()
-            assert page.hook is True
-            assert context_ctor.call_args.kwargs["hook"] is True
+            assert page.trace is True
+            assert context_ctor.call_args.kwargs["trace"] is True
 
             context_ctor.reset_mock()
-            overridden = browser.new_context().new_page(hook=False)
-            assert overridden.hook is False
-            assert context_ctor.call_args.kwargs["hook"] is False
+            overridden = browser.new_context().new_page(trace=False)
+            assert overridden.trace is False
+            assert context_ctor.call_args.kwargs["trace"] is False
         finally:
             browser.close()
 

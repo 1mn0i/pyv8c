@@ -4,13 +4,16 @@ import pyv8
 import time
 
 from ..engine.registry import expose_interfaces
+from ..engine.trace import log_trace
 from ..foundation.executor import RealmExecutor
 
 
-def _context_kwargs(session, context_type, hook, on_materialize=None):
+def _context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False):
     """Shared native Context arguments assembled from one binding session."""
     return {
-        "hook": hook,
+        "trace": trace,
+        "traceable": traceable,
+        "trace_callback": (log_trace if trace_callback is None else trace_callback) if trace or traceable else None,
         "ctx_type": context_type,
         "class_configs": session.configs,
         "lazy_factory": session.lazy_factory(context_type, on_materialize=on_materialize),
@@ -49,7 +52,9 @@ class WorkerRealm:
         session.class_configs("Worker", roots=(scope.__idl_spec__.name,))
         self.isolate = pyv8.Isolate()
         self.context = self.isolate.context(
-            scope, **_context_kwargs(session, "Worker", config.hook),
+            scope, **_context_kwargs(session, "Worker", config.trace,
+                                     trace_callback=config.browser.trace_callback,
+                                     traceable=config.browser.traceable),
         )
         session.attach_context(self.context)
         _declare_realm_interfaces(
@@ -97,8 +102,10 @@ class PageRealm:
         )
         binding_prepared = time.perf_counter_ns()
         self.context = pyv8.Context(page.window, **_context_kwargs(
-            self.binding_session, "Window", page.hook,
+            self.binding_session, "Window", page.trace,
             on_materialize=self._record_lazy_materialized,
+            trace_callback=browser.trace_callback,
+            traceable=browser.traceable,
         ))
         self.binding_session.attach_context(self.context)
         context_created = time.perf_counter_ns()
@@ -118,8 +125,6 @@ class PageRealm:
             interface_names=len(self.binding_session.interface_names("Window")),
             lazy_registered=lazy_registered,
         )
-        if page.hook:
-            self.context.exec_js("faker.hook=true;")
 
     def _record_lazy_materialized(self, name):
         """Keep startup stats in sync with on-demand interface materialisation."""

@@ -649,21 +649,18 @@ from .elements import (
 @interface('Document', 'Node')
 class Document(_ParentNodeMixin, Node):
     __v8_idl_spec__ = IdlSpec(
+        constructor_behavior=0, has_constructor=1,
         attributes=(
             AttributeSpec(name="URL", getter="get_URL", side_effect=1),
             AttributeSpec(name="documentURI", getter="get_URL", side_effect=1),
-            AttributeSpec(
-                name="documentElement", getter="get_documentElement", side_effect=1
-            ),
+            AttributeSpec(name="documentElement", getter="get_documentElement", side_effect=1),
             AttributeSpec(name="body", getter="get_body", side_effect=1),
             AttributeSpec(name="head", getter="get_head", side_effect=1),
             AttributeSpec(name="defaultView", getter="get_defaultView", side_effect=1),
             AttributeSpec(name="childNodes", getter="get_childNodes", side_effect=1),
             AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
             AttributeSpec(name="hidden", getter="get_hidden", side_effect=1),
-            AttributeSpec(
-                name="visibilityState", getter="get_visibilityState", side_effect=1
-            ),
+            AttributeSpec(name="visibilityState", getter="get_visibilityState", side_effect=1),
             AttributeSpec(name="cookie", getter="get_cookie", setter="set_cookie"),
             AttributeSpec(name="all", getter="get_all", side_effect=1),
         ),
@@ -671,49 +668,15 @@ class Document(_ParentNodeMixin, Node):
             MethodSpec(name="createElement", callback="fn_createElement", length=1),
             MethodSpec(name="createTextNode", callback="fn_createTextNode", length=1),
             MethodSpec(name="createComment", callback="fn_createComment", length=1),
-            MethodSpec(
-                name="createDocumentFragment", callback="fn_createDocumentFragment"
-            ),
+            MethodSpec(name="createDocumentFragment", callback="fn_createDocumentFragment"),
             MethodSpec(name="createAttribute", callback="fn_createAttribute", length=1),
-            MethodSpec(
-                name="getElementById",
-                callback="fn_getElementById",
-                length=1,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="getElementsByTagName",
-                callback="fn_getElementsByTagName",
-                length=1,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="getElementsByClassName",
-                callback="fn_getElementsByClassName",
-                length=1,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="getElementsByTagNameNS",
-                callback="fn_getElementsByTagNameNS",
-                length=2,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="querySelector",
-                callback="fn_querySelector",
-                length=1,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="querySelectorAll",
-                callback="fn_querySelectorAll",
-                length=1,
-                side_effect=1,
-            ),
+            MethodSpec(name="getElementById", callback="fn_getElementById", length=1, side_effect=1),
+            MethodSpec(name="getElementsByTagName", callback="fn_getElementsByTagName", length=1, side_effect=1),
+            MethodSpec(name="getElementsByClassName", callback="fn_getElementsByClassName", length=1, side_effect=1),
+            MethodSpec(name="getElementsByTagNameNS", callback="fn_getElementsByTagNameNS", length=2, side_effect=1),
+            MethodSpec(name="querySelector", callback="fn_querySelector", length=1, side_effect=1),
+            MethodSpec(name="querySelectorAll", callback="fn_querySelectorAll", length=1, side_effect=1),
         ),
-        constructor_behavior=0,
-        has_constructor=1,
     )
     def __init__(self, services=None, url="about:blank", ready_state="complete", **kw):
         super().__init__(services=services, node_type=Node.DOCUMENT_NODE, node_name="#document", **kw)
