@@ -12,13 +12,14 @@ IsolateState* current_isolate_state();
 class IsolateLockScope
 {
 public:
-    explicit IsolateLockScope(IsolateState* state);
+    explicit IsolateLockScope(IsolateState* state, bool try_only = false);
     ~IsolateLockScope();
 
     IsolateLockScope(const IsolateLockScope&) = delete;
     IsolateLockScope& operator=(const IsolateLockScope&) = delete;
 
     v8::Isolate* isolate() const { return isolate_; }
+    bool entered() const { return entered_; }
 
 private:
     IsolateState* state_;

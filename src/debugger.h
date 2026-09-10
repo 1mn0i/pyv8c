@@ -1,80 +1,16 @@
 #ifndef DEBUGGER_H
 #define DEBUGGER_H
-
 #include <Python.h>
-#include <v8.h>
-#include <v8-inspector.h>
-#include <memory>
-
-#include "pyv8.h"
-
-using namespace v8_inspector;
-
-class V8PyInspectorClient;
-class V8PyChannel;
+#include "context.h"
 struct DebuggerState;
-
-typedef struct _debugger
-{
-    PyObject_HEAD 
+typedef struct _debugger {
+    PyObject_HEAD
     context_c* context;
-    V8PyInspectorClient* client;
-    V8PyChannel* channel;
     DebuggerState* state;
-    PyObject* scripts;
 } debugger_c;
-
 extern PyTypeObject* debugger_type;
 int debugger_type_init();
-
-PyObject* debugger_new(PyTypeObject* type, PyObject* args, PyObject* kwargs);
-int debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs);
-void debugger_dealloc(debugger_c* self);
-PyObject* debugger_send(debugger_c* self, PyObject* message);
-PyObject* debugger_schedule_pause(debugger_c* self, PyObject* args, PyObject* kwargs);
-PyObject* debugger_disconnect(debugger_c* self, PyObject* ignored);
-PyObject* debugger_handle(debugger_c* self, PyObject* message);
-
-class V8PyInspectorClient : public V8InspectorClient
-{
-public:
-    V8PyInspectorClient(debugger_c* debugger)
-        : debugger_(debugger), run_if_waiting_requested_(false) {}
-    v8::Local<v8::Context> ensureDefaultContextInGroup(int context_group_id) override
-    {
-        v8::Isolate* isolate = debugger_->context->isolate_state->isolate();
-        return debugger_->context->js_context.Get(isolate);
-    }
-
-    void runMessageLoopOnPause(int /*context_group_id*/) override;
-    void runIfWaitingForDebugger(int /*context_group_id*/) override;
-    void quitMessageLoopOnPause() override;
-    bool consumeRunIfWaitingForDebuggerRequest();
-
-private:
-    debugger_c* debugger_;
-    bool run_if_waiting_requested_;
-};
-
-class V8PyChannel : public V8Inspector::Channel
-{
-public:
-    V8PyChannel(debugger_c* debugger) : debugger_(debugger) {}
-
-private:
-    void sendResponse(int callId, std::unique_ptr<StringBuffer> message) override
-    {
-        handle_message(message);
-    }
-    void sendNotification(std::unique_ptr<StringBuffer> message) override
-    {
-        handle_message(message);
-    }
-    void flushProtocolNotifications() override {}
-
-    void handle_message(const std::unique_ptr<StringBuffer>& message);
-
-    debugger_c* debugger_;
-};
-
+void debugger_prepare_script(context_c* context);
+void debugger_context_closed(context_c* context);
+bool debugger_context_can_close(context_c* context);
 #endif

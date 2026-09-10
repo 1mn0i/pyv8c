@@ -1,126 +1,202 @@
-import asyncio
-import socket
-import subprocess
-import sys
-import textwrap
-import unittest
-from pathlib import Path
-from unittest.mock import patch
+"""Native Inspector contracts, independent of WebSocket transport."""
 
+import json
+import threading
+
+import pytest
 import pyv8
-from pyv8 import devtools
-from pyv8.devtools import DevtoolsDebugger
-from websockets.asyncio.client import connect
 
 
-class TestDevtools(unittest.TestCase):
-    def test_debugger_requires_context_without_crashing(self):
-        """验证缺少 Context 时返回 Python 异常，而不是访问未初始化指针。"""
-        with self.assertRaises(TypeError):
-            pyv8.Debugger()
-
-    def test_run_if_waiting_uses_inspector_callback(self):
-        """CDP 方法应由 Inspector 解析，不能通过 JSON 文本搜索触发。"""
-
-        package_root = str(Path(__file__).resolve().parents[1])
-        code = f"import sys; sys.path.insert(0, {package_root!r})\n" + textwrap.dedent(
-            """
-            import json
-
-            import pyv8
+class Window:
+    pass
 
 
-            class Window:
-                pass
+def test_busy_isolate_command_entry_is_nonblocking_and_notifies_release():
+    first, second = pyv8.Context(Window()), pyv8.Context(Window())
+    entered, release, woke = threading.Event(), threading.Event(), threading.Event()
+
+    def hold():
+        entered.set()
+        assert release.wait(3)
+
+    owner = threading.Thread(target=lambda: first._try_inspector(hold, lambda: None))
+    owner.start()
+    try:
+        assert entered.wait(2)
+        calls = []
+        assert second._try_inspector(lambda: calls.append(True), woke.set) is False
+        assert calls == []
+        release.set()
+        assert woke.wait(2)
+        owner.join(2)
+        assert second._try_inspector(lambda: calls.append(True), woke.set) is True
+        assert calls == [True]
+    finally:
+        release.set()
+        owner.join(3)
+        first.close()
+        second.close()
 
 
-            class ProtocolDebugger(pyv8.Debugger):
-                def __init__(self, context):
-                    self.run_count = 0
-                    super().__init__(context)
+class Probe(pyv8.Debugger):
+    def __init__(self, context):
+        self.messages = []
+        self.ready_count = 0
+        self.sequence = 0
+        super().__init__(context)
 
-                def handle(self, message):
-                    pass
+    def handle(self, message):
+        self.messages.append(json.loads(message))
 
-                def run_js(self):
-                    self.run_count += 1
+    def request(self, method, **params):
+        self.sequence += 1
+        self.send(json.dumps({"id": self.sequence, "method": method, "params": params}).encode())
+        return next(message for message in reversed(self.messages) if message.get("id") == self.sequence)
+
+    def on_ready(self):
+        self.ready_count += 1
+
+    def run_loop(self):
+        self.resume()
+
+    def quit_loop(self):
+        pass
+
+    @property
+    def pauses(self):
+        return [message["params"] for message in self.messages if message.get("method") == "Debugger.paused"]
 
 
-            context = pyv8.Context(Window())
-            debugger = ProtocolDebugger(context)
-            debugger.send(
-                json.dumps(
-                    {
-                        "id": 1,
-                        "method": "Runtime.evaluate",
-                        "params": {
-                            "expression": "Runtime.runIfWaitingForDebugger"
-                        },
-                    }
-                ).encode()
-            )
-            assert debugger.run_count == 0
+@pytest.fixture
+def inspector():
+    context = pyv8.Context(Window())
+    probe = Probe(context)
+    probe.request("Runtime.enable")
+    probe.request("Debugger.enable")
+    try:
+        yield context, probe
+    finally:
+        probe.disconnect()
+        context.close()
 
-            debugger.send(
-                json.dumps(
-                    {
-                        "id": 2,
-                        "method": "Runtime.runIfWaitingForDebugger",
-                        "params": {},
-                    }
-                ).encode()
-            )
-            assert debugger.run_count == 1
-            """
-        )
 
-        result = subprocess.run(
-            [sys.executable, "-I", "-c", code],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
+def test_debugger_requires_context():
+    with pytest.raises(TypeError):
+        pyv8.Debugger()
 
-    def test_start_devtools_uses_chrome_compatible_loopback_host(self):
-        """Chrome 130+ 的 DevTools CSP 要求 WebSocket 使用 127.0.0.1。"""
 
-        with patch("pyv8.devtools.DevtoolsDebugger") as debugger_type, patch(
-            "builtins.print"
-        ) as print_mock:
-            debugger = debugger_type.return_value
-            devtools.start_devtools(object(), port=9010)
+def test_native_reentrant_close_is_reported_not_destroyed():
+    context = pyv8.Context(Window())
+    observed = []
 
-            debugger.start_server.assert_called_once_with("127.0.0.1", 9010)
-            debugger.close.assert_called_once_with()
-            output = "\n".join(call.args[0] for call in print_mock.call_args_list)
-            self.assertIn("ws=127.0.0.1:9010", output)
+    class ReentrantProbe(Probe):
+        def run_loop(self):
+            for callback in [self.disconnect, context.close]:
+                with pytest.raises(RuntimeError, match="Cannot"):
+                    callback()
+                observed.append(True)
+            self.resume()
 
-    def test_websocket_bridge(self):
-        class Window:
-            pass
+    probe = ReentrantProbe(context)
+    try:
+        probe.request("Debugger.enable")
+        probe.schedule_pause_on_next_statement("close check")
+        assert context.exec_js("42") == 42
+        assert observed == [True, True]
+    finally:
+        probe.disconnect()
+        context.close()
 
-        context = pyv8.Context(Window())
-        debugger = DevtoolsDebugger(context)
-        host = "127.0.0.1"
 
-        sock = socket.socket()
-        sock.bind((host, 0))
-        port = sock.getsockname()[1]
-        sock.close()
+def test_ready_is_notification_not_implicit_pause(inspector):
+    context, probe = inspector
+    probe.request("Runtime.evaluate", expression="'Runtime.runIfWaitingForDebugger'")
+    assert probe.ready_count == 0
+    probe.request("Runtime.runIfWaitingForDebugger")
+    assert probe.ready_count == 1
+    assert context.exec_js("40 + 2") == 42
+    assert probe.pauses == []
 
-        debugger.start_server(host, port)
 
-        async def run_client():
-            async with connect(f"ws://{host}:{port}/") as websocket:
-                await websocket.send("ping")
-                self.assertEqual(debugger.top_queue.get(timeout=2), "ping")
+@pytest.mark.parametrize("precompiled", [False, True])
+def test_scheduled_pause_survives_compilation_and_is_once(inspector, precompiled):
+    context, probe = inspector
+    source = "globalThis.debugValue = 42"
+    script = pyv8.Script(context, source, "example.js") if precompiled else source
+    probe.schedule_pause_on_next_statement("custom startup")
+    assert context.exec_js(script, filename="example.js") == 42
+    assert context.exec_js("debugValue") == 42
+    assert len(probe.pauses) == 1
+    assert probe.pauses[0]["reason"] == "custom startup"
+    assert probe.pauses[0]["callFrames"][0]["location"]["lineNumber"] == 0
 
-                debugger.handle("pong")
-                message = await asyncio.wait_for(websocket.recv(), timeout=2)
-                self.assertEqual(message, "pong")
 
-        try:
-            asyncio.run(run_client())
-        finally:
-            debugger.close()
+def test_compile_failure_does_not_consume_pause(inspector):
+    context, probe = inspector
+    probe.schedule_pause_on_next_statement("retry")
+    with pytest.raises(pyv8.JSException):
+        context.exec_js("const =")
+    context.exec_js("1 + 1")
+    assert len(probe.pauses) == 1
+    assert probe.pauses[0]["reason"] == "retry"
+
+
+def test_cancel_and_console_do_not_consume_host_pause(inspector):
+    context, probe = inspector
+    probe.schedule_pause_on_next_statement("host")
+    probe.request("Runtime.evaluate", expression="1 + 1")
+    assert probe.pauses == []
+    context.exec_js("40 + 2")
+    assert len(probe.pauses) == 1
+    probe.schedule_pause_on_next_statement("cancelled")
+    probe.cancel_pause_on_next_statement()
+    context.exec_js("3 + 3")
+    assert len(probe.pauses) == 1
+
+
+def test_sessions_are_independent_and_share_isolate(inspector):
+    context, first = inspector
+    other_context = pyv8.Context(Window())
+    second = Probe(context)
+    third = Probe(other_context)
+    try:
+        assert first.isolate_id == second.isolate_id == third.isolate_id == context.isolate_id
+        for probe in (second, third):
+            probe.request("Debugger.enable")
+        first.request("Debugger.setBreakpointByUrl", lineNumber=0, url="target.js")
+        second.request("Debugger.disable")
+        context.exec_js("globalThis.value = 42", filename="target.js")
+        assert len(first.pauses) == 1
+        assert second.pauses == []
+        assert third.pauses == []
+        first.disconnect()
+        second.request("Debugger.enable")
+        second.schedule_pause_on_next_statement("second")
+        context.exec_js("43")
+        assert len(second.pauses) == 1
+    finally:
+        second.disconnect()
+        third.disconnect()
+        other_context.close()
+
+
+def test_close_context_before_sessions_is_safe(inspector):
+    context, probe = inspector
+    context.close()
+    probe.disconnect()
+    with pytest.raises(RuntimeError):
+        probe.request("Runtime.enable")
+
+
+def test_precompiled_before_attach_is_debuggable():
+    context = pyv8.Context(Window())
+    script = pyv8.Script(context, "globalThis.value = 42", "precompiled.js")
+    probe = Probe(context)
+    try:
+        probe.request("Debugger.enable")
+        probe.request("Debugger.setBreakpointByUrl", lineNumber=0, url="precompiled.js")
+        assert context.exec_js(script) == 42
+        assert len(probe.pauses) == 1
+    finally:
+        probe.disconnect()
+        context.close()

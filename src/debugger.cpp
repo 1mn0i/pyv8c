@@ -1,310 +1,283 @@
 #include <Python.h>
 #include "pyv8.h"
-#include <v8.h>
 #include "context.h"
 #include "debugger.h"
-#include <cstring>
+#include <v8-inspector.h>
+#include <algorithm>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
 
 using namespace v8;
+using namespace v8_inspector;
+struct InspectorHub;
 
-struct DebuggerState
-{
-    std::unique_ptr<V8Inspector> inspector;
+static void call_callback(debugger_c* self, const char* name) {
+    PyObject* callback = PyObject_GetAttrString((PyObject*)self, name);
+    if (!callback) { PyErr_Clear(); return; }
+    PyObject* result = PyObject_CallNoArgs(callback);
+    Py_DECREF(callback);
+    if (!result) PyErr_WriteUnraisable((PyObject*)self);
+    else Py_DECREF(result);
+}
+struct InspectorChannel : V8Inspector::Channel {
+    debugger_c* owner;
+    bool enabled = true;
+    explicit InspectorChannel(debugger_c* value) : owner(value) {}
+    void deliver(std::unique_ptr<StringBuffer> message) {
+        if (!enabled || !message) return;
+        StringView view = message->string();
+        PyObject* text = view.is8Bit()
+            ? PyUnicode_DecodeLatin1((const char*)view.characters8(), view.length(), nullptr)
+            : PyUnicode_DecodeUTF16((const char*)view.characters16(), view.length() * 2, nullptr, nullptr);
+        if (!text) { PyErr_WriteUnraisable((PyObject*)owner); return; }
+        PyObject* callback = PyObject_GetAttrString((PyObject*)owner, "handle");
+        if (callback) {
+            PyObject* result = PyObject_CallFunctionObjArgs(callback, text, nullptr);
+            Py_DECREF(callback);
+            if (!result) PyErr_WriteUnraisable((PyObject*)owner);
+            else Py_DECREF(result);
+        } else PyErr_Clear();
+        Py_DECREF(text);
+    }
+    void sendResponse(int, std::unique_ptr<StringBuffer> message) override { deliver(std::move(message)); }
+    void sendNotification(std::unique_ptr<StringBuffer> message) override { deliver(std::move(message)); }
+    void flushProtocolNotifications() override {}
+};
+struct DebuggerState {
+    std::shared_ptr<InspectorHub> hub;
+    std::unique_ptr<InspectorChannel> channel;
     std::unique_ptr<V8InspectorSession> session;
+    int group = 0;
+    bool run_requested = false;
+    bool pending_pause = false;
+    std::string pause_reason;
 };
-
-
-PyMethodDef debugger_methods[] = {
-    {"send", (PyCFunction)debugger_send, METH_O, NULL},
-    {"schedule_pause_on_next_statement", (PyCFunction)debugger_schedule_pause, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"disconnect", (PyCFunction)debugger_disconnect, METH_NOARGS, NULL},
-    {NULL},
+struct InspectorHub : V8InspectorClient {
+    Isolate* isolate;
+    std::unique_ptr<V8Inspector> inspector;
+    std::map<context_c*, int> groups;
+    std::vector<debugger_c*> sessions;
+    std::vector<debugger_c*> dispatch_stack;
+    std::vector<debugger_c*> pause_stack;
+    int next_group = 1;
+    explicit InspectorHub(Isolate* value) : isolate(value) {
+        inspector = V8Inspector::create(isolate, this);
+    }
+    Local<Context> ensureDefaultContextInGroup(int group) override {
+        for (auto& entry : groups)
+            if (entry.second == group) return entry.first->js_context.Get(isolate);
+        return Local<Context>();
+    }
+    void runIfWaitingForDebugger(int) override {
+        if (!dispatch_stack.empty()) dispatch_stack.back()->state->run_requested = true;
+    }
+    void runMessageLoopOnPause(int group) override {
+        auto found = std::find_if(sessions.begin(), sessions.end(), [group](debugger_c* entry) {
+            return entry->state->group == group;
+        });
+        if (found == sessions.end()) return;
+        debugger_c* owner = *found;
+        Py_INCREF(owner);
+        pause_stack.push_back(owner);
+        call_callback(owner, "run_loop");
+        pause_stack.pop_back();
+        Py_DECREF(owner);
+    }
+    void quitMessageLoopOnPause() override {
+        if (!pause_stack.empty()) call_callback(pause_stack.back(), "quit_loop");
+    }
 };
-PyTypeObject *debugger_type = NULL;
-
+static std::map<Isolate*, std::weak_ptr<InspectorHub>> inspector_hubs;
+static std::shared_ptr<InspectorHub> hub_for(Isolate* isolate) {
+    auto hub = inspector_hubs[isolate].lock();
+    if (!hub) {
+        hub = std::make_shared<InspectorHub>(isolate);
+        inspector_hubs[isolate] = hub;
+    }
+    return hub;
+}
+static PyObject* debugger_new(PyTypeObject* type, PyObject*, PyObject*) {
+    return PyType_GenericAlloc(type, 0);
+}
+static int debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs) {
+    PyObject* context_object;
+    static const char* keywords[] = {"context", nullptr};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O:Debugger", const_cast<char**>(keywords), &context_object)) return -1;
+    if (self->state) { PyErr_SetString(PyExc_RuntimeError, "Debugger is already initialized"); return -1; }
+    if (!PyObject_TypeCheck(context_object, context_type)) {
+        PyErr_SetString(PyExc_TypeError, "context must be an active Context"); return -1;
+    }
+    context_c* context = (context_c*)context_object;
+    if (!context->isolate_state || context->js_context.IsEmpty()) {
+        PyErr_SetString(PyExc_RuntimeError, "Context is closed"); return -1;
+    }
+    IN_ISOLATE(context->isolate_state);
+    auto state = std::make_unique<DebuggerState>();
+    state->hub = hub_for(isolate);
+    auto& hub = *state->hub;
+    auto found = hub.groups.find(context);
+    if (found == hub.groups.end()) {
+        state->group = hub.next_group++;
+        hub.groups[context] = state->group;
+        hub.inspector->contextCreated(V8ContextInfo(context->js_context.Get(isolate), state->group, StringView()));
+    } else state->group = found->second;
+    state->channel = std::make_unique<InspectorChannel>(self);
+    state->session = hub.inspector->connect(state->group, state->channel.get(), StringView(), V8Inspector::kFullyTrusted);
+    Py_INCREF(context_object);
+    self->context = context;
+    self->state = state.release();
+    hub.sessions.push_back(self);
+    return 0;
+}
+static bool require_session(debugger_c* self) {
+    if (self->state && self->state->session && self->context && self->context->isolate_state && !self->context->js_context.IsEmpty()) return true;
+    PyErr_SetString(PyExc_RuntimeError, "Debugger is closed");
+    return false;
+}
+static PyObject* debugger_send(debugger_c* self, PyObject* message) {
+    if (!require_session(self)) return nullptr;
+    char* bytes;
+    Py_ssize_t length;
+    if (PyBytes_AsStringAndSize(message, &bytes, &length) < 0) return nullptr;
+    IN_ISOLATE(self->context->isolate_state);
+    IN_CONTEXT(self->context->js_context.Get(isolate));
+    auto hub = self->state->hub;
+    hub->dispatch_stack.push_back(self);
+    self->state->session->dispatchProtocolMessage(StringView((const uint8_t*)bytes, length));
+    hub->dispatch_stack.pop_back();
+    if (self->state->run_requested) {
+        self->state->run_requested = false;
+        call_callback(self, "on_ready");
+    }
+    PYV8_RETURN_NONE;
+}
+static PyObject* debugger_schedule_pause(debugger_c* self, PyObject* args, PyObject* kwargs) {
+    const char* reason = "pause on next statement";
+    static const char* keywords[] = {"reason", nullptr};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|s", const_cast<char**>(keywords), &reason)) return nullptr;
+    if (!require_session(self)) return nullptr;
+    self->state->pending_pause = true;
+    self->state->pause_reason = reason;
+    PYV8_RETURN_NONE;
+}
+static PyObject* debugger_cancel_pause(debugger_c* self, PyObject*) {
+    if (!self->state || !self->state->session) PYV8_RETURN_NONE;
+    if (!require_session(self)) return nullptr;
+    IN_ISOLATE(self->context->isolate_state);
+    self->state->pending_pause = false;
+    self->state->session->cancelPauseOnNextStatement();
+    PYV8_RETURN_NONE;
+}
+static PyObject* debugger_resume(debugger_c* self, PyObject*) {
+    if (!self->state || !self->state->session) PYV8_RETURN_NONE;
+    if (!require_session(self)) return nullptr;
+    IN_ISOLATE(self->context->isolate_state);
+    self->state->pending_pause = false;
+    self->state->session->resume();
+    PYV8_RETURN_NONE;
+}
+static PyObject* debugger_isolate_id(debugger_c* self, void*) {
+    if (!require_session(self)) return nullptr;
+    return PyLong_FromVoidPtr(self->state->hub->isolate);
+}
+static PyObject* debugger_disconnect(debugger_c* self, PyObject*) {
+    if (!self->state || !self->state->session) PYV8_RETURN_NONE;
+    IN_ISOLATE(self->context->isolate_state);
+    auto hub = self->state->hub;
+    if (!hub->pause_stack.empty() || !hub->dispatch_stack.empty()) {
+        PyErr_SetString(PyExc_RuntimeError, "Cannot disconnect Inspector inside an active protocol or pause callback; resume and close on the host thread");
+        return nullptr;
+    }
+    self->state->pending_pause = false;
+    self->state->session.reset();
+    auto& sessions = hub->sessions;
+    sessions.erase(std::remove(sessions.begin(), sessions.end(), self), sessions.end());
+    bool remaining = std::any_of(sessions.begin(), sessions.end(), [self](debugger_c* other) { return other->context == self->context; });
+    if (!remaining) {
+        hub->inspector->contextDestroyed(self->context->js_context.Get(isolate));
+        hub->groups.erase(self->context);
+    }
+    self->state->hub.reset();
+    if (sessions.empty()) inspector_hubs.erase(isolate);
+    PYV8_RETURN_NONE;
+}
+bool debugger_context_can_close(context_c* context) {
+    if (!context->isolate_state) return true;
+    IN_ISOLATE(context->isolate_state);
+    auto found = inspector_hubs.find(isolate);
+    if (found == inspector_hubs.end()) return true;
+    auto hub = found->second.lock();
+    if (hub && (!hub->pause_stack.empty() || !hub->dispatch_stack.empty())) {
+        PyErr_SetString(PyExc_RuntimeError, "Cannot close Context inside an active Inspector callback");
+        return false;
+    }
+    return true;
+}
+void debugger_context_closed(context_c* context) {
+    if (!context->isolate_state) return;
+    IN_ISOLATE(context->isolate_state);
+    auto found = inspector_hubs.find(isolate);
+    if (found == inspector_hubs.end()) return;
+    auto hub = found->second.lock();
+    if (!hub) return;
+    auto sessions = hub->sessions;
+    for (auto session : sessions) {
+        if (session->context != context) continue;
+        PyObject* result = debugger_disconnect(session, nullptr);
+        Py_XDECREF(result);
+    }
+}
+void debugger_prepare_script(context_c* context) {
+    auto found = inspector_hubs.find(context->isolate_state->isolate());
+    if (found == inspector_hubs.end()) return;
+    auto hub = found->second.lock();
+    if (!hub || !hub->dispatch_stack.empty()) return;
+    for (auto debugger : hub->sessions) {
+        auto state = debugger->state;
+        if (debugger->context != context || !state->pending_pause) continue;
+        state->pending_pause = false;
+        StringView reason((const uint8_t*)state->pause_reason.data(), state->pause_reason.size());
+        state->session->schedulePauseOnNextStatement(reason, StringView());
+    }
+}
+static void debugger_dealloc(debugger_c* self) {
+    if (self->state) {
+        self->state->channel->enabled = false;
+        PyObject* result = debugger_disconnect(self, nullptr);
+        Py_XDECREF(result);
+        delete self->state;
+    }
+    Py_XDECREF(self->context);
+    TP_FREE_ABI3(debugger_type, self);
+}
+static PyMethodDef debugger_methods[] = {
+    {"send", (PyCFunction)debugger_send, METH_O, nullptr},
+    {"schedule_pause_on_next_statement", (PyCFunction)debugger_schedule_pause, METH_VARARGS | METH_KEYWORDS, nullptr},
+    {"cancel_pause_on_next_statement", (PyCFunction)debugger_cancel_pause, METH_NOARGS, nullptr},
+    {"resume", (PyCFunction)debugger_resume, METH_NOARGS, nullptr},
+    {"disconnect", (PyCFunction)debugger_disconnect, METH_NOARGS, nullptr},
+    {nullptr}
+};
+static PyGetSetDef debugger_getsets[] = {
+    {"isolate_id", (getter)debugger_isolate_id, nullptr, nullptr, nullptr},
+    {nullptr}
+};
+PyTypeObject* debugger_type = nullptr;
 static PyType_Slot debugger_slots[] = {
     {Py_tp_dealloc, (void*)debugger_dealloc},
     {Py_tp_new, (void*)debugger_new},
     {Py_tp_init, (void*)debugger_init},
     {Py_tp_methods, debugger_methods},
-    {Py_tp_doc, (void*)"v8 inspector"},
-    {0, NULL} };
-
+    {Py_tp_getset, debugger_getsets},
+    {0, nullptr}
+};
 static PyType_Spec debugger_spec = {
-    "_pyv8.Debugger",
-    sizeof(debugger_c),
-    0,
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    debugger_slots };
-
-int 
-debugger_type_init()
-{
-    debugger_type = (PyTypeObject *)PyType_FromSpec(&debugger_spec);
-    if (debugger_type == NULL)
-    {
-        return -1;
-    }
-    return 0;
-}
-
-PyObject * 
-debugger_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
-{
-    //debugger_c* self = (debugger_c*)type->tp_alloc(type, 0);
-    debugger_c* self = (debugger_c*)PyType_GenericAlloc(type, 0);
-
-    PyErr_PROPAGATE(self);
-    self->context = NULL;
-    self->client = NULL; // indicate the object has not been initialized
-    self->channel = NULL;
-    self->state = NULL;
-    self->scripts = NULL;
-    return (PyObject*)self;
-}
-
-int 
-debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs)
-{
-    if (self->client != NULL || self->state != NULL) {
-        PyErr_SetString(PyExc_RuntimeError, "Debugger is already initialized");
-        return -1;
-    }
-    PyObject* context_object = NULL;
-    static const char* keywords[] = {"context", NULL};
-    if (!PyArg_ParseTupleAndKeywords(
-            args, kwargs, "O:Debugger", const_cast<char**>(keywords), &context_object)) {
-        return -1;
-    }
-    context_c* context = (context_c*)context_object;
-    if (!PyObject_TypeCheck((PyObject*)context, context_type) ||
-        context->isolate_state == nullptr || !context->isolate_state->require_active()) {
-        if (!PyErr_Occurred())
-            PyErr_SetString(PyExc_TypeError, "context must be an active Context instance");
-        return -1;
-    }
-    if (context->has_debugger) {
-        PyErr_SetString(PyExc_ValueError, "specified context already has a debugger attached");
-        return -1;
-    }
-    IN_ISOLATE(context->isolate_state);
-
-    Py_INCREF(context);
-    self->context = context;
-    Local<Context> js_context = context->js_context.Get(isolate);
-    context->has_debugger = true;
-
-    std::unique_ptr<DebuggerState> state(new (std::nothrow) DebuggerState());
-    std::unique_ptr<V8PyInspectorClient> client(new (std::nothrow) V8PyInspectorClient(self));
-    std::unique_ptr<V8PyChannel> channel(new (std::nothrow) V8PyChannel(self));
-    if (!state || !client || !channel) {
-        context->has_debugger = false;
-        Py_CLEAR(self->context);
-        PyErr_NoMemory();
-        return -1;
-    }
-
-    self->client = client.get();
-    self->channel = channel.get();
-    self->state = state.get();
-    state->inspector = V8Inspector::create(isolate, self->client);
-    if (!state->inspector) {
-        self->client = NULL;
-        self->channel = NULL;
-        self->state = NULL;
-        context->has_debugger = false;
-        Py_CLEAR(self->context);
-        PyErr_SetString(PyExc_RuntimeError, "failed to create V8 inspector");
-        return -1;
-    }
-    state->inspector->contextCreated(V8ContextInfo(js_context, 1, StringView()));
-    state->session = state->inspector->connect(
-        1, self->channel, StringView(), v8_inspector::V8Inspector::kFullyTrusted);
-    if (!state->session) {
-        self->client = NULL;
-        self->channel = NULL;
-        self->state = NULL;
-        context->has_debugger = false;
-        Py_CLEAR(self->context);
-        PyErr_SetString(PyExc_RuntimeError, "failed to create V8 inspector session");
-        return -1;
-    }
-    client.release();
-    channel.release();
-    state.release();
-
-    return 0;
-}
-
-void 
-call_self(debugger_c* self, const char* method)
-{
-    PyObject* debugger = (PyObject*)self;
-    if (PyObject_HasAttrString(debugger, method)) {
-        if (PyObject_CallMethod(debugger, (char*)method, NULL) == NULL) {
-            PyErr_WriteUnraisable(debugger);
-        }
-    }
-}
-
-void 
-V8PyChannel::handle_message(const std::unique_ptr<StringBuffer>& message)
-{
-    if (message == nullptr)
-        return;
-    const StringView& stringview = message->string();
-    PyObject* string;
-    if (stringview.is8Bit())
-        string = PyUnicode_DecodeLatin1((const char*)stringview.characters8(), stringview.length(), NULL);
-    else 
-        string = PyUnicode_DecodeUTF16((const char*)stringview.characters16(), stringview.length() * 2, NULL, NULL);
-
-    PyObject* self = (PyObject*)debugger_;
-    if (PyObject_HasAttrString(self, "handle")) {
-        PyObject* result = string == nullptr ? NULL :
-            PyObject_CallMethod(self, (char*)"handle", (char*)"O", string);
-        if (result == NULL) {
-            PyErr_WriteUnraisable(self);
-        }
-        else {
-            Py_DECREF(result);
-        }
-    }
-    Py_XDECREF(string);
-}
-
-void 
-V8PyInspectorClient::runMessageLoopOnPause(int /*context_group_id*/)
-{
-    call_self(debugger_, "run_loop");
-}
-
-void
-V8PyInspectorClient::runIfWaitingForDebugger(int /*context_group_id*/)
-{
-    // Python execution must wait until V8 finishes dispatching the CDP message.
-    run_if_waiting_requested_ = true;
-}
-
-bool
-V8PyInspectorClient::consumeRunIfWaitingForDebuggerRequest()
-{
-    bool requested = run_if_waiting_requested_;
-    run_if_waiting_requested_ = false;
-    return requested;
-}
-
-void 
-V8PyInspectorClient::quitMessageLoopOnPause()
-{
-    call_self(debugger_, "quit_loop");
-}
-
-PyObject *
-debugger_send(debugger_c* self, PyObject* message)
-{
-    if (self->client == NULL || self->state == NULL || self->state->session == nullptr) {
-        PyErr_SetString(PyExc_RuntimeError, "__init__ has not yet been called");
-        return NULL;
-    }
-
-    if (self->context == nullptr || self->context->isolate_state == nullptr ||
-        !self->context->isolate_state->require_active()) {
-        PyErr_SetString(PyExc_RuntimeError, "Debugger context is not active");
-        return NULL;
-    }
-    IN_ISOLATE(self->context->isolate_state);
-    IN_CONTEXT(self->context->js_context.Get(isolate));
-
-    //const uint8_t* command_bytes = (const uint8_t*)PyBytes_AS_STRING(message);
-    //int length = PyBytes_GET_SIZE(message);
-
-    char* command_bytes_str;
-    Py_ssize_t length;
-    if (PyBytes_AsStringAndSize(message, &command_bytes_str, &length) < 0)
-    {
-        return NULL;
-    }
-    const uint8_t* command_bytes = (const uint8_t*)command_bytes_str;
-
-    std::unique_ptr<StringBuffer> stringview = StringBuffer::create(StringView(command_bytes, length));
-
-    if (stringview.get() == NULL) return NULL;
-    self->state->session->dispatchProtocolMessage(stringview.get()->string());
-
-    if (self->client->consumeRunIfWaitingForDebuggerRequest()) {
-        std::string_view reason = "run script";
-        StringView inspector_reason(
-            reinterpret_cast<const uint8_t*>(reason.data()), reason.size());
-        self->state->session->schedulePauseOnNextStatement(
-            inspector_reason, inspector_reason);
-        if (PyObject_HasAttrString((PyObject*)self, "on_run_if_waiting_for_debugger"))
-            call_self(self, "on_run_if_waiting_for_debugger");
-        else
-            call_self(self, "run_js");
-    }
-    PYV8_RETURN_TRUE;
-}
-
-PyObject *
-debugger_schedule_pause(debugger_c* self, PyObject* args, PyObject* kwargs)
-{
-    const char* reason = "pause on next statement";
-    static const char* keywords[] = {"reason", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|s:schedule_pause_on_next_statement",
-                                     const_cast<char**>(keywords), &reason))
-        return NULL;
-    if (self->state == NULL || self->state->session == nullptr || self->context == nullptr ||
-        self->context->isolate_state == nullptr || !self->context->isolate_state->require_active()) {
-        PyErr_SetString(PyExc_RuntimeError, "Debugger is not active");
-        return NULL;
-    }
-    IN_ISOLATE(self->context->isolate_state);
-    IN_CONTEXT(self->context->js_context.Get(isolate));
-    StringView inspector_reason(reinterpret_cast<const uint8_t*>(reason), strlen(reason));
-    self->state->session->schedulePauseOnNextStatement(inspector_reason, inspector_reason);
-    PYV8_RETURN_NONE;
-}
-
-PyObject *
-debugger_disconnect(debugger_c* self, PyObject* ignored)
-{
-    (void)ignored;
-    if (self->state == NULL)
-        PYV8_RETURN_NONE;
-    IsolateState* isolate_state = self->context == nullptr ? nullptr : self->context->isolate_state;
-    if (isolate_state != nullptr && isolate_state->require_active()) {
-        IN_ISOLATE(isolate_state);
-        if (self->state->session != nullptr && self->state->inspector != nullptr && self->context != nullptr &&
-            !self->context->js_context.IsEmpty())
-            self->state->inspector->contextDestroyed(self->context->js_context.Get(isolate));
-        self->state->session.reset();
-    } else {
-        self->state->session.reset();
-    }
-    PYV8_RETURN_NONE;
-}
-
-void 
-debugger_dealloc(debugger_c* self)
-{
-    PyObject* disconnected = debugger_disconnect(self, NULL);
-    Py_XDECREF(disconnected);
-    IsolateState* isolate_state = self->context == nullptr ? nullptr : self->context->isolate_state;
-    if (isolate_state != nullptr && isolate_state->is_active()) {
-        IN_ISOLATE(isolate_state);
-        delete self->state;
-        self->state = NULL;
-    }
-    else {
-        delete self->state;
-        self->state = NULL;
-    }
-    delete self->client;
-    delete self->channel;
-    if (self->context != nullptr)
-        self->context->has_debugger = false;
-    Py_XDECREF(self->context);
-    //Py_TYPE(self)->tp_free((PyObject*)self);
-    TP_FREE_ABI3(debugger_type, self);
+    "_pyv8.Debugger", sizeof(debugger_c), 0,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, debugger_slots
+};
+int debugger_type_init() {
+    debugger_type = (PyTypeObject*)PyType_FromSpec(&debugger_spec);
+    return debugger_type ? 0 : -1;
 }

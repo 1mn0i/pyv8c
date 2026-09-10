@@ -36,7 +36,7 @@ Repository = "https://github.com/ConlinH/pyv8.git"
 Issues = "https://github.com/ConlinH/pyv8/issues"
 
 [tool.setuptools]
-packages = ["pyv8"]
+packages = ["pyv8", "pyv8.devtools"]
 
 [tool.setuptools.package-data]
 pyv8 = ["icudtl.dat", "_pyv8.pyi", "_pyv8.abi3.so"]

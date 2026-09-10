@@ -1,8 +1,10 @@
 #include <Python.h>
 #include "pyv8.h"
 #include <v8.h>
+#include <algorithm>
 
 #include "context.h"
+#include "debugger.h"
 #include "idl_spec.h"
 #include "script.h"
 #include "convert.h"
@@ -17,7 +19,10 @@
 
 using namespace v8;
 
+static PyObject* context_try_inspector(context_c* self, PyObject* args);
+
 PyMethodDef context_methods[] = {
+    {"_try_inspector", (PyCFunction)context_try_inspector, METH_VARARGS, NULL},
     {"exec_js", (PyCFunction)context_run, METH_VARARGS | METH_KEYWORDS, NULL},
     {"js_obj", (PyCFunction)context_js_obj, METH_O, NULL},
     {"expose", (PyCFunction)context_expose, METH_VARARGS | METH_KEYWORDS, NULL},
@@ -39,8 +44,38 @@ context_require_isolate(context_c* self)
     }
     return self->isolate_state;
 }
+static PyObject* context_try_inspector(context_c* self, PyObject* args) {
+    PyObject *callback, *wake;
+    if (!PyArg_ParseTuple(args, "OO", &callback, &wake)) return nullptr;
+    if (!PyCallable_Check(callback) || !PyCallable_Check(wake)) {
+        PyErr_SetString(PyExc_TypeError, "Inspector callbacks must be callable");
+        return nullptr;
+    }
+    auto state = context_require_isolate(self);
+    if (!state) return nullptr;
+    IsolateLockScope scope(state, true);
+    if (!scope.entered()) {
+        auto& waiters = state->inspector_waiters;
+        if (std::find(waiters.begin(), waiters.end(), wake) == waiters.end()) {
+            Py_INCREF(wake);
+            waiters.push_back(wake);
+        }
+        Py_RETURN_FALSE;
+    }
+    PyObject* result = PyObject_CallNoArgs(callback);
+    if (!result) return nullptr;
+    Py_DECREF(result);
+    Py_RETURN_TRUE;
+}
 // Python is wrong. The first entry is not modifiable and should be const char *
+static PyObject* context_isolate_id(context_c* self, void*) {
+    auto state = context_require_isolate(self);
+    if (!state) return nullptr;
+    return PyLong_FromVoidPtr(state->isolate());
+}
+
 PyGetSetDef context_getset[] = {
+    {(char*)"isolate_id", (getter)context_isolate_id, NULL, NULL, NULL},
     {(char*)"glob", (getter)context_get_global, NULL, NULL, NULL},
     {(char*)"trace", (getter)context_get_trace, (setter)context_set_trace, NULL, NULL},
     {(char*)"timeout", (getter)context_get_timeout, (setter)context_set_timeout, NULL, NULL},
@@ -177,7 +212,6 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         self->lazy_factory = lazy_factory;
     }
     self->py_global = global;
-    self->has_debugger = false;
     self->has_done = false;
     self->timeout = timeout;
     self->trace = trace == Py_True;
@@ -299,6 +333,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 static void
 context_release(context_c *self)
 {
+    debugger_context_closed(self);
     Py_CLEAR(self->class_template_cache);
     Py_CLEAR(self->class_configs);
     Py_CLEAR(self->lazy_factory);
@@ -340,6 +375,7 @@ PyObject*
 context_close(context_c *self, PyObject* ignored)
 {
     (void)ignored;
+    if (!debugger_context_can_close(self)) return nullptr;
     context_release(self);
     PYV8_RETURN_NONE;
 }
@@ -709,23 +745,13 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     IN_CONTEXT(self->js_context.Get(isolate));
     JS_TRY
 
-    Local<UnboundScript> unbound_script;
-    if (self->has_debugger) {
-        MaybeLocal<UnboundScript> maybe_script = script_compile(context, py_script->source, py_script->script_name);
-        if (!maybe_script.ToLocal(&unbound_script)) {
-            Py_DECREF(program);
-            PY_PROPAGATE_JS;
-            PyErr_SetString(PyExc_RuntimeError, "failed to compile JavaScript");
-            return NULL;
-        }
-    } else {
-        unbound_script = py_script->script.Get(isolate);
-    }
+    Local<UnboundScript> unbound_script = py_script->script.Get(isolate);
     Py_XDECREF(program);
     Local<Script> script = unbound_script->BindToCurrentContext();
 
     TimeoutGuard timeout_guard(timeout, isolate);
     if (!timeout_guard.start()) return NULL;
+    debugger_prepare_script(self);
     MaybeLocal<Value> result = script->Run(context);
 
     if (!timeout_guard.stop()) return NULL;

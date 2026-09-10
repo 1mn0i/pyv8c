@@ -16,11 +16,16 @@
 
 #include <cstddef>
 #include <memory>
+#include <mutex>
 #include <unordered_set>
+#include <vector>
 
 class IsolateState
 {
 public:
+    std::recursive_mutex entry_mutex;
+    unsigned entry_depth = 0;
+    std::vector<PyObject*> inspector_waiters;
     IsolateState();
     ~IsolateState();
 

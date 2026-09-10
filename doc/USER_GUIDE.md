@@ -1135,31 +1135,33 @@ def run_target(context):
 
 
 context = pyv8.Context(Window())
-pyv8.start_devtools(
-    context,
-    callback=run_target,
-    host="127.0.0.1",
-    port=9005,
-)
+try:
+    with pyv8.start_devtools(context, options=pyv8.DevToolsOptions(port=9005)) as handle:
+        print(handle.url)
+        handle.run(run_target)
+finally:
+    context.close()
 ```
 
-程序会打印类似地址：
+由调用者打印 `handle.url`，地址包含稳定的 Target ID，例如：
 
 ```text
-devtools://devtools/bundled/inspector.html?experiments=true&v8only=true&ws=127.0.0.1:9005
+devtools://devtools/bundled/inspector.html?experiments=true&ws=127.0.0.1:9005/devtools/page/<target-id>
 ```
 
 将地址粘贴到 Chrome 地址栏。DevTools 发送
-`Runtime.runIfWaitingForDebugger` 后，pyv8 才会调用 `callback` 执行目标脚本，因此可以在
-脚本运行前启用 Debugger 和设置暂停行为。
+`Runtime.runIfWaitingForDebugger` 后，`handle.run(run_target)` 在调用线程执行回调。
+默认首句暂停一次；Console 求值不会消耗这个暂停，重连也不会重复已消耗的暂停。
 
 ### 使用注意事项
 
 - Chrome 130+ 的 DevTools CSP 只允许该页面连接 `ws://127.0.0.1:*`，默认地址不要改成
   `localhost`。
-- 一个 Context 同一时间只能挂载一个 Debugger。
-- `start_devtools()` 会阻塞调用线程，WebSocket 服务运行在后台线程。
-- 断开 WebSocket 或收到关闭信号后，服务会唤醒暂停消息循环并退出。
+- 同一 Context 可以有多个独立的原生 Inspector session；服务保留单客户端连接模型。
+- `start_devtools()` 不阻塞业务。独立 Context 使用 `handle.run()` 或 `wait_for_ready()` 在调用线程处理握手。
+- 断线释放启动等待及暂停，保留 Context 和服务供重连；不再接管进程信号。
+- `handle.close()` 在 Context 的调用线程执行，关闭服务但不关闭 Context；支持重复调用和上下文管理。
+- `DevToolsOptions` 统一配置 host、port、wait_for_debugger、pause_on_start、startup_timeout。
 - `filename` 决定 Sources 面板和堆栈中显示的脚本名称。
 - DevTools 可能发送嵌入式 V8 不支持的 `Network.*`、`Target.*` 方法，返回 `-32601`
   不代表调试连接失败。
@@ -1169,11 +1171,12 @@ devtools://devtools/bundled/inspector.html?experiments=true&v8only=true&ws=127.0
 需要完全控制 CDP 时，可以继承 `pyv8.Debugger`，实现：
 
 - `handle(message)`：接收 Inspector 返回的 JSON 消息
-- `run_js()`：处理 `Runtime.runIfWaitingForDebugger`
+- `on_ready()`：接收 `Runtime.runIfWaitingForDebugger`，不隐式安排暂停
 - `run_loop()`：V8 暂停时运行嵌套消息循环
 - `quit_loop()`：恢复执行时退出嵌套循环
 
-普通使用者应优先使用 `pyv8.start_devtools()` 和 `pyv8.devtools.DevtoolsDebugger`。
+普通使用者应优先使用 `pyv8.start_devtools()` 和 `DevToolsHandle`。
+详细的生命周期、发现接口和迁移说明见 [DEVTOOLS](DEVTOOLS.md)。
 
 ## API 速查
 
@@ -1291,15 +1294,16 @@ python -c "import struct, sys; print(sys.version); print(struct.calcsize('P') * 
 确认 URL 使用：
 
 ```text
-ws=127.0.0.1:9005
+ws=127.0.0.1:9005/devtools/page/<target-id>
 ```
 
-不要使用 `ws=localhost:9005`。同时检查端口占用、防火墙以及程序是否仍阻塞在
-`start_devtools()`。
+直接使用 `handle.url`，不要丢弃 Target 路径。检查端口、防火墙以及独立 Context 是否正在
+`handle.run()` / `handle.wait_for_ready()` 中处理命令。断线后可重新打开相同地址。
 
-### `specified context already has a debugger attached`
+### 旧 DevTools 参数或 `DevtoolsDebugger` 无法导入
 
-同一个 Context 已存在 Debugger。关闭旧 `DevtoolsDebugger`，或创建新的 Context。
+旧实现已移除。将 `host`、`port`、`startup_timeout` 放入 `DevToolsOptions`；
+`callback=fn` 改为 `handle.run(fn)`。参见 [迁移表](DEVTOOLS.md#旧接口迁移)。
 
 ### `cannot close V8 isolate while ... persistent handle(s) are active`
 

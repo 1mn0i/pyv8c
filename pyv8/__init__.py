@@ -24,7 +24,7 @@ globals().update({name: getattr(_pyv8, name) for name in _NATIVE_EXPORTS})
 
 __version__ = "2.1.2"
 
-from .devtools import start_devtools
+from .devtools import DevToolsHandle, DevToolsOptions, start_devtools
 from .trace import format_trace, log_trace
 
 
@@ -48,5 +48,5 @@ _HELPER_EXPORTS = {
     "FlagConstructor", "SideEffectType", "FlagArrayProto",
     "format_trace", "log_trace",
 }
-__all__ = [*_NATIVE_EXPORTS, "ArrayType", "start_devtools", "__version__"]
+__all__ = [*_NATIVE_EXPORTS, "ArrayType", "DevToolsOptions", "DevToolsHandle", "start_devtools", "__version__"]
 __all__ += sorted(_HELPER_EXPORTS)

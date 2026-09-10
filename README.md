@@ -201,12 +201,18 @@ def run_script(context):
 
 
 context = pyv8.Context(Window())
-pyv8.start_devtools(context, callback=run_script, port=9005)
+try:
+    with pyv8.start_devtools(context, options=pyv8.DevToolsOptions(port=9005)) as handle:
+        print(handle.url)
+        handle.run(run_script)
+finally:
+    context.close()
 ```
 
-程序会输出一个 `devtools://` URL。将它粘贴到 Chrome 地址栏即可连接。
-Chrome 130 及以上版本的 CSP 要求 WebSocket 使用 `127.0.0.1`，因此不要把 URL
-中的地址改回 `localhost`。
+将打印的 `devtools://` URL 粘贴到 Chrome 地址栏。`start_devtools()` 只启动服务；
+`handle.run()` 在调用线程处理调试握手，然后执行回调。默认在下一段宿主脚本的首条语句暂停一次，
+不需要插入 `debugger;`。使用默认 `127.0.0.1`，不要向不可信网络暴露无认证的调试端口。
+配置、线程约束和旧接口迁移见 [DevTools 架构与迁移](doc/DEVTOOLS.md)。
 
 ## 文档
 

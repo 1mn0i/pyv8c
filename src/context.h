@@ -23,7 +23,6 @@ typedef struct
     PyObject* resolving_classes;
     PyObject* lazy_names;
     PyObject* py_global;
-    bool has_debugger;
     bool has_done;
     double timeout;
     bool trace;
