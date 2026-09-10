@@ -101,6 +101,11 @@ Trace 只在已存在的 binding/handler 执行边界观察数据，不改变 ha
 
 ## 修改时不能破坏的不变量
 
+DevTools 的共享核心位于 `pyv8.devtools`，没有 Browser/Page 依赖。
+本仓的适配层只提供目标描述、父子关系、Context、executor、关闭回调；不实现 WebSocket 或协议队列。
+普通命令在目标 owner 执行，共享 Isolate 暂停时由暂停线程进入对应 Context 统一处理 Inspector 命令，
+不执行宿主任务。发现、自动附加、重连和接口迁移见 [DevTools](DEVTOOLS.md)。
+
 1. V8/JS 回调留在 owner 线程；后台 transport 只投递结果。
 2. realm 无关编译缓存不捕获 Page；realm 相关回调不串页。
 3. Session 状态只在 native 批提交成功后更新。

@@ -17,7 +17,7 @@ import pytest
 pytest.importorskip("pyv8")
 from websockets.asyncio.client import connect
 
-from pyv8c import Browser
+from pyv8c import Browser, DevToolsOptions
 
 ORIGIN = "http://127.0.0.1:9"
 
@@ -133,7 +133,7 @@ def test_devtools_pause_supports_cdp_attach_evaluate_detach_and_close():
     browser = Browser(resource_loader=_loader, stub_logging="off")
     context = browser.new_context()
     page = context.new_page()
-    handle = context.start_devtools(page, start_paused=True, startup_timeout=3)
+    handle = context.start_devtools(page, options=DevToolsOptions(wait_for_debugger=True, startup_timeout=3))
     completed = threading.Event()
     probe_done = threading.Event()
     errors = []

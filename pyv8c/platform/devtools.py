@@ -1,695 +1,83 @@
-"""Small Chrome DevTools Protocol bridge for pyv8c realms."""
+"""Browser host adapters for the shared pyv8 DevTools service."""
 
-from __future__ import annotations
+from pyv8.devtools import DevToolsHandle, DevToolsOptions, create_service
+from pyv8.devtools.scheduler import Host
 
-import asyncio
-import json
-import queue
-import threading
-import time
-import uuid
-from concurrent.futures import Future
-from dataclasses import dataclass, field
-from urllib.parse import quote
-
-import pyv8
-from loguru import logger
-from websockets.asyncio.server import serve
-from websockets.exceptions import ConnectionClosed
-
-from ..foundation.errors import TimeoutError
-from ..foundation.lifecycle import ResourceScope
+__all__ = ["DevToolsHandle", "DevToolsOptions"]
 
 
-@dataclass
-class CommandEnvelope:
-    """One CDP request tracked until Inspector response or target close."""
-
-    request_id: object
-    session_id: str | None
-    target_id: str
-    connection_id: int | None = None
-    future: Future = field(default_factory=Future)
-    cancelled: bool = False
-
-    def cancel(self):
-        self.cancelled = True
-        if not self.future.done():
-            self.future.cancel()
-
-class DevToolsTarget:
-    """A debuggable page, iframe, or worker realm."""
-
-    def __init__(self, server, realm, kind="page", parent=None, *, worker_runtime=None,
-                 start_paused=False, startup_timeout=None):
-        self.server = server
-        self.realm = realm
-        self.kind = kind
-        self.parent = parent
-        self.worker_runtime = worker_runtime
-        self.target_id = uuid.uuid4().hex
-        self.sessions = set()
-        self.debugger = None
-        self.closed = False
-        self._scope = ResourceScope()
-        self._pending = {}
-        self.start_paused = bool(start_paused)
-        self.startup_timeout = startup_timeout
-        self._startup_released = threading.Event()
-        self._startup_released.set() if not self.start_paused else None
-        self._startup_queue = queue.Queue()
-        self._paused = False
-        self._pause_queue = None
-        self._pause_lock = threading.RLock()
-        self._close_diagnostics = []
-        if worker_runtime is None:
-            self._create_debugger()
-
-    @property
-    def close_diagnostics(self):
-        """Teardown problems that must not abort ``close()``.
-
-        Skipping or failing an inspector disconnect leaves the realm usable,
-        so it is recorded here instead of being raised or silently dropped.
-        """
-        return tuple(self._close_diagnostics)
-
-    @property
-    def url(self):
-        if self.kind == "worker":
-            return str(getattr(self.realm, "script_url", "about:blank"))
-        return str(getattr(self.realm, "url", "about:blank"))
-
-    @property
-    def title(self):
-        return self.url
-
-    def descriptor(self):
-        return {
-            "targetId": self.target_id,
-            "type": "worker" if self.kind == "worker" else "page",
-            "title": self.title,
-            "url": self.url,
-            "attached": bool(self.sessions),
-            "canAccessOpener": False,
-            "browserContextId": "pyv8c",
-        }
-
-    def _create_debugger(self):
-        target = self
-
-        class Inspector(pyv8.Debugger):
-            def __init__(self, context):
-                super().__init__(context)
-
-            def handle(self, message):
-                target.server.emit_from_target(target, message)
-
-            def run_js(self):
-                target._on_run_if_waiting()
-
-            def on_run_if_waiting_for_debugger(self):
-                target._on_run_if_waiting()
-
-            def run_loop(self):
-                target._run_pause_loop()
-
-            def quit_loop(self):
-                target._stop_pause_loop()
-
-        context = getattr(self.realm, "context", None) or getattr(self.realm, "_context", None)
-        if context is not None:
-            self.debugger = Inspector(context)
-
-    def _on_run_if_waiting(self):
-        self._startup_released.set()
-
-    def _release_startup(self):
-        self._startup_released.set()
-        self._startup_queue.put(None)
-
-    def wait_for_startup(self):
-        if self.closed or not self.start_paused:
-            return
-        timeout = self.startup_timeout
-        deadline = None if timeout is None else time.monotonic() + float(timeout)
-        while not self._startup_released.is_set() and not self.closed:
-            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
-            if remaining == 0.0:
-                raise TimeoutError("DevTools connection timed out before the first script")
-            try:
-                message = self._startup_queue.get(timeout=remaining)
-            except queue.Empty:
-                raise TimeoutError("DevTools connection timed out before the first script")
-            if message is None:
-                return
-            if isinstance(message, tuple):
-                message, envelope = message
-            else:
-                envelope = None
-            self._send_on_owner(message, envelope)
-
-    def _run_pause_loop(self):
-        with self._pause_lock:
-            self._paused = True
-            queue_ref = queue.Queue()
-            self._pause_queue = queue_ref
-        try:
-            while not self.closed:
-                message = queue_ref.get()
-                if message is None:
-                    return
-                if isinstance(message, tuple):
-                    message, envelope = message
-                else:
-                    envelope = None
-                self._send_on_owner(message, envelope)
-        finally:
-            with self._pause_lock:
-                self._paused = False
-                self._pause_queue = None
-
-    def _stop_pause_loop(self):
-        with self._pause_lock:
-            if self._pause_queue is not None:
-                self._pause_queue.put(None)
-        self._startup_released.set()
-
-    def wake_waiting_owner(self):
-        """Release a start-paused gate and any inspector pause loop.
-
-        A realm owner blocked in ``wait_for_startup`` reads the startup queue,
-        not the pause queue, so ``_stop_pause_loop`` alone cannot unblock a
-        navigation that is gated before its first script.  ``Page.close`` calls
-        this so teardown never waits out ``startup_timeout`` (or wedges a realm
-        started with no timeout at all).
-        """
-        self._stop_pause_loop()
-        self._release_startup()
-
-    def _fail_command(self, envelope, exc):
-        if envelope is None or envelope.future.done():
-            return
-        envelope.cancelled = True
-        envelope.future.set_exception(exc)
-        self.server._command_failed(envelope, str(exc))
-
-    def _resolve_owner(self):
-        """Return the executor owning this target's realm, or ``None``.
-
-        ``send``, ``_send_on_owner`` and ``close`` must share one lookup.  They
-        previously disagreed: ``close`` only tried ``self.realm.executor``,
-        which never resolves for a page target because a ``Page`` exposes its
-        executor through ``Page.realm``.  Every page target therefore fell
-        through to running ``Debugger.disconnect`` on whichever thread
-        happened to be closing, breaking the single-owner invariant.
-        """
-        realm = self.realm
-        for candidate in (
-            getattr(getattr(realm, "realm", None), "executor", None),  # Page -> PageRealm
-            getattr(realm, "executor", None),                          # worker realm
-            getattr(self.worker_runtime, "executor", None),            # worker runtime
-        ):
-            if candidate is not None:
-                return candidate
-        return None
-
-    def _record_close_diagnostic(self, message):
-        entry = {"target": self.target_id, "kind": self.kind, "message": message}
-        self._close_diagnostics.append(entry)
-        logger.warning("devtools target {} ({}): {}", self.target_id, self.kind, message)
-
-    def _disconnect_debugger(self, debugger):
-        """Detach the V8 inspector from the realm owner thread.
-
-        ``Debugger.disconnect`` enters V8, so issuing it from an unrelated
-        thread breaks the single-owner invariant the runtime is built on.  When
-        no owner can be resolved the call is skipped: the native deallocator
-        already disconnects on the last reference, and by then the isolate is
-        being torn down anyway.  Skipping is strictly safer than racing it.
-        """
-        def guarded():
-            try:
-                disconnect = getattr(debugger, "disconnect", None)
-                if callable(disconnect):
-                    disconnect()
-            except BaseException as exc:  # noqa: BLE001 - surfaced as a diagnostic
-                self._record_close_diagnostic(f"inspector disconnect failed: {exc!r}")
-
-        owner = self._resolve_owner()
-        if owner is None or owner.closed:
-            self._record_close_diagnostic(
-                "inspector disconnect skipped; realm owner is unavailable"
-            )
-            return
-        if owner.is_owner_thread():
-            guarded()
-            return
-        try:
-            owner.call(guarded, timeout=5)
-        except BaseException as exc:  # noqa: BLE001 - surfaced as a diagnostic
-            # A wedged or shutting-down owner must not abort teardown; the
-            # deallocator still releases the session on the last reference.
-            self._record_close_diagnostic(f"inspector disconnect not scheduled: {exc!r}")
-
-    def _send_on_owner(self, message, envelope=None):
-        if self.debugger is None or self.closed:
-            self._fail_command(envelope, RuntimeError("target is closed"))
-            return
-        try:
-            owner = self._resolve_owner()
-            if owner is not None and not owner.is_owner_thread():
-                # Inspector calls must never synchronously block the WebSocket
-                # thread.  In particular Runtime.evaluate("debugger; ...")
-                # enters V8's pause loop; waiting here would prevent the
-                # subsequent Debugger.resume from being received.
-                if not owner.post(self._send_on_owner, message, envelope):
-                    self._fail_command(envelope, RuntimeError("realm executor is closed"))
-                return
-            self.debugger.send(message.encode("utf-8"))
-        except BaseException as exc:
-            self._fail_command(envelope, exc)
-            self.server._send({"method": "Runtime.exceptionThrown", "params": {
-                "exceptionDetails": {"text": str(exc)}},
-                }, connection_id=getattr(envelope, "connection_id", None))
-
-    def submit(self, envelope, message):
-        if self.closed:
-            self._fail_command(envelope, RuntimeError("target is closed"))
-            return envelope.future
-        with self._pause_lock:
-            self._pending[(envelope.session_id, envelope.request_id)] = envelope
-        self.send(message, envelope)
-        return envelope.future
-
-    def cancel_pending(self, connection_id=None):
-        """Cancel requests belonging to a disconnected WebSocket client."""
-        with self._pause_lock:
-            pending = [
-                (key, envelope) for key, envelope in self._pending.items()
-                if connection_id is None or envelope.connection_id == connection_id
-            ]
-            for key, envelope in pending:
-                self._pending.pop(key, None)
-                envelope.cancel()
-
-    def resolve_response(self, request_id, payload):
-        """Resolve the oldest matching transaction for this target."""
-        with self._pause_lock:
-            match = next(
-                ((key, envelope) for key, envelope in self._pending.items()
-                 if envelope.request_id == request_id),
-                None,
-            )
-            if match is None:
-                return None
-            key, envelope = match
-            self._pending.pop(key, None)
-        if envelope.session_id:
-            payload["sessionId"] = envelope.session_id
-        if not envelope.future.done():
-            envelope.future.set_result(payload)
-        return envelope
-
-    def send(self, message, envelope=None):
-        if self.closed:
-            self._fail_command(envelope, RuntimeError("target is closed"))
-            return
-        waiting_command = False
-        if self.start_paused and not self._startup_released.is_set():
-            try:
-                waiting_command = json.loads(message).get("method") == "Runtime.runIfWaitingForDebugger"
-            except (TypeError, ValueError):
-                pass
-            if waiting_command:
-                # The realm owner is blocked in wait_for_startup().  Queue the
-                # release command before the sentinel so it executes on that
-                # owner thread and the native Inspector callback opens the gate.
-                self._startup_queue.put((message, envelope))
-                self._startup_queue.put(None)
-                return
-        if self.worker_runtime is not None:
-            with self._pause_lock:
-                if self._paused and self._pause_queue is not None:
-                    self._pause_queue.put((message, envelope))
-                    return
-            owner = self._resolve_owner()
-            if owner is not None:
-                if not owner.post(self._send_on_owner, message, envelope):
-                    self._fail_command(envelope, RuntimeError("realm executor is closed"))
-            else:
-                self._send_on_owner(message, envelope)
-        elif self.debugger is not None:
-            if self.start_paused and not self._startup_released.is_set():
-                self._startup_queue.put((message, envelope))
-                return
-            with self._pause_lock:
-                if self._paused and self._pause_queue is not None:
-                    self._pause_queue.put((message, envelope))
-                    return
-            owner = self._resolve_owner()
-            if owner is not None and not owner.is_owner_thread():
-                if not owner.post(self._send_on_owner, message, envelope):
-                    self._fail_command(envelope, RuntimeError("realm executor is closed"))
-            else:
-                self._send_on_owner(message, envelope)
-
-    def close(self):
-        if self._scope.begin_close() is None:
-            return
-        self.closed = True
-        self._stop_pause_loop()
-        self._release_startup()
-        self.sessions.clear()
-        for envelope in tuple(self._pending.values()):
-            self._fail_command(envelope, RuntimeError("target was closed"))
-        self._pending.clear()
-        debugger, self.debugger = self.debugger, None
-        if debugger is not None:
-            self._disconnect_debugger(debugger)
-            del debugger
-        self._scope.close()
-
-
-class DevToolsServer:
-    """Single-client WebSocket server and Target/session router."""
-
-    def __init__(self, context, page, host, port, *, start_paused=False, startup_timeout=None):
+class BrowserDebugging:
+    def __init__(self, context, page, options):
         self.context = context
-        self.root_page = page
-        self.host = host
-        self.requested_port = int(port)
-        self.start_paused = bool(start_paused)
-        self.startup_timeout = startup_timeout
-        self.port = None
         self.targets = {}
-        self._target_by_realm = {}
-        self._sessions = {}
-        self._lock = threading.RLock()
-        self._loop = None
-        self._server = None
-        self._websocket = None
-        self._connected = threading.Event()
-        self._connection_seq = 0
-        self._connection_id = None
-        self._outgoing = None
-        self._started = threading.Event()
-        self._shutdown = threading.Event()
-        self._error = None
-        self._thread = threading.Thread(target=self._run, name="pyv8c-devtools", daemon=True)
+        host = self.page_host(page)
+        self.handle = create_service(host, options, on_close=self._did_close)
+        self.router = self.handle._router
+        self.targets[page] = self.handle._root
+        page._devtools_target = self.handle._root
+        self._register_descendants(page)
 
-    def start(self):
-        self._thread.start()
-        if not self._started.wait(5):
-            self.close()
-            raise RuntimeError("timed out starting devtools server")
-        if self._error:
-            raise RuntimeError("failed to start devtools server") from self._error
+    @staticmethod
+    def page_host(page, kind="page"):
+        return Host(page.context, page.realm.executor, lambda: page.url, page.close, kind)
 
-    def _run(self):
-        try:
-            asyncio.run(self._serve())
-        except BaseException as exc:
-            self._error = exc
-            self._started.set()
-        finally:
-            self._loop = None
+    def _register_descendants(self, page):
+        for child in tuple(page._owned.frames):
+            self.register_page(child, kind="iframe", parent=page, started=True)
+            self._register_descendants(child)
+        for worker in tuple(page._owned.workers):
+            runtime = worker._runtime
+            if runtime is not None:
+                runtime.executor.post(self.register_worker, runtime, self.targets[page], started=True)
 
-    async def _serve(self):
-        self._loop = asyncio.get_running_loop()
-        async with serve(self._handle, self.host, self.requested_port) as server:
-            self._server = server
-            self.port = server.sockets[0].getsockname()[1]
-            self._started.set()
-            await self._loop.run_in_executor(None, self._shutdown.wait)
-
-    async def _handle(self, websocket):
-        with self._lock:
-            if self._websocket is not None:
-                await websocket.close(code=1013, reason="debugger already connected")
-                return
-            self._websocket = websocket
-            self._outgoing = asyncio.Queue()
-            self._connection_seq += 1
-            connection_id = self._connection_seq
-            self._connection_id = connection_id
-            self._connected.set()
-        sender = asyncio.create_task(self._sender(websocket, self._outgoing))
-        try:
-            async for message in websocket:
-                # _dispatch only validates/routs and now posts V8 work to the
-                # owning RealmExecutor.  Keep this loop receptive to resume
-                # and evaluate commands while a target is paused.
-                self._dispatch(message, connection_id)
-        finally:
-            sender.cancel()
-            with self._lock:
-                if self._websocket is websocket:
-                    self._websocket = None
-                    self._outgoing = None
-                    self._connection_id = None
-                    self._connected.clear()
-            for session_id, target in list(self._sessions.items()):
-                target.sessions.discard(session_id)
-            # Requests on the root target commonly have no sessionId.  Cancel
-            # every target's envelopes, not only targets referenced by a
-            # session, so a reconnect cannot inherit stale responses.
-            for target in list(self.targets.values()):
-                target.cancel_pending(connection_id)
-            self._sessions.clear()
-            for target in list(self.targets.values()):
-                target._release_startup()
-                target._stop_pause_loop()
-
-    async def _sender(self, websocket, outgoing):
-        try:
-            while True:
-                message = await outgoing.get()
-                await websocket.send(message)
-        except (asyncio.CancelledError, ConnectionClosed):
-            return
-
-    def _send(self, payload, connection_id=None):
-        with self._lock:
-            loop, outgoing = self._loop, self._outgoing
-            if connection_id is not None and connection_id != self._connection_id:
-                return
-        if loop is not None and outgoing is not None:
-            message = json.dumps(payload, separators=(",", ":"))
-            if threading.current_thread() is self._thread:
-                outgoing.put_nowait(message)
-            else:
-                asyncio.run_coroutine_threadsafe(outgoing.put(message), loop)
-
-    def emit_from_target(self, target, message):
-        try:
-            payload = json.loads(message)
-        except (TypeError, ValueError):
-            return
-        request_id = payload.get("id")
-        if request_id is not None:
-            envelope = target.resolve_response(request_id, payload)
-            # An unmatched id is a late response for a cancelled request (or
-            # a stale inspector packet after reconnect).  Never forward it to
-            # the next client as if it were a fresh event.
-            if envelope is not None:
-                self._send(payload, connection_id=getattr(envelope, "connection_id", None))
-            return
-        matched = False
-        for session_id, bound in list(self._sessions.items()):
-            if bound is target:
-                matched = True
-                event = dict(payload)
-                event["sessionId"] = session_id
-                self._send(event)
-        if not matched:
-            self._send(payload)
-
-    def _command_failed(self, envelope, message):
-        with self._lock:
-            target = self.targets.get(envelope.target_id)
-        if target is not None:
-            with target._pause_lock:
-                target._pending.pop((envelope.session_id, envelope.request_id), None)
-        self._reply(
-            {"id": envelope.request_id},
-            error={"code": -32000, "message": message},
-            session_id=envelope.session_id,
-            connection_id=envelope.connection_id,
-        )
-
-    def register_page(self, page, kind="page", parent=None):
-        with self._lock:
-            existing = self._target_by_realm.get(page)
-            if existing and not existing.closed:
-                return existing
-            target = DevToolsTarget(
-                self, page, kind, parent,
-                start_paused=self.start_paused if page is self.root_page else False,
-                startup_timeout=self.startup_timeout,
-            )
-            self.targets[target.target_id] = target
-            self._target_by_realm[page] = target
-        self._send({"method": "Target.targetCreated", "params": {"targetInfo": target.descriptor()}})
+    def register_page(self, page, kind="page", parent=None, *, started=False):
+        if page in self.targets:
+            return self.targets[page]
+        parent_target = self.targets.get(parent)
+        if parent_target is None:
+            return None
+        target = self.router.register(self.page_host(page, kind), parent_target, started=started)
+        self.targets[page] = target
+        page._devtools_target = target
         return target
 
-    def register_worker(self, runtime):
-        with self._lock:
-            target = DevToolsTarget(
-                self, runtime, "worker", self._target_by_realm.get(runtime.page),
-                worker_runtime=runtime, start_paused=self.start_paused,
-                startup_timeout=self.startup_timeout,
-            )
-            self.targets[target.target_id] = target
-            self._target_by_realm[runtime] = target
-            runtime.debug_target = target
-        self._send({"method": "Target.targetCreated", "params": {"targetInfo": target.descriptor()}})
+    def register_worker(self, runtime, parent, *, started=False):
+        if runtime in self.targets:
+            return self.targets[runtime]
+        if parent is None or parent.closed or runtime._context is None:
+            return None
+        target = self.router.register(Host(
+            runtime._context, runtime.executor, lambda: runtime.script_url,
+            runtime.stop, "worker",
+        ), parent, started=started)
+        self.targets[runtime] = target
+        runtime.debug_target = target
+        runtime._devtools = self
         return target
 
     def unregister(self, realm):
-        with self._lock:
-            target = self._target_by_realm.pop(realm, None)
-            if target is None:
-                return
-            self.targets.pop(target.target_id, None)
-            session_ids = [sid for sid, value in self._sessions.items() if value is target]
-            for sid in session_ids:
-                self._sessions.pop(sid, None)
-        target.close()
-        self._send({"method": "Target.targetDestroyed", "params": {"targetId": target.target_id}})
-
-    def _reply(self, request, result=None, error=None, session_id=None, connection_id=None):
-        payload = {"id": request.get("id")}
-        if error is not None:
-            payload["error"] = error
-        else:
-            payload["result"] = result or {}
-        if session_id:
-            payload["sessionId"] = session_id
-        self._send(payload, connection_id=connection_id)
-
-    def _dispatch(self, raw, connection_id=None):
-        try:
-            request = json.loads(raw)
-        except (TypeError, ValueError):
-            return
-        method = request.get("method", "")
-        params = request.get("params") or {}
-        session_id = request.get("sessionId")
-        if method == "Target.getTargets":
-            self._reply(request, {"targetInfos": [t.descriptor() for t in self.targets.values() if not t.closed]}, connection_id=connection_id)
-            return
-        if method == "Target.setDiscoverTargets":
-            if params.get("discover", False):
-                for target in self.targets.values():
-                    if not target.closed:
-                        self._send({"method": "Target.targetCreated", "params": {"targetInfo": target.descriptor()}})
-            self._reply(request, {}, connection_id=connection_id)
-            return
-        if method == "Target.setAutoAttach":
-            self._reply(request, {}, connection_id=connection_id)
-            return
-        if method == "Target.attachToTarget":
-            target = self.targets.get(params.get("targetId"))
-            if target is None:
-                self._reply(request, error={"code": -32000, "message": "No such target"}, connection_id=connection_id)
-                return
-            sid = uuid.uuid4().hex
-            self._sessions[sid] = target
-            target.sessions.add(sid)
-            self._reply(request, {"sessionId": sid}, connection_id=connection_id)
-            self._send({"method": "Target.attachedToTarget", "params": {"sessionId": sid, "targetInfo": target.descriptor(), "waitingForDebugger": False}})
-            return
-        if method == "Target.detachFromTarget":
-            sid = params.get("sessionId") or session_id
-            target = self._sessions.pop(sid, None)
-            if target:
-                target.sessions.discard(sid)
-                self._send({"method": "Target.detachedFromTarget", "params": {"sessionId": sid, "targetId": target.target_id}})
-            self._reply(request, {}, connection_id=connection_id)
-            return
-        if method == "Target.activateTarget":
-            self._reply(request, {}, connection_id=connection_id)
-            return
-        if method == "Target.closeTarget":
-            target = self.targets.get(params.get("targetId"))
-            if target and target.realm is not self.root_page:
-                close = getattr(target.realm, "close", None) or getattr(target.realm, "fn_terminate", None)
-                if close:
-                    close()
-            self._reply(request, {"success": bool(target)}, connection_id=connection_id)
-            return
-        target = self._sessions.get(session_id) if session_id else self._target_by_realm.get(self.root_page)
+        target = self.targets.pop(realm, None)
         if target is None:
-            self._reply(request, error={"code": -32000, "message": "Target not found"}, session_id=session_id, connection_id=connection_id)
             return
-        if method.startswith("Runtime.") or method.startswith("Debugger."):
-            inspector_request = dict(request)
-            inspector_request.pop("sessionId", None)
-            envelope = CommandEnvelope(
-                request_id=request.get("id"),
-                session_id=session_id,
-                target_id=target.target_id,
-                connection_id=connection_id,
-            )
-            target.submit(
-                envelope,
-                json.dumps(inspector_request, separators=(",", ":")),
-            )
-            return
-        self._reply(request, error={"code": -32601, "message": "Method not found"}, session_id=session_id, connection_id=connection_id)
+        self.router.unregister(target)
+        if target.host.executor.is_owner_thread():
+            target.mailbox.drain(target)
 
-    def close(self):
-        if self._shutdown.is_set():
-            return
-        self._shutdown.set()
-        for target in list(self.targets.values()):
-            target.close()
-        self.targets.clear()
-        self._target_by_realm.clear()
-        self._sessions.clear()
-        if self._thread.is_alive() and threading.current_thread() is not self._thread:
-            self._thread.join(timeout=5)
-        if getattr(self.context, "_devtools", None) is self:
-            self.context._devtools = None
-
-    def target_info_changed(self, realm):
-        target = self._target_by_realm.get(realm)
+    def target_info_changed(self, page):
+        target = self.targets.get(page)
         if target is not None and not target.closed:
-            self._send({"method": "Target.targetInfoChanged", "params": {"targetInfo": target.descriptor()}})
+            self.router.event("Target.targetInfoChanged", {"targetInfo": target.descriptor()})
 
-
-class DevToolsHandle:
-    def __init__(self, server):
-        self._server = server
-        self.host = server.host
-        self.port = server.port
-        self.url = "devtools://devtools/bundled/inspector.html?experiments=true&v8only=true&ws={}:{}".format(quote(self.host, safe="."), self.port)
+    def _did_close(self):
+        if self.context._devtools is self:
+            self.context._devtools = None
+        self.targets.clear()
 
     def close(self):
-        self._server.close()
-
-    def wait(self, timeout=None):
-        self._server._thread.join(timeout)
-
-    def wait_for_connection(self, timeout=None):
-        return self._server._connected.wait(timeout)
+        self.handle.close()
 
 
-def start_devtools(context, page, *, host="127.0.0.1", port=0,
-                   start_paused=False, startup_timeout=None):
-    server = DevToolsServer(
-        context, page, host, port,
-        start_paused=start_paused,
-        startup_timeout=startup_timeout,
-    )
-    try:
-        server.start()
-        page._devtools_target = server.register_page(page)
-    except BaseException:
-        server.close()
-        raise
-    return DevToolsHandle(server)
-
-
-__all__ = ["CommandEnvelope", "DevToolsHandle", "DevToolsTarget", "DevToolsServer", "start_devtools"]
+def start_devtools(context, page, *, options=None):
+    adapter = BrowserDebugging(context, page, options)
+    context._devtools = adapter
+    return adapter.handle

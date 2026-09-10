@@ -42,12 +42,15 @@ class WorkerRuntime:
             devtools = config.devtools
             self._devtools = devtools
             if devtools is not None:
-                devtools.register_worker(self)
+                devtools.register_worker(self, config.debug_parent)
                 if self.debug_target is not None:
-                    self.debug_target._create_debugger()
-                    self.debug_target.wait_for_startup()
+                    self.debug_target.before_script()
             if source:
-                self._context.exec_js(source, filename=self.script_url)
+                try:
+                    self._context.exec_js(source, filename=self.script_url)
+                finally:
+                    if self.debug_target is not None:
+                        self.debug_target.after_script()
         except BaseException as exc:
             self._report_error(exc)
             self._stop.set()
@@ -97,12 +100,7 @@ class WorkerRuntime:
         self._stop.set()
         target = self.debug_target
         if target is not None:
-            release = getattr(target, "_release_startup", None)
-            if callable(release):
-                release()
-            wake_pause = getattr(target, "_stop_pause_loop", None)
-            if callable(wake_pause):
-                wake_pause()
+            target.wake_waiting_owner()
         try:
             try:
                 self.executor.call(self._cleanup_owner, timeout=5)

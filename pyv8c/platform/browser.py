@@ -231,9 +231,7 @@ class Page:
         if not self.realm.executor.is_owner_thread():
             target = self._devtools_target
             if target is not None:
-                wake = getattr(target, "wake_waiting_owner", None)
-                if callable(wake):
-                    wake()
+                target.wake_waiting_owner()
         try:
             return self.realm.executor.call(self._close_owner)
         finally:
@@ -355,20 +353,14 @@ class BrowserContext:
         except ValueError:
             pass
 
-    def start_devtools(self, page, *, host="127.0.0.1", port=0,
-                       start_paused=False, startup_timeout=None):
+    def start_devtools(self, page: Page, *, options: pyv8.DevToolsOptions | None = None) -> pyv8.DevToolsHandle:
         self._ensure_open()
         if page not in self.pages or page.closed:
             raise InvalidStateError("Page does not belong to this BrowserContext")
         if self._devtools is not None:
             raise InvalidStateError("BrowserContext already has DevTools attached")
         from .devtools import start_devtools
-        handle = start_devtools(
-            self, page, host=host, port=port,
-            start_paused=start_paused, startup_timeout=startup_timeout,
-        )
-        self._devtools = handle._server
-        return handle
+        return start_devtools(self, page, options=options)
 
     def close(self):
         if self.closed:

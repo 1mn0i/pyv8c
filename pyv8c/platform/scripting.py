@@ -97,10 +97,14 @@ class ScriptController:
     def evaluate(self, script, filename=None):
         if self.page.closed or self.page.context_owner.closed:
             raise InvalidStateError("Page is closed")
-        target = getattr(self.page, "_devtools_target", None)
+        target = self.page._devtools_target
         if target is not None:
-            target.wait_for_startup()
-        return self.page.context.exec_js(str(script), filename=filename)
+            target.before_script()
+        try:
+            return self.page.context.exec_js(str(script), filename=filename)
+        finally:
+            if target is not None:
+                target.after_script()
 
     def execute_script(self, node, source, filename=None):
         try:

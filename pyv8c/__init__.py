@@ -10,7 +10,7 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
-    "Browser", "BrowserContext", "Page", "DevToolsHandle", "DevToolsTarget", "DevToolsServer", "BrowserEnvironment", "ViewportConfig", "ScreenConfig", "GeolocationConfig", "PluginConfig", "MimeTypeConfig", "Window",
+    "Browser", "BrowserContext", "Page", "DevToolsHandle", "DevToolsOptions", "BrowserEnvironment", "ViewportConfig", "ScreenConfig", "GeolocationConfig", "PluginConfig", "MimeTypeConfig", "Window",
     "Document", "Node", "Element", "HTMLElement", "Text", "Comment", "DocumentType",
     "CharacterData", "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "CustomEvent", "EventTarget", "WindowProperties", "Location", "Navigator", "Screen", "Storage", "URL", "Plugin", "PluginArray", "MimeType", "MimeTypeArray", "HTMLMetaElement",
     "URLSearchParams",

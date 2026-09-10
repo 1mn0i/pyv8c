@@ -45,6 +45,12 @@ class _RecordingDebugger:
     def disconnect(self):
         self.disconnect_calls.append(threading.get_ident())
 
+    def cancel_pause_on_next_statement(self):
+        pass
+
+    def resume(self):
+        pass
+
     def send(self, data):
         self.send_calls.append(data)
 
@@ -54,6 +60,13 @@ class _PageLike:
 
     def __init__(self, executor):
         self.realm = SimpleNamespace(executor=executor)
+
+
+def _fake_context(executor):
+    def try_inspector(callback, wake):
+        callback()
+        return True
+    return SimpleNamespace(isolate_id=id(executor), _try_inspector=try_inspector)
 
 
 class _DummyNode:
@@ -74,55 +87,60 @@ def test_devtools_close_disconnects_on_the_realm_owner_thread():
     which never resolves for a Page, so the disconnect ran on the closing
     thread instead of the owner thread that owns V8.
     """
-    from pyv8c.platform.devtools import DevToolsTarget
+    from pyv8.devtools import DevToolsOptions
+    from pyv8.devtools.router import Router
+    from pyv8.devtools.scheduler import Host
+    from pyv8.devtools.session import Session
 
     executor = RealmExecutor(name="race-dev-owner")
     try:
         owner_ident = executor.call(threading.get_ident)
         debugger = _RecordingDebugger()
-        target = DevToolsTarget(None, _PageLike(executor))
-        target.debugger = debugger
-
-        target.close()
+        router = Router(DevToolsOptions())
+        target = router.register(Host(_fake_context(executor), executor, lambda: "about:blank", lambda: None))
+        session = Session(router, target, None, 1)
+        session.native = debugger
+        for future in target.close():
+            future.result(2)
 
         assert debugger.disconnect_calls == [owner_ident], (
             "Debugger.disconnect did not run on the realm owner thread"
         )
-        assert target.close_diagnostics == ()
+        assert not target.diagnostics
     finally:
         executor.close()
 
 
-def test_devtools_close_skips_disconnect_when_owner_is_unresolvable():
-    """A1: an ownerless target must skip the disconnect, not run it off-thread."""
-    from pyv8c.platform.devtools import DevToolsTarget
+def test_devtools_requires_an_explicit_host_adapter():
+    from pyv8.devtools.scheduler import Host
 
-    debugger = _RecordingDebugger()
-    target = DevToolsTarget(None, object())  # no .realm/.executor anywhere
-    target.debugger = debugger
-
-    target.close()
-
-    assert debugger.disconnect_calls == []
-    assert len(target.close_diagnostics) == 1
-    assert "skipped" in target.close_diagnostics[0]["message"]
+    with pytest.raises(TypeError):
+        Host(object())
 
 
 def test_devtools_close_skips_disconnect_when_owner_is_already_closed():
     """A1: closing after the owner died must record a diagnostic, not crash."""
-    from pyv8c.platform.devtools import DevToolsTarget
+    from pyv8.devtools import DevToolsOptions
+    from pyv8.devtools.router import Router
+    from pyv8.devtools.scheduler import Host
+    from pyv8.devtools.session import Session
 
     executor = RealmExecutor(name="race-dev-dead-owner")
     executor.close()
 
     debugger = _RecordingDebugger()
-    target = DevToolsTarget(None, _PageLike(executor))
-    target.debugger = debugger
-
-    target.close()
+    router = Router(DevToolsOptions())
+    target = router.register(Host(_fake_context(executor), executor, lambda: "about:blank", lambda: None))
+    session = Session(router, target, None, 1)
+    session.native = debugger
+    futures = target.close()
+    for future in futures:
+        router.track_cleanup(future)
+    with pytest.raises(RuntimeError, match="cleanup failed.*executor is closed"):
+        router.finish_cleanup()
 
     assert debugger.disconnect_calls == []
-    assert len(target.close_diagnostics) == 1
+    assert len(router.diagnostics) == 1
 
 
 def test_devtools_page_close_records_no_disconnect_diagnostics(browser):
@@ -131,13 +149,12 @@ def test_devtools_page_close_records_no_disconnect_diagnostics(browser):
     page = context.new_page()
     handle = context.start_devtools(page)
     try:
-        target = handle._server._target_by_realm.get(page)
-        assert target is not None and target.debugger is not None
+        target = context._devtools.targets[page]
 
         page.close()
 
         assert target.closed
-        assert target.close_diagnostics == ()
+        assert not handle._router.diagnostics
     finally:
         handle.close()
 

@@ -168,6 +168,8 @@ class RealmExecutor:
         try:
             return future.result(timeout=timeout)
         except FutureTimeoutError:
+            if future.done():
+                return future.result()
             # A command which is still queued can be cancelled safely.  This
             # prevents a timed-out navigation/evaluate from running later and
             # mutating a page after its caller has already handled the error.

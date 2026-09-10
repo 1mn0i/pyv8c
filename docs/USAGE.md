@@ -106,13 +106,13 @@ finally:
 下面的片段需要人工打开打印的调试地址，不属于无人值守测试：
 
 ```python
-from pyv8c import Browser
+from pyv8c import Browser, DevToolsOptions
 
 browser = Browser(stub_logging="off")
 try:
     context = browser.new_context()
     page = context.new_page()
-    handle = context.start_devtools(page)
+    handle = context.start_devtools(page, options=DevToolsOptions(port=9005))
     print(handle.url)
     input("打开调试地址后按回车继续：")
     page.evaluate("globalThis.debugValue = 42", filename="example.js")
@@ -121,12 +121,15 @@ finally:
     browser.close()
 ```
 
-入口参数为 host、port、start_paused、startup_timeout；默认 host=127.0.0.1，port=0 自动选择端口。
-每个 BrowserContext 只允许一个活动 DevTools server，server 是单客户端模型。
-Handle 提供 close、wait、wait_for_connection；默认未连接时不会自动替你打开浏览器。
-start_paused=True 用于等待启动释放，需要客户端配合，否则求值可能等待到指定超时。
+统一使用 `DevToolsOptions`：host="127.0.0.1"、port=0、wait_for_debugger=False、
+pause_on_start=True、startup_timeout=None。默认不阻塞业务；完成握手后，在下一段宿主脚本第一条语句暂停一次。
+每个 BrowserContext 只允许一个活动服务，保留单客户端模型；Browser 直接复用 `pyv8.devtools` 核心。
+Handle 提供 close、wait_for_connection、wait_for_ready 和上下文管理；不会自动打开浏览器、打印地址或接管进程信号。
+`wait_for_debugger=True` 显式等待启动释放；超时抛出 TimeoutError，不执行该脚本也不关闭页面。
+同端口提供 /json、/json/list、/json/version。支持 iframe/Worker 自动附加和稳定 Target ID 重连。
 支持 Runtime/Debugger 和部分 Target 命令，不提供完整 Page/Network/DOM 域。
 不要将没有认证隔离保证的调试端口暴露给不可信网络。
+旧 `start_paused=True` 改为 `DevToolsOptions(wait_for_debugger=True)`；详情见 [DevTools](DEVTOOLS.md)。
 
 ## 使用时的限制
 

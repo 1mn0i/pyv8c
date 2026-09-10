@@ -1,31 +1,85 @@
-"""Browser-level tests for the pyv8c DevTools bridge."""
+"""Real CDP coverage for the browser adapter and shared service."""
 
-import asyncio
+from concurrent.futures import Future
 import json
 import threading
-import time
+from urllib.request import urlopen
 
 import pytest
-from websockets.asyncio.client import connect
+from websockets.sync.client import connect
+from websockets.exceptions import ConnectionClosed
 
-from pyv8c import Browser
+from pyv8c import Browser, DevToolsOptions
 from pyv8c.foundation.errors import DOMException
 
 
-async def _request(ws, payload):
-    await ws.send(json.dumps(payload))
-    while True:
-        result = json.loads(await asyncio.wait_for(ws.recv(), 2))
-        if result.get("id") == payload.get("id"):
-            return result
+class Client:
+    def __init__(self, handle, path="/"):
+        self.ws = connect(f"ws://{handle.host}:{handle.port}{path}", close_timeout=1)
+        self.sequence = 0
+        self.inbox = []
+
+    def send(self, method, params=None, session=None, request_id=None):
+        self.sequence += 1
+        payload = {"id": self.sequence if request_id is None else request_id, "method": method}
+        if params is not None:
+            payload["params"] = params
+        if session is not None:
+            payload["sessionId"] = session
+        self.ws.send(json.dumps(payload))
+        return payload["id"]
+
+    def matching(self, predicate):
+        for index, message in enumerate(self.inbox):
+            if predicate(message):
+                return self.inbox.pop(index)
+        while True:
+            message = json.loads(self.ws.recv(timeout=4))
+            if predicate(message):
+                return message
+            self.inbox.append(message)
+
+    def request(self, method, params=None, session=None):
+        request_id = self.send(method, params, session)
+        message = self.matching(lambda item: item.get("id") == request_id and item.get("sessionId") == session)
+        assert "error" not in message, message
+        return message["result"]
+
+    def event(self, method, session=None):
+        return self.matching(lambda item: item.get("method") == method and item.get("sessionId") == session)["params"]
+
+    def ready(self, session=None):
+        self.request("Runtime.enable", session=session)
+        self.request("Debugger.enable", session=session)
+        self.request("Runtime.runIfWaitingForDebugger", session=session)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_error):
+        self.ws.close()
+
+
+def background(callback):
+    result = Future()
+
+    def run():
+        try:
+            result.set_result(callback())
+        except BaseException as error:
+            result.set_exception(error)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return result
 
 
 @pytest.fixture
 def devtools_page():
-    browser = Browser(stub_logging="off")
+    browser = Browser(stub_logging="off", resource_loader=lambda url, request: {"url": url, "body": "<script>globalThis.childStarted=42</script>"})
     context = browser.new_context()
     page = context.new_page()
-    page.set_content("<html><body><script>globalThis.answer = 40;</script></body></html>")
+    page.evaluate("globalThis.answer = 40")
     handle = context.start_devtools(page)
     try:
         yield context, page, handle
@@ -34,253 +88,265 @@ def devtools_page():
         browser.close()
 
 
-def test_start_is_non_blocking_and_exposes_target(devtools_page):
-    context, page, handle = devtools_page
-    assert handle.host == "127.0.0.1"
-    assert handle.port > 0
-    assert handle.url.endswith(f"ws=127.0.0.1:{handle.port}")
+def test_discovery_and_nonblocking_start(devtools_page):
+    _, page, handle = devtools_page
     assert page.evaluate("answer") == 40
-
-    async def check():
-        async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
-            result = await _request(ws, {"id": 1, "method": "Target.getTargets"})
-            assert len(result["result"]["targetInfos"]) == 1
-            target = result["result"]["targetInfos"][0]
-            assert target["type"] == "page"
-            evaluation = await _request(ws, {
-                "id": 2,
-                "method": "Runtime.evaluate",
-                "params": {"expression": "answer + 2"},
-            })
-            assert evaluation["result"]["result"]["value"] == 42
-
-    asyncio.run(check())
+    base = f"http://{handle.host}:{handle.port}"
+    with urlopen(base + "/json/list") as response:
+        targets = json.load(response)
+    with urlopen(base + "/json") as response:
+        assert json.load(response) == targets
+    with urlopen(base + "/json/version") as response:
+        version = json.load(response)
+    assert version["Protocol-Version"] == "1.3"
+    assert targets[0]["devtoolsFrontendUrl"] == handle.url
+    assert version["webSocketDebuggerUrl"].startswith(f"ws://{handle.host}:{handle.port}/devtools/browser/")
+    with Client(handle, "/devtools/page/" + targets[0]["id"]) as client:
+        assert handle.wait_for_connection(1)
+        assert client.request("Runtime.evaluate", {"expression": "answer + 2"})["result"]["value"] == 42
 
 
-def test_target_attach_and_detach(devtools_page):
-    _, _, handle = devtools_page
-
-    async def check():
-        async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
-            targets = await _request(ws, {"id": 1, "method": "Target.getTargets"})
-            target_id = targets["result"]["targetInfos"][0]["targetId"]
-            attached = await _request(ws, {
-                "id": 2, "method": "Target.attachToTarget",
-                "params": {"targetId": target_id},
-            })
-            session_id = attached["result"]["sessionId"]
-            event = json.loads(await asyncio.wait_for(ws.recv(), 2))
-            assert event["method"] == "Target.attachedToTarget"
-            assert event["params"]["sessionId"] == session_id
-            detached = await _request(ws, {
-                "id": 3, "method": "Target.detachFromTarget",
-                "params": {"sessionId": session_id},
-            })
-            assert detached["result"] == {}
-
-    asyncio.run(check())
-
-
-def test_only_one_devtools_handle_per_context(devtools_page):
-    context, page, _ = devtools_page
+def test_only_one_service_and_client(devtools_page):
+    context, page, handle = devtools_page
     with pytest.raises(DOMException):
         context.start_devtools(page)
+    with Client(handle) as first:
+        first.request("Target.getTargets")
+        with Client(handle) as second:
+            with pytest.raises(ConnectionClosed) as closed:
+                second.ws.recv(timeout=2)
+            assert closed.value.rcvd.code == 1013
+
+
+def test_first_statement_console_isolation_step_and_once(devtools_page):
+    _, page, handle = devtools_page
+    with Client(handle) as client:
+        client.ready()
+        assert handle.wait_for_ready(1)
+        client.request("Runtime.evaluate", {"expression": "globalThis.consoleValue = 9"})
+        result = background(lambda: page.evaluate("globalThis.debugValue = 42;\nglobalThis.debugValue += 1", filename="example.js"))
+        paused = client.event("Debugger.paused")
+        assert paused["callFrames"][0]["location"]["lineNumber"] == 0
+        assert not result.done()
+        client.request("Debugger.stepOver")
+        assert client.event("Debugger.paused")["callFrames"][0]["location"]["lineNumber"] == 1
+        client.request("Debugger.resume")
+        assert result.result(3) == 43
+        assert page.evaluate("debugValue + consoleValue") == 52
+
+
+def test_url_breakpoint_and_independent_session_ids(devtools_page):
+    _, page, handle = devtools_page
+    with Client(handle) as client:
+        target = client.request("Target.getTargets")["targetInfos"][0]["targetId"]
+        one = client.request("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
+        two = client.request("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
+        client.request("Debugger.enable", session=one)
+        client.request("Debugger.enable", session=two)
+        client.request("Debugger.disable", session=two)
+        client.request("Debugger.setBreakpointByUrl", {"url": "breakpoint.js", "lineNumber": 0}, one)
+        for session, value in [(one, 11), (two, 22)]:
+            client.send("Runtime.evaluate", {"expression": str(value)}, session, request_id=100)
+        for session, value in [(one, 11), (two, 22)]:
+            response = client.matching(lambda item: item.get("id") == 100 and item.get("sessionId") == session)
+            assert response["result"]["result"]["value"] == value
+        result = background(lambda: page.evaluate("40 + 2", filename="breakpoint.js"))
+        assert client.event("Debugger.paused", one)["hitBreakpoints"]
+        client.request("Debugger.resume", session=one)
+        assert result.result(3) == 42
+        client.request("Target.detachFromTarget", {"sessionId": one})
+        assert client.event("Target.detachedFromTarget")["sessionId"] == one
+
+
+@pytest.mark.parametrize("phase", ["ready", "paused", "request"])
+def test_disconnect_reconnect_preserves_host_and_target(devtools_page, phase):
+    _, page, handle = devtools_page
+    with Client(handle) as client:
+        target_id = client.request("Target.getTargets")["targetInfos"][0]["targetId"]
+        client.ready()
+        if phase == "paused":
+            result = background(lambda: page.evaluate("globalThis.disconnected = 1", filename="disconnect.js"))
+            client.event("Debugger.paused")
+        elif phase == "request":
+            client.send("Runtime.evaluate", {"expression": "debugger; 7"}, request_id=900)
+            client.event("Debugger.paused")
+    if phase == "paused":
+        result.result(3)
+    with Client(handle) as client:
+        assert client.request("Target.getTargets")["targetInfos"][0]["targetId"] == target_id
+        client.ready()
+        if phase != "paused":
+            result = background(lambda: page.evaluate("1"))
+            client.event("Debugger.paused")
+            client.request("Debugger.resume")
+            result.result(3)
+        assert page.evaluate("answer + 2") == 42
+        assert not any(message.get("id") == 900 for message in client.inbox)
+
+
+@pytest.mark.parametrize("disconnect", [False, True])
+def test_explicit_startup_wait(disconnect):
+    browser = Browser(stub_logging="off")
+    context = browser.new_context()
+    page = context.new_page()
+    handle = context.start_devtools(page, options=DevToolsOptions(wait_for_debugger=True, pause_on_start=False, startup_timeout=3))
+    try:
+        result = background(lambda: page.evaluate("globalThis.started = 42"))
+        with Client(handle) as client:
+            client.request("Runtime.enable")
+            assert not result.done()
+            if not disconnect:
+                client.request("Runtime.runIfWaitingForDebugger")
+        assert result.result(3) == 42
+        assert page.evaluate("started") == 42
+    finally:
+        handle.close()
+        browser.close()
+
+
+def test_timeout_does_not_execute_or_close_page():
+    browser = Browser(stub_logging="off")
+    try:
+        context = browser.new_context()
+        page = context.new_page()
+        handle = context.start_devtools(page, options=DevToolsOptions(wait_for_debugger=True, startup_timeout=0))
+        with pytest.raises(TimeoutError, match="startup timed out"):
+            page.evaluate("globalThis.shouldNotRun = 1")
+        assert not page.closed
+        handle.close()
+        handle.close()
+        assert page.evaluate("typeof shouldNotRun") == "undefined"
+    finally:
+        browser.close()
 
 
 def test_page_close_removes_target(devtools_page):
     _, page, handle = devtools_page
-
-    async def check():
-        async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
-            await asyncio.sleep(0.05)
-            page.close()
-            await asyncio.sleep(0.05)
-            event = json.loads(await asyncio.wait_for(ws.recv(), 2))
-            assert event["method"] == "Target.targetDestroyed"
-
-    asyncio.run(check())
+    with Client(handle) as client:
+        client.request("Runtime.enable")
+        page.close()
+        assert client.event("Target.targetDestroyed")["targetId"]
+        assert not handle._router.diagnostics
 
 
-def test_start_paused_waits_before_first_script_and_resumes():
-    browser = Browser(stub_logging="off")
-    context = browser.new_context()
-    page = context.new_page()
-    handle = context.start_devtools(page, start_paused=True, startup_timeout=3)
-    completed = threading.Event()
-    errors = []
+def test_close_waiters_and_port_are_released(devtools_page):
+    import socket
 
-    def navigate():
-        try:
-            page.set_content("<script>globalThis.answer = 42;</script>")
-        except BaseException as exc:
-            errors.append(exc)
-        finally:
-            completed.set()
-
-    thread = threading.Thread(target=navigate)
-    thread.start()
-    try:
-        time.sleep(0.05)
-        assert not completed.is_set()
-
-        async def resume():
-            async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
-                await ws.send(json.dumps({"id": 1, "method": "Runtime.runIfWaitingForDebugger"}))
-
-        asyncio.run(resume())
-        thread.join(2)
-        assert completed.is_set()
-        assert errors == []
-        assert page.evaluate("answer") == 42
-    finally:
-        handle.close()
-        browser.close()
+    _, _, handle = devtools_page
+    ready = background(lambda: handle.wait_for_ready())
+    connection = background(lambda: handle.wait_for_connection())
+    handle.close()
+    assert ready.result(2) is False
+    assert connection.result(2) is False
+    with socket.socket() as listener:
+        listener.bind((handle.host, handle.port))
+    assert not handle._router.transport.thread.is_alive()
 
 
-def test_run_if_waiting_command_releases_gate_before_socket_closes():
-    browser = Browser(stub_logging="off")
-    context = browser.new_context()
-    page = context.new_page()
-    handle = context.start_devtools(page, start_paused=True, startup_timeout=3)
-    completed = threading.Event()
-
-    def navigate():
-        page.set_content("<script>globalThis.answer = 42;</script>")
-        completed.set()
-
-    thread = threading.Thread(target=navigate)
-    thread.start()
-    try:
-        time.sleep(0.05)
-        assert not completed.is_set()
-
-        async def resume_and_wait():
-            async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
-                await ws.send(json.dumps({"id": 7, "method": "Runtime.runIfWaitingForDebugger"}))
-                response = json.loads(await asyncio.wait_for(ws.recv(), 2))
-                assert response["id"] == 7
-                assert "error" not in response
-
-        asyncio.run(resume_and_wait())
-        thread.join(2)
-        assert completed.is_set()
-        assert page.evaluate("answer") == 42
-    finally:
-        handle.close()
-        browser.close()
-
-
-def test_debugger_pause_loop_routes_resume():
-    browser = Browser(stub_logging="off")
-    context = browser.new_context()
-    page = context.new_page()
-    handle = context.start_devtools(page, start_paused=True, startup_timeout=3)
-    completed = threading.Event()
-
-    def navigate():
-        page.set_content(
-            "<script>globalThis.answer = 1; debugger; globalThis.answer = 2;</script>"
-        )
-        completed.set()
-
-    thread = threading.Thread(target=navigate)
-    thread.start()
-    try:
-        async def debug():
-            async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
-                await ws.send(json.dumps({"id": 1, "method": "Target.getTargets"}))
-                targets = json.loads(await ws.recv())["result"]["targetInfos"]
-                target_id = targets[0]["targetId"]
-                await ws.send(json.dumps({
-                    "id": 2, "method": "Target.attachToTarget",
-                    "params": {"targetId": target_id},
-                }))
-                await ws.recv()
-                attached = json.loads(await ws.recv())
-                session_id = attached["params"]["sessionId"]
-                for ident, method in ((3, "Runtime.enable"), (4, "Debugger.enable"),
-                                      (5, "Runtime.runIfWaitingForDebugger")):
-                    await ws.send(json.dumps({
-                        "id": ident, "method": method, "sessionId": session_id,
-                    }))
-                while True:
-                    message = json.loads(await asyncio.wait_for(ws.recv(), 2))
-                    if message.get("method") == "Debugger.paused":
-                        await ws.send(json.dumps({
-                            "id": 6, "method": "Debugger.resume", "sessionId": session_id,
-                        }))
-                        return
-
-        asyncio.run(debug())
-        thread.join(2)
-        assert completed.is_set()
-        assert page.evaluate("answer") == 2
-    finally:
-        handle.close()
-        browser.close()
-
-
-def test_devtools_resume_can_be_received_while_runtime_evaluate_is_paused(devtools_page):
-    """The WebSocket reader must remain live while V8 is in its pause loop."""
+def test_page_compile_failure_does_not_arm_helpers_or_console(devtools_page):
     _, page, handle = devtools_page
-
-    async def check():
-        async with connect(f"ws://{handle.host}:{handle.port}/") as ws:
-            targets = await _request(ws, {"id": 1, "method": "Target.getTargets"})
-            target_id = targets["result"]["targetInfos"][0]["targetId"]
-            await ws.send(json.dumps({"id": 2, "method": "Target.attachToTarget",
-                                       "params": {"targetId": target_id}}))
-            attached_response = json.loads(await asyncio.wait_for(ws.recv(), 2))
-            assert attached_response["id"] == 2
-            attached_event = json.loads(await asyncio.wait_for(ws.recv(), 2))
-            session_id = attached_event["params"]["sessionId"]
-            await ws.send(json.dumps({"id": 3, "method": "Runtime.enable",
-                                       "sessionId": session_id}))
-            await ws.send(json.dumps({"id": 4, "method": "Debugger.enable",
-                                       "sessionId": session_id}))
-            # Do not wait for the evaluate response before reading again: it
-            # pauses at `debugger` and requires a second command to progress.
-            await ws.send(json.dumps({"id": 5, "method": "Runtime.evaluate",
-                                       "sessionId": session_id,
-                                       "params": {"expression": "debugger; 7"}}))
-            paused = None
-            while paused is None:
-                message = json.loads(await asyncio.wait_for(ws.recv(), 2))
-                if message.get("method") == "Debugger.paused":
-                    paused = message
-            await ws.send(json.dumps({"id": 6, "method": "Debugger.resume",
-                                       "sessionId": session_id}))
-            while True:
-                response = json.loads(await asyncio.wait_for(ws.recv(), 2))
-                if response.get("id") == 6:
-                    assert "error" not in response
-                if response.get("id") == 5:
-                    assert response["result"]["result"]["value"] == 7
-                    return
-
-    asyncio.run(check())
+    with Client(handle) as client:
+        client.ready()
+        with pytest.raises(BaseException):
+            page.evaluate("const =", filename="bad.js")
+        assert page.realm.executor.call(lambda: page.context.exec_js("21+21")) == 42
+        assert client.request("Runtime.evaluate", {"expression": "1+1"})["result"]["value"] == 2
+        result = background(lambda: page.evaluate("42", filename="retry.js"))
+        client.event("Debugger.paused")
+        client.request("Debugger.resume")
+        assert result.result(2) == 42
 
 
-def test_start_paused_timeout_releases_navigation():
-    browser = Browser(stub_logging="off")
+def test_rapid_reconnect_does_not_replay_requests(devtools_page):
+    _, _, handle = devtools_page
+    target_id = None
+    for _ in range(10):
+        with Client(handle) as client:
+            current = client.request("Target.getTargets")["targetInfos"][0]["targetId"]
+            if target_id is not None:
+                assert current == target_id
+            target_id = current
+            client.send("Runtime.evaluate", {"expression": "42"}, request_id=700)
+    with Client(handle) as client:
+        assert client.request("Runtime.evaluate", {"expression": "21"})["result"]["value"] == 21
+        assert not any(message.get("id") == 700 for message in client.inbox)
+
+
+def test_existing_iframe_autoattach_and_commands_during_shared_isolate_pause():
+    browser = Browser(stub_logging="off", resource_loader=lambda url, request: {"url": url, "body": "<script>globalThis.childValue=7</script>"})
     context = browser.new_context()
     page = context.new_page()
-    handle = context.start_devtools(page, start_paused=True, startup_timeout=0.05)
-    errors = []
-
-    def navigate():
-        try:
-            page.set_content("<script>globalThis.answer = 1;</script>")
-        except BaseException as exc:
-            errors.append(exc)
-
-    thread = threading.Thread(target=navigate)
-    thread.start()
+    page.set_content('<iframe src="http://example.test/child"></iframe>')
+    page.run_until_idle(timeout=1)
+    handle = context.start_devtools(page)
     try:
-        thread.join(2)
-        assert not thread.is_alive()
-        assert len(errors) == 1
-        assert "timed out" in str(errors[0])
+        with Client(handle) as client:
+            client.request("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True})
+            child = client.event("Target.attachedToTarget")
+            assert child["targetInfo"]["type"] == "iframe"
+            assert not child["waitingForDebugger"]
+            sid = child["sessionId"]
+            client.ready()
+            client.request("Runtime.enable", session=sid)
+            result = background(lambda: page.evaluate("1", filename="parent.js"))
+            client.event("Debugger.paused")
+            assert client.request("Runtime.evaluate", {"expression": "childValue"}, sid)["result"]["value"] == 7
+            client.request("Debugger.resume")
+            result.result(3)
+            client.request("Target.setAutoAttach", {"autoAttach": False, "flatten": True})
+            assert client.event("Target.detachedFromTarget")["sessionId"] == sid
     finally:
         handle.close()
         browser.close()
+
+
+@pytest.mark.parametrize("kind", ["iframe", "worker"])
+def test_new_children_wait_before_script_and_parent_close(devtools_page, kind):
+    _, page, handle = devtools_page
+    with Client(handle) as client:
+        client.request("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True})
+        if kind == "iframe":
+            result = background(lambda: page.set_content('<iframe src="http://example.test/child"></iframe>'))
+        else:
+            result = background(lambda: page.evaluate("globalThis.w = new Worker(URL.createObjectURL(new Blob(['globalThis.childStarted=42'], {type:'text/javascript'})))"))
+        child = client.event("Target.attachedToTarget")
+        assert child["targetInfo"]["type"] == kind
+        assert child["waitingForDebugger"]
+        sid = child["sessionId"]
+        value = client.request("Runtime.evaluate", {"expression": "typeof childStarted"}, sid)
+        assert value["result"]["value"] == "undefined"
+        client.ready(sid)
+        assert client.event("Debugger.paused", sid)["callFrames"][0]["location"]["lineNumber"] == 0
+        client.request("Debugger.resume", session=sid)
+        result.result(3)
+        assert client.request("Runtime.evaluate", {"expression": "childStarted"}, sid)["result"]["value"] == 42
+        page.close()
+        assert client.event("Target.detachedFromTarget")["sessionId"] == sid
+
+
+@pytest.mark.parametrize("pause", [False, True])
+def test_parent_close_releases_child_startup_and_pause(devtools_page, pause):
+    _, page, handle = devtools_page
+    with Client(handle) as client:
+        client.request("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True})
+        navigation = background(lambda: page.set_content('<iframe src="http://example.test/child"></iframe>'))
+        child = client.event("Target.attachedToTarget")
+        if pause:
+            client.ready(child["sessionId"])
+            client.event("Debugger.paused", child["sessionId"])
+        closed = background(page.close)
+        closed.result(4)
+        navigation.result(4)
+        assert page.closed
+
+
+def test_service_close_while_paused_keeps_host(devtools_page):
+    _, page, handle = devtools_page
+    with Client(handle) as client:
+        client.ready()
+        result = background(lambda: page.evaluate("42", filename="close.js"))
+        client.event("Debugger.paused")
+        handle.close()
+        assert result.result(3) == 42
+        assert not page.closed
+        assert page.evaluate("21+21") == 42

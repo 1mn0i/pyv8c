@@ -13,6 +13,7 @@
 | 开关 trace、编写观察回调 | [被动 Trace](TRACE.md) |
 | Mock 资源、接入网络、控制磁盘缓存 | [资源加载与拦截](resource-interception.md) |
 | 处理 iframe、跨源和消息 | [Window 安全模型](WINDOW_SECURITY.md) |
+| 调试首句、Worker 和重连 | [DevTools 与迁移](DEVTOOLS.md) → [验证记录](DEVTOOLS_VALIDATION.md) |
 | 更新 Chromium 元数据 | [baseline 格式与生成](interface-baseline-fields.md) |
 | 查历史变更及验证记录 | [工作日志](../WORKLOG.md) |
 

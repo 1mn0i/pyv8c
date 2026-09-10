@@ -45,12 +45,12 @@ class NavigationController:
         self.page.scripts.reset()
         self.page._update_origin(url)
         self.page.window.location.href = str(url)
-        devtools = getattr(self.page.context_owner, "_devtools", None)
+        devtools = self.page.context_owner._devtools
         if devtools is not None:
             devtools.target_info_changed(self.page)
         self.page.document = Document(services=self.page.services, url=str(url), ready_state="loading")
         self.page.services.document = self.page.document
-        target = getattr(self.page, "_devtools_target", None)
+        target = self.page._devtools_target
         if target is not None:
             target.wait_for_startup()
         self.parser_generation = self.generation

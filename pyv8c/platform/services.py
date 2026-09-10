@@ -33,6 +33,7 @@ class WorkerContext:
     expose_unimplemented: bool
     stub_logging: str
     devtools: Optional[Any]
+    debug_parent: Optional[Any]
 
 
 class _RealmCapability:
@@ -263,6 +264,7 @@ class _WorkerCapability:
             expose_unimplemented=browser.expose_unimplemented,
             stub_logging=browser.stub_logging,
             devtools=self._owner._context._devtools,
+            debug_parent=self._owner._page_realm.page._devtools_target,
         )
 
     def create_worker_realm(self, config):
