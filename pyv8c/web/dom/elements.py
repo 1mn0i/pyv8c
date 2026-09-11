@@ -3,22 +3,26 @@
 The node tree and document algorithms live in :mod:`dom.model`; this module
 owns the HTML tag-specific interfaces and the tag-to-class factory.
 """
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
-
 from html import escape
 
 import pyv8
-
-
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.registry import interface
+from ...foundation.arguments import MISSING, boolean, dom_string, interface_value, is_nullish, missing_error
 from ...foundation.errors import InvalidCharacterError, NotFoundError, V8SyntaxError, V8TypeError
 from .collections import DOMTokenList, HTMLCollection, NamedNodeMap, _dom_string
 from .model import (
-    Attr, DocumentFragment, Node, Text, XHTML_NAMESPACE, _VALID_NAME_RE,
-    _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, _ParentNodeMixin,
+    _VALID_NAME_RE,
+    XHTML_NAMESPACE,
+    Attr,
+    DocumentFragment,
+    Node,
+    Text,
+    _ChildNodeMixin,
+    _NonDocumentTypeChildNodeMixin,
+    _ParentNodeMixin,
 )
-
 
 #: ``insertAdjacent*`` positions, in the order Chromium validates them.
 _ADJACENT_POSITIONS = ("beforebegin", "afterbegin", "beforeend", "afterend")
@@ -155,15 +159,21 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
     def get_localName(self): return self.localName
     def get_tagName(self): return self.nodeName
     def get_id(self): return self.attributes.get("id", "")
-    def set_id(self, value): self.attributes["id"] = str(value)
+    def set_id(self, value):
+        value = dom_string(value)
+        self.attributes['id'] = str(value)
     def get_className(self): return self.attributes.get("class", "")
-    def set_className(self, value): self.attributes["class"] = str(value)
+    def set_className(self, value):
+        value = dom_string(value)
+        self.attributes['class'] = str(value)
     def get_innerHTML(self): return "".join(c.outer_html() for c in self._children)
     def set_innerHTML(self, value):
+        value = dom_string(value)
         self._replace_children(())
         if self._services: self._services.document_services.document._parse_fragment(str(value), self)
     def get_outerHTML(self): return self.outer_html()
     def set_outerHTML(self, value):
+        value = dom_string(value)
         if self.parentNode: self.parentNode.fn_replaceChild(self._services.document_services.document._parse_one(str(value)), self)
     def get_children(self): return HTMLCollection(owner=self, getter=lambda: [c for c in self._children if isinstance(c, Element)])
     def get_classList(self):
@@ -174,19 +184,39 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         value = getattr(self, "_attributes_view", None)
         if value is None: value = self._attributes_view = NamedNodeMap(self)
         return value
-    def fn_getAttribute(self, name):
-        # HTML attribute names are ASCII case-insensitive, so lookups mirror
-        # the lower-casing already applied by ``setAttribute``/``hasAttribute``.
+    def fn_getAttribute(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('Element', 'getAttribute', 1, 0, constructor=False)
+        name = dom_string(name)
         return self.attributes.get(str(name).lower(), pyv8.Null)
-    def fn_setAttribute(self, name, value):
-        # Chromium's ``setAttribute`` is ``setAttributeNS`` with a null
-        # namespace; routing through it keeps one validation path.
+    def fn_setAttribute(self, name=MISSING, value=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('Element', 'setAttribute', 2, 0, constructor=False)
+        if value is MISSING:
+            raise missing_error('Element', 'setAttribute', 2, 1, constructor=False)
+        name = dom_string(name)
+        value = dom_string(value)
         self.fn_setAttributeNS(None, name, value)
-    def fn_removeAttribute(self, name): self.attributes.pop(str(name).lower(), None)
-    def fn_hasAttribute(self, name): return str(name).lower() in self.attributes
-    def fn_hasAttributes(self): return bool(self.attributes)
-    def fn_getAttributeNames(self): return list(self.attributes)
-    def fn_toggleAttribute(self, name, force=None):
+    def fn_removeAttribute(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('Element', 'removeAttribute', 1, 0, constructor=False)
+        name = dom_string(name)
+        self.attributes.pop(str(name).lower(), None)
+    def fn_hasAttribute(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('Element', 'hasAttribute', 1, 0, constructor=False)
+        name = dom_string(name)
+        return str(name).lower() in self.attributes
+    def fn_hasAttributes(self, *_extra):
+        return bool(self.attributes)
+    def fn_getAttributeNames(self, *_extra):
+        return list(self.attributes)
+    def fn_toggleAttribute(self, name=MISSING, force=pyv8.Undefined, *_extra):
+        if name is MISSING:
+            raise missing_error('Element', 'toggleAttribute', 1, 0, constructor=False)
+        name = dom_string(name)
+        if force is not pyv8.Undefined:
+            force = boolean(force)
         name = str(name).lower()
         if force in (None, pyv8.Undefined, pyv8.Null):
             force = not (name in self.attributes)
@@ -197,45 +227,97 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
     # Only the HTML namespace is modelled, so the *NS variants behave exactly
     # like their namespace-free counterparts for a null/HTML namespace and
     # match nothing for a foreign one.
-    def fn_getAttributeNS(self, namespace, local_name): return self.fn_getAttribute(local_name)
-    # Not declared on the V8 template: the bundled baseline has an unresolved
-    # signature for it and strict validation rejects such declarations.
-    def fn_setAttributeNS(self, namespace, name, value):
-        name = str(name)
+    def fn_getAttributeNS(self, namespace=MISSING, local_name=MISSING, *_extra):
+        if namespace is MISSING:
+            raise missing_error('Element', 'getAttributeNS', 2, 0, constructor=False)
+        if local_name is MISSING:
+            raise missing_error('Element', 'getAttributeNS', 2, 1, constructor=False)
+        if not is_nullish(namespace):
+            namespace = dom_string(namespace)
+        local_name = dom_string(local_name)
+        return self.fn_getAttribute(local_name)
+    def fn_setAttributeNS(self, namespace=MISSING, name=MISSING, value=MISSING, *_extra):
+        if namespace is MISSING:
+            raise missing_error('Element', 'setAttributeNS', 3, 0)
+        if name is MISSING:
+            raise missing_error('Element', 'setAttributeNS', 3, 1)
+        if value is MISSING:
+            raise missing_error('Element', 'setAttributeNS', 3, 2)
+        namespace = None if is_nullish(namespace) else dom_string(namespace)
+        name = dom_string(name)
+        value = dom_string(value)
         if not _VALID_NAME_RE.match(name):
             raise InvalidCharacterError("The attribute name provided is invalid.")
         self.attributes[name.lower()] = str(value)
-    def fn_removeAttributeNS(self, namespace, local_name): self.fn_removeAttribute(local_name)
-    def fn_hasAttributeNS(self, namespace, local_name): return self.fn_hasAttribute(local_name)
-    def fn_getAttributeNode(self, name):
+    def fn_removeAttributeNS(self, namespace=MISSING, local_name=MISSING, *_extra):
+        if namespace is MISSING:
+            raise missing_error('Element', 'removeAttributeNS', 2, 0, constructor=False)
+        if local_name is MISSING:
+            raise missing_error('Element', 'removeAttributeNS', 2, 1, constructor=False)
+        if not is_nullish(namespace):
+            namespace = dom_string(namespace)
+        local_name = dom_string(local_name)
+        self.fn_removeAttribute(local_name)
+    def fn_hasAttributeNS(self, namespace=MISSING, local_name=MISSING, *_extra):
+        if namespace is MISSING:
+            raise missing_error('Element', 'hasAttributeNS', 2, 0, constructor=False)
+        if local_name is MISSING:
+            raise missing_error('Element', 'hasAttributeNS', 2, 1, constructor=False)
+        if not is_nullish(namespace):
+            namespace = dom_string(namespace)
+        local_name = dom_string(local_name)
+        return self.fn_hasAttribute(local_name)
+    def fn_getAttributeNode(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('Element', 'getAttributeNode', 1, 0, constructor=False)
+        name = dom_string(name)
         name = str(name).lower()
         if name not in self.attributes: return pyv8.Null
         return Attr(name, self.attributes[name], ownerElement=self, services=self._services)
-    def fn_setAttributeNode(self, attr):
+    def fn_setAttributeNode(self, attr=MISSING, *_extra):
+        if attr is MISSING:
+            raise missing_error('Element', 'setAttributeNode', 1, 0, constructor=False)
+        attr = interface_value(attr, 'Attr', 'Element', 'setAttributeNode', 1, nullable=False)
         if not isinstance(attr, Attr): raise V8TypeError("parameter 1 is not of type 'Attr'.")
         previous = self.fn_getAttributeNode(attr.get_name())
         self.attributes[str(attr.get_name()).lower()] = attr.get_value()
         return previous
-    def fn_removeAttributeNode(self, attr):
+    def fn_removeAttributeNode(self, attr=MISSING, *_extra):
+        if attr is MISSING:
+            raise missing_error('Element', 'removeAttributeNode', 1, 0, constructor=False)
+        attr = interface_value(attr, 'Attr', 'Element', 'removeAttributeNode', 1, nullable=False)
         if not isinstance(attr, Attr): raise V8TypeError("parameter 1 is not of type 'Attr'.")
         name = str(attr.get_name()).lower()
         if name not in self.attributes: raise NotFoundError("The attribute was not found.")
         return Attr(name, self.attributes.pop(name), ownerElement=self, services=self._services)
     def _descendant_elements(self):
         return [node for node in self._descendants() if isinstance(node, Element)]
-    def fn_getElementsByTagName(self, tag_name):
+    def fn_getElementsByTagName(self, tag_name=MISSING, *_extra):
+        if tag_name is MISSING:
+            raise missing_error('Element', 'getElementsByTagName', 1, 0, constructor=False)
+        tag_name = dom_string(tag_name)
         wanted = str(tag_name).lower()
         return HTMLCollection(owner=self, getter=lambda: [
             node for node in self._descendant_elements()
             if wanted == "*" or node.localName == wanted
         ])
-    def fn_getElementsByClassName(self, class_names):
+    def fn_getElementsByClassName(self, class_names=MISSING, *_extra):
+        if class_names is MISSING:
+            raise missing_error('Element', 'getElementsByClassName', 1, 0, constructor=False)
+        class_names = dom_string(class_names)
         wanted = set(str(class_names).split())
         return HTMLCollection(owner=self, getter=lambda: [
             node for node in self._descendant_elements()
             if wanted.issubset(set(node.get_className().split()))
         ])
-    def fn_getElementsByTagNameNS(self, namespace, local_name):
+    def fn_getElementsByTagNameNS(self, namespace=MISSING, local_name=MISSING, *_extra):
+        if namespace is MISSING:
+            raise missing_error('Element', 'getElementsByTagNameNS', 2, 0, constructor=False)
+        if local_name is MISSING:
+            raise missing_error('Element', 'getElementsByTagNameNS', 2, 1, constructor=False)
+        if not is_nullish(namespace):
+            namespace = dom_string(namespace)
+        local_name = dom_string(local_name)
         if namespace not in (None, pyv8.Null, pyv8.Undefined, "", "*", XHTML_NAMESPACE):
             return HTMLCollection(owner=self, getter=lambda: [])
         return self.fn_getElementsByTagName(local_name)
@@ -258,23 +340,60 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             # already a sibling detaches it first and shifts the list.
             index = parent._children.index(self) + (0 if where == "beforebegin" else 1)
             parent._adopt_child(node, index)
-    def fn_insertAdjacentElement(self, where, element):
+    def fn_insertAdjacentElement(self, where=MISSING, element=MISSING, *_extra):
+        if where is MISSING:
+            raise missing_error('Element', 'insertAdjacentElement', 2, 0, constructor=False)
+        if element is MISSING:
+            raise missing_error('Element', 'insertAdjacentElement', 2, 1, constructor=False)
+        where = dom_string(where)
+        element = interface_value(element, 'Element', 'Element', 'insertAdjacentElement', 2, nullable=False)
         if not isinstance(element, Element):
             raise V8TypeError("parameter 2 is not of type 'Element'")
         self._insert_adjacent(where, [element])
         return element
-    def fn_insertAdjacentText(self, where, data):
+    def fn_insertAdjacentText(self, where=MISSING, data=MISSING, *_extra):
+        if where is MISSING:
+            raise missing_error('Element', 'insertAdjacentText', 2, 0, constructor=False)
+        if data is MISSING:
+            raise missing_error('Element', 'insertAdjacentText', 2, 1, constructor=False)
+        where = dom_string(where)
+        data = dom_string(data)
         self._insert_adjacent(where, [Text(str(data), services=self._services)])
-    def fn_insertAdjacentHTML(self, position, html):
+    def fn_insertAdjacentHTML(self, position=MISSING, html=MISSING, *_extra):
+        if position is MISSING:
+            raise missing_error('Element', 'insertAdjacentHTML', 2, 0, constructor=False)
+        if html is MISSING:
+            raise missing_error('Element', 'insertAdjacentHTML', 2, 1, constructor=False)
+        position = dom_string(position)
+        html = dom_string(html)
         document = self._services.document_services.document
         fragment = DocumentFragment(services=self._services)
         document._parse_fragment(str(html), fragment)
         self._insert_adjacent(position, list(fragment._children))
-    def fn_webkitMatchesSelector(self, selector): return self.fn_matches(selector)
-    def fn_querySelector(self, selector): return self._services.document_services.document.query_selector(selector, self) if self._services else pyv8.Null
-    def fn_querySelectorAll(self, selector): return self._services.document_services.document.query_selector_all(selector, self) if self._services else []
-    def fn_matches(self, selector): return self._services.document_services.document.matches(self, selector) if self._services else False
-    def fn_closest(self, selector):
+    def fn_webkitMatchesSelector(self, selector=MISSING, *_extra):
+        if selector is MISSING:
+            raise missing_error('Element', 'webkitMatchesSelector', 1, 0, constructor=False)
+        selector = dom_string(selector)
+        return self.fn_matches(selector)
+    def fn_querySelector(self, selector=MISSING, *_extra):
+        if selector is MISSING:
+            raise missing_error('Element', 'querySelector', 1, 0, constructor=False)
+        selector = dom_string(selector)
+        return self._services.document_services.document.query_selector(selector, self) if self._services else pyv8.Null
+    def fn_querySelectorAll(self, selector=MISSING, *_extra):
+        if selector is MISSING:
+            raise missing_error('Element', 'querySelectorAll', 1, 0, constructor=False)
+        selector = dom_string(selector)
+        return self._services.document_services.document.query_selector_all(selector, self) if self._services else []
+    def fn_matches(self, selector=MISSING, *_extra):
+        if selector is MISSING:
+            raise missing_error('Element', 'matches', 1, 0, constructor=False)
+        selector = dom_string(selector)
+        return self._services.document_services.document.matches(self, selector) if self._services else False
+    def fn_closest(self, selector=MISSING, *_extra):
+        if selector is MISSING:
+            raise missing_error('Element', 'closest', 1, 0, constructor=False)
+        selector = dom_string(selector)
         n = self
         while isinstance(n, Element):
             if n.fn_matches(selector): return n
@@ -297,9 +416,12 @@ class HTMLElement(Element):
         has_constructor=1,
     )
     def get_title(self): return self.attributes.get("title", "")
-    def set_title(self, v): self.attributes["title"] = str(v)
+    def set_title(self, v):
+        v = dom_string(v)
+        self.attributes['title'] = str(v)
     def get_hidden(self): return "hidden" in self.attributes
     def set_hidden(self, v):
+        v = boolean(v)
         if v: self.attributes["hidden"] = ""
         else: self.attributes.pop("hidden", None)
 
@@ -324,10 +446,13 @@ class HTMLImageElement(HTMLElement):
     )
     def get_src(self): return self.attributes.get("src", "")
     def set_src(self, value):
+        value = dom_string(value)
         self.attributes["src"] = str(value)
         if self._services: self._services.resource_services.discover_element_resource(self)
     def get_alt(self): return self.attributes.get("alt", "")
-    def set_alt(self, value): self.attributes["alt"] = str(value)
+    def set_alt(self, value):
+        value = dom_string(value)
+        self.attributes['alt'] = str(value)
 
 
 @interface('HTMLScriptElement', 'HTMLElement')
@@ -343,15 +468,21 @@ class HTMLScriptElement(HTMLElement):
         has_constructor=1,
     )
     def get_src(self): return self.attributes.get("src", "")
-    def set_src(self, value): self.attributes["src"] = str(value)
+    def set_src(self, value):
+        value = dom_string(value)
+        self.attributes['src'] = str(value)
     def get_type(self): return self.attributes.get("type", "")
-    def set_type(self, value): self.attributes["type"] = str(value)
+    def set_type(self, value):
+        value = dom_string(value)
+        self.attributes['type'] = str(value)
     def get_async(self): return "async" in self.attributes
     def set_async(self, value):
+        value = boolean(value)
         if value: self.attributes["async"] = ""
         else: self.attributes.pop("async", None)
     def get_defer(self): return "defer" in self.attributes
     def set_defer(self, value):
+        value = boolean(value)
         if value: self.attributes["defer"] = ""
         else: self.attributes.pop("defer", None)
 
@@ -367,9 +498,13 @@ class HTMLLinkElement(HTMLElement):
         has_constructor=1,
     )
     def get_href(self): return self.attributes.get("href", "")
-    def set_href(self, value): self.attributes["href"] = str(value)
+    def set_href(self, value):
+        value = dom_string(value)
+        self.attributes['href'] = str(value)
     def get_rel(self): return self.attributes.get("rel", "")
-    def set_rel(self, value): self.attributes["rel"] = str(value)
+    def set_rel(self, value):
+        value = dom_string(value)
+        self.attributes['rel'] = str(value)
 
 
 @interface('HTMLStyleElement', 'HTMLElement')
@@ -380,7 +515,9 @@ class HTMLStyleElement(HTMLElement):
         has_constructor=1,
     )
     def get_media(self): return self.attributes.get("media", "")
-    def set_media(self, value): self.attributes["media"] = str(value)
+    def set_media(self, value):
+        value = dom_string(value)
+        self.attributes['media'] = str(value)
 
 
 @interface('HTMLMetaElement', 'HTMLElement')
@@ -400,15 +537,25 @@ class HTMLMetaElement(HTMLElement):
     )
 
     def get_name(self): return self.attributes.get("name", "")
-    def set_name(self, value): self.attributes["name"] = _dom_string(value)
+    def set_name(self, value):
+        value = dom_string(value)
+        self.attributes['name'] = _dom_string(value)
     def get_httpEquiv(self): return self.attributes.get("http-equiv", "")
-    def set_httpEquiv(self, value): self.attributes["http-equiv"] = _dom_string(value)
+    def set_httpEquiv(self, value):
+        value = dom_string(value)
+        self.attributes['http-equiv'] = _dom_string(value)
     def get_content(self): return self.attributes.get("content", "")
-    def set_content(self, value): self.attributes["content"] = _dom_string(value)
+    def set_content(self, value):
+        value = dom_string(value)
+        self.attributes['content'] = _dom_string(value)
     def get_media(self): return self.attributes.get("media", "")
-    def set_media(self, value): self.attributes["media"] = _dom_string(value)
+    def set_media(self, value):
+        value = dom_string(value)
+        self.attributes['media'] = _dom_string(value)
     def get_scheme(self): return self.attributes.get("scheme", "")
-    def set_scheme(self, value): self.attributes["scheme"] = _dom_string(value)
+    def set_scheme(self, value):
+        value = dom_string(value)
+        self.attributes['scheme'] = _dom_string(value)
 
 
 @interface('HTMLTemplateElement', 'HTMLElement')
@@ -446,6 +593,7 @@ class HTMLIFrameElement(HTMLElement):
         self._child_services = None
     def get_src(self): return self.attributes.get("src", "")
     def set_src(self, value):
+        value = dom_string(value)
         self.attributes["src"] = str(value)
         self._resource_started = False
         if self._services:

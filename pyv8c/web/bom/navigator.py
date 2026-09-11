@@ -1,18 +1,16 @@
 """Navigator, geolocation, and browser-compatible plugin collections."""
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
-
 import math
 import time
 
 import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagArrayProto, V8Attribute
 
-
 from ...engine.registry import interface
-from ...foundation.indexed_properties import ReadOnlyIndexedPropertyMixin
+from ...foundation.arguments import MISSING, boolean, callback_value, dictionary, integer, is_nullish, missing_error
 from ...foundation.environment import BrowserEnvironment, MimeTypeConfig
 from ...foundation.errors import LegacyPropertyError, V8TypeError
-
+from ...foundation.indexed_properties import ReadOnlyIndexedPropertyMixin
 
 _ITERABLE_FLAGS = (
     FlagArrayProto.iterator | FlagArrayProto.entries | FlagArrayProto.keys
@@ -108,8 +106,10 @@ class _LegacyNamedCollection(ReadOnlyIndexedPropertyMixin):
     # the bodies only depend on ``_indexed_items``/``_named_item`` and the
     # registered interface name, so they live here once.
     def get_length(self): return len(self._indexed_items())
-    def fn_item(self, *args): return self._item_at(self._item_argument(args, self._interface_name()))
-    def fn_namedItem(self, *args): return self._named_item(self._named_argument(args, self._interface_name()))
+    def fn_item(self, *args):
+        return self._item_at(self._item_argument(args, self._interface_name()))
+    def fn_namedItem(self, *args):
+        return self._named_item(self._named_argument(args, self._interface_name()))
 
 
 @interface('MimeType', None, exposed_in=('Window',))
@@ -197,7 +197,12 @@ class PluginArray(_LegacyNamedCollection):
     def _supported_names(self): return [item.get_name() for item in self._plugins]
     def _named_item(self, name):
         return next((item for item in self._plugins if item.get_name() == name), pyv8.Null)
-    def fn_refresh(self, reload_documents=False): return None
+    def fn_refresh(self, reload_documents=False, *_extra):
+        if reload_documents is pyv8.Undefined:
+            reload_documents = False
+        if reload_documents is not pyv8.Undefined:
+            reload_documents = boolean(reload_documents)
+        return None
 
 
 @interface('MimeTypeArray', None, exposed_in=('Window',))
@@ -291,17 +296,43 @@ class Geolocation:
         if self._services is not None:
             self._services.task_services.post_task(callback)
 
-    def fn_getCurrentPosition(self, success, error=None, options=None):
+    def fn_getCurrentPosition(self, success=MISSING, error=None, options=None, *_extra):
+        if success is MISSING:
+            raise missing_error('Geolocation', 'getCurrentPosition', 1, 0, constructor=False)
+        if success is not pyv8.Undefined:
+            success = callback_value(success)
+        if error is pyv8.Undefined:
+            error = None
+        if error is not pyv8.Undefined:
+            if not is_nullish(error):
+                error = callback_value(error)
+        if options is pyv8.Undefined:
+            options = None
+        if options is not pyv8.Undefined:
+            options = dictionary(options)
         if not callable(success):
             raise V8TypeError("success callback must be callable")
-        if error is not None and not callable(error):
+        if not is_nullish(error) and not callable(error):
             raise V8TypeError("error callback must be callable")
         self._deliver(success, error)
 
-    def fn_watchPosition(self, success, error=None, options=None):
+    def fn_watchPosition(self, success=MISSING, error=None, options=None, *_extra):
+        if success is MISSING:
+            raise missing_error('Geolocation', 'watchPosition', 1, 0, constructor=False)
+        if success is not pyv8.Undefined:
+            success = callback_value(success)
+        if error is pyv8.Undefined:
+            error = None
+        if error is not pyv8.Undefined:
+            if not is_nullish(error):
+                error = callback_value(error)
+        if options is pyv8.Undefined:
+            options = None
+        if options is not pyv8.Undefined:
+            options = dictionary(options)
         if not callable(success):
             raise V8TypeError("success callback must be callable")
-        if error is not None and not callable(error):
+        if not is_nullish(error) and not callable(error):
             raise V8TypeError("error callback must be callable")
         ident = self._next_watch
         self._next_watch += 1
@@ -309,7 +340,11 @@ class Geolocation:
         self._deliver(success, error, ident)
         return ident
 
-    def fn_clearWatch(self, ident): self._watchers.pop(int(ident), None)
+    def fn_clearWatch(self, ident=MISSING, *_extra):
+        if ident is MISSING:
+            raise missing_error('Geolocation', 'clearWatch', 1, 0, constructor=False)
+        ident = integer(ident, signed=True)
+        self._watchers.pop(int(ident), None)
 
 
 @interface('Navigator', None)

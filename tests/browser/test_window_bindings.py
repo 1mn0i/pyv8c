@@ -29,8 +29,7 @@ def test_window_config_has_no_ordinary_named_handlers():
         assert config.index_get
         assert config.cross_origin_check
         assert config.cross_origin_name_get
-        assert universe.binding_plan("Window", "postMessage").resolved
-        assert universe.binding_plan("Window", "onmessage", "attribute").resolved
+        assert not hasattr(universe, 'binding_plan')
         assert "postMessage" in {item.name for item in Window.__v8_idl_spec__.methods}
         assert "onmessage" in {item.name for item in Window.__v8_idl_spec__.attributes}
     finally:

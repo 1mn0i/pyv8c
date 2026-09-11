@@ -1,12 +1,13 @@
 """XMLHttpRequest implementation."""
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
+import re
+from urllib.parse import urljoin, urlsplit
 
 import pyv8
-
-
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.registry import interface
-from ...foundation.errors import InvalidStateError, NotSupportedError
+from ...foundation.arguments import MISSING, boolean, byte_string, dom_string, missing_error, usv_string
+from ...foundation.errors import InvalidStateError, NotSupportedError, SecurityError, V8SyntaxError
 from ..dom.events import Event, EventTarget
 from .events import ErrorEvent
 from .headers import Headers
@@ -49,7 +50,9 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         has_constructor=1,
     )
 
-    def __init__(self, services=None, _realm=None, **kw):
+    def __init__(self, *_extra, services=None, _realm=None, **kw):
+        if services is pyv8.Undefined:
+            services = None
         super().__init__(services=services or _realm, **kw)
         self._method = "GET"
         self._url = ""
@@ -73,23 +76,57 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self.readyState = value
         self.fn_dispatchEvent(Event("readystatechange"))
 
-    def fn_open(self, method, url, async_value=True, *args):
-        self._method, self._url, self._async = str(method).upper(), str(url), bool(async_value)
-        self._state(self.OPENED)
-        if not self._async:
+    def fn_open(self, method=MISSING, url=MISSING, async_value=True, *args):
+        if method is MISSING:
+            raise missing_error('XMLHttpRequest', 'open', 2, 0, constructor=False)
+        if url is MISSING:
+            raise missing_error('XMLHttpRequest', 'open', 2, 1, constructor=False)
+        method = byte_string(method)
+        url = usv_string(url)
+        if async_value is pyv8.Undefined:
+            async_value = True
+        if async_value is not pyv8.Undefined:
+            async_value = boolean(async_value)
+        if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", method):
+            raise V8SyntaxError("Invalid HTTP method")
+        if method.upper() in ("CONNECT", "TRACE", "TRACK"):
+            raise SecurityError("Forbidden HTTP method")
+        base = self._services.realm_services.url if self._services else "about:blank"
+        resolved = urljoin(base, url)
+        try:
+            parts = urlsplit(resolved)
+            if not parts.scheme:
+                raise ValueError("missing scheme")
+            parts.port
+        except ValueError as exc:
+            raise V8SyntaxError("Invalid URL") from exc
+        if not async_value:
             raise NotSupportedError("synchronous XMLHttpRequest is not supported")
+        self._method, self._url, self._async = method.upper(), resolved, async_value
+        self._state(self.OPENED)
 
-    def fn_setRequestHeader(self, key, value):
+    def fn_setRequestHeader(self, key=MISSING, value=MISSING, *_extra):
+        if key is MISSING:
+            raise missing_error('XMLHttpRequest', 'setRequestHeader', 2, 0, constructor=False)
+        if value is MISSING:
+            raise missing_error('XMLHttpRequest', 'setRequestHeader', 2, 1, constructor=False)
+        key = byte_string(key)
+        value = byte_string(value)
         if self.readyState != self.OPENED:
             raise InvalidStateError("XMLHttpRequest is not in the OPENED state")
         self._request_headers.fn_set(key, value)
 
-    def fn_getResponseHeader(self, name):
+    def fn_getResponseHeader(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('XMLHttpRequest', 'getResponseHeader', 1, 0, constructor=False)
+        name = dom_string(name)
         if not self._response:
             return pyv8.Null
         return self._response.headers.fn_get(name)
 
-    def fn_send(self, body=None):
+    def fn_send(self, body=None, *_extra):
+        if body is pyv8.Undefined:
+            body = None
         if self.readyState != self.OPENED:
             raise InvalidStateError("XMLHttpRequest is not in the OPENED state")
         request = {
@@ -119,7 +156,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self.fn_dispatchEvent(Event("load"))
         self.fn_dispatchEvent(Event("loadend"))
 
-    def fn_abort(self):
+    def fn_abort(self, *_extra):
         self.readyState = self.UNSENT
         self.fn_dispatchEvent(Event("abort"))
         self.fn_dispatchEvent(Event("loadend"))

@@ -179,17 +179,14 @@ class InterfaceCompiler:
                         )
                     )
                     continue
-                plan = universe.binding_plan(name, public_name)
                 static = location == "interface"
                 if declared is not None:
-                    if not plan.resolved:
-                        raise TypeError(f"{name}.{public_name} has unresolved Web IDL signature")
                     raw = self.wrappers._raw_callback(cls, declared.callback)
-                    callback = self.wrappers.method(cls, name, public_name, raw, plan, static=static)
+                    callback = self.wrappers.method(cls, name, public_name, raw, static=static)
                     if static and self.wrappers._parameters_for(raw)[:1] == ("_realm",):
-                        realm_methods.append((len(methods), raw, plan))
+                        realm_methods.append((len(methods), raw))
                 else:
-                    callback = self.stubs.method(name, public_name, plan, static=static)
+                    callback = self.stubs.method(name, public_name, static=static)
                 methods.append(
                     MethodSpec(
                         name=public_name,
@@ -223,13 +220,10 @@ class InterfaceCompiler:
                 if "setter" not in member and declared is not None:
                     writable = declared.setter is not None
                 if writable:
-                    plan = universe.binding_plan(name, public_name, "attribute")
-                    if declared is not None and declared.setter is not None and not plan.resolved:
-                        raise TypeError(f"{name}.{public_name} setter has unresolved Web IDL signature")
                     setter = (
-                        self.wrappers.setter(cls, name, public_name, declared.setter, plan)
+                        self.wrappers.setter(cls, name, public_name, declared.setter)
                         if declared is not None and declared.setter is not None
-                        else self.stubs.setter(name, public_name, plan)
+                        else self.stubs.setter(name, public_name)
                     )
                 attributes.append(
                     AttributeSpec(
@@ -243,29 +237,27 @@ class InterfaceCompiler:
                     )
                 )
         for public_name, declared in declared_methods.items():
+            if universe._member(name, public_name, "operation") is None:
+                raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
             if declared.callback_type == CallbackType.kJs:
                 methods.append(declared)
                 continue
-            plan = universe.binding_plan(name, public_name)
-            if not plan.resolved:
-                raise TypeError(f"{name}.{public_name} has unresolved Web IDL signature")
             raw = self.wrappers._raw_callback(cls, declared.callback)
             static = declared.location == FlagLocation.kInterface
-            callback = self.wrappers.method(cls, name, public_name, raw, plan, static=static)
+            callback = self.wrappers.method(cls, name, public_name, raw, static=static)
             if static and self.wrappers._parameters_for(raw)[:1] == ("_realm",):
-                realm_methods.append((len(methods), raw, plan))
+                realm_methods.append((len(methods), raw))
             methods.append(declared.replace(callback=callback))
         for public_name, declared in declared_attributes.items():
+            if declared.setter is not None and universe._member(name, public_name, "attribute") is None:
+                raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
             if declared.callback_type == CallbackType.kJs:
                 attributes.append(declared)
                 continue
             getter = self.wrappers._raw_callback(cls, declared.getter)
             setter = None
             if declared.setter is not None:
-                plan = universe.binding_plan(name, public_name, "attribute")
-                if not plan.resolved:
-                    raise TypeError(f"{name}.{public_name} setter has unresolved Web IDL signature")
-                setter = self.wrappers.setter(cls, name, public_name, declared.setter, plan)
+                setter = self.wrappers.setter(cls, name, public_name, declared.setter)
             attributes.append(declared.replace(getter=getter, setter=setter))
         template = baseline.get("template") or {}
         enabled = set()
@@ -330,9 +322,6 @@ class InterfaceCompiler:
             )
         realm_constructor = False
         if options.get("constructor_behavior", source.constructor_behavior):
-            plan = universe.binding_plan(name, "constructor", "constructor")
-            if registration is not None and source.constructor_behavior and not plan.resolved:
-                raise TypeError(f"{name} constructor has unresolved Web IDL signature")
             options["constructor_adapter"] = self.wrappers.constructor_adapter(name, registration is None)
             realm_constructor = "_realm" in self.wrappers._parameters_for(cls)
         return CompiledInterface(source.replace(**options), tuple(realm_methods), realm_constructor)
@@ -345,9 +334,9 @@ class InterfaceCompiler:
         changes = {}
         if compiled.realm_methods:
             methods = list(compiled.spec.methods)
-            for index, raw, plan in compiled.realm_methods:
+            for index, raw in compiled.realm_methods:
                 item = methods[index]
-                callback = self.wrappers.method(cls, name, item.name, raw, plan, static=True, realm=realm)
+                callback = self.wrappers.method(cls, name, item.name, raw, static=True, realm=realm)
                 methods[index] = item.replace(callback=callback)
             changes["methods"] = tuple(methods)
         if compiled.realm_constructor:

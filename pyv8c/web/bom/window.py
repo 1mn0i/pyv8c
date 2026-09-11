@@ -1,11 +1,20 @@
 """Window, its named-properties prototype, and realm-aware WindowProxy."""
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
-
 import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagCrossOriginCheck, FlagLocation, SideEffectType
 
-
 from ...engine.registry import interface
+from ...foundation.arguments import (
+    MISSING,
+    callback_value,
+    dictionary,
+    dom_string,
+    event_handler,
+    integer,
+    is_nullish,
+    missing_error,
+    usv_string,
+)
 from ...foundation.environment import BrowserEnvironment
 from ...foundation.errors import SecurityError
 from ...foundation.urls import origin_tuple, serialize_origin
@@ -256,9 +265,14 @@ class Window(WindowProperties):
     def get_closed(self): return bool(getattr(self._services, "closed", False))
     def get_opener(self): return pyv8.Null
     def get_onmessage(self): self._require_same_origin(); return self._get_handler("onmessage")
-    def set_onmessage(self, value): self._require_same_origin(); self._set_handler("onmessage", value)
+    def set_onmessage(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._require_same_origin()
+        self._set_handler('onmessage', value)
     def get_location(self): return self.location
-    def set_location(self, value): self.location.set_href(value)
+    def set_location(self, value):
+        self.location.set_href(value)
     def get_navigator(self): self._require_same_origin(); return self.navigator
     def get_screen(self): self._require_same_origin(); return self.screen
     def get_localStorage(self): self._require_same_origin(); return self.localStorage
@@ -269,16 +283,59 @@ class Window(WindowProperties):
     def get_outerWidth(self): self._require_same_origin(); return self.outerWidth
     def get_outerHeight(self): self._require_same_origin(); return self.outerHeight
     def get_devicePixelRatio(self): self._require_same_origin(); return self.devicePixelRatio
-    def fn_setTimeout(self, callback, delay=0): return self._services.task_services.schedule(callback, float(delay) / 1000.0, repeat=False)
-    def fn_clearTimeout(self, ident): self._services.task_services.cancel(int(ident))
-    def fn_setInterval(self, callback, delay=0): return self._services.task_services.schedule(callback, float(delay) / 1000.0, repeat=True)
-    def fn_clearInterval(self, ident): self._services.task_services.cancel(int(ident))
-    def fn_queueMicrotask(self, callback): self._services.task_services.microtasks.append(callback)
-    def fn_requestAnimationFrame(self, callback): return self._services.task_services.schedule(callback, 0, repeat=False)
-    def fn_fetch(self, request, options=None):
+    def fn_setTimeout(self, callback=MISSING, delay=0, *arguments):
+        if callback is MISSING:
+            raise missing_error('Window', 'setTimeout', 1, 0, constructor=False)
+        if not callable(callback):
+            source = dom_string(callback)
+            callback = lambda: self._services.realm_services.evaluate_script(source)
+        elif arguments:
+            original = callback
+            callback = lambda: original(*arguments)
+        if delay is pyv8.Undefined:
+            delay = 0
+        if delay is not pyv8.Undefined:
+            delay = integer(delay, signed=True)
+        return self._services.task_services.schedule(callback, float(delay) / 1000.0, repeat=False)
+    def fn_clearTimeout(self, ident=0, *_extra):
+        ident = integer(ident, signed=True)
+        self._services.task_services.cancel(int(ident))
+    def fn_setInterval(self, callback=MISSING, delay=0, *arguments):
+        if callback is MISSING:
+            raise missing_error('Window', 'setInterval', 1, 0, constructor=False)
+        if not callable(callback):
+            source = dom_string(callback)
+            callback = lambda: self._services.realm_services.evaluate_script(source)
+        elif arguments:
+            original = callback
+            callback = lambda: original(*arguments)
+        if delay is pyv8.Undefined:
+            delay = 0
+        if delay is not pyv8.Undefined:
+            delay = integer(delay, signed=True)
+        return self._services.task_services.schedule(callback, float(delay) / 1000.0, repeat=True)
+    def fn_clearInterval(self, ident=0, *_extra):
+        ident = integer(ident, signed=True)
+        self._services.task_services.cancel(int(ident))
+    def fn_queueMicrotask(self, callback=MISSING, *_extra):
+        if callback is MISSING:
+            raise missing_error('Window', 'queueMicrotask', 1, 0, constructor=False)
+        callback = callback_value(callback)
+        self._services.task_services.microtasks.append(callback)
+    def fn_requestAnimationFrame(self, callback=MISSING, *_extra):
+        if callback is MISSING:
+            raise missing_error('Window', 'requestAnimationFrame', 1, 0, constructor=False)
+        callback = callback_value(callback)
+        return self._services.task_services.schedule(callback, 0, repeat=False)
+    def fn_fetch(self, request=MISSING, options=None, *_extra):
         promise, resolve, reject = self._services.realm_services.make_promise()
         try:
-            req = request if isinstance(request, Request) else Request(request, options, services=self._services)
+            if request is MISSING:
+                raise missing_error('Window', 'fetch', 1, 0)
+            if not isinstance(request, Request):
+                request = usv_string(request)
+            options = dictionary(options, name="RequestInit", prefix="Failed to execute 'fetch' on 'Window': ")
+            req = Request(request, options, services=self._services)
         except BaseException as exc:
             self._services.realm_services.post_task(lambda exc=exc: reject(self._services.realm_services.js_error_value(exc)))
             return promise
@@ -288,28 +345,39 @@ class Window(WindowProperties):
             "resource_type": "fetch",
         }, lambda response, error: reject(self._services.realm_services.js_error_value(error)) if error else resolve(response))
         return promise
-    def fn_close(self):
+    def fn_close(self, *_extra):
         return None
-    def fn_focus(self):
+    def fn_focus(self, *_extra):
         return None
-    def fn_blur(self):
+    def fn_blur(self, *_extra):
         return None
-    def fn_postMessage(self, message, target_origin="/", transfer=()):
+    def fn_postMessage(self, message=MISSING, target_origin='/', transfer=MISSING, *_extra):
+        if message is MISSING:
+            raise missing_error('Window', 'postMessage', 1, 0, constructor=False)
+        if target_origin is pyv8.Undefined:
+            target_origin = '/'
+        from ...foundation.arguments import sequence
+        if transfer is not MISSING:
+            target_origin = dom_string(target_origin)
+            transfer = sequence(transfer)
+        else:
+            transfer = ()
         self._post_message(self, message, target_origin, transfer)
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
-        from ..workers.clone import structured_clone
-        from ..fetch.events import MessageEvent
         from ...foundation.errors import V8SyntaxError
+        from ..fetch.events import MessageEvent
+        from ..workers.clone import structured_clone
 
-        # Null is an empty WindowPostMessageOptions dictionary. Explicit
-        # undefined is defaulted by the reviewed binding signature.
+        # Null is an empty WindowPostMessageOptions dictionary.
         if target_origin is None or target_origin is pyv8.Null or target_origin is pyv8.Undefined:
             target_origin = {}
-        if isinstance(target_origin, dict):
-            transfer = target_origin.get("transfer", ())
-            target_origin = target_origin.get("targetOrigin", "/")
-        target_origin = str(target_origin)
+        if isinstance(target_origin, (dict, pyv8.JSObject)):
+            from ...foundation.arguments import sequence
+            options = dictionary(target_origin)
+            target_origin = dom_string(options.get("targetOrigin", "/"))
+            transfer = sequence(options.get("transfer", ()))
+        target_origin = dom_string(target_origin)
         if target_origin == "/":
             expected_origin = source._origin
         elif target_origin == "*":
@@ -373,7 +441,10 @@ class _CrossOriginLocation:
     def get_search(self): self._deny()
     def get_hash(self): self._deny()
     def set_href(self, value): return self._location.set_href(value)
-    def fn_replace(self, value): return self._location.set_href(value)
+    def fn_replace(self, value=MISSING, *_extra):
+        if value is MISSING:
+            raise missing_error("Location", "replace", 1, 0)
+        return self._location.set_href(usv_string(value))
 
     def __v8_name_get__(self, name):
         if name in ("href", "origin", "protocol", "host", "hostname", "port", "pathname", "search", "hash", "replace"):
@@ -507,8 +578,17 @@ class WindowProxy:
     def get_closed(self): return self._child_window.get_closed()
     def get_location(self): return self._child_window.location if self._same_origin() else self._location
     def set_location(self, value): return self._child_window.location.set_href(value)
-    def fn_close(self): return self._child_window.fn_close()
-    def fn_focus(self): return self._child_window.fn_focus()
-    def fn_blur(self): return self._child_window.fn_blur()
-    def fn_postMessage(self, message, target_origin="/", transfer=()):
+    def fn_close(self, *_extra): return self._child_window.fn_close()
+    def fn_focus(self, *_extra): return self._child_window.fn_focus()
+    def fn_blur(self, *_extra): return self._child_window.fn_blur()
+    def fn_postMessage(self, message=MISSING, target_origin="/", transfer=MISSING, *_extra):
+        from ...foundation.arguments import sequence
+
+        if message is MISSING:
+            raise missing_error("Window", "postMessage", 1, 0)
+        if transfer is not MISSING:
+            target_origin = dom_string(target_origin)
+            transfer = sequence(transfer)
+        else:
+            transfer = ()
         return self._child_window._post_message(self._accessor(), message, target_origin, transfer)

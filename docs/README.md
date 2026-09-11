@@ -10,6 +10,7 @@
 | 第一次运行 | [项目 README](../README.md) → [使用与配置](USAGE.md) |
 | 接手项目或排查架构问题 | [交接状态](../HANDOFF.md) → [架构与不变量](ARCHITECTURE.md) |
 | 添加浏览器接口或修复绑定 | [开发与验证](DEVELOPMENT.md) → [IDL 声明与编译](IDL_MIGRATION.md) |
+| 维护参数转换和异常行为 | [开发规范](DEVELOPMENT.md) |
 | 开关 trace、编写观察回调 | [被动 Trace](TRACE.md) |
 | Mock 资源、接入网络、控制磁盘缓存 | [资源加载与拦截](resource-interception.md) |
 | 处理 iframe、跨源和消息 | [Window 安全模型](WINDOW_SECURITY.md) |

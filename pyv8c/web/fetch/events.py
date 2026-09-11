@@ -1,11 +1,18 @@
 """Events shared by Fetch, WebSocket, XHR, and Worker APIs."""
-from pyv8 import IdlSpec, AttributeSpec
-
 import pyv8
-
-
+from pyv8 import AttributeSpec, IdlSpec
 
 from ...engine.registry import interface
+from ...foundation.arguments import (
+    MISSING,
+    boolean,
+    dictionary,
+    dom_string,
+    integer,
+    is_nullish,
+    missing_error,
+    usv_string,
+)
 from ..dom.events import Event
 
 
@@ -22,11 +29,19 @@ class MessageEvent(Event):
         has_constructor=1,
     )
 
-    def __init__(self, event_type="message", options=None, **kw):
+    def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
+        if event_type is MISSING:
+            raise missing_error('MessageEvent', 'constructor', 1, 0, constructor=True)
+        event_type = dom_string(event_type)
+        if options is pyv8.Undefined:
+            options = None
+        if options is not pyv8.Undefined:
+            if not is_nullish(options):
+                options = dictionary(options)
         super().__init__(event_type, options, **kw)
         options = options if isinstance(options, dict) else {}
         self.data = options.get("data", pyv8.Null)
-        self.origin = options.get("origin", "")
+        self.origin = usv_string(options.get("origin", ""))
         self.source = options.get("source", pyv8.Null)
 
     def get_data(self): return self.data
@@ -47,12 +62,20 @@ class CloseEvent(Event):
         has_constructor=1,
     )
 
-    def __init__(self, event_type="close", options=None, **kw):
+    def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
+        if event_type is MISSING:
+            raise missing_error('CloseEvent', 'constructor', 1, 0, constructor=True)
+        event_type = dom_string(event_type)
+        if options is pyv8.Undefined:
+            options = None
+        if options is not pyv8.Undefined:
+            if not is_nullish(options):
+                options = dictionary(options)
         super().__init__(event_type, options, **kw)
         options = options if isinstance(options, dict) else {}
-        self.code = int(options.get("code", 1000))
-        self.reason = str(options.get("reason", ""))
-        self.was_clean = bool(options.get("wasClean", True))
+        self.code = integer(options.get("code", 0), bits=16)
+        self.reason = usv_string(options.get("reason", ""))
+        self.was_clean = boolean(options.get("wasClean", False))
 
     def get_code(self): return self.code
     def get_reason(self): return self.reason
@@ -71,11 +94,19 @@ class ErrorEvent(Event):
         has_constructor=1,
     )
 
-    def __init__(self, event_type="error", options=None, **kw):
+    def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
+        if event_type is MISSING:
+            raise missing_error('ErrorEvent', 'constructor', 1, 0, constructor=True)
+        event_type = dom_string(event_type)
+        if options is pyv8.Undefined:
+            options = None
+        if options is not pyv8.Undefined:
+            if not is_nullish(options):
+                options = dictionary(options)
         super().__init__(event_type, options, **kw)
         options = options if isinstance(options, dict) else {}
-        self.message = str(options.get("message", ""))
         self.error = options.get("error", pyv8.Null)
+        self.message = dom_string(options.get("message", ""))
 
     def get_message(self): return self.message
     def get_error(self): return self.error

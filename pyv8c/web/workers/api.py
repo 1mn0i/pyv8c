@@ -1,15 +1,23 @@
 """Worker Web API and global scope types."""
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
-
 from urllib.parse import urljoin
 
-
-
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.registry import interface
+from ...foundation.arguments import (
+    MISSING,
+    dictionary,
+    dom_string,
+    enum_value,
+    event_handler,
+    is_nullish,
+    missing_error,
+    usv_string,
+)
 from ...foundation.errors import InvalidStateError
 from ..dom.events import EventTarget
 from ..fetch.events import ErrorEvent, MessageEvent
+from .clone import message_transfer
 
 
 @interface('WorkerGlobalScope', 'EventTarget', exposed_in=('Worker',))
@@ -41,11 +49,22 @@ class WorkerGlobalScope(EventTarget):
     def get_self(self): return self
     def get_navigator(self): return self.navigator
     def get_onmessage(self): return self._get_handler("onmessage")
-    def set_onmessage(self, value): self._set_handler("onmessage", value)
+    def set_onmessage(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onmessage', value)
     def get_onerror(self): return self._get_handler("onerror")
-    def set_onerror(self, value): self._set_handler("onerror", value)
-    def fn_postMessage(self, value): self._runtime.post_to_parent(value)
-    def fn_close(self): self._runtime.stop()
+    def set_onerror(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onerror', value)
+    def fn_postMessage(self, value=MISSING, options=None, *_extra):
+        if value is MISSING:
+            raise missing_error('WorkerGlobalScope', 'postMessage', 1, 0, constructor=False)
+        transfer = message_transfer(options)
+        self._runtime.post_to_parent(value, transfer)
+    def fn_close(self, *_extra):
+        self._runtime.stop()
 
 
 @interface('DedicatedWorkerGlobalScope', 'WorkerGlobalScope', exposed_in=('Worker',))
@@ -72,7 +91,14 @@ class Worker(EventTarget):
         has_constructor=1,
     )
 
-    def __init__(self, script_url="", _realm=None, **kw):
+    def __init__(self, script_url=MISSING, options=None, *_extra, _realm=None, **kw):
+        if script_url is MISSING:
+            raise missing_error('Worker', 'constructor', 1, 0, constructor=True)
+        script_url = usv_string(script_url)
+        options = dictionary(options, name="WorkerOptions", prefix="Failed to construct 'Worker': ")
+        self._credentials = enum_value(options.get("credentials", "same-origin"), ("omit", "same-origin", "include"))
+        self._worker_name = dom_string(options.get("name", ""))
+        self._worker_type = enum_value(options.get("type", "classic"), ("classic", "module"))
         services = _realm
         super().__init__(services=services, **kw)
         self._services = services
@@ -86,14 +112,23 @@ class Worker(EventTarget):
         self._runtime = WorkerRuntime(self, self._script_url)
 
     def get_onmessage(self): return self._get_handler("onmessage")
-    def set_onmessage(self, value): self._set_handler("onmessage", value)
+    def set_onmessage(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onmessage', value)
     def get_onerror(self): return self._get_handler("onerror")
-    def set_onerror(self, value): self._set_handler("onerror", value)
+    def set_onerror(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onerror', value)
 
-    def fn_postMessage(self, value):
+    def fn_postMessage(self, value=MISSING, options=None, *_extra):
+        if value is MISSING:
+            raise missing_error('Worker', 'postMessage', 1, 0, constructor=False)
+        transfer = message_transfer(options)
         if self._terminated:
             raise InvalidStateError("Worker has been terminated")
-        self._runtime.post_from_parent(value)
+        self._runtime.post_from_parent(value, transfer)
 
     def _receive_message(self, value):
         if not self._terminated:
@@ -109,7 +144,7 @@ class Worker(EventTarget):
         self._services.task_services.complete_worker()
         self._services.worker_services.discard_worker(self)
 
-    def fn_terminate(self):
+    def fn_terminate(self, *_extra):
         if not self._terminated:
             self._terminated = True
             self._runtime.stop()

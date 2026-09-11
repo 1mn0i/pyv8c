@@ -145,7 +145,7 @@ def test_two_browsers_keep_generated_classes_and_templates_isolated(tmp_path):
         custom_browser.close()
 
 
-def test_two_browsers_compile_real_member_signatures_independently(tmp_path):
+def test_baseline_signatures_do_not_control_implementation_arguments(tmp_path):
     document = _baseline_document()
     contains = next(
         member for member in document["DOMTokenList"]["members"]["prototype"]
@@ -163,16 +163,14 @@ def test_two_browsers_compile_real_member_signatures_independently(tmp_path):
         default_page.set_content("<body></body>")
         strict_page.set_content("<body></body>")
         assert default_page.evaluate("document.body.classList.contains('x')") is False
-        assert strict_page.evaluate(
-            "try { document.body.classList.contains('x'); false } catch (e) { e instanceof TypeError }"
-        ) is True
+        assert strict_page.evaluate("document.body.classList.contains('x')") is False
         assert strict_page.evaluate("document.body.classList.contains('x', 'ignored')") is False
     finally:
         default_browser.close()
         strict_browser.close()
 
 
-def test_unresolved_real_member_is_rejected_but_unresolved_stub_is_allowed(tmp_path):
+def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_path):
     document = _baseline_document()
     contains = next(
         member for member in document["DOMTokenList"]["members"]["prototype"]
@@ -181,8 +179,12 @@ def test_unresolved_real_member_is_rejected_but_unresolved_stub_is_allowed(tmp_p
     contains["signature"]["status"] = "unresolved"
     path = tmp_path / "unresolved-real.json"
     path.write_text(json.dumps(document), encoding="utf-8")
-    with pytest.raises(TypeError, match=r"DOMTokenList\.contains has unresolved"):
-        Browser(interface_baseline_path=path, stub_logging="off", strict_validation=True)
+    browser = Browser(interface_baseline_path=path, stub_logging="off", strict_validation=True)
+    try:
+        page = browser.new_context().new_page()
+        assert page.evaluate("document.createElement('div').classList.contains('x')") is False
+    finally:
+        browser.close()
 
     document = _baseline_document()
     abort = next(

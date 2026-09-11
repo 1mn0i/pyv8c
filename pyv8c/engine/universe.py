@@ -4,7 +4,7 @@ Baseline file I/O and the two-level disk cache live in :mod:`.baseline`;
 this module keeps the per-Browser :class:`InterfaceUniverse` composition
 root.  The collaborators it assembles are: :mod:`.catalog` (hierarchy and
 exposure indexes), :mod:`.stubs` (generated API shells for unimplemented
-members), :mod:`.wrappers` (argument-validating callback wrappers),
+members), :mod:`.wrappers` (realm injection adapters),
 :mod:`.assembly` (immutable IDL compilation) and :mod:`.sessions` (the
 realm-local :class:`BindingSession`).
 """
@@ -12,14 +12,12 @@ realm-local :class:`BindingSession`).
 from __future__ import annotations
 
 import threading
-from dataclasses import replace
 
 from .baseline import (
     DEFAULT_BASELINE_PATH,
     BaselineRepository,
     BaselineSnapshot,
 )
-from .webidl import BindingPlan, MethodSpec, ParamSpec, compile_binding
 from .catalog import InterfaceCatalog
 from .stubs import StubFactory
 from .wrappers import BindingWrapperFactory
@@ -43,40 +41,8 @@ DEFAULT_EAGER_INTERFACES = (
     "MimeType",
 )
 
-#: Chromium declares these as ``(Node or DOMString)...``, but the generated
-#: binding tables collapse a trailing variadic list into an empty parameter
-#: table, so the extracted baseline records no parameters at all.  Without a
-#: variadic parameter the argument-validating wrapper would drop every
-#: argument and the operations could never see their nodes.  The override is
-#: applied only where the baseline really has no parameters, so a future
-#: extraction that recovers the list keeps precedence.
-#: Signatures the generated Chromium tables cannot express at all. Blink
-#: types ``insertAdjacentHTML``'s markup as ``V8UnionStringOrTrustedHTML``;
-#: this runtime has no trusted types, so the union collapses to the plain
-#: string branch a page actually passes.
-_SIGNATURE_OVERRIDES = {
-    ("Element", "insertAdjacentHTML"): MethodSpec(
-        (ParamSpec("DOMString"), ParamSpec("DOMString")), 2, None, False,
-    ),
-}
-
-_VARIADIC_PARAMETER_MEMBERS = frozenset((
-    ("Element", "append"), ("Element", "prepend"), ("Element", "replaceChildren"),
-    ("Element", "before"), ("Element", "after"), ("Element", "replaceWith"),
-    ("CharacterData", "before"), ("CharacterData", "after"),
-    ("CharacterData", "replaceWith"),
-    ("DocumentType", "before"), ("DocumentType", "after"),
-    ("DocumentType", "replaceWith"),
-    ("Document", "append"), ("Document", "prepend"), ("Document", "replaceChildren"),
-    ("DocumentFragment", "append"), ("DocumentFragment", "prepend"),
-    ("DocumentFragment", "replaceChildren"),
-))
-
-_VARIADIC_SPEC = MethodSpec((ParamSpec("any", variadic=True),), 0, None, True)
-
-
 class InterfaceUniverse:
-    """One isolated interface registry, binding plan, and class config set."""
+    """One isolated interface registry and class config set."""
 
     def __init__(self, baseline: BaselineSnapshot, *, registry, stub_logging="info",
                  expose_unimplemented=True, eager_interfaces=DEFAULT_EAGER_INTERFACES,
@@ -96,11 +62,10 @@ class InterfaceUniverse:
         # inserted twice, or an exposure table computed twice).
         self._lock = threading.RLock()
         self._classes: dict[str, type] = {}
-        self._plans: dict[tuple[str, str, str], BindingPlan] = {}
         self._catalog = InterfaceCatalog(baseline)
         self._exposure_names = {}
         # Collaborator factories: stubs generate unimplemented-member shells,
-        # wrappers adapt hand-written callbacks with argument validation, and
+        # adapters inject realm dependencies into callbacks, and
         # the compiler combines both into immutable native descriptions.
         self._stubs = StubFactory(self.stub_logging)
         self._wrappers = BindingWrapperFactory(self)
@@ -150,7 +115,6 @@ class InterfaceUniverse:
             if candidates:
                 candidates.sort(key=lambda item: (
                     item[1].get("world") not in (None, "AllWorlds", "MainWorld"),
-                    (item[1].get("signature") or {}).get("status") == "unresolved",
                 ))
                 return current, candidates[0][0], candidates[0][1]
             current = self.spec(current).get("parent")
@@ -161,34 +125,6 @@ class InterfaceUniverse:
                 if member.get("name") == public_name and member.get("kind") == kind:
                     return candidate_name, location, member
         return None
-
-    def binding_plan(self, interface_name, public_name, kind="operation"):
-        key = (interface_name, public_name, kind)
-        with self._lock:
-            plan = self._plans.get(key)
-            if plan is not None:
-                return plan
-        if kind == "constructor":
-            signature = (self.spec(interface_name).get("constructor") or {}).get("signature")
-        else:
-            found = self._member(interface_name, public_name, "attribute" if kind == "attribute" else "operation")
-            if found is None:
-                raise TypeError(f"{interface_name}.{public_name} is not present in Chromium interface baseline")
-            _owner, _location_name, member = found
-            signature = member.get("setter_signature") if kind == "attribute" else member.get("signature")
-        plan = compile_binding(interface_name, public_name, kind, signature)
-        override = _SIGNATURE_OVERRIDES.get((interface_name, public_name))
-        if override is not None and plan.resolved:
-            plan = replace(plan, signature=override, overload_plans=())
-        elif (not plan.signature.params and plan.resolved
-                and (interface_name, public_name) in _VARIADIC_PARAMETER_MEMBERS):
-            plan = replace(plan, signature=_VARIADIC_SPEC, overload_plans=())
-        with self._lock:
-            existing = self._plans.get(key)
-            if existing is not None:
-                return existing
-            self._plans[key] = plan
-            return plan
 
     def class_for(self, name):
         """Return the one canonical class object per interface name.

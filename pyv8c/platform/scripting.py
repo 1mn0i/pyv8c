@@ -69,6 +69,8 @@ class ScriptController:
 
     def js_error_value(self, exc):
         """Materialize a rejected Promise reason as a native JS error object."""
+        if isinstance(exc, pyv8.JSException):
+            return exc.original
         error = as_js_error(exc)
         name = getattr(error, "_name", None)
         if not name:

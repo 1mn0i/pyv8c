@@ -12,6 +12,7 @@ def _context_kwargs(session, context_type, trace, on_materialize=None, trace_cal
     """Shared native Context arguments assembled from one binding session."""
     return {
         "trace": trace,
+        "preserve_arguments": True,
         "traceable": traceable,
         "trace_callback": (log_trace if trace_callback is None else trace_callback) if trace or traceable else None,
         "ctx_type": context_type,
@@ -117,7 +118,7 @@ class PageRealm:
         )
         lazy_registered_at = time.perf_counter_ns()
         browser._record_startup(
-            binding_plan_ms=(binding_prepared - binding_started) / 1_000_000,
+            binding_assembly_ms=(binding_prepared - binding_started) / 1_000_000,
             context_create_ms=(context_created - binding_prepared) / 1_000_000,
             lazy_register_ms=(lazy_registered_at - context_created) / 1_000_000,
             eager_interfaces=len(self.binding_session.materialized_interfaces),

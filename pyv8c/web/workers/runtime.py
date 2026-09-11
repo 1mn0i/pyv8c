@@ -82,16 +82,12 @@ class WorkerRuntime:
     def _report_error(self, exc):
         self.services.task_services.post_task(lambda: self.owner._receive_error(exc))
 
-    def post_from_parent(self, value):
+    def post_from_parent(self, value, transfer=()):
         if not self._stop.is_set():
-            self.executor.post(self._dispatch_message, structured_clone(value))
+            self.executor.post(self._dispatch_message, structured_clone(value, transfer))
 
-    def post_to_parent(self, value):
-        try:
-            value = structured_clone(value, context=self._context)
-        except BaseException as exc:
-            self._report_error(exc)
-            return
+    def post_to_parent(self, value, transfer=()):
+        value = structured_clone(value, transfer, context=self._context)
         self.services.task_services.post_task(lambda: self.owner._receive_message(value))
 
     def stop(self):

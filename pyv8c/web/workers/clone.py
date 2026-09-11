@@ -2,7 +2,18 @@
 
 import pyv8
 
+from ...foundation.arguments import MISSING, dictionary, is_nullish, materialize, sequence
 from ...foundation.errors import DataCloneError
+
+
+def message_transfer(value):
+    if is_nullish(value):
+        return ()
+    iterator = value._iterator_method() if isinstance(value, pyv8.JSObject) else MISSING
+    if isinstance(value, (list, tuple)) or (iterator is not MISSING and not is_nullish(iterator)):
+        return sequence(value, iterator_method=iterator)
+    options = dictionary(value, name="PostMessageOptions")
+    return sequence(options.get("transfer", ()))
 
 
 def structured_clone(value, transfer=(), context=None):
@@ -12,6 +23,8 @@ def structured_clone(value, transfer=(), context=None):
 
     def clone(item):
         from ..fetch.blob import Blob
+
+        item = materialize(item)
 
         if item is None or item is pyv8.Null or item is pyv8.Undefined:
             return item

@@ -262,7 +262,7 @@ def test_dom_token_list_validation_is_atomic_and_uses_dom_exceptions(page):
   const tokens = document.getElementById('root').classList;
   const errors = [];
   for (const token of ['', 'a b']) {
-    try { tokens.contains(token); }
+    try { tokens.add(token); }
     catch (e) { errors.push([e.name, e.code, e instanceof DOMException, e.message]); }
   }
   try { tokens.add('new', ''); } catch (e) {}
@@ -276,10 +276,10 @@ def test_dom_token_list_validation_is_atomic_and_uses_dom_exceptions(page):
 """)
     assert result == [
         [
-            ["SyntaxError", 12, True, "The token provided must not be empty."],
+            ["SyntaxError", 12, True, "Failed to execute 'add' on 'DOMTokenList': The token provided must not be empty."],
             [
                 "InvalidCharacterError", 5, True,
-                "The token provided contains HTML space characters, which are not valid in tokens.",
+                "Failed to execute 'add' on 'DOMTokenList': The token provided ('a b') contains HTML space characters, which are not valid in tokens.",
             ],
         ],
         True,

@@ -1,15 +1,23 @@
 """DOM event model: events and the target dispatch pipeline."""
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
-
 import time
 
 import pyv8
-
-
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.registry import interface
+from ...foundation.arguments import (
+    MISSING,
+    boolean,
+    callback_value,
+    dictionary,
+    dom_string,
+    event_handler,
+    event_listener,
+    interface_value,
+    is_nullish,
+    missing_error,
+)
 from ...foundation.errors import V8TypeError
-
 
 _DOCUMENT_NODE = 9  # DOM standard nodeType of Document; hardcoded to avoid a model import cycle.
 
@@ -61,13 +69,24 @@ class Event:
         to_string_tag="Event",
         has_constructor=1,
     )
-    def __init__(self, event_type="", options=None, **_):
+    def __init__(self, event_type=MISSING, options=None, *_extra, **_):
+        if event_type is MISSING:
+            raise missing_error(type(self).__idl_spec__.name, 'constructor', 1, 0, constructor=True)
+        event_type = dom_string(event_type)
+        if options is pyv8.Undefined:
+            options = None
+        if options is not pyv8.Undefined:
+            if not is_nullish(options):
+                options = dictionary(options)
         options = options if isinstance(options, dict) else {}
-        self.type, self.bubbles, self.cancelable = str(event_type), bool(options.get("bubbles", False)), bool(options.get("cancelable", False))
+        self.type, self.bubbles, self.cancelable = str(event_type), boolean(options.get("bubbles", False)), boolean(options.get("cancelable", False))
         self.target = self.currentTarget = None; self.eventPhase = 0; self.defaultPrevented = False
         self._stop = self._immediate = False; self._path = []; self._passive = False
-        self._time_stamp = time.time() * 1000.0; self._trusted = bool(options.get("isTrusted", False))
-        self._composed = bool(options.get("composed", False)); self._persisted = bool(options.get("persisted", False))
+        self._composed = boolean(options.get("composed", False))
+        self._time_stamp = time.time() * 1000.0
+        # Trust is host state, never an EventInit member.
+        self._trusted = bool(options.get("isTrusted", False)) if type(options) is dict else False
+        self._persisted = bool(options.get("persisted", False)) if type(options) is dict else False
     def get_type(self): return self.type
     def get_target(self): return self.target or pyv8.Null
     def get_currentTarget(self): return self.currentTarget or pyv8.Null
@@ -76,19 +95,25 @@ class Event:
     def get_defaultPrevented(self): return self.defaultPrevented
     def get_eventPhase(self): return self.eventPhase
     def get_cancelBubble(self): return self._stop
-    def set_cancelBubble(self, value): self._stop = bool(value)
+    def set_cancelBubble(self, value):
+        value = boolean(value)
+        self._stop = bool(value)
     def get_timeStamp(self): return self._time_stamp
     def get_isTrusted(self): return self._trusted
     def get_composed(self): return self._composed
     def get_persisted(self): return self._persisted
     def get_returnValue(self): return not self.defaultPrevented
     def set_returnValue(self, value):
+        value = boolean(value)
         if not value and self.cancelable: self.defaultPrevented = True
-    def fn_preventDefault(self):
+    def fn_preventDefault(self, *_extra):
         if self.cancelable and not self._passive: self.defaultPrevented = True
-    def fn_stopPropagation(self): self._stop = True
-    def fn_stopImmediatePropagation(self): self._stop = self._immediate = True
-    def fn_composedPath(self): return list(self._path)
+    def fn_stopPropagation(self, *_extra):
+        self._stop = True
+    def fn_stopImmediatePropagation(self, *_extra):
+        self._stop = self._immediate = True
+    def fn_composedPath(self, *_extra):
+        return list(self._path)
 
 
 @interface('UIEvent', 'Event')
@@ -127,7 +152,15 @@ class CustomEvent(Event):
         to_string_tag="CustomEvent",
         has_constructor=1,
     )
-    def __init__(self, event_type="", options=None, **kw):
+    def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
+        if event_type is MISSING:
+            raise missing_error('CustomEvent', 'constructor', 1, 0, constructor=True)
+        event_type = dom_string(event_type)
+        if options is pyv8.Undefined:
+            options = None
+        if options is not pyv8.Undefined:
+            if not is_nullish(options):
+                options = dictionary(options)
         super().__init__(event_type, options, **kw)
         options = options if isinstance(options, dict) else {}
         self.detail = options.get("detail", pyv8.Null)
@@ -173,44 +206,94 @@ class EventTarget:
         has_constructor=1,
     )
 
-    def __init__(self, services=None, **_):
+    def __init__(self, *_extra, services=None, **_):
+        if services is pyv8.Undefined:
+            services = None
         self._services = services
         self._listeners = {}
         self._listener_order = 0
         self._handlers = {}
 
     def _get_handler(self, name): return self._handlers.get(name, pyv8.Null)
-    def _set_handler(self, name, value): self._handlers[name] = value
+    def _set_handler(self, name, value): self._handlers[name] = event_handler(value)
     def get_onload(self): return self._get_handler("onload")
-    def set_onload(self, value): self._set_handler("onload", value)
+    def set_onload(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onload', value)
     def get_onerror(self): return self._get_handler("onerror")
-    def set_onerror(self, value): self._set_handler("onerror", value)
+    def set_onerror(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onerror', value)
     def get_onreadystatechange(self): return self._get_handler("onreadystatechange")
-    def set_onreadystatechange(self, value): self._set_handler("onreadystatechange", value)
+    def set_onreadystatechange(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onreadystatechange', value)
     def get_onpageshow(self): return self._get_handler("onpageshow")
-    def set_onpageshow(self, value): self._set_handler("onpageshow", value)
+    def set_onpageshow(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onpageshow', value)
     def get_onpagehide(self): return self._get_handler("onpagehide")
-    def set_onpagehide(self, value): self._set_handler("onpagehide", value)
+    def set_onpagehide(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onpagehide', value)
     def get_onunload(self): return self._get_handler("onunload")
-    def set_onunload(self, value): self._set_handler("onunload", value)
+    def set_onunload(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onunload', value)
     def get_onbeforeunload(self): return self._get_handler("onbeforeunload")
-    def set_onbeforeunload(self, value): self._set_handler("onbeforeunload", value)
+    def set_onbeforeunload(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onbeforeunload', value)
 
-    def fn_addEventListener(self, event_type, listener, options=False):
-        capture = bool(options.get("capture", False)) if isinstance(options, dict) else bool(options)
+    def fn_addEventListener(self, event_type=MISSING, listener=MISSING, options=False, *_extra):
+        if event_type is MISSING:
+            raise missing_error('EventTarget', 'addEventListener', 2, 0, constructor=False)
+        if listener is MISSING:
+            raise missing_error('EventTarget', 'addEventListener', 2, 1, constructor=False)
+        event_type = dom_string(event_type)
+        if not is_nullish(listener):
+            listener = event_listener(listener)
+        if options is pyv8.Undefined:
+            options = False
+        if isinstance(options, pyv8.JSObject):
+            options = dictionary(options)
+        capture = boolean(options.get("capture", False)) if isinstance(options, dict) else boolean(options)
         once = bool(options.get("once", False)) if isinstance(options, dict) else False
         passive = bool(options.get("passive", False)) if isinstance(options, dict) else False
         signal = options.get("signal") if isinstance(options, dict) else None
+        if is_nullish(listener):
+            return
         bucket = self._listeners.setdefault(str(event_type), [])
         if not any(item[0] is listener and item[1] == capture for item in bucket):
             self._listener_order += 1; bucket.append((listener, capture, once, passive, signal, self._listener_order))
 
-    def fn_removeEventListener(self, event_type, listener, options=False):
-        capture = bool(options.get("capture", False)) if isinstance(options, dict) else bool(options)
+    def fn_removeEventListener(self, event_type=MISSING, listener=MISSING, options=False, *_extra):
+        if event_type is MISSING:
+            raise missing_error('EventTarget', 'removeEventListener', 2, 0, constructor=False)
+        if listener is MISSING:
+            raise missing_error('EventTarget', 'removeEventListener', 2, 1, constructor=False)
+        event_type = dom_string(event_type)
+        if not is_nullish(listener):
+            listener = event_listener(listener)
+        if options is pyv8.Undefined:
+            options = False
+        if isinstance(options, pyv8.JSObject):
+            options = dictionary(options)
+        capture = boolean(options.get("capture", False)) if isinstance(options, dict) else boolean(options)
         bucket = self._listeners.get(str(event_type), [])
         self._listeners[str(event_type)] = [x for x in bucket if not (x[0] is listener and x[1] == capture)]
 
-    def fn_dispatchEvent(self, event):
+    def fn_dispatchEvent(self, event=MISSING, *_extra):
+        if event is MISSING:
+            raise missing_error('EventTarget', 'dispatchEvent', 1, 0, constructor=False)
+        event = interface_value(event, 'Event', 'EventTarget', 'dispatchEvent', 1, nullable=False)
         if not isinstance(event, Event):
             raise V8TypeError("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
         event.target = event.target or self
@@ -243,7 +326,15 @@ class EventTarget:
             if registered_capture != capture:
                 continue
             if signal is not None and getattr(signal, "aborted", False): continue
-            event._passive = passive; _js_call(listener, self, event); event._passive = False
+            event._passive = passive
+            try:
+                if callable(listener):
+                    _js_call(listener, self, event)
+                else:
+                    callback = listener._get("handleEvent") if isinstance(listener, pyv8.JSObject) else listener.get("handleEvent")
+                    _js_call(callback_value(callback), listener, event)
+            finally:
+                event._passive = False
             if once: self._listeners[event.type] = [x for x in self._listeners.get(event.type, ()) if x[0] is not listener or x[1] != registered_capture]
             if event._immediate:
                 return

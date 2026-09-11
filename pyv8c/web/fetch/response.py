@@ -1,12 +1,13 @@
 """Fetch response model."""
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
-
 import json
 
-
-
+import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.registry import interface
+from ...foundation.arguments import byte_string, dictionary, integer, is_nullish, usv_string
+from ...foundation.errors import V8RangeError, V8SyntaxError, V8TypeError
+from .blob import Blob
 from .headers import Headers
 
 
@@ -33,14 +34,33 @@ class Response:
         has_constructor=1,
     )
 
-    def __init__(self, body="", options=None, services=None, _realm=None, **_):
+    def __init__(self, body=None, options=None, *_extra, services=None, _realm=None, **_):
+        if body is pyv8.Undefined:
+            body = None
+        if isinstance(body, Blob):
+            body = body._data
+        elif not is_nullish(body) and not isinstance(body, bytes):
+            body = usv_string(body)
+        if options is pyv8.Undefined:
+            options = None
+        if options is not pyv8.Undefined:
+            if not is_nullish(options):
+                options = dictionary(options)
+        if services is pyv8.Undefined:
+            services = None
         options = options if isinstance(options, dict) else {}
         self._services = services or _realm
         self.body = body
-        self.status = int(options.get("status", 200))
-        self.status_text = str(options.get("statusText", options.get("reason", "")))
-        self.url = str(options.get("url", ""))
         self.headers = Headers(options.get("headers"))
+        self.status = integer(options.get("status", 200), bits=16)
+        self.status_text = byte_string(options.get("statusText", options.get("reason", "")))
+        if _realm is not None and not 200 <= self.status <= 599:
+            raise V8RangeError("Failed to construct 'Response': The status provided (" + str(self.status) + ") is outside the range [200, 599].")
+        if _realm is not None and self.status in (204, 205, 304) and not is_nullish(body):
+            raise V8TypeError("Failed to construct 'Response': Response with null body status cannot have body")
+        if any(character in self.status_text for character in "\r\n"):
+            raise V8TypeError("Failed to construct 'Response': Invalid statusText")
+        self.url = str(options.get("url", ""))
         self.redirected = bool(options.get("redirected", False))
         self.type = str(options.get("type", "basic"))
         self.body_used = False
@@ -55,19 +75,52 @@ class Response:
     def get_bodyUsed(self): return self.body_used
 
     def body_text(self):
-        return self.body.decode("utf-8", "replace") if isinstance(self.body, bytes) else str(self.body)
+        if is_nullish(self.body):
+            return ""
+        return self.body.decode("utf-8", "replace") if isinstance(self.body, bytes) else usv_string(self.body)
 
     def _body_value(self):
+        if self.body_used:
+            raise V8TypeError("Body has already been consumed.")
         self.body_used = True
         return self.body_text()
 
     def _result(self, value):
         return self._services.realm_services.promise_resolve(value) if self._services else value
 
-    def fn_text(self): return self._result(self._body_value())
-    def fn_json(self): return self._result(json.loads(self._body_value()))
-    def fn_arrayBuffer(self):
-        return self._result(self.body if isinstance(self.body, bytes) else self._body_value().encode())
+    def fn_text(self, *_extra):
+        if not self._services:
+            return self._body_value()
+        promise, resolve, reject = self._services.realm_services.make_promise()
+        try:
+            resolve(self._body_value())
+        except (V8TypeError, pyv8.JSException, UnicodeError) as exc:
+            reject(self._services.realm_services.js_error_value(exc))
+        return promise
+    def fn_json(self, *_extra):
+        if not self._services:
+            return json.loads(self._body_value())
+        promise, resolve, reject = self._services.realm_services.make_promise()
+        try:
+            text = self._body_value()
+            try:
+                value = json.loads(text)
+            except ValueError as exc:
+                raise V8SyntaxError(str(exc)) from exc
+            resolve(value)
+        except (V8TypeError, V8SyntaxError, pyv8.JSException, UnicodeError) as exc:
+            reject(self._services.realm_services.js_error_value(exc))
+        return promise
+    def fn_arrayBuffer(self, *_extra):
+        if not self._services:
+            return self._body_value().encode()
+        promise, resolve, reject = self._services.realm_services.make_promise()
+        try:
+            text = self._body_value()
+            resolve(self.body if isinstance(self.body, bytes) else text.encode())
+        except (V8TypeError, pyv8.JSException, UnicodeError) as exc:
+            reject(self._services.realm_services.js_error_value(exc))
+        return promise
 
 
 __all__ = ["Response"]

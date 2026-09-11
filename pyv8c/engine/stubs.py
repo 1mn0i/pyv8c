@@ -10,8 +10,6 @@ from __future__ import annotations
 import pyv8
 from loguru import logger
 
-from .webidl import validate_arguments
-
 
 def mark_stub(callback):
     """Mark generated placeholders for Python diagnostics only."""
@@ -29,11 +27,8 @@ class StubFactory:
         if self.stub_logging not in ("off", "none", "disabled"):
             logger.info(message, *args)
 
-    def method(self, interface_name, member_name, plan, *, static=False):
+    def method(self, interface_name, member_name, *, static=False):
         def callback(*args):
-            values = args if static else args[1:]
-            if plan.resolved:
-                validate_arguments(plan, values)
             self._log("pyv8c: {}.{}() 待实现", interface_name, member_name)
             return pyv8.Undefined
         callback.__name__ = f"_pyv8c_stub_method_{interface_name}_{member_name}"
@@ -46,11 +41,8 @@ class StubFactory:
         getter.__name__ = f"_pyv8c_stub_get_{interface_name}_{member_name}"
         return mark_stub(getter)
 
-    def setter(self, interface_name, member_name, plan):
+    def setter(self, interface_name, member_name):
         def setter(*args):
-            values = args[1:] if len(args) > 1 else args
-            if plan.resolved:
-                validate_arguments(plan, values)
             self._log("pyv8c: {}.{} setter 待实现", interface_name, member_name)
         setter.__name__ = f"_pyv8c_stub_set_{interface_name}_{member_name}"
         return mark_stub(setter)

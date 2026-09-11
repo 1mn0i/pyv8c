@@ -444,7 +444,7 @@ class Browser:
             "eager_interfaces": len(self.interface_universe.eager_names("Window")),
             "lazy_interfaces": max(0, len(self.interface_universe.interface_names("Window")) - len(self.interface_universe.eager_names("Window"))),
             "materialized_interfaces": 0,
-            "binding_plan_ms": 0.0,
+            "binding_assembly_ms": 0.0,
             "context_create_ms": 0.0,
             "lazy_register_ms": 0.0,
             "lazy_registered": 0,

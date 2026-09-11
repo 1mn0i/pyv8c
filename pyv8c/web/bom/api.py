@@ -1,17 +1,26 @@
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
-from pyv8.flag import FlagLocation, FlagReceiverCheck, FlagCrossOriginCheck
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
 
-
-
-from ..dom.model import Event, EventTarget
 from ...engine.registry import interface
-from ..fetch.blob import Blob
-from ...foundation.errors import SecurityError, V8URIError, V8TypeError, InvalidStateError
+from ...foundation.arguments import (
+    MISSING,
+    dictionary,
+    dom_string,
+    integer,
+    interface_value,
+    is_nullish,
+    missing_error,
+    sequence,
+    usv_string,
+)
 from ...foundation.environment import BrowserEnvironment
+from ...foundation.errors import InvalidStateError, SecurityError, V8TypeError, V8URIError
 from ...foundation.urls import SPECIAL_SCHEMES
+from ..dom.model import Event, EventTarget
+from ..fetch.blob import Blob
 
 
 @interface('Location', None)
@@ -25,6 +34,7 @@ class Location:
     def _parts(self): self._require_access(); return urlsplit(self.href)
     def get_href(self): self._require_access(); return self.href
     def set_href(self, value):
+        value = dom_string(value)
         target = urljoin(self.href, str(value))
         if self._services is not None:
             self._services.document_services.request_navigation(target)
@@ -114,13 +124,31 @@ class Storage:
     )
     def __init__(self, **_): self._data = {}
     def get_length(self): return len(self._data)
-    def fn_getItem(self, key): return self._data.get(str(key), None)
-    def fn_setItem(self, key, value): self._data[str(key)] = str(value)
-    def fn_removeItem(self, key): self._data.pop(str(key), None)
-    def fn_clear(self): self._data.clear()
-    def fn_key(self, index):
-        try: return list(self._data)[int(index)]
-        except (IndexError, ValueError): return None
+    def fn_getItem(self, key=MISSING, *_extra):
+        if key is MISSING:
+            raise missing_error('Storage', 'getItem', 1, 0, constructor=False)
+        key = dom_string(key)
+        return self._data.get(str(key), pyv8.Null)
+    def fn_setItem(self, key=MISSING, value=MISSING, *_extra):
+        if key is MISSING:
+            raise missing_error('Storage', 'setItem', 2, 0, constructor=False)
+        if value is MISSING:
+            raise missing_error('Storage', 'setItem', 2, 1, constructor=False)
+        key = dom_string(key)
+        value = dom_string(value)
+        self._data[str(key)] = str(value)
+    def fn_removeItem(self, key=MISSING, *_extra):
+        if key is MISSING:
+            raise missing_error('Storage', 'removeItem', 1, 0, constructor=False)
+        key = dom_string(key)
+        self._data.pop(str(key), None)
+    def fn_clear(self, *_extra):
+        self._data.clear()
+    def fn_key(self, index=MISSING, *_extra):
+        if index is MISSING:
+            raise missing_error('Storage', 'key', 1, 0, constructor=False)
+        index = integer(index)
+        return list(self._data)[index] if index < len(self._data) else pyv8.Null
 
 
 @interface('URLSearchParams', None)
@@ -141,10 +169,27 @@ class URLSearchParams:
         has_constructor=1,
     )
 
-    def __init__(self, init="", _url=None, **_):
+    def __init__(self, init='', *_extra, _url=None, **_):
+        if init is pyv8.Undefined:
+            init = ''
         from urllib.parse import parse_qsl
         self._url = _url
-        self._items = list(parse_qsl(str(init).lstrip("?"), keep_blank_values=True)) if not isinstance(init, dict) else list(init.items())
+        iterable = isinstance(init, (list, tuple))
+        iterator = MISSING
+        if isinstance(init, pyv8.JSObject):
+            iterator = init._iterator_method()
+            iterable = not is_nullish(iterator)
+        if iterable:
+            def convert_pair(entry):
+                pair = sequence(entry, usv_string)
+                if len(pair) != 2:
+                    raise V8TypeError("Failed to construct 'URLSearchParams': Sequence initializer must only contain pair elements.")
+                return tuple(pair)
+            self._items = sequence(init, convert_pair, iterator_method=iterator)
+        elif isinstance(init, (dict, pyv8.JSObject)):
+            self._items = [(usv_string(key), usv_string(value)) for key, value in dictionary(init).items()]
+        else:
+            self._items = list(parse_qsl(usv_string(init).lstrip("?"), keep_blank_values=True))
 
     def _refresh(self):
         if self._url is not None:
@@ -156,25 +201,49 @@ class URLSearchParams:
             from urllib.parse import urlencode
             self._url._set_search_from_params(urlencode(self._items))
 
-    def fn_append(self, name, value):
+    def fn_append(self, name=MISSING, value=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('URLSearchParams', 'append', 2, 0, constructor=False)
+        if value is MISSING:
+            raise missing_error('URLSearchParams', 'append', 2, 1, constructor=False)
+        name = dom_string(name)
+        value = dom_string(value)
         self._refresh(); self._items.append((str(name), str(value))); self._commit()
 
-    def fn_delete(self, name):
+    def fn_delete(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('URLSearchParams', 'delete', 1, 0, constructor=False)
+        name = dom_string(name)
         self._refresh(); name = str(name); self._items = [(k, v) for k, v in self._items if k != name]; self._commit()
 
-    def fn_get(self, name):
+    def fn_get(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('URLSearchParams', 'get', 1, 0, constructor=False)
+        name = dom_string(name)
         self._refresh(); name = str(name)
         for key, value in self._items:
             if key == name: return value
         return pyv8.Null
 
-    def fn_getAll(self, name):
+    def fn_getAll(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('URLSearchParams', 'getAll', 1, 0, constructor=False)
+        name = dom_string(name)
         self._refresh(); name = str(name); return [value for key, value in self._items if key == name]
 
-    def fn_has(self, name):
+    def fn_has(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('URLSearchParams', 'has', 1, 0, constructor=False)
+        name = dom_string(name)
         self._refresh(); name = str(name); return any(key == name for key, _ in self._items)
 
-    def fn_set(self, name, value):
+    def fn_set(self, name=MISSING, value=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('URLSearchParams', 'set', 2, 0, constructor=False)
+        if value is MISSING:
+            raise missing_error('URLSearchParams', 'set', 2, 1, constructor=False)
+        name = dom_string(name)
+        value = dom_string(value)
         self._refresh(); name, value = str(name), str(value)
         replaced = False; result = []
         for key, old_value in self._items:
@@ -184,10 +253,10 @@ class URLSearchParams:
         if not replaced: result.append((name, value))
         self._items = result; self._commit()
 
-    def fn_sort(self):
+    def fn_sort(self, *_extra):
         self._refresh(); self._items.sort(key=lambda item: item[0]); self._commit()
 
-    def fn_toString(self):
+    def fn_toString(self, *_extra):
         from urllib.parse import urlencode
         self._refresh()
         return urlencode(self._items)
@@ -195,9 +264,18 @@ class URLSearchParams:
 
 @interface('URL', None)
 class URL:
-    def __init__(self, url="", base=None, _realm=None, **_):
+    def __init__(self, url=MISSING, base=pyv8.Undefined, *_extra, _realm=None, **_):
+        if url is MISSING:
+            raise missing_error('URL', 'constructor', 1, 0, constructor=True)
+        url = usv_string(url)
+        base = None if base is pyv8.Undefined else usv_string(base)
         self._realm = _realm
-        self.href = self._resolve(url, base)
+        try:
+            if base is not None:
+                base = self._resolve(base)
+            self.href = self._resolve(url, base)
+        except V8TypeError as exc:
+            raise V8TypeError("Failed to construct 'URL': Invalid URL") from exc
         self._search_params = None
 
     @staticmethod
@@ -226,7 +304,9 @@ class URL:
 
     def _set_search_from_params(self, query): self._replace(query=str(query))
     def get_href(self): return self.href
-    def set_href(self, value): self.href = self._resolve(value, self.href)
+    def set_href(self, value):
+        value = dom_string(value)
+        self.href = self._resolve(value, self.href)
     def get_origin(self):
         parts = self._parts()
         if parts.scheme not in SPECIAL_SCHEMES or not parts.netloc:
@@ -238,66 +318,100 @@ class URL:
     def get_protocol(self):
         scheme = self._parts().scheme
         return scheme + ":" if scheme else ""
-    def set_protocol(self, value): self._replace(scheme=str(value).rstrip(":"))
+    def set_protocol(self, value):
+        value = dom_string(value)
+        self._replace(scheme=str(value).rstrip(':'))
     def get_username(self): return self._parts().username or ""
-    def set_username(self, value): self._set_credentials(username=str(value), password=self.get_password())
+    def set_username(self, value):
+        value = dom_string(value)
+        self._set_credentials(username=str(value), password=self.get_password())
     def get_password(self): return self._parts().password or ""
-    def set_password(self, value): self._set_credentials(username=self.get_username(), password=str(value))
+    def set_password(self, value):
+        value = dom_string(value)
+        self._set_credentials(username=self.get_username(), password=str(value))
     def _set_credentials(self, *, username, password):
         parts = self._parts(); host = parts.hostname or ""
         if parts.port is not None: host += ":" + str(parts.port)
         credentials = (username + (":" + password if password else "") + "@") if username or password else ""
         self._replace(netloc=credentials + host)
     def get_host(self): return self._parts().netloc.rsplit("@", 1)[-1]
-    def set_host(self, value): self._replace(netloc=str(value))
+    def set_host(self, value):
+        value = dom_string(value)
+        self._replace(netloc=str(value))
     def get_hostname(self): return self._parts().hostname or ""
     def set_hostname(self, value):
+        value = dom_string(value)
         parts = self._parts(); credentials = parts.netloc.rsplit("@", 1)[0] + "@" if "@" in parts.netloc else ""
         port = ":" + str(parts.port) if parts.port is not None else ""
         self._replace(netloc=credentials + str(value) + port)
     def get_port(self): return str(self._parts().port or "")
     def set_port(self, value):
+        value = dom_string(value)
         parts = self._parts(); credentials = parts.netloc.rsplit("@", 1)[0] + "@" if "@" in parts.netloc else ""
         self._replace(netloc=credentials + (parts.hostname or "") + ((":" + str(value)) if str(value) else ""))
     def get_pathname(self):
         path = self._parts().path
         return path or ("/" if self._parts().netloc else "")
-    def set_pathname(self, value): self._replace(path=str(value) or "/")
+    def set_pathname(self, value):
+        value = dom_string(value)
+        self._replace(path=str(value) or '/')
     def get_search(self):
         query = self._parts().query
         return ("?" + query) if query else ""
-    def set_search(self, value): self._replace(query=str(value).lstrip("?"))
+    def set_search(self, value):
+        value = dom_string(value)
+        self._replace(query=str(value).lstrip('?'))
     def get_hash(self):
         fragment = self._parts().fragment
         return ("#" + fragment) if fragment else ""
-    def set_hash(self, value): self._replace(fragment=str(value).lstrip("#"))
+    def set_hash(self, value):
+        value = dom_string(value)
+        self._replace(fragment=str(value).lstrip('#'))
     def get_searchParams(self):
         if self._search_params is None:
             self._search_params = URLSearchParams(self.get_search(), _url=self)
         return self._search_params
-    def fn_toString(self): return self.href
-    def fn_toJSON(self): return self.href
+    def fn_toString(self, *_extra):
+        return self.href
+    def fn_toJSON(self, *_extra):
+        return self.href
 
     @staticmethod
-    def fn_canParse(url, base=None):
+    def fn_canParse(url=MISSING, base=pyv8.Undefined, *_extra):
+        if url is MISSING:
+            raise missing_error('URL', 'canParse', 1, 0, constructor=False)
+        url = dom_string(url)
+        if base is not pyv8.Undefined:
+            base = dom_string(base)
         try: URL(url, base)
         except (V8URIError, TypeError, ValueError): return False
         return True
 
     @staticmethod
-    def fn_parse(url, base=None):
+    def fn_parse(url=MISSING, base=pyv8.Undefined, *_extra):
+        if url is MISSING:
+            raise missing_error('URL', 'parse', 1, 0, constructor=False)
+        url = dom_string(url)
+        if base is not pyv8.Undefined:
+            base = dom_string(base)
         try: return URL(url, base)
         except (V8URIError, TypeError, ValueError): return pyv8.Null
 
     @staticmethod
-    def fn_createObjectURL(_realm, blob):
+    def fn_createObjectURL(_realm, blob=MISSING, *_extra):
+        if blob is MISSING:
+            raise missing_error('URL', 'createObjectURL', 1, 0, constructor=False)
+        blob = interface_value(blob, 'Blob', 'URL', 'createObjectURL', 1, nullable=False)
         services = _realm
         if services is None or services.realm_services.closed: raise InvalidStateError("The execution context is no longer active")
         if not isinstance(blob, Blob): raise V8TypeError("The object is not a Blob")
         return services.context_services.create_blob_url(blob, realm=services.realm_services)
 
     @staticmethod
-    def fn_revokeObjectURL(_realm, url):
+    def fn_revokeObjectURL(_realm, url=MISSING, *_extra):
+        if url is MISSING:
+            raise missing_error('URL', 'revokeObjectURL', 1, 0, constructor=False)
+        url = dom_string(url)
         services = _realm
         if services is None or services.realm_services.closed: raise InvalidStateError("The execution context is no longer active")
         services.context_services.revoke_blob_url(str(url))
@@ -401,15 +515,37 @@ class History:
         target = self._url(url) if url is not None else self._services.realm_services.url
         if not same_origin(self._services.realm_services.url, target): raise SecurityError("A history state URL must be same-origin")
         return target
-    def fn_pushState(self, state, unused="", url=None):
+    def fn_pushState(self, state=MISSING, unused=MISSING, url=None, *_extra):
+        if state is MISSING:
+            raise missing_error('History', 'pushState', 2, 0, constructor=False)
+        if unused is MISSING:
+            raise missing_error('History', 'pushState', 2, 1, constructor=False)
+        unused = dom_string(unused)
+        if url is pyv8.Undefined:
+            url = None
+        url = None if is_nullish(url) else usv_string(url)
         target = self._validate_target(url)
         self._entries = self._entries[:self._index + 1] + [(target, state)]; self._index += 1; self._services.document_services.window.location.href = target
-    def fn_replaceState(self, state, unused="", url=None):
+    def fn_replaceState(self, state=MISSING, unused=MISSING, url=None, *_extra):
+        if state is MISSING:
+            raise missing_error('History', 'replaceState', 2, 0, constructor=False)
+        if unused is MISSING:
+            raise missing_error('History', 'replaceState', 2, 1, constructor=False)
+        unused = dom_string(unused)
+        if url is pyv8.Undefined:
+            url = None
+        url = None if is_nullish(url) else usv_string(url)
         target = self._validate_target(url)
         self._entries[self._index] = (target, state); self._services.document_services.window.location.href = target
-    def fn_back(self): return self.fn_go(-1)
-    def fn_forward(self): return self.fn_go(1)
-    def fn_go(self, delta=0):
+    def fn_back(self, *_extra):
+        return self.fn_go(-1)
+    def fn_forward(self, *_extra):
+        return self.fn_go(1)
+    def fn_go(self, delta=0, *_extra):
+        if delta is pyv8.Undefined:
+            delta = 0
+        if delta is not pyv8.Undefined:
+            delta = integer(delta, signed=True)
         target = max(0, min(len(self._entries) - 1, self._index + int(delta)))
         if target == self._index: return
         self._index = target; self._services.document_services.window.location.href = self._entries[target][0]; self._services.document_services.window.fn_dispatchEvent(Event("popstate", {"bubbles": False}))

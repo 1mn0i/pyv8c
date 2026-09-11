@@ -103,8 +103,8 @@ ruff/mypy 当前只对 foundation 设置阻断门禁，不表示全仓库都完�
 
 1. 在 web 对应领域实现行为，通过 services 消费任务、资源和 realm 能力。
 2. 声明接口身份与不可变 IdlSpec；不要增加 cls trace 注入、位置元组配置或 Page 私有后门。
-3. 在相应 registration 模块登记；核对 baseline 的父接口、exposure、成员位置、描述符与签名。
-4. 对 IDL 合成/参数验证加 unit 测试，对 JS 可观察行为加 browser/integration 测试。
+3. 在相应 registration 模块登记；核对 baseline 的父接口、exposure、成员位置、描述符与 length。signature 只用于离线核对。
+4. 在方法/构造器/setter 内处理参数，测试缺参、undefined/null、转换副作用和同步抛错/Promise 拒绝。setter 不检查 MISSING。
 5. 覆盖新旧 realm、lazy 首触、异常、关闭和重入等受影响路径。
 6. 修改 [IDL 文档](IDL_MIGRATION.md) 或相关专题；更新版本/构建信息时同步交接记录。
 

@@ -4,21 +4,19 @@ These classes deliberately have no dependency on the node model itself:
 they read through owner-supplied getters, which keeps them importable by
 :meth:`dom.model` without a cycle.
 """
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
-
 import pyv8
-
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagArrayProto, V8Attribute
 
 from ...engine.registry import interface
+from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, missing_error
 from ...foundation.errors import (
-    V8TypeError,
     InvalidCharacterError,
     LegacyPropertyError,
+    V8TypeError,
     dom_exception,
 )
 from ...foundation.indexed_properties import ReadOnlyIndexedPropertyMixin
-
 
 _ITERABLE_FLAGS = (
     FlagArrayProto.iterator | FlagArrayProto.entries | FlagArrayProto.keys
@@ -44,7 +42,11 @@ class NodeList(ReadOnlyIndexedPropertyMixin):
         return items if hasattr(items, "__len__") and hasattr(items, "__getitem__") else tuple(items)
     def _indexed_items(self): return self._items()
     def get_length(self): return len(self._items())
-    def fn_item(self, index): return self._item_at(index)
+    def fn_item(self, index=MISSING, *_extra):
+        if index is MISSING:
+            raise missing_error('NodeList', 'item', 1, 0, constructor=False)
+        index = integer(index)
+        return self._item_at(index)
     def __iter__(self): return iter(self._items())
     def __getitem__(self, index): return self._items()[index]
     def __len__(self): return len(self._items())
@@ -73,15 +75,24 @@ class NamedNodeMap(NodeList):
         from .model import Attr
         return [Attr(k, v, ownerElement=self._element, services=self._element._services)
                 for k, v in self._element.attributes.items()]
-    def fn_getNamedItem(self, name):
+    def fn_getNamedItem(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('NamedNodeMap', 'getNamedItem', 1, 0, constructor=False)
+        name = dom_string(name)
         return next((item for item in self._items() if item.get_name() == str(name)), pyv8.Null)
-    def fn_setNamedItem(self, attr):
+    def fn_setNamedItem(self, attr=MISSING, *_extra):
+        if attr is MISSING:
+            raise missing_error('NamedNodeMap', 'setNamedItem', 1, 0, constructor=False)
+        attr = interface_value(attr, 'Attr', 'NamedNodeMap', 'setNamedItem', 1, nullable=False)
         from .model import Attr
         if not isinstance(attr, Attr): raise V8TypeError("parameter is not of type Attr")
         old = self.fn_getNamedItem(attr.get_name())
         self._element.attributes[attr.get_name()] = attr.get_value()
         return old
-    def fn_removeNamedItem(self, name):
+    def fn_removeNamedItem(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('NamedNodeMap', 'removeNamedItem', 1, 0, constructor=False)
+        name = dom_string(name)
         from ...foundation.errors import NotFoundError
         name = str(name)
         if name not in self._element.attributes: raise NotFoundError("The attribute was not found.")
@@ -155,7 +166,10 @@ class HTMLCollection(NodeList):
         name_del="__v8_name_del__",
         name_enum="__v8_name_enum__",
     )
-    def fn_namedItem(self, name):
+    def fn_namedItem(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('HTMLCollection', 'namedItem', 1, 0, constructor=False)
+        name = dom_string(name)
         value = str(name)
         if not value:
             return pyv8.Null
@@ -300,8 +314,6 @@ class HTMLAllCollection(ReadOnlyIndexedPropertyMixin):
     def get_length(self): return len(self._items())
 
     def fn_item(self, *args):
-        # The IDL argument is a DOMString; canonical array-index strings use
-        # indexed lookup, while every other string uses the named lookup.
         if not args or args[0] is pyv8.Undefined:
             return pyv8.Null
         name = _dom_string(args[0])
@@ -434,12 +446,16 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
 
     def _indexed_items(self): return self._tokens()
 
-    def _validate(self, token):
+    def _validate(self, token, method=None):
         token = str(token)
+        prefix = f"Failed to execute '{method}' on 'DOMTokenList': " if method else ""
         if not token:
-            raise dom_exception("SyntaxError", "The token provided must not be empty.")
+            raise dom_exception("SyntaxError", prefix + "The token provided must not be empty.")
         if any(ch in self._ASCII_WHITESPACE for ch in token):
-            raise InvalidCharacterError("The token provided contains HTML space characters, which are not valid in tokens.")
+            detail = "The token provided contains HTML space characters, which are not valid in tokens."
+            if method in ("add", "remove", "toggle", "replace"):
+                detail = f"The token provided ('{token}') contains HTML space characters, which are not valid in tokens."
+            raise InvalidCharacterError(prefix + detail)
         return token
 
     def _update(self, values):
@@ -449,20 +465,37 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
 
     def get_length(self): return len(self._tokens())
     def get_value(self): return self._raw_value()
-    def set_value(self, value): self._element.attributes[self._attr] = str(value)
-    def fn_item(self, index): return self._item_at(index)
-    def fn_contains(self, token): return self._validate(token) in self._tokens()
+    def set_value(self, value):
+        value = dom_string(value)
+        self._element.attributes[self._attr] = str(value)
+    def fn_item(self, index=MISSING, *_extra):
+        if index is MISSING:
+            raise missing_error('DOMTokenList', 'item', 1, 0, constructor=False)
+        index = integer(index)
+        return self._item_at(index)
+    def fn_contains(self, token=MISSING, *_extra):
+        if token is MISSING:
+            raise missing_error('DOMTokenList', 'contains', 1, 0, constructor=False)
+        token = dom_string(token)
+        return token in self._tokens()
 
     def fn_add(self, *tokens):
-        tokens = [self._validate(token) for token in tokens]
+        tokens = [dom_string(token) for token in tokens]
+        tokens = [self._validate(token, "add") for token in tokens]
         self._update(self._tokens() + tokens)
 
     def fn_remove(self, *tokens):
-        tokens = set(self._validate(token) for token in tokens)
+        tokens = [dom_string(token) for token in tokens]
+        tokens = set(self._validate(token, "remove") for token in tokens)
         self._update(token for token in self._tokens() if token not in tokens)
 
-    def fn_toggle(self, token, force=pyv8.Undefined):
-        token = self._validate(token)
+    def fn_toggle(self, token=MISSING, force=pyv8.Undefined, *_extra):
+        if token is MISSING:
+            raise missing_error('DOMTokenList', 'toggle', 1, 0, constructor=False)
+        token = dom_string(token)
+        if force is not pyv8.Undefined:
+            force = boolean(force)
+        token = self._validate(token, "toggle")
         values = self._tokens()
         present = token in values
         if present:
@@ -475,8 +508,14 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
             return True
         return False
 
-    def fn_replace(self, old, new):
-        old, new = self._validate(old), self._validate(new)
+    def fn_replace(self, old=MISSING, new=MISSING, *_extra):
+        if old is MISSING:
+            raise missing_error('DOMTokenList', 'replace', 2, 0, constructor=False)
+        if new is MISSING:
+            raise missing_error('DOMTokenList', 'replace', 2, 1, constructor=False)
+        old = dom_string(old)
+        new = dom_string(new)
+        old, new = self._validate(old, "replace"), self._validate(new, "replace")
         values = self._tokens()
         if old not in values:
             return False
@@ -488,10 +527,14 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
         self._update(values)
         return True
 
-    def fn_supports(self, token):
+    def fn_supports(self, token=MISSING, *_extra):
+        if token is MISSING:
+            raise missing_error('DOMTokenList', 'supports', 1, 0, constructor=False)
+        token = dom_string(token)
         if self._supported_tokens is None:
             raise V8TypeError("DOMTokenList has no supported tokens.")
         return str(token).lower() in self._supported_tokens
 
-    def fn_toString(self): return self.get_value()
+    def fn_toString(self, *_extra):
+        return self.get_value()
     def __iter__(self): return iter(self._tokens())

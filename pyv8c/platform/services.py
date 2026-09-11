@@ -64,6 +64,9 @@ class _RealmCapability:
     def make_promise(self):
         return self._owner._scripts.make_promise()
 
+    def evaluate_script(self, source):
+        return self._owner._scripts.evaluate(source)
+
     def promise_resolve(self, value):
         return self._owner._scripts.promise_resolve(value)
 

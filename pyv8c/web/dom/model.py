@@ -4,26 +4,24 @@ Collection views live in :mod:`dom.collections` and the event model in
 :mod:`dom.events`; both are re-exported here so legacy ``model`` imports and
 ``from .model import *`` keep working.
 """
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
-
 import re
 from html import escape
 
 import pyv8
-
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import V8Attribute
 
 from ...engine.registry import interface
-from ...foundation.errors import V8TypeError, HierarchyRequestError, NotFoundError, InvalidCharacterError
-
-from .collections import NodeList, HTMLCollection, HTMLAllCollection, DOMTokenList, NamedNodeMap
+from ...foundation.arguments import MISSING, boolean, dictionary, dom_string, integer, interface_value, is_nullish, missing_error
+from ...foundation.errors import HierarchyRequestError, InvalidCharacterError, NotFoundError, V8TypeError
+from .collections import DOMTokenList, HTMLAllCollection, HTMLCollection, NamedNodeMap, NodeList
 from .events import (
-    Event,
-    UIEvent,
-    MouseEvent,
-    KeyboardEvent,
     CustomEvent,
+    Event,
     EventTarget,
+    KeyboardEvent,
+    MouseEvent,
+    UIEvent,
 )
 
 __all__ = [
@@ -206,13 +204,18 @@ class Node(EventTarget):
     def get_lastChild(self): return self.lastChild
     def get_textContent(self): return "".join(n.get_textContent() or "" for n in self._children)
     def set_textContent(self, value):
+        if not is_nullish(value):
+            value = dom_string(value)
         self._replace_children(())
         # Replacing with the empty string leaves no child node behind (the
         # spec removes a text node whose data is empty after replacement).
         if value is not None and str(value) != "":
             self.append_child(Text(str(value), services=self._services))
     def get_nodeValue(self): return self.nodeValue if self.nodeValue is not None else pyv8.Null
-    def set_nodeValue(self, value): self.nodeValue = value
+    def set_nodeValue(self, value):
+        if not is_nullish(value):
+            value = dom_string(value)
+        self.nodeValue = value
 
     @staticmethod
     def _detach_from_parent(node):
@@ -262,8 +265,18 @@ class Node(EventTarget):
                 self._adopt_child(child)
             return node
         return self._adopt_child(node)
-    def fn_appendChild(self, node): return self.append_child(node)
-    def fn_insertBefore(self, node, reference):
+    def fn_appendChild(self, node=MISSING, *_extra):
+        if node is MISSING:
+            raise missing_error('Node', 'appendChild', 1, 0, constructor=False)
+        node = interface_value(node, 'Node', 'Node', 'appendChild', 1, nullable=False)
+        return self.append_child(node)
+    def fn_insertBefore(self, node=MISSING, reference=MISSING, *_extra):
+        if node is MISSING:
+            raise missing_error('Node', 'insertBefore', 2, 0, constructor=False)
+        if reference is MISSING:
+            raise missing_error('Node', 'insertBefore', 2, 1, constructor=False)
+        node = interface_value(node, 'Node', 'Node', 'insertBefore', 1, nullable=False)
+        reference = interface_value(reference, 'Node', 'Node', 'insertBefore', 2, nullable=True)
         if reference in (None, pyv8.Null, pyv8.Undefined): return self.append_child(node)
         if reference not in self._children: raise NotFoundError("The reference node is not a child.")
         index = self._children.index(reference)
@@ -275,10 +288,19 @@ class Node(EventTarget):
         if node.parentNode is self and self._children.index(node) < index:
             index -= 1
         return self._adopt_child(node, index)
-    def fn_removeChild(self, node):
+    def fn_removeChild(self, node=MISSING, *_extra):
+        if node is MISSING:
+            raise missing_error('Node', 'removeChild', 1, 0, constructor=False)
+        node = interface_value(node, 'Node', 'Node', 'removeChild', 1, nullable=False)
         if node not in self._children: raise NotFoundError("The node to be removed is not a child.")
         self._children.remove(node); node.parentNode = None; return node
-    def fn_replaceChild(self, new, old):
+    def fn_replaceChild(self, new=MISSING, old=MISSING, *_extra):
+        if new is MISSING:
+            raise missing_error('Node', 'replaceChild', 2, 0, constructor=False)
+        if old is MISSING:
+            raise missing_error('Node', 'replaceChild', 2, 1, constructor=False)
+        new = interface_value(new, 'Node', 'Node', 'replaceChild', 1, nullable=False)
+        old = interface_value(old, 'Node', 'Node', 'replaceChild', 2, nullable=False)
         if not isinstance(new, Node) or not isinstance(old, Node):
             raise V8TypeError("Failed to execute 'replaceChild' on 'Node': parameter is not of type 'Node'.")
         if old not in self._children: raise NotFoundError("The node to be replaced is not a child.")
@@ -293,13 +315,20 @@ class Node(EventTarget):
             i -= 1
         self._adopt_child(new, i)
         return old
-    def fn_cloneNode(self, deep=False):
+    def fn_cloneNode(self, deep=False, *_extra):
+        if deep is pyv8.Undefined:
+            deep = False
+        if deep is not pyv8.Undefined:
+            deep = boolean(deep)
         clone = self._clone_shallow()
         if deep:
             for child in self._children: clone.append_child(child.fn_cloneNode(True))
         return clone
     def _clone_shallow(self): return Node(services=self._services, node_type=self.nodeType, node_name=self.nodeName, value=self.nodeValue)
-    def fn_compareDocumentPosition(self, other):
+    def fn_compareDocumentPosition(self, other=MISSING, *_extra):
+        if other is MISSING:
+            raise missing_error('Node', 'compareDocumentPosition', 1, 0, constructor=False)
+        other = interface_value(other, 'Node', 'Node', 'compareDocumentPosition', 1, nullable=False)
         """Bitmask describing ``other``'s position relative to ``self``."""
         if not isinstance(other, Node):
             raise V8TypeError("Failed to execute 'compareDocumentPosition' on 'Node': parameter 1 is not of type 'Node'.")
@@ -330,23 +359,41 @@ class Node(EventTarget):
         return (Node.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC
                 | Node.DOCUMENT_POSITION_FOLLOWING)
 
-    def fn_getRootNode(self, options=None):
-        # Shadow trees are not modelled, so ``composed`` cannot change the
-        # answer: the root is always the topmost node of this tree.
+    def fn_getRootNode(self, options=None, *_extra):
+        options = dictionary(options)
+        boolean(options.get("composed", False))
         return self.root_node()
 
-    def fn_isSameNode(self, other=None): return other is self
+    def fn_isSameNode(self, other=MISSING, *_extra):
+        if other is MISSING:
+            raise missing_error('Node', 'isSameNode', 1, 0, constructor=False)
+        other = interface_value(other, 'Node', 'Node', 'isSameNode', 1, nullable=True)
+        return other is self
 
-    def fn_isDefaultNamespace(self, namespace=None): return namespace == XHTML_NAMESPACE
+    def fn_isDefaultNamespace(self, namespace=MISSING, *_extra):
+        if namespace is MISSING:
+            raise missing_error('Node', 'isDefaultNamespace', 1, 0, constructor=False)
+        if not is_nullish(namespace):
+            namespace = dom_string(namespace)
+        return namespace == XHTML_NAMESPACE
 
-    def fn_lookupNamespaceURI(self, prefix=None):
+    def fn_lookupNamespaceURI(self, prefix=MISSING, *_extra):
+        if prefix is MISSING:
+            raise missing_error('Node', 'lookupNamespaceURI', 1, 0, constructor=False)
+        if not is_nullish(prefix):
+            prefix = dom_string(prefix)
         if prefix in (None, pyv8.Null, pyv8.Undefined, ""):
             return XHTML_NAMESPACE
         return pyv8.Null
 
-    def fn_lookupPrefix(self, namespace=None): return pyv8.Null
+    def fn_lookupPrefix(self, namespace=MISSING, *_extra):
+        if namespace is MISSING:
+            raise missing_error('Node', 'lookupPrefix', 1, 0, constructor=False)
+        if not is_nullish(namespace):
+            namespace = dom_string(namespace)
+        return pyv8.Null
 
-    def fn_normalize(self):
+    def fn_normalize(self, *_extra):
         """Merge adjacent text nodes and drop empty ones, recursively."""
         previous = None
         for child in list(self._children):
@@ -362,9 +409,18 @@ class Node(EventTarget):
             if isinstance(child, Node):
                 child.fn_normalize()
 
-    def fn_contains(self, other): return other is self or any(c.fn_contains(other) for c in self._children)
-    def fn_hasChildNodes(self): return bool(self._children)
-    def fn_isEqualNode(self, other): return isinstance(other, Node) and self.outer_html() == other.outer_html()
+    def fn_contains(self, other=MISSING, *_extra):
+        if other is MISSING:
+            raise missing_error('Node', 'contains', 1, 0, constructor=False)
+        other = interface_value(other, 'Node', 'Node', 'contains', 1, nullable=True)
+        return other is self or any((c.fn_contains(other) for c in self._children))
+    def fn_hasChildNodes(self, *_extra):
+        return bool(self._children)
+    def fn_isEqualNode(self, other=MISSING, *_extra):
+        if other is MISSING:
+            raise missing_error('Node', 'isEqualNode', 1, 0, constructor=False)
+        other = interface_value(other, 'Node', 'Node', 'isEqualNode', 1, nullable=True)
+        return isinstance(other, Node) and self.outer_html() == other.outer_html()
     def outer_html(self): return self.get_textContent()
 
 
@@ -374,8 +430,8 @@ def _as_nodes(values, parent):
     for value in values:
         if isinstance(value, Node):
             nodes.append(value)
-        elif value is not None and value is not pyv8.Undefined and value is not pyv8.Null:
-            nodes.append(Text(str(value), services=getattr(parent, "_services", None)))
+        else:
+            nodes.append(Text(dom_string(value), services=getattr(parent, "_services", None)))
     return nodes
 
 
@@ -465,8 +521,9 @@ class _ParentNodeMixin:
         for index, node in enumerate(_as_nodes(values, self)):
             self._adopt_child(node, index)
     def fn_replaceChildren(self, *values):
+        nodes = _as_nodes(values, self)
         self._replace_children(())
-        for node in _as_nodes(values, self):
+        for node in nodes:
             self.append_child(node)
 
 
@@ -487,17 +544,19 @@ class _ChildNodeMixin:
     )
 
     def fn_before(self, *values):
+        nodes = _as_nodes(values, self)
         parent = self.parentNode
         if parent is None:
             return
-        for node in _as_nodes(values, self):
+        for node in nodes:
             parent._adopt_child(node, parent._children.index(self))
 
     def fn_after(self, *values):
+        nodes = _as_nodes(values, self)
         parent = self.parentNode
         if parent is None:
             return
-        for node in _as_nodes(values, self):
+        for node in nodes:
             parent._adopt_child(node, parent._children.index(self) + 1)
 
     def fn_replaceWith(self, *values):
@@ -510,7 +569,7 @@ class _ChildNodeMixin:
         for offset, node in enumerate(nodes):
             parent._adopt_child(node, index + offset)
 
-    def fn_remove(self):
+    def fn_remove(self, *_extra):
         parent = self.parentNode
         if parent is not None:
             parent.fn_removeChild(self)
@@ -519,7 +578,9 @@ class _ChildNodeMixin:
 @interface('DocumentFragment', 'Node')
 class DocumentFragment(_ParentNodeMixin, Node):
     __v8_idl_spec__ = IdlSpec(constructor_behavior=1, has_constructor=1)
-    def __init__(self, services=None, **kw):
+    def __init__(self, *_extra, services=None, **kw):
+        if services is pyv8.Undefined:
+            services = None
         super().__init__(services=services, node_type=Node.DOCUMENT_FRAGMENT_NODE, node_name="#document-fragment", **kw)
     def _clone_shallow(self): return DocumentFragment(services=self._services)
 
@@ -549,7 +610,9 @@ class Attr(Node):
         self.ownerElement = ownerElement
     def get_name(self): return self.nodeName
     def get_value(self): return self.nodeValue or ""
-    def set_value(self, value): self.nodeValue = str(value)
+    def set_value(self, value):
+        value = dom_string(value)
+        self.nodeValue = str(value)
     def get_specified(self): return True
     # HTML attributes carry no namespace, so both namespace accessors are null.
     def get_namespaceURI(self): return pyv8.Null
@@ -579,21 +642,59 @@ class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
         constructor_behavior=0,
         has_constructor=1,
     )
-    def __init__(self, data="", services=None, **kw): super().__init__(services=services, node_type=Node.TEXT_NODE, node_name="#text", value=str(data), **kw)
+    def __init__(self, data='', *_extra, services=None, **kw):
+        if data is pyv8.Undefined:
+            data = ''
+        if data is not pyv8.Undefined:
+            data = dom_string(data)
+        if services is pyv8.Undefined:
+            services = None
+        super().__init__(services=services, node_type=Node.TEXT_NODE, node_name='#text', value=str(data), **kw)
     def get_data(self): return self.nodeValue or ""
     def set_data(self, value): self.nodeValue = str(value)
     def get_length(self): return len(self.nodeValue or "")
-    def fn_substringData(self, offset, count):
+    def fn_substringData(self, offset=MISSING, count=MISSING, *_extra):
+        if offset is MISSING:
+            raise missing_error('CharacterData', 'substringData', 2, 0, constructor=False)
+        if count is MISSING:
+            raise missing_error('CharacterData', 'substringData', 2, 1, constructor=False)
+        offset = integer(offset)
+        count = integer(count)
         start, end = int(offset), int(offset) + int(count)
         return (self.nodeValue or "")[start:end]
-    def fn_appendData(self, value): self.nodeValue = (self.nodeValue or "") + str(value)
-    def fn_insertData(self, offset, value):
+    def fn_appendData(self, value=MISSING, *_extra):
+        if value is MISSING:
+            raise missing_error('CharacterData', 'appendData', 1, 0, constructor=False)
+        value = dom_string(value)
+        self.nodeValue = (self.nodeValue or '') + str(value)
+    def fn_insertData(self, offset=MISSING, value=MISSING, *_extra):
+        if offset is MISSING:
+            raise missing_error('CharacterData', 'insertData', 2, 0, constructor=False)
+        if value is MISSING:
+            raise missing_error('CharacterData', 'insertData', 2, 1, constructor=False)
+        offset = integer(offset)
+        value = dom_string(value)
         data, start = self.nodeValue or "", int(offset)
         self.nodeValue = data[:start] + str(value) + data[start:]
-    def fn_deleteData(self, offset, count):
+    def fn_deleteData(self, offset=MISSING, count=MISSING, *_extra):
+        if offset is MISSING:
+            raise missing_error('CharacterData', 'deleteData', 2, 0, constructor=False)
+        if count is MISSING:
+            raise missing_error('CharacterData', 'deleteData', 2, 1, constructor=False)
+        offset = integer(offset)
+        count = integer(count)
         data, start = self.nodeValue or "", int(offset)
         self.nodeValue = data[:start] + data[start + int(count):]
-    def fn_replaceData(self, offset, count, value):
+    def fn_replaceData(self, offset=MISSING, count=MISSING, value=MISSING, *_extra):
+        if offset is MISSING:
+            raise missing_error('CharacterData', 'replaceData', 3, 0, constructor=False)
+        if count is MISSING:
+            raise missing_error('CharacterData', 'replaceData', 3, 1, constructor=False)
+        if value is MISSING:
+            raise missing_error('CharacterData', 'replaceData', 3, 2, constructor=False)
+        offset = integer(offset)
+        count = integer(count)
+        value = dom_string(value)
         data, start = self.nodeValue or "", int(offset)
         self.nodeValue = data[:start] + str(value) + data[start + int(count):]
     def _clone_shallow(self):
@@ -614,7 +715,15 @@ class Text(CharacterData):
 @interface('Comment', 'CharacterData')
 class Comment(CharacterData):
     __v8_idl_spec__ = IdlSpec(constructor_behavior=1, has_constructor=1)
-    def __init__(self, data="", services=None, **kw): super().__init__(data, services=services, **kw); self.nodeType, self.nodeName = Node.COMMENT_NODE, "#comment"
+    def __init__(self, data='', *_extra, services=None, **kw):
+        if data is pyv8.Undefined:
+            data = ''
+        if data is not pyv8.Undefined:
+            data = dom_string(data)
+        if services is pyv8.Undefined:
+            services = None
+        super().__init__(data, services=services, **kw)
+        self.nodeType, self.nodeName = (Node.COMMENT_NODE, '#comment')
     def outer_html(self): return "<!--" + (self.nodeValue or "") + "-->"
 
 
@@ -640,9 +749,16 @@ class DocumentType(_ChildNodeMixin, Node):
 # HTML tag implementations live in ``dom.elements``. Import them after the
 # core node classes exist to preserve the historical ``dom.model`` exports.
 from .elements import (
-    Element, HTMLElement, HTML_CLASSES, HTMLImageElement, HTMLScriptElement,
-    HTMLLinkElement, HTMLStyleElement, HTMLMetaElement, HTMLTemplateElement,
+    HTML_CLASSES,
+    Element,
+    HTMLElement,
     HTMLIFrameElement,
+    HTMLImageElement,
+    HTMLLinkElement,
+    HTMLMetaElement,
+    HTMLScriptElement,
+    HTMLStyleElement,
+    HTMLTemplateElement,
 )
 
 
@@ -707,6 +823,7 @@ class Document(_ParentNodeMixin, Node):
         context = self._cookie_jar()
         return context.document_for(self.url) if context is not None else ""
     def set_cookie(self, value):
+        value = dom_string(value)
         context = self._cookie_jar()
         if context is not None:
             context.set_from_document(self.url, value)
@@ -731,26 +848,66 @@ class Document(_ParentNodeMixin, Node):
         if realm is None or realm.interface_materialized(name):
             return
         realm.materialize_interface(name)
-    def fn_createElement(self, name): return self._new_element(str(name))
-    def fn_createTextNode(self, value): return Text(str(value), services=self._services)
-    def fn_createComment(self, value): return Comment(str(value), services=self._services)
-    def fn_createDocumentFragment(self): return DocumentFragment(services=self._services)
-    def fn_createAttribute(self, name): return Attr(self._validate_name(name), "", services=self._services)
-    def fn_getElementById(self, value): return next((x for x in self._walk() if isinstance(x, Element) and x.get_id() == str(value)), pyv8.Null)
-    def fn_getElementsByTagName(self, value):
+    def fn_createElement(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('Document', 'createElement', 1, 0, constructor=False)
+        name = dom_string(name)
+        return self._new_element(str(name))
+    def fn_createTextNode(self, value=MISSING, *_extra):
+        if value is MISSING:
+            raise missing_error('Document', 'createTextNode', 1, 0, constructor=False)
+        value = dom_string(value)
+        return Text(str(value), services=self._services)
+    def fn_createComment(self, value=MISSING, *_extra):
+        if value is MISSING:
+            raise missing_error('Document', 'createComment', 1, 0, constructor=False)
+        value = dom_string(value)
+        return Comment(str(value), services=self._services)
+    def fn_createDocumentFragment(self, *_extra):
+        return DocumentFragment(services=self._services)
+    def fn_createAttribute(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('Document', 'createAttribute', 1, 0, constructor=False)
+        name = dom_string(name)
+        return Attr(self._validate_name(name), '', services=self._services)
+    def fn_getElementById(self, value=MISSING, *_extra):
+        if value is MISSING:
+            raise missing_error('Document', 'getElementById', 1, 0, constructor=False)
+        value = dom_string(value)
+        return next((x for x in self._walk() if isinstance(x, Element) and x.get_id() == str(value)), pyv8.Null)
+    def fn_getElementsByTagName(self, value=MISSING, *_extra):
+        if value is MISSING:
+            raise missing_error('Document', 'getElementsByTagName', 1, 0, constructor=False)
+        value = dom_string(value)
         value = str(value).lower()
         return HTMLCollection(owner=self, getter=lambda: [x for x in self._walk() if isinstance(x, Element) and (value == "*" or x.localName == value)])
-    def fn_getElementsByClassName(self, value):
+    def fn_getElementsByClassName(self, value=MISSING, *_extra):
+        if value is MISSING:
+            raise missing_error('Document', 'getElementsByClassName', 1, 0, constructor=False)
+        value = dom_string(value)
         names = set(str(value).split())
         return HTMLCollection(owner=self, getter=lambda: [x for x in self._walk() if isinstance(x, Element) and names.issubset(set(x.get_className().split()))])
-    def fn_getElementsByTagNameNS(self, namespace, local_name):
-        # Only the HTML namespace is modelled, so a foreign namespace simply
-        # matches nothing instead of silently ignoring the argument.
+    def fn_getElementsByTagNameNS(self, namespace=MISSING, local_name=MISSING, *_extra):
+        if namespace is MISSING:
+            raise missing_error('Document', 'getElementsByTagNameNS', 2, 0, constructor=False)
+        if local_name is MISSING:
+            raise missing_error('Document', 'getElementsByTagNameNS', 2, 1, constructor=False)
+        if not is_nullish(namespace):
+            namespace = dom_string(namespace)
+        local_name = dom_string(local_name)
         if namespace not in (None, pyv8.Null, pyv8.Undefined, "", "*", XHTML_NAMESPACE):
             return HTMLCollection(owner=self, getter=lambda: [])
         return self.fn_getElementsByTagName(local_name)
-    def fn_querySelector(self, selector): return self.query_selector(selector, self)
-    def fn_querySelectorAll(self, selector): return self.query_selector_all(selector, self)
+    def fn_querySelector(self, selector=MISSING, *_extra):
+        if selector is MISSING:
+            raise missing_error('Document', 'querySelector', 1, 0, constructor=False)
+        selector = dom_string(selector)
+        return self.query_selector(selector, self)
+    def fn_querySelectorAll(self, selector=MISSING, *_extra):
+        if selector is MISSING:
+            raise missing_error('Document', 'querySelectorAll', 1, 0, constructor=False)
+        selector = dom_string(selector)
+        return self.query_selector_all(selector, self)
     def _validate_name(self, name):
         value = str(name)
         if not _VALID_NAME_RE.match(value):

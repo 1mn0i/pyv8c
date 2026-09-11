@@ -1,16 +1,15 @@
 """Runtime contracts available to browser-facing interface objects.
 
-``engine`` needs a small set of services from the realm an object lives in
-(creating promises, converting errors, posting tasks). It consumes them through
+Web API implementations need services from the realm an object lives in
+(creating promises, converting errors, posting tasks). They consume them through
 :class:`RealmServices` so it never imports ``platform`` or reaches into Page
 privates.  The web layer is served by the other five narrow protocols, each
 covering one slice of the realm a page exposes. ``PageServices`` assembles
 the capability objects rather than implementing their protocols itself.
 
-``RealmServices`` deliberately keeps ``post_task``: ``engine`` rejection
-wrappers resolve a promise on the object's realm and schedule the rejection
-through the same handle, so the realm token they are given must carry task
-posting without importing ``platform``.
+``RealmServices`` exposes task posting and script execution without importing
+``platform``. Parameter conversion and Promise rejection belong to Web API
+implementations, not to binding wrappers.
 """
 
 from collections.abc import MutableSequence
@@ -27,6 +26,7 @@ class RealmServices(Protocol):
 
     def post_task(self, callback) -> None: ...
     def promise_resolve(self, value: Any) -> Any: ...
+    def evaluate_script(self, source: str) -> Any: ...
     def make_promise(self) -> Any:
         """Return ``(promise, resolve, reject)`` in this realm's context."""
         ...

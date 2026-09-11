@@ -111,9 +111,16 @@ class DOMException(RuntimeError):
 
     __v8_error__ = True
 
-    def __init__(self, message="", name="Error", code=None, **_):
-        self._message = "" if message is None else str(message)
-        self._name = str(name or "Error")
+    def __init__(self, message="", name="Error", *_extra, code=None, **_):
+        if not isinstance(message, str) or not isinstance(name, str):
+            import pyv8
+
+            from .arguments import dom_string
+
+            message = "" if message is pyv8.Undefined else dom_string(message)
+            name = "Error" if name is pyv8.Undefined else dom_string(name)
+        self._message = message
+        self._name = name
         self._code = int(_DOM_CODES.get(self._name, 0) if code is None else code)
         Exception.__init__(self, self._message)
 
@@ -125,9 +132,16 @@ class DOMException(RuntimeError):
 class DOMError(Exception):
     __v8_error__ = True
 
-    def __init__(self, message="", name="Error", **_):
-        self._message = "" if message is None else str(message)
-        self._name = str(name or "Error")
+    def __init__(self, message="", name="Error", *_extra, **_):
+        if not isinstance(message, str) or not isinstance(name, str):
+            import pyv8
+
+            from .arguments import dom_string
+
+            message = "" if message is pyv8.Undefined else dom_string(message)
+            name = "Error" if name is pyv8.Undefined else dom_string(name)
+        self._message = message
+        self._name = name
         Exception.__init__(self, self._message)
 
     def get_name(self): return self._name

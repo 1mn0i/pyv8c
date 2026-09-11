@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | InterfaceSpec / __idl_spec__ | pyv8c.engine.registry | 接口名称、父接口、exposure 身份 |
 | IdlSpec / __v8_idl_spec__ | pyv8 原生桥 | 构造、模板、成员、handler 等安装描述 |
-| BindingPlan | pyv8c.engine.webidl | 参数转换、重载、签名解析状态 |
+| 实现层转换 | pyv8c.foundation.arguments 与各 Web API | 方法、构造器和 setter 按 Web API 语义自行转换与报错 |
 | BindingSession.configs | 每个 realm | Python 类型到不可变 IdlSpec 的注册映射 |
 
 下面是声明方式的示例，不是自动加入 Browser 的插件：
@@ -53,15 +53,17 @@ trace 不属于类声明；错误桥接协议也与 trace 独立。
 ## 编译与 realm 绑定
 
 1. InterfaceCatalog 提供 baseline 继承、exposure 和成员信息。
-2. InterfaceCompiler 结合手写声明、mixin、baseline、stub 和参数适配器，首次生成结构描述。
-3. Universe 缓存结构与签名分析；普通新页面复用 realm 无关结果。
+2. InterfaceCompiler 结合手写声明、mixin、baseline 和 stub，首次生成结构描述。
+3. Universe 缓存结构与创建期 Python 回调检查；普通新页面复用 realm 无关结果。不存在运行时参数计划。
 4. 依赖 _realm 的静态回调及构造适配器按 session 绑定，不再生成 callback-owner 类。
 5. BindingSession 将本批接口和祖先准备为 staged 配置，native 接受后再更新本地状态。
 
-baseline 的成员描述符/签名提供可观察约束，接口自身实现优先于实现 mixin。
+baseline 的成员描述符和 length 提供可观察约束；signature 仅供离线参考，不参与调用。
+参数存在性、转换、重载、校验顺序与 Promise 拒绝由各 Web API 实现负责，详见 [开发规范](DEVELOPMENT.md)。
+接口自身实现优先于实现 mixin。
 JS 父接口成员通过原型链继承，不无条件复制到子接口；baseline 明确声明在子接口的成员仍按其描述安装。
 显式原生模板持有回调快照，不追踪之后对 Python 类成员的替换。
-strict_validation 在 Universe 内完整编译一次；它不是完整兼容性审计或“无 stub 模式”。
+strict_validation 在 Universe 内完整编译一次，只检查绑定结构，不检查参数语义；它不是完整兼容性审计或“无 stub 模式”。
 
 ## 注册和失败原子性
 

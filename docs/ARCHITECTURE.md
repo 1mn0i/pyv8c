@@ -21,7 +21,7 @@ engine 不导入 platform；web 通过 services 与平台协作。边界由 [架
 | 作用域 | 对象/状态 | 约束 |
 | --- | --- | --- |
 | 进程 | BaselineRepository 缓存、默认已冻结 InterfaceRegistry | 只共享元数据/注册信息，不共享页面可变状态 |
-| Browser | BrowserEnvironment、InterfaceUniverse、接口类/编译/签名缓存 | 多页面复用结构，不绑定到某个 Page |
+| Browser | BrowserEnvironment、InterfaceUniverse、接口类/结构编译/创建期回调检查缓存 | 多页面复用结构，不绑定到某个 Page |
 | BrowserContext | CookieJar、Blob URL、网络客户端、页面和 DevTools server | Context 隔离；磁盘缓存目录由使用者额外隔离 |
 | Page/realm | Document、Window、TaskQueue、PageServices、BindingSession、V8 Context | 可变状态属于本 realm，生命周期随页面关闭 |
 | Worker | WorkerRuntime、executor、WorkerRealm、Isolate | 启动异步；与页面通过任务和消息交互 |
@@ -44,8 +44,12 @@ Chromium 生成的 v8_*.cc + Web IDL + review 数据
     → V8 模板与已有 Python/JS 业务回调
 ```
 
-Catalog 负责继承与 exposure 索引；StubFactory 补未实现成员；WrapperFactory 缓存签名分析并适配参数；Compiler 合成原生描述。
+Catalog 负责继承与 exposure 索引；StubFactory 补未实现成员；WrapperFactory 只做创建期回调检查和 realm 注入；Compiler 合成原生描述。
 首次结构编译发生在 Universe；只有依赖 realm 的静态回调与构造适配器需要按 realm 绑定。
+
+普通方法与 setter 直接绑定实现函数。参数语义由 Web API 自行处理，显式使用小型转换原语；不存在签名驱动验证器。
+页面与 Worker 的 native Context 开启 `preserve_arguments`，使桥接传参不会预先枚举对象、读取 getter 或消耗迭代器。
+独立 Context 默认仍使用原先的数据转换方式；脚本执行结果仍按原先方式转换。
 Session 的配置先准备后提交，native 接受整批配置之后才发布本地 materialized 状态。
 父接口通过原型链继承；不要把全部父成员复制到每个子接口。
 
