@@ -788,6 +788,8 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="visibilityState", getter="get_visibilityState", side_effect=1),
             AttributeSpec(name="cookie", getter="get_cookie", setter="set_cookie"),
             AttributeSpec(name="all", getter="get_all", side_effect=1),
+            AttributeSpec(name="characterSet", getter="get_characterSet", side_effect=1),
+            AttributeSpec(name="charset", getter="get_charset", side_effect=1),
         ),
         methods=(
             MethodSpec(name="createElement", callback="fn_createElement", length=1),
@@ -825,6 +827,8 @@ class Document(_ParentNodeMixin, Node):
         return Window._accessor_window(target)._view(target)
     def get_readyState(self): return self.ready_state
     def get_hidden(self): return self.hidden
+    def get_characterSet(self): return 'UTF-8'
+    def get_charset(self): return 'UTF-8'
     def get_visibilityState(self): return "hidden" if self.hidden else "visible"
     def _cookie_jar(self):
         return getattr(getattr(self._services, "context_services", None), "cookie_jar", None)
