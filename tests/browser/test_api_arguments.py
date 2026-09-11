@@ -202,3 +202,21 @@ def test_worker_option_conversion_precedes_start(argument_page):
         })}catch(error){if(error!==42)throw error}
         return seen;
     })()""") == ["credentials", "name", "name-value", "type"]
+
+
+def test_idb_compound_key_path_and_transaction_scope(argument_page):
+    argument_page.evaluate("""globalThis.idbArgumentResult=null;
+        const request=indexedDB.open('argument-compound-path',1);
+        request.onupgradeneeded=()=>{
+            const store=request.result.createObjectStore('items',{keyPath:['group','id']});
+            store.createIndex('byParts',['group','id']);
+            store.add({group:'a',id:1});
+        };
+        request.onsuccess=()=>{
+            const transaction=request.result.transaction(['items']);
+            const query=transaction.objectStore('items').get(['a',1]);
+            query.onsuccess=()=>{idbArgumentResult=query.result.id;request.result.close()};
+        };
+    """)
+    argument_page.run_until_idle(timeout=1)
+    assert argument_page.evaluate("idbArgumentResult") == 1

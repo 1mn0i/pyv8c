@@ -21,6 +21,7 @@ from ...foundation.urls import origin_tuple, serialize_origin
 from ..dom.model import EventTarget
 from ..fetch.request import Request
 from .api import History, Location, Screen, Storage
+from .indexedDB import IDBFactory
 from .navigator import Navigator
 
 __all__ = ["Window", "WindowProperties", "WindowProxy"]
@@ -111,6 +112,7 @@ class Window(WindowProperties):
                 "sessionStorage", "get_sessionStorage", cross_origin=True
             ),
             _window_attribute("history", "get_history", cross_origin=True),
+            _window_attribute("indexedDB", "get_indexedDB", cross_origin=True),
             _window_attribute("innerWidth", "get_innerWidth", cross_origin=True),
             _window_attribute("innerHeight", "get_innerHeight", cross_origin=True),
             _window_attribute("outerWidth", "get_outerWidth", cross_origin=True),
@@ -168,6 +170,7 @@ class Window(WindowProperties):
         self.outerWidth, self.outerHeight = viewport.width, viewport.height
         self.devicePixelRatio = viewport.device_scale_factor
         self.history = History(services=services)
+        self.indexedDB = IDBFactory(services=services)
     def __v8_cross_origin_check__(self, accessor):
         return accessor is self or getattr(accessor, "_origin", None) == self._origin
 
@@ -278,6 +281,7 @@ class Window(WindowProperties):
     def get_localStorage(self): self._require_same_origin(); return self.localStorage
     def get_sessionStorage(self): self._require_same_origin(); return self.sessionStorage
     def get_history(self): self._require_same_origin(); return self.history
+    def get_indexedDB(self): self._require_same_origin(); return self.indexedDB
     def get_innerWidth(self): self._require_same_origin(); return self.innerWidth
     def get_innerHeight(self): self._require_same_origin(); return self.innerHeight
     def get_outerWidth(self): self._require_same_origin(); return self.outerWidth
