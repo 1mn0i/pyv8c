@@ -3,7 +3,7 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagCrossOriginCheck, FlagLocation, SideEffectType
 
-from ...engine.registry import interface
+from ...engine.features import interface
 from ...foundation.arguments import (
     MISSING,
     callback_value,
@@ -20,9 +20,6 @@ from ...foundation.errors import SecurityError
 from ...foundation.urls import origin_tuple, serialize_origin
 from ..dom.model import EventTarget
 from ..fetch.request import Request
-from .api import History, Location, Screen, Storage
-from .indexedDB import IDBFactory
-from .navigator import Navigator
 
 __all__ = ["Window", "WindowProperties", "WindowProxy"]
 
@@ -156,7 +153,7 @@ class Window(WindowProperties):
     # Ordinary members use Web IDL bindings; dynamic names live on
     # WindowProperties, not a generic Python interceptor on Window.
     _context_origins = {}
-    def __init__(self, services=None, **kw):
+    def __init__(self, services=None, feature_runtime=None, **kw):
         super().__init__(services=services, **kw); self._services = services
         self._origin = getattr(services, "_origin", ("opaque", object()))
         self._parent_window = self
@@ -164,13 +161,38 @@ class Window(WindowProperties):
         self._proxies = {}
         environment = getattr(getattr(services, "realm_services", None), "environment", None)
         viewport = BrowserEnvironment.from_value(environment).viewport
-        self.location = Location(services=services); self.navigator = Navigator(services=services, environment=environment); self.screen = Screen(environment=environment)
-        self.localStorage, self.sessionStorage = Storage(), Storage()
+        if feature_runtime is None:
+            raise RuntimeError("Window requires the Browser FeatureRuntime")
+        self._features = feature_runtime.values_for(self)
+        self._history_initial_url = getattr(getattr(services, "realm_services", None), "url", "about:blank")
+        self.location = self._features.value("location")
         self.innerWidth, self.innerHeight = viewport.width, viewport.height
         self.outerWidth, self.outerHeight = viewport.width, viewport.height
         self.devicePixelRatio = viewport.device_scale_factor
-        self.history = History(services=services)
-        self.indexedDB = IDBFactory(services=services)
+
+    @property
+    def navigator(self):
+        return self._features.value("navigator")
+
+    @property
+    def screen(self):
+        return self._features.value("screen")
+
+    @property
+    def localStorage(self):
+        return self._features.value("localStorage")
+
+    @property
+    def sessionStorage(self):
+        return self._features.value("sessionStorage")
+
+    @property
+    def history(self):
+        return self._features.value("history")
+
+    @property
+    def indexedDB(self):
+        return self._features.value("indexedDB")
     def __v8_cross_origin_check__(self, accessor):
         return accessor is self or getattr(accessor, "_origin", None) == self._origin
 

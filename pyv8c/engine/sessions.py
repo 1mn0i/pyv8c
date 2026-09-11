@@ -1,4 +1,4 @@
-"""Realm-local registration with shared immutable compiled descriptions.
+"""Realm-local binding state with shared immutable compiled descriptions.
 
 Only realm-dependent callbacks are rebound. Configurations and materialized
 names become visible to the session after the native batch commit succeeds.
@@ -7,6 +7,7 @@ names become visible to the session after the native batch commit succeeds.
 from __future__ import annotations
 
 from types import MappingProxyType
+
 from pyv8 import IdlSpec
 
 
@@ -55,11 +56,12 @@ class BindingSession:
         staged = {}
         materialized = set()
         for name in names:
-            for interface_name in reversed(tuple(self.universe.walk_parent_names(name))):
-                cls = self.class_for(interface_name)
-                if cls not in self._configs and cls not in staged:
-                    staged[cls] = self.universe.class_config_for(interface_name, self.realm)
-                materialized.add(interface_name)
+            for group_name in self.universe.runtime.interface_group(name):
+                for interface_name in reversed(tuple(self.universe.walk_parent_names(group_name))):
+                    cls = self.class_for(interface_name)
+                    if cls not in self._configs and cls not in staged:
+                        staged[cls] = self.universe.class_config_for(interface_name, self.realm)
+                    materialized.add(interface_name)
         if staged and self._context is not None:
             self._context.update_configs(staged)
         self._configs.update(staged)
@@ -80,14 +82,10 @@ class BindingSession:
     def lazy_names(self, context_type="Window"):
         """Exposed names that are declared on the realm but not pre-built."""
         if context_type not in self._lazy_names:
-            if not self.universe.lazy_interfaces:
-                # Everything is materialized up front; nothing to declare lazily.
-                self._lazy_names[context_type] = ()
-            else:
-                eager = set(self.universe.eager_names(context_type))
-                self._lazy_names[context_type] = tuple(
-                    name for name in self.interface_names(context_type) if name not in eager
-                )
+            eager = set(self.universe.eager_names(context_type))
+            self._lazy_names[context_type] = tuple(
+                name for name in self.interface_names(context_type) if name not in eager
+            )
         return self._lazy_names[context_type]
 
     def lazy_factory(self, context_type="Window", on_materialize=None):

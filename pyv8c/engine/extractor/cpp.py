@@ -1,4 +1,4 @@
-"""Extract a reviewable interface snapshot from generated Blink bindings."""
+"""Extract an interface snapshot from generated Blink bindings."""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,6 @@ import re
 from pathlib import Path
 
 from ..schema import write_baseline
-
 
 INTERFACE_DECL = re.compile(r"const\s+WrapperTypeInfo\s+V8(?P<binding>[A-Za-z0-9_]+)::wrapper_type_info_\s*\{")
 FUNCTION_DECL = re.compile(r"(?:void|v8::Local\s*<\s*v8::Value\s*>)\s+(?P<name>[A-Za-z0-9_]+Callback)\s*\([^)]*\)\s*\{")
@@ -592,92 +591,10 @@ def _report(result, duplicate_sources=0, parse_failures=()):
         "interfaces_with_members": sum(any(item["members"].values()) for item in interfaces.values()),
         "interfaces_with_signatures": sum(any(member.get("signature") for values in item["members"].values() for member in values) for item in interfaces.values()),
         "generated_signatures": sum(_signature_status(signature) == "generated" for signature in signatures),
-        "reviewed_signatures": sum(_signature_status(signature) == "manual-reviewed" for signature in signatures),
         "unresolved_signatures": sum(_signature_status(signature) == "unresolved" for signature in signatures),
-        "manual_review_required": sum(_signature_status(signature) == "unresolved" for signature in signatures),
         "duplicate_sources": duplicate_sources,
         "parse_failures": sorted(set(parse_failures)),
     }
-
-
-def _review_source_path(source):
-    """Normalize generated source paths for review evidence comparisons."""
-    normalized = str(source).replace("\\", "/")
-    if "/renderer/" in normalized:
-        normalized = normalized.split("/renderer/", 1)[1]
-    if normalized.startswith("bindings/"):
-        normalized = normalized[len("bindings/"):]
-    normalized = normalized.replace("/v8/v8_", "/v8_")
-    return normalized
-
-
-def apply_reviews(extracted, review_path):
-    """Merge generation-only reviewed signatures into a renderer snapshot."""
-    reviews = json.loads(Path(review_path).read_text(encoding="utf-8"))
-    interfaces = {name: item for name, item in extracted.items() if not name.startswith("_")}
-    for interface_name, signature in (reviews.get("constructors") or {}).items():
-        if interface_name not in interfaces:
-            raise ValueError(f"stale Web IDL constructor review: {interface_name}")
-        reviewed = dict(signature)
-        expected_sources = reviewed.pop("target_sources", None)
-        actual_sources = sorted(_review_source_path(source) for source in interfaces[interface_name].get("sources", ()))
-        if expected_sources is None or sorted(expected_sources) != actual_sources:
-            raise ValueError(f"stale Web IDL constructor source evidence: {interface_name}")
-        constructor_metadata = {
-            key: reviewed.pop(key) for key in ("exposed", "allow_new", "allow_call", "length")
-            if key in reviewed
-        }
-        reviewed["status"] = "manual-reviewed"
-        constructor = interfaces[interface_name]["constructor"]
-        constructor.update(constructor_metadata)
-        constructor["signature"] = reviewed
-        if constructor.get("length") is None:
-            constructor["length"] = int(reviewed.get("required") or 0)
-    for key, signature in (reviews.get("members") or {}).items():
-        interface_name, separator, member_name = key.partition(".")
-        if not separator or interface_name not in interfaces:
-            raise ValueError(f"stale Web IDL member review: {key}")
-        reviewed = dict(signature)
-        expected_callbacks = reviewed.pop("target_callbacks", None)
-        reviewed["status"] = "manual-reviewed"
-        matches = []
-        candidates = [interface_name]
-        for candidate_name, item in interfaces.items():
-            cursor, seen = candidate_name, set()
-            while cursor and cursor not in seen:
-                seen.add(cursor)
-                if cursor == interface_name:
-                    candidates.append(candidate_name)
-                    break
-                cursor = interfaces.get(cursor, {}).get("parent")
-        for candidate_name in dict.fromkeys(candidates):
-            for location, values in interfaces[candidate_name]["members"].items():
-                matches.extend(
-                    (candidate_name, location, member) for member in values
-                    if member.get("name") == member_name and member.get("kind") in ("operation", "attribute")
-                )
-        if not matches:
-            raise ValueError(f"stale Web IDL member review: {key}")
-        actual_callbacks = sorted(
-            f"{candidate_name}|{location}|{member.get('kind')}|{member.get('callback') or member.get('setter')}"
-            for candidate_name, location, member in matches
-        )
-        if expected_callbacks is None or not set(expected_callbacks).issubset(actual_callbacks):
-            raise ValueError(f"stale Web IDL member callback evidence: {key}")
-        for _candidate_name, _location, member in matches:
-            if member.get("kind") == "attribute":
-                if not member.get("setter"):
-                    continue
-                member["setter_signature"] = dict(reviewed)
-            else:
-                member["signature"] = dict(reviewed)
-    previous = extracted.get("_report") or {}
-    extracted["_report"] = _report(
-        extracted,
-        previous.get("duplicate_sources", 0),
-        previous.get("parse_failures", ()),
-    )
-    return extracted
 
 
 def _compact_callback_metadata(item, *, include_audit):
@@ -717,7 +634,7 @@ def schema5_baseline(extracted, *, include_audit=False):
     """Build the schema 5 runtime snapshot.
 
     The default output omits callback symbols, default world values, and
-    source provenance. ``include_audit`` retains those review-only details.
+    source provenance. ``include_audit`` retains callback and provenance details.
     """
     output = {}
     for name, source in extracted.items():
@@ -798,7 +715,6 @@ def main():
                         help="GN output directory (default: <chromium-root>/src/out/Cronet145)")
     parser.add_argument("--bindings-dir", type=Path, default=None,
                         help="existing generated bindings directory")
-    parser.add_argument("--reviews", type=Path, default=PROJECT_ROOT / "tools" / "webidl-reviews.json")
     parser.add_argument("--report", action="store_true")
     parser.add_argument("--audit", action="store_true",
                         help="write a non-runtime audit snapshot with callback names, world metadata, and provenance")
@@ -811,8 +727,6 @@ def main():
     if not any(renderer.rglob("v8_*.cc")):
         parser.error(f"generated Blink bindings not found under {renderer}; run fetch_chromium.py first")
     extracted = extract(renderer, args.chromium_root / "src" / "third_party" / "blink" / "renderer")
-    if args.reviews:
-        apply_reviews(extracted, args.reviews)
     report = extracted.pop("_report")
     output = {"_webidl": {"schema": 5, "source": "tools/extract_interfaces.py",
         "renderer_snapshot": str(renderer), "report": report,

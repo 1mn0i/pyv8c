@@ -1,13 +1,15 @@
 """Thread-safe HTTP transport bridge for the optional cycronet package."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from concurrent.futures import ThreadPoolExecutor
-from threading import RLock
 import importlib
 import inspect
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from threading import RLock
+
 # Tests patch cookie-change logging through this module attribute.
 from loguru import logger  # noqa: F401 - patch target for cookie-change logging tests
+
 from ...foundation.errors import InvalidStateError
 from ...foundation.urls import same_origin
 from .cookies import CookieJar

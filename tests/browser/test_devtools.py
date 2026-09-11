@@ -1,13 +1,13 @@
 """Real CDP coverage for the browser adapter and shared service."""
 
-from concurrent.futures import Future
 import json
 import threading
+from concurrent.futures import Future
 from urllib.request import urlopen
 
 import pytest
-from websockets.sync.client import connect
 from websockets.exceptions import ConnectionClosed
+from websockets.sync.client import connect
 
 from pyv8c import Browser, DevToolsOptions
 from pyv8c.foundation.errors import DOMException

@@ -1,0 +1,43 @@
+"""Low-frequency Window modules are allocated on first observable access."""
+
+from pyv8c import Browser
+
+
+def _loader(url, request):
+    return {"url": url, "body": "", "headers": {"content-type": "text/html"}}
+
+
+def test_window_defers_low_frequency_bom_modules_and_keeps_identity():
+    browser = Browser(stub_logging="off", resource_loader=_loader)
+    try:
+        context = browser.new_context()
+        page = context.new_page("http://lazy.test/start")
+        window = page.window
+        assert window.location.href == "http://lazy.test/start"
+
+        assert page.evaluate("navigator === navigator")
+        assert "navigator" in browser.interface_universe.runtime.loaded_features
+        assert page.evaluate("screen === screen")
+        assert page.evaluate("localStorage === localStorage")
+        assert page.evaluate("sessionStorage === sessionStorage")
+        assert page.evaluate("history === history")
+        assert page.evaluate("indexedDB === indexedDB")
+        assert "indexeddb" in browser.interface_universe.runtime.loaded_features
+        assert page.evaluate("history.length") == 1
+    finally:
+        browser.close()
+
+
+def test_lazy_history_retains_the_window_initial_entry():
+    browser = Browser(stub_logging="off", resource_loader=_loader)
+    try:
+        context = browser.new_context()
+        page = context.new_page("http://lazy.test/original")
+        window = page.window
+        window.location.href = "http://lazy.test/current"
+        assert page.evaluate("history.length") == 1
+        # Window is created before the first navigation; this preserves the
+        # eager implementation's initial about:blank history entry.
+        assert window.history._entries == [("about:blank", None)]
+    finally:
+        browser.close()

@@ -202,5 +202,5 @@ class NavigationController:
                 scripts.execute_script(node, source, self.page.url)
 
     def element_class(self, tag):
-        from ..web.dom.model import HTMLElement, HTML_CLASSES
+        from ..web.dom.model import HTML_CLASSES, HTMLElement
         return HTML_CLASSES.get("HTML" + str(tag).capitalize() + "Element", HTMLElement)

@@ -1,5 +1,7 @@
 import pytest
-from pyv8c import Browser, Response
+
+from pyv8c import Browser
+from pyv8c.web.fetch.response import Response
 
 
 def page_with(html="<div id='a' class='one two'><span class='one'>x</span><span>y</span></div>"):

@@ -9,16 +9,15 @@ can never fail because of a broken cache.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from hashlib import sha256
 import json
 import pickle
 import time
 import zipfile
+from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
-
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASELINE_PATH = PACKAGE_ROOT / "baselines" / "interface-baseline.zip"

@@ -1,9 +1,6 @@
 import json
-from pathlib import Path
 import zipfile
-
-import pytest
-
+from pathlib import Path
 
 from pyv8c.engine import extractor as extract_interfaces
 from pyv8c.engine.extractor.cpp import (
@@ -142,7 +139,7 @@ def test_real_renderer_snapshot_has_members_for_core_interfaces():
         assert any(entry["members"].values()), name
     assert len(snapshot["URL"]["sources"]) >= 2
     assert snapshot["_report"]["interfaces"] > 1000
-    assert snapshot["_report"]["manual_review_required"] > 0
+    assert snapshot["_report"]["unresolved_signatures"] > 0
 
 
 def test_generated_baseline_keeps_full_runtime_snapshot_and_report():
@@ -150,9 +147,8 @@ def test_generated_baseline_keeps_full_runtime_snapshot_and_report():
     assert baseline["_webidl"]["schema"] == 5
     assert baseline["_webidl"]["compact"] is True
     assert baseline["_webidl"]["report"]["interfaces"] > 1000
-    assert baseline["_webidl"]["report"]["reviewed_signatures"] > 0
+    assert baseline["_webidl"]["report"]["unresolved_signatures"] > 0
     assert all("callbacks" not in value for key, value in baseline.items() if not key.startswith("_"))
-    assert "runtime_registry" not in baseline["_webidl"]
     assert len(baseline["Event"]["members"]["prototype"]) >= 5
     assert len(baseline["Node"]["members"]["prototype"]) > 10
     assert len(baseline["URL"]["members"]["interface"]) >= 2
@@ -237,46 +233,3 @@ def test_schema5_audit_switch_controls_callback_and_world_fields():
     assert audit["template"]["handlers"]["named"]["get"] == "NamedGetterCallback"
     assert audit["members"]["prototype"][0]["callback"] == "RunCallback"
     assert audit["members"]["prototype"][0]["world"] == "AllWorlds"
-
-
-def test_generation_reviews_are_embedded_and_stale_evidence_is_rejected(tmp_path):
-    snapshot = {
-        "Fixture": {
-            "parent": None,
-            "sources": ["root/renderer/core/v8_fixture.cc"],
-            "constructor": {"signature": {"status": "unresolved", "parameters": []}},
-            "members": {
-                "instance": [],
-                "prototype": [{
-                    "name": "run", "kind": "operation", "callback": "RunCallback",
-                    "signature": {"status": "unresolved", "parameters": []},
-                }],
-                "interface": [],
-            },
-        },
-        "_report": {"duplicate_sources": 0, "parse_failures": []},
-    }
-    reviews = {
-        "constructors": {
-            "Fixture": {
-                "parameters": [], "required": 0,
-                "target_sources": ["core/v8_fixture.cc"],
-            },
-        },
-        "members": {
-            "Fixture.run": {
-                "parameters": [{"type": "DOMString"}], "required": 1,
-                "target_callbacks": ["Fixture|prototype|operation|RunCallback"],
-            },
-        },
-    }
-    path = tmp_path / "reviews.json"
-    path.write_text(json.dumps(reviews), encoding="utf-8")
-    extract_interfaces.apply_reviews(snapshot, path)
-    assert snapshot["Fixture"]["constructor"]["signature"]["status"] == "manual-reviewed"
-    assert snapshot["Fixture"]["members"]["prototype"][0]["signature"]["status"] == "manual-reviewed"
-
-    reviews["members"]["Fixture.run"]["target_callbacks"][0] = "Fixture|prototype|operation|ChangedCallback"
-    path.write_text(json.dumps(reviews), encoding="utf-8")
-    with pytest.raises(ValueError, match="callback evidence"):
-        extract_interfaces.apply_reviews(snapshot, path)

@@ -4,6 +4,7 @@ import pytest
 
 pytest.importorskip("pyv8")
 import pyv8
+
 from pyv8c import Browser
 from pyv8c.web.dom.model import HTML_CLASSES, Element, HTMLAllCollection, HTMLCollection
 
@@ -576,8 +577,8 @@ def test_document_all_lazy_interface_is_materialised_on_first_use(browser):
     assert "HTMLAllCollection" in session.materialized_interfaces
 
 
-def test_document_all_full_materialisation_path():
-    browser = Browser(stub_logging="off", lazy_interfaces=False)
+def test_document_all_materialises_through_the_feature_runtime():
+    browser = Browser(stub_logging="off")
     try:
         page = browser.new_context().new_page()
         page.set_content(DOCUMENT)
@@ -589,9 +590,10 @@ def test_document_all_full_materialisation_path():
         browser.close()
 
 
-def test_document_all_strict_validation_accepts_the_interface():
-    browser = Browser(stub_logging="off", strict_validation=True)
+def test_document_all_accepts_the_interface_after_catalog_validation():
+    browser = Browser(stub_logging="off")
     try:
+        browser.interface_universe.validate()
         page = browser.new_context().new_page()
         page.set_content(DOCUMENT)
         page.run_until_idle()

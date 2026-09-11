@@ -22,11 +22,9 @@ def page():
         browser.close()
 
 
-def test_module_exports_are_compatible():
+def test_window_and_bom_core_have_separate_feature_boundaries():
     from pyv8c.web.bom import api
-    assert api.Window is Window
-    assert api.WindowProperties is WindowProperties
-    assert api.WindowProxy is WindowProxy
+    assert api.Location.__module__ == 'pyv8c.web.bom.api'
     assert Window.__module__ == 'pyv8c.web.bom.window'
 
 

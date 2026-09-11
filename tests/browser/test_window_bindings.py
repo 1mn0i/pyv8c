@@ -8,7 +8,7 @@ from pyv8c.web.bom.window import Window
 
 @pytest.fixture
 def page():
-    browser = Browser(cache=False, stub_logging="off", strict_validation=True)
+    browser = Browser(cache=False, stub_logging="off")
     page = browser.new_context().new_page()
     page.set_content('<div id="namedElement"></div>', url="http://a.test/")
     try:
@@ -18,7 +18,7 @@ def page():
 
 
 def test_window_config_has_no_ordinary_named_handlers():
-    browser = Browser(cache=False, stub_logging="off", strict_validation=True)
+    browser = Browser(cache=False, stub_logging="off")
     try:
         universe = browser.interface_universe
         config = universe.class_config_for("Window")

@@ -33,7 +33,7 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
 
-from ...engine.registry import interface
+from ...engine.features import FeatureImplementation, interface
 from ...foundation.arguments import (
     MISSING,
     boolean,
@@ -2375,3 +2375,23 @@ class IDBFactory:
         if second is MISSING:
             raise missing_error('IDBFactory', 'cmp', 2, 1, constructor=False)
         return _cmp(_to_key(first), _to_key(second))
+
+
+FEATURE = FeatureImplementation(
+    {
+        "DOMStringList": DOMStringList,
+        "IDBRecord": IDBRecord,
+        "IDBVersionChangeEvent": IDBVersionChangeEvent,
+        "IDBRequest": IDBRequest,
+        "IDBOpenDBRequest": IDBOpenDBRequest,
+        "IDBKeyRange": IDBKeyRange,
+        "IDBCursor": IDBCursor,
+        "IDBCursorWithValue": IDBCursorWithValue,
+        "IDBTransaction": IDBTransaction,
+        "IDBObjectStore": IDBObjectStore,
+        "IDBIndex": IDBIndex,
+        "IDBDatabase": IDBDatabase,
+        "IDBFactory": IDBFactory,
+    },
+    {"indexedDB": lambda window: IDBFactory(services=window._services)},
+)

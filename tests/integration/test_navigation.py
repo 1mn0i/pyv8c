@@ -1,6 +1,7 @@
 import pytest
 
-from pyv8c import Browser, Response
+from pyv8c import Browser
+from pyv8c.web.fetch.response import Response
 
 
 def test_goto_downloads_html_and_waits_for_document_load():

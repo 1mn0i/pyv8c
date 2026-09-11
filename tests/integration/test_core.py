@@ -1,19 +1,23 @@
-import pytest
 from unittest.mock import patch
 
+import pytest
+
 pytest.importorskip("pyv8")
+import pyv8c.platform.browser as browser_runtime
 from pyv8c import Browser
 from pyv8c.web.dom.selectors import parse
-import pyv8c.platform.browser as browser_runtime
 
 
-def test_interface_registry_is_explicit():
+def test_feature_runtime_exposes_baseline_interfaces():
     browser = Browser(stub_logging="off")
     try:
-        interfaces = browser.interface_universe.registry.specs
-        assert interfaces["HTMLElement"].parent == "Element"
-        assert interfaces["Element"].parent == "Node"
-        assert interfaces["Node"].parent == "EventTarget"
+        interfaces = {
+            name: browser.interface_universe.spec(name)
+            for name in browser.interface_universe.runtime.catalog.interfaces
+        }
+        assert interfaces["HTMLElement"]["parent"] == "Element"
+        assert interfaces["Element"]["parent"] == "Node"
+        assert interfaces["Node"]["parent"] == "EventTarget"
     finally:
         browser.close()
 

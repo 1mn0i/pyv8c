@@ -1,7 +1,8 @@
-from html.parser import HTMLParser
-from html import unescape
 import re
-from .model import Element, Text, Comment
+from html import unescape
+from html.parser import HTMLParser
+
+from .model import Comment, Element, Text
 
 
 class _TreeBuilderMixin:

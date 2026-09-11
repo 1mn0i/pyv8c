@@ -1,5 +1,5 @@
-import pyv8
 import pytest
+import pyv8
 
 from pyv8c import Browser
 

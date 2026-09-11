@@ -1,9 +1,9 @@
 """Platform-owned V8 realms for pages and workers."""
 
-import pyv8
 import time
 
-from ..engine.registry import expose_interfaces
+import pyv8
+
 from ..engine.trace import log_trace
 from ..foundation.executor import RealmExecutor
 
@@ -21,15 +21,10 @@ def _context_kwargs(session, context_type, trace, on_materialize=None, trace_cal
     }
 
 
-def _declare_realm_interfaces(context, session, *, context_type, generate_stubs, universe):
+def _declare_realm_interfaces(context, session, *, context_type, universe):
     """Expose eager interfaces and declare lazy names on a fresh context."""
-    expose_interfaces(
-        context,
-        context_type=context_type,
-        generate_stubs=generate_stubs,
-        universe=universe,
-        class_for=session.class_for,
-    )
+    for name in universe.eager_names(context_type):
+        context.expose(session.class_for(name), name=name)
     return context.declare_lazy(
         session.lazy_names(context_type),
         skip=universe.eager_names(context_type),
@@ -61,7 +56,6 @@ class WorkerRealm:
         _declare_realm_interfaces(
             self.context, session,
             context_type="Worker",
-            generate_stubs=config.generate_stubs,
             universe=config.universe,
         )
         return self.context
@@ -104,34 +98,33 @@ class PageRealm:
         binding_prepared = time.perf_counter_ns()
         self.context = pyv8.Context(page.window, **_context_kwargs(
             self.binding_session, "Window", page.trace,
-            on_materialize=self._record_lazy_materialized,
+            on_materialize=self._record_deferred_materialized,
             trace_callback=browser.trace_callback,
             traceable=browser.traceable,
         ))
         self.binding_session.attach_context(self.context)
         context_created = time.perf_counter_ns()
-        lazy_registered = _declare_realm_interfaces(
+        deferred_globals = _declare_realm_interfaces(
             self.context, self.binding_session,
             context_type="Window",
-            generate_stubs=browser.generate_interface_stubs,
             universe=browser.interface_universe,
         )
-        lazy_registered_at = time.perf_counter_ns()
+        deferred_declared_at = time.perf_counter_ns()
         browser._record_startup(
             binding_assembly_ms=(binding_prepared - binding_started) / 1_000_000,
             context_create_ms=(context_created - binding_prepared) / 1_000_000,
-            lazy_register_ms=(lazy_registered_at - context_created) / 1_000_000,
-            eager_interfaces=len(self.binding_session.materialized_interfaces),
+            deferred_global_declare_ms=(deferred_declared_at - context_created) / 1_000_000,
+            core_interfaces=len(self.binding_session.materialized_interfaces),
             materialized_interfaces=len(self.binding_session.materialized_interfaces),
-            interface_names=len(self.binding_session.interface_names("Window")),
-            lazy_registered=lazy_registered,
+            known_interfaces=len(self.binding_session.interface_names("Window")),
+            deferred_globals=deferred_globals,
         )
 
-    def _record_lazy_materialized(self, name):
+    def _record_deferred_materialized(self, name):
         """Keep startup stats in sync with on-demand interface materialisation."""
         self.page.context_owner.browser._record_startup(
             materialized_interfaces=len(self.binding_session.materialized_interfaces),
-            lazy_materialized=len(self.binding_session.materialized_interfaces)
+            deferred_materialized=len(self.binding_session.materialized_interfaces)
             - len(self.binding_session.universe.eager_names("Window")),
         )
 

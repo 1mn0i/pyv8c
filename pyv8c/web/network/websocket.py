@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.registry import interface
+from ...engine.features import FeatureImplementation, interface
 from ...foundation.arguments import (
     MISSING,
     dom_string,
@@ -182,3 +182,6 @@ class WebSocket(EventTarget):
 
 
 __all__ = ["WebSocket"]
+
+
+FEATURE = FeatureImplementation({"WebSocket": WebSocket})

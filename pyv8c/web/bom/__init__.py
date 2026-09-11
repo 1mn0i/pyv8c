@@ -1,6 +1,4 @@
-"""Browser object model interfaces."""
+"""Browser object model implementation package.
 
-from .api import *
-from .window import *
-from .navigator import *
-from .indexedDB import *
+Concrete interfaces are owned by Features, not package-level re-exports.
+"""

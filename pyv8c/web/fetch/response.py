@@ -4,7 +4,7 @@ import json
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.registry import interface
+from ...engine.features import interface
 from ...foundation.arguments import byte_string, dictionary, integer, is_nullish, usv_string
 from ...foundation.errors import V8RangeError, V8SyntaxError, V8TypeError
 from .blob import Blob

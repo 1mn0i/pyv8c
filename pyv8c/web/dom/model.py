@@ -11,8 +11,17 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import V8Attribute
 
-from ...engine.registry import interface
-from ...foundation.arguments import MISSING, boolean, dictionary, dom_string, integer, interface_value, is_nullish, missing_error
+from ...engine.features import interface
+from ...foundation.arguments import (
+    MISSING,
+    boolean,
+    dictionary,
+    dom_string,
+    integer,
+    interface_value,
+    is_nullish,
+    missing_error,
+)
 from ...foundation.errors import HierarchyRequestError, InvalidCharacterError, NotFoundError, V8TypeError
 from .collections import DOMTokenList, HTMLAllCollection, HTMLCollection, NamedNodeMap, NodeList
 from .events import (

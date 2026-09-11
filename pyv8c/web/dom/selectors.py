@@ -1,9 +1,9 @@
 import re
 from dataclasses import dataclass
 from functools import lru_cache
-from .model import Element
-from ...foundation.errors import V8SyntaxError
 
+from ...foundation.errors import V8SyntaxError
+from .model import Element
 
 # Selector parser failures cross the Python/V8 binding boundary.  Raising the
 # project's marked error type lets V8 materialize a native SyntaxError that

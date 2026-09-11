@@ -1,5 +1,5 @@
-from loguru import logger
 import pyv8
+from loguru import logger
 
 from pyv8c import Browser
 

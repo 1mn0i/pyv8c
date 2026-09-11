@@ -1,12 +1,13 @@
 import copy
 import json
-from pathlib import Path
 import zipfile
+from pathlib import Path
 
 import pytest
 import pyv8
 
 from pyv8c import Browser
+
 BASELINE = Path(__file__).resolve().parents[2] / "pyv8c" / "baselines" / "interface-baseline.zip"
 
 
@@ -179,7 +180,7 @@ def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_pa
     contains["signature"]["status"] = "unresolved"
     path = tmp_path / "unresolved-real.json"
     path.write_text(json.dumps(document), encoding="utf-8")
-    browser = Browser(interface_baseline_path=path, stub_logging="off", strict_validation=True)
+    browser = Browser(interface_baseline_path=path, stub_logging="off")
     try:
         page = browser.new_context().new_page()
         assert page.evaluate("document.createElement('div').classList.contains('x')") is False

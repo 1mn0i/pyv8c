@@ -1,13 +1,13 @@
 """Resource loading and network responses for a single Page."""
 
-import itertools
-import threading
 import base64
 import hashlib
+import itertools
 import json
 import os
 import re
 import tempfile
+import threading
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -15,9 +15,9 @@ import pyv8
 from loguru import logger
 
 from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
+from ..foundation.urls import same_origin
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
-from ..foundation.urls import same_origin
 from ..web.network.backend import NetworkRequest
 
 

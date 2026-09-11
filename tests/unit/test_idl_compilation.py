@@ -5,12 +5,12 @@ from collections import Counter
 import pytest
 
 from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse
-from pyv8c.platform.bootstrap import bootstrap_interfaces
+from pyv8c.platform.bootstrap import bootstrap_runtime
 
 
 @pytest.fixture
 def universe():
-    return InterfaceUniverse(BaselineRepository.load(), registry=bootstrap_interfaces(), stub_logging="off")
+    return InterfaceUniverse(BaselineRepository.load(), runtime=bootstrap_runtime(), stub_logging="off")
 
 
 def test_compilation_and_signature_analysis_are_not_repeated(universe, monkeypatch):

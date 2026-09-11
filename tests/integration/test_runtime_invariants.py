@@ -1,11 +1,12 @@
 import pytest
 from pyv8 import IdlSpec
 
-from pyv8c import Browser, Response
+from pyv8c import Browser
 from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse
 from pyv8c.foundation.errors import DOMException
-from pyv8c.web.workers.clone import structured_clone
+from pyv8c.web.fetch.response import Response
 from pyv8c.web.network.cookies import CookieJar
+from pyv8c.web.workers.clone import structured_clone
 
 
 def new_page(*, loader=None):
@@ -29,9 +30,9 @@ def test_closed_context_rejects_new_pages_and_blob_access():
 
 
 def test_binding_sessions_are_isolated_per_realm():
-    from pyv8c.platform.bootstrap import bootstrap_interfaces
+    from pyv8c.platform.bootstrap import bootstrap_runtime
     universe = InterfaceUniverse(
-        BaselineRepository.load(), registry=bootstrap_interfaces(),
+        BaselineRepository.load(), runtime=bootstrap_runtime(),
         stub_logging="off",
     )
     first_realm = object()
@@ -128,10 +129,10 @@ def test_cookie_path_match_uses_path_boundary_and_preserves_repeated_set_cookie(
 
 @pytest.mark.parametrize("name", ["Node", "Element", "Window"])
 def test_native_specs_do_not_mutate_interface_declarations(name):
-    from pyv8c.platform.bootstrap import bootstrap_interfaces
+    from pyv8c.platform.bootstrap import bootstrap_runtime
 
     universe = InterfaceUniverse(
-        BaselineRepository.load(), registry=bootstrap_interfaces(), stub_logging="off",
+        BaselineRepository.load(), runtime=bootstrap_runtime(), stub_logging="off",
     )
     interface = universe.class_for(name)
     declaration = interface.__dict__["__v8_idl_spec__"]

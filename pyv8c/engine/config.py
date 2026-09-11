@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 TEMPLATE_FLAGS = (
     ("immutable_proto", "immutable"),
     ("undetectable", "undetectable"),

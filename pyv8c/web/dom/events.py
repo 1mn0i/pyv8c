@@ -4,7 +4,7 @@ import time
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.registry import interface
+from ...engine.features import interface
 from ...foundation.arguments import (
     MISSING,
     boolean,

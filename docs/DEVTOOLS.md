@@ -61,4 +61,4 @@ Page 和 iframe 共享 Isolate，但拥有不同 context group；Worker 使用�
 专项：`python -m pytest tests/browser/test_devtools.py tests/integration/test_race_regressions.py tests/integration/test_lifecycle_stress.py -q`。
 真实 Chrome 前端验收：`python tools/devtools_chrome_smoke.py --chrome <chrome.exe>`。
 工具使用临时用户目录和独立 Chrome 进程，不连接或关闭用户的现有浏览器。
-验收记录见 [DEVTOOLS_VALIDATION](DEVTOOLS_VALIDATION.md)。
+回归入口见 `tests/browser/test_devtools.py`、`tests/integration/test_race_regressions.py` 和 `tests/integration/test_lifecycle_stress.py`。

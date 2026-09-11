@@ -4,7 +4,7 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
 
-from ...engine.registry import interface
+from ...engine.features import interface
 from ...foundation.arguments import (
     MISSING,
     dictionary,
@@ -21,6 +21,8 @@ from ...foundation.errors import InvalidStateError, SecurityError, V8TypeError, 
 from ...foundation.urls import SPECIAL_SCHEMES
 from ..dom.model import Event, EventTarget
 from ..fetch.blob import Blob
+
+__all__ = ["Location", "Screen", "Storage", "URLSearchParams", "URL", "History"]
 
 
 @interface('Location', None)
@@ -506,7 +508,10 @@ class History:
         constructor_behavior=0,
         has_constructor=1,
     )
-    def __init__(self, services=None, **_): self._services, self._entries, self._index = services, [(getattr(getattr(services, "realm_services", None), "url", "about:blank"), None)], 0
+    def __init__(self, services=None, initial_url=None, **_):
+        self._services = services
+        self._entries = [(initial_url if initial_url is not None else getattr(getattr(services, "realm_services", None), "url", "about:blank"), None)]
+        self._index = 0
     def get_length(self): return len(self._entries)
     def get_state(self): return self._entries[self._index][1]
     def _url(self, value): return urljoin(self._services.realm_services.url, str(value))
@@ -549,7 +554,3 @@ class History:
         target = max(0, min(len(self._entries) - 1, self._index + int(delta)))
         if target == self._index: return
         self._index = target; self._services.document_services.window.location.href = self._entries[target][0]; self._services.document_services.window.fn_dispatchEvent(Event("popstate", {"bubbles": False}))
-
-
-# Compatibility re-exports; implementations live in window.py.
-from .window import Window, WindowProperties, WindowProxy  # noqa: E402,F401

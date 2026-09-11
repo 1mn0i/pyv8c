@@ -66,15 +66,10 @@ finally:
 | trace / traceable | False / False | 初始观察状态 / 是否允许后续开启 |
 | trace_callback | None | 共享事件回调；未提供时使用 Loguru 输出 |
 | interface_baseline_path | None | 默认随包 ZIP，可指定 compact schema 5 JSON/ZIP |
-| lazy_interfaces | True | eager 核心以外的接口按需物化 |
-| eager_interfaces | None | 使用内置核心集合；显式传入时替换集合 |
 | expose_unimplemented | True | exposure 计划是否包含没有手写实现的 baseline 接口 |
-| generate_interface_stubs | True | 暴露阶段是否走 baseline 补壳路径，与前一开关不是同一概念 |
 | stub_logging | info | 未实现成员日志；off/none/disabled 可关闭 |
-| strict_validation | False | 创建 Universe 时完整编译检查，否则按需编译 |
 
 关闭 stub_logging 只关闭日志，不会让占位成员获得实现。
-关闭 generate_interface_stubs 也不能作为“所有未实现接口完全不可见”的保证；lazy 声明和 exposure 有独立路径。
 原生 binding 描述和已创建模板不是热更新配置；更换 baseline 或修改接口声明后应创建新的 Browser/Context。
 
 ## 环境覆盖

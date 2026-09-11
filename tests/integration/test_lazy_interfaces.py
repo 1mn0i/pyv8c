@@ -24,7 +24,7 @@ def test_cold_start_materialises_no_lazy_interface():
         # Ancestors of eager interfaces (WindowProperties) are expected too.
         assert eager <= materialized
         assert not (materialized & lazy)
-        assert browser.startup_stats["lazy_registered"] == len(lazy)
+        assert browser.startup_stats["deferred_globals"] == len(lazy)
     finally:
         browser.close()
 

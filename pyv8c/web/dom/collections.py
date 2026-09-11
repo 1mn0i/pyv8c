@@ -8,7 +8,7 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagArrayProto, V8Attribute
 
-from ...engine.registry import interface
+from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, missing_error
 from ...foundation.errors import (
     InvalidCharacterError,

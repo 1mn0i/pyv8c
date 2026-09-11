@@ -6,7 +6,7 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagArrayProto, V8Attribute
 
-from ...engine.registry import interface
+from ...engine.features import FeatureImplementation, interface
 from ...foundation.arguments import MISSING, boolean, callback_value, dictionary, integer, is_nullish, missing_error
 from ...foundation.environment import BrowserEnvironment, MimeTypeConfig
 from ...foundation.errors import LegacyPropertyError, V8TypeError
@@ -405,3 +405,21 @@ class Navigator:
 __all__ = [
     "Navigator", "Geolocation", "Plugin", "PluginArray", "MimeType", "MimeTypeArray",
 ]
+
+
+FEATURE = FeatureImplementation(
+    {
+        "MimeType": MimeType,
+        "Plugin": Plugin,
+        "PluginArray": PluginArray,
+        "MimeTypeArray": MimeTypeArray,
+        "Geolocation": Geolocation,
+        "Navigator": Navigator,
+    },
+    {
+        "navigator": lambda window: Navigator(
+            services=window._services,
+            environment=getattr(getattr(window._services, "realm_services", None), "environment", None),
+        ),
+    },
+)

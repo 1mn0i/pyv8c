@@ -1,12 +1,13 @@
 """Compile realm-independent IDL structure once, bind only realm-dependent callbacks."""
 
 from dataclasses import dataclass
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec, ConstantSpec
+
+from pyv8 import AttributeSpec, ConstantSpec, IdlSpec, MethodSpec
 from pyv8.flag import (
     CallbackType,
+    FlagCrossOriginCheck,
     FlagLocation,
     FlagReceiverCheck,
-    FlagCrossOriginCheck,
     SideEffectType,
     V8Attribute,
 )
@@ -138,9 +139,10 @@ class InterfaceCompiler:
         baseline = universe.spec(name)
         parent_name = baseline.get("parent")
         parent = universe.class_for(parent_name) if parent_name else object
-        registration = universe.registry.specs.get(name)
+        implementation = universe.runtime.interface(name)
+        registration = getattr(implementation, "__idl_spec__", None)
         if registration is not None:
-            if registration.parent and registration.parent not in universe.registry.specs:
+            if registration.parent and registration.parent not in universe.runtime.catalog.interfaces:
                 raise TypeError(f"{name} refers to unknown parent {registration.parent}")
             if parent_name is not None and registration.parent != parent_name:
                 raise TypeError(f"{name} parent does not match baseline")
@@ -341,6 +343,6 @@ class InterfaceCompiler:
             changes["methods"] = tuple(methods)
         if compiled.realm_constructor:
             changes["constructor_adapter"] = self.wrappers.constructor_adapter(
-                name, name not in self.universe.registry.specs, realm
+                name, self.universe.runtime.interface(name) is None, realm
             )
         return compiled.spec.replace(**changes)

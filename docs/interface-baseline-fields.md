@@ -11,7 +11,7 @@ metadata.report 仍包含 unresolved 签名；接口数量、成员数量和提�
 CHROMIUM_VERSION 当前为 154.0.8030.0，它是源码获取工具的默认目标。
 ZIP 的 renderer_snapshot 是生成目录来源信息，不含足以独立证明 Chromium release 的版本字段。
 不要从目录名 Cronet145、默认 UA 中的 Chrome/152 或原生 V8 版本反推该 ZIP 的准确 Chromium 版本。
-更新快照时同时记录源码 commit、生成命令、review 文件和输出摘要。
+更新快照时同时记录源码 commit、生成命令和输出摘要。
 
 ## 根结构
 
@@ -57,7 +57,7 @@ attribute 常含 name、setter、flags、receiver、cross_origin、side_effect �
 setter 为 1 表示有 setter，null 表示只读；安装位置由外层分组决定，不重复编码为位置元组。
 常量包含 name、resolved、value、location；未成功解析的常量不能凭空补值。
 
-signature.status 为 generated、manual-reviewed 或 unresolved；source_evidence 记录生成/人工判断依据。
+signature.status 为 generated 或 unresolved；source_evidence 记录生成依据。
 参数按顺序记录 type/idl_type、optional、nullable、default、variadic、enum 等信息。
 签名状态与业务实现是否存在是两个独立维度。
 
@@ -94,8 +94,8 @@ python tools/fetch_chromium.py --version 154.0.8030.0 --root .chromium-build/chr
 python tools/extract_interfaces.py pyv8c/baselines/interface-baseline.zip --chromium-root .chromium-build/chromium --report
 ```
 
-已有生成目录时可传 --bindings-dir；指定 GN 输出用 --build-dir；人工规则来自 tools/webidl-reviews.json，可用 --reviews 替换。
+已有生成目录时可传 --bindings-dir；指定 GN 输出用 --build-dir。
 输出名为 .zip 或传 --zip 时生成压缩包；--audit 输出应使用单独文件，不覆盖运行时 ZIP。
 
 更新后运行 [提取器测试](../tests/unit/test_interface_extractor.py)、[baseline 版本测试](../tests/integration/test_baseline_versions.py)、
-[IDL 编译测试](../tests/unit/test_idl_compilation.py) 与完整浏览器回归，再更新版本证据和 [工作日志](../WORKLOG.md)。
+[IDL 编译测试](../tests/unit/test_idl_compilation.py)、抽取器测试与完整浏览器回归共同验证 baseline 更新。

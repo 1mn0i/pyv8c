@@ -4,7 +4,7 @@ from urllib.parse import urljoin, urlsplit
 
 from pyv8 import AttributeSpec, IdlSpec
 
-from ...engine.registry import interface
+from ...engine.features import interface
 from ...foundation.arguments import MISSING, byte_string, dictionary, enum_value, is_nullish, missing_error, usv_string
 from ...foundation.errors import V8TypeError
 from .headers import Headers

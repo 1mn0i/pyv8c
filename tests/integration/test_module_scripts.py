@@ -1,4 +1,5 @@
-from pyv8c import Browser, Response
+from pyv8c import Browser
+from pyv8c.web.fetch.response import Response
 
 
 def test_static_module_imports_execute_dependency_before_entry_and_block_dcl():

@@ -3,8 +3,8 @@
 import pytest
 
 from pyv8c import Browser
-from pyv8c.web.bom.api import Window
 from pyv8c.foundation.urls import origin_tuple
+from pyv8c.web.bom.window import Window
 
 
 @pytest.fixture
@@ -179,7 +179,7 @@ def test_saved_location_is_restricted_after_origin_changes(windows):
     assert page.evaluate('try { savedLocation.href; } catch(e) { [e.name,e.code]; }') == ['SecurityError', 18]
 
 
-def test_blob_origin_comes_from_creator_registry(windows):
+def test_blob_origin_comes_from_creator_page(windows):
     page, child = windows
     creator = page.context_owner.new_page()
     creator.set_content('<body/>', url='data:text/html,creator')

@@ -13,17 +13,17 @@ from __future__ import annotations
 
 import threading
 
+from .assembly import InterfaceCompiler
 from .baseline import (
     DEFAULT_BASELINE_PATH,
     BaselineRepository,
     BaselineSnapshot,
 )
 from .catalog import InterfaceCatalog
+from .features import FeatureRuntime, InterfaceSpec
+from .sessions import BindingSession
 from .stubs import StubFactory
 from .wrappers import BindingWrapperFactory
-from .assembly import InterfaceCompiler
-from .registry import InterfaceSpec
-from .sessions import BindingSession
 
 __all__ = [
     "DEFAULT_BASELINE_PATH",
@@ -37,24 +37,21 @@ __all__ = [
 DEFAULT_EAGER_INTERFACES = (
     "Window", "EventTarget", "Event", "Node", "Document", "Element",
     "HTMLElement", "URL", "URLSearchParams", "DOMTokenList", "NodeList",
-    "HTMLCollection", "NamedNodeMap", "PluginArray", "Plugin", "MimeTypeArray",
-    "MimeType",
+    "HTMLCollection", "NamedNodeMap",
 )
 
 class InterfaceUniverse:
-    """One isolated interface registry and class config set."""
+    """One isolated baseline view and FeatureRuntime class config set."""
 
-    def __init__(self, baseline: BaselineSnapshot, *, registry, stub_logging="info",
-                 expose_unimplemented=True, eager_interfaces=DEFAULT_EAGER_INTERFACES,
-                 strict_validation=False, lazy_interfaces=True):
+    def __init__(self, baseline: BaselineSnapshot, *, runtime: FeatureRuntime, stub_logging="info",
+                 expose_unimplemented=True):
         self.baseline = baseline
-        self.registry = registry
+        self.runtime = runtime
         self.stub_logging = str(stub_logging or "info").lower()
         self.expose_unimplemented = bool(expose_unimplemented)
-        self.eager_interfaces = tuple(dict.fromkeys(eager_interfaces or ()))
-        self.strict_validation = bool(strict_validation)
+        self.eager_interfaces = DEFAULT_EAGER_INTERFACES
         self._validated = False
-        self.lazy_interfaces = bool(lazy_interfaces)
+        self.deferred_globals = True
         # Realm-independent caches. Configs are owned by each BindingSession.
         # One re-entrant lock guards every read-modify-write cache sequence so
         # concurrent materialisation across realms can never observe a torn
@@ -141,7 +138,7 @@ class InterfaceUniverse:
             spec = self.spec(name)
             parent_name = spec.get("parent")
             parent = self.class_for(parent_name) if parent_name else object
-            implementation = self.registry.implementations.get(name)
+            implementation = self.runtime.interface(name)
             if implementation is None:
                 cls = type(name, (parent,), {
                     "__module__": "pyv8c.engine.generated",
@@ -163,15 +160,12 @@ class InterfaceUniverse:
 
     def exposed_names(self, context_type):
         return list(self._catalog.exposed_names(
-            context_type, self.expose_unimplemented, self.registry.implementations,
+            context_type, self.expose_unimplemented, self.runtime.catalog.interfaces,
         ))
 
     def resolve_names(self, context_type, roots=()):
         """Interface names (including ancestors) a context_type must install."""
-        names = set(
-            self.eager_names(context_type)
-            if self.lazy_interfaces else self.exposed_names(context_type)
-        )
+        names = set(self.eager_names(context_type))
         names.update(root for root in roots if isinstance(root, str))
         for name in tuple(names):
             names.update(self.walk_parent_names(name))

@@ -1,11 +1,11 @@
 """Cookie storage and matching for page and network contexts."""
 
+import time
 from dataclasses import dataclass
-from email.utils import parsedate_to_datetime
 from datetime import timezone
+from email.utils import parsedate_to_datetime
 from http.cookies import SimpleCookie
 from threading import RLock
-import time
 from urllib.parse import urlsplit
 
 from loguru import logger

@@ -1,4 +1,5 @@
-from pyv8c import Browser, Response
+from pyv8c import Browser
+from pyv8c.web.fetch.response import Response
 
 
 def test_parser_blocking_external_script_pauses_and_resumes_parser():

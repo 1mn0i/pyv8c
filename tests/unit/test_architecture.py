@@ -4,8 +4,8 @@ import ast
 from pathlib import Path
 
 import pytest
-import pyv8c
 
+import pyv8c
 
 ROOT = Path(__file__).resolve().parents[2] / "pyv8c"
 DOMAIN_PACKAGES = {"web/dom", "web/bom", "web/fetch", "web/network", "web/workers"}
@@ -20,8 +20,8 @@ def _imports(path):
 
 def test_public_top_level_api_is_available():
     expected = {
-        "Browser", "BrowserContext", "Page", "Document", "Window", "URL",
-        "Blob", "Request", "Response", "XMLHttpRequest", "Worker", "DOMException",
+        "Browser", "BrowserContext", "Page", "DevToolsOptions",
+        "BrowserEnvironment", "ViewportConfig", "DOMException", "V8TypeError",
     }
     assert expected.issubset(set(pyv8c.__all__))
     # The root must remain importable for the standalone Chromium extractor;
@@ -116,11 +116,11 @@ def test_layering_has_no_upward_imports():
 
 def test_runtime_interface_catalog_is_frozen_after_bootstrap():
     pytest.importorskip("pyv8", reason="imports platform modules bound to the native extension")
-    from pyv8c.platform.bootstrap import bootstrap_interfaces
+    from pyv8c.platform.bootstrap import bootstrap_runtime
 
-    registry = bootstrap_interfaces()
-    assert registry.frozen
-    assert bootstrap_interfaces() is registry
+    runtime = bootstrap_runtime()
+    assert "core" in runtime.loaded_features
+    assert bootstrap_runtime() is not runtime
 
 
 @pytest.mark.parametrize("attribute", ["_realm", "_services"])
@@ -153,7 +153,14 @@ def test_realm_of_prefers_injection_and_falls_back_to_services():
 def test_page_exposes_narrow_realm_services():
     pytest.importorskip("pyv8", reason="constructs a live Browser")
     from pyv8c import Browser
-    from pyv8c.foundation.realm import ContextServices, DocumentServices, RealmServices, ResourceServices, TaskServices, WorkerServices
+    from pyv8c.foundation.realm import (
+        ContextServices,
+        DocumentServices,
+        RealmServices,
+        ResourceServices,
+        TaskServices,
+        WorkerServices,
+    )
 
     browser = Browser(stub_logging="off")
     page = browser.new_context().new_page()

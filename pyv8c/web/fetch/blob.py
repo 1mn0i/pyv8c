@@ -2,7 +2,7 @@
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.registry import interface
+from ...engine.features import interface
 from ...foundation.arguments import dictionary, dom_string, enum_value, integer, is_nullish, sequence, usv_string
 from ...foundation.errors import V8TypeError
 

@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlsplit
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.registry import interface
+from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, byte_string, dom_string, missing_error, usv_string
 from ...foundation.errors import InvalidStateError, NotSupportedError, SecurityError, V8SyntaxError
 from ..dom.events import Event, EventTarget

@@ -29,7 +29,6 @@ class WorkerContext:
     universe: Any
     environment: Any
     trace: bool
-    generate_stubs: bool
     expose_unimplemented: bool
     stub_logging: str
     devtools: Optional[Any]
@@ -263,7 +262,6 @@ class _WorkerCapability:
             universe=browser.interface_universe,
             environment=self._owner.environment,
             trace=bool(self._owner.trace),
-            generate_stubs=browser.generate_interface_stubs,
             expose_unimplemented=browser.expose_unimplemented,
             stub_logging=browser.stub_logging,
             devtools=self._owner._context._devtools,

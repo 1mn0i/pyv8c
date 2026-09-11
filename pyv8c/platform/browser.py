@@ -8,8 +8,8 @@ controllers, so each concern can be read and tested on its own.
 """
 
 import os
-import time
 import threading
+import time
 import uuid
 from pathlib import Path
 from types import MappingProxyType
@@ -19,26 +19,24 @@ from types import MappingProxyType
 import pyv8  # noqa: F401 - patch target for native Context instrumentation tests
 from loguru import logger
 
+from ..engine.universe import BaselineRepository, InterfaceUniverse
+from ..foundation.environment import BrowserEnvironment
+from ..foundation.errors import InvalidStateError, NetworkError
+from ..foundation.lifecycle import ResourceScope
+from ..foundation.tasks import TaskQueue
+from ..foundation.urls import origin_string, origin_tuple
 from ..web.bom.window import Window
 from ..web.dom.model import Document
-from ..foundation.urls import origin_string, origin_tuple
 from ..web.network.backend import CronetNetworkBackend
 from ..web.network.cookies import CookieJar
-from ..engine.universe import (
-    DEFAULT_EAGER_INTERFACES, BaselineRepository, InterfaceUniverse,
-)
-from ..foundation.errors import InvalidStateError, NetworkError
-from ..foundation.environment import BrowserEnvironment
-from ..foundation.tasks import TaskQueue
-from ..foundation.lifecycle import ResourceScope
-from .state import Ownership
-from .services import PageServices
-from .bootstrap import bootstrap_interfaces
-from .navigation import NavigationController
+from .bootstrap import bootstrap_runtime
 from .lifecycle import DocumentLifecycle
-from .scripting import ScriptController
-from .resource_loading import ResourceController
+from .navigation import NavigationController
 from .realms import PageRealm
+from .resource_loading import ResourceController
+from .scripting import ScriptController
+from .services import PageServices
+from .state import Ownership
 
 
 class _TaskHostAdapter:
@@ -120,7 +118,10 @@ class Page:
         self.resource_interceptor = context.browser.resource_interceptor
         self.cache_enabled = context.browser.cache_enabled
         self.network_backend = context.network_backend
-        self.window = Window(services=self.services, environment=self.environment)
+        self.window = Window(
+            services=self.services,
+            feature_runtime=context.browser.interface_universe.runtime,
+        )
         self.services.window = self.window
         self.services.document = self.document
         self.window.location.href = str(url)
@@ -390,14 +391,13 @@ class BrowserContext:
 
 
 class Browser:
-    def __init__(self, *, resource_loader=None,
-                 real_network=False, cycronet_options=None, trace=False, trace_callback=None, traceable=False,
-                 resource_interceptor=None, cache=True,
-                 cache_dir=None,
+    def __init__(self, *,
                  environment=None,
-                 generate_interface_stubs=True, expose_unimplemented=True,
-                 stub_logging="info", interface_baseline_path=None,
-                 eager_interfaces=None, lazy_interfaces=True, strict_validation=False):
+                 real_network=False, resource_loader=None, cycronet_options=None, resource_interceptor=None,
+                 trace=False, trace_callback=None, traceable=False,
+                 cache=True, cache_dir=None,
+                 expose_unimplemented=True,
+                 stub_logging="info", interface_baseline_path=None):
         if trace_callback is not None and not callable(trace_callback):
             raise TypeError("trace_callback must be callable or None")
         self.trace_callback = trace_callback
@@ -414,41 +414,32 @@ class Browser:
         self.trace = bool(trace)
         self.traceable = bool(traceable) or self.trace
         self.environment = BrowserEnvironment.from_value(environment)
-        self.generate_interface_stubs = bool(generate_interface_stubs)
         self.expose_unimplemented = bool(expose_unimplemented)
         self.stub_logging = str(stub_logging or "info")
         self._startup_stats = {}
         snapshot = BaselineRepository.load(interface_baseline_path)
         loaded = time.perf_counter_ns()
         self.interface_universe = InterfaceUniverse(
-            snapshot, registry=bootstrap_interfaces(),
+            snapshot, runtime=bootstrap_runtime(),
             stub_logging=self.stub_logging,
             expose_unimplemented=self.expose_unimplemented,
-            eager_interfaces=DEFAULT_EAGER_INTERFACES if eager_interfaces is None else eager_interfaces,
-            strict_validation=strict_validation,
-            lazy_interfaces=lazy_interfaces,
         )
-        if strict_validation:
-            validation_started = time.perf_counter_ns()
-            self.interface_universe.validate()
-            validation_finished = time.perf_counter_ns()
-        else:
-            validation_finished = validation_started = loaded
+        validation_finished = validation_started = loaded
         self.interface_baseline_path = snapshot.path
         self.interface_baseline_info = snapshot.info
         self._startup_stats.update(BaselineRepository._last_timings)
         self._startup_stats.update({
             "validation_ms": (validation_finished - validation_started) / 1_000_000,
             "browser_init_ms": (validation_finished - started) / 1_000_000,
-            "interface_names": len(self.interface_universe.interface_names("Window")),
-            "eager_interfaces": len(self.interface_universe.eager_names("Window")),
-            "lazy_interfaces": max(0, len(self.interface_universe.interface_names("Window")) - len(self.interface_universe.eager_names("Window"))),
+            "known_interfaces": len(self.interface_universe.interface_names("Window")),
+            "core_interfaces": len(self.interface_universe.eager_names("Window")),
+            "deferred_interfaces": max(0, len(self.interface_universe.interface_names("Window")) - len(self.interface_universe.eager_names("Window"))),
             "materialized_interfaces": 0,
             "binding_assembly_ms": 0.0,
             "context_create_ms": 0.0,
-            "lazy_register_ms": 0.0,
-            "lazy_registered": 0,
-            "lazy_materialized": 0,
+            "deferred_global_declare_ms": 0.0,
+            "deferred_globals": 0,
+            "deferred_materialized": 0,
         })
 
     @property

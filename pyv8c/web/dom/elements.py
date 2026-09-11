@@ -8,7 +8,7 @@ from html import escape
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.registry import interface
+from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, interface_value, is_nullish, missing_error
 from ...foundation.errors import InvalidCharacterError, NotFoundError, V8SyntaxError, V8TypeError
 from .collections import DOMTokenList, HTMLCollection, NamedNodeMap, _dom_string

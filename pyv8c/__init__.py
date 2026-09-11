@@ -1,46 +1,37 @@
-"""Public pyv8c API.
+"""Small public runtime surface for pyv8c.
 
-The package root deliberately loads browser bindings lazily. This keeps
-metadata tooling usable on machines that only have Chromium sources and not
-the optional native :mod:`pyv8` extension.
+Web interface implementation classes are Feature internals.  Applications use
+them through JavaScript in a :class:`Browser` realm rather than importing
+their Python implementation classes from this package.
 """
 
 from __future__ import annotations
 
 from importlib import import_module
 
-__all__ = [
-    "Browser", "BrowserContext", "Page", "DevToolsHandle", "DevToolsOptions", "BrowserEnvironment", "ViewportConfig", "ScreenConfig", "GeolocationConfig", "PluginConfig", "MimeTypeConfig", "Window",
-    "Document", "Node", "Element", "HTMLElement", "Text", "Comment", "DocumentType",
-    "CharacterData", "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "CustomEvent", "EventTarget", "WindowProperties", "Location", "Navigator", "Screen", "Storage", "URL", "Plugin", "PluginArray", "MimeType", "MimeTypeArray", "HTMLMetaElement",
-    "URLSearchParams",
-    "NodeList", "HTMLCollection", "HTMLAllCollection", "DOMTokenList", "NamedNodeMap", "Attr", "DocumentFragment", "HTMLTemplateElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLScriptElement", "HTMLLinkElement", "HTMLStyleElement",
-    "Blob", "Headers", "Request", "Response", "XMLHttpRequest", "Worker", "WorkerGlobalScope", "DedicatedWorkerGlobalScope",
-    "WebSocket", "MessageEvent", "CloseEvent", "ErrorEvent",
+_EXPORTS = {
+    "Browser": ".platform", "BrowserContext": ".platform", "Page": ".platform",
+    "DevToolsHandle": ".platform", "DevToolsOptions": ".platform",
+    "BrowserEnvironment": ".foundation.environment", "ViewportConfig": ".foundation.environment",
+    "ScreenConfig": ".foundation.environment", "GeolocationConfig": ".foundation.environment",
+    "PluginConfig": ".foundation.environment", "MimeTypeConfig": ".foundation.environment",
+}
+for _name in (
     "V8Error", "V8TypeError", "V8RangeError", "V8ReferenceError", "V8SyntaxError", "V8URIError", "V8EvalError",
-    "DOMException", "DOMError", "dom_exception", "IndexSizeError", "InvalidCharacterError",
-    "HierarchyRequestError", "NotFoundError", "NotSupportedError", "InvalidStateError",
-    "InvalidAccessError", "SecurityError", "NetworkError", "AbortError", "TimeoutError",
-    "QuotaExceededError", "DataCloneError", "as_js_error",
-]
+    "DOMException", "DOMError", "dom_exception", "IndexSizeError", "InvalidCharacterError", "HierarchyRequestError",
+    "NotFoundError", "NotSupportedError", "InvalidStateError", "InvalidAccessError", "SecurityError", "NetworkError",
+    "AbortError", "TimeoutError", "QuotaExceededError", "DataCloneError", "as_js_error",
+):
+    _EXPORTS[_name] = ".foundation.errors"
 
-_PUBLIC_API_LOADED = False
-
-
-def _load_public_api():
-    global _PUBLIC_API_LOADED
-    if _PUBLIC_API_LOADED:
-        return
-    facade = import_module(".api", __name__)
-    facade._load_public_api()
-    for name in __all__:
-        if hasattr(facade, name):
-            globals()[name] = getattr(facade, name)
-    _PUBLIC_API_LOADED = True
+__all__ = tuple(_EXPORTS)
 
 
 def __getattr__(name):
-    if name in __all__:
-        _load_public_api()
-        return globals()[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    try:
+        module = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+    value = getattr(import_module(module, __name__), name)
+    globals()[name] = value
+    return value

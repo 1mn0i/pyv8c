@@ -3,7 +3,7 @@ from urllib.parse import urljoin
 
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.registry import interface
+from ...engine.features import FeatureImplementation, interface
 from ...foundation.arguments import (
     MISSING,
     dictionary,
@@ -152,3 +152,12 @@ class Worker(EventTarget):
 
 
 __all__ = ["Worker", "WorkerGlobalScope", "DedicatedWorkerGlobalScope"]
+
+
+FEATURE = FeatureImplementation(
+    {
+        "WorkerGlobalScope": WorkerGlobalScope,
+        "DedicatedWorkerGlobalScope": DedicatedWorkerGlobalScope,
+        "Worker": Worker,
+    },
+)

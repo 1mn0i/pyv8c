@@ -1,49 +1,22 @@
-"""Assemble built-in interface implementations in dependency order."""
+"""Create one Feature runtime per Browser."""
 
-from threading import RLock
-
-from ..engine.registry import InterfaceRegistry
-
-
-_bootstrap_lock = RLock()
-_registration_functions = None
-_default_registry = None
+from ..engine.features import FeatureRuntime
+from ..web.features.catalog import CATALOG
 
 
-def bootstrap_interfaces(registry: InterfaceRegistry | None = None):
-    """Build (or extend) a frozen registry of built-in interface implementations.
+def bootstrap_runtime():
+    """Return a fresh Browser-local FeatureRuntime.
 
-    Called with no arguments this returns a cached default registry, built
-    once and frozen; passing a fresh ``InterfaceRegistry`` yields an isolated
-    catalog for tests or experimental baselines.
+    The catalog is immutable and process-shared; implementation caches and
+    loaded-feature state intentionally belong to exactly one Browser.
     """
-    global _default_registry, _registration_functions
-    if registry is None:
-        if _default_registry is not None:
-            return _default_registry
-        registry = InterfaceRegistry()
-    if not isinstance(registry, InterfaceRegistry):
-        raise TypeError("registry must be an InterfaceRegistry")
-    if getattr(registry, "_pyv8c_bootstrapped", False):
-        return registry
-    with _bootstrap_lock:
-        if getattr(registry, "_pyv8c_bootstrapped", False):
-            return registry
-        if _registration_functions is None:
-            from ..engine.builtin_errors import register as register_errors
-            from ..web.bom.registration import register as register_bom
-            from ..web.dom.registration import register as register_dom
-            from ..web.fetch.registration import register as register_fetch
-            from ..web.network.registration import register as register_network
-            from ..web.workers.registration import register as register_workers
-            _registration_functions = (
-                register_errors, register_dom, register_fetch, register_network,
-                register_workers, register_bom,
-            )
-        for register in _registration_functions:
-            register(registry)
-        registry.freeze()
-        registry._pyv8c_bootstrapped = True
-    if _default_registry is None:
-        _default_registry = registry
-    return registry
+    runtime = FeatureRuntime(CATALOG)
+    runtime.preload_eager()
+    return runtime
+
+
+def validate_feature_catalog():
+    """Development-time full validation without a Browser constructor flag."""
+    runtime = bootstrap_runtime()
+    runtime.validate()
+    return runtime

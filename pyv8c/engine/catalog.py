@@ -61,4 +61,3 @@ class InterfaceCatalog:
             seen.add(name)
             yield name
             name = self.baseline.interfaces[name].get("parent")
-
