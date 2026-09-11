@@ -2,7 +2,15 @@ import pytest
 
 pytest.importorskip("pyv8")
 
-from pyv8c import Browser, BrowserEnvironment, MimeTypeConfig, PluginConfig
+from pyv8c import (
+    BatteryConfig,
+    Browser,
+    BrowserEnvironment,
+    MimeTypeConfig,
+    NetworkInformationConfig,
+    PluginConfig,
+    StorageQuotaConfig,
+)
 
 
 def new_page(environment=None):
@@ -29,11 +37,26 @@ def test_default_plugins_match_current_chrome_pdf_snapshot():
             5,
             2,
             [
-                ["PDF Viewer", "internal-pdf-viewer", "Portable Document Format", ["application/pdf", "text/pdf"]],
-                ["Chrome PDF Viewer", "internal-pdf-viewer", "Portable Document Format", ["application/pdf", "text/pdf"]],
-                ["Chromium PDF Viewer", "internal-pdf-viewer", "Portable Document Format", ["application/pdf", "text/pdf"]],
-                ["Microsoft Edge PDF Viewer", "internal-pdf-viewer", "Portable Document Format", ["application/pdf", "text/pdf"]],
-                ["WebKit built-in PDF", "internal-pdf-viewer", "Portable Document Format", ["application/pdf", "text/pdf"]],
+                [
+                    "PDF Viewer", "internal-pdf-viewer", "Portable Document Format",
+                    ["application/pdf", "text/pdf"],
+                ],
+                [
+                    "Chrome PDF Viewer", "internal-pdf-viewer", "Portable Document Format",
+                    ["application/pdf", "text/pdf"],
+                ],
+                [
+                    "Chromium PDF Viewer", "internal-pdf-viewer", "Portable Document Format",
+                    ["application/pdf", "text/pdf"],
+                ],
+                [
+                    "Microsoft Edge PDF Viewer", "internal-pdf-viewer",
+                    "Portable Document Format", ["application/pdf", "text/pdf"],
+                ],
+                [
+                    "WebKit built-in PDF", "internal-pdf-viewer", "Portable Document Format",
+                    ["application/pdf", "text/pdf"],
+                ],
             ],
             [
                 ["application/pdf", "pdf", "Portable Document Format", "PDF Viewer"],
@@ -74,7 +97,10 @@ def test_plugin_and_mime_type_collections_follow_browser_legacy_collection_rules
             "[object PluginArray]", "[object Plugin]", "[object MimeTypeArray]", "[object MimeType]",
             True, True, True, False, True,
             ["0", "1", "2", "3", "4"],
-            ["0", "1", "2", "3", "4", "PDF Viewer", "Chrome PDF Viewer", "Chromium PDF Viewer", "Microsoft Edge PDF Viewer", "WebKit built-in PDF"],
+            [
+                "0", "1", "2", "3", "4", "PDF Viewer", "Chrome PDF Viewer",
+                "Chromium PDF Viewer", "Microsoft Edge PDF Viewer", "WebKit built-in PDF",
+            ],
             False, False, "function", True, True,
         ]
     finally:
@@ -106,8 +132,17 @@ def test_environment_plugins_support_mapping_and_page_overrides():
         context = browser.new_context()
         default_page = context.new_page()
         override_page = context.new_page(environment=override)
-        assert default_page.evaluate("[navigator.plugins[0].name, navigator.mimeTypes[0].type]") == ["Browser Plugin", "application/browser"]
-        assert override_page.evaluate("[navigator.plugins.length, navigator.plugins['Page Plugin'].filename, navigator.plugins[0].namedItem('text/page').suffixes, navigator.mimeTypes['application/page'].enabledPlugin.name]") == [
+        assert default_page.evaluate(
+            "[navigator.plugins[0].name, navigator.mimeTypes[0].type]"
+        ) == ["Browser Plugin", "application/browser"]
+        assert override_page.evaluate("""
+            [
+                navigator.plugins.length,
+                navigator.plugins['Page Plugin'].filename,
+                navigator.plugins[0].namedItem('text/page').suffixes,
+                navigator.mimeTypes['application/page'].enabledPlugin.name,
+            ]
+        """) == [
             1, "page-plugin", "page", "Page Plugin",
         ]
     finally:
@@ -122,6 +157,123 @@ def test_plugin_configuration_is_immutable_and_validated():
     with pytest.raises(ValueError):
         BrowserEnvironment(plugins=[{"name": "duplicate"}, {"name": "duplicate"}])
     with pytest.raises(ValueError):
-        BrowserEnvironment(plugins=[{"name": "invalid", "mime_types": [{"type": "application/test"}, {"type": "application/test"}]}])
+        BrowserEnvironment(plugins=[{
+            "name": "invalid",
+            "mime_types": [
+                {"type": "application/test"},
+                {"type": "application/test"},
+            ],
+        }])
     with pytest.raises(TypeError):
         BrowserEnvironment(plugins="not a plugin sequence")
+
+
+def test_navigator_runtime_surfaces_match_chrome_shapes_and_identity():
+    browser, page = new_page({
+        "user_agent": "Mozilla/5.0 Test Browser",
+        "webdriver": True,
+        "connection": {
+            "effective_type": "3g", "rtt": 250, "downlink": 1.5,
+            "save_data": True, "type": "wifi", "downlink_max": 25,
+        },
+        "battery": {
+            "charging": False, "charging_time": 120,
+            "discharging_time": 3600, "level": 0.75,
+        },
+        "persistent_storage_quota": {"usage": 10, "quota": 40},
+    })
+    try:
+        assert page.evaluate("""
+            (() => [
+                navigator.appVersion,
+                navigator.webdriver,
+                navigator.connection === navigator.connection,
+                Object.prototype.toString.call(navigator.connection),
+                navigator.connection.effectiveType,
+                navigator.connection.rtt,
+                navigator.connection.downlink,
+                navigator.connection.saveData,
+                navigator.connection.type,
+                navigator.connection.downlinkMax,
+                navigator.webkitPersistentStorage === navigator.webkitPersistentStorage,
+                Object.prototype.toString.call(navigator.webkitPersistentStorage),
+                navigator.getBattery.length,
+            ])()
+        """) == [
+            "5.0 Test Browser", True, True, "[object NetworkInformation]",
+            "3g", 250, 1.5, True, "wifi", 25, True,
+            "[object DeprecatedStorageQuota]", 0,
+        ]
+
+        page.evaluate("""
+            navigator.getBattery().then(battery => globalThis.batterySnapshot = [
+                Object.prototype.toString.call(battery), battery.charging,
+                battery.chargingTime, battery.dischargingTime, battery.level,
+            ]);
+            navigator.webkitPersistentStorage.queryUsageAndQuota(
+                (usage, quota) => globalThis.quotaSnapshot = [usage, quota]
+            );
+            navigator.webkitPersistentStorage.requestQuota(
+                100, quota => globalThis.grantedQuota = quota
+            );
+        """)
+        page.run_until_idle()
+        assert page.evaluate("batterySnapshot") == [
+            "[object BatteryManager]", False, 120, 3600, 0.75,
+        ]
+        assert page.evaluate("quotaSnapshot") == [10, 40]
+        assert page.evaluate("grantedQuota") == 40
+    finally:
+        browser.close()
+
+
+def test_navigator_subobjects_are_created_only_on_first_access():
+    browser, page = new_page()
+    try:
+        navigator = page.window.navigator
+        assert navigator._features.cached_names == frozenset()
+
+        assert page.evaluate("navigator.userAgent.length > 0")
+        assert navigator._features.cached_names == frozenset()
+
+        assert page.evaluate("navigator.connection === navigator.connection")
+        assert navigator._features.cached_names == {"connection"}
+
+        assert page.evaluate("navigator.plugins === navigator.plugins")
+        assert navigator._features.cached_names == {
+            "connection", "plugins", "mimeTypes",
+        }
+
+        assert page.evaluate("navigator.webkitPersistentStorage === navigator.webkitPersistentStorage")
+        assert "webkitPersistentStorage" in navigator._features.cached_names
+        assert "webkitTemporaryStorage" not in navigator._features.cached_names
+        assert "battery" not in navigator._features.cached_names
+
+        page.evaluate("navigator.getBattery()")
+        assert "battery" in navigator._features.cached_names
+        assert "geolocation" not in navigator._features.cached_names
+
+        assert page.evaluate("navigator.geolocation === navigator.geolocation")
+        assert "geolocation" in navigator._features.cached_names
+    finally:
+        browser.close()
+
+
+def test_navigator_environment_records_validate_defaults():
+    environment = BrowserEnvironment()
+    assert environment.app_version == environment.user_agent.removeprefix("Mozilla/")
+    assert environment.webdriver is False
+    assert environment.connection == NetworkInformationConfig()
+    assert environment.battery == BatteryConfig()
+    assert environment.persistent_storage_quota == StorageQuotaConfig()
+
+    assert environment.overlay({"user_agent": "Custom UA"}).app_version == "Custom UA"
+    assert environment.overlay({
+        "user_agent": "Custom UA", "app_version": "Explicit Version",
+    }).app_version == "Explicit Version"
+    with pytest.raises(ValueError):
+        BrowserEnvironment(connection={"effective_type": "5g"})
+    with pytest.raises(ValueError):
+        BrowserEnvironment(battery={"level": 1.1})
+    with pytest.raises(ValueError):
+        BrowserEnvironment(persistent_storage_quota={"usage": 2, "quota": 1})

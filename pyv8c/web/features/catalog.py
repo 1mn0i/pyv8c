@@ -20,7 +20,10 @@ INDEXEDDB_INTERFACES = (
     "DOMStringList", "IDBRecord", "IDBVersionChangeEvent", "IDBRequest", "IDBOpenDBRequest", "IDBKeyRange",
     "IDBCursor", "IDBCursorWithValue", "IDBTransaction", "IDBObjectStore", "IDBIndex", "IDBDatabase", "IDBFactory",
 )
-NAVIGATOR_INTERFACES = ("MimeType", "Plugin", "PluginArray", "MimeTypeArray", "Geolocation", "Navigator")
+NAVIGATOR_INTERFACES = (
+    "MimeType", "Plugin", "PluginArray", "MimeTypeArray", "Geolocation",
+    "NetworkInformation", "BatteryManager", "DeprecatedStorageQuota", "Navigator",
+)
 WORKER_INTERFACES = ("WorkerGlobalScope", "DedicatedWorkerGlobalScope", "Worker")
 
 

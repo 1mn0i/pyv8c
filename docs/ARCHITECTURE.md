@@ -62,6 +62,16 @@ FEATURE = FeatureImplementation(
 
 Runtime 负责依赖先后、循环检测、接口映射完整性、模块加载失败回滚和同一 Feature 的单次加载。IndexedDB、Navigator、WebSocket、Worker 是 Optional Feature；首次访问全局构造器或 Window 槽位时才加载。
 
+### Feature 内对象惰性创建
+
+Feature 模块加载、Realm 接口物化和具体对象实例化是三个独立阶段。加载某个 Feature 只允许准备类和绑定；除页面启动必需的对象外，不能在父对象构造时顺带创建低频子对象。
+
+例如创建 `Navigator` 时不能立即创建 `NetworkInformation`、`BatteryManager`、Geolocation、Plugin 集合或存储配额对象。它们应在对应属性或方法首次访问时创建，后续访问返回同一对象。其他 Feature 中昂贵、低频或可能持有资源的子对象遵循相同规则。
+
+`Window` 槽位和 Feature 内部子对象统一使用 `LazyValueStore`：宿主 getter 只处理可用性并调用 `.value("slot")`，集中式 `_create_value()` 工厂负责构造。需要成组创建的关联值由工厂一次写入同一个 store。不要新增 `_object()` 辅助函数、逐属性 nullable 字段或 `dict.get()` 风格的第二套缓存。
+
+惰性对象工厂不得放在 getter 中重复执行，不得用局部动态 import 代替 Feature 加载，也不得让“未访问”与“已创建但值为空”共享无法区分的缓存状态。构造失败不得留下缓存项，以便后续访问重试。测试必须同时验证首次访问前未实例化、首次访问触发创建和重复访问身份稳定。
+
 ### Realm 物化
 
 Feature 模块加载和 Realm 物化是两件事：模块类缓存属于 Browser Runtime，`IdlSpec` 配置属于 Realm Session。Optional Feature 首次使用时，其关联接口组在当前 Realm 一次性提交，避免对象返回时缺少对应绑定。

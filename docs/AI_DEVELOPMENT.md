@@ -21,13 +21,14 @@
 - `FeatureCatalog` 只保存声明；`FeatureRuntime` 才拥有模块加载状态。每个 Browser 有独立 Runtime，Python `sys.modules` 的进程级缓存不等于 Browser 状态。
 - Feature 实现模块必须显式导出 `FEATURE`，接口映射必须完整；不要重新引入 `vars(module)` 扫描、注册表冻结后写入或散落的 loader。
 - Optional Feature 首次接口/Window 槽位访问时加载；同一 Feature 在一个 Browser 中只加载一次，在一个 Realm 中原子物化其关联接口。
-- Window 值必须通过 Feature 槽位创建并保持对象身份；不要重新引入 `_lazy_bom`、字符串键缓存或局部动态 import。
+- Window 值必须通过 Feature 槽位创建并保持对象身份；不要重新引入由 Window 自己维护的 `_lazy_bom` 或局部动态 import。
+- Feature 内部的低频子对象必须在对应属性或方法首次使用时实例化。Window 槽位和 Feature 内部子对象统一使用 `LazyValueStore`：getter 只做可用性判断并调用 `.value("slot")`，集中式 `_create_value()` 负责构造。不要新增 `_object()`、逐属性 nullable 字段或 `dict.get()` 缓存。重复访问必须返回同一实例；构造父对象时不得预先创建 NetworkInformation、BatteryManager、Geolocation、Plugin 集合、存储配额等低频对象。
 - 参数语义、转换顺序、同步异常和 Promise 拒绝属于 API 实现；不要增加签名驱动的统一校验 wrapper。
 - `interface-baseline.zip` 提供结构、继承、成员和模板元数据，不是运行时参数调度器。
 
 ## 修改方法
 
-- 新增 Web API：先确定所属 Feature、接口组、依赖和 Window 槽位，再写实现；在模块尾部之外定义显式 `FEATURE` 映射，并添加最小行为测试。
+- 新增 Web API：先确定所属 Feature、接口组、依赖和 Window 槽位，再写实现；在模块尾部之外定义显式 `FEATURE` 映射，并添加最小行为测试。若接口返回低频子对象，测试首次访问前未实例化、首次访问创建和重复访问身份稳定。
 - 修改绑定：检查 `InterfaceUniverse`、`BindingSession`、`InterfaceCompiler` 和 `_pyv8` Context lazy factory 的数据流，确保失败时不提交半成品配置。
 - 修改页面生命周期：沿 `PageServices` capability 传递，不给 Web 对象增加宽 owner/backdoor。
 - 修改 IndexedDB、DevTools、trace 或资源系统时，只改变任务指定的子系统；避免顺手重写无关模块。

@@ -38,7 +38,10 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
             output["after_websocket"] = {key: module in sys.modules for key, module in modules.items()}
             output["worker_type"] = page.evaluate("typeof Worker")
             output["after_worker"] = {key: module in sys.modules for key, module in modules.items()}
-            output["idb_group"] = [name for name in page.binding_session.materialized_interfaces if name.startswith("IDB")]
+            output["idb_group"] = [
+                name for name in page.binding_session.materialized_interfaces
+                if name.startswith("IDB")
+            ]
             print(json.dumps(output))
         finally:
             browser.close()
@@ -118,3 +121,31 @@ def test_feature_runtime_reports_cycles_before_importing_a_module():
 
     with pytest.raises(RuntimeError, match="first -> second -> first"):
         runtime.load("first")
+
+
+def test_lazy_value_store_caches_none_and_retries_failed_creation():
+    from pyv8c.engine.features import LazyValueStore
+
+    class Values(LazyValueStore):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def _create_value(self, name):
+            self.calls.append(name)
+            if name == "retry" and self.calls.count(name) == 1:
+                raise RuntimeError("creation failed")
+            return None if name == "empty" else object()
+
+    values = Values()
+    assert values.value("empty") is None
+    assert values.value("empty") is None
+    assert values.calls == ["empty"]
+    assert values.cached_names == {"empty"}
+
+    with pytest.raises(RuntimeError, match="creation failed"):
+        values.value("retry")
+    assert "retry" not in values.cached_names
+    created = values.value("retry")
+    assert values.value("retry") is created
+    assert values.calls == ["empty", "retry", "retry"]

@@ -195,8 +195,82 @@ class GeolocationConfig(_ConfigMapping):
 
 
 @dataclass(frozen=True)
+class NetworkInformationConfig(_ConfigMapping):
+    _config_label = "connection"
+    _none_default = True
+
+    effective_type: str = "4g"
+    rtt: int = 100
+    downlink: float = 10.0
+    save_data: bool = False
+    type: str = "unknown"
+    downlink_max: float = float("inf")
+
+    def __post_init__(self):
+        effective_type = str(self.effective_type)
+        if effective_type not in ("slow-2g", "2g", "3g", "4g"):
+            raise ValueError("connection.effective_type must be 'slow-2g', '2g', '3g', or '4g'")
+        connection_type = str(self.type)
+        if connection_type not in (
+            "bluetooth", "cellular", "ethernet", "mixed", "none",
+            "other", "unknown", "wifi", "wimax",
+        ):
+            raise ValueError("connection.type is not a valid connection type")
+        object.__setattr__(self, "effective_type", effective_type)
+        object.__setattr__(self, "rtt", _non_negative_int(self.rtt, "connection.rtt"))
+        object.__setattr__(self, "downlink", _non_negative_float(self.downlink, "connection.downlink"))
+        object.__setattr__(self, "save_data", bool(self.save_data))
+        object.__setattr__(self, "type", connection_type)
+        downlink_max = float(self.downlink_max)
+        if downlink_max < 0:
+            raise ValueError("connection.downlink_max must not be negative")
+        object.__setattr__(self, "downlink_max", downlink_max)
+
+
+@dataclass(frozen=True)
+class BatteryConfig(_ConfigMapping):
+    _config_label = "battery"
+    _none_default = True
+
+    charging: bool = True
+    charging_time: float = 0.0
+    discharging_time: float = float("inf")
+    level: float = 1.0
+
+    def __post_init__(self):
+        object.__setattr__(self, "charging", bool(self.charging))
+        object.__setattr__(self, "charging_time", _non_negative_float(self.charging_time, "battery.charging_time"))
+        object.__setattr__(
+            self, "discharging_time",
+            _non_negative_float(self.discharging_time, "battery.discharging_time"),
+        )
+        level = float(self.level)
+        if not 0.0 <= level <= 1.0:
+            raise ValueError("battery.level must be between zero and one")
+        object.__setattr__(self, "level", level)
+
+
+@dataclass(frozen=True)
+class StorageQuotaConfig(_ConfigMapping):
+    _config_label = "storage quota"
+    _none_default = True
+
+    usage: int = 0
+    quota: int = 0
+
+    def __post_init__(self):
+        usage = _non_negative_int(self.usage, "storage quota usage")
+        quota = _non_negative_int(self.quota, "storage quota quota")
+        if usage > quota:
+            raise ValueError("storage quota usage must not exceed quota")
+        object.__setattr__(self, "usage", usage)
+        object.__setattr__(self, "quota", quota)
+
+
+@dataclass(frozen=True)
 class BrowserEnvironment:
     user_agent: str = DEFAULT_USER_AGENT
+    app_version: str | None = None
     platform: str = "Win32"
     language: str = DEFAULT_LANGUAGES[0]
     languages: tuple[str, ...] = DEFAULT_LANGUAGES
@@ -204,14 +278,23 @@ class BrowserEnvironment:
     hardware_concurrency: int = 8
     device_memory: float = 8.0
     max_touch_points: int = 0
+    webdriver: bool = False
     viewport: ViewportConfig = field(default_factory=ViewportConfig)
     screen: ScreenConfig = field(default_factory=ScreenConfig)
     timezone: str = "UTC"
     geolocation: GeolocationConfig = field(default_factory=GeolocationConfig)
+    connection: NetworkInformationConfig = field(default_factory=NetworkInformationConfig)
+    battery: BatteryConfig = field(default_factory=BatteryConfig)
+    temporary_storage_quota: StorageQuotaConfig = field(default_factory=StorageQuotaConfig)
+    persistent_storage_quota: StorageQuotaConfig = field(default_factory=StorageQuotaConfig)
     plugins: tuple[PluginConfig, ...] = DEFAULT_PLUGINS
 
     def __post_init__(self):
         object.__setattr__(self, "user_agent", str(self.user_agent))
+        app_version = self.app_version
+        if app_version is None:
+            app_version = self.user_agent.removeprefix("Mozilla/")
+        object.__setattr__(self, "app_version", str(app_version))
         object.__setattr__(self, "platform", str(self.platform))
         if not self.user_agent:
             raise ValueError("user_agent must not be empty")
@@ -239,6 +322,7 @@ class BrowserEnvironment:
         )
         object.__setattr__(self, "device_memory", _positive_float(self.device_memory, "device_memory"))
         object.__setattr__(self, "max_touch_points", _non_negative_int(self.max_touch_points, "max_touch_points"))
+        object.__setattr__(self, "webdriver", bool(self.webdriver))
         object.__setattr__(self, "viewport", ViewportConfig.from_value(self.viewport))
         object.__setattr__(self, "screen", ScreenConfig.from_value(self.screen))
         timezone = str(self.timezone)
@@ -246,6 +330,16 @@ class BrowserEnvironment:
             raise ValueError("timezone must not be empty")
         object.__setattr__(self, "timezone", timezone)
         object.__setattr__(self, "geolocation", GeolocationConfig.from_value(self.geolocation))
+        object.__setattr__(self, "connection", NetworkInformationConfig.from_value(self.connection))
+        object.__setattr__(self, "battery", BatteryConfig.from_value(self.battery))
+        object.__setattr__(
+            self, "temporary_storage_quota",
+            StorageQuotaConfig.from_value(self.temporary_storage_quota),
+        )
+        object.__setattr__(
+            self, "persistent_storage_quota",
+            StorageQuotaConfig.from_value(self.persistent_storage_quota),
+        )
         plugins = self.plugins
         if isinstance(plugins, Mapping):
             # Runtime callers may pass a lone mapping for a single entry even
@@ -273,7 +367,12 @@ class BrowserEnvironment:
         # language list, matching browser Navigator semantics.
         if "languages" in supplied and "language" not in supplied:
             values["language"] = None
-        for name in ("viewport", "screen", "geolocation"):
+        if "user_agent" in supplied and "app_version" not in supplied:
+            values["app_version"] = None
+        for name in (
+            "viewport", "screen", "geolocation", "connection", "battery",
+            "temporary_storage_quota", "persistent_storage_quota",
+        ):
             nested = supplied.get(name)
             if isinstance(nested, Mapping):
                 merged = dict(values[name])
@@ -296,5 +395,6 @@ class BrowserEnvironment:
 
 __all__ = [
     "BrowserEnvironment", "ViewportConfig", "ScreenConfig", "GeolocationConfig",
+    "NetworkInformationConfig", "BatteryConfig", "StorageQuotaConfig",
     "PluginConfig", "MimeTypeConfig",
 ]

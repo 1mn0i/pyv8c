@@ -14,6 +14,8 @@ _EXPORTS = {
     "DevToolsHandle": ".platform", "DevToolsOptions": ".platform",
     "BrowserEnvironment": ".foundation.environment", "ViewportConfig": ".foundation.environment",
     "ScreenConfig": ".foundation.environment", "GeolocationConfig": ".foundation.environment",
+    "NetworkInformationConfig": ".foundation.environment", "BatteryConfig": ".foundation.environment",
+    "StorageQuotaConfig": ".foundation.environment",
     "PluginConfig": ".foundation.environment", "MimeTypeConfig": ".foundation.environment",
 }
 for _name in (

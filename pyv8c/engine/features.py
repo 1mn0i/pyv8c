@@ -109,21 +109,45 @@ class FeatureCatalog:
         return tuple(spec for spec in self._by_name.values() if spec.eager)
 
 
-class WindowFeatureValues:
+class LazyValueStore:
+    """Identity-preserving values created by a single owning factory."""
+
+    __slots__ = ("_values",)
+
+    def __init__(self):
+        self._values = {}
+
+    @property
+    def cached_names(self):
+        return frozenset(self._values)
+
+    def value(self, name):
+        try:
+            return self._values[name]
+        except KeyError:
+            value = self._create_value(name)
+            self._values[name] = value
+            return value
+
+    def _cache(self, name, value):
+        self._values[name] = value
+        return value
+
+    def _create_value(self, name):
+        raise NotImplementedError
+
+
+class WindowFeatureValues(LazyValueStore):
     """Per-Window identity cache owned by one :class:`FeatureRuntime`."""
 
-    __slots__ = ("_runtime", "_window", "_values")
+    __slots__ = ("_runtime", "_window")
 
     def __init__(self, runtime, window):
-        self._runtime, self._window, self._values = runtime, window, {}
+        super().__init__()
+        self._runtime, self._window = runtime, window
 
-    def value(self, slot):
-        try:
-            return self._values[slot]
-        except KeyError:
-            value = self._runtime.create_window_value(slot, self._window)
-            self._values[slot] = value
-            return value
+    def _create_value(self, slot):
+        return self._runtime.create_window_value(slot, self._window)
 
 
 class FeatureRuntime:

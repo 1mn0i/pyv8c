@@ -6,11 +6,21 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagArrayProto, V8Attribute
 
-from ...engine.features import FeatureImplementation, interface
-from ...foundation.arguments import MISSING, boolean, callback_value, dictionary, integer, is_nullish, missing_error
+from ...engine.features import FeatureImplementation, LazyValueStore, interface
+from ...foundation.arguments import (
+    MISSING,
+    boolean,
+    callback_value,
+    dictionary,
+    event_handler,
+    integer,
+    is_nullish,
+    missing_error,
+)
 from ...foundation.environment import BrowserEnvironment, MimeTypeConfig
 from ...foundation.errors import LegacyPropertyError, V8TypeError
 from ...foundation.indexed_properties import ReadOnlyIndexedPropertyMixin
+from ..dom.events import EventTarget
 
 _ITERABLE_FLAGS = (
     FlagArrayProto.iterator | FlagArrayProto.entries | FlagArrayProto.keys
@@ -347,11 +357,170 @@ class Geolocation:
         self._watchers.pop(int(ident), None)
 
 
+@interface('NetworkInformation', 'EventTarget', exposed_in=('Window',))
+class NetworkInformation(EventTarget):
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="onchange", getter="get_onchange", setter="set_onchange"),
+            AttributeSpec(name="effectiveType", getter="get_effectiveType", side_effect=1),
+            AttributeSpec(name="rtt", getter="get_rtt", side_effect=1),
+            AttributeSpec(name="downlink", getter="get_downlink", side_effect=1),
+            AttributeSpec(name="saveData", getter="get_saveData", side_effect=1),
+            AttributeSpec(name="type", getter="get_type", side_effect=1),
+            AttributeSpec(name="downlinkMax", getter="get_downlinkMax", side_effect=1),
+            AttributeSpec(name="ontypechange", getter="get_ontypechange", setter="set_ontypechange"),
+        ),
+        constructor_behavior=0,
+        to_string_tag="NetworkInformation",
+        has_constructor=1,
+    )
+
+    def __init__(self, config, services=None, **_):
+        super().__init__(services=services)
+        self._config = config
+
+    def get_onchange(self): return self._get_handler("onchange")
+    def set_onchange(self, value): self._set_handler("onchange", event_handler(value))
+    def get_effectiveType(self): return self._config.effective_type
+    def get_rtt(self): return self._config.rtt
+    def get_downlink(self): return self._config.downlink
+    def get_saveData(self): return self._config.save_data
+    def get_type(self): return self._config.type
+    def get_downlinkMax(self): return self._config.downlink_max
+    def get_ontypechange(self): return self._get_handler("ontypechange")
+    def set_ontypechange(self, value): self._set_handler("ontypechange", event_handler(value))
+
+
+@interface('BatteryManager', 'EventTarget', exposed_in=('Window',))
+class BatteryManager(EventTarget):
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="charging", getter="get_charging", side_effect=1),
+            AttributeSpec(name="chargingTime", getter="get_chargingTime", side_effect=1),
+            AttributeSpec(name="dischargingTime", getter="get_dischargingTime", side_effect=1),
+            AttributeSpec(name="level", getter="get_level", side_effect=1),
+            AttributeSpec(name="onchargingchange", getter="get_onchargingchange", setter="set_onchargingchange"),
+            AttributeSpec(
+                name="onchargingtimechange",
+                getter="get_onchargingtimechange",
+                setter="set_onchargingtimechange",
+            ),
+            AttributeSpec(
+                name="ondischargingtimechange",
+                getter="get_ondischargingtimechange",
+                setter="set_ondischargingtimechange",
+            ),
+            AttributeSpec(name="onlevelchange", getter="get_onlevelchange", setter="set_onlevelchange"),
+        ),
+        constructor_behavior=0,
+        to_string_tag="BatteryManager",
+        has_constructor=1,
+    )
+
+    def __init__(self, config, services=None, **_):
+        super().__init__(services=services)
+        self._config = config
+
+    def get_charging(self): return self._config.charging
+    def get_chargingTime(self): return self._config.charging_time
+    def get_dischargingTime(self): return self._config.discharging_time
+    def get_level(self): return self._config.level
+    def get_onchargingchange(self): return self._get_handler("onchargingchange")
+    def set_onchargingchange(self, value): self._set_handler("onchargingchange", event_handler(value))
+    def get_onchargingtimechange(self): return self._get_handler("onchargingtimechange")
+    def set_onchargingtimechange(self, value): self._set_handler("onchargingtimechange", event_handler(value))
+    def get_ondischargingtimechange(self): return self._get_handler("ondischargingtimechange")
+    def set_ondischargingtimechange(self, value): self._set_handler("ondischargingtimechange", event_handler(value))
+    def get_onlevelchange(self): return self._get_handler("onlevelchange")
+    def set_onlevelchange(self, value): self._set_handler("onlevelchange", event_handler(value))
+
+
+@interface('DeprecatedStorageQuota', None, exposed_in=('Window',))
+class DeprecatedStorageQuota:
+    __v8_idl_spec__ = IdlSpec(
+        methods=(
+            MethodSpec(name="queryUsageAndQuota", callback="fn_queryUsageAndQuota", length=1),
+            MethodSpec(name="requestQuota", callback="fn_requestQuota", length=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="DeprecatedStorageQuota",
+        has_constructor=1,
+    )
+
+    def __init__(self, config, services=None, **_):
+        self._config = config
+        self._services = services
+
+    @staticmethod
+    def _optional_callback(value):
+        if value is pyv8.Undefined or is_nullish(value):
+            return None
+        return callback_value(value)
+
+    def _post(self, callback, *args):
+        if callback is None:
+            return
+        task_services = getattr(self._services, "task_services", None)
+        if task_services is None:
+            callback(*args)
+        else:
+            task_services.post_task(lambda: callback(*args))
+
+    def fn_queryUsageAndQuota(self, success=MISSING, error=None, *_extra):
+        if success is MISSING:
+            raise missing_error('DeprecatedStorageQuota', 'queryUsageAndQuota', 1, 0, constructor=False)
+        success = callback_value(success)
+        self._optional_callback(error)
+        self._post(success, self._config.usage, self._config.quota)
+
+    def fn_requestQuota(self, requested=MISSING, success=None, error=None, *_extra):
+        if requested is MISSING:
+            raise missing_error('DeprecatedStorageQuota', 'requestQuota', 1, 0, constructor=False)
+        requested = integer(requested, bits=64)
+        success = self._optional_callback(success)
+        self._optional_callback(error)
+        self._post(success, min(requested, self._config.quota))
+
+
+class _NavigatorFeatureValues(LazyValueStore):
+    __slots__ = ("_navigator",)
+
+    def __init__(self, navigator):
+        super().__init__()
+        self._navigator = navigator
+
+    def _create_value(self, name):
+        navigator = self._navigator
+        environment = navigator._environment
+        services = navigator._services
+        if name == "connection":
+            return NetworkInformation(environment.connection, services=services)
+        if name == "battery":
+            return BatteryManager(environment.battery, services=services)
+        if name == "geolocation":
+            return Geolocation(services=services, environment=environment)
+        if name == "webkitTemporaryStorage":
+            return DeprecatedStorageQuota(
+                environment.temporary_storage_quota, services=services
+            )
+        if name == "webkitPersistentStorage":
+            return DeprecatedStorageQuota(
+                environment.persistent_storage_quota, services=services
+            )
+        if name in ("plugins", "mimeTypes"):
+            plugins, mime_types = create_plugin_collections(environment)
+            self._cache("plugins", plugins)
+            self._cache("mimeTypes", mime_types)
+            return plugins if name == "plugins" else mime_types
+        raise AttributeError(f"unknown Navigator feature value: {name!r}")
+
+
 @interface('Navigator', None)
 class Navigator:
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="userAgent", getter="get_userAgent", side_effect=1),
+            AttributeSpec(name="appVersion", getter="get_appVersion", side_effect=1),
             AttributeSpec(name="platform", getter="get_platform", side_effect=1),
             AttributeSpec(name="language", getter="get_language", side_effect=1),
             AttributeSpec(name="languages", getter="get_languages", side_effect=1),
@@ -367,29 +536,37 @@ class Navigator:
             AttributeSpec(
                 name="maxTouchPoints", getter="get_maxTouchPoints", side_effect=1
             ),
+            AttributeSpec(name="webdriver", getter="get_webdriver", side_effect=1),
+            AttributeSpec(name="connection", getter="get_connection", side_effect=1),
+            AttributeSpec(
+                name="webkitTemporaryStorage",
+                getter="get_webkitTemporaryStorage",
+                side_effect=1,
+            ),
+            AttributeSpec(
+                name="webkitPersistentStorage",
+                getter="get_webkitPersistentStorage",
+                side_effect=1,
+            ),
             AttributeSpec(name="geolocation", getter="get_geolocation", side_effect=1),
             AttributeSpec(name="plugins", getter="get_plugins", side_effect=1),
             AttributeSpec(name="mimeTypes", getter="get_mimeTypes", side_effect=1),
         ),
+        methods=(MethodSpec(name="getBattery", callback="fn_getBattery"),),
         constructor_behavior=0,
         has_constructor=1,
     )
 
     def __init__(self, user_agent=None, services=None, environment=None, worker=False, **_):
+        self._services = services
         self._environment = BrowserEnvironment.from_value(environment)
         self._worker = bool(worker)
         if user_agent is not None:
             self._environment = BrowserEnvironment.from_value({"user_agent": user_agent}, base=self._environment)
-        self._geolocation = (
-            Geolocation(services=services, environment=self._environment)
-            if services is not None and not self._worker else pyv8.Undefined
-        )
-        self._plugins, self._mime_types = (
-            create_plugin_collections(self._environment)
-            if not self._worker else (pyv8.Undefined, pyv8.Undefined)
-        )
+        self._features = _NavigatorFeatureValues(self)
 
     def get_userAgent(self): return self._environment.user_agent
+    def get_appVersion(self): return self._environment.app_version
     def get_platform(self): return self._environment.platform
     def get_language(self): return self._environment.language
     def get_languages(self): return list(self._environment.languages)
@@ -397,13 +574,33 @@ class Navigator:
     def get_hardwareConcurrency(self): return self._environment.hardware_concurrency
     def get_deviceMemory(self): return self._environment.device_memory
     def get_maxTouchPoints(self): return self._environment.max_touch_points
-    def get_geolocation(self): return self._geolocation
-    def get_plugins(self): return self._plugins
-    def get_mimeTypes(self): return self._mime_types
+    def get_webdriver(self): return self._environment.webdriver
+    def get_connection(self): return self._features.value("connection")
+    def get_webkitTemporaryStorage(self):
+        if self._worker:
+            return pyv8.Undefined
+        return self._features.value("webkitTemporaryStorage")
+    def get_webkitPersistentStorage(self):
+        if self._worker:
+            return pyv8.Undefined
+        return self._features.value("webkitPersistentStorage")
+    def get_geolocation(self):
+        if self._services is None or self._worker:
+            return pyv8.Undefined
+        return self._features.value("geolocation")
+    def get_plugins(self):
+        return pyv8.Undefined if self._worker else self._features.value("plugins")
+    def get_mimeTypes(self):
+        return pyv8.Undefined if self._worker else self._features.value("mimeTypes")
+    def fn_getBattery(self, *_extra):
+        battery = self._features.value("battery")
+        realm = getattr(self._services, "realm_services", None)
+        return realm.promise_resolve(battery) if realm is not None else battery
 
 
 __all__ = [
     "Navigator", "Geolocation", "Plugin", "PluginArray", "MimeType", "MimeTypeArray",
+    "NetworkInformation", "BatteryManager", "DeprecatedStorageQuota",
 ]
 
 
@@ -414,6 +611,9 @@ FEATURE = FeatureImplementation(
         "PluginArray": PluginArray,
         "MimeTypeArray": MimeTypeArray,
         "Geolocation": Geolocation,
+        "NetworkInformation": NetworkInformation,
+        "BatteryManager": BatteryManager,
+        "DeprecatedStorageQuota": DeprecatedStorageQuota,
         "Navigator": Navigator,
     },
     {
