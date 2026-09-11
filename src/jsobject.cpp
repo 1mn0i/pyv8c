@@ -14,7 +14,128 @@
 using namespace v8;
 
 
+static PyObject* js_object_read(js_object* self, PyObject* name) {
+    if (!js_object_require_active(self)) return nullptr;
+    IN_ISOLATE(self->isolate_state);
+    Local<Object> object = self->object.Get(isolate);
+    IN_CONTEXT(object->GetCreationContextChecked());
+    Local<Value> key = js_from_py(name, context);
+    if (key.IsEmpty() || PyErr_Occurred()) return nullptr;
+    JS_TRY
+    TimeoutGuard guard(context);
+    if (!guard.start()) return nullptr;
+    Local<Value> value;
+    bool success = object->Get(context, key).ToLocal(&value);
+    if (!guard.stop()) return nullptr;
+    PY_PROPAGATE_JS;
+    if (!success) return nullptr;
+    return py_argument_from_js(value, context);
+}
+
+static PyObject* js_object_to_python(js_object* self, PyObject*) {
+    if (!js_object_require_active(self)) return nullptr;
+    IN_ISOLATE(self->isolate_state);
+    Local<Object> object = self->object.Get(isolate);
+    IN_CONTEXT(object->GetCreationContextChecked());
+    JS_TRY
+    PyObject* result = py_from_js(object, context);
+    PY_PROPAGATE_JS;
+    return result;
+}
+
+static PyObject* js_object_string(js_object* self, PyObject*) {
+    return js_object_repr(self);
+}
+
+static PyObject* js_object_number(js_object* self, PyObject*) {
+    if (!js_object_require_active(self)) return nullptr;
+    IN_ISOLATE(self->isolate_state);
+    Local<Object> object = self->object.Get(isolate);
+    IN_CONTEXT(object->GetCreationContextChecked());
+    JS_TRY
+    TimeoutGuard guard(context);
+    if (!guard.start()) return nullptr;
+    Local<Number> value;
+    bool success = object->ToNumber(context).ToLocal(&value);
+    if (!guard.stop()) return nullptr;
+    PY_PROPAGATE_JS;
+    if (!success) return nullptr;
+    return PyFloat_FromDouble(value->Value());
+}
+
+static PyObject* js_object_iterator_method(js_object* self, PyObject*) {
+    if (!js_object_require_active(self)) return nullptr;
+    IN_ISOLATE(self->isolate_state);
+    Local<Object> object = self->object.Get(isolate);
+    IN_CONTEXT(object->GetCreationContextChecked());
+    JS_TRY
+    TimeoutGuard guard(context);
+    if (!guard.start()) return nullptr;
+    Local<Value> result;
+    bool success = object->Get(context, Symbol::GetIterator(isolate)).ToLocal(&result);
+    if (!guard.stop()) return nullptr;
+    PY_PROPAGATE_JS;
+    if (!success) return nullptr;
+    return py_argument_from_js(result, context);
+}
+
+static PyObject* js_object_invoke(js_object* self, PyObject* args) {
+    if (!js_object_require_active(self)) return nullptr;
+    IN_ISOLATE(self->isolate_state);
+    Local<Object> object = self->object.Get(isolate);
+    IN_CONTEXT(object->GetCreationContextChecked());
+    if (!object->IsCallable() || PyTuple_Size(args) < 1) {
+        PyErr_SetString(PyExc_TypeError, "_invoke requires a callable and a receiver");
+        return nullptr;
+    }
+    const int length = (int)PyTuple_Size(args);
+    V8ValueArguments converted(length);
+    if (!converted.valid()) { PyErr_NoMemory(); return nullptr; }
+    jss_from_pys(args, converted.data(), context);
+    if (PyErr_Occurred()) return nullptr;
+    JS_TRY
+    TimeoutGuard guard(context);
+    if (!guard.start()) return nullptr;
+    Local<Value> result;
+    bool success = object->CallAsFunction(context, converted.data()[0], length - 1, converted.data() + 1).ToLocal(&result);
+    if (!guard.stop()) return nullptr;
+    PY_PROPAGATE_JS;
+    if (!success) return nullptr;
+    return py_argument_from_js(result, context);
+}
+
+static PyObject* js_object_keys(js_object* self, PyObject*) {
+    if (!js_object_require_active(self)) return nullptr;
+    IN_ISOLATE(self->isolate_state);
+    Local<Object> object = self->object.Get(isolate);
+    IN_CONTEXT(object->GetCreationContextChecked());
+    JS_TRY
+    TimeoutGuard guard(context);
+    if (!guard.start()) return nullptr;
+    Local<Array> keys;
+    bool success = object->GetOwnPropertyNames(context,
+        static_cast<PropertyFilter>(ONLY_ENUMERABLE | SKIP_SYMBOLS), KeyConversionMode::kConvertToString).ToLocal(&keys);
+    if (!guard.stop()) return nullptr;
+    PY_PROPAGATE_JS;
+    if (!success) return nullptr;
+    return py_from_js(keys, context);
+}
+
+static PyObject* js_object_is_array(js_object* self, PyObject*) {
+    if (!js_object_require_active(self)) return nullptr;
+    IN_ISOLATE(self->isolate_state);
+    return PyBool_FromLong(self->object.Get(isolate)->IsArray());
+}
+
 PyMethodDef js_object_methods[] = {
+    {"_iterator_method", (PyCFunction)js_object_iterator_method, METH_NOARGS, nullptr},
+    {"_invoke", (PyCFunction)js_object_invoke, METH_VARARGS, nullptr},
+    {"_keys", (PyCFunction)js_object_keys, METH_NOARGS, nullptr},
+    {"_is_array", (PyCFunction)js_object_is_array, METH_NOARGS, nullptr},
+    {"_to_string", (PyCFunction)js_object_string, METH_NOARGS, nullptr},
+    {"_to_number", (PyCFunction)js_object_number, METH_NOARGS, nullptr},
+    {"_get", (PyCFunction)js_object_read, METH_O, "Read one property without eagerly converting objects."},
+    {"_to_python", (PyCFunction)js_object_to_python, METH_NOARGS, "Explicitly materialize an object using the default conversion."},
     {"__dir__", (PyCFunction)js_object_dir, METH_NOARGS, NULL},
     {NULL} };
 
@@ -422,11 +543,9 @@ js_object_repr(js_object *self)
     if (!timeout_guard.stop())
         return NULL;
     if (!maybe_v8_str.ToLocal(&v8_str)) {
-        if (tc.HasCaught() && !tc.CanContinue()) {
-            PyErr_SetNone((PyObject*)js_terminated_type);
-            return NULL;
-        }
-        return PyUnicode_FromString("[error toString object]");
+        PY_PROPAGATE_JS;
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript ToString failed");
+        return nullptr;
     }
 
     v8::String::Utf8Value str(isolate, v8_str);

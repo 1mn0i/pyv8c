@@ -17,6 +17,7 @@ htmlcov/
 .pytest_cache/
 .pyv8-build/
 .pyv8-version
+.ruff_cache/
 
 # 编译相关
 .vs/

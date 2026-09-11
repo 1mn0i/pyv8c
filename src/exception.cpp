@@ -10,7 +10,21 @@
 
 using namespace v8;
 
+static PyObject* js_exception_original(PyObject* self, void*) {
+    JsExceptionState* state = js_exception_get_state(self);
+    if (!state || !state->isolate_state->require_active()) return nullptr;
+    IN_ISOLATE(state->isolate_state);
+    auto* owner = (context_c*)state->py_context;
+    if (owner == nullptr || owner->js_context.IsEmpty()) {
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript exception context is no longer active");
+        return nullptr;
+    }
+    IN_CONTEXT(owner->js_context.Get(isolate));
+    return py_argument_from_js(state->exception.Get(isolate), context);
+}
+
 PyGetSetDef js_exception_getsets[] = {
+    {"original", (getter)js_exception_original, NULL, NULL},
     {"value", (getter)js_exception_get_value, NULL, NULL},
     {NULL},
 };
@@ -311,6 +325,18 @@ js_throw_py()
     PyObject* exc_type, * exc_value, * exc_traceback;
     PyErr_Fetch(&exc_type, &exc_value, &exc_traceback);
     PyErr_NormalizeException(&exc_type, &exc_value, &exc_traceback);
+
+    if (exc_value && PyObject_TypeCheck(exc_value, js_exception_type)) {
+        JsExceptionState* state = js_exception_get_state(exc_value);
+        if (state && state->isolate_state == isolate_state) {
+            isolate->ThrowException(state->exception.Get(isolate));
+            Py_XDECREF(exc_type);
+            Py_XDECREF(exc_value);
+            Py_XDECREF(exc_traceback);
+            return;
+        }
+        PyErr_Clear();
+    }
 
     if (!PyObject_HasAttrString(exc_value, "__v8_error__")) {
         PyObject* traceback_module = PyImport_ImportModule("traceback");

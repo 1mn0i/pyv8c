@@ -6,10 +6,62 @@
 #include <iostream>
 
 #include "jsvalue.h"
+#include "timeout_guard.h"
 
 using namespace v8;
 
+static PyObject* js_value_string(js_value* self, PyObject*) {
+    if (!self->isolate_state || !self->isolate_state->require_active()) return nullptr;
+    IN_ISOLATE(self->isolate_state);
+    auto* owner = (context_c*)self->py_context;
+    if (owner == nullptr || owner->js_context.IsEmpty()) {
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value context is no longer active");
+        return nullptr;
+    }
+    IN_CONTEXT(owner->js_context.Get(isolate));
+    JS_TRY
+    Local<String> result;
+    if (!self->value.Get(isolate)->ToString(context).ToLocal(&result)) {
+        PY_PROPAGATE_JS;
+        return nullptr;
+    }
+    String::Utf8Value text(isolate, result);
+    return PyUnicode_DecodeUTF8(*text, text.length(), "replace");
+}
+
+static PyObject* js_value_number(js_value* self, PyObject*) {
+    if (!self->isolate_state || !self->isolate_state->require_active()) return nullptr;
+    IN_ISOLATE(self->isolate_state);
+    auto* owner = (context_c*)self->py_context;
+    if (owner == nullptr || owner->js_context.IsEmpty()) {
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value context is no longer active");
+        return nullptr;
+    }
+    IN_CONTEXT(owner->js_context.Get(isolate));
+    JS_TRY
+    Local<Number> result;
+    if (!self->value.Get(isolate)->ToNumber(context).ToLocal(&result)) {
+        PY_PROPAGATE_JS;
+        return nullptr;
+    }
+    return PyFloat_FromDouble(result->Value());
+}
+
+static PyObject* js_value_boolean(js_value* self, PyObject*) {
+    if (!self->isolate_state || !self->isolate_state->require_active()) return nullptr;
+    IN_ISOLATE(self->isolate_state);
+    return PyBool_FromLong(self->value.Get(isolate)->BooleanValue(isolate));
+}
+
+static PyMethodDef js_value_methods[] = {
+    {"_to_string", (PyCFunction)js_value_string, METH_NOARGS, nullptr},
+    {"_to_number", (PyCFunction)js_value_number, METH_NOARGS, nullptr},
+    {"_to_boolean", (PyCFunction)js_value_boolean, METH_NOARGS, nullptr},
+    {nullptr}
+};
+
 static PyType_Slot js_value_slots[] = {
+    {Py_tp_methods, (void*)js_value_methods},
     {Py_tp_dealloc, (void *)js_value_dealloc},
     {Py_tp_repr, (void *)js_value_repr},
     {Py_tp_doc, (void*)"v8 Value"},

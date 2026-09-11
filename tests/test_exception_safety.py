@@ -18,7 +18,19 @@ class TestExceptionSafety(unittest.TestCase):
     def tearDown(self):
         """每个测试结束后释放 JavaScript 上下文。"""
 
-        del self.context
+        self.context.close()
+
+    def test_script_failures_preserve_error_type_and_context_usability(self):
+        """Compile and execution failures must not poison subsequent execution."""
+        for source, name in (("1 +", "SyntaxError"),
+                             ("throw new Error('boom')", "Error"),
+                             ("missingBinding", "ReferenceError")):
+            with self.subTest(name=name):
+                with self.assertRaises(pyv8.JSException) as caught:
+                    self.context.exec_js(source, filename="failure.js")
+                self.assertEqual(caught.exception.original.name, name)
+                self.assertIn("failure.js", str(caught.exception))
+                self.assertEqual(self.context.exec_js("6 * 7"), 42)
 
     def test_getter_exception_surfaces_as_js_exception(self):
         """JavaScript getter 抛出的异常应转换为 JSException。"""

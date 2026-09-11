@@ -1,9 +1,8 @@
 """Trace observes native boundaries without re-executing JavaScript operations."""
 
-import logging
-
 import pytest
 import pyv8
+from loguru import logger
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from tests.test_trace_contracts import Window, Target, Failure
@@ -56,10 +55,24 @@ def test_javascript_bindings_execute_once_with_original_identity(enabled):
         context.close()
 
 
+@pytest.fixture
+def trace_messages():
+    """Observe the actual default sink without replacing application handlers."""
+    messages = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]),
+        level="DEBUG",
+        filter=lambda record: record["name"] == "pyv8.trace",
+    )
+    try:
+        yield messages
+    finally:
+        logger.remove(sink_id)
+
+
 @pytest.mark.parametrize("sink_kind", ["collect", "default"])
-def test_observation_never_reads_or_stringifies_js_objects(sink_kind, caplog):
+def test_observation_never_reads_or_stringifies_js_objects(sink_kind, trace_messages):
     events = []
-    caplog.set_level(logging.INFO, logger="pyv8.trace")
     callback = (lambda *event: events.append(event)) if sink_kind == "collect" else None
     context = pyv8.Context(Window(), trace=True, trace_callback=callback)
     try:
@@ -92,8 +105,13 @@ def test_observation_never_reads_or_stringifies_js_objects(sink_kind, caplog):
         if sink_kind == "collect":
             assert len(events) == 12
             assert all(isinstance(event[4], pyv8.JSObject) for event in events)
+            assert trace_messages == []
         else:
-            assert len(caplog.records) == 12
+            assert trace_messages == [
+                "[Top] getter: JsTarget.value -> <JSObject>",
+                "[Top] setter: JsTarget.value = <JSObject>",
+                "[Top] method: JsTarget.echo(<JSObject>) -> <JSObject>",
+            ] * 4
     finally:
         context.close()
 

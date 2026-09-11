@@ -150,7 +150,7 @@ static void py_class_method_impl(const FunctionCallbackInfo<Value> &info, Local<
     }
     for (int index = 0; index < info.Length(); ++index)
     {
-        PyObject *value = py_from_js(info[index], context);
+        PyObject *value = py_argument_from_js(info[index], context);
         if (value == nullptr || PyTuple_SetItem(args, index + offset, value) < 0)
         {
             Py_DECREF(args);
@@ -291,7 +291,7 @@ static void attribute_set_impl(const FunctionCallbackInfo<Value>& info, bool ins
     }
     auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
     PyObject* self = binding->setter_receiver ? get_self(info) : Py_None;
-    PyObject* value = py_from_js(info[0], context);
+    PyObject* value = py_argument_from_js(info[0], context);
     JS_PROPAGATE_PY(value);
     PyObject* result = self == Py_None ? PyObject_CallFunctionObjArgs(binding->setter, value, nullptr) :
         PyObject_CallFunctionObjArgs(binding->setter, self, value, nullptr);

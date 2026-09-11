@@ -349,6 +349,29 @@ py_from_js(Local<Value> value, Local<Context> context)
     return py_from_js_impl(value, context, nullptr);
 }
 
+PyObject *
+py_argument_from_js(Local<Value> value, Local<Context> context)
+{
+    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (owner == nullptr || !owner->preserve_arguments)
+        return py_from_js(value, context);
+    if (value->IsSymbol())
+        return (PyObject*)js_value_new(value, context);
+    if (value->IsObject()) {
+        Local<Object> object = value.As<Object>();
+        auto* state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
+        if (object->InternalFieldCount() == OBJECT_INTERNAL_FIELDS &&
+            object->GetInternalField(PYTHON_MAGIC_FIELD) == state->v8_string(V8StringId::PythonObjectMagic)) {
+            auto* result = (PyObject*)v8_compat::external_value(object->GetInternalField(PYTHON_OBJECT_FIELD));
+            Py_INCREF(result);
+            return result;
+        }
+        // Do not enumerate, probe prototypes, read accessors, or iterate here.
+        return (PyObject*)js_object_new(object, context);
+    }
+    return py_from_js(value, context);
+}
+
 static Local<Value>
 js_from_py_impl(PyObject *value,
                  Local<Context> context,
@@ -712,7 +735,7 @@ pys_from_jss(const FunctionCallbackInfo<Value> &js_args, Local<Context> context)
     PyErr_PROPAGATE(py_args);
     for (int i = 0; i < js_args.Length(); i++)
     {
-        PyObject *arg = py_from_js(js_args[i], context);
+        PyObject *arg = py_argument_from_js(js_args[i], context);
         if (arg == NULL)
         {
             Py_DECREF(py_args);

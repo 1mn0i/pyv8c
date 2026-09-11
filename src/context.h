@@ -27,6 +27,8 @@ typedef struct
     double timeout;
     bool trace;
     bool traceable;
+    // Opt-in lazy object arguments for hosts which own Web API conversion.
+    bool preserve_arguments;
     unsigned int trace_depth;
 
     PyObject* trace_callback;

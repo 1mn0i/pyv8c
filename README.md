@@ -249,6 +249,8 @@ python setup.py build_ext --inplace --force
 python -m pytest
 ```
 
+`tests/run_tests.py` 也统一使用 pytest，避免 unittest discovery 漏掉函数式测试。
+
 ## 重要限制
 
 - `import pyv8` 会初始化进程级 V8 Runtime 和默认 Isolate。

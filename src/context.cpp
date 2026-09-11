@@ -133,11 +133,12 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* lazy_factory = Py_None;
     PyObject* trace_callback = Py_None;
     PyObject* traceable = Py_False;
-    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "class_configs", "lazy_factory", "trace_callback", "traceable", NULL};
+    int preserve_arguments = 0;
+    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "class_configs", "lazy_factory", "trace_callback", "traceable", "preserve_arguments", NULL};
 
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOOOO", (char **) keywords,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOOOOp", (char **) keywords,
                                     &global, &trace, &ctx_type, &timeout, &py_isolate,
-                                    &class_configs, &lazy_factory, &trace_callback, &traceable) < 0) {
+                                    &class_configs, &lazy_factory, &trace_callback, &traceable, &preserve_arguments)) {
         return NULL;
     }
 
@@ -216,6 +217,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->timeout = timeout;
     self->trace = trace == Py_True;
     self->traceable = self->trace || traceable == Py_True;
+    self->preserve_arguments = preserve_arguments != 0;
     self->trace_depth = 0;
     if (trace_callback != Py_None) {
         Py_INCREF(trace_callback);
