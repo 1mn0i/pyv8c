@@ -6,7 +6,7 @@ CORE_INTERFACES = (
     "DOMException", "DOMError", "DOMTokenList", "HTMLAllCollection", "HTMLCollection", "NamedNodeMap", "NodeList",
     "CustomEvent", "Event", "EventTarget", "KeyboardEvent", "MouseEvent", "UIEvent",
     "Node", "DocumentFragment", "Attr", "CharacterData", "Text", "Comment", "DocumentType", "Document",
-    "Element", "HTMLElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLLinkElement", "HTMLMetaElement",
+    "CSSStyleDeclaration", "Element", "HTMLElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLLinkElement", "HTMLMetaElement",
     "HTMLScriptElement", "HTMLStyleElement", "HTMLTemplateElement", "HTMLHtmlElement", "HTMLHeadElement",
     "HTMLBodyElement", "HTMLDivElement", "HTMLSpanElement", "HTMLAnchorElement", "HTMLInputElement",
     "HTMLFormElement", "HTMLCanvasElement", "HTMLMediaElement", "HTMLTableElement", "HTMLTableRowElement",

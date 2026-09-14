@@ -762,6 +762,7 @@ from .elements import (
     Element,
     HTMLElement,
     HTMLIFrameElement,
+    HTMLCanvasElement,
     HTMLImageElement,
     HTMLLinkElement,
     HTMLMetaElement,

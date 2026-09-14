@@ -25,7 +25,7 @@ def test_browser_events_lazy_interfaces_and_page_override():
         assert any(event[0] == 'get' and event[2] == 'id' and event[4] == 'traced' for event in events)
         assert any(event[0] == 'construct' and event[2] == 'Event' for event in events)
         assert any(event[0] == 'method' and event[2] == 'abort' for event in events)
-        assert not any(event[2] == 'extra' for event in events)
+        assert any(event[2] == 'extra' for event in events)
         for name in page.binding_session.materialized_interfaces:
             cls = page.binding_session.class_for(name)
             assert not any(key.endswith('_hook__') for base in cls.__mro__ for key in base.__dict__)

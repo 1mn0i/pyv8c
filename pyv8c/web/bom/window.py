@@ -136,6 +136,7 @@ class Window(WindowProperties):
             _window_method("blur", "fn_blur"),
             _window_method("postMessage", "fn_postMessage", 1),
             _window_method("webkitRequestFileSystem", "fn_webkitRequestFileSystem", 3, cross_origin=True),
+            _window_method("getComputedStyle", "fn_getComputedStyle", 1, cross_origin=True),
         ),
         constructor_behavior=0,
         to_string_tag="Window",
@@ -398,6 +399,14 @@ class Window(WindowProperties):
         self._require_same_origin()
         from .filesystem import request_file_system
         return request_file_system(self, type, size, success, error)
+    def fn_getComputedStyle(self, element=MISSING, pseudo=pyv8.Undefined, *_extra):
+        if element is MISSING:
+            raise missing_error("Window", "getComputedStyle", 1, 0, constructor=False)
+        from ..dom.model import Element
+        if not isinstance(element, Element):
+            raise TypeError("The provided value is not an Element")
+        from ..dom.layout import computed_style_object
+        return computed_style_object(element)
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
         from ...foundation.errors import V8SyntaxError

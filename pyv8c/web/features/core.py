@@ -21,8 +21,9 @@ FEATURE = FeatureImplementation(
         collections.DOMTokenList, collections.HTMLAllCollection, collections.HTMLCollection, collections.NamedNodeMap, collections.NodeList,
         events.CustomEvent, events.Event, events.EventTarget, events.KeyboardEvent, events.MouseEvent, events.UIEvent,
         model.Node, model.DocumentFragment, model.Attr, model.CharacterData, model.Text, model.Comment, model.DocumentType, model.Document,
-        elements.Element, elements.HTMLElement, elements.HTMLIFrameElement, elements.HTMLImageElement, elements.HTMLLinkElement,
+        elements.CSSStyleDeclaration, elements.Element, elements.HTMLElement, elements.HTMLIFrameElement, elements.HTMLImageElement, elements.HTMLLinkElement,
         elements.HTMLMetaElement, elements.HTMLScriptElement, elements.HTMLStyleElement, elements.HTMLTemplateElement,
+        elements.HTMLCanvasElement, elements.CanvasRenderingContext2D,
         *(model.HTML_CLASSES[name] for name in (
             "HTMLHtmlElement", "HTMLHeadElement", "HTMLBodyElement", "HTMLDivElement", "HTMLSpanElement",
             "HTMLAnchorElement", "HTMLInputElement", "HTMLFormElement", "HTMLCanvasElement", "HTMLMediaElement",

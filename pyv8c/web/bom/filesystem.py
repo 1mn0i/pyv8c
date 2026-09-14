@@ -16,6 +16,7 @@ from ...engine.features import interface
 from ...foundation.arguments import MISSING, callback_value, dom_string, integer, missing_error
 from ...foundation.errors import V8TypeError
 from ..fetch.blob import Blob
+from ..dom.events import EventTarget
 
 __all__ = ["FileSystem", "Entry", "DirectoryEntry", "FileEntry", "DirectoryReader", "FileWriter", "File"]
 
@@ -58,14 +59,16 @@ class File(Blob):
     def get_type(self): return ""
 
 
-@interface("FileWriter", None, exposed_in=("Window",))
-class FileWriter:
+@interface("FileWriter", "EventTarget", exposed_in=("Window",))
+class FileWriter(EventTarget):
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="position", getter="get_position"), AttributeSpec(name="length", getter="get_length")),
         methods=(MethodSpec(name="write", callback="fn_write", length=1), MethodSpec(name="seek", callback="fn_seek", length=1), MethodSpec(name="truncate", callback="fn_truncate", length=1)),
         constructor_behavior=0, has_constructor=1, to_string_tag="FileWriter",
     )
-    def __init__(self, path, services=None, **_): self._path, self._position, self._services = Path(path), 0, services
+    def __init__(self, path, services=None, **_):
+        super().__init__(services=services)
+        self._path, self._position, self._services = Path(path), 0, services
     def get_position(self): return self._position
     def get_length(self): return self._path.stat().st_size if self._path.exists() else 0
     def fn_seek(self, offset=MISSING, *_extra):

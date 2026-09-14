@@ -462,6 +462,8 @@ class ResourceController:
         else:
             if kind == "script":
                 page.scripts.execute_script(node, response.body_text(), response.url or page.url)
+            elif kind == "style":
+                node._stylesheet_text = response.body_text()
             page.lifecycle.dispatch_page_event("load", node, {"bubbles": False})
         page.lifecycle.maybe_fire_document_load()
 
