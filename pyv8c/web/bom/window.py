@@ -135,6 +135,7 @@ class Window(WindowProperties):
             _window_method("focus", "fn_focus"),
             _window_method("blur", "fn_blur"),
             _window_method("postMessage", "fn_postMessage", 1),
+            _window_method("webkitRequestFileSystem", "fn_webkitRequestFileSystem", 3, cross_origin=True),
         ),
         constructor_behavior=0,
         to_string_tag="Window",
@@ -389,6 +390,14 @@ class Window(WindowProperties):
         else:
             transfer = ()
         self._post_message(self, message, target_origin, transfer)
+
+    def fn_webkitRequestFileSystem(self, type=MISSING, size=MISSING, success=MISSING, error=pyv8.Undefined, *_extra):
+        if type is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 0, constructor=False)
+        if size is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 1, constructor=False)
+        if success is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 2, constructor=False)
+        self._require_same_origin()
+        from .filesystem import request_file_system
+        return request_file_system(self, type, size, success, error)
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
         from ...foundation.errors import V8SyntaxError

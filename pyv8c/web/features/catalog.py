@@ -13,7 +13,7 @@ CORE_INTERFACES = (
     "HTMLTableCellElement", "HTMLSelectElement", "HTMLTextAreaElement", "HTMLButtonElement", "HTMLOptionElement",
     "HTMLUnknownElement", "Headers", "Blob", "Request", "Response", "MessageEvent", "CloseEvent", "ErrorEvent",
     "XMLHttpRequestEventTarget", "XMLHttpRequest", "Location", "Screen", "Storage", "URLSearchParams", "URL",
-    "History", "Window", "WindowProperties",
+    "History", "DOMFileSystem", "Entry", "DirectoryEntry", "FileEntry", "DirectoryReader", "FileWriter", "File", "Window", "WindowProperties",
 )
 
 INDEXEDDB_INTERFACES = (

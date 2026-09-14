@@ -4,6 +4,7 @@ from ...engine.builtin_errors import implementations as error_interfaces
 from ...engine.features import FeatureImplementation
 from ...foundation.environment import BrowserEnvironment
 from ..bom import api as bom
+from ..bom import filesystem
 from ..bom import window
 from ..dom import collections, elements, events, model
 from ..fetch import blob, headers, request, response, xhr
@@ -31,6 +32,8 @@ FEATURE = FeatureImplementation(
         headers.Headers, blob.Blob, request.Request, response.Response, fetch_events.MessageEvent, fetch_events.CloseEvent,
         fetch_events.ErrorEvent, xhr.XMLHttpRequestEventTarget, xhr.XMLHttpRequest,
         bom.Location, bom.Screen, bom.Storage, bom.URLSearchParams, bom.URL, bom.History,
+        filesystem.DOMFileSystem, filesystem.Entry, filesystem.DirectoryEntry, filesystem.FileEntry,
+        filesystem.DirectoryReader, filesystem.FileWriter, filesystem.File,
         window.Window, window.WindowProperties,
     ),
     {
