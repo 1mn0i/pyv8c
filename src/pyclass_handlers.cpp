@@ -541,8 +541,8 @@ Intercepted property_getter_handler(PyObject* key, const PropertyCallbackInfo<Va
     Py_XINCREF(key);
     faker::TraceEvent observation(info.GetIsolate(), owner, self);
     auto result = property_getter_handler_impl(key, info, context, self, method_name);
-    if (result == Intercepted::kYes || observation.failed())
-        observation.emit(0, key, info.GetReturnValue().Get());
+    // if (result == Intercepted::kYes || observation.failed())
+    observation.emit(0, key, info.GetReturnValue().Get());
     Py_XDECREF(key);
     return result;
 }
@@ -554,7 +554,8 @@ Intercepted property_setter_handler(PyObject* key, Local<Value> value, const Pro
     Py_XINCREF(key);
     faker::TraceEvent observation(info.GetIsolate(), owner, self);
     auto result = property_setter_handler_impl(key, value, info, context, self, method_name);
-    if (result == Intercepted::kYes || observation.failed()) observation.emit(1, key, value);
+    // if (result == Intercepted::kYes || observation.failed()) 
+    observation.emit(1, key, value);
     Py_XDECREF(key);
     return result;
 }

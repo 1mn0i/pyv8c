@@ -353,7 +353,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         self->has_constructor = (int)config.has_constructor;
     }
 
-    if (config.name_get && strcmp(world, "WindowProperties") != 0)
+    if ((py_ctx->traceable|| config.name_get) && strcmp(world, "WindowProperties") != 0)
     {
         auto handler_flags = v8::PropertyHandlerFlags::kNone;
         if (config.undetectable) {
@@ -364,7 +364,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         }
         NamedPropertyHandlerConfiguration callbacks(
             named_getter,
-            config.name_set ? named_setter : nullptr,
+            (py_ctx->traceable|| config.name_get) ? named_setter : nullptr,
             config.name_query ? named_query : nullptr,
             config.name_del ? named_deleter : nullptr,
             config.name_enum ? named_enumerator : nullptr,
@@ -375,7 +375,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         templ->InstanceTemplate()->SetHandler(callbacks);
     }
 
-    if (config.index_get && strcmp(world, "WindowProperties") != 0)
+    if ((py_ctx->traceable|| config.index_get) && strcmp(world, "WindowProperties") != 0)
     {
         auto handler_flags = v8::PropertyHandlerFlags::kNone;
         if (config.undetectable) {
@@ -383,7 +383,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         }
         IndexedPropertyHandlerConfiguration callbacks(
             indexed_getter,
-            config.index_set ? indexed_setter : nullptr,
+            (py_ctx->traceable|| config.index_get) ? indexed_setter : nullptr,
             config.index_query ? indexed_query : nullptr,
             config.index_del ? indexed_deleter : nullptr,
             config.index_enum ? indexed_enumerator : nullptr,
