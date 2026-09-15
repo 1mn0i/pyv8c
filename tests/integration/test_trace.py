@@ -1,7 +1,9 @@
 """Actual browser trace events, rather than Context constructor arguments."""
 
 import pytest
+import pyv8
 from loguru import logger
+from pyv8.trace import format_trace
 
 from pyv8c import Browser
 
@@ -25,7 +27,9 @@ def test_browser_events_lazy_interfaces_and_page_override():
         assert any(event[0] == 'get' and event[2] == 'id' and event[4] == 'traced' for event in events)
         assert any(event[0] == 'construct' and event[2] == 'Event' for event in events)
         assert any(event[0] == 'method' and event[2] == 'abort' for event in events)
-        assert any(event[2] == 'extra' for event in events)
+        # ``extra`` is a plain JS expando on a host object: the engine resolves it
+        # outside the binding boundary and the trace reports the stored value.
+        assert any(event[0] == 'set' and event[2] == 'extra' and event[4] == 42 for event in events)
         for name in page.binding_session.materialized_interfaces:
             cls = page.binding_session.class_for(name)
             assert not any(key.endswith('_hook__') for base in cls.__mro__ for key in base.__dict__)
@@ -50,6 +54,76 @@ def test_default_browser_sink_really_logs():
     finally:
         browser.close()
         logger.remove(sink)
+
+
+def _messages(events):
+    return [message for message in (format_trace(*event) for event in events) if message is not None]
+
+
+def test_declined_reads_are_reported_with_the_value_they_resolve_to():
+    """Native globals resolve outside the binding and still carry their value."""
+    events = []
+    browser = Browser(trace=True, traceable=True, trace_callback=lambda *event: events.append(event),
+                      stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://example.test/")
+        events.clear()
+        assert page.evaluate("eval") is not None
+        assert _messages(events) == ["[Window] getter: Window.eval -> function eval() { [native code] }"]
+        events.clear()
+        # A name no property provides has no value to show, so it stays silent.
+        assert page.evaluate("window.notThere") is pyv8.Undefined
+        assert _messages(events) == []
+    finally:
+        browser.close()
+
+
+def test_probes_are_reported_separately_from_reads():
+    """Existence and descriptor probes get their own events, reads stay single."""
+    events = []
+    browser = Browser(trace=True, traceable=True, trace_callback=lambda *event: events.append(event),
+                      stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://example.test/")
+        events.clear()
+        assert page.evaluate("'eval' in window") is True
+        assert page.evaluate("'notThere' in window") is False
+        assert page.evaluate("Object.getOwnPropertyDescriptor(window, 'eval') === undefined") is False
+        probes = [message for message in _messages(events) if " has: " in message or " descriptor: " in message]
+        assert probes == [
+            "[Window] has: Window.eval -> True",
+            "[Window] has: Window.notThere -> False",
+            "[Window] descriptor: Window.eval -> True",
+        ]
+        assert [event for event in events if event[0] == "get" and event[2] == "eval"] == []
+        events.clear()
+        assert page.evaluate("typeof window.eval") == 'function'
+        assert [event for event in events if event[0] in ("has", "descriptor")] == []
+        assert [message for message in _messages(events) if "eval" in message] == [
+            "[Window] getter: Window.eval -> function eval() { [native code] }"]
+    finally:
+        browser.close()
+
+
+def test_declared_getters_are_reported_once_with_their_value():
+    events = []
+    browser = Browser(trace=True, traceable=True, trace_callback=lambda *event: events.append(event),
+                      stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://example.test/")
+        events.clear()
+        page.evaluate("navigator.userAgent")
+        messages = _messages(events)
+        assert [message.split(" -> ")[0] for message in messages] == [
+            "[Window] getter: Window.navigator",
+            "[Window] getter: Navigator.userAgent",
+        ]
+        assert "undefined" not in messages[-1]
+    finally:
+        browser.close()
 
 
 def test_worker_inherits_context_sink_without_faker_switch():
