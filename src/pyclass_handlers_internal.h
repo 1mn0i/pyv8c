@@ -51,7 +51,9 @@ v8::Intercepted property_getter_handler(
     const v8::PropertyCallbackInfo<v8::Value>& info,
     v8::Local<v8::Context> context,
     PyObject* self,
-    const char* method_name);
+    const char* method_name,
+    v8::Local<v8::Name> js_name = v8::Local<v8::Name>(),
+    bool report_declined = true);
 
 v8::Intercepted property_setter_handler(
     PyObject* key,
@@ -59,7 +61,8 @@ v8::Intercepted property_setter_handler(
     const v8::PropertyCallbackInfo<void>& info,
     v8::Local<v8::Context> context,
     PyObject* self,
-    const char* method_name);
+    const char* method_name,
+    bool report_declined = true);
 
 v8::Intercepted property_deleter_handler(
     PyObject* key,

@@ -61,6 +61,55 @@ def traced():
     context.close()
 
 
+def test_probes_are_reported_without_extra_reads(traced):
+    """A probe is its own event: reads stay at one getter event each."""
+    context, target, events = traced
+    assert context.exec_js("[typeof target.value, target.value, 'value' in target]") == ["number", 5, True]
+    assert [(event[0], event[2], event[4]) for event in events if event[1] is target] == [
+        ("get", "value", 5), ("get", "value", 5), ("has", "value", True),
+    ]
+    assert target.reads == 2
+
+
+def test_existence_and_descriptor_probes_are_reported(traced):
+    context, target, events = traced
+    assert context.exec_js("'value' in target") is True
+    assert context.exec_js("'nope' in target") is False
+    # ``value`` lives on the prototype, so it has no own descriptor; ``in`` sees
+    # the whole chain while a descriptor probe only answers for own properties.
+    assert context.exec_js("Object.getOwnPropertyDescriptor(target, 'value') === undefined") is True
+    assert context.exec_js("Object.getOwnPropertyDescriptor(target, 'nope') === undefined") is True
+    assert [(event[0], event[2], event[4]) for event in events if event[1] is target] == [
+        ("has", "value", True), ("has", "nope", False),
+        ("descriptor", "value", False), ("descriptor", "nope", False),
+    ]
+    # Probing a property must not evaluate its accessor, and must not be
+    # reported as a read either.
+    assert [event for event in events if event[1] is target and event[0] == "get"] == []
+    assert target.reads == 0
+    events.clear()
+    context.exec_js("target.extra = 7")
+    assert context.exec_js("Object.getOwnPropertyDescriptor(target, 'extra').value") == 7
+    assert ("descriptor", "extra", True) in [(event[0], event[2], event[4]) for event in events
+                                             if event[1] is target]
+
+
+def test_declined_reads_report_real_data_property_values(traced):
+    """Native globals and expandos resolve outside the binding and are reported."""
+    context, target, events = traced
+    context.exec_js("globalThis.expando = 7")
+    events.clear()
+    assert context.exec_js("[expando, eval]")[0] == 7
+    reads = {event[2]: event[4] for event in events if event[0] == "get"}
+    assert reads["expando"] == 7
+    assert repr(reads["eval"]) == "function eval() { [native code] }"
+    assert [event for event in events if event[1] is target] == []
+    events.clear()
+    # A name no property provides has no value to show, so it is not reported.
+    assert context.exec_js("typeof notThere") == "undefined"
+    assert [event for event in events if event[2] == "notThere"] == []
+
+
 def test_four_events_and_single_property_evaluation(traced):
     context, target, events = traced
     assert context.exec_js("[target.value, target.value=7, target.add(2,3), target.alias(4,5)]") == [5, 7, 5, 9]

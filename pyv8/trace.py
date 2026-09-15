@@ -2,7 +2,7 @@
 
 from loguru import logger
 
-from . import Null, Undefined
+from . import JSFunction, Null, Undefined
 
 
 _EXCLUDED_GETTERS = frozenset((
@@ -24,6 +24,17 @@ def _display(value):
         return repr(value)
     if type(value) is tuple:
         return "(" + ", ".join(_display(item) for item in value) + ")"
+    if isinstance(value, JSFunction):
+        # A function value shows its source, such as
+        # "function eval() { [native code] }".  The wrapper asks the binding for
+        # the raw source, so an overridden ``toString`` is not called, and a
+        # multi-line source is trimmed to keep one event on one log line.
+        try:
+            source = repr(value)
+        except Exception:  # noqa: BLE001 - formatting must never break a trace
+            source = ""
+        if source:
+            return source.splitlines()[0]
     return f"<{type(value).__name__}>"
 
 
@@ -38,6 +49,10 @@ def format_trace(event, receiver, name, arguments, value, error, is_construct, c
         message = f"[{ctx_type}] setter: {owner}.{name} = {_display(value)}"
     elif event == "method":
         message = f"[{ctx_type}] method: {owner}.{name}{_display(arguments)} -> {_display(value)}"
+    elif event == "has":
+        message = f"[{ctx_type}] has: {owner}.{name} -> {_display(value)}"
+    elif event == "descriptor":
+        message = f"[{ctx_type}] descriptor: {owner}.{name} -> {_display(value)}"
     else:
         prefix = "new " if is_construct else ""
         message = f"[{ctx_type}] construct: {prefix}{name}{_display(arguments)} -> {_display(value)}"

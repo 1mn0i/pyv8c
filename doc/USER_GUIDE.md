@@ -848,23 +848,34 @@ context.trace = False
 
 回调契约：
 
-- `event`：`get`、`set`、`method`、`construct`。
+- `event`：`get`、`set`、`method`、`construct`、`has`、`descriptor`。
 - `receiver`：Python 对象；构造事件为类；无法解析时为 `None`。
 - `name`：JS 属性/方法/构造器名称，索引访问为整数。
-- `arguments`：方法与构造事件为 tuple，属性事件为 `None`。
-- `value`：读取结果、写入值、调用结果。get/method/construct 失败时为 `pyv8.Undefined`；set 失败时仍保留写入值，不额外读取写入后的属性。
+- `arguments`：方法与构造事件为 tuple，属性与探查事件为 `None`。
+- `value`：读取结果、写入值、调用结果；`has`/`descriptor` 为 bool。get/method/construct 失败时为 `pyv8.Undefined`；set 失败时仍保留写入值，不额外读取写入后的属性。
 - `error`：成功时为 `pyv8.Undefined`，失败时为原异常值的 Python 表示。
 - `is_construct`：是否通过 `new` 调用。
 - `ctx_type`：创建时配置的上下文标记。
 
-**观察范围**：Python/JS 实现的 IDL 属性和方法、原生构造器，以及真正处理操作的业务 named/indexed getter/setter。
-业务 handler 返回未处理时，原始 V8 查找继续；不会为了获得后续结果主动读取或伪造事件。
-纯 JS 自定义属性、纯 JS accessor、普通方法属性的读取、常量读取，以及进入绑定回调前被 V8 拒绝的操作不在观察范围。
-例如 `document.createElement(...)` 和 `element.id` 会产生事件，但 `element.extra = 1` 不会。
+`has` 与 `descriptor` 是**探查**事件，不是读取：
+
+- `has`：`in`、`hasOwnProperty` 等存在性查询；`value` 为引擎能否为这个名字解析到属性（沿原型链查找，与 `in` 一致）。
+- `descriptor`：`Object.getOwnPropertyDescriptor` 等描述符查询；`value` 为**自身**是否提供该属性（与 `getOwnPropertyDescriptor` 一致）。
+- `typeof x` 是一次取值而非探查，只产生一条 `get`。
+- 探查不会执行 accessor、不触发 Proxy trap，也永远不会产生 `get`：同一次访问的 getter 日志仍只有一条。
+
+**观察范围**：Python/JS 实现的 IDL 属性和方法、原生构造器、named/indexed 拦截器处理或拒绝的属性访问，以及上述探查。
+业务 handler 返回未处理时，原始 V8 查找继续，本层同时按引擎的结果上报该次访问：能无副作用取到真实数据属性的读写都带上真实值，
+因此原生全局（`window.eval`、`JSON`、`Object`）和脚本挂的 expando（`element.extra = 1`）都会产生事件。
+已声明成员不在拦截器这里上报，它们由各自的 accessor 和调用上报，同一次访问不会出现两条日志。
+读取时 accessor 属性和不存在的名字不上报：取值要么需要再次执行 JS，要么只能伪造，宁可少一条事件。
+例如 `document.createElement(...)`、`element.id`、`element.extra = 1`、`window.eval`、`'extra' in element`、
+`Object.getOwnPropertyDescriptor(window, 'eval')` 都会产生事件。
 
 **值转换**：标量按值转换；原生 Python 对象保留身份；其他 JS 对象（包括数组、Proxy、异常对象）以 JSObject 系列引用传递。
 不遍历对象或数组，不调用 getter、Proxy trap 或 `toString`。这些引用不是深拷贝快照；后续对象变化仍然可见。
-默认 `format_trace` 只显示复杂对象的类型，不自动展开内容。
+默认 `format_trace` 对普通对象只显示类型（如 `<Navigator>`），对函数显示源码（如 `function eval() { [native code] }`）；
+源码经绑定的 raw toString 取得，不会调用被观察对象自己的 `toString`。
 
 未传回调时使用 `pyv8.trace.log_trace`，通过标准 logging 的 `pyv8.trace` logger 输出 INFO 日志。
 原生层缓存回调和事件名称，关闭时跳过观察作用域与值转换，不改变对象模板。

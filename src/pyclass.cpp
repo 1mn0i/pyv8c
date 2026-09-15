@@ -365,7 +365,10 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         NamedPropertyHandlerConfiguration callbacks(
             named_getter,
             (py_ctx->traceable|| config.name_get) ? named_setter : nullptr,
-            config.name_query ? named_query : nullptr,
+            // The query callback answers ``in`` and other existence probes, so a
+            // traced context installs it to observe them.  Declining leaves the
+            // engine's own lookup in charge, exactly like the getter above.
+            (py_ctx->traceable || config.name_query) ? named_query : nullptr,
             config.name_del ? named_deleter : nullptr,
             config.name_enum ? named_enumerator : nullptr,
             named_definer,
@@ -384,7 +387,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         IndexedPropertyHandlerConfiguration callbacks(
             indexed_getter,
             (py_ctx->traceable|| config.index_get) ? indexed_setter : nullptr,
-            config.index_query ? indexed_query : nullptr,
+            (py_ctx->traceable || config.index_query) ? indexed_query : nullptr,
             config.index_del ? indexed_deleter : nullptr,
             config.index_enum ? indexed_enumerator : nullptr,
             indexed_definer,

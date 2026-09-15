@@ -251,7 +251,10 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     }
     
     if (self->trace_callback != nullptr) {
-        self->trace_event_names = Py_BuildValue("(ssss)", "get", "set", "method", "construct");
+        // Event names indexed by the kind passed to TraceEvent::emit: 0 get,
+        // 1 set, 2 method, 3 construct, 4 has, 5 descriptor.
+        self->trace_event_names = Py_BuildValue(
+            "(ssssss)", "get", "set", "method", "construct", "has", "descriptor");
         self->trace_context_type = ctx_type;
         Py_INCREF(ctx_type);
         if (self->trace_event_names == nullptr) {
