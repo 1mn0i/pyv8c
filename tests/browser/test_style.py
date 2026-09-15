@@ -67,6 +67,39 @@ def test_style_methods_priority_removal_and_css_text(page):
     assert page.evaluate("target.style.cssText = ''; [target.style.length, target.hasAttribute('style')]" ) == [0, False]
 
 
+def test_style_named_properties_only_exist_when_supported(page):
+    """``in`` and reads follow the properties Chrome supports."""
+    assert page.evaluate("""(() => {
+        const s = target.style;
+        return [
+            'MozAppearance' in s, '-moz-appearance' in s, 'msTransform' in s, 'OTransition' in s,
+            'notAProperty' in s, 'zzz' in s,
+            'color' in s, 'backgroundColor' in s, 'background-color' in s,
+            'webkitTransform' in s, 'WebkitAppearance' in s,
+            typeof s.MozAppearance, typeof s.display, s.display, s.color,
+            Object.getOwnPropertyDescriptor(s, 'MozAppearance') === undefined,
+        ];
+    })()""") == [
+        False, False, False, False,
+        False, False,
+        True, True, True,
+        True, True,
+        "undefined", "string", "", "blue",
+        True,
+    ]
+
+
+def test_style_declared_unsupported_name_becomes_visible(page):
+    """Assigning a name no property provides still makes it exist."""
+    assert page.evaluate("""(() => {
+        const s = target.style;
+        const before = ['notAProperty' in s, s.notAProperty === undefined, '--theme-color' in s];
+        s.notAProperty = '1';
+        s['--theme-color'] = 'red';
+        return [before, 'notAProperty' in s, s.notAProperty, s['--theme-color']];
+    })()""") == [[False, True, True], True, "1", "red"]
+
+
 def test_style_attribute_changes_refresh_existing_object(page):
     assert page.evaluate("""(() => {
         const s = target.style;

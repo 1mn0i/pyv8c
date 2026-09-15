@@ -7,6 +7,7 @@ from pyv8.flag import V8Attribute
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
+from .css_properties import supported
 from .events import EventTarget
 
 _NAME_RE = re.compile(r"^(?:--[A-Za-z0-9_-]+|-?[A-Za-z_][A-Za-z0-9_-]*)$")
@@ -131,14 +132,29 @@ class CSSStyleDeclaration:
         self._set(name, value, priority)
     def _named(self, name):
         if not isinstance(name, str) or name in _OBJECT_NAMES: return None
-        dashed = _dash_name(name); return self._value(dashed) if _NAME_RE.match(dashed) else None
+        dashed = _dash_name(name)
+        if not _NAME_RE.match(dashed): return None
+        value = self._value(dashed)
+        if value: return value
+        # A property the engine supports but that is not declared reads as the
+        # empty string; a name no property provides stays undefined.
+        return "" if supported(dashed) else None
+    def _exists(self, name):
+        """Whether the engine resolves this name to a property at all."""
+        dashed = _dash_name(name)
+        if not _NAME_RE.match(dashed): return False
+        if supported(dashed): return True
+        declared = _property_name(dashed)
+        return any(_property_name(declared_name) == declared for declared_name, _, _ in self._declarations())
     def __v8_name_get__(self, name): return self._named(name)
     def __v8_name_set__(self, name, value):
         if not isinstance(name, str) or name in _OBJECT_NAMES: return None
         dashed = _dash_name(name)
         if not _NAME_RE.match(dashed): return None
         self._set(dashed, value); return True
-    def __v8_name_query__(self, name): return 0 if self._named(name) is not None else None
+    def __v8_name_query__(self, name):
+        if not isinstance(name, str) or name in _OBJECT_NAMES: return None
+        return 0 if self._exists(name) else None
     def __v8_name_del__(self, name):
         if isinstance(name, str) and name not in _OBJECT_NAMES: self._set(_dash_name(name), "")
         return True
