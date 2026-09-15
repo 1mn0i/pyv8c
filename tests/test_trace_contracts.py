@@ -110,6 +110,35 @@ def test_declined_reads_report_real_data_property_values(traced):
     assert [event for event in events if event[2] == "notThere"] == []
 
 
+def test_python_backed_function_calls_are_reported():
+    """A function exposed to JS is traced like any other host operation."""
+    events = []
+
+    class Host:
+        def echo(self, value):
+            return value
+
+    host = Host()
+
+    def double(value):
+        return value * 2
+
+    context = pyv8.Context(Window(), trace=True, ctx_type="Top",
+                           trace_callback=lambda *event: events.append(event))
+    try:
+        context.glob["echo"] = host.echo
+        context.glob["double"] = double
+        events.clear()
+        assert context.exec_js("[echo(7), double(4)]") == [7, 8]
+        assert [(event[0], event[1] is host, event[2], event[3], event[4]) for event in events
+                if event[0] == "method"] == [
+            ("method", True, "echo", (7,), 7),
+            ("method", False, "double", (4,), 8),
+        ]
+    finally:
+        context.close()
+
+
 def test_four_events_and_single_property_evaluation(traced):
     context, target, events = traced
     assert context.exec_js("[target.value, target.value=7, target.add(2,3), target.alias(4,5)]") == [5, 7, 5, 9]

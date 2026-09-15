@@ -872,6 +872,9 @@ context.trace = False
 例如 `document.createElement(...)`、`element.id`、`element.extra = 1`、`window.eval`、`'extra' in element`、
 `Object.getOwnPropertyDescriptor(window, 'eval')` 都会产生事件。
 
+暴露给 JS 的 Python 可调用对象（`Context.glob` 上挂的函数、绑定方法，例如 `chrome.loadTimes`）被调用时按 `method` 上报：
+`receiver` 为该可调用对象所属的 Python 对象，普通函数为 `None`，`arguments` 与 `value` 的约定同 IDL 方法。
+
 **值转换**：标量按值转换；原生 Python 对象保留身份；其他 JS 对象（包括数组、Proxy、异常对象）以 JSObject 系列引用传递。
 不遍历对象或数组，不调用 getter、Proxy trap 或 `toString`。这些引用不是深拷贝快照；后续对象变化仍然可见。
 默认 `format_trace` 对普通对象只显示类型（如 `<Navigator>`），对函数显示源码（如 `function eval() { [native code] }`）；

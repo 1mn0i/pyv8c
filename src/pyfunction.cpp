@@ -5,8 +5,10 @@
 
 #include "context.h"
 #include "convert.h"
+#include "pyclass.h"
 #include "pyfunction.h"
 #include "idl_spec.h"
+#include "faker/trace.h"
 
 using namespace v8;
 
@@ -139,14 +141,9 @@ py_template_to_function(py_function *self, Local<Context> context)
     return hs.Escape(function);
 }
 
-static void 
-py_function_callback(const FunctionCallbackInfo<Value> &info)
+static void
+py_function_invoke(const FunctionCallbackInfo<Value> &info, py_function *self, Local<Context> context)
 {
-    Isolate* isolate = info.GetIsolate();
-    HandleScope hs(isolate);
-    Local<Context> context = isolate->GetCurrentContext();
-
-    py_function *self = (py_function *) v8_compat::external_value(info.Data());
     PyObject *args = pys_from_jss(info, context);
     JS_PROPAGATE_PY(args);
     PyObject *result = PyObject_CallObject(self->function, args);
@@ -162,4 +159,28 @@ py_function_callback(const FunctionCallbackInfo<Value> &info)
         return;
     }
     info.GetReturnValue().Set(js_result);
+}
+
+static void
+py_function_callback(const FunctionCallbackInfo<Value> &info)
+{
+    Isolate* isolate = info.GetIsolate();
+    HandleScope hs(isolate);
+    Local<Context> context = isolate->GetCurrentContext();
+
+    py_function *self = (py_function *) v8_compat::external_value(info.Data());
+    context_c* owner = context.IsEmpty() ? nullptr :
+        v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (owner == nullptr || !context_trace_enabled(owner)) {
+        py_function_invoke(info, self, context);
+        return;
+    }
+    // A Python-backed function is a binding-implemented operation, so calling it
+    // is observed like any other host method: the receiver is the Python object
+    // the callable belongs to (None for a plain function), the arguments are the
+    // JavaScript ones and the value is whatever the call produced.
+    PyObject* receiver = PyMethod_Check_abi3(self->function)
+        ? PyMethod_GET_SELF_abi3(self->function) : Py_None;
+    faker::TraceScope observation(info, 2, self->function_name, receiver, owner);
+    py_function_invoke(info, self, context);
 }
