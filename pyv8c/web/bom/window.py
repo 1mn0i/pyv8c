@@ -103,6 +103,7 @@ class Window(WindowProperties):
             ),
             _window_attribute("document", "get_document", cross_origin=True),
             _window_attribute("navigator", "get_navigator", cross_origin=True),
+            _window_attribute("clientInformation", "get_clientInformation", cross_origin=True),
             _window_attribute("screen", "get_screen", cross_origin=True),
             _window_attribute("localStorage", "get_localStorage", cross_origin=True),
             _window_attribute(
@@ -301,6 +302,7 @@ class Window(WindowProperties):
     def set_location(self, value):
         self.location.set_href(value)
     def get_navigator(self): self._require_same_origin(); return self.navigator
+    def get_clientInformation(self): self._require_same_origin(); return self.navigator
     def get_screen(self): self._require_same_origin(); return self.screen
     def get_localStorage(self): self._require_same_origin(); return self.localStorage
     def get_sessionStorage(self): self._require_same_origin(); return self.sessionStorage
