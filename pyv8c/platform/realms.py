@@ -6,6 +6,7 @@ import pyv8
 
 from ..engine.trace import log_trace
 from ..foundation.executor import RealmExecutor
+from ..web.bom.chrome import install_window_chrome
 
 
 def _context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False):
@@ -110,10 +111,14 @@ class PageRealm:
             universe=browser.interface_universe,
         )
         deferred_declared_at = time.perf_counter_ns()
+        # Chromium installs window.chrome before any page script runs.
+        install_window_chrome(self.context, page.services)
+        chrome_installed_at = time.perf_counter_ns()
         browser._record_startup(
             binding_assembly_ms=(binding_prepared - binding_started) / 1_000_000,
             context_create_ms=(context_created - binding_prepared) / 1_000_000,
             deferred_global_declare_ms=(deferred_declared_at - context_created) / 1_000_000,
+            chrome_install_ms=(chrome_installed_at - deferred_declared_at) / 1_000_000,
             core_interfaces=len(self.binding_session.materialized_interfaces),
             materialized_interfaces=len(self.binding_session.materialized_interfaces),
             known_interfaces=len(self.binding_session.interface_names("Window")),

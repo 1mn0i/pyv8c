@@ -121,6 +121,29 @@ finally:
 配置会校验并冻结；页面覆盖基于 Browser 配置合成。几何数值是环境模拟，不代表存在布局引擎。
 配置中出现 timezone 也不能推断所有原生 Date/Intl 行为已切换。
 
+## window.chrome
+
+`window.chrome` 按 Chromium 的形态安装：可写、可枚举、不可配置的全局属性，值是普通对象
+（`Object.getPrototypeOf(chrome) === Object.prototype`、`chrome.constructor === Object`），
+own key 顺序为 `loadTimes`、`csi`、`app`，没有扩展时不提供 `chrome.runtime`；Worker 全局没有 `chrome`。
+
+```python
+page.evaluate("[typeof chrome, Object.keys(chrome), typeof chrome.csi]")
+# ['object', ['loadTimes', 'csi', 'app'], 'function']
+page.evaluate("chrome.csi()")
+# {'startE': 1789462997343.7854, 'onloadT': ..., 'pageT': ..., 'tran': 15}
+```
+
+- `chrome.csi()`：`startE`、`onloadT`、`pageT`、`tran`（正常导航为 15），每次调用返回新对象。
+- `chrome.loadTimes()`：13 个字段，`navigationType` 为 `Other`，`wasFetchedViaSpdy`/`wasNpnNegotiated` 为 true、
+  `npnNegotiatedProtocol`/`connectionInfo` 为 `h2`，尚未到达的里程碑为 0。
+- `chrome.app`：`isInstalled`、`getDetails`、`getIsInstalled`、`installState`、`runningState`，
+  以及 `InstallState`、`RunningState` 枚举。
+- `chrome.csi`/`chrome.loadTimes` 是与绑定同源的 native 函数：`String(chrome.csi)` 为
+  `function csi() { [native code] }`，`chrome.csi.name` 为 `csi`。
+- 时间以当前文档的导航起点为锚，`goto`/`set_content` 之后会重新计时；精度高于 Windows `time.time()` 的
+  15ms 刻度，连续两次 `chrome.csi().pageT` 不相等。
+
 ## 网络与资源
 
 默认不联网；本地 HTML 用 set_content，导航或外部脚本使用明确的 loader。

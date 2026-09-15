@@ -98,3 +98,6 @@ DevTools 协议、传输、请求路由和 Inspector 会话核心位于相邻 `_
 - Window 值通过 Feature 槽位创建，不在 Window 中导入低频实现类或维护第二套缓存。
 - 跨层需求通过 capability 扩展，不增加 owner/backdoor。
 - 先改测试和最小实现，再运行专项测试与完整套件。
+- 例外：`window.chrome` 在 baseline 里没有接口，也不是 Window 成员，因此不走 Feature，而是由
+  `PageRealm` 在 realm 初始化时用 `web.bom.chrome` 的引导脚本安装（Chromium 同样在页面脚本之前安装它）。
+  它必须是普通对象，所以成员函数经临时全局桥接给 JS 后用 `Object.defineProperty` 定义，桥接全局随即删除。
