@@ -6,11 +6,11 @@ from ...engine.features import interface
 from ...foundation.arguments import (
     MISSING,
     boolean,
-    dictionary,
     dom_string,
+    event_constructor_arguments,
     integer,
     is_nullish,
-    missing_error,
+    sequence,
     usv_string,
 )
 from ..dom.events import Event
@@ -22,7 +22,9 @@ class MessageEvent(Event):
         attributes=(
             AttributeSpec(name="data", getter="get_data", side_effect=1),
             AttributeSpec(name="origin", getter="get_origin", side_effect=1),
+            AttributeSpec(name="lastEventId", getter="get_lastEventId", side_effect=1),
             AttributeSpec(name="source", getter="get_source", side_effect=1),
+            AttributeSpec(name="ports", getter="get_ports", side_effect=1),
         ),
         constructor_behavior=1,
         length=1,
@@ -30,23 +32,20 @@ class MessageEvent(Event):
     )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
-        if event_type is MISSING:
-            raise missing_error('MessageEvent', 'constructor', 1, 0, constructor=True)
-        event_type = dom_string(event_type)
-        if options is pyv8.Undefined:
-            options = None
-        if options is not pyv8.Undefined:
-            if not is_nullish(options):
-                options = dictionary(options)
-        super().__init__(event_type, options, **kw)
-        options = options if isinstance(options, dict) else {}
-        self.data = options.get("data", pyv8.Null)
-        self.origin = usv_string(options.get("origin", ""))
-        self.source = options.get("source", pyv8.Null)
+        event_type, init = event_constructor_arguments('MessageEvent', event_type, options)
+        super().__init__(event_type, init, **kw)
+        self.data = init.get("data", pyv8.Null)
+        self.origin = usv_string(init.get("origin", ""))
+        self.lastEventId = dom_string(init.get("lastEventId", ""))
+        self.source = init.get("source", pyv8.Null)
+        ports = init.get("ports", pyv8.Undefined)
+        self.ports = [] if is_nullish(ports) else sequence(ports)
 
     def get_data(self): return self.data
     def get_origin(self): return self.origin
+    def get_lastEventId(self): return self.lastEventId
     def get_source(self): return self.source
+    def get_ports(self): return self.ports
 
 
 @interface('CloseEvent', 'Event')
@@ -63,19 +62,11 @@ class CloseEvent(Event):
     )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
-        if event_type is MISSING:
-            raise missing_error('CloseEvent', 'constructor', 1, 0, constructor=True)
-        event_type = dom_string(event_type)
-        if options is pyv8.Undefined:
-            options = None
-        if options is not pyv8.Undefined:
-            if not is_nullish(options):
-                options = dictionary(options)
-        super().__init__(event_type, options, **kw)
-        options = options if isinstance(options, dict) else {}
-        self.code = integer(options.get("code", 0), bits=16)
-        self.reason = usv_string(options.get("reason", ""))
-        self.was_clean = boolean(options.get("wasClean", False))
+        event_type, init = event_constructor_arguments('CloseEvent', event_type, options)
+        super().__init__(event_type, init, **kw)
+        self.code = integer(init.get("code", 0), bits=16)
+        self.reason = usv_string(init.get("reason", ""))
+        self.was_clean = boolean(init.get("wasClean", False))
 
     def get_code(self): return self.code
     def get_reason(self): return self.reason
@@ -87,6 +78,9 @@ class ErrorEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="message", getter="get_message", side_effect=1),
+            AttributeSpec(name="filename", getter="get_filename", side_effect=1),
+            AttributeSpec(name="lineno", getter="get_lineno", side_effect=1),
+            AttributeSpec(name="colno", getter="get_colno", side_effect=1),
             AttributeSpec(name="error", getter="get_error", side_effect=1),
         ),
         constructor_behavior=1,
@@ -95,21 +89,44 @@ class ErrorEvent(Event):
     )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
-        if event_type is MISSING:
-            raise missing_error('ErrorEvent', 'constructor', 1, 0, constructor=True)
-        event_type = dom_string(event_type)
-        if options is pyv8.Undefined:
-            options = None
-        if options is not pyv8.Undefined:
-            if not is_nullish(options):
-                options = dictionary(options)
-        super().__init__(event_type, options, **kw)
-        options = options if isinstance(options, dict) else {}
-        self.error = options.get("error", pyv8.Null)
-        self.message = dom_string(options.get("message", ""))
+        event_type, init = event_constructor_arguments('ErrorEvent', event_type, options)
+        super().__init__(event_type, init, **kw)
+        self.error = init.get("error", pyv8.Null)
+        self.message = dom_string(init.get("message", ""))
+        self.filename = usv_string(init.get("filename", ""))
+        self.lineno = integer(init.get("lineno", 0), bits=32)
+        self.colno = integer(init.get("colno", 0), bits=32)
 
     def get_message(self): return self.message
+    def get_filename(self): return self.filename
+    def get_lineno(self): return self.lineno
+    def get_colno(self): return self.colno
     def get_error(self): return self.error
 
 
-__all__ = ["MessageEvent", "CloseEvent", "ErrorEvent"]
+@interface('ProgressEvent', 'Event', exposed_in=('Window', 'DedicatedWorker', 'SharedWorker'))
+class ProgressEvent(Event):
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="lengthComputable", getter="get_lengthComputable", side_effect=1),
+            AttributeSpec(name="loaded", getter="get_loaded", side_effect=1),
+            AttributeSpec(name="total", getter="get_total", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
+    )
+
+    def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
+        event_type, init = event_constructor_arguments('ProgressEvent', event_type, options)
+        super().__init__(event_type, init, **kw)
+        self.length_computable = boolean(init.get("lengthComputable", False))
+        self.loaded = integer(init.get("loaded", 0), bits=64)
+        self.total = integer(init.get("total", 0), bits=64)
+
+    def get_lengthComputable(self): return self.length_computable
+    def get_loaded(self): return self.loaded
+    def get_total(self): return self.total
+
+
+__all__ = ["MessageEvent", "CloseEvent", "ErrorEvent", "ProgressEvent"]

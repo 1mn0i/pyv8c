@@ -28,7 +28,7 @@ def test_window_defers_low_frequency_bom_modules_and_keeps_identity():
         browser.close()
 
 
-def test_lazy_history_retains_the_window_initial_entry():
+def test_lazy_history_starts_at_the_current_document_url():
     browser = Browser(stub_logging="off", resource_loader=_loader)
     try:
         context = browser.new_context()
@@ -36,8 +36,11 @@ def test_lazy_history_retains_the_window_initial_entry():
         window = page.window
         window.location.href = "http://lazy.test/current"
         assert page.evaluate("history.length") == 1
-        # Window is created before the first navigation; this preserves the
-        # eager implementation's initial about:blank history entry.
-        assert window.history._entries == [("about:blank", None)]
+        # History is created on first access, so its single entry describes the
+        # document that is actually loaded; fragment navigation and
+        # back/forward stay coherent because no stale about:blank entry is kept
+        # (a History materialized *before* a commit is re-pointed by
+        # ``Window.sync_history_url``).
+        assert window.history._entries == [("http://lazy.test/current", None)]
     finally:
         browser.close()

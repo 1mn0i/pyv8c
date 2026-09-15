@@ -217,6 +217,32 @@ class Page:
     def run_until_idle(self, timeout=0):
         self.realm.executor.call(self.tasks.run_until_idle, timeout)
 
+    def dispatch_event(self, event_type, *, target="window", selector=None, event_class=None, init=None):
+        """Dispatch a host-trusted event and report whether it was not cancelled.
+
+        ``target`` is ``"window"`` (default), ``"document"`` or a DOM node from
+        :meth:`query_selector`; ``selector`` resolves the target from the current
+        document instead.  ``event_class`` names the event interface to build
+        (inferred from ``event_type`` when omitted) and ``init`` is a plain dict
+        of EventInit members.
+        """
+        return self.realm.executor.call(
+            self.lifecycle.dispatch_event, event_type,
+            target=target, selector=selector, event_class=event_class, init=init,
+        )
+
+    def query_selector(self, selector):
+        """Return the host-side DOM node matching a CSS selector, else ``None``."""
+        def resolve():
+            node = self.document.fn_querySelector(str(selector))
+            return None if node is pyv8.Null else node
+
+        return self.realm.executor.call(resolve)
+
+    def set_visibility(self, hidden):
+        """Switch the document visibility state and fire its lifecycle events."""
+        return self.realm.executor.call(self.lifecycle.set_visibility, hidden)
+
     def close(self):
         with self._close_lock:
             if self.closed:
@@ -249,8 +275,8 @@ class Page:
             return
         if self.navigation.has_navigation:
             self.lifecycle.dispatch_beforeunload()
-            self.lifecycle.dispatch_page_event("pagehide", self.window, {"bubbles": False, "persisted": False})
-            self.lifecycle.dispatch_page_event("unload", self.window, {"bubbles": False})
+            self.lifecycle.dispatch_page_hide(False)
+            self.lifecycle.dispatch_unload()
         # Drop cached JS scripts before the V8 context goes away.
         self.scripts.clear_js_helpers()
         if self._devtools_target is not None:

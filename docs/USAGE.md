@@ -30,6 +30,9 @@ Context 关闭会关闭其页面、DevTools 和网络客户端，并清理 Blob 
 | `page.goto(url, timeout=30, wait_until="load")` | 加载并导航，通常返回 Response；beforeunload 阻止时可返回 None |
 | `page.evaluate(script, filename=None)` | 在 owner 线程执行 JS 源码；filename 用于脚本定位 |
 | `page.run_until_idle(timeout=0)` | 驱动就绪任务；正 timeout 允许等待定时器/异步工作，到期返回，不承诺所有工作完成 |
+| `page.dispatch_event(type, *, target="window", selector=None, event_class=None, init=None)` | 宿主侧派发 trusted 事件；返回是否未被取消，详见下节 |
+| `page.query_selector(selector)` | 返回宿主侧 DOM 节点句柄，未命中返回 None |
+| `page.set_visibility(hidden)` | 切换文档可见性并派发 visibilitychange/ freeze / resume |
 | `page.trace = True/False` | 切换该页面观察状态，需要创建时配置观察能力 |
 | `page.close()` | 关闭页面及其拥有的资源 |
 
@@ -52,6 +55,34 @@ finally:
 
 默认 executor 自动消费事件循环；run_until_idle 是测试/等待辅助工具，并非每条语句之后都必须调用。
 持续 interval 或永不结束的脚本不能被“空闲”调用可靠收敛；等待超时也不能抢占已开始的同步 Python 回调。
+
+## 事件触发
+
+页面加载生命周期事件由宿主按阶段派发：`readystatechange` → `DOMContentLoaded` → `load` → `pageshow`，导航与关闭时依次为 `beforeunload` → `pagehide` → `unload`；元素资源按 `loadstart` → `progress` → `load`/`error` → `loadend`，iframe 在子文档 load 后追加 `DOMFrameContentLoaded`。`hashchange`、`popstate`、`visibilitychange`、`freeze`、`resume` 由片段导航与 `set_visibility` 触发。
+
+需要主动打事件时用 `Page.dispatch_event`，它始终在 owner 线程执行并把事件标记为 trusted：
+
+```python
+from pyv8c import Browser
+
+browser = Browser(stub_logging="off")
+try:
+    page = browser.new_context().new_page()
+    page.set_content("<button id='go'>go</button>", url="https://example.test/")
+    page.evaluate("document.querySelector('#go').onclick = e => window.__x = e.clientX")
+    page.dispatch_event("click", selector="#go", init={"clientX": 7})   # 事件类按类型推断为 MouseEvent
+    page.dispatch_event("custom", target="document", event_class="CustomEvent", init={"detail": {"n": 1}})
+    page.set_visibility(True)
+    assert page.evaluate("__x") == 7
+finally:
+    browser.close()
+```
+
+`target` 取 `"window"`（默认）、`"document"` 或 `query_selector` 返回的节点；`selector` 与 `target` 二选一，未命中抛 `NotFoundError`。`init` 是普通 dict，缺省时按事件类型补 `bubbles`/`cancelable` 默认值；`event_class` 可显式指定接口名，未知接口或非 `Event` 接口报 `TypeError`。
+
+事件类本身（`MouseEvent`/`KeyboardEvent`/`PointerEvent`/`WheelEvent`/`FocusEvent`/`InputEvent`/`CompositionEvent`/`PopStateEvent`/`HashChangeEvent`/`StorageEvent`/`AnimationEvent`/`TransitionEvent`/`PromiseRejectionEvent`/`PageTransitionEvent`/`ProgressEvent` 等）只实现常用 init 成员与同名属性，其余成员仍由 stub 兜底；`BeforeUnloadEvent` 按 baseline 不可 `new`。
+
+边界：`PromiseRejectionEvent`、`StorageEvent`、`AnimationEvent`/`TransitionEvent` 目前只提供构造与显式派发，不会自动触发（分别需要原生 Promise 拒绝回调、跨窗口 storage 广播与 CSS 动画引擎）；元素 `abort` 仅在显式取消路径可达。页面 `close()` 或导航重建文档时不会补发被取消资源的事件。
 
 ## Browser 参数
 

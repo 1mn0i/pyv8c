@@ -5,13 +5,16 @@ from ...engine.features import FeatureCatalog, FeatureSpec
 CORE_INTERFACES = (
     "DOMException", "DOMError", "DOMTokenList", "HTMLAllCollection", "HTMLCollection", "NamedNodeMap", "NodeList",
     "CustomEvent", "Event", "EventTarget", "KeyboardEvent", "MouseEvent", "UIEvent",
+    "FocusEvent", "InputEvent", "CompositionEvent", "PointerEvent", "WheelEvent",
+    "PopStateEvent", "HashChangeEvent", "StorageEvent", "AnimationEvent", "TransitionEvent",
+    "PromiseRejectionEvent", "PageTransitionEvent", "BeforeUnloadEvent",
     "Node", "DocumentFragment", "Attr", "CharacterData", "Text", "Comment", "DocumentType", "Document",
     "CSSStyleDeclaration", "Element", "HTMLElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLLinkElement", "HTMLMetaElement", "CanvasRenderingContext2D",
     "HTMLScriptElement", "HTMLStyleElement", "HTMLTemplateElement", "HTMLHtmlElement", "HTMLHeadElement",
     "HTMLBodyElement", "HTMLDivElement", "HTMLSpanElement", "HTMLAnchorElement", "HTMLInputElement",
     "HTMLFormElement", "HTMLCanvasElement", "HTMLMediaElement", "HTMLTableElement", "HTMLTableRowElement",
     "HTMLTableCellElement", "HTMLSelectElement", "HTMLTextAreaElement", "HTMLButtonElement", "HTMLOptionElement",
-    "HTMLUnknownElement", "Headers", "Blob", "Request", "Response", "MessageEvent", "CloseEvent", "ErrorEvent",
+    "HTMLUnknownElement", "Headers", "Blob", "Request", "Response", "ProgressEvent", "MessageEvent", "CloseEvent", "ErrorEvent",
     "XMLHttpRequestEventTarget", "XMLHttpRequest", "Location", "Screen", "Storage", "URLSearchParams", "URL",
     "History", "DOMFileSystem", "Entry", "DirectoryEntry", "FileEntry", "DirectoryReader", "FileWriter", "File", "Window", "WindowProperties",
 )

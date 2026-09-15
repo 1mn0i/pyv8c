@@ -19,10 +19,26 @@ from ...foundation.arguments import (
 from ...foundation.environment import BrowserEnvironment
 from ...foundation.errors import InvalidStateError, SecurityError, V8TypeError, V8URIError
 from ...foundation.urls import SPECIAL_SCHEMES
-from ..dom.model import Event, EventTarget
+from ..dom.events import EventTarget, HashChangeEvent, PopStateEvent
 from ..fetch.blob import Blob
 
 __all__ = ["Location", "Screen", "Storage", "URLSearchParams", "URL", "History"]
+
+
+def _document_key(url):
+    """The URL parts a same-document (fragment) navigation cannot change."""
+    parts = urlsplit(url)
+    return (parts.scheme, parts.netloc, parts.path, parts.query)
+
+
+#: Location components the implementation actually assigns; the baseline marks
+#: protocol/host/hostname/port writable too, and those keep their stub setter.
+_LOCATION_SETTERS = {
+    "href": "set_href",
+    "pathname": "set_pathname",
+    "search": "set_search",
+    "hash": "set_hash",
+}
 
 
 @interface('Location', None)
@@ -38,10 +54,61 @@ class Location:
     def set_href(self, value):
         value = dom_string(value)
         target = urljoin(self.href, str(value))
-        if self._services is not None:
-            self._services.document_services.request_navigation(target)
-        else:
+        if self._services is None:
             self.href = target
+            return
+        if self._is_same_document(target):
+            self._navigate_within_document(target, replace=False)
+            return
+        self._services.document_services.request_navigation(target)
+    def _is_same_document(self, target):
+        return target != self.href and _document_key(target) == _document_key(self.href)
+    def _navigate_within_document(self, target, replace):
+        """Commit a fragment change without rebuilding the document.
+
+        Only the fragment may differ, so no ``beforeunload``/``pagehide``/
+        ``unload`` runs and resources keep their state; ``hashchange`` fires
+        because a new entry is created for the fragment.
+        """
+        window = self._services.document_services.window
+        # Materialize the History (which starts at the *current* URL) before the
+        # fragment change so entry 0 still describes the document we are on.
+        history = getattr(window, "history", None)
+        previous, self.href = str(self.href), target
+        if history is not None:
+            if replace:
+                history.replace_same_document(target)
+            else:
+                history.push_same_document(target)
+        if urlsplit(previous).fragment != urlsplit(target).fragment:
+            self._services.realm_services.materialize_interface("HashChangeEvent")
+            event = HashChangeEvent("hashchange", {"oldURL": previous, "newURL": target})
+            event._trusted = True
+            window.fn_dispatchEvent(event)
+    def _set_component(self, **changes):
+        self._require_access()
+        self.set_href(urlunsplit(urlsplit(self.href)._replace(**changes)))
+    def set_pathname(self, value): self._set_component(path=dom_string(value))
+    def set_search(self, value): self._set_component(query=dom_string(value).lstrip("?"))
+    def set_hash(self, value): self._set_component(fragment=dom_string(value).lstrip("#"))
+    def fn_assign(self, value=MISSING, *_extra):
+        if value is MISSING:
+            raise missing_error('Location', 'assign', 1, 0)
+        self.set_href(usv_string(value))
+    def fn_replace(self, value=MISSING, *_extra):
+        if value is MISSING:
+            raise missing_error('Location', 'replace', 1, 0)
+        target = urljoin(self.href, usv_string(value))
+        if self._services is None:
+            self.href = target
+            return
+        if self._is_same_document(target):
+            self._navigate_within_document(target, replace=True)
+            return
+        self._services.document_services.request_navigation(target)
+    def fn_reload(self, *_extra):
+        if self._services is not None:
+            self._services.document_services.request_navigation(self.href)
     def get_origin(self):
         p = self._parts(); return f"{p.scheme}://{p.netloc}" if p.scheme and p.netloc else "null"
     def get_protocol(self): return self._parts().scheme + ":"
@@ -57,7 +124,7 @@ class Location:
                 AttributeSpec(
                     name=n,
                     getter="get_" + n,
-                    setter="set_href" if n == "href" else None,
+                    setter=_LOCATION_SETTERS.get(n),
                 )
                 for n in (
                     "href",
@@ -71,6 +138,11 @@ class Location:
                     "hash",
                 )
             )
+        ),
+        methods=(
+            MethodSpec(name="assign", callback="fn_assign", length=1),
+            MethodSpec(name="replace", callback="fn_replace", length=1),
+            MethodSpec(name="reload", callback="fn_reload"),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -542,6 +614,12 @@ class History:
         url = None if is_nullish(url) else usv_string(url)
         target = self._validate_target(url)
         self._entries[self._index] = (target, state); self._services.document_services.window.location.href = target
+    def push_same_document(self, url, state=None):
+        """Record a same-document entry without resolving the URL again."""
+        self._entries = self._entries[:self._index + 1] + [(str(url), state)]
+        self._index += 1
+    def replace_same_document(self, url, state=None):
+        self._entries[self._index] = (str(url), state)
     def fn_back(self, *_extra):
         return self.fn_go(-1)
     def fn_forward(self, *_extra):
@@ -553,4 +631,19 @@ class History:
             delta = integer(delta, signed=True)
         target = max(0, min(len(self._entries) - 1, self._index + int(delta)))
         if target == self._index: return
-        self._index = target; self._services.document_services.window.location.href = self._entries[target][0]; self._services.document_services.window.fn_dispatchEvent(Event("popstate", {"bubbles": False}))
+        window = self._services.document_services.window
+        previous = str(window.location.href)
+        self._index = target
+        entry = self._entries[target]
+        window.location.href = entry[0]
+        self._services.realm_services.materialize_interface("PopStateEvent")
+        event = PopStateEvent("popstate", {"state": entry[1]})
+        event._trusted = True
+        window.fn_dispatchEvent(event)
+        # Crossing entries whose fragments differ is also a fragment navigation,
+        # so ``hashchange`` follows ``popstate`` for that step.
+        if urlsplit(previous).fragment != urlsplit(str(entry[0])).fragment:
+            self._services.realm_services.materialize_interface("HashChangeEvent")
+            change = HashChangeEvent("hashchange", {"oldURL": previous, "newURL": str(entry[0])})
+            change._trusted = True
+            window.fn_dispatchEvent(change)

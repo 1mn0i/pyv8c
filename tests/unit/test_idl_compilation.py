@@ -57,6 +57,28 @@ def test_session_commits_ancestors_atomically_and_can_retry(universe):
     assert len(batches) == 2
 
 
+def test_event_handler_slots_follow_the_baseline_member_table(universe):
+    """Each interface compiles exactly the ``on*`` slots its baseline declares."""
+    event_target = universe.class_for("EventTarget")
+    names = [item.name for item in event_target.__v8_idl_spec__.attributes]
+    assert len(names) == len(set(names))
+    assert {"onload", "onerror", "onclick", "onkeydown", "onhashchange"} <= set(names)
+    for slot in ("onclick", "onkeydown"):
+        assert event_target.__dict__["get_" + slot].__name__ == "get_" + slot
+        assert event_target.__dict__["set_" + slot].__name__ == "set_" + slot
+
+    window = {item.name: item for item in universe.class_config_for("Window").attributes}
+    assert {"onclick", "onkeydown", "onwheel", "onhashchange", "onpopstate", "onstorage"} <= set(window)
+    assert window["onclick"].getter.__name__ == "get_onclick"
+
+    document = {item.name for item in universe.class_config_for("Document").attributes}
+    assert {"onclick", "onvisibilitychange", "onfreeze", "onresume"} <= document
+
+    # Interfaces whose baseline member table has no such slot never grow one.
+    node = {item.name for item in universe.class_config_for("Node").attributes}
+    assert not ({"onclick", "onkeydown", "onhashchange", "onvisibilitychange"} & node)
+
+
 def test_realm_dependent_callbacks_are_isolated_and_released(universe):
     class Realm:
         pass

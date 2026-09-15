@@ -167,7 +167,6 @@ class Window(WindowProperties):
         if feature_runtime is None:
             raise RuntimeError("Window requires the Browser FeatureRuntime")
         self._features = feature_runtime.values_for(self)
-        self._history_initial_url = getattr(getattr(services, "realm_services", None), "url", "about:blank")
         self.location = self._features.value("location")
         self.innerWidth, self.innerHeight = viewport.width, viewport.height
         self.outerWidth, self.outerHeight = viewport.width, viewport.height
@@ -196,6 +195,17 @@ class Window(WindowProperties):
     @property
     def indexedDB(self):
         return self._features.value("indexedDB")
+
+    def sync_history_url(self, url):
+        """Re-point the current history entry at a committed document URL.
+
+        A navigation replaces the current entry's URL here (no entry is pushed),
+        so this keeps the entry table coherent for later ``back``/``forward`` and
+        fragment navigation.  ``history`` is created lazily, so a page that never
+        reads it does not materialize one just because it navigated.
+        """
+        if "history" in self._features.cached_names:
+            self.history.replace_same_document(str(url))
     def __v8_cross_origin_check__(self, accessor):
         return accessor is self or getattr(accessor, "_origin", None) == self._origin
 

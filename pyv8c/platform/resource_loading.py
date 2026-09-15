@@ -431,7 +431,15 @@ class ResourceController:
         # silently leave its cancel callback behind until the page closes.
         page.services.resource_services._track_resource(handle)
         handle._transport = self.load_resource_async(url, request, done)
+        page.lifecycle.dispatch_progress_event(node, "loadstart")
         return handle
+
+    @staticmethod
+    def _response_length(response):
+        try:
+            return len(getattr(response, "body", None) or b"")
+        except TypeError:
+            return 0
 
     def complete_document_resource(self, token, generation, response, error, handle=None):
         page = self.page
@@ -440,7 +448,13 @@ class ResourceController:
             return
         _generation, node, kind, _handle = item
         if kind == "iframe" and not error:
-            self.load_iframe_response(node, response, lambda ok: self.finish_iframe_resource(token, generation, node, ok))
+            # ``when_loaded`` resolves on the *child* realm's owner thread, so
+            # hand the completion back to this realm's queue before touching
+            # page state: materializing an event interface or advancing the
+            # document lifecycle must happen on this Page's owner thread.
+            def child_loaded(ok):
+                page.tasks.post(lambda: self.finish_iframe_resource(token, generation, node, ok))
+            self.load_iframe_response(node, response, child_loaded)
             return
         self.resources.pop(token, None)
         _handle.finish()
@@ -459,12 +473,20 @@ class ResourceController:
                 page.lifecycle.dispatch_script_error(node, error)
             else:
                 page.lifecycle.dispatch_page_event("error", node, {"bubbles": False})
+            page.lifecycle.dispatch_progress_event(node, "loadend")
         else:
             if kind == "script":
                 page.scripts.execute_script(node, response.body_text(), response.url or page.url)
             elif kind == "style":
                 node._stylesheet_text = response.body_text()
+            # The transfer has already completed, so one progress event carries
+            # the whole body; there is no incremental delivery pipeline.
+            length = self._response_length(response)
+            page.lifecycle.dispatch_progress_event(
+                node, "progress", loaded=length, total=length, length_computable=True,
+            )
             page.lifecycle.dispatch_page_event("load", node, {"bubbles": False})
+            page.lifecycle.dispatch_progress_event(node, "loadend")
         page.lifecycle.maybe_fire_document_load()
 
     def finish_iframe_resource(self, token, generation, node, ok):
@@ -475,6 +497,10 @@ class ResourceController:
         if item is not None:
             item[3].finish()
         page.lifecycle.dispatch_page_event("load" if ok else "error", node, {"bubbles": False})
+        if ok:
+            # Legacy iframe-only signal, fired after the child document loaded.
+            page.lifecycle.dispatch_page_event("DOMFrameContentLoaded", node, {"bubbles": False})
+        page.lifecycle.dispatch_progress_event(node, "loadend")
         page.lifecycle.maybe_fire_document_load()
 
     def _child_frame_page(self, iframe, target):

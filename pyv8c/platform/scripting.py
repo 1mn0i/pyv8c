@@ -221,6 +221,8 @@ class ScriptController:
             else:
                 self.execute_script(node, response.body_text(), response.url or page.url)
                 page.lifecycle.dispatch_page_event("load", node, {"bubbles": False})
+            if error or response is not None:
+                page.lifecycle.dispatch_progress_event(node, "loadend")
             self.dom_blocking_scripts = max(0, self.dom_blocking_scripts - 1)
         if not self.dom_blocking_scripts and page.navigation.parser is not None and not page.navigation.parser.done:
             page.tasks.post(
@@ -249,4 +251,5 @@ class ScriptController:
                 self.execute_script(node, source, (response.url if response is not None else page.url) or page.url)
                 if response is not None:
                     page.lifecycle.dispatch_page_event("load", node, {"bubbles": False})
+                    page.lifecycle.dispatch_progress_event(node, "loadend")
         page.lifecycle.maybe_fire_dom_content_loaded()

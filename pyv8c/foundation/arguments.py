@@ -159,6 +159,28 @@ def dictionary(value, *, name="Object", prefix=""):
     raise V8TypeError(f"{prefix}The provided value is not of type '{name}'.")
 
 
+def event_init(options):
+    """An event constructor's EventInit dictionary as a readable mapping.
+
+    ``undefined``/``null`` mean "empty EventInit".  A JS object is read lazily
+    through :class:`Dictionary`; a plain Python dict passes through untouched so
+    the host can drive the private ``isTrusted``/``persisted`` channels that are
+    never EventInit members.
+    """
+    if is_nullish(options):
+        return {}
+    if isinstance(options, dict):
+        return options
+    return dictionary(options)
+
+
+def event_constructor_arguments(interface, event_type, options):
+    """Validate ``(type, init)`` for an event constructor."""
+    if event_type is MISSING:
+        raise missing_error(interface, 'constructor', 1, 0, constructor=True)
+    return dom_string(event_type), event_init(options)
+
+
 def member(value, name, default=pyv8.Undefined):
     if isinstance(value, pyv8.JSObject):
         result = value._get(name)

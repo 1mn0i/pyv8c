@@ -70,7 +70,16 @@ def _fake_context(executor):
 
 
 class _DummyNode:
+    """Minimal stand-in for a connected element in the resource path."""
+
     attributes = {}
+
+    def __init__(self):
+        self.events = []
+
+    def fn_dispatchEvent(self, event):
+        self.events.append(event.type)
+        return True
 
 
 def _response_for(url):

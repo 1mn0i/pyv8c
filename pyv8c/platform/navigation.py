@@ -34,10 +34,8 @@ class NavigationController:
     def commit_content(self, html, url):
         lifecycle = self.page.lifecycle
         if self.has_navigation:
-            lifecycle.dispatch_page_event(
-                "pagehide", self.page.window, {"bubbles": False, "persisted": False}
-            )
-            lifecycle.dispatch_page_event("unload", self.page.window, {"bubbles": False})
+            lifecycle.dispatch_page_hide(False)
+            lifecycle.dispatch_unload()
         self.generation += 1
         self.has_navigation = True
         self.parser_done = lifecycle.dom_content_loaded = lifecycle.document_load_fired = False
@@ -45,6 +43,7 @@ class NavigationController:
         self.page.scripts.reset()
         self.page._update_origin(url)
         self.page.window.location.href = str(url)
+        self.page.window.sync_history_url(str(url))
         devtools = self.page.context_owner._devtools
         if devtools is not None:
             devtools.target_info_changed(self.page)
