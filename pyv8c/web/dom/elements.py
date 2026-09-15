@@ -16,6 +16,7 @@ from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, interface_value, is_nullish, missing_error
 from ...foundation.errors import InvalidCharacterError, NotFoundError, V8SyntaxError, V8TypeError
 from .collections import DOMTokenList, HTMLCollection, NamedNodeMap, _dom_string
+from .css import CSSStyleDeclaration
 from .model import (
     _VALID_NAME_RE,
     XHTML_NAMESPACE,
@@ -456,7 +457,6 @@ class HTMLElement(Element):
     def get_style(self):
         value = getattr(self, "_style_declaration", None)
         if value is None:
-            from .css import CSSStyleDeclaration
             value = self._style_declaration = CSSStyleDeclaration(element=self)
         return value
     def get_offsetParent(self):
