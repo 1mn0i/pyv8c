@@ -1,4 +1,9 @@
-"""Structured-clone support shared by Window and Worker message channels."""
+"""Structured-clone support for the message and storage channels.
+
+The Window, Worker and IndexedDB channels all move JavaScript values across a
+realm boundary, so all three share this one implementation.  It sits beside
+:class:`~pyv8c.web.fetch.blob.Blob`, the web type it knows how to deep-copy.
+"""
 
 import pyv8
 
@@ -22,7 +27,7 @@ def structured_clone(value, transfer=(), context=None):
     active = set()
 
     def clone(item):
-        from ..fetch.blob import Blob
+        from .blob import Blob
 
         item = materialize(item)
 

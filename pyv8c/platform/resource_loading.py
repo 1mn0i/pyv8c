@@ -15,7 +15,7 @@ import pyv8
 from loguru import logger
 
 from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
-from ..foundation.urls import same_origin
+from ..foundation.urls import DEFAULT_PORTS, same_origin
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
 from ..web.network.backend import NetworkRequest
@@ -105,7 +105,7 @@ class ResourceController:
             port = parsed.port
         except ValueError:
             port = None
-        default_port = {"http": 80, "https": 443}.get(parsed.scheme.lower())
+        default_port = DEFAULT_PORTS.get(parsed.scheme.lower())
         if port is not None and port != default_port:
             domain = f"{domain}_{port}"
         domain = re.sub(r"[^A-Za-z0-9._-]+", "_", domain).strip("._") or "unknown"

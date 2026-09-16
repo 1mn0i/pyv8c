@@ -43,10 +43,6 @@ class RealmBusyError(RuntimeError):
     """
 
 
-class TaskAbortedError(RuntimeError):
-    """A queued task was dropped because its realm closed or cancelled it."""
-
-
 class LegacyPropertyError(V8TypeError):
     """A legacy interceptor failure that is silent outside strict mode."""
 
@@ -189,7 +185,7 @@ def as_js_error(exc, *, default="Error"):
 __all__ = [
     "V8Error", "V8TypeError", "V8RangeError", "V8ReferenceError", "V8SyntaxError",
     "V8URIError", "V8EvalError", "DOMException", "DOMError", "dom_exception",
-    "LegacyPropertyError", "RealmBusyError", "TaskAbortedError",
+    "LegacyPropertyError", "RealmBusyError",
     "IndexSizeError", "InvalidCharacterError", "HierarchyRequestError", "NotFoundError",
     "NotSupportedError", "InvalidStateError", "InvalidAccessError", "SecurityError",
     "NetworkError", "AbortError", "TimeoutError", "QuotaExceededError", "DataCloneError",

@@ -49,9 +49,10 @@ from ...foundation.arguments import (
     sequence,
 )
 from ...foundation.errors import V8TypeError, dom_exception
-from ...foundation.indexed_properties import ReadOnlyIndexedPropertyMixin
+from ...foundation.realm import post_or_call
 from ..dom.events import Event, EventTarget
-from ..workers.clone import structured_clone
+from ..dom.mixins import ReadOnlyIndexedPropertyMixin
+from ..fetch.clone import structured_clone
 
 __all__ = [
     "IDBFactory", "IDBDatabase", "IDBTransaction", "IDBObjectStore", "IDBIndex",
@@ -118,10 +119,6 @@ _TYPE_ORDER = {_NUMBER: 0, _DATE: 1, _STRING: 2, _BINARY: 3, _ARRAY: 4}
 _MAX_KEY_GENERATOR = 2 ** 53
 
 
-def _is_missing(value):
-    return value is pyv8.Undefined or value is pyv8.Null or value is None
-
-
 def _string_or_strings(value):
     if isinstance(value, (list, tuple)):
         return sequence(value, dom_string)
@@ -139,7 +136,7 @@ def _to_key(value):
     which is what Chrome does for ``cmp``, ``add``, ``get`` and friends.
     """
     value = materialize(value)
-    if _is_missing(value):
+    if is_nullish(value):
         raise _data_error("The parameter is not a valid key.")
     if isinstance(value, bool):
         raise _data_error("A boolean is not a valid key.")
@@ -308,7 +305,7 @@ def _to_key_range(value, null_disallowed=False):
         return value
     if isinstance(value, IDBKeyRange):
         return value._range
-    if _is_missing(value):
+    if is_nullish(value):
         if null_disallowed:
             raise _data_error("No key or key range was specified.")
         return _KeyRange()
@@ -657,7 +654,7 @@ class IDBVersionChangeEvent(Event):
         options = options if isinstance(options, dict) else {}
         self.oldVersion = int(options.get("oldVersion", 0) or 0)
         new_version = options.get("newVersion", None)
-        self.newVersion = None if _is_missing(new_version) else int(new_version)
+        self.newVersion = None if is_nullish(new_version) else int(new_version)
 
     def get_oldVersion(self):
         return self.oldVersion
@@ -1008,14 +1005,7 @@ class _CursorBody:
             finally:
                 transaction._end_dispatch()
 
-        self._post(run)
-
-    def _post(self, callback):
-        services = getattr(self._source, "_services", None)
-        if services is not None:
-            services.task_services.post_task(callback)
-        else:
-            callback()
+        post_or_call(getattr(self._source, "_services", None), run)
 
     def get_source(self):
         return self._source
@@ -1040,7 +1030,7 @@ class _CursorBody:
         if key is pyv8.Undefined:
             key = None
         self._require_usable()
-        if _is_missing(key):
+        if is_nullish(key):
             self._iterate()
             return None
         self._iterate(cut_key=_to_key(key), inclusive=True)
@@ -1168,12 +1158,6 @@ class IDBTransaction(EventTarget):
         self._snapshot = None
 
     # -- lifecycle --------------------------------------------------------
-    def _post(self, callback):
-        if self._services is not None:
-            self._services.task_services.post_task(callback)
-        else:
-            callback()
-
     def _deactivate(self):
         if self._state == "active":
             self._state = "inactive"
@@ -1194,7 +1178,7 @@ class IDBTransaction(EventTarget):
         if self._pending:
             return
         self._state = "committing"
-        self._post(self._commit_now)
+        post_or_call(self._services, self._commit_now)
 
     def _commit_now(self):
         if self._state == "finished":
@@ -1297,7 +1281,7 @@ class IDBTransaction(EventTarget):
             finally:
                 self._end_dispatch()
 
-        self._post(execute)
+        post_or_call(self._services, execute)
 
     # -- script API -------------------------------------------------------
     def get_objectStoreNames(self):
@@ -1494,7 +1478,7 @@ class IDBObjectStore:
     def _resolve_key(self, value, key):
         """Return ``(stored_value, key)`` applying in-line keys and generators."""
         store = self._store
-        given = not _is_missing(key)
+        given = not is_nullish(key)
         if store.key_path is not None:
             if given:
                 raise _data_error(
@@ -1764,7 +1748,7 @@ class IDBObjectStore:
             finally:
                 transaction._end_dispatch()
 
-        transaction._post(run)
+        post_or_call(transaction._services, run)
         return request
 
     def _cursor_update(self, cursor, value):
@@ -1986,7 +1970,7 @@ class IDBIndex:
             finally:
                 transaction._end_dispatch()
 
-        transaction._post(run)
+        post_or_call(transaction._services, run)
         return request
 
     def _request(self, operation):
@@ -2201,12 +2185,6 @@ class IDBFactory:
     def __init__(self, services=None, **_):
         self._services = services
 
-    def _post(self, callback):
-        if self._services is not None:
-            self._services.task_services.post_task(callback)
-        else:
-            callback()
-
     def _schedule(self, callback):
         if self._services is not None:
             self._services.task_services.schedule(callback, _BLOCKED_POLL_SECONDS, repeat=False)
@@ -2228,12 +2206,12 @@ class IDBFactory:
                 raise V8TypeError("Failed to execute 'open' on 'IDBFactory': Value is outside the 'unsigned long long' value range.") from exc
         name = str(name)
         requested = None
-        if not _is_missing(version):
+        if not is_nullish(version):
             requested = int(version)
             if requested <= 0:
                 raise V8TypeError("The version provided must be greater than 0.")
         request = IDBOpenDBRequest(services=self._services)
-        self._post(lambda: self._open_step(request, name, requested, 0.0))
+        post_or_call(self._services, lambda: self._open_step(request, name, requested, 0.0))
         return request
 
     def _open_step(self, request, name, requested, waited):
@@ -2324,7 +2302,7 @@ class IDBFactory:
             # commit.
             transaction._end_dispatch()
 
-        self._post(dispatch)
+        post_or_call(self._services, dispatch)
 
     # -- delete -----------------------------------------------------------
     def fn_deleteDatabase(self, name=MISSING, *_extra):
@@ -2333,7 +2311,7 @@ class IDBFactory:
         name = dom_string(name)
         name = str(name)
         request = IDBOpenDBRequest(services=self._services)
-        self._post(lambda: self._delete_step(request, name, 0.0))
+        post_or_call(self._services, lambda: self._delete_step(request, name, 0.0))
         return request
 
     def _delete_step(self, request, name, waited):
@@ -2366,7 +2344,7 @@ class IDBFactory:
                 ]
             resolve(snapshot)
 
-        self._post(run)
+        post_or_call(self._services, run)
         return promise
 
     def fn_cmp(self, first=MISSING, second=MISSING, *_extra):

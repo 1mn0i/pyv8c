@@ -1,9 +1,12 @@
-"""Window, its named-properties prototype, and realm-aware WindowProxy."""
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, SideEffectType
+"""Window and the named-properties prototype it inherits.
 
-from ...engine.features import interface
+Cross-origin access to another window goes through :mod:`dom.window_proxy`,
+which :meth:`Window._view` imports on first use.
+"""
+import pyv8
+from pyv8 import IdlSpec
+
+from ...engine.features import LazyValueStore, interface
 from ...foundation.arguments import (
     MISSING,
     callback_value,
@@ -18,14 +21,22 @@ from ...foundation.arguments import (
 from ...foundation.environment import BrowserEnvironment
 from ...foundation.errors import SecurityError
 from ...foundation.urls import origin_tuple, serialize_origin
-from ..dom.model import EventTarget
+from ..dom.events import EventTarget
 from ..fetch.request import Request
+from .utils import deny_cross_origin, window_attribute, window_method
 
-__all__ = ["Window", "WindowProperties", "WindowProxy"]
+__all__ = ["Window", "WindowProperties"]
+
+#: Names :class:`~dom.window_proxy.WindowProxy` exposes to a cross-origin
+#: caller.  ``Window`` enumerates the same set when a proxy asks it for its own
+#: keys, so the table lives here rather than in the proxy module.
+_PROXY_SAFE_NAMES = frozenset((
+    "window", "self", "top", "parent", "opener", "frames", "length", "closed",
+    "location", "close", "focus", "blur", "postMessage",
+))
 
 
-
-@interface('WindowProperties', 'EventTarget', exposed_in=())
+@interface('WindowProperties', 'EventTarget')
 class WindowProperties(EventTarget):
     """The named-properties object between Window and EventTarget prototypes.
 
@@ -71,73 +82,83 @@ class WindowProperties(EventTarget):
         return []
 
 
-def _window_attribute(name, getter, setter=None, *, cross_origin=False, flags=0, side_effect=SideEffectType.kHasSideEffect):
-    check = FlagCrossOriginCheck.kCheck if cross_origin else FlagCrossOriginCheck.kDoNotCheck
-    return AttributeSpec(name=name, getter=getter, setter=setter, location=FlagLocation.kInstance,
-                         property_flags=flags, cross_origin_get_check=check,
-                         cross_origin_set_check=check, side_effect=side_effect)
 
 
-def _window_method(name, callback, length=0, *, cross_origin=False, side_effect=SideEffectType.kHasSideEffect):
-    check = FlagCrossOriginCheck.kCheck if cross_origin else FlagCrossOriginCheck.kDoNotCheck
-    return MethodSpec(name=name, callback=callback, length=length, location=FlagLocation.kInstance,
-                      cross_origin_check=check, side_effect=side_effect)
+class _WindowFeatureValues(LazyValueStore):
+    """The Window's feature slots, built by their Feature on first access.
+
+    A Window value is declared by ``FeatureSpec.window_slots`` and constructed
+    by that Feature's ``window_values`` factory, so this store only routes a
+    slot name to :meth:`FeatureRuntime.create_window_value` and caches the
+    result: construction knowledge stays in the Feature, identity and lifetime
+    stay per Window.
+    """
+
+    __slots__ = ("_runtime", "_window")
+
+    def __init__(self, runtime, window):
+        super().__init__()
+        self._runtime, self._window = runtime, window
+
+    def _create_value(self, slot):
+        return self._runtime.create_window_value(slot, self._window)
 
 
-@interface('Window', 'WindowProperties', exposed_in=('Window',))
+@interface('Window', 'WindowProperties')
 class Window(WindowProperties):
     __v8_idl_spec__ = IdlSpec(
         global_this=True,
         attributes=(
-            _window_attribute("window", "get_window"),
-            _window_attribute("self", "get_self"),
-            _window_attribute("parent", "get_parent"),
-            _window_attribute("top", "get_top"),
-            _window_attribute("frames", "get_frames"),
-            _window_attribute("length", "get_length"),
-            _window_attribute("closed", "get_closed"),
-            _window_attribute("opener", "get_opener"),
-            _window_attribute("location", "get_location", "set_location"),
-            _window_attribute(
+            window_attribute("window", "get_window"),
+            window_attribute("self", "get_self"),
+            window_attribute("parent", "get_parent"),
+            window_attribute("top", "get_top"),
+            window_attribute("frames", "get_frames"),
+            window_attribute("length", "get_length"),
+            window_attribute("closed", "get_closed"),
+            window_attribute("opener", "get_opener"),
+            window_attribute("location", "get_location", "set_location"),
+            window_attribute(
                 "onmessage", "get_onmessage", "set_onmessage", cross_origin=True
             ),
-            _window_attribute("document", "get_document", cross_origin=True),
-            _window_attribute("navigator", "get_navigator", cross_origin=True),
-            _window_attribute("clientInformation", "get_clientInformation", cross_origin=True),
-            _window_attribute("screen", "get_screen", cross_origin=True),
-            _window_attribute("localStorage", "get_localStorage", cross_origin=True),
-            _window_attribute(
+            window_attribute("document", "get_document", cross_origin=True),
+            window_attribute("navigator", "get_navigator", cross_origin=True),
+            window_attribute("clientInformation", "get_clientInformation", cross_origin=True),
+            window_attribute("screen", "get_screen", cross_origin=True),
+            window_attribute("localStorage", "get_localStorage", cross_origin=True),
+            window_attribute(
                 "sessionStorage", "get_sessionStorage", cross_origin=True
             ),
-            _window_attribute("history", "get_history", cross_origin=True),
-            _window_attribute("indexedDB", "get_indexedDB", cross_origin=True),
-            _window_attribute("innerWidth", "get_innerWidth", cross_origin=True),
-            _window_attribute("innerHeight", "get_innerHeight", cross_origin=True),
-            _window_attribute("outerWidth", "get_outerWidth", cross_origin=True),
-            _window_attribute("outerHeight", "get_outerHeight", cross_origin=True),
-            _window_attribute(
+            window_attribute("history", "get_history", cross_origin=True),
+            window_attribute("indexedDB", "get_indexedDB", cross_origin=True),
+            window_attribute("innerWidth", "get_innerWidth", cross_origin=True),
+            window_attribute("innerHeight", "get_innerHeight", cross_origin=True),
+            window_attribute("outerWidth", "get_outerWidth", cross_origin=True),
+            window_attribute("outerHeight", "get_outerHeight", cross_origin=True),
+            window_attribute("orientation", "get_orientation", cross_origin=True),
+            window_attribute(
                 "devicePixelRatio", "get_devicePixelRatio", cross_origin=True
             ),
         ),
         methods=(
-            _window_method("setTimeout", "fn_setTimeout", 1, cross_origin=True),
-            _window_method("clearTimeout", "fn_clearTimeout", 1, cross_origin=True),
-            _window_method("setInterval", "fn_setInterval", 1, cross_origin=True),
-            _window_method("clearInterval", "fn_clearInterval", 1, cross_origin=True),
-            _window_method("queueMicrotask", "fn_queueMicrotask", 1, cross_origin=True),
-            _window_method(
+            window_method("setTimeout", "fn_setTimeout", 1, cross_origin=True),
+            window_method("clearTimeout", "fn_clearTimeout", 1, cross_origin=True),
+            window_method("setInterval", "fn_setInterval", 1, cross_origin=True),
+            window_method("clearInterval", "fn_clearInterval", 1, cross_origin=True),
+            window_method("queueMicrotask", "fn_queueMicrotask", 1, cross_origin=True),
+            window_method(
                 "requestAnimationFrame",
                 "fn_requestAnimationFrame",
                 1,
                 cross_origin=True,
             ),
-            _window_method("fetch", "fn_fetch", 1, cross_origin=True),
-            _window_method("close", "fn_close"),
-            _window_method("focus", "fn_focus"),
-            _window_method("blur", "fn_blur"),
-            _window_method("postMessage", "fn_postMessage", 1),
-            _window_method("webkitRequestFileSystem", "fn_webkitRequestFileSystem", 3, cross_origin=True),
-            _window_method("getComputedStyle", "fn_getComputedStyle", 1, cross_origin=True),
+            window_method("fetch", "fn_fetch", 1, cross_origin=True),
+            window_method("close", "fn_close"),
+            window_method("focus", "fn_focus"),
+            window_method("blur", "fn_blur"),
+            window_method("postMessage", "fn_postMessage", 1),
+            window_method("webkitRequestFileSystem", "fn_webkitRequestFileSystem", 3, cross_origin=True),
+            window_method("getComputedStyle", "fn_getComputedStyle", 1, cross_origin=True),
         ),
         constructor_behavior=0,
         to_string_tag="Window",
@@ -166,7 +187,7 @@ class Window(WindowProperties):
         viewport = BrowserEnvironment.from_value(environment).viewport
         if feature_runtime is None:
             raise RuntimeError("Window requires the Browser FeatureRuntime")
-        self._features = feature_runtime.values_for(self)
+        self._features = _WindowFeatureValues(feature_runtime, self)
         self.location = self._features.value("location")
         self.innerWidth, self.innerHeight = viewport.width, viewport.height
         self.outerWidth, self.outerHeight = viewport.width, viewport.height
@@ -217,7 +238,7 @@ class Window(WindowProperties):
 
     def __v8_cross_origin_name_get__(self, name):
         proxy = self._cross_origin_proxy()
-        if name in WindowProxy._safe_names:
+        if name in _PROXY_SAFE_NAMES:
             getter = getattr(proxy, "get_" + name, None)
             return getter() if getter else getattr(proxy, "fn_" + name)
         return proxy.__v8_name_get__(name)
@@ -232,7 +253,7 @@ class Window(WindowProperties):
         return self._cross_origin_proxy().__v8_name_del__(name)
 
     def __v8_cross_origin_name_enum__(self):
-        return list(WindowProxy._safe_names)
+        return list(_PROXY_SAFE_NAMES)
 
     def __v8_cross_origin_index_get__(self, index):
         return self._cross_origin_proxy().__v8_index_get__(index)
@@ -266,7 +287,7 @@ class Window(WindowProperties):
 
     def _require_same_origin(self):
         if not self._same_origin():
-            raise SecurityError("Blocked a frame with origin from accessing a cross-origin frame")
+            deny_cross_origin()
 
     def get_window(self): return self
     def get_self(self): return self
@@ -280,6 +301,7 @@ class Window(WindowProperties):
         if target is self:
             return self
         if target not in self._proxies:
+            from .window_proxy import WindowProxy
             self._proxies[target] = WindowProxy(self, target)
         return self._proxies[target]
 
@@ -323,6 +345,14 @@ class Window(WindowProperties):
     def get_outerWidth(self): self._require_same_origin(); return self.outerWidth
     def get_outerHeight(self): self._require_same_origin(); return self.outerHeight
     def get_devicePixelRatio(self): self._require_same_origin(); return self.devicePixelRatio
+    def get_orientation(self):
+        """Chromium's deprecated alias for the screen orientation angle.
+
+        A desktop window is never rotated, so the reported angle -- and this
+        alias with it -- is 0.
+        """
+        self._require_same_origin()
+        return 0
     def fn_setTimeout(self, callback=MISSING, delay=0, *arguments):
         if callback is MISSING:
             raise missing_error('Window', 'setTimeout', 1, 0, constructor=False)
@@ -409,12 +439,15 @@ class Window(WindowProperties):
         if size is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 1, constructor=False)
         if success is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 2, constructor=False)
         self._require_same_origin()
+        # The API is an Optional Feature: loading it commits its interface group
+        # to this realm before the first FileSystem instance is handed back.
+        self._services.realm_services.materialize_interface("DOMFileSystem")
         from .filesystem import request_file_system
         return request_file_system(self, type, size, success, error)
     def fn_getComputedStyle(self, element=MISSING, pseudo=pyv8.Undefined, *_extra):
         if element is MISSING:
             raise missing_error("Window", "getComputedStyle", 1, 0, constructor=False)
-        from ..dom.model import Element
+        from ..dom.html_elements import Element
         if not isinstance(element, Element):
             raise TypeError("The provided value is not an Element")
         from ..dom.layout import computed_style_object
@@ -422,8 +455,8 @@ class Window(WindowProperties):
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
         from ...foundation.errors import V8SyntaxError
+        from ..fetch.clone import structured_clone
         from ..fetch.events import MessageEvent
-        from ..workers.clone import structured_clone
 
         # Null is an empty WindowPostMessageOptions dictionary.
         if target_origin is None or target_origin is pyv8.Null or target_origin is pyv8.Undefined:
@@ -453,198 +486,3 @@ class Window(WindowProperties):
                                            "source": self._view(source), "isTrusted": True})
             self.fn_dispatchEvent(event)
         self._services.realm_services.post_task(deliver)
-
-
-class _CrossOriginLocation:
-    """The restricted Location object exposed by a cross-origin WindowProxy.
-
-    Chrome permits assigning ``other.location`` (and ``location.href``), but
-    does not expose the target URL or its parsed components to the caller.
-    """
-
-    __v8_idl_spec__ = IdlSpec(
-        name_get="__v8_name_get__",
-        name_set="__v8_name_set__",
-        name_del="__v8_name_del__",
-        attributes=(
-            AttributeSpec(name="href", getter="get_href", setter="set_href"),
-            AttributeSpec(name="origin", getter="get_origin"),
-            AttributeSpec(name="protocol", getter="get_protocol"),
-            AttributeSpec(name="host", getter="get_host"),
-            AttributeSpec(name="hostname", getter="get_hostname"),
-            AttributeSpec(name="port", getter="get_port"),
-            AttributeSpec(name="pathname", getter="get_pathname"),
-            AttributeSpec(name="search", getter="get_search"),
-            AttributeSpec(name="hash", getter="get_hash"),
-        ),
-        methods=(MethodSpec(name="replace", callback="fn_replace", length=1),),
-    )
-
-    def __init__(self, location):
-        self._location = location
-
-    @staticmethod
-    def _deny():
-        raise SecurityError("Blocked a frame with origin from accessing a cross-origin frame")
-
-    def get_href(self): self._deny()
-    def get_origin(self): self._deny()
-    def get_protocol(self): self._deny()
-    def get_host(self): self._deny()
-    def get_hostname(self): self._deny()
-    def get_port(self): self._deny()
-    def get_pathname(self): self._deny()
-    def get_search(self): self._deny()
-    def get_hash(self): self._deny()
-    def set_href(self, value): return self._location.set_href(value)
-    def fn_replace(self, value=MISSING, *_extra):
-        if value is MISSING:
-            raise missing_error("Location", "replace", 1, 0)
-        return self._location.set_href(usv_string(value))
-
-    def __v8_name_get__(self, name):
-        if name in ("href", "origin", "protocol", "host", "hostname", "port", "pathname", "search", "hash", "replace"):
-            return None
-        self._deny()
-
-    def __v8_name_set__(self, name, value):
-        if name == "href":
-            self.set_href(value)
-            return True
-        self._deny()
-
-    def __v8_name_del__(self, name): self._deny()
-
-
-class WindowProxy:
-    """Stable parent-realm facade for a cross-origin iframe Window.
-
-    A child ``Window`` is a global object owned by its own V8 Context and must
-    never be handed directly to another Context.  This small native-backed
-    facade keeps identity stable while implementing the browser's safe
-    cross-origin surface.
-    """
-
-    __v8_idl_spec__ = IdlSpec(
-        name_get="__v8_name_get__",
-        name_set="__v8_name_set__",
-        name_query="__v8_name_query__",
-        name_del="__v8_name_del__",
-        name_enum="__v8_name_enum__",
-        index_get="__v8_index_get__",
-        index_set="__v8_index_set__",
-        index_del="__v8_index_del__",
-        attributes=(
-            AttributeSpec(name="window", getter="get_window", side_effect=1),
-            AttributeSpec(name="self", getter="get_self", side_effect=1),
-            AttributeSpec(name="top", getter="get_top", side_effect=1),
-            AttributeSpec(name="parent", getter="get_parent", side_effect=1),
-            AttributeSpec(name="opener", getter="get_opener", side_effect=1),
-            AttributeSpec(name="frames", getter="get_frames", side_effect=1),
-            AttributeSpec(name="length", getter="get_length", side_effect=1),
-            AttributeSpec(name="closed", getter="get_closed", side_effect=1),
-            AttributeSpec(
-                name="location", getter="get_location", setter="set_location"
-            ),
-        ),
-        methods=(
-            MethodSpec(name="close", callback="fn_close"),
-            MethodSpec(name="focus", callback="fn_focus"),
-            MethodSpec(name="blur", callback="fn_blur"),
-            MethodSpec(name="postMessage", callback="fn_postMessage", length=2),
-        ),
-    )
-
-    def __init__(self, parent_window, child_window):
-        self._parent_window = parent_window
-        self._child_window = child_window
-        self._location = _CrossOriginLocation(child_window.location)
-
-    _safe_names = frozenset(("window", "self", "top", "parent", "opener", "frames",
-                             "length", "closed", "location", "close", "focus", "blur", "postMessage"))
-
-    @staticmethod
-    def _deny():
-        raise SecurityError("Blocked a frame with origin from accessing a cross-origin frame")
-
-    def __v8_name_get__(self, name):
-        if name in self._safe_names:
-            return None
-        if self._same_origin():
-            if isinstance(name, str):
-                getter = getattr(self._child_window, "get_" + name, None)
-                if getter is not None:
-                    return getter()
-                callback = getattr(self._child_window, "fn_" + name, None)
-                if callback is not None:
-                    return callback
-            return self._child_window._services.realm_services.window_property("get", name)
-        self._deny()
-
-    def __v8_name_set__(self, name, value):
-        if name == "location":
-            self.set_location(value)
-            return True
-        if self._same_origin():
-            setter = getattr(self._child_window, "set_" + str(name), None)
-            if setter is not None:
-                setter(value)
-            else:
-                self._child_window._services.realm_services.window_property("set", name, value)
-            return True
-        self._deny()
-
-    def __v8_name_del__(self, name):
-        if self._same_origin():
-            self._child_window._services.realm_services.window_property("delete", name)
-            return True
-        self._deny()
-
-    def __v8_name_query__(self, name):
-        if name in self._safe_names:
-            return pyv8.V8Attribute.kNone
-        if self._same_origin():
-            return self._child_window._services.realm_services.window_property("query", name)
-        self._deny()
-
-    def __v8_name_enum__(self): return list(self._safe_names)
-
-    def _same_origin(self):
-        return self._accessor()._origin == self._child_window._origin
-
-    def _accessor(self):
-        return Window._accessor_window(self._parent_window)
-
-    def __v8_index_get__(self, index):
-        frames = self._child_window._frame_windows()
-        if 0 <= index < len(frames):
-            return self._accessor()._view(frames[index])
-        self._deny()
-
-    def __v8_index_set__(self, index, value): self._deny()
-    def __v8_index_del__(self, index): self._deny()
-
-    def get_window(self): return self
-    def get_self(self): return self
-    def get_frames(self): return self
-    def get_top(self): return self._accessor()._view(self._child_window._top_window)
-    def get_parent(self): return self._accessor()._view(self._child_window._parent_window)
-    def get_opener(self): return pyv8.Null
-    def get_length(self): return self._child_window.get_length()
-    def get_closed(self): return self._child_window.get_closed()
-    def get_location(self): return self._child_window.location if self._same_origin() else self._location
-    def set_location(self, value): return self._child_window.location.set_href(value)
-    def fn_close(self, *_extra): return self._child_window.fn_close()
-    def fn_focus(self, *_extra): return self._child_window.fn_focus()
-    def fn_blur(self, *_extra): return self._child_window.fn_blur()
-    def fn_postMessage(self, message=MISSING, target_origin="/", transfer=MISSING, *_extra):
-        from ...foundation.arguments import sequence
-
-        if message is MISSING:
-            raise missing_error("Window", "postMessage", 1, 0)
-        if transfer is not MISSING:
-            target_origin = dom_string(target_origin)
-            transfer = sequence(transfer)
-        else:
-            transfer = ()
-        return self._child_window._post_message(self._accessor(), message, target_origin, transfer)

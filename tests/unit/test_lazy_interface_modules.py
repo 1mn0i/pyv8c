@@ -24,6 +24,7 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
             "navigator": "pyv8c.web.bom.navigator",
             "websocket": "pyv8c.web.network.websocket",
             "worker": "pyv8c.web.workers.api",
+            "filesystem": "pyv8c.web.bom.filesystem",
         }
         browser = Browser(stub_logging="off")
         try:
@@ -38,6 +39,8 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
             output["after_websocket"] = {key: module in sys.modules for key, module in modules.items()}
             output["worker_type"] = page.evaluate("typeof Worker")
             output["after_worker"] = {key: module in sys.modules for key, module in modules.items()}
+            output["file_type"] = page.evaluate("typeof File")
+            output["after_file"] = {key: module in sys.modules for key, module in modules.items()}
             output["idb_group"] = [
                 name for name in page.binding_session.materialized_interfaces
                 if name.startswith("IDB")
@@ -54,16 +57,22 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
     )
     assert result.returncode == 0, result.stderr
     output = json.loads(result.stdout)
-    assert output["startup"] == {"idb": False, "navigator": False, "websocket": False, "worker": False}
+    def loaded(idb=False, navigator=False, websocket=False, worker=False, filesystem=False):
+        return {"idb": idb, "navigator": navigator, "websocket": websocket,
+                "worker": worker, "filesystem": filesystem}
+
+    assert output["startup"] == loaded()
     assert output["indexeddb_identity"] is True
-    assert output["after_idb"] == {"idb": True, "navigator": False, "websocket": False, "worker": False}
+    assert output["after_idb"] == loaded(idb=True)
     assert output["idb_type"] == "function"
     assert output["navigator_identity"] is True
-    assert output["after_navigator"] == {"idb": True, "navigator": True, "websocket": False, "worker": False}
+    assert output["after_navigator"] == loaded(idb=True, navigator=True)
     assert output["websocket_type"] == "function"
-    assert output["after_websocket"] == {"idb": True, "navigator": True, "websocket": True, "worker": False}
+    assert output["after_websocket"] == loaded(idb=True, navigator=True, websocket=True)
     assert output["worker_type"] == "function"
-    assert output["after_worker"] == {"idb": True, "navigator": True, "websocket": True, "worker": True}
+    assert output["after_worker"] == loaded(idb=True, navigator=True, websocket=True, worker=True)
+    assert output["file_type"] == "function"
+    assert output["after_file"] == loaded(idb=True, navigator=True, websocket=True, worker=True, filesystem=True)
     assert {"IDBFactory", "IDBKeyRange", "IDBDatabase", "IDBTransaction"}.issubset(output["idb_group"])
 
 

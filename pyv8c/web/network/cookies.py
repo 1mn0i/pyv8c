@@ -1,5 +1,6 @@
 """Cookie storage and matching for page and network contexts."""
 
+import re
 import time
 from dataclasses import dataclass
 from datetime import timezone
@@ -11,6 +12,26 @@ from urllib.parse import urlsplit
 from loguru import logger
 
 _INVALID_COOKIE_NAME_CHARS = frozenset("()<>@,;:") | {"\\", "[", "]", "?", "=", "{", "}", " ", "\t"}
+
+#: Several ``Set-Cookie`` headers arrive joined into one line with ``, ``.  A
+#: comma starts a new cookie only when what follows looks like ``token=`` before
+#: any ``;`` or ``,``; the comma inside an ``expires`` date (``Sat, 13 Sep 2036``)
+#: fails that test because nothing before the next delimiter reads as ``name=``.
+_SET_COOKIE_SEPARATOR = re.compile(r",(?=\s*[^;=,\s]+\s*=)")
+
+
+def split_set_cookie(header):
+    """Return the individual ``Set-Cookie`` strings in ``header``.
+
+    HTTP joins repeated ``Set-Cookie`` headers with ``, ``, so one line may
+    carry several cookies.  ``http.cookies.SimpleCookie`` cannot parse that form
+    (it silently yields nothing), so the line is split first; commas that belong
+    to an ``expires`` value are left in place.
+    """
+    text = str(header)
+    if "," not in text:
+        return [text]
+    return _SET_COOKIE_SEPARATOR.split(text)
 
 
 @dataclass
@@ -39,6 +60,9 @@ class CookieJar:
             for value in header: self.add_from_response(url, value)
             return
         parsed_url = urlsplit(url)
+        for value in split_set_cookie(header):
+            self._add_one_from_response(parsed_url, value)
+    def _add_one_from_response(self, parsed_url, header):
         cookie = SimpleCookie()
         try: cookie.load(header)
         except Exception: return

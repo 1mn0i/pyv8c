@@ -2,7 +2,9 @@ import re
 from html import unescape
 from html.parser import HTMLParser
 
-from .model import Comment, Element, Text
+from .character_data import Comment, Text
+from .html_elements import Element, HTMLTemplateElement
+from .nodes import _bump_style_version
 
 
 class _TreeBuilderMixin:
@@ -18,21 +20,20 @@ class _TreeBuilderMixin:
 
     void = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
     auto_close = {"li": {"li"}, "dt": {"dt", "dd"}, "dd": {"dt", "dd"}, "p": {"p", "div", "section", "article", "ul", "ol"}}
+    #: Tags whose character data is raw text: the tokenizer hands them the rest
+    #: of their content verbatim rather than parsing child tags.
     raw_text_tags = {"script", "style", "textarea", "title"}
-    # Element classes whose text content is raw text, plus ``title`` which is
-    # matched through ``localName`` because it has no dedicated class.
-    _raw_text_elements = ("HTMLScriptElement", "HTMLStyleElement", "HTMLTextAreaElement")
 
     @property
     def current(self): return self.stack[-1]
     @property
     def target(self):
-        return self.current.content if self.current.__class__.__name__ == "HTMLTemplateElement" else self.current
+        # ``<template>`` builds its own content fragment instead of itself.
+        return self.current.content if isinstance(self.current, HTMLTemplateElement) else self.current
 
     @classmethod
     def _is_raw_text_container(cls, node):
-        return (node.__class__.__name__ in cls._raw_text_elements
-                or getattr(node, "localName", "") == "title")
+        return getattr(node, "localName", "") in cls.raw_text_tags
 
     def _pop_auto_closing(self, tag):
         # The parsing-context root (stack[0]) is never auto-closed: when a
@@ -70,6 +71,11 @@ class _TreeBuilderMixin:
                 self.services.document_services.parser_script_complete(node, source)
             if source and (tag == "script" or tag in self.raw_text_tags):
                 node.append_child(Text(source, services=self.services))
+                if tag != "script":
+                    # The text now lives in the tree, so drop the parse-time copy
+                    # a script would otherwise shadow when it edits the element.
+                    # Scripts keep theirs: re-inserting one re-runs that source.
+                    node._raw_text = ""
             del self.stack[index:]
             return True
         return False
@@ -95,6 +101,7 @@ class DOMParser(_TreeBuilderMixin, HTMLParser):
         if not data: return
         if self._is_raw_text_container(self.current):
             self.current._raw_text = getattr(self.current, "_raw_text", "") + data
+            _bump_style_version(self.current)
             return
         self.target.append_child(Text(data, services=self.services))
     def handle_entityref(self, name): self.handle_data(unescape("&" + name + ";"))
@@ -102,7 +109,7 @@ class DOMParser(_TreeBuilderMixin, HTMLParser):
     def handle_comment(self, data): self.target.append_child(Comment(data, services=self.services))
     def handle_decl(self, decl):
         if decl.lower().startswith("doctype"):
-            from .model import DocumentType
+            from .character_data import DocumentType
             parts = decl.split(None, 1)
             name = parts[1].strip() if len(parts) > 1 else "html"
             self.target.append_child(DocumentType(name=name, services=self.services))
@@ -179,24 +186,36 @@ class IncrementalDOMParser(_TreeBuilderMixin):
 
     def _end(self, tag): self._close_element(str(tag).lower())
 
+    def write_markup(self, markup):
+        """Splice written markup into the input stream (``document.write``).
+
+        The tokens are inserted in front of the ones still to be consumed, so
+        the written nodes are created exactly like the surrounding document:
+        they land in the element the writing script sits in, and a written
+        ``<script>`` blocks the parser like any other parser-inserted script.
+        """
+        text = str(markup)
+        if not text or self.done:
+            return False
+        self.tokens[self.index:self.index] = list(_iter_tokens(text))
+        return True
+
     def run(self):
         while self.index < len(self.tokens):
             kind, value = self.tokens[self.index]; self.index += 1
             if kind == "start": self._start(value)
             elif kind == "end": self._end(value)
             elif kind == "data":
-                if self._is_raw_text_container(self.current): self.current._raw_text = getattr(self.current, "_raw_text", "") + value
+                if self._is_raw_text_container(self.current):
+                    self.current._raw_text = getattr(self.current, "_raw_text", "") + value
+                    _bump_style_version(self.current)
                 else: self.target.append_child(Text(unescape(value), services=self.services))
             elif kind == "comment": self.target.append_child(Comment(value, services=self.services))
             elif kind == "decl":
-                from .model import DocumentType
+                from .character_data import DocumentType
                 parts = value.split(None, 1); self.target.append_child(DocumentType(name=parts[1].strip() if len(parts) > 1 else "html", services=self.services))
             if self.services.document_services.parser_is_blocked(): return False
         self.done = True; return True
-
-
-def parse(html, services, document):
-    parser = DOMParser(services, document); parser.feed(html); parser.close(); return document
 
 
 def parse_fragment(html, services, parent):

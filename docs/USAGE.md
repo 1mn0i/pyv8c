@@ -84,6 +84,15 @@ finally:
 
 边界：`PromiseRejectionEvent`、`StorageEvent`、`AnimationEvent`/`TransitionEvent` 目前只提供构造与显式派发，不会自动触发（分别需要原生 Promise 拒绝回调、跨窗口 storage 广播与 CSS 动画引擎）；元素 `abort` 仅在显式取消路径可达。页面 `close()` 或导航重建文档时不会补发被取消资源的事件。
 
+## 文档写入
+
+解析期调用 `document.write`（或 `writeln`）时，文本按**插入点**进入解析器：元素落在写脚本所在的位置，写入的 `<script>`
+与文档中其他解析器插入脚本一样阻塞解析并执行，`writeln` 额外追加一个换行。
+
+解析结束后再写入等价于 `document.open()`：当前文档内容被清空，写入的标记成为新内容，并在新的 `body` 内解析；
+`Document` 对象、URL 与 `readyState` 都保持不变，导航生命周期（`unload`/`DOMContentLoaded`/`load`）不会重新派发。
+没有浏览上下文的文档没有解析器，写入不产生效果。
+
 ## Browser 参数
 
 | 参数 | 默认值 | 作用 |

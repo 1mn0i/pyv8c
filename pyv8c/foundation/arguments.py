@@ -100,13 +100,6 @@ def number(value):
         return math.nan
 
 
-def finite_number(value):
-    result = number(value)
-    if not math.isfinite(result):
-        raise V8TypeError("The provided double value is non-finite.")
-    return result
-
-
 def integer(value, *, bits=32, signed=False, enforce_range=False):
     result = number(value)
     limit = 2**bits
@@ -179,18 +172,6 @@ def event_constructor_arguments(interface, event_type, options):
     if event_type is MISSING:
         raise missing_error(interface, 'constructor', 1, 0, constructor=True)
     return dom_string(event_type), event_init(options)
-
-
-def member(value, name, default=pyv8.Undefined):
-    if isinstance(value, pyv8.JSObject):
-        result = value._get(name)
-        return default if result is pyv8.Undefined else result
-    if isinstance(value, dict):
-        return value.get(name, default)
-    try:
-        return value[name]
-    except (AttributeError, KeyError):
-        return default
 
 
 def sequence(value, convert=None, *, iterator_method=MISSING):

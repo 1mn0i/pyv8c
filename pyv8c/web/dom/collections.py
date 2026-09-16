@@ -2,26 +2,20 @@
 
 These classes deliberately have no dependency on the node model itself:
 they read through owner-supplied getters, which keeps them importable by
-:meth:`dom.model` without a cycle.
+:mod:`dom.nodes` without a cycle.
 """
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagArrayProto, V8Attribute
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, missing_error
 from ...foundation.errors import (
     InvalidCharacterError,
-    LegacyPropertyError,
     V8TypeError,
     dom_exception,
 )
-from ...foundation.indexed_properties import ReadOnlyIndexedPropertyMixin
-
-_ITERABLE_FLAGS = (
-    FlagArrayProto.iterator | FlagArrayProto.entries | FlagArrayProto.keys
-    | FlagArrayProto.values | FlagArrayProto.forEach
-)
+from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
+from .utils import ITERABLE_FLAGS
 
 
 @interface('NodeList', None)
@@ -33,7 +27,7 @@ class NodeList(ReadOnlyIndexedPropertyMixin):
         constructor_behavior=0,
         to_string_tag="NodeList",
         has_constructor=1,
-        array=_ITERABLE_FLAGS,
+        array=ITERABLE_FLAGS,
     )
     def __init__(self, owner=None, getter=None, values=None, **_):
         self._owner, self._getter, self._values = owner, getter, values
@@ -72,7 +66,7 @@ class NamedNodeMap(NodeList):
         self._element = element
         super().__init__(getter=self._attribute_items)
     def _attribute_items(self):
-        from .model import Attr
+        from .nodes import Attr
         return [Attr(k, v, ownerElement=self._element, services=self._element._services)
                 for k, v in self._element.attributes.items()]
     def fn_getNamedItem(self, name=MISSING, *_extra):
@@ -84,7 +78,7 @@ class NamedNodeMap(NodeList):
         if attr is MISSING:
             raise missing_error('NamedNodeMap', 'setNamedItem', 1, 0, constructor=False)
         attr = interface_value(attr, 'Attr', 'NamedNodeMap', 'setNamedItem', 1, nullable=False)
-        from .model import Attr
+        from .nodes import Attr
         if not isinstance(attr, Attr): raise V8TypeError("parameter is not of type Attr")
         old = self.fn_getNamedItem(attr.get_name())
         self._element.attributes[attr.get_name()] = attr.get_value()
@@ -96,7 +90,7 @@ class NamedNodeMap(NodeList):
         from ...foundation.errors import NotFoundError
         name = str(name)
         if name not in self._element.attributes: raise NotFoundError("The attribute was not found.")
-        from .model import Attr
+        from .nodes import Attr
         return Attr(name, self._element.attributes.pop(name), ownerElement=self._element, services=self._element._services)
 
 
@@ -133,23 +127,8 @@ def _supported_names(items, name_getter):
     return names
 
 
-# Legacy named properties do not override ordinary prototype properties.
-# These are the string keys installed on the collection prototypes and on
-# Object.prototype; symbol-based iterator members cannot collide with names.
-_OBJECT_PROTOTYPE_NAMES = frozenset((
-    "constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty",
-    "__lookupGetter__", "__lookupSetter__", "isPrototypeOf",
-    "propertyIsEnumerable", "toString", "valueOf", "__proto__",
-    "toLocaleString",
-))
-_HTML_COLLECTION_PROTOTYPE_NAMES = _OBJECT_PROTOTYPE_NAMES | {
-    "length", "item", "namedItem",
-}
-
-
 @interface('HTMLCollection', None)
-class HTMLCollection(NodeList):
-    _NAME_ATTRIBUTES = V8Attribute.ReadOnly | V8Attribute.DontEnum
+class HTMLCollection(LegacyNamedPropertyMixin, NodeList):
     __v8_idl_spec__ = IdlSpec(
         methods=(
             MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
@@ -179,71 +158,8 @@ class HTMLCollection(NodeList):
     def _supported_names(self):
         return _supported_names(self._items(), _collection_node_name)
 
-    def _visible_names(self):
-        return [
-            name for name in self._supported_names()
-            if name not in _HTML_COLLECTION_PROTOTYPE_NAMES
-        ]
-
-    def __v8_name_get__(self, name):
-        if not isinstance(name, str) or name not in self._visible_names():
-            return None
-        value = self.fn_namedItem(name)
-        return None if value is pyv8.Null else value
-
-    def __v8_name_set__(self, name, value):
-        name = _dom_string(name)
-        if name in self._visible_names():
-            raise LegacyPropertyError.named(
-                "set", name, self._interface_name(),
-                "Named property setter is not supported.",
-            )
-        return None
-
-    def __v8_name_query__(self, name):
-        if not isinstance(name, str):
-            return None
-        return self._NAME_ATTRIBUTES if name in self._visible_names() else None
-
-    def __v8_name_del__(self, name):
-        name = _dom_string(name)
-        if name in self._visible_names():
-            raise LegacyPropertyError.named(
-                "delete", name, self._interface_name(),
-                "Named property deleter is not supported.",
-            )
-        return None
-
-    def __v8_name_enum__(self):
-        return self._visible_names()
-
-
-# ``HTMLAllCollection`` is declared ``[LegacyUnenumerableNamedProperties]``:
-# the named properties exist and are reachable, but their descriptors are
-# non-enumerable (so they are omitted by ``Object.keys`` and ``for-in``).
-_ALL_NAME_ATTRIBUTES = V8Attribute.ReadOnly | V8Attribute.DontEnum
-_ALL_INTERFACE = "HTMLAllCollection"
-
-
-def _dom_string(value):
-    if value is pyv8.Undefined:
-        return "undefined"
-    if value is pyv8.Null or value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, float):
-        if value != value:
-            return "NaN"
-        if value == float("inf"):
-            return "Infinity"
-        if value == float("-inf"):
-            return "-Infinity"
-        if value == 0:
-            return "0"
-        if value.is_integer():
-            return str(int(value))
-    return str(value)
+    def _named_item(self, name):
+        return self.fn_namedItem(name)
 
 
 def _array_index_name(value):
@@ -257,8 +173,11 @@ def _array_index_name(value):
     return index if index < 2 ** 32 - 1 else None
 
 
+# ``HTMLAllCollection`` is declared ``[LegacyUnenumerableNamedProperties]``:
+# the named properties exist and are reachable, but their descriptors are
+# non-enumerable (so they are omitted by ``Object.keys`` and ``for-in``).
 @interface('HTMLAllCollection', None)
-class HTMLAllCollection(ReadOnlyIndexedPropertyMixin):
+class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
     """The legacy ``document.all`` view: undetectable, callable and live.
 
     Chromium marks the interface undetectable, so ``typeof document.all`` is
@@ -316,7 +235,7 @@ class HTMLAllCollection(ReadOnlyIndexedPropertyMixin):
     def fn_item(self, *args):
         if not args or args[0] is pyv8.Undefined:
             return pyv8.Null
-        name = _dom_string(args[0])
+        name = dom_string(args[0])
         index = _array_index_name(name)
         if index is None:
             return self._named(name)
@@ -328,12 +247,12 @@ class HTMLAllCollection(ReadOnlyIndexedPropertyMixin):
             raise V8TypeError(
                 "Failed to execute 'namedItem' on 'HTMLAllCollection': 1 argument required, but only 0 present."
             )
-        return self._named(_dom_string(args[0]))
+        return self._named(dom_string(args[0]))
 
     def __call__(self, *args):
         if not args or args[0] is pyv8.Undefined:
             return pyv8.Null
-        name = _dom_string(args[0])
+        name = dom_string(args[0])
         index = _array_index_name(name)
         if index is not None:
             items = self._items()
@@ -341,45 +260,11 @@ class HTMLAllCollection(ReadOnlyIndexedPropertyMixin):
         return self._named(name)
 
     # -- named interceptor ----------------------------------------------
-    def __v8_name_get__(self, name):
-        if not isinstance(name, str) or name in _HTML_COLLECTION_PROTOTYPE_NAMES:
-            return None
-        value = self._named(name)
-        return None if value is pyv8.Null else value
+    def _supported_names(self):
+        return _supported_names(self._items(), _all_node_name)
 
-    def __v8_name_set__(self, name, value):
-        name = _dom_string(name)
-        if name not in _HTML_COLLECTION_PROTOTYPE_NAMES and self._matches(name):
-            raise LegacyPropertyError.named(
-                "set", name, _ALL_INTERFACE,
-                "Named property setter is not supported.",
-            )
-        return None
-    def __v8_name_query__(self, name):
-        if not isinstance(name, str):
-            return None
-        if name in _HTML_COLLECTION_PROTOTYPE_NAMES:
-            return None
-        return _ALL_NAME_ATTRIBUTES if self._matches(name) else None
-    def __v8_name_del__(self, name):
-        name = _dom_string(name)
-        if name not in _HTML_COLLECTION_PROTOTYPE_NAMES and self._matches(name):
-            raise LegacyPropertyError.named(
-                "delete", name, _ALL_INTERFACE,
-                "Named property deleter is not supported.",
-            )
-        return None
-    def __v8_name_enum__(self):
-        # OwnPropertyKeys includes legacy names; LegacyUnenumerable controls
-        # their enumerable bit, not whether they are returned here.
-        names = []
-        seen = set()
-        for node in self._items():
-            for value in (_node_id(node), _all_node_name(node)):
-                if (value and value not in seen
-                        and value not in _HTML_COLLECTION_PROTOTYPE_NAMES):
-                    seen.add(value); names.append(value)
-        return names
+    def _named_item(self, name):
+        return self._named(name)
 
     # -- indexed interceptor --------------------------------------------
     def _indexed_items(self): return self._items()
@@ -410,7 +295,7 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
         constructor_behavior=0,
         to_string_tag="DOMTokenList",
         has_constructor=1,
-        array=_ITERABLE_FLAGS,
+        array=ITERABLE_FLAGS,
     )
     _ASCII_WHITESPACE = " \t\n\f\r"
 

@@ -150,6 +150,51 @@ def test_websocket_binary_types_and_blob_api(monkeypatch):
     browser.close()
 
 
+def test_header_deduped_cookies_are_restored_from_the_client_jar(monkeypatch):
+    """A client that collapses repeated Set-Cookie headers must not lose cookies."""
+
+    class FakeCookieEntry:
+        def __init__(self, name, value, path="/"):
+            self.name, self.value, self.path = name, value, path
+
+    class FakeResponseJar:
+        def __init__(self, entries): self._entries = entries
+        def iter_cookies(self): return iter(self._entries)
+
+    class DedupedResponse:
+        status_code = 202
+        reason = ""
+        headers = {"set-cookie": "FSSBBIl1UgzbN7N80T=first; Path=/"}
+        content = b""
+        url = "http://example.test/page"
+        history = ()
+        cookies = FakeResponseJar([FakeCookieEntry("FSSBBIl1UgzbN7N80T", "first"),
+                                   FakeCookieEntry("FSSBBIl1UgzbN7N80S", "second")])
+
+    class DedupedClient(FakeClient):
+        requests_sent = []
+        def get(self, url, **kwargs):
+            DedupedClient.requests_sent.append(kwargs.get("headers") or {})
+            return DedupedResponse()
+
+    monkeypatch.setitem(sys.modules, "cycronet", types.SimpleNamespace(CronetClient=DedupedClient))
+    browser = Browser(real_network=True, stub_logging="off")
+    context = browser.new_context()
+    page = context.new_page()
+    page.set_content("<body></body>", url="http://example.test/")
+    page.evaluate("fetch('/page').then(r => r.text())")
+    page.run_until_idle(timeout=2)
+    header = context.network_backend.cookies.header_for("http://example.test/page")
+    assert "FSSBBIl1UgzbN7N80T=first" in header
+    assert "FSSBBIl1UgzbN7N80S=second" in header
+    page.evaluate("fetch('/page2').then(r => r.text())")
+    page.run_until_idle(timeout=2)
+    cookie = DedupedClient.requests_sent[-1].get("Cookie", "")
+    assert "FSSBBIl1UgzbN7N80T=first" in cookie
+    assert "FSSBBIl1UgzbN7N80S=second" in cookie
+    browser.close()
+
+
 def test_cross_origin_cors_and_no_cors(monkeypatch):
     install_fake_cycronet(monkeypatch)
     class CORSClient(FakeClient):

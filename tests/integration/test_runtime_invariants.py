@@ -4,9 +4,9 @@ from pyv8 import IdlSpec
 from pyv8c import Browser
 from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse
 from pyv8c.foundation.errors import DOMException
+from pyv8c.web.fetch.clone import structured_clone
 from pyv8c.web.fetch.response import Response
 from pyv8c.web.network.cookies import CookieJar
-from pyv8c.web.workers.clone import structured_clone
 
 
 def new_page(*, loader=None):

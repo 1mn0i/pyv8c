@@ -191,8 +191,12 @@ class DocumentLifecycle:
     def dispatch_script_error(self, node, error):
         if node is not None:
             self.dispatch_page_event("error", node, {"bubbles": False})
+        # A browser hands page handlers the original JavaScript error (the
+        # fifth ``onerror`` argument), so a wrapper from the binding layer is
+        # replaced by the JS value it stands for when there is one.
+        original = getattr(error, "original", None)
         event = self.materialize_event_class("ErrorEvent")(
-            "error", {"message": str(error), "error": error},
+            "error", {"message": str(error), "error": original if original is not None else error},
         )
         event._trusted = True
         self.page.window.fn_dispatchEvent(event)

@@ -149,7 +149,37 @@ class CronetNetworkBackend:
         set_cookie = response.headers.get("set-cookie")
         if set_cookie:
             self.cookies.add_from_response(response.url, set_cookie)
+        self._absorb_client_cookies(raw, response.url)
         return response
+
+    def _absorb_client_cookies(self, raw, url):
+        """Restore cookies that the client's header map dropped.
+
+        Some clients collapse repeated ``Set-Cookie`` headers into a single dict
+        entry, which silently keeps only the first cookie (cycronet hands out a
+        plain ``dict``).  The client's per-response cookie jar still knows what
+        the server actually sent, so names missing from our jar are restored
+        from it.  Attributes such as ``HttpOnly`` and ``expires`` are not part
+        of that view, so the restored cookies are host-scoped session cookies.
+        """
+        jar = getattr(raw, "cookies", None)
+        entries = getattr(jar, "iter_cookies", None)
+        if entries is None:
+            return
+        try:
+            cookies = list(entries())
+        except Exception:  # noqa: BLE001 - a broken client jar must not fail the response
+            return
+        known = {
+            cookie.split("=", 1)[0]
+            for cookie in self.cookies.header_for(url).split("; ") if cookie
+        }
+        for cookie in cookies:
+            name = getattr(cookie, "name", None)
+            if name is None or name in known:
+                continue
+            path = getattr(cookie, "path", "") or "/"
+            self.cookies.add_from_response(url, f"{name}={getattr(cookie, 'value', '')}; Path={path}")
 
     def request_sync(self, request: NetworkRequest):
         return self._call(request)

@@ -1,7 +1,7 @@
 import pytest
 
 from pyv8c import Browser
-from pyv8c.web.bom.window import Window, WindowProperties, WindowProxy
+from pyv8c.web.bom.window import Window
 
 
 @pytest.fixture
@@ -23,8 +23,8 @@ def page():
 
 
 def test_window_and_bom_core_have_separate_feature_boundaries():
-    from pyv8c.web.bom import api
-    assert api.Location.__module__ == 'pyv8c.web.bom.api'
+    from pyv8c.web.bom import navigation
+    assert navigation.Location.__module__ == 'pyv8c.web.bom.navigation'
     assert Window.__module__ == 'pyv8c.web.bom.window'
 
 
@@ -34,6 +34,13 @@ def test_ids_and_supported_name_attributes(page):
         typeof notGlobal, typeof alsoNotGlobal, typeof missingGlobal,
         typeof window.toString, window.document === document]''') == [
         True, 'FORM', 'EMBED', 'OBJECT', 'undefined', 'undefined', 'undefined', 'function', True]
+
+
+def test_orientation_reports_the_desktop_screen_angle(page):
+    """``window.orientation`` is Chromium's deprecated screen-angle alias."""
+    assert page.evaluate(
+        "[window.orientation, typeof window.orientation, 'orientation' in window]"
+    ) == [0, "number", True]
 
 
 def test_duplicates_return_live_html_collection(page):

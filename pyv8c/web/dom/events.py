@@ -23,7 +23,7 @@ from ...foundation.arguments import (
 )
 from ...foundation.errors import V8TypeError
 
-_DOCUMENT_NODE = 9  # DOM standard nodeType of Document; hardcoded to avoid a model import cycle.
+_DOCUMENT_NODE = 9  # DOM standard nodeType of Document; hardcoded to avoid a dom.nodes import cycle.
 
 
 def _js_call(fn, this, *args):
@@ -144,7 +144,7 @@ class Event:
         self.cancelable = boolean(cancelable)
 
 
-@interface('UIEvent', 'Event', exposed_in=('Window',))
+@interface('UIEvent', 'Event')
 class UIEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -169,7 +169,7 @@ class UIEvent(Event):
     def get_which(self): return self.detail
 
 
-@interface('MouseEvent', 'UIEvent', exposed_in=('Window',))
+@interface('MouseEvent', 'UIEvent')
 class MouseEvent(UIEvent):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -262,7 +262,7 @@ class MouseEvent(UIEvent):
         return _modifier_state(self, key)
 
 
-@interface('KeyboardEvent', 'UIEvent', exposed_in=('Window',))
+@interface('KeyboardEvent', 'UIEvent')
 class KeyboardEvent(UIEvent):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -354,7 +354,7 @@ class CustomEvent(Event):
         self.detail = detail
 
 
-@interface('FocusEvent', 'UIEvent', exposed_in=('Window',))
+@interface('FocusEvent', 'UIEvent')
 class FocusEvent(UIEvent):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -374,7 +374,7 @@ class FocusEvent(UIEvent):
     def get_relatedTarget(self): return self.relatedTarget
 
 
-@interface('InputEvent', 'UIEvent', exposed_in=('Window',))
+@interface('InputEvent', 'UIEvent')
 class InputEvent(UIEvent):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -409,7 +409,7 @@ class InputEvent(UIEvent):
     def fn_getTargetRanges(self, *_extra): return []
 
 
-@interface('CompositionEvent', 'UIEvent', exposed_in=('Window',))
+@interface('CompositionEvent', 'UIEvent')
 class CompositionEvent(UIEvent):
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="data", getter="get_data", side_effect=1),),
@@ -427,7 +427,7 @@ class CompositionEvent(UIEvent):
     def get_data(self): return self.data
 
 
-@interface('PointerEvent', 'MouseEvent', exposed_in=('Window',))
+@interface('PointerEvent', 'MouseEvent')
 class PointerEvent(MouseEvent):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -492,7 +492,7 @@ class PointerEvent(MouseEvent):
     def fn_getPredictedEvents(self, *_extra): return []
 
 
-@interface('WheelEvent', 'MouseEvent', exposed_in=('Window',))
+@interface('WheelEvent', 'MouseEvent')
 class WheelEvent(MouseEvent):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -535,7 +535,7 @@ class WheelEvent(MouseEvent):
     def get_momentum(self): return self.momentum
 
 
-@interface('PopStateEvent', 'Event', exposed_in=('Window', 'Worker'))
+@interface('PopStateEvent', 'Event')
 class PopStateEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -561,7 +561,7 @@ class PopStateEvent(Event):
     def get_hasUAVisualTransition(self): return self.has_ua_visual_transition
 
 
-@interface('HashChangeEvent', 'Event', exposed_in=('Window', 'Worker'))
+@interface('HashChangeEvent', 'Event')
 class HashChangeEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -585,7 +585,7 @@ class HashChangeEvent(Event):
     def get_newURL(self): return self.newURL
 
 
-@interface('StorageEvent', 'Event', exposed_in=('Window',))
+@interface('StorageEvent', 'Event')
 class StorageEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -618,7 +618,7 @@ class StorageEvent(Event):
     def get_storageArea(self): return self.storageArea
 
 
-@interface('AnimationEvent', 'Event', exposed_in=('Window',))
+@interface('AnimationEvent', 'Event')
 class AnimationEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -651,7 +651,7 @@ class AnimationEvent(Event):
     def get_pseudoTarget(self): return self.pseudoTarget
 
 
-@interface('TransitionEvent', 'Event', exposed_in=('Window',))
+@interface('TransitionEvent', 'Event')
 class TransitionEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -684,7 +684,7 @@ class TransitionEvent(Event):
     def get_pseudoTarget(self): return self.pseudoTarget
 
 
-@interface('PromiseRejectionEvent', 'Event', exposed_in=('Window', 'Worker', 'ShadowRealm'))
+@interface('PromiseRejectionEvent', 'Event')
 class PromiseRejectionEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -708,7 +708,7 @@ class PromiseRejectionEvent(Event):
     def get_reason(self): return self.reason
 
 
-@interface('PageTransitionEvent', 'Event', exposed_in=('Window', 'Worker'))
+@interface('PageTransitionEvent', 'Event')
 class PageTransitionEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="persisted", getter="get_persisted", side_effect=1),),
@@ -726,7 +726,7 @@ class PageTransitionEvent(Event):
     def get_persisted(self): return self._persisted
 
 
-@interface('BeforeUnloadEvent', 'Event', exposed_in=('Window',))
+@interface('BeforeUnloadEvent', 'Event')
 class BeforeUnloadEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -754,30 +754,11 @@ class BeforeUnloadEvent(Event):
 
 @interface('EventTarget', None)
 class EventTarget:
+    # Every ``on*`` slot -- including the load/unload family -- is generated
+    # once from ``_HANDLER_SLOTS`` at the bottom of this module, so the class
+    # body only declares the event-listener methods.
     __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="onload", getter="get_onload", setter="set_onload"),
-            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
-            AttributeSpec(
-                name="onreadystatechange",
-                getter="get_onreadystatechange",
-                setter="set_onreadystatechange",
-            ),
-            AttributeSpec(
-                name="onpageshow", getter="get_onpageshow", setter="set_onpageshow"
-            ),
-            AttributeSpec(
-                name="onpagehide", getter="get_onpagehide", setter="set_onpagehide"
-            ),
-            AttributeSpec(
-                name="onunload", getter="get_onunload", setter="set_onunload"
-            ),
-            AttributeSpec(
-                name="onbeforeunload",
-                getter="get_onbeforeunload",
-                setter="set_onbeforeunload",
-            ),
-        ),
+        attributes=(),
         methods=(
             MethodSpec(
                 name="addEventListener", callback="fn_addEventListener", length=2
@@ -801,41 +782,6 @@ class EventTarget:
 
     def _get_handler(self, name): return self._handlers.get(name, pyv8.Null)
     def _set_handler(self, name, value): self._handlers[name] = event_handler(value)
-    def get_onload(self): return self._get_handler("onload")
-    def set_onload(self, value):
-        if not is_nullish(value):
-            value = event_handler(value)
-        self._set_handler('onload', value)
-    def get_onerror(self): return self._get_handler("onerror")
-    def set_onerror(self, value):
-        if not is_nullish(value):
-            value = event_handler(value)
-        self._set_handler('onerror', value)
-    def get_onreadystatechange(self): return self._get_handler("onreadystatechange")
-    def set_onreadystatechange(self, value):
-        if not is_nullish(value):
-            value = event_handler(value)
-        self._set_handler('onreadystatechange', value)
-    def get_onpageshow(self): return self._get_handler("onpageshow")
-    def set_onpageshow(self, value):
-        if not is_nullish(value):
-            value = event_handler(value)
-        self._set_handler('onpageshow', value)
-    def get_onpagehide(self): return self._get_handler("onpagehide")
-    def set_onpagehide(self, value):
-        if not is_nullish(value):
-            value = event_handler(value)
-        self._set_handler('onpagehide', value)
-    def get_onunload(self): return self._get_handler("onunload")
-    def set_onunload(self, value):
-        if not is_nullish(value):
-            value = event_handler(value)
-        self._set_handler('onunload', value)
-    def get_onbeforeunload(self): return self._get_handler("onbeforeunload")
-    def set_onbeforeunload(self, value):
-        if not is_nullish(value):
-            value = event_handler(value)
-        self._set_handler('onbeforeunload', value)
 
     def fn_addEventListener(self, event_type=MISSING, listener=MISSING, options=False, *_extra):
         if event_type is MISSING:
@@ -960,9 +906,11 @@ class EventTarget:
 # ``addEventListener('compositionstart', ...)``.
 #
 # Declaring the slots here also exposes them on ``EventTarget.prototype``, which
-# a real browser does not.  That trade-off predates this table (the seven slots
-# above behave the same way) and keeps a single declaration site.
+# a real browser does not; that is the price of a single declaration site.
 _HANDLER_SLOTS = (
+    # Document and resource lifecycle
+    "onload", "onerror", "onreadystatechange", "onpageshow", "onpagehide",
+    "onunload", "onbeforeunload",
     # Mouse family
     "onclick", "ondblclick", "onauxclick", "oncontextmenu",
     "onmousedown", "onmouseup", "onmousemove", "onmouseover", "onmouseout",

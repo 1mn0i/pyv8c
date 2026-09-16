@@ -1,4 +1,8 @@
-"""Small CSS cascade, font measurement and layout facade for DOM geometry."""
+"""Small CSS cascade, font measurement and layout facade for DOM geometry.
+
+The property tables the cascade starts from (initial values and which
+properties inherit) live with the rest of the CSS metadata in :mod:`dom.css`.
+"""
 import os
 import re
 from dataclasses import dataclass
@@ -8,11 +12,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     ImageFont = None
 
-from .css import CSSStyleDeclaration
-from .model import Element, Text
-
-_INHERITED = {"color", "font-family", "font-size", "font-style", "font-weight", "line-height", "letter-spacing", "word-spacing", "visibility", "white-space"}
-_DEFAULTS = {"display": "block", "position": "static", "visibility": "visible", "font-family": "sans-serif", "font-size": "16px", "font-weight": "400", "font-style": "normal", "line-height": "normal", "letter-spacing": "normal", "word-spacing": "normal", "box-sizing": "content-box"}
+from ...foundation.errors import V8SyntaxError
+from .character_data import Text
+from .css import INHERITED_PROPERTIES, INITIAL_VALUES, CSSStyleDeclaration, parse_declarations
+from .html_elements import Element
+from .selectors import matches
 
 
 def _number(value, base=0.0):
@@ -62,44 +66,65 @@ def _inline_declarations(element):
     return {name: value for name, value, _ in CSSStyleDeclaration(element=element)._declarations()}
 
 def _selector_matches(element, selector):
-    selector = selector.strip()
-    if not selector or any(ch in selector for ch in ":[]>"):
+    """Match one stylesheet selector; unsupported syntax simply never matches."""
+    try:
+        return matches(element, selector)
+    except V8SyntaxError:
         return False
-    if selector.startswith("#"):
-        return element.attributes.get("id") == selector[1:]
-    if selector.startswith("."):
-        return selector[1:] in str(element.attributes.get("class", "")).split()
-    if "." in selector:
-        tag, cls = selector.split(".", 1)
-        return (not tag or element.localName == tag.lower()) and cls in str(element.attributes.get("class", "")).split()
-    return selector == "*" or element.localName == selector.lower()
 
-def _stylesheet_declarations(element):
-    document = getattr(element, "ownerDocument", None)
+def document_rules(document):
+    """The document's ``<style>`` rules as ``(selectors, declarations)`` pairs.
+
+    Reading the sheet walks the document, and a page that measures layout asks
+    for it constantly -- once per ``getComputedStyle``, geometry read and
+    :func:`layout` call, and the cascade runs per ancestor on top of that -- so
+    the result is cached on the document.  The cache is keyed on the style
+    version the DOM bumps whenever a ``<style>`` is added, removed or edited
+    (see :func:`dom.nodes._bump_style_version`), which is what keeps a page that
+    builds its styles at runtime from reading stale rules.
+    """
     if document is None:
-        return {}
-    result = {}
-    for node in document._walk():
+        return ()
+    version = getattr(document, "style_version", 0)
+    cached = getattr(document, "_rules_cache", None)
+    if cached is not None and cached[0] == version:
+        return cached[1]
+    rules = _parse_style_elements(document)
+    document._rules_cache = (version, rules)
+    return rules
+
+
+def _parse_style_elements(document):
+    rules = []
+    for node in document._descendants():
         if getattr(node, "localName", "") != "style":
             continue
-        source = getattr(node, "_stylesheet_text", "") or getattr(node, "_raw_text", "") or node.get_textContent()
+        # The element's own text is authoritative once the parser has moved it
+        # into the tree; ``_raw_text`` only covers a style the parser never
+        # closed (see ``parser._close_element``).
+        source = node.get_textContent() or getattr(node, "_raw_text", "")
         for selector, block in re.findall(r"([^{}]+)\{([^{}]*)\}", source):
-            if not any(_selector_matches(element, part) for part in selector.split(",")):
-                continue
-            for name, value, priority in CSSStyleDeclaration._parse_text(block):
-                result[name] = (value, priority)
-    return result
+            rules.append((selector.split(","), parse_declarations(block)))
+    return tuple(rules)
+
+
+def _cascade(element, rules):
+    values = dict(INITIAL_VALUES)
+    parent = getattr(element, "parentElement", None)
+    if parent is not None:
+        inherited = _cascade(parent, rules)
+        values.update({key: inherited.get(key, default) for key, default in INITIAL_VALUES.items() if key in INHERITED_PROPERTIES})
+    for selectors, declarations in rules:
+        if not any(_selector_matches(element, part) for part in selectors):
+            continue
+        for name, value, _priority in declarations:
+            values[name] = value
+    values.update(_inline_declarations(element))
+    return values
 
 
 def computed_style(element):
-    values = dict(_DEFAULTS)
-    parent = getattr(element, "parentElement", None)
-    if parent is not None:
-        values.update({key: computed_style(parent).get(key, default) for key, default in _DEFAULTS.items() if key in _INHERITED})
-    for name, (value, priority) in _stylesheet_declarations(element).items():
-        values[name] = value
-    values.update(_inline_declarations(element))
-    return values
+    return _cascade(element, document_rules(getattr(element, "ownerDocument", None)))
 
 
 @dataclass
@@ -110,8 +135,11 @@ class Box:
     top: float = 0
 
 
-def layout(element, containing_width=None, top=0.0):
-    style = computed_style(element)
+def layout(element, containing_width=None, top=0.0, rules=None, style=None):
+    if rules is None:
+        rules = document_rules(getattr(element, "ownerDocument", None))
+    if style is None:
+        style = _cascade(element, rules)
     if style.get("display") == "none" or not getattr(element, "isConnected", False): return Box()
     if containing_width is None:
         realm = getattr(getattr(element, "_services", None), "realm_services", None)
@@ -128,31 +156,30 @@ def layout(element, containing_width=None, top=0.0):
     inline_height = 0.0
     if style.get("display") == "flex":
         row = style.get("flex-direction", "row") not in ("column", "column-reverse")
-        boxes = [layout(child, content_width, top) for child in children if isinstance(child, Element)]
+        boxes = [layout(child, content_width, top, rules) for child in children if isinstance(child, Element)]
         if row:
             height += max((box.height for box in boxes), default=0)
         else:
             height += sum(box.height for box in boxes)
     elif style.get("display") == "grid":
         columns = max(1, len(str(style.get("grid-template-columns", "1fr")).split()))
-        boxes = [layout(child, content_width / columns, top) for child in children if isinstance(child, Element)]
+        boxes = [layout(child, content_width / columns, top, rules) for child in children if isinstance(child, Element)]
         for index in range(0, len(boxes), columns):
             height += max((box.height for box in boxes[index:index + columns]), default=0)
     else:
-      for child in children:
-        if isinstance(child, Text):
-            text = child.get_textContent() or ""
-            inline_width += text_width(text, style)
-            line = _px(style.get("line-height", "normal"), 0) or _px(style.get("font-size", "16px"), 16) * 1.2
-            inline_height = max(inline_height, line)
-        else:
-            child_style = computed_style(child)
-            if child_style.get("display", "block") in ("inline", "inline-block"):
-                child_box = layout(child, content_width, top + height)
-                inline_width += child_box.width; inline_height = max(inline_height, child_box.height)
+        for child in children:
+            if isinstance(child, Text):
+                text = child.get_textContent() or ""
+                inline_width += text_width(text, style)
+                line = _px(style.get("line-height", "normal"), 0) or _px(style.get("font-size", "16px"), 16) * 1.2
+                inline_height = max(inline_height, line)
             else:
-                child_box = layout(child, content_width, top + height)
-                height += child_box.height
+                child_style = _cascade(child, rules)
+                child_box = layout(child, content_width, top + height, rules, child_style)
+                if child_style.get("display", "block") in ("inline", "inline-block"):
+                    inline_width += child_box.width; inline_height = max(inline_height, child_box.height)
+                else:
+                    height += child_box.height
     if inline_height:
         height += inline_height
     explicit_height = style.get("height", "auto")
@@ -171,4 +198,4 @@ class ComputedStyle(CSSStyleDeclaration):
 def computed_style_object(element): return ComputedStyle(element, computed_style(element))
 
 
-__all__ = ["Box", "computed_style", "computed_style_object", "layout"]
+__all__ = ["Box", "computed_style", "computed_style_object", "document_rules", "layout"]

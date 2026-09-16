@@ -1,4 +1,6 @@
-"""CSSOM support for inline ``HTMLElement.style`` declarations."""
+"""CSSOM support: inline ``HTMLElement.style`` declarations, and the table of
+property names a ``CSSStyleDeclaration`` exposes as named properties.
+"""
 import re
 
 import pyv8
@@ -7,11 +9,13 @@ from pyv8.flag import V8Attribute
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
-from .css_properties import supported
-from .events import EventTarget
+from .utils import OBJECT_PROTOTYPE_NAMES
 
 _NAME_RE = re.compile(r"^(?:--[A-Za-z0-9_-]+|-?[A-Za-z_][A-Za-z0-9_-]*)$")
-_OBJECT_NAMES = frozenset(("constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty", "__lookupGetter__", "__lookupSetter__", "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf", "__proto__", "toLocaleString", "cssText", "length", "parentRule", "cssFloat", "getPropertyPriority", "getPropertyValue", "item", "removeProperty", "setProperty"))
+_OBJECT_NAMES = OBJECT_PROTOTYPE_NAMES | {
+    "cssText", "length", "parentRule", "cssFloat", "getPropertyPriority",
+    "getPropertyValue", "item", "removeProperty", "setProperty",
+}
 
 def _property_name(value):
     value = str(dom_string(value)).strip()
@@ -43,7 +47,191 @@ def _split_priority(value):
     return (value[:match.start()].rstrip(), "important") if match else (value, "")
 
 
-@interface("CSSStyleDeclaration", None, exposed_in=("Window",))
+# ---------------------------------------------------------------------------
+# Property names the engine resolves as named properties
+# ---------------------------------------------------------------------------
+#
+# ``'color' in style`` and ``style.color`` only answer for properties the engine
+# supports, so the simulator needs the same names Chrome reports.  Vendor
+# prefixed spellings are part of that list only when Blink ships them, which is
+# why ``-webkit-`` forms are present while ``-moz-``/``-ms-``/``-o-`` ones are
+# not.  Custom properties (``--name``) are always accepted.
+
+#: camelCase, as reported by a real Chrome CSSStyleDeclaration.
+_CAMEL_NAMES = (
+    "accentColor", "additiveSymbols", "alignContent", "alignItems", "alignSelf", "alignmentBaseline", "all",
+    "anchorName", "animation", "animationComposition", "animationDelay", "animationDirection", "animationDuration",
+    "animationFillMode", "animationIterationCount", "animationName", "animationPlayState", "animationRange",
+    "animationRangeEnd", "animationRangeStart", "animationTimeline", "animationTimingFunction", "appRegion",
+    "appearance", "ascentOverride", "aspectRatio", "backdropFilter", "backfaceVisibility", "background",
+    "backgroundAttachment", "backgroundBlendMode", "backgroundClip", "backgroundColor", "backgroundImage",
+    "backgroundOrigin", "backgroundPosition", "backgroundPositionX", "backgroundPositionY", "backgroundRepeat",
+    "backgroundSize", "basePalette", "baselineShift", "baselineSource", "blockSize", "border", "borderBlock",
+    "borderBlockColor", "borderBlockEnd", "borderBlockEndColor", "borderBlockEndStyle", "borderBlockEndWidth",
+    "borderBlockStart", "borderBlockStartColor", "borderBlockStartStyle", "borderBlockStartWidth", "borderBlockStyle",
+    "borderBlockWidth", "borderBottom", "borderBottomColor", "borderBottomLeftRadius", "borderBottomRightRadius",
+    "borderBottomStyle", "borderBottomWidth", "borderCollapse", "borderColor", "borderEndEndRadius",
+    "borderEndStartRadius", "borderImage", "borderImageOutset", "borderImageRepeat", "borderImageSlice",
+    "borderImageSource", "borderImageWidth", "borderInline", "borderInlineColor", "borderInlineEnd",
+    "borderInlineEndColor", "borderInlineEndStyle", "borderInlineEndWidth", "borderInlineStart",
+    "borderInlineStartColor", "borderInlineStartStyle", "borderInlineStartWidth", "borderInlineStyle",
+    "borderInlineWidth", "borderLeft", "borderLeftColor", "borderLeftStyle", "borderLeftWidth", "borderRadius",
+    "borderRight", "borderRightColor", "borderRightStyle", "borderRightWidth", "borderSpacing", "borderStartEndRadius",
+    "borderStartStartRadius", "borderStyle", "borderTop", "borderTopColor", "borderTopLeftRadius",
+    "borderTopRightRadius", "borderTopStyle", "borderTopWidth", "borderWidth", "bottom", "boxShadow", "boxSizing",
+    "breakAfter", "breakBefore", "breakInside", "bufferedRendering", "captionSide", "caretColor", "clear", "clip",
+    "clipPath", "clipRule", "color", "colorInterpolation", "colorInterpolationFilters", "colorRendering",
+    "colorScheme", "columnCount", "columnFill", "columnGap", "columnRule", "columnRuleColor", "columnRuleStyle",
+    "columnRuleWidth", "columnSpan", "columnWidth", "columns", "contain", "containIntrinsicBlockSize",
+    "containIntrinsicHeight", "containIntrinsicInlineSize", "containIntrinsicSize", "containIntrinsicWidth",
+    "container", "containerName", "containerType", "content", "contentVisibility", "counterIncrement",
+    "counterReset", "counterSet", "cursor", "cx", "cy", "d", "descentOverride", "direction", "display",
+    "dominantBaseline", "emptyCells", "fallback", "fieldSizing", "fill", "fillOpacity", "fillRule", "filter", "flex",
+    "flexBasis", "flexDirection", "flexFlow", "flexGrow", "flexShrink", "flexWrap", "float", "floodColor",
+    "floodOpacity", "font", "fontDisplay", "fontFamily", "fontFeatureSettings", "fontKerning", "fontOpticalSizing",
+    "fontPalette", "fontSize", "fontSizeAdjust", "fontStretch", "fontStyle", "fontSynthesis",
+    "fontSynthesisSmallCaps", "fontSynthesisStyle", "fontSynthesisWeight", "fontVariant", "fontVariantAlternates",
+    "fontVariantCaps", "fontVariantEastAsian", "fontVariantLigatures", "fontVariantNumeric", "fontVariantPosition",
+    "fontVariationSettings", "fontWeight", "forcedColorAdjust", "gap", "grid", "gridArea", "gridAutoColumns",
+    "gridAutoFlow", "gridAutoRows", "gridColumn", "gridColumnEnd", "gridColumnGap", "gridColumnStart", "gridGap",
+    "gridRow", "gridRowEnd", "gridRowGap", "gridRowStart", "gridTemplate", "gridTemplateAreas", "gridTemplateColumns",
+    "gridTemplateRows", "height", "hyphenateCharacter", "hyphenateLimitChars", "hyphens", "imageOrientation",
+    "imageRendering", "inherits", "initialLetter", "initialValue", "inlineSize", "inset", "insetArea", "insetBlock",
+    "insetBlockEnd", "insetBlockStart", "insetInline", "insetInlineEnd", "insetInlineStart", "isolation",
+    "justifyContent", "justifyItems", "justifySelf", "left", "letterSpacing", "lightingColor", "lineBreak",
+    "lineGapOverride", "lineHeight", "listStyle", "listStyleImage", "listStylePosition", "listStyleType", "margin",
+    "marginBlock", "marginBlockEnd", "marginBlockStart", "marginBottom", "marginInline", "marginInlineEnd",
+    "marginInlineStart", "marginLeft", "marginRight", "marginTop", "marker", "markerEnd", "markerMid", "markerStart",
+    "mask", "maskClip", "maskComposite", "maskImage", "maskMode", "maskOrigin", "maskPosition", "maskRepeat",
+    "maskSize", "maskType", "mathDepth", "mathShift", "mathStyle", "maxBlockSize", "maxHeight", "maxInlineSize",
+    "maxWidth", "minBlockSize", "minHeight", "minInlineSize", "minWidth", "mixBlendMode", "navigation", "negative",
+    "objectFit", "objectPosition", "objectViewBox", "offset", "offsetAnchor", "offsetDistance", "offsetPath",
+    "offsetPosition", "offsetRotate", "opacity", "order", "orphans", "outline", "outlineColor", "outlineOffset",
+    "outlineStyle", "outlineWidth", "overflow", "overflowAnchor", "overflowClipMargin", "overflowWrap", "overflowX",
+    "overflowY", "overlay", "overrideColors", "overscrollBehavior", "overscrollBehaviorBlock",
+    "overscrollBehaviorInline", "overscrollBehaviorX", "overscrollBehaviorY", "pad", "padding", "paddingBlock",
+    "paddingBlockEnd", "paddingBlockStart", "paddingBottom", "paddingInline", "paddingInlineEnd", "paddingInlineStart",
+    "paddingLeft", "paddingRight", "paddingTop", "page", "pageBreakAfter", "pageBreakBefore", "pageBreakInside",
+    "pageOrientation", "paintOrder", "perspective", "perspectiveOrigin", "placeContent", "placeItems", "placeSelf",
+    "pointerEvents", "position", "positionAnchor", "positionTry", "positionTryOptions", "positionTryOrder",
+    "positionVisibility", "prefix", "quotes", "r", "range", "resize", "right", "rotate", "rowGap", "rubyPosition",
+    "rx", "ry", "scale", "scrollBehavior", "scrollMargin", "scrollMarginBlock", "scrollMarginBlockEnd",
+    "scrollMarginBlockStart", "scrollMarginBottom", "scrollMarginInline", "scrollMarginInlineEnd",
+    "scrollMarginInlineStart", "scrollMarginLeft", "scrollMarginRight", "scrollMarginTop", "scrollPadding",
+    "scrollPaddingBlock", "scrollPaddingBlockEnd", "scrollPaddingBlockStart", "scrollPaddingBottom",
+    "scrollPaddingInline", "scrollPaddingInlineEnd", "scrollPaddingInlineStart", "scrollPaddingLeft",
+    "scrollPaddingRight", "scrollPaddingTop", "scrollSnapAlign", "scrollSnapStop", "scrollSnapType", "scrollTimeline",
+    "scrollTimelineAxis", "scrollTimelineName", "scrollbarColor", "scrollbarGutter", "scrollbarWidth",
+    "shapeImageThreshold", "shapeMargin", "shapeOutside", "shapeRendering", "size", "sizeAdjust", "speak", "speakAs",
+    "src", "stopColor", "stopOpacity", "stroke", "strokeDasharray", "strokeDashoffset", "strokeLinecap",
+    "strokeLinejoin", "strokeMiterlimit", "strokeOpacity", "strokeWidth", "suffix", "symbols", "syntax", "system",
+    "tabSize", "tableLayout", "textAlign", "textAlignLast", "textAnchor", "textCombineUpright", "textDecoration",
+    "textDecorationColor", "textDecorationLine", "textDecorationSkipInk", "textDecorationStyle",
+    "textDecorationThickness", "textEmphasis", "textEmphasisColor", "textEmphasisPosition", "textEmphasisStyle",
+    "textIndent", "textOrientation", "textOverflow", "textRendering", "textShadow", "textSizeAdjust",
+    "textSpacingTrim", "textTransform", "textUnderlineOffset", "textUnderlinePosition", "textWrap", "timelineScope",
+    "top", "touchAction", "transform", "transformBox", "transformOrigin", "transformStyle", "transition",
+    "transitionBehavior", "transitionDelay", "transitionDuration", "transitionProperty", "transitionTimingFunction",
+    "translate", "types", "unicodeBidi", "unicodeRange", "userSelect", "vectorEffect", "verticalAlign", "viewTimeline",
+    "viewTimelineAxis", "viewTimelineInset", "viewTimelineName", "viewTransitionClass", "viewTransitionName",
+    "visibility", "webkitAlignContent", "webkitAlignItems", "webkitAlignSelf", "webkitAnimation",
+    "webkitAnimationDelay", "webkitAnimationDirection", "webkitAnimationDuration",
+    "webkitAnimationFillMode", "webkitAnimationIterationCount",
+    "webkitAnimationName", "webkitAnimationPlayState", "webkitAnimationTimingFunction", "webkitAppRegion",
+    "webkitAppearance", "webkitBackfaceVisibility", "webkitBackgroundClip", "webkitBackgroundOrigin",
+    "webkitBackgroundSize", "webkitBorderAfter", "webkitBorderAfterColor", "webkitBorderAfterStyle",
+    "webkitBorderAfterWidth", "webkitBorderBefore", "webkitBorderBeforeColor", "webkitBorderBeforeStyle",
+    "webkitBorderBeforeWidth", "webkitBorderBottomLeftRadius", "webkitBorderBottomRightRadius", "webkitBorderEnd",
+    "webkitBorderEndColor", "webkitBorderEndStyle", "webkitBorderEndWidth", "webkitBorderHorizontalSpacing",
+    "webkitBorderImage", "webkitBorderRadius", "webkitBorderStart", "webkitBorderStartColor", "webkitBorderStartStyle",
+    "webkitBorderStartWidth", "webkitBorderTopLeftRadius", "webkitBorderTopRightRadius", "webkitBorderVerticalSpacing",
+    "webkitBoxAlign", "webkitBoxDecorationBreak", "webkitBoxDirection", "webkitBoxFlex", "webkitBoxOrdinalGroup",
+    "webkitBoxOrient", "webkitBoxPack", "webkitBoxReflect", "webkitBoxShadow", "webkitBoxSizing", "webkitClipPath",
+    "webkitColumnBreakAfter", "webkitColumnBreakBefore", "webkitColumnBreakInside", "webkitColumnCount",
+    "webkitColumnGap", "webkitColumnRule", "webkitColumnRuleColor", "webkitColumnRuleStyle", "webkitColumnRuleWidth",
+    "webkitColumnSpan", "webkitColumnWidth", "webkitColumns", "webkitFilter", "webkitFlex", "webkitFlexBasis",
+    "webkitFlexDirection", "webkitFlexFlow", "webkitFlexGrow", "webkitFlexShrink", "webkitFlexWrap",
+    "webkitFontFeatureSettings", "webkitFontSmoothing", "webkitHyphenateCharacter", "webkitJustifyContent",
+    "webkitLineBreak", "webkitLineClamp", "webkitLocale", "webkitLogicalHeight", "webkitLogicalWidth",
+    "webkitMarginAfter", "webkitMarginBefore", "webkitMarginEnd", "webkitMarginStart", "webkitMask",
+    "webkitMaskBoxImage", "webkitMaskBoxImageOutset", "webkitMaskBoxImageRepeat", "webkitMaskBoxImageSlice",
+    "webkitMaskBoxImageSource", "webkitMaskBoxImageWidth", "webkitMaskClip", "webkitMaskComposite", "webkitMaskImage",
+    "webkitMaskOrigin", "webkitMaskPosition", "webkitMaskPositionX", "webkitMaskPositionY", "webkitMaskRepeat",
+    "webkitMaskSize", "webkitMaxLogicalHeight", "webkitMaxLogicalWidth", "webkitMinLogicalHeight",
+    "webkitMinLogicalWidth", "webkitOpacity", "webkitOrder", "webkitPaddingAfter", "webkitPaddingBefore",
+    "webkitPaddingEnd", "webkitPaddingStart", "webkitPerspective", "webkitPerspectiveOrigin",
+    "webkitPerspectiveOriginX", "webkitPerspectiveOriginY", "webkitPrintColorAdjust", "webkitRtlOrdering",
+    "webkitRubyPosition", "webkitShapeImageThreshold", "webkitShapeMargin", "webkitShapeOutside",
+    "webkitTapHighlightColor", "webkitTextCombine", "webkitTextDecorationsInEffect", "webkitTextEmphasis",
+    "webkitTextEmphasisColor", "webkitTextEmphasisPosition", "webkitTextEmphasisStyle", "webkitTextFillColor",
+    "webkitTextOrientation", "webkitTextSecurity", "webkitTextSizeAdjust", "webkitTextStroke", "webkitTextStrokeColor",
+    "webkitTextStrokeWidth", "webkitTransform", "webkitTransformOrigin", "webkitTransformOriginX",
+    "webkitTransformOriginY", "webkitTransformOriginZ", "webkitTransformStyle", "webkitTransition",
+    "webkitTransitionDelay", "webkitTransitionDuration", "webkitTransitionProperty", "webkitTransitionTimingFunction",
+    "webkitUserDrag", "webkitUserModify", "webkitUserSelect", "webkitWritingMode", "whiteSpace", "whiteSpaceCollapse",
+    "widows", "width", "willChange", "wordBreak", "wordSpacing", "wordWrap", "writingMode", "x", "y", "zIndex", "zoom",
+)
+
+
+def _canonical(name):
+    """The dashed, lower-case form every spelling of a property maps onto."""
+    return _dash_name(name).lstrip("-").lower()
+
+
+SUPPORTED_NAMES = frozenset(_canonical(name) for name in _CAMEL_NAMES)
+
+
+def supported(name):
+    """Whether a camel-case, dashed or prefixed spelling names a real property."""
+    if name.startswith("--"):
+        return True
+    return _canonical(name) in SUPPORTED_NAMES
+
+
+#: Properties whose computed value is inherited from the parent element.
+INHERITED_PROPERTIES = frozenset((
+    "color", "font-family", "font-size", "font-style", "font-weight",
+    "line-height", "letter-spacing", "word-spacing", "visibility", "white-space",
+))
+
+#: The initial value the cascade starts from for each supported property.
+INITIAL_VALUES = {
+    "display": "block", "position": "static", "visibility": "visible",
+    "font-family": "sans-serif", "font-size": "16px", "font-weight": "400",
+    "font-style": "normal", "line-height": "normal", "letter-spacing": "normal",
+    "word-spacing": "normal", "box-sizing": "content-box",
+}
+
+
+def parse_declarations(raw):
+    """Parse ``a: b; c: d !important`` into a declaration list.
+
+    A repeated property keeps the position of its first occurrence and the
+    value of its last one, which is what ``cssText`` and ``setProperty``
+    observe.  ``_declarations``, ``set_cssText`` and the cascade reader in
+    ``dom.layout`` all go through this single parser.
+    """
+    declarations, positions = [], {}
+    for chunk in str(raw).split(";"):
+        if ":" not in chunk:
+            continue
+        name, value = chunk.split(":", 1)
+        name = _property_name(name)
+        if not name:
+            continue
+        value, priority = _split_priority(_normalize_value(value))
+        if not value:
+            continue
+        item = (name, value, priority)
+        if name in positions:
+            declarations[positions[name]] = item
+        else:
+            positions[name] = len(declarations)
+            declarations.append(item)
+    return declarations
+
+
+@interface("CSSStyleDeclaration", None)
 class CSSStyleDeclaration:
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="cssText", getter="get_cssText", setter="set_cssText"), AttributeSpec(name="length", getter="get_length", side_effect=1), AttributeSpec(name="parentRule", getter="get_parentRule", side_effect=1), AttributeSpec(name="cssFloat", getter="get_cssFloat", setter="set_cssFloat")),
@@ -53,31 +241,11 @@ class CSSStyleDeclaration:
         index_get="__v8_index_get__", index_set="__v8_index_set__", index_query="__v8_index_query__", index_del="__v8_index_del__", index_enum="__v8_index_enum__",
     )
     def __init__(self, element=None, **_): self._element = element
-    @staticmethod
-    def _parse_text(raw):
-        result = []
-        for chunk in str(raw).split(";"):
-            if ":" not in chunk: continue
-            name, value = chunk.split(":", 1); name = _property_name(name)
-            if not name: continue
-            value, priority = _split_priority(_normalize_value(value)); value = _normalize_value(value)
-            if value: result.append((name, value, priority))
-        return result
     def _declarations(self):
         if hasattr(self, "_computed_values"):
             return [(name, value, "") for name, value in self._computed_values.items() if value not in ("", None)]
         raw = str(self._element.attributes.get("style", "")) if self._element is not None else ""
-        result, positions = [], {}
-        for chunk in raw.split(";"):
-            if ":" not in chunk: continue
-            name, value = chunk.split(":", 1); name = _property_name(name)
-            if not name: continue
-            value, priority = _split_priority(_normalize_value(value)); value = _normalize_value(value)
-            if not value: continue
-            item = (name, value, priority)
-            if name in positions: result[positions[name]] = item
-            else: positions[name] = len(result); result.append(item)
-        return result
+        return parse_declarations(raw)
     def _write(self, declarations):
         if self._element is None: return
         text = "".join(f"{n}: {v}{' !important' if p else ''}; " for n, v, p in declarations).strip()
@@ -97,17 +265,7 @@ class CSSStyleDeclaration:
         return next((v for n, v, _ in self._declarations() if n == name), "")
     def get_cssText(self): return "".join(f"{n}: {v}{' !important' if p else ''}; " for n, v, p in self._declarations()).strip()
     def set_cssText(self, value):
-        raw = str(dom_string(value)); declarations, positions = [], {}
-        for chunk in raw.split(";"):
-            if ":" not in chunk: continue
-            name, value = chunk.split(":", 1); name = _property_name(name)
-            if not name: continue
-            value, priority = _split_priority(_normalize_value(value)); value = _normalize_value(value)
-            if not value: continue
-            item = (name, value, priority)
-            if name in positions: declarations[positions[name]] = item
-            else: positions[name] = len(declarations); declarations.append(item)
-        self._write(declarations)
+        self._write(parse_declarations(dom_string(value)))
     def get_length(self): return len(self._declarations())
     def get_parentRule(self): return pyv8.Null
     def get_cssFloat(self): return self._value("float")
@@ -165,4 +323,4 @@ class CSSStyleDeclaration:
     def __v8_index_del__(self, index): return None
     def __v8_index_enum__(self): return self.get_length()
 
-__all__ = ["CSSStyleDeclaration"]
+__all__ = ["CSSStyleDeclaration", "SUPPORTED_NAMES", "parse_declarations", "supported"]

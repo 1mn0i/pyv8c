@@ -58,7 +58,7 @@ def test_missing_error_is_browser_error():
 
 def test_ordinary_callbacks_are_bound_without_validation_wrapper():
     from pyv8c import Browser
-    from pyv8c.web.dom.elements import Element
+    from pyv8c.web.dom.html_elements import Element
 
     browser = Browser(stub_logging="off")
     try:

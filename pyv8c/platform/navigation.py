@@ -5,7 +5,7 @@ from urllib.parse import urljoin
 
 from ..foundation.errors import InvalidStateError, TimeoutError
 from ..foundation.tasks import TaskSource
-from ..web.dom.model import Document
+from ..web.dom.document import Document
 from ..web.dom.parser import IncrementalDOMParser
 
 
@@ -138,6 +138,49 @@ class NavigationController:
     def parser_is_blocked(self):
         return bool(self.page.scripts.dom_blocking_scripts)
 
+    def write_markup(self, markup):
+        """Insert JavaScript-written markup (HTML's ``document.write``).
+
+        While the document is being parsed the markup joins the token stream, so
+        written nodes land at the writing script's insertion point.  Once parsing
+        has finished, ``document.write`` implies ``document.open()``: the
+        document is emptied and the written markup becomes its new content,
+        parsed inside a fresh ``body``.  The navigation lifecycle is not replayed
+        -- the same document keeps its URL, load state and event history.
+        """
+        parser = self.parser
+        if parser is not None and not parser.done:
+            return parser.write_markup(markup)
+        if self.page.closed or self.page.context_owner.closed:
+            return False
+        document = self.page.document
+        self.generation += 1
+        self.parser_generation = self.generation
+        self.parser_done = False
+        self.page.resources.reset()
+        self.page.scripts.reset()
+        for child in list(document.get_childNodes() or ()):
+            document.fn_removeChild(child)
+        body = self._open_document_body(document)
+        self.parser = IncrementalDOMParser(self.page.services, body, str(markup))
+        self.resume_parser(self.parser_generation)
+        return True
+
+    def _open_document_body(self, document):
+        """Build the skeleton ``document.open()`` leaves for the new parse.
+
+        A browser restarts the insertion modes from scratch, so written markup
+        ends up inside a fresh ``html``/``body`` rather than as a sibling of the
+        document element.
+        """
+        element_class = self.element_class
+        html = element_class("html")("html", services=self.page.services, attributes={})
+        document.append_child(html)
+        html.append_child(element_class("head")("head", services=self.page.services, attributes={}))
+        body = element_class("body")("body", services=self.page.services, attributes={})
+        html.append_child(body)
+        return body
+
     def finish_document_parse(self):
         self.parser_done = True
         self.parsing = False
@@ -201,5 +244,5 @@ class NavigationController:
                 scripts.execute_script(node, source, self.page.url)
 
     def element_class(self, tag):
-        from ..web.dom.model import HTML_CLASSES, HTMLElement
-        return HTML_CLASSES.get("HTML" + str(tag).capitalize() + "Element", HTMLElement)
+        from ..web.dom.html_classes import class_for_tag
+        return class_for_tag(tag)

@@ -43,6 +43,34 @@ def test_domain_packages_do_not_depend_on_runtime_or_extractor_cli():
                 assert not module.startswith("engine.extractor"), path
 
 
+#: Implementation modules the Feature runtime loads on first use, mapped to the
+#: web subpackage they live in.
+OPTIONAL_FEATURES = {
+    "web/bom/navigator.py": "bom",
+    "web/bom/indexeddb.py": "bom",
+    "web/network/websocket.py": "network",
+    "web/workers/api.py": "workers",
+    "web/workers/runtime.py": "workers",
+}
+
+
+def test_optional_features_build_only_on_shared_layers():
+    """Loading one optional feature must not drag in another one.
+
+    A module-body import of a sibling feature would defeat the on-demand
+    contract in docs/ARCHITECTURE.md; its runtime half is the ``sys.modules``
+    probe in tests/unit/test_lazy_interface_modules.py.  Only import-time
+    imports are inspected: a call body may reach a sibling feature lazily.
+    """
+    for relative, own_package in OPTIONAL_FEATURES.items():
+        tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, ast.ImportFrom) or node.level != 2:
+                continue
+            target = (node.module or "").split(".")[0]
+            assert target in ("dom", "fetch", own_package), (relative, target)
+
+
 def test_bindings_do_not_depend_on_runtime():
     """bindings must reach realm services through core, never through Page."""
     for path in (ROOT / "engine").glob("*.py"):

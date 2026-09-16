@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from ...foundation.errors import V8SyntaxError
-from .model import Element
+from .html_elements import Element
 
 # Selector parser failures cross the Python/V8 binding boundary.  Raising the
 # project's marked error type lets V8 materialize a native SyntaxError that
@@ -215,5 +215,5 @@ def matches(node, selector): return any(_matches_ast(node, group) for group in p
 def select(root, selector):
     ast = parse(selector); nodes = []
     if isinstance(root, Element) and any(_matches_ast(root, group) for group in ast): nodes.append(root)
-    nodes.extend(n for n in root._services.document_services.document._walk(root) if isinstance(n, Element) and any(_matches_ast(n, group) for group in ast))
+    nodes.extend(n for n in root._descendants() if isinstance(n, Element) and any(_matches_ast(n, group) for group in ast))
     return nodes

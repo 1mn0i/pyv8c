@@ -3,32 +3,41 @@
 The API is deprecated in Chromium, but remains observable by older pages.  This
 implementation deliberately keeps the old callback surface while using a
 per-page temporary directory as its backing store.
+
+Only ``File`` is reachable as a global, so the module is an Optional Feature: it
+loads when a page touches that constructor or calls
+``webkitRequestFileSystem``, which materialises the interface group before the
+first object is handed back.
 """
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
-from ...foundation.arguments import MISSING, callback_value, dom_string, integer, missing_error
+from ...engine.features import FeatureImplementation, interface
+from ...foundation.arguments import (
+    MISSING,
+    callback_value,
+    dictionary,
+    dom_string,
+    integer,
+    is_nullish,
+    missing_error,
+)
 from ...foundation.errors import V8TypeError
+from ...foundation.realm import post_or_call
+from ..dom.events import Event, EventTarget, _install_handler_slots
 from ..fetch.blob import Blob
-from ..dom.events import EventTarget
+from ..fetch.events import ProgressEvent
 
 __all__ = ["FileSystem", "Entry", "DirectoryEntry", "FileEntry", "DirectoryReader", "FileWriter", "File"]
 
-
-def _post(services, callback, *args):
-    if callback is None:
-        return
-    task = getattr(services, "task_services", None) if services is not None else None
-    if task is None:
-        callback(*args)
-    else:
-        task.post_task(lambda: callback(*args))
+#: The asynchronous entry points below all deliver their callback the same way.
+_post = post_or_call
 
 
 def _callback(value, name, position, optional=False):
@@ -39,27 +48,55 @@ def _callback(value, name, position, optional=False):
     return callback_value(value)
 
 
-@interface("File", "Blob", exposed_in=("Window",))
+@interface("File", "Blob")
 class File(Blob):
+    """The ``File`` global, and the ``FileEntry.file()`` view of one path.
+
+    ``File`` is exposed as a constructor, so it takes the standard
+    ``fileBits``/``fileName``/``options`` arguments; ``size`` and ``type`` are
+    inherited from :class:`Blob`.  The legacy API hands out a file that already
+    exists on disk, which :func:`_file_from_path` builds from disk.
+    """
+
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="name", getter="get_name", side_effect=1),
                     AttributeSpec(name="lastModified", getter="get_lastModified", side_effect=1),
                     AttributeSpec(name="size", getter="get_size", side_effect=1),
                     AttributeSpec(name="type", getter="get_type", side_effect=1)),
-        constructor_behavior=0, has_constructor=1, to_string_tag="File",
+        constructor_behavior=1, length=2, has_constructor=1, to_string_tag="File",
     )
 
-    def __init__(self, path, **_):
-        self._path = Path(path)
-        self._data = self._path.read_bytes() if self._path.exists() else b""
-        self._type = ""
-    def get_name(self): return self._path.name
-    def get_lastModified(self): return int(self._path.stat().st_mtime * 1000) if self._path.exists() else 0
-    def get_size(self): return self._path.stat().st_size if self._path.exists() else 0
-    def get_type(self): return ""
+    def __init__(self, file_bits=pyv8.Undefined, file_name=pyv8.Undefined, options=None, *_extra, **kw):
+        if file_bits is pyv8.Undefined:
+            raise missing_error("File", "constructor", 2, 0, constructor=True)
+        if file_name is pyv8.Undefined:
+            raise missing_error("File", "constructor", 2, 1, constructor=True)
+        init = {} if is_nullish(options) else dictionary(options, name="FilePropertyBag")
+        super().__init__(file_bits, init, *_extra, **kw)
+        self._name = dom_string(file_name)
+        last_modified = init.get("lastModified")
+        self._last_modified = (int(time.time() * 1000) if last_modified is None
+                               else int(integer(last_modified, bits=64)))
+
+    def get_name(self): return self._name
+    def get_lastModified(self): return self._last_modified
 
 
-@interface("FileWriter", "EventTarget", exposed_in=("Window",))
+def _file_from_path(path):
+    """The ``FileEntry.file()`` view: parts, name and timestamp come from disk."""
+    path = Path(path)
+    if not path.exists():
+        return File([b""], path.name)
+    return File([path.read_bytes()], path.name,
+                {"lastModified": int(path.stat().st_mtime * 1000)})
+
+
+#: ``FileWriter``'s six event-handler attributes.  ``EventTarget`` declares no
+#: ``on*`` slot for them, so the write lifecycle below needs its own.
+_WRITER_HANDLERS = ("onwritestart", "onprogress", "onwrite", "onabort", "onerror", "onwriteend")
+
+
+@interface("FileWriter", "EventTarget")
 class FileWriter(EventTarget):
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="position", getter="get_position"), AttributeSpec(name="length", getter="get_length")),
@@ -87,9 +124,28 @@ class FileWriter(EventTarget):
         mode = "r+b" if self._path.exists() else "wb"
         with self._path.open(mode) as fh:
             fh.seek(self._position); fh.write(raw); self._position += len(raw)
+        self._report_write(len(raw))
+    def _report_write(self, length):
+        """Queue the events that tell the writer's handlers the write finished.
+
+        The write above is synchronous, so Chromium's ``writestart``/``write``/
+        ``progress``/``writeend`` sequence is delivered behind it, in that
+        order, through the same task queue as this module's other callbacks.
+        ``onerror``/``onabort`` stay unfired: this writer never fails
+        asynchronously and implements no ``abort()``.
+        """
+        events = (
+            Event("writestart", {"isTrusted": True}),
+            Event("write", {"isTrusted": True}),
+            ProgressEvent("progress", {"isTrusted": True, "lengthComputable": True,
+                                       "loaded": length, "total": length}),
+            Event("writeend", {"isTrusted": True}),
+        )
+        for event in events:
+            _post(self._services, self.fn_dispatchEvent, event)
 
 
-@interface("Entry", None, exposed_in=("Window",))
+@interface("Entry", None)
 class Entry:
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="isFile", getter="get_isFile", side_effect=1), AttributeSpec(name="isDirectory", getter="get_isDirectory", side_effect=1), AttributeSpec(name="name", getter="get_name", side_effect=1), AttributeSpec(name="fullPath", getter="get_fullPath", side_effect=1), AttributeSpec(name="filesystem", getter="get_filesystem", side_effect=1)),
@@ -119,18 +175,18 @@ class Entry:
         except Exception as exc: _post(self._fs._services, _callback(error, "remove", 2, True), exc)
 
 
-@interface("FileEntry", "Entry", exposed_in=("Window",))
+@interface("FileEntry", "Entry")
 class FileEntry(Entry):
     __v8_idl_spec__ = IdlSpec(methods=(MethodSpec(name="file", callback="fn_file", length=2), MethodSpec(name="createWriter", callback="fn_createWriter", length=2)), constructor_behavior=0, has_constructor=1, to_string_tag="FileEntry")
     def fn_file(self, success=MISSING, error=None, *_extra):
         if success is MISSING: raise missing_error("FileEntry", "file", 1, 0)
-        _post(self._fs._services, _callback(success, "file", 1), File(self._path))
+        _post(self._fs._services, _callback(success, "file", 1), _file_from_path(self._path))
     def fn_createWriter(self, success=MISSING, error=None, *_extra):
         if success is MISSING: raise missing_error("FileEntry", "createWriter", 1, 0)
         _post(self._fs._services, _callback(success, "createWriter", 1), FileWriter(self._path, self._fs._services))
 
 
-@interface("DirectoryReader", None, exposed_in=("Window",))
+@interface("DirectoryReader", None)
 class DirectoryReader:
     __v8_idl_spec__ = IdlSpec(methods=(MethodSpec(name="readEntries", callback="fn_readEntries", length=1),), constructor_behavior=0, has_constructor=1, to_string_tag="DirectoryReader")
     def __init__(self, fs, path, **_): self._fs, self._path, self._done = fs, Path(path), False
@@ -141,7 +197,7 @@ class DirectoryReader:
         _post(self._fs._services, _callback(success, "readEntries", 1), result)
 
 
-@interface("DirectoryEntry", "Entry", exposed_in=("Window",))
+@interface("DirectoryEntry", "Entry")
 class DirectoryEntry(Entry):
     __v8_idl_spec__ = IdlSpec(methods=(MethodSpec(name="createReader", callback="fn_createReader"), MethodSpec(name="getFile", callback="fn_getFile", length=3), MethodSpec(name="getDirectory", callback="fn_getDirectory", length=3), MethodSpec(name="removeRecursively", callback="fn_removeRecursively", length=2)), constructor_behavior=0, has_constructor=1, to_string_tag="DirectoryEntry")
     def fn_createReader(self, *_extra): return DirectoryReader(self._fs, self._path)
@@ -167,7 +223,7 @@ class DirectoryEntry(Entry):
         except Exception as exc: _post(self._fs._services, _callback(error, "removeRecursively", 2, True), exc)
 
 
-@interface("DOMFileSystem", None, exposed_in=("Window",))
+@interface("DOMFileSystem", None)
 class DOMFileSystem:
     __v8_idl_spec__ = IdlSpec(attributes=(AttributeSpec(name="name", getter="get_name", side_effect=1), AttributeSpec(name="root", getter="get_root", side_effect=1)), constructor_behavior=0, has_constructor=1, to_string_tag="FileSystem")
     def __init__(self, name, root, services=None, origin="null", **_): self._name, self._root, self._services, self._origin = name, Path(root), services, origin; self._root.mkdir(parents=True, exist_ok=True)
@@ -190,3 +246,22 @@ def request_file_system(window, kind, size, success, error):
     origin = getattr(getattr(window._services, "realm_services", None), "url", "null")
     fs = FileSystem("temporary" if kind == 0 else "persistent", root, services=window._services, origin=origin)
     _post(window._services, success, fs)
+
+
+# ``FileWriter`` owns six handler attributes that ``EventTarget`` does not
+# declare, so they are installed here the way ``dom.events`` installs its own.
+FileWriter.__v8_idl_spec__ = FileWriter.__v8_idl_spec__.replace(
+    attributes=FileWriter.__v8_idl_spec__.attributes
+    + _install_handler_slots(FileWriter, _WRITER_HANDLERS)
+)
+
+
+FEATURE = FeatureImplementation({
+    "DOMFileSystem": DOMFileSystem,
+    "Entry": Entry,
+    "DirectoryEntry": DirectoryEntry,
+    "FileEntry": FileEntry,
+    "DirectoryReader": DirectoryReader,
+    "FileWriter": FileWriter,
+    "File": File,
+})

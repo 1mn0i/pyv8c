@@ -104,7 +104,7 @@ class ErrorEvent(Event):
     def get_error(self): return self.error
 
 
-@interface('ProgressEvent', 'Event', exposed_in=('Window', 'DedicatedWorker', 'SharedWorker'))
+@interface('ProgressEvent', 'Event')
 class ProgressEvent(Event):
     __v8_idl_spec__ = IdlSpec(
         attributes=(

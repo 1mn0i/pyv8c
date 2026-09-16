@@ -1,10 +1,8 @@
 """Navigator, geolocation, and browser-compatible plugin collections."""
-import math
 import time
 
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagArrayProto, V8Attribute
 
 from ...engine.features import FeatureImplementation, LazyValueStore, interface
 from ...foundation.arguments import (
@@ -18,36 +16,14 @@ from ...foundation.arguments import (
     missing_error,
 )
 from ...foundation.environment import BrowserEnvironment, MimeTypeConfig
-from ...foundation.errors import LegacyPropertyError, V8TypeError
-from ...foundation.indexed_properties import ReadOnlyIndexedPropertyMixin
+from ...foundation.errors import V8TypeError
+from ...foundation.realm import post_or_call
 from ..dom.events import EventTarget
-
-_ITERABLE_FLAGS = (
-    FlagArrayProto.iterator | FlagArrayProto.entries | FlagArrayProto.keys
-    | FlagArrayProto.values | FlagArrayProto.forEach
-)
-_NAMED_ATTRIBUTES = V8Attribute.ReadOnly | V8Attribute.DontEnum
-_OBJECT_PROTOTYPE_NAMES = frozenset((
-    "constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty",
-    "__lookupGetter__", "__lookupSetter__", "isPrototypeOf",
-    "propertyIsEnumerable", "toString", "valueOf", "__proto__", "toLocaleString",
-))
+from ..dom.mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
+from ..dom.utils import ITERABLE_FLAGS
 
 
-def _unsigned_long(value):
-    """Apply Web IDL unsigned-long conversion used by item(index)."""
-    if value is pyv8.Undefined or value is pyv8.Null or value is None:
-        return 0
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return 0
-    if not math.isfinite(numeric):
-        return 0
-    return int(numeric) % (2 ** 32)
-
-
-class _LegacyNamedCollection(ReadOnlyIndexedPropertyMixin):
+class _LegacyNamedCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
     """Readonly indexed and named properties shared by plugin collections."""
 
     __v8_idl_spec__ = IdlSpec(
@@ -58,52 +34,12 @@ class _LegacyNamedCollection(ReadOnlyIndexedPropertyMixin):
         name_enum="__v8_name_enum__",
     )
 
-    _prototype_names = _OBJECT_PROTOTYPE_NAMES | {"length", "item", "namedItem"}
-
-    def _supported_names(self):
-        raise NotImplementedError
-
-    def _named_item(self, name):
-        raise NotImplementedError
-
-    def _visible_names(self):
-        return [name for name in self._supported_names() if name not in self._prototype_names]
-
-    def __v8_name_get__(self, name):
-        if not isinstance(name, str) or name not in self._visible_names():
-            return None
-        return self._named_item(name)
-
-    def __v8_name_set__(self, name, value):
-        if isinstance(name, str) and name in self._visible_names():
-            raise LegacyPropertyError.named(
-                "set", name, self._interface_name(),
-                "Named property setter is not supported.",
-            )
-        return None
-
-    def __v8_name_query__(self, name):
-        if not isinstance(name, str):
-            return None
-        return _NAMED_ATTRIBUTES if name in self._visible_names() else None
-
-    def __v8_name_del__(self, name):
-        if isinstance(name, str) and name in self._visible_names():
-            raise LegacyPropertyError.named(
-                "delete", name, self._interface_name(),
-                "Named property deleter is not supported.",
-            )
-        return None
-
-    def __v8_name_enum__(self):
-        return self._visible_names()
-
     def _item_argument(self, args, api_name):
         if not args:
             raise V8TypeError(
                 f"Failed to execute 'item' on '{api_name}': 1 argument required, but only 0 present."
             )
-        return _unsigned_long(args[0])
+        return integer(args[0], bits=32)
 
     def _named_argument(self, args, api_name):
         if not args:
@@ -122,7 +58,7 @@ class _LegacyNamedCollection(ReadOnlyIndexedPropertyMixin):
         return self._named_item(self._named_argument(args, self._interface_name()))
 
 
-@interface('MimeType', None, exposed_in=('Window',))
+@interface('MimeType', None)
 class MimeType:
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -148,7 +84,7 @@ class MimeType:
     def get_enabledPlugin(self): return self._enabled_plugin if self._enabled_plugin is not None else pyv8.Null
 
 
-@interface('Plugin', None, exposed_in=('Window',))
+@interface('Plugin', None)
 class Plugin(_LegacyNamedCollection):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -166,7 +102,7 @@ class Plugin(_LegacyNamedCollection):
         constructor_behavior=0,
         to_string_tag="Plugin",
         has_constructor=1,
-        array=_ITERABLE_FLAGS,
+        array=ITERABLE_FLAGS,
     )
 
     def __init__(self, config, **_):
@@ -182,7 +118,7 @@ class Plugin(_LegacyNamedCollection):
     def get_description(self): return self._config.description
 
 
-@interface('PluginArray', None, exposed_in=('Window',))
+@interface('PluginArray', None)
 class PluginArray(_LegacyNamedCollection):
     _prototype_names = _LegacyNamedCollection._prototype_names | {"refresh"}
     __v8_idl_spec__ = IdlSpec(
@@ -197,7 +133,7 @@ class PluginArray(_LegacyNamedCollection):
         constructor_behavior=0,
         to_string_tag="PluginArray",
         has_constructor=1,
-        array=_ITERABLE_FLAGS,
+        array=ITERABLE_FLAGS,
     )
 
     def __init__(self, configs=(), **_):
@@ -215,7 +151,7 @@ class PluginArray(_LegacyNamedCollection):
         return None
 
 
-@interface('MimeTypeArray', None, exposed_in=('Window',))
+@interface('MimeTypeArray', None)
 class MimeTypeArray(_LegacyNamedCollection):
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
@@ -228,7 +164,7 @@ class MimeTypeArray(_LegacyNamedCollection):
         constructor_behavior=0,
         to_string_tag="MimeTypeArray",
         has_constructor=1,
-        array=_ITERABLE_FLAGS,
+        array=ITERABLE_FLAGS,
     )
 
     def __init__(self, plugins=(), **_):
@@ -254,7 +190,7 @@ def create_plugin_collections(environment):
     return plugins, MimeTypeArray(plugins._plugins)
 
 
-@interface('Geolocation', None, exposed_in=('Window',))
+@interface('Geolocation', None)
 class Geolocation:
     __v8_idl_spec__ = IdlSpec(
         methods=(
@@ -357,7 +293,7 @@ class Geolocation:
         self._watchers.pop(int(ident), None)
 
 
-@interface('NetworkInformation', 'EventTarget', exposed_in=('Window',))
+@interface('NetworkInformation', 'EventTarget')
 class NetworkInformation(EventTarget):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -391,7 +327,7 @@ class NetworkInformation(EventTarget):
     def set_ontypechange(self, value): self._set_handler("ontypechange", event_handler(value))
 
 
-@interface('BatteryManager', 'EventTarget', exposed_in=('Window',))
+@interface('BatteryManager', 'EventTarget')
 class BatteryManager(EventTarget):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -435,7 +371,7 @@ class BatteryManager(EventTarget):
     def set_onlevelchange(self, value): self._set_handler("onlevelchange", event_handler(value))
 
 
-@interface('DeprecatedStorageQuota', None, exposed_in=('Window',))
+@interface('DeprecatedStorageQuota', None)
 class DeprecatedStorageQuota:
     __v8_idl_spec__ = IdlSpec(
         methods=(
@@ -457,21 +393,12 @@ class DeprecatedStorageQuota:
             return None
         return callback_value(value)
 
-    def _post(self, callback, *args):
-        if callback is None:
-            return
-        task_services = getattr(self._services, "task_services", None)
-        if task_services is None:
-            callback(*args)
-        else:
-            task_services.post_task(lambda: callback(*args))
-
     def fn_queryUsageAndQuota(self, success=MISSING, error=None, *_extra):
         if success is MISSING:
             raise missing_error('DeprecatedStorageQuota', 'queryUsageAndQuota', 1, 0, constructor=False)
         success = callback_value(success)
         self._optional_callback(error)
-        self._post(success, self._config.usage, self._config.quota)
+        post_or_call(self._services, success, self._config.usage, self._config.quota)
 
     def fn_requestQuota(self, requested=MISSING, success=None, error=None, *_extra):
         if requested is MISSING:
@@ -479,7 +406,7 @@ class DeprecatedStorageQuota:
         requested = integer(requested, bits=64)
         success = self._optional_callback(success)
         self._optional_callback(error)
-        self._post(success, min(requested, self._config.quota))
+        post_or_call(self._services, success, min(requested, self._config.quota))
 
 
 class _NavigatorFeatureValues(LazyValueStore):

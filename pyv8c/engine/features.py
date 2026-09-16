@@ -15,13 +15,20 @@ from types import MappingProxyType
 
 @dataclass(frozen=True)
 class InterfaceSpec:
+    """What a Feature implementation class declares about its interface.
+
+    Which realms expose an interface is deliberately *not* declared here: the
+    Chromium baseline owns that field (``InterfaceCatalog.exposed_names`` reads
+    it, and the extractor fills it from the IDL ``[Exposed=...]`` attribute), so
+    a second copy on the class could only ever drift out of step with it.
+    """
+
     name: str
     parent: str | None
-    exposed_in: tuple[str, ...] = ("Window", "Worker")
 
 
-def interface(name, parent, *, exposed_in=("Window", "Worker")):
-    declaration = InterfaceSpec(name, parent, tuple(exposed_in))
+def interface(name, parent):
+    declaration = InterfaceSpec(name, parent)
 
     def decorate(cls):
         cls.__idl_spec__ = declaration
@@ -137,19 +144,6 @@ class LazyValueStore:
         raise NotImplementedError
 
 
-class WindowFeatureValues(LazyValueStore):
-    """Per-Window identity cache owned by one :class:`FeatureRuntime`."""
-
-    __slots__ = ("_runtime", "_window")
-
-    def __init__(self, runtime, window):
-        super().__init__()
-        self._runtime, self._window = runtime, window
-
-    def _create_value(self, slot):
-        return self._runtime.create_window_value(slot, self._window)
-
-
 class FeatureRuntime:
     """Loads feature modules once and exposes their classes to one Universe."""
 
@@ -238,9 +232,6 @@ class FeatureRuntime:
     def interface_group(self, name):
         spec = self.catalog.for_interface(name)
         return spec.interfaces if spec is not None and spec.atomic else (name,)
-
-    def values_for(self, window):
-        return WindowFeatureValues(self, window)
 
     def create_window_value(self, slot, window):
         spec = self.catalog.for_window_slot(slot)

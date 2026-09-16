@@ -6,7 +6,9 @@ pytest.importorskip("pyv8")
 import pyv8
 
 from pyv8c import Browser
-from pyv8c.web.dom.model import HTML_CLASSES, Element, HTMLAllCollection, HTMLCollection
+from pyv8c.web.dom.collections import HTMLAllCollection, HTMLCollection
+from pyv8c.web.dom.html_classes import HTML_CLASSES
+from pyv8c.web.dom.html_elements import Element
 
 DOCUMENT = (
     "<html><head><title>t</title></head><body>"

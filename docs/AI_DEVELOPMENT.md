@@ -45,7 +45,7 @@ git diff --check
 
 按改动范围额外运行：
 
-- Feature/懒加载：`tests/unit/test_lazy_interface_modules.py`、`tests/unit/test_window_lazy_bom.py`、`tests/integration/test_lazy_interfaces.py`。
+- Feature/懒加载：`tests/unit/test_lazy_interface_modules.py`、`tests/unit/test_window_lazy_bom.py`、`tests/integration/test_lazy_interfaces.py`，以及方法入口 Feature 的接口组物化：`tests/browser/test_filesystem_api.py`。
 - IndexedDB：`tests/integration/test_indexeddb.py`。
 - DevTools：`tests/browser/test_devtools.py`。
 - 绑定编译和 baseline：`tests/unit/test_idl_compilation.py`、`tests/unit/test_interface_extractor.py`、`tests/integration/test_baseline_versions.py`。

@@ -16,11 +16,11 @@ from ...foundation.arguments import (
 )
 from ...foundation.errors import InvalidStateError
 from ..dom.events import EventTarget
+from ..fetch.clone import message_transfer
 from ..fetch.events import ErrorEvent, MessageEvent
-from .clone import message_transfer
 
 
-@interface('WorkerGlobalScope', 'EventTarget', exposed_in=('Worker',))
+@interface('WorkerGlobalScope', 'EventTarget')
 class WorkerGlobalScope(EventTarget):
     __v8_idl_spec__ = IdlSpec(
         global_this=True,
@@ -67,7 +67,7 @@ class WorkerGlobalScope(EventTarget):
         self._runtime.stop()
 
 
-@interface('DedicatedWorkerGlobalScope', 'WorkerGlobalScope', exposed_in=('Worker',))
+@interface('DedicatedWorkerGlobalScope', 'WorkerGlobalScope')
 class DedicatedWorkerGlobalScope(WorkerGlobalScope):
     __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
     pass

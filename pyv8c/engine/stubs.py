@@ -62,11 +62,10 @@ class StubFactory:
 
     def handler(self, interface_name, method_name):
         def handler(*args):
-            # Returning None tells V8 that the interceptor did not handle it.
+            # Returning None tells V8 that the interceptor did not handle it;
+            # enum interceptors report "nothing to enumerate" with an empty tuple.
             if method_name.endswith("enum__"):
                 return ()
-            if method_name.endswith("query__") or method_name.endswith("del__"):
-                return None
             return None
         handler.__name__ = f"_pyv8c_stub_{method_name}_{interface_name}"
         return mark_stub(handler)

@@ -109,6 +109,15 @@ class ScriptController:
                 target.after_script()
 
     def execute_script(self, node, source, filename=None):
+        """Run one classic script with ``document.currentScript`` set to *node*.
+
+        The IDL attribute is only non-null while the script is on the stack, so
+        the value is cleared again before an error handler runs and the previous
+        one is restored for a caller that is itself executing a script.
+        """
+        document = self.page.document
+        previous = document.current_script
+        document.current_script = node
         try:
             if str(getattr(node, "get_type", lambda: "")() or "").lower() == "module":
                 self.execute_module(source, filename or self.page.url, set())
@@ -116,8 +125,11 @@ class ScriptController:
                 self.evaluate(source, filename=filename or self.page.url)
             return True
         except BaseException as exc:
+            document.current_script = previous
             self.page.lifecycle.dispatch_script_error(node, exc)
             return False
+        finally:
+            document.current_script = previous
 
     def execute_module(self, source, filename, trail):
         """Execute static module imports in dependency-first order.

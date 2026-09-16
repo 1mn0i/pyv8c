@@ -26,7 +26,7 @@ from ..foundation.lifecycle import ResourceScope
 from ..foundation.tasks import TaskQueue
 from ..foundation.urls import origin_string, origin_tuple
 from ..web.bom.window import Window
-from ..web.dom.model import Document
+from ..web.dom.document import Document
 from ..web.network.backend import CronetNetworkBackend
 from ..web.network.cookies import CookieJar
 from .bootstrap import bootstrap_runtime

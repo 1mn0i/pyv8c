@@ -78,6 +78,7 @@ class DocumentServices(Protocol):
     def parser_script_start(self, node) -> None: ...
     def parser_script_complete(self, node, source) -> None: ...
     def parser_is_blocked(self) -> bool: ...
+    def write_markup(self, markup: str) -> bool: ...
 
 
 @runtime_checkable
@@ -101,7 +102,7 @@ class ContextServices(Protocol):
 
 __all__ = [
     "RealmServices", "TaskServices", "ResourceServices", "DocumentServices",
-    "WorkerServices", "ContextServices", "realm_of",
+    "WorkerServices", "ContextServices", "realm_of", "post_or_call",
 ]
 
 
@@ -117,3 +118,21 @@ def realm_of(obj) -> Any:
     if services is None:
         services = getattr(obj, "_services", None)
     return getattr(services, "realm_services", services)
+
+
+def post_or_call(services, callback, *args) -> None:
+    """Deliver ``callback`` through the task queue, or run it when there is none.
+
+    Web API objects are routinely built without a realm -- by tests, and by the
+    entry points that hand them a bare environment -- so they have no
+    ``task_services`` to post to.  The DOM still has to make progress in that
+    case, so the callback runs synchronously.  A ``None`` callback is a no-op,
+    which is how the optional-callback APIs spell "the caller passed none".
+    """
+    if callback is None:
+        return
+    task_services = getattr(services, "task_services", None) if services is not None else None
+    if task_services is None:
+        callback(*args)
+    else:
+        task_services.post_task(lambda: callback(*args))

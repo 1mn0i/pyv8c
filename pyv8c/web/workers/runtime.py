@@ -4,8 +4,8 @@ import threading
 
 from ...foundation.executor import RealmExecutor
 from ...foundation.lifecycle import ResourceScope
+from ..fetch.clone import structured_clone
 from ..fetch.events import MessageEvent
-from .clone import structured_clone
 
 
 class WorkerRuntime:

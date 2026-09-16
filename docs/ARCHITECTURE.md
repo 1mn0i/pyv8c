@@ -60,7 +60,7 @@ FEATURE = FeatureImplementation(
 )
 ```
 
-Runtime 负责依赖先后、循环检测、接口映射完整性、模块加载失败回滚和同一 Feature 的单次加载。IndexedDB、Navigator、WebSocket、Worker 是 Optional Feature；首次访问全局构造器或 Window 槽位时才加载。
+Runtime 负责依赖先后、循环检测、接口映射完整性、模块加载失败回滚和同一 Feature 的单次加载。IndexedDB、Navigator、WebSocket、Worker、FileSystem 是 Optional Feature；首次访问全局构造器或 Window 槽位时才加载。以方法为唯一入口的 Feature（旧 FileSystem 的 `webkitRequestFileSystem`）由该方法先 `materialize_interface()` 提交自己的接口组，再向页面交出对象。
 
 ### Feature 内对象惰性创建
 

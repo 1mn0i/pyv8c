@@ -35,19 +35,26 @@ class WorkerContext:
     debug_parent: Optional[Any]
 
 
-class _RealmCapability:
-    """Realm identity, scripting and task posting (implements RealmServices)."""
+class _TaskSource:
+    """Task-queue access shared by the capabilities that post to the loop."""
 
     def __init__(self, owner):
         self._owner = owner
 
     @property
-    def url(self):
-        return self._owner.window.location.href
-
-    @property
     def closed(self):
         return self._owner._tasks.closed
+
+    def post_task(self, callback):
+        self._owner._tasks.post(callback)
+
+
+class _RealmCapability(_TaskSource):
+    """Realm identity, scripting and task posting (implements RealmServices)."""
+
+    @property
+    def url(self):
+        return self._owner.window.location.href
 
     @property
     def environment(self):
@@ -56,9 +63,6 @@ class _RealmCapability:
     @property
     def origin(self):
         return self._owner._origin
-
-    def post_task(self, callback):
-        self._owner._tasks.post(callback)
 
     def make_promise(self):
         return self._owner._scripts.make_promise()
@@ -103,18 +107,8 @@ class _RealmCapability:
 
 
 
-class _TaskCapability:
+class _TaskCapability(_TaskSource):
     """Event-loop task sources (implements TaskServices)."""
-
-    def __init__(self, owner):
-        self._owner = owner
-
-    @property
-    def closed(self):
-        return self._owner._tasks.closed
-
-    def post_task(self, callback):
-        self._owner._tasks.post(callback)
 
     def schedule(self, callback, delay, repeat=False):
         return self._owner._tasks.schedule(callback, delay, repeat)
@@ -235,6 +229,9 @@ class _DocumentCapability:
 
     def parser_is_blocked(self):
         return self._owner._navigation.parser_is_blocked()
+
+    def write_markup(self, markup):
+        return self._owner._navigation.write_markup(markup)
 
     def node_adopted(self, node):
         return self._owner._scripts.node_adopted(node)
