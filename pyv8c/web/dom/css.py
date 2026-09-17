@@ -234,11 +234,20 @@ def parse_declarations(raw):
 @interface("CSSStyleDeclaration", None)
 class CSSStyleDeclaration:
     __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="cssText", getter="get_cssText", setter="set_cssText"), AttributeSpec(name="length", getter="get_length", side_effect=1), AttributeSpec(name="parentRule", getter="get_parentRule", side_effect=1), AttributeSpec(name="cssFloat", getter="get_cssFloat", setter="set_cssFloat")),
-        methods=(MethodSpec(name="getPropertyPriority", callback="fn_getPropertyPriority", length=1, side_effect=1), MethodSpec(name="getPropertyValue", callback="fn_getPropertyValue", length=1, side_effect=1), MethodSpec(name="item", callback="fn_item", length=1, side_effect=1), MethodSpec(name="removeProperty", callback="fn_removeProperty", length=1), MethodSpec(name="setProperty", callback="fn_setProperty", length=2)),
+        attributes=(AttributeSpec(name="cssText", getter="get_cssText", setter="set_cssText"),
+                    AttributeSpec(name="length", getter="get_length", side_effect=1),
+                    AttributeSpec(name="parentRule", getter="get_parentRule", side_effect=1),
+                    AttributeSpec(name="cssFloat", getter="get_cssFloat", setter="set_cssFloat")),
+        methods=(MethodSpec(name="getPropertyPriority", callback="fn_getPropertyPriority", length=1, side_effect=1),
+                 MethodSpec(name="getPropertyValue", callback="fn_getPropertyValue", length=1, side_effect=1),
+                 MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
+                 MethodSpec(name="removeProperty", callback="fn_removeProperty", length=1),
+                 MethodSpec(name="setProperty", callback="fn_setProperty", length=2)),
         constructor_behavior=0, has_constructor=1, to_string_tag="CSSStyleDeclaration", array=True,
-        name_get="__v8_name_get__", name_set="__v8_name_set__", name_query="__v8_name_query__", name_del="__v8_name_del__", name_enum="__v8_name_enum__",
-        index_get="__v8_index_get__", index_set="__v8_index_set__", index_query="__v8_index_query__", index_del="__v8_index_del__", index_enum="__v8_index_enum__",
+        name_get="__v8_name_get__", name_set="__v8_name_set__", name_query="__v8_name_query__",
+        name_del="__v8_name_del__", name_enum="__v8_name_enum__",
+        index_get="__v8_index_get__", index_set="__v8_index_set__", index_query="__v8_index_query__",
+        index_del="__v8_index_del__", index_enum="__v8_index_enum__",
     )
     def __init__(self, element=None, **_): self._element = element
     def _declarations(self):
@@ -263,7 +272,8 @@ class CSSStyleDeclaration:
     def _value(self, name):
         name = _property_name(name)
         return next((v for n, v, _ in self._declarations() if n == name), "")
-    def get_cssText(self): return "".join(f"{n}: {v}{' !important' if p else ''}; " for n, v, p in self._declarations()).strip()
+    def get_cssText(self):
+        return "".join(f"{n}: {v}{' !important' if p else ''}; " for n, v, p in self._declarations()).strip()
     def set_cssText(self, value):
         self._write(parse_declarations(dom_string(value)))
     def get_length(self): return len(self._declarations())
@@ -282,7 +292,9 @@ class CSSStyleDeclaration:
         return declarations[index][0] if 0 <= index < len(declarations) else ""
     def fn_removeProperty(self, name=MISSING, *_extra):
         if name is MISSING: raise missing_error("CSSStyleDeclaration", "removeProperty", 1, 0)
-        name = _property_name(name); declarations = self._declarations(); old = next((v for n, v, _ in declarations if n == name), "")
+        name = _property_name(name)
+        declarations = self._declarations()
+        old = next((v for n, v, _ in declarations if n == name), "")
         self._write([item for item in declarations if item[0] != name]); return old
     def fn_setProperty(self, name=MISSING, value=MISSING, priority="", *_extra):
         if name is MISSING: raise missing_error("CSSStyleDeclaration", "setProperty", 2, 0)

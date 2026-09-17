@@ -20,7 +20,7 @@ python -c "import pyv8, pyv8c; print(pyv8.__file__); print(pyv8c.__file__)"
 3. 判断修改属于 platform、foundation、engine、web Feature 还是 `_pyv8` 原生层。
 4. 先补专项测试，再修改实现。
 5. 检查 capability 边界、Feature 所有权、Realm 物化和关闭顺序。
-6. 运行专项测试、完整测试、Ruff 和 diff 检查。
+6. 运行专项测试、完整测试和 diff 检查。
 
 ## 常用验证
 
@@ -30,8 +30,6 @@ python -m pytest tests/unit/test_lazy_interface_modules.py tests/integration/tes
 python -m pytest tests/integration/test_indexeddb.py -q
 python -m pytest tests/browser/test_devtools.py -q
 python -m pytest tests/unit/test_interface_extractor.py tests/unit/test_idl_compilation.py -q
-python -m ruff check pyv8c/foundation
-python -m mypy
 git diff --check
 ```
 

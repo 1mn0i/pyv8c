@@ -407,14 +407,14 @@ class HTMLInputElement(HTMLElement):
         realm = getattr(getattr(self._services, "realm_services", None), "evaluate_script", None)
         if realm is None: return pyv8.Null
         try: return realm(f"new Date({int(parsed)})")
-        except Exception:  # noqa: BLE001 - a missing realm must not break the getter
+        except Exception:  # a missing realm must not break the getter
             return pyv8.Null
     def set_valueAsDate(self, value):
         if is_nullish(value):
             self.set_value("")
             return
         try: milliseconds = float(value.getTime.call(value))
-        except Exception:  # noqa: BLE001 - non-Date values are ignored, like Chrome
+        except Exception:  # non-Date values are ignored, like Chrome
             return
         self.set_value(self._format_value(self.get_type(), milliseconds))
 
@@ -793,7 +793,7 @@ class HTMLInputElement(HTMLElement):
         if kind == "month": return moment.strftime("%Y-%m")
         if kind == "week":
             year, week, _ = moment.isocalendar()
-            return "%04d-W%02d" % (year, week)
+            return f"{year:04d}-W{week:02d}"
         if kind == "time": return moment.strftime("%H:%M:%S") if moment.second or moment.microsecond else moment.strftime("%H:%M")
         return moment.strftime("%Y-%m-%dT%H:%M:%S") if moment.second else moment.strftime("%Y-%m-%dT%H:%M")
     def _format_number(self, number):

@@ -194,7 +194,7 @@ class NavigationController:
         self.parsing = True
         try:
             complete = self.parser.run()
-        except BaseException as exc:
+        except BaseException as exc:  # a script error is dispatched, not raised
             self.parsing = False
             self.page.lifecycle.dispatch_script_error(None, exc)
             complete = True

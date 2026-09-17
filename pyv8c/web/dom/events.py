@@ -73,34 +73,22 @@ class Event:
         attributes=(
             AttributeSpec(name="type", getter="get_type", side_effect=1),
             AttributeSpec(name="target", getter="get_target", side_effect=1),
-            AttributeSpec(
-                name="currentTarget", getter="get_currentTarget", side_effect=1
-            ),
+            AttributeSpec(name="currentTarget", getter="get_currentTarget", side_effect=1),
             AttributeSpec(name="bubbles", getter="get_bubbles", side_effect=1),
             AttributeSpec(name="cancelable", getter="get_cancelable", side_effect=1),
-            AttributeSpec(
-                name="defaultPrevented", getter="get_defaultPrevented", side_effect=1
-            ),
+            AttributeSpec(name="defaultPrevented", getter="get_defaultPrevented", side_effect=1),
             AttributeSpec(name="eventPhase", getter="get_eventPhase", side_effect=1),
-            AttributeSpec(
-                name="cancelBubble",
-                getter="get_cancelBubble",
-                setter="set_cancelBubble",
-            ),
+            AttributeSpec(name="cancelBubble", getter="get_cancelBubble", setter="set_cancelBubble"),
             AttributeSpec(name="timeStamp", getter="get_timeStamp", side_effect=1),
             AttributeSpec(name="isTrusted", getter="get_isTrusted", side_effect=1),
             AttributeSpec(name="composed", getter="get_composed", side_effect=1),
-            AttributeSpec(
-                name="returnValue", getter="get_returnValue", setter="set_returnValue"
-            ),
+            AttributeSpec(name="returnValue", getter="get_returnValue", setter="set_returnValue"),
             AttributeSpec(name="persisted", getter="get_persisted", side_effect=1),
         ),
         methods=(
             MethodSpec(name="preventDefault", callback="fn_preventDefault"),
             MethodSpec(name="stopPropagation", callback="fn_stopPropagation"),
-            MethodSpec(
-                name="stopImmediatePropagation", callback="fn_stopImmediatePropagation"
-            ),
+            MethodSpec(name="stopImmediatePropagation", callback="fn_stopImmediatePropagation"),
             MethodSpec(name="composedPath", callback="fn_composedPath", side_effect=1),
             MethodSpec(name="initEvent", callback="fn_initEvent", length=3),
         ),
@@ -780,12 +768,8 @@ class EventTarget:
     __v8_idl_spec__ = IdlSpec(
         attributes=(),
         methods=(
-            MethodSpec(
-                name="addEventListener", callback="fn_addEventListener", length=2
-            ),
-            MethodSpec(
-                name="removeEventListener", callback="fn_removeEventListener", length=2
-            ),
+            MethodSpec(name="addEventListener", callback="fn_addEventListener", length=2),
+            MethodSpec(name="removeEventListener", callback="fn_removeEventListener", length=2),
             MethodSpec(name="dispatchEvent", callback="fn_dispatchEvent", length=1),
         ),
         constructor_behavior=1,
@@ -886,7 +870,7 @@ class EventTarget:
                     _js_call(callback_value(callback), listener, event)
             except _CONTROL_EXCEPTIONS:
                 raise
-            except BaseException as exc:  # noqa: BLE001 - reported, then dispatching continues
+            except BaseException as exc:  # reported, then dispatching continues
                 # Letting this escape would make dispatchEvent itself throw and
                 # silently skip every later listener, which no browser does.
                 _report_listener_exception(self, exc)
@@ -910,7 +894,7 @@ class EventTarget:
                         event.defaultPrevented = True
             except _CONTROL_EXCEPTIONS:
                 raise
-            except BaseException as exc:  # noqa: BLE001 - reported, not propagated
+            except BaseException as exc:  # reported, not propagated
                 # The handler slot is a listener with a shorter spelling, and an
                 # exception in it is reported the same way.
                 _report_listener_exception(self, exc)

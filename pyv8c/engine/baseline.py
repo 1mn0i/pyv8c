@@ -13,11 +13,12 @@ import json
 import pickle
 import time
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASELINE_PATH = PACKAGE_ROOT / "baselines" / "interface-baseline.zip"
@@ -73,7 +74,7 @@ class BaselineRepository:
                 if header.get("schema") != 5:
                     return None
                 payload = pickle.load(handle)
-        except Exception:
+        except Exception:  # a corrupt cache simply reads as "not cached"
             return None
         if not isinstance(payload, tuple) or len(payload) != 2:
             return None
@@ -92,7 +93,7 @@ class BaselineRepository:
                             protocol=pickle.HIGHEST_PROTOCOL)
                 pickle.dump((metadata, interfaces), handle,
                             protocol=pickle.HIGHEST_PROTOCOL)
-        except Exception:
+        except Exception:  # a failed write is reported by the return value
             return False
         return True
 

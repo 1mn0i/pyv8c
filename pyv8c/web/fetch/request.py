@@ -45,7 +45,8 @@ class Request:
         try:
             parts = urlsplit(self._url)
             valid_url = bool(parts.scheme) and not parts.username and not parts.password
-            parts.port
+            # Reading the port is what rejects a URL whose port cannot be one.
+            _ = parts.port
         except ValueError:
             valid_url = False
         if not valid_url:

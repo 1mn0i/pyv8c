@@ -75,8 +75,6 @@ Feature 相关代码位于 `pyv8c/engine/features.py` 和 `pyv8c/web/features/`�
 ```powershell
 $env:PYTHONPATH = 'D:\src\pyv8env\_pyv8;D:\src\pyv8env\pyv8c'
 python -m pytest -q
-python -m ruff check pyv8c tests
-python -m mypy
 ```
 
 运行时架构和不变量见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，使用配置见 [docs/USAGE.md](docs/USAGE.md)，开发和验证流程见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
@@ -86,6 +84,7 @@ python -m mypy
 - [DevTools](docs/DEVTOOLS.md)
 - [Trace](docs/TRACE.md)
 - [资源加载与拦截](docs/resource-interception.md)
+- [网络引擎与参数](docs/network-engines.md)
 - [Window、iframe 与同源边界](docs/WINDOW_SECURITY.md)
 - [Interface baseline](docs/interface-baseline-fields.md)
 - [AI 接手开发规范](docs/AI_DEVELOPMENT.md)

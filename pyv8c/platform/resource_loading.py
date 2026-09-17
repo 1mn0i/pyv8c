@@ -18,7 +18,7 @@ from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
 from ..foundation.urls import DEFAULT_PORTS, same_origin
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
-from ..web.network.backend import NetworkRequest
+from ..web.network.models import NetworkRequest
 
 
 class RequestHandle:
@@ -247,9 +247,10 @@ class ResourceController:
             response = self._response_from_loader(page.resource_loader(target, request), target)
             self._store_response(target, request, response)
             return response
-        if page.network_backend:
+        backend = page.network_backend
+        if backend is not None and backend.http_available:
             req = self._network_request(target, request, page)
-            raw = page.network_backend.request_sync(req)
+            raw = backend.request_sync(req)
             response = self.apply_response_policy(self.response_object(raw), request)
             self._store_response(target, request, response)
             return response
@@ -353,8 +354,9 @@ class ResourceController:
             # Fixture loaders use the same asynchronous boundary as Cronet.
             page.tasks.post(lambda: deliver(response, error))
             return handle
-        if page.network_backend:
-            handle._transport = page.network_backend.request_async(
+        backend = page.network_backend
+        if backend is not None and backend.http_available:
+            handle._transport = backend.request_async(
                 page.services.task_services, req,
                 lambda raw, error: self.finish_async_response(raw, error, request, deliver),
             )
@@ -526,7 +528,7 @@ class ResourceController:
         try:
             child.set_content(response.body_text(), url=target)
             child.lifecycle.when_loaded(callback)
-        except BaseException:
+        except BaseException:  # a failed document load is reported as False
             callback(False)
 
     def load_iframe(self, iframe):

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 try:
     from PIL import ImageFont
-except Exception:  # pragma: no cover - optional dependency
+except Exception:  # optional dependency  # pragma: no cover
     ImageFont = None
 
 from ...foundation.errors import V8SyntaxError
@@ -36,23 +36,35 @@ def _font(path_candidates, size, weight="400", italic=False):
     if ImageFont is None: return None
     for path in path_candidates:
         try: return ImageFont.truetype(path, max(1, int(round(size))))
-        except Exception: pass
+        except Exception: pass  # the next candidate path is tried
     return None
 
 
 def _font_candidates(families):
-    roots = [os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"), "/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/truetype/liberation2"]
+    roots = [
+        os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"),
+        "/usr/share/fonts/truetype/dejavu",
+        "/usr/share/fonts/truetype/liberation2",
+    ]
     names = []
     for family in families:
         stem = re.sub(r"[^A-Za-z0-9]", "", family).lower()
-        names.extend([f for root in roots if os.path.isdir(root) for f in (os.listdir(root)) if stem in re.sub(r"[^A-Za-z0-9]", "", f).lower() and f.lower().endswith((".ttf", ".otf"))])
+        names.extend(
+            f for root in roots if os.path.isdir(root)
+            for f in os.listdir(root)
+            if stem in re.sub(r"[^A-Za-z0-9]", "", f).lower() and f.lower().endswith((".ttf", ".otf"))
+        )
     names.extend(["arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"])
     return [os.path.join(root, name) for root in roots for name in names if os.path.exists(os.path.join(root, name))]
 
 
 def text_width(text, style):
     size = _px(style.get("font-size", "16px"), 16) or 16
-    font = _font(_font_candidates([x.strip().strip('"\'') for x in style.get("font-family", "sans-serif").split(",")]), size, style.get("font-weight", "400"), style.get("font-style") == "italic")
+    families = [x.strip().strip('"\'') for x in style.get("font-family", "sans-serif").split(",")]
+    font = _font(
+        _font_candidates(families), size,
+        style.get("font-weight", "400"), style.get("font-style") == "italic",
+    )
     if font is not None:
         try: width = font.getlength(text)
         except AttributeError: width = font.getbbox(text)[2]
@@ -113,7 +125,10 @@ def _cascade(element, rules):
     parent = getattr(element, "parentElement", None)
     if parent is not None:
         inherited = _cascade(parent, rules)
-        values.update({key: inherited.get(key, default) for key, default in INITIAL_VALUES.items() if key in INHERITED_PROPERTIES})
+        values.update({
+            key: inherited.get(key, default)
+            for key, default in INITIAL_VALUES.items() if key in INHERITED_PROPERTIES
+        })
     for selectors, declarations in rules:
         if not any(_selector_matches(element, part) for part in selectors):
             continue
@@ -143,7 +158,8 @@ def layout(element, containing_width=None, top=0.0, rules=None, style=None):
     if style.get("display") == "none" or not getattr(element, "isConnected", False): return Box()
     if containing_width is None:
         realm = getattr(getattr(element, "_services", None), "realm_services", None)
-        containing_width = getattr(getattr(realm, "environment", None), "viewport", None).width if getattr(getattr(realm, "environment", None), "viewport", None) else 1280
+        viewport = getattr(getattr(realm, "environment", None), "viewport", None)
+        containing_width = viewport.width if viewport else 1280
     padding = _px(style.get("padding", "0"), containing_width)
     border = _px(style.get("border-width", "0"), containing_width)
     width_value = style.get("width", "auto")
@@ -191,7 +207,8 @@ def layout(element, containing_width=None, top=0.0, rules=None, style=None):
 class ComputedStyle(CSSStyleDeclaration):
     def __init__(self, element, values):
         super().__init__(element=element); self._computed_values = values
-    def _declarations(self): return list((name, value, "") for name, value in self._computed_values.items() if value not in ("", None))
+    def _declarations(self):
+        return [(name, value, "") for name, value in self._computed_values.items() if value not in ("", None)]
     def _write(self, declarations): return None
 
 

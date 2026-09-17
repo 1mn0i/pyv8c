@@ -105,9 +105,7 @@ class WindowProxy:
             AttributeSpec(name="frames", getter="get_frames", side_effect=1),
             AttributeSpec(name="length", getter="get_length", side_effect=1),
             AttributeSpec(name="closed", getter="get_closed", side_effect=1),
-            AttributeSpec(
-                name="location", getter="get_location", setter="set_location"
-            ),
+            AttributeSpec(name="location", getter="get_location", setter="set_location"),
         ),
         methods=(
             MethodSpec(name="close", callback="fn_close"),

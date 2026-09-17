@@ -76,7 +76,7 @@ class WorkerRuntime:
                 finally:
                     if self.debug_target is not None:
                         self.debug_target.after_script()
-        except BaseException as exc:
+        except BaseException as exc:  # a worker's failure is reported, not raised
             self._report_error(exc)
             self._stop.set()
             self._cleanup_owner()
@@ -90,7 +90,7 @@ class WorkerRuntime:
             self._scope.fn_dispatchEvent(MessageEvent("message", {
                 "data": value, "origin": self.services.realm_services.url,
             }))
-        except BaseException as exc:
+        except BaseException as exc:  # a message error is reported, not raised
             self._report_error(exc)
 
     def _cleanup_owner(self):
@@ -125,7 +125,7 @@ class WorkerRuntime:
                     "colno": column,
                     "error": error,
                 }))
-            except BaseException:  # noqa: BLE001 - reporting must not break the worker
+            except BaseException:  # reporting must not break the worker
                 logger.debug("failed to report a worker error", exc_info=True)
         self.services.task_services.post_task(
             lambda: self.owner._receive_uncaught(message, filename, line, column)
@@ -140,7 +140,7 @@ class WorkerRuntime:
             scope.fn_dispatchEvent(PromiseRejectionEvent(event_type, {
                 "promise": promise, "reason": reason,
             }))
-        except BaseException:  # noqa: BLE001 - reporting must not break the worker
+        except BaseException:  # reporting must not break the worker
             logger.debug("failed to report a worker rejection", exc_info=True)
 
     def _report_error(self, exc):

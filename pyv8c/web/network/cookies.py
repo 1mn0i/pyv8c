@@ -1,5 +1,12 @@
-"""Cookie storage and matching for page and network contexts."""
+"""Cookie storage and matching for page and network contexts.
 
+One :class:`CookieJar` belongs to a browser context and is the single store both
+sides of it share: the document reads and writes it through ``document.cookie``,
+the network engines send it and fold responses back into it.  Matching follows
+RFC 6265's host/path/secure rules, with the two views the two callers need --
+``header_for`` (what goes on the wire, ``HttpOnly`` included) and ``document_for``
+(what script may see).
+"""
 import re
 import time
 from dataclasses import dataclass
@@ -21,13 +28,6 @@ _SET_COOKIE_SEPARATOR = re.compile(r",(?=\s*[^;=,\s]+\s*=)")
 
 
 def split_set_cookie(header):
-    """Return the individual ``Set-Cookie`` strings in ``header``.
-
-    HTTP joins repeated ``Set-Cookie`` headers with ``, ``, so one line may
-    carry several cookies.  ``http.cookies.SimpleCookie`` cannot parse that form
-    (it silently yields nothing), so the line is split first; commas that belong
-    to an ``expires`` value are left in place.
-    """
     text = str(header)
     if "," not in text:
         return [text]
@@ -49,6 +49,8 @@ class Cookie:
 
 
 class CookieJar:
+    """The context's single cookie store."""
+
     def __init__(self):
         self._cookies: dict[tuple[str, str, str], Cookie] = {}
         self._lock = RLock()
@@ -62,6 +64,7 @@ class CookieJar:
         parsed_url = urlsplit(url)
         for value in split_set_cookie(header):
             self._add_one_from_response(parsed_url, value)
+
     def _add_one_from_response(self, parsed_url, header):
         cookie = SimpleCookie()
         try: cookie.load(header)
@@ -69,10 +72,13 @@ class CookieJar:
         for morsel in cookie.values():
             domain = (morsel["domain"] or parsed_url.hostname or "").lower().lstrip(".")
             path = morsel["path"] if morsel["path"].startswith("/") else self._default_path(parsed_url.path)
-            self._store(parsed_url, morsel.key, morsel.value, domain=domain, path=path,
-                        secure=bool(morsel["secure"]), host_only=not bool(morsel["domain"]),
-                        http_only=bool(morsel["httponly"]), same_site=str(morsel["samesite"] or "").lower(),
-                        expires=self._parse_expires(morsel["expires"]), max_age=self._parse_max_age(morsel["max-age"]), source="network")
+            self._store(
+                parsed_url, morsel.key, morsel.value, domain=domain, path=path,
+                secure=bool(morsel["secure"]), host_only=not bool(morsel["domain"]),
+                http_only=bool(morsel["httponly"]), same_site=str(morsel["samesite"] or "").lower(),
+                expires=self._parse_expires(morsel["expires"]),
+                max_age=self._parse_max_age(morsel["max-age"]), source="network",
+            )
 
     @staticmethod
     def _default_path(path):
@@ -81,7 +87,7 @@ class CookieJar:
         return path[:path.rfind("/")] or "/"
 
     @staticmethod
-    def _cookie_url(parsed_url): return parsed_url.scheme in ("http", "https") and bool(parsed_url.hostname)
+    def _allows_cookies(parsed_url): return parsed_url.scheme in ("http", "https") and bool(parsed_url.hostname)
 
     @staticmethod
     def _parse_expires(value):
@@ -115,7 +121,7 @@ class CookieJar:
 
     def _store(self, parsed_url, name, value, *, domain, path, secure, host_only,
                http_only=False, same_site="", expires=None, max_age=None, source="script"):
-        if not self._cookie_url(parsed_url): return False
+        if not self._allows_cookies(parsed_url): return False
         host = (parsed_url.hostname or "").lower()
         if domain and not self._domain_matches(host, domain, False): return False
         if secure and parsed_url.scheme not in ("https", "wss") and source == "script": return False
@@ -135,7 +141,7 @@ class CookieJar:
 
     def set_from_document(self, url, assignment):
         parsed_url = urlsplit(str(url))
-        if not self._cookie_url(parsed_url): return False
+        if not self._allows_cookies(parsed_url): return False
         pair, *attributes = str(assignment).split(";")
         if "=" not in pair: return False
         name, value = (part.strip() for part in pair.split("=", 1))
@@ -160,11 +166,17 @@ class CookieJar:
 
     def _for_url(self, url, *, include_http_only):
         parsed = urlsplit(url)
-        if not self._cookie_url(parsed): return ""
+        if not self._allows_cookies(parsed): return ""
         host, path, secure = (parsed.hostname or "").lower(), parsed.path or "/", parsed.scheme in ("https", "wss")
         with self._lock:
             self._purge_expired()
-            matched = [cookie for cookie in self._cookies.values() if (include_http_only or not cookie.http_only) and self._domain_matches(host, cookie.domain, cookie.host_only) and self._path_matches(path, cookie.path) and (not cookie.secure or secure)]
+            matched = [
+                cookie for cookie in self._cookies.values()
+                if (include_http_only or not cookie.http_only)
+                and self._domain_matches(host, cookie.domain, cookie.host_only)
+                and self._path_matches(path, cookie.path)
+                and (not cookie.secure or secure)
+            ]
             matched.sort(key=lambda cookie: (-len(cookie.path), cookie.creation_index))
             return "; ".join(f"{cookie.name}={cookie.value}" for cookie in matched)
 

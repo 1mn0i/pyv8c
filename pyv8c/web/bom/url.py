@@ -166,7 +166,8 @@ class URL:
             parts = urlsplit(value)
             if not parts.scheme or (parts.scheme in SPECIAL_SCHEMES and not parts.netloc):
                 raise V8URIError("Invalid URL")
-            parts.port
+            # Reading the port is what rejects a URL whose port cannot be one.
+            _ = parts.port
         except (ValueError, V8URIError) as exc:
             raise V8TypeError("Invalid URL") from exc
         return urlunsplit(parts)
@@ -298,66 +299,24 @@ class URL:
         attributes=(
             AttributeSpec(name="href", getter="get_href", setter="set_href"),
             AttributeSpec(name="origin", getter="get_origin", side_effect=1),
-            AttributeSpec(
-                name="protocol", getter="get_protocol", setter="set_protocol"
-            ),
-            AttributeSpec(
-                name="username", getter="get_username", setter="set_username"
-            ),
-            AttributeSpec(
-                name="password", getter="get_password", setter="set_password"
-            ),
+            AttributeSpec(name="protocol", getter="get_protocol", setter="set_protocol"),
+            AttributeSpec(name="username", getter="get_username", setter="set_username"),
+            AttributeSpec(name="password", getter="get_password", setter="set_password"),
             AttributeSpec(name="host", getter="get_host", setter="set_host"),
-            AttributeSpec(
-                name="hostname", getter="get_hostname", setter="set_hostname"
-            ),
+            AttributeSpec(name="hostname", getter="get_hostname", setter="set_hostname"),
             AttributeSpec(name="port", getter="get_port", setter="set_port"),
-            AttributeSpec(
-                name="pathname", getter="get_pathname", setter="set_pathname"
-            ),
+            AttributeSpec(name="pathname", getter="get_pathname", setter="set_pathname"),
             AttributeSpec(name="search", getter="get_search", setter="set_search"),
-            AttributeSpec(
-                name="searchParams", getter="get_searchParams", side_effect=1
-            ),
+            AttributeSpec(name="searchParams", getter="get_searchParams", side_effect=1),
             AttributeSpec(name="hash", getter="get_hash", setter="set_hash"),
         ),
         methods=(
             MethodSpec(name="toString", callback="fn_toString", side_effect=1),
             MethodSpec(name="toJSON", callback="fn_toJSON", side_effect=1),
-            MethodSpec(
-                name="canParse",
-                callback="fn_canParse",
-                length=1,
-                side_effect=1,
-                location=FlagLocation.kInterface,
-                receiver_check=FlagReceiverCheck.kDoNotCheck,
-                cross_origin_check=FlagCrossOriginCheck.kDoNotCheck,
-            ),
-            MethodSpec(
-                name="parse",
-                callback="fn_parse",
-                length=1,
-                side_effect=1,
-                location=FlagLocation.kInterface,
-                receiver_check=FlagReceiverCheck.kDoNotCheck,
-                cross_origin_check=FlagCrossOriginCheck.kDoNotCheck,
-            ),
-            MethodSpec(
-                name="createObjectURL",
-                callback="fn_createObjectURL",
-                length=1,
-                location=FlagLocation.kInterface,
-                receiver_check=FlagReceiverCheck.kDoNotCheck,
-                cross_origin_check=FlagCrossOriginCheck.kDoNotCheck,
-            ),
-            MethodSpec(
-                name="revokeObjectURL",
-                callback="fn_revokeObjectURL",
-                length=1,
-                location=FlagLocation.kInterface,
-                receiver_check=FlagReceiverCheck.kDoNotCheck,
-                cross_origin_check=FlagCrossOriginCheck.kDoNotCheck,
-            ),
+            MethodSpec(name="canParse", callback="fn_canParse", length=1, side_effect=1, location=FlagLocation.kInterface, receiver_check=FlagReceiverCheck.kDoNotCheck, cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
+            MethodSpec(name="parse", callback="fn_parse", length=1, side_effect=1, location=FlagLocation.kInterface, receiver_check=FlagReceiverCheck.kDoNotCheck, cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
+            MethodSpec(name="createObjectURL", callback="fn_createObjectURL", length=1, location=FlagLocation.kInterface, receiver_check=FlagReceiverCheck.kDoNotCheck, cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
+            MethodSpec(name="revokeObjectURL", callback="fn_revokeObjectURL", length=1, location=FlagLocation.kInterface, receiver_check=FlagReceiverCheck.kDoNotCheck, cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
         ),
         constructor_behavior=1,
         length=1,

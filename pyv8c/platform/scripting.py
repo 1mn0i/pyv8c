@@ -113,7 +113,7 @@ class ScriptController:
         trail.add(key)
         imports = re.findall(r"(^|;)\s*import\s+([\s\S]*?)\s+from\s+(['\"])([^'\"]+)\3\s*;?", source)
         side_effects = re.findall(r"(?:^|;)\s*import\s*(['\"])([^'\"]+)\1\s*;?", source)
-        for _prefix, clause, _quote, specifier in imports:
+        for _prefix, _clause, _quote, specifier in imports:
             dep_url = urljoin(key, specifier)
             dep = self.page.resources.load_resource(dep_url, {"method": "GET", "mode": "cors"})
             self.execute_module(dep.body_text(), dep.url or dep_url, trail)
@@ -137,7 +137,7 @@ class ScriptController:
                     continue
                 parts = re.split(r"\s+as\s+", item)
                 if len(parts) == 2:
-                    transformed = "const %s = %s;\n%s" % (parts[1].strip(), parts[0].strip(), transformed)
+                    transformed = f"const {parts[1].strip()} = {parts[0].strip()};\n{transformed}"
         self.evaluate(transformed, filename=key)
         self.module_cache[key] = True
 

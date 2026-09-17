@@ -17,7 +17,7 @@ __all__ = ["Screen"]
 class Screen(EventTarget):
     __v8_idl_spec__ = IdlSpec(
         attributes=tuple(
-            (
+
                 AttributeSpec(name=n, getter="get_" + n, side_effect=1)
                 for n in (
                     "width",
@@ -27,7 +27,7 @@ class Screen(EventTarget):
                     "colorDepth",
                     "pixelDepth",
                 )
-            )
+
         ),
         constructor_behavior=0,
         has_constructor=1,

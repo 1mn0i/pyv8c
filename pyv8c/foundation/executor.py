@@ -196,7 +196,7 @@ class RealmExecutor:
             return
         try:
             result = callback(*args, **kwargs)
-        except BaseException as exc:  # noqa: BLE001 - reported below or mirrored
+        except BaseException as exc:  # reported below or mirrored
             if future is None:
                 # post() carries no Future, so this exception has nowhere to
                 # go: mirroring it onto a Future would silently drop it.
@@ -222,7 +222,7 @@ class RealmExecutor:
             try:
                 sink(exc)
                 reported = True
-            except BaseException:  # noqa: BLE001 - reporting must not break the loop
+            except BaseException:  # reporting must not break the loop
                 reported = False
         if not reported:
             logger.opt(exception=exc).error("realm command failed")
@@ -249,7 +249,7 @@ class RealmExecutor:
             return
         try:
             tracker.flush()
-        except BaseException:  # noqa: BLE001 - reporting must not break the loop
+        except BaseException:  # reporting must not break the loop
             logger.debug("failed to report unhandled rejections", exc_info=True)
 
     def _run(self):

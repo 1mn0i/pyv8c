@@ -27,23 +27,14 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
             AttributeSpec(name="status", getter="get_status", side_effect=1),
             AttributeSpec(name="statusText", getter="get_statusText", side_effect=1),
-            AttributeSpec(
-                name="responseText", getter="get_responseText", side_effect=1
-            ),
+            AttributeSpec(name="responseText", getter="get_responseText", side_effect=1),
             AttributeSpec(name="response", getter="get_response", side_effect=1),
         ),
         methods=(
             MethodSpec(name="open", callback="fn_open", length=2),
             MethodSpec(name="send", callback="fn_send"),
-            MethodSpec(
-                name="setRequestHeader", callback="fn_setRequestHeader", length=2
-            ),
-            MethodSpec(
-                name="getResponseHeader",
-                callback="fn_getResponseHeader",
-                length=1,
-                side_effect=1,
-            ),
+            MethodSpec(name="setRequestHeader", callback="fn_setRequestHeader", length=2),
+            MethodSpec(name="getResponseHeader", callback="fn_getResponseHeader", length=1, side_effect=1),
             MethodSpec(name="abort", callback="fn_abort"),
         ),
         constructor_behavior=1,
@@ -96,7 +87,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             parts = urlsplit(resolved)
             if not parts.scheme:
                 raise ValueError("missing scheme")
-            parts.port
+            # Reading the port is what rejects a URL whose port cannot be one.
+            _ = parts.port
         except ValueError as exc:
             raise V8SyntaxError("Invalid URL") from exc
         if not async_value:

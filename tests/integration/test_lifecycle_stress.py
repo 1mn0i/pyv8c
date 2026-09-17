@@ -77,7 +77,7 @@ def test_evaluate_races_page_close(browser):
             while time.monotonic() < deadline:
                 page.evaluate("Math.random()")
             errors.append("no close observed within 5s")
-        except BaseException as exc:  # noqa: BLE001 - close races are expected
+        except BaseException as exc:  # close races are expected
             errors.append(type(exc).__name__)
 
     def closer():
@@ -141,7 +141,7 @@ def test_devtools_pause_supports_cdp_attach_evaluate_detach_and_close():
     def navigate():
         try:
             page.set_content("<script>globalThis.answer = 42;</script>")
-        except BaseException as exc:  # noqa: BLE001 - collected for the test
+        except BaseException as exc:  # collected for the test
             errors.append(exc)
         finally:
             completed.set()
@@ -175,7 +175,7 @@ def test_devtools_pause_supports_cdp_attach_evaluate_detach_and_close():
                         await asyncio.wait_for(ws.recv(), 0.2)
                     except asyncio.TimeoutError:
                         continue
-        except BaseException as exc:  # noqa: BLE001 - collected for the test
+        except BaseException as exc:  # collected for the test
             errors.append(exc)
             probe_done.set()
 

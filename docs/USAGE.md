@@ -98,8 +98,10 @@ finally:
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
 | resource_loader | None | 同步 Python 资源提供函数；离线测试首选 |
-| real_network | False | 为每个 Context 创建可选 cycronet 客户端 |
-| cycronet_options | None | 网络客户端参数；max_workers 单独用于桥接线程池 |
+| real_network | False | 为未指定名字的角色装配默认引擎（HTTP=curl_cffi、WebSocket=websockets） |
+| network_engine / ws_engine | None / None | 分别选择 HTTP 引擎与 WebSocket 引擎；只装其中一半也可以 |
+| network_backend | None | 整体注入引擎实例或工厂，按对象能做的角色填充 |
+| http_options / ws_options | None / None | 分别交给两个引擎的参数；引擎不认识的键在创建 Context 时报错 |
 | resource_interceptor | None | 主动跳过/替换请求，区别于被动 trace |
 | cache / cache_dir | True / None | 允许缓存；只有显式目录才持久化资源响应 |
 | environment | None | 不可变 BrowserEnvironment 或字典 |
@@ -157,7 +159,8 @@ page.evaluate("chrome.csi()")
 
 默认不联网；本地 HTML 用 set_content，导航或外部脚本使用明确的 loader。
 真实网络需要另外安装项目的 network extra，并使用 Browser(real_network=True)。
-完整 loader 契约、响应格式、拦截和缓存风险见 [资源加载](resource-interception.md)。
+`[network]` extra 装的是默认两个引擎（curl_cffi 与 websockets）；network_engine / ws_engine 可分别改选其它已注册引擎（如 `"cronet"`，需装 `[cronet]` extra），http_options / ws_options 传各自的参数。
+选引擎、参数含义、校验规则和自定义引擎见 [网络引擎与参数](network-engines.md)；完整 loader 契约、响应格式、拦截和缓存风险见 [资源加载与拦截](resource-interception.md)。
 
 ## DevTools
 

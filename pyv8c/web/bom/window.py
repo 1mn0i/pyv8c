@@ -117,17 +117,13 @@ class Window(_SchedulingMixin, WindowProperties):
             window_attribute("closed", "get_closed"),
             window_attribute("opener", "get_opener"),
             window_attribute("location", "get_location", "set_location"),
-            window_attribute(
-                "onmessage", "get_onmessage", "set_onmessage", cross_origin=True
-            ),
+            window_attribute("onmessage", "get_onmessage", "set_onmessage", cross_origin=True),
             window_attribute("document", "get_document", cross_origin=True),
             window_attribute("navigator", "get_navigator", cross_origin=True),
             window_attribute("clientInformation", "get_clientInformation", cross_origin=True),
             window_attribute("screen", "get_screen", cross_origin=True),
             window_attribute("localStorage", "get_localStorage", cross_origin=True),
-            window_attribute(
-                "sessionStorage", "get_sessionStorage", cross_origin=True
-            ),
+            window_attribute("sessionStorage", "get_sessionStorage", cross_origin=True),
             window_attribute("history", "get_history", cross_origin=True),
             window_attribute("indexedDB", "get_indexedDB", cross_origin=True),
             window_attribute("innerWidth", "get_innerWidth", cross_origin=True),
@@ -135,9 +131,7 @@ class Window(_SchedulingMixin, WindowProperties):
             window_attribute("outerWidth", "get_outerWidth", cross_origin=True),
             window_attribute("outerHeight", "get_outerHeight", cross_origin=True),
             window_attribute("orientation", "get_orientation", cross_origin=True),
-            window_attribute(
-                "devicePixelRatio", "get_devicePixelRatio", cross_origin=True
-            ),
+            window_attribute("devicePixelRatio", "get_devicePixelRatio", cross_origin=True),
         ),
         methods=(
             window_method("setTimeout", "fn_setTimeout", 1, cross_origin=True),
@@ -145,15 +139,8 @@ class Window(_SchedulingMixin, WindowProperties):
             window_method("setInterval", "fn_setInterval", 1, cross_origin=True),
             window_method("clearInterval", "fn_clearInterval", 1, cross_origin=True),
             window_method("queueMicrotask", "fn_queueMicrotask", 1, cross_origin=True),
-            window_method(
-                "requestAnimationFrame",
-                "fn_requestAnimationFrame",
-                1,
-                cross_origin=True,
-            ),
-            window_method(
-                "cancelAnimationFrame", "fn_cancelAnimationFrame", 1, cross_origin=True
-            ),
+            window_method("requestAnimationFrame", "fn_requestAnimationFrame", 1, cross_origin=True),
+            window_method("cancelAnimationFrame", "fn_cancelAnimationFrame", 1, cross_origin=True),
             window_method("fetch", "fn_fetch", 1, cross_origin=True),
             window_method("close", "fn_close"),
             window_method("focus", "fn_focus"),
@@ -229,6 +216,7 @@ class Window(_SchedulingMixin, WindowProperties):
         """
         if "history" in self._features.cached_names:
             self.history.replace_same_document(str(url))
+    
     def __v8_cross_origin_check__(self, accessor):
         return accessor is self or getattr(accessor, "_origin", None) == self._origin
 
@@ -293,11 +281,8 @@ class Window(_SchedulingMixin, WindowProperties):
 
     def get_window(self): return self
     def get_self(self): return self
-    def get_parent(self):
-        return self._view(self._parent_window)
-
-    def get_top(self):
-        return self._view(self._top_window)
+    def get_parent(self): return self._view(self._parent_window)
+    def get_top(self): return self._view(self._top_window)
 
     def _view(self, target):
         if target is self:
@@ -333,8 +318,7 @@ class Window(_SchedulingMixin, WindowProperties):
         self._require_same_origin()
         self._set_handler('onmessage', value)
     def get_location(self): return self.location
-    def set_location(self, value):
-        self.location.set_href(value)
+    def set_location(self, value): self.location.set_href(value)
     def get_navigator(self): self._require_same_origin(); return self.navigator
     def get_clientInformation(self): self._require_same_origin(); return self.navigator
     def get_screen(self): self._require_same_origin(); return self.screen
@@ -373,12 +357,11 @@ class Window(_SchedulingMixin, WindowProperties):
             "resource_type": "fetch",
         }, lambda response, error: reject(self._services.realm_services.js_error_value(error)) if error else resolve(response))
         return promise
-    def fn_close(self, *_extra):
-        return None
-    def fn_focus(self, *_extra):
-        return None
-    def fn_blur(self, *_extra):
-        return None
+    
+    def fn_close(self, *_extra): return None
+    def fn_focus(self, *_extra): return None
+    def fn_blur(self, *_extra): return None
+
     def fn_postMessage(self, message=MISSING, target_origin='/', transfer=MISSING, *_extra):
         if message is MISSING:
             raise missing_error('Window', 'postMessage', 1, 0, constructor=False)
@@ -402,6 +385,7 @@ class Window(_SchedulingMixin, WindowProperties):
         self._services.realm_services.materialize_interface("DOMFileSystem")
         from .filesystem import request_file_system
         return request_file_system(self, type, size, success, error)
+
     def fn_getComputedStyle(self, element=MISSING, pseudo=pyv8.Undefined, *_extra):
         if element is MISSING:
             raise missing_error("Window", "getComputedStyle", 1, 0, constructor=False)

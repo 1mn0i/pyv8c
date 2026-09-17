@@ -3,7 +3,7 @@ import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 
-from pyv8c.web.dom.events import EventTarget  # noqa: E402 - skipped before import
+from pyv8c.web.dom.events import EventTarget  # skipped before import
 
 
 @pytest.fixture

@@ -31,22 +31,14 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
-            AttributeSpec(
-                name="namespaceURI", getter="get_namespaceURI", side_effect=1
-            ),
+            AttributeSpec(name="namespaceURI", getter="get_namespaceURI", side_effect=1),
             AttributeSpec(name="prefix", getter="get_prefix", side_effect=1),
             AttributeSpec(name="localName", getter="get_localName", side_effect=1),
             AttributeSpec(name="tagName", getter="get_tagName", side_effect=1),
             AttributeSpec(name="id", getter="get_id", setter="set_id"),
-            AttributeSpec(
-                name="className", getter="get_className", setter="set_className"
-            ),
-            AttributeSpec(
-                name="innerHTML", getter="get_innerHTML", setter="set_innerHTML"
-            ),
-            AttributeSpec(
-                name="outerHTML", getter="get_outerHTML", setter="set_outerHTML"
-            ),
+            AttributeSpec(name="className", getter="get_className", setter="set_className"),
+            AttributeSpec(name="innerHTML", getter="get_innerHTML", setter="set_innerHTML"),
+            AttributeSpec(name="outerHTML", getter="get_outerHTML", setter="set_outerHTML"),
             AttributeSpec(name="children", getter="get_children", side_effect=1),
             AttributeSpec(name="classList", getter="get_classList", side_effect=1),
             AttributeSpec(name="attributes", getter="get_attributes", side_effect=1),
@@ -56,94 +48,29 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             AttributeSpec(name="scrollHeight", getter="get_scrollHeight", side_effect=1),
         ),
         methods=(
-            MethodSpec(
-                name="getAttribute", callback="fn_getAttribute", length=1, side_effect=1
-            ),
+            MethodSpec(name="getAttribute", callback="fn_getAttribute", length=1, side_effect=1),
             MethodSpec(name="setAttribute", callback="fn_setAttribute", length=2),
             MethodSpec(name="removeAttribute", callback="fn_removeAttribute", length=1),
-            MethodSpec(
-                name="hasAttribute", callback="fn_hasAttribute", length=1, side_effect=1
-            ),
+            MethodSpec(name="hasAttribute", callback="fn_hasAttribute", length=1, side_effect=1),
             MethodSpec(name="getAttributeNames", callback="fn_getAttributeNames"),
-            MethodSpec(
-                name="hasAttributes", callback="fn_hasAttributes", side_effect=1
-            ),
+            MethodSpec(name="hasAttributes", callback="fn_hasAttributes", side_effect=1),
             MethodSpec(name="toggleAttribute", callback="fn_toggleAttribute", length=1),
-            MethodSpec(
-                name="getAttributeNS",
-                callback="fn_getAttributeNS",
-                length=2,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="removeAttributeNS", callback="fn_removeAttributeNS", length=2
-            ),
-            MethodSpec(
-                name="hasAttributeNS",
-                callback="fn_hasAttributeNS",
-                length=2,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="getAttributeNode",
-                callback="fn_getAttributeNode",
-                length=1,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="setAttributeNode", callback="fn_setAttributeNode", length=1
-            ),
-            MethodSpec(
-                name="removeAttributeNode", callback="fn_removeAttributeNode", length=1
-            ),
-            MethodSpec(
-                name="getElementsByTagName",
-                callback="fn_getElementsByTagName",
-                length=1,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="getElementsByTagNameNS",
-                callback="fn_getElementsByTagNameNS",
-                length=2,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="getElementsByClassName",
-                callback="fn_getElementsByClassName",
-                length=1,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="insertAdjacentElement",
-                callback="fn_insertAdjacentElement",
-                length=2,
-            ),
-            MethodSpec(
-                name="insertAdjacentHTML", callback="fn_insertAdjacentHTML", length=2
-            ),
-            MethodSpec(
-                name="insertAdjacentText", callback="fn_insertAdjacentText", length=2
-            ),
-            MethodSpec(
-                name="querySelector",
-                callback="fn_querySelector",
-                length=1,
-                side_effect=1,
-            ),
-            MethodSpec(
-                name="querySelectorAll",
-                callback="fn_querySelectorAll",
-                length=1,
-                side_effect=1,
-            ),
+            MethodSpec(name="getAttributeNS", callback="fn_getAttributeNS", length=2, side_effect=1),
+            MethodSpec(name="removeAttributeNS", callback="fn_removeAttributeNS", length=2),
+            MethodSpec(name="hasAttributeNS", callback="fn_hasAttributeNS", length=2, side_effect=1),
+            MethodSpec(name="getAttributeNode", callback="fn_getAttributeNode", length=1, side_effect=1),
+            MethodSpec(name="setAttributeNode", callback="fn_setAttributeNode", length=1),
+            MethodSpec(name="removeAttributeNode", callback="fn_removeAttributeNode", length=1),
+            MethodSpec(name="getElementsByTagName", callback="fn_getElementsByTagName", length=1, side_effect=1),
+            MethodSpec(name="getElementsByTagNameNS", callback="fn_getElementsByTagNameNS", length=2, side_effect=1),
+            MethodSpec(name="getElementsByClassName", callback="fn_getElementsByClassName", length=1, side_effect=1),
+            MethodSpec(name="insertAdjacentElement", callback="fn_insertAdjacentElement", length=2),
+            MethodSpec(name="insertAdjacentHTML", callback="fn_insertAdjacentHTML", length=2),
+            MethodSpec(name="insertAdjacentText", callback="fn_insertAdjacentText", length=2),
+            MethodSpec(name="querySelector", callback="fn_querySelector", length=1, side_effect=1),
+            MethodSpec(name="querySelectorAll", callback="fn_querySelectorAll", length=1, side_effect=1),
             MethodSpec(name="matches", callback="fn_matches", length=1, side_effect=1),
-            MethodSpec(
-                name="webkitMatchesSelector",
-                callback="fn_webkitMatchesSelector",
-                length=1,
-                side_effect=1,
-            ),
+            MethodSpec(name="webkitMatchesSelector", callback="fn_webkitMatchesSelector", length=1, side_effect=1),
             MethodSpec(name="closest", callback="fn_closest", length=1, side_effect=1),
             MethodSpec(name="getBoundingClientRect", callback="fn_getBoundingClientRect", side_effect=1),
         ),
@@ -235,7 +162,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             force = boolean(force)
         name = str(name).lower()
         if force in (None, pyv8.Undefined, pyv8.Null):
-            force = not (name in self.attributes)
+            force = name not in self.attributes
         force = bool(force)
         if force: self.attributes[name] = ""
         else: self.attributes.pop(name, None)
@@ -748,12 +675,8 @@ class HTMLIFrameElement(HTMLElement):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             _url_attr("src", "get_src", "set_src"),
-            AttributeSpec(
-                name="contentDocument", getter="get_contentDocument", side_effect=1
-            ),
-            AttributeSpec(
-                name="contentWindow", getter="get_contentWindow", side_effect=1
-            ),
+            AttributeSpec(name="contentDocument", getter="get_contentDocument", side_effect=1),
+            AttributeSpec(name="contentWindow", getter="get_contentWindow", side_effect=1),
         ),
         constructor_behavior=0,
         has_constructor=1,

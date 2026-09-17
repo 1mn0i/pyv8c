@@ -43,10 +43,12 @@ class _SchedulingMixin:
         """Queue one timer, accepting the string form HTML also allows."""
         if not callable(callback):
             source = dom_string(callback)
-            callback = lambda: self._services.realm_services.evaluate_script(source)
+
+            def callback(): return self._services.realm_services.evaluate_script(source)
         elif arguments:
             original = callback
-            callback = lambda: original(*arguments)
+
+            def callback(): return original(*arguments)
         if delay is pyv8.Undefined:
             delay = 0
         delay = integer(delay, signed=True)

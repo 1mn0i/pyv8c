@@ -229,7 +229,7 @@ def _primitive_constant(expression):
     if match:
         try:
             return json.loads(value)
-        except Exception:
+        except Exception:  # a value that is not JSON falls back to the raw match
             return match.group(1)
     return None
 

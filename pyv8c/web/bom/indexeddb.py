@@ -787,11 +787,7 @@ class IDBOpenDBRequest(IDBRequest):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="onblocked", getter="get_onblocked", setter="set_onblocked"),
-            AttributeSpec(
-                name="onupgradeneeded",
-                getter="get_onupgradeneeded",
-                setter="set_onupgradeneeded",
-            ),
+            AttributeSpec(name="onupgradeneeded", getter="get_onupgradeneeded", setter="set_onupgradeneeded"),
         ),
         constructor_behavior=0,
         to_string_tag="IDBOpenDBRequest",
@@ -1268,7 +1264,7 @@ class IDBTransaction(EventTarget):
             try:
                 try:
                     result = operation()
-                except BaseException as exc:  # noqa: BLE001 - surfaced to JS below
+                except BaseException as exc:  # surfaced to JS below
                     error = exc if getattr(exc, "__v8_error__", False) else _fail(
                         "UnknownError", str(exc) or "The operation failed."
                     )
@@ -1994,9 +1990,7 @@ class IDBDatabase(EventTarget):
             AttributeSpec(name="onabort", getter="get_onabort", setter="set_onabort"),
             AttributeSpec(name="onclose", getter="get_onclose", setter="set_onclose"),
             AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
-            AttributeSpec(
-                name="onversionchange", getter="get_onversionchange", setter="set_onversionchange"
-            ),
+            AttributeSpec(name="onversionchange", getter="get_onversionchange", setter="set_onversionchange"),
         ),
         methods=(
             MethodSpec(name="close", callback="fn_close"),

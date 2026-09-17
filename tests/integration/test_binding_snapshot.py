@@ -40,7 +40,7 @@ def test_concurrent_first_access_yields_one_class_object(browser):
             try:
                 barrier.wait(timeout=10)
                 assert page.evaluate("typeof " + LAZY_NAME) == "function"
-            except BaseException as exc:  # noqa: BLE001 - collected for the test
+            except BaseException as exc:  # collected for the test
                 errors.append(exc)
 
         threads = [threading.Thread(target=trigger, args=(p,)) for p in pages]
@@ -123,7 +123,7 @@ def test_repeated_concurrent_materialization_within_one_realm(browser):
             try:
                 barrier.wait(timeout=10)
                 assert page.evaluate("typeof " + LAZY_NAME) == "function"
-            except BaseException as exc:  # noqa: BLE001 - collected for the test
+            except BaseException as exc:  # collected for the test
                 errors.append(exc)
 
         threads = [threading.Thread(target=touch) for _ in range(4)]

@@ -110,12 +110,8 @@ class Location:
     def get_hash(self): return ("#" + self._parts().fragment) if self._parts().fragment else ""
     __v8_idl_spec__ = IdlSpec(
         attributes=tuple(
-            (
-                AttributeSpec(
-                    name=n,
-                    getter="get_" + n,
-                    setter=_LOCATION_SETTERS.get(n),
-                )
+
+                AttributeSpec(name=n, getter="get_" + n, setter=_LOCATION_SETTERS.get(n))
                 for n in (
                     "href",
                     "origin",
@@ -127,7 +123,7 @@ class Location:
                     "search",
                     "hash",
                 )
-            )
+
         ),
         methods=(
             MethodSpec(name="assign", callback="fn_assign", length=1),

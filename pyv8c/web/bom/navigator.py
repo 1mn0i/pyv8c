@@ -65,9 +65,7 @@ class MimeType:
             AttributeSpec(name="type", getter="get_type", side_effect=1),
             AttributeSpec(name="suffixes", getter="get_suffixes", side_effect=1),
             AttributeSpec(name="description", getter="get_description", side_effect=1),
-            AttributeSpec(
-                name="enabledPlugin", getter="get_enabledPlugin", side_effect=1
-            ),
+            AttributeSpec(name="enabledPlugin", getter="get_enabledPlugin", side_effect=1),
         ),
         constructor_behavior=0,
         to_string_tag="MimeType",
@@ -95,9 +93,7 @@ class Plugin(_LegacyNamedCollection):
         ),
         methods=(
             MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(
-                name="namedItem", callback="fn_namedItem", length=1, side_effect=1
-            ),
+            MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
         ),
         constructor_behavior=0,
         to_string_tag="Plugin",
@@ -125,9 +121,7 @@ class PluginArray(_LegacyNamedCollection):
         attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
         methods=(
             MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(
-                name="namedItem", callback="fn_namedItem", length=1, side_effect=1
-            ),
+            MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
             MethodSpec(name="refresh", callback="fn_refresh"),
         ),
         constructor_behavior=0,
@@ -157,9 +151,7 @@ class MimeTypeArray(_LegacyNamedCollection):
         attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
         methods=(
             MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(
-                name="namedItem", callback="fn_namedItem", length=1, side_effect=1
-            ),
+            MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
         ),
         constructor_behavior=0,
         to_string_tag="MimeTypeArray",
@@ -194,9 +186,7 @@ def create_plugin_collections(environment):
 class Geolocation:
     __v8_idl_spec__ = IdlSpec(
         methods=(
-            MethodSpec(
-                name="getCurrentPosition", callback="fn_getCurrentPosition", length=3
-            ),
+            MethodSpec(name="getCurrentPosition", callback="fn_getCurrentPosition", length=3),
             MethodSpec(name="watchPosition", callback="fn_watchPosition", length=3),
             MethodSpec(name="clearWatch", callback="fn_clearWatch", length=1),
         ),
@@ -336,16 +326,8 @@ class BatteryManager(EventTarget):
             AttributeSpec(name="dischargingTime", getter="get_dischargingTime", side_effect=1),
             AttributeSpec(name="level", getter="get_level", side_effect=1),
             AttributeSpec(name="onchargingchange", getter="get_onchargingchange", setter="set_onchargingchange"),
-            AttributeSpec(
-                name="onchargingtimechange",
-                getter="get_onchargingtimechange",
-                setter="set_onchargingtimechange",
-            ),
-            AttributeSpec(
-                name="ondischargingtimechange",
-                getter="get_ondischargingtimechange",
-                setter="set_ondischargingtimechange",
-            ),
+            AttributeSpec(name="onchargingtimechange", getter="get_onchargingtimechange", setter="set_onchargingtimechange"),
+            AttributeSpec(name="ondischargingtimechange", getter="get_ondischargingtimechange", setter="set_ondischargingtimechange"),
             AttributeSpec(name="onlevelchange", getter="get_onlevelchange", setter="set_onlevelchange"),
         ),
         constructor_behavior=0,
@@ -452,29 +434,13 @@ class Navigator:
             AttributeSpec(name="language", getter="get_language", side_effect=1),
             AttributeSpec(name="languages", getter="get_languages", side_effect=1),
             AttributeSpec(name="onLine", getter="get_onLine", side_effect=1),
-            AttributeSpec(
-                name="hardwareConcurrency",
-                getter="get_hardwareConcurrency",
-                side_effect=1,
-            ),
-            AttributeSpec(
-                name="deviceMemory", getter="get_deviceMemory", side_effect=1
-            ),
-            AttributeSpec(
-                name="maxTouchPoints", getter="get_maxTouchPoints", side_effect=1
-            ),
+            AttributeSpec(name="hardwareConcurrency", getter="get_hardwareConcurrency", side_effect=1),
+            AttributeSpec(name="deviceMemory", getter="get_deviceMemory", side_effect=1),
+            AttributeSpec(name="maxTouchPoints", getter="get_maxTouchPoints", side_effect=1),
             AttributeSpec(name="webdriver", getter="get_webdriver", side_effect=1),
             AttributeSpec(name="connection", getter="get_connection", side_effect=1),
-            AttributeSpec(
-                name="webkitTemporaryStorage",
-                getter="get_webkitTemporaryStorage",
-                side_effect=1,
-            ),
-            AttributeSpec(
-                name="webkitPersistentStorage",
-                getter="get_webkitPersistentStorage",
-                side_effect=1,
-            ),
+            AttributeSpec(name="webkitTemporaryStorage", getter="get_webkitTemporaryStorage", side_effect=1),
+            AttributeSpec(name="webkitPersistentStorage", getter="get_webkitPersistentStorage", side_effect=1),
             AttributeSpec(name="geolocation", getter="get_geolocation", side_effect=1),
             AttributeSpec(name="plugins", getter="get_plugins", side_effect=1),
             AttributeSpec(name="mimeTypes", getter="get_mimeTypes", side_effect=1),

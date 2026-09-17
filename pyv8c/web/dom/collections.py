@@ -52,9 +52,7 @@ class NamedNodeMap(NodeList):
     __v8_idl_spec__ = IdlSpec(
         methods=(
             MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(
-                name="getNamedItem", callback="fn_getNamedItem", length=1, side_effect=1
-            ),
+            MethodSpec(name="getNamedItem", callback="fn_getNamedItem", length=1, side_effect=1),
             MethodSpec(name="setNamedItem", callback="fn_setNamedItem", length=1),
             MethodSpec(name="removeNamedItem", callback="fn_removeNamedItem", length=1),
         ),
@@ -132,9 +130,7 @@ class HTMLCollection(LegacyNamedPropertyMixin, NodeList):
     __v8_idl_spec__ = IdlSpec(
         methods=(
             MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(
-                name="namedItem", callback="fn_namedItem", length=1, side_effect=1
-            ),
+            MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
         ),
         constructor_behavior=0,
         to_string_tag="HTMLCollection",
@@ -194,9 +190,7 @@ class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
         attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
         methods=(
             MethodSpec(name="item", callback="fn_item", side_effect=1),
-            MethodSpec(
-                name="namedItem", callback="fn_namedItem", length=1, side_effect=1
-            ),
+            MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
         ),
         constructor_behavior=0,
         to_string_tag="HTMLAllCollection",
@@ -282,9 +276,7 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
         ),
         methods=(
             MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(
-                name="contains", callback="fn_contains", length=1, side_effect=1
-            ),
+            MethodSpec(name="contains", callback="fn_contains", length=1, side_effect=1),
             MethodSpec(name="add", callback="fn_add"),
             MethodSpec(name="remove", callback="fn_remove"),
             MethodSpec(name="toggle", callback="fn_toggle", length=1),

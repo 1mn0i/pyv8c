@@ -11,6 +11,7 @@
 | 调试首句、Worker、iframe 和重连 | [DevTools](DEVTOOLS.md) |
 | 观察参数、返回值和异常 | [Trace](TRACE.md) |
 | 注入资源、网络和缓存 | [资源加载与拦截](resource-interception.md) |
+| 选择网络引擎、传入参数 | [网络引擎与参数](network-engines.md) |
 | Window、iframe、跨源访问 | [Window 安全模型](WINDOW_SECURITY.md) |
 | 更新 Chromium 接口基线 | [Baseline 格式与生成](interface-baseline-fields.md) |
 

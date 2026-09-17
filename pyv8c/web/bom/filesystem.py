@@ -34,8 +34,6 @@ from ..dom.events import Event, EventTarget, _install_handler_slots
 from ..fetch.blob import Blob
 from ..fetch.events import ProgressEvent
 
-__all__ = ["FileSystem", "Entry", "DirectoryEntry", "FileEntry", "DirectoryReader", "FileWriter", "File"]
-
 #: The asynchronous entry points below all deliver their callback the same way.
 _post = post_or_call
 
@@ -99,8 +97,15 @@ _WRITER_HANDLERS = ("onwritestart", "onprogress", "onwrite", "onabort", "onerror
 @interface("FileWriter", "EventTarget")
 class FileWriter(EventTarget):
     __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="position", getter="get_position"), AttributeSpec(name="length", getter="get_length")),
-        methods=(MethodSpec(name="write", callback="fn_write", length=1), MethodSpec(name="seek", callback="fn_seek", length=1), MethodSpec(name="truncate", callback="fn_truncate", length=1)),
+        attributes=(
+            AttributeSpec(name="position", getter="get_position"),
+            AttributeSpec(name="length", getter="get_length"),
+        ),
+        methods=(
+            MethodSpec(name="write", callback="fn_write", length=1),
+            MethodSpec(name="seek", callback="fn_seek", length=1),
+            MethodSpec(name="truncate", callback="fn_truncate", length=1),
+        ),
         constructor_behavior=0, has_constructor=1, to_string_tag="FileWriter",
     )
     def __init__(self, path, services=None, **_):
@@ -148,20 +153,36 @@ class FileWriter(EventTarget):
 @interface("Entry", None)
 class Entry:
     __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="isFile", getter="get_isFile", side_effect=1), AttributeSpec(name="isDirectory", getter="get_isDirectory", side_effect=1), AttributeSpec(name="name", getter="get_name", side_effect=1), AttributeSpec(name="fullPath", getter="get_fullPath", side_effect=1), AttributeSpec(name="filesystem", getter="get_filesystem", side_effect=1)),
-        methods=(MethodSpec(name="getMetadata", callback="fn_getMetadata", length=2), MethodSpec(name="remove", callback="fn_remove", length=2), MethodSpec(name="getParent", callback="fn_getParent", length=2), MethodSpec(name="toURL", callback="fn_toURL")),
+        attributes=(
+            AttributeSpec(name="isFile", getter="get_isFile", side_effect=1),
+            AttributeSpec(name="isDirectory", getter="get_isDirectory", side_effect=1),
+            AttributeSpec(name="name", getter="get_name", side_effect=1),
+            AttributeSpec(name="fullPath", getter="get_fullPath", side_effect=1),
+            AttributeSpec(name="filesystem", getter="get_filesystem", side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="getMetadata", callback="fn_getMetadata", length=2),
+            MethodSpec(name="remove", callback="fn_remove", length=2),
+            MethodSpec(name="getParent", callback="fn_getParent", length=2),
+            MethodSpec(name="toURL", callback="fn_toURL"),
+        ),
         constructor_behavior=0, has_constructor=1, to_string_tag="Entry",
     )
     def __init__(self, fs, path, **_): self._fs, self._path = fs, Path(path)
     def get_isFile(self): return self._path.is_file()
     def get_isDirectory(self): return self._path.is_dir()
     def get_name(self): return "" if self._path == self._fs._root else self._path.name
-    def get_fullPath(self): return "/" + str(self._path.relative_to(self._fs._root)).replace(os.sep, "/") if self._path != self._fs._root else "/"
+    def get_fullPath(self):
+        if self._path == self._fs._root: return "/"
+        return "/" + str(self._path.relative_to(self._fs._root)).replace(os.sep, "/")
     def get_filesystem(self): return self._fs
     def fn_toURL(self, *_extra): return "filesystem:" + self._fs._origin + "/temporary" + self.get_fullPath()
     def fn_getMetadata(self, success=MISSING, error=None, *_extra):
         if success is MISSING: raise missing_error("Entry", "getMetadata", 1, 0)
-        _post(self._fs._services, _callback(success, "getMetadata", 1), {"modificationTime": self._path.stat().st_mtime if self._path.exists() else 0, "size": self._path.stat().st_size if self._path.is_file() else 0})
+        _post(self._fs._services, _callback(success, "getMetadata", 1), {
+            "modificationTime": self._path.stat().st_mtime if self._path.exists() else 0,
+            "size": self._path.stat().st_size if self._path.is_file() else 0,
+        })
     def fn_getParent(self, success=MISSING, error=None, *_extra):
         if success is MISSING: raise missing_error("Entry", "getParent", 1, 0)
         _post(self._fs._services, _callback(success, "getParent", 1), Entry(self._fs, self._path.parent))
@@ -172,12 +193,17 @@ class Entry:
             if self._path.is_dir(): self._path.rmdir()
             elif self._path.exists(): self._path.unlink()
             _post(self._fs._services, cb)
-        except Exception as exc: _post(self._fs._services, _callback(error, "remove", 2, True), exc)
+        except Exception as exc:  # the failure is reported through the callback
+            _post(self._fs._services, _callback(error, "remove", 2, True), exc)
 
 
 @interface("FileEntry", "Entry")
 class FileEntry(Entry):
-    __v8_idl_spec__ = IdlSpec(methods=(MethodSpec(name="file", callback="fn_file", length=2), MethodSpec(name="createWriter", callback="fn_createWriter", length=2)), constructor_behavior=0, has_constructor=1, to_string_tag="FileEntry")
+    __v8_idl_spec__ = IdlSpec(
+        methods=(MethodSpec(name="file", callback="fn_file", length=2),
+                 MethodSpec(name="createWriter", callback="fn_createWriter", length=2)),
+        constructor_behavior=0, has_constructor=1, to_string_tag="FileEntry",
+    )
     def fn_file(self, success=MISSING, error=None, *_extra):
         if success is MISSING: raise missing_error("FileEntry", "file", 1, 0)
         _post(self._fs._services, _callback(success, "file", 1), _file_from_path(self._path))
@@ -188,7 +214,10 @@ class FileEntry(Entry):
 
 @interface("DirectoryReader", None)
 class DirectoryReader:
-    __v8_idl_spec__ = IdlSpec(methods=(MethodSpec(name="readEntries", callback="fn_readEntries", length=1),), constructor_behavior=0, has_constructor=1, to_string_tag="DirectoryReader")
+    __v8_idl_spec__ = IdlSpec(
+        methods=(MethodSpec(name="readEntries", callback="fn_readEntries", length=1),),
+        constructor_behavior=0, has_constructor=1, to_string_tag="DirectoryReader",
+    )
     def __init__(self, fs, path, **_): self._fs, self._path, self._done = fs, Path(path), False
     def fn_readEntries(self, success=MISSING, error=None, *_extra):
         if success is MISSING: raise missing_error("DirectoryReader", "readEntries", 1, 0)
@@ -199,7 +228,13 @@ class DirectoryReader:
 
 @interface("DirectoryEntry", "Entry")
 class DirectoryEntry(Entry):
-    __v8_idl_spec__ = IdlSpec(methods=(MethodSpec(name="createReader", callback="fn_createReader"), MethodSpec(name="getFile", callback="fn_getFile", length=3), MethodSpec(name="getDirectory", callback="fn_getDirectory", length=3), MethodSpec(name="removeRecursively", callback="fn_removeRecursively", length=2)), constructor_behavior=0, has_constructor=1, to_string_tag="DirectoryEntry")
+    __v8_idl_spec__ = IdlSpec(
+        methods=(MethodSpec(name="createReader", callback="fn_createReader"),
+                 MethodSpec(name="getFile", callback="fn_getFile", length=3),
+                 MethodSpec(name="getDirectory", callback="fn_getDirectory", length=3),
+                 MethodSpec(name="removeRecursively", callback="fn_removeRecursively", length=2)),
+        constructor_behavior=0, has_constructor=1, to_string_tag="DirectoryEntry",
+    )
     def fn_createReader(self, *_extra): return DirectoryReader(self._fs, self._path)
     def _child(self, name):
         name = dom_string(name)
@@ -220,13 +255,20 @@ class DirectoryEntry(Entry):
         if success is MISSING: raise missing_error("DirectoryEntry", "removeRecursively", 1, 0)
         cb = _callback(success, "removeRecursively", 1)
         try: shutil.rmtree(self._path); _post(self._fs._services, cb)
-        except Exception as exc: _post(self._fs._services, _callback(error, "removeRecursively", 2, True), exc)
+        except Exception as exc:  # the failure is reported through the callback
+            _post(self._fs._services, _callback(error, "removeRecursively", 2, True), exc)
 
 
 @interface("DOMFileSystem", None)
 class DOMFileSystem:
-    __v8_idl_spec__ = IdlSpec(attributes=(AttributeSpec(name="name", getter="get_name", side_effect=1), AttributeSpec(name="root", getter="get_root", side_effect=1)), constructor_behavior=0, has_constructor=1, to_string_tag="FileSystem")
-    def __init__(self, name, root, services=None, origin="null", **_): self._name, self._root, self._services, self._origin = name, Path(root), services, origin; self._root.mkdir(parents=True, exist_ok=True)
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="name", getter="get_name", side_effect=1),
+                    AttributeSpec(name="root", getter="get_root", side_effect=1)),
+        constructor_behavior=0, has_constructor=1, to_string_tag="FileSystem",
+    )
+    def __init__(self, name, root, services=None, origin="null", **_):
+        self._name, self._root, self._services, self._origin = name, Path(root), services, origin
+        self._root.mkdir(parents=True, exist_ok=True)
     def get_name(self): return self._name
     def get_root(self): return DirectoryEntry(self, self._root)
     def _entry(self, path): return DirectoryEntry(self, path) if Path(path).is_dir() else FileEntry(self, path)
@@ -255,6 +297,7 @@ FileWriter.__v8_idl_spec__ = FileWriter.__v8_idl_spec__.replace(
     + _install_handler_slots(FileWriter, _WRITER_HANDLERS)
 )
 
+__all__ = ["FileSystem", "Entry", "DirectoryEntry", "FileEntry", "DirectoryReader", "FileWriter", "File"]
 
 FEATURE = FeatureImplementation({
     "DOMFileSystem": DOMFileSystem,

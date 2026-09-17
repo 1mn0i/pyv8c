@@ -81,9 +81,10 @@ interceptor 接收 request 的副本；仅修改副本不是受支持的请求�
 python -m pip install -e ".[network]"
 ```
 
-使用 Browser(real_network=True, cycronet_options={...})。每个 BrowserContext 拥有自己的 CronetNetworkBackend 和 CookieJar。
-cycronet_options 中 max_workers 控制桥接线程池，其余参数交给客户端；缺少依赖会在创建 Context 时失败，不会静默伪装联网成功。
-网络实现见 [backend.py](../pyv8c/web/network/backend.py)，响应策略包含基础同源/CORS/no-cors 处理，但不是完整 Fetch/CORS 协议栈。
+使用 Browser(real_network=True)。每个 BrowserContext 拥有自己的网络栈（默认 HTTP=curl_cffi、WebSocket=websockets）和 CookieJar。
+两个角色可用 network_engine / ws_engine 分别替换，http_options / ws_options 传该引擎的参数：引擎不认识的键（拼错，或属于另一个角色的引擎）会在创建 Context 时报错，不会被静默转交或丢弃；缺少依赖同样在创建 Context 时失败，不会静默伪装联网成功。
+选引擎、参数含义、校验规则、握手与自定义引擎见 [网络引擎与参数](network-engines.md)。
+网络实现见 [registry.py](../pyv8c/web/network/registry.py) 与 [backend.py](../pyv8c/web/network/backend.py)，响应策略包含基础同源/CORS/no-cors 处理，但不是完整 Fetch/CORS 协议栈。
 不要假定拦截响应、缓存命中和所有同步 loader 路径都重新执行相同的安全策略。
 
 ## 磁盘缓存

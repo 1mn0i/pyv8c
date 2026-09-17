@@ -201,7 +201,7 @@ def _matches_ast(node, ast):
             current = _previous_element(current)
         elif relation == "~":
             current = _previous_element(
-                current, lambda item: _simple_match(item, compounds[index]),
+                current, lambda item, index=index: _simple_match(item, compounds[index]),
             )
             if current is not None: continue
         else:

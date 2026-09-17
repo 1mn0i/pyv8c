@@ -38,8 +38,6 @@
 
 ```powershell
 python -m pytest -q
-python -m ruff check pyv8c tests
-python -m mypy
 git diff --check
 ```
 

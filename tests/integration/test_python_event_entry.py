@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 
-from pyv8c.foundation.errors import DOMException  # noqa: E402 - skipped before import
+from pyv8c.foundation.errors import DOMException  # skipped before import
 
 
 @pytest.fixture
@@ -104,5 +104,5 @@ def test_dispatch_event_after_close_raises(browser):
     page = browser.new_context().new_page()
     page.set_content("<div id='a'></div>", url="https://example.test/")
     page.close()
-    with pytest.raises(Exception):  # noqa: BLE001 - executor/invalid-state variants
+    with pytest.raises(Exception):  # executor/invalid-state variants
         page.dispatch_event("click", selector="#a")

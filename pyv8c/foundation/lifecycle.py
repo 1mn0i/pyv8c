@@ -69,7 +69,7 @@ class ResourceScope:
         for callback in callbacks:
             try:
                 callback()
-            except BaseException:  # noqa: BLE001 - cleanup must continue
+            except BaseException:  # cleanup must continue
                 # Owners can report callback failures; aborting teardown here
                 # would strand every resource below this one.
                 pass

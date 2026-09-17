@@ -15,8 +15,9 @@ surface from drifting away from the contracts web code actually consumes.
 
 import threading
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
+from ..foundation.urls import origin_string
 from .state import Ownership
 
 
@@ -31,8 +32,8 @@ class WorkerContext:
     trace: bool
     expose_unimplemented: bool
     stub_logging: str
-    devtools: Optional[Any]
-    debug_parent: Optional[Any]
+    devtools: Any | None
+    debug_parent: Any | None
 
 
 class _TaskSource:
@@ -374,11 +375,37 @@ class _ContextCapability:
     def network_available(self):
         return self._owner._context.network_backend is not None
 
+    @property
+    def http_available(self):
+        backend = self._owner._context.network_backend
+        return backend is not None and backend.http_available
+
+    @property
+    def ws_available(self):
+        backend = self._owner._context.network_backend
+        return backend is not None and backend.ws_available
+
     def websocket(self, url, protocols, callbacks):
         backend = self._owner._context.network_backend
         if backend is None:
             return None
-        return backend.websocket(self._owner.task_services, url, protocols, callbacks)
+        return backend.websocket(
+            self._owner.task_services, url, protocols, callbacks, self._handshake(),
+        )
+
+    def _handshake(self):
+        """What the page contributes to a WebSocket handshake."""
+        environment = self._owner.environment
+        options = {
+            "headers": {
+                "User-Agent": environment.user_agent,
+                "Accept-Language": ", ".join(environment.languages),
+            },
+        }
+        origin = origin_string(self._owner.realm_services.url)
+        if origin != "null":
+            options["origin"] = origin
+        return options
 
     def close_websocket(self, websocket):
         backend = self._owner._context.network_backend

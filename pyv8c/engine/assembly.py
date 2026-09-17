@@ -190,15 +190,7 @@ class InterfaceCompiler:
                 else:
                     callback = self.stubs.method(name, public_name, static=static)
                 methods.append(
-                    MethodSpec(
-                        name=public_name,
-                        callback=callback,
-                        length=int(
-                            member["length"] if member.get("length") is not None else declared.length if declared else 0
-                        ),
-                        cross_origin_check=_cross_origin(member.get("cross_origin")),
-                        **common,
-                    )
+                    MethodSpec(name=public_name, callback=callback, length=int(member["length"] if member.get("length") is not None else declared.length if declared else 0), cross_origin_check=_cross_origin(member.get("cross_origin")), **common)
                 )
             else:
                 declared = declared_attributes.pop(public_name, None)
@@ -228,15 +220,7 @@ class InterfaceCompiler:
                         else self.stubs.setter(name, public_name)
                     )
                 attributes.append(
-                    AttributeSpec(
-                        name=public_name,
-                        getter=getter,
-                        setter=setter,
-                        replaceable=bool(declared and declared.replaceable),
-                        cross_origin_get_check=_cross_origin(member.get("cross_origin")),
-                        cross_origin_set_check=_cross_origin(member.get("cross_origin")),
-                        **common,
-                    )
+                    AttributeSpec(name=public_name, getter=getter, setter=setter, replaceable=bool(declared and declared.replaceable), cross_origin_get_check=_cross_origin(member.get("cross_origin")), cross_origin_set_check=_cross_origin(member.get("cross_origin")), **common)
                 )
         for public_name, declared in declared_methods.items():
             if universe._member(name, public_name, "operation") is None:

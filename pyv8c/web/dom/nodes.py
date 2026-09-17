@@ -97,35 +97,20 @@ class Node(EventTarget):
     DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32
     __v8_idl_spec__ = IdlSpec(
         attributes=(
-            AttributeSpec(
-                name="nodeType",
-                getter="get_nodeType",
-                property_flags=V8Attribute.DontEnum,
-                side_effect=1,
-            ),
+            AttributeSpec(name="nodeType", getter="get_nodeType", property_flags=V8Attribute.DontEnum, side_effect=1),
             AttributeSpec(name="nodeName", getter="get_nodeName", side_effect=1),
             AttributeSpec(name="baseURI", getter="get_baseURI", side_effect=1),
             AttributeSpec(name="isConnected", getter="get_isConnected", side_effect=1),
-            AttributeSpec(
-                name="ownerDocument", getter="get_ownerDocument", side_effect=1
-            ),
+            AttributeSpec(name="ownerDocument", getter="get_ownerDocument", side_effect=1),
             AttributeSpec(name="parentNode", getter="get_parentNode", side_effect=1),
-            AttributeSpec(
-                name="parentElement", getter="get_parentElement", side_effect=1
-            ),
+            AttributeSpec(name="parentElement", getter="get_parentElement", side_effect=1),
             AttributeSpec(name="childNodes", getter="get_childNodes", side_effect=1),
             AttributeSpec(name="firstChild", getter="get_firstChild", side_effect=1),
             AttributeSpec(name="lastChild", getter="get_lastChild", side_effect=1),
-            AttributeSpec(
-                name="previousSibling", getter="get_previousSibling", side_effect=1
-            ),
+            AttributeSpec(name="previousSibling", getter="get_previousSibling", side_effect=1),
             AttributeSpec(name="nextSibling", getter="get_nextSibling", side_effect=1),
-            AttributeSpec(
-                name="textContent", getter="get_textContent", setter="set_textContent"
-            ),
-            AttributeSpec(
-                name="nodeValue", getter="get_nodeValue", setter="set_nodeValue"
-            ),
+            AttributeSpec(name="textContent", getter="get_textContent", setter="set_textContent"),
+            AttributeSpec(name="nodeValue", getter="get_nodeValue", setter="set_nodeValue"),
         ),
         methods=(
             MethodSpec(name="appendChild", callback="fn_appendChild", length=1),
@@ -133,26 +118,14 @@ class Node(EventTarget):
             MethodSpec(name="removeChild", callback="fn_removeChild", length=1),
             MethodSpec(name="replaceChild", callback="fn_replaceChild", length=2),
             MethodSpec(name="cloneNode", callback="fn_cloneNode"),
-            MethodSpec(
-                name="contains", callback="fn_contains", length=1, side_effect=1
-            ),
-            MethodSpec(
-                name="hasChildNodes", callback="fn_hasChildNodes", side_effect=1
-            ),
+            MethodSpec(name="contains", callback="fn_contains", length=1, side_effect=1),
+            MethodSpec(name="hasChildNodes", callback="fn_hasChildNodes", side_effect=1),
             MethodSpec(name="isEqualNode", callback="fn_isEqualNode", length=1),
-            MethodSpec(
-                name="compareDocumentPosition",
-                callback="fn_compareDocumentPosition",
-                length=1,
-            ),
+            MethodSpec(name="compareDocumentPosition", callback="fn_compareDocumentPosition", length=1),
             MethodSpec(name="getRootNode", callback="fn_getRootNode"),
-            MethodSpec(
-                name="isDefaultNamespace", callback="fn_isDefaultNamespace", length=1
-            ),
+            MethodSpec(name="isDefaultNamespace", callback="fn_isDefaultNamespace", length=1),
             MethodSpec(name="isSameNode", callback="fn_isSameNode", length=1),
-            MethodSpec(
-                name="lookupNamespaceURI", callback="fn_lookupNamespaceURI", length=1
-            ),
+            MethodSpec(name="lookupNamespaceURI", callback="fn_lookupNamespaceURI", length=1),
             MethodSpec(name="lookupPrefix", callback="fn_lookupPrefix", length=1),
             MethodSpec(name="normalize", callback="fn_normalize"),
         ),
@@ -467,7 +440,7 @@ class Node(EventTarget):
         if other is MISSING:
             raise missing_error('Node', 'contains', 1, 0, constructor=False)
         other = interface_value(other, 'Node', 'Node', 'contains', 1, nullable=True)
-        return other is self or any((c.fn_contains(other) for c in self._children))
+        return other is self or any(c.fn_contains(other) for c in self._children)
     def fn_hasChildNodes(self, *_extra):
         return bool(self._children)
     def fn_isEqualNode(self, other=MISSING, *_extra):
@@ -521,14 +494,10 @@ class Attr(Node):
             AttributeSpec(name="name", getter="get_name", side_effect=1),
             AttributeSpec(name="value", getter="get_value", setter="set_value"),
             AttributeSpec(name="specified", getter="get_specified", side_effect=1),
-            AttributeSpec(
-                name="namespaceURI", getter="get_namespaceURI", side_effect=1
-            ),
+            AttributeSpec(name="namespaceURI", getter="get_namespaceURI", side_effect=1),
             AttributeSpec(name="prefix", getter="get_prefix", side_effect=1),
             AttributeSpec(name="localName", getter="get_localName", side_effect=1),
-            AttributeSpec(
-                name="ownerElement", getter="get_ownerElement", side_effect=1
-            ),
+            AttributeSpec(name="ownerElement", getter="get_ownerElement", side_effect=1),
         ),
         constructor_behavior=0,
         to_string_tag="Attr",

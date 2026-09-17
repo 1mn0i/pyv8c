@@ -29,9 +29,7 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
         attributes=(
             AttributeSpec(name="self", getter="get_self", side_effect=1),
             AttributeSpec(name="navigator", getter="get_navigator", side_effect=1),
-            AttributeSpec(
-                name="onmessage", getter="get_onmessage", setter="set_onmessage"
-            ),
+            AttributeSpec(name="onmessage", getter="get_onmessage", setter="set_onmessage"),
             AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
         ),
         methods=(
@@ -86,18 +84,8 @@ class DedicatedWorkerGlobalScope(WorkerGlobalScope):
         methods=(
             # Frame requests live on the dedicated scope itself, which is where
             # the baseline declares them.
-            MethodSpec(
-                name="requestAnimationFrame",
-                callback="fn_requestAnimationFrame",
-                length=1,
-                location=FlagLocation.kInstance,
-            ),
-            MethodSpec(
-                name="cancelAnimationFrame",
-                callback="fn_cancelAnimationFrame",
-                length=1,
-                location=FlagLocation.kInstance,
-            ),
+            MethodSpec(name="requestAnimationFrame", callback="fn_requestAnimationFrame", length=1, location=FlagLocation.kInstance),
+            MethodSpec(name="cancelAnimationFrame", callback="fn_cancelAnimationFrame", length=1, location=FlagLocation.kInstance),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -108,9 +96,7 @@ class DedicatedWorkerGlobalScope(WorkerGlobalScope):
 class Worker(EventTarget):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
-            AttributeSpec(
-                name="onmessage", getter="get_onmessage", setter="set_onmessage"
-            ),
+            AttributeSpec(name="onmessage", getter="get_onmessage", setter="set_onmessage"),
             AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
         ),
         methods=(

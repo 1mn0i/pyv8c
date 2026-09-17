@@ -291,6 +291,19 @@ def test_page_keeps_only_user_facing_api():
 def test_web_capability_split_has_no_legacy_mixed_modules():
     assert not (ROOT / "web" / "fetch" / "backend.py").exists()
     assert not (ROOT / "web" / "fetch" / "api.py").exists()
+    # The HTTP and socket engines are assembled per context; the module that
+    # used to answer one role's gap from the other role's engine is gone.
+    assert not (ROOT / "web" / "network" / "composite.py").exists()
     assert "class CookieJar" in (ROOT / "web" / "network" / "cookies.py").read_text(encoding="utf-8")
-    assert "class CronetNetworkBackend" in (ROOT / "web" / "network" / "backend.py").read_text(encoding="utf-8")
+    assert "class CronetTransport" in (ROOT / "web" / "network" / "cronet.py").read_text(encoding="utf-8")
+    assert "class NetworkBackend" in (ROOT / "web" / "network" / "backend.py").read_text(encoding="utf-8")
+    assert "class WebSocketsTransport" in (ROOT / "web" / "network" / "ws_websockets.py").read_text(encoding="utf-8")
     assert "class WorkerRuntime" in (ROOT / "web" / "workers" / "runtime.py").read_text(encoding="utf-8")
+
+
+def test_the_two_network_roles_stay_separate_contracts():
+    """Each role is what an engine must implement to fill it, and no more."""
+    from pyv8c.web.network.registry import HttpTransport, WebSocketTransport
+
+    assert not hasattr(HttpTransport, "websocket")
+    assert not hasattr(WebSocketTransport, "request_sync")

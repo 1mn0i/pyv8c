@@ -16,7 +16,7 @@ from types import MappingProxyType
 
 # Kept as a module attribute: tests patch ``pyv8c.platform.browser.pyv8``
 # to instrument native Context construction on the PageRealm path.
-import pyv8  # noqa: F401 - patch target for native Context instrumentation tests
+import pyv8  # patch target for native Context instrumentation tests
 from loguru import logger
 
 from ..engine.universe import BaselineRepository, InterfaceUniverse
@@ -29,11 +29,13 @@ from ..foundation.tasks import TaskQueue
 from ..foundation.urls import origin_string, origin_tuple
 from ..web.bom.window import Window
 from ..web.dom.document import Document
-from ..web.network.backend import CronetNetworkBackend
+from ..web.network.backend import NetworkBackend
 from ..web.network.cookies import CookieJar
+from ..web.network.registry import create_transport
 from .bootstrap import bootstrap_runtime
 from .lifecycle import DocumentLifecycle
 from .navigation import NavigationController
+from .net import PageNet
 from .realms import PageRealm
 from .resource_loading import ResourceController
 from .scripting import ScriptController
@@ -130,6 +132,9 @@ class Page:
         self.services.window = self.window
         self.services.document = self.document
         self.window.location.href = str(url)
+        # Host-side HTTP for this page: carries its cookies and headers through
+        # the context's transport (see platform/net.py).
+        self.net = PageNet(self)
         # Native template installation can inspect the global object before
         # Context.__init__ returns.  Publish a sentinel so Window callbacks
         # never observe a partially initialized Page attribute.
@@ -200,7 +205,7 @@ class Page:
                 None, error, message=message, filename=filename, line=line,
                 column=column, value=value,
             )
-        except BaseException:
+        except BaseException:  # reporting a script error must not raise
             logger.debug("failed to report an exception", exc_info=True)
         finally:
             self._reporting_error = False
@@ -226,7 +231,7 @@ class Page:
         self._reporting_error = True
         try:
             self.lifecycle.dispatch_rejection(event_type, promise, reason)
-        except BaseException:
+        except BaseException:  # reporting a rejection must not raise
             logger.debug("failed to report a rejection", exc_info=True)
         finally:
             self._reporting_error = False
@@ -331,6 +336,7 @@ class Page:
                 self.context_owner._devtools.unregister(self)
             self._devtools_target = None
         self.closed = True
+        self.net.close()
         self.tasks.close()
         self.resources.reset()
         self.lifecycle.load_waiters.clear()
@@ -358,13 +364,135 @@ class Page:
         self._resource_scope.close()
 
 
+#: The engines ``real_network=True`` assembles for whichever role was not named.
+#: Both are ordinary engines: naming a role replaces its default, and naming
+#: neither role -- with no networking asked for -- leaves both empty.
+DEFAULT_HTTP_ENGINE = "curl_cffi"
+DEFAULT_WS_ENGINE = "websockets"
+
+
+def _options(browser, role):
+    """The options the *role* engine is handed; a copy, so callers keep theirs.
+
+    ``None`` rather than an empty dictionary when nothing was configured, which
+    is the shape a registered engine is documented to be called with -- it lets
+    a host tell "no options" from "options, all of them defaults" if it cares.
+    """
+    return dict(getattr(browser, f"{role}_options")) or None
+
+
+def _roles(candidate):
+    """Which roles an engine object serves, decided by what it can do."""
+    return (
+        candidate if hasattr(candidate, "request_sync") else None,
+        candidate if hasattr(candidate, "websocket") else None,
+    )
+
+
+def _resolve_injected(browser, value):
+    """Resolve ``network_backend=`` into the roles the given object serves.
+
+    A bare callable is a factory and is called with no arguments.  Which roles
+    the result fills is what it can do -- ``request_sync`` makes it the HTTP
+    engine, ``websocket`` the socket engine -- so an engine for one role leaves
+    the other to ``network_engine`` and ``ws_engine``.
+
+    Options for a role an injected object fills are refused: it was built before
+    the context existed, so nothing would read them.
+    """
+    candidate = value
+    if not any(_roles(candidate)) and callable(candidate):
+        candidate = candidate()
+    http, ws = _roles(candidate)
+    if http is None and ws is None:
+        raise TypeError(
+            "network_backend must be an engine name, an engine instance with "
+            "request_sync or websocket, or a factory"
+        )
+    for role, filled in (("http", http is not None), ("ws", ws is not None)):
+        if filled and getattr(browser, f"{role}_options"):
+            named = "network_engine" if role == "http" else "ws_engine"
+            raise TypeError(
+                f"{role}_options cannot configure an injected network_backend; "
+                f"name the engine with {named} to pass options to it"
+            )
+    return http, ws
+
+
+def _refuse_unconsumed_options(browser):
+    """Reject options no engine would read, instead of dropping them quietly."""
+    given = [role for role in ("http", "ws") if getattr(browser, f"{role}_options")]
+    if given:
+        listed = " and ".join(f"{role}_options" for role in given)
+        raise TypeError(
+            f"{listed} was given but no network engine is configured; "
+            "set real_network=True, network_engine or ws_engine"
+        )
+
+
+def _refuse_shared_options(browser, name):
+    """One engine cannot be configured twice; say which options to move."""
+    if browser.ws_options:
+        raise TypeError(
+            f"network_engine and ws_engine both name {name!r}, which is built once, "
+            "so ws_options would be ignored; give the WebSocket role its own engine "
+            "or move those settings into http_options"
+        )
+
+
+def _build_network_backend(browser):
+    """Assemble one context's HTTP engine and its WebSocket engine.
+
+    ``network_backend`` wins for the roles it can serve.  Otherwise
+    ``network_engine`` names the HTTP engine and ``ws_engine`` the socket engine,
+    while ``real_network=True`` fills in the default for whichever role was left
+    unnamed -- so naming one role assembles exactly that role.
+
+    Each role's options are checked against the engine that will read them, so a
+    key it does not accept is reported here instead of reaching a client that
+    would ignore it, and options with no engine to read them are refused rather
+    than dropped.
+    """
+    http = ws = None
+    shared = None
+    injected = browser.network_backend
+    if isinstance(injected, str):
+        # A name here has always meant "the HTTP engine to use for this context".
+        http = create_transport(injected, options=_options(browser, "http"), strict=True)
+        shared = injected if injected == browser.ws_engine else None
+    elif injected is not None:
+        http, ws = _resolve_injected(browser, injected)
+
+    http_name, ws_name = browser.network_engine, browser.ws_engine
+    if http is None and http_name is None and browser.real_network:
+        http_name = DEFAULT_HTTP_ENGINE
+    if ws is None and ws_name is None and browser.real_network:
+        ws_name = DEFAULT_WS_ENGINE
+
+    if http is None and http_name is not None:
+        http = create_transport(http_name, options=_options(browser, "http"), strict=True)
+    if ws is None and ws_name is not None:
+        if http is not None and ws_name in (http_name, shared):
+            # One name, one engine: building it twice would mean two clients,
+            # two pools and two connection caches for the same context.
+            _refuse_shared_options(browser, ws_name)
+            ws = http
+        else:
+            ws = create_transport(ws_name, kind="ws", options=_options(browser, "ws"), strict=True)
+
+    if http is None and ws is None:
+        _refuse_unconsumed_options(browser)
+        return None
+    return NetworkBackend(http, ws)
+
+
 class BrowserContext:
     def __init__(self, browser):
         self.browser, self.pages = browser, []
         self.cookies = CookieJar()
         self.resource_cache_dir = browser.cache_dir if browser.cache_enabled else None
         self.resource_cache_lock = threading.RLock()
-        self.network_backend = CronetNetworkBackend(options=browser.cycronet_options) if browser.real_network else None
+        self.network_backend = _build_network_backend(browser)
         if self.network_backend is not None:
             self.network_backend.cookies = self.cookies
         self._blob_urls = {}
@@ -444,7 +572,7 @@ class BrowserContext:
         for page in list(self.pages):
             try:
                 page.close()
-            except BaseException as exc:
+            except BaseException as exc:  # the reason is the comment below
                 # Teardown is best effort across independent pages.  Do not
                 # leave later pages, DevTools or the network backend alive
                 # merely because one realm reported an error.
@@ -466,7 +594,9 @@ class BrowserContext:
 class Browser:
     def __init__(self, *,
                  environment=None,
-                 real_network=False, resource_loader=None, cycronet_options=None, resource_interceptor=None,
+                 real_network=False, resource_loader=None, resource_interceptor=None,
+                 network_engine=None, ws_engine=None, network_backend=None,
+                 http_options=None, ws_options=None, default_headers=None,
                  trace=False, trace_callback=None, traceable=False,
                  cache=True, cache_dir=None,
                  expose_unimplemented=True,
@@ -482,8 +612,23 @@ class Browser:
         self.resource_interceptor = resource_interceptor
         self.cache_enabled = bool(cache)
         self.cache_dir = Path(cache_dir).expanduser() if cache_dir is not None else None
+        # A transport is built when one was asked for: either through
+        # ``real_network`` or by naming or injecting an engine directly.
+        #: Whether a context should assemble the default engines for whichever
+        #: role was not named; naming a role assembles exactly that role.
         self.real_network = bool(real_network)
-        self.cycronet_options = dict(cycronet_options or {})
+        self.network_engine = None if network_engine is None else str(network_engine)
+        self.ws_engine = None if ws_engine is None else str(ws_engine)
+        self.network_backend = network_backend
+        #: Options for the HTTP engine and for the WebSocket engine.  Each engine
+        #: says which keys it accepts and a context refuses the rest, so a
+        #: misspelt key is reported when the context is created, not passed on
+        #: unread.
+        self.http_options = dict(http_options or {})
+        self.ws_options = dict(ws_options or {})
+        #: Headers every host request starts from, on top of the ones derived
+        #: from the browser environment (see ``platform.net.PageNet``).
+        self.default_headers = dict(default_headers or {})
         self.trace = bool(trace)
         self.traceable = bool(traceable) or self.trace
         self.environment = BrowserEnvironment.from_value(environment)
@@ -537,7 +682,7 @@ class Browser:
         for context in self.contexts:
             try:
                 context.close()
-            except BaseException as exc:
+            except BaseException as exc:  # every context still gets its close attempt
                 if first_error is None:
                     first_error = exc
         self.contexts.clear()

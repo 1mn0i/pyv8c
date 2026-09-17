@@ -27,16 +27,8 @@ class _NonDocumentTypeChildNodeMixin:
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
-            AttributeSpec(
-                name="previousElementSibling",
-                getter="get_previousElementSibling",
-                side_effect=1,
-            ),
-            AttributeSpec(
-                name="nextElementSibling",
-                getter="get_nextElementSibling",
-                side_effect=1,
-            ),
+            AttributeSpec(name="previousElementSibling", getter="get_previousElementSibling", side_effect=1),
+            AttributeSpec(name="nextElementSibling", getter="get_nextElementSibling", side_effect=1),
         ),
     )
 
@@ -69,15 +61,9 @@ class _ParentNodeMixin:
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
-            AttributeSpec(
-                name="firstElementChild", getter="get_firstElementChild", side_effect=1
-            ),
-            AttributeSpec(
-                name="lastElementChild", getter="get_lastElementChild", side_effect=1
-            ),
-            AttributeSpec(
-                name="childElementCount", getter="get_childElementCount", side_effect=1
-            ),
+            AttributeSpec(name="firstElementChild", getter="get_firstElementChild", side_effect=1),
+            AttributeSpec(name="lastElementChild", getter="get_lastElementChild", side_effect=1),
+            AttributeSpec(name="childElementCount", getter="get_childElementCount", side_effect=1),
         ),
         methods=(
             MethodSpec(name="append", callback="fn_append"),

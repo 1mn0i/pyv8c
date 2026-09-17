@@ -140,7 +140,7 @@ class TaskQueue:
         """Run one queued task, keeping a faulty task from aborting the rest."""
         try:
             return callback(*args)
-        except BaseException as exc:  # noqa: BLE001 - reported below
+        except BaseException as exc:  # reported below
             self._report_error(exc)
             return None
 
@@ -162,7 +162,7 @@ class TaskQueue:
         if sink is not None:
             try:
                 sink(error)
-            except BaseException:  # noqa: BLE001 - reporting must never break the turn
+            except BaseException:  # reporting must never break the turn
                 pass
 
     def drain_task_errors(self):

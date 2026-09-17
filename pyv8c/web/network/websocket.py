@@ -20,7 +20,7 @@ from ...foundation.errors import InvalidStateError, V8SyntaxError, dom_exception
 from ..dom.events import Event, EventTarget
 from ..fetch.blob import Blob, bytes_from_value
 from ..fetch.events import CloseEvent, ErrorEvent, MessageEvent
-from .backend import NetworkUnavailableError
+from .models import NetworkUnavailableError
 
 
 @interface('WebSocket', 'EventTarget')
@@ -32,16 +32,10 @@ class WebSocket(EventTarget):
             AttributeSpec(name="protocol", getter="get_protocol", side_effect=1),
             AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
             AttributeSpec(name="extensions", getter="get_extensions", side_effect=1),
-            AttributeSpec(
-                name="binaryType", getter="get_binaryType", setter="set_binaryType"
-            ),
-            AttributeSpec(
-                name="bufferedAmount", getter="get_bufferedAmount", side_effect=1
-            ),
+            AttributeSpec(name="binaryType", getter="get_binaryType", setter="set_binaryType"),
+            AttributeSpec(name="bufferedAmount", getter="get_bufferedAmount", side_effect=1),
             AttributeSpec(name="onopen", getter="get_onopen", setter="set_onopen"),
-            AttributeSpec(
-                name="onmessage", getter="get_onmessage", setter="set_onmessage"
-            ),
+            AttributeSpec(name="onmessage", getter="get_onmessage", setter="set_onmessage"),
             AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
             AttributeSpec(name="onclose", getter="get_onclose", setter="set_onclose"),
         ),
@@ -62,7 +56,10 @@ class WebSocket(EventTarget):
             protocols = []
         elif isinstance(protocols, pyv8.JSObject):
             iterator = protocols._iterator_method()
-            protocols = [dom_string(protocols)] if is_nullish(iterator) else sequence(protocols, dom_string, iterator_method=iterator)
+            protocols = (
+                [dom_string(protocols)] if is_nullish(iterator)
+                else sequence(protocols, dom_string, iterator_method=iterator)
+            )
         elif isinstance(protocols, (list, tuple)):
             protocols = sequence(protocols, dom_string)
         else:
@@ -74,15 +71,20 @@ class WebSocket(EventTarget):
             scheme = {"http": "ws", "https": "wss"}.get(parts.scheme, parts.scheme)
             if scheme not in ("ws", "wss") or not parts.netloc or parts.fragment:
                 raise ValueError("invalid WebSocket URL")
-            parts.port
+            # Reading the port is what rejects a URL whose port cannot be one.
+            _ = parts.port
             url = urlunsplit((scheme, parts.netloc, parts.path or "/", parts.query, ""))
         except ValueError as exc:
             raise V8SyntaxError("Failed to construct 'WebSocket': The URL is invalid.") from exc
-        if len(set(protocols)) != len(protocols) or any(not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", protocol) for protocol in protocols):
+        if len(set(protocols)) != len(protocols) or any(
+            not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", protocol) for protocol in protocols
+        ):
             raise V8SyntaxError("Failed to construct 'WebSocket': Invalid or duplicate subprotocol.")
         super().__init__(services=services, **kw)
-        if not services or not services.context_services.network_available:
-            raise NetworkUnavailableError("WebSocket requires real_network=True")
+        if not services or not services.context_services.ws_available:
+            raise NetworkUnavailableError(
+                "WebSocket requires a WebSocket engine; set ws_engine= or real_network=True"
+            )
         self._services, self._url = services, str(url)
         self._protocol = self._extensions = ""
         self._state_value, self._binary_type, self._buffered = self.CONNECTING, "blob", 0
@@ -149,9 +151,11 @@ class WebSocket(EventTarget):
             raise dom_exception("InvalidAccessError", "The code must be either 1000, or between 3000 and 4999.")
         if len(reason.encode("utf-8")) > 123:
             raise V8SyntaxError("The close reason must not be greater than 123 UTF-8 bytes.")
-        if self._state_value in (self.CLOSING, self.CLOSED): return
+        if self._state_value in (self.CLOSING, self.CLOSED):
+            return
         self._state_value = self.CLOSING
-        if self._ws: self._ws.close(int(code), str(reason))
+        if self._ws:
+            self._ws.close(int(code), str(reason))
 
     def _on_open(self, ws):
         self._state_value = self.OPEN

@@ -17,6 +17,19 @@ _EXPORTS = {
     "NetworkInformationConfig": ".foundation.environment", "BatteryConfig": ".foundation.environment",
     "StorageQuotaConfig": ".foundation.environment",
     "PluginConfig": ".foundation.environment", "MimeTypeConfig": ".foundation.environment",
+    # Networking: the two engine roles a context assembles, how to extend them,
+    # and the values they exchange with the engine.
+    "HttpTransport": ".web.network.registry",
+    "WebSocketTransport": ".web.network.registry",
+    "register_transport": ".web.network.registry",
+    "register_ws_transport": ".web.network.registry",
+    "transport_names": ".web.network.registry",
+    "NetworkBackend": ".web.network.backend",
+    "CronetTransport": ".web.network.cronet",
+    "CurlCffiTransport": ".web.network.curl_cffi",
+    "WebSocketsTransport": ".web.network.ws_websockets",
+    "NetworkRequest": ".web.network.models", "NetworkResponse": ".web.network.models",
+    "NetworkUnavailableError": ".web.network.models",
 }
 for _name in (
     "V8Error", "V8TypeError", "V8RangeError", "V8ReferenceError", "V8SyntaxError", "V8URIError", "V8EvalError",
