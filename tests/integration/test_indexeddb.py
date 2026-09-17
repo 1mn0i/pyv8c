@@ -12,7 +12,6 @@ the rollback semantics that matter to real pages:
   old data, and does not leave a stale connection behind.
 """
 import time
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 import pytest

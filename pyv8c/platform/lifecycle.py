@@ -188,18 +188,52 @@ class DocumentLifecycle:
             event_class="ProgressEvent",
         )
 
-    def dispatch_script_error(self, node, error):
+    def dispatch_script_error(self, node, error, *, message=None, filename="", line=0,
+                              column=0, value=None):
+        """Fire ``error`` for *error*, or for the pieces V8 reported directly.
+
+        An exception the embedder caught arrives as a Python object and carries
+        its own text and, usually, the JavaScript value behind it.  One V8
+        raised on its own -- inside a microtask job -- never comes back to
+        Python as an exception, so the isolate reports the message, position and
+        thrown value instead; both spellings build the same ``ErrorEvent``.
+        """
         if node is not None:
             self.dispatch_page_event("error", node, {"bubbles": False})
-        # A browser hands page handlers the original JavaScript error (the
-        # fifth ``onerror`` argument), so a wrapper from the binding layer is
-        # replaced by the JS value it stands for when there is one.
-        original = getattr(error, "original", None)
+        if message is None:
+            # A browser hands page handlers the original JavaScript error (the
+            # fifth ``onerror`` argument), so a wrapper from the binding layer is
+            # replaced by the JS value it stands for when there is one.
+            original = getattr(error, "original", None)
+            message = str(error)
+            value = error if original is None else original
         event = self.materialize_event_class("ErrorEvent")(
-            "error", {"message": str(error), "error": original if original is not None else error},
+            "error", {
+                "message": message,
+                "filename": filename,
+                "lineno": line,
+                "colno": column,
+                "error": value,
+            },
         )
         event._trusted = True
         self.page.window.fn_dispatchEvent(event)
+        return event
+
+    def dispatch_rejection(self, event_type, promise, reason):
+        """Fire ``unhandledrejection`` or ``rejectionhandled`` on the window.
+
+        The environment can see a rejected promise but not the handlers attached
+        to it, so the event is built from what V8 named.  Its revocation
+        notification carries no value, which leaves ``reason`` null on a
+        ``rejectionhandled``; the promise member still reaches it.
+        """
+        event = self.materialize_event_class(EVENT_CLASS_BY_TYPE[event_type])(
+            event_type, {"promise": promise, "reason": reason},
+        )
+        event._trusted = True
+        self.page.window.fn_dispatchEvent(event)
+        return event
 
     # -- page visibility -----------------------------------------------
 

@@ -22,6 +22,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 
 from loguru import logger
 
+from . import timer_resolution
 from .errors import RealmBusyError
 
 #: Exceptions that must interrupt the process rather than be logged by a
@@ -82,12 +83,10 @@ class RealmExecutor:
         self._wake = threading.Event()
         self._owner_ident = None
         self._task_queue = None
-        self._paused = False
-        self._pause_lock = threading.Lock()
         self.auto_pump = _env_flag("PYV8C_AUTO_PUMP") if auto_pump is None else bool(auto_pump)
         self.default_timeout = _default_call_timeout() if default_timeout is _UNSET else default_timeout
         self._error_sink = None
-        self._close_diagnostics = []
+        self._rejections = None
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         # Start without waiting for the thread to be scheduled.  The command
         # queue is unbounded and thread safe, so post/call/close behave
@@ -102,47 +101,34 @@ class RealmExecutor:
     def closed(self):
         return self._closed.is_set()
 
-    @property
-    def paused(self):
-        with self._pause_lock:
-            return self._paused
-
     def is_owner_thread(self):
         return threading.get_ident() == self._owner_ident
-
-    def set_error_sink(self, sink):
-        """Install the reporter for exceptions raised by ``post()`` commands.
-
-        Defaults to the attached :class:`~pyv8c.foundation.tasks.TaskQueue`
-        error sink, which records the error and forwards it to the realm's
-        reporter.
-        """
-        self._error_sink = sink
 
     def attach_task_queue(self, task_queue):
         """Attach the queue after services and the Realm exist."""
         self._task_queue = task_queue
         # Route fire-and-forget exceptions into the realm's error reporting so
-        # a failing network, worker or iframe callback stays observable.
+        # a failing network, worker or iframe callback stays observable.  The
+        # queue is the realm's single reporting entry point: it records the
+        # error and forwards it to whatever the realm installed as its sink.
         if self._error_sink is None:
-            self._error_sink = getattr(task_queue, "report_error", None)
+            self._error_sink = task_queue.report_error
         # The queue wakes this thread directly; without it a timer or a
         # network delivery could only be noticed on the safety timeout.
-        setter = getattr(task_queue, "set_wakeup", None)
-        if callable(setter):
-            setter(self.wakeup)
+        task_queue.set_wakeup(self.wakeup)
         self.wakeup()
 
-    def set_paused(self, paused):
-        """Suspend event-loop turns while the inspector holds the realm.
+    def attach_rejection_tracker(self, tracker):
+        """Attach the realm's queue of unhandled-rejection candidates.
 
-        Commands keep running: an attached debugger evaluates expressions
-        through them.  Only page work is held so it cannot race the pause
-        loop for the owner thread.
+        V8 reports a rejection before the turn that caused it has finished, and
+        revokes the report if a handler appears before the microtask checkpoint
+        ends, so the realm can only publish ``unhandledrejection`` once the
+        checkpoint is over.  Beginning a loop iteration is that point: the owner
+        thread is back in Python after a command or a turn, by which time V8 has
+        run every microtask those queued.  See ``foundation.rejections``.
         """
-        with self._pause_lock:
-            self._paused = bool(paused)
-        self.wakeup()
+        self._rejections = tracker
 
     def wakeup(self):
         # A no-op command wakes the command wait without executing user code.
@@ -232,8 +218,6 @@ class RealmExecutor:
             raise exc
         reported = False
         sink = self._error_sink
-        if sink is None and self._task_queue is not None:
-            sink = getattr(self._task_queue, "report_error", None)
         if sink is not None:
             try:
                 sink(exc)
@@ -243,25 +227,30 @@ class RealmExecutor:
         if not reported:
             logger.opt(exception=exc).error("realm command failed")
 
-    def _idle_timeout(self):
-        """How long the loop may sleep before it must look again."""
-        if self._paused:
-            return IDLE_WAIT_MAX
+    def _next_deadline(self):
+        """Seconds until the realm's next timer is due, if it has one."""
         task_queue = self._task_queue
         if task_queue is None or not self.auto_pump:
-            return IDLE_WAIT_MAX
-        deadline = task_queue.next_deadline()
-        if deadline is None:
-            return IDLE_WAIT_MAX
-        return min(deadline, IDLE_WAIT_MAX)
+            return None
+        return task_queue.next_deadline()
 
     def _run_turn(self):
-        if self._paused or not self.auto_pump:
+        if not self.auto_pump:
             return False
         task_queue = self._task_queue
         if task_queue is None:
             return False
         return task_queue.run_turn()
+
+    def _settle_rejections(self):
+        """Publish the rejection candidates whose turn has ended."""
+        tracker = self._rejections
+        if tracker is None:
+            return
+        try:
+            tracker.flush()
+        except BaseException:  # noqa: BLE001 - reporting must not break the loop
+            logger.debug("failed to report unhandled rejections", exc_info=True)
 
     def _run(self):
         self._owner_ident = threading.get_ident()
@@ -269,7 +258,7 @@ class RealmExecutor:
         while not self._closed.is_set():
             # Commands first: evaluate/goto/close must never queue behind
             # page work, and a command may itself be the thing that unblocks
-            # a paused or parser-blocked realm.
+            # a parser-blocked realm.
             drained = False
             while not self._closed.is_set():
                 command = self._next_command()
@@ -287,15 +276,33 @@ class RealmExecutor:
                     # dies, so close it first and then propagate.
                     self._closed.set()
                     raise
+                else:
+                    # The command may have run JavaScript, and with it V8's
+                    # microtask checkpoint: whatever rejections it reported are
+                    # due now, before the next command is picked up rather than
+                    # after the whole batch has drained.
+                    self._settle_rejections()
             if self._closed.is_set():
                 break
             if self._run_turn():
+                # A turn ends its task, which is where the specification puts
+                # the rejection events for anything that task rejected.
+                self._settle_rejections()
                 continue
             if drained:
                 continue
             self._wake.clear()
             if self._commands.empty():
-                self._wake.wait(self._idle_timeout())
+                deadline = self._next_deadline()
+                timeout = IDLE_WAIT_MAX if deadline is None else min(deadline, IDLE_WAIT_MAX)
+                # A wait towards a deadline asks for the finer platform timer;
+                # one that is only re-checking on the safety cap does not, and
+                # holding it there would charge the host for precision nothing
+                # is waiting on.  A distant deadline is waited in slices, so
+                # each of them needs it too: the slice before the deadline is
+                # the one whose overshoot would be the timer's lateness.
+                with timer_resolution.hold(deadline is not None):
+                    self._wake.wait(timeout)
         self._closed.set()
 
     def close(self, timeout=5):
@@ -319,16 +326,9 @@ class RealmExecutor:
         if not self.is_owner_thread():
             self._thread.join(timeout)
             if self._thread.is_alive():
-                # A leaked owner thread is silent today.  Record it so the
-                # lifecycle stress tests can assert on it.
-                self._close_diagnostics.append(
-                    f"{self._thread.name} did not exit within {timeout}s"
-                )
-
-    @property
-    def close_diagnostics(self):
-        """Teardown problems observed while stopping this executor."""
-        return tuple(self._close_diagnostics)
+                # A leaked owner thread keeps the realm's isolate alive, and
+                # nothing else would notice, so say so.
+                logger.warning(f"{self._thread.name} did not exit within {timeout}s")
 
 
 _STOP = object()

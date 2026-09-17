@@ -9,11 +9,9 @@ from pyv8 import IdlSpec
 from ...engine.features import LazyValueStore, interface
 from ...foundation.arguments import (
     MISSING,
-    callback_value,
     dictionary,
     dom_string,
     event_handler,
-    integer,
     is_nullish,
     missing_error,
     usv_string,
@@ -23,6 +21,7 @@ from ...foundation.errors import SecurityError
 from ...foundation.urls import origin_tuple, serialize_origin
 from ..dom.events import EventTarget
 from ..fetch.request import Request
+from .scheduling import _SchedulingMixin
 from .utils import deny_cross_origin, window_attribute, window_method
 
 __all__ = ["Window", "WindowProperties"]
@@ -105,7 +104,7 @@ class _WindowFeatureValues(LazyValueStore):
 
 
 @interface('Window', 'WindowProperties')
-class Window(WindowProperties):
+class Window(_SchedulingMixin, WindowProperties):
     __v8_idl_spec__ = IdlSpec(
         global_this=True,
         attributes=(
@@ -151,6 +150,9 @@ class Window(WindowProperties):
                 "fn_requestAnimationFrame",
                 1,
                 cross_origin=True,
+            ),
+            window_method(
+                "cancelAnimationFrame", "fn_cancelAnimationFrame", 1, cross_origin=True
             ),
             window_method("fetch", "fn_fetch", 1, cross_origin=True),
             window_method("close", "fn_close"),
@@ -353,50 +355,6 @@ class Window(WindowProperties):
         """
         self._require_same_origin()
         return 0
-    def fn_setTimeout(self, callback=MISSING, delay=0, *arguments):
-        if callback is MISSING:
-            raise missing_error('Window', 'setTimeout', 1, 0, constructor=False)
-        if not callable(callback):
-            source = dom_string(callback)
-            callback = lambda: self._services.realm_services.evaluate_script(source)
-        elif arguments:
-            original = callback
-            callback = lambda: original(*arguments)
-        if delay is pyv8.Undefined:
-            delay = 0
-        if delay is not pyv8.Undefined:
-            delay = integer(delay, signed=True)
-        return self._services.task_services.schedule(callback, float(delay) / 1000.0, repeat=False)
-    def fn_clearTimeout(self, ident=0, *_extra):
-        ident = integer(ident, signed=True)
-        self._services.task_services.cancel(int(ident))
-    def fn_setInterval(self, callback=MISSING, delay=0, *arguments):
-        if callback is MISSING:
-            raise missing_error('Window', 'setInterval', 1, 0, constructor=False)
-        if not callable(callback):
-            source = dom_string(callback)
-            callback = lambda: self._services.realm_services.evaluate_script(source)
-        elif arguments:
-            original = callback
-            callback = lambda: original(*arguments)
-        if delay is pyv8.Undefined:
-            delay = 0
-        if delay is not pyv8.Undefined:
-            delay = integer(delay, signed=True)
-        return self._services.task_services.schedule(callback, float(delay) / 1000.0, repeat=True)
-    def fn_clearInterval(self, ident=0, *_extra):
-        ident = integer(ident, signed=True)
-        self._services.task_services.cancel(int(ident))
-    def fn_queueMicrotask(self, callback=MISSING, *_extra):
-        if callback is MISSING:
-            raise missing_error('Window', 'queueMicrotask', 1, 0, constructor=False)
-        callback = callback_value(callback)
-        self._services.task_services.microtasks.append(callback)
-    def fn_requestAnimationFrame(self, callback=MISSING, *_extra):
-        if callback is MISSING:
-            raise missing_error('Window', 'requestAnimationFrame', 1, 0, constructor=False)
-        callback = callback_value(callback)
-        return self._services.task_services.schedule(callback, 0, repeat=False)
     def fn_fetch(self, request=MISSING, options=None, *_extra):
         promise, resolve, reject = self._services.realm_services.make_promise()
         try:

@@ -85,8 +85,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         url = usv_string(url)
         if async_value is pyv8.Undefined:
             async_value = True
-        if async_value is not pyv8.Undefined:
-            async_value = boolean(async_value)
+        async_value = boolean(async_value)
         if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", method):
             raise V8SyntaxError("Invalid HTTP method")
         if method.upper() in ("CONNECT", "TRACE", "TRACK"):

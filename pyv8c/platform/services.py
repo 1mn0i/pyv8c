@@ -36,21 +36,29 @@ class WorkerContext:
 
 
 class _TaskSource:
-    """Task-queue access shared by the capabilities that post to the loop."""
+    """Task-queue access shared by the capabilities that post to the loop.
 
-    def __init__(self, owner):
-        self._owner = owner
+    The queue itself is held rather than reached through an owner, because a
+    worker realm drives its own queue with the same capabilities a page does.
+    """
+
+    def __init__(self, tasks):
+        self._tasks = tasks
 
     @property
     def closed(self):
-        return self._owner._tasks.closed
+        return self._tasks.closed
 
     def post_task(self, callback):
-        self._owner._tasks.post(callback)
+        self._tasks.post(callback)
 
 
 class _RealmCapability(_TaskSource):
     """Realm identity, scripting and task posting (implements RealmServices)."""
+
+    def __init__(self, owner):
+        super().__init__(owner._tasks)
+        self._owner = owner
 
     @property
     def url(self):
@@ -67,6 +75,14 @@ class _RealmCapability(_TaskSource):
     def make_promise(self):
         return self._owner._scripts.make_promise()
 
+    def enqueue_microtask(self, callback):
+        """Queue *callback* on the realm's V8 microtask queue.
+
+        Promise reactions and ``queueMicrotask`` share that queue, which is what
+        gives them the single FIFO order the HTML specification requires.
+        """
+        return self._owner._scripts.enqueue_microtask(callback)
+
     def evaluate_script(self, source):
         return self._owner._scripts.evaluate(source)
 
@@ -75,6 +91,17 @@ class _RealmCapability(_TaskSource):
 
     def js_error_value(self, exc):
         return self._owner._scripts.js_error_value(exc)
+
+    def report_exception(self, exc):
+        """Report an uncaught exception through this realm's error reporting.
+
+        The DOM is what calls page code -- listeners, handler slots -- so an
+        exception raised there has no caller left to catch it.  That is the case
+        the specification calls "report the exception", and the task queue is
+        the realm's reporting entry point: its sink turns it into the page's
+        ``error`` event.
+        """
+        self._tasks.report_error(exc)
 
     def materialize_interface(self, name):
         return self._owner._page_realm.binding_session.materialize(name)
@@ -111,26 +138,72 @@ class _TaskCapability(_TaskSource):
     """Event-loop task sources (implements TaskServices)."""
 
     def schedule(self, callback, delay, repeat=False):
-        return self._owner._tasks.schedule(callback, delay, repeat)
+        return self._tasks.schedule(callback, delay, repeat)
 
     def cancel(self, ident):
-        self._owner._tasks.cancel(ident)
-
-    @property
-    def microtasks(self):
-        return self._owner._tasks.microtasks
+        self._tasks.cancel(ident)
 
     def begin_network(self):
-        self._owner._tasks.begin_network()
+        self._tasks.begin_network()
 
     def complete_network(self):
-        self._owner._tasks.complete_network()
+        self._tasks.complete_network()
 
     def begin_worker(self):
-        self._owner._tasks.begin_worker()
+        self._tasks.begin_worker()
 
     def complete_worker(self):
-        self._owner._tasks.complete_worker()
+        self._tasks.complete_worker()
+
+
+class WorkerRealmServices:
+    """The capability facets a worker hands to its own global scope.
+
+    A worker realm owns its task queue and its V8 context, so ``setTimeout``
+    and ``queueMicrotask`` behave exactly as they do on a page.  Everything the
+    scope needs from its *parent* travels separately, through the
+    ``WorkerServices`` facet the parent page established.
+    """
+
+    def __init__(self, tasks, runtime):
+        self.task_services = _TaskCapability(tasks)
+        self.realm_services = _WorkerRealmCapability(tasks, runtime)
+
+
+class _WorkerRealmCapability(_TaskSource):
+    """Worker scripting: the worker's own context, with no page behind it."""
+
+    def __init__(self, tasks, runtime):
+        super().__init__(tasks)
+        self._runtime = runtime
+
+    @property
+    def url(self):
+        return self._runtime.script_url
+
+    def evaluate_script(self, source):
+        return self._runtime.evaluate_script(source)
+
+    def enqueue_microtask(self, callback):
+        return self._runtime.enqueue_microtask(callback)
+
+    def make_promise(self):
+        return self._runtime.make_promise()
+
+    def js_error_value(self, exc):
+        return self._runtime.js_error_value(exc)
+
+    def promise_resolve(self, value):
+        return self._runtime.promise_resolve(value)
+
+    def report_exception(self, exc):
+        """Route a listener exception to the worker's error reporting.
+
+        A worker global has no window to report onto: its reporting is the task
+        queue's, which forwards the failure to the parent page as the worker's
+        ``error`` event.
+        """
+        self._tasks.report_error(exc)
 
 
 class _ResourceCapability:
@@ -369,7 +442,7 @@ class PageServices:
 
         # Narrow capabilities handed to web packages.
         self.realm_services = _RealmCapability(self)
-        self.task_services = _TaskCapability(self)
+        self.task_services = _TaskCapability(tasks)
         self.resource_services = _ResourceCapability(self)
         self.document_services = _DocumentCapability(self)
         self.worker_services = _WorkerCapability(self)
@@ -394,4 +467,4 @@ class PageServices:
         self._page_realm = page_realm
 
 
-__all__ = ["PageServices", "WorkerContext"]
+__all__ = ["PageServices", "WorkerContext", "WorkerRealmServices"]

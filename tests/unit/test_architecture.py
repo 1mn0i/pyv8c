@@ -53,6 +53,12 @@ OPTIONAL_FEATURES = {
     "web/workers/runtime.py": "workers",
 }
 
+#: Web packages every feature may build on at import time.
+SHARED_WEB_PACKAGES = ("dom", "fetch")
+
+#: ``bom`` helper modules that hold no interface behind them.
+SHARED_BOM_MODULES = ("bom.scheduling", "bom.utils")
+
 
 def test_optional_features_build_only_on_shared_layers():
     """Loading one optional feature must not drag in another one.
@@ -61,14 +67,19 @@ def test_optional_features_build_only_on_shared_layers():
     contract in docs/ARCHITECTURE.md; its runtime half is the ``sys.modules``
     probe in tests/unit/test_lazy_interface_modules.py.  Only import-time
     imports are inspected: a call body may reach a sibling feature lazily.
+
+    ``dom`` and ``fetch`` are shared by every feature, but ``bom`` holds
+    sibling features, so only the helper modules that carry no interface behind
+    them may be named from it.
     """
     for relative, own_package in OPTIONAL_FEATURES.items():
         tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
         for node in tree.body:
             if not isinstance(node, ast.ImportFrom) or node.level != 2:
                 continue
-            target = (node.module or "").split(".")[0]
-            assert target in ("dom", "fetch", own_package), (relative, target)
+            module = node.module or ""
+            shared = module in SHARED_BOM_MODULES or module.split(".")[0] in SHARED_WEB_PACKAGES
+            assert shared or module.split(".")[0] == own_package, (relative, module)
 
 
 def test_bindings_do_not_depend_on_runtime():

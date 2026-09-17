@@ -1,16 +1,17 @@
-"""Per-page task, timer, microtask, and pending-work scheduler.
+"""Per-page task, timer, and pending-work scheduler.
 
 A realm owns one :class:`TaskQueue`. The realm executor drives it through
 :meth:`TaskQueue.run_turn`, which performs exactly one event-loop turn:
 
 1. one parser task (only while the parser is not blocked),
 2. one posted task (network / worker / iframe delivery),
-3. a microtask checkpoint,
-4. all due timers, each followed by a microtask checkpoint.
+3. at most one due timer.
 
 Returning after a single turn lets the executor interleave its own commands
-with page work, and the two checkpoints mirror the WHATWG ordering of
-"one macrotask, then drain the microtask queue".
+with page work.  Microtasks are deliberately not a source here: the realm's V8
+context owns that queue and drains it whenever a JavaScript call returns to the
+embedder, which is the checkpoint the HTML specification places after every
+task.
 """
 
 from __future__ import annotations
@@ -18,27 +19,41 @@ from __future__ import annotations
 import enum
 import heapq
 import itertools
-import queue
 import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
+from . import timer_resolution
 from .errors import as_js_error
+
+#: Everything this queue times is measured on the highest-resolution monotonic
+#: clock Python exposes.  Windows' ``time.monotonic()`` reads ``GetTickCount64``
+#: and moves once per 64 Hz system tick, so a timer armed for 5 ms was compared
+#: against a clock that only advanced every 15.6 ms: it fired a tick late no
+#: matter how precisely the loop waited.  On platforms where ``monotonic`` is
+#: already fine grained, ``perf_counter`` is the same clock.
+_now = time.perf_counter
 
 
 class TaskSource(enum.Enum):
-    """Task queues drained by one realm event-loop turn, in priority order."""
+    """Task queues drained by one realm event-loop turn, in priority order.
 
-    COMMAND = "command"       # executor-delivered evaluate/goto/close/DevTools commands
+    Only the sources callers post into are listed: timers live in this queue's
+    own heap, ordered by deadline rather than by arrival, and the microtask
+    queue belongs to V8, which drains it whenever a JavaScript call returns to
+    the embedder.
+
+    Embedder commands (evaluate, goto, close, DevTools) are absent by design:
+    they travel on the executor's own command queue, which it drains before any
+    turn so page work can never starve them.
+    """
+
     PARSER = "parser"         # parser resumption, gated by the parser-blocking state
     POSTED = "posted"         # network / worker / iframe completion callbacks
-    TIMER = "timer"           # setTimeout / setInterval
-    MICROTASK = "microtask"   # promise reactions and queueMicrotask
 
 
-@runtime_checkable
 class TaskHost(Protocol):
     """The only thing :class:`TaskQueue` may ask of its owning realm.
 
@@ -63,7 +78,7 @@ class _NullTaskHost:
 
 
 class TaskQueue:
-    """One realm's task sources, timers, microtasks and pending-work counters."""
+    """One realm's task sources, timers and pending-work counters."""
 
     def __init__(self, host=None, *, error_sink: Callable[[BaseException], None] | None = None):
         self._host = host if host is not None else _NullTaskHost()
@@ -71,8 +86,10 @@ class TaskQueue:
         self.timers: list[tuple[float, int, Callable[..., object], float | None]] = []
         self.counter = itertools.count(1)
         self.cancelled: set[int] = set()
-        self.microtasks: deque[Callable[..., object]] = deque()
-        self.posted: queue.Queue[Callable[..., object]] = queue.Queue()
+        # A deque is enough for the posted source: delivery threads only append
+        # and the single pop happens on the owner thread, while ``_signal``
+        # already orders a delivery against a waiter that is about to sleep.
+        self.posted: deque[Callable[..., object]] = deque()
         self.errors: list[BaseException] = []
         self.condition = threading.Condition()
         self.network_pending = 0
@@ -188,7 +205,7 @@ class TaskQueue:
         if source is TaskSource.PARSER:
             self._parser.append(callback)
         else:
-            self.posted.put(callback)
+            self.posted.append(callback)
         self._signal()
         return True
 
@@ -202,7 +219,7 @@ class TaskQueue:
             delay = 0.0
         heapq.heappush(
             self.timers,
-            (time.monotonic() + delay, ident, callback, delay if repeat else None),
+            (_now() + delay, ident, callback, delay if repeat else None),
         )
         self._signal()
         return ident
@@ -219,31 +236,15 @@ class TaskQueue:
         on time without polling.
         """
         if self.timers:
-            return max(0.0, self.timers[0][0] - time.monotonic())
+            return max(0.0, self.timers[0][0] - _now())
         return None
-
-    @staticmethod
-    def _take(buffer):
-        try:
-            if isinstance(buffer, queue.Queue):
-                return buffer.get_nowait()
-            return buffer.popleft()
-        except (queue.Empty, IndexError):
-            return None
-
-    def _drain_microtasks(self):
-        ran = False
-        while self.microtasks:
-            self.run_callback(self.microtasks.popleft())
-            ran = True
-        return ran
 
     def _run_due_timers(self):
         ran = False
         # A repeating zero-delay timer must not monopolise the realm.  One
-        # timer callback per turn gives posted work, inspector commands and
-        # microtasks a chance to run between callbacks.
-        if self.timers and self.timers[0][0] <= time.monotonic():
+        # timer callback per turn gives posted work and inspector commands a
+        # chance to run between callbacks.
+        if self.timers and self.timers[0][0] <= _now():
             due, ident, callback, interval = heapq.heappop(self.timers)
             if ident in self.cancelled:
                 self.cancelled.discard(ident)
@@ -257,9 +258,8 @@ class TaskQueue:
                     interval = max(interval, 0.001)
                     heapq.heappush(
                         self.timers,
-                        (max(due + interval, time.monotonic() + interval), ident, callback, interval),
+                        (max(due + interval, _now() + interval), ident, callback, interval),
                     )
-                self._drain_microtasks()
         return ran
 
     def run_turn(self, *, allow_parser: bool = True) -> bool:
@@ -272,19 +272,16 @@ class TaskQueue:
         if self.closed:
             return False
         worked = False
-        if allow_parser and not self._host.parser_blocked():
-            callback = self._take(self._parser)
-            if callback is not None:
-                self.run_callback(callback)
-                worked = True
-        callback = self._take(self.posted)
-        if callback is not None:
-            self.run_callback(callback)
+        # The host is only asked about parser-blocking when there is parser work
+        # for it to gate: that question crosses into the owning realm, which
+        # makes it by far the most expensive check in a turn.
+        if allow_parser and self._parser and not self._host.parser_blocked():
+            self.run_callback(self._parser.popleft())
             worked = True
-        worked = self._drain_microtasks() or worked
-        worked = self._run_due_timers() or worked
-        worked = self._drain_microtasks() or worked
-        return worked
+        if self.posted:
+            self.run_callback(self.posted.popleft())
+            worked = True
+        return self._run_due_timers() or worked
 
     def pump_until(self, predicate, timeout=0):
         """Turn the loop until ``predicate()`` holds or *timeout* expires.
@@ -301,7 +298,7 @@ class TaskQueue:
         received.  Sampling after ``run_turn()`` would leave deliveries that
         raced between the turn and the sample undetected.
         """
-        deadline = time.monotonic() + float(timeout or 0)
+        deadline = _now() + float(timeout or 0)
         while True:
             seq = self._signal_seq
             if predicate():
@@ -313,12 +310,14 @@ class TaskQueue:
                 return True
             if not timeout:
                 return predicate()
-            remaining = deadline - time.monotonic()
+            remaining = deadline - _now()
             if remaining <= 0:
                 return predicate()
             hint = self.next_deadline()
             wait_for = min(hint, remaining) if hint is not None else min(0.05, remaining)
-            with self.condition:
+            # Both waits below are bounded by a deadline, so they ask for the
+            # finer platform timer while they last.
+            with timer_resolution.hold(), self.condition:
                 if not self.closed and self._signal_seq == seq:
                     self.condition.wait(max(0.0, wait_for))
 
@@ -329,7 +328,7 @@ class TaskQueue:
         keeps turning the loop (already driven by the realm executor) until
         the queues drain or *timeout* expires.
         """
-        deadline = time.monotonic() + float(timeout or 0)
+        deadline = _now() + float(timeout or 0)
         while True:
             # Sampled before the drain: a delivery that lands while this
             # iteration runs bumps the sequence, so the gate below skips the
@@ -337,27 +336,26 @@ class TaskQueue:
             # notification nobody received.
             seq = self._signal_seq
             while self.run_turn():
-                if timeout and time.monotonic() >= deadline:
+                if timeout and _now() >= deadline:
                     return
             if self.closed:
                 return
             if not timeout:
                 return
-            remaining = max(0.0, deadline - time.monotonic())
+            remaining = max(0.0, deadline - _now())
             if remaining == 0.0:
                 return
             deadline_hint = self.next_deadline()
             if deadline_hint is None and not (self.network_pending or self.worker_pending):
                 return
             wait_for = min(0.01, remaining) if deadline_hint is None else min(deadline_hint, remaining)
-            with self.condition:
+            with timer_resolution.hold(), self.condition:
                 if not self.closed and self._signal_seq == seq:
                     self.condition.wait(max(0.0, wait_for))
 
     def close(self):
         self._closed = True
         self.timers.clear()
-        self.microtasks.clear()
         self.cancelled.clear()
         # Async network/worker completions may arrive after the Page closes.
         # Drop their wait state as part of teardown so a closed page cannot
@@ -365,11 +363,7 @@ class TaskQueue:
         self.network_pending = 0
         self.worker_pending = 0
         self._parser.clear()
-        while True:
-            try:
-                self.posted.get_nowait()
-            except queue.Empty:
-                break
+        self.posted.clear()
         self._signal()
 
 

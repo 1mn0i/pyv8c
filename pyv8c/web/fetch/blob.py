@@ -80,14 +80,12 @@ class Blob:
     def fn_slice(self, start=0, end=pyv8.Undefined, content_type='', *_extra):
         if start is pyv8.Undefined:
             start = 0
-        if start is not pyv8.Undefined:
-            start = integer(start, bits=64, signed=True)
+        start = integer(start, bits=64, signed=True)
         if end is not pyv8.Undefined:
             end = integer(end, bits=64, signed=True)
         if content_type is pyv8.Undefined:
             content_type = ''
-        if content_type is not pyv8.Undefined:
-            content_type = dom_string(content_type)
+        content_type = dom_string(content_type)
         size = len(self._data)
         start = int(start)
         end = size if end is pyv8.Undefined else int(end)

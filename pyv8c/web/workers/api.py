@@ -2,6 +2,7 @@
 from urllib.parse import urljoin
 
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8.flag import FlagLocation
 
 from ...engine.features import FeatureImplementation, interface
 from ...foundation.arguments import (
@@ -15,13 +16,14 @@ from ...foundation.arguments import (
     usv_string,
 )
 from ...foundation.errors import InvalidStateError
+from ..bom.scheduling import _SchedulingMixin
 from ..dom.events import EventTarget
 from ..fetch.clone import message_transfer
 from ..fetch.events import ErrorEvent, MessageEvent
 
 
 @interface('WorkerGlobalScope', 'EventTarget')
-class WorkerGlobalScope(EventTarget):
+class WorkerGlobalScope(_SchedulingMixin, EventTarget):
     __v8_idl_spec__ = IdlSpec(
         global_this=True,
         attributes=(
@@ -35,13 +37,24 @@ class WorkerGlobalScope(EventTarget):
         methods=(
             MethodSpec(name="postMessage", callback="fn_postMessage", length=1),
             MethodSpec(name="close", callback="fn_close"),
+            # A worker global schedules like a window: same declarations, same
+            # implementations, the only difference being that they run on the
+            # worker's own task queue.
+            MethodSpec(name="setTimeout", callback="fn_setTimeout", length=1),
+            MethodSpec(name="clearTimeout", callback="fn_clearTimeout", length=0),
+            MethodSpec(name="setInterval", callback="fn_setInterval", length=1),
+            MethodSpec(name="clearInterval", callback="fn_clearInterval", length=0),
+            MethodSpec(name="queueMicrotask", callback="fn_queueMicrotask", length=1),
         ),
         constructor_behavior=0,
         has_constructor=1,
     )
 
-    def __init__(self, runtime=None, environment=None, **kw):
-        super().__init__(services=None, **kw)
+    #: Interface name the scheduling methods report in argument errors.
+    _scheduling_interface = "WorkerGlobalScope"
+
+    def __init__(self, runtime=None, environment=None, services=None, **kw):
+        super().__init__(services=services, **kw)
         self._runtime = runtime
         from ..bom.navigator import Navigator
         self.navigator = Navigator(environment=environment, worker=True)
@@ -69,8 +82,26 @@ class WorkerGlobalScope(EventTarget):
 
 @interface('DedicatedWorkerGlobalScope', 'WorkerGlobalScope')
 class DedicatedWorkerGlobalScope(WorkerGlobalScope):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-    pass
+    __v8_idl_spec__ = IdlSpec(
+        methods=(
+            # Frame requests live on the dedicated scope itself, which is where
+            # the baseline declares them.
+            MethodSpec(
+                name="requestAnimationFrame",
+                callback="fn_requestAnimationFrame",
+                length=1,
+                location=FlagLocation.kInstance,
+            ),
+            MethodSpec(
+                name="cancelAnimationFrame",
+                callback="fn_cancelAnimationFrame",
+                length=1,
+                location=FlagLocation.kInstance,
+            ),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
 
 
 @interface('Worker', 'EventTarget')
@@ -137,6 +168,21 @@ class Worker(EventTarget):
     def _receive_error(self, error):
         if not self._terminated:
             self.fn_dispatchEvent(ErrorEvent("error", {"message": str(error), "error": error}))
+
+    def _receive_uncaught(self, message, filename, line, column):
+        """Report an exception V8 raised inside the worker's own realm.
+
+        The worker's error value cannot cross into this realm, so the Worker
+        object receives the text and position V8 captured -- the same shape a
+        cross-origin script error reaches a page with.
+        """
+        if not self._terminated:
+            self.fn_dispatchEvent(ErrorEvent("error", {
+                "message": message,
+                "filename": filename,
+                "lineno": line,
+                "colno": column,
+            }))
 
     def _finish_lifecycle(self):
         if getattr(self, "_lifecycle_finished", False): return

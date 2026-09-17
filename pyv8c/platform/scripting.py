@@ -4,26 +4,12 @@ import re
 from collections import deque
 from urllib.parse import urljoin
 
-import pyv8
-
-from ..foundation.errors import InvalidStateError, as_js_error
+from ..foundation.errors import InvalidStateError
 from ..foundation.tasks import TaskSource
 
 
 class ScriptController:
     """Own script-queue state and execution; runs on the owning Page thread."""
-
-    # JavaScript helpers compiled once per realm; see ScriptController._js_scripts.
-    _JS_HELPER_SOURCES = {
-        "make_promise": (
-            "(() => { let resolve, reject;"
-            " const promise = new Promise((yes, no) => { resolve = yes; reject = no; });"
-            " return { promise, resolve, reject }; })()"
-        ),
-        "error_factory": "(name, message) => new (globalThis[name] || Error)(message)",
-        "dom_error_factory": "(message, name) => new DOMException(message, name)",
-        "promise_resolve": "(value) => Promise.resolve(value)",
-    }
 
     def __init__(self, page):
         self.page = page
@@ -31,7 +17,9 @@ class ScriptController:
         self.queue = deque()
         self.defer = deque()
         self.module_cache = {}
-        self._js_script_cache = None
+        # The realm's compiled JS helpers, created with the V8 context and
+        # dropped when it is replaced.
+        self._realm_scripts = None
 
     def reset(self):
         self.dom_blocking_scripts = 0
@@ -41,58 +29,36 @@ class ScriptController:
 
     def clear_js_helpers(self):
         """Drop cached scripts when the V8 context goes away."""
-        self._js_script_cache = None
+        self._realm_scripts = None
 
     # -- realm JS helpers ----------------------------------------------
 
     @property
-    def _js_scripts(self):
-        """Compile the realm's JavaScript helpers exactly once.
+    def _scripts(self):
+        """The realm's compiled JavaScript helpers.
 
-        ``exec_js`` builds a fresh ``Script`` for every source string, and that
-        construction costs several times more than evaluating an already
-        compiled one. Fetch, XHR and every rejected Promise go through these
-        helpers, so they are compiled once per realm and re-evaluated after.
+        The realm creates them alongside its context and installs the isolate's
+        error hooks on that same instance, so this controller borrows the set
+        instead of compiling a second one.
         """
-        scripts = self._js_script_cache
+        scripts = self._realm_scripts
         if scripts is None:
-            scripts = {
-                key: pyv8.Script(self.page.context, source)
-                for key, source in self._JS_HELPER_SOURCES.items()
-            }
-            self._js_script_cache = scripts
+            scripts = self._realm_scripts = self.page.realm.scripts
         return scripts
 
     def make_promise(self):
-        record = self.page.context.exec_js(self._js_scripts["make_promise"])
-        return record["promise"], record["resolve"], record["reject"]
+        return self._scripts.make_promise()
 
     def js_error_value(self, exc):
         """Materialize a rejected Promise reason as a native JS error object."""
-        if isinstance(exc, pyv8.JSException):
-            return exc.original
-        error = as_js_error(exc)
-        name = getattr(error, "_name", None)
-        if not name:
-            name = {
-                "V8TypeError": "TypeError", "V8RangeError": "RangeError",
-                "V8ReferenceError": "ReferenceError", "V8SyntaxError": "SyntaxError",
-                "V8URIError": "URIError", "V8EvalError": "EvalError",
-            }.get(type(error).__name__, "Error")
-        message = str(error)
-        scripts = self._js_scripts
-        # DOMException's name is stored on the Python instance, while native
-        # Error subclasses use the constructor name.  Keep DOMException
-        # construction separate so its name/code remain observable.
-        if hasattr(error, "_name"):
-            factory = self.page.context.exec_js(scripts["dom_error_factory"])
-            return factory.call(None, message, name)
-        factory = self.page.context.exec_js(scripts["error_factory"])
-        return factory.call(None, name, message)
+        return self._scripts.js_error_value(exc)
 
     def promise_resolve(self, value):
-        factory = self.page.context.exec_js(self._js_scripts["promise_resolve"])
-        return factory.call(None, value)
+        return self._scripts.promise_resolve(value)
+
+    def enqueue_microtask(self, callback):
+        """Queue *callback* as a microtask, in FIFO with promise reactions."""
+        return self._scripts.enqueue_microtask(callback)
 
     # -- script execution ----------------------------------------------
 

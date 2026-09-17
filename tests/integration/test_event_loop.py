@@ -10,6 +10,7 @@ page to run.
 runs task turns on its own and a page only advances while ``run_until_idle``
 is executing.
 """
+import statistics
 import time
 from urllib.parse import urlsplit
 
@@ -19,6 +20,18 @@ pytest.importorskip("pyv8")
 from pyv8c import Browser
 
 ORIGIN = "http://127.0.0.1:9"
+
+#: A worker that exercises the scheduling surface its global scope shares with
+#: a window.  Each source posts separately so the order is observable.
+SCHEDULING_WORKER = """
+self.onmessage = function () {
+    queueMicrotask(function () { postMessage('microtask'); });
+    Promise.resolve().then(function () { postMessage('promise'); });
+    setTimeout(function () { postMessage('timeout'); }, 5);
+    requestAnimationFrame(function () { postMessage('frame'); });
+    postMessage('sync');
+};
+"""
 
 
 def _loader(url, request):
@@ -38,6 +51,13 @@ def _loader(url, request):
                 "self.onmessage = function (e) { postMessage(e.data * 2); };"
                 "setInterval(function () {}, 50);"
             ),
+            "headers": {"content-type": "text/javascript"},
+        }
+    if path == "/scheduling.js":
+        return {
+            "status": 200,
+            "url": str(url),
+            "body": SCHEDULING_WORKER,
             "headers": {"content-type": "text/javascript"},
         }
     return {"status": 200, "url": str(url), "body": "", "headers": {"content-type": "text/html"}}
@@ -135,6 +155,136 @@ def test_posted_response_runs_before_soon_timer(page):
     """)
     assert wait_until(page, "window.__order.length === 2", until=True)
     assert page.evaluate("window.__order") == ["fetch", "timer"]
+
+
+def test_a_short_timer_is_not_left_a_system_tick_late(page):
+    """A timer fires close to the deadline it was armed with.
+
+    Two platform details made this fail by a whole 64 Hz tick: Windows'
+    ``time.monotonic`` only moves once per tick, so the deadline comparison was
+    quantised, and an ordinary wait rounds up to the same tick.  The bound is
+    deliberately loose -- it is a regression guard, not a precision claim.
+    """
+    lateness = []
+    for _ in range(5):
+        page.evaluate("""
+            (function () {
+                window.__fired = false;
+                setTimeout(function () { window.__fired = true; }, 5);
+            })()
+        """)
+        started = time.perf_counter()
+        while not page.evaluate("window.__fired"):
+            if time.perf_counter() - started > 2:
+                pytest.fail("a 5 ms timer never ran")
+        lateness.append((time.perf_counter() - started) * 1000)
+
+    assert statistics.median(lateness) < 12.0, lateness
+
+
+def test_queue_microtask_shares_the_promise_queue(page):
+    """``queueMicrotask`` and promise reactions are one FIFO queue.
+
+    The specification puts both on the microtask queue, so they interleave in
+    enqueue order.  A second queue of the embedder's own would instead run one
+    kind entirely after the other.
+    """
+    page.evaluate("""
+        window.__order = [];
+        queueMicrotask(function () { window.__order.push('microtask-1'); });
+        Promise.resolve().then(function () { window.__order.push('promise-1'); });
+        queueMicrotask(function () { window.__order.push('microtask-2'); });
+        Promise.resolve().then(function () { window.__order.push('promise-2'); });
+        setTimeout(function () { window.__order.push('timer'); }, 0);
+        window.__order.push('sync');
+    """)
+    assert wait_until(page, "window.__order.length === 6", until=True) is True
+    assert page.evaluate("window.__order") == [
+        "sync", "microtask-1", "promise-1", "microtask-2", "promise-2", "timer",
+    ]
+
+
+def test_queue_microtask_ignores_a_replaced_promise(page):
+    """The page must not be able to break ``queueMicrotask``.
+
+    The specification defines it on the implementation's own microtask queue, so
+    replacing ``Promise`` must leave it working -- it is not a page-level API
+    implemented in terms of a page-level object.
+    """
+    page.evaluate("""
+        window.__log = [];
+        const real = Promise;
+        Promise = undefined;
+        try { queueMicrotask(function () { window.__log.push('ran'); }); }
+        catch (error) { window.__log.push('threw: ' + error); }
+        Promise = real;
+    """)
+    assert wait_until(page, "window.__log.length === 1", until=True) is True
+    assert page.evaluate("window.__log") == ["ran"]
+
+
+def test_queue_microtask_is_not_routed_through_a_patched_then(page):
+    """Wrapping ``Promise.prototype.then`` must not add observable steps.
+
+    Instrumentation libraries patch exactly that method, and doing so must not
+    move the microtask, duplicate it, or make it run through the wrapper.
+    """
+    page.evaluate("""
+        window.__order = [];
+        const realThen = Promise.prototype.then;
+        Promise.prototype.then = function (onFulfilled, onRejected) {
+            return realThen.call(this, function (value) {
+                window.__order.push('then-wrapper');
+                return onFulfilled ? onFulfilled(value) : value;
+            }, onRejected);
+        };
+        queueMicrotask(function () { window.__order.push('microtask'); });
+        Promise.resolve().then(function () { window.__order.push('user-promise'); });
+        window.__order.push('sync');
+    """)
+    assert wait_until(page, "window.__order.length === 4", until=True) is True
+    # Only the page's own .then reaches its wrapper.
+    assert page.evaluate("window.__order") == [
+        "sync", "microtask", "then-wrapper", "user-promise",
+    ]
+
+
+def test_throwing_microtask_does_not_stop_the_checkpoint(page):
+    """A faulty microtask is reported, and the jobs behind it still run.
+
+    The callback is queued on V8's own microtask queue, so an exception escaping
+    it is reported the way V8 reports an uncaught microtask exception -- through
+    the isolate, on stderr -- rather than as a window ``error`` event, and the
+    checkpoint carries on with the jobs already queued behind it.
+    """
+    page.evaluate("""
+        window.__log = [];
+        queueMicrotask(function () { throw new Error('microtask boom'); });
+        queueMicrotask(function () { window.__log.push('after-throw'); });
+        Promise.resolve().then(function () { window.__log.push('promise'); });
+        window.__log.push('sync');
+    """)
+    assert wait_until(page, "window.__log.length === 3", until=True) is True
+    assert page.evaluate("window.__log") == ["sync", "after-throw", "promise"]
+
+
+def test_worker_runs_timers_and_microtasks(page):
+    """A worker global schedules on its own task queue, not on stub calls."""
+    page.evaluate("""
+        window.__workerOrder = [];
+        var scheduling = new Worker('/scheduling.js');
+        scheduling.onmessage = function (event) { window.__workerOrder.push(event.data); };
+        scheduling.onerror = function (event) { window.__workerOrder.push('error: ' + event.message); };
+        scheduling.postMessage('go');
+    """)
+    assert wait_until(page, "window.__workerOrder.length === 5", until=True) is True
+    prefix, tail = page.evaluate(
+        "[window.__workerOrder.slice(0, 3), window.__workerOrder.slice(3).sort()]"
+    )
+    # The task body runs first, then its microtasks in enqueue order; the timer
+    # and the frame request both run afterwards, in whichever order they are due.
+    assert prefix == ["sync", "microtask", "promise"]
+    assert tail == ["frame", "timeout"]
 
 
 def test_interval_repeats_and_can_be_cleared(page):

@@ -43,9 +43,8 @@ class Response:
             body = usv_string(body)
         if options is pyv8.Undefined:
             options = None
-        if options is not pyv8.Undefined:
-            if not is_nullish(options):
-                options = dictionary(options)
+        if not is_nullish(options):
+            options = dictionary(options)
         if services is pyv8.Undefined:
             services = None
         options = options if isinstance(options, dict) else {}

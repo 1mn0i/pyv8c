@@ -32,6 +32,26 @@ def _js_call(fn, this, *args):
     return fn(*args)
 
 
+#: Exceptions that must interrupt the process rather than become a page's error.
+#: The same pair ``foundation.executor`` re-raises.
+_CONTROL_EXCEPTIONS = (KeyboardInterrupt, SystemExit)
+
+
+def _report_listener_exception(target, exc):
+    """Report an exception a listener raised, as "report the exception" says.
+
+    The DOM is what invokes a listener, so an exception thrown there has no
+    caller left to catch it: a browser hands it to the realm's error reporting
+    and carries on with the remaining listeners.  A target whose realm is gone
+    -- a worker shutting down, an element detached from every document -- drops
+    it instead.
+    """
+    realm = getattr(target._services, "realm_services", None)
+    reporter = getattr(realm, "report_exception", None) if realm is not None else None
+    if reporter is not None:
+        reporter(exc)
+
+
 def _modifier_state(event, key):
     """Shared ``getModifierState`` table used by mouse and keyboard events."""
     return {
@@ -864,6 +884,12 @@ class EventTarget:
                 else:
                     callback = listener._get("handleEvent") if isinstance(listener, pyv8.JSObject) else listener.get("handleEvent")
                     _js_call(callback_value(callback), listener, event)
+            except _CONTROL_EXCEPTIONS:
+                raise
+            except BaseException as exc:  # noqa: BLE001 - reported, then dispatching continues
+                # Letting this escape would make dispatchEvent itself throw and
+                # silently skip every later listener, which no browser does.
+                _report_listener_exception(self, exc)
             finally:
                 event._passive = False
             if once: self._listeners[event.type] = [x for x in self._listeners.get(event.type, ()) if x[0] is not listener or x[1] != registered_capture]
@@ -873,14 +899,21 @@ class EventTarget:
         # EventHandler slots may hold non-callable objects; Blink invokes
         # only their effective function, not the object itself.
         if not capture and callable(handler):
-            if event.type == "error" and self.__class__.__name__ == "Window":
-                _js_call(handler, self, getattr(event, "message", ""),
-                         getattr(event, "filename", ""), getattr(event, "lineno", 0),
-                         getattr(event, "colno", 0), getattr(event, "error", pyv8.Null))
-            else:
-                result = _js_call(handler, self, event)
-                if event.type == "beforeunload" and result not in (None, pyv8.Null, pyv8.Undefined, ""):
-                    event.defaultPrevented = True
+            try:
+                if event.type == "error" and self.__class__.__name__ == "Window":
+                    _js_call(handler, self, getattr(event, "message", ""),
+                             getattr(event, "filename", ""), getattr(event, "lineno", 0),
+                             getattr(event, "colno", 0), getattr(event, "error", pyv8.Null))
+                else:
+                    result = _js_call(handler, self, event)
+                    if event.type == "beforeunload" and result not in (None, pyv8.Null, pyv8.Undefined, ""):
+                        event.defaultPrevented = True
+            except _CONTROL_EXCEPTIONS:
+                raise
+            except BaseException as exc:  # noqa: BLE001 - reported, not propagated
+                # The handler slot is a listener with a shorter spelling, and an
+                # exception in it is reported the same way.
+                _report_listener_exception(self, exc)
 
     def __getattr__(self, name):
         if name.startswith("on"):

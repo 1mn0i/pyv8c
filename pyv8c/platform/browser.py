@@ -20,9 +20,11 @@ import pyv8  # noqa: F401 - patch target for native Context instrumentation test
 from loguru import logger
 
 from ..engine.universe import BaselineRepository, InterfaceUniverse
+from ..foundation.arguments import is_nullish
 from ..foundation.environment import BrowserEnvironment
 from ..foundation.errors import InvalidStateError, NetworkError
 from ..foundation.lifecycle import ResourceScope
+from ..foundation.rejections import RejectionTracker
 from ..foundation.tasks import TaskQueue
 from ..foundation.urls import origin_string, origin_tuple
 from ..web.bom.window import Window
@@ -100,10 +102,13 @@ class Page:
         # The task queue lives in foundation and may only ask its host the two
         # TaskHost questions; hand it a narrow adapter instead of this Page.
         self.tasks = TaskQueue(_TaskHostAdapter(self))
-        # Task exceptions are currently invisible: surface them the way a
+        # Uncaught exceptions are currently invisible: surface them the way a
         # browser does, as an ErrorEvent on the realm's window.
-        self._reporting_task_error = False
-        self.tasks.set_error_sink(self._report_task_error)
+        self._reporting_error = False
+        self.tasks.set_error_sink(self.report_exception)
+        # V8 reports a rejection before the turn that caused it ends, so the
+        # candidates wait for the executor's next boundary to be published.
+        self.rejections = RejectionTracker(self.report_rejection)
         self._owned = Ownership()
         # Web-facing objects never see this Page; they receive the narrow
         # PageServices surface assembled from the controllers above.
@@ -133,6 +138,7 @@ class Page:
         self.realm = PageRealm(self)
         self.services.bind_realm(self.realm)
         self.realm.executor.attach_task_queue(self.tasks)
+        self.realm.executor.attach_rejection_tracker(self.rejections)
         self.context = self.realm.context
         Window._bind_context(self.context, self.window)
         if parent is not None:
@@ -168,21 +174,62 @@ class Page:
         if entry is not None:
             Window._context_origins[id(self.context)] = (entry[0], self.origin)
 
-    # -- task error reporting --------------------------------------------
-    # TaskQueue routes task exceptions here through its error sink so a faulty
-    # timer or callback surfaces on the window instead of vanishing.
+    # -- error reporting ---------------------------------------------------
+    # One entry point for everything that notices an exception: TaskQueue routes
+    # a task that raised here through its error sink, the DOM reports a listener
+    # that threw, and the isolate's hooks report what V8 ran without returning
+    # to Python at all.  All of them surface on the window as an ``error`` event
+    # instead of vanishing.
 
-    def _report_task_error(self, error):
-        """Mirror a task exception onto the realm as an ``error`` event."""
-        if self.closed or self._reporting_task_error:
+    def report_exception(self, error=None, *, message=None, filename="", line=0,
+                         column=0, value=None):
+        """Mirror an uncaught exception onto the realm's window.
+
+        Either a Python *error*, which brings its own text and (usually) the
+        JavaScript value behind it, or -- for an exception that never reached
+        Python -- the *message*, position and thrown *value* V8 captured.
+
+        The guard keeps a page handler that throws while handling this from
+        re-entering the reporter.
+        """
+        if self.closed or self._reporting_error:
             return
-        self._reporting_task_error = True
+        self._reporting_error = True
         try:
-            self.lifecycle.dispatch_script_error(None, error)
+            self.lifecycle.dispatch_script_error(
+                None, error, message=message, filename=filename, line=line,
+                column=column, value=value,
+            )
         except BaseException:
-            logger.debug("failed to report task error", exc_info=True)
+            logger.debug("failed to report an exception", exc_info=True)
         finally:
-            self._reporting_task_error = False
+            self._reporting_error = False
+
+    def report_uncaught_message(self, message, source, line, column, error):
+        """Report the pieces of an exception V8 raised on its own.
+
+        This is the isolate's uncaught-exception hook: a microtask job that
+        threw never returns to a Python frame, so V8 hands over the message, the
+        throw site and the exception value it captured.
+        """
+        if is_nullish(source):
+            source = ""
+        self.report_exception(
+            message=str(message), filename=str(source), line=int(line),
+            column=int(column), value=error,
+        )
+
+    def report_rejection(self, event_type, promise, reason):
+        """Mirror a rejection notice onto the window's rejection events."""
+        if self.closed or self._reporting_error:
+            return
+        self._reporting_error = True
+        try:
+            self.lifecycle.dispatch_rejection(event_type, promise, reason)
+        except BaseException:
+            logger.debug("failed to report a rejection", exc_info=True)
+        finally:
+            self._reporting_error = False
 
     @property
     def binding_session(self):
