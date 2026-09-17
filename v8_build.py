@@ -322,6 +322,33 @@ def _platform_folder() -> str:
     raise V8BuildError(f"unsupported platform: {sys.platform}")
 
 
+def cppgc_microtask_queue_enabled(output_dir: str | Path) -> bool:
+    """Whether the V8 library in *output_dir* was built with cppgc microtask queues.
+
+    ``v8::MicrotaskQueue``'s class layout is conditional on the
+    ``V8_CPPGC_MICROTASK_QUEUE`` macro, which V8 passes on its own compile
+    command line and ships in no public header.  An embedder built without it
+    disagrees with the library about that class and faults on every virtual call
+    into a queue -- ``EnqueueMicrotask`` and ``PerformCheckpoint`` alike.  The
+    flag is therefore read back from the generated build files, so the extension
+    always matches the library it links, whichever way the gn flag
+    ``v8_cppgc_microtask_queue`` defaults in the selected V8 version.
+    """
+    marker = "-DV8_CPPGC_MICROTASK_QUEUE"
+    obj_dir = Path(output_dir) / "obj"
+    if not obj_dir.is_dir():
+        return False
+    for path in sorted(obj_dir.glob("*.ninja")):
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as stream:
+                for line in stream:
+                    if marker in line:
+                        return True
+        except OSError:
+            continue
+    return False
+
+
 @dataclass
 class V8BuildConfig:
     project_root: Path

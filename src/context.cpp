@@ -5,6 +5,7 @@
 
 #include "context.h"
 #include "debugger.h"
+#include "error_hooks.h"
 #include "idl_spec.h"
 #include "script.h"
 #include "convert.h"
@@ -30,6 +31,9 @@ PyMethodDef context_methods[] = {
     {"declare_lazy", (PyCFunction)context_declare_lazy, METH_VARARGS | METH_KEYWORDS, NULL},
     {"update_configs", (PyCFunction)context_update_configs, METH_O, NULL},
     {"gc", (PyCFunction)context_gc, METH_NOARGS, NULL},
+    {"enqueue_microtask", (PyCFunction)context_enqueue_microtask, METH_O, NULL},
+    {"set_error_hooks", (PyCFunction)context_set_error_hooks,
+     METH_VARARGS | METH_KEYWORDS, NULL},
     {"close", (PyCFunction)context_close, METH_NOARGS, NULL},
     {NULL},
 };
@@ -919,5 +923,61 @@ context_gc(context_c *self)
         return NULL;
     IN_ISOLATE(isolate_state);
     isolate->RequestGarbageCollectionForTesting(Isolate::GarbageCollectionType::kFullGarbageCollection);
+    PYV8_RETURN_NONE;
+}
+
+PyObject *
+context_enqueue_microtask(context_c *self, PyObject *function)
+{
+#ifndef V8_CPPGC_MICROTASK_QUEUE
+    // v8::MicrotaskQueue's class layout follows this macro, and the library only
+    // defines it on its own compile command line.  Built without it, this
+    // translation unit would disagree with the library about the class and every
+    // virtual call into a queue would reach the wrong slot.  Refuse instead, and
+    // keep the reason visible from Python.
+    PyErr_SetString(PyExc_RuntimeError,
+                    "this V8 build does not use cppgc microtask queues");
+    return NULL;
+#else
+    IsolateState* isolate_state = context_require_isolate(self);
+    if (isolate_state == nullptr)
+        return NULL;
+    IN_ISOLATE(isolate_state);
+    IN_CONTEXT(self->js_context.Get(isolate));
+    Local<Value> microtask = js_from_py(function, context);
+    if (microtask.IsEmpty() || PyErr_Occurred())
+        return NULL;
+    if (!microtask->IsFunction()) {
+        PyErr_SetString(PyExc_TypeError, "microtask must be a function");
+        return NULL;
+    }
+    MicrotaskQueue* queue = context->GetMicrotaskQueue();
+    if (queue == nullptr) {
+        PyErr_SetString(PyExc_RuntimeError, "V8 context has no microtask queue");
+        return NULL;
+    }
+    queue->EnqueueMicrotask(isolate, microtask.As<Function>());
+    PYV8_RETURN_NONE;
+#endif
+}
+
+PyObject *
+context_set_error_hooks(context_c *self, PyObject *args, PyObject *kwargs)
+{
+    // Both arguments are optional so a realm can replace or drop one reporter
+    // without disturbing the other.
+    PyObject *on_uncaught = Py_None;
+    PyObject *on_rejection = Py_None;
+    static const char *keywords[] = {"on_uncaught", "on_rejection", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|OO", (char **) keywords,
+                                     &on_uncaught, &on_rejection)) {
+        return NULL;
+    }
+    IsolateState* isolate_state = context_require_isolate(self);
+    if (isolate_state == nullptr)
+        return NULL;
+    IN_ISOLATE(isolate_state);
+    if (!error_hooks_install(isolate_state, on_uncaught, on_rejection))
+        return NULL;
     PYV8_RETURN_NONE;
 }

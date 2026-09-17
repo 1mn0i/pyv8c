@@ -24,6 +24,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from v8_build import (  # noqa: E402
     V8BuildConfig,
     V8BuildError,
+    cppgc_microtask_queue_enabled,
     file_sha256,
     fetch_v8_versions,
     print_v8_version_choices,
@@ -106,6 +107,15 @@ class PyV8BuildExt(build_ext):
                 'icudtl.dat was not found; set PYV8_ICU_DATA to the matching V8 ICU data file'
             )
         icu_sha256 = file_sha256(icu_data)
+        # v8::MicrotaskQueue's layout follows this macro, and V8 only passes it
+        # on its own compile command line; without it every call into a queue
+        # from the extension would dispatch through the wrong vtable slot.
+        cppgc_queues = cppgc_microtask_queue_enabled(config.output_dir)
+        if not cppgc_queues:
+            print(
+                'V8 was built without cppgc microtask queues; '
+                'Context.enqueue_microtask will refuse to run'
+            )
         for extension in self.extensions:
             if extension.name != 'pyv8._pyv8':
                 continue
@@ -118,8 +128,10 @@ class PyV8BuildExt(build_ext):
             extension.define_macros = [
                 macro
                 for macro in (extension.define_macros or [])
-                if macro[0] != 'PYV8_ICU_DATA_SHA256'
+                if macro[0] not in ('PYV8_ICU_DATA_SHA256', 'V8_CPPGC_MICROTASK_QUEUE')
             ] + [('PYV8_ICU_DATA_SHA256', f'"{icu_sha256}"')]
+            if cppgc_queues:
+                extension.define_macros.append(('V8_CPPGC_MICROTASK_QUEUE', None))
 
     def _copy_icu_data(self, config):
         source = config.icu_data_file()
@@ -148,6 +160,7 @@ class PyV8BuildExt(build_ext):
             'v8_home': str(config.v8_home),
             'output_dir': str(config.output_dir),
             'gn_args': config.gn_args,
+            'cppgc_microtask_queue': cppgc_microtask_queue_enabled(config.output_dir),
             'library_size': library_stat.st_size,
             'library_mtime_ns': library_stat.st_mtime_ns,
             'icu_sha256': file_sha256(icu_data),

@@ -1,5 +1,6 @@
 #include "isolate_state.h"
 
+#include "error_hooks.h"
 #include "isolate_scope.h"
 #include "pyclass.h"
 #include "v8_compat.h"
@@ -37,6 +38,9 @@ IsolateState::IsolateState()
       live_v8_handles_(0),
       function_template_cache_(nullptr),
       javascript_name_(nullptr),
+      uncaught_handler_(nullptr),
+      rejection_handler_(nullptr),
+      error_hooks_installed_(false),
       disposed_(false)
 {
 }
@@ -137,6 +141,24 @@ IsolateState::release_v8_handle()
 {
     if (live_v8_handles_ > 0)
         --live_v8_handles_;
+}
+
+void
+IsolateState::set_error_handlers(PyObject* on_uncaught, PyObject* on_rejection)
+{
+    Py_XINCREF(on_uncaught);
+    Py_XINCREF(on_rejection);
+    Py_XDECREF(uncaught_handler_);
+    Py_XDECREF(rejection_handler_);
+    uncaught_handler_ = on_uncaught;
+    rejection_handler_ = on_rejection;
+}
+
+void
+IsolateState::clear_error_handlers()
+{
+    Py_CLEAR(uncaught_handler_);
+    Py_CLEAR(rejection_handler_);
 }
 
 PyObject*
@@ -280,6 +302,9 @@ IsolateState::shutdown(bool report_error)
     {
         IsolateLockScope scope(this);
         HandleScope handle_scope(isolate_);
+        // The reporters go first: they hold references into Python and could
+        // otherwise be called while the isolate is already being torn down.
+        error_hooks_uninstall(this);
         clear_function_template_cache();
         Py_CLEAR(javascript_name_);
         clear_python_owners();

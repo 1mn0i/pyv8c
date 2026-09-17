@@ -41,6 +41,15 @@ public:
     void release_v8_handle();
     std::size_t live_v8_handles() const { return live_v8_handles_; }
 
+    // Reporters for the failures the isolate raises on its own; see
+    // error_hooks.h.  Either may be null, which means that report is dropped.
+    PyObject* uncaught_handler() const { return uncaught_handler_; }
+    PyObject* rejection_handler() const { return rejection_handler_; }
+    void set_error_handlers(PyObject* on_uncaught, PyObject* on_rejection);
+    void clear_error_handlers();
+    bool error_hooks_installed() const { return error_hooks_installed_; }
+    void set_error_hooks_installed(bool installed) { error_hooks_installed_ = installed; }
+
     PyObject* function_template_cache();
     void clear_function_template_cache();
     PyObject* javascript_name();
@@ -65,6 +74,9 @@ private:
     std::size_t live_v8_handles_;
     PyObject* function_template_cache_;
     PyObject* javascript_name_;
+    PyObject* uncaught_handler_;
+    PyObject* rejection_handler_;
+    bool error_hooks_installed_;
     std::unordered_set<PythonObjectOwner*> python_owners_;
     bool disposed_;
 };

@@ -55,6 +55,8 @@ PyObject* context_declare_lazy(context_c* self, PyObject* args, PyObject* kwargs
 PyObject* context_update_configs(context_c* self, PyObject* mapping);
 PyObject* context_gc(context_c* self);
 PyObject* context_close(context_c* self, PyObject* ignored);
+PyObject* context_enqueue_microtask(context_c* self, PyObject* function);
+PyObject* context_set_error_hooks(context_c* self, PyObject* args, PyObject* kwargs);
 
 // Embedder data slots
 #define CONTEXT_OBJECT_SLOT 1
