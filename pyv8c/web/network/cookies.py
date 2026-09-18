@@ -136,7 +136,7 @@ class CookieJar:
                 self._creation_index += 1
                 item = Cookie(name, value, domain, path, secure, host_only, http_only, same_site, expires, previous.creation_index if previous else self._creation_index)
                 changed = previous != item; self._cookies[key] = item
-        if changed: logger.debug("cookie changed: {}", self.document_for(parsed_url.geturl()))
+        if changed: logger.debug("cookie changed: {}", self.header_for(parsed_url.geturl()))
         return changed
 
     def set_from_document(self, url, assignment):

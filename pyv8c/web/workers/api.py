@@ -178,8 +178,8 @@ class Worker(EventTarget):
 
     def fn_terminate(self, *_extra):
         if not self._terminated:
-            self._terminated = True
             self._runtime.stop()
+            self._terminated = True
             self._finish_lifecycle()
 
 

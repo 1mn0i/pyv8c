@@ -32,6 +32,13 @@ class BindingSession:
         """
         self._context = context
 
+    def detach_context(self):
+        self._context = None
+        self._configs.clear()
+        self._materialized.clear()
+        self._lazy_names.clear()
+        self.realm = None
+
     def interface_names(self, context_type="Window"):
         return self.universe.interface_names(context_type)
 

@@ -28,8 +28,15 @@ class RejectionTracker:
         #: ``rejectionhandled`` notifications waiting for the same boundary.
         self._followups = []
 
+    def close(self):
+        self._pending.clear()
+        self._followups.clear()
+        self._publish = None
+
     def record(self, event_type, identity, promise, reason):
         """Take one notification from the isolate's rejection hook."""
+        if self._publish is None:
+            return
         if event_type == "unhandledrejection":
             self._pending[identity] = (promise, reason)
             return
@@ -55,8 +62,12 @@ class RejectionTracker:
         pending, self._pending = self._pending, {}
         followups, self._followups = self._followups, []
         for promise, reason in pending.values():
+            if self._publish is None:
+                return
             self._publish("unhandledrejection", promise, reason)
         for promise, reason in followups:
+            if self._publish is None:
+                return
             self._publish("rejectionhandled", promise, reason)
 
 

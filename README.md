@@ -35,6 +35,11 @@ finally:
 
 默认不会访问外网。使用 `resource_loader` 注入页面和资源，或显式启用真实网络后端。
 
+请显式关闭 Page、BrowserContext 或 Browser。关闭的 Page 会从所属上下文移除，
+关闭的 BrowserContext 会从 Browser 移除；页面返回的原生 JS 对象和函数随页面关闭
+失效，后续访问会报错。关闭某个页面不影响其他页面的错误钩子。
+独立资源清理失败时会报告异常，保留失败资源以便再次调用 `close()` 重试。
+
 ## 运行模型
 
 ```text

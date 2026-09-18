@@ -325,34 +325,61 @@ class Page:
     def _close_owner(self):
         if self.closed:
             return
-        if self.navigation.has_navigation:
-            self.lifecycle.dispatch_beforeunload()
-            self.lifecycle.dispatch_page_hide(False)
-            self.lifecycle.dispatch_unload()
+        first_error = None
+
+        def attempt(callback, *args):
+            nonlocal first_error
+            try:
+                callback(*args)
+                return True
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+                return False
+
+        if not getattr(self, "_unload_dispatched", False):
+            self._unload_dispatched = True
+            if self.navigation.has_navigation:
+                attempt(self.lifecycle.dispatch_beforeunload)
+                attempt(self.lifecycle.dispatch_page_hide, False)
+                attempt(self.lifecycle.dispatch_unload)
         # Drop cached JS scripts before the V8 context goes away.
         self.scripts.clear_js_helpers()
+        self.scripts.reset()
         if self._devtools_target is not None:
             if self.context_owner._devtools is not None:
-                self.context_owner._devtools.unregister(self)
-            self._devtools_target = None
-        self.closed = True
-        self.net.close()
-        self.tasks.close()
-        self.resources.reset()
+                if attempt(self.context_owner._devtools.unregister, self):
+                    self._devtools_target = None
+            else:
+                self._devtools_target = None
+        attempt(self.net.close)
+        attempt(self.tasks.close)
+        attempt(self.resources.reset)
+        self.rejections.close()
         self.lifecycle.load_waiters.clear()
         for frame in self._owned.drain("frames"):
-            self.services.context_services.discard_frame(frame)
-            frame.close()
+            if attempt(frame.close):
+                self.services.context_services.discard_frame(frame)
+            else:
+                self._owned.track("frames", frame)
         for ws in self._owned.drain("websockets"):
-            self.services.context_services.discard_websocket(ws)
-            if self.network_backend:
-                self.network_backend.close_websocket(ws)
+            if not self.network_backend or attempt(self.network_backend.close_websocket, ws):
+                self.services.context_services.discard_websocket(ws)
+            else:
+                self._owned.track("websockets", ws)
         for worker in self._owned.drain("workers"):
-            self.services.worker_services.discard_worker(worker)
-            worker.fn_terminate()
-        self.context_owner._discard_page(self)
+            if attempt(worker.fn_terminate):
+                self.services.worker_services.discard_worker(worker)
+            else:
+                self._owned.track("workers", worker)
+        if first_error is not None:
+            # Keep the realm owner available to retry failed native resources.
+            raise first_error
         Window._unbind_context(self.context)
         self.realm.close()
+        self.context = None
+        self.closed = True
+        self.context_owner._discard_page(self)
         parent_cleanup = getattr(self, "_parent_scope_cleanup", None)
         if callable(parent_cleanup):
             parent_cleanup()
@@ -567,7 +594,6 @@ class BrowserContext:
     def close(self):
         if self.closed:
             return
-        self.closed = True
         first_error = None
         for page in list(self.pages):
             try:
@@ -578,17 +604,23 @@ class BrowserContext:
                 # merely because one realm reported an error.
                 if first_error is None:
                     first_error = exc
-        self.pages.clear()
-        if self._devtools is not None:
-            self._devtools.close()
-            self._devtools = None
+        for name in ("_devtools", "network_backend"):
+            resource = getattr(self, name)
+            if resource is not None:
+                try:
+                    resource.close()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
+                else:
+                    setattr(self, name, None)
         self._blob_urls.clear()
         self._blob_origins.clear()
-        if self.network_backend:
-            self.network_backend.close()
-            self.network_backend = None
         if first_error is not None:
             raise first_error
+        self.closed = True
+        if self in self.browser.contexts:
+            self.browser.contexts.remove(self)
 
 
 class Browser:
@@ -679,13 +711,12 @@ class Browser:
         if self._closed:
             return
         first_error = None
-        for context in self.contexts:
+        for context in list(self.contexts):
             try:
                 context.close()
             except BaseException as exc:  # every context still gets its close attempt
                 if first_error is None:
                     first_error = exc
-        self.contexts.clear()
-        self._closed = True
         if first_error is not None:
             raise first_error
+        self._closed = True

@@ -40,6 +40,10 @@ class RealmScripts:
         self._cache = None
         self._helpers = None
 
+    def close(self):
+        self.clear()
+        self._context = None
+
     @property
     def _scripts(self):
         """Compile the realm's JavaScript helpers exactly once.

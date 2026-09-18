@@ -112,20 +112,30 @@ class WorkerRealm:
         return self.scripts.promise_resolve(value)
 
     def close(self):
-        self.tasks.close()
-        self.scripts = None
-        context = self.context
-        self.context = None
-        self.scope = None
-        if context is not None:
-            del context
-        isolate = self.isolate
-        self.isolate = None
-        if isolate is not None:
+        first_error = None
+
+        def attempt(callback):
+            nonlocal first_error
             try:
-                isolate.close()
-            except RuntimeError:
-                pass
+                callback()
+                return True
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+                return False
+
+        attempt(self.tasks.close)
+        if self.context is not None and attempt(self.context.close):
+            self.context = None
+        if self.scripts is not None and attempt(self.scripts.close):
+            self.scripts = None
+        attempt(self.config.session.detach_context)
+        if self.context is None:
+            self.scope = None
+        if self.isolate is not None and attempt(self.isolate.close):
+            self.isolate = None
+        if first_error is not None:
+            raise first_error
 
 
 class PageRealm:
@@ -133,6 +143,7 @@ class PageRealm:
 
     def __init__(self, page):
         self.page = page
+        self.context = None
         self.executor = RealmExecutor(name="pyv8c-page")
         #: Compiled JavaScript helpers, created with the context in _initialize.
         self.scripts = None
@@ -141,7 +152,11 @@ class PageRealm:
         # never the platform Page itself.
         self.binding_session = browser.interface_universe.binding_session(page.services)
         page.services.bind_realm(self)
-        self.executor.call(self._initialize)
+        try:
+            self.executor.call(self._initialize)
+        except BaseException:
+            self.close()
+            raise
 
     def _initialize(self):
         page = self.page
@@ -200,16 +215,18 @@ class PageRealm:
     def close(self):
         def close_context():
             context = self.context
-            self.context = None
             close = getattr(context, "close", None)
             if callable(close):
                 close()
+            self.context = None
+            self.binding_session.detach_context()
+            if self.scripts is not None:
+                self.scripts.close()
+                self.scripts = None
         if self.executor.closed:
             return
-        try:
-            self.executor.call(close_context)
-        finally:
-            self.executor.close()
+        self.executor.call(close_context)
+        self.executor.close()
 
 
 __all__ = ["PageRealm", "WorkerRealm"]

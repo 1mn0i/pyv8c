@@ -94,14 +94,27 @@ class WorkerRuntime:
             self._report_error(exc)
 
     def _cleanup_owner(self):
+        first_error = None
         devtools = self._devtools
         if devtools is not None:
-            devtools.unregister(self)
+            try:
+                devtools.unregister(self)
+                self._devtools = None
+            except BaseException as exc:
+                first_error = exc
+        self.rejections.close()
         if self._realm is not None:
-            self._realm.close()
-            self._realm = None
-        self._context = None
-        self._scope = None
+            try:
+                self._realm.close()
+                self._realm = None
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+        if self._realm is None:
+            self._context = None
+            self._scope = None
+        if first_error is not None:
+            raise first_error
         self.services.task_services.post_task(self.owner._finish_lifecycle)
 
     def _report_uncaught(self, message, source, line, column, error):
@@ -155,22 +168,19 @@ class WorkerRuntime:
         self.services.task_services.post_task(lambda: self.owner._receive_message(value))
 
     def stop(self):
-        if self._lifecycle_scope.begin_close() is None:
+        if self.executor.closed and self._realm is None:
             return
         self._stop.set()
         target = self.debug_target
         if target is not None:
             target.wake_waiting_owner()
         try:
-            try:
-                self.executor.call(self._cleanup_owner, timeout=5)
-            except RuntimeError:
-                # The worker thread failed to start and already cleaned up and
-                # closed its executor before this terminate arrived.
-                pass
-        finally:
-            self.executor.close()
-            self._lifecycle_scope.close()
+            self.executor.call(self._cleanup_owner, timeout=5)
+        except RuntimeError:
+            if not (self.executor.closed and self._realm is None):
+                raise
+        self.executor.close()
+        self._lifecycle_scope.close()
 
 
 __all__ = ["WorkerRuntime"]
