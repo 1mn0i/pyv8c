@@ -1,5 +1,13 @@
 # pyv8c
 
+## Native Bridge Protocol
+
+Python 3.12+ is required. `Page.evaluate()` returns materialized data;
+`Page.evaluate_handle()` returns primitives or live JS handles. Call
+`handle.to_python()` explicitly for arrays and plain objects. Handles are
+invalid after their Context closes. Internal bindings use the handle protocol
+without implicit object enumeration.
+
 `pyv8c` 是一个运行在相邻 `_pyv8` 原生扩展之上的、可控且可测试的 Chromium-like JavaScript 页面环境。
 V8 负责执行 JavaScript；Python 负责页面、DOM/BOM、资源、事件循环、Worker、WebSocket、IndexedDB 和 DevTools 宿主行为。
 

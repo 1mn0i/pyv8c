@@ -262,6 +262,12 @@ class Page:
         )
 
     def evaluate(self, script, filename=None):
+        def evaluate_data():
+            value = self.scripts.evaluate(script, filename=filename)
+            return value.to_python() if isinstance(value, pyv8.JSObject) else value
+        return self.realm.executor.call(evaluate_data)
+
+    def evaluate_handle(self, script, filename=None):
         return self.realm.executor.call(
             self.scripts.evaluate, script, filename=filename,
         )

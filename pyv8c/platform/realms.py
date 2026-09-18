@@ -16,7 +16,6 @@ def _context_kwargs(session, context_type, trace, on_materialize=None, trace_cal
     """Shared native Context arguments assembled from one binding session."""
     return {
         "trace": trace,
-        "preserve_arguments": True,
         "traceable": traceable,
         "trace_callback": (log_trace if trace_callback is None else trace_callback) if trace or traceable else None,
         "ctx_type": context_type,

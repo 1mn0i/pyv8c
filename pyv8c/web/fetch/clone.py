@@ -48,7 +48,7 @@ def structured_clone(value, transfer=(), context=None):
             if context is not None:
                 try:
                     converter = context.exec_js("buffer => Array.from(new Uint8Array(buffer))")
-                    return bytes(converter.call(None, item))
+                    return bytes(converter.call(None, item).to_python())
                 except (AttributeError, TypeError, ValueError):
                     pass
             marker = id(item)

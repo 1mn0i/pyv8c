@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "pyv8c"
 version = "0.1.0"
 description = "A deterministic Chromium-like BOM/DOM environment on pyv8"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = ["loguru>=0.7", "websockets>=14"]
 
 [project.optional-dependencies]

@@ -137,7 +137,7 @@ class Dictionary(dict):
 
 def materialize(value):
     """Explicit data snapshot, for algorithms such as structured cloning."""
-    return value._to_python() if isinstance(value, pyv8.JSObject) else value
+    return value.to_python() if isinstance(value, pyv8.JSObject) else value
 
 
 def dictionary(value, *, name="Object", prefix=""):
