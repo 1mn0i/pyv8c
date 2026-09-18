@@ -4,6 +4,7 @@
 #include <memory>
 
 #include <v8.h>
+#include <Python.h>
 
 class IsolateState;
 
@@ -27,6 +28,7 @@ private:
     v8::Isolate* isolate_;
     std::unique_ptr<v8::Locker> locker_;
     bool entered_;
+    PyObject* python_owner_;
 };
 
 #endif

@@ -88,6 +88,7 @@ isolate_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
         return nullptr;
     }
     self->state = state;
+    state->python_owner = (PyObject*)self;
     return (PyObject*)self;
 }
 
@@ -96,6 +97,7 @@ isolate_dealloc(isolate_c* self)
 {
     if (self->state != nullptr)
     {
+        self->state->python_owner = nullptr;
         runtime_manager.destroy_isolate(self->state, false);
         self->state = nullptr;
         PyErr_Clear();
@@ -140,8 +142,7 @@ isolate_gc(isolate_c* self, PyObject* args)
     if (state == nullptr)
         return nullptr;
     IN_ISOLATE(state);
-    isolate->RequestGarbageCollectionForTesting(
-        Isolate::GarbageCollectionType::kFullGarbageCollection);
+    isolate->LowMemoryNotification();
     PYV8_RETURN_NONE;
 }
 

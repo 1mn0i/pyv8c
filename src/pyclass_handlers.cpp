@@ -105,8 +105,10 @@ py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
 
 void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
     SETUP;
+    if (!context_check_callback(context)) return;
 
-    py_class *self = (py_class *) v8_compat::external_value(info.Data());
+    py_class *self = (py_class *) IsolateState::callback_target(info.Data());
+    if (self == nullptr) { js_throw_py(); return; }
     context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
         context, CONTEXT_OBJECT_SLOT);
     if (ctx_c == nullptr)
@@ -180,7 +182,9 @@ static void py_class_method_impl(const FunctionCallbackInfo<Value> &info, Local<
 void py_class_method_callback(const FunctionCallbackInfo<Value> &info)
 {
     SETUP;
-    auto *binding = (MethodSpec *)v8_compat::external_value(info.Data());
+    if (!context_check_callback(context)) return;
+    auto *binding = (MethodSpec *)IsolateState::callback_target(info.Data());
+    if (binding == nullptr) { js_throw_py(); return; }
     PyObject *receiver = binding->pass_receiver ? get_self(info) : Py_None;
     if (receiver == nullptr)
     {
@@ -210,10 +214,12 @@ void py_class_method_callback(const FunctionCallbackInfo<Value> &info)
 // --- Interceptors ---
 void py_class_property_getter(Local<Name> js_name, Info(Value)) {
     SETUP;
+    if (!context_check_callback(context)) return;
 
     PyObject* self = get_self(info);
 
-    PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
+    PyObject* method = (PyObject*)IsolateState::callback_target(info.Data());
+    if (method == nullptr) { js_throw_py(); return; }
     JS_PROPAGATE_PY(method);
 
 
@@ -238,9 +244,11 @@ void py_class_property_getter(Local<Name> js_name, Info(Value)) {
 
 void py_class_property_setter(Local<Name> js_name, Local<Value> js_value, Info(void)) {
     SETUP;
+    if (!context_check_callback(context)) return;
 
     PyObject* self = get_self(info);
-    PyObject* method = (PyObject*)v8_compat::external_value(info.Data());
+    PyObject* method = (PyObject*)IsolateState::callback_target(info.Data());
+    if (method == nullptr) { js_throw_py(); return; }
     JS_PROPAGATE_PY(method);
 
 
@@ -262,7 +270,9 @@ void py_class_property_setter(Local<Name> js_name, Local<Value> js_value, Info(v
 
 static void attribute_get_impl(const FunctionCallbackInfo<Value>& info) {
     SETUP;
-    auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
+    if (!context_check_callback(context)) return;
+    auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
+    if (binding == nullptr) { js_throw_py(); return; }
     PyObject* self = binding->getter_receiver ? get_self(info) : Py_None;
     PyObject* result = self == Py_None ? PyObject_CallNoArgs(binding->getter) :
         PyObject_CallFunctionObjArgs(binding->getter, self, nullptr);
@@ -275,9 +285,11 @@ static void attribute_get_impl(const FunctionCallbackInfo<Value>& info) {
 
 void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
     SETUP;
+    if (!context_check_callback(context)) return;
     auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
     if (!context_trace_enabled(owner)) { attribute_get_impl(info); return; }
-    auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
+    auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
+    if (binding == nullptr) { js_throw_py(); return; }
     PyObject* receiver = binding->getter_receiver ? get_self(info) : Py_None;
     faker::TraceScope observation(info, 0, binding->name, receiver, owner);
     attribute_get_impl(info);
@@ -285,11 +297,13 @@ void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
 
 static void attribute_set_impl(const FunctionCallbackInfo<Value>& info, bool instance) {
     SETUP;
+    if (!context_check_callback(context)) return;
     if (info.Length() < 1) {
         isolate->ThrowException(v8::Exception::TypeError(V8String(isolate, "1 argument required, but only 0 present")));
         return;
     }
-    auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
+    auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
+    if (binding == nullptr) { js_throw_py(); return; }
     PyObject* self = binding->setter_receiver ? get_self(info) : Py_None;
     PyObject* value = py_argument_from_js(info[0], context);
     JS_PROPAGATE_PY(value);
@@ -308,9 +322,11 @@ static void attribute_set_impl(const FunctionCallbackInfo<Value>& info, bool ins
 
 static void attribute_set(const FunctionCallbackInfo<Value>& info, bool instance) {
     SETUP;
+    if (!context_check_callback(context)) return;
     auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
     if (!context_trace_enabled(owner)) { attribute_set_impl(info, instance); return; }
-    auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
+    auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
+    if (binding == nullptr) { js_throw_py(); return; }
     PyObject* receiver = binding->setter_receiver ? get_self(info) : Py_None;
     faker::TraceScope observation(info, 1, binding->name, receiver, owner);
     attribute_set_impl(info, instance);
@@ -870,6 +886,7 @@ indexed_enumerator_handler(const PropertyCallbackInfo<Array>& info,
 
 Intercepted named_getter(Local<Name> js_name, Info(Value)) {
     SETUP
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
         context, CONTEXT_OBJECT_SLOT);
@@ -905,6 +922,7 @@ static PyObject* properties_owner(const PropertyCallbackInfo<T>& info, Local<Nam
 
 Intercepted properties_named_getter(Local<Name> js_name, Info(Value)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     PyObject* self = properties_owner(info, js_name);
     // This interceptor is the fallback layer behind the per-class one, so a name
     // it declined is reported there already; reporting it here too would log
@@ -915,12 +933,14 @@ Intercepted properties_named_getter(Local<Name> js_name, Info(Value)) {
 
 Intercepted properties_named_query(Local<Name> name, Info(Integer)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     return property_query_handler(py_from_js(name, context), info,
         properties_owner(info, name), "__v8_property_name_query__");
 }
 
 Intercepted properties_named_descriptor(Local<Name> name, Info(Value)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     auto result = property_getter_handler_impl(py_from_js(name, context), info, context,
         properties_owner(info, name), "__v8_property_name_get__");
     if (result == Intercepted::kNo) return result;
@@ -947,6 +967,7 @@ void properties_delete_constructor(Local<Object> prototype, Local<Context> conte
 
 Intercepted properties_named_deleter(Local<Name>, Info(Boolean)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     if (deleting_synthetic_constructor) return Intercepted::kNo;
     info.GetReturnValue().Set(false);
     if (info.ShouldThrowOnError()) info.GetIsolate()->ThrowException(
@@ -956,6 +977,7 @@ Intercepted properties_named_deleter(Local<Name>, Info(Boolean)) {
 
 Intercepted properties_named_definer(Local<Name>, const PropertyDescriptor&, Info(Boolean)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     info.GetReturnValue().Set(false);
     if (info.ShouldThrowOnError()) info.GetIsolate()->ThrowException(
         Exception::TypeError(JSTR("Cannot define properties on WindowProperties")));
@@ -985,6 +1007,7 @@ Intercepted properties_indexed_definer(uint32_t index, const PropertyDescriptor&
 
 Intercepted named_setter(Local<Name> js_name, Local<Value> js_value, Info(void)) {
     SETUP
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
         context, CONTEXT_OBJECT_SLOT);
@@ -998,12 +1021,14 @@ Intercepted named_setter(Local<Name> js_name, Local<Value> js_value, Info(void))
 
 Intercepted named_deleter(Local<Name> js_name, Info(Boolean)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     PyObject* self = get_self(info);
     return property_deleter_handler(py_from_js(js_name, context), info, self, "__v8_name_del__");
 }
 
 Intercepted named_query(Local<Name> js_name, Info(Integer)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
     PyObject* self = get_self(info);
     if (!context_trace_enabled(owner) || self == Py_None)
@@ -1026,12 +1051,14 @@ Intercepted named_query(Local<Name> js_name, Info(Integer)) {
 
 void named_enumerator(Info(Array)) {
     SETUP;
+    if (!context_check_callback(context)) return;
     PyObject* self = get_self(info);
     named_enumerator_handler(info, context, self, "__v8_name_enum__");
 }
 
 Intercepted indexed_getter(uint32_t index, Info(Value)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
         context, CONTEXT_OBJECT_SLOT);
@@ -1045,6 +1072,7 @@ Intercepted indexed_getter(uint32_t index, Info(Value)) {
 
 Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     context_c* ctx_c = v8_compat::context_embedder_pointer<context_c>(
         context, CONTEXT_OBJECT_SLOT);
@@ -1058,12 +1086,14 @@ Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
 
 Intercepted indexed_deleter(uint32_t index, Info(Boolean)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     PyObject* self = get_self(info);
     return property_deleter_handler(PyLong_FromSize_t(index), info, self, "__v8_index_del__");
 }
 
 Intercepted indexed_query(uint32_t index, Info(Integer)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
     PyObject* self = get_self(info);
     if (!context_trace_enabled(owner) || self == Py_None)
@@ -1085,12 +1115,14 @@ Intercepted indexed_query(uint32_t index, Info(Integer)) {
 
 void indexed_enumerator(Info(Array)) {
     SETUP;
+    if (!context_check_callback(context)) return;
     PyObject* self = get_self(info);
     indexed_enumerator_handler(info, context, self, "__v8_index_enum__");
 }
 
 Intercepted named_descriptor(Local<Name> js_name, Info(Value)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
     Local<Object> receiver = info.Holder();
     PyObject* self = get_self(info);
@@ -1129,6 +1161,7 @@ Intercepted named_descriptor(Local<Name> js_name, Info(Value)) {
 
 Intercepted indexed_descriptor(uint32_t index, Info(Value)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
     auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
     PyObject* self = get_self(info);
     PyObject* key = PyLong_FromSize_t(index);
@@ -1174,6 +1207,7 @@ property_definer(PyObject* key, const PropertyDescriptor& desc,
 Intercepted named_definer(Local<Name> js_name, const PropertyDescriptor& desc,
                           const PropertyCallbackInfo<Boolean>& info) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     PyObject* self = get_self(info);
     PyObject* key = py_from_js(js_name, context);
@@ -1191,6 +1225,7 @@ Intercepted named_definer(Local<Name> js_name, const PropertyDescriptor& desc,
 Intercepted indexed_definer(uint32_t index, const PropertyDescriptor& desc,
                             const PropertyCallbackInfo<Boolean>& info) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     PyObject* self = get_self(info);
     PyObject* key = PyLong_FromSize_t(index);

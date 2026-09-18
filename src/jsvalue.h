@@ -13,6 +13,8 @@ typedef struct
     v8::Persistent<v8::Value> value;
     PyObject* py_context;
     PyObject* py_isolate;
+    PyObject* registry_context;
+    bool weak_owned;
 } js_value;
 
 extern PyTypeObject *js_value_type;

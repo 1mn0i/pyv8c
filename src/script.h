@@ -8,6 +8,7 @@ typedef struct {
     IsolateState* isolate_state;
     v8::Persistent<v8::UnboundScript> script;
     PyObject* py_isolate;
+    PyObject* py_context;
     PyObject *source;
     PyObject *script_name;
 } script_c;

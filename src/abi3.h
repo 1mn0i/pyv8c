@@ -46,12 +46,14 @@ PyV8_NewRef(PyObject *value)
 
 
 #define TP_FREE_ABI3(type, self)                                            \
+    PyTypeObject* allocated_type = Py_TYPE((PyObject*)(self));              \
     freefunc free_func = (freefunc)PyType_GetSlot(                          \
-        Py_TYPE((PyObject*)(self)), Py_tp_free);                            \
+        allocated_type, Py_tp_free);                                      \
     if (free_func)                                                          \
         free_func(self);                                                    \
     else                                                                    \
-        PyObject_Del(self);
+        PyObject_Del(self);                                                \
+    Py_DECREF(allocated_type);
 
 
 

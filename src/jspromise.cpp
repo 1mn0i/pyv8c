@@ -125,6 +125,7 @@ js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 PyObject * 
 js_promise_repr(js_promise* self)
 {
+    if (!js_object_require_active(&self->base)) return nullptr;
     static PyObject* promise_repr = NULL;
     if (promise_repr == NULL)
     {

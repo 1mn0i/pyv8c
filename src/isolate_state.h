@@ -20,12 +20,19 @@
 #include <unordered_set>
 #include <vector>
 
+struct context_c;
+
 class IsolateState
 {
 public:
     std::recursive_mutex entry_mutex;
     unsigned entry_depth = 0;
+    PyObject* python_owner = nullptr;
     std::vector<PyObject*> inspector_waiters;
+    std::vector<PyObject*> deferred_releases;
+    std::vector<context_c*> pending_context_closes;
+    void drain_deferred();
+    void defer_release(PyObject* object);
     IsolateState();
     ~IsolateState();
 
@@ -41,21 +48,26 @@ public:
     void release_v8_handle();
     std::size_t live_v8_handles() const { return live_v8_handles_; }
 
-    // Reporters for the failures the isolate raises on its own; see
-    // error_hooks.h.  Either may be null, which means that report is dropped.
-    PyObject* uncaught_handler() const { return uncaught_handler_; }
-    PyObject* rejection_handler() const { return rejection_handler_; }
-    void set_error_handlers(PyObject* on_uncaught, PyObject* on_rejection);
-    void clear_error_handlers();
+    // The listeners are isolate-wide; Python reporters belong to each Context.
     bool error_hooks_installed() const { return error_hooks_installed_; }
     void set_error_hooks_installed(bool installed) { error_hooks_installed_ = installed; }
 
-    PyObject* function_template_cache();
-    void clear_function_template_cache();
     PyObject* javascript_name();
     v8::Local<v8::String> v8_string(V8StringId id) const;
 
-    bool track_python_object(v8::Local<v8::Object> object, PyObject* py_object);
+    bool track_python_object(v8::Local<v8::Object> object, PyObject* py_object, context_c* context);
+    int traverse_context_owners(context_c* context, visitproc visit, void* arg);
+    void release_context_owners(context_c* context);
+    struct CallbackData {
+        IsolateState* state;
+        context_c* context;
+        PyObject* target;
+        // The Context owns target. This weak anchor may outlive its close.
+        v8::Global<v8::External> external;
+    };
+    v8::Local<v8::External> callback_data(context_c* context, PyObject* target);
+    void invalidate_callbacks(context_c* context);
+    static PyObject* callback_target(v8::Local<v8::Value> data);
     bool attach_exception_state(v8::Local<v8::Object> object,
                                 PyObject* exc_type,
                                 PyObject* exc_traceback);
@@ -72,12 +84,11 @@ private:
     std::unique_ptr<V8StringCache> v8_strings_;
     v8::Isolate* isolate_;
     std::size_t live_v8_handles_;
-    PyObject* function_template_cache_;
     PyObject* javascript_name_;
-    PyObject* uncaught_handler_;
-    PyObject* rejection_handler_;
     bool error_hooks_installed_;
     std::unordered_set<PythonObjectOwner*> python_owners_;
+    std::unordered_set<CallbackData*> callback_data_;
+    static void callback_data_collected(const v8::WeakCallbackInfo<CallbackData>& info);
     bool disposed_;
 };
 

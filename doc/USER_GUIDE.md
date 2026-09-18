@@ -1091,16 +1091,34 @@ Context 所有权和消息队列。
 
 ### 关闭规则
 
+`context.close()` 是幂等操作。关闭后，这个 Context 创建的 `JSObject`、
+`JSFunction`、`JSValue`、Promise、TypedArray 和 `Script` 均失效；通过 Python
+再次访问会抛出 `RuntimeError`。另一个 Context 保存的宿主函数、构造器、方法和
+getter 也不能继续调用已关闭 Context 的 Python 回调，调用时会抛出 JavaScript 错误。
+其他活跃 Context 的回调和错误钩子不受影响。
+
+在 Python 回调内部关闭 Context 时，立即禁止新的访问，底层引用清理延迟至当前
+原生执行退出。Context 和关联包装类型参与 Python 循环 GC，但应用仍应显式关闭
+页面和 Context，以确定性释放线程、网络及原生资源。
+
+`context.set_error_hooks()` 仅设置当前 Context 的钩子；Promise rejection 按
+Promise 的创建 Context 投递。关闭 Context 自动解除自己的钩子。
+
+`context.gc()`、`isolate.gc()` 和 `pyv8.v8_gc()` 使用生产可用的低内存回收通知，
+不要求启用 `--expose-gc`，也不保证进程工作集立即下降。
+
 关闭自定义 Isolate 前，必须释放它的所有持久句柄：
 
 ```python
-del context
+context.close()
 gc.collect()
 isolate.close()
 ```
 
 如果仍有活动 Context、Script 或 JS wrapper，`close()` 会抛出包含
 `persistent handle` 的 `RuntimeError`，并保持 Isolate 可继续使用。
+Context.close 会撤销其关联持久句柄，因此无需先删除已经失效的 Python 包装对象。
+正在执行原生调用时不能销毁 Isolate，会抛出 `RuntimeError`。
 
 `pyv8.shutdown_v8()` 用于关闭默认 Isolate 和进程级 V8 Runtime：
 

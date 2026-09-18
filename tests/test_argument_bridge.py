@@ -232,7 +232,7 @@ def test_exception_original_can_be_rejected_without_copy(context):
     assert context.exec_js("original===sentinel")
 
 
-def test_preserved_argument_keeps_isolate_alive_until_released():
+def test_preserved_argument_is_invalidated_when_context_closes():
     import gc
 
     isolate = pyv8.Isolate()
@@ -241,10 +241,10 @@ def test_preserved_argument_keeps_isolate_alive_until_released():
     context.expose(capture=lambda value: captured.append(value))
     context.exec_js("capture({field:42})")
     context.close()
-    assert captured[0]._get("field") == 42
-    with pytest.raises(RuntimeError, match="persistent handle"):
-        isolate.close()
+    with pytest.raises(RuntimeError):
+        captured[0]._get("field")
+    assert isolate.close()
     captured.clear()
     del context
     gc.collect()
-    assert isolate.close()
+    assert not isolate.close()

@@ -52,14 +52,17 @@ namespace bindings {
 
     template<int kind>
     static void FakerJsBindingCallback(const FunctionCallbackInfo<Value>& info) {
+        if (!context_check_callback(info.GetIsolate()->GetCurrentContext())) return;
+        PyObject* data = IsolateState::callback_target(info.Data());
+        if (data == nullptr) { js_throw_py(); return; }
         PyObject* name;
         PyObject* callback;
         if constexpr (kind == 2) {
-            auto* binding = (MethodSpec*)v8_compat::external_value(info.Data());
+            auto* binding = (MethodSpec*)data;
             name = binding->name;
             callback = binding->callback;
         } else {
-            auto* binding = (AttributeSpec*)v8_compat::external_value(info.Data());
+            auto* binding = (AttributeSpec*)data;
             name = binding->name;
             callback = kind == 0 ? binding->getter : binding->setter;
         }
@@ -99,6 +102,7 @@ namespace bindings {
     void ConstructAccessorNameGetterCallback(Local<Name> property, const PropertyCallbackInfo<Value>& info) {
         v8::Isolate* isolate = info.GetIsolate();
         Local<Context> context = isolate->GetCurrentContext();
+        if (!context_check_callback(context)) return;
         context_c* py_ctx = (context_c*)v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
         if (py_ctx == nullptr) {
             info.GetReturnValue().SetUndefined();
@@ -343,7 +347,7 @@ namespace bindings {
 
     bool InstallAttributes(v8::Isolate* isolate, const char* world,
         v8::Local<v8::FunctionTemplate> interface_template, v8::Local<v8::Signature> signature,
-        PyObject* cls, PyObject* configs, PyObject* callback_data_owner) {
+        PyObject* cls, PyObject* configs, PyObject* callback_data_owner, context_c* owner) {
         if (configs == nullptr) return true;
         for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
             PyObject* resolved = idl_spec_resolve(PyTuple_GetItem(configs, index), cls);
@@ -358,10 +362,10 @@ namespace bindings {
             config.cross_origin_check_for_get = (unsigned)spec->cross_origin_get_check;
             config.cross_origin_check_for_set = (unsigned)spec->cross_origin_set_check;
             config.v8_side_effect = (unsigned)spec->side_effect;
-            config.get_method = v8_compat::external_new(isolate, resolved);
+            config.get_method = owner->isolate_state->callback_data(owner, resolved);
             config.callback_for_get = spec->callback_type == 0 ? py_attribute_for_get : FakerJsBindingCallback<0>;
             if (spec->setter != nullptr) {
-                config.set_method = v8_compat::external_new(isolate, resolved);
+                config.set_method = config.get_method;
                 config.callback_for_set = spec->callback_type == 0 ? (spec->location == 0 ? py_attribute_for_instance_set : py_attribute_for_property_set) : FakerJsBindingCallback<1>;
             }
             bool valid = config.name != nullptr;
@@ -409,7 +413,7 @@ namespace bindings {
 
     bool InstallOperations(v8::Isolate* isolate, const char* world,
         v8::Local<v8::FunctionTemplate> interface_template, v8::Local<v8::Signature> signature,
-        PyObject* cls, PyObject* configs, PyObject* callback_data_owner) {
+        PyObject* cls, PyObject* configs, PyObject* callback_data_owner, context_c* owner) {
         if (configs == nullptr) return true;
         for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
             PyObject* resolved = idl_spec_resolve(PyTuple_GetItem(configs, index), cls);
@@ -424,7 +428,7 @@ namespace bindings {
             config.receiver_check = (unsigned)spec->receiver_check;
             config.cross_origin_check = (unsigned)spec->cross_origin_check;
             config.v8_side_effect = (unsigned)spec->side_effect;
-            config.callback_data = v8_compat::external_new(isolate, resolved);
+            config.callback_data = owner->isolate_state->callback_data(owner, resolved);
             config.callback = spec->callback_type == 0 ? py_class_method_callback : FakerJsBindingCallback<2>;
             bool valid = config.name != nullptr;
             if (valid) InstallOperation(isolate, world, interface_template, signature, config);

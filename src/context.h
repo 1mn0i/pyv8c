@@ -4,10 +4,19 @@
 
 #include <Python.h>
 #include <v8.h>
+#include <unordered_map>
+#include <unordered_set>
 
 class IsolateState;
+struct context_c;
 
-typedef struct
+struct ContextResources {
+    std::unordered_map<PyObject*, int (*)(PyObject*)> handles;
+    std::unordered_set<context_c*> dependents;
+    std::unordered_set<context_c*> dependencies;
+};
+
+typedef struct context_c
 {
     PyObject_HEAD
 
@@ -16,6 +25,12 @@ typedef struct
     v8::Persistent<v8::Context> js_context;
     PyObject* js_object_cache;
     PyObject* class_template_cache;
+    PyObject* function_template_cache;
+    PyObject* uncaught_handler;
+    PyObject* rejection_handler;
+    PyObject* dependencies;
+    ContextResources* resources;
+    bool closing;
     PyObject* class_configs;
     // Optional callable used to materialise lazily declared interface names.
     // Called with an interface name, returns the Python class or None.
@@ -35,6 +50,13 @@ typedef struct
     PyObject* trace_context_type;
     PyObject* trace_event_names;
 } context_c;
+
+bool context_is_active(context_c* self);
+bool context_check_callback(v8::Local<v8::Context> context);
+void context_finish_close(context_c* self);
+void context_register_handle(context_c* self, PyObject* handle, int (*clear)(PyObject*));
+void context_unregister_handle(context_c* self, PyObject* handle);
+bool context_retain_dependency(v8::Local<v8::Context> target, PyObject* source);
 
 inline bool context_trace_enabled(context_c* context) {
     return context != nullptr && context->trace && context->trace_callback != nullptr && context->trace_depth == 0;

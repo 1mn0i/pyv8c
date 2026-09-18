@@ -12,6 +12,8 @@ typedef struct {
     v8::Persistent<v8::Object> object;
     PyObject* py_context;
     PyObject* py_isolate;
+    PyObject* registry_context;
+    bool weak_owned;
 } js_object;
 
 extern PyTypeObject* js_object_type;
@@ -24,6 +26,8 @@ void js_object_set_persistent(js_object* self, v8::Local<v8::Object> object,
 bool js_object_require_active(const js_object* self);
 PyObject *js_object_fake_new(PyTypeObject *type, PyObject *args, PyObject *kwargs);
 void js_object_dealloc(js_object *self);
+int js_object_clear(js_object* self);
+int js_object_traverse(js_object* self, visitproc visit, void* arg);
 
 PyObject *js_object_getattro(js_object *self, PyObject *name);
 int js_object_setattro(js_object *self, PyObject *name, PyObject *value);

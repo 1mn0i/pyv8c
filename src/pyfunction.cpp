@@ -15,7 +15,21 @@ using namespace v8;
 
 PyTypeObject* py_function_type = NULL;
 
+static int function_traverse(py_function* self, visitproc visit, void* arg) {
+    Py_VISIT(self->function);
+    Py_VISIT(self->function_name);
+    return 0;
+}
+static int function_clear(py_function* self) {
+    if (self->js_template) self->js_template->Reset();
+    Py_CLEAR(self->function);
+    Py_CLEAR(self->function_name);
+    return 0;
+}
+
 static PyType_Slot py_function_slots[] = {
+    {Py_tp_traverse, (void*)function_traverse},
+    {Py_tp_clear, (void*)function_clear},
     {Py_tp_dealloc, (void*)py_function_dealloc},
     {Py_tp_doc, (void*)""},
     {0, NULL} };
@@ -24,7 +38,7 @@ static PyType_Spec py_function_spec = {
     "_pyv8env.Function",
     sizeof(py_function),
     0,
-    Py_TPFLAGS_DEFAULT,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
     py_function_slots };
 
 int 
@@ -41,8 +55,9 @@ py_function_type_init()
 static void py_function_callback(const FunctionCallbackInfo<Value> &info);
 
 PyObject *
-py_function_new(PyObject *function, IsolateState* isolate_state)
+py_function_new(PyObject *function, context_c* owner)
 {
+    auto* isolate_state = owner->isolate_state;
     IN_ISOLATE(isolate_state);
 
     //py_function *self = (py_function *) py_function_type.tp_alloc(&py_function_type, 0);
@@ -70,7 +85,7 @@ py_function_new(PyObject *function, IsolateState* isolate_state)
         Py_DECREF((PyObject*)self);
         return NULL;
     }
-    Local<External> js_self = v8_compat::external_new(isolate, self);
+    Local<External> js_self = isolate_state->callback_data(owner, (PyObject*)self);
     Local<FunctionTemplate> js_template;
 
     if (throw_on_construct) {
@@ -84,9 +99,9 @@ py_function_new(PyObject *function, IsolateState* isolate_state)
 }
 
 PyObject *
-py_function_to_template(PyObject *func, IsolateState* isolate_state)
+py_function_to_template(PyObject *func, context_c* owner)
 {
-    PyObject* cache = isolate_state->function_template_cache();
+    PyObject* cache = owner->function_template_cache;
     PyErr_PROPAGATE(cache);
 
     PyObject *templ = PyDict_GetItem(cache, func);
@@ -94,7 +109,7 @@ py_function_to_template(PyObject *func, IsolateState* isolate_state)
         return templ;
     }
 
-    templ = py_function_new(func, isolate_state);
+    templ = py_function_new(func, owner);
     PyErr_PROPAGATE(templ);
     if (PyDict_SetItem(cache, func, templ) < 0) {
         Py_DECREF(templ);
@@ -107,12 +122,12 @@ py_function_to_template(PyObject *func, IsolateState* isolate_state)
 void
 py_function_dealloc(py_function *self)
 {
+    PyObject_GC_UnTrack(self);
+    function_clear(self);
     if (self->js_template != NULL) {
         self->js_template->Reset();
         delete self->js_template;
     }
-    Py_XDECREF(self->function);
-    Py_XDECREF(self->function_name);
     TP_FREE_ABI3(py_function_type, self);
 }
 
@@ -168,7 +183,8 @@ py_function_callback(const FunctionCallbackInfo<Value> &info)
     HandleScope hs(isolate);
     Local<Context> context = isolate->GetCurrentContext();
 
-    py_function *self = (py_function *) v8_compat::external_value(info.Data());
+    py_function *self = (py_function *)IsolateState::callback_target(info.Data());
+    if (self == nullptr) { js_throw_py(); return; }
     context_c* owner = context.IsEmpty() ? nullptr :
         v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
     if (owner == nullptr || !context_trace_enabled(owner)) {

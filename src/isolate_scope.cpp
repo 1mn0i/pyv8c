@@ -16,9 +16,12 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
     : state_(state),
       previous_(current_isolate_state()),
       isolate_(state->isolate()),
-      entered_(false)
+      entered_(false),
+      python_owner_(nullptr)
 {
     if (try_only && !state_->entry_mutex.try_lock()) return;
+    python_owner_ = state_->python_owner;
+    Py_XINCREF(python_owner_);
     // A v8::Locker that is contended for blocks until the owning thread leaves
     // the isolate.  Acquiring it while still holding the GIL would starve every
     // other Python thread -- the owning thread itself usually needs the GIL to
@@ -39,6 +42,7 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
             PyEval_RestoreThread(gil_state);
         }
         state_->entry_mutex.unlock();
+        Py_XDECREF(python_owner_);
         throw;
     }
     PyEval_RestoreThread(gil_state);
@@ -51,6 +55,10 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
 IsolateLockScope::~IsolateLockScope()
 {
     if (!entered_) return;
+    if (state_->entry_depth == 1) {
+        v8::HandleScope handle_scope(isolate_);
+        state_->drain_deferred();
+    }
     active_isolate_state = previous_;
     if (entered_)
     {
@@ -72,4 +80,5 @@ IsolateLockScope::~IsolateLockScope()
         }
         PyErr_Restore(error_type, error_value, error_traceback);
     }
+    Py_XDECREF(python_owner_);
 }

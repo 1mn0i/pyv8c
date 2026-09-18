@@ -30,7 +30,28 @@ enum FlagImmutable {
 
 PyTypeObject* py_class_type = NULL;
 
+static int class_traverse(py_class* self, visitproc visit, void* arg) {
+    Py_VISIT(self->cls);
+    Py_VISIT(self->idl_spec);
+    Py_VISIT(self->cls_name);
+    Py_VISIT(self->operation_callback_data);
+    Py_VISIT(self->constructor_adapter);
+    return 0;
+}
+
+static int class_clear(py_class* self) {
+    self->templ.Reset();
+    Py_CLEAR(self->cls);
+    Py_CLEAR(self->idl_spec);
+    Py_CLEAR(self->cls_name);
+    Py_CLEAR(self->operation_callback_data);
+    Py_CLEAR(self->constructor_adapter);
+    return 0;
+}
+
 static PyType_Slot py_class_slots[] = {
+    {Py_tp_traverse, (void*)class_traverse},
+    {Py_tp_clear, (void*)class_clear},
     {Py_tp_dealloc, (void*)py_class_dealloc},
     {Py_tp_doc, (void*)"v8 Class"},
     {0, NULL} };
@@ -39,7 +60,7 @@ static PyType_Spec py_class_spec = {
     "_pyv8.Class",
     sizeof(py_class),
     0,
-    Py_TPFLAGS_DEFAULT,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
     py_class_slots };
 
 int 
@@ -57,12 +78,8 @@ py_class_type_init()
 void 
 py_class_dealloc(py_class* self) 
 {
-    self->templ.Reset();
-    Py_XDECREF(self->cls);
-    Py_XDECREF(self->idl_spec);
-    Py_XDECREF(self->cls_name);
-    Py_XDECREF(self->operation_callback_data);
-    Py_XDECREF(self->constructor_adapter);
+    PyObject_GC_UnTrack(self);
+    class_clear(self);
     //Py_XDECREF(self->parent);
     //Py_TYPE(self)->tp_free((PyObject*)self);
     TP_FREE_ABI3(py_class_type, self);
@@ -204,7 +221,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     if (PyErr_Occurred()) { Py_DECREF((PyObject*)self); return nullptr; }
     IdlSpec defaults;
     const IdlSpec& config = self->idl_spec == nullptr ? defaults : *(IdlSpec*)self->idl_spec;
-    Local<External> js_self = v8_compat::external_new(isolate, self);
+    Local<External> js_self = isolate_state->callback_data(py_ctx, (PyObject*)self);
     int templ_lenght = (int)config.length;
     self->constructor_behavior = (int)config.constructor_behavior;
     self->unconstructable = config.unconstructable;
@@ -265,7 +282,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
                 isolate, world, templ, sig,
                 cls,
                 config.attributes,
-                self->operation_callback_data)) {
+                self->operation_callback_data, py_ctx)) {
             Py_DECREF((PyObject*)self);
             return NULL;
         }
@@ -277,7 +294,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
                 isolate, world, templ, sig,
                 cls,
                 config.methods,
-                self->operation_callback_data)) {
+                self->operation_callback_data, py_ctx)) {
             Py_DECREF((PyObject*)self);
             return NULL;
         }
@@ -311,7 +328,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
             Py_DECREF((PyObject*)self);
             return nullptr;
         }
-        templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_method_callback, v8_compat::external_new(isolate, data));
+        templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_method_callback, isolate_state->callback_data(py_ctx, data));
         Py_DECREF(data);
     }
 
@@ -611,7 +628,8 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
 {
     Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
-    if (!isolate_state->track_python_object(js_object, py_object)) {
+    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (!isolate_state->track_python_object(js_object, py_object, owner)) {
         return false;
     }
     js_object->SetInternalField(

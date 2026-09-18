@@ -11,7 +11,33 @@ using namespace v8;
 
 PyTypeObject* script_type = NULL;
 
+static int script_traverse(script_c* self, visitproc visit, void* arg) {
+    Py_VISIT(self->py_context);
+    Py_VISIT(self->py_isolate);
+    Py_VISIT(self->source);
+    Py_VISIT(self->script_name);
+    return 0;
+}
+
+static int script_clear(script_c* self) {
+    std::unique_ptr<IsolateLockScope> lock;
+    if (self->isolate_state) lock.reset(new IsolateLockScope(self->isolate_state));
+    context_unregister_handle((context_c*)self->py_context, (PyObject*)self);
+    if (!self->script.IsEmpty()) {
+        self->script.Reset();
+        self->isolate_state->release_v8_handle();
+    }
+    self->isolate_state = nullptr;
+    Py_CLEAR(self->script_name);
+    Py_CLEAR(self->source);
+    Py_CLEAR(self->py_context);
+    Py_CLEAR(self->py_isolate);
+    return 0;
+}
+
 static PyType_Slot script_slots[] = {
+    {Py_tp_traverse, (void*)script_traverse},
+    {Py_tp_clear, (void*)script_clear},
     {Py_tp_doc, (void*)"v8 Script"},
     {Py_tp_new, (void *)script_new},
     {Py_tp_dealloc, (void *)script_dealloc},
@@ -21,7 +47,7 @@ static PyType_Spec script_spec = {
     "_pyv8.Script",
     sizeof(script_c),
     0,
-    Py_TPFLAGS_DEFAULT,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
     script_slots};
 
 int 
@@ -68,14 +94,22 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     if (PyArg_ParseTupleAndKeywords(args, kwargs, "OO|O", (char **) keywords, &py_ctx, &source, &filename) < 0) {
         return NULL;
     }
-    if (!PyObject_TypeCheck((PyObject*)py_ctx, context_type) || py_ctx->isolate_state == nullptr) {
+    if (!PyObject_TypeCheck((PyObject*)py_ctx, context_type)) {
         PyErr_SetString(PyExc_TypeError, "context must be an active Context instance");
         return NULL;
+    }
+    if (!context_is_active(py_ctx)) {
+        PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
+        return nullptr;
     }
     IsolateState* isolate_state = py_ctx->isolate_state;
     if (!isolate_state->require_active())
         return NULL;
     IN_ISOLATE(isolate_state);
+    if (!context_is_active(py_ctx)) {
+        PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
+        return nullptr;
+    }
     IN_CONTEXT(py_ctx->js_context.Get(isolate));
     JS_TRY
 
@@ -101,6 +135,9 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     script_c *self = (script_c *)PyType_GenericAlloc(type, 0);
     PyErr_PROPAGATE(self);
     self->isolate_state = isolate_state;
+    self->py_context = (PyObject*)py_ctx;
+    Py_INCREF(py_ctx);
+    context_register_handle(py_ctx, (PyObject*)self, (int (*)(PyObject*))script_clear);
     self->script.Reset(isolate, script);
     isolate_state->retain_v8_handle();
     if (py_ctx->py_isolate != nullptr) {
@@ -139,16 +176,8 @@ script_compile(Local<Context> context, PyObject *source, PyObject *filename)
 void 
 script_dealloc(script_c *self)
 {
-    if (!self->script.IsEmpty()) {
-        self->script.Reset();
-        if (self->isolate_state != nullptr)
-            self->isolate_state->release_v8_handle();
-    }
-
-    Py_XDECREF(self->script_name);
-    Py_XDECREF(self->source);
-    Py_XDECREF(self->py_isolate);
-    self->isolate_state = nullptr;
+    PyObject_GC_UnTrack(self);
+    script_clear(self);
     //Py_TYPE(self)->tp_free((PyObject *) self);
     TP_FREE_ABI3(script_type, self);
 }

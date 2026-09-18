@@ -3,6 +3,7 @@
 #include "error_hooks.h"
 #include "isolate_scope.h"
 #include "pyclass.h"
+#include "context.h"
 #include "v8_compat.h"
 
 #include <cassert>
@@ -13,11 +14,12 @@ using namespace v8;
 struct IsolateState::PythonObjectOwner
 {
     explicit PythonObjectOwner(IsolateState* isolate_state)
-        : isolate_state(isolate_state), py_object(nullptr), exc_type(nullptr), exc_traceback(nullptr)
+        : isolate_state(isolate_state), context(nullptr), py_object(nullptr), exc_type(nullptr), exc_traceback(nullptr)
     {
     }
 
     IsolateState* isolate_state;
+    context_c* context;
     Global<Object> object;
     PyObject* py_object;
     PyObject* exc_type;
@@ -36,10 +38,7 @@ IsolateState::python_object_weak_callback(
 IsolateState::IsolateState()
     : isolate_(nullptr),
       live_v8_handles_(0),
-      function_template_cache_(nullptr),
       javascript_name_(nullptr),
-      uncaught_handler_(nullptr),
-      rejection_handler_(nullptr),
       error_hooks_installed_(false),
       disposed_(false)
 {
@@ -143,36 +142,59 @@ IsolateState::release_v8_handle()
         --live_v8_handles_;
 }
 
-void
-IsolateState::set_error_handlers(PyObject* on_uncaught, PyObject* on_rejection)
-{
-    Py_XINCREF(on_uncaught);
-    Py_XINCREF(on_rejection);
-    Py_XDECREF(uncaught_handler_);
-    Py_XDECREF(rejection_handler_);
-    uncaught_handler_ = on_uncaught;
-    rejection_handler_ = on_rejection;
+void IsolateState::defer_release(PyObject* object) {
+    if (object != nullptr) deferred_releases.push_back(object);
 }
 
-void
-IsolateState::clear_error_handlers()
-{
-    Py_CLEAR(uncaught_handler_);
-    Py_CLEAR(rejection_handler_);
+void IsolateState::drain_deferred() {
+    PyObject *type, *value, *traceback;
+    PyErr_Fetch(&type, &value, &traceback);
+    while (!pending_context_closes.empty() || !deferred_releases.empty()) {
+        auto closes = std::move(pending_context_closes);
+        pending_context_closes.clear();
+        for (auto* context : closes) {
+            context_finish_close(context);
+            Py_DECREF(context);
+        }
+        auto releases = std::move(deferred_releases);
+        deferred_releases.clear();
+        for (auto* object : releases) Py_DECREF(object);
+    }
+    PyErr_Restore(type, value, traceback);
 }
 
-PyObject*
-IsolateState::function_template_cache()
-{
-    if (function_template_cache_ == nullptr)
-        function_template_cache_ = PyDict_New();
-    return function_template_cache_;
+Local<External> IsolateState::callback_data(context_c* context, PyObject* target) {
+    auto* data = new CallbackData{this, context, target, {}};
+    auto external = v8_compat::external_new(isolate_, data);
+    data->external.Reset(isolate_, external);
+    data->external.SetWeak(data, callback_data_collected, WeakCallbackType::kParameter);
+    callback_data_.insert(data);
+    return external;
 }
 
-void
-IsolateState::clear_function_template_cache()
-{
-    Py_CLEAR(function_template_cache_);
+void IsolateState::callback_data_collected(const WeakCallbackInfo<CallbackData>& info) {
+    auto* data = info.GetParameter();
+    data->external.Reset();
+    data->state->callback_data_.erase(data);
+    delete data;
+}
+
+void IsolateState::invalidate_callbacks(context_c* context) {
+    for (auto* data : callback_data_) {
+        if (data->context == context) {
+            data->context = nullptr;
+            data->target = nullptr;
+        }
+    }
+}
+
+PyObject* IsolateState::callback_target(Local<Value> value) {
+    auto* data = static_cast<CallbackData*>(v8_compat::external_value(value));
+    if (data == nullptr || !context_is_active(data->context)) {
+        PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
+        return nullptr;
+    }
+    return data->target;
 }
 
 PyObject*
@@ -191,7 +213,7 @@ IsolateState::v8_string(V8StringId id) const
 }
 
 bool
-IsolateState::track_python_object(Local<Object> object, PyObject* py_object)
+IsolateState::track_python_object(Local<Object> object, PyObject* py_object, context_c* context)
 {
     if (object->InternalFieldCount() <= PYTHON_OWNER_FIELD)
     {
@@ -208,6 +230,7 @@ IsolateState::track_python_object(Local<Object> object, PyObject* py_object)
     }
 
     Py_INCREF(py_object);
+    owner->context = context;
     owner->py_object = py_object;
     try
     {
@@ -258,10 +281,36 @@ void
 IsolateState::release_python_owner(PythonObjectOwner* owner)
 {
     python_owners_.erase(owner);
-    Py_XDECREF(owner->py_object);
-    Py_XDECREF(owner->exc_type);
-    Py_XDECREF(owner->exc_traceback);
+    defer_release(owner->py_object);
+    defer_release(owner->exc_type);
+    defer_release(owner->exc_traceback);
     delete owner;
+}
+
+int IsolateState::traverse_context_owners(context_c* context, visitproc visit, void* arg) {
+    for (auto* owner : python_owners_) {
+        if (owner->context != context) continue;
+        Py_VISIT(owner->py_object);
+        Py_VISIT(owner->exc_type);
+        Py_VISIT(owner->exc_traceback);
+    }
+    return 0;
+}
+
+void IsolateState::release_context_owners(context_c* context) {
+    // Allocate before iteration: V8 GC can remove other owners from the registry.
+    auto cleared = v8_compat::external_new(isolate_, nullptr);
+    for (auto it = python_owners_.begin(); it != python_owners_.end();) {
+        auto* owner = *it++;
+        if (owner->context != context) continue;
+        if (!owner->object.IsEmpty()) {
+            auto object = owner->object.Get(isolate_);
+            for (int field = 0; field < OBJECT_INTERNAL_FIELDS; ++field)
+                object->SetInternalField(field, cleared);
+            owner->object.Reset();
+        }
+        release_python_owner(owner);
+    }
 }
 
 void
@@ -281,12 +330,17 @@ IsolateState::shutdown(bool report_error)
     if (!is_active())
         return false;
 
+    if (entry_depth != 0) {
+        if (report_error) PyErr_SetString(PyExc_RuntimeError, "cannot close V8 isolate during active execution");
+        return false;
+    }
+
     if (live_v8_handles_ != 0)
     {
         IsolateLockScope scope(this);
         HandleScope handle_scope(isolate_);
-        isolate_->RequestGarbageCollectionForTesting(
-            Isolate::GarbageCollectionType::kFullGarbageCollection);
+        isolate_->LowMemoryNotification();
+        drain_deferred();
     }
     if (live_v8_handles_ != 0)
     {
@@ -305,9 +359,14 @@ IsolateState::shutdown(bool report_error)
         // The reporters go first: they hold references into Python and could
         // otherwise be called while the isolate is already being torn down.
         error_hooks_uninstall(this);
-        clear_function_template_cache();
         Py_CLEAR(javascript_name_);
         clear_python_owners();
+        drain_deferred();
+        for (auto* data : callback_data_) {
+            data->external.Reset();
+            delete data;
+        }
+        callback_data_.clear();
         v8_strings_->reset();
     }
 

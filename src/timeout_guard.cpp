@@ -44,7 +44,7 @@ context_timeout(Local<Context> context)
 {
     context_c* py_context = static_cast<context_c*>(
         v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT)));
-    return py_context->timeout;
+    return py_context == nullptr ? 0 : py_context->timeout;
 }
 
 TimeoutGuard::TimeoutGuard(double timeout, Isolate* isolate)

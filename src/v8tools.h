@@ -113,7 +113,7 @@ namespace bindings {
         v8::Local<v8::Signature> signature,
         PyObject* cls,
         PyObject* configs,
-        PyObject* callback_data_owner);
+        PyObject* callback_data_owner, context_c* owner);
 
     void InstallOperation(v8::Isolate* isolate,
         const char* world,
@@ -127,7 +127,7 @@ namespace bindings {
         v8::Local<v8::Signature> signature,
         PyObject* cls,
         PyObject* configs,
-        PyObject* callback_data_owner);
+        PyObject* callback_data_owner, context_c* owner);
 
     void InstallConstantValue(v8::Isolate* isolate,
         const char* world,

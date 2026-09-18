@@ -50,6 +50,7 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
     if (!js_object_require_active(&self->base))
         return NULL;
     IN_ISOLATE(self->base.isolate_state);
+    if (!js_object_require_active(&self->base)) return nullptr;
     Local<Object> object = self->base.object.Get(isolate);
     //IN_CONTEXT(object->CreationContext());
     IN_CONTEXT(object->GetCreationContextChecked());
@@ -90,6 +91,7 @@ PyObject* js_function_repr(js_function* self) {
     if (!js_object_require_active(&self->base))
         return NULL;
     IN_ISOLATE(self->base.isolate_state);
+    if (!js_object_require_active(&self->base)) return nullptr;
     Local<Object> object = self->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
@@ -129,6 +131,5 @@ PyObject* js_function_repr(js_function* self) {
 }
 
 void js_function_dealloc(js_function *self) {
-    self->js_this.Reset();
     js_object_dealloc((js_object*)self);
 }

@@ -21,6 +21,71 @@
 using namespace v8;
 
 static PyObject* context_try_inspector(context_c* self, PyObject* args);
+static int context_clear(context_c* self);
+static int context_traverse(context_c* self, visitproc visit, void* arg);
+
+bool context_is_active(context_c* self) {
+    return self != nullptr && !self->closing && self->isolate_state != nullptr &&
+        !self->js_context.IsEmpty();
+}
+
+bool context_check_callback(Local<Context> context) {
+    // Context::New may call interceptors before embedder data is installed.
+    if (!context.IsEmpty() &&
+        (context->GetNumberOfEmbedderDataFields() <= CONTEXT_OBJECT_SLOT ||
+         !context->GetEmbedderData(CONTEXT_OBJECT_SLOT)->IsExternal())) return true;
+    auto* owner = context.IsEmpty() ? nullptr :
+        v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (context_is_active(owner)) return true;
+    auto* isolate = Isolate::GetCurrent();
+    isolate->ThrowException(Exception::Error(V8String(isolate, "V8 context is closed")));
+    return false;
+}
+
+void context_register_handle(context_c* self, PyObject* handle, int (*clear)(PyObject*)) {
+    if (self->resources == nullptr) self->resources = new ContextResources();
+    self->resources->handles[handle] = clear;
+}
+
+void context_unregister_handle(context_c* self, PyObject* handle) {
+    if (self != nullptr && self->resources != nullptr) self->resources->handles.erase(handle);
+}
+
+bool context_retain_dependency(Local<Context> target, PyObject* source) {
+    auto* owner = v8_compat::context_embedder_pointer<context_c>(target, CONTEXT_OBJECT_SLOT);
+    if (source == nullptr || owner == nullptr || source == (PyObject*)owner) return true;
+    if (owner->dependencies == nullptr) owner->dependencies = PyList_New(0);
+    if (owner->dependencies == nullptr) return false;
+    for (Py_ssize_t i = 0; i < PyList_Size(owner->dependencies); ++i)
+        if (PyList_GetItem(owner->dependencies, i) == source) return true;
+    if (PyList_Append(owner->dependencies, source) < 0) return false;
+    auto* origin = (context_c*)source;
+    if (origin->resources == nullptr) origin->resources = new ContextResources();
+    if (owner->resources == nullptr) owner->resources = new ContextResources();
+    origin->resources->dependents.insert(owner);
+    owner->resources->dependencies.insert(origin);
+    return true;
+}
+
+static void context_unlink_dependencies(context_c* self) {
+    if (self->resources != nullptr) {
+        auto& dependents = self->resources->dependents;
+        while (!dependents.empty()) {
+            auto* target = *dependents.begin();
+            dependents.erase(target);
+            if (target->resources != nullptr) target->resources->dependencies.erase(self);
+            if (target->dependencies == nullptr) continue;
+            for (Py_ssize_t i = PyList_Size(target->dependencies); i-- > 0;)
+                if (PyList_GetItem(target->dependencies, i) == (PyObject*)self)
+                    PySequence_DelItem(target->dependencies, i);
+        }
+        for (auto* origin : self->resources->dependencies) {
+            if (origin->resources != nullptr) origin->resources->dependents.erase(self);
+        }
+        self->resources->dependencies.clear();
+    }
+    Py_CLEAR(self->dependencies);
+}
 
 PyMethodDef context_methods[] = {
     {"_try_inspector", (PyCFunction)context_try_inspector, METH_VARARGS, NULL},
@@ -41,7 +106,7 @@ PyMethodDef context_methods[] = {
 static IsolateState*
 context_require_isolate(context_c* self)
 {
-    if (self->isolate_state == nullptr || !self->isolate_state->is_active() || self->js_context.IsEmpty())
+    if (!context_is_active(self) || !self->isolate_state->is_active())
     {
         PyErr_SetString(PyExc_RuntimeError, "V8 context is no longer active");
         return nullptr;
@@ -89,6 +154,8 @@ PyGetSetDef context_getset[] = {
 
 // For ABI3 compatibility, we'll define the type using PyType_Spec
 static PyType_Slot context_slots[] = {
+    {Py_tp_traverse, (void*)context_traverse},
+    {Py_tp_clear, (void*)context_clear},
     {Py_tp_dealloc, (void*)context_dealloc},
     {Py_tp_new, (void*)context_new},
     {Py_tp_methods, context_methods},
@@ -104,7 +171,7 @@ static PyType_Spec context_spec = {
     "_pyv8env.Context",
     sizeof(context_c),
     0,
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     context_slots };
 
 PyTypeObject* context_type = NULL;
@@ -191,6 +258,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->lazy_names = PySet_New(nullptr);
     self->py_global = NULL;
     self->class_template_cache = PyDict_New();
+    self->function_template_cache = PyDict_New();
     if (class_configs != Py_None && PyDict_Check(class_configs)) {
         // Keep the caller's mapping alive so Python can add realm-specific
         // class overlays when a lazy interface is first accessed.
@@ -248,7 +316,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         Py_DECREF((PyObject*)self);
         return NULL;
     }
-    if (ctx_type == NULL || self->class_template_cache == NULL || self->class_configs == NULL || self->resolving_classes == nullptr || self->lazy_names == nullptr) {
+    if (ctx_type == NULL || self->class_template_cache == NULL || self->function_template_cache == NULL || self->class_configs == NULL || self->resolving_classes == nullptr || self->lazy_names == nullptr) {
         Py_XDECREF(ctx_type);
         Py_DECREF((PyObject*)self);
         return NULL;
@@ -339,10 +407,34 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     return (PyObject *) self;
 }
 
-static void
-context_release(context_c *self)
+void
+context_finish_close(context_c *self)
 {
+    self->closing = true;
     debugger_context_closed(self);
+    context_unlink_dependencies(self);
+    if (self->isolate_state != nullptr) {
+        self->isolate_state->invalidate_callbacks(self);
+        if (!self->js_context.IsEmpty())
+            self->js_context.Get(self->isolate_state->isolate())->SetEmbedderData(
+                CONTEXT_OBJECT_SLOT, v8_compat::external_new(self->isolate_state->isolate(), nullptr));
+        self->isolate_state->release_context_owners(self);
+    }
+    if (self->resources != nullptr) {
+        while (!self->resources->handles.empty()) {
+            auto item = *self->resources->handles.begin();
+            self->resources->handles.erase(item.first);
+            Py_INCREF(item.first);
+            item.second(item.first);
+            Py_DECREF(item.first);
+        }
+        delete self->resources;
+        self->resources = nullptr;
+    }
+    Py_CLEAR(self->function_template_cache);
+    Py_CLEAR(self->uncaught_handler);
+    Py_CLEAR(self->rejection_handler);
+    Py_CLEAR(self->dependencies);
     Py_CLEAR(self->class_template_cache);
     Py_CLEAR(self->class_configs);
     Py_CLEAR(self->lazy_factory);
@@ -359,25 +451,47 @@ context_release(context_c *self)
     }
     Py_CLEAR(self->py_global);
 
-    if (self->js_object_cache != NULL && PyObject_HasAttrString(self->js_object_cache, "items")) {
-        PyObject* items = PyObject_CallMethod(self->js_object_cache, "items", nullptr);
-        if (items) {
-            PyObject* iterator = PyObject_GetIter(items);
-            if (iterator) {
-                PyObject* item;
-                while ((item = PyIter_Next(iterator)) != nullptr) {
-                    Py_DECREF(item);
-                }
-                Py_DECREF(iterator);
-            }
-            Py_DECREF(items);
-        }
-    }
-
     Py_CLEAR(self->js_object_cache);
     Py_CLEAR(self->py_isolate);
     self->isolate_state = nullptr;
 
+}
+
+static int context_traverse(context_c* self, visitproc visit, void* arg) {
+    Py_VISIT(self->py_isolate);
+    Py_VISIT(self->js_object_cache);
+    Py_VISIT(self->class_template_cache);
+    Py_VISIT(self->function_template_cache);
+    Py_VISIT(self->class_configs);
+    Py_VISIT(self->lazy_factory);
+    Py_VISIT(self->resolving_classes);
+    Py_VISIT(self->lazy_names);
+    Py_VISIT(self->py_global);
+    Py_VISIT(self->trace_callback);
+    Py_VISIT(self->trace_context_type);
+    Py_VISIT(self->trace_event_names);
+    Py_VISIT(self->uncaught_handler);
+    Py_VISIT(self->rejection_handler);
+    Py_VISIT(self->dependencies);
+    if (self->isolate_state != nullptr)
+        return self->isolate_state->traverse_context_owners(self, visit, arg);
+    return 0;
+}
+
+static int context_clear(context_c* self) {
+    if (self->closing) return 0;
+    auto* state = self->isolate_state;
+    if (state == nullptr) { context_finish_close(self); return 0; }
+    IN_ISOLATE(state);
+    self->closing = true;
+    // Callback frames still borrow binding metadata until the outer entry exits.
+    if (state->entry_depth > 1) {
+        Py_INCREF(self);
+        state->pending_context_closes.push_back(self);
+    } else {
+        context_finish_close(self);
+    }
+    return 0;
 }
 
 PyObject*
@@ -385,14 +499,16 @@ context_close(context_c *self, PyObject* ignored)
 {
     (void)ignored;
     if (!debugger_context_can_close(self)) return nullptr;
-    context_release(self);
+    context_clear(self);
     PYV8_RETURN_NONE;
 }
 
 void
 context_dealloc(context_c *self)
 {
-    context_release(self);
+    PyObject_GC_UnTrack(self);
+    context_clear(self);
+    if (Py_REFCNT(self) != 0) return;
     TP_FREE_ABI3(context_type, self);
 }
 
@@ -404,6 +520,7 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
     if (isolate_state == nullptr)
         return NULL;
     IN_ISOLATE(isolate_state);
+    if (context_require_isolate(self) == nullptr) return nullptr;
     Local<Context> context = self->js_context.Get(isolate);
     Local<Object> global = context->Global();
 
@@ -571,6 +688,7 @@ context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
     if (isolate_state == nullptr)
         return NULL;
     IN_ISOLATE(isolate_state);
+    if (context_require_isolate(self) == nullptr) return nullptr;
     Local<Context> context = self->js_context.Get(isolate);
     Local<Object> global = context->Global();
 
@@ -719,6 +837,8 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     IsolateState* isolate_state = context_require_isolate(self);
     if (isolate_state == nullptr)
         return NULL;
+    IN_ISOLATE(isolate_state);
+    if (context_require_isolate(self) == nullptr) return nullptr;
     PyObject *program;
     PyObject *filename = Py_None;
     double timeout = self->timeout;
@@ -744,13 +864,17 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     assert(PyObject_IsInstance(program, (PyObject*)script_type));
     script_c *py_script = (script_c *) program;
 
+    if (py_script->script.IsEmpty()) {
+        Py_DECREF(program);
+        PyErr_SetString(PyExc_RuntimeError, "V8 script context is closed");
+        return nullptr;
+    }
     if (py_script->isolate_state != isolate_state) {
         Py_DECREF(program);
         PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
         return NULL;
     }
 
-    IN_ISOLATE(isolate_state);
     IN_CONTEXT(self->js_context.Get(isolate));
     JS_TRY
 
@@ -863,6 +987,7 @@ context_get_global(context_c *self, void *shit)
     if (isolate_state == nullptr)
         return NULL;
     IN_ISOLATE(isolate_state);
+    if (context_require_isolate(self) == nullptr) return nullptr;
     Local<Context> context = self->js_context.Get(isolate);
     PyObject* pyobj = py_from_js(
         v8_compat::global_template_object(context), context);
@@ -888,7 +1013,9 @@ context_getitem(context_c *self, PyObject *name)
 {
     PyObject* global = context_get_global(self, NULL);
     PyErr_PROPAGATE(global);
-    return PyObject_GetAttr(global, name);
+    PyObject* result = PyObject_GetAttr(global, name);
+    Py_DECREF(global);
+    return result;
 }
 
 int 
@@ -912,7 +1039,9 @@ context_setitem(context_c *self, PyObject *name, PyObject *value)
 {
     PyObject *global = context_get_global(self, NULL);
     PyErr_PROPAGATE_(global);
-    return PyObject_SetAttr(global, name, value);
+    int result = PyObject_SetAttr(global, name, value);
+    Py_DECREF(global);
+    return result;
 }
 
 PyObject *
@@ -922,7 +1051,8 @@ context_gc(context_c *self)
     if (isolate_state == nullptr)
         return NULL;
     IN_ISOLATE(isolate_state);
-    isolate->RequestGarbageCollectionForTesting(Isolate::GarbageCollectionType::kFullGarbageCollection);
+    if (context_require_isolate(self) == nullptr) return nullptr;
+    isolate->LowMemoryNotification();
     PYV8_RETURN_NONE;
 }
 
@@ -943,6 +1073,7 @@ context_enqueue_microtask(context_c *self, PyObject *function)
     if (isolate_state == nullptr)
         return NULL;
     IN_ISOLATE(isolate_state);
+    if (context_require_isolate(self) == nullptr) return nullptr;
     IN_CONTEXT(self->js_context.Get(isolate));
     Local<Value> microtask = js_from_py(function, context);
     if (microtask.IsEmpty() || PyErr_Occurred())
@@ -964,8 +1095,7 @@ context_enqueue_microtask(context_c *self, PyObject *function)
 PyObject *
 context_set_error_hooks(context_c *self, PyObject *args, PyObject *kwargs)
 {
-    // Both arguments are optional so a realm can replace or drop one reporter
-    // without disturbing the other.
+    // Each call replaces both reporters for this Context only.
     PyObject *on_uncaught = Py_None;
     PyObject *on_rejection = Py_None;
     static const char *keywords[] = {"on_uncaught", "on_rejection", NULL};
@@ -977,7 +1107,8 @@ context_set_error_hooks(context_c *self, PyObject *args, PyObject *kwargs)
     if (isolate_state == nullptr)
         return NULL;
     IN_ISOLATE(isolate_state);
-    if (!error_hooks_install(isolate_state, on_uncaught, on_rejection))
+    if (context_require_isolate(self) == nullptr) return nullptr;
+    if (!error_hooks_install(self, on_uncaught, on_rejection))
         return NULL;
     PYV8_RETURN_NONE;
 }

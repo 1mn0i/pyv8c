@@ -11,7 +11,7 @@ from .flag import *  # noqa: F401,F403 - flag constants are public API
 
 _pyv8.init_v8(
     icudtl_path=os.path.join(os.path.dirname(__file__), "icudtl.dat"),
-    params=["--expose-gc"],
+    # params=["--expose-gc"],
 )
 
 _NATIVE_EXPORTS = (

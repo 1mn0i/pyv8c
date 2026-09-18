@@ -5,6 +5,7 @@
 #include "pyv8.h"
 
 #include "convert.h"
+#include "context.h"
 #include "isolate_scope.h"
 #include "isolate_state.h"
 
@@ -70,14 +71,16 @@ call_reporter(PyObject* callback, PyObject* arguments)
 void
 report_uncaught(IsolateState* state, Local<Message> message, Local<Value> data)
 {
-    PyObject* handler = state->uncaught_handler();
-    if (handler == nullptr)
-        return;
     Isolate* isolate = state->isolate();
     HandleScope handle_scope(isolate);
     Local<Context> context = isolate->GetCurrentContext();
     if (context.IsEmpty())
         return;
+    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (!context_is_active(owner) || owner->uncaught_handler == nullptr) return;
+    PyObject* handler = owner->uncaught_handler;
+    Py_INCREF(handler);
+    PyOwnedRef keep_handler(handler);
 
     int line = 0;
     int column = 0;
@@ -121,9 +124,6 @@ report_uncaught(IsolateState* state, Local<Message> message, Local<Value> data)
 void
 report_rejection(IsolateState* state, PromiseRejectMessage message)
 {
-    PyObject* handler = state->rejection_handler();
-    if (handler == nullptr)
-        return;
     const char* event_name = nullptr;
     switch (message.GetEvent())
     {
@@ -148,9 +148,13 @@ report_rejection(IsolateState* state, PromiseRejectMessage message)
     }
     Isolate* isolate = state->isolate();
     HandleScope handle_scope(isolate);
-    Local<Context> context = isolate->GetCurrentContext();
-    if (context.IsEmpty())
-        return;
+    Local<Context> context;
+    if (!message.GetPromise()->GetCreationContext().ToLocal(&context)) return;
+    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    if (!context_is_active(owner) || owner->rejection_handler == nullptr) return;
+    PyObject* handler = owner->rejection_handler;
+    Py_INCREF(handler);
+    PyOwnedRef keep_handler(handler);
 
     // The identity hash is stable for the lifetime of the promise and is what
     // the reporter keys its pending notifications on.
@@ -211,14 +215,21 @@ require_callable(PyObject* callback, const char* name)
 }  // namespace
 
 bool
-error_hooks_install(IsolateState* state, PyObject* on_uncaught, PyObject* on_rejection)
+error_hooks_install(context_c* context, PyObject* on_uncaught, PyObject* on_rejection)
 {
+    auto* state = context->isolate_state;
     if (!require_callable(on_uncaught, "on_uncaught"))
         return false;
     if (!require_callable(on_rejection, "on_rejection"))
         return false;
-    state->set_error_handlers(on_uncaught == Py_None ? nullptr : on_uncaught,
-                              on_rejection == Py_None ? nullptr : on_rejection);
+    PyObject* uncaught = on_uncaught == Py_None ? nullptr : on_uncaught;
+    PyObject* rejection = on_rejection == Py_None ? nullptr : on_rejection;
+    Py_XINCREF(uncaught);
+    Py_XINCREF(rejection);
+    Py_CLEAR(context->uncaught_handler);
+    Py_CLEAR(context->rejection_handler);
+    context->uncaught_handler = uncaught;
+    context->rejection_handler = rejection;
     if (state->error_hooks_installed())
         return true;
     // A second AddMessageListener would report every exception twice, so the
@@ -232,7 +243,6 @@ error_hooks_install(IsolateState* state, PyObject* on_uncaught, PyObject* on_rej
 void
 error_hooks_uninstall(IsolateState* state)
 {
-    state->clear_error_handlers();
     if (!state->error_hooks_installed())
         return;
     state->set_error_hooks_installed(false);

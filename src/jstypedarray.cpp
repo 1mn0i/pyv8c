@@ -330,6 +330,7 @@ js_typedarray_repr(js_typedarray* self)
     if (!js_object_require_active(&self->base))
         return NULL;
     IN_ISOLATE(self->base.isolate_state);
+    if (!js_object_require_active(&self->base)) return nullptr;
     Local<Object> object = self->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;

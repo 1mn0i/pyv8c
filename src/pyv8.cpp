@@ -224,7 +224,7 @@ v8_gc(PyObject *self, PyObject *args)
         return NULL;
     IsolateState* isolate_state = runtime_manager.default_isolate();
     IN_ISOLATE(isolate_state);
-    isolate->RequestGarbageCollectionForTesting(Isolate::GarbageCollectionType::kFullGarbageCollection);
+    isolate->LowMemoryNotification();
     PYV8_RETURN_NONE;
 }
 

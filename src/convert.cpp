@@ -562,7 +562,12 @@ js_from_py_impl(PyObject *value,
     if (PyFunction_Check_abi3(value) || PyMethod_Check_abi3(value))
     {
         IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
-        py_function *templ = (py_function *)py_function_to_template(value, isolate_state);
+        auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+        if (owner == nullptr) {
+            PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
+            return Local<Value>();
+        }
+        py_function *templ = (py_function *)py_function_to_template(value, owner);
         if (templ == NULL)
         {
             return Local<Value>();
@@ -638,22 +643,29 @@ js_from_py_impl(PyObject *value,
     if (PyObject_TypeCheck(value, js_object_type))
     {
         js_object *py_value = (js_object *)value;
+        if (!js_object_require_active(py_value)) return Local<Value>();
         if (py_value->isolate_state == nullptr || py_value->isolate_state->isolate() != isolate)
         {
             PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
             return Local<Value>();
         }
+        if (!context_retain_dependency(context, py_value->py_context)) return Local<Value>();
         return py_value->object.Get(isolate);
     }
 
     if (PyObject_TypeCheck(value, js_value_type))
     {
         js_value* py_value = (js_value*)value;
+        if (py_value->value.IsEmpty()) {
+            PyErr_SetString(PyExc_RuntimeError, "V8 value context is closed");
+            return Local<Value>();
+        }
         if (py_value->isolate_state == nullptr || py_value->isolate_state->isolate() != isolate)
         {
             PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
             return Local<Value>();
         }
+        if (!context_retain_dependency(context, py_value->py_context)) return Local<Value>();
         return py_value->value.Get(isolate);
     }
 

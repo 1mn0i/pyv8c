@@ -21,6 +21,7 @@ using namespace v8;
 // handlers because they use the accessing context and a different self lookup.
 Intercepted cross_origin_named_getter(Local<Name> js_name, Info(Value)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     PyObject* self = get_self_cross_origin(info);
     return property_getter_handler(
@@ -33,6 +34,7 @@ Intercepted cross_origin_named_setter(
     Local<Value> js_value,
     Info(void)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     PyObject* self = get_self_cross_origin(info);
     return property_setter_handler(
@@ -42,6 +44,7 @@ Intercepted cross_origin_named_setter(
 
 Intercepted cross_origin_named_deleter(Local<Name> js_name, Info(Boolean)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     PyObject* self = get_self_cross_origin(info);
     return property_deleter_handler(
@@ -51,6 +54,7 @@ Intercepted cross_origin_named_deleter(Local<Name> js_name, Info(Boolean)) {
 
 Intercepted cross_origin_named_query(Local<Name> js_name, Info(Integer)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     PyObject* self = get_self_cross_origin(info);
     return property_query_handler(
@@ -60,6 +64,7 @@ Intercepted cross_origin_named_query(Local<Name> js_name, Info(Integer)) {
 
 void cross_origin_named_enumerator(Info(Array)) {
     SETUP;
+    if (!context_check_callback(context)) return;
 
     PyObject* self = get_self_cross_origin(info);
     named_enumerator_handler(
@@ -68,6 +73,7 @@ void cross_origin_named_enumerator(Info(Array)) {
 
 Intercepted cross_origin_indexed_getter(uint32_t index, Info(Value)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     PyObject* self = get_self_cross_origin(info);
     return property_getter_handler(
@@ -80,6 +86,7 @@ Intercepted cross_origin_indexed_setter(
     Local<Value> js_value,
     Info(void)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     PyObject* self = get_self_cross_origin(info);
     return property_setter_handler(
@@ -89,6 +96,7 @@ Intercepted cross_origin_indexed_setter(
 
 Intercepted cross_origin_indexed_deleter(uint32_t index, Info(Boolean)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     PyObject* self = get_self_cross_origin(info);
     return property_deleter_handler(
@@ -98,6 +106,7 @@ Intercepted cross_origin_indexed_deleter(uint32_t index, Info(Boolean)) {
 
 Intercepted cross_origin_indexed_query(uint32_t index, Info(Integer)) {
     SETUP;
+    if (!context_check_callback(context)) return Intercepted::kYes;
 
     PyObject* self = get_self_cross_origin(info);
     return property_query_handler(
@@ -107,6 +116,7 @@ Intercepted cross_origin_indexed_query(uint32_t index, Info(Integer)) {
 
 void cross_origin_indexed_enumerator(Info(Array)) {
     SETUP;
+    if (!context_check_callback(context)) return;
 
     PyObject* self = get_self_cross_origin(info);
     indexed_enumerator_handler(

@@ -4,6 +4,7 @@
 #include <Python.h>
 
 class IsolateState;
+struct context_c;
 
 // Route the failures V8 handles by itself back into Python.
 //
@@ -17,16 +18,17 @@ class IsolateState;
 //
 // ``on_uncaught`` is called as ``(message, source, line, column, error)`` with
 // the exception V8 could not deliver, and ``on_rejection`` as
-// ``(event, promise, reason)``, where ``event`` is ``"unhandledrejection"`` or
+// ``(event, identity, promise, reason)``, where ``event`` is ``"unhandledrejection"`` or
 // ``"rejectionhandled"``.  Either may be ``None`` to leave that report alone.
 //
 // Both run on the thread executing the isolate, with the GIL held -- V8 only
 // calls them while a realm thread is inside JavaScript -- and the pending
 // Python error state is restored around the call, so a reporter cannot disturb
 // the JavaScript failure it is reporting.
-bool error_hooks_install(IsolateState* state, PyObject* on_uncaught, PyObject* on_rejection);
+bool error_hooks_install(context_c* context, PyObject* on_uncaught, PyObject* on_rejection);
 
-// Drop the reporters and the callbacks they were installed with.  Safe to call
+// Remove the native listeners. Python reporters are released by Context.close.
+// Safe to call
 // on an isolate that never installed them.
 void error_hooks_uninstall(IsolateState* state);
 
