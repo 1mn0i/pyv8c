@@ -153,7 +153,7 @@ static PyObject *field_get(PyObject *self, void *closure)
             return PyTuple_New(0);
         value = Py_None;
     }
-    Py_INCREF(value);
+    Py_INCREF((PyObject*)value);
     return value;
 }
 static int assign_field(PyObject *self, const Field &field, PyObject *value)
@@ -226,18 +226,18 @@ static int assign_field(PyObject *self, const Field &field, PyObject *value)
     }
     if (value == Py_None)
         value = nullptr;
-    Py_XINCREF(value);
+    Py_XINCREF((PyObject*)value);
     Py_XDECREF(*(PyObject **)address(self, field));
     *(PyObject **)address(self, field) = value;
     return 0;
 invalid:
-    PyErr_Format(PyExc_TypeError, "%s.%s has an invalid value or type", definition(Py_TYPE(self)).name,
+    PyErr_Format(PyExc_TypeError, "%s.%s has an invalid value or type", definition(Py_TYPE((PyObject*)self)).name,
                  field.name);
     return -1;
 }
 static int apply_fields(PyObject *self, PyObject *changes)
 {
-    auto &def = definition(Py_TYPE(self));
+    auto &def = definition(Py_TYPE((PyObject*)self));
     Py_ssize_t position = 0;
     PyObject *key = nullptr;
     PyObject *value = nullptr;
@@ -278,7 +278,7 @@ static int apply_fields(PyObject *self, PyObject *changes)
             return -1;
         }
     }
-    if (Py_TYPE(self) == method_spec_type)
+    if (Py_TYPE((PyObject*)self) == method_spec_type)
     {
         auto &spec = *(MethodSpec *)self;
         if (spec.callback_type == 1 && !PyUnicode_Check(spec.callback))
@@ -288,8 +288,13 @@ static int apply_fields(PyObject *self, PyObject *changes)
         }
         spec.callbacks_resolved = spec.callback_type == 1 || callbacks_resolved;
         spec.pass_receiver = spec.location != 2 && !PyMethod_Check_abi3(spec.callback);
+        Py_CLEAR(spec.trace_receiver);
+        if (PyMethod_Check_abi3(spec.callback)) {
+            spec.trace_receiver = PyObject_GetAttrString(spec.callback, "__self__");
+            if (!spec.trace_receiver) return -1;
+        }
     }
-    if (Py_TYPE(self) == attribute_spec_type)
+    if (Py_TYPE((PyObject*)self) == attribute_spec_type)
     {
         auto &spec = *(AttributeSpec *)self;
         if (spec.callback_type == 1 &&
@@ -303,7 +308,7 @@ static int apply_fields(PyObject *self, PyObject *changes)
         spec.setter_receiver =
             spec.location != 2 && (spec.setter == nullptr || !PyMethod_Check_abi3(spec.setter));
     }
-    if (Py_TYPE(self) == idl_spec_type)
+    if (Py_TYPE((PyObject*)self) == idl_spec_type)
     {
         auto &spec = *(IdlSpec *)self;
         spec.callbacks_resolved = callbacks_resolved;
@@ -334,24 +339,24 @@ static PyObject *record_new(PyTypeObject *type, PyObject *args, PyObject *kwargs
     }
     if (apply_fields(self, kwargs) < 0)
     {
-        Py_DECREF(self);
+        Py_DECREF((PyObject*)self);
         return nullptr;
     }
     return self;
 }
 PyObject *idl_spec_replace(PyObject *original, PyObject *changes)
 {
-    PyObject *self = PyType_GenericAlloc(Py_TYPE(original), 0);
+    PyObject *self = PyType_GenericAlloc(Py_TYPE((PyObject*)original), 0);
     if (self == nullptr)
         return nullptr;
-    auto &def = definition(Py_TYPE(original));
+    auto &def = definition(Py_TYPE((PyObject*)original));
     for (size_t index = 0; index < def.count; ++index)
     {
         const Field &field = def.fields[index];
         if (object_field(field))
         {
             PyObject *value = *(PyObject **)address(original, field);
-            Py_XINCREF(value);
+            Py_XINCREF((PyObject*)value);
             *(PyObject **)address(self, field) = value;
         }
         else if (field.kind == Kind::Bool)
@@ -361,7 +366,7 @@ PyObject *idl_spec_replace(PyObject *original, PyObject *changes)
     }
     if (apply_fields(self, changes) < 0)
     {
-        Py_DECREF(self);
+        Py_DECREF((PyObject*)self);
         return nullptr;
     }
     return self;
@@ -377,7 +382,8 @@ static PyObject *record_replace(PyObject *self, PyObject *args, PyObject *kwargs
 }
 static int record_traverse(PyObject *self, visitproc visit, void *arg)
 {
-    auto &def = definition(Py_TYPE(self));
+    if (Py_TYPE(self) == method_spec_type) Py_VISIT(((MethodSpec*)self)->trace_receiver);
+    auto &def = definition(Py_TYPE((PyObject*)self));
     for (size_t index = 0; index < def.count; ++index)
         if (object_field(def.fields[index]))
             Py_VISIT(*(PyObject **)address(self, def.fields[index]));
@@ -385,7 +391,8 @@ static int record_traverse(PyObject *self, visitproc visit, void *arg)
 }
 static int record_clear(PyObject *self)
 {
-    auto &def = definition(Py_TYPE(self));
+    if (Py_TYPE(self) == method_spec_type) Py_CLEAR(((MethodSpec*)self)->trace_receiver);
+    auto &def = definition(Py_TYPE((PyObject*)self));
     for (size_t index = 0; index < def.count; ++index)
         if (object_field(def.fields[index]))
             Py_CLEAR(*(PyObject **)address(self, def.fields[index]));
@@ -395,12 +402,12 @@ static void record_dealloc(PyObject *self)
 {
     PyObject_GC_UnTrack(self);
     record_clear(self);
-    PyTypeObject *type = Py_TYPE(self);
+    PyTypeObject *type = Py_TYPE((PyObject*)self);
     ((freefunc)PyType_GetSlot(type, Py_tp_free))(self);
-    Py_DECREF(type);
+    Py_DECREF((PyObject*)type);
 }
 static PyMethodDef methods[] = {
-    {"replace", (PyCFunction)record_replace, METH_VARARGS | METH_KEYWORDS, nullptr},
+    {"replace", (PyCFunction)PythonBoundary<record_replace>::call, METH_VARARGS | METH_KEYWORDS, nullptr},
     {nullptr, nullptr, 0, nullptr}};
 int idl_spec_init(PyObject *module)
 {
@@ -410,10 +417,10 @@ int idl_spec_init(PyObject *module)
         for (size_t index = 0; index < def.count; ++index)
             def.getters[index] = {const_cast<char *>(def.fields[index].name), field_get, nullptr, nullptr,
                                   &def.fields[index]};
-        PyType_Slot slots[] = {{Py_tp_new, (void *)record_new},
-                               {Py_tp_dealloc, (void *)record_dealloc},
-                               {Py_tp_traverse, (void *)record_traverse},
-                               {Py_tp_clear, (void *)record_clear},
+        PyType_Slot slots[] = {{Py_tp_new, (void *)PythonBoundary<record_new>::call},
+                               {Py_tp_dealloc, (void *)PythonBoundary<record_dealloc>::call},
+                               {Py_tp_traverse, (void *)PythonBoundary<record_traverse>::call},
+                               {Py_tp_clear, (void *)PythonBoundary<record_clear>::call},
                                {Py_tp_methods, methods},
                                {Py_tp_getset, def.getters},
                                {0, nullptr}};
@@ -433,9 +440,9 @@ PyObject *idl_spec_for(PyObject *owner)
             PyErr_Clear();
         return nullptr;
     }
-    if (Py_TYPE(spec) != idl_spec_type)
+    if (Py_TYPE((PyObject*)spec) != idl_spec_type)
     {
-        Py_DECREF(spec);
+        Py_DECREF((PyObject*)spec);
         PyErr_SetString(PyExc_TypeError, "__v8_idl_spec__ must be an IdlSpec");
         return nullptr;
     }
@@ -443,19 +450,19 @@ PyObject *idl_spec_for(PyObject *owner)
 }
 PyObject *idl_spec_resolve(PyObject *original, PyObject *owner)
 {
-    bool resolved = Py_TYPE(original) == idl_spec_type ? ((IdlSpec *)original)->callbacks_resolved
-                    : Py_TYPE(original) == attribute_spec_type
+    bool resolved = Py_TYPE((PyObject*)original) == idl_spec_type ? ((IdlSpec *)original)->callbacks_resolved
+                    : Py_TYPE((PyObject*)original) == attribute_spec_type
                         ? ((AttributeSpec *)original)->callbacks_resolved
                         : ((MethodSpec *)original)->callbacks_resolved;
     if (resolved)
     {
-        Py_INCREF(original);
+        Py_INCREF((PyObject*)original);
         return original;
     }
     PyObject *changes = nullptr;
-    auto &def = definition(Py_TYPE(original));
-    bool python = Py_TYPE(original) == idl_spec_type ||
-                  (Py_TYPE(original) == attribute_spec_type ? ((AttributeSpec *)original)->callback_type == 0
+    auto &def = definition(Py_TYPE((PyObject*)original));
+    bool python = Py_TYPE((PyObject*)original) == idl_spec_type ||
+                  (Py_TYPE((PyObject*)original) == attribute_spec_type ? ((AttributeSpec *)original)->callback_type == 0
                                                             : ((MethodSpec *)original)->callback_type == 0);
     for (size_t index = 0; python && index < def.count; ++index)
     {
@@ -474,33 +481,33 @@ PyObject *idl_spec_resolve(PyObject *original, PyObject *owner)
         PyObject *callback = PyObject_GetAttr(owner, reference);
         if (callback == nullptr)
         {
-            Py_DECREF(changes);
+            Py_DECREF((PyObject*)changes);
             return nullptr;
         }
         if (!PyCallable_Check(callback))
         {
-            Py_DECREF(callback);
-            Py_DECREF(changes);
+            Py_DECREF((PyObject*)callback);
+            Py_DECREF((PyObject*)changes);
             PyErr_SetString(PyExc_TypeError, "IDL callback is not callable");
             return nullptr;
         }
         int result = PyDict_SetItemString(changes, field.name, callback);
-        Py_DECREF(callback);
+        Py_DECREF((PyObject*)callback);
         if (result < 0)
         {
-            Py_DECREF(changes);
+            Py_DECREF((PyObject*)changes);
             return nullptr;
         }
     }
     PyObject *result;
     if (changes == nullptr)
     {
-        Py_INCREF(original);
+        Py_INCREF((PyObject*)original);
         result = original;
     }
     else
         result = idl_spec_replace(original, changes);
-    Py_XDECREF(changes);
+    Py_XDECREF((PyObject*)changes);
     return result;
 }
 bool idl_spec_validate_configs(PyObject *configs)
@@ -509,7 +516,7 @@ bool idl_spec_validate_configs(PyObject *configs)
     PyObject *key = nullptr;
     PyObject *value = nullptr;
     while (PyDict_Next(configs, &position, &key, &value))
-        if (!PyType_Check(key) || Py_TYPE(value) != idl_spec_type)
+        if (!PyType_Check(key) || Py_TYPE((PyObject*)value) != idl_spec_type)
         {
             PyErr_SetString(PyExc_TypeError, "class_configs must map Python types to IdlSpec objects");
             return false;
@@ -526,6 +533,6 @@ bool idl_spec_flag(PyObject *owner, const char *key, bool *result)
     }
     IdlSpec *spec = (IdlSpec *)value;
     *result = std::strcmp(key, "hidden") == 0 ? spec->hidden : spec->skip_inherit;
-    Py_DECREF(value);
+    Py_DECREF((PyObject*)value);
     return true;
 }

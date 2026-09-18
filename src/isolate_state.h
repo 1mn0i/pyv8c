@@ -21,18 +21,23 @@
 #include <vector>
 
 struct context_c;
+struct ContextLifetime;
+struct DeferredPythonRelease {
+    PyObject* object;
+    DeferredPythonRelease* next;
+};
 
 class IsolateState
 {
 public:
     std::recursive_mutex entry_mutex;
     unsigned entry_depth = 0;
+    unsigned entry_users = 0; // Includes waiting threads; protected by the GIL.
     PyObject* python_owner = nullptr;
     std::vector<PyObject*> inspector_waiters;
-    std::vector<PyObject*> deferred_releases;
-    std::vector<context_c*> pending_context_closes;
+    context_c* pending_context_closes = nullptr;
     void drain_deferred();
-    void defer_release(PyObject* object);
+    void defer_release(DeferredPythonRelease* record, PyObject* object);
     IsolateState();
     ~IsolateState();
 
@@ -56,12 +61,14 @@ public:
     v8::Local<v8::String> v8_string(V8StringId id) const;
 
     bool track_python_object(v8::Local<v8::Object> object, PyObject* py_object, context_c* context);
+    static PyObject* python_object(v8::Local<v8::Object> object);
+    static void restore_python_exception(v8::Local<v8::Object> object);
     int traverse_context_owners(context_c* context, visitproc visit, void* arg);
     void release_context_owners(context_c* context);
     struct CallbackData {
         IsolateState* state;
-        context_c* context;
-        PyObject* target;
+        std::shared_ptr<ContextLifetime> lifetime;
+        Py_ssize_t target_index;
         // The Context owns target. This weak anchor may outlive its close.
         v8::Global<v8::External> external;
     };
@@ -74,6 +81,8 @@ public:
 
 private:
     struct PythonObjectOwner;
+    PythonObjectOwner* pending_owners_ = nullptr;
+    DeferredPythonRelease* pending_wrappers_ = nullptr;
 
     static void python_object_weak_callback(
         const v8::WeakCallbackInfo<PythonObjectOwner>& info);

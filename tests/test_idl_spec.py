@@ -1,3 +1,5 @@
+from tests.values import snapshot
+
 import gc
 import unittest
 import weakref
@@ -88,8 +90,8 @@ class TestIdlSpec(unittest.TestCase):
         context = pyv8.Context(Window())
         self.addCleanup(context.close)
         context.expose(callback=callback)
-        self.assertEqual(context.exec_js("[callback.name, callback.length, callback(1, 2)]"), ["example", 2, 2])
-        self.assertTrue(context.exec_js("try { new callback(); false } catch (error) { error instanceof TypeError }"))
+        self.assertEqual(snapshot(context.exec_js("[callback.name, callback.length, callback(1, 2)]")), ["example", 2, 2])
+        self.assertTrue(snapshot(context.exec_js("try { new callback(); false } catch (error) { error instanceof TypeError }")))
 
     def test_rejected_update_is_atomic_and_context_owns_registry(self):
         class Window:
@@ -136,7 +138,7 @@ class TestIdlSpec(unittest.TestCase):
         self.addCleanup(context.close)
         context.expose(target=Interface())
         Interface.run = lambda self: 99
-        self.assertEqual(context.exec_js("[target.run(), target.value]"), [4, 5])
+        self.assertEqual(snapshot(context.exec_js("[target.run(), target.value]")), [4, 5])
         self.assertNotIn("__v8_direct_callback__", Interface.get_value.__dict__)
         self.assertNotIn("__v8_raw_name__", Interface.get_value.__dict__)
 

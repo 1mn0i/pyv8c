@@ -39,7 +39,7 @@ to_python(Local<Value> value, Local<Context> context)
 {
     if (value.IsEmpty())
     {
-        Py_INCREF(Py_None);
+        Py_INCREF((PyObject*)Py_None);
         return Py_None;
     }
     return py_from_js(value, context);
@@ -64,7 +64,7 @@ call_reporter(PyObject* callback, PyObject* arguments)
     if (result == nullptr)
         PyErr_WriteUnraisable(callback);
     else
-        Py_DECREF(result);
+        Py_DECREF((PyObject*)result);
     PyErr_Restore(error_type, error_value, error_traceback);
 }
 
@@ -76,10 +76,10 @@ report_uncaught(IsolateState* state, Local<Message> message, Local<Value> data)
     Local<Context> context = isolate->GetCurrentContext();
     if (context.IsEmpty())
         return;
-    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    auto* owner = context_from_v8(context);
     if (!context_is_active(owner) || owner->uncaught_handler == nullptr) return;
     PyObject* handler = owner->uncaught_handler;
-    Py_INCREF(handler);
+    Py_INCREF((PyObject*)handler);
     PyOwnedRef keep_handler(handler);
 
     int line = 0;
@@ -93,7 +93,7 @@ report_uncaught(IsolateState* state, Local<Message> message, Local<Value> data)
     if (data.IsEmpty() || data->IsUndefined())
     {
         error = Py_None;
-        Py_INCREF(error);
+        Py_INCREF((PyObject*)error);
     }
     else
     {
@@ -107,18 +107,18 @@ report_uncaught(IsolateState* state, Local<Message> message, Local<Value> data)
                            py_column != nullptr && error != nullptr)
         ? PyTuple_Pack(5, text, source, py_line, py_column, error)
         : nullptr;
-    Py_XDECREF(text);
-    Py_XDECREF(source);
-    Py_XDECREF(py_line);
-    Py_XDECREF(py_column);
-    Py_XDECREF(error);
+    Py_XDECREF((PyObject*)text);
+    Py_XDECREF((PyObject*)source);
+    Py_XDECREF((PyObject*)py_line);
+    Py_XDECREF((PyObject*)py_column);
+    Py_XDECREF((PyObject*)error);
     if (arguments == nullptr)
     {
         PyErr_Clear();
         return;
     }
     call_reporter(handler, arguments);
-    Py_DECREF(arguments);
+    Py_DECREF((PyObject*)arguments);
 }
 
 void
@@ -150,10 +150,10 @@ report_rejection(IsolateState* state, PromiseRejectMessage message)
     HandleScope handle_scope(isolate);
     Local<Context> context;
     if (!message.GetPromise()->GetCreationContext().ToLocal(&context)) return;
-    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    auto* owner = context_from_v8(context);
     if (!context_is_active(owner) || owner->rejection_handler == nullptr) return;
     PyObject* handler = owner->rejection_handler;
-    Py_INCREF(handler);
+    Py_INCREF((PyObject*)handler);
     PyOwnedRef keep_handler(handler);
 
     // The identity hash is stable for the lifetime of the promise and is what
@@ -172,17 +172,17 @@ report_rejection(IsolateState* state, PromiseRejectMessage message)
                            reason != nullptr)
         ? PyTuple_Pack(4, name, identity, promise, reason)
         : nullptr;
-    Py_XDECREF(name);
-    Py_XDECREF(identity);
-    Py_XDECREF(promise);
-    Py_XDECREF(reason);
+    Py_XDECREF((PyObject*)name);
+    Py_XDECREF((PyObject*)identity);
+    Py_XDECREF((PyObject*)promise);
+    Py_XDECREF((PyObject*)reason);
     if (arguments == nullptr)
     {
         PyErr_Clear();
         return;
     }
     call_reporter(handler, arguments);
-    Py_DECREF(arguments);
+    Py_DECREF((PyObject*)arguments);
 }
 
 // Installed through ``error_hooks_install``; the isolate owns them for as long
@@ -224,8 +224,8 @@ error_hooks_install(context_c* context, PyObject* on_uncaught, PyObject* on_reje
         return false;
     PyObject* uncaught = on_uncaught == Py_None ? nullptr : on_uncaught;
     PyObject* rejection = on_rejection == Py_None ? nullptr : on_rejection;
-    Py_XINCREF(uncaught);
-    Py_XINCREF(rejection);
+    Py_XINCREF((PyObject*)uncaught);
+    Py_XINCREF((PyObject*)rejection);
     Py_CLEAR(context->uncaught_handler);
     Py_CLEAR(context->rejection_handler);
     context->uncaught_handler = uncaught;
@@ -234,8 +234,8 @@ error_hooks_install(context_c* context, PyObject* on_uncaught, PyObject* on_reje
         return true;
     // A second AddMessageListener would report every exception twice, so the
     // listeners are installed once and only the reporters are replaced.
-    state->isolate()->AddMessageListener(on_uncaught_message);
-    state->isolate()->SetPromiseRejectCallback(on_promise_rejection);
+    state->isolate()->AddMessageListener(CallbackBoundary<on_uncaught_message>::call);
+    state->isolate()->SetPromiseRejectCallback(CallbackBoundary<on_promise_rejection>::call);
     state->set_error_hooks_installed(true);
     return true;
 }
@@ -249,6 +249,6 @@ error_hooks_uninstall(IsolateState* state)
     Isolate* isolate = state->isolate();
     if (isolate == nullptr)
         return;
-    isolate->RemoveMessageListeners(on_uncaught_message);
+    isolate->RemoveMessageListeners(CallbackBoundary<on_uncaught_message>::call);
     isolate->SetPromiseRejectCallback(nullptr);
 }

@@ -85,7 +85,7 @@ def test_python_dom_exception_survives_native_access_check():
         one.expose(foreign=two.js_obj(second))
         assert one.exec_js('''try { foreign.secret; } catch(e) {
             [e.name, e.code, e instanceof DOMException, e.message];
-        }''') == ['SecurityError', 18, True, 'cross-origin access denied']
+        }''').to_python() == ['SecurityError', 18, True, 'cross-origin access denied']
         assert one.exec_js('40 + 2') == 42
     finally:
         one.close()

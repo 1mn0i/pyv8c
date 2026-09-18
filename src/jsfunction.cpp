@@ -13,9 +13,9 @@ using namespace v8;
 PyTypeObject *js_function_type = NULL;
 
 static PyType_Slot js_function_slots[] = {
-    {Py_tp_dealloc, (void*)js_function_dealloc},
-    {Py_tp_repr, (void*)js_function_repr},
-    {Py_tp_call, (void*)js_function_call},
+    {Py_tp_dealloc, (void*)PythonBoundary<js_function_dealloc>::call},
+    {Py_tp_repr, (void*)PythonBoundary<js_function_repr>::call},
+    {Py_tp_call, (void*)PythonBoundary<js_function_call>::call},
     {Py_tp_doc, (void*)""},
     {0, NULL} };
 
@@ -34,10 +34,10 @@ int js_function_type_init()
         return -1;
     }
     PyTuple_SetItem(bases, 0, (PyObject*)js_object_type);
-    Py_INCREF(js_object_type); 
+    Py_INCREF((PyObject*)js_object_type);
 
     js_function_type = (PyTypeObject * )PyType_FromSpecWithBases(&js_function_spec, bases);
-    Py_DECREF(bases);
+    Py_DECREF((PyObject*)bases);
 
     if (js_function_type == NULL)
     {
@@ -49,8 +49,9 @@ int js_function_type_init()
 PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) {
     if (!js_object_require_active(&self->base))
         return NULL;
-    IN_ISOLATE(self->base.isolate_state);
-    if (!js_object_require_active(&self->base)) return nullptr;
+    ExecutionScope execution(self->base.registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(&self->base)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->base.object.Get(isolate);
     //IN_CONTEXT(object->CreationContext());
     IN_CONTEXT(object->GetCreationContextChecked());
@@ -90,8 +91,9 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
 PyObject* js_function_repr(js_function* self) {
     if (!js_object_require_active(&self->base))
         return NULL;
-    IN_ISOLATE(self->base.isolate_state);
-    if (!js_object_require_active(&self->base)) return nullptr;
+    ExecutionScope execution(self->base.registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(&self->base)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;

@@ -42,8 +42,7 @@ breaker_thread(void* parameter)
 static double
 context_timeout(Local<Context> context)
 {
-    context_c* py_context = static_cast<context_c*>(
-        v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT)));
+    context_c* py_context = context_from_v8(context);
     return py_context == nullptr ? 0 : py_context->timeout;
 }
 

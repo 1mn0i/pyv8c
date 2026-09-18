@@ -1,3 +1,5 @@
+from tests.values import snapshot
+
 from pyv8 import IdlSpec, AttributeSpec, MethodSpec, ConstantSpec
 import unittest
 
@@ -31,7 +33,7 @@ class TestChromiumContracts(unittest.TestCase):
                 self.second = second
 
         self.context.expose(ChromiumConstructor)
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             """
             (() => {
                 const descriptor = Object.getOwnPropertyDescriptor(
@@ -49,7 +51,7 @@ class TestChromiumContracts(unittest.TestCase):
                 ];
             })()
             """
-        )
+        ))
         self.assertEqual(
             result,
             ["ChromiumConstructor", 2, True, True, False, True, True],
@@ -81,7 +83,7 @@ class TestChromiumContracts(unittest.TestCase):
                 return "pyv8-browser/1.0"
 
         self.context.expose(navigator=NavigatorLike())
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             """
             (() => {
                 const prototype = Object.getPrototypeOf(navigator);
@@ -104,7 +106,7 @@ class TestChromiumContracts(unittest.TestCase):
                 ];
             })()
             """
-        )
+        ))
         self.assertEqual(result, ["pyv8-browser/1.0", False, False, True, True])
 
     def test_interface_operation_and_constant_descriptors(self):
@@ -139,7 +141,7 @@ class TestChromiumContracts(unittest.TestCase):
                 pass
 
         self.context.expose(InterfaceContract)
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             """
             (() => {
                 const operation = Object.getOwnPropertyDescriptor(
@@ -167,7 +169,7 @@ class TestChromiumContracts(unittest.TestCase):
                 ];
             })()
             """
-        )
+        ))
         self.assertEqual(
             result,
             [42, True, False, False, False, 4, False, False, 4],
@@ -256,32 +258,32 @@ class TestChromiumContracts(unittest.TestCase):
         collection = BrowserCollection()
         self.context.expose(collection=collection)
 
-        initial = self.context.exec_js(
+        initial = snapshot(self.context.exec_js(
             "[collection.visible, collection[0], 'visible' in collection, 0 in collection]"
-        )
+        ))
         self.assertEqual(initial, [1, 10, True, True])
 
         self.context.exec_js("collection.added = 3; collection[2] = 30")
         self.assertEqual(collection.named["added"], 3)
         self.assertEqual(collection.indexed[2], 30)
 
-        keys = self.context.exec_js("Object.keys(collection)")
+        keys = snapshot(self.context.exec_js("Object.keys(collection)"))
         self.assertIn("visible", keys)
         self.assertIn("added", keys)
         self.assertNotIn("hidden", keys)
         self.assertIn("0", keys)
         self.assertIn("2", keys)
 
-        deleted = self.context.exec_js(
+        deleted = snapshot(self.context.exec_js(
             "[delete collection.visible, delete collection[0]]"
-        )
+        ))
         self.assertEqual(deleted, [True, True])
         self.assertIsNone(collection.indexed[0])
         self.assertNotIn("visible", collection.named)
         self.assertTrue(
-            self.context.exec_js(
+            snapshot(self.context.exec_js(
                 "collection.visible === undefined && collection[0] === undefined"
-            )
+            ))
         )
 
     def test_array_prototype_intrinsics_keep_their_native_semantics(self):
@@ -306,7 +308,7 @@ class TestChromiumContracts(unittest.TestCase):
                 return self.values[index] if index < len(self.values) else None
 
         self.context.expose(collection=IterableCollection())
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             """
             (() => {
                 const visited = [];
@@ -321,7 +323,7 @@ class TestChromiumContracts(unittest.TestCase):
                 ];
             })()
             """
-        )
+        ))
         self.assertEqual(
             result,
             [
@@ -368,7 +370,7 @@ class TestChromiumContracts(unittest.TestCase):
             api_objects[f"api{index}"] = instance
 
         self.context.expose(*api_classes, **api_objects)
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             """
             [
                 api0.kind,
@@ -380,7 +382,7 @@ class TestChromiumContracts(unittest.TestCase):
                 Object.getPrototypeOf(api0) !== Object.getPrototypeOf(api63)
             ]
             """
-        )
+        ))
         self.assertEqual(
             result,
             [0, 63, True, True, "dynamic-0", "dynamic-63", True],

@@ -7,6 +7,7 @@
 
 struct JsExceptionState
 {
+    PyObject_HEAD
     IsolateState* isolate_state;
     v8::Persistent<v8::Value> exception;
     v8::Persistent<v8::Message> message;

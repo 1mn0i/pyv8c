@@ -13,8 +13,8 @@ PyObject* js_null_object = NULL;
 
 static PyType_Slot null_slots[] = {
     {Py_tp_doc, (void*)""},
-    {Py_tp_repr, (void*)js_null_repr},
-    {Py_nb_bool, (void*)js_null_bool},
+    {Py_tp_repr, (void*)PythonBoundary<js_null_repr>::call},
+    {Py_nb_bool, (void*)PythonBoundary<js_null_bool>::call},
     {0, NULL} };
 
 static PyType_Spec null_spec = {
@@ -37,7 +37,7 @@ int js_null_type_init()
     {
         return -1;
     }
-    Py_INCREF(js_null_object);
+    Py_INCREF((PyObject*)js_null_object);
     return 0;
 }
 
@@ -49,7 +49,7 @@ js_null_repr(PyObject* self)
     {
         null_repr = PyUnicode_InternFromString("null");
     }
-    Py_INCREF(null_repr);
+    Py_INCREF((PyObject*)null_repr);
     return null_repr;
 }
 

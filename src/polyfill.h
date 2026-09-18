@@ -20,9 +20,8 @@ PyString_StartsWithString(PyObject *str, const char *prefix)
 {
     PyObject *result = PyObject_CallMethod(str, (char *)"startswith", (char *)"s", prefix);
     int retval = (result == Py_True);
-    Py_XDECREF(result);
+    Py_XDECREF((PyObject*)result);
     return retval;
 }
 
 #endif
-

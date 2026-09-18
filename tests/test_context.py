@@ -24,7 +24,7 @@ class TestContext(unittest.TestCase):
         """Explicit closure rejects further V8 entry and is idempotent."""
         self.context.close()
         self.context.close()
-        with self.assertRaisesRegex(RuntimeError, "no longer active"):
+        with self.assertRaisesRegex(RuntimeError, "closed"):
             self.context.exec_js("1 + 1")
 
     def test_exec_js(self):

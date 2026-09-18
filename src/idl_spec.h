@@ -76,6 +76,7 @@ struct MethodSpec
     bool callbacks_resolved = true; bool pass_receiver = true;
     PyObject *name = nullptr;
     PyObject *callback = nullptr;
+    PyObject *trace_receiver = nullptr;
     int64_t length = 0;
     int64_t callback_type = 0;
     int64_t location = 1;

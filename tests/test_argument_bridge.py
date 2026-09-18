@@ -28,7 +28,7 @@ class Host:
 
 @pytest.fixture
 def context():
-    owner = pyv8.Context(Host(), preserve_arguments=True)
+    owner = pyv8.Context(Host())
     try:
         yield owner
     finally:
@@ -47,7 +47,7 @@ def test_preserved_arguments_do_not_probe_objects(context):
     })()""")
 
 
-def test_default_context_keeps_eager_data_conversion():
+def test_default_context_returns_object_handles():
     class Root:
         pass
     owner = pyv8.Context(Root())
@@ -55,40 +55,37 @@ def test_default_context_keeps_eager_data_conversion():
     try:
         owner.expose(capture=lambda value: observed.append(value))
         owner.exec_js("capture({items:[1,2]})")
-        assert observed == [{"items": [1, 2]}]
+        assert isinstance(observed[0], pyv8.JSObject)
+        assert observed[0].to_python() == {"items": [1, 2]}
     finally:
         owner.close()
 
 
-@pytest.mark.parametrize("preserve", [False, True])
-def test_argument_mode_controls_when_getters_run(preserve):
+def test_explicit_read_controls_when_getters_run():
     observed = []
-    owner = pyv8.Context(object(), preserve_arguments=preserve)
+    owner = pyv8.Context(object())
     try:
         owner.expose(capture=observed.append)
         owner.exec_js("globalThis.reads=0; capture({get value(){reads++;return 42}})")
-        assert owner.exec_js("reads") == (0 if preserve else 1)
-        if preserve:
-            assert isinstance(observed[0], pyv8.JSObject)
-            assert observed[0]._get("value") == 42
-        else:
-            assert observed == [{"value": 42}]
+        assert owner.exec_js("reads") == 0
+        assert isinstance(observed[0], pyv8.JSObject)
+        assert observed[0]._get("value") == 42
         assert owner.exec_js("reads") == 1
     finally:
         observed.clear()
         owner.close()
 
 
-def test_argument_mode_is_per_context_on_shared_isolate():
+def test_argument_protocol_is_uniform_on_shared_isolate():
     isolate = pyv8.Isolate()
     eager = isolate.context(object())
-    preserved = isolate.context(object(), preserve_arguments=True)
+    preserved = isolate.context(object())
     try:
         for owner in (eager, preserved):
             owner.expose(is_handle=lambda value: isinstance(value, pyv8.JSObject))
         for _ in range(3):
             assert preserved.exec_js("is_handle({})") is True
-            assert eager.exec_js("is_handle({})") is False
+            assert eager.exec_js("is_handle({})") is True
     finally:
         eager.close()
         preserved.close()
@@ -139,12 +136,12 @@ def test_explicit_snapshot_preserves_aliases_and_does_not_change_return_conversi
         source.self = source;
         capture(source);
     """)
-    snapshot = observed[0]._to_python()
+    snapshot = observed[0].to_python()
     assert snapshot["a"] is snapshot["b"]
     assert snapshot["self"] is snapshot
     snapshot["a"]["value"] = 99
     assert context.exec_js("child.value") == 42
-    assert context.exec_js("({items: [1, 2]})") == {"items": [1, 2]}
+    assert context.exec_js("({items: [1, 2]})").to_python() == {"items": [1, 2]}
 
 
 def test_explicit_keys_do_not_read_values_or_include_inherited_and_symbol_keys(context):
@@ -194,7 +191,7 @@ def test_explicit_conversion_calls_to_primitive_once(context, method, hint, expe
     """)
     source = context.glob._get("source")
     assert getattr(source, method)() == expected
-    assert context.exec_js("calls") == [hint]
+    assert context.exec_js("calls").to_python() == [hint]
 
 
 @pytest.mark.parametrize("expression", ["42", "null", "undefined", "Symbol('thrown')", "({marker:42})"])
@@ -222,7 +219,7 @@ def test_lazy_property_read_keeps_identity_and_only_get_trap(context):
     assert isinstance(child, pyv8.JSObject)
     context.expose(child=child)
     assert context.exec_js("child===source.child")
-    assert context.exec_js("accesses") == ["child"]
+    assert context.exec_js("accesses").to_python() == ["child"]
 
 
 def test_exception_original_can_be_rejected_without_copy(context):
@@ -236,7 +233,7 @@ def test_preserved_argument_is_invalidated_when_context_closes():
     import gc
 
     isolate = pyv8.Isolate()
-    context = isolate.context(Host(), preserve_arguments=True)
+    context = isolate.context(Host())
     captured = []
     context.expose(capture=lambda value: captured.append(value))
     context.exec_js("capture({field:42})")

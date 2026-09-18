@@ -1,3 +1,5 @@
+from tests.values import snapshot
+
 import time
 import unittest
 
@@ -104,7 +106,7 @@ class TestExceptionSafety(unittest.TestCase):
             self.context.exec_js("raise_python_failure()")
 
         # JavaScript 捕获时，应能读取异常消息和 V8 捕获的 stack。
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             """
             try {
                 raise_python_failure();
@@ -112,9 +114,9 @@ class TestExceptionSafety(unittest.TestCase):
                 [error.message, typeof error.stack, error.stack.includes("python callback boom")];
             }
             """
-        )
+        ))
         self.assertEqual(result, ["python callback boom", "string", True])
-        self.assertEqual(self.context.exec_js("5 + 5"), 10)
+        self.assertEqual(snapshot(self.context.exec_js("5 + 5")), 10)
 
     def test_timeout_cleanup_allows_next_execution(self):
         """执行超时后应清理定时器，并允许上下文继续运行。"""

@@ -1,6 +1,9 @@
 # pyv8 使用指南
 
-本文档对应 pyv8 2.1.2。默认验证环境为 CPython 3.10 至 3.14、V8 15.2.20.1。
+本文档对应 pyv8 2.1.2。ABI3 目标为 CPython 3.12 至 3.14、V8 15.2.20.1。
+
+桥接内核重构后，JS 对象默认返回句柄，需要 list/dict 时显式调用
+`result.to_python()`。接口、所有权和验证说明见 [桥接内核文档](BRIDGE_KERNEL.md)。
 
 pyv8 的主要目标不是替代浏览器，而是提供一组足够底层的 Python/V8 桥接 API，
 用于构造接近 Chromium 行为的原型对象、构造器、属性描述符和 property interceptor。
@@ -26,7 +29,7 @@ pyv8 的主要目标不是替代浏览器，而是提供一组足够底层的 Py
 
 ### Python 和平台要求
 
-- CPython 3.10 至 3.14
+- CPython 3.12 至 3.14
 - 使用 GIL 的标准 CPython 构建
 - 支持 C++20 的编译器
 - 与目标平台和 CPU 架构匹配的 V8 静态库
@@ -39,10 +42,10 @@ Windows 是当前主要开发和完整测试平台。Windows 源码构建建议�
 ### 安装预编译 wheel
 
 ```bash
-python -m pip install path/to/pyv8-2.1.2-cp310-abi3-<platform>.whl
+python -m pip install path/to/pyv8-2.1.2-cp312-abi3-<platform>.whl
 ```
 
-`cp310-abi3` 表示同一 wheel 可以被 CPython 3.10 至 3.14 加载。ABI3 不会让二进制跨
+`cp312-abi3` 表示同一 wheel 可以被 CPython 3.12 至 3.14 加载。ABI3 不会让二进制跨
 操作系统或 CPU 架构使用，例如 Windows 的 `.pyd` 不能在 Linux 中加载。
 
 ### 准备构建工具
@@ -131,10 +134,10 @@ python setup.py build_ext --inplace --force
 构建可发布 wheel：
 
 ```bash
-python310 -m build --wheel
+python312 -m build --wheel
 ```
 
-使用 Python 3.10 构建可以得到 `cp310-abi3` wheel，供后续 Python 3.10 至 3.14 使用。
+使用 Python 3.12 构建可以得到 `cp312-abi3` wheel，供后续 Python 3.12 至 3.14 使用。
 
 ### 使用已有 V8 产物
 
@@ -145,7 +148,7 @@ $env:PYV8_V8_VERSION = "15.2.20.1"
 $env:PYV8_V8_HOME = "D:\v8-workspace\v8"
 $env:PYV8_V8_OUT = "D:\v8-workspace\v8\out\x64.release"
 $env:PYV8_ICU_DATA = "D:\v8-workspace\v8\out\x64.release\icudtl.dat"
-python310 -m build --wheel
+python312 -m build --wheel
 ```
 
 Linux/macOS 使用相同变量语义：
@@ -155,7 +158,7 @@ PYV8_V8_VERSION=15.2.20.1 \
 PYV8_V8_HOME=/opt/v8 \
 PYV8_V8_OUT=/opt/v8/out/x64.release \
 PYV8_ICU_DATA=/opt/v8/out/x64.release/icudtl.dat \
-python310 -m build --wheel
+python312 -m build --wheel
 ```
 
 `PYV8_V8_OUT` 中必须存在：
@@ -431,26 +434,27 @@ JavaScript `number` 无法无损表示任意大的 Python 整数。需要精确�
 | 32 位整数 | `int` |
 | 其他 `number` | `float` |
 | `string` | `str` |
-| `Array` | `list` |
-| 普通 object literal | `dict` |
+| `Array` | `JSObject`；显式 `to_python()` 得到 `list` |
+| 普通 object literal | `JSObject`；显式 `to_python()` 得到 `dict` |
 | 自定义对象、Date、RegExp | `JSObject` |
 | function | `JSFunction` |
 | Promise | `JSPromise` |
 | TypedArray | `JSTypeArray` |
 | BigInt | `JSValue` |
 
-JavaScript 数组和普通对象中的循环、共享引用同样会保留：
+默认转换不枚举属性，不读取 getter 或执行 Proxy trap。显式物化时允许读取属性，
+读取失败会传播异常；不能物化的值仍保留句柄。物化保留数组和普通对象的循环、共享引用：
 
 ```python
 value = context.exec_js(
     "const root = []; const child = {root}; root.push(child, child); root"
-)
+).to_python()
 
 assert value[0]["root"] is value
 assert value[0] is value[1]
 ```
 
-稀疏数组中的 hole 会转换为 `pyv8.Undefined`。
+显式物化时，稀疏数组中的 hole 会转换为 `pyv8.Undefined`。
 
 ## JavaScript 对象与函数
 
@@ -984,7 +988,7 @@ result = context.exec_js(
     """
 )
 
-assert result == ["TypeError", "invalid payload", "string"]
+assert result.to_python() == ["TypeError", "invalid payload", "string"]
 ```
 
 支持按 Python 异常类名映射到 `TypeError`、`RangeError`、`ReferenceError`、`SyntaxError`
@@ -1259,13 +1263,13 @@ python314 -m pip install --upgrade tox
 python314 -m tox
 ```
 
-tox 使用 Python 3.10 构建一次 ABI3 wheel，再分别安装到 Python 3.10、3.11、3.12、
+tox 使用 Python 3.12 构建一次 ABI3 wheel，再分别安装到 Python 3.12、
 3.13、3.14 环境。这样可以避免错误地让所有解释器加载源码目录中的同一个临时文件。
 
 ### 指定版本
 
 ```bash
-python314 -m tox -e py310
+python314 -m tox -e py312
 python314 -m tox -e py314
 ```
 

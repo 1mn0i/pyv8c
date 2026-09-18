@@ -27,9 +27,9 @@ enum class ArrayType {
 PyTypeObject* js_typedarray_type = NULL;
 
 static PyType_Slot js_typedarray_slots[] = {
-    {Py_tp_dealloc, (void*)js_typedarray_dealloc},
-    {Py_tp_new, (void*)js_typearray_new},
-    {Py_tp_repr, (void*)js_typedarray_repr},
+    {Py_tp_dealloc, (void*)PythonBoundary<js_typedarray_dealloc>::call},
+    {Py_tp_new, (void*)PythonBoundary<js_typearray_new>::call},
+    {Py_tp_repr, (void*)PythonBoundary<js_typedarray_repr>::call},
     {Py_tp_doc, (void*)"v8 TypedArray"},
     {0, NULL} };
 
@@ -52,10 +52,10 @@ js_typedarray_type_init()
         return -1;
     }
     PyTuple_SetItem(bases, 0, (PyObject*)js_object_type);
-    Py_INCREF(js_object_type); // PyTuple_SetItem steals a reference
+    Py_INCREF((PyObject*)js_object_type); // PyTuple_SetItem steals a reference
 
     js_typedarray_type = (PyTypeObject*)PyType_FromSpecWithBases(&js_typedarray_spec, bases);
-    Py_DECREF(bases);
+    Py_DECREF((PyObject*)bases);
 
     //js_typedarray_type = (PyTypeObject*)PyType_FromSpec(&js_typedarray_spec);
     if (js_typedarray_type == NULL)
@@ -279,6 +279,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
     Local<Object> typed_array;
     if (PyObject_TypeCheck(data, js_object_type)) {
         js_object* py_value = (js_object*)data;
+        if (!js_object_require_active(py_value)) return nullptr;
         if (py_value->isolate_state != isolate_state) {
             PyErr_SetString(PyExc_RuntimeError,
                             "JavaScript value belongs to another isolate");
@@ -329,8 +330,9 @@ js_typedarray_repr(js_typedarray* self)
 {
     if (!js_object_require_active(&self->base))
         return NULL;
-    IN_ISOLATE(self->base.isolate_state);
-    if (!js_object_require_active(&self->base)) return nullptr;
+    ExecutionScope execution(self->base.registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(&self->base)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
@@ -371,8 +373,8 @@ js_typedarray_repr(js_typedarray* self)
         arry_type = PyUnicode_FromString("UnKnownTypedArray([%s])");
     }
     PyObject* repr = PyUnicode_Format(arry_type, text);
-    Py_XDECREF(text);
-    Py_XDECREF(arry_type);
+    Py_XDECREF((PyObject*)text);
+    Py_XDECREF((PyObject*)arry_type);
     return repr;
 }
 

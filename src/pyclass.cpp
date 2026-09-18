@@ -50,9 +50,9 @@ static int class_clear(py_class* self) {
 }
 
 static PyType_Slot py_class_slots[] = {
-    {Py_tp_traverse, (void*)class_traverse},
-    {Py_tp_clear, (void*)class_clear},
-    {Py_tp_dealloc, (void*)py_class_dealloc},
+    {Py_tp_traverse, (void*)PythonBoundary<class_traverse>::call},
+    {Py_tp_clear, (void*)PythonBoundary<class_clear>::call},
+    {Py_tp_dealloc, (void*)PythonBoundary<py_class_dealloc>::call},
     {Py_tp_doc, (void*)"v8 Class"},
     {0, NULL} };
 
@@ -81,7 +81,7 @@ py_class_dealloc(py_class* self)
     PyObject_GC_UnTrack(self);
     class_clear(self);
     //Py_XDECREF(self->parent);
-    //Py_TYPE(self)->tp_free((PyObject*)self);
+    //Py_TYPE((PyObject*)self)->tp_free((PyObject*)self);
     TP_FREE_ABI3(py_class_type, self);
 }
 
@@ -106,42 +106,42 @@ PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
         int declared = PySet_Contains(py_ctx->lazy_names, name);
         if (declared < 0)
         {
-            Py_DECREF(name);
+            Py_DECREF((PyObject*)name);
             return nullptr;
         }
         if (declared == 1)
         {
             if (PySet_Add(py_ctx->resolving_classes, cls) < 0)
             {
-                Py_DECREF(name);
+                Py_DECREF((PyObject*)name);
                 return nullptr;
             }
             PyObject *resolved = PyObject_CallFunctionObjArgs(py_ctx->lazy_factory, name, nullptr);
-            Py_DECREF(name);
+            Py_DECREF((PyObject*)name);
             PySet_Discard(py_ctx->resolving_classes, cls);
             if (resolved == nullptr)
                 return nullptr;
             if (resolved != Py_None && resolved != cls)
             {
-                Py_DECREF(resolved);
+                Py_DECREF((PyObject*)resolved);
                 PyErr_SetString(PyExc_TypeError,
                                 "lazy factory returned a different class for the requested type");
                 return nullptr;
             }
-            Py_DECREF(resolved);
+            Py_DECREF((PyObject*)resolved);
             templ = PyDict_GetItemWithError(py_ctx->class_template_cache, cls);
             if (templ != nullptr || PyErr_Occurred())
                 return templ;
         }
         else
-            Py_DECREF(name);
+            Py_DECREF((PyObject*)name);
     }
     templ = py_class_new(cls, py_ctx);
     PyErr_PROPAGATE(templ);
 
     if (PyDict_SetItem(py_ctx->class_template_cache, cls, templ) < 0)
     {
-        Py_DECREF(templ);
+        Py_DECREF((PyObject*)templ);
         return NULL;
     }
     PyObject *cls_name = ((py_class *)templ)->cls_name;
@@ -149,7 +149,7 @@ PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
     if (existing_name != NULL && existing_name != templ)
     {
         PyDict_DelItem(py_ctx->class_template_cache, cls);
-        Py_DECREF(templ);
+        Py_DECREF((PyObject*)templ);
         PyErr_Format(PyExc_ValueError, "JavaScript class name '%U' is already registered in this Context",
                      cls_name);
         return NULL;
@@ -157,10 +157,10 @@ PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
     if (PyDict_SetItem(py_ctx->class_template_cache, cls_name, templ) < 0)
     {
         PyDict_DelItem(py_ctx->class_template_cache, cls);
-        Py_DECREF(templ);
+        Py_DECREF((PyObject*)templ);
         return NULL;
     }
-    Py_DECREF(templ);
+    Py_DECREF((PyObject*)templ);
     return PyDict_GetItem(py_ctx->class_template_cache, cls);
 }
 int add_to_template(PyObject* cls, context_c* py_ctx, PyObject* member_name, PyObject* member_value, Local<FunctionTemplate> templ, Local<Signature> sig, const char* world);
@@ -203,7 +203,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         return NULL;
     }
 
-    Py_INCREF(cls);
+    Py_INCREF((PyObject*)cls);
     self->cls = cls;
     self->cls_name = PyObject_GetAttrString(cls, "__name__");
     if (self->cls_name == NULL) {
@@ -212,23 +212,24 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     }
 
     PyObject* registered = PyDict_GetItemWithError(py_ctx->class_configs, cls);
-    if (registered != nullptr) Py_INCREF(registered);
+    if (registered != nullptr) Py_INCREF((PyObject*)registered);
     else if (!PyErr_Occurred()) registered = idl_spec_for(cls);
     if (registered != nullptr) {
         self->idl_spec = idl_spec_resolve(registered, cls);
-        Py_DECREF(registered);
+        Py_DECREF((PyObject*)registered);
     }
     if (PyErr_Occurred()) { Py_DECREF((PyObject*)self); return nullptr; }
     IdlSpec defaults;
     const IdlSpec& config = self->idl_spec == nullptr ? defaults : *(IdlSpec*)self->idl_spec;
     Local<External> js_self = isolate_state->callback_data(py_ctx, (PyObject*)self);
+    if (js_self.IsEmpty()) { Py_DECREF((PyObject*)self); return nullptr; }
     int templ_lenght = (int)config.length;
     self->constructor_behavior = (int)config.constructor_behavior;
     self->unconstructable = config.unconstructable;
     self->constructor_adapter = config.constructor_adapter;
     Py_XINCREF(self->constructor_adapter);
 
-    Local<FunctionTemplate> templ = FunctionTemplate::New(isolate, py_class_construct_callback, js_self,
+    Local<FunctionTemplate> templ = FunctionTemplate::New(isolate, CallbackBoundary<py_class_construct_callback>::call, js_self,
             Local<Signature>(), templ_lenght, ConstructorBehavior::kAllow);
     
     const char* world = PyUnicode_AsUTF8_abi3(self->cls_name);
@@ -255,25 +256,25 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     if (self->idl_spec == nullptr) {
         PyObject* class_dict = PyObject_GetAttrString(cls, "__dict__");
         PyObject* items = class_dict == nullptr ? nullptr : PyMapping_Items(class_dict);
-        Py_XDECREF(class_dict);
+        Py_XDECREF((PyObject*)class_dict);
         if (items == nullptr) { Py_DECREF((PyObject*)self); return nullptr; }
         for (Py_ssize_t index = 0; index < PyList_Size(items); ++index) {
             PyObject* item = PyList_GetItem(items, index);
             if (PyUnicode_CompareWithASCIIString(PyTuple_GetItem(item, 0), "__call__") == 0) {
                 defaults.call = PyTuple_GetItem(item, 1);
                 if (PyList_Append(self->operation_callback_data, defaults.call) < 0) {
-                    Py_DECREF(items);
+                    Py_DECREF((PyObject*)items);
                     Py_DECREF((PyObject*)self);
                     return nullptr;
                 }
             }
             if (add_to_template(cls, py_ctx, PyTuple_GetItem(item, 0), PyTuple_GetItem(item, 1), templ, sig, world) < 0) {
-                Py_DECREF(items);
+                Py_DECREF((PyObject*)items);
                 Py_DECREF((PyObject*)self);
                 return nullptr;
             }
         }
-        Py_DECREF(items);
+        Py_DECREF((PyObject*)items);
     }
 
     if (config.attributes != NULL)
@@ -321,15 +322,17 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         PyObject* args = PyTuple_New(0);
         PyObject* kwargs = Py_BuildValue("{s:s,s:O}", "name", "__call__", "callback", config.call);
         PyObject* data = args != nullptr && kwargs != nullptr ? PyObject_Call((PyObject*)method_spec_type, args, kwargs) : nullptr;
-        Py_XDECREF(args);
-        Py_XDECREF(kwargs);
+        Py_XDECREF((PyObject*)args);
+        Py_XDECREF((PyObject*)kwargs);
         if (data == nullptr || PyList_Append(self->operation_callback_data, data) < 0) {
-            Py_XDECREF(data);
+            Py_XDECREF((PyObject*)data);
             Py_DECREF((PyObject*)self);
             return nullptr;
         }
-        templ->InstanceTemplate()->SetCallAsFunctionHandler(py_class_method_callback, isolate_state->callback_data(py_ctx, data));
-        Py_DECREF(data);
+        auto anchor = isolate_state->callback_data(py_ctx, data);
+        if (anchor.IsEmpty()) { Py_DECREF(data); Py_DECREF((PyObject*)self); return nullptr; }
+        templ->InstanceTemplate()->SetCallAsFunctionHandler(CallbackBoundary<py_class_method_callback>::call, anchor);
+        Py_DECREF((PyObject*)data);
     }
 
     // V8 requires a callable instance template before an undetectable
@@ -380,16 +383,16 @@ py_class_new(PyObject *cls, context_c * py_ctx)
                 int32_t(v8::PropertyHandlerFlags::kHasNoSideEffect));
         }
         NamedPropertyHandlerConfiguration callbacks(
-            named_getter,
-            (py_ctx->traceable|| config.name_get) ? named_setter : nullptr,
+            CallbackBoundary<named_getter>::call,
+            (py_ctx->traceable|| config.name_get) ? CallbackBoundary<named_setter>::call : nullptr,
             // The query callback answers ``in`` and other existence probes, so a
             // traced context installs it to observe them.  Declining leaves the
             // engine's own lookup in charge, exactly like the getter above.
-            (py_ctx->traceable || config.name_query) ? named_query : nullptr,
-            config.name_del ? named_deleter : nullptr,
-            config.name_enum ? named_enumerator : nullptr,
-            named_definer,
-            named_descriptor,
+            (py_ctx->traceable || config.name_query) ? CallbackBoundary<named_query>::call : nullptr,
+            config.name_del ? CallbackBoundary<named_deleter>::call : nullptr,
+            config.name_enum ? CallbackBoundary<named_enumerator>::call : nullptr,
+            CallbackBoundary<named_definer>::call,
+            CallbackBoundary<named_descriptor>::call,
             v8::Local<v8::Value>(),
             handler_flags);
         templ->InstanceTemplate()->SetHandler(callbacks);
@@ -402,13 +405,13 @@ py_class_new(PyObject *cls, context_c * py_ctx)
             handler_flags = v8::PropertyHandlerFlags::kHasNoSideEffect;
         }
         IndexedPropertyHandlerConfiguration callbacks(
-            indexed_getter,
-            (py_ctx->traceable|| config.index_get) ? indexed_setter : nullptr,
-            (py_ctx->traceable || config.index_query) ? indexed_query : nullptr,
-            config.index_del ? indexed_deleter : nullptr,
-            config.index_enum ? indexed_enumerator : nullptr,
-            indexed_definer,
-            indexed_descriptor,
+            CallbackBoundary<indexed_getter>::call,
+            (py_ctx->traceable|| config.index_get) ? CallbackBoundary<indexed_setter>::call : nullptr,
+            (py_ctx->traceable || config.index_query) ? CallbackBoundary<indexed_query>::call : nullptr,
+            config.index_del ? CallbackBoundary<indexed_deleter>::call : nullptr,
+            config.index_enum ? CallbackBoundary<indexed_enumerator>::call : nullptr,
+            CallbackBoundary<indexed_definer>::call,
+            CallbackBoundary<indexed_descriptor>::call,
             v8::Local<v8::Value>(),
             handler_flags);
         templ->InstanceTemplate()->SetHandler(callbacks);
@@ -418,38 +421,38 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     {   
         if (config.cross_origin_name_get){
             NamedPropertyHandlerConfiguration cross_origin_named_callbacks(
-                cross_origin_named_getter,
-                config.cross_origin_name_set ? cross_origin_named_setter : nullptr,
-                config.cross_origin_name_query ? cross_origin_named_query : nullptr,
-                config.cross_origin_name_del ? cross_origin_named_deleter : nullptr,
-                config.cross_origin_name_enum ? cross_origin_named_enumerator : nullptr);
+                CallbackBoundary<cross_origin_named_getter>::call,
+                config.cross_origin_name_set ? CallbackBoundary<cross_origin_named_setter>::call : nullptr,
+                config.cross_origin_name_query ? CallbackBoundary<cross_origin_named_query>::call : nullptr,
+                config.cross_origin_name_del ? CallbackBoundary<cross_origin_named_deleter>::call : nullptr,
+                config.cross_origin_name_enum ? CallbackBoundary<cross_origin_named_enumerator>::call : nullptr);
 
             IndexedPropertyHandlerConfiguration cross_origin_index_callbacks(
-                config.cross_origin_index_get ? cross_origin_indexed_getter : nullptr,
-                config.cross_origin_index_set ? cross_origin_indexed_setter : nullptr,
-                config.cross_origin_index_query ? cross_origin_indexed_query : nullptr,
-                config.cross_origin_index_del ? cross_origin_indexed_deleter : nullptr,
-                config.cross_origin_index_enum ? cross_origin_indexed_enumerator : nullptr);
-            templ->InstanceTemplate()->SetAccessCheckCallbackAndHandler(cross_origin_access_check, cross_origin_named_callbacks, cross_origin_index_callbacks);
+                config.cross_origin_index_get ? CallbackBoundary<cross_origin_indexed_getter>::call : nullptr,
+                config.cross_origin_index_set ? CallbackBoundary<cross_origin_indexed_setter>::call : nullptr,
+                config.cross_origin_index_query ? CallbackBoundary<cross_origin_indexed_query>::call : nullptr,
+                config.cross_origin_index_del ? CallbackBoundary<cross_origin_indexed_deleter>::call : nullptr,
+                config.cross_origin_index_enum ? CallbackBoundary<cross_origin_indexed_enumerator>::call : nullptr);
+            templ->InstanceTemplate()->SetAccessCheckCallbackAndHandler(CallbackBoundary<cross_origin_access_check>::call, cross_origin_named_callbacks, cross_origin_index_callbacks);
         }
         else{
-            templ->InstanceTemplate()->SetAccessCheckCallback(cross_origin_access_check);
+            templ->InstanceTemplate()->SetAccessCheckCallback(CallbackBoundary<cross_origin_access_check>::call);
         }
     }
 
     if (strcmp(world, "WindowProperties") == 0) {
         NamedPropertyHandlerConfiguration name_callbacks(
-            properties_named_getter, nullptr,
-            properties_named_query, properties_named_deleter,
-            properties_named_enumerator, properties_named_definer,
-            properties_named_descriptor, Local<Value>(),
+            CallbackBoundary<properties_named_getter>::call, nullptr,
+            CallbackBoundary<properties_named_query>::call, CallbackBoundary<properties_named_deleter>::call,
+            CallbackBoundary<properties_named_enumerator>::call, CallbackBoundary<properties_named_definer>::call,
+            CallbackBoundary<properties_named_descriptor>::call, Local<Value>(),
             PropertyHandlerFlags::kOnlyInterceptStrings);
         templ->PrototypeTemplate()->SetHandler(name_callbacks);
         IndexedPropertyHandlerConfiguration index_callbacks(
-            properties_indexed_getter, nullptr,
-            properties_indexed_query, properties_indexed_deleter,
-            properties_named_enumerator, properties_indexed_definer,
-            properties_indexed_descriptor);
+            CallbackBoundary<properties_indexed_getter>::call, nullptr,
+            CallbackBoundary<properties_indexed_query>::call, CallbackBoundary<properties_indexed_deleter>::call,
+            CallbackBoundary<properties_named_enumerator>::call, CallbackBoundary<properties_indexed_definer>::call,
+            CallbackBoundary<properties_indexed_descriptor>::call);
         templ->PrototypeTemplate()->SetHandler(index_callbacks);
         templ->PrototypeTemplate()->SetImmutableProto();
     }
@@ -469,7 +472,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
             PyErr_Clear();
         }
     }
-    Py_XDECREF(bases);
+    Py_XDECREF((PyObject*)bases);
 
     if (last_base == PyExc_Exception || last_base == PyExc_BaseException) {
         // if the superclass is Exception, ignore that fact and make the superclass Error
@@ -518,7 +521,7 @@ if_property_has(PyObject *property, const char *what)
     if (!PyObject_TypeCheck(property, &PyProperty_Type))
         return true;
     PyObject *value = PyObject_GetAttrString(property, what);
-    Py_XDECREF(value);
+    Py_XDECREF((PyObject*)value);
     return value == Py_None;
 }
 
@@ -628,16 +631,13 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
 {
     Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
-    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+    auto* owner = context_from_v8(context);
     if (!isolate_state->track_python_object(js_object, py_object, owner)) {
         return false;
     }
     js_object->SetInternalField(
         PYTHON_MAGIC_FIELD,
         isolate_state->v8_string(V8StringId::PythonObjectMagic));
-    js_object->SetInternalField(PYTHON_OBJECT_FIELD, v8_compat::external_new(isolate, py_object));
-    js_object->SetInternalField(PYTHON_EXCEPTION_TYPE_FIELD, v8_compat::external_new(isolate, nullptr));
-    js_object->SetInternalField(PYTHON_TRACEBACK_FIELD, v8_compat::external_new(isolate, nullptr));
     // find out if the object is supposed to inherit from Error 
     // the information is in an internal field on the last prototype
     Local<Value> last_proto = js_object;

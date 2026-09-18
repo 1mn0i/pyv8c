@@ -59,16 +59,16 @@ static PyObject* mark_spec_flag(PyObject* thing, const char* key)
     if (original == nullptr) original = PyObject_CallObject((PyObject*)idl_spec_type, nullptr);
     if (original == nullptr) return nullptr;
     PyObject* changes = PyDict_New();
-    if (changes == nullptr) { Py_DECREF(original); return nullptr; }
+    if (changes == nullptr) { Py_DECREF((PyObject*)original); return nullptr; }
     int result = PyDict_SetItemString(changes, key, Py_True);
     PyObject* spec = result == 0 ? idl_spec_replace(original, changes) : nullptr;
-    Py_DECREF(changes);
-    Py_DECREF(original);
+    Py_DECREF((PyObject*)changes);
+    Py_DECREF((PyObject*)original);
     if (spec == nullptr) return nullptr;
     result = PyObject_SetAttrString(thing, "__v8_idl_spec__", spec);
-    Py_DECREF(spec);
+    Py_DECREF((PyObject*)spec);
     if (result < 0) return NULL;
-    Py_INCREF(thing);
+    Py_INCREF((PyObject*)thing);
     return thing;
 }
 
@@ -183,8 +183,8 @@ context_get_current(PyObject *self, PyObject *args)
     {
         PYV8_RETURN_NONE;
     }
-    PyObject *context = (PyObject *)v8_compat::external_value(current_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
-    Py_INCREF(context);
+    PyObject *context = (PyObject*)context_from_v8(current_context);
+    Py_INCREF((PyObject*)context);
     return context;
 }
 
@@ -205,8 +205,8 @@ context_get_incumbent(PyObject* self, PyObject* args)
     {
         PYV8_RETURN_NONE;
     }
-    PyObject* context = (PyObject*)v8_compat::external_value(current_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
-    Py_INCREF(context);
+    PyObject* context = (PyObject*)context_from_v8(current_context);
+    Py_INCREF((PyObject*)context);
     return context;
 }
 
@@ -235,7 +235,7 @@ static PyMethodDef v8_methods[] = {
     {"incumbent_context", context_get_incumbent, METH_VARARGS, "get incumbent v8 context"},
     {"new", construct_new_object, METH_VARARGS, "Creates a new JavaScript object from a given constructor function"},
     {"low_memory_notification", trigger_low_memory_notification, METH_NOARGS, "Trigger V8 low memory notification"},
-    {"init_v8", (PyCFunction)py_initialize_v8, METH_VARARGS | METH_KEYWORDS, "initialize v8 platform and isolate"},
+    {"init_v8", (PyCFunction)PythonBoundary<py_initialize_v8>::call, METH_VARARGS | METH_KEYWORDS, "initialize v8 platform and isolate"},
     {"shutdown_v8", py_shutdown_v8, METH_NOARGS, "shut down v8 platform and isolate"},
     {"v8_version", v8_version, METH_NOARGS, "v8 version"},
     {"v8_gc", v8_gc, METH_NOARGS, "v8 gc"},

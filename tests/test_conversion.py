@@ -1,3 +1,5 @@
+from tests.values import snapshot
+
 import gc
 import sys
 import unittest
@@ -119,26 +121,26 @@ class TestConversion(unittest.TestCase):
         self.context.py_list = py_list
 
         # 验证数组长度
-        length = self.context.exec_js("py_list.length")
+        length = snapshot(self.context.exec_js("py_list.length"))
         self.assertEqual(length, 5)
         
         # 验证数组元素
-        result0 = self.context.exec_js("py_list[0]")
-        result3 = self.context.exec_js("py_list[3]")
-        result4 = self.context.exec_js("py_list[4]")
+        result0 = snapshot(self.context.exec_js("py_list[0]"))
+        result3 = snapshot(self.context.exec_js("py_list[3]"))
+        result4 = snapshot(self.context.exec_js("py_list[4]"))
         self.assertEqual(result0, 1)
         self.assertEqual(result3, "four")
         self.assertEqual(result4, True)
         
         # JavaScript -> Python
-        js_array = self.context.exec_js("[1, 2, 3, 'four', true]")
+        js_array = snapshot(self.context.exec_js("[1, 2, 3, 'four', true]"))
         self.assertEqual(list(js_array), [1, 2, 3, "four", True])
 
     def test_js_self_referential_array_conversion(self):
         """测试 JavaScript 自引用数组转换为 Python 列表。"""
 
         # 创建一个首个元素指向数组自身的 JavaScript 数组。
-        js_array = self.context.exec_js("const a = []; a[0] = a; a")
+        js_array = snapshot(self.context.exec_js("const a = []; a[0] = a; a"))
 
         # 转换后应保留自引用关系，而不是创建新的列表副本。
         self.assertIs(js_array[0], js_array)
@@ -146,10 +148,10 @@ class TestConversion(unittest.TestCase):
     def test_js_indirect_cycle_and_shared_reference_conversion(self):
         """测试 JavaScript 间接循环和共享子对象转换。"""
 
-        js_array = self.context.exec_js(
+        js_array = snapshot(self.context.exec_js(
             "const root = []; const child = {root}; "
             "root.push(child, child); root"
-        )
+        ))
 
         # child.root 应回到根列表，两个数组元素也应指向同一个 Python 字典。
         self.assertIs(js_array[0]["root"], js_array)
@@ -173,13 +175,13 @@ class TestConversion(unittest.TestCase):
         py_items = [{"value": index} for index in range(20)]
         self.context.py_graph = {"items": py_items, "last": py_items[-1]}
         self.assertTrue(
-            self.context.exec_js("py_graph.items[19] === py_graph.last")
+            snapshot(self.context.exec_js("py_graph.items[19] === py_graph.last"))
         )
 
-        js_graph = self.context.exec_js(
+        js_graph = snapshot(self.context.exec_js(
             "const items = Array.from({length: 20}, (_, value) => ({value})); "
             "({items, last: items[19]})"
-        )
+        ))
         self.assertIs(js_graph["items"][19], js_graph["last"])
 
     def test_bytes_arraybuffer_conversion(self):
@@ -226,10 +228,10 @@ class TestConversion(unittest.TestCase):
         self.context.py_nested=py_nested
         
         # 验证嵌套结构
-        array_length = self.context.exec_js("py_nested.array.length")
-        object_a = self.context.exec_js("py_nested.object.a")
-        mixed_0_x = self.context.exec_js("py_nested.mixed[0].x")
-        mixed_1_1 = self.context.exec_js("py_nested.mixed[1][1]")
+        array_length = snapshot(self.context.exec_js("py_nested.array.length"))
+        object_a = snapshot(self.context.exec_js("py_nested.object.a"))
+        mixed_0_x = snapshot(self.context.exec_js("py_nested.mixed[0].x"))
+        mixed_1_1 = snapshot(self.context.exec_js("py_nested.mixed[1][1]"))
         
         self.assertEqual(array_length, 3)
         self.assertEqual(object_a, 1)
@@ -237,13 +239,13 @@ class TestConversion(unittest.TestCase):
         self.assertEqual(mixed_1_1, 3)
         
         # JavaScript -> Python
-        js_nested = self.context.exec_js("""
+        js_nested = snapshot(self.context.exec_js("""
             ({
                 array: [1, 2, 3],
                 object: {a: 1, b: 2},
                 mixed: [{x: 1}, [2, 3], 4]
             })
-        """)
+        """))
         
         self.assertEqual(list(js_nested["array"]), [1, 2, 3])
         self.assertEqual(js_nested["object"]["a"], 1)

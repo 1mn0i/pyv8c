@@ -1,3 +1,5 @@
+from tests.values import snapshot
+
 from pyv8 import IdlSpec
 import math
 import unittest
@@ -46,7 +48,7 @@ class TestBridgeResilience(unittest.TestCase):
 
         self.context.expose(**callbacks)
         for key, expected_name in expected_names.items():
-            result = self.context.exec_js(
+            result = snapshot(self.context.exec_js(
                 f"""
                 try {{
                     raise_{key}();
@@ -54,7 +56,7 @@ class TestBridgeResilience(unittest.TestCase):
                     [error.name, error.message];
                 }}
                 """
-            )
+            ))
             self.assertEqual(result, [expected_name, f"{key} boom"])
 
     def test_explicit_python_exception_name_mapping(self):
@@ -77,9 +79,9 @@ class TestBridgeResilience(unittest.TestCase):
                     raise exception_type("explicit mapping")
 
                 self.context.expose(fail=fail)
-                result = self.context.exec_js(
+                result = snapshot(self.context.exec_js(
                     "try { fail(); } catch (error) { [error.name, error.message]; }"
-                )
+                ))
                 self.assertEqual(result, [error_name, "explicit mapping"])
 
     def test_interceptor_failure_marker_respects_strict_mode(self):
@@ -106,9 +108,9 @@ class TestBridgeResilience(unittest.TestCase):
                 raise LegacyWriteFailure("legacy delete rejected")
 
         self.context.expose(target=LegacyTarget())
-        self.assertEqual(self.context.exec_js("target.value = 1"), 1)
-        self.assertFalse(self.context.exec_js("delete target.value"))
-        result = self.context.exec_js(
+        self.assertEqual(snapshot(self.context.exec_js("target.value = 1")), 1)
+        self.assertFalse(snapshot(self.context.exec_js("delete target.value")))
+        result = snapshot(self.context.exec_js(
             """
             try {
                 (function () { "use strict"; target.value = 1; })();
@@ -116,7 +118,7 @@ class TestBridgeResilience(unittest.TestCase):
                 [error.name, error.message];
             }
             """
-        )
+        ))
         self.assertEqual(result, ["TypeError", "legacy write rejected"])
 
     def test_python_exception_rethrow_restores_original_type(self):
@@ -148,7 +150,7 @@ class TestBridgeResilience(unittest.TestCase):
             raise BrokenStringError()
 
         self.context.expose(fail=fail)
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             """
             try {
                 fail();
@@ -156,9 +158,9 @@ class TestBridgeResilience(unittest.TestCase):
                 [error.message, typeof error.stack];
             }
             """
-        )
+        ))
         self.assertEqual(result, ["Python exception", "string"])
-        self.assertEqual(self.context.exec_js("21 * 2"), 42)
+        self.assertEqual(snapshot(self.context.exec_js("21 * 2")), 42)
 
     def test_number_boundaries_and_special_values(self):
         """数值桥接应保留安全整数、NaN、Infinity 和负零语义。"""
@@ -169,7 +171,7 @@ class TestBridgeResilience(unittest.TestCase):
             negative_infinity=-math.inf,
             not_a_number=math.nan,
         )
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             """
             [
                 max_safe_integer === Number.MAX_SAFE_INTEGER,
@@ -178,12 +180,12 @@ class TestBridgeResilience(unittest.TestCase):
                 Number.isNaN(not_a_number)
             ]
             """
-        )
+        ))
         self.assertEqual(result, [True, True, True, True])
 
-        self.assertTrue(math.isnan(self.context.exec_js("NaN")))
-        self.assertEqual(self.context.exec_js("Infinity"), math.inf)
-        negative_zero = self.context.exec_js("-0")
+        self.assertTrue(math.isnan(snapshot(self.context.exec_js("NaN"))))
+        self.assertEqual(snapshot(self.context.exec_js("Infinity")), math.inf)
+        negative_zero = snapshot(self.context.exec_js("-0"))
         self.assertEqual(math.copysign(1.0, negative_zero), -1.0)
 
     def test_unicode_nul_and_sparse_array_conversion(self):
@@ -191,12 +193,12 @@ class TestBridgeResilience(unittest.TestCase):
 
         text = "prefix\x00中文😀suffix"
         self.context.expose(text=text)
-        self.assertEqual(self.context.exec_js("text"), text)
-        self.assertTrue(self.context.exec_js("text.includes('中文')"))
+        self.assertEqual(snapshot(self.context.exec_js("text")), text)
+        self.assertTrue(snapshot(self.context.exec_js("text.includes('中文')")))
 
-        sparse = self.context.exec_js(
+        sparse = snapshot(self.context.exec_js(
             "const value = []; value.length = 3; value[1] = 42; value"
-        )
+        ))
         self.assertIs(sparse[0], pyv8.Undefined)
         self.assertEqual(sparse[1], 42)
         self.assertIs(sparse[2], pyv8.Undefined)

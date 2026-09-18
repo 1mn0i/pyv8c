@@ -20,6 +20,8 @@
 #include "runtime.h"
 #include "isolate_scope.h"
 #include "isolate_state.h"
+#include "execution.h"
+#include "callback_boundary.h"
 
 #define HOOKHANDLE "faker"
 

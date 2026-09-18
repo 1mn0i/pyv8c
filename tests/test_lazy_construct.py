@@ -1,3 +1,5 @@
+from tests.values import snapshot
+
 """Lazy interface declaration via Context.declare_lazy + lazy_factory.
 
 declare_lazy installs a non-enumerable accessor on the global object for every
@@ -96,9 +98,9 @@ class TestLazyConstruct(unittest.TestCase):
         self.addCleanup(context.close)
         context.declare_lazy(["Widget"])
 
-        self.assertIn("Widget", context.exec_js("Object.getOwnPropertyNames(globalThis)"))
+        self.assertIn("Widget", snapshot(context.exec_js("Object.getOwnPropertyNames(globalThis)")))
         # DontEnum keeps the names out of enumeration, matching real globals.
-        self.assertNotIn("Widget", context.exec_js("Object.keys(globalThis)"))
+        self.assertNotIn("Widget", snapshot(context.exec_js("Object.keys(globalThis)")))
 
     def test_first_access_materialises_and_second_hits_cache(self):
         context = self.make_context({"Widget": self.widget})

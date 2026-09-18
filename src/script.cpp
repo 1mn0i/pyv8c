@@ -22,11 +22,8 @@ static int script_traverse(script_c* self, visitproc visit, void* arg) {
 static int script_clear(script_c* self) {
     std::unique_ptr<IsolateLockScope> lock;
     if (self->isolate_state) lock.reset(new IsolateLockScope(self->isolate_state));
-    context_unregister_handle((context_c*)self->py_context, (PyObject*)self);
-    if (!self->script.IsEmpty()) {
-        self->script.Reset();
-        self->isolate_state->release_v8_handle();
-    }
+    self->registration.detach();
+    self->registration.reset(self->script, self->isolate_state);
     self->isolate_state = nullptr;
     Py_CLEAR(self->script_name);
     Py_CLEAR(self->source);
@@ -36,11 +33,11 @@ static int script_clear(script_c* self) {
 }
 
 static PyType_Slot script_slots[] = {
-    {Py_tp_traverse, (void*)script_traverse},
-    {Py_tp_clear, (void*)script_clear},
+    {Py_tp_traverse, (void*)PythonBoundary<script_traverse>::call},
+    {Py_tp_clear, (void*)PythonBoundary<script_clear>::call},
     {Py_tp_doc, (void*)"v8 Script"},
-    {Py_tp_new, (void *)script_new},
-    {Py_tp_dealloc, (void *)script_dealloc},
+    {Py_tp_new, (void *)PythonBoundary<script_new>::call},
+    {Py_tp_dealloc, (void *)PythonBoundary<script_dealloc>::call},
     {0, NULL}};
 
 static PyType_Spec script_spec = {
@@ -69,7 +66,7 @@ construct_script_name(Local<Context> context, Local<Value> js_name, int id)
         IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
         name = isolate_state->javascript_name();
         PyErr_PROPAGATE(name);
-        Py_INCREF(name);
+        Py_INCREF((PyObject*)name);
     } else {
         name = py_from_js(js_name, context);
         PyErr_PROPAGATE(name);
@@ -78,7 +75,7 @@ construct_script_name(Local<Context> context, Local<Value> js_name, int id)
         return name;
     }
     PyObject *script_name = PyUnicode_FromFormat("%S-%d", name, id);
-    Py_XDECREF(name);
+    Py_XDECREF((PyObject*)name);
     return script_name;
 }
 
@@ -98,19 +95,11 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         PyErr_SetString(PyExc_TypeError, "context must be an active Context instance");
         return NULL;
     }
-    if (!context_is_active(py_ctx)) {
-        PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
-        return nullptr;
-    }
-    IsolateState* isolate_state = py_ctx->isolate_state;
-    if (!isolate_state->require_active())
-        return NULL;
-    IN_ISOLATE(isolate_state);
-    if (!context_is_active(py_ctx)) {
-        PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
-        return nullptr;
-    }
-    IN_CONTEXT(py_ctx->js_context.Get(isolate));
+    ExecutionScope execution(py_ctx);
+    if (!execution) return nullptr;
+    auto* isolate_state = py_ctx->isolate_state;
+    auto* isolate = execution.isolate();
+    auto context = execution.context();
     JS_TRY
 
     if (!PyUnicode_Check(source))
@@ -136,17 +125,17 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyErr_PROPAGATE(self);
     self->isolate_state = isolate_state;
     self->py_context = (PyObject*)py_ctx;
-    Py_INCREF(py_ctx);
-    context_register_handle(py_ctx, (PyObject*)self, (int (*)(PyObject*))script_clear);
+    Py_INCREF((PyObject*)py_ctx);
+    self->registration.attach(py_ctx, (PyObject*)self, (int (*)(PyObject*))script_clear);
     self->script.Reset(isolate, script);
     isolate_state->retain_v8_handle();
     if (py_ctx->py_isolate != nullptr) {
         self->py_isolate = py_ctx->py_isolate;
         Py_INCREF(self->py_isolate);
     }
-    Py_INCREF(filename);
+    Py_INCREF((PyObject*)filename);
     self->script_name = filename;
-    Py_INCREF(source);
+    Py_INCREF((PyObject*)source);
     self->source = source;
 
     return (PyObject *) self;
@@ -178,6 +167,6 @@ script_dealloc(script_c *self)
 {
     PyObject_GC_UnTrack(self);
     script_clear(self);
-    //Py_TYPE(self)->tp_free((PyObject *) self);
+    //Py_TYPE((PyObject*)self)->tp_free((PyObject *) self);
     TP_FREE_ABI3(script_type, self);
 }

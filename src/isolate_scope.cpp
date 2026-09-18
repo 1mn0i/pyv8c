@@ -15,13 +15,21 @@ current_isolate_state()
 IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
     : state_(state),
       previous_(current_isolate_state()),
-      isolate_(state->isolate()),
+      isolate_(nullptr),
       entered_(false),
+      nested_(false),
       python_owner_(nullptr)
 {
+    if (state == current_isolate_state()) {
+        isolate_ = state->isolate();
+        nested_ = entered_ = true;
+        ++state_->entry_depth;
+        return;
+    }
     if (try_only && !state_->entry_mutex.try_lock()) return;
     python_owner_ = state_->python_owner;
-    Py_XINCREF(python_owner_);
+    Py_XINCREF((PyObject*)python_owner_);
+    ++state_->entry_users;
     // A v8::Locker that is contended for blocks until the owning thread leaves
     // the isolate.  Acquiring it while still holding the GIL would starve every
     // other Python thread -- the owning thread itself usually needs the GIL to
@@ -29,10 +37,22 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
     // duration of the acquisition and re-acquire it before entering the
     // isolate (Python callbacks from inside V8 run while holding it).
     PyThreadState* gil_state = nullptr;
+    bool acquired = try_only;
     try
     {
         gil_state = PyEval_SaveThread();
         if (!try_only) state_->entry_mutex.lock();
+        acquired = true;
+        isolate_ = state_->isolate();
+        if (isolate_ == nullptr) {
+            state_->entry_mutex.unlock();
+            PyEval_RestoreThread(gil_state);
+            PyErr_SetString(PyExc_RuntimeError, "V8 isolate has been closed");
+            --state_->entry_users;
+            Py_XDECREF((PyObject*)python_owner_);
+            python_owner_ = nullptr;
+            return;
+        }
         locker_.reset(new v8::Locker(isolate_));
     }
     catch (...)
@@ -41,8 +61,9 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
         {
             PyEval_RestoreThread(gil_state);
         }
-        state_->entry_mutex.unlock();
-        Py_XDECREF(python_owner_);
+        if (acquired) state_->entry_mutex.unlock();
+        --state_->entry_users;
+        Py_XDECREF((PyObject*)python_owner_);
         throw;
     }
     PyEval_RestoreThread(gil_state);
@@ -55,6 +76,10 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
 IsolateLockScope::~IsolateLockScope()
 {
     if (!entered_) return;
+    if (nested_) {
+        --state_->entry_depth;
+        return;
+    }
     if (state_->entry_depth == 1) {
         v8::HandleScope handle_scope(isolate_);
         state_->drain_deferred();
@@ -75,10 +100,11 @@ IsolateLockScope::~IsolateLockScope()
         for (auto callback : waiters) {
             PyObject* result = PyObject_CallNoArgs(callback);
             if (!result) PyErr_WriteUnraisable(callback);
-            else Py_DECREF(result);
-            Py_DECREF(callback);
+            else Py_DECREF((PyObject*)result);
+            Py_DECREF((PyObject*)callback);
         }
         PyErr_Restore(error_type, error_value, error_traceback);
     }
-    Py_XDECREF(python_owner_);
+    --state_->entry_users;
+    Py_XDECREF((PyObject*)python_owner_);
 }

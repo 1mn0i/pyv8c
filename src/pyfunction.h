@@ -9,6 +9,7 @@ typedef struct {
     IsolateState* isolate_state;
     PyObject *function;
     PyObject *function_name;
+    PyObject *receiver;
     v8::Persistent<v8::FunctionTemplate> *js_template;
 } py_function;
 

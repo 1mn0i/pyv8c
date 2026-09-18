@@ -237,7 +237,7 @@ def test_foreign_class_bindings_are_invalidated():
     second.expose(constructor=first.exec_js('Payload'),
                   method=first.exec_js('payload.method.bind(payload)'),
                   getter=first.exec_js("Object.getOwnPropertyDescriptor(Payload.prototype, 'value').get.bind(payload)"))
-    assert second.exec_js('[method(), getter()]') == [42, 42]
+    assert second.exec_js('[method(), getter()]').to_python() == [42, 42]
     first.close()
     for expression in ('new constructor()', 'method()', 'getter()'):
         assert second.exec_js(f'try {{ {expression}; false }} catch (e) {{ true }}')

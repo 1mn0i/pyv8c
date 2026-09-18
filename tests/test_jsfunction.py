@@ -1,3 +1,5 @@
+from tests.values import snapshot
+
 import unittest
 import pyv8
 
@@ -84,7 +86,7 @@ class TestJSFunction(unittest.TestCase):
     def test_js_function_arguments(self):
         """测试JavaScript函数的参数处理"""
         # 定义一个处理不同类型参数的函数
-        js_func = self.context.exec_js("""
+        js_func = snapshot(self.context.exec_js("""
             function processArgs(a, b, c, d, e) {
                 return {
                     number: a,
@@ -95,7 +97,7 @@ class TestJSFunction(unittest.TestCase):
                 };
             };
             processArgs
-        """)
+        """))
         
         # 调用函数，传入不同类型的参数
         result = js_func(
@@ -110,7 +112,7 @@ class TestJSFunction(unittest.TestCase):
         self.assertEqual(result['number'], 42)
         self.assertEqual(result['string'], "hello")
         self.assertEqual(result['boolean'], True)
-        self.assertEqual(list(result['array']), [1, 2, 3])
+        self.assertEqual(result['array'].to_python(), [1, 2, 3])
         self.assertEqual(result['object']['key'], "value")
 
     def test_js_function_inline_and_heap_arguments(self):

@@ -12,9 +12,9 @@ using namespace v8;
 PyTypeObject *js_promise_type = NULL;
 
 static PyType_Slot js_promise_slots[] = {
-    {Py_tp_dealloc, (void*)js_promise_dealloc},
-    {Py_tp_new, (void*)js_promise_new},
-    {Py_tp_repr, (void*)js_promise_repr},
+    {Py_tp_dealloc, (void*)PythonBoundary<js_promise_dealloc>::call},
+    {Py_tp_new, (void*)PythonBoundary<js_promise_new>::call},
+    {Py_tp_repr, (void*)PythonBoundary<js_promise_repr>::call},
     {Py_tp_doc, (void*)"v8 Promise"},
     {0, NULL} };
 
@@ -34,10 +34,10 @@ int js_promise_type_init()
         return -1;
     }
     PyTuple_SetItem(bases, 0, (PyObject*)js_object_type);
-    Py_INCREF(js_object_type);
+    Py_INCREF((PyObject*)js_object_type);
 
     js_promise_type = (PyTypeObject*)PyType_FromSpecWithBases(&js_promise_spec, bases);
-    Py_DECREF(bases);
+    Py_DECREF((PyObject*)bases);
 
     //js_promise_type = (PyTypeObject*)PyType_FromSpec(&js_promise_spec);
     if (js_promise_type == NULL)
@@ -131,7 +131,7 @@ js_promise_repr(js_promise* self)
     {
         promise_repr = PyUnicode_InternFromString("[object Promise]");
     }
-    Py_INCREF(promise_repr);
+    Py_INCREF((PyObject*)promise_repr);
     return promise_repr;
 }
 

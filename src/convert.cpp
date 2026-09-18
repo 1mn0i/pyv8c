@@ -16,6 +16,17 @@
 
 using namespace v8;
 
+bool PythonArguments::convert(const FunctionCallbackInfo<Value>& info,
+                              Local<Context> context, PyObject* receiver) {
+    size_t offset = receiver ? 1 : 0;
+    if (receiver) { Py_INCREF((PyObject*)receiver); values_[0] = receiver; }
+    for (int i = 0; i < info.Length(); ++i) {
+        values_[i + offset] = py_argument_from_js(info[i], context);
+        if (!values_[i + offset]) return false;
+    }
+    return true;
+}
+
 namespace
 {
 class JsToPyConversionContext
@@ -34,7 +45,7 @@ public:
             return NULL;
         for (const Entry& entry : bucket->second)
         {
-            if (entry.object.Get(isolate_)->StrictEquals(object))
+            if (entry.object->StrictEquals(object))
             {
                 Py_INCREF(entry.result);
                 return entry.result;
@@ -47,7 +58,7 @@ public:
     {
         try
         {
-            visited_[object->GetIdentityHash()].emplace_back(isolate_, object, result);
+            visited_[object->GetIdentityHash()].emplace_back(object, result);
         }
         catch (const std::bad_alloc&)
         {
@@ -60,8 +71,8 @@ public:
 private:
     struct Entry
     {
-        Entry(Isolate* isolate, Local<Object> object, PyObject* result)
-            : object(isolate, object), result(result)
+        Entry(Local<Object> object, PyObject* result)
+            : object(object), result(result)
         {
         }
 
@@ -70,7 +81,7 @@ private:
         Entry(const Entry&) = delete;
         Entry& operator=(const Entry&) = delete;
 
-        Global<Object> object;
+        Local<Object> object;
         PyObject* result;
     };
 
@@ -151,12 +162,12 @@ py_from_js_impl(Local<Value> value,
     }
     if (value->IsNull())
     {
-        Py_INCREF(js_null_object);
+        Py_INCREF((PyObject*)js_null_object);
         return js_null_object;
     }
     if (value->IsUndefined())
     {
-        Py_INCREF(js_undefined_object);
+        Py_INCREF((PyObject*)js_undefined_object);
         return js_undefined_object;
     }
     if (value->IsBoolean())
@@ -189,7 +200,7 @@ py_from_js_impl(Local<Value> value,
             return NULL;
         if (!conversion->remember(array, list))
         {
-            Py_DECREF(list);
+            Py_DECREF((PyObject*)list);
             return NULL;
         }
 
@@ -198,14 +209,14 @@ py_from_js_impl(Local<Value> value,
             Local<Value> js_value;
             if (!array->Get(context, i).ToLocal(&js_value))
             {
-                Py_DECREF(list);
+                Py_DECREF((PyObject*)list);
                 return NULL;
             }
 
             PyObject *obj = py_from_js_impl(js_value, context, conversion);
             if (obj == NULL)
             {
-                Py_DECREF(list);
+                Py_DECREF((PyObject*)list);
                 return NULL;
             }
             PyList_SetItem(list, i, obj);
@@ -228,9 +239,9 @@ py_from_js_impl(Local<Value> value,
             Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
             if (magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
             {
-                PyObject* object = (PyObject*)v8_compat::external_value(
-                    obj_value->GetInternalField(PYTHON_OBJECT_FIELD));
-                Py_INCREF(object);
+                PyObject* object = IsolateState::python_object(obj_value);
+                if (!object) return nullptr;
+                Py_INCREF((PyObject*)object);
                 return object;
             }
         }
@@ -256,14 +267,14 @@ py_from_js_impl(Local<Value> value,
                 return NULL;
             if (!conversion->remember(obj_value, dict))
             {
-                Py_DECREF(dict);
+                Py_DECREF((PyObject*)dict);
                 return NULL;
             }
 
             Local<Array> js_keys;
             if (!obj_value->GetPropertyNames(context).ToLocal(&js_keys))
             {
-                Py_XDECREF(dict);
+                Py_XDECREF((PyObject*)dict);
                 PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object properties");
                 return NULL;
             }
@@ -272,40 +283,40 @@ py_from_js_impl(Local<Value> value,
                 Local<Value> js_key;
                 if (!js_keys->Get(context, i).ToLocal(&js_key))
                 {
-                    Py_XDECREF(dict);
+                    Py_XDECREF((PyObject*)dict);
                     PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object property key");
                     return NULL;
                 }
                 PyObject *key = py_from_js_impl(js_key, context, conversion);
                 if (key == NULL)
                 {
-                    Py_XDECREF(dict);
+                    Py_XDECREF((PyObject*)dict);
                     return NULL;
                 }
                 Local<Value> js_value;
                 if (!obj_value->Get(context, js_key).ToLocal(&js_value))
                 {
-                    Py_XDECREF(key);
-                    Py_XDECREF(dict);
+                    Py_XDECREF((PyObject*)key);
+                    Py_XDECREF((PyObject*)dict);
                     PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object property value");
                     return NULL;
                 }
                 PyObject *dict_value = py_from_js_impl(js_value, context, conversion);
                 if (dict_value == NULL)
                 {
-                    Py_XDECREF(dict);
-                    Py_XDECREF(key);
+                    Py_XDECREF((PyObject*)dict);
+                    Py_XDECREF((PyObject*)key);
                     return NULL;
                 }
                 if (PyDict_SetItem(dict, key, dict_value) < 0)
                 {
-                    Py_XDECREF(key);
-                    Py_XDECREF(dict_value);
-                    Py_XDECREF(dict);
+                    Py_XDECREF((PyObject*)key);
+                    Py_XDECREF((PyObject*)dict_value);
+                    Py_XDECREF((PyObject*)dict);
                     return NULL;
                 }
-                Py_XDECREF(key);
-                Py_XDECREF(dict_value);
+                Py_XDECREF((PyObject*)key);
+                Py_XDECREF((PyObject*)dict_value);
             }
             return dict;
         }
@@ -315,8 +326,9 @@ py_from_js_impl(Local<Value> value,
             Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
             if (magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
             {
-                PyObject *object = (PyObject *)v8_compat::external_value(obj_value->GetInternalField(PYTHON_OBJECT_FIELD));
-                Py_INCREF(object);
+                PyObject *object = IsolateState::python_object(obj_value);
+                if (!object) return nullptr;
+                Py_INCREF((PyObject*)object);
                 return object;
             }
         }
@@ -342,19 +354,14 @@ py_from_js_impl(Local<Value> value,
 }
 
 PyObject *
-py_from_js(Local<Value> value, Local<Context> context)
+py_materialize(Local<Value> value, Local<Context> context)
 {
-    IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
-    IN_ISOLATE(isolate_state);
     return py_from_js_impl(value, context, nullptr);
 }
 
 PyObject *
-py_argument_from_js(Local<Value> value, Local<Context> context)
+py_from_js(Local<Value> value, Local<Context> context)
 {
-    auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
-    if (owner == nullptr || !owner->preserve_arguments)
-        return py_from_js(value, context);
     if (value->IsSymbol())
         return (PyObject*)js_value_new(value, context);
     if (value->IsObject()) {
@@ -362,13 +369,18 @@ py_argument_from_js(Local<Value> value, Local<Context> context)
         auto* state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
         if (object->InternalFieldCount() == OBJECT_INTERNAL_FIELDS &&
             object->GetInternalField(PYTHON_MAGIC_FIELD) == state->v8_string(V8StringId::PythonObjectMagic)) {
-            auto* result = (PyObject*)v8_compat::external_value(object->GetInternalField(PYTHON_OBJECT_FIELD));
-            Py_INCREF(result);
+            auto* result = IsolateState::python_object(object);
+            if (!result) return nullptr;
+            Py_INCREF((PyObject*)result);
             return result;
         }
         // Do not enumerate, probe prototypes, read accessors, or iterate here.
         return (PyObject*)js_object_new(object, context);
     }
+    return py_from_js_impl(value, context, nullptr);
+}
+
+PyObject* py_argument_from_js(Local<Value> value, Local<Context> context) {
     return py_from_js(value, context);
 }
 
@@ -562,7 +574,7 @@ js_from_py_impl(PyObject *value,
     if (PyFunction_Check_abi3(value) || PyMethod_Check_abi3(value))
     {
         IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
-        auto* owner = v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+        auto* owner = context_from_v8(context);
         if (owner == nullptr) {
             PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
             return Local<Value>();
@@ -582,8 +594,7 @@ js_from_py_impl(PyObject *value,
 
     if (PyType_Check(value))
     {
-        context_c *ctx_c = v8_compat::context_embedder_pointer<context_c>(
-            context, CONTEXT_OBJECT_SLOT);
+        context_c *ctx_c = context_from_v8(context);
         if (ctx_c == nullptr)
         {
             PyErr_SetString(PyExc_RuntimeError, "V8 context has no Python owner");
@@ -671,12 +682,12 @@ js_from_py_impl(PyObject *value,
 
     // python global_this -> js globalThis
     context_c *ctx_c = context.IsEmpty() ? nullptr :
-        v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+        context_from_v8(context);
     if (ctx_c == nullptr) {
         PyErr_SetString(PyExc_RuntimeError, "Python objects require a V8 context");
         return Local<Value>();
     }
-    if (ctx_c->py_global != NULL && Py_TYPE(value) == Py_TYPE(ctx_c->py_global))
+    if (ctx_c->py_global != NULL && Py_TYPE((PyObject*)value) == Py_TYPE(ctx_c->py_global))
     {
         PyObject *ctx = PyObject_GetAttrString(value, "_ctx");
         if (ctx == NULL)
@@ -689,17 +700,17 @@ js_from_py_impl(PyObject *value,
         context_c* source_context = (context_c*)ctx;
         if (source_context->isolate_state == nullptr || source_context->isolate_state->isolate() != isolate)
         {
-            Py_DECREF(ctx);
+            Py_DECREF((PyObject*)ctx);
             PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
             return Local<Value>();
         }
         auto js_content = source_context->js_context.Get(isolate);
-        Py_DECREF(ctx);
+        Py_DECREF((PyObject*)ctx);
         return js_content->Global();
     }
     // it's an arbitrary object
     PyObject *type;
-    type = (PyObject*)Py_TYPE(value);
+    type = (PyObject*)Py_TYPE((PyObject*)value);
     py_class *templ = (py_class *)py_class_to_template(type, ctx_c);
     if (templ == NULL)
     {
@@ -730,6 +741,8 @@ js_from_py(PyObject *value, Local<Context> context, Isolate* target_isolate)
         PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
         return Local<Value>();
     }
+    if (auto* active = current_isolate_state(); active && active->isolate() == target_isolate)
+        return js_from_py_impl(value, context, nullptr, target_isolate);
     IsolateState* isolate_state = runtime_manager.find_isolate(target_isolate);
     if (isolate_state == nullptr || !isolate_state->require_active())
         return Local<Value>();
@@ -750,7 +763,7 @@ pys_from_jss(const FunctionCallbackInfo<Value> &js_args, Local<Context> context)
         PyObject *arg = py_argument_from_js(js_args[i], context);
         if (arg == NULL)
         {
-            Py_DECREF(py_args);
+            Py_DECREF((PyObject*)py_args);
             return NULL;
         }
         PyTuple_SetItem(py_args, i, arg);
@@ -790,28 +803,28 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
     const char *exc_message = PyUnicode_AsUTF8_abi3(exc_value_str);
     if (exc_message == NULL)
     {
-        Py_XDECREF(exc_value_str);
+        Py_XDECREF((PyObject*)exc_value_str);
         return exception;
     }
     PyObject *exc_type = PyObject_Type(value);
     if (exc_type == NULL)
     {
-        Py_XDECREF(exc_value_str);
+        Py_XDECREF((PyObject*)exc_value_str);
         return exception;
     }
     PyObject *exc_cls_name = PyObject_GetAttrString(exc_type, "__name__");
     if (exc_cls_name == NULL)
     {
-        Py_XDECREF(exc_type);
-        Py_XDECREF(exc_value_str);
+        Py_XDECREF((PyObject*)exc_type);
+        Py_XDECREF((PyObject*)exc_value_str);
         return exception;
     }
     const char *exc_type_name = PyUnicode_AsUTF8_abi3(exc_cls_name);
     if (exc_type_name == NULL)
     {
-        Py_XDECREF(exc_cls_name);
-        Py_XDECREF(exc_type);
-        Py_XDECREF(exc_value_str);
+        Py_XDECREF((PyObject*)exc_cls_name);
+        Py_XDECREF((PyObject*)exc_type);
+        Py_XDECREF((PyObject*)exc_value_str);
         return exception;
     }
     if (PyObject_TypeCheck(value, js_exception_type))
@@ -864,8 +877,8 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
                 V8String(isolate, exc_message));
         }
     }
-    Py_XDECREF(exc_cls_name);
-    Py_XDECREF(exc_type);
-    Py_XDECREF(exc_value_str);
+    Py_XDECREF((PyObject*)exc_cls_name);
+    Py_XDECREF((PyObject*)exc_type);
+    Py_XDECREF((PyObject*)exc_value_str);
     return exception;
 }

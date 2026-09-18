@@ -23,8 +23,8 @@ inline PyObject* trace_value(v8::Local<v8::Value> value, v8::Local<v8::Context> 
     auto* state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
     if (object->InternalFieldCount() == OBJECT_INTERNAL_FIELDS &&
         object->GetInternalField(PYTHON_MAGIC_FIELD) == state->v8_string(V8StringId::PythonObjectMagic)) {
-        auto* result = (PyObject*)v8_compat::external_value(object->GetInternalField(PYTHON_OBJECT_FIELD));
-        Py_XINCREF(result);
+        auto* result = IsolateState::python_object(object);
+        Py_XINCREF((PyObject*)result);
         return result;
     }
     return (PyObject*)js_object_new(object, context);
@@ -52,9 +52,9 @@ public:
         auto error = failed() ? caught.Exception() : v8::Undefined(isolate).As<v8::Value>();
         if (value.IsEmpty() || (failed() && kind != 1)) value = v8::Undefined(isolate);
         PyObject* arguments = Py_None;
-        Py_INCREF(arguments);
+        Py_INCREF((PyObject*)arguments);
         if (info != nullptr && kind >= 2) {
-            Py_DECREF(arguments);
+            Py_DECREF((PyObject*)arguments);
             arguments = PyTuple_New(info->Length());
             if (arguments != nullptr) {
                 for (int index = 0; index < info->Length(); ++index) {
@@ -72,11 +72,11 @@ public:
                 receiver == nullptr ? Py_None : receiver, name, arguments, py_value, py_error,
                 info != nullptr && info->IsConstructCall() ? Py_True : Py_False,
                 owner->trace_context_type, nullptr);
-            Py_XDECREF(result);
+            Py_XDECREF((PyObject*)result);
         }
-        Py_XDECREF(arguments);
-        Py_XDECREF(py_value);
-        Py_XDECREF(py_error);
+        Py_XDECREF((PyObject*)arguments);
+        Py_XDECREF((PyObject*)py_value);
+        Py_XDECREF((PyObject*)py_error);
         PyErr_Clear();
         PyErr_Restore(error_type, error_value, error_traceback);
     }

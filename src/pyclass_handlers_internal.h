@@ -22,8 +22,7 @@ get_handler_self(const Info& info, bool cross_origin)
     v8::Local<v8::Data> magic = js_self->GetInternalField(PYTHON_MAGIC_FIELD);
     if (magic != runtime_manager.find_isolate(isolate)->v8_string(V8StringId::PythonObjectMagic))
         return Py_None;
-    return (PyObject*)v8_compat::external_value(
-        js_self->GetInternalField(PYTHON_OBJECT_FIELD));
+    return IsolateState::python_object(js_self);
 }
 
 template <class T>

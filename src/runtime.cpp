@@ -109,14 +109,7 @@ RuntimeManager::destroy_isolate(IsolateState* state, bool report_error)
 IsolateState*
 RuntimeManager::find_isolate(v8::Isolate* isolate) const
 {
-    if (default_isolate_ != nullptr && default_isolate_->isolate() == isolate)
-        return default_isolate_.get();
-    for (IsolateState* state : custom_isolates_)
-    {
-        if (state->isolate() == isolate)
-            return state;
-    }
-    return nullptr;
+    return isolate ? static_cast<IsolateState*>(isolate->GetData(0)) : nullptr;
 }
 
 bool

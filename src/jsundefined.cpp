@@ -13,8 +13,8 @@ PyObject* js_undefined_object = NULL;
 
 static PyType_Slot js_undefined_slots[] = {
     {Py_tp_doc, (void*)""},
-    {Py_tp_repr, (void*)js_undefined_repr},
-    {Py_nb_bool, (void*)js_undefined_bool},
+    {Py_tp_repr, (void*)PythonBoundary<js_undefined_repr>::call},
+    {Py_nb_bool, (void*)PythonBoundary<js_undefined_bool>::call},
     {0, NULL} };
 
 static PyType_Spec js_undefined_spec = {
@@ -38,7 +38,7 @@ js_undefined_type_init()
     {
         return -1;
     }
-    Py_INCREF(js_undefined_object);
+    Py_INCREF((PyObject*)js_undefined_object);
     return 0;
 }
 
@@ -50,7 +50,7 @@ js_undefined_repr(PyObject* self)
     {
         undefined_repr = PyUnicode_InternFromString("undefined");
     }
-    Py_INCREF(undefined_repr);
+    Py_INCREF((PyObject*)undefined_repr);
     return undefined_repr;
 }
 

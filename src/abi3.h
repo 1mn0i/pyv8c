@@ -2,6 +2,7 @@
 #define PYV8ENV_ABI3_H
 
 #include <Python.h>
+#include "boundary.h"
 
 class PyOwnedRef
 {
@@ -16,7 +17,7 @@ public:
 
     ~PyOwnedRef()
     {
-        Py_XDECREF(value_);
+        Py_XDECREF((PyObject*)value_);
     }
 
     PyObject* get() const { return value_; }
@@ -53,22 +54,9 @@ PyV8_NewRef(PyObject *value)
         free_func(self);                                                    \
     else                                                                    \
         PyObject_Del(self);                                                \
-    Py_DECREF(allocated_type);
+    Py_DECREF((PyObject*)allocated_type);
 
 
-
-typedef PyObject* (*vectorcallfuncabi3)(PyObject* callable, PyObject* const* args, size_t nargsf, PyObject* kwnames);
-
-typedef struct {
-    PyObject_HEAD
-    PyObject* im_func;
-    PyObject* im_self;
-    PyObject* im_weakreflist;
-    vectorcallfuncabi3 vectorcall;
-} PyMethodObjectAbi3;
-
-#define PyMethod_GET_SELF_abi3(meth) \
-        (((PyMethodObjectAbi3 *)meth) -> im_self)
 
 
 static inline const char* 
@@ -78,8 +66,8 @@ PyUnicode_AsUTF8_abi3(PyObject* unicode) {
 }
 
 
-static PyObject* g_func_type;
-static PyObject* g_method_type;
+extern PyObject* g_func_type;
+extern PyObject* g_method_type;
 
 int cache_FunctionType_init();
 

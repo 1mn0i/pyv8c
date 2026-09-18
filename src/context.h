@@ -6,11 +6,20 @@
 #include <v8.h>
 #include <unordered_map>
 #include <unordered_set>
+#include <memory>
 
 class IsolateState;
 struct context_c;
+enum class ContextState { Active, Closing, Closed };
+struct ContextLifetime {
+    context_c* owner;
+    explicit ContextLifetime(context_c* owner) : owner(owner) {}
+};
 
 struct ContextResources {
+    std::shared_ptr<ContextLifetime> lifetime;
+    std::unordered_set<void*> python_owners;
+    std::unordered_set<void*> callbacks;
     std::unordered_map<PyObject*, int (*)(PyObject*)> handles;
     std::unordered_set<context_c*> dependents;
     std::unordered_set<context_c*> dependencies;
@@ -26,11 +35,13 @@ typedef struct context_c
     PyObject* js_object_cache;
     PyObject* class_template_cache;
     PyObject* function_template_cache;
+    PyObject* callback_targets;
     PyObject* uncaught_handler;
     PyObject* rejection_handler;
     PyObject* dependencies;
     ContextResources* resources;
-    bool closing;
+    ContextState state;
+    context_c* next_pending_close;
     PyObject* class_configs;
     // Optional callable used to materialise lazily declared interface names.
     // Called with an interface name, returns the Python class or None.
@@ -42,8 +53,6 @@ typedef struct context_c
     double timeout;
     bool trace;
     bool traceable;
-    // Opt-in lazy object arguments for hosts which own Web API conversion.
-    bool preserve_arguments;
     unsigned int trace_depth;
 
     PyObject* trace_callback;
@@ -52,6 +61,7 @@ typedef struct context_c
 } context_c;
 
 bool context_is_active(context_c* self);
+context_c* context_from_v8(v8::Local<v8::Context> context);
 bool context_check_callback(v8::Local<v8::Context> context);
 void context_finish_close(context_c* self);
 void context_register_handle(context_c* self, PyObject* handle, int (*clear)(PyObject*));

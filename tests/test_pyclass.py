@@ -1,3 +1,5 @@
+from tests.values import snapshot
+
 from pyv8 import IdlSpec, AttributeSpec, MethodSpec
 import unittest
 import pyv8
@@ -58,10 +60,10 @@ class TestPyClass(unittest.TestCase):
         self.context.expose(Calculator)
 
         # 在JavaScript中使用类
-        result = self.context.exec_js("""
+        result = snapshot(self.context.exec_js("""
             var obj = new Calculator();
             [obj.add(2, 8), obj.subtract(30, 10)]
-        """)
+        """))
 
         # 验证结果
         self.assertEqual(list(result), [10, 20])
@@ -134,12 +136,12 @@ class TestPyClass(unittest.TestCase):
         self.context.expose(ClassWithProperties)
 
         # 在JavaScript中使用类
-        result = self.context.exec_js("""
+        result = snapshot(self.context.exec_js("""
             var obj = new ClassWithProperties();
             obj.x = 10;
             obj.y = 20;
             [obj.x, obj.y, obj.sum]
-        """)
+        """))
 
         # 验证结果
         self.assertEqual(list(result), [10, 20, 30])
@@ -183,7 +185,7 @@ class TestPyClass(unittest.TestCase):
         ]
 
         self.context.expose(*prototypes)
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             """
             [
                 typeof GeneratedPrototype0,
@@ -192,7 +194,7 @@ class TestPyClass(unittest.TestCase):
                 GeneratedPrototype127.__proto__.name
             ]
             """
-        )
+        ))
         self.assertEqual(
             result,
             ["function", "function", "PrototypeBase", "PrototypeBase"],
@@ -230,10 +232,10 @@ class TestPyClass(unittest.TestCase):
 
         self.context.expose(WindowProperties, EventTarget)
 
-        result1 = self.context.exec_js("Object.keys(Object.getOwnPropertyDescriptors(EventTarget.prototype))")
+        result1 = snapshot(self.context.exec_js("Object.keys(Object.getOwnPropertyDescriptors(EventTarget.prototype))"))
         self.assertEqual(result1, ['constructor'])
 
-        result2 = self.context.exec_js("Object.keys(Object.getOwnPropertyDescriptors(WindowProperties.prototype))")
+        result2 = snapshot(self.context.exec_js("Object.keys(Object.getOwnPropertyDescriptors(WindowProperties.prototype))"))
         self.assertEqual(result2, [])
 
     def test_class_constructor_behavior(self):

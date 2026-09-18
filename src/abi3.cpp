@@ -1,4 +1,6 @@
 #include "abi3.h"
+PyObject* g_func_type = nullptr;
+PyObject* g_method_type = nullptr;
 
 int 
 cache_FunctionType_init() 
@@ -18,8 +20,6 @@ cache_FunctionType_init()
         return -1;
     }
 
-    Py_INCREF(g_func_type);
-    Py_INCREF(g_method_type);
     return 0;
 }
 

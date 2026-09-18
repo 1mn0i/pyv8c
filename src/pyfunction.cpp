@@ -18,19 +18,21 @@ PyTypeObject* py_function_type = NULL;
 static int function_traverse(py_function* self, visitproc visit, void* arg) {
     Py_VISIT(self->function);
     Py_VISIT(self->function_name);
+    Py_VISIT(self->receiver);
     return 0;
 }
 static int function_clear(py_function* self) {
     if (self->js_template) self->js_template->Reset();
     Py_CLEAR(self->function);
     Py_CLEAR(self->function_name);
+    Py_CLEAR(self->receiver);
     return 0;
 }
 
 static PyType_Slot py_function_slots[] = {
-    {Py_tp_traverse, (void*)function_traverse},
-    {Py_tp_clear, (void*)function_clear},
-    {Py_tp_dealloc, (void*)py_function_dealloc},
+    {Py_tp_traverse, (void*)PythonBoundary<function_traverse>::call},
+    {Py_tp_clear, (void*)PythonBoundary<function_clear>::call},
+    {Py_tp_dealloc, (void*)PythonBoundary<py_function_dealloc>::call},
     {Py_tp_doc, (void*)""},
     {0, NULL} };
 
@@ -65,34 +67,39 @@ py_function_new(PyObject *function, context_c* owner)
     PyErr_PROPAGATE(self);
     self->isolate_state = isolate_state;
     self->js_template = new Persistent<FunctionTemplate>();
-    Py_INCREF(function);
+    Py_INCREF((PyObject*)function);
     self->function = function;
+    if (PyMethod_Check_abi3(function)) {
+        self->receiver = PyObject_GetAttrString(function, "__self__");
+        if (!self->receiver) { Py_DECREF((PyObject*)self); return nullptr; }
+    }
     PyObject* spec = idl_spec_for(function);
     if (spec == NULL && PyErr_Occurred()) { Py_DECREF((PyObject*)self); return NULL; }
     IdlSpec defaults;
     const IdlSpec& config = spec == nullptr ? defaults : *(IdlSpec*)spec;
     PyObject* name = config.name;
     if (name != NULL) {
-        Py_INCREF(name);
+        Py_INCREF((PyObject*)name);
         self->function_name = name;
     } else {
         self->function_name = PyObject_GetAttrString(function, "__name__");
     }
     int length = (int)config.length;
     bool throw_on_construct = spec != nullptr && (config.constructor_behavior & 1) == 0;
-    Py_XDECREF(spec);
+    Py_XDECREF((PyObject*)spec);
     if (self->function_name == NULL || PyErr_Occurred()) {
         Py_DECREF((PyObject*)self);
         return NULL;
     }
     Local<External> js_self = isolate_state->callback_data(owner, (PyObject*)self);
+    if (js_self.IsEmpty()) { Py_DECREF((PyObject*)self); return nullptr; }
     Local<FunctionTemplate> js_template;
 
     if (throw_on_construct) {
-        js_template = FunctionTemplate::New(isolate, py_function_callback, js_self, Local<Signature>(), length, ConstructorBehavior::kThrow);
+        js_template = FunctionTemplate::New(isolate, CallbackBoundary<py_function_callback>::call, js_self, Local<Signature>(), length, ConstructorBehavior::kThrow);
     }
     else {
-        js_template = FunctionTemplate::New(isolate, py_function_callback, js_self, Local<Signature>(), length);
+        js_template = FunctionTemplate::New(isolate, CallbackBoundary<py_function_callback>::call, js_self, Local<Signature>(), length);
     }
     self->js_template->Reset(isolate, js_template);
     return (PyObject *) self;
@@ -112,10 +119,10 @@ py_function_to_template(PyObject *func, context_c* owner)
     templ = py_function_new(func, owner);
     PyErr_PROPAGATE(templ);
     if (PyDict_SetItem(cache, func, templ) < 0) {
-        Py_DECREF(templ);
+        Py_DECREF((PyObject*)templ);
         return NULL;
     }
-    Py_DECREF(templ);
+    Py_DECREF((PyObject*)templ);
     return PyDict_GetItem(cache, func);
 }
 
@@ -159,13 +166,13 @@ py_template_to_function(py_function *self, Local<Context> context)
 static void
 py_function_invoke(const FunctionCallbackInfo<Value> &info, py_function *self, Local<Context> context)
 {
-    PyObject *args = pys_from_jss(info, context);
-    JS_PROPAGATE_PY(args);
-    PyObject *result = PyObject_CallObject(self->function, args);
-    Py_XDECREF(args);
+    PythonArguments args(info.Length());
+    if (!args.valid() || !args.convert(info, context)) { js_throw_py(); return; }
+    PyOwnedRef callable(PyV8_NewRef(self->function));
+    PyObject *result = PyObject_Vectorcall(callable.get(), args.data(), args.size(), nullptr);
     JS_PROPAGATE_PY(result);
     Local<Value> js_result = js_from_py(result, context);
-    Py_XDECREF(result);
+    Py_XDECREF((PyObject*)result);
     if (js_result.IsEmpty()) {
         if (!PyErr_Occurred()) {
             PyErr_SetString(PyExc_RuntimeError, "failed to convert Python callback result");
@@ -186,7 +193,7 @@ py_function_callback(const FunctionCallbackInfo<Value> &info)
     py_function *self = (py_function *)IsolateState::callback_target(info.Data());
     if (self == nullptr) { js_throw_py(); return; }
     context_c* owner = context.IsEmpty() ? nullptr :
-        v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+        context_from_v8(context);
     if (owner == nullptr || !context_trace_enabled(owner)) {
         py_function_invoke(info, self, context);
         return;
@@ -195,8 +202,7 @@ py_function_callback(const FunctionCallbackInfo<Value> &info)
     // is observed like any other host method: the receiver is the Python object
     // the callable belongs to (None for a plain function), the arguments are the
     // JavaScript ones and the value is whatever the call produced.
-    PyObject* receiver = PyMethod_Check_abi3(self->function)
-        ? PyMethod_GET_SELF_abi3(self->function) : Py_None;
+    PyObject* receiver = self->receiver ? self->receiver : Py_None;
     faker::TraceScope observation(info, 2, self->function_name, receiver, owner);
     py_function_invoke(info, self, context);
 }

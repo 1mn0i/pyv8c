@@ -19,7 +19,7 @@ def test_toggle_existing_and_new_objects(initial):
             context.expose(new_target=Target())
             events.clear()
             previous = target.value
-            assert context.exec_js("[target.value,new_target.value,target.value=9,target.add(1,2)]") == [previous,5,9,3]
+            assert context.exec_js("[target.value,new_target.value,target.value=9,target.add(1,2)]").to_python() == [previous,5,9,3]
             assert bool(events) is enabled
             assert context.trace is enabled
             if enabled:

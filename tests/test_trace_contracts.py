@@ -64,7 +64,7 @@ def traced():
 def test_probes_are_reported_without_extra_reads(traced):
     """A probe is its own event: reads stay at one getter event each."""
     context, target, events = traced
-    assert context.exec_js("[typeof target.value, target.value, 'value' in target]") == ["number", 5, True]
+    assert context.exec_js("[typeof target.value, target.value, 'value' in target]").to_python() == ["number", 5, True]
     assert [(event[0], event[2], event[4]) for event in events if event[1] is target] == [
         ("get", "value", 5), ("get", "value", 5), ("has", "value", True),
     ]
@@ -129,7 +129,7 @@ def test_python_backed_function_calls_are_reported():
         context.glob["echo"] = host.echo
         context.glob["double"] = double
         events.clear()
-        assert context.exec_js("[echo(7), double(4)]") == [7, 8]
+        assert context.exec_js("[echo(7), double(4)]").to_python() == [7, 8]
         assert [(event[0], event[1] is host, event[2], event[3], event[4]) for event in events
                 if event[0] == "method"] == [
             ("method", True, "echo", (7,), 7),
@@ -141,7 +141,7 @@ def test_python_backed_function_calls_are_reported():
 
 def test_four_events_and_single_property_evaluation(traced):
     context, target, events = traced
-    assert context.exec_js("[target.value, target.value=7, target.add(2,3), target.alias(4,5)]") == [5, 7, 5, 9]
+    assert context.exec_js("[target.value, target.value=7, target.add(2,3), target.alias(4,5)]").to_python() == [5, 7, 5, 9]
     context.exec_js("new Target()")
     own = [event for event in events if event[1] is target]
     assert [(event[0], event[2], event[4]) for event in own if event[2] == "value"] == [
@@ -247,7 +247,7 @@ def test_no_javascript_trace_dispatch(traced):
     assert context.exec_js("typeof faker.hook") == "undefined"
     context.exec_js("faker.hook=false; faker.getter=faker.setter=faker.method=faker.construct=()=>{throw 123}")
     events.clear()
-    assert context.exec_js("[target.value,target.value=8,target.add(1,2),new Target().value]") == [5,8,3,5]
+    assert context.exec_js("[target.value,target.value=8,target.add(1,2),new Target().value]").to_python() == [5,8,3,5]
     assert {event[0] for event in events} == {"get", "set", "method", "construct"}
 
 

@@ -16,8 +16,9 @@ using namespace v8;
 
 static PyObject* js_object_read(js_object* self, PyObject* name) {
     if (!js_object_require_active(self)) return nullptr;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     Local<Value> key = js_from_py(name, context);
@@ -35,12 +36,17 @@ static PyObject* js_object_read(js_object* self, PyObject* name) {
 
 static PyObject* js_object_to_python(js_object* self, PyObject*) {
     if (!js_object_require_active(self)) return nullptr;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
-    PyObject* result = py_from_js(object, context);
+    TimeoutGuard guard(context);
+    if (!guard.start()) return nullptr;
+    PyObject* result = py_materialize(object, context);
+    if (!guard.stop()) { Py_XDECREF(result); return nullptr; }
+    if (tc.HasCaught()) Py_XDECREF(result);
     PY_PROPAGATE_JS;
     return result;
 }
@@ -51,8 +57,9 @@ static PyObject* js_object_string(js_object* self, PyObject*) {
 
 static PyObject* js_object_number(js_object* self, PyObject*) {
     if (!js_object_require_active(self)) return nullptr;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
@@ -68,8 +75,9 @@ static PyObject* js_object_number(js_object* self, PyObject*) {
 
 static PyObject* js_object_iterator_method(js_object* self, PyObject*) {
     if (!js_object_require_active(self)) return nullptr;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
@@ -85,8 +93,9 @@ static PyObject* js_object_iterator_method(js_object* self, PyObject*) {
 
 static PyObject* js_object_invoke(js_object* self, PyObject* args) {
     if (!js_object_require_active(self)) return nullptr;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     if (!object->IsCallable() || PyTuple_Size(args) < 1) {
@@ -111,8 +120,9 @@ static PyObject* js_object_invoke(js_object* self, PyObject* args) {
 
 static PyObject* js_object_keys(js_object* self, PyObject*) {
     if (!js_object_require_active(self)) return nullptr;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
@@ -124,40 +134,41 @@ static PyObject* js_object_keys(js_object* self, PyObject*) {
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
     if (!success) return nullptr;
-    return py_from_js(keys, context);
+    return py_materialize(keys, context);
 }
 
 static PyObject* js_object_is_array(js_object* self, PyObject*) {
     if (!js_object_require_active(self)) return nullptr;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     return PyBool_FromLong(self->object.Get(isolate)->IsArray());
 }
 
 PyMethodDef js_object_methods[] = {
-    {"_iterator_method", (PyCFunction)js_object_iterator_method, METH_NOARGS, nullptr},
-    {"_invoke", (PyCFunction)js_object_invoke, METH_VARARGS, nullptr},
-    {"_keys", (PyCFunction)js_object_keys, METH_NOARGS, nullptr},
-    {"_is_array", (PyCFunction)js_object_is_array, METH_NOARGS, nullptr},
-    {"_to_string", (PyCFunction)js_object_string, METH_NOARGS, nullptr},
-    {"_to_number", (PyCFunction)js_object_number, METH_NOARGS, nullptr},
-    {"_get", (PyCFunction)js_object_read, METH_O, "Read one property without eagerly converting objects."},
-    {"_to_python", (PyCFunction)js_object_to_python, METH_NOARGS, "Explicitly materialize an object using the default conversion."},
-    {"__dir__", (PyCFunction)js_object_dir, METH_NOARGS, NULL},
+    {"_iterator_method", (PyCFunction)PythonBoundary<js_object_iterator_method>::call, METH_NOARGS, nullptr},
+    {"_invoke", (PyCFunction)PythonBoundary<js_object_invoke>::call, METH_VARARGS, nullptr},
+    {"_keys", (PyCFunction)PythonBoundary<js_object_keys>::call, METH_NOARGS, nullptr},
+    {"_is_array", (PyCFunction)PythonBoundary<js_object_is_array>::call, METH_NOARGS, nullptr},
+    {"_to_string", (PyCFunction)PythonBoundary<js_object_string>::call, METH_NOARGS, nullptr},
+    {"_to_number", (PyCFunction)PythonBoundary<js_object_number>::call, METH_NOARGS, nullptr},
+    {"_get", (PyCFunction)PythonBoundary<js_object_read>::call, METH_O, "Read one property without eagerly converting objects."},
+    {"to_python", (PyCFunction)PythonBoundary<js_object_to_python>::call, METH_NOARGS, "Explicitly materialize arrays and plain objects."},
+    {"__dir__", (PyCFunction)PythonBoundary<js_object_dir>::call, METH_NOARGS, NULL},
     {NULL} };
 
 
 static PyType_Slot js_object_slots[] = {
-    {Py_tp_traverse, (void*)js_object_traverse},
-    {Py_tp_clear, (void*)js_object_clear},
-    {Py_tp_getattro, (void*)js_object_getattro},    // __getattribute__
-    {Py_tp_setattro, (void*)js_object_setattro},    // __setattribute__
-    {Py_mp_subscript, (void*)js_object_getattro},  // __getitem__
-    {Py_mp_ass_subscript, (void*)js_object_setattro},  // __setitem__
-    {Py_tp_iter, (void*)js_object_getiter},
-    {Py_tp_richcompare, (void*)js_object_richcompare},
-    {Py_tp_dealloc, (void*)js_object_dealloc},
-    {Py_tp_repr, (void*)js_object_repr},
+    {Py_tp_traverse, (void*)PythonBoundary<js_object_traverse>::call},
+    {Py_tp_clear, (void*)PythonBoundary<js_object_clear>::call},
+    {Py_tp_getattro, (void*)PythonBoundary<js_object_getattro>::call},    // __getattribute__
+    {Py_tp_setattro, (void*)PythonBoundary<js_object_setattro>::call},    // __setattribute__
+    {Py_mp_subscript, (void*)PythonBoundary<js_object_getattro>::call},  // __getitem__
+    {Py_mp_ass_subscript, (void*)PythonBoundary<js_object_setattro>::call},  // __setitem__
+    {Py_tp_iter, (void*)PythonBoundary<js_object_getiter>::call},
+    {Py_tp_richcompare, (void*)PythonBoundary<js_object_richcompare>::call},
+    {Py_tp_dealloc, (void*)PythonBoundary<js_object_dealloc>::call},
+    {Py_tp_repr, (void*)PythonBoundary<js_object_repr>::call},
     {Py_tp_methods, js_object_methods},
     {Py_tp_doc, (void*)"v8 Object"},
     {0, NULL} };
@@ -176,7 +187,7 @@ bool
 js_object_require_active(const js_object* self)
 {
     if (self == nullptr || self->isolate_state == nullptr || self->object.IsEmpty() ||
-        (self->registry_context && !context_is_active((context_c*)self->registry_context))) {
+        (self->registration.context && !context_is_active((context_c*)self->registration.context))) {
         PyErr_SetString(PyExc_RuntimeError, "JavaScript object has no active V8 isolate");
         return false;
     }
@@ -186,10 +197,10 @@ js_object_require_active(const js_object* self)
 static bool
 js_object_should_try_python_attribute(js_object* self, PyObject* name)
 {
-    if (Py_TYPE(self) != js_object_type &&
-        Py_TYPE(self) != js_function_type &&
-        Py_TYPE(self) != js_promise_type &&
-        Py_TYPE(self) != js_typedarray_type)
+    if (Py_TYPE((PyObject*)self) != js_object_type &&
+        Py_TYPE((PyObject*)self) != js_function_type &&
+        Py_TYPE((PyObject*)self) != js_promise_type &&
+        Py_TYPE((PyObject*)self) != js_typedarray_type)
     {
         return true;
     }
@@ -200,7 +211,7 @@ js_object_should_try_python_attribute(js_object* self, PyObject* name)
     const char* utf8_name = PyUnicode_AsUTF8AndSize(name, &length);
     if (utf8_name == NULL)
         return true;
-    return length == 0 || utf8_name[0] == '_';
+    return length == 0 || utf8_name[0] == '_' || PyUnicode_CompareWithASCIIString(name, "to_python") == 0;
 }
 
 void
@@ -217,10 +228,9 @@ js_object_set_persistent(js_object* self, Local<Object> object,
     if (!context.IsEmpty()) {
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
-            context_c* py_context = (context_c*)v8_compat::external_value(context_data);
+            context_c* py_context = context_from_v8(context);
             if (py_context == nullptr) return;
-            self->registry_context = (PyObject*)py_context;
-            context_register_handle(py_context, (PyObject*)self, (int (*)(PyObject*))js_object_clear);
+            self->registration.attach(py_context, (PyObject*)self, (int (*)(PyObject*))js_object_clear);
             if (retain_context) {
                 self->py_context = (PyObject*)py_context;
                 Py_INCREF(self->py_context);
@@ -247,6 +257,16 @@ int js_object_type_init()
 js_object *
 js_object_new(Local<Object> object, Local<Context> context)
 {
+    Local<Context> creation;
+    if (object->GetCreationContext().ToLocal(&creation) &&
+        creation->GetNumberOfEmbedderDataFields() > CONTEXT_OBJECT_SLOT) {
+        auto slot = creation->GetEmbedderData(CONTEXT_OBJECT_SLOT);
+        if (slot->IsExternal() && !context_is_active(
+                context_from_v8(creation))) {
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript object Context is closed");
+            return nullptr;
+        }
+    }
     IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
     IN_ISOLATE(isolate_state);
     Context::Scope cs(context);
@@ -276,12 +296,9 @@ void
 js_object_weak_callback(const WeakCallbackInfo<js_object> &info)
 {
     js_object *self = info.GetParameter();
-    if (!self->object.IsEmpty()) {
-        self->object.Reset();
-        self->isolate_state->release_v8_handle();
-    }
+    self->registration.reset(self->object, self->isolate_state);
     self->weak_owned = false;
-    self->isolate_state->defer_release((PyObject*)self);
+    self->isolate_state->defer_release(&self->deferred_release, (PyObject*)self);
 }
 
 js_object *
@@ -311,7 +328,7 @@ js_object_weak_new(Local<Object> object, Local<Context> context)
     if (self != NULL) {
         js_object_set_persistent(self, object, context, false);
         // The V8 weak callback owns this reference and releases it on GC.
-        Py_INCREF(self);
+        Py_INCREF((PyObject*)self);
         self->weak_owned = true;
         //self->object.SetWeak(self, js_object_weak_callback, WeakCallbackType::kFinalizer);
         self->object.SetWeak(self, js_object_weak_callback, WeakCallbackType::kParameter);
@@ -333,8 +350,9 @@ js_object_getattro(js_object *self, PyObject *name)
 
     if (!js_object_require_active(self))
         return NULL;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     Local<Value> js_name = js_from_py(name, context);
@@ -360,12 +378,12 @@ js_object_getattro(js_object *self, PyObject *name)
         PyObject *class_name = py_from_js(object->GetConstructorName(), context);
         PyErr_PROPAGATE(class_name);
         PyObject *class_name_string = PyObject_Str(class_name);
-        Py_XDECREF(class_name);
+        Py_XDECREF((PyObject*)class_name);
         PyErr_PROPAGATE(class_name_string);
 
         PyErr_Format(PyExc_AttributeError, "'%.50S' JavaScript object has no attribute '%.400S'", 
                 class_name_string, name);
-        Py_XDECREF(class_name_string);
+        Py_XDECREF((PyObject*)class_name_string);
         return NULL;
     }
 
@@ -383,7 +401,7 @@ js_object_getattro(js_object *self, PyObject *name)
     PyObject *value = py_from_js(local_js_value, context);
     PyErr_PROPAGATE(value);
     // if this was called like object.method() then bind the return value to make it callable
-    if (Py_TYPE(value) == js_function_type) {
+    if (Py_TYPE((PyObject*)value) == js_function_type) {
         js_function *func = (js_function *) value;
 
         func->js_this.Reset(isolate, object);
@@ -403,15 +421,16 @@ js_object_setattro(js_object *self, PyObject *name, PyObject *value)
         }
         else
         {
-            Py_XDECREF(attr_value);
+            Py_XDECREF((PyObject*)attr_value);
             return PyObject_GenericSetAttr((PyObject *)self, name, value);
         }
     }
 
     if (!js_object_require_active(self))
         return -1;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return -1;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return -1;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
@@ -448,7 +467,7 @@ js_object_getiter(js_object *self)
     PyObject *props = js_object_dir(self);
     PyErr_PROPAGATE(props);
     PyObject *iter = PySeqIter_New(props);
-    Py_XDECREF(props);
+    Py_XDECREF((PyObject*)props);
     return iter;
 }
 
@@ -457,8 +476,9 @@ js_object_dir(js_object *self)
 {
     if (!js_object_require_active(self))
         return NULL;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->object.Get(isolate);
     Local<Context> context = object->GetCreationContextChecked();
     Context::Scope cs(context);
@@ -479,7 +499,7 @@ js_object_dir(js_object *self)
     PyErr_PROPAGATE(py_properties);
 
     if (!timeout_guard.start()) {
-        Py_DECREF(py_properties);
+        Py_DECREF((PyObject*)py_properties);
         return NULL;
     }
     for (unsigned i = 0; i < properties->Length(); i++) {
@@ -487,7 +507,7 @@ js_object_dir(js_object *self)
         Local<Value> local_js_property;
         if (!js_property.ToLocal(&local_js_property)) {
             timeout_guard.stop();
-            Py_DECREF(py_properties);
+            Py_DECREF((PyObject*)py_properties);
             PY_PROPAGATE_JS;
             PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript property name");
             return NULL;
@@ -495,19 +515,19 @@ js_object_dir(js_object *self)
         PyObject *py_property = py_from_js(local_js_property, context);
         if (py_property == NULL) {
             timeout_guard.stop();
-            Py_DECREF(py_properties);
+            Py_DECREF((PyObject*)py_properties);
             return NULL;
         }
         if (PyList_SetItem(py_properties, i, py_property) < 0) {
             timeout_guard.stop();
-            Py_DECREF(py_property);
-            Py_DECREF(py_properties);
+            Py_DECREF((PyObject*)py_property);
+            Py_DECREF((PyObject*)py_properties);
             return NULL;
         }
     }
 
     if (!timeout_guard.stop()) {
-        Py_DECREF(py_properties);
+        Py_DECREF((PyObject*)py_properties);
         return NULL;
     }
 
@@ -534,9 +554,12 @@ js_object_richcompare(js_object* self, PyObject* other, int operation)
             PYV8_RETURN_TRUE;
         PYV8_RETURN_FALSE;
     }
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     JS_TRY;
+
+    if (!js_object_require_active(other_object)) return nullptr;
 
     Local<Object> js_obj = self->object.Get(isolate);
     Local<Object> js_obj_other = other_object->object.Get(isolate);
@@ -552,8 +575,9 @@ js_object_repr(js_object *self)
 {
     if (!js_object_require_active(self))
         return NULL;
-    IN_ISOLATE(self->isolate_state);
-    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
@@ -587,18 +611,13 @@ int js_object_clear(js_object* self)
     auto* state = self->isolate_state;
     std::unique_ptr<IsolateLockScope> lock;
     if (state != nullptr) lock.reset(new IsolateLockScope(state));
-    context_unregister_handle((context_c*)self->registry_context, (PyObject*)self);
-    self->registry_context = nullptr;
+    self->registration.detach();
     if (PyObject_TypeCheck((PyObject*)self, js_function_type))
         ((js_function*)self)->js_this.Reset();
-    if (!self->object.IsEmpty()) {
-        self->object.Reset();
-        if (self->isolate_state != nullptr)
-            self->isolate_state->release_v8_handle();
-    }
+    self->registration.reset(self->object, self->isolate_state);
     if (self->weak_owned) {
         self->weak_owned = false;
-        state->defer_release((PyObject*)self);
+        state->defer_release(&self->deferred_release, (PyObject*)self);
     }
     self->isolate_state = nullptr;
     Py_CLEAR(self->py_context);

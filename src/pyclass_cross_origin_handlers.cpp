@@ -127,8 +127,7 @@ bool cross_origin_access_check(
     v8::Local<v8::Context> accessing_context,
     v8::Local<v8::Object> accessed_object,
     v8::Local<v8::Value> unused_data) {
-    context_c* accessing_ctx_c = v8_compat::context_embedder_pointer<context_c>(
-        accessing_context, CONTEXT_OBJECT_SLOT);
+    context_c* accessing_ctx_c = context_from_v8(accessing_context);
     if (accessing_ctx_c == nullptr || accessing_ctx_c->py_global == nullptr)
         return false;
     PyObject* accessor = accessing_ctx_c->py_global;
@@ -137,8 +136,7 @@ bool cross_origin_access_check(
     if (!accessed_object->GetCreationContext().ToLocal(&accessed_context))
         return false;
 
-    context_c* interviewee_ctx_c = v8_compat::context_embedder_pointer<context_c>(
-        accessed_context, CONTEXT_OBJECT_SLOT);
+    context_c* interviewee_ctx_c = context_from_v8(accessed_context);
     if (interviewee_ctx_c == nullptr || interviewee_ctx_c->py_global == nullptr)
         return false;
     PyObject* interviewee = interviewee_ctx_c->py_global;
@@ -153,7 +151,7 @@ bool cross_origin_access_check(
         return false;
     }
     PyObject* value = PyObject_CallFunctionObjArgs(checker, accessor, nullptr);
-    Py_DECREF(checker);
+    Py_DECREF((PyObject*)checker);
     if (value == nullptr) {
         // Keep the Python exception pending in the accessing JS realm.  In
         // particular, browser embedders must be able to report SecurityError
@@ -163,7 +161,7 @@ bool cross_origin_access_check(
         return false;
     }
     bool allowed = value != Py_False;
-    Py_DECREF(value);
+    Py_DECREF((PyObject*)value);
     if (!allowed)
         return false;
     return true;

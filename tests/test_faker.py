@@ -79,7 +79,7 @@ def test_callbacks_forward_more_than_ten_arguments(context):
         const documentAll = faker.new_document_all(function () { return Array.from(arguments); });
         const nativeWrapper = faker.native_wrapper({cb: function () { return Array.from(arguments); }});
         [documentAll(...args), nativeWrapper(...args)];
-    """) == [list(range(32)), list(range(32))]
+    """).to_python() == [list(range(32)), list(range(32))]
 
 
 def test_run_js_requires_string_source(context):

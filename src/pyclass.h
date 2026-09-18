@@ -33,11 +33,8 @@ PyObject* py_class_handler(PyObject* receiver, const char* name, context_c* cont
 void delete_constructor(py_class* self, v8::Local<v8::Context> context);
 enum PythonObjectInternalField {
     PYTHON_MAGIC_FIELD = 0,
-    PYTHON_OBJECT_FIELD = 1,
-    PYTHON_EXCEPTION_TYPE_FIELD = 2,
-    PYTHON_TRACEBACK_FIELD = 3,
-    PYTHON_OWNER_FIELD = 4,
-    OBJECT_INTERNAL_FIELDS = 5,
+    PYTHON_OWNER_FIELD = 1,
+    OBJECT_INTERNAL_FIELDS = 2,
 };
 
 void py_class_construct_callback(const v8::FunctionCallbackInfo<v8::Value>& info);
@@ -73,8 +70,6 @@ void indexed_enumerator(const v8::PropertyCallbackInfo<v8::Array>& info);
 v8::Intercepted indexed_definer(uint32_t index, const v8::PropertyDescriptor& desc, const v8::PropertyCallbackInfo<v8::Boolean>& info);
 v8::Intercepted indexed_descriptor(uint32_t index, const v8::PropertyCallbackInfo<v8::Value>& info);
 
-void py_class_property_getter(v8::Local<v8::Name> js_name, const v8::PropertyCallbackInfo<v8::Value>& info);
-void py_class_property_setter(v8::Local<v8::Name> js_name, v8::Local<v8::Value> js_value, const v8::PropertyCallbackInfo<void>& info);
 
 void py_attribute_for_get(const v8::FunctionCallbackInfo<v8::Value>& info);
 void py_attribute_for_instance_set(const v8::FunctionCallbackInfo<v8::Value>& info);

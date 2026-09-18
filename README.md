@@ -1,5 +1,8 @@
 # pyv8
 
+桥接内核重构后的接口和关闭语义见 [BRIDGE_KERNEL](doc/BRIDGE_KERNEL.md)，
+实测结果和待验收事项见 [重构报告](doc/BRIDGE_REFACTOR_RESULTS.md)。
+
 pyv8 是一个基于 Google V8 的 CPython C++ 扩展，用于在 Python 中执行 JavaScript，
 并在 Python 对象与 V8 对象之间建立双向桥接。
 
@@ -23,14 +26,14 @@ pyv8 更关注 Chromium-like 构造器、原型链、属性描述符、intercept
 - 创建多个相互隔离的 V8 Isolate
 - 在 Python 与 JavaScript 之间可靠传播异常
 - 通过 Chrome DevTools 调试嵌入式 V8 Context
-- 使用 CPython Limited API 构建 `cp310-abi3` 扩展
+- 使用 CPython Limited API 构建 `cp312-abi3` 扩展
 
 ## 支持范围
 
 | 项目 | 当前状态 |
 | --- | --- |
-| CPython | 3.10 至 3.14 |
-| Python ABI | `cp310-abi3` |
+| CPython | 3.12 至 3.14 |
+| Python ABI | `cp312-abi3` |
 | 默认 V8 | `15.2.20.1` |
 | Windows | 主要开发和完整测试平台 |
 | Linux/macOS | 包含构建分支，需要在目标平台编译并验证 V8 产物 |
@@ -115,10 +118,10 @@ IDL 映射统一使用 C++ 定义的 `pyv8.IdlSpec`，完整字段与 realm 装�
 下载与目标操作系统和 CPU 架构匹配的 wheel，然后执行：
 
 ```bash
-python -m pip install path/to/pyv8-2.1.2-cp310-abi3-<platform>.whl
+python -m pip install path/to/pyv8-2.1.2-cp312-abi3-<platform>.whl
 ```
 
-`cp310-abi3` wheel 可以由 CPython 3.10 至 3.14 加载，但 Windows、Linux、macOS
+`cp312-abi3` wheel 可以由 CPython 3.12 至 3.14 加载，但 Windows、Linux、macOS
 以及 x64、arm64 仍然需要各自对应的 wheel。
 
 ### 从源码构建
@@ -157,7 +160,7 @@ python setup.py build_v8 --select --proxy=http://127.0.0.1:7890
 构建 ABI3 wheel：
 
 ```bash
-python310 -m build --wheel
+python312 -m build --wheel
 ```
 
 Windows 构建 V8 `15.2.20.1` 时，建议显式设置工具链路径：
@@ -228,7 +231,7 @@ finally:
 
 ## 测试
 
-项目使用 tox 4 构建一次 `cp310-abi3` wheel，并在 Python 3.10 至 3.14 的隔离环境中
+项目使用 tox 4 构建一次 `cp312-abi3` wheel，并在 Python 3.12 至 3.14 的隔离环境中
 安装和测试同一个 wheel：
 
 ```bash
@@ -238,7 +241,7 @@ python314 -m tox
 只测试指定版本：
 
 ```bash
-python314 -m tox -e py310
+python314 -m tox -e py312
 python314 -m tox -e py314
 ```
 

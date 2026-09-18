@@ -13,21 +13,21 @@ static PyObject* isolate_gc(isolate_c* self, PyObject* args);
 static PyObject* isolate_get_closed(isolate_c* self, void* closure);
 
 static PyMethodDef isolate_methods[] = {
-    {"close", (PyCFunction)isolate_close, METH_NOARGS, "close this V8 isolate"},
-    {"context", (PyCFunction)isolate_context, METH_VARARGS | METH_KEYWORDS,
+    {"close", (PyCFunction)PythonBoundary<isolate_close>::call, METH_NOARGS, "close this V8 isolate"},
+    {"context", (PyCFunction)PythonBoundary<isolate_context>::call, METH_VARARGS | METH_KEYWORDS,
      "create a Context owned by this isolate"},
-    {"gc", (PyCFunction)isolate_gc, METH_NOARGS, "request a full V8 garbage collection"},
+    {"gc", (PyCFunction)PythonBoundary<isolate_gc>::call, METH_NOARGS, "request a full V8 garbage collection"},
     {nullptr},
 };
 
 static PyGetSetDef isolate_getset[] = {
-    {(char*)"closed", (getter)isolate_get_closed, nullptr, nullptr, nullptr},
+    {(char*)"closed", (getter)PythonBoundary<isolate_get_closed>::call, nullptr, nullptr, nullptr},
     {nullptr},
 };
 
 static PyType_Slot isolate_slots[] = {
-    {Py_tp_new, (void*)isolate_new},
-    {Py_tp_dealloc, (void*)isolate_dealloc},
+    {Py_tp_new, (void*)PythonBoundary<isolate_new>::call},
+    {Py_tp_dealloc, (void*)PythonBoundary<isolate_dealloc>::call},
     {Py_tp_methods, isolate_methods},
     {Py_tp_getset, isolate_getset},
     {Py_tp_doc, (void*)"independent V8 isolate"},
@@ -127,11 +127,11 @@ isolate_context(isolate_c* self, PyObject* args, PyObject* kwargs)
         return nullptr;
     if (PyDict_SetItemString(call_kwargs, "isolate", (PyObject*)self) < 0)
     {
-        Py_DECREF(call_kwargs);
+        Py_DECREF((PyObject*)call_kwargs);
         return nullptr;
     }
     PyObject* result = PyObject_Call((PyObject*)context_type, args, call_kwargs);
-    Py_DECREF(call_kwargs);
+    Py_DECREF((PyObject*)call_kwargs);
     return result;
 }
 

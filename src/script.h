@@ -2,6 +2,7 @@
 #include <v8.h>
 
 #include "pyv8.h"
+#include "handle_resource.h"
 
 typedef struct {
     PyObject_HEAD
@@ -9,6 +10,7 @@ typedef struct {
     v8::Persistent<v8::UnboundScript> script;
     PyObject* py_isolate;
     PyObject* py_context;
+    HandleRegistration registration;
     PyObject *source;
     PyObject *script_name;
 } script_c;

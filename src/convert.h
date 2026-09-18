@@ -6,6 +6,31 @@
 #include <memory>
 #include <new>
 
+class PythonArguments {
+public:
+    explicit PythonArguments(size_t size) : size_(size) {
+        if (size > 8) {
+            heap_.reset(new (std::nothrow) PyObject*[size]());
+            values_ = heap_.get();
+            if (!values_) PyErr_NoMemory();
+        }
+    }
+    ~PythonArguments() {
+        if (values_) for (size_t i = 0; i < size_; ++i) Py_XDECREF(values_[i]);
+    }
+    PythonArguments(const PythonArguments&) = delete;
+    bool valid() const { return values_ != nullptr; }
+    PyObject* const* data() const { return values_; }
+    size_t size() const { return size_; }
+    bool convert(const v8::FunctionCallbackInfo<v8::Value>& info,
+                 v8::Local<v8::Context> context, PyObject* receiver = nullptr);
+private:
+    size_t size_;
+    PyObject* inline_[8] = {};
+    std::unique_ptr<PyObject*[]> heap_;
+    PyObject** values_ = inline_;
+};
+
 class V8ValueArguments
 {
 public:
@@ -34,6 +59,7 @@ private:
 };
 
 PyObject *py_from_js(v8::Local<v8::Value> js_value, v8::Local<v8::Context> context);
+PyObject *py_materialize(v8::Local<v8::Value> value, v8::Local<v8::Context> context);
 PyObject *py_argument_from_js(v8::Local<v8::Value> value, v8::Local<v8::Context> context);
 v8::Local<v8::Value> js_from_py(PyObject *py_value, v8::Local<v8::Context> context);
 v8::Local<v8::Value> js_from_py(PyObject *py_value, v8::Local<v8::Context> context, v8::Isolate* isolate);

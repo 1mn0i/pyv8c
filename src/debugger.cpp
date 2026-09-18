@@ -17,9 +17,9 @@ static void call_callback(debugger_c* self, const char* name) {
     PyObject* callback = PyObject_GetAttrString((PyObject*)self, name);
     if (!callback) { PyErr_Clear(); return; }
     PyObject* result = PyObject_CallNoArgs(callback);
-    Py_DECREF(callback);
+    Py_DECREF((PyObject*)callback);
     if (!result) PyErr_WriteUnraisable((PyObject*)self);
-    else Py_DECREF(result);
+    else Py_DECREF((PyObject*)result);
 }
 struct InspectorChannel : V8Inspector::Channel {
     debugger_c* owner;
@@ -35,11 +35,11 @@ struct InspectorChannel : V8Inspector::Channel {
         PyObject* callback = PyObject_GetAttrString((PyObject*)owner, "handle");
         if (callback) {
             PyObject* result = PyObject_CallFunctionObjArgs(callback, text, nullptr);
-            Py_DECREF(callback);
+            Py_DECREF((PyObject*)callback);
             if (!result) PyErr_WriteUnraisable((PyObject*)owner);
-            else Py_DECREF(result);
+            else Py_DECREF((PyObject*)result);
         } else PyErr_Clear();
-        Py_DECREF(text);
+        Py_DECREF((PyObject*)text);
     }
     void sendResponse(int, std::unique_ptr<StringBuffer> message) override { deliver(std::move(message)); }
     void sendNotification(std::unique_ptr<StringBuffer> message) override { deliver(std::move(message)); }
@@ -79,11 +79,11 @@ struct InspectorHub : V8InspectorClient {
         });
         if (found == sessions.end()) return;
         debugger_c* owner = *found;
-        Py_INCREF(owner);
+        Py_INCREF((PyObject*)owner);
         pause_stack.push_back(owner);
         call_callback(owner, "run_loop");
         pause_stack.pop_back();
-        Py_DECREF(owner);
+        Py_DECREF((PyObject*)owner);
     }
     void quitMessageLoopOnPause() override {
         if (!pause_stack.empty()) call_callback(pause_stack.back(), "quit_loop");
@@ -125,7 +125,7 @@ static int debugger_init(debugger_c* self, PyObject* args, PyObject* kwargs) {
     } else state->group = found->second;
     state->channel = std::make_unique<InspectorChannel>(self);
     state->session = hub.inspector->connect(state->group, state->channel.get(), StringView(), V8Inspector::kFullyTrusted);
-    Py_INCREF(context_object);
+    Py_INCREF((PyObject*)context_object);
     self->context = context;
     self->state = state.release();
     hub.sessions.push_back(self);
@@ -226,7 +226,7 @@ void debugger_context_closed(context_c* context) {
     for (auto session : sessions) {
         if (session->context != context) continue;
         PyObject* result = debugger_disconnect(session, nullptr);
-        Py_XDECREF(result);
+        Py_XDECREF((PyObject*)result);
     }
 }
 void debugger_prepare_script(context_c* context) {
@@ -246,28 +246,28 @@ static void debugger_dealloc(debugger_c* self) {
     if (self->state) {
         self->state->channel->enabled = false;
         PyObject* result = debugger_disconnect(self, nullptr);
-        Py_XDECREF(result);
+        Py_XDECREF((PyObject*)result);
         delete self->state;
     }
-    Py_XDECREF(self->context);
+    Py_XDECREF((PyObject*)self->context);
     TP_FREE_ABI3(debugger_type, self);
 }
 static PyMethodDef debugger_methods[] = {
-    {"send", (PyCFunction)debugger_send, METH_O, nullptr},
-    {"schedule_pause_on_next_statement", (PyCFunction)debugger_schedule_pause, METH_VARARGS | METH_KEYWORDS, nullptr},
-    {"cancel_pause_on_next_statement", (PyCFunction)debugger_cancel_pause, METH_NOARGS, nullptr},
-    {"resume", (PyCFunction)debugger_resume, METH_NOARGS, nullptr},
-    {"disconnect", (PyCFunction)debugger_disconnect, METH_NOARGS, nullptr},
+    {"send", (PyCFunction)PythonBoundary<debugger_send>::call, METH_O, nullptr},
+    {"schedule_pause_on_next_statement", (PyCFunction)PythonBoundary<debugger_schedule_pause>::call, METH_VARARGS | METH_KEYWORDS, nullptr},
+    {"cancel_pause_on_next_statement", (PyCFunction)PythonBoundary<debugger_cancel_pause>::call, METH_NOARGS, nullptr},
+    {"resume", (PyCFunction)PythonBoundary<debugger_resume>::call, METH_NOARGS, nullptr},
+    {"disconnect", (PyCFunction)PythonBoundary<debugger_disconnect>::call, METH_NOARGS, nullptr},
     {nullptr}
 };
 static PyGetSetDef debugger_getsets[] = {
-    {"isolate_id", (getter)debugger_isolate_id, nullptr, nullptr, nullptr},
+    {"isolate_id", (getter)PythonBoundary<debugger_isolate_id>::call, nullptr, nullptr, nullptr},
     {nullptr}
 };
 PyTypeObject* debugger_type = nullptr;
 static PyType_Slot debugger_slots[] = {
-    {Py_tp_dealloc, (void*)debugger_dealloc},
-    {Py_tp_new, (void*)debugger_new},
+    {Py_tp_dealloc, (void*)PythonBoundary<debugger_dealloc>::call},
+    {Py_tp_new, (void*)PythonBoundary<debugger_new>::call},
     {Py_tp_init, (void*)debugger_init},
     {Py_tp_methods, debugger_methods},
     {Py_tp_getset, debugger_getsets},

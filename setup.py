@@ -17,7 +17,7 @@ from setuptools import Command, Extension, setup
 from setuptools.command.build_ext import build_ext
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-ABI3_MINIMUM_PYTHON = (3, 10)
+ABI3_MINIMUM_PYTHON = (3, 12)
 ABI3_BUILD_OVERRIDE = 'PYV8_ALLOW_NEWER_ABI3_BUILD'
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -57,6 +57,16 @@ if sys.platform.startswith('linux'):
 
 if sys.platform.startswith('darwin'):
     extra_compile_args.append('-stdlib=libc++')
+
+if os.environ.get('PYV8_SANITIZERS'):
+    if os.name == 'nt':
+        raise RuntimeError('PYV8_SANITIZERS requires the Linux validation environment')
+    sanitizers = os.environ['PYV8_SANITIZERS'].split(',')
+    if not set(sanitizers) <= {'address', 'undefined'}:
+        raise RuntimeError('PYV8_SANITIZERS accepts address,undefined')
+    flags = ['-fsanitize=' + ','.join(sanitizers), '-fno-omit-frame-pointer']
+    extra_compile_args.extend(flags + ['-O1', '-g'])
+    extra_link_args.extend(flags)
 
 
 class PyV8BuildExt(build_ext):
@@ -346,7 +356,7 @@ ext_modules = [
         libraries=libraries,
         extra_compile_args=extra_compile_args,
         extra_link_args=extra_link_args,
-        define_macros=[('Py_LIMITED_API', '0x030A0000')],
+        define_macros=[('Py_LIMITED_API', '0x030C0000')],
         py_limited_api=True,
         language='c++'
     )
@@ -360,5 +370,5 @@ setup(
         'build_v8': BuildV8,
         'list_v8_versions': ListV8Versions,
     },
-    options={'bdist_wheel': {'py_limited_api': 'cp310'}},
+    options={'bdist_wheel': {'py_limited_api': 'cp312'}},
 )

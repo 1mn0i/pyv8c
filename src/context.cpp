@@ -25,8 +25,15 @@ static int context_clear(context_c* self);
 static int context_traverse(context_c* self, visitproc visit, void* arg);
 
 bool context_is_active(context_c* self) {
-    return self != nullptr && !self->closing && self->isolate_state != nullptr &&
+    return self != nullptr && self->state == ContextState::Active && self->isolate_state != nullptr &&
         !self->js_context.IsEmpty();
+}
+
+context_c* context_from_v8(Local<Context> context) {
+    if (context.IsEmpty() || context->GetNumberOfEmbedderDataFields() <= CONTEXT_OBJECT_SLOT)
+        return nullptr;
+    auto* lifetime = v8_compat::context_embedder_pointer<ContextLifetime>(context, CONTEXT_OBJECT_SLOT);
+    return lifetime ? lifetime->owner : nullptr;
 }
 
 bool context_check_callback(Local<Context> context) {
@@ -35,7 +42,7 @@ bool context_check_callback(Local<Context> context) {
         (context->GetNumberOfEmbedderDataFields() <= CONTEXT_OBJECT_SLOT ||
          !context->GetEmbedderData(CONTEXT_OBJECT_SLOT)->IsExternal())) return true;
     auto* owner = context.IsEmpty() ? nullptr :
-        v8_compat::context_embedder_pointer<context_c>(context, CONTEXT_OBJECT_SLOT);
+        context_from_v8(context);
     if (context_is_active(owner)) return true;
     auto* isolate = Isolate::GetCurrent();
     isolate->ThrowException(Exception::Error(V8String(isolate, "V8 context is closed")));
@@ -52,18 +59,29 @@ void context_unregister_handle(context_c* self, PyObject* handle) {
 }
 
 bool context_retain_dependency(Local<Context> target, PyObject* source) {
-    auto* owner = v8_compat::context_embedder_pointer<context_c>(target, CONTEXT_OBJECT_SLOT);
+    auto* owner = context_from_v8(target);
     if (source == nullptr || owner == nullptr || source == (PyObject*)owner) return true;
     if (owner->dependencies == nullptr) owner->dependencies = PyList_New(0);
     if (owner->dependencies == nullptr) return false;
     for (Py_ssize_t i = 0; i < PyList_Size(owner->dependencies); ++i)
         if (PyList_GetItem(owner->dependencies, i) == source) return true;
-    if (PyList_Append(owner->dependencies, source) < 0) return false;
     auto* origin = (context_c*)source;
-    if (origin->resources == nullptr) origin->resources = new ContextResources();
-    if (owner->resources == nullptr) owner->resources = new ContextResources();
-    origin->resources->dependents.insert(owner);
-    owner->resources->dependencies.insert(origin);
+    try {
+        if (origin->resources == nullptr) origin->resources = new ContextResources();
+        if (owner->resources == nullptr) owner->resources = new ContextResources();
+        origin->resources->dependents.insert(owner);
+        owner->resources->dependencies.insert(origin);
+    } catch (const std::bad_alloc&) {
+        if (origin->resources) origin->resources->dependents.erase(owner);
+        if (owner->resources) owner->resources->dependencies.erase(origin);
+        PyErr_NoMemory();
+        return false;
+    }
+    if (PyList_Append(owner->dependencies, source) < 0) {
+        origin->resources->dependents.erase(owner);
+        owner->resources->dependencies.erase(origin);
+        return false;
+    }
     return true;
 }
 
@@ -88,18 +106,18 @@ static void context_unlink_dependencies(context_c* self) {
 }
 
 PyMethodDef context_methods[] = {
-    {"_try_inspector", (PyCFunction)context_try_inspector, METH_VARARGS, NULL},
-    {"exec_js", (PyCFunction)context_run, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"js_obj", (PyCFunction)context_js_obj, METH_O, NULL},
-    {"expose", (PyCFunction)context_expose, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"expose_module", (PyCFunction)context_expose_module, METH_O, NULL},
-    {"declare_lazy", (PyCFunction)context_declare_lazy, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"update_configs", (PyCFunction)context_update_configs, METH_O, NULL},
-    {"gc", (PyCFunction)context_gc, METH_NOARGS, NULL},
-    {"enqueue_microtask", (PyCFunction)context_enqueue_microtask, METH_O, NULL},
-    {"set_error_hooks", (PyCFunction)context_set_error_hooks,
+    {"_try_inspector", (PyCFunction)PythonBoundary<context_try_inspector>::call, METH_VARARGS, NULL},
+    {"exec_js", (PyCFunction)PythonBoundary<context_run>::call, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"js_obj", (PyCFunction)PythonBoundary<context_js_obj>::call, METH_O, NULL},
+    {"expose", (PyCFunction)PythonBoundary<context_expose>::call, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"expose_module", (PyCFunction)PythonBoundary<context_expose_module>::call, METH_O, NULL},
+    {"declare_lazy", (PyCFunction)PythonBoundary<context_declare_lazy>::call, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"update_configs", (PyCFunction)PythonBoundary<context_update_configs>::call, METH_O, NULL},
+    {"gc", (PyCFunction)PythonBoundary<context_gc>::call, METH_NOARGS, NULL},
+    {"enqueue_microtask", (PyCFunction)PythonBoundary<context_enqueue_microtask>::call, METH_O, NULL},
+    {"set_error_hooks", (PyCFunction)PythonBoundary<context_set_error_hooks>::call,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"close", (PyCFunction)context_close, METH_NOARGS, NULL},
+    {"close", (PyCFunction)PythonBoundary<context_close>::call, METH_NOARGS, NULL},
     {NULL},
 };
 
@@ -126,14 +144,14 @@ static PyObject* context_try_inspector(context_c* self, PyObject* args) {
     if (!scope.entered()) {
         auto& waiters = state->inspector_waiters;
         if (std::find(waiters.begin(), waiters.end(), wake) == waiters.end()) {
-            Py_INCREF(wake);
+            Py_INCREF((PyObject*)wake);
             waiters.push_back(wake);
         }
         Py_RETURN_FALSE;
     }
     PyObject* result = PyObject_CallNoArgs(callback);
     if (!result) return nullptr;
-    Py_DECREF(result);
+    Py_DECREF((PyObject*)result);
     Py_RETURN_TRUE;
 }
 // Python is wrong. The first entry is not modifiable and should be const char *
@@ -144,23 +162,23 @@ static PyObject* context_isolate_id(context_c* self, void*) {
 }
 
 PyGetSetDef context_getset[] = {
-    {(char*)"isolate_id", (getter)context_isolate_id, NULL, NULL, NULL},
-    {(char*)"glob", (getter)context_get_global, NULL, NULL, NULL},
-    {(char*)"trace", (getter)context_get_trace, (setter)context_set_trace, NULL, NULL},
-    {(char*)"timeout", (getter)context_get_timeout, (setter)context_set_timeout, NULL, NULL},
+    {(char*)"isolate_id", (getter)PythonBoundary<context_isolate_id>::call, NULL, NULL, NULL},
+    {(char*)"glob", (getter)PythonBoundary<context_get_global>::call, NULL, NULL, NULL},
+    {(char*)"trace", (getter)PythonBoundary<context_get_trace>::call, (setter)PythonBoundary<context_set_trace>::call, NULL, NULL},
+    {(char*)"timeout", (getter)PythonBoundary<context_get_timeout>::call, (setter)PythonBoundary<context_set_timeout>::call, NULL, NULL},
     {NULL},
 };
 // We don't need mapping methods for ABI3 compatibility
 
 // For ABI3 compatibility, we'll define the type using PyType_Spec
 static PyType_Slot context_slots[] = {
-    {Py_tp_traverse, (void*)context_traverse},
-    {Py_tp_clear, (void*)context_clear},
-    {Py_tp_dealloc, (void*)context_dealloc},
-    {Py_tp_new, (void*)context_new},
+    {Py_tp_traverse, (void*)PythonBoundary<context_traverse>::call},
+    {Py_tp_clear, (void*)PythonBoundary<context_clear>::call},
+    {Py_tp_dealloc, (void*)PythonBoundary<context_dealloc>::call},
+    {Py_tp_new, (void*)PythonBoundary<context_new>::call},
     {Py_tp_methods, context_methods},
-    {Py_tp_getattro, (void*)context_getattro},
-    {Py_tp_setattro, (void*)context_setattro},
+    {Py_tp_getattro, (void*)PythonBoundary<context_getattro>::call},
+    {Py_tp_setattro, (void*)PythonBoundary<context_setattro>::call},
     {Py_tp_getset, context_getset},
     {Py_tp_doc, (void*)"v8 context"},
     // We can't use Py_tp_as_mapping in Limited API
@@ -204,12 +222,11 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* lazy_factory = Py_None;
     PyObject* trace_callback = Py_None;
     PyObject* traceable = Py_False;
-    int preserve_arguments = 0;
-    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "class_configs", "lazy_factory", "trace_callback", "traceable", "preserve_arguments", NULL};
+    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "class_configs", "lazy_factory", "trace_callback", "traceable", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOOOOp", (char **) keywords,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOOOO", (char **) keywords,
                                     &global, &trace, &ctx_type, &timeout, &py_isolate,
-                                    &class_configs, &lazy_factory, &trace_callback, &traceable, &preserve_arguments)) {
+                                    &class_configs, &lazy_factory, &trace_callback, &traceable)) {
         return NULL;
     }
 
@@ -232,23 +249,23 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
             PyObject* no_args = PyTuple_New(0);
             PyErr_PROPAGATE(no_args);
             global = PyObject_Call(global, no_args, NULL);
-            Py_XDECREF(no_args);
+            Py_XDECREF((PyObject*)no_args);
             PyErr_PROPAGATE(global);
         }
         else {
-            Py_INCREF(global);
+            Py_INCREF((PyObject*)global);
         }
     }
 
     context_c* self = (context_c*)PyType_GenericAlloc(type, 0);
     if (self == NULL) {
-        Py_XDECREF(global);
+        Py_XDECREF((PyObject*)global);
         return NULL;
     }
     self->isolate_state = isolate_state;
     self->py_isolate = nullptr;
     if (py_isolate != Py_None) {
-        Py_INCREF(py_isolate);
+        Py_INCREF((PyObject*)py_isolate);
         self->py_isolate = py_isolate;
     }
     self->js_object_cache = NULL;
@@ -271,17 +288,17 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         if (!PyMapping_Check(class_configs)) {
             PyErr_SetString(PyExc_TypeError, "class_configs must be a mapping or None");
             Py_DECREF((PyObject*)self);
-            Py_XDECREF(global);
+            Py_XDECREF((PyObject*)global);
             return NULL;
         }
         if (PyDict_Update(self->class_configs, class_configs) < 0) {
             Py_DECREF((PyObject*)self);
-            Py_XDECREF(global);
+            Py_XDECREF((PyObject*)global);
             return NULL;
         }
     }
     if (lazy_factory != Py_None) {
-        Py_INCREF(lazy_factory);
+        Py_INCREF((PyObject*)lazy_factory);
         self->lazy_factory = lazy_factory;
     }
     self->py_global = global;
@@ -289,16 +306,15 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->timeout = timeout;
     self->trace = trace == Py_True;
     self->traceable = self->trace || traceable == Py_True;
-    self->preserve_arguments = preserve_arguments != 0;
     self->trace_depth = 0;
     if (trace_callback != Py_None) {
-        Py_INCREF(trace_callback);
+        Py_INCREF((PyObject*)trace_callback);
         self->trace_callback = trace_callback;
     } else if (self->traceable) {
         PyObject* module = PyImport_ImportModule("pyv8.trace");
         if (module != nullptr) {
             self->trace_callback = PyObject_GetAttrString(module, "log_trace");
-            Py_DECREF(module);
+            Py_DECREF((PyObject*)module);
         }
         if (self->trace_callback == nullptr) {
             Py_DECREF((PyObject*)self);
@@ -309,15 +325,15 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     if (ctx_type == NULL) {
         ctx_type = PyUnicode_FromString("Top");
     } else {
-        Py_INCREF(ctx_type);
+        Py_INCREF((PyObject*)ctx_type);
     }
     if (self->class_configs != NULL && !idl_spec_validate_configs(self->class_configs)) {
-        Py_XDECREF(ctx_type);
+        Py_XDECREF((PyObject*)ctx_type);
         Py_DECREF((PyObject*)self);
         return NULL;
     }
     if (ctx_type == NULL || self->class_template_cache == NULL || self->function_template_cache == NULL || self->class_configs == NULL || self->resolving_classes == nullptr || self->lazy_names == nullptr) {
-        Py_XDECREF(ctx_type);
+        Py_XDECREF((PyObject*)ctx_type);
         Py_DECREF((PyObject*)self);
         return NULL;
     }
@@ -328,9 +344,9 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         self->trace_event_names = Py_BuildValue(
             "(ssssss)", "get", "set", "method", "construct", "has", "descriptor");
         self->trace_context_type = ctx_type;
-        Py_INCREF(ctx_type);
+        Py_INCREF((PyObject*)ctx_type);
         if (self->trace_event_names == nullptr) {
-            Py_DECREF(ctx_type);
+            Py_DECREF((PyObject*)ctx_type);
             Py_DECREF((PyObject*)self);
             return nullptr;
         }
@@ -344,19 +360,19 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
             global_type = PyObject_GetAttrString(global, "__class__");
         }
         else {
-            global_type = (PyObject*)Py_TYPE(global);
-            Py_INCREF(global_type);
+            global_type = (PyObject*)Py_TYPE((PyObject*)global);
+            Py_INCREF((PyObject*)global_type);
         }
         if (global_type == NULL) {
-            Py_DECREF(ctx_type);
+            Py_DECREF((PyObject*)ctx_type);
             Py_DECREF((PyObject*)self);
             return NULL;
         }
         py_class* templ;
         templ = (py_class*)py_class_to_template(global_type, self);
-        Py_XDECREF(global_type);
+        Py_XDECREF((PyObject*)global_type);
         if (templ == NULL) {
-            Py_DECREF(ctx_type);
+            Py_DECREF((PyObject*)ctx_type);
             Py_DECREF((PyObject*)self);
             return NULL;
         }
@@ -374,8 +390,10 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     // add env to vm
     //IN_CONTEXT(self->js_context.Get(isolate));
     context->SetEmbedderData(CTX_TYPE, V8String(isolate, PyUnicode_AsUTF8_abi3(ctx_type)));
-    Py_DECREF(ctx_type);
-    context->SetEmbedderData(CONTEXT_OBJECT_SLOT, v8_compat::external_new(isolate, self));
+    Py_DECREF((PyObject*)ctx_type);
+    if (!self->resources) self->resources = new ContextResources();
+    if (!self->resources->lifetime) self->resources->lifetime = std::make_shared<ContextLifetime>(self);
+    context->SetEmbedderData(CONTEXT_OBJECT_SLOT, v8_compat::external_new(isolate, self->resources->lifetime.get()));
     context->SetEmbedderData(OBJECT_PROTOTYPE_SLOT, Object::New(isolate)->GetPrototype());
     context->SetEmbedderData(ERROR_PROTOTYPE_SLOT, Exception::Error(String::Empty(isolate)).As<Object>()->GetPrototype());
 
@@ -385,13 +403,13 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         return NULL;
     }
     PyObject *weak_key_dict = PyObject_GetAttrString(weakref_module, "WeakKeyDictionary");
-    Py_DECREF(weakref_module);
+    Py_DECREF((PyObject*)weakref_module);
     if (weak_key_dict == NULL) {
         Py_DECREF((PyObject*)self);
         return NULL;
     }
     self->js_object_cache = PyObject_CallObject(weak_key_dict, NULL);
-    Py_DECREF(weak_key_dict);
+    Py_DECREF((PyObject*)weak_key_dict);
     if (self->js_object_cache == NULL) {
         Py_DECREF((PyObject*)self);
         return NULL;
@@ -410,7 +428,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 void
 context_finish_close(context_c *self)
 {
-    self->closing = true;
+    self->state = ContextState::Closing;
     debugger_context_closed(self);
     context_unlink_dependencies(self);
     if (self->isolate_state != nullptr) {
@@ -432,6 +450,7 @@ context_finish_close(context_c *self)
         self->resources = nullptr;
     }
     Py_CLEAR(self->function_template_cache);
+    Py_CLEAR(self->callback_targets);
     Py_CLEAR(self->uncaught_handler);
     Py_CLEAR(self->rejection_handler);
     Py_CLEAR(self->dependencies);
@@ -454,7 +473,7 @@ context_finish_close(context_c *self)
     Py_CLEAR(self->js_object_cache);
     Py_CLEAR(self->py_isolate);
     self->isolate_state = nullptr;
-
+    self->state = ContextState::Closed;
 }
 
 static int context_traverse(context_c* self, visitproc visit, void* arg) {
@@ -462,6 +481,7 @@ static int context_traverse(context_c* self, visitproc visit, void* arg) {
     Py_VISIT(self->js_object_cache);
     Py_VISIT(self->class_template_cache);
     Py_VISIT(self->function_template_cache);
+    Py_VISIT(self->callback_targets);
     Py_VISIT(self->class_configs);
     Py_VISIT(self->lazy_factory);
     Py_VISIT(self->resolving_classes);
@@ -479,15 +499,16 @@ static int context_traverse(context_c* self, visitproc visit, void* arg) {
 }
 
 static int context_clear(context_c* self) {
-    if (self->closing) return 0;
+    if (self->state != ContextState::Active) return 0;
     auto* state = self->isolate_state;
     if (state == nullptr) { context_finish_close(self); return 0; }
     IN_ISOLATE(state);
-    self->closing = true;
+    self->state = ContextState::Closing;
     // Callback frames still borrow binding metadata until the outer entry exits.
     if (state->entry_depth > 1) {
-        Py_INCREF(self);
-        state->pending_context_closes.push_back(self);
+        Py_INCREF((PyObject*)self);
+        self->next_pending_close = state->pending_context_closes;
+        state->pending_context_closes = self;
     } else {
         context_finish_close(self);
     }
@@ -508,7 +529,7 @@ context_dealloc(context_c *self)
 {
     PyObject_GC_UnTrack(self);
     context_clear(self);
-    if (Py_REFCNT(self) != 0) return;
+    if (Py_REFCNT((PyObject*)self) != 0) return;
     TP_FREE_ABI3(context_type, self);
 }
 
@@ -516,11 +537,10 @@ PyObject *
 context_expose(context_c *self, PyObject *args, PyObject *kwargs)
 {
     faker::TraceSilence silence(self);
-    IsolateState* isolate_state = context_require_isolate(self);
-    if (isolate_state == nullptr)
-        return NULL;
-    IN_ISOLATE(isolate_state);
-    if (context_require_isolate(self) == nullptr) return nullptr;
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    auto* isolate_state = self->isolate_state;
     Local<Context> context = self->js_context.Get(isolate);
     Local<Object> global = context->Global();
 
@@ -531,52 +551,52 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
     {
         PyObject *object = PySequence_GetItem(args, i);
         if (object == NULL) {
-            Py_DECREF(args);
+            Py_DECREF((PyObject*)args);
             return NULL;
         }
         if (!PyObject_HasAttrString(object, "__name__"))
         {
             PyErr_SetString(PyExc_TypeError, "Object passed to expose must have a __name__");
-            Py_DECREF(object);
-            Py_DECREF(args);
+            Py_DECREF((PyObject*)object);
+            Py_DECREF((PyObject*)args);
             return NULL;
         }
-        Py_DECREF(object);
+        Py_DECREF((PyObject*)object);
     }
     for (int i = 0; i < args_size; i++)
     {
         PyObject *object = PySequence_GetItem(args, i);
         if (object == NULL) {
-            Py_DECREF(args);
+            Py_DECREF((PyObject*)args);
             return NULL;
         }
         PyObject *name = PyObject_GetAttrString(object, "__name__");
         if (name == NULL) {
-            Py_DECREF(object);
-            Py_DECREF(args);
+            Py_DECREF((PyObject*)object);
+            Py_DECREF((PyObject*)args);
             return NULL;
         }
         Local<Value> js_name = js_from_py(name, context);
         Local<Value> js_object = js_from_py(object, context);
         if (js_name.IsEmpty() || js_object.IsEmpty() || PyErr_Occurred()) {
-            Py_DECREF(object);
-            Py_DECREF(name);
-            Py_DECREF(args);
+            Py_DECREF((PyObject*)object);
+            Py_DECREF((PyObject*)name);
+            Py_DECREF((PyObject*)args);
             return NULL;
         }
         bool created;
         if (!global->CreateDataProperty(
                 context, js_name.As<String>(), js_object).To(&created)) {
-            Py_DECREF(object);
-            Py_DECREF(name);
-            Py_DECREF(args);
+            Py_DECREF((PyObject*)object);
+            Py_DECREF((PyObject*)name);
+            Py_DECREF((PyObject*)args);
             PyErr_SetString(PyExc_RuntimeError, "failed to expose Python object");
             return NULL;
         }
-        Py_DECREF(object);
-        Py_DECREF(name);
+        Py_DECREF((PyObject*)object);
+        Py_DECREF((PyObject*)name);
     }
-    Py_XDECREF(args);
+    Py_XDECREF((PyObject*)args);
 
     if (kwargs != NULL)
     {
@@ -602,6 +622,8 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
 
 PyObject *context_update_configs(context_c *self, PyObject *mapping)
 {
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
     if (self->class_configs == NULL || !PyDict_Check(self->class_configs))
     {
         PyErr_SetString(PyExc_RuntimeError, "V8 context is no longer active");
@@ -617,7 +639,7 @@ PyObject *context_update_configs(context_c *self, PyObject *mapping)
         return NULL;
     if (PyDict_Update(snapshot, mapping) < 0 || !idl_spec_validate_configs(snapshot))
     {
-        Py_DECREF(snapshot);
+        Py_DECREF((PyObject*)snapshot);
         return NULL;
     }
     Py_ssize_t added = 0;
@@ -629,7 +651,7 @@ PyObject *context_update_configs(context_c *self, PyObject *mapping)
         int contained = PyDict_Contains(self->class_configs, key);
         if (contained < 0)
         {
-            Py_DECREF(snapshot);
+            Py_DECREF((PyObject*)snapshot);
             return NULL;
         }
         if (contained == 0)
@@ -637,12 +659,12 @@ PyObject *context_update_configs(context_c *self, PyObject *mapping)
             int installed = PyDict_Contains(self->class_template_cache, key);
             if (installed < 0)
             {
-                Py_DECREF(snapshot);
+                Py_DECREF((PyObject*)snapshot);
                 return nullptr;
             }
             if (installed)
             {
-                Py_DECREF(snapshot);
+                Py_DECREF((PyObject*)snapshot);
                 PyErr_SetString(PyExc_RuntimeError,
                                 "IDL configuration must be registered before template installation");
                 return nullptr;
@@ -651,24 +673,24 @@ PyObject *context_update_configs(context_c *self, PyObject *mapping)
         }
         else if (PyDict_GetItemWithError(self->class_configs, key) != value)
         {
-            Py_DECREF(snapshot);
+            Py_DECREF((PyObject*)snapshot);
             PyErr_SetString(PyExc_RuntimeError, "IDL configuration is already registered for this type");
             return nullptr;
         }
     }
     if (added == 0)
     {
-        Py_DECREF(snapshot);
+        Py_DECREF((PyObject*)snapshot);
         return PyLong_FromLong(0);
     }
     PyObject *updated = PyDict_Copy(self->class_configs);
     if (updated == nullptr || PyDict_Update(updated, snapshot) < 0)
     {
-        Py_XDECREF(updated);
-        Py_DECREF(snapshot);
+        Py_XDECREF((PyObject*)updated);
+        Py_DECREF((PyObject*)snapshot);
         return nullptr;
     }
-    Py_DECREF(snapshot);
+    Py_DECREF((PyObject*)snapshot);
     Py_DECREF(self->class_configs);
     self->class_configs = updated;
     return PyLong_FromSsize_t(added);
@@ -684,11 +706,10 @@ context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
         return NULL;
     }
 
-    IsolateState* isolate_state = context_require_isolate(self);
-    if (isolate_state == nullptr)
-        return NULL;
-    IN_ISOLATE(isolate_state);
-    if (context_require_isolate(self) == nullptr) return nullptr;
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    auto* isolate_state = self->isolate_state;
     Local<Context> context = self->js_context.Get(isolate);
     Local<Object> global = context->Global();
 
@@ -700,19 +721,19 @@ context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
         PyObject* skip_seq = PySequence_Fast(skip, "declare_lazy skip must be a sequence");
         PyErr_PROPAGATE(skip_seq);
         skip_set = PySet_New(skip_seq);
-        Py_DECREF(skip_seq);
+        Py_DECREF((PyObject*)skip_seq);
         PyErr_PROPAGATE(skip_set);
     }
 
     PyObject* sequence = PySequence_Fast(names, "declare_lazy requires a sequence of interface names");
     if (sequence == NULL) {
-        Py_XDECREF(skip_set);
+        Py_XDECREF((PyObject*)skip_set);
         return NULL;
     }
     Py_ssize_t size = PySequence_Size(sequence);
     if (size < 0) {
-        Py_DECREF(sequence);
-        Py_XDECREF(skip_set);
+        Py_DECREF((PyObject*)sequence);
+        Py_XDECREF((PyObject*)skip_set);
         return NULL;
     }
 
@@ -721,41 +742,41 @@ context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
     {
         PyObject* item = PySequence_GetItem(sequence, i);
         if (item == NULL) {
-            Py_DECREF(sequence);
-            Py_XDECREF(skip_set);
+            Py_DECREF((PyObject*)sequence);
+            Py_XDECREF((PyObject*)skip_set);
             return NULL;
         }
         if (!PyUnicode_Check(item)) {
             PyErr_Format(PyExc_TypeError,
                          "declare_lazy names must be strings, got a non-string at index %zd",
                          i);
-            Py_DECREF(item);
-            Py_DECREF(sequence);
-            Py_XDECREF(skip_set);
+            Py_DECREF((PyObject*)item);
+            Py_DECREF((PyObject*)sequence);
+            Py_XDECREF((PyObject*)skip_set);
             return NULL;
         }
         bool skipped = false;
         if (skip_set != NULL) {
             int contained = PySet_Contains(skip_set, item);
             if (contained < 0) {
-                Py_DECREF(item);
-                Py_DECREF(sequence);
-                Py_XDECREF(skip_set);
+                Py_DECREF((PyObject*)item);
+                Py_DECREF((PyObject*)sequence);
+                Py_XDECREF((PyObject*)skip_set);
                 return NULL;
             }
             skipped = contained == 1;
         }
         const char* text = PyUnicode_AsUTF8_abi3(item);
         if (!skipped && text != nullptr && PySet_Add(self->lazy_names, item) < 0) {
-            Py_DECREF(item);
-            Py_DECREF(sequence);
-            Py_XDECREF(skip_set);
+            Py_DECREF((PyObject*)item);
+            Py_DECREF((PyObject*)sequence);
+            Py_XDECREF((PyObject*)skip_set);
             return nullptr;
         }
-        Py_DECREF(item);
+        Py_DECREF((PyObject*)item);
         if (text == nullptr) {
-            Py_DECREF(sequence);
-            Py_XDECREF(skip_set);
+            Py_DECREF((PyObject*)sequence);
+            Py_XDECREF((PyObject*)skip_set);
             return NULL;
         }
         if (skipped) {
@@ -764,8 +785,8 @@ context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
         bindings::InstallExposedConstruct(context, global, text);
         declared++;
     }
-    Py_DECREF(sequence);
-    Py_XDECREF(skip_set);
+    Py_DECREF((PyObject*)sequence);
+    Py_XDECREF((PyObject*)skip_set);
     return PyLong_FromSsize_t(declared);
 }
 
@@ -780,7 +801,7 @@ context_expose_module(context_c *self, PyObject *module)
     PyObject *module_all_slow = PyObject_Dir(module);
     PyErr_PROPAGATE(module_all_slow);
     PyObject *module_all = PySequence_Fast(module_all_slow, "o noes");
-    Py_XDECREF(module_all_slow);
+    Py_XDECREF((PyObject*)module_all_slow);
     PyErr_PROPAGATE(module_all);
     PyObject *members = PyDict_New();
     PyErr_PROPAGATE(members);
@@ -793,27 +814,27 @@ context_expose_module(context_c *self, PyObject *module)
             PyObject *value = PyObject_GetAttr(module, name);
             if (value == NULL)
             {
-                Py_DECREF(name);
-                Py_XDECREF(members);
+                Py_DECREF((PyObject*)name);
+                Py_XDECREF((PyObject*)members);
                 return NULL;
             }
             if (PyDict_SetItem(members, name, value) < 0)
             {
-                Py_DECREF(name);
-                Py_DECREF(value);
-                Py_XDECREF(members);
+                Py_DECREF((PyObject*)name);
+                Py_DECREF((PyObject*)value);
+                Py_XDECREF((PyObject*)members);
                 return NULL;
             }
-            Py_DECREF(value);
+            Py_DECREF((PyObject*)value);
         }
-        Py_DECREF(name);
+        Py_DECREF((PyObject*)name);
     }
 
     PyObject *no_args = PyTuple_New(0);
     PyErr_PROPAGATE(no_args);
     PyObject *result = context_expose(self, no_args, members);
-    Py_XDECREF(no_args);
-    Py_XDECREF(members);
+    Py_XDECREF((PyObject*)no_args);
+    Py_XDECREF((PyObject*)members);
     return result;
 }
 
@@ -834,11 +855,10 @@ context_js_obj(context_c* self, PyObject* py_object)
 PyObject *
 context_run(context_c *self, PyObject *args, PyObject *kwargs)
 {
-    IsolateState* isolate_state = context_require_isolate(self);
-    if (isolate_state == nullptr)
-        return NULL;
-    IN_ISOLATE(isolate_state);
-    if (context_require_isolate(self) == nullptr) return nullptr;
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    auto* isolate_state = self->isolate_state;
     PyObject *program;
     PyObject *filename = Py_None;
     double timeout = self->timeout;
@@ -859,18 +879,18 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     }
     else
     {
-        Py_INCREF(program);
+        Py_INCREF((PyObject*)program);
     }
     assert(PyObject_IsInstance(program, (PyObject*)script_type));
     script_c *py_script = (script_c *) program;
 
     if (py_script->script.IsEmpty()) {
-        Py_DECREF(program);
+        Py_DECREF((PyObject*)program);
         PyErr_SetString(PyExc_RuntimeError, "V8 script context is closed");
         return nullptr;
     }
     if (py_script->isolate_state != isolate_state) {
-        Py_DECREF(program);
+        Py_DECREF((PyObject*)program);
         PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
         return NULL;
     }
@@ -879,7 +899,7 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     JS_TRY
 
     Local<UnboundScript> unbound_script = py_script->script.Get(isolate);
-    Py_XDECREF(program);
+    Py_XDECREF((PyObject*)program);
     Local<Script> script = unbound_script->BindToCurrentContext();
 
     TimeoutGuard timeout_guard(timeout, isolate);
@@ -904,7 +924,7 @@ context_get_cached_jsobject(Local<Context> js_context, PyObject *py_object)
 {
     Isolate* isolate = v8_compat::context_isolate(js_context);
     EscapableHandleScope hs(isolate);
-    context_c *self = (context_c *) v8_compat::external_value(js_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
+    context_c *self = context_from_v8(js_context);
     js_object *jsobj = (js_object *) PyObject_GetItem(
         self->js_object_cache, py_object);
     if (jsobj != NULL) {
@@ -923,7 +943,7 @@ context_set_cached_jsobject(Local<Context> js_context, PyObject *py_object, Loca
 {
     Isolate* isolate = v8_compat::context_isolate(js_context);
     EscapableHandleScope hs(isolate);
-    context_c *self = (context_c *) v8_compat::external_value(js_context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
+    context_c *self = context_from_v8(js_context);
     js_object *jsobj = js_object_weak_new(object, js_context);
     if (jsobj == NULL) {
         return;
@@ -983,17 +1003,16 @@ context_set_timeout(context_c *self, PyObject *value, void *shit)
 PyObject *
 context_get_global(context_c *self, void *shit)
 {
-    IsolateState* isolate_state = context_require_isolate(self);
-    if (isolate_state == nullptr)
-        return NULL;
-    IN_ISOLATE(isolate_state);
-    if (context_require_isolate(self) == nullptr) return nullptr;
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    auto* isolate_state = self->isolate_state;
     Local<Context> context = self->js_context.Get(isolate);
     PyObject* pyobj = py_from_js(
         v8_compat::global_template_object(context), context);
     PyErr_PROPAGATE(pyobj);
     PyObject* result = context_js_obj(self, pyobj);
-    Py_DECREF(pyobj);
+    Py_DECREF((PyObject*)pyobj);
     return result;
 }
 
@@ -1014,7 +1033,7 @@ context_getitem(context_c *self, PyObject *name)
     PyObject* global = context_get_global(self, NULL);
     PyErr_PROPAGATE(global);
     PyObject* result = PyObject_GetAttr(global, name);
-    Py_DECREF(global);
+    Py_DECREF((PyObject*)global);
     return result;
 }
 
@@ -1028,7 +1047,7 @@ context_setattro(context_c *self, PyObject *name, PyObject *value)
         PyErr_Clear();
         return context_setitem(self, name, value);
     } else {
-        Py_XDECREF(ctx_value);
+        Py_XDECREF((PyObject*)ctx_value);
     }
     // if the property is defined by Context, delegate
     return PyObject_GenericSetAttr((PyObject *) self, name, value);
@@ -1040,18 +1059,17 @@ context_setitem(context_c *self, PyObject *name, PyObject *value)
     PyObject *global = context_get_global(self, NULL);
     PyErr_PROPAGATE_(global);
     int result = PyObject_SetAttr(global, name, value);
-    Py_DECREF(global);
+    Py_DECREF((PyObject*)global);
     return result;
 }
 
 PyObject *
 context_gc(context_c *self) 
 {
-    IsolateState* isolate_state = context_require_isolate(self);
-    if (isolate_state == nullptr)
-        return NULL;
-    IN_ISOLATE(isolate_state);
-    if (context_require_isolate(self) == nullptr) return nullptr;
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    auto* isolate_state = self->isolate_state;
     isolate->LowMemoryNotification();
     PYV8_RETURN_NONE;
 }
@@ -1069,11 +1087,10 @@ context_enqueue_microtask(context_c *self, PyObject *function)
                     "this V8 build does not use cppgc microtask queues");
     return NULL;
 #else
-    IsolateState* isolate_state = context_require_isolate(self);
-    if (isolate_state == nullptr)
-        return NULL;
-    IN_ISOLATE(isolate_state);
-    if (context_require_isolate(self) == nullptr) return nullptr;
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    auto* isolate_state = self->isolate_state;
     IN_CONTEXT(self->js_context.Get(isolate));
     Local<Value> microtask = js_from_py(function, context);
     if (microtask.IsEmpty() || PyErr_Occurred())
@@ -1103,11 +1120,10 @@ context_set_error_hooks(context_c *self, PyObject *args, PyObject *kwargs)
                                      &on_uncaught, &on_rejection)) {
         return NULL;
     }
-    IsolateState* isolate_state = context_require_isolate(self);
-    if (isolate_state == nullptr)
-        return NULL;
-    IN_ISOLATE(isolate_state);
-    if (context_require_isolate(self) == nullptr) return nullptr;
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    auto* isolate_state = self->isolate_state;
     if (!error_hooks_install(self, on_uncaught, on_rejection))
         return NULL;
     PYV8_RETURN_NONE;

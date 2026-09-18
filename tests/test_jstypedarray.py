@@ -1,3 +1,5 @@
+from tests.values import snapshot
+
 import unittest
 import pyv8
 
@@ -117,9 +119,9 @@ class TestJSTypedArray(unittest.TestCase):
     def test_array_buffer_view_can_create_uint8_view(self):
         """ArrayBufferView 输入应保留原视图的 byteOffset 和 byteLength。"""
 
-        source_view = self.context.exec_js(
+        source_view = snapshot(self.context.exec_js(
             "new Uint16Array(new ArrayBuffer(8), 2, 2)"
-        )
+        ))
 
         def make_byte_view():
             return pyv8.JSTypeArray(
@@ -127,26 +129,26 @@ class TestJSTypedArray(unittest.TestCase):
             )
 
         self.context.expose(make_byte_view)
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             "const view = make_byte_view(); "
             "[view instanceof Uint8Array, view.byteOffset, view.byteLength]"
-        )
+        ))
         self.assertEqual(result, [True, 2, 4])
 
     def test_array_buffer_view_preserves_requested_element_type(self):
         """验证从 ArrayBuffer 创建视图时使用请求的元素类型。"""
-        source_view = self.context.exec_js(
+        source_view = snapshot(self.context.exec_js(
             "new Uint8Array(new ArrayBuffer(8), 0, 8)"
-        )
+        ))
 
         def make_int32_view():
             return pyv8.JSTypeArray(source_view, pyv8.ArrayType.Int32Array)
 
         self.context.expose(make_int32_view)
-        result = self.context.exec_js(
+        result = snapshot(self.context.exec_js(
             "const view = make_int32_view(); "
             "[view instanceof Int32Array, view.length, view.byteLength]"
-        )
+        ))
         self.assertEqual(result, [True, 2, 8])
 
 if __name__ == "__main__":

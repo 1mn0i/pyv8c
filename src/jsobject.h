@@ -3,6 +3,7 @@
 
 #include <Python.h>
 #include <v8.h>
+#include "handle_resource.h"
 
 class IsolateState;
 
@@ -12,7 +13,8 @@ typedef struct {
     v8::Persistent<v8::Object> object;
     PyObject* py_context;
     PyObject* py_isolate;
-    PyObject* registry_context;
+    HandleRegistration registration;
+    DeferredPythonRelease deferred_release;
     bool weak_owned;
 } js_object;
 

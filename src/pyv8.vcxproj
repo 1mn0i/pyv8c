@@ -127,10 +127,15 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="abi3.cpp" />
+    <ClCompile Include="binding_callbacks.cpp" />
     <ClCompile Include="context.cpp" />
+    <ClCompile Include="context_resources.cpp" />
     <ClCompile Include="convert.cpp" />
     <ClCompile Include="debugger.cpp" />
     <ClCompile Include="exception.cpp" />
+    <ClCompile Include="execution.cpp" />
+    <ClCompile Include="error_hooks.cpp" />
+    <ClCompile Include="idl_spec.cpp" />
     <ClCompile Include="faker\Faker.cpp" />
     <ClCompile Include="faker\tools.cpp" />
     <ClCompile Include="isolate.cpp" />
@@ -157,10 +162,16 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="abi3.h" />
+    <ClInclude Include="boundary.h" />
+    <ClInclude Include="callback_boundary.h" />
     <ClInclude Include="context.h" />
     <ClInclude Include="convert.h" />
     <ClInclude Include="debugger.h" />
     <ClInclude Include="exception.h" />
+    <ClInclude Include="execution.h" />
+    <ClInclude Include="handle_resource.h" />
+    <ClInclude Include="error_hooks.h" />
+    <ClInclude Include="idl_spec.h" />
     <ClInclude Include="faker\Faker.h" />
     <ClInclude Include="faker\trace.h" />
     <ClInclude Include="faker\tools.h" />

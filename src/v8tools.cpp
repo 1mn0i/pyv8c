@@ -20,13 +20,17 @@ namespace bindings {
         v8::Isolate* isolate = info.GetIsolate();
         Local<Context> context = isolate->GetCurrentContext();
         Local<Object> global = context->Global();
-        Local<Object> faker = global
-            ->Get(context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Faker))
-            .ToLocalChecked()
-            .As<Object>();
+        Local<Value> faker_value;
+        if (!global->Get(context, runtime_manager.find_isolate(isolate)->v8_string(V8StringId::Faker)).ToLocal(&faker_value)) return;
+        if (!faker_value->IsObject()) {
+            isolate->ThrowException(Exception::TypeError(V8String(isolate, "binding dispatcher is not an object")));
+            return;
+        }
+        Local<Object> faker = faker_value.As<Object>();
 
         Local<String> cb = V8String(isolate, PyUnicode_AsUTF8_abi3(cb_name));
-        Local<Value> func = faker->Get(context, cb).ToLocalChecked();
+        Local<Value> func;
+        if (!faker->Get(context, cb).ToLocal(&func)) return;
         if (func.IsEmpty() || !func->IsFunction()) {
             info.GetIsolate()->ThrowException(v8::Exception::Error(String::Concat(isolate, V8String(isolate, "patch callback "), cb)));
             return;
@@ -47,7 +51,8 @@ namespace bindings {
             try_catch.ReThrow();
             return;
         }
-        info.GetReturnValue().Set(result.ToLocalChecked());
+        Local<Value> returned;
+        if (result.ToLocal(&returned)) info.GetReturnValue().Set(returned);
     }
 
     template<int kind>
@@ -66,8 +71,7 @@ namespace bindings {
             name = binding->name;
             callback = kind == 0 ? binding->getter : binding->setter;
         }
-        auto* owner = v8_compat::context_embedder_pointer<context_c>(
-            info.GetIsolate()->GetCurrentContext(), CONTEXT_OBJECT_SLOT);
+        auto* owner = context_from_v8(info.GetIsolate()->GetCurrentContext());
         if (!context_trace_enabled(owner)) { FakerJsFunctionImpl(info, callback); return; }
         faker::TraceScope observation(info, kind, name, get_self(info), owner);
         FakerJsFunctionImpl(info, callback);
@@ -103,7 +107,7 @@ namespace bindings {
         v8::Isolate* isolate = info.GetIsolate();
         Local<Context> context = isolate->GetCurrentContext();
         if (!context_check_callback(context)) return;
-        context_c* py_ctx = (context_c*)v8_compat::external_value(context->GetEmbedderData(CONTEXT_OBJECT_SLOT));
+        context_c* py_ctx = context_from_v8(context);
         if (py_ctx == nullptr) {
             info.GetReturnValue().SetUndefined();
             return;
@@ -122,22 +126,22 @@ namespace bindings {
             // the cache without another Python round trip.
             PyObject* cls = PyObject_CallFunctionObjArgs(py_ctx->lazy_factory, name, NULL);
             if (cls == NULL) {
-                Py_DECREF(name);
+                Py_DECREF((PyObject*)name);
                 js_throw_py();
                 return;
             }
             if (cls != Py_None) {
                 if (PySet_Add(py_ctx->resolving_classes, cls) < 0) {
-                    Py_DECREF(cls);
-                    Py_DECREF(name);
+                    Py_DECREF((PyObject*)cls);
+                    Py_DECREF((PyObject*)name);
                     js_throw_py();
                     return;
                 }
                 py_cls = py_class_to_template(cls, py_ctx);
                 PySet_Discard(py_ctx->resolving_classes, cls);
-                Py_DECREF(cls);
+                Py_DECREF((PyObject*)cls);
                 if (py_cls == NULL) {
-                    Py_DECREF(name);
+                    Py_DECREF((PyObject*)name);
                     js_throw_py();
                     return;
                 }
@@ -147,22 +151,22 @@ namespace bindings {
                 PyObject* existing = PyDict_GetItem(py_ctx->class_template_cache, name);
                 if (existing == NULL &&
                     PyDict_SetItem(py_ctx->class_template_cache, name, py_cls) < 0) {
-                    Py_DECREF(name);
+                    Py_DECREF((PyObject*)name);
                     js_throw_py();
                     return;
                 }
             }
             else {
-                Py_DECREF(cls);
+                Py_DECREF((PyObject*)cls);
             }
         }
         if (py_cls == NULL) {
-            Py_DECREF(name);
+            Py_DECREF((PyObject*)name);
             info.GetReturnValue().SetUndefined();
             return;
         }
         Local<FunctionTemplate> interface_template = ((py_class*)py_cls)->templ.Get(isolate);
-        Py_XDECREF(name);
+        Py_XDECREF((PyObject*)name);
         v8::Local<v8::Function> interface_object;
         bool get_interface_object =
             interface_template->GetFunction(context).ToLocal(&interface_object);
@@ -352,7 +356,7 @@ namespace bindings {
         for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
             PyObject* resolved = idl_spec_resolve(PyTuple_GetItem(configs, index), cls);
             if (resolved == nullptr) return false;
-            if (!RetainCallbackData(callback_data_owner, resolved)) { Py_DECREF(resolved); return false; }
+            if (!RetainCallbackData(callback_data_owner, resolved)) { Py_DECREF((PyObject*)resolved); return false; }
             auto* spec = (AttributeSpec*)resolved;
             AttributeConfig config;
             config.name = PyUnicode_AsUTF8_abi3(spec->name);
@@ -363,14 +367,15 @@ namespace bindings {
             config.cross_origin_check_for_set = (unsigned)spec->cross_origin_set_check;
             config.v8_side_effect = (unsigned)spec->side_effect;
             config.get_method = owner->isolate_state->callback_data(owner, resolved);
-            config.callback_for_get = spec->callback_type == 0 ? py_attribute_for_get : FakerJsBindingCallback<0>;
+            if (config.get_method.IsEmpty()) { Py_DECREF(resolved); return false; }
+            config.callback_for_get = spec->callback_type == 0 ? CallbackBoundary<py_attribute_for_get>::call : CallbackBoundary<FakerJsBindingCallback<0>>::call;
             if (spec->setter != nullptr) {
                 config.set_method = config.get_method;
-                config.callback_for_set = spec->callback_type == 0 ? (spec->location == 0 ? py_attribute_for_instance_set : py_attribute_for_property_set) : FakerJsBindingCallback<1>;
+                config.callback_for_set = spec->callback_type == 0 ? (spec->location == 0 ? CallbackBoundary<py_attribute_for_instance_set>::call : CallbackBoundary<py_attribute_for_property_set>::call) : CallbackBoundary<FakerJsBindingCallback<1>>::call;
             }
             bool valid = config.name != nullptr;
             if (valid) InstallAttribute(isolate, world, interface_template, signature, config);
-            Py_DECREF(resolved);
+            Py_DECREF((PyObject*)resolved);
             if (!valid) return false;
         }
         return true;
@@ -418,7 +423,7 @@ namespace bindings {
         for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
             PyObject* resolved = idl_spec_resolve(PyTuple_GetItem(configs, index), cls);
             if (resolved == nullptr) return false;
-            if (!RetainCallbackData(callback_data_owner, resolved)) { Py_DECREF(resolved); return false; }
+            if (!RetainCallbackData(callback_data_owner, resolved)) { Py_DECREF((PyObject*)resolved); return false; }
             auto* spec = (MethodSpec*)resolved;
             OperationConfig config;
             config.name = PyUnicode_AsUTF8_abi3(spec->name);
@@ -429,10 +434,11 @@ namespace bindings {
             config.cross_origin_check = (unsigned)spec->cross_origin_check;
             config.v8_side_effect = (unsigned)spec->side_effect;
             config.callback_data = owner->isolate_state->callback_data(owner, resolved);
-            config.callback = spec->callback_type == 0 ? py_class_method_callback : FakerJsBindingCallback<2>;
+            if (config.callback_data.IsEmpty()) { Py_DECREF(resolved); return false; }
+            config.callback = spec->callback_type == 0 ? CallbackBoundary<py_class_method_callback>::call : CallbackBoundary<FakerJsBindingCallback<2>>::call;
             bool valid = config.name != nullptr;
             if (valid) InstallOperation(isolate, world, interface_template, signature, config);
-            Py_DECREF(resolved);
+            Py_DECREF((PyObject*)resolved);
             if (!valid) return false;
         }
         return true;
@@ -489,15 +495,15 @@ namespace bindings {
             const char* callback = PyUnicode_AsUTF8_abi3(spec->callback);
             if (name == nullptr || callback == nullptr) return false;
             auto flags = static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontDelete);
-            if (!interface_template->PrototypeTemplate().IsEmpty()) interface_template->PrototypeTemplate()->SetLazyDataProperty(V8String(isolate, name), FakerJsFunctionAccessorNameGetterCallback, V8String(isolate, callback), flags, v8::SideEffectType::kHasNoSideEffect);
-            interface_template->SetLazyDataProperty(V8String(isolate, name), FakerJsFunctionAccessorNameGetterCallback, V8String(isolate, callback), flags, v8::SideEffectType::kHasNoSideEffect);
+            if (!interface_template->PrototypeTemplate().IsEmpty()) interface_template->PrototypeTemplate()->SetLazyDataProperty(V8String(isolate, name), CallbackBoundary<FakerJsFunctionAccessorNameGetterCallback>::call, V8String(isolate, callback), flags, v8::SideEffectType::kHasNoSideEffect);
+            interface_template->SetLazyDataProperty(V8String(isolate, name), CallbackBoundary<FakerJsFunctionAccessorNameGetterCallback>::call, V8String(isolate, callback), flags, v8::SideEffectType::kHasNoSideEffect);
         }
         return true;
     }
 
     void InstallExposedConstruct(v8::Isolate* isolate, v8::Local<v8::ObjectTemplate> instance_template, const char* name) {
             instance_template->SetLazyDataProperty(
-                V8String(isolate, name), ConstructAccessorNameGetterCallback, v8::Local<v8::Value>(), v8::DontEnum,
+                V8String(isolate, name), CallbackBoundary<ConstructAccessorNameGetterCallback>::call, v8::Local<v8::Value>(), v8::DontEnum,
                 v8::SideEffectType::kHasNoSideEffect);
     }
 
@@ -506,7 +512,7 @@ namespace bindings {
         v8::Isolate* isolate = v8_compat::context_isolate(context);
         instance_object
             ->SetLazyDataProperty(context, V8String(isolate, name),
-                ConstructAccessorNameGetterCallback, v8::Local<v8::Value>(),
+                CallbackBoundary<ConstructAccessorNameGetterCallback>::call, v8::Local<v8::Value>(),
                 v8::DontEnum,
                 v8::SideEffectType::kHasNoSideEffect)
             .ToChecked();

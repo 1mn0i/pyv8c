@@ -1,0 +1,108 @@
+{
+  "python": "3.12.9 (tags/v3.12.9:fdb8142, Feb  4 2025, 15:27:58) [MSC v.1942 64 bit (AMD64)]",
+  "binary": "D:\\src\\pyv8env\\_pyv8\\pyv8\\_pyv8.pyd",
+  "sha256": "1d6e163081108337dad76f51f4f159ba7a39e4cb1d537305a3fd1b05fe5990bd",
+  "samples": [
+    {
+      "created": 100,
+      "retained": {
+        "page": 0,
+        "window": 0,
+        "context": 0
+      },
+      "python_bytes_delta": 52360,
+      "private_bytes": 74969088
+    },
+    {
+      "created": 200,
+      "retained": {
+        "page": 0,
+        "window": 0,
+        "context": 0
+      },
+      "python_bytes_delta": 66311,
+      "private_bytes": 76554240
+    },
+    {
+      "created": 300,
+      "retained": {
+        "page": 0,
+        "window": 0,
+        "context": 0
+      },
+      "python_bytes_delta": 72952,
+      "private_bytes": 78180352
+    },
+    {
+      "created": 400,
+      "retained": {
+        "page": 0,
+        "window": 0,
+        "context": 0
+      },
+      "python_bytes_delta": 78169,
+      "private_bytes": 79323136
+    },
+    {
+      "created": 500,
+      "retained": {
+        "page": 0,
+        "window": 0,
+        "context": 0
+      },
+      "python_bytes_delta": 83159,
+      "private_bytes": 79212544
+    },
+    {
+      "created": 600,
+      "retained": {
+        "page": 0,
+        "window": 0,
+        "context": 0
+      },
+      "python_bytes_delta": 84298,
+      "private_bytes": 78467072
+    },
+    {
+      "created": 700,
+      "retained": {
+        "page": 0,
+        "window": 0,
+        "context": 0
+      },
+      "python_bytes_delta": 86846,
+      "private_bytes": 79360000
+    },
+    {
+      "created": 800,
+      "retained": {
+        "page": 0,
+        "window": 0,
+        "context": 0
+      },
+      "python_bytes_delta": 87502,
+      "private_bytes": 79515648
+    },
+    {
+      "created": 900,
+      "retained": {
+        "page": 0,
+        "window": 0,
+        "context": 0
+      },
+      "python_bytes_delta": 88969,
+      "private_bytes": 79282176
+    },
+    {
+      "created": 1000,
+      "retained": {
+        "page": 0,
+        "window": 0,
+        "context": 0
+      },
+      "python_bytes_delta": 90699,
+      "private_bytes": 79634432
+    }
+  ],
+  "private_bytes_baseline": 61284352
+}

@@ -28,6 +28,7 @@ private:
     v8::Isolate* isolate_;
     std::unique_ptr<v8::Locker> locker_;
     bool entered_;
+    bool nested_;
     PyObject* python_owner_;
 };
 
