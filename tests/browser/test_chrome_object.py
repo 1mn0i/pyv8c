@@ -2,8 +2,8 @@
 
 import time
 
-import pyv8
-from pyv8.trace import format_trace
+import v8n
+from v8n.trace import format_trace
 
 from pyv8c import Browser
 
@@ -171,7 +171,7 @@ def test_chrome_method_calls_are_reported_with_their_results():
     try:
         page = _page(browser)
         events.clear()
-        assert page.evaluate("chrome.app.getDetails()") is pyv8.Null
+        assert page.evaluate("chrome.app.getDetails()") is v8n.Null
         assert _messages(events) == [
             "[Window] getter: Window.chrome -> <JSObject>",
             "[Window] method: ChromeBindings.getDetails() -> null",

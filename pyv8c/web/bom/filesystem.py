@@ -15,8 +15,8 @@ import tempfile
 import time
 from pathlib import Path
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import FeatureImplementation, interface
 from ...foundation.arguments import (
@@ -39,7 +39,7 @@ _post = post_or_call
 
 
 def _callback(value, name, position, optional=False):
-    if value is pyv8.Undefined or value is None or value is pyv8.Null:
+    if value is v8n.Undefined or value is None or value is v8n.Null:
         if optional:
             return None
         raise V8TypeError(f"Failed to execute '{name}' on 'Entry': parameter {position} is not a function.")
@@ -64,10 +64,10 @@ class File(Blob):
         constructor_behavior=1, length=2, has_constructor=1, to_string_tag="File",
     )
 
-    def __init__(self, file_bits=pyv8.Undefined, file_name=pyv8.Undefined, options=None, *_extra, **kw):
-        if file_bits is pyv8.Undefined:
+    def __init__(self, file_bits=v8n.Undefined, file_name=v8n.Undefined, options=None, *_extra, **kw):
+        if file_bits is v8n.Undefined:
             raise missing_error("File", "constructor", 2, 0, constructor=True)
-        if file_name is pyv8.Undefined:
+        if file_name is v8n.Undefined:
             raise missing_error("File", "constructor", 2, 1, constructor=True)
         init = {} if is_nullish(options) else dictionary(options, name="FilePropertyBag")
         super().__init__(file_bits, init, *_extra, **kw)
@@ -283,7 +283,7 @@ def request_file_system(window, kind, size, success, error):
     size = integer(size, bits=64)
     if size < 0: raise V8TypeError("Invalid file system size")
     success = callback_value(success)
-    if error is not pyv8.Undefined and error is not None and error is not pyv8.Null: error = callback_value(error)
+    if error is not v8n.Undefined and error is not None and error is not v8n.Null: error = callback_value(error)
     root = tempfile.mkdtemp(prefix="pyv8-fs-")
     origin = getattr(getattr(window._services, "realm_services", None), "url", "null")
     fs = FileSystem("temporary" if kind == 0 else "persistent", root, services=window._services, origin=origin)

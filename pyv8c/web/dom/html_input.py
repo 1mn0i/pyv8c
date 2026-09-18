@@ -6,8 +6,8 @@ live here so the tag-specific rules stay in one place.
 
 import re
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import (
@@ -191,7 +191,7 @@ class FileList(ReadOnlyIndexedPropertyMixin):
             raise missing_error('FileList', 'item', 1, 0, constructor=False)
         items = self._values
         index = int(index)
-        return items[index] if 0 <= index < len(items) else pyv8.Null
+        return items[index] if 0 <= index < len(items) else v8n.Null
 
 
 @interface('ValidityState', None)
@@ -401,18 +401,21 @@ class HTMLInputElement(HTMLElement):
 
     def get_valueAsDate(self):
         kind = self.get_type()
-        if kind not in _DATE_INPUT_TYPES: return pyv8.Null
+        if kind not in _DATE_INPUT_TYPES: return v8n.Null
         parsed = self._parse_value(kind, self.get_value())
-        if parsed is None: return pyv8.Null
+        if parsed is None: return v8n.Null
         realm = getattr(getattr(self._services, "realm_services", None), "evaluate_script", None)
-        if realm is None: return pyv8.Null
+        if realm is None: return v8n.Null
         try: return realm(f"new Date({int(parsed)})")
         except Exception:  # a missing realm must not break the getter
-            return pyv8.Null
+            return v8n.Null
     def set_valueAsDate(self, value):
         if is_nullish(value):
             self.set_value("")
             return
+        # `getTime` is read off the JavaScript Date and then called on it: a
+        # method read out of an object is not bound to it, so the receiver
+        # travels as an argument.
         try: milliseconds = float(value.getTime.call(value))
         except Exception:  # non-Date values are ignored, like Chrome
             return
@@ -509,7 +512,7 @@ class HTMLInputElement(HTMLElement):
 
     def get_form(self):
         owner = self._form_owner()
-        return owner if owner is not None else pyv8.Null
+        return owner if owner is not None else v8n.Null
     def _form_owner(self):
         form_id = self.attributes.get("form")
         if form_id and self._services:
@@ -522,10 +525,10 @@ class HTMLInputElement(HTMLElement):
         return None
     def get_list(self):
         list_id = self.attributes.get("list")
-        if not list_id or not self._services: return pyv8.Null
+        if not list_id or not self._services: return v8n.Null
         found = self._services.document_services.document.fn_getElementById(list_id)
         if isinstance(found, Element) and found.localName == "datalist": return found
-        return pyv8.Null
+        return v8n.Null
     def get_labels(self):
         return NodeList(owner=self, getter=self._label_elements)
     def _label_elements(self):
@@ -549,15 +552,15 @@ class HTMLInputElement(HTMLElement):
         return False
     def get_popoverTargetElement(self):
         target = self.attributes.get("popovertarget")
-        if not target or not self._services: return pyv8.Null
+        if not target or not self._services: return v8n.Null
         found = self._services.document_services.document.fn_getElementById(target)
-        return found if isinstance(found, Element) else pyv8.Null
+        return found if isinstance(found, Element) else v8n.Null
     def set_popoverTargetElement(self, value):
         if is_nullish(value):
             self.attributes.pop("popovertarget", None)
             return
         element = interface_value(value, 'Element', 'Element', 'popoverTargetElement', 0, nullable=True)
-        identifier = element.get_id() if element is not None and element is not pyv8.Null else ""
+        identifier = element.get_id() if element is not None and element is not v8n.Null else ""
         if identifier: self.attributes["popovertarget"] = str(identifier)
     def get_popoverTargetAction(self):
         value = self._attr("popovertargetaction")

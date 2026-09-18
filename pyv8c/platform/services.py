@@ -62,6 +62,17 @@ class _RealmCapability(_TaskSource):
         self._owner = owner
 
     @property
+    def realm(self):
+        """The native realm these services speak for, or None before it exists.
+
+        A caller that has a handle and needs a function to run in the realm that
+        made it -- comparing a value against that realm's intrinsics, say -- has
+        nowhere else to get one from.
+        """
+        realm = self._owner._page_realm
+        return None if realm is None else realm.context
+
+    @property
     def url(self):
         return self._owner.window.location.href
 
@@ -105,32 +116,51 @@ class _RealmCapability(_TaskSource):
         self._tasks.report_error(exc)
 
     def materialize_interface(self, name):
-        return self._owner._page_realm.binding_session.materialize(name)
+        # A value built before the realm exists -- the Window's own `location`,
+        # which is created with the Window and re-pointed before the realm is --
+        # has no realm to install into yet.  Answering None says so rather than
+        # failing inside the construction of a page.
+        realm = self._owner._page_realm
+        if realm is None:
+            return None
+        return realm.binding_session.materialize(name)
 
     def interface_materialized(self, name):
-        return name in self._owner._page_realm.binding_session.materialized_interfaces
+        realm = self._owner._page_realm
+        return realm is not None and name in realm.binding_session.materialized_interfaces
+
+    def interface_exposed(self, name, context_type="Window"):
+        return self._owner._page_realm.binding_session.interface_exposed(name, context_type)
+
+    def exposed_interface(self, name):
+        """The constructor for one of this realm's exposed interface names."""
+        realm = self._owner._page_realm
+        if realm is None:
+            return None
+        return realm.binding_session.exposed_interface(name)
 
     def window_property(self, operation, name, value=None):
         """Operate on a same-origin Window in its owning realm."""
         realm = self._owner._page_realm
         def apply():
-            target = realm.context.js_obj(self._owner.window)
+            target = realm.context.wrap(self._owner.window)
             if operation == "get":
                 try:
-                    return target[name]
+                    return target.get(name)
                 except AttributeError:
-                    import pyv8
-                    return pyv8.Undefined
+                    return v8n.Undefined
             if operation == "set":
-                target[name] = value
+                # Assignment is the write path: unlike a read, no Python
+                # attribute of the wrapper can shadow it.
+                setattr(target, name, value)
             elif operation == "delete":
-                del target[name]
+                target.delete(name)
             elif operation == "query":
-                return 0 if name in dir(target) else None
+                return 0 if name in target.keys() else None
         # Cross-window property access is synchronous and can originate in a
         # V8 callback that already holds the shared isolate lock.  Posting to
         # another executor would wait on that same lock and deadlock.  The
-        # native JSObject operation enters its saved Context reentrantly.
+        # native handle operation enters its saved realm reentrantly.
         return apply()
 
 
@@ -196,6 +226,13 @@ class _WorkerRealmCapability(_TaskSource):
 
     def promise_resolve(self, value):
         return self._runtime.promise_resolve(value)
+
+    def interface_exposed(self, name, context_type="Worker"):
+        return self._runtime.config.session.interface_exposed(name, context_type)
+
+    def exposed_interface(self, name):
+        """The constructor for one of this worker realm's exposed names."""
+        return self._runtime.config.session.exposed_interface(name)
 
     def report_exception(self, exc):
         """Route a listener exception to the worker's error reporting.

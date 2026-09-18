@@ -6,9 +6,9 @@ comparison) that every other node type builds on.  References to the concrete
 members that need them, because those modules sit above this one.
 """
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import V8Attribute
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
+from v8n.flag import V8Attribute
 
 from ...engine.features import interface
 from ...foundation.arguments import (
@@ -144,9 +144,9 @@ class Node(EventTarget):
     def parentElement(self):
         return self.parentNode if is_element(self.parentNode) else None
     @property
-    def firstChild(self): return self._children[0] if self._children else pyv8.Null
+    def firstChild(self): return self._children[0] if self._children else v8n.Null
     @property
-    def lastChild(self): return self._children[-1] if self._children else pyv8.Null
+    def lastChild(self): return self._children[-1] if self._children else v8n.Null
 
     @property
     def ownerDocument(self):
@@ -213,11 +213,11 @@ class Node(EventTarget):
     def get_nodeName(self): return self.nodeName
     def get_baseURI(self): return self.baseURI
     def get_isConnected(self): return self.isConnected
-    def get_ownerDocument(self): return self.ownerDocument or pyv8.Null
-    def get_previousSibling(self): return self.previousSibling or pyv8.Null
-    def get_nextSibling(self): return self.nextSibling or pyv8.Null
-    def get_parentNode(self): return self.parentNode or pyv8.Null
-    def get_parentElement(self): return self.parentElement or pyv8.Null
+    def get_ownerDocument(self): return self.ownerDocument or v8n.Null
+    def get_previousSibling(self): return self.previousSibling or v8n.Null
+    def get_nextSibling(self): return self.nextSibling or v8n.Null
+    def get_parentNode(self): return self.parentNode or v8n.Null
+    def get_parentElement(self): return self.parentElement or v8n.Null
     def get_childNodes(self): return self._child_nodes_view
     def get_firstChild(self): return self.firstChild
     def get_lastChild(self): return self.lastChild
@@ -232,7 +232,7 @@ class Node(EventTarget):
         # spec removes a text node whose data is empty after replacement).
         if value is not None and str(value) != "":
             self.append_child(Text(str(value), services=self._services))
-    def get_nodeValue(self): return self.nodeValue if self.nodeValue is not None else pyv8.Null
+    def get_nodeValue(self): return self.nodeValue if self.nodeValue is not None else v8n.Null
     def set_nodeValue(self, value):
         if not is_nullish(value):
             value = dom_string(value)
@@ -301,7 +301,7 @@ class Node(EventTarget):
             raise missing_error('Node', 'insertBefore', 2, 1, constructor=False)
         node = interface_value(node, 'Node', 'Node', 'insertBefore', 1, nullable=False)
         reference = interface_value(reference, 'Node', 'Node', 'insertBefore', 2, nullable=True)
-        if reference in (None, pyv8.Null, pyv8.Undefined): return self.append_child(node)
+        if reference in (None, v8n.Null, v8n.Undefined): return self.append_child(node)
         if reference not in self._children: raise NotFoundError("The reference node is not a child.")
         index = self._children.index(reference)
         if isinstance(node, DocumentFragment):
@@ -341,9 +341,9 @@ class Node(EventTarget):
         self._adopt_child(new, i)
         return old
     def fn_cloneNode(self, deep=False, *_extra):
-        if deep is pyv8.Undefined:
+        if deep is v8n.Undefined:
             deep = False
-        if deep is not pyv8.Undefined:
+        if deep is not v8n.Undefined:
             deep = boolean(deep)
         clone = self._clone_shallow()
         if deep:
@@ -407,16 +407,16 @@ class Node(EventTarget):
             raise missing_error('Node', 'lookupNamespaceURI', 1, 0, constructor=False)
         if not is_nullish(prefix):
             prefix = dom_string(prefix)
-        if prefix in (None, pyv8.Null, pyv8.Undefined, ""):
+        if prefix in (None, v8n.Null, v8n.Undefined, ""):
             return XHTML_NAMESPACE
-        return pyv8.Null
+        return v8n.Null
 
     def fn_lookupPrefix(self, namespace=MISSING, *_extra):
         if namespace is MISSING:
             raise missing_error('Node', 'lookupPrefix', 1, 0, constructor=False)
         if not is_nullish(namespace):
             namespace = dom_string(namespace)
-        return pyv8.Null
+        return v8n.Null
 
     def fn_normalize(self, *_extra):
         """Merge adjacent text nodes and drop empty ones, recursively."""
@@ -461,7 +461,7 @@ class DocumentFragment(_ParentNodeMixin, Node):
         constructor_behavior=1, has_constructor=1,
     )
     def __init__(self, *_extra, services=None, **kw):
-        if services is pyv8.Undefined:
+        if services is v8n.Undefined:
             services = None
         super().__init__(services=services, node_type=Node.DOCUMENT_FRAGMENT_NODE, node_name="#document-fragment", **kw)
     def _document(self):
@@ -477,7 +477,7 @@ class DocumentFragment(_ParentNodeMixin, Node):
             raise missing_error('DocumentFragment', 'querySelector', 1, 0, constructor=False)
         selector = dom_string(selector)
         document = self._document()
-        return document.query_selector(selector, self) if document is not None else pyv8.Null
+        return document.query_selector(selector, self) if document is not None else v8n.Null
     def fn_querySelectorAll(self, selector=MISSING, *_extra):
         if selector is MISSING:
             raise missing_error('DocumentFragment', 'querySelectorAll', 1, 0, constructor=False)
@@ -513,7 +513,7 @@ class Attr(Node):
         self.nodeValue = str(value)
     def get_specified(self): return True
     # HTML attributes carry no namespace, so both namespace accessors are null.
-    def get_namespaceURI(self): return pyv8.Null
-    def get_prefix(self): return pyv8.Null
+    def get_namespaceURI(self): return v8n.Null
+    def get_prefix(self): return v8n.Null
     def get_localName(self): return self.nodeName
-    def get_ownerElement(self): return self.ownerElement or pyv8.Null
+    def get_ownerElement(self): return self.ownerElement or v8n.Null

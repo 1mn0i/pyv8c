@@ -7,8 +7,8 @@ module owns the HTML tag-specific interfaces and the tag-to-class factory.
 from html import escape
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, interface_value, is_nullish, missing_error
@@ -84,7 +84,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
 
     def get_namespaceURI(self): return XHTML_NAMESPACE
     # HTML elements are never qualified, so the prefix is always null.
-    def get_prefix(self): return pyv8.Null
+    def get_prefix(self): return v8n.Null
     def get_localName(self): return self.localName
     def get_tagName(self): return self.nodeName
     def get_id(self): return self.attributes.get("id", "")
@@ -131,7 +131,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if name is MISSING:
             raise missing_error('Element', 'getAttribute', 1, 0, constructor=False)
         name = dom_string(name)
-        return self.attributes.get(str(name).lower(), pyv8.Null)
+        return self.attributes.get(str(name).lower(), v8n.Null)
     def fn_setAttribute(self, name=MISSING, value=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('Element', 'setAttribute', 2, 0, constructor=False)
@@ -154,14 +154,14 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         return bool(self.attributes)
     def fn_getAttributeNames(self, *_extra):
         return list(self.attributes)
-    def fn_toggleAttribute(self, name=MISSING, force=pyv8.Undefined, *_extra):
+    def fn_toggleAttribute(self, name=MISSING, force=v8n.Undefined, *_extra):
         if name is MISSING:
             raise missing_error('Element', 'toggleAttribute', 1, 0, constructor=False)
         name = dom_string(name)
-        if force is not pyv8.Undefined:
+        if force is not v8n.Undefined:
             force = boolean(force)
         name = str(name).lower()
-        if force in (None, pyv8.Undefined, pyv8.Null):
+        if force in (None, v8n.Undefined, v8n.Null):
             force = name not in self.attributes
         force = bool(force)
         if force: self.attributes[name] = ""
@@ -215,7 +215,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             raise missing_error('Element', 'getAttributeNode', 1, 0, constructor=False)
         name = dom_string(name)
         name = str(name).lower()
-        if name not in self.attributes: return pyv8.Null
+        if name not in self.attributes: return v8n.Null
         return Attr(name, self.attributes[name], ownerElement=self, services=self._services)
     def fn_setAttributeNode(self, attr=MISSING, *_extra):
         if attr is MISSING:
@@ -261,7 +261,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if not is_nullish(namespace):
             namespace = dom_string(namespace)
         local_name = dom_string(local_name)
-        if namespace not in (None, pyv8.Null, pyv8.Undefined, "", "*", XHTML_NAMESPACE):
+        if namespace not in (None, v8n.Null, v8n.Undefined, "", "*", XHTML_NAMESPACE):
             return HTMLCollection(owner=self, getter=lambda: [])
         return self.fn_getElementsByTagName(local_name)
     def _insert_adjacent(self, where, nodes):
@@ -322,7 +322,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if selector is MISSING:
             raise missing_error('Element', 'querySelector', 1, 0, constructor=False)
         selector = dom_string(selector)
-        return self._services.document_services.document.query_selector(selector, self) if self._services else pyv8.Null
+        return self._services.document_services.document.query_selector(selector, self) if self._services else v8n.Null
     def fn_querySelectorAll(self, selector=MISSING, *_extra):
         if selector is MISSING:
             raise missing_error('Element', 'querySelectorAll', 1, 0, constructor=False)
@@ -341,7 +341,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         while isinstance(n, Element):
             if n.fn_matches(selector): return n
             n = n.parentElement
-        return pyv8.Null
+        return v8n.Null
     def outer_html(self):
         attrs = "".join(f' {k}="{escape(str(v), quote=True)}"' for k, v in self.attributes.items())
         return f"<{self.localName}{attrs}>{self.get_innerHTML()}</{self.localName}>"
@@ -379,8 +379,8 @@ class HTMLElement(Element):
             value = self._style_declaration = CSSStyleDeclaration(element=self)
         return value
     def get_offsetParent(self):
-        if not self.isConnected: return pyv8.Null
-        return self.parentElement or pyv8.Null
+        if not self.isConnected: return v8n.Null
+        return self.parentElement or v8n.Null
     def get_offsetTop(self):
         from .layout import layout
         return int(round(layout(self).top))
@@ -693,15 +693,15 @@ class HTMLIFrameElement(HTMLElement):
             if resource_services is not None: resource_services.load_iframe(self)
     def get_contentDocument(self):
         if self._child_services is None:
-            return pyv8.Null
+            return v8n.Null
         from ..bom.window import Window
         accessor = Window._accessor_window(self._services.document_services.window)
         if accessor._origin != self._child_services._origin:
-            return pyv8.Null
+            return v8n.Null
         return self._child_services.document_services.document
     def get_contentWindow(self):
         if self._child_services is None:
-            return pyv8.Null
+            return v8n.Null
         child_window = self._child_services.document_services.window
         from ..bom.window import Window
         parent_window = Window._accessor_window(self._services.document_services.window)

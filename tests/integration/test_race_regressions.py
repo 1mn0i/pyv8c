@@ -26,13 +26,28 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("v8n", reason="the native v8n extension is not importable")
 
 from pyv8c.foundation.errors import V8Error
 from pyv8c.foundation.executor import RealmExecutor
 from pyv8c.platform.resource_loading import RequestHandle
 
 pytestmark = [pytest.mark.race, pytest.mark.native]
+
+
+def _inspector_available():
+    """Whether this kernel has the Inspector layer the devtools cases need."""
+    try:
+        import v8n.devtools.router  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+requires_inspector = pytest.mark.skipif(
+    not _inspector_available(),
+    reason="the kernel has no Inspector layer, so there is no devtools router",
+)
 
 
 class _RecordingDebugger:
@@ -89,6 +104,7 @@ def _response_for(url):
 # -- A1: Debugger.disconnect must run on (or never run off) the owner thread -
 
 
+@requires_inspector
 def test_devtools_close_disconnects_on_the_realm_owner_thread():
     """A1: a page target must detach its inspector on the realm owner thread.
 
@@ -96,10 +112,10 @@ def test_devtools_close_disconnects_on_the_realm_owner_thread():
     which never resolves for a Page, so the disconnect ran on the closing
     thread instead of the owner thread that owns V8.
     """
-    from pyv8.devtools import DevToolsOptions
-    from pyv8.devtools.router import Router
-    from pyv8.devtools.scheduler import Host
-    from pyv8.devtools.session import Session
+    from v8n.devtools import DevToolsOptions
+    from v8n.devtools.router import Router
+    from v8n.devtools.scheduler import Host
+    from v8n.devtools.session import Session
 
     executor = RealmExecutor(name="race-dev-owner")
     try:
@@ -120,19 +136,21 @@ def test_devtools_close_disconnects_on_the_realm_owner_thread():
         executor.close()
 
 
+@requires_inspector
 def test_devtools_requires_an_explicit_host_adapter():
-    from pyv8.devtools.scheduler import Host
+    from v8n.devtools.scheduler import Host
 
     with pytest.raises(TypeError):
         Host(object())
 
 
+@requires_inspector
 def test_devtools_close_skips_disconnect_when_owner_is_already_closed():
     """A1: closing after the owner died must record a diagnostic, not crash."""
-    from pyv8.devtools import DevToolsOptions
-    from pyv8.devtools.router import Router
-    from pyv8.devtools.scheduler import Host
-    from pyv8.devtools.session import Session
+    from v8n.devtools import DevToolsOptions
+    from v8n.devtools.router import Router
+    from v8n.devtools.scheduler import Host
+    from v8n.devtools.session import Session
 
     executor = RealmExecutor(name="race-dev-dead-owner")
     executor.close()
@@ -152,6 +170,7 @@ def test_devtools_close_skips_disconnect_when_owner_is_already_closed():
     assert len(router.diagnostics) == 1
 
 
+@requires_inspector
 def test_devtools_page_close_records_no_disconnect_diagnostics(browser):
     """A1: closing a live devtools page detaches on the owner without noise."""
     context = browser.new_context()
@@ -328,15 +347,19 @@ def test_document_resource_is_tracked_before_its_request_is_issued(browser, monk
         monkeypatch.setattr(facet, "_track_resource", spied_track)
         monkeypatch.setattr(controller, "load_resource_async", recording_issue)
 
-        controller.track_document_resource(
+        # On the realm's owner thread, because the binding refuses a realm from
+        # any other one: a subresource that completes here dispatches an event,
+        # and dispatching builds the event's interface.
+        page.realm.executor.call(lambda: controller.track_document_resource(
             _DummyNode(), "http://127.0.0.1:9/doc.js", {"method": "GET"}, "script"
-        )
+        ))
 
         assert order == ["track", "issue"], f"document resource registered after issue: {order}"
     finally:
         page.close()
 
 
+@requires_inspector
 def test_race_teardown_returns_to_thread_baseline(thread_leak_check, browser):
     """A1+A4 teardown must not leak owner, server, or network threads."""
     for _ in range(3):

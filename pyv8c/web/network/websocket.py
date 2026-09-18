@@ -2,8 +2,8 @@
 import re
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import FeatureImplementation, interface
 from ...foundation.arguments import (
@@ -48,14 +48,14 @@ class WebSocket(EventTarget):
         has_constructor=1,
     )
 
-    def __init__(self, url=MISSING, protocols=pyv8.Undefined, *_extra, _realm=None, **kw):
+    def __init__(self, url=MISSING, protocols=v8n.Undefined, *_extra, _realm=None, **kw):
         if url is MISSING:
             raise missing_error('WebSocket', 'constructor', 1, 0, constructor=True)
         url = usv_string(url)
-        if protocols is pyv8.Undefined or protocols is None:
+        if protocols is v8n.Undefined or protocols is None:
             protocols = []
-        elif isinstance(protocols, pyv8.JSObject):
-            iterator = protocols._iterator_method()
+        elif isinstance(protocols, v8n.Value):
+            iterator = protocols.iterator()
             protocols = (
                 [dom_string(protocols)] if is_nullish(iterator)
                 else sequence(protocols, dom_string, iterator_method=iterator)
@@ -139,13 +139,13 @@ class WebSocket(EventTarget):
             self._ws.send(str(value))
 
     def fn_close(self, code=1000, reason='', *_extra):
-        if code is pyv8.Undefined:
+        if code is v8n.Undefined:
             code = 1000
-        if code is not pyv8.Undefined:
+        if code is not v8n.Undefined:
             code = integer(code, bits=16)
-        if reason is pyv8.Undefined:
+        if reason is v8n.Undefined:
             reason = ''
-        if reason is not pyv8.Undefined:
+        if reason is not v8n.Undefined:
             reason = usv_string(reason)
         if code != 1000 and not 3000 <= code <= 4999:
             raise dom_exception("InvalidAccessError", "The code must be either 1000, or between 3000 and 4999.")

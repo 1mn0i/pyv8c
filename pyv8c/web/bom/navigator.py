@@ -1,8 +1,8 @@
 """Navigator, geolocation, and browser-compatible plugin collections."""
 import time
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import FeatureImplementation, LazyValueStore, interface
 from ...foundation.arguments import (
@@ -79,7 +79,7 @@ class MimeType:
     def get_type(self): return self._config.type
     def get_suffixes(self): return self._config.suffixes
     def get_description(self): return self._config.description
-    def get_enabledPlugin(self): return self._enabled_plugin if self._enabled_plugin is not None else pyv8.Null
+    def get_enabledPlugin(self): return self._enabled_plugin if self._enabled_plugin is not None else v8n.Null
 
 
 @interface('Plugin', None)
@@ -108,7 +108,7 @@ class Plugin(_LegacyNamedCollection):
     def _indexed_items(self): return self._mime_types
     def _supported_names(self): return [item.get_type() for item in self._mime_types]
     def _named_item(self, name):
-        return next((item for item in self._mime_types if item.get_type() == name), pyv8.Null)
+        return next((item for item in self._mime_types if item.get_type() == name), v8n.Null)
     def get_name(self): return self._config.name
     def get_filename(self): return self._config.filename
     def get_description(self): return self._config.description
@@ -136,11 +136,11 @@ class PluginArray(_LegacyNamedCollection):
     def _indexed_items(self): return self._plugins
     def _supported_names(self): return [item.get_name() for item in self._plugins]
     def _named_item(self, name):
-        return next((item for item in self._plugins if item.get_name() == name), pyv8.Null)
+        return next((item for item in self._plugins if item.get_name() == name), v8n.Null)
     def fn_refresh(self, reload_documents=False, *_extra):
-        if reload_documents is pyv8.Undefined:
+        if reload_documents is v8n.Undefined:
             reload_documents = False
-        if reload_documents is not pyv8.Undefined:
+        if reload_documents is not v8n.Undefined:
             reload_documents = boolean(reload_documents)
         return None
 
@@ -172,7 +172,7 @@ class MimeTypeArray(_LegacyNamedCollection):
     def _indexed_items(self): return self._mime_types
     def _supported_names(self): return [item.get_type() for item in self._mime_types]
     def _named_item(self, name):
-        return next((item for item in self._mime_types if item.get_type() == name), pyv8.Null)
+        return next((item for item in self._mime_types if item.get_type() == name), v8n.Null)
 
 
 def create_plugin_collections(environment):
@@ -235,16 +235,16 @@ class Geolocation:
     def fn_getCurrentPosition(self, success=MISSING, error=None, options=None, *_extra):
         if success is MISSING:
             raise missing_error('Geolocation', 'getCurrentPosition', 1, 0, constructor=False)
-        if success is not pyv8.Undefined:
+        if success is not v8n.Undefined:
             success = callback_value(success)
-        if error is pyv8.Undefined:
+        if error is v8n.Undefined:
             error = None
-        if error is not pyv8.Undefined:
+        if error is not v8n.Undefined:
             if not is_nullish(error):
                 error = callback_value(error)
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = None
-        if options is not pyv8.Undefined:
+        if options is not v8n.Undefined:
             options = dictionary(options)
         if not callable(success):
             raise V8TypeError("success callback must be callable")
@@ -255,16 +255,16 @@ class Geolocation:
     def fn_watchPosition(self, success=MISSING, error=None, options=None, *_extra):
         if success is MISSING:
             raise missing_error('Geolocation', 'watchPosition', 1, 0, constructor=False)
-        if success is not pyv8.Undefined:
+        if success is not v8n.Undefined:
             success = callback_value(success)
-        if error is pyv8.Undefined:
+        if error is v8n.Undefined:
             error = None
-        if error is not pyv8.Undefined:
+        if error is not v8n.Undefined:
             if not is_nullish(error):
                 error = callback_value(error)
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = None
-        if options is not pyv8.Undefined:
+        if options is not v8n.Undefined:
             options = dictionary(options)
         if not callable(success):
             raise V8TypeError("success callback must be callable")
@@ -371,7 +371,7 @@ class DeprecatedStorageQuota:
 
     @staticmethod
     def _optional_callback(value):
-        if value is pyv8.Undefined or is_nullish(value):
+        if value is v8n.Undefined or is_nullish(value):
             return None
         return callback_value(value)
 
@@ -471,20 +471,20 @@ class Navigator:
     def get_connection(self): return self._features.value("connection")
     def get_webkitTemporaryStorage(self):
         if self._worker:
-            return pyv8.Undefined
+            return v8n.Undefined
         return self._features.value("webkitTemporaryStorage")
     def get_webkitPersistentStorage(self):
         if self._worker:
-            return pyv8.Undefined
+            return v8n.Undefined
         return self._features.value("webkitPersistentStorage")
     def get_geolocation(self):
         if self._services is None or self._worker:
-            return pyv8.Undefined
+            return v8n.Undefined
         return self._features.value("geolocation")
     def get_plugins(self):
-        return pyv8.Undefined if self._worker else self._features.value("plugins")
+        return v8n.Undefined if self._worker else self._features.value("plugins")
     def get_mimeTypes(self):
-        return pyv8.Undefined if self._worker else self._features.value("mimeTypes")
+        return v8n.Undefined if self._worker else self._features.value("mimeTypes")
     def fn_getBattery(self, *_extra):
         battery = self._features.value("battery")
         realm = getattr(self._services, "realm_services", None)

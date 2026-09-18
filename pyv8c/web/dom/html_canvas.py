@@ -9,8 +9,8 @@ import io
 import math
 import re
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import dom_string
@@ -178,7 +178,7 @@ class HTMLCanvasElement(HTMLElement):
     def set_height(self, v):
         self._height=max(0, int(float(v))); self.attributes['height']=str(self._height); self._resize()
     def fn_getContext(self, kind='', *_):
-        if str(kind).lower() != '2d': return pyv8.Null
+        if str(kind).lower() != '2d': return v8n.Null
         if self._context2d is None: self._context2d=CanvasRenderingContext2D(self)
         return self._context2d
     def fn_toDataURL(self, kind='image/png', *_):

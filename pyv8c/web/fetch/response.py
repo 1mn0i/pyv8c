@@ -1,12 +1,12 @@
 """Fetch response model."""
 import json
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import byte_string, dictionary, integer, is_nullish, usv_string
-from ...foundation.errors import V8RangeError, V8SyntaxError, V8TypeError
+from ...foundation.errors import V8Error, V8RangeError, V8SyntaxError, V8TypeError
 from .blob import Blob
 from .headers import Headers
 
@@ -35,17 +35,17 @@ class Response:
     )
 
     def __init__(self, body=None, options=None, *_extra, services=None, _realm=None, **_):
-        if body is pyv8.Undefined:
+        if body is v8n.Undefined:
             body = None
         if isinstance(body, Blob):
             body = body._data
         elif not is_nullish(body) and not isinstance(body, bytes):
             body = usv_string(body)
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = None
         if not is_nullish(options):
             options = dictionary(options)
-        if services is pyv8.Undefined:
+        if services is v8n.Undefined:
             services = None
         options = options if isinstance(options, dict) else {}
         self._services = services or _realm
@@ -93,7 +93,9 @@ class Response:
         promise, resolve, reject = self._services.realm_services.make_promise()
         try:
             resolve(self._body_value())
-        except (V8TypeError, pyv8.JSException, UnicodeError) as exc:
+        except (V8TypeError, V8Error, RuntimeError, UnicodeError) as exc:
+            # ``RuntimeError`` is the binding's last resort for a JavaScript
+            # error it could not name, so it belongs here with the mapped ones.
             reject(self._services.realm_services.js_error_value(exc))
         return promise
     def fn_json(self, *_extra):
@@ -107,7 +109,7 @@ class Response:
             except ValueError as exc:
                 raise V8SyntaxError(str(exc)) from exc
             resolve(value)
-        except (V8TypeError, V8SyntaxError, pyv8.JSException, UnicodeError) as exc:
+        except (V8TypeError, V8SyntaxError, V8Error, RuntimeError, UnicodeError) as exc:
             reject(self._services.realm_services.js_error_value(exc))
         return promise
     def fn_arrayBuffer(self, *_extra):
@@ -117,7 +119,7 @@ class Response:
         try:
             text = self._body_value()
             resolve(self.body if isinstance(self.body, bytes) else text.encode())
-        except (V8TypeError, pyv8.JSException, UnicodeError) as exc:
+        except (V8TypeError, V8Error, RuntimeError, UnicodeError) as exc:
             reject(self._services.realm_services.js_error_value(exc))
         return promise
 

@@ -4,7 +4,7 @@ import math
 import re
 from typing import Any
 
-import pyv8
+import v8n
 
 from .errors import V8TypeError
 
@@ -18,17 +18,19 @@ def missing_error(interface, member, required, present, *, constructor=False):
 
 
 def is_nullish(value):
-    return value is None or value is pyv8.Null or value is pyv8.Undefined
+    return value is None or value is v8n.Null or value is v8n.Undefined
 
 
 def dom_string(value):
-    if isinstance(value, (pyv8.JSObject, pyv8.JSValue)):
-        return value._to_string()
+    if isinstance(value, v8n.Value):
+        # ``String(value)``, which is what Web IDL's DOMString conversion means:
+        # a JavaScript object's own toString, not a Python rendering of it.
+        return value.to_string()
     if isinstance(value, str):
         return value
-    if value is None or value is pyv8.Null:
+    if value is None or value is v8n.Null:
         return "null"
-    if value is pyv8.Undefined:
+    if value is v8n.Undefined:
         return "undefined"
     if value is True:
         return "true"
@@ -65,8 +67,8 @@ def byte_string(value, *, prefix=""):
 
 
 def boolean(value):
-    if isinstance(value, pyv8.JSValue):
-        return value._to_boolean()
+    if isinstance(value, v8n.Value):
+        return value.to_boolean()
     if is_nullish(value):
         return False
     if isinstance(value, (str, int, float, bool)):
@@ -75,11 +77,11 @@ def boolean(value):
 
 
 def number(value):
-    if isinstance(value, (pyv8.JSObject, pyv8.JSValue)):
-        return value._to_number()
-    if value is None or value is pyv8.Null:
+    if isinstance(value, v8n.Value):
+        return value.to_number()
+    if value is None or value is v8n.Null:
         return 0.0
-    if value is pyv8.Undefined:
+    if value is v8n.Undefined:
         return math.nan
     if isinstance(value, (float, int)):
         return float(value)
@@ -87,7 +89,7 @@ def number(value):
         callback = value.get("valueOf")
         if callable(callback):
             converted = callback()
-            if not isinstance(converted, (dict, list, tuple, pyv8.JSObject)):
+            if not isinstance(converted, (dict, list, tuple, v8n.Value)):
                 return number(converted)
     text = dom_string(value).strip()
     if not text:
@@ -122,28 +124,30 @@ class Dictionary(dict):
         self.value = value
 
     def get(self, name, default=None):
-        result = self.value._get(name)
-        return default if result is pyv8.Undefined else result
+        result = self.value.get(name)
+        return default if result is v8n.Undefined else result
 
     def __getitem__(self, name):
-        return self.value._get(name)
+        return self.value.get(name)
 
     def __contains__(self, name):
-        return self.value._get(name) is not pyv8.Undefined
+        return self.value.get(name) is not v8n.Undefined
 
     def items(self):
-        return ((name, self.value._get(name)) for name in self.value._keys())
+        # Keys first, then one read each: an algorithm that only wanted the keys
+        # does not run a getter for every member of the object.
+        return ((name, self.value.get(name)) for name in self.value.keys())
 
 
 def materialize(value):
     """Explicit data snapshot, for algorithms such as structured cloning."""
-    return value.to_python() if isinstance(value, pyv8.JSObject) else value
+    return value.to_python() if isinstance(value, v8n.Value) else value
 
 
 def dictionary(value, *, name="Object", prefix=""):
     if is_nullish(value):
         return {}
-    if isinstance(value, pyv8.JSObject):
+    if isinstance(value, v8n.Value):
         return Dictionary(value)
     if isinstance(value, dict):
         return value
@@ -177,24 +181,29 @@ def event_constructor_arguments(interface, event_type, options):
 def sequence(value, convert=None, *, iterator_method=MISSING):
     if isinstance(value, (str, dict)) or is_nullish(value):
         raise V8TypeError("The object must have a callable @@iterator property.")
-    if isinstance(value, pyv8.JSObject):
-        method = value._iterator_method() if iterator_method is MISSING else iterator_method
+    if isinstance(value, v8n.Value):
+        # A caller may have read the method already -- it has to, to decide
+        # whether the object is iterable before it asks -- so it is taken as an
+        # argument rather than read twice.
+        method = value.iterator() if iterator_method is MISSING else iterator_method
         if not callable(method):
             raise V8TypeError("The object must have a callable @@iterator property.")
-        iterator = method._invoke(value)
-        if not isinstance(iterator, pyv8.JSObject):
+        # The iterator method is called on the value it came from, which is why
+        # a handle can call with an explicit receiver at all.
+        iterator = method.call(value)
+        if not isinstance(iterator, v8n.Value):
             raise V8TypeError("Iterator result is not an object.")
-        next_value = iterator._get("next")
+        next_value = iterator.get("next")
         if not callable(next_value):
             raise V8TypeError("Iterator next is not callable.")
         result: list[Any] = []
         while True:
-            step = next_value._invoke(iterator)
-            if not isinstance(step, pyv8.JSObject):
+            step = next_value.call(iterator)
+            if not isinstance(step, v8n.Value):
                 raise V8TypeError("Iterator result is not an object.")
-            if boolean(step._get("done")):
+            if boolean(step.get("done")):
                 return result
-            item = step._get("value")
+            item = step.get("value")
             result.append(convert(item) if convert else item)
     try:
         result = list(value)
@@ -229,13 +238,13 @@ def callback_value(value):
 def event_listener(value):
     if is_nullish(value):
         return None
-    if callable(value) or isinstance(value, (dict, pyv8.JSObject)):
+    if callable(value) or isinstance(value, (dict, v8n.Value)):
         return value
     raise V8TypeError("The provided value is not of type 'Object'.")
 
 
 def event_handler(value):
-    return value if callable(value) else pyv8.Null
+    return value if callable(value) else v8n.Null
 
 
 def header_name(value):

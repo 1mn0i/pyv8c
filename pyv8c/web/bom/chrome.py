@@ -14,7 +14,7 @@ class: a host class would leak its own prototype and constructor, while
 """
 import time
 
-import pyv8
+import v8n
 
 __all__ = ["ChromeBindings", "install_window_chrome"]
 
@@ -126,7 +126,7 @@ class ChromeBindings:
         }
 
     def getDetails(self):
-        return pyv8.Null
+        return v8n.Null
 
     def getIsInstalled(self):
         return False
@@ -138,24 +138,26 @@ class ChromeBindings:
         return "cannot_run"
 
 
-def install_window_chrome(context, services=None):
+def install_window_chrome(realm, services=None):
     """Install ``window.chrome`` for one Window realm.
 
     Chromium runs this before any page script, so the object is present for
     inline scripts in the document head as well.  Worker globals do not get one.
     """
     bindings = ChromeBindings(services)
+    # The functions cross as one host object: a dict converts to a plain
+    # JavaScript object, so the bootstrap reads them by name.
     bridge = {name: getattr(bindings, name) for name in ("loadTimes", "csi", *_APP_FUNCTIONS)}
     # Installing the object is host work, not page behaviour: neither the bridge
     # global nor the descriptor of ``chrome`` may be reported as a trace event,
     # and a page that never touches ``chrome`` must produce no event at all.
     # Chromium's own V8 extras are equally invisible to instrumentation.
-    tracing = bool(getattr(context, "trace", False))
-    if tracing:
-        context.trace = False
+    hook = realm.trace_hook
+    if hook is not None:
+        realm.trace_hook = None
     try:
-        context.glob[_BRIDGE_GLOBAL] = bridge
-        context.exec_js(_BOOTSTRAP, filename="chrome.js")
+        setattr(realm.glob, _BRIDGE_GLOBAL, bridge)
+        realm.evaluate(_BOOTSTRAP, filename="chrome.js")
     finally:
-        if tracing:
-            context.trace = True
+        if hook is not None:
+            realm.trace_hook = hook

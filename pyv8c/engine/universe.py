@@ -151,8 +151,23 @@ class InterfaceUniverse:
             self._classes[name] = cls
             return cls
 
-    def class_config_for(self, name, realm=None):
-        return self._assembly.bind(name, realm)
+    def plan_for(self, name, realm=None):
+        """The install plan for one interface, as a realm hands it to the batch.
+
+        A plan carries callables rather than slot numbers, so it is correct in
+        every realm that installs it -- which is why it is compiled once and
+        cached, and why the one thing that does depend on the realm produces a
+        copy instead.
+        """
+        return self._assembly.plan(name, realm)
+
+    def plan_declared(self, cls, name, declaration=None, realm=None):
+        """The plan for a class that carries its own declaration.
+
+        For the interfaces the renderer's snapshot does not describe but pyv8c
+        defines anyway: the class's declaration is the whole interface.
+        """
+        return self._assembly.plan_declared(cls, name, declaration, realm)
 
     def walk_parent_names(self, name):
         """The interface plus its ancestor chain, innermost first."""

@@ -1,8 +1,8 @@
 """Worker Web API and global scope types."""
 from urllib.parse import urljoin
 
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagLocation
+from v8n import AttributeSpec, IdlSpec, MethodSpec
+from v8n.flag import FlagLocation
 
 from ...engine.features import FeatureImplementation, interface
 from ...foundation.arguments import (
@@ -16,6 +16,7 @@ from ...foundation.arguments import (
     usv_string,
 )
 from ...foundation.errors import InvalidStateError
+from ..bom.exposed import ExposedInterfacesMixin
 from ..bom.scheduling import _SchedulingMixin
 from ..dom.events import EventTarget
 from ..fetch.clone import message_transfer
@@ -23,7 +24,15 @@ from ..fetch.events import ErrorEvent, MessageEvent
 
 
 @interface('WorkerGlobalScope', 'EventTarget')
-class WorkerGlobalScope(_SchedulingMixin, EventTarget):
+class WorkerGlobalScope(ExposedInterfacesMixin, _SchedulingMixin, EventTarget):
+    #: A worker global exposes the dedicated-worker names, not a window's.
+    #:
+    #: The catalogue has a broader "Worker" list, which the renderer's exposure
+    #: table fills with everything a worker scope can see *in any worker* --
+    #: including Window, and so WindowProperties through it.  A dedicated worker
+    #: is the narrower, accurate list, and it is the one this global is.
+    _exposed_context_type = "DedicatedWorker"
+
     __v8_idl_spec__ = IdlSpec(
         global_this=True,
         attributes=(
@@ -46,6 +55,11 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
         ),
         constructor_behavior=0,
         has_constructor=1,
+        # The realm's other interface names, answered on first read rather than
+        # declared one property each -- see web/bom/exposed.py for why.
+        name_get="__v8_name_get__",
+        name_query="__v8_name_query__",
+        name_enum="__v8_name_enum__",
     )
 
     #: Interface name the scheduling methods report in argument errors.

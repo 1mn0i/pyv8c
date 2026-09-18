@@ -8,11 +8,14 @@ layer because the worker packages need it too and may not import ``platform``.
 
 from __future__ import annotations
 
-import pyv8
+import v8n
 
 from .errors import as_js_error
 
-#: JavaScript helpers compiled once per realm.
+#: JavaScript helpers compiled once per realm.  A source is evaluated rather
+#: than compiled and held because the realm is the only thing that can hold a
+#: compiled script, and evaluating a source that is already a function only
+#: rebuilds that function -- which is why the evaluated results are cached.
 _SOURCES = {
     "make_promise": (
         "(() => { let resolve, reject;"
@@ -26,41 +29,32 @@ _SOURCES = {
     # microtask queue directly, see enqueue_microtask.
 }
 
+#: How a Python error names its JavaScript counterpart, for the ones whose
+#: Python class name is not already the JavaScript one.
+_ERROR_NAMES = {
+    "V8TypeError": "TypeError",
+    "V8RangeError": "RangeError",
+    "V8ReferenceError": "ReferenceError",
+    "V8SyntaxError": "SyntaxError",
+    "V8URIError": "URIError",
+    "V8EvalError": "EvalError",
+}
+
 
 class RealmScripts:
-    """Compiled JavaScript helpers bound to one V8 context."""
+    """Compiled JavaScript helpers bound to one V8 realm."""
 
-    def __init__(self, context):
-        self._context = context
-        self._cache = None
+    def __init__(self, realm):
+        self._realm = realm
         self._helpers = None
 
     def clear(self):
-        """Drop the compiled scripts when the V8 context goes away."""
-        self._cache = None
+        """Drop the helpers when the V8 realm goes away."""
         self._helpers = None
 
     def close(self):
         self.clear()
-        self._context = None
-
-    @property
-    def _scripts(self):
-        """Compile the realm's JavaScript helpers exactly once.
-
-        ``exec_js`` builds a fresh ``Script`` for every source string, and that
-        construction costs several times more than evaluating an already
-        compiled one. Fetch, XHR and every rejected Promise go through these
-        helpers, so they are compiled once per realm and re-evaluated after.
-        """
-        scripts = self._cache
-        if scripts is None:
-            scripts = {
-                key: pyv8.Script(self._context, source)
-                for key, source in _SOURCES.items()
-            }
-            self._cache = scripts
-        return scripts
+        self._realm = None
 
     def _helper(self, name):
         """The *evaluated* helper for *name*, reused across calls.
@@ -76,35 +70,41 @@ class RealmScripts:
             helpers = self._helpers = {}
         helper = helpers.get(name)
         if helper is None:
-            helper = helpers[name] = self._context.exec_js(self._scripts[name])
+            helper = helpers[name] = self._realm.evaluate(_SOURCES[name])
         return helper
 
     def make_promise(self):
-        record = self._context.exec_js(self._scripts["make_promise"])
-        return record["promise"], record["resolve"], record["reject"]
+        record = self._realm.evaluate(_SOURCES["make_promise"])
+        # The record is a handle, not a dict: the boundary hands an object back
+        # unexpanded, so each member is read by name.
+        return record.get("promise"), record.get("resolve"), record.get("reject")
 
     def js_error_value(self, exc):
-        """Materialize a rejected Promise reason as a native JS error object."""
-        if isinstance(exc, pyv8.JSException):
-            return exc.original
+        """Materialize a rejected Promise reason as a native JS error object.
+
+        A reason that is already a JavaScript value -- which is what a
+        rejection raised inside JavaScript arrives as -- is handed back
+        unchanged, so identity survives and a handler sees the error the page
+        actually threw.  A Python exception has no JavaScript counterpart, so
+        one is built for it: a real ``Error`` subclass is what makes ``error
+        instanceof TypeError`` true in a handler.
+        """
+        if isinstance(exc, v8n.Value):
+            return exc
         error = as_js_error(exc)
         name = getattr(error, "_name", None)
         if not name:
-            name = {
-                "V8TypeError": "TypeError", "V8RangeError": "RangeError",
-                "V8ReferenceError": "ReferenceError", "V8SyntaxError": "SyntaxError",
-                "V8URIError": "URIError", "V8EvalError": "EvalError",
-            }.get(type(error).__name__, "Error")
+            name = _ERROR_NAMES.get(type(error).__name__, "Error")
         message = str(error)
         # DOMException's name is stored on the Python instance, while native
         # Error subclasses use the constructor name.  Keep DOMException
         # construction separate so its name/code remain observable.
         if hasattr(error, "_name"):
-            return self._helper("dom_error_factory").call(None, message, name)
-        return self._helper("error_factory").call(None, name, message)
+            return self._helper("dom_error_factory")(message, name)
+        return self._helper("error_factory")(name, message)
 
     def promise_resolve(self, value):
-        return self._helper("promise_resolve").call(None, value)
+        return self._helper("promise_resolve")(value)
 
     def install_error_hooks(self, on_uncaught, on_rejection):
         """Route the failures V8 handles on its own back into the realm.
@@ -112,16 +112,16 @@ class RealmScripts:
         Everything the embedder calls it catches itself -- the call it made
         returns as a Python exception.  Microtask jobs and promise reactions
         never come back to a Python frame, and a rejection is not an exception
-        at all, so V8 reports both through isolate-wide callbacks and this
-        installs them.  Doing it here is also what makes it free per call:
-        wrapping each enqueued function in JavaScript would cost on every one.
+        at all, so V8 reports both through per-realm callbacks and this installs
+        them.  Doing it here is also what makes it free per call: wrapping each
+        enqueued function in JavaScript would cost on every one.
 
-        ``on_uncaught`` receives ``(message, source, line, column, error)`` and
-        ``on_rejection`` receives ``(event, identity, promise, reason)``; either
-        may be ``None`` to leave that report alone.  Both run on the realm's own
-        thread while it is inside JavaScript.
+        Both hooks receive one argument: the value V8 captured, through the
+        same three-state boundary everything else crosses by.  That is why a
+        rejection arrives as whatever was rejected -- a handle, a primitive or
+        the original Python object -- rather than as a copy or a message.
         """
-        self._context.set_error_hooks(on_uncaught, on_rejection)
+        self._realm.set_error_hooks(on_uncaught=on_uncaught, on_rejection=on_rejection)
 
     def enqueue_microtask(self, callback):
         """Queue *callback* on V8's own microtask queue.
@@ -141,7 +141,7 @@ class RealmScripts:
         -- see ``v8_build.cppgc_microtask_queue_enabled``.  Without it the call
         raises instead of dispatching through a mismatched vtable.
         """
-        return self._context.enqueue_microtask(callback)
+        return self._realm.enqueue_microtask(callback)
 
 
 __all__ = ["RealmScripts"]

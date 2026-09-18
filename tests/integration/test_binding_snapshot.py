@@ -10,7 +10,7 @@ import threading
 
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("v8n")
 from pyv8c import Browser
 
 LAZY_NAME = "XPathEvaluator"

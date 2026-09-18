@@ -1,7 +1,7 @@
 """``HTMLInputElement``: value semantics, selection, stepping and validation."""
 
 import pytest
-import pyv8
+import v8n
 
 from pyv8c import Browser
 
@@ -118,7 +118,7 @@ def test_file_input_exposes_an_empty_file_list_and_others_throw(page):
         let thrown = null;
         try { text.files; } catch (error) { thrown = error.name; }
         return [file.files.length, file.files.item(0), thrown];
-    })()""") == [0, pyv8.Null, "InvalidStateError"]
+    })()""") == [0, v8n.Null, "InvalidStateError"]
 
 
 def test_labels_and_form_owner(page):
@@ -132,4 +132,4 @@ def test_labels_and_form_owner(page):
         const wrapped = document.getElementById('wrapped');
         return [inside.form.id, inside.labels.length, inside.labels[0].textContent,
             wrapped.labels.length, wrapped.form];
-    })()""") == ["f", 1, "L", 1, pyv8.Null]
+    })()""") == ["f", 1, "L", 1, v8n.Null]

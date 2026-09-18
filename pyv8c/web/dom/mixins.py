@@ -10,9 +10,9 @@ interceptor, and the collections that also expose named properties share
 IDL interface declares.
 """
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import V8Attribute
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
+from v8n.flag import V8Attribute
 
 from ...foundation.errors import LegacyPropertyError
 from .utils import NAMED_PROPERTY_ATTRIBUTES, OBJECT_PROTOTYPE_NAMES, as_nodes, is_element
@@ -47,8 +47,8 @@ class _NonDocumentTypeChildNodeMixin:
             index += step
         return None
 
-    def get_previousElementSibling(self): return self._element_sibling(-1) or pyv8.Null
-    def get_nextElementSibling(self): return self._element_sibling(1) or pyv8.Null
+    def get_previousElementSibling(self): return self._element_sibling(-1) or v8n.Null
+    def get_nextElementSibling(self): return self._element_sibling(1) or v8n.Null
 
 
 class _ParentNodeMixin:
@@ -77,10 +77,10 @@ class _ParentNodeMixin:
 
     def get_firstElementChild(self):
         children = self._element_children()
-        return children[0] if children else pyv8.Null
+        return children[0] if children else v8n.Null
     def get_lastElementChild(self):
         children = self._element_children()
-        return children[-1] if children else pyv8.Null
+        return children[-1] if children else v8n.Null
     def get_childElementCount(self): return len(self._element_children())
 
     def fn_append(self, *values):
@@ -152,7 +152,7 @@ class ReadOnlyIndexedPropertyMixin:
     collection objects in any browser subsystem.
     """
 
-    __v8_idl_spec__ = pyv8.IdlSpec(
+    __v8_idl_spec__ = IdlSpec(
         index_get="__v8_index_get__",
         index_set="__v8_index_set__",
         index_query="__v8_index_query__",
@@ -167,19 +167,19 @@ class ReadOnlyIndexedPropertyMixin:
         try:
             index = int(index)
         except (TypeError, ValueError, OverflowError):
-            return pyv8.Null
+            return v8n.Null
         items = self._indexed_items()
-        return items[index] if 0 <= index < len(items) else pyv8.Null
+        return items[index] if 0 <= index < len(items) else v8n.Null
 
     def _has_index(self, index):
-        return self._item_at(index) is not pyv8.Null
+        return self._item_at(index) is not v8n.Null
 
     def _interface_name(self):
         return getattr(getattr(type(self), "__idl_spec__", None), "name", type(self).__name__)
 
     def __v8_index_get__(self, index):
         value = self._item_at(index)
-        return None if value is pyv8.Null else value
+        return None if value is v8n.Null else value
 
     def __v8_index_set__(self, index, value):
         if self._has_index(index):
@@ -240,7 +240,7 @@ class LegacyNamedPropertyMixin:
         if not isinstance(name, str) or name not in self._visible_names():
             return None
         value = self._named_item(name)
-        return None if value is pyv8.Null else value
+        return None if value is v8n.Null else value
 
     def __v8_name_set__(self, name, value):
         if isinstance(name, str) and name in self._visible_names():

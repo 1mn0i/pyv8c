@@ -7,7 +7,7 @@ interface that exposes them: a page marks them cross-origin visible, a worker
 does not.
 """
 
-import pyv8
+import v8n
 
 from ...foundation.arguments import (
     MISSING,
@@ -49,7 +49,7 @@ class _SchedulingMixin:
             original = callback
 
             def callback(): return original(*arguments)
-        if delay is pyv8.Undefined:
+        if delay is v8n.Undefined:
             delay = 0
         delay = integer(delay, signed=True)
         return self._services.task_services.schedule(callback, float(delay) / 1000.0, repeat=repeat)

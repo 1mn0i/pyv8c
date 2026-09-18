@@ -1,6 +1,6 @@
 """Document lifecycle events and ready-state transitions for a Page."""
 
-import pyv8
+import v8n
 
 from ..foundation.errors import NotFoundError
 from ..web.dom.events import Event
@@ -140,7 +140,7 @@ class DocumentLifecycle:
         page = self.page
         if selector is not None:
             node = page.document.fn_querySelector(str(selector))
-            if node is pyv8.Null or node is None:
+            if node is v8n.Null or node is None:
                 raise NotFoundError(f"No element matches the selector {selector!r}")
             return node
         if target == "window" or target is page.window:
@@ -201,12 +201,11 @@ class DocumentLifecycle:
         if node is not None:
             self.dispatch_page_event("error", node, {"bubbles": False})
         if message is None:
-            # A browser hands page handlers the original JavaScript error (the
-            # fifth ``onerror`` argument), so a wrapper from the binding layer is
-            # replaced by the JS value it stands for when there is one.
-            original = getattr(error, "original", None)
+            # No message was supplied, so this is a Python exception that a
+            # callback raised on its way into JavaScript: it brings its own text
+            # and, when it has one, its own value behind it.
             message = str(error)
-            value = error if original is None else original
+            value = error
         event = self.materialize_event_class("ErrorEvent")(
             "error", {
                 "message": message,

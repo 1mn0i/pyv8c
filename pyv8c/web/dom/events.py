@@ -1,8 +1,8 @@
 """DOM event model: events, event-handler slots and the target dispatch pipeline."""
 import time
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import (
@@ -27,7 +27,14 @@ _DOCUMENT_NODE = 9  # DOM standard nodeType of Document; hardcoded to avoid a do
 
 
 def _js_call(fn, this, *args):
-    if hasattr(fn, "call"):
+    """Invoke a listener or handler, JavaScript's way or Python's.
+
+    A JavaScript function is called with its receiver spelled out.  Reading
+    ``fn.call`` off a JavaScript function gives JavaScript's own ``call``, not an
+    invocation of ``fn``, so the receiver has to travel as an argument to the one
+    call the binding offers.  A Python callable has no receiver to give.
+    """
+    if isinstance(fn, v8n.Value):
         return fn.call(this, *args)
     return fn(*args)
 
@@ -64,7 +71,7 @@ def _modifier_state(event, key):
 
 def _nullable_string(value):
     """Web IDL ``DOMString?``: ``null``/``undefined`` are preserved as null."""
-    return pyv8.Null if is_nullish(value) else dom_string(value)
+    return v8n.Null if is_nullish(value) else dom_string(value)
 
 
 @interface('Event', None)
@@ -112,8 +119,8 @@ class Event:
         self._trusted = bool(init.get("isTrusted", False)) if type(options) is dict else False
         self._persisted = bool(init.get("persisted", False)) if type(options) is dict else False
     def get_type(self): return self.type
-    def get_target(self): return self.target or pyv8.Null
-    def get_currentTarget(self): return self.currentTarget or pyv8.Null
+    def get_target(self): return self.target or v8n.Null
+    def get_currentTarget(self): return self.currentTarget or v8n.Null
     def get_bubbles(self): return self.bubbles
     def get_cancelable(self): return self.cancelable
     def get_defaultPrevented(self): return self.defaultPrevented
@@ -143,9 +150,9 @@ class Event:
         # dispatched is a no-op per DOM; that edge is out of scope here.
         if event_type is MISSING:
             raise missing_error('Event', 'initEvent', 3, 0, constructor=False)
-        if bubbles is pyv8.Undefined:
+        if bubbles is v8n.Undefined:
             bubbles = False
-        if cancelable is pyv8.Undefined:
+        if cancelable is v8n.Undefined:
             cancelable = False
         self.type = dom_string(event_type)
         self.bubbles = boolean(bubbles)
@@ -171,7 +178,7 @@ class UIEvent(Event):
         super().__init__(event_type, options, **kw)
         init = event_init(options)
         self.detail = integer(init.get("detail", 0), signed=True)
-        self.view = init.get("view", pyv8.Null)
+        self.view = init.get("view", v8n.Null)
     def get_view(self): return self.view
     def get_detail(self): return self.detail
     def get_which(self): return self.detail
@@ -239,7 +246,7 @@ class MouseEvent(UIEvent):
         self.metaKey = boolean(init.get("metaKey", False))
         self.button = integer(init.get("button", 0), bits=16, signed=True)
         self.buttons = integer(init.get("buttons", 0), bits=16)
-        self.relatedTarget = init.get("relatedTarget", pyv8.Null)
+        self.relatedTarget = init.get("relatedTarget", v8n.Null)
 
     def get_screenX(self): return self.screenX
     def get_screenY(self): return self.screenY
@@ -261,8 +268,8 @@ class MouseEvent(UIEvent):
     def get_buttons(self): return self.buttons
     def get_relatedTarget(self): return self.relatedTarget
     # Legacy aliases: Blink exposes relatedTarget only for the matching type.
-    def get_fromElement(self): return self.relatedTarget if self.type == "mouseover" else pyv8.Null
-    def get_toElement(self): return self.relatedTarget if self.type == "mouseout" else pyv8.Null
+    def get_fromElement(self): return self.relatedTarget if self.type == "mouseover" else v8n.Null
+    def get_toElement(self): return self.relatedTarget if self.type == "mouseout" else v8n.Null
     def get_which(self): return self.button + 1
     def fn_getModifierState(self, key=MISSING, *_extra):
         if key is MISSING:
@@ -348,15 +355,15 @@ class CustomEvent(Event):
         event_type, options = event_constructor_arguments('CustomEvent', event_type, options)
         super().__init__(event_type, options, **kw)
         init = event_init(options)
-        self.detail = init.get("detail", pyv8.Null)
+        self.detail = init.get("detail", v8n.Null)
 
     def get_detail(self): return self.detail
-    def fn_initCustomEvent(self, event_type=MISSING, bubbles=False, cancelable=False, detail=pyv8.Null, *_extra):
+    def fn_initCustomEvent(self, event_type=MISSING, bubbles=False, cancelable=False, detail=v8n.Null, *_extra):
         if event_type is MISSING:
             raise missing_error('CustomEvent', 'initCustomEvent', 4, 0, constructor=False)
-        if bubbles is pyv8.Undefined:
+        if bubbles is v8n.Undefined:
             bubbles = False
-        if cancelable is pyv8.Undefined:
+        if cancelable is v8n.Undefined:
             cancelable = False
         self.fn_initEvent(event_type, bubbles, cancelable)
         self.detail = detail
@@ -377,7 +384,7 @@ class FocusEvent(UIEvent):
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('FocusEvent', event_type, options)
         super().__init__(event_type, options, **kw)
-        self.relatedTarget = event_init(options).get("relatedTarget", pyv8.Null)
+        self.relatedTarget = event_init(options).get("relatedTarget", v8n.Null)
 
     def get_relatedTarget(self): return self.relatedTarget
 
@@ -404,10 +411,10 @@ class InputEvent(UIEvent):
         event_type, options = event_constructor_arguments('InputEvent', event_type, options)
         super().__init__(event_type, options, **kw)
         init = event_init(options)
-        self.data = _nullable_string(init.get("data", pyv8.Null))
+        self.data = _nullable_string(init.get("data", v8n.Null))
         self.isComposing = boolean(init.get("isComposing", False))
         self.inputType = dom_string(init.get("inputType", ""))
-        self.dataTransfer = init.get("dataTransfer", pyv8.Null)
+        self.dataTransfer = init.get("dataTransfer", v8n.Null)
 
     def get_data(self): return self.data
     def get_isComposing(self): return self.isComposing
@@ -560,9 +567,9 @@ class PopStateEvent(Event):
         event_type, options = event_constructor_arguments('PopStateEvent', event_type, options)
         super().__init__(event_type, options, **kw)
         init = event_init(options)
-        state = init.get("state", pyv8.Null)
+        state = init.get("state", v8n.Null)
         # ``None`` is the host's "no state"; a JS ``undefined`` stays undefined.
-        self.state = pyv8.Null if state is None else state
+        self.state = v8n.Null if state is None else state
         self.has_ua_visual_transition = boolean(init.get("hasUAVisualTransition", False))
 
     def get_state(self): return self.state
@@ -613,11 +620,11 @@ class StorageEvent(Event):
         event_type, options = event_constructor_arguments('StorageEvent', event_type, options)
         super().__init__(event_type, options, **kw)
         init = event_init(options)
-        self.key = _nullable_string(init.get("key", pyv8.Null))
-        self.oldValue = _nullable_string(init.get("oldValue", pyv8.Null))
-        self.newValue = _nullable_string(init.get("newValue", pyv8.Null))
+        self.key = _nullable_string(init.get("key", v8n.Null))
+        self.oldValue = _nullable_string(init.get("oldValue", v8n.Null))
+        self.newValue = _nullable_string(init.get("newValue", v8n.Null))
         self.url = dom_string(init.get("url", ""))
-        self.storageArea = init.get("storageArea", pyv8.Null)
+        self.storageArea = init.get("storageArea", v8n.Null)
 
     def get_key(self): return self.key
     def get_oldValue(self): return self.oldValue
@@ -649,8 +656,8 @@ class AnimationEvent(Event):
         self.animationName = dom_string(init.get("animationName", ""))
         self.elapsedTime = number(init.get("elapsedTime", 0))
         self.pseudoElement = dom_string(init.get("pseudoElement", ""))
-        self.animation = init.get("animation", pyv8.Null)
-        self.pseudoTarget = init.get("pseudoTarget", pyv8.Null)
+        self.animation = init.get("animation", v8n.Null)
+        self.pseudoTarget = init.get("pseudoTarget", v8n.Null)
 
     def get_animationName(self): return self.animationName
     def get_elapsedTime(self): return self.elapsedTime
@@ -682,8 +689,8 @@ class TransitionEvent(Event):
         self.propertyName = dom_string(init.get("propertyName", ""))
         self.elapsedTime = number(init.get("elapsedTime", 0))
         self.pseudoElement = dom_string(init.get("pseudoElement", ""))
-        self.animation = init.get("animation", pyv8.Null)
-        self.pseudoTarget = init.get("pseudoTarget", pyv8.Null)
+        self.animation = init.get("animation", v8n.Null)
+        self.pseudoTarget = init.get("pseudoTarget", v8n.Null)
 
     def get_propertyName(self): return self.propertyName
     def get_elapsedTime(self): return self.elapsedTime
@@ -709,8 +716,8 @@ class PromiseRejectionEvent(Event):
         event_type, options = event_constructor_arguments('PromiseRejectionEvent', event_type, options)
         super().__init__(event_type, options, **kw)
         init = event_init(options)
-        self.promise = init.get("promise", pyv8.Null)
-        self.reason = init.get("reason", pyv8.Null)
+        self.promise = init.get("promise", v8n.Null)
+        self.reason = init.get("reason", v8n.Null)
 
     def get_promise(self): return self.promise
     def get_reason(self): return self.reason
@@ -777,14 +784,14 @@ class EventTarget:
     )
 
     def __init__(self, *_extra, services=None, **_):
-        if services is pyv8.Undefined:
+        if services is v8n.Undefined:
             services = None
         self._services = services
         self._listeners = {}
         self._listener_order = 0
         self._handlers = {}
 
-    def _get_handler(self, name): return self._handlers.get(name, pyv8.Null)
+    def _get_handler(self, name): return self._handlers.get(name, v8n.Null)
     def _set_handler(self, name, value): self._handlers[name] = event_handler(value)
 
     def fn_addEventListener(self, event_type=MISSING, listener=MISSING, options=False, *_extra):
@@ -795,9 +802,9 @@ class EventTarget:
         event_type = dom_string(event_type)
         if not is_nullish(listener):
             listener = event_listener(listener)
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = False
-        if isinstance(options, pyv8.JSObject):
+        if isinstance(options, v8n.Value):
             options = dictionary(options)
         capture = boolean(options.get("capture", False)) if isinstance(options, dict) else boolean(options)
         once = bool(options.get("once", False)) if isinstance(options, dict) else False
@@ -817,9 +824,9 @@ class EventTarget:
         event_type = dom_string(event_type)
         if not is_nullish(listener):
             listener = event_listener(listener)
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = False
-        if isinstance(options, pyv8.JSObject):
+        if isinstance(options, v8n.Value):
             options = dictionary(options)
         capture = boolean(options.get("capture", False)) if isinstance(options, dict) else boolean(options)
         bucket = self._listeners.get(str(event_type), [])
@@ -866,7 +873,9 @@ class EventTarget:
                 if callable(listener):
                     _js_call(listener, self, event)
                 else:
-                    callback = listener._get("handleEvent") if isinstance(listener, pyv8.JSObject) else listener.get("handleEvent")
+                    # A dictionary listener, in either language: reading the
+                    # member is the same operation on both.
+                    callback = listener.get("handleEvent")
                     _js_call(callback_value(callback), listener, event)
             except _CONTROL_EXCEPTIONS:
                 raise
@@ -887,10 +896,10 @@ class EventTarget:
                 if event.type == "error" and self.__class__.__name__ == "Window":
                     _js_call(handler, self, getattr(event, "message", ""),
                              getattr(event, "filename", ""), getattr(event, "lineno", 0),
-                             getattr(event, "colno", 0), getattr(event, "error", pyv8.Null))
+                             getattr(event, "colno", 0), getattr(event, "error", v8n.Null))
                 else:
                     result = _js_call(handler, self, event)
-                    if event.type == "beforeunload" and result not in (None, pyv8.Null, pyv8.Undefined, ""):
+                    if event.type == "beforeunload" and result not in (None, v8n.Null, v8n.Undefined, ""):
                         event.defaultPrevented = True
             except _CONTROL_EXCEPTIONS:
                 raise
@@ -901,7 +910,7 @@ class EventTarget:
 
     def __getattr__(self, name):
         if name.startswith("on"):
-            return self._handlers.get(name, pyv8.Null)
+            return self._handlers.get(name, v8n.Null)
         raise AttributeError(name)
 
     def __setattr__(self, name, value):
@@ -968,7 +977,7 @@ def _install_handler_slots(cls, names):
     attributes = []
     for name in names:
         def getter(self, _name=name):
-            return self._handlers.get(_name, pyv8.Null)
+            return self._handlers.get(_name, v8n.Null)
 
         def setter(self, value, _name=name):
             self._handlers[_name] = event_handler(value)

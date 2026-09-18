@@ -1,6 +1,6 @@
 """Events shared by Fetch, WebSocket, XHR, and Worker APIs."""
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import (
@@ -34,11 +34,11 @@ class MessageEvent(Event):
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, init = event_constructor_arguments('MessageEvent', event_type, options)
         super().__init__(event_type, init, **kw)
-        self.data = init.get("data", pyv8.Null)
+        self.data = init.get("data", v8n.Null)
         self.origin = usv_string(init.get("origin", ""))
         self.lastEventId = dom_string(init.get("lastEventId", ""))
-        self.source = init.get("source", pyv8.Null)
-        ports = init.get("ports", pyv8.Undefined)
+        self.source = init.get("source", v8n.Null)
+        ports = init.get("ports", v8n.Undefined)
         self.ports = [] if is_nullish(ports) else sequence(ports)
 
     def get_data(self): return self.data
@@ -91,7 +91,7 @@ class ErrorEvent(Event):
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, init = event_constructor_arguments('ErrorEvent', event_type, options)
         super().__init__(event_type, init, **kw)
-        self.error = init.get("error", pyv8.Null)
+        self.error = init.get("error", v8n.Null)
         self.message = dom_string(init.get("message", ""))
         self.filename = usv_string(init.get("filename", ""))
         self.lineno = integer(init.get("lineno", 0), bits=32)

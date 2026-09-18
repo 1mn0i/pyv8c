@@ -4,8 +4,8 @@ These classes deliberately have no dependency on the node model itself:
 they read through owner-supplied getters, which keeps them importable by
 :mod:`dom.nodes` without a cycle.
 """
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, missing_error
@@ -71,7 +71,7 @@ class NamedNodeMap(NodeList):
         if name is MISSING:
             raise missing_error('NamedNodeMap', 'getNamedItem', 1, 0, constructor=False)
         name = dom_string(name)
-        return next((item for item in self._items() if item.get_name() == str(name)), pyv8.Null)
+        return next((item for item in self._items() if item.get_name() == str(name)), v8n.Null)
     def fn_setNamedItem(self, attr=MISSING, *_extra):
         if attr is MISSING:
             raise missing_error('NamedNodeMap', 'setNamedItem', 1, 0, constructor=False)
@@ -147,9 +147,9 @@ class HTMLCollection(LegacyNamedPropertyMixin, NodeList):
         name = dom_string(name)
         value = str(name)
         if not value:
-            return pyv8.Null
+            return v8n.Null
         return next((n for n in self._items()
-                     if _node_id(n) == value or _collection_node_name(n) == value), pyv8.Null)
+                     if _node_id(n) == value or _collection_node_name(n) == value), v8n.Null)
 
     def _supported_names(self):
         return _supported_names(self._items(), _collection_node_name)
@@ -219,7 +219,7 @@ class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
         # elements share the id or name, and null when nothing matches.
         matches = self._matches(name)
         if not matches:
-            return pyv8.Null
+            return v8n.Null
         if len(matches) == 1:
             return matches[0]
         return HTMLCollection(owner=self._owner, getter=lambda: self._matches(name))
@@ -227,14 +227,14 @@ class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
     def get_length(self): return len(self._items())
 
     def fn_item(self, *args):
-        if not args or args[0] is pyv8.Undefined:
-            return pyv8.Null
+        if not args or args[0] is v8n.Undefined:
+            return v8n.Null
         name = dom_string(args[0])
         index = _array_index_name(name)
         if index is None:
             return self._named(name)
         items = self._items()
-        return items[index] if 0 <= index < len(items) else pyv8.Null
+        return items[index] if 0 <= index < len(items) else v8n.Null
 
     def fn_namedItem(self, *args):
         if not args:
@@ -244,13 +244,13 @@ class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
         return self._named(dom_string(args[0]))
 
     def __call__(self, *args):
-        if not args or args[0] is pyv8.Undefined:
-            return pyv8.Null
+        if not args or args[0] is v8n.Undefined:
+            return v8n.Null
         name = dom_string(args[0])
         index = _array_index_name(name)
         if index is not None:
             items = self._items()
-            return items[index] if index < len(items) else pyv8.Null
+            return items[index] if index < len(items) else v8n.Null
         return self._named(name)
 
     # -- named interceptor ----------------------------------------------
@@ -366,21 +366,21 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
         tokens = set(self._validate(token, "remove") for token in tokens)
         self._update(token for token in self._tokens() if token not in tokens)
 
-    def fn_toggle(self, token=MISSING, force=pyv8.Undefined, *_extra):
+    def fn_toggle(self, token=MISSING, force=v8n.Undefined, *_extra):
         if token is MISSING:
             raise missing_error('DOMTokenList', 'toggle', 1, 0, constructor=False)
         token = dom_string(token)
-        if force is not pyv8.Undefined:
+        if force is not v8n.Undefined:
             force = boolean(force)
         token = self._validate(token, "toggle")
         values = self._tokens()
         present = token in values
         if present:
-            if force is pyv8.Undefined or not force:
+            if force is v8n.Undefined or not force:
                 self._update(value for value in values if value != token)
                 return False
             return True
-        if force is pyv8.Undefined or force:
+        if force is v8n.Undefined or force:
             self._update(values + [token])
             return True
         return False

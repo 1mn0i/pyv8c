@@ -2,10 +2,11 @@
 
 import pytest
 
-pytest.importorskip("pyv8")
-import pyv8
+pytest.importorskip("v8n")
+import v8n
 
 from pyv8c import Browser
+from pyv8c.foundation.errors import V8Error
 from pyv8c.web.dom.collections import HTMLAllCollection, HTMLCollection
 from pyv8c.web.dom.html_classes import HTML_CLASSES
 from pyv8c.web.dom.html_elements import Element
@@ -74,7 +75,7 @@ def test_node_list_has_live_readonly_indexed_properties(page):
   ];
 })()
 """)
-    assert result[0:3] == [True, pyv8.Null, True]
+    assert result[0:3] == [True, v8n.Null, True]
     assert result[3] == ["0", "1"]
     assert result[4] == {
         "value": result[4]["value"],
@@ -82,7 +83,7 @@ def test_node_list_has_live_readonly_indexed_properties(page):
         "enumerable": True,
         "configurable": True,
     }
-    assert result[5:11] == [123, False, "first", "expando", True, pyv8.Undefined]
+    assert result[5:11] == [123, False, "first", "expando", True, v8n.Undefined]
     assert result[11:] == [3, 3, [True, True, True]]
 
 
@@ -181,7 +182,7 @@ def test_html_collection_mutation_and_named_property_visibility(page):
           extraDeleted, collection.extra, typeof collection.item, errors];
 })()
 """)
-    assert result[:7] == [1, False, "first", 2, True, pyv8.Undefined, "function"]
+    assert result[:7] == [1, False, "first", 2, True, v8n.Undefined, "function"]
     assert result[7] == [
         [
             "TypeError",
@@ -206,7 +207,7 @@ def test_dom_token_list_preserves_value_and_exposes_tokens(page):
           DOMTokenList.prototype.add.length, DOMTokenList.prototype.remove.length];
 })()
 """)
-    assert result[:6] == ["  a\tb  a  ", "  a\tb  a  ", 2, "a", "b", pyv8.Null]
+    assert result[:6] == ["  a\tb  a  ", "  a\tb  a  ", 2, "a", "b", v8n.Null]
     assert result[6] == ["0", "1"]
     assert result[7] == {
         "value": "a",
@@ -331,7 +332,7 @@ def test_document_all_interface_constructor_is_exposed_but_not_constructible(doc
     assert document_page.evaluate("HTMLAllCollection.name") == "HTMLAllCollection"
     assert document_page.evaluate("document.all.constructor === HTMLAllCollection") is True
     for script in ("new HTMLAllCollection()", "HTMLAllCollection()"):
-        with pytest.raises(pyv8.JSException) as caught:
+        with pytest.raises(V8Error) as caught:
             document_page.evaluate(script)
         assert "Illegal constructor" in str(caught.value)
 
@@ -339,7 +340,7 @@ def test_document_all_interface_constructor_is_exposed_but_not_constructible(doc
 def test_document_all_document_owns_all_as_a_prototype_accessor(document_page):
     descriptor = "Object.getOwnPropertyDescriptor(Document.prototype, 'all')"
     assert document_page.evaluate(f"typeof {descriptor}.get") == "function"
-    assert document_page.evaluate(f"{descriptor}.set") is pyv8.Undefined
+    assert document_page.evaluate(f"{descriptor}.set") is v8n.Undefined
     assert document_page.evaluate(f"{descriptor}.enumerable") is True
     assert document_page.evaluate(f"{descriptor}.configurable") is True
 
@@ -359,41 +360,41 @@ def test_document_all_indexed_access_follows_tree_order(document_page):
 
 
 def test_document_all_index_out_of_range_is_undefined(document_page):
-    assert document_page.evaluate("document.all[document.all.length]") is pyv8.Undefined
-    assert document_page.evaluate("document.all[99]") is pyv8.Undefined
-    assert document_page.evaluate("document.all.item(99)") is pyv8.Null
+    assert document_page.evaluate("document.all[document.all.length]") is v8n.Undefined
+    assert document_page.evaluate("document.all[99]") is v8n.Undefined
+    assert document_page.evaluate("document.all.item(99)") is v8n.Null
     assert document_page.evaluate("99 in document.all") is False
 
 
 def test_document_all_item_matches_indexed_access(document_page):
     assert document_page.evaluate("document.all.item(0) === document.all[0]") is True
     assert document_page.evaluate("document.all.item(4).id") == "app"
-    assert document_page.evaluate("document.all.item()") is pyv8.Null
-    assert document_page.evaluate("document.all.item(-1)") is pyv8.Null
+    assert document_page.evaluate("document.all.item()") is v8n.Null
+    assert document_page.evaluate("document.all.item(-1)") is v8n.Null
     assert document_page.evaluate("document.all.item('0') === document.all[0]") is True
-    assert document_page.evaluate("document.all.item('04')") is pyv8.Null
-    assert document_page.evaluate("document.all.item(true)") is pyv8.Null
-    assert document_page.evaluate("document.all.item(null)") is pyv8.Null
+    assert document_page.evaluate("document.all.item('04')") is v8n.Null
+    assert document_page.evaluate("document.all.item(true)") is v8n.Null
+    assert document_page.evaluate("document.all.item(null)") is v8n.Null
     assert document_page.evaluate("document.all.item('app') === document.all.namedItem('app')") is True
-    assert document_page.evaluate("document.all.item('missing')") is pyv8.Null
+    assert document_page.evaluate("document.all.item('missing')") is v8n.Null
 
 
 def test_document_all_named_item_by_id_and_by_name(document_page):
     assert document_page.evaluate("document.all.namedItem('app').tagName") == "DIV"
-    assert document_page.evaluate("document.all.namedItem('note')") is pyv8.Null
-    assert document_page.evaluate("document.all.namedItem('missing')") is pyv8.Null
+    assert document_page.evaluate("document.all.namedItem('note')") is v8n.Null
+    assert document_page.evaluate("document.all.namedItem('missing')") is v8n.Null
 
 
 def test_document_all_named_access_by_id_and_by_name(document_page):
     assert document_page.evaluate("document.all.app.tagName") == "DIV"
-    assert document_page.evaluate("document.all.note") is pyv8.Undefined
+    assert document_page.evaluate("document.all.note") is v8n.Undefined
     assert document_page.evaluate("document.all['app'] === document.all.app") is True
     assert document_page.evaluate("'app' in document.all") is True
 
 
 def test_document_all_unknown_name_is_undefined_but_lookup_is_null(document_page):
-    assert document_page.evaluate("document.all.missing") is pyv8.Undefined
-    assert document_page.evaluate("document.all.namedItem('missing')") is pyv8.Null
+    assert document_page.evaluate("document.all.missing") is v8n.Undefined
+    assert document_page.evaluate("document.all.namedItem('missing')") is v8n.Null
     assert document_page.evaluate("'missing' in document.all") is False
 
 
@@ -408,16 +409,16 @@ def test_document_all_duplicate_names_return_a_live_html_collection(document_pag
 
 def test_document_all_legacy_call_resolves_names_and_indices(document_page):
     assert document_page.evaluate("document.all('app').tagName") == "DIV"
-    assert document_page.evaluate("document.all('note')") is pyv8.Null
+    assert document_page.evaluate("document.all('note')") is v8n.Null
     assert document_page.evaluate("document.all(0) === document.all[0]") is True
     assert document_page.evaluate("document.all('0') === document.all[0]") is True
     assert document_page.evaluate("document.all(4).id") == "app"
-    assert document_page.evaluate("document.all('missing')") is pyv8.Null
-    assert document_page.evaluate("document.all()") is pyv8.Null
+    assert document_page.evaluate("document.all('missing')") is v8n.Null
+    assert document_page.evaluate("document.all()") is v8n.Null
 
 
 def test_document_all_named_item_requires_an_argument(document_page):
-    with pytest.raises(pyv8.JSException) as caught:
+    with pytest.raises(V8Error) as caught:
         document_page.evaluate("document.all.namedItem()")
     assert "namedItem" in str(caught.value)
     assert "argument" in str(caught.value)
@@ -449,10 +450,10 @@ def test_document_all_legacy_named_properties_do_not_mask_the_prototype(document
 
 
 def test_document_all_empty_names_and_forbidden_name_attributes_are_ignored(document_page):
-    assert document_page.evaluate("document.all.namedItem('')") is pyv8.Null
-    assert document_page.evaluate("document.all['']") is pyv8.Undefined
+    assert document_page.evaluate("document.all.namedItem('')") is v8n.Null
+    assert document_page.evaluate("document.all['']") is v8n.Undefined
     assert document_page.evaluate("'' in document.all") is False
-    assert document_page.evaluate("document.all.note") is pyv8.Undefined
+    assert document_page.evaluate("document.all.note") is v8n.Undefined
     document_page.evaluate("document.body.appendChild(document.createElement('input')).setAttribute('name', 'field')")
     assert document_page.evaluate("document.all.field.tagName") == "INPUT"
 
@@ -466,17 +467,17 @@ def test_document_all_legacy_mutations_follow_strictness_and_do_not_define_prope
     assert document_page.evaluate("(document.all.app = 1, document.all.app.id)") == "app"
     assert document_page.evaluate("(delete document.all.app, document.all.app.id)") == "app"
     assert document_page.evaluate("(document.all.created = 1, document.all.created)") == 1
-    with pytest.raises(pyv8.JSException, match=(
+    with pytest.raises(V8Error, match=(
         "Failed to set a named property 'app' on 'HTMLAllCollection': "
         "Named property setter is not supported"
     )):
         document_page.evaluate("'use strict'; document.all.app = 1")
-    with pytest.raises(pyv8.JSException, match=(
+    with pytest.raises(V8Error, match=(
         "Failed to delete a named property 'app' from 'HTMLAllCollection': "
         "Named property deleter is not supported"
     )):
         document_page.evaluate("'use strict'; delete document.all.app")
-    with pytest.raises(pyv8.JSException, match=(
+    with pytest.raises(V8Error, match=(
         r"Failed to delete an indexed property \[0\] from 'HTMLAllCollection': "
         "Indexed property deleter is not supported"
     )):
@@ -513,7 +514,7 @@ def test_document_all_empty_document_has_an_empty_collection(browser):
     empty = browser.new_context().new_page()
     assert empty.evaluate("document.all.length") == 0
     assert empty.evaluate("typeof document.all") == "undefined"
-    assert empty.evaluate("document.all[0]") is pyv8.Undefined
+    assert empty.evaluate("document.all[0]") is v8n.Undefined
 
 
 # document.all: live updates and materialisation
@@ -551,8 +552,8 @@ def test_document_all_cached_reference_tracks_later_insertions(document_page):
 def test_document_all_removal_shortens_the_collection(document_page):
     document_page.evaluate("document.body.removeChild(document.getElementById('app'))")
     assert document_page.evaluate("document.all.length") == len(TAGS) - 1
-    assert document_page.evaluate("document.all.app") is pyv8.Undefined
-    assert document_page.evaluate("document.all.namedItem('app')") is pyv8.Null
+    assert document_page.evaluate("document.all.app") is v8n.Undefined
+    assert document_page.evaluate("document.all.namedItem('app')") is v8n.Null
 
 
 def test_document_all_new_element_without_id_is_only_reachable_by_index(document_page):
@@ -563,7 +564,7 @@ def test_document_all_new_element_without_id_is_only_reachable_by_index(document
 
 def test_document_all_renaming_an_id_changes_the_named_lookup(document_page):
     document_page.evaluate("document.getElementById('app').id = 'renamed'")
-    assert document_page.evaluate("document.all.app") is pyv8.Undefined
+    assert document_page.evaluate("document.all.app") is v8n.Undefined
     assert document_page.evaluate("document.all.renamed.tagName") == "DIV"
     assert document_page.evaluate("'app' in document.all") is False
     assert document_page.evaluate("'renamed' in document.all") is True

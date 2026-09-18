@@ -4,7 +4,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
-import pyv8
+import v8n
 
 from pyv8c import Browser
 
@@ -139,7 +139,7 @@ def test_two_browsers_keep_generated_classes_and_templates_isolated(tmp_path):
         assert custom_page.evaluate("(() => { const node=document.querySelector('#value'); return [node instanceof Node, node instanceof Element, document instanceof Document, document.querySelector('#value') === node]; })()") == [True, True, True, True]
 
         default_browser.close()
-        assert custom_page.evaluate("new AbortController().alternateAbort()") is pyv8.Undefined
+        assert custom_page.evaluate("new AbortController().alternateAbort()") is v8n.Undefined
         assert custom_page.evaluate("typeof URL === 'function'") is True
     finally:
         default_browser.close()
@@ -198,7 +198,7 @@ def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_pa
     browser = Browser(interface_baseline_path=path, stub_logging="off")
     try:
         page = browser.new_context().new_page()
-        assert page.evaluate("new AbortController().abort(1, 2, 3)") is pyv8.Undefined
+        assert page.evaluate("new AbortController().abort(1, 2, 3)") is v8n.Undefined
     finally:
         browser.close()
 

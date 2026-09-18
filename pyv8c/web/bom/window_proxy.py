@@ -9,8 +9,9 @@ first use, which keeps :mod:`dom.window` out of the cycle the reverse import
 would otherwise create.
 """
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
+from v8n.flag import V8Attribute
 
 from ...foundation.arguments import MISSING, dom_string, missing_error, usv_string
 from .utils import deny_cross_origin
@@ -158,7 +159,7 @@ class WindowProxy:
 
     def __v8_name_query__(self, name):
         if name in self._safe_names:
-            return pyv8.V8Attribute.kNone
+            return V8Attribute.kNone
         if self._same_origin():
             return self._child_window._services.realm_services.window_property("query", name)
         deny_cross_origin()
@@ -185,7 +186,7 @@ class WindowProxy:
     def get_frames(self): return self
     def get_top(self): return self._accessor()._view(self._child_window._top_window)
     def get_parent(self): return self._accessor()._view(self._child_window._parent_window)
-    def get_opener(self): return pyv8.Null
+    def get_opener(self): return v8n.Null
     def get_length(self): return self._child_window.get_length()
     def get_closed(self): return self._child_window.get_closed()
     def get_location(self): return self._child_window.location if self._same_origin() else self._location

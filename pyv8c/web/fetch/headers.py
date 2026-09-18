@@ -1,7 +1,7 @@
 """Fetch header collection; conversion precedes validation and mutation."""
 
-import pyv8
-from pyv8 import IdlSpec, MethodSpec
+import v8n
+from v8n import IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import (
@@ -29,9 +29,9 @@ class Headers:
         ), constructor_behavior=1, length=1, has_constructor=1,
     )
 
-    def __init__(self, init=pyv8.Undefined, *_extra, **_):
+    def __init__(self, init=v8n.Undefined, *_extra, **_):
         self._data = {}
-        if init is pyv8.Undefined:
+        if init is v8n.Undefined:
             return
         if isinstance(init, Headers):
             self._data.update(init._data)
@@ -43,8 +43,8 @@ class Headers:
             raise V8TypeError("Failed to construct 'Headers': The provided value is not of type '(sequence<sequence<ByteString>> or record<ByteString, ByteString>)'.")
         iterable = isinstance(init, (list, tuple))
         iterator = MISSING
-        if isinstance(init, pyv8.JSObject):
-            iterator = init._iterator_method()
+        if isinstance(init, v8n.Value):
+            iterator = init.iterator()
             iterable = not is_nullish(iterator)
 
         def convert_pair(entry):
@@ -64,7 +64,7 @@ class Headers:
         if key is MISSING:
             raise missing_error('Headers', 'get', 1, 0)
         key = byte_string(key, prefix="Failed to execute 'get' on 'Headers': ")
-        return self._data.get(header_name(key), pyv8.Null)
+        return self._data.get(header_name(key), v8n.Null)
 
     def fn_set(self, key=MISSING, value=MISSING, *_extra):
         if key is MISSING:

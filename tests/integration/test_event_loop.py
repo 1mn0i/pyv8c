@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("v8n")
 from pyv8c import Browser
 
 ORIGIN = "http://127.0.0.1:9"

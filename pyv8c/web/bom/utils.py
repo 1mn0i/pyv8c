@@ -10,8 +10,8 @@ its interface requires.
 
 from urllib.parse import urlsplit
 
-from pyv8 import AttributeSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, SideEffectType
+from v8n import AttributeSpec, MethodSpec
+from v8n.flag import FlagCrossOriginCheck, FlagLocation, SideEffectType
 
 from ...foundation.errors import SecurityError
 

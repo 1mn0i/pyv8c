@@ -4,7 +4,7 @@ Every field is read from the browser environment's screen configuration, so a
 page sees the dimensions its environment was given.
 """
 
-from pyv8 import AttributeSpec, IdlSpec
+from v8n import AttributeSpec, IdlSpec
 
 from ...engine.features import interface
 from ...foundation.environment import BrowserEnvironment

@@ -4,7 +4,7 @@ import threading
 
 from loguru import logger
 
-from ...foundation.arguments import is_nullish
+from ...foundation.errors import error_text
 from ...foundation.executor import RealmExecutor
 from ...foundation.lifecycle import ResourceScope
 from ...foundation.rejections import RejectionTracker
@@ -72,7 +72,7 @@ class WorkerRuntime:
                     self.debug_target.before_script()
             if source:
                 try:
-                    self._context.exec_js(source, filename=self.script_url)
+                    self._context.evaluate(source, filename=self.script_url)
                 finally:
                     if self.debug_target is not None:
                         self.debug_target.after_script()
@@ -117,31 +117,30 @@ class WorkerRuntime:
             raise first_error
         self.services.task_services.post_task(self.owner._finish_lifecycle)
 
-    def _report_uncaught(self, message, source, line, column, error):
+    def _report_uncaught(self, error):
         """Report an exception V8 raised inside this worker's realm.
 
         The worker's global sees it first, as a browser's would, and the parent
         page hears about it through the Worker object.  The thrown value stays
-        behind -- a JavaScript object cannot cross into another realm -- so the
-        parent's event carries the text and position instead.
+        behind -- a JavaScript object cannot cross into another realm, and
+        necessarily not into the parent's -- so the parent's event carries the
+        text instead.
         """
-        message = str(message)
-        filename = "" if is_nullish(source) else str(source)
-        line, column = int(line), int(column)
+        message = error_text(error)
         scope = self._scope
         if scope is not None:
             try:
                 scope.fn_dispatchEvent(ErrorEvent("error", {
                     "message": message,
-                    "filename": filename,
-                    "lineno": line,
-                    "colno": column,
+                    "filename": "",
+                    "lineno": 0,
+                    "colno": 0,
                     "error": error,
                 }))
             except BaseException:  # reporting must not break the worker
                 logger.debug("failed to report a worker error", exc_info=True)
         self.services.task_services.post_task(
-            lambda: self.owner._receive_uncaught(message, filename, line, column)
+            lambda: self.owner._receive_uncaught(message, "", 0, 0)
         )
 
     def _dispatch_rejection(self, event_type, promise, reason):
@@ -161,7 +160,13 @@ class WorkerRuntime:
 
     def post_from_parent(self, value, transfer=()):
         if not self._stop.is_set():
-            self.executor.post(self._dispatch_message, structured_clone(value, transfer))
+            # Cloned while the parent's realm is still the one the value belongs
+            # to, and with it named, because a view of that realm's ArrayBuffer
+            # can only be read there.
+            cloned = structured_clone(
+                value, transfer, context=self.services.realm_services.realm,
+            )
+            self.executor.post(self._dispatch_message, cloned)
 
     def post_to_parent(self, value, transfer=()):
         value = structured_clone(value, transfer, context=self._context)

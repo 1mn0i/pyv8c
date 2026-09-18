@@ -4,8 +4,8 @@ The table is per instance, so ``localStorage`` and ``sessionStorage`` never
 share entries and each realm gets its own pair.
 """
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
@@ -33,7 +33,7 @@ class Storage:
         if key is MISSING:
             raise missing_error('Storage', 'getItem', 1, 0, constructor=False)
         key = dom_string(key)
-        return self._data.get(str(key), pyv8.Null)
+        return self._data.get(str(key), v8n.Null)
     def fn_setItem(self, key=MISSING, value=MISSING, *_extra):
         if key is MISSING:
             raise missing_error('Storage', 'setItem', 2, 0, constructor=False)
@@ -53,4 +53,4 @@ class Storage:
         if index is MISSING:
             raise missing_error('Storage', 'key', 1, 0, constructor=False)
         index = integer(index)
-        return list(self._data)[index] if index < len(self._data) else pyv8.Null
+        return list(self._data)[index] if index < len(self._data) else v8n.Null

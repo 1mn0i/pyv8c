@@ -1,6 +1,6 @@
 import pytest
 
-pyv8 = pytest.importorskip("pyv8")
+v8n = pytest.importorskip("v8n")
 from pyv8c import Browser
 
 
@@ -10,7 +10,7 @@ def test_evaluate_data_and_handle_boundaries():
         page = browser.new_context().new_page()
         assert page.evaluate("({items: [1, 2]})") == {"items": [1, 2]}
         value = page.evaluate_handle("({items: [1, 2]})")
-        assert isinstance(value, pyv8.JSObject)
+        assert isinstance(value, v8n.Value)
         assert value.to_python() == {"items": [1, 2]}
         page.close()
         with pytest.raises(RuntimeError):

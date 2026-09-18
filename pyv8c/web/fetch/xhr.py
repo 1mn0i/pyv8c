@@ -2,8 +2,8 @@
 import re
 from urllib.parse import urljoin, urlsplit
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, byte_string, dom_string, missing_error, usv_string
@@ -42,7 +42,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
     )
 
     def __init__(self, *_extra, services=None, _realm=None, **kw):
-        if services is pyv8.Undefined:
+        if services is v8n.Undefined:
             services = None
         super().__init__(services=services or _realm, **kw)
         self._method = "GET"
@@ -74,7 +74,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             raise missing_error('XMLHttpRequest', 'open', 2, 1, constructor=False)
         method = byte_string(method)
         url = usv_string(url)
-        if async_value is pyv8.Undefined:
+        if async_value is v8n.Undefined:
             async_value = True
         async_value = boolean(async_value)
         if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", method):
@@ -112,11 +112,11 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             raise missing_error('XMLHttpRequest', 'getResponseHeader', 1, 0, constructor=False)
         name = dom_string(name)
         if not self._response:
-            return pyv8.Null
+            return v8n.Null
         return self._response.headers.fn_get(name)
 
     def fn_send(self, body=None, *_extra):
-        if body is pyv8.Undefined:
+        if body is v8n.Undefined:
             body = None
         if self.readyState != self.OPENED:
             raise InvalidStateError("XMLHttpRequest is not in the OPENED state")

@@ -2,7 +2,7 @@
 
 import re
 
-from pyv8.flag import FlagArrayProto, V8Attribute
+from v8n.flag import FlagArrayProto, V8Attribute
 
 from ...foundation.arguments import dom_string
 

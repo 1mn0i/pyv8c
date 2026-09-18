@@ -1,4 +1,4 @@
-import pyv8
+import v8n
 from loguru import logger
 
 from pyv8c import Browser
@@ -30,8 +30,8 @@ def test_stub_method_logs_and_real_member_wins():
     try:
         browser = Browser()
         page = browser.new_context().new_page()
-        assert page.evaluate("new AbortController().abort()") is pyv8.Undefined
-        assert page.evaluate("AbortSignal.abort()") is pyv8.Undefined
+        assert page.evaluate("new AbortController().abort()") is v8n.Undefined
+        assert page.evaluate("AbortSignal.abort()") is v8n.Undefined
         assert any("AbortController.abort() 待实现" in message for message in messages)
         assert any("AbortSignal.abort() 待实现" in message for message in messages)
         assert page.evaluate("new URL('https://example.test/').toString()") == "https://example.test/"

@@ -29,9 +29,9 @@ import threading
 from bisect import bisect_left, bisect_right
 from datetime import datetime
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
+import v8n
+from v8n import AttributeSpec, IdlSpec, MethodSpec
+from v8n.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
 
 from ...engine.features import FeatureImplementation, interface
 from ...foundation.arguments import (
@@ -122,8 +122,8 @@ _MAX_KEY_GENERATOR = 2 ** 53
 def _string_or_strings(value):
     if isinstance(value, (list, tuple)):
         return sequence(value, dom_string)
-    if isinstance(value, pyv8.JSObject):
-        iterator = value._iterator_method()
+    if isinstance(value, v8n.Value):
+        iterator = value.iterator()
         if not is_nullish(iterator):
             return sequence(value, dom_string, iterator_method=iterator)
     return dom_string(value)
@@ -542,8 +542,14 @@ def _databases(services):
     return _ORIGINS.setdefault(_origin_key(services), {})
 
 
-def _store_clone(value):
-    return structured_clone(value)
+def _store_clone(value, services=None):
+    """A stored value never keeps a handle, so cloning names the realm it is in.
+
+    Without it a binary value would be walked member by member -- an ArrayBuffer
+    has none -- and stored as an empty object.
+    """
+    realm = getattr(getattr(services, "realm_services", None), "realm", None)
+    return structured_clone(value, context=realm)
 
 
 def _maybe_update_generator(store, key):
@@ -588,7 +594,7 @@ class DOMStringList(ReadOnlyIndexedPropertyMixin):
 
     def fn_item(self, *args):
         index = int(args[0]) if args else 0
-        return self._names[index] if 0 <= index < len(self._names) else pyv8.Null
+        return self._names[index] if 0 <= index < len(self._names) else v8n.Null
 
     def fn_contains(self, *args):
         return str(args[0]) in self._names if args else False
@@ -613,17 +619,17 @@ class IDBRecord:
         self._value = value
 
     def get_key(self):
-        return _key_to_value(self._key) if self._key is not None else pyv8.Undefined
+        return _key_to_value(self._key) if self._key is not None else v8n.Undefined
 
     def get_primaryKey(self):
         return (
             _key_to_value(self._primary_key)
             if self._primary_key is not None
-            else pyv8.Undefined
+            else v8n.Undefined
         )
 
     def get_value(self):
-        return self._value if self._value is not None else pyv8.Undefined
+        return self._value if self._value is not None else v8n.Undefined
 
 
 # --------------------------------------------------------------------------
@@ -646,9 +652,9 @@ class IDBVersionChangeEvent(Event):
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         if event_type is MISSING:
             raise missing_error('IDBVersionChangeEvent', 'constructor', 1, 0, constructor=True)
-        if event_type is not pyv8.Undefined:
+        if event_type is not v8n.Undefined:
             event_type = dom_string(event_type)
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = None
         super().__init__(event_type, options, **kw)
         options = options if isinstance(options, dict) else {}
@@ -660,7 +666,7 @@ class IDBVersionChangeEvent(Event):
         return self.oldVersion
 
     def get_newVersion(self):
-        return pyv8.Null if self.newVersion is None else self.newVersion
+        return v8n.Null if self.newVersion is None else self.newVersion
 
 
 # --------------------------------------------------------------------------
@@ -674,7 +680,7 @@ class _RequestMixin:
         self._source = source
         self._transaction = transaction
         self._done = False
-        self._result = pyv8.Undefined
+        self._result = v8n.Undefined
         self._error = None
         self.readyState = "pending"
         self._blocked_fired = False
@@ -704,14 +710,14 @@ class _RequestMixin:
         return self._dispatch("success")
 
     def _succeed_version_change(self, old_version, new_version):
-        self._result = pyv8.Undefined
+        self._result = v8n.Undefined
         self._error = None
         self._mark_done()
         return self._dispatch_version_change("success", old_version, new_version)
 
     def _fail_with(self, error):
         self._error = error
-        self._result = pyv8.Undefined
+        self._result = v8n.Undefined
         self._mark_done()
         # Error events bubble and are cancelable: preventDefault() stops the
         # surrounding transaction from aborting.
@@ -755,13 +761,13 @@ class IDBRequest(EventTarget, _RequestMixin):
     def get_error(self):
         if not self._done:
             raise _invalid_state_error("The request has not finished.")
-        return self._error if self._error is not None else pyv8.Null
+        return self._error if self._error is not None else v8n.Null
 
     def get_source(self):
-        return self._source if self._source is not None else pyv8.Null
+        return self._source if self._source is not None else v8n.Null
 
     def get_transaction(self):
-        return self._transaction if self._transaction is not None else pyv8.Null
+        return self._transaction if self._transaction is not None else v8n.Null
 
     def get_readyState(self):
         return self.readyState
@@ -855,9 +861,9 @@ class IDBKeyRange:
     def fn_lowerBound(_realm, lower=MISSING, open=False, *_extra):
         if lower is MISSING:
             raise missing_error('IDBKeyRange', 'lowerBound', 1, 0, constructor=False)
-        if open is pyv8.Undefined:
+        if open is v8n.Undefined:
             open = False
-        if open is not pyv8.Undefined:
+        if open is not v8n.Undefined:
             open = boolean(open)
         return IDBKeyRange(_KeyRange(lower=_to_key(lower), lower_open=bool(open)))
 
@@ -865,9 +871,9 @@ class IDBKeyRange:
     def fn_upperBound(_realm, upper=MISSING, open=False, *_extra):
         if upper is MISSING:
             raise missing_error('IDBKeyRange', 'upperBound', 1, 0, constructor=False)
-        if open is pyv8.Undefined:
+        if open is v8n.Undefined:
             open = False
-        if open is not pyv8.Undefined:
+        if open is not v8n.Undefined:
             open = boolean(open)
         return IDBKeyRange(_KeyRange(upper=_to_key(upper), upper_open=bool(open)))
 
@@ -877,13 +883,13 @@ class IDBKeyRange:
             raise missing_error('IDBKeyRange', 'bound', 2, 0, constructor=False)
         if upper is MISSING:
             raise missing_error('IDBKeyRange', 'bound', 2, 1, constructor=False)
-        if lower_open is pyv8.Undefined:
+        if lower_open is v8n.Undefined:
             lower_open = False
-        if lower_open is not pyv8.Undefined:
+        if lower_open is not v8n.Undefined:
             lower_open = boolean(lower_open)
-        if upper_open is pyv8.Undefined:
+        if upper_open is v8n.Undefined:
             upper_open = False
-        if upper_open is not pyv8.Undefined:
+        if upper_open is not v8n.Undefined:
             upper_open = boolean(upper_open)
         lower_key, upper_key = _to_key(lower), _to_key(upper)
         result = _cmp(lower_key, upper_key)
@@ -892,10 +898,10 @@ class IDBKeyRange:
         return IDBKeyRange(_KeyRange(lower_key, upper_key, bool(lower_open), bool(upper_open)))
 
     def get_lower(self):
-        return _key_to_value(self._range.lower) if self._range.lower is not None else pyv8.Undefined
+        return _key_to_value(self._range.lower) if self._range.lower is not None else v8n.Undefined
 
     def get_upper(self):
-        return _key_to_value(self._range.upper) if self._range.upper is not None else pyv8.Undefined
+        return _key_to_value(self._range.upper) if self._range.upper is not None else v8n.Undefined
 
     def get_lowerOpen(self):
         return self._range.lower_open
@@ -997,7 +1003,7 @@ class _CursorBody:
             transaction._begin_dispatch()
             try:
                 found = self._step(cut_key, cut_primary, inclusive, steps)
-                request._succeed(self if found is not None else pyv8.Null)
+                request._succeed(self if found is not None else v8n.Null)
             finally:
                 transaction._end_dispatch()
 
@@ -1010,20 +1016,20 @@ class _CursorBody:
         return self._direction
 
     def get_key(self):
-        return _key_to_value(self._key) if self._key is not None else pyv8.Undefined
+        return _key_to_value(self._key) if self._key is not None else v8n.Undefined
 
     def get_primaryKey(self):
         return (
             _key_to_value(self._primary_key)
             if self._primary_key is not None
-            else pyv8.Undefined
+            else v8n.Undefined
         )
 
     def get_request(self):
         return self._request
 
     def fn_continue(self, key=None, *_extra):
-        if key is pyv8.Undefined:
+        if key is v8n.Undefined:
             key = None
         self._require_usable()
         if is_nullish(key):
@@ -1105,7 +1111,7 @@ class IDBCursorWithValue(IDBCursor):
     )
 
     def get_value(self):
-        return self._value if self._value is not None else pyv8.Undefined
+        return self._value if self._value is not None else v8n.Undefined
 
 
 # --------------------------------------------------------------------------
@@ -1295,10 +1301,10 @@ class IDBTransaction(EventTarget):
         return "active" if self._state == "active" else "inactive"
 
     def get_db(self):
-        return self._database if self._database is not None else pyv8.Null
+        return self._database if self._database is not None else v8n.Null
 
     def get_error(self):
-        return self._error if self._error is not None else pyv8.Null
+        return self._error if self._error is not None else v8n.Null
 
     def get_onabort(self):
         return self._get_handler("onabort")
@@ -1447,7 +1453,7 @@ class IDBObjectStore:
 
     def get_keyPath(self):
         if self._store is None or self._store.key_path is None:
-            return pyv8.Null
+            return v8n.Null
         key_path = self._store.key_path
         return list(key_path) if isinstance(key_path, (list, tuple)) else key_path
 
@@ -1480,7 +1486,7 @@ class IDBObjectStore:
                 raise _data_error(
                     "The object store uses in-line keys and the key parameter was provided."
                 )
-            cloned = _store_clone(value)
+            cloned = _store_clone(value, self._services)
             extracted = _extract_key(cloned, store.key_path)
             if extracted is not None:
                 return cloned, extracted
@@ -1494,12 +1500,12 @@ class IDBObjectStore:
             resolved = _to_key(key)
             if store.auto_increment:
                 _maybe_update_generator(store, resolved)
-            return _store_clone(value), resolved
+            return _store_clone(value, self._services), resolved
         if not store.auto_increment:
             raise _data_error(
                 "The object store uses out-of-line keys and no key generator."
             )
-        return _store_clone(value), self._generate_key()
+        return _store_clone(value, self._services), self._generate_key()
 
     # -- reads ------------------------------------------------------------
     def _entries(self, query, count=None, direction=None):
@@ -1529,16 +1535,16 @@ class IDBObjectStore:
         return self._request(lambda: self._first(query, "key"))
 
     def fn_count(self, query=None, *_extra):
-        if query is pyv8.Undefined:
+        if query is v8n.Undefined:
             query = None
         return self._request(lambda: len(self._entries(query)[0]))
 
     def fn_getAll(self, query=None, count=None, *_extra):
-        if query is pyv8.Undefined:
+        if query is v8n.Undefined:
             query = None
-        if count is pyv8.Undefined:
+        if count is v8n.Undefined:
             count = None
-        if count is not None and count is not pyv8.Undefined:
+        if count is not None and count is not v8n.Undefined:
             count = integer(count, enforce_range=True)
         def run():
             entries, limit, _direction = self._entries(query, count)
@@ -1546,11 +1552,11 @@ class IDBObjectStore:
         return self._request(run)
 
     def fn_getAllKeys(self, query=None, count=None, *_extra):
-        if query is pyv8.Undefined:
+        if query is v8n.Undefined:
             query = None
-        if count is pyv8.Undefined:
+        if count is v8n.Undefined:
             count = None
-        if count is not None and count is not pyv8.Undefined:
+        if count is not None and count is not v8n.Undefined:
             count = integer(count, enforce_range=True)
         def run():
             entries, limit, _direction = self._entries(query, count)
@@ -1558,7 +1564,7 @@ class IDBObjectStore:
         return self._request(run)
 
     def fn_getAllRecords(self, options=None, *_extra):
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = None
         options = dictionary(options)
         def run():
@@ -1571,21 +1577,21 @@ class IDBObjectStore:
     def _first(self, query, wants):
         entries, _limit_value, _direction = self._entries(query)
         if not entries:
-            return pyv8.Undefined
+            return v8n.Undefined
         return entries[0][2] if wants == "value" else _key_to_value(entries[0][0])
 
     # -- writes -----------------------------------------------------------
     def fn_add(self, value=MISSING, key=None, *_extra):
         if value is MISSING:
             raise missing_error('IDBObjectStore', 'add', 1, 0, constructor=False)
-        if key is pyv8.Undefined:
+        if key is v8n.Undefined:
             key = None
         return self._write(value, key, no_overwrite=True)
 
     def fn_put(self, value=MISSING, key=None, *_extra):
         if value is MISSING:
             raise missing_error('IDBObjectStore', 'put', 1, 0, constructor=False)
-        if key is pyv8.Undefined:
+        if key is v8n.Undefined:
             key = None
         return self._write(value, key, no_overwrite=False)
 
@@ -1609,7 +1615,7 @@ class IDBObjectStore:
         def run():
             _require_writable(self)
             self._store.delete_range(key_range)
-            return pyv8.Undefined
+            return v8n.Undefined
 
         return self._request(run)
 
@@ -1619,7 +1625,7 @@ class IDBObjectStore:
         def run():
             _require_writable(self)
             self._store.clear()
-            return pyv8.Undefined
+            return v8n.Undefined
 
         return self._request(run)
 
@@ -1648,7 +1654,7 @@ class IDBObjectStore:
             raise missing_error('IDBObjectStore', 'createIndex', 2, 1, constructor=False)
         name = dom_string(name)
         key_path = _string_or_strings(key_path)
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = None
         options = dictionary(options)
         name = str(name)
@@ -1704,17 +1710,17 @@ class IDBObjectStore:
 
     # -- cursors ----------------------------------------------------------
     def fn_openCursor(self, query=None, direction='next', *_extra):
-        if query is pyv8.Undefined:
+        if query is v8n.Undefined:
             query = None
-        if direction is pyv8.Undefined:
+        if direction is v8n.Undefined:
             direction = 'next'
         direction = enum_value(direction, ('next', 'nextunique', 'prev', 'prevunique'))
         return self._open_cursor(query, direction, key_only=False)
 
     def fn_openKeyCursor(self, query=None, direction='next', *_extra):
-        if query is pyv8.Undefined:
+        if query is v8n.Undefined:
             query = None
-        if direction is pyv8.Undefined:
+        if direction is v8n.Undefined:
             direction = 'next'
         direction = enum_value(direction, ('next', 'nextunique', 'prev', 'prevunique'))
         return self._open_cursor(query, direction, key_only=True)
@@ -1740,7 +1746,7 @@ class IDBObjectStore:
             transaction._begin_dispatch()
             try:
                 found = cursor._step()
-                request._succeed(cursor if found is not None else pyv8.Null)
+                request._succeed(cursor if found is not None else v8n.Null)
             finally:
                 transaction._end_dispatch()
 
@@ -1749,7 +1755,7 @@ class IDBObjectStore:
 
     def _cursor_update(self, cursor, value):
         primary_key = cursor._primary_key
-        cloned = _store_clone(value)
+        cloned = _store_clone(value, self._services)
         store = self._store
         if store.key_path is not None:
             extracted = _extract_key(cloned, store.key_path)
@@ -1769,7 +1775,7 @@ class IDBObjectStore:
         def run():
             _require_writable(self)
             self._store.delete_range(_KeyRange(lower=primary_key, upper=primary_key))
-            return pyv8.Undefined
+            return v8n.Undefined
 
         return self._request(run)
 
@@ -1877,16 +1883,16 @@ class IDBIndex:
         return self._request(lambda: self._first(query, "primary"))
 
     def fn_count(self, query=None, *_extra):
-        if query is pyv8.Undefined:
+        if query is v8n.Undefined:
             query = None
         return self._request(lambda: len(self._records(query)[0]))
 
     def fn_getAll(self, query=None, count=None, *_extra):
-        if query is pyv8.Undefined:
+        if query is v8n.Undefined:
             query = None
-        if count is pyv8.Undefined:
+        if count is v8n.Undefined:
             count = None
-        if count is not None and count is not pyv8.Undefined:
+        if count is not None and count is not v8n.Undefined:
             count = integer(count, enforce_range=True)
         def run():
             records, limit, _direction = self._records(query, count)
@@ -1894,11 +1900,11 @@ class IDBIndex:
         return self._request(run)
 
     def fn_getAllKeys(self, query=None, count=None, *_extra):
-        if query is pyv8.Undefined:
+        if query is v8n.Undefined:
             query = None
-        if count is pyv8.Undefined:
+        if count is v8n.Undefined:
             count = None
-        if count is not None and count is not pyv8.Undefined:
+        if count is not None and count is not v8n.Undefined:
             count = integer(count, enforce_range=True)
         def run():
             records, limit, _direction = self._records(query, count)
@@ -1906,7 +1912,7 @@ class IDBIndex:
         return self._request(run)
 
     def fn_getAllRecords(self, options=None, *_extra):
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = None
         options = dictionary(options)
         def run():
@@ -1921,22 +1927,22 @@ class IDBIndex:
     def _first(self, query, wants):
         records, _limit_value, _direction = self._records(query)
         if not records:
-            return pyv8.Undefined
+            return v8n.Undefined
         return records[0][2] if wants == "value" else _key_to_value(records[0][1])
 
     # -- cursors ----------------------------------------------------------
     def fn_openCursor(self, query=None, direction='next', *_extra):
-        if query is pyv8.Undefined:
+        if query is v8n.Undefined:
             query = None
-        if direction is pyv8.Undefined:
+        if direction is v8n.Undefined:
             direction = 'next'
         direction = enum_value(direction, ('next', 'nextunique', 'prev', 'prevunique'))
         return self._open_cursor(query, direction, key_only=False)
 
     def fn_openKeyCursor(self, query=None, direction='next', *_extra):
-        if query is pyv8.Undefined:
+        if query is v8n.Undefined:
             query = None
-        if direction is pyv8.Undefined:
+        if direction is v8n.Undefined:
             direction = 'next'
         direction = enum_value(direction, ('next', 'nextunique', 'prev', 'prevunique'))
         return self._open_cursor(query, direction, key_only=True)
@@ -1962,7 +1968,7 @@ class IDBIndex:
             transaction._begin_dispatch()
             try:
                 found = cursor._step()
-                request._succeed(cursor if found is not None else pyv8.Null)
+                request._succeed(cursor if found is not None else v8n.Null)
             finally:
                 transaction._end_dispatch()
 
@@ -2058,7 +2064,7 @@ class IDBDatabase(EventTarget):
         if name is MISSING:
             raise missing_error('IDBDatabase', 'createObjectStore', 1, 0, constructor=False)
         name = dom_string(name)
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = None
         options = dictionary(options)
         name = str(name)
@@ -2102,10 +2108,10 @@ class IDBDatabase(EventTarget):
         if store_names is MISSING:
             raise missing_error('IDBDatabase', 'transaction', 1, 0, constructor=False)
         store_names = _string_or_strings(store_names)
-        if mode is pyv8.Undefined:
+        if mode is v8n.Undefined:
             mode = 'readonly'
         mode = enum_value(mode, ('readonly', 'readwrite'))
-        if options is pyv8.Undefined:
+        if options is v8n.Undefined:
             options = None
         options = dictionary(options)
         options = options if isinstance(options, dict) else {}
@@ -2190,9 +2196,9 @@ class IDBFactory:
         if name is MISSING:
             raise missing_error('IDBFactory', 'open', 1, 0, constructor=False)
         name = dom_string(name)
-        if version is pyv8.Undefined:
+        if version is v8n.Undefined:
             version = None
-        if version is not None and version is not pyv8.Undefined:
+        if version is not None and version is not v8n.Undefined:
             version = number(version)
             try:
                 version = integer(version, bits=64, enforce_range=True)
