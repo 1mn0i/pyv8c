@@ -10,6 +10,27 @@ namespace v8n
 namespace
 {
 
+//: The realm an uncaught report belongs to, while its checkpoint runs.  See
+//: UncaughtReportScope in realm_internal.h.
+thread_local Realm* g_reporting_realm = nullptr;
+
+// The error-level listener V8 calls for an exception no embedding frame caught.
+//
+// It is installed per isolate, and the only thing that tells it which realm the
+// report belongs to is the checkpoint that named one: a message carries no
+// context, and the exception value alone cannot say which realm it was raised
+// in.  Without an active checkpoint there is nothing to attribute the report to,
+// so it is left alone rather than guessed at.
+void uncaught_message_callback(v8::Local<v8::Message> message,
+                               v8::Local<v8::Value> exception)
+{
+    (void)message;
+    Realm* realm = g_reporting_realm;
+    if (realm == nullptr || exception.IsEmpty())
+        return;
+    realm->report_uncaught(exception);
+}
+
 // One callback per isolate, dispatching on the promise's realm.
 //
 // V8 offers no per-context rejection hook, so the callback has to look up the
@@ -45,16 +66,43 @@ void promise_reject_callback(v8::PromiseRejectMessage message)
 
 }  // namespace
 
+UncaughtReportScope::UncaughtReportScope(Realm* realm)
+{
+    // Nesting is not a case a checkpoint can produce -- a checkpoint does not
+    // start another -- so the previous value is remembered rather than stacked,
+    // and restoring it keeps the scope honest if one ever appears.
+    previous_ = g_reporting_realm;
+    g_reporting_realm = realm;
+}
+
+UncaughtReportScope::~UncaughtReportScope()
+{
+    g_reporting_realm = previous_;
+}
+
 void
 hooks_install(Isolate& isolate)
 {
     // Installed unconditionally, and that is deliberate.  Remembering which
-    // isolates already have it would mean remembering an address, and V8 reuses
+    // isolates already have them would mean remembering an address, and V8 reuses
     // an isolate's address once the isolate is destroyed: a new isolate in the
     // same slot would look like one that was already set up and would silently
-    // never receive a rejection.  Setting the callback is idempotent, so there is
+    // never receive a rejection.  Setting them is idempotent, so there is
     // nothing to save by caching.
-    isolate.v8()->SetPromiseRejectCallback(promise_reject_callback);
+    //
+    // The entry is required: the rejection callback is a plain field, but a
+    // message listener is an object in the isolate's heap, and registering one
+    // allocates in it.
+    IsolateEntry entry(isolate);
+    if (!entry.ok())
+        return;
+
+    v8::Isolate* v8 = entry.v8();
+    v8->SetPromiseRejectCallback(promise_reject_callback);
+    // Error level only: a message listener also carries warnings, and the hook
+    // it feeds is an uncaught *exception* hook.
+    v8->AddMessageListenerWithErrorLevel(
+        uncaught_message_callback, v8::Isolate::kMessageError);
 }
 
 bool
@@ -94,9 +142,9 @@ Realm::set_error_hooks(PyObject* on_uncaught, PyObject* on_rejection)
     Py_XINCREF(rejection_hook_);
     Py_XDECREF(previous_rejection);
 
-    // Installed on first use: a realm that never asks for rejection reporting
-    // costs V8 nothing.
-    if (on_rejection != nullptr)
+    // Installed on first use: a realm that asks for neither hook costs V8
+    // nothing.
+    if (on_rejection != nullptr || on_uncaught != nullptr)
         hooks_install(*isolate_);
     return true;
 }

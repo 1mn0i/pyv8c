@@ -31,6 +31,9 @@ PyEntry::PyEntry(Realm& realm)
 
     context_scope_ = std::make_unique<v8::Context::Scope>(context);
     realm_ = &realm;
+    // Named for the whole crossing: the microtask checkpoint that V8 runs when
+    // this entry unwinds is where a microtask that threw is reported.
+    report_scope_.emplace(&realm);
     entry_ = std::move(entry);
 }
 

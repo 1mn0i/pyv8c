@@ -23,6 +23,32 @@
 namespace v8n
 {
 
+// Names the realm an uncaught report belongs to, for the duration of a crossing.
+//
+// An exception thrown inside a microtask is reported by V8 through the isolate's
+// message listener -- no embedding frame ever sees it -- and a message carries no
+// context, so the realm has to be named somewhere else.  A crossing runs on the
+// isolate's owner thread and an isolate belongs to one thread, so a thread-local
+// names it exactly, and the scope is held for as long as the crossing is: V8's
+// default microtask policy checkpoints the queue as the outermost entry unwinds,
+// which is where such a report happens.
+//
+// Nothing outside a crossing is reported.  An exception the embedding code's own
+// TryCatch caught is that code's to report, and reporting it here too would
+// report it twice.
+class UncaughtReportScope
+{
+public:
+    explicit UncaughtReportScope(Realm* realm);
+    ~UncaughtReportScope();
+
+    UncaughtReportScope(const UncaughtReportScope&) = delete;
+    UncaughtReportScope& operator=(const UncaughtReportScope&) = delete;
+
+private:
+    Realm* previous_;
+};
+
 // A Python call entering a realm.
 //
 // Entering is three things, and all of them are required before the first
@@ -55,6 +81,11 @@ private:
     //
     // v8::HandleScope deletes its own operator new to force stack allocation,
     // so it cannot live behind a unique_ptr and is held in an optional instead.
+    //
+    // The report scope is declared ahead of all of them on purpose: it has to
+    // outlive the isolate entry, because that is the point at which the microtask
+    // checkpoint runs.  See UncaughtReportScope.
+    std::optional<UncaughtReportScope> report_scope_;
     std::unique_ptr<IsolateEntry> entry_;
     std::optional<v8::HandleScope> handle_scope_;
     std::unique_ptr<v8::Context::Scope> context_scope_;

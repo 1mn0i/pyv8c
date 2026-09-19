@@ -620,16 +620,22 @@ handler_data_of(v8::Local<v8::Value> data)
     return static_cast<HandlerData*>(v8c::external_value(data));
 }
 
-// The property name, as Python sees it.  A name becomes a string and an index
-// becomes an int, because that is what the host declared: `handlers` are keyed by
-// whatever JavaScript looked up.
+// The property name, as Python sees it.  A string name becomes a str -- that is
+// what a handler is keyed by -- and an index becomes an int.
+//
+// Anything else is a symbol, which JavaScript also reaches an object through, and
+// it crosses as the value it is rather than being named.  Stringifying one throws
+// (`Symbol.prototype.toString` does, deliberately), and a key that cannot be named
+// is not an answer any handler could give: crossing it unchanged lets the handlers
+// that only understand names decline it, so the access falls back to the
+// own-property semantics a symbol belongs to.
 PyObject*
-name_key(v8::Local<v8::Name> name, v8::Local<v8::Context> context)
+name_key(v8::Local<v8::Name> name, v8::Local<v8::Context> context, Realm& realm)
 {
-    v8::Local<v8::String> text;
-    if (!name->ToString(context).ToLocal(&text))
-        return nullptr;
-    v8::String::Utf8Value utf8(v8c::context_isolate(context), text);
+    if (!name->IsString())
+        return to_python_boundary(name, realm);
+
+    v8::String::Utf8Value utf8(v8c::context_isolate(context), name.As<v8::String>());
     if (*utf8 == nullptr)
         return nullptr;
     return PyUnicode_DecodeUTF8(*utf8, utf8.length(), "replace");
@@ -866,7 +872,7 @@ named_getter(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>
         return v8::Intercepted::kNo;
 
     PyCallback guard("a JavaScript read of an intercepted property");
-    PyRef key(PyRef::adopt(name_key(name, isolate->GetCurrentContext())));
+    PyRef key(PyRef::adopt(name_key(name, isolate->GetCurrentContext(), *realm)));
     if (!key)
     {
         throw_python_error(isolate);
@@ -900,7 +906,7 @@ named_setter(v8::Local<v8::Name> name, v8::Local<v8::Value> value,
         return v8::Intercepted::kNo;
 
     PyCallback guard("a JavaScript write to an intercepted property");
-    PyRef key(PyRef::adopt(name_key(name, isolate->GetCurrentContext())));
+    PyRef key(PyRef::adopt(name_key(name, isolate->GetCurrentContext(), *realm)));
     if (!key)
     {
         throw_python_error(isolate);
@@ -940,7 +946,7 @@ named_query(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Integer
         return v8::Intercepted::kNo;
 
     PyCallback guard("a JavaScript existence test on an intercepted object");
-    PyRef key(PyRef::adopt(name_key(name, isolate->GetCurrentContext())));
+    PyRef key(PyRef::adopt(name_key(name, isolate->GetCurrentContext(), *realm)));
     if (!key)
     {
         throw_python_error(isolate);
@@ -978,7 +984,7 @@ named_deleter(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Boole
         return v8::Intercepted::kNo;
 
     PyCallback guard("a JavaScript delete of an intercepted property");
-    PyRef key(PyRef::adopt(name_key(name, isolate->GetCurrentContext())));
+    PyRef key(PyRef::adopt(name_key(name, isolate->GetCurrentContext(), *realm)));
     if (!key)
     {
         throw_python_error(isolate);
@@ -1337,7 +1343,7 @@ lazy_interface_getter(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v
         return;
     }
 
-    PyRef key(PyRef::adopt(name_key(name, context)));
+    PyRef key(PyRef::adopt(name_key(name, context, realm)));
     if (!key)
     {
         throw_python_error(isolate);

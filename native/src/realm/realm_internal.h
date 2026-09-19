@@ -75,12 +75,15 @@ private:
 
 // -- hooks.cpp ------------------------------------------------------------
 
-// Installs the per-isolate rejection callback, once per isolate.  Safe to call
-// on every realm creation: the second call does nothing.
+// Installs the per-isolate rejection callback and the error-level message
+// listener, once per isolate.  Safe to call on every realm creation: the second
+// call does nothing.
 //
-// The callback is per isolate rather than per realm because that is the only
-// granularity V8 offers, so it dispatches on the promise's creation context and
-// does nothing for a promise that belongs to no realm of ours.
+// Both are per isolate rather than per realm because that is the only
+// granularity V8 offers: the rejection callback dispatches on the promise's
+// creation context and does nothing for a promise that belongs to no realm of
+// ours, and the message listener reads the realm named by the current
+// UncaughtReportScope (see v8n/boundary.h).
 void hooks_install(Isolate& isolate);
 
 }  // namespace v8n

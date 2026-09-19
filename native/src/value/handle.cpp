@@ -431,6 +431,19 @@ PyObject* handle_to_number(ValueObject* self, PyObject*)
     v8::Local<v8::Context> context = entry.context();
     v8::Context::Scope context_scope(context);
 
+    // ``Number(bigint)`` is a TypeError in JavaScript, and V8's ToNumber does not
+    // stand in for it: it answers the number the BigInt holds.  A Web IDL numeric
+    // conversion has to reject a BigInt rather than read one, or
+    // ``localStorage.key(1n)`` would quietly index storage with 1.
+    if (self->slot->get(isolate)->IsBigInt())
+    {
+        js_exception_to_python(
+            v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
+                isolate, "Cannot convert a BigInt value to a number")),
+            *realm);
+        return nullptr;
+    }
+
     v8::TryCatch try_catch(isolate);
     v8::Local<v8::Number> number;
     if (!self->slot->get(isolate)->ToNumber(context).ToLocal(&number))
@@ -662,11 +675,34 @@ PyObject* handle_get_is_array(ValueObject* self, void*)
     return PyBool_FromLong(self->slot->get(isolate)->IsArray() ? 1 : 0);
 }
 
+PyObject* handle_get_is_callable(ValueObject* self, void*)
+{
+    Realm* realm = usable_realm(self, "is_callable");
+    if (realm == nullptr)
+        return nullptr;
+
+    PyEntry entry(*realm);
+    if (!entry.ok())
+        return nullptr;
+
+    v8::Isolate* isolate = entry.v8();
+    v8::HandleScope handle_scope(isolate);
+    v8::Local<v8::Context> context = entry.context();
+    v8::Context::Scope context_scope(context);
+
+    return PyBool_FromLong(self->slot->get(isolate)->IsFunction() ? 1 : 0);
+}
+
 PyGetSetDef handle_getset[] = {
     {const_cast<char*>("is_valid"), reinterpret_cast<getter>(handle_get_valid), nullptr,
      const_cast<char*>("Whether the realm that produced this handle is still open."), nullptr},
     {const_cast<char*>("is_array"), reinterpret_cast<getter>(handle_get_is_array), nullptr,
      const_cast<char*>("Whether the value is a JavaScript array."), nullptr},
+    {const_cast<char*>("is_callable"), reinterpret_cast<getter>(handle_get_is_callable), nullptr,
+     const_cast<char*>("Whether the value is a JavaScript function.  A host needs this "
+                       "because Python's callable() answers yes for every handle -- the "
+                       "wrapper defines __call__ -- so an object that is not a function "
+                       "would otherwise look like one."), nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
 

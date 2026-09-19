@@ -687,7 +687,20 @@ wrap_python_object(Realm& realm, PyObject* instance)
                                   v8::ConstructorBehavior::kThrow)
                     .ToLocal(&function);
         if (built)
+        {
+            // A host function carries the name it has in the host.  A page reads
+            // ``.name`` and ``String(f)`` on it like any other function, and an
+            // anonymous one would say nothing about where it came from.
+            PyRef name(PyRef::adopt(PyObject_GetAttrString(instance, "__name__")));
+            v8::Local<v8::Value> text;
+            if (name)
+                text = to_js(name.get(), realm);
+            else
+                PyErr_Clear();
+            if (!text.IsEmpty() && text->IsString())
+                function->SetName(text.As<v8::String>());
             wrapper = function;
+        }
     }
     else
     {
@@ -742,15 +755,12 @@ to_python_boundary(v8::Local<v8::Value> value, Realm& realm)
         return PyLong_FromLongLong(value.As<v8::Int32>()->Value());
     if (value->IsNumber())
         return PyFloat_FromDouble(value.As<v8::Number>()->Value());
-    if (value->IsBigInt())
-    {
-        bool lossless = false;
-        const int64_t integer = value.As<v8::BigInt>()->Int64Value(&lossless);
-        if (lossless)
-            return PyLong_FromLongLong(integer);
-        return raise(PyExc_OverflowError,
-                     "a JavaScript BigInt does not fit a Python int; read it as a handle");
-    }
+    // A BigInt deliberately falls through to the wrapper below.  It has no Python
+    // counterpart: the int it holds only fits while it is small, and the two
+    // languages keep them apart -- ``Number(1n)`` is a TypeError in JavaScript,
+    // while a Python int is a perfectly good Web IDL number, so a host handed an
+    // int could not tell which language's conversion rule to apply.  Reading one
+    // is ``int(handle.to_string())``.
     if (value->IsObject())
     {
         PythonOwner* record = nullptr;

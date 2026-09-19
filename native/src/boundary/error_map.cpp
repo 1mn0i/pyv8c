@@ -48,6 +48,7 @@ PyObject* registered_error_map = nullptr;
 constexpr const char* kErrorNameAttribute = "__v8_error_name__";
 constexpr const char* kErrorArgsAttribute = "__v8_error_args__";
 constexpr const char* kOriginalErrorKey = "__python_error__";
+constexpr const char* kThrownValueAttribute = "__v8_thrown__";
 //: How many values an exception may add to its own error's construction.  Small
 //: on purpose: this is for a constructor's parameters, not a place to hang data.
 constexpr int kMaxErrorArguments = 4;
@@ -191,6 +192,50 @@ construct_error(v8::Isolate* isolate, v8::Local<v8::Context> context,
     return error;
 }
 
+// Remember the JavaScript value a Python exception stands for.
+//
+// A conversion that runs a page's own code -- `String(value)`, which calls its
+// `toString` -- can be made to throw, and what it throws crosses into Python as
+// an exception like any other.  When that exception is on its way back out, the
+// page is entitled to see the very value it threw: `catch (error) { error ===
+// sentinel }` is a comparison of identity, and a new Error built from the text
+// would be a different object.
+//
+// The value is kept the way any other value crosses: a primitive becomes the
+// Python primitive, and an object or a symbol becomes a handle, which the realm
+// releases when it closes.  A handle that has outlived its realm cannot be
+// converted back, and the caller falls back to describing the error.
+void remember_thrown_value(PyObject* instance, v8::Local<v8::Value> exception,
+                           Realm& realm)
+{
+    if (instance == nullptr)
+        return;
+    PyRef converted(PyRef::adopt(to_python_boundary(exception, realm)));
+    if (!converted)
+    {
+        PyErr_Clear();
+        return;
+    }
+    if (PyObject_SetAttrString(instance, kThrownValueAttribute, converted.get()) < 0)
+        PyErr_Clear();
+}
+
+// The value a Python exception remembers having been thrown as, if any.
+v8::Local<v8::Value>
+remembered_thrown_value(PyObject* error, Realm& realm)
+{
+    PyRef thrown(PyRef::adopt(PyObject_GetAttrString(error, kThrownValueAttribute)));
+    if (!thrown)
+    {
+        PyErr_Clear();
+        return v8::Local<v8::Value>();
+    }
+    v8::Local<v8::Value> converted = to_js(thrown.get(), realm);
+    if (converted.IsEmpty())
+        PyErr_Clear();
+    return converted;
+}
+
 // Read the property that carries a Python exception back across the boundary.
 bool
 original_python_error(v8::Local<v8::Object> object, v8::Isolate* isolate,
@@ -249,6 +294,18 @@ python_error_to_js(v8::Isolate* isolate)
     if (context.IsEmpty())
         return v8::Local<v8::Value>();
 
+    Realm* owner = Realm::from_context(context);
+
+    // An exception that remembers a JavaScript value goes back out as that value,
+    // which is what makes a conversion the page's own code threw into a round trip
+    // rather than a translation.  See remember_thrown_value.
+    if (owner != nullptr && value)
+    {
+        v8::Local<v8::Value> thrown = remembered_thrown_value(value.get(), *owner);
+        if (!thrown.IsEmpty())
+            return thrown;
+    }
+
     std::string message = "Python exception";
     if (value)
     {
@@ -273,7 +330,6 @@ python_error_to_js(v8::Isolate* isolate)
 
     // The extras are read through the realm, because converting them is the same
     // crossing as any other value the host hands to JavaScript.
-    Realm* owner = Realm::from_context(context);
     std::vector<v8::Local<v8::Value>> extra;
     if (owner != nullptr && value)
         extra = error_arguments(value.get(), *owner);
@@ -391,6 +447,7 @@ js_exception_to_python(v8::Local<v8::Value> exception, Realm& realm)
             if (!instance)
                 return;
 
+            remember_thrown_value(instance.get(), exception, realm);
             PyErr_SetObject(is_class ? entry.get()
                                      : reinterpret_cast<PyObject*>(Py_TYPE(instance.get())),
                             instance.get());
@@ -413,8 +470,23 @@ js_exception_to_python(v8::Local<v8::Value> exception, Realm& realm)
     }
 
     // No mapping entry and nothing to unwrap: say what JavaScript said rather
-    // than inventing a class the host never declared.
-    PyErr_Format(PyExc_RuntimeError, "%s: %s", name.c_str(), message.c_str());
+    // than inventing a class the host never declared.  The value is still
+    // remembered, so a caller that lets the exception through hands JavaScript
+    // back the value JavaScript threw.
+    PyRef text(PyRef::adopt(
+        PyUnicode_FromFormat("%s: %s", name.c_str(), message.c_str())));
+    PyRef error(PyRef::adopt(
+        text ? PyObject_CallFunctionObjArgs(reinterpret_cast<PyObject*>(PyExc_RuntimeError),
+                                            text.get(), nullptr)
+             : nullptr));
+    if (!error)
+    {
+        PyErr_Clear();
+        PyErr_Format(PyExc_RuntimeError, "%s: %s", name.c_str(), message.c_str());
+        return;
+    }
+    remember_thrown_value(error.get(), exception, realm);
+    PyErr_SetObject(PyExc_RuntimeError, error.get());
 }
 
 void

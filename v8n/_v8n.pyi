@@ -65,6 +65,9 @@ class Value:
     @property
     def is_array(self) -> bool:
         """Whether the value is a JavaScript array."""
+    @property
+    def is_callable(self) -> bool:
+        """Whether the value is a JavaScript function."""
     def to_python(self) -> object:
         """Materialise arrays and plain objects recursively.
 
@@ -88,7 +91,7 @@ class Value:
     def to_string(self) -> str:
         """``String(value)``."""
     def to_number(self) -> float:
-        """``Number(value)``; NaN rather than an error."""
+        """``Number(value)``; NaN rather than an error, and a TypeError for a BigInt."""
     def to_boolean(self) -> bool:
         """``Boolean(value)``."""
     def __call__(self, *args: object) -> object:

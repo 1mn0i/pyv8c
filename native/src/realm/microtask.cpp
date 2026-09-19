@@ -1,6 +1,8 @@
 #include "boundary/guard.h"
 #include "kernel/v8_identity.h"
+#include "realm/realm_internal.h"
 #include "value/value_internal.h"
+#include "v8n/boundary.h"
 #include "v8n/realm.h"
 #include "v8n/value.h"
 
@@ -39,6 +41,11 @@ Realm::enqueue_microtask(PyObject* callable)
               "cannot run in it");
         return false;
     }
+
+    // The queued job may throw on the checkpoint that runs it, and that checkpoint
+    // happens as this entry unwinds: naming the realm here is what attributes the
+    // report to it.  See UncaughtReportScope.
+    UncaughtReportScope reports(this);
 
     IsolateEntry entry(*isolate_);
     if (!entry.ok())
@@ -96,6 +103,13 @@ Realm::run_microtasks()
     v8::MicrotaskQueue* queue = local->GetMicrotaskQueue();
     if (queue == nullptr)
         return true;
+
+    // A microtask that throws never returns to an embedding frame: V8 leaves the
+    // exception for the isolate to report through its message listener.  Naming
+    // this realm for the duration of the checkpoint is what lets that report
+    // reach the host's uncaught hook instead of stopping at V8's default, which
+    // is stderr.  See UncaughtReportScope.
+    UncaughtReportScope reports(this);
 
     // No context scope: each microtask carries the context it was created in, and
     // V8 restores it.  Entering this realm's context here would run another

@@ -669,6 +669,12 @@ Realm::evaluate(const char* source, const char* filename)
     // realm to stop seeing the previous entry's verdict.
     terminated_ = false;
 
+    // Named for the whole entry, and declared before the isolate entry so that it
+    // outlives it: with V8's default microtask policy the checkpoint that runs a
+    // microtask this entry queued happens as that entry unwinds, and a throwing
+    // microtask is reported then.  See UncaughtReportScope.
+    UncaughtReportScope reports(this);
+
     IsolateEntry entry(*isolate_);
     if (!entry.ok())
         return nullptr;
