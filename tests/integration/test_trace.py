@@ -1,9 +1,9 @@
 """Actual browser trace events, rather than Context constructor arguments."""
 
 import pytest
-import v8n
+import pyv8
 from loguru import logger
-from v8n.trace import format_trace
+from pyv8.trace import format_trace
 
 from pyv8c import Browser
 
@@ -73,7 +73,7 @@ def test_declined_reads_are_reported_with_the_value_they_resolve_to():
         assert _messages(events) == ["[Window] getter: Window.eval -> function eval() { [native code] }"]
         events.clear()
         # A name no property provides has no value to show, so it stays silent.
-        assert page.evaluate("window.notThere") is v8n.Undefined
+        assert page.evaluate("window.notThere") is pyv8.Undefined
         assert _messages(events) == []
     finally:
         browser.close()

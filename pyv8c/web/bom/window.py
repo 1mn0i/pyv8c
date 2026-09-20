@@ -3,11 +3,8 @@
 Cross-origin access to another window goes through :mod:`dom.window_proxy`,
 which :meth:`Window._view` imports on first use.
 """
-import functools
-import threading
-
-import v8n
-from v8n import IdlSpec
+import pyv8
+from pyv8 import IdlSpec
 
 from ...engine.features import LazyValueStore, interface
 from ...foundation.arguments import (
@@ -24,7 +21,6 @@ from ...foundation.errors import SecurityError
 from ...foundation.urls import origin_tuple, serialize_origin
 from ..dom.events import EventTarget
 from ..fetch.request import Request
-from .exposed import ExposedInterfacesMixin
 from .scheduling import _SchedulingMixin
 from .utils import deny_cross_origin, window_attribute, window_method
 
@@ -37,40 +33,6 @@ _PROXY_SAFE_NAMES = frozenset((
     "window", "self", "top", "parent", "opener", "frames", "length", "closed",
     "location", "close", "focus", "blur", "postMessage",
 ))
-
-#: The window whose realm is performing the access currently on the stack.
-#:
-#: The binding decides whether to let another realm in by calling the check with
-#: the accessing realm's window, and the property handlers that follow run after
-#: the check with no further word about who asked.  They need it -- a proxy has
-#: to be built in the accessing realm, not in the realm being read -- so the
-#: check leaves it here and the handler that consumes it drops it again.
-#:
-#: Per thread, because a realm is; and restored rather than cleared, because a
-#: handler may itself trigger an access.
-_ACCESSOR = threading.local()
-
-
-def _accessor_window():
-    return getattr(_ACCESSOR, "window", None)
-
-
-def consumes_accessor(method):
-    """Run one cross-origin handler and drop the accessor it was called for.
-
-    The recording is only meaningful for the access the check admitted it for,
-    and the binding gives no "that access finished" notification, so the handler
-    is the last point at which it can be dropped.  Leaving it behind would let a
-    same-realm read much later consult a realm that is no longer on the stack.
-    """
-    @functools.wraps(method)
-    def handler(self, *args):
-        previous = getattr(_ACCESSOR, "window", None)
-        try:
-            return method(self, *args)
-        finally:
-            _ACCESSOR.window = previous
-    return handler
 
 
 @interface('WindowProperties', 'EventTarget')
@@ -138,25 +100,11 @@ class _WindowFeatureValues(LazyValueStore):
         self._runtime, self._window = runtime, window
 
     def _create_value(self, slot):
-        value = self._runtime.create_window_value(slot, self._window)
-        # The object is about to be handed to JavaScript, so its interface has
-        # to be installed first: without one it arrives as a generic host object
-        # whose "properties" are Python attributes, and an interface's
-        # `get_length` is not what `value.length` reads.  Reading an interface
-        # name installs it, so a value reached through its constructor needs
-        # nothing here; a value built on first access -- `history`, `screen`,
-        # `navigator` -- is exactly the case that does.
-        return self._window.install_interface_for(value)
-
-    def _cache(self, name, value):
-        # ``LazyValueStore`` caches by slot; the interface is installed by
-        # ``_create_value`` on the way out, so a direct cache write is another
-        # way in and gets the same treatment.
-        return super()._cache(name, self._window.install_interface_for(value))
+        return self._runtime.create_window_value(slot, self._window)
 
 
 @interface('Window', 'WindowProperties')
-class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
+class Window(_SchedulingMixin, WindowProperties):
     __v8_idl_spec__ = IdlSpec(
         global_this=True,
         attributes=(
@@ -214,15 +162,10 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
         cross_origin_index_set="__v8_cross_origin_index_set__",
         cross_origin_index_del="__v8_cross_origin_index_del__",
         index_get="__v8_index_get__",
-        # The realm's other interface names, answered on first read rather than
-        # declared one property each -- see web/bom/exposed.py for why.
-        name_get="__v8_name_get__",
-        name_query="__v8_name_query__",
-        name_enum="__v8_name_enum__",
     )
-    # Ordinary members use Web IDL bindings; the frame and named-element lookups
-    # that used to be here are declared on WindowProperties above, and the
-    # interface names a realm exposes are answered by ExposedInterfacesMixin.
+    # Ordinary members use Web IDL bindings; dynamic names live on
+    # WindowProperties, not a generic Python interceptor on Window.
+    _context_origins = {}
     def __init__(self, services=None, feature_runtime=None, **kw):
         super().__init__(services=services, **kw); self._services = services
         self._origin = getattr(services, "_origin", ("opaque", object()))
@@ -263,40 +206,6 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
     def indexedDB(self):
         return self._features.value("indexedDB")
 
-    def install_interface_for(self, value):
-        """Install the interface a Python object stands for, and return it.
-
-        An object handed to JavaScript has to carry its interface before it
-        crosses: the binding wraps an object whose type it has an interface for
-        in that interface's template, and anything else in the realm's generic
-        host template, where a property read is a Python attribute read.  A
-        plain host object declares no interface and is returned unchanged.
-        """
-        declaration = getattr(type(value), "__idl_spec__", None)
-        name = getattr(declaration, "name", None)
-        services = getattr(self, "_services", None)
-        realm_services = getattr(services, "realm_services", None)
-        if name is None or realm_services is None:
-            return value
-        if not realm_services.interface_materialized(name):
-            realm_services.materialize_interface(name)
-        return value
-
-    def expose_interfaces(self):
-        """Install the interfaces of values this Window built before its realm.
-
-        ``location`` is the case that exists: the Page re-points it at the
-        document URL while the Window is still being constructed, long before
-        there is a realm to install anything into.  A value built before its
-        realm can only be installed afterwards, and afterwards is now.  The
-        feature slots are included because a host may have read one early; only
-        the ones already built are touched, so this does not defeat their
-        laziness.
-        """
-        self.install_interface_for(self.location)
-        for slot in self._features.cached_names:
-            self.install_interface_for(self._features.value(slot))
-
     def sync_history_url(self, url):
         """Re-point the current history entry at a committed document URL.
 
@@ -309,15 +218,13 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
             self.history.replace_same_document(str(url))
     
     def __v8_cross_origin_check__(self, accessor):
-        _ACCESSOR.window = accessor if isinstance(accessor, Window) else None
         return accessor is self or getattr(accessor, "_origin", None) == self._origin
 
-    @consumes_accessor
     def _cross_origin_proxy(self):
-        accessor = _accessor_window()
-        if accessor is None:
+        entry = self._context_origins.get(id(pyv8.current_context()))
+        if entry is None:
             raise SecurityError("The accessing Window is not available")
-        return accessor._view(self)
+        return entry[0]._view(self)
 
     def __v8_cross_origin_name_get__(self, name):
         proxy = self._cross_origin_proxy()
@@ -335,7 +242,6 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
     def __v8_cross_origin_name_del__(self, name):
         return self._cross_origin_proxy().__v8_name_del__(name)
 
-    @consumes_accessor
     def __v8_cross_origin_name_enum__(self):
         return list(_PROXY_SAFE_NAMES)
 
@@ -349,19 +255,22 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
         return self._cross_origin_proxy().__v8_index_del__(index)
 
     @classmethod
-    def _accessor_window(cls, fallback=None):
-        """The window whose realm is asking, or *fallback* when it is this one.
+    def _bind_context(cls, context, window):
+        cls._context_origins[id(context)] = (window, window._origin)
 
-        A same-realm access never runs the check -- V8 only asks when the
-        accessing realm differs -- so there is nothing recorded and the caller's
-        own window is the answer.
-        """
-        recorded = _accessor_window()
-        return recorded if recorded is not None else fallback
+    @classmethod
+    def _unbind_context(cls, context):
+        cls._context_origins.pop(id(context), None)
+
+    @classmethod
+    def _accessor_window(cls, fallback=None):
+        entry = cls._context_origins.get(id(pyv8.current_context()))
+        return entry[0] if entry is not None else fallback
 
     def _accessor_origin(self):
-        recorded = _accessor_window()
-        return recorded._origin if recorded is not None else self._origin
+        current = pyv8.current_context()
+        entry = self._context_origins.get(id(current))
+        return entry[0]._origin if entry is not None else self._origin
 
     def _same_origin(self):
         return self._accessor_origin() == self._origin
@@ -389,24 +298,6 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
             return self._view(frames[index])
         return None
 
-    # A global object answers for two families of names, and a browser answers
-    # them in this order: what the realm exposes, then the document's named
-    # elements and frames.  Both have to come from *this* object, because the
-    # binding gives one interceptor per interface and the global object is a
-    # Window: its parent's interceptor is never reached, so the named-elements
-    # half is asked here, in the family that object declares it in.
-    def __v8_name_get__(self, name):
-        value = super().__v8_name_get__(name)
-        if value is not None:
-            return value
-        return self.__v8_property_name_get__(name)
-
-    def __v8_name_query__(self, name):
-        attributes = super().__v8_name_query__(name)
-        if attributes is not None:
-            return attributes
-        return self.__v8_property_name_query__(name)
-
     def _frame_windows(self):
         return tuple(node._child_services.window
                      for node in self._services.document_services.document.fn_querySelectorAll("iframe")
@@ -419,7 +310,7 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
     def get_frames(self): return self
     def get_length(self): return len(self._frame_windows())
     def get_closed(self): return bool(getattr(self._services, "closed", False))
-    def get_opener(self): return v8n.Null
+    def get_opener(self): return pyv8.Null
     def get_onmessage(self): self._require_same_origin(); return self._get_handler("onmessage")
     def set_onmessage(self, value):
         if not is_nullish(value):
@@ -474,7 +365,7 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
     def fn_postMessage(self, message=MISSING, target_origin='/', transfer=MISSING, *_extra):
         if message is MISSING:
             raise missing_error('Window', 'postMessage', 1, 0, constructor=False)
-        if target_origin is v8n.Undefined:
+        if target_origin is pyv8.Undefined:
             target_origin = '/'
         from ...foundation.arguments import sequence
         if transfer is not MISSING:
@@ -484,7 +375,7 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
             transfer = ()
         self._post_message(self, message, target_origin, transfer)
 
-    def fn_webkitRequestFileSystem(self, type=MISSING, size=MISSING, success=MISSING, error=v8n.Undefined, *_extra):
+    def fn_webkitRequestFileSystem(self, type=MISSING, size=MISSING, success=MISSING, error=pyv8.Undefined, *_extra):
         if type is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 0, constructor=False)
         if size is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 1, constructor=False)
         if success is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 2, constructor=False)
@@ -495,7 +386,7 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
         from .filesystem import request_file_system
         return request_file_system(self, type, size, success, error)
 
-    def fn_getComputedStyle(self, element=MISSING, pseudo=v8n.Undefined, *_extra):
+    def fn_getComputedStyle(self, element=MISSING, pseudo=pyv8.Undefined, *_extra):
         if element is MISSING:
             raise missing_error("Window", "getComputedStyle", 1, 0, constructor=False)
         from ..dom.html_elements import Element
@@ -510,9 +401,9 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
         from ..fetch.events import MessageEvent
 
         # Null is an empty WindowPostMessageOptions dictionary.
-        if target_origin is None or target_origin is v8n.Null or target_origin is v8n.Undefined:
+        if target_origin is None or target_origin is pyv8.Null or target_origin is pyv8.Undefined:
             target_origin = {}
-        if isinstance(target_origin, (dict, v8n.Value)):
+        if isinstance(target_origin, (dict, pyv8.JSObject)):
             from ...foundation.arguments import sequence
             options = dictionary(target_origin)
             target_origin = dom_string(options.get("targetOrigin", "/"))
@@ -526,10 +417,7 @@ class Window(ExposedInterfacesMixin, _SchedulingMixin, WindowProperties):
             expected_origin = origin_tuple(target_origin)
             if expected_origin[0] == "opaque":
                 raise V8SyntaxError("Invalid target origin in postMessage")
-        data = structured_clone(
-            message, transfer,
-            context=getattr(self._services.realm_services, "realm", None),
-        )
+        data = structured_clone(message, transfer)
         serialized = serialize_origin(source._origin)
 
         def deliver():

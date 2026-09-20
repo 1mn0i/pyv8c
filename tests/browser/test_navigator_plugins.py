@@ -1,6 +1,6 @@
 import pytest
 
-pytest.importorskip("v8n")
+pytest.importorskip("pyv8")
 
 from pyv8c import (
     BatteryConfig,

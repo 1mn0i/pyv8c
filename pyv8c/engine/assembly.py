@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass
 
-from v8n import AttributeSpec, ConstantSpec, IdlSpec, MethodSpec
-from v8n.flag import (
+from pyv8 import AttributeSpec, ConstantSpec, IdlSpec, MethodSpec
+from pyv8.flag import (
     CallbackType,
     FlagCrossOriginCheck,
     FlagLocation,
@@ -13,7 +13,6 @@ from v8n.flag import (
 )
 
 from .config import apply_template_flags
-from .description import UnsupportedMember, plan_from_spec
 
 
 def _location(value):
@@ -109,124 +108,7 @@ class InterfaceCompiler:
         self.stubs = stubs
         self.wrappers = wrappers
         self._compiled = {}
-        self._plans = {}
         self._lock = lock
-
-    def plan(self, name, realm=None):
-        """The plan for one interface, which is what a realm installs.
-
-        Cached and shared, like the compiled declaration it comes from: a plan
-        carries callables rather than slots, so it is correct in every realm that
-        installs it, and rebuilding it per call would re-derive the same interface
-        once per page.  The one thing that does depend on the realm is a static
-        member that asked for one, so that case -- and only that case -- produces a
-        copy, which is deliberately not cached: a cache keyed by realm would hold
-        every page ever built.
-        """
-        with self._lock:
-            compiled = self.compile(name)
-            base = self._plan(name, compiled)
-            if realm is None or not (compiled.realm_methods or compiled.realm_constructor):
-                return base
-
-            cls = self.universe.class_for(name)
-            plan = dict(base)
-            members = [dict(member) for member in base["members"]]
-            plan["members"] = members
-
-            # The methods in a plan are the declaration's methods in order, so an
-            # index recorded against one list addresses the other.
-            method_at = [
-                index for index, member in enumerate(members)
-                if member["kind"] == "method"
-            ]
-            for index, raw in compiled.realm_methods:
-                position = method_at[index]
-                members[position]["callback"] = self.wrappers.method(
-                    cls, name, members[position]["name"], raw, static=True, realm=realm
-                )
-            if compiled.realm_constructor:
-                plan["constructor_adapter"] = self.wrappers.constructor_adapter(
-                    name, self.universe.runtime.interface(name) is None, realm
-                )
-            return plan
-
-    def plan_declared(self, cls, name, declaration=None, realm=None):
-        """The plan for a class that carries its own declaration.
-
-        pyv8c defines a few interfaces the renderer's snapshot says nothing
-        about -- ``WindowProxy`` is the one a page can reach, through an iframe's
-        ``contentWindow`` -- and they are interfaces all the same: JavaScript
-        sees their objects as instances of a named type with members.  There is no
-        baseline entry to consult here, so the class's own declaration is the
-        whole description, and each member's own location says where it belongs.
-        """
-        with self._lock:
-            source = declaration if declaration is not None else cls.__dict__.get("__v8_idl_spec__")
-            if source is None:
-                raise TypeError(f"{name} declares no idl spec of its own")
-
-            methods = []
-            for public_name, declared in self._members(cls, object, "methods", frozenset()).items():
-                if declared.callback_type == CallbackType.kJs:
-                    raise UnsupportedMember(
-                        f"{name}.{public_name} names the patch {declared.callback!r}, "
-                        f"which a description cannot describe"
-                    )
-                raw = self.wrappers._raw_callback(cls, declared.callback)
-                static = declared.location == FlagLocation.kInterface
-                methods.append(declared.replace(
-                    callback=self.wrappers.method(cls, name, public_name, raw, static=static)
-                ))
-
-            attributes = []
-            for public_name, declared in self._members(cls, object, "attributes", frozenset()).items():
-                if declared.callback_type == CallbackType.kJs:
-                    raise UnsupportedMember(
-                        f"{name}.{public_name} names the patch {declared.callback!r}, "
-                        f"which a description cannot describe"
-                    )
-                getter = self.wrappers._raw_callback(cls, declared.getter)
-                setter = None
-                if declared.setter is not None:
-                    setter = self.wrappers.setter(cls, name, public_name, declared.setter)
-                attributes.append(declared.replace(getter=getter, setter=setter))
-
-            spec = source.replace(methods=tuple(methods), attributes=tuple(attributes))
-
-            # The interceptors are named in the declaration the same way the
-            # members are, so they resolve the same way: by name from the class's
-            # own chain.
-            roles = {}
-            for field in ("name_get", "name_set", "name_query", "name_del", "name_enum",
-                          "index_get", "index_set", "index_query", "index_del", "index_enum"):
-                for prefix in ("", "cross_origin_"):
-                    reference = getattr(source, prefix + field, None)
-                    if reference is not None:
-                        roles[prefix + field] = self.wrappers._raw_callback(cls, reference)
-            if source.cross_origin_check is not None:
-                roles["cross_origin_check"] = self.wrappers._raw_callback(
-                    cls, source.cross_origin_check
-                )
-            spec = spec.replace(**roles)
-
-            return plan_from_spec(
-                spec, name=name, implementation=cls, parent=getattr(source, "parent", None),
-            )
-
-    def _plan(self, name, compiled):
-        cached = self._plans.get(name)
-        if cached is not None:
-            return cached
-
-        plan = plan_from_spec(
-            compiled.spec,
-            name=name,
-            implementation=self.universe.class_for(name),
-            parent=self.universe.spec(name).get("parent"),
-        )
-        self._plans[name] = plan
-        return plan
 
     def _members(self, cls, parent, field, public_names):
         members = {}
@@ -386,16 +268,6 @@ class InterfaceCompiler:
                 (getattr(declaration, key) for declaration in declarations if getattr(declaration, key) is not None),
                 None,
             )
-            if reference is None:
-                # A named-properties object names its callbacks in a family of
-                # their own, so that a subclass implementing the same roles --
-                # ``Window`` is a ``WindowProperties`` and answers a different set
-                # of names -- does not shadow them.  ``WindowProperties`` declares
-                # no handler at all and implements ``__v8_property_name_get__``;
-                # without this second look its named elements would not resolve.
-                alternative = f"__v8_property_{key}__"
-                if any(getattr(base, alternative, None) is not None for base in cls.__mro__):
-                    reference = alternative
             if reference is not None:
                 options[key] = self.wrappers._raw_callback(cls, reference)
             elif registration is None and callback_name in enabled:

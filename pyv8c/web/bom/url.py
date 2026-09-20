@@ -7,9 +7,9 @@ its owner through ``_url``, which writes every mutation back with
 
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-import v8n
-from v8n import AttributeSpec, IdlSpec, MethodSpec
-from v8n.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
+import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
 
 from ...engine.features import interface
 from ...foundation.arguments import (
@@ -48,14 +48,14 @@ class URLSearchParams:
     )
 
     def __init__(self, init='', *_extra, _url=None, **_):
-        if init is v8n.Undefined:
+        if init is pyv8.Undefined:
             init = ''
         from urllib.parse import parse_qsl
         self._url = _url
         iterable = isinstance(init, (list, tuple))
         iterator = MISSING
-        if isinstance(init, v8n.Value):
-            iterator = init.iterator()
+        if isinstance(init, pyv8.JSObject):
+            iterator = init._iterator_method()
             iterable = not is_nullish(iterator)
         if iterable:
             def convert_pair(entry):
@@ -64,7 +64,7 @@ class URLSearchParams:
                     raise V8TypeError("Failed to construct 'URLSearchParams': Sequence initializer must only contain pair elements.")
                 return tuple(pair)
             self._items = sequence(init, convert_pair, iterator_method=iterator)
-        elif isinstance(init, (dict, v8n.Value)):
+        elif isinstance(init, (dict, pyv8.JSObject)):
             self._items = [(usv_string(key), usv_string(value)) for key, value in dictionary(init).items()]
         else:
             self._items = list(parse_qsl(usv_string(init).lstrip("?"), keep_blank_values=True))
@@ -101,7 +101,7 @@ class URLSearchParams:
         self._refresh(); name = str(name)
         for key, value in self._items:
             if key == name: return value
-        return v8n.Null
+        return pyv8.Null
 
     def fn_getAll(self, name=MISSING, *_extra):
         if name is MISSING:
@@ -142,11 +142,11 @@ class URLSearchParams:
 
 @interface('URL', None)
 class URL:
-    def __init__(self, url=MISSING, base=v8n.Undefined, *_extra, _realm=None, **_):
+    def __init__(self, url=MISSING, base=pyv8.Undefined, *_extra, _realm=None, **_):
         if url is MISSING:
             raise missing_error('URL', 'constructor', 1, 0, constructor=True)
         url = usv_string(url)
-        base = None if base is v8n.Undefined else usv_string(base)
+        base = None if base is pyv8.Undefined else usv_string(base)
         self._realm = _realm
         try:
             if base is not None:
@@ -256,25 +256,25 @@ class URL:
         return self.href
 
     @staticmethod
-    def fn_canParse(url=MISSING, base=v8n.Undefined, *_extra):
+    def fn_canParse(url=MISSING, base=pyv8.Undefined, *_extra):
         if url is MISSING:
             raise missing_error('URL', 'canParse', 1, 0, constructor=False)
         url = dom_string(url)
-        if base is not v8n.Undefined:
+        if base is not pyv8.Undefined:
             base = dom_string(base)
         try: URL(url, base)
         except (V8URIError, TypeError, ValueError): return False
         return True
 
     @staticmethod
-    def fn_parse(url=MISSING, base=v8n.Undefined, *_extra):
+    def fn_parse(url=MISSING, base=pyv8.Undefined, *_extra):
         if url is MISSING:
             raise missing_error('URL', 'parse', 1, 0, constructor=False)
         url = dom_string(url)
-        if base is not v8n.Undefined:
+        if base is not pyv8.Undefined:
             base = dom_string(base)
         try: return URL(url, base)
-        except (V8URIError, TypeError, ValueError): return v8n.Null
+        except (V8URIError, TypeError, ValueError): return pyv8.Null
 
     @staticmethod
     def fn_createObjectURL(_realm, blob=MISSING, *_extra):

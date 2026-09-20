@@ -1,7 +1,7 @@
 """The ``Document`` interface: collection accessors, factories and parsing hooks."""
 
-import v8n
-from v8n import AttributeSpec, IdlSpec, MethodSpec
+import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error
@@ -90,9 +90,9 @@ class Document(_ParentNodeMixin, Node):
         title = self._first_element("title")
         if title is None:
             parent = self.get_head()
-            if parent is v8n.Null:
+            if parent is pyv8.Null:
                 parent = self.get_documentElement()
-            if parent is v8n.Null:
+            if parent is pyv8.Null:
                 return
             title = self._new_element("title")
             parent.append_child(title)
@@ -104,14 +104,14 @@ class Document(_ParentNodeMixin, Node):
             implementation = self._implementation = DOMImplementation(services=self._services)
         return implementation
     def get_currentScript(self):
-        return self.current_script if self.current_script is not None else v8n.Null
+        return self.current_script if self.current_script is not None else pyv8.Null
     def get_documentElement(self):
         """The document's first element child, whatever its local name.
 
         The DOM standard does not require it to be ``html``: a document built by
         ``DOMImplementation.createDocument`` has the root it was asked for.
         """
-        return next((x for x in self._children if isinstance(x, Element)), v8n.Null)
+        return next((x for x in self._children if isinstance(x, Element)), pyv8.Null)
     def _html_element(self):
         """The ``html`` root, when this document is a full HTML document.
 
@@ -131,20 +131,20 @@ class Document(_ParentNodeMixin, Node):
         html = self._html_element()
         if html is not None:
             body = html.fn_querySelector("body")
-            if body is not v8n.Null:
+            if body is not pyv8.Null:
                 return body
         return next((x for x in self._descendants() if isinstance(x, Element) and x.localName == "body"),
-                    next((x for x in self._children if isinstance(x, Element)), v8n.Null))
+                    next((x for x in self._children if isinstance(x, Element)), pyv8.Null))
     def get_head(self):
         html = self._html_element()
         if html is not None:
             head = html.fn_querySelector("head")
-            if head is not v8n.Null:
+            if head is not pyv8.Null:
                 return head
-        return next((x for x in self._descendants() if isinstance(x, Element) and x.localName == "head"), v8n.Null)
+        return next((x for x in self._descendants() if isinstance(x, Element) and x.localName == "head"), pyv8.Null)
     def get_defaultView(self):
         if self._services is None:
-            return v8n.Null
+            return pyv8.Null
         from ..bom.window import Window
         target = self._services.document_services.window
         return Window._accessor_window(target)._view(target)
@@ -234,7 +234,7 @@ class Document(_ParentNodeMixin, Node):
         if value is MISSING:
             raise missing_error('Document', 'getElementById', 1, 0, constructor=False)
         value = dom_string(value)
-        return next((x for x in self._descendants() if isinstance(x, Element) and x.get_id() == str(value)), v8n.Null)
+        return next((x for x in self._descendants() if isinstance(x, Element) and x.get_id() == str(value)), pyv8.Null)
     def fn_getElementsByName(self, value=MISSING, *_extra):
         if value is MISSING:
             raise missing_error('Document', 'getElementsByName', 1, 0, constructor=False)
@@ -262,7 +262,7 @@ class Document(_ParentNodeMixin, Node):
         if not is_nullish(namespace):
             namespace = dom_string(namespace)
         local_name = dom_string(local_name)
-        if namespace not in (None, v8n.Null, v8n.Undefined, "", "*", XHTML_NAMESPACE):
+        if namespace not in (None, pyv8.Null, pyv8.Undefined, "", "*", XHTML_NAMESPACE):
             return HTMLCollection(owner=self, getter=lambda: [])
         return self.fn_getElementsByTagName(local_name)
     def fn_querySelector(self, selector=MISSING, *_extra):
@@ -301,7 +301,7 @@ class Document(_ParentNodeMixin, Node):
         return class_for_tag(tag)(tag, services=self._services)
     def query_selector(self, selector, root):
         from .selectors import select
-        return next(iter(select(root, selector)), v8n.Null)
+        return next(iter(select(root, selector)), pyv8.Null)
     def query_selector_all(self, selector, root):
         from .selectors import select
         return list(select(root, selector))
@@ -344,7 +344,7 @@ class DOMImplementation:
     def _document(self):
         return Document(services=self._services, url="about:blank", ready_state="complete")
 
-    def fn_createHTMLDocument(self, title=v8n.Undefined, *_extra):
+    def fn_createHTMLDocument(self, title=pyv8.Undefined, *_extra):
         document = self._document()
         root, head, body = (document._new_element(tag) for tag in ("html", "head", "body"))
         document.append_child(root)

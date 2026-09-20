@@ -14,13 +14,15 @@ import uuid
 from pathlib import Path
 from types import MappingProxyType
 
-import v8n
+# Kept as a module attribute: tests patch ``pyv8c.platform.browser.pyv8``
+# to instrument native Context construction on the PageRealm path.
+import pyv8  # patch target for native Context instrumentation tests
 from loguru import logger
 
 from ..engine.universe import BaselineRepository, InterfaceUniverse
 from ..foundation.arguments import is_nullish
 from ..foundation.environment import BrowserEnvironment
-from ..foundation.errors import InvalidStateError, NetworkError, error_text
+from ..foundation.errors import InvalidStateError, NetworkError
 from ..foundation.lifecycle import ResourceScope
 from ..foundation.rejections import RejectionTracker
 from ..foundation.tasks import TaskQueue
@@ -31,7 +33,6 @@ from ..web.network.backend import NetworkBackend
 from ..web.network.cookies import CookieJar
 from ..web.network.registry import create_transport
 from .bootstrap import bootstrap_runtime
-from .devtools import DevToolsHandle, DevToolsOptions
 from .lifecycle import DocumentLifecycle
 from .navigation import NavigationController
 from .net import PageNet
@@ -61,25 +62,17 @@ class _TaskHostAdapter:
         return self._page.navigation.parser_is_blocked()
 
 
-class _RealmBootstrapProxy:
-    """Placeholder published while the realm installs its own interfaces.
+class _ContextBootstrapProxy:
+    """Placeholder published while native Context installs templates."""
 
-    A host callback reached during installation can read ``page.context``
-    before the realm object exists.  Answering the realm-shaped operations with
-    nothing keeps that read from raising inside someone else's construction,
-    which is where a partially built page is least diagnosable.
-    """
+    def __init__(self):
+        self.args = ()
+        self.kw = {}
 
-    glob = None
-    trace_hook = None
-
-    def evaluate(self, *_args, **_kwargs):
+    def expose(self, *_args, **_kwargs):
         return None
 
-    def install(self, *_args, **_kwargs):
-        return None
-
-    def wrap(self, *_args, **_kwargs):
+    def exec_js(self, *_args, **_kwargs):
         return None
 
     def close(self):
@@ -142,16 +135,17 @@ class Page:
         # Host-side HTTP for this page: carries its cookies and headers through
         # the context's transport (see platform/net.py).
         self.net = PageNet(self)
-        # Installing the realm's templates can reach back into a host callback
-        # before that realm object exists.  Publish a sentinel so those calls
-        # observe an answer rather than a missing Page attribute.
-        self.context = _RealmBootstrapProxy()
+        # Native template installation can inspect the global object before
+        # Context.__init__ returns.  Publish a sentinel so Window callbacks
+        # never observe a partially initialized Page attribute.
+        self.context = _ContextBootstrapProxy()
         self._devtools_target = None
         self.realm = PageRealm(self)
         self.services.bind_realm(self.realm)
         self.realm.executor.attach_task_queue(self.tasks)
         self.realm.executor.attach_rejection_tracker(self.rejections)
         self.context = self.realm.context
+        Window._bind_context(self.context, self.window)
         if parent is not None:
             self.window._set_frame_parent(parent.window)
 
@@ -167,9 +161,7 @@ class Page:
         def update():
             if self.closed or self.context_owner.closed:
                 raise RuntimeError("page is closed")
-            # The realm owns the switch; refusing a page that cannot be traced
-            # is its answer, so the page does not carry a second copy of it.
-            self.realm.set_trace(enabled)
+            self.context.trace = enabled
             self._trace = enabled
             self.services.trace = enabled
 
@@ -179,9 +171,13 @@ class Page:
         self.origin = origin_tuple(url, inherited=getattr(self.parent_page, "origin", None))
         self.origin = self.context_owner._blob_origins.get(str(url), self.origin)
         self.services._origin = self.origin
-        # The cross-origin check reads the window's origin live, so a
-        # navigation that changes it needs no second table kept in sync.
         self.window._origin = self.origin
+        # The native access-check callback resolves the accessing realm from
+        # this table.  Navigation can change the origin after the Context has
+        # already been created, so keep the bound entry in sync.
+        entry = Window._context_origins.get(id(self.context))
+        if entry is not None:
+            Window._context_origins[id(self.context)] = (entry[0], self.origin)
 
     # -- error reporting ---------------------------------------------------
     # One entry point for everything that notices an exception: TaskQueue routes
@@ -214,16 +210,19 @@ class Page:
         finally:
             self._reporting_error = False
 
-    def report_uncaught(self, error):
-        """Report an exception V8 raised on its own.
+    def report_uncaught_message(self, message, source, line, column, error):
+        """Report the pieces of an exception V8 raised on its own.
 
-        This is the realm's uncaught-exception hook: a microtask job that threw
-        never returns to a Python frame, so V8 hands over the thrown value and
-        nothing else.  There is no source position with it -- V8 keeps one on
-        the error's message object, and reading it while the engine is unwinding
-        is the kind of eager work the value boundary exists to avoid.
+        This is the isolate's uncaught-exception hook: a microtask job that
+        threw never returns to a Python frame, so V8 hands over the message, the
+        throw site and the exception value it captured.
         """
-        self.report_exception(message=error_text(error), value=error)
+        if is_nullish(source):
+            source = ""
+        self.report_exception(
+            message=str(message), filename=str(source), line=int(line),
+            column=int(column), value=error,
+        )
 
     def report_rejection(self, event_type, promise, reason):
         """Mirror a rejection notice onto the window's rejection events."""
@@ -265,9 +264,7 @@ class Page:
     def evaluate(self, script, filename=None):
         def evaluate_data():
             value = self.scripts.evaluate(script, filename=filename)
-            # A handle is what the boundary gives back for an object; this entry
-            # point exists to hand a Python caller data, so it materialises.
-            return value.to_python() if isinstance(value, v8n.Value) else value
+            return value.to_python() if isinstance(value, pyv8.JSObject) else value
         return self.realm.executor.call(evaluate_data)
 
     def evaluate_handle(self, script, filename=None):
@@ -296,7 +293,7 @@ class Page:
         """Return the host-side DOM node matching a CSS selector, else ``None``."""
         def resolve():
             node = self.document.fn_querySelector(str(selector))
-            return None if node is v8n.Null else node
+            return None if node is pyv8.Null else node
 
         return self.realm.executor.call(resolve)
 
@@ -384,6 +381,7 @@ class Page:
         if first_error is not None:
             # Keep the realm owner available to retry failed native resources.
             raise first_error
+        Window._unbind_context(self.context)
         self.realm.close()
         self.context = None
         self.closed = True
@@ -590,7 +588,7 @@ class BrowserContext:
         except ValueError:
             pass
 
-    def start_devtools(self, page: Page, *, options: DevToolsOptions | None = None) -> DevToolsHandle:
+    def start_devtools(self, page: Page, *, options: pyv8.DevToolsOptions | None = None) -> pyv8.DevToolsHandle:
         self._ensure_open()
         if page not in self.pages or page.closed:
             raise InvalidStateError("Page does not belong to this BrowserContext")

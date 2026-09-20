@@ -10,12 +10,6 @@ the capability objects rather than implementing their protocols itself.
 ``RealmServices`` exposes task posting and script execution without importing
 ``platform``. Parameter conversion and Promise rejection belong to Web API
 implementations, not to binding wrappers.
-
-It also carries the two halves of "expose an interface by name": which names a
-realm declares (``interface_exposed``) and building one on demand
-(``exposed_interface``).  A global object answers for those names through one
-interceptor rather than one property each, which is why the question and the
-answer live here instead of in the binding.
 """
 
 from typing import Any, Protocol, runtime_checkable
@@ -44,17 +38,6 @@ class RealmServices(Protocol):
         """Materialise a Python exception as a native JS error object."""
         ...
 
-    def interface_exposed(self, name: str, context_type: str = "Window") -> bool:
-        """Whether this realm declares *name* as an interface it may expose."""
-        ...
-
-    def exposed_interface(self, name: str) -> Any:
-        """The JavaScript constructor for an exposed name, building it now.
-
-        The global object answers with it, so what comes back is the very
-        function JavaScript will use rather than a second one standing for it.
-        """
-        ...
 
 @runtime_checkable
 class TaskServices(Protocol):

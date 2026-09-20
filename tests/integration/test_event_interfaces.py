@@ -110,7 +110,7 @@ def test_event_init_members_round_trip(event_page, expression, expected):
 
 
 def test_nullable_event_members_default_to_null(event_page):
-    import v8n
+    import pyv8
 
     for expression in (
         "new InputEvent('input').data",
@@ -119,7 +119,7 @@ def test_nullable_event_members_default_to_null(event_page):
         "new StorageEvent('storage', {key: 'k'}).oldValue",
         "new FocusEvent('focus').relatedTarget",
     ):
-        assert event_page.evaluate(expression) is v8n.Null, expression
+        assert event_page.evaluate(expression) is pyv8.Null, expression
 
 
 def test_before_unload_event_is_not_constructible(event_page):

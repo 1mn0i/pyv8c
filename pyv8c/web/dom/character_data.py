@@ -6,8 +6,8 @@ the ``ChildNode`` / ``NonDocumentTypeChildNode`` mixins from :mod:`dom.mixins`.
 
 from html import escape
 
-import v8n
-from v8n import AttributeSpec, IdlSpec, MethodSpec
+import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
@@ -37,11 +37,11 @@ class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
         has_constructor=1,
     )
     def __init__(self, data='', *_extra, services=None, **kw):
-        if data is v8n.Undefined:
+        if data is pyv8.Undefined:
             data = ''
-        if data is not v8n.Undefined:
+        if data is not pyv8.Undefined:
             data = dom_string(data)
-        if services is v8n.Undefined:
+        if services is pyv8.Undefined:
             services = None
         super().__init__(services=services, node_type=Node.TEXT_NODE, node_name='#text', value=str(data), **kw)
     def get_data(self): return self.nodeValue or ""
@@ -116,11 +116,11 @@ class Text(CharacterData):
 class Comment(CharacterData):
     __v8_idl_spec__ = IdlSpec(constructor_behavior=1, has_constructor=1)
     def __init__(self, data='', *_extra, services=None, **kw):
-        if data is v8n.Undefined:
+        if data is pyv8.Undefined:
             data = ''
-        if data is not v8n.Undefined:
+        if data is not pyv8.Undefined:
             data = dom_string(data)
-        if services is v8n.Undefined:
+        if services is pyv8.Undefined:
             services = None
         super().__init__(data, services=services, **kw)
         self.nodeType, self.nodeName = (Node.COMMENT_NODE, '#comment')

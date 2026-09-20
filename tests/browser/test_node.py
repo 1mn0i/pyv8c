@@ -1,5 +1,5 @@
 import pytest
-import v8n
+import pyv8
 
 from pyv8c import Browser
 
@@ -42,7 +42,7 @@ def test_node_type_and_name_identity(page):
         "frag.nodeType, frag.nodeName, "
         "document.nodeType, document.nodeName, document.body.nodeName]; })()"
     )
-    assert result == [1, "DIV", v8n.Null, 3, "#text", 8, "#comment", "c",
+    assert result == [1, "DIV", pyv8.Null, 3, "#text", 8, "#comment", "c",
                       11, "#document-fragment", 9, "#document", "BODY"]
 
 

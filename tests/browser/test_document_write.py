@@ -1,6 +1,6 @@
 """``document.write``/``writeln`` parse their text at the insertion point."""
 import pytest
-import v8n
+import pyv8
 
 from pyv8c import Browser
 
@@ -27,7 +27,7 @@ def test_write_inserts_at_the_insertion_point(browser):
         return [written.textContent, written.previousElementSibling.getAttribute('id'),
             written.nextElementSibling.id, document.getElementById('after').id,
             document.body.childNodes.length];
-    })()""") == ["w", v8n.Null, "after", "after", 4]
+    })()""") == ["w", pyv8.Null, "after", "after", 4]
 
 
 def test_written_scripts_run_like_parser_inserted_scripts(browser):
@@ -47,13 +47,13 @@ def test_write_after_load_replaces_the_document(browser):
     page = browser.new_context().new_page()
     page.set_content("<html><body><div id='before'>old</div></body></html>", url="https://write.test/")
     assert page.evaluate("[document.readyState, !!document.getElementById('before')]") == ["complete", True]
-    assert page.evaluate("document.write('<i id=after>new</i>')") is v8n.Undefined
+    assert page.evaluate("document.write('<i id=after>new</i>')") is pyv8.Undefined
     assert page.evaluate("""(() => ({
         written: document.getElementById('after').tagName,
         before: document.getElementById('before'),
         body: document.body.innerHTML,
         url: document.URL,
-    }))()""") == {"written": "I", "before": v8n.Null, "body": "<i id=\"after\">new</i>",
+    }))()""") == {"written": "I", "before": pyv8.Null, "body": "<i id=\"after\">new</i>",
                    "url": "https://write.test/"}
 
 

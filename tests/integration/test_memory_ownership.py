@@ -3,7 +3,7 @@ import weakref
 
 import pytest
 
-pyv8 = pytest.importorskip('v8n')
+pyv8 = pytest.importorskip('pyv8')
 from pyv8c import Browser
 
 

@@ -7,7 +7,7 @@ via ``stub_logging``.
 
 from __future__ import annotations
 
-import v8n
+import pyv8
 from loguru import logger
 
 
@@ -30,14 +30,14 @@ class StubFactory:
     def method(self, interface_name, member_name, *, static=False):
         def callback(*args):
             self._log("pyv8c: {}.{}() 待实现", interface_name, member_name)
-            return v8n.Undefined
+            return pyv8.Undefined
         callback.__name__ = f"_pyv8c_stub_method_{interface_name}_{member_name}"
         return mark_stub(callback)
 
     def getter(self, interface_name, member_name):
         def getter(*_args):
             self._log("pyv8c: {}.{} getter 待实现", interface_name, member_name)
-            return v8n.Undefined
+            return pyv8.Undefined
         getter.__name__ = f"_pyv8c_stub_get_{interface_name}_{member_name}"
         return mark_stub(getter)
 
@@ -56,7 +56,7 @@ class StubFactory:
 
     def call_handler(self, interface_name):
         def call_handler(*_args):
-            return v8n.Undefined
+            return pyv8.Undefined
         call_handler.__name__ = f"_pyv8c_stub_call_{interface_name}"
         return mark_stub(call_handler)
 

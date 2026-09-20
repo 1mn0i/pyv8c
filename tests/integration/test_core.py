@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-pytest.importorskip("v8n")
+pytest.importorskip("pyv8")
 import pyv8c.platform.browser as browser_runtime
 from pyv8c import Browser
 from pyv8c.web.dom.selectors import parse

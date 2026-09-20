@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
-import v8n
+import pyv8
 from loguru import logger
 
 from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
@@ -288,7 +288,7 @@ class ResourceController:
             response.status, response.body, response.headers, response.type = 0, "", Headers(), "opaque"
             return response
         allowed = response.headers.fn_get("access-control-allow-origin")
-        allowed = "" if allowed is None or allowed is v8n.Null else str(allowed)
+        allowed = "" if allowed is None or allowed is pyv8.Null else str(allowed)
         if allowed not in ("*", self.page.window.location.get_origin()):
             raise SecurityError("CORS check failed")
         if request.get("credentials") == "include":

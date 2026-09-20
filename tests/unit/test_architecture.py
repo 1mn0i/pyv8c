@@ -57,7 +57,7 @@ OPTIONAL_FEATURES = {
 SHARED_WEB_PACKAGES = ("dom", "fetch")
 
 #: ``bom`` helper modules that hold no interface behind them.
-SHARED_BOM_MODULES = ("bom.exposed", "bom.scheduling", "bom.utils")
+SHARED_BOM_MODULES = ("bom.scheduling", "bom.utils")
 
 
 def test_optional_features_build_only_on_shared_layers():

@@ -9,8 +9,8 @@ rebuilding the document, so it fires ``hashchange`` and no load events.
 
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-import v8n
-from v8n import AttributeSpec, IdlSpec, MethodSpec
+import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, integer, is_nullish, missing_error, usv_string
@@ -170,7 +170,7 @@ class History:
         if unused is MISSING:
             raise missing_error('History', 'pushState', 2, 1, constructor=False)
         unused = dom_string(unused)
-        if url is v8n.Undefined:
+        if url is pyv8.Undefined:
             url = None
         url = None if is_nullish(url) else usv_string(url)
         target = self._validate_target(url)
@@ -181,7 +181,7 @@ class History:
         if unused is MISSING:
             raise missing_error('History', 'replaceState', 2, 1, constructor=False)
         unused = dom_string(unused)
-        if url is v8n.Undefined:
+        if url is pyv8.Undefined:
             url = None
         url = None if is_nullish(url) else usv_string(url)
         target = self._validate_target(url)
@@ -197,9 +197,9 @@ class History:
     def fn_forward(self, *_extra):
         return self.fn_go(1)
     def fn_go(self, delta=0, *_extra):
-        if delta is v8n.Undefined:
+        if delta is pyv8.Undefined:
             delta = 0
-        if delta is not v8n.Undefined:
+        if delta is not pyv8.Undefined:
             delta = integer(delta, signed=True)
         target = max(0, min(len(self._entries) - 1, self._index + int(delta)))
         if target == self._index: return

@@ -3,9 +3,9 @@ property names a ``CSSStyleDeclaration`` exposes as named properties.
 """
 import re
 
-import v8n
-from v8n import AttributeSpec, IdlSpec, MethodSpec
-from v8n.flag import V8Attribute
+import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8.flag import V8Attribute
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
@@ -277,7 +277,7 @@ class CSSStyleDeclaration:
     def set_cssText(self, value):
         self._write(parse_declarations(dom_string(value)))
     def get_length(self): return len(self._declarations())
-    def get_parentRule(self): return v8n.Null
+    def get_parentRule(self): return pyv8.Null
     def get_cssFloat(self): return self._value("float")
     def set_cssFloat(self, value): self._set("float", value)
     def fn_getPropertyPriority(self, name=MISSING, *_extra):

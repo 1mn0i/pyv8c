@@ -1,6 +1,6 @@
 """Native declarations for browser exception objects."""
 
-from v8n import AttributeSpec, IdlSpec
+from pyv8 import AttributeSpec, IdlSpec
 
 from ..foundation import errors
 from .features import interface

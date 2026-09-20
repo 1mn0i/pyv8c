@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 import pytest
-import v8n
+import pyv8
 
 from pyv8c.foundation.arguments import boolean, byte_string, dom_string, integer, missing_error, usv_string
 from pyv8c.foundation.errors import V8TypeError
@@ -15,9 +15,9 @@ from pyv8c.foundation.errors import V8TypeError
 @pytest.mark.parametrize(
     "value,expected",
     [
-        (v8n.Undefined, "undefined"),
+        (pyv8.Undefined, "undefined"),
         (None, "null"),
-        (v8n.Null, "null"),
+        (pyv8.Null, "null"),
         (True, "true"),
         (False, "false"),
         ([1, None, False], "1,,false"),
@@ -41,7 +41,7 @@ def test_integer_conversion_uses_wrapping_or_explicit_range():
 def test_boolean_uses_javascript_truthiness():
     assert boolean({}) and boolean([])
     assert not boolean(math.nan)
-    assert not boolean(v8n.Undefined)
+    assert not boolean(pyv8.Undefined)
 
 
 def test_string_subtypes():
@@ -63,15 +63,11 @@ def test_ordinary_callbacks_are_bound_without_validation_wrapper():
     browser = Browser(stub_logging="off")
     try:
         universe = browser.interface_universe
-        # A plan refers to its callables directly, so the binding does not have
-        # to look a method up by name again when the realm installs it.
-        plan = universe.plan_for("Element")
-        methods = {member["name"]: member for member in plan["members"]
-                   if member["kind"] == "method"}
-        attributes = {member["name"]: member for member in plan["members"]
-                      if member["kind"] == "attribute"}
-        assert methods["setAttribute"]["callback"] is Element.fn_setAttribute
-        assert attributes["id"]["setter"] is Element.set_id
+        config = universe.class_config_for("Element")
+        callback = next(method.callback for method in config.methods if method.name == "setAttribute")
+        assert callback is Element.fn_setAttribute
+        setter = next(attribute.setter for attribute in config.attributes if attribute.name == "id")
+        assert setter is Element.set_id
         assert not hasattr(universe, "binding_plan")
         assert not hasattr(universe, "_plans")
     finally:

@@ -1,6 +1,6 @@
 """Blob data type and byte conversion helpers."""
-import v8n
-from v8n import AttributeSpec, IdlSpec, MethodSpec
+import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import dictionary, dom_string, enum_value, integer, is_nullish, sequence, usv_string
@@ -18,23 +18,6 @@ def bytes_from_value(value):
         return value.tobytes()
     if isinstance(value, str):
         return value.encode("utf-8")
-    if isinstance(value, v8n.Value):
-        # A JavaScript array materialises into a list and is handled below.  A
-        # typed array does not: the value layer keeps a binary view as a handle
-        # rather than expanding it, so its bytes are read one element at a time.
-        # Materialising it here would hand back another handle and never end.
-        materialised = value.to_python()
-        # A materialised value is a list, a dict or a string -- never a handle --
-        # so this is the test that says whether anything was expanded.  Comparing
-        # the object with `is` would not: materialising a value the layer keeps as
-        # a reference hands back a *new* wrapper for it, and the branch would take
-        # itself again forever.
-        if not isinstance(materialised, v8n.Value):
-            return bytes_from_value(materialised)
-        length = value.get("length")
-        if not isinstance(length, int) or isinstance(length, bool):
-            return None
-        return bytes(int(value.get(str(index))) & 255 for index in range(length))
     if isinstance(value, (list, tuple)):
         return bytes(int(item) & 255 for item in value)
     try:
@@ -60,16 +43,16 @@ class Blob:
         has_constructor=1,
     )
 
-    def __init__(self, parts=v8n.Undefined, options=None, *_extra, _realm=None, **_):
-        if parts is v8n.Undefined:
+    def __init__(self, parts=pyv8.Undefined, options=None, *_extra, _realm=None, **_):
+        if parts is pyv8.Undefined:
             parts = []
         elif is_nullish(parts) or isinstance(parts, (int, float, bool, str)):
             raise V8TypeError("Failed to construct 'Blob': The provided value cannot be converted to a sequence.")
         else:
-            parts = sequence(parts, lambda part: part if isinstance(part, (Blob, bytes, bytearray, memoryview, v8n.Value)) else usv_string(part))
-        if options is v8n.Undefined:
+            parts = sequence(parts, lambda part: part if isinstance(part, (Blob, bytes, bytearray, memoryview, pyv8.JSTypeArray)) else usv_string(part))
+        if options is pyv8.Undefined:
             options = None
-        if options is not v8n.Undefined:
+        if options is not pyv8.Undefined:
             if not is_nullish(options):
                 options = dictionary(options)
         self._realm = _realm
@@ -94,18 +77,18 @@ class Blob:
     def get_type(self):
         return self._type
 
-    def fn_slice(self, start=0, end=v8n.Undefined, content_type='', *_extra):
-        if start is v8n.Undefined:
+    def fn_slice(self, start=0, end=pyv8.Undefined, content_type='', *_extra):
+        if start is pyv8.Undefined:
             start = 0
         start = integer(start, bits=64, signed=True)
-        if end is not v8n.Undefined:
+        if end is not pyv8.Undefined:
             end = integer(end, bits=64, signed=True)
-        if content_type is v8n.Undefined:
+        if content_type is pyv8.Undefined:
             content_type = ''
         content_type = dom_string(content_type)
         size = len(self._data)
         start = int(start)
-        end = size if end is v8n.Undefined else int(end)
+        end = size if end is pyv8.Undefined else int(end)
         start = max(size + start, 0) if start < 0 else min(start, size)
         end = max(size + end, 0) if end < 0 else min(end, size)
         return Blob(

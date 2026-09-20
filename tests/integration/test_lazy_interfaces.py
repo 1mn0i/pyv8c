@@ -6,7 +6,7 @@ Browser materialises only the eager core while still exposing every name.
 """
 import pytest
 
-pytest.importorskip("v8n")
+pytest.importorskip("pyv8")
 from pyv8c import Browser
 
 

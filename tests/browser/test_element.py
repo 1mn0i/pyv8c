@@ -1,5 +1,5 @@
 import pytest
-import v8n
+import pyv8
 
 from pyv8c import Browser
 
@@ -34,7 +34,7 @@ def test_element_identity_and_constructor_mapping(page):
         "widget.localName, widget.tagName]; })()"
     )
     assert result == ["div", "DIV", "DIV", 1, "http://www.w3.org/1999/xhtml",
-                      v8n.Null, True, True, False, True, True,
+                      pyv8.Null, True, True, False, True, True,
                       "my-widget", "MY-WIDGET"]
 
 

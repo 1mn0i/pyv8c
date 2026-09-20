@@ -69,7 +69,7 @@ class ScriptController:
         if target is not None:
             target.before_script()
         try:
-            return self.page.context.evaluate(str(script), filename=filename)
+            return self.page.context.exec_js(str(script), filename=filename)
         finally:
             if target is not None:
                 target.after_script()
@@ -182,7 +182,7 @@ class ScriptController:
 
     def install_inline_handler(self, node, name, source):
         try:
-            fn = self.page.context.evaluate("(function(event){" + str(source) + "})")
+            fn = self.page.context.exec_js("(function(event){" + str(source) + "})")
             node._handlers[str(name).lower()] = fn
         except BaseException as exc:
             self.page.lifecycle.dispatch_script_error(node, exc)

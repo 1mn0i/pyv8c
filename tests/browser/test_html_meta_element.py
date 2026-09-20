@@ -2,8 +2,8 @@
 
 import pytest
 
-pytest.importorskip("v8n")
-import v8n
+pytest.importorskip("pyv8")
+import pyv8
 
 from pyv8c import Browser
 
@@ -39,7 +39,7 @@ def test_meta_is_a_real_html_meta_element_with_reflected_attributes(page):
     assert result == [
         True, "[object HTMLMetaElement]", "meta", "META",
         "viewport", "refresh", "width=device-width", "screen", "text",
-        "refresh", v8n.Null,
+        "refresh", pyv8.Null,
     ]
 
 

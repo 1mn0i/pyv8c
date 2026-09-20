@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-pytest.importorskip("v8n")
+pytest.importorskip("pyv8")
 from websockets.asyncio.client import connect
 
 from pyv8c import Browser, DevToolsOptions
