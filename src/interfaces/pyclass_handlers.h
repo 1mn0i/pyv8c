@@ -86,8 +86,11 @@ get_handler_self(const Info& info, bool cross_origin)
 
     if (js_self->InternalFieldCount() != OBJECT_INTERNAL_FIELDS)
         return Py_None;
+    IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
+    if (isolate_state == nullptr)
+        return Py_None;
     v8::Local<v8::Data> magic = js_self->GetInternalField(PYTHON_MAGIC_FIELD);
-    if (magic != runtime_manager.find_isolate(isolate)->v8_string(V8StringId::PythonObjectMagic))
+    if (magic != isolate_state->v8_string(V8StringId::PythonObjectMagic))
         return Py_None;
     return IsolateState::python_object(js_self);
 }
@@ -112,20 +115,15 @@ inline PyObject* get_self_cross_origin(const v8::FunctionCallbackInfo<T>& info) 
     return get_handler_self(info, true);
 }
 
-// Which of an interface's declared handlers a lookup wants.  The spec-backed ids
-// are in IdlSpec's field order, which keeps the switch that reads them a table
-// lookup rather than a chain of comparisons.
+// Which of an interface's declared handlers a lookup wants.  Generated from
+// handler_table.def, which is also where the declaration names and the spec fields
+// come from, so the three cannot drift apart.
 enum class HandlerId {
-    NameGet, NameSet, NameQuery, NameEnum, NameDel,
-    IndexGet, IndexSet, IndexQuery, IndexEnum, IndexDel,
-    CrossOriginCheck,
-    CrossOriginNameGet, CrossOriginNameSet, CrossOriginNameQuery,
-    CrossOriginNameEnum, CrossOriginNameDel,
-    CrossOriginIndexGet, CrossOriginIndexSet, CrossOriginIndexQuery,
-    CrossOriginIndexEnum, CrossOriginIndexDel,
-    // A window keeps its own name table outside any interface declaration: these
-    // two are Python attributes of the window object itself, found by name.
-    PropertyNameGet, PropertyNameQuery,
+#define PYV8_HANDLER(id, declaration, field) id,
+#define PYV8_PROPERTY_NAME_HANDLER(id, declaration) id,
+#include "handler_table.def"
+#undef PYV8_HANDLER
+#undef PYV8_PROPERTY_NAME_HANDLER
     Count,
 };
 

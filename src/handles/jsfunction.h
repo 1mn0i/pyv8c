@@ -4,10 +4,12 @@
 #include <Python.h>
 #include <v8.h>
 #include "jsobject.h"
+#include "v8_handle_slot.h"
 
 typedef struct {
     js_object base;
-    v8::Persistent<v8::Value> js_this;
+    // The receiver a method was read from, so `obj.method()` keeps `obj`.
+    V8HandleSlot<v8::Value> js_this;
 } js_function;
 
 extern PyTypeObject* js_function_type;

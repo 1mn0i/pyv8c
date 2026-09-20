@@ -13,6 +13,7 @@
 #include <v8.h>
 
 #include "v8_string_cache.h"
+#include "watchdog.h"
 
 #include <cstddef>
 #include <memory>
@@ -22,6 +23,9 @@
 
 struct context_c;
 struct ContextLifetime;
+// The JavaScript object standing for a Python host object in one realm, plus
+// the Python references that pair keeps.  Defined beside the pair table.
+struct PythonObjectOwner;
 struct DeferredPythonRelease {
     PyObject* object;
     DeferredPythonRelease* next;
@@ -53,6 +57,8 @@ public:
     void release_v8_handle();
     std::size_t live_v8_handles() const { return live_v8_handles_; }
 
+    Watchdog& watchdog() { return *watchdog_; }
+
     // The listeners are isolate-wide; Python reporters belong to each Context.
     bool error_hooks_installed() const { return error_hooks_installed_; }
     void set_error_hooks_installed(bool installed) { error_hooks_installed_ = installed; }
@@ -75,7 +81,8 @@ public:
         IsolateState* state;
         std::shared_ptr<ContextLifetime> lifetime;
         Py_ssize_t target_index;
-        // The Context owns target. This weak anchor may outlive its close.
+        // The Context owns target. This weak anchor may outlive its close, so it
+        // is uncounted for the same reason PythonObjectOwner's object is.
         v8::Global<v8::External> external;
     };
     v8::Local<v8::External> callback_data(context_c* context, PyObject* target);
@@ -86,7 +93,6 @@ public:
                                 PyObject* exc_traceback);
 
 private:
-    struct PythonObjectOwner;
     static PythonObjectOwner* find_python_owner(context_c* context, PyObject* py_object);
     PythonObjectOwner* pending_owners_ = nullptr;
     DeferredPythonRelease* pending_wrappers_ = nullptr;
@@ -98,6 +104,7 @@ private:
 
     std::unique_ptr<v8::ArrayBuffer::Allocator> allocator_;
     std::unique_ptr<V8StringCache> v8_strings_;
+    std::unique_ptr<Watchdog> watchdog_;
     v8::Isolate* isolate_;
     std::size_t live_v8_handles_;
     bool error_hooks_installed_;

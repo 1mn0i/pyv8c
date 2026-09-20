@@ -1,0 +1,40 @@
+// The handlers an interface can declare, in one place.
+//
+// Three things have to agree about each of them: the ``HandlerId`` the binding
+// passes around, the ``__v8_*__`` name a Python class declares it under, and the
+// ``IdlSpec`` field that holds it.  This list is that agreement; the enum, the
+// field lookup and the name lookup are all generated from it, so adding a handler
+// is one line here rather than four edits that have to match.
+//
+// PYV8_HANDLER(id, declaration, spec_field)
+//     A handler an interface declares in its spec.
+// PYV8_PROPERTY_NAME_HANDLER(id, declaration)
+//     A handler that asks the receiver's own name table instead of a spec, so it
+//     names no field.
+
+PYV8_HANDLER(NameGet, "__v8_name_get__", name_get)
+PYV8_HANDLER(NameSet, "__v8_name_set__", name_set)
+PYV8_HANDLER(NameQuery, "__v8_name_query__", name_query)
+PYV8_HANDLER(NameEnum, "__v8_name_enum__", name_enum)
+PYV8_HANDLER(NameDel, "__v8_name_del__", name_del)
+
+PYV8_HANDLER(IndexGet, "__v8_index_get__", index_get)
+PYV8_HANDLER(IndexSet, "__v8_index_set__", index_set)
+PYV8_HANDLER(IndexQuery, "__v8_index_query__", index_query)
+PYV8_HANDLER(IndexEnum, "__v8_index_enum__", index_enum)
+PYV8_HANDLER(IndexDel, "__v8_index_del__", index_del)
+
+PYV8_HANDLER(CrossOriginCheck, "__v8_cross_origin_check__", cross_origin_check)
+PYV8_HANDLER(CrossOriginNameGet, "__v8_cross_origin_name_get__", cross_origin_name_get)
+PYV8_HANDLER(CrossOriginNameSet, "__v8_cross_origin_name_set__", cross_origin_name_set)
+PYV8_HANDLER(CrossOriginNameQuery, "__v8_cross_origin_name_query__", cross_origin_name_query)
+PYV8_HANDLER(CrossOriginNameEnum, "__v8_cross_origin_name_enum__", cross_origin_name_enum)
+PYV8_HANDLER(CrossOriginNameDel, "__v8_cross_origin_name_del__", cross_origin_name_del)
+PYV8_HANDLER(CrossOriginIndexGet, "__v8_cross_origin_index_get__", cross_origin_index_get)
+PYV8_HANDLER(CrossOriginIndexSet, "__v8_cross_origin_index_set__", cross_origin_index_set)
+PYV8_HANDLER(CrossOriginIndexQuery, "__v8_cross_origin_index_query__", cross_origin_index_query)
+PYV8_HANDLER(CrossOriginIndexEnum, "__v8_cross_origin_index_enum__", cross_origin_index_enum)
+PYV8_HANDLER(CrossOriginIndexDel, "__v8_cross_origin_index_del__", cross_origin_index_del)
+
+PYV8_PROPERTY_NAME_HANDLER(PropertyNameGet, "__v8_property_name_get__")
+PYV8_PROPERTY_NAME_HANDLER(PropertyNameQuery, "__v8_property_name_query__")

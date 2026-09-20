@@ -8,7 +8,7 @@
 #include <new>
 using namespace v8;
 
-struct IsolateState::PythonObjectOwner
+struct PythonObjectOwner
 {
     explicit PythonObjectOwner(IsolateState* isolate_state)
         : isolate_state(isolate_state), context(nullptr), py_object(nullptr), exc_type(nullptr), exc_traceback(nullptr), wrapper(nullptr)
@@ -17,6 +17,8 @@ struct IsolateState::PythonObjectOwner
 
     IsolateState* isolate_state;
     context_c* context;
+    // Weak and deliberately uncounted: owners are released in the teardown that
+    // runs after the handle count reached zero.
     Global<Object> object;
     PyObject* py_object;
     PyObject* exc_type;
@@ -135,7 +137,10 @@ PyObject* IsolateState::callback_target(Local<Value> value) {
 Local<String>
 IsolateState::v8_string(V8StringId id) const
 {
-    assert(v8_strings_ != nullptr);
+    // An isolate being taken apart has no cache left, and an empty handle
+    // compares unequal to every magic value, which is the right answer.
+    if (v8_strings_ == nullptr || isolate_ == nullptr)
+        return Local<String>();
     return v8_strings_->get(isolate_, id);
 }
 
@@ -196,7 +201,7 @@ IsolateState::track_python_object(Local<Object> object, PyObject* py_object, con
     return true;
 }
 
-IsolateState::PythonObjectOwner*
+PythonObjectOwner*
 IsolateState::find_python_owner(context_c* context, PyObject* py_object)
 {
     if (context == nullptr || py_object == nullptr)
@@ -209,7 +214,7 @@ IsolateState::find_python_owner(context_c* context, PyObject* py_object)
     auto item = cache.find(py_object);
     if (item == cache.end())
         return nullptr;
-    return static_cast<PythonObjectOwner*>(item->second);
+    return item->second;
 }
 
 v8::Local<v8::Object>
@@ -347,7 +352,7 @@ void IsolateState::release_context_owners(context_c* context) {
     // Allocate before iteration: V8 GC can remove other owners from the registry.
     auto cleared = v8_compat::external_new(isolate_, nullptr);
     while (!context->resources->python_owners.empty()) {
-        auto* owner = static_cast<PythonObjectOwner*>(*context->resources->python_owners.begin());
+        auto* owner = *context->resources->python_owners.begin();
         if (!owner->object.IsEmpty()) {
             auto object = owner->object.Get(isolate_);
             for (int field = 0; field < OBJECT_INTERNAL_FIELDS; ++field)

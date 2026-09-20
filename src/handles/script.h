@@ -7,7 +7,7 @@
 typedef struct {
     PyObject_HEAD
     IsolateState* isolate_state;
-    v8::Persistent<v8::UnboundScript> script;
+    V8HandleSlot<v8::UnboundScript> script;
     PyObject* py_isolate;
     PyObject* py_context;
     HandleRegistration registration;

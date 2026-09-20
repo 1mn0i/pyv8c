@@ -39,7 +39,20 @@ verify_icu_data_fingerprint(PyObject* path)
         return false;
     PyOwnedRef stream(PyObject_CallObject(open_function.get(), open_args.get()));
     if (stream.get() == nullptr)
+    {
+        // A missing or unreadable file is the common case here, and the OSError it
+        // raises names no remedy.  Say what to do about it instead.
+        if (PyErr_ExceptionMatches(PyExc_OSError))
+        {
+            const char* icu_path = PyUnicode_AsUTF8_abi3(path);
+            PyErr_Clear();
+            PyErr_Format(PyExc_RuntimeError,
+                         "cannot read ICU data from %s; copy icudtl.dat together with _pyv8,"
+                         " or point pyv8.configure(icudtl_path=...) at it",
+                         icu_path != nullptr ? icu_path : "<icudtl.dat>");
+        }
         return false;
+    }
 
     while (true)
     {
@@ -95,18 +108,8 @@ PlatformState::~PlatformState()
 }
 
 bool
-PlatformState::initialize(PyObject* icu, PyObject* params)
+PlatformState::validate_config(PyObject* icu, PyObject* params)
 {
-    if (initialized_)
-        return true;
-    if (disposed_)
-    {
-        PyErr_SetString(PyExc_RuntimeError,
-                        "V8 cannot be reinitialized after shutdown_v8()");
-        return false;
-    }
-
-    const char* icudtl_path = nullptr;
     if (icu != nullptr)
     {
         if (!PyUnicode_Check(icu))
@@ -114,8 +117,7 @@ PlatformState::initialize(PyObject* icu, PyObject* params)
             PyErr_SetString(PyExc_TypeError, "icudtl_path parameter must be a string");
             return false;
         }
-        icudtl_path = PyUnicode_AsUTF8_abi3(icu);
-        if (icudtl_path == nullptr)
+        if (PyUnicode_AsUTF8_abi3(icu) == nullptr)
             return false;
     }
 
@@ -135,7 +137,42 @@ PlatformState::initialize(PyObject* icu, PyObject* params)
                 PyErr_SetString(PyExc_TypeError, "params list must only contain strings");
                 return false;
             }
-            const char* item_str = PyUnicode_AsUTF8_abi3(item);
+            if (PyUnicode_AsUTF8_abi3(item) == nullptr)
+                return false;
+        }
+    }
+    return true;
+}
+
+bool
+PlatformState::initialize(PyObject* icu, PyObject* params)
+{
+    if (initialized_)
+        return true;
+    if (disposed_)
+    {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "V8 cannot be reinitialized after shutdown_v8()");
+        return false;
+    }
+
+    if (!validate_config(icu, params))
+        return false;
+
+    const char* icudtl_path = nullptr;
+    if (icu != nullptr)
+    {
+        icudtl_path = PyUnicode_AsUTF8_abi3(icu);
+        if (icudtl_path == nullptr)
+            return false;
+    }
+
+    if (params != nullptr)
+    {
+        const Py_ssize_t size = PyList_Size(params);
+        for (Py_ssize_t i = 0; i < size; ++i)
+        {
+            const char* item_str = PyUnicode_AsUTF8_abi3(PyList_GetItem(params, i));
             if (item_str == nullptr)
                 return false;
             V8::SetFlagsFromString(item_str);
@@ -152,7 +189,8 @@ PlatformState::initialize(PyObject* icu, PyObject* params)
     {
         if (icudtl_path != nullptr)
             PyErr_Format(PyExc_RuntimeError,
-                         "failed to initialize ICU from %s",
+                         "failed to initialize ICU from %s; check that icudtl.dat sits next to"
+                         " _pyv8, or point pyv8.configure(icudtl_path=...) at it",
                          icudtl_path);
         else
             PyErr_SetString(PyExc_RuntimeError, "failed to initialize bundled ICU data");

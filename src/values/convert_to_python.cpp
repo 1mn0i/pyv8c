@@ -182,7 +182,7 @@ py_from_js_impl(Local<Value> value,
         for (uint32_t i = 0; i < length; i++)
         {
             Local<Value> js_value;
-            if (!array->Get(context, i).ToLocal(&js_value))
+            if (!without_gil([&] { return array->Get(context, i).ToLocal(&js_value); }))
             {
                 Py_DECREF((PyObject*)list);
                 return NULL;
@@ -212,7 +212,8 @@ py_from_js_impl(Local<Value> value,
         if (obj_value->InternalFieldCount() == OBJECT_INTERNAL_FIELDS)
         {
             Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
-            if (magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
+            if (isolate_state != nullptr &&
+                magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
             {
                 PyObject* object = IsolateState::python_object(obj_value);
                 if (!object) return nullptr;
@@ -221,7 +222,10 @@ py_from_js_impl(Local<Value> value,
             }
         }
         bool has_to_string_tag;
-        Maybe<bool> maybe_has_to_string_tag = obj_value->HasOwnProperty(context, Symbol::GetToStringTag(v8_compat::context_isolate(context)));
+        Maybe<bool> maybe_has_to_string_tag = without_gil([&] {
+            return obj_value->HasOwnProperty(
+                context, Symbol::GetToStringTag(v8_compat::context_isolate(context)));
+        });
         if (!maybe_has_to_string_tag.To(&has_to_string_tag))
         {
             PyErr_SetString(PyExc_RuntimeError, "failed to inspect JavaScript object");
@@ -247,7 +251,7 @@ py_from_js_impl(Local<Value> value,
             }
 
             Local<Array> js_keys;
-            if (!obj_value->GetPropertyNames(context).ToLocal(&js_keys))
+            if (!without_gil([&] { return obj_value->GetPropertyNames(context).ToLocal(&js_keys); }))
             {
                 Py_XDECREF((PyObject*)dict);
                 PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object properties");
@@ -256,7 +260,7 @@ py_from_js_impl(Local<Value> value,
             for (uint32_t i = 0; i < js_keys->Length(); i++)
             {
                 Local<Value> js_key;
-                if (!js_keys->Get(context, i).ToLocal(&js_key))
+                if (!without_gil([&] { return js_keys->Get(context, i).ToLocal(&js_key); }))
                 {
                     Py_XDECREF((PyObject*)dict);
                     PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object property key");
@@ -269,7 +273,7 @@ py_from_js_impl(Local<Value> value,
                     return NULL;
                 }
                 Local<Value> js_value;
-                if (!obj_value->Get(context, js_key).ToLocal(&js_value))
+                if (!without_gil([&] { return obj_value->Get(context, js_key).ToLocal(&js_value); }))
                 {
                     Py_XDECREF((PyObject*)key);
                     Py_XDECREF((PyObject*)dict);
@@ -299,7 +303,8 @@ py_from_js_impl(Local<Value> value,
         if (obj_value->InternalFieldCount() == OBJECT_INTERNAL_FIELDS)
         {
             Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
-            if (magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
+            if (isolate_state != nullptr &&
+                magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
             {
                 PyObject *object = IsolateState::python_object(obj_value);
                 if (!object) return nullptr;
@@ -344,7 +349,7 @@ py_from_js(Local<Value> value, Local<Context> context)
     if (value->IsObject()) {
         Local<Object> object = value.As<Object>();
         auto* state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
-        if (object->InternalFieldCount() == OBJECT_INTERNAL_FIELDS &&
+        if (object->InternalFieldCount() == OBJECT_INTERNAL_FIELDS && state != nullptr &&
             object->GetInternalField(PYTHON_MAGIC_FIELD) == state->v8_string(V8StringId::PythonObjectMagic)) {
             auto* result = IsolateState::python_object(object);
             if (!result) return nullptr;

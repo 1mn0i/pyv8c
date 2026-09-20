@@ -34,7 +34,7 @@ static PyType_Slot js_typedarray_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_typedarray_spec = {
-    "_pyv8.TypedArray",
+    "pyv8.JSTypeArray",
     sizeof(js_typedarray),
     0,
     Py_TPFLAGS_DEFAULT,
@@ -244,7 +244,7 @@ typed_array_from_list(Isolate* isolate, Local<Context> context,
 PyObject * 
 js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 {
-    if (!runtime_manager.require_initialized())
+    if (!runtime_manager.ensure_initialized())
         return NULL;
 
     PyObject* data = NULL;

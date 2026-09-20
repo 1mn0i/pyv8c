@@ -14,6 +14,7 @@ using namespace v8_inspector;
 struct InspectorHub;
 
 static void call_callback(debugger_c* self, const char* name) {
+    GILAcquireScope acquire;
     PyObject* callback = PyObject_GetAttrString((PyObject*)self, name);
     if (!callback) { PyErr_Clear(); return; }
     PyObject* result = PyObject_CallNoArgs(callback);
@@ -27,6 +28,7 @@ struct InspectorChannel : V8Inspector::Channel {
     explicit InspectorChannel(debugger_c* value) : owner(value) {}
     void deliver(std::unique_ptr<StringBuffer> message) {
         if (!enabled || !message) return;
+        GILAcquireScope acquire;
         StringView view = message->string();
         PyObject* text = view.is8Bit()
             ? PyUnicode_DecodeLatin1((const char*)view.characters8(), view.length(), nullptr)
@@ -297,7 +299,7 @@ static PyType_Slot debugger_slots[] = {
     {0, nullptr}
 };
 static PyType_Spec debugger_spec = {
-    "_pyv8.Debugger", sizeof(debugger_c), 0,
+    "pyv8.Debugger", sizeof(debugger_c), 0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, debugger_slots
 };
 int debugger_type_init() {

@@ -21,6 +21,10 @@ public:
     PlatformState();
     ~PlatformState();
 
+    // Checks what a caller passed without touching V8, so a bad path or flag list is
+    // reported where it was given -- at configure() time as well as at startup.
+    static bool validate_config(PyObject* icu, PyObject* params);
+
     bool initialize(PyObject* icu, PyObject* params);
     void shutdown();
 

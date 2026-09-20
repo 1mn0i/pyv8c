@@ -38,8 +38,10 @@ class TestICUDataCompatibility(unittest.TestCase):
 
             environment = os.environ.copy()
             environment["PYTHONPATH"] = str(temporary_root)
+            # Importing starts nothing, so the check is asked for by the first use --
+            # and it still answers before V8 itself comes up.
             result = subprocess.run(
-                [sys.executable, "-c", "import pyv8"],
+                [sys.executable, "-c", "import pyv8; pyv8.Context(object)"],
                 cwd=temporary_root,
                 env=environment,
                 capture_output=True,

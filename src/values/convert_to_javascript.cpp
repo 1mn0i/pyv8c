@@ -3,6 +3,7 @@
 #include <v8.h>
 
 #include "convert.h"
+#include "error_map.h"
 #include "pyfunction.h"
 #include "pyclass.h"
 #include "jsobject.h"
@@ -311,6 +312,7 @@ js_from_py_impl(PyObject *value,
         {
             return Local<Value>();
         }
+        PyOwnedRef keep_template((PyObject*)templ);
         Local<Function> function = py_template_to_function(templ, context);
         if (function.IsEmpty())
         {
@@ -332,6 +334,7 @@ js_from_py_impl(PyObject *value,
         {
             return Local<Value>();
         }
+        PyOwnedRef keep_template((PyObject*)templ);
         if (templ->to_obj)
         {
             const char *world = PyUnicode_AsUTF8_abi3(templ->cls_name);
@@ -384,7 +387,7 @@ js_from_py_impl(PyObject *value,
         if (!js_object_require_active(py_value)) return Local<Value>();
         if (py_value->isolate_state == nullptr || py_value->isolate_state->isolate() != isolate)
         {
-            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate; use pyv8.transfer() to copy it");
             return Local<Value>();
         }
         if (!context_retain_dependency(context, py_value->py_context)) return Local<Value>();
@@ -400,7 +403,7 @@ js_from_py_impl(PyObject *value,
         }
         if (py_value->isolate_state == nullptr || py_value->isolate_state->isolate() != isolate)
         {
-            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate; use pyv8.transfer() to copy it");
             return Local<Value>();
         }
         if (!context_retain_dependency(context, py_value->py_context)) return Local<Value>();
@@ -428,7 +431,7 @@ js_from_py_impl(PyObject *value,
         if (source_context->isolate_state == nullptr || source_context->isolate_state->isolate() != isolate)
         {
             Py_DECREF((PyObject*)ctx);
-            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate; use pyv8.transfer() to copy it");
             return Local<Value>();
         }
         auto js_content = source_context->js_context.Get(isolate);
@@ -443,6 +446,7 @@ js_from_py_impl(PyObject *value,
     {
         return Local<Value>();
     }
+    PyOwnedRef keep_template((PyObject*)templ);
     Local<Object> js_object = py_class_create_js_object(templ, value, context);
     if (js_object.IsEmpty())
     {
@@ -465,7 +469,7 @@ Local<Value>
 js_from_py(PyObject *value, Local<Context> context, Isolate* target_isolate)
 {
     if (!context.IsEmpty() && v8_compat::context_isolate(context) != target_isolate) {
-        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate; use pyv8.transfer() to copy it");
         return Local<Value>();
     }
     if (auto* active = current_isolate_state(); active && active->isolate() == target_isolate)
@@ -536,6 +540,28 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
         Py_XDECREF((PyObject*)exc_value_str);
         return exception;
     }
+    // A class may have named itself with __v8_error_name__.  Both directions read
+    // the same table, so the same class has to arrive as the same JavaScript
+    // error whether it was thrown or used as a rejection reason.
+    bool has_explicit_js_error_name = false;
+    PyObject* js_error_name = PyObject_GetAttrString(value, "__v8_error_name__");
+    if (js_error_name != nullptr && PyUnicode_Check(js_error_name))
+    {
+        const char* explicit_name = PyUnicode_AsUTF8_abi3(js_error_name);
+        if (explicit_name != nullptr)
+        {
+            exc_type_name = explicit_name;
+            has_explicit_js_error_name = true;
+            Py_DECREF((PyObject*)exc_cls_name);
+            exc_cls_name = js_error_name;
+            js_error_name = nullptr;
+        }
+    }
+    else if (js_error_name == nullptr && PyErr_Occurred())
+    {
+        PyErr_Clear();
+    }
+    Py_XDECREF((PyObject*)js_error_name);
     if (PyObject_TypeCheck(value, js_exception_type))
     {
         JsExceptionState* state = js_exception_get_state(value);
@@ -546,32 +572,18 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
         }
         if (state->isolate_state != isolate_state)
         {
-            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate; use pyv8.transfer() to copy it");
         }
         else
         {
             exception = state->exception.Get(isolate).As<Object>();
         }
     }
-    else if (strcmp(exc_type_name, "V8TypeError") == 0)
+    else if (Local<Object> mapped = error_map::js_error_for(
+                 isolate, exc_type_name, exc_message, has_explicit_js_error_name);
+             !mapped.IsEmpty())
     {
-        exception = Exception::TypeError(V8String(isolate, exc_message)).As<Object>();
-    }
-    else if (strcmp(exc_type_name, "V8Error") == 0)
-    {
-        exception = Exception::Error(V8String(isolate, exc_message)).As<Object>();
-    }
-    else if (strcmp(exc_type_name, "V8RangeError") == 0)
-    {
-        exception = Exception::RangeError(V8String(isolate, exc_message)).As<Object>();
-    }
-    else if (strcmp(exc_type_name, "V8ReferenceError") == 0)
-    {
-        exception = Exception::ReferenceError(V8String(isolate, exc_message)).As<Object>();
-    }
-    else if (strcmp(exc_type_name, "V8SyntaxError") == 0)
-    {
-        exception = Exception::SyntaxError(V8String(isolate, exc_message)).As<Object>();
+        exception = mapped;
     }
     else
     {

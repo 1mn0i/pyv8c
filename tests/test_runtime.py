@@ -44,6 +44,25 @@ class TestRuntimeLifecycle(unittest.TestCase):
         pyv8.v8_gc()
         gc.collect()
 
+    def test_shutdown_without_any_use_reports_false(self):
+        """从未使用过的 runtime 没有可关闭的东西，关闭也不能把它启动起来。"""
+
+        code = textwrap.dedent(
+            """
+            import pyv8
+
+            assert pyv8.shutdown_v8() is False
+            assert pyv8.is_initialized() is False
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_shutdown_releases_runtime_in_subprocess(self):
         """独立进程应能完整释放 owner、isolate、allocator 和 platform。"""
 

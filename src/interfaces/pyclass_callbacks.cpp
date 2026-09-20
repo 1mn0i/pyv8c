@@ -13,10 +13,8 @@
 using namespace v8;
 
 enum FlagConstructor {
-    kDontAll = 0,
     kNew = 1 << 0,
     kCall = 1 << 1,
-    kAll = kNew | kCall,
 };
 
 // The keyword a constructor is offered its window under, interned once and handed

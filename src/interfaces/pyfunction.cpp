@@ -22,7 +22,7 @@ static int function_traverse(py_function* self, visitproc visit, void* arg) {
     return 0;
 }
 static int function_clear(py_function* self) {
-    if (self->js_template) self->js_template->Reset();
+    self->js_template.Reset();
     Py_CLEAR(self->function);
     Py_CLEAR(self->function_name);
     Py_CLEAR(self->receiver);
@@ -37,7 +37,7 @@ static PyType_Slot py_function_slots[] = {
     {0, NULL} };
 
 static PyType_Spec py_function_spec = {
-    "_pyv8env.Function",
+    "pyv8.Function",
     sizeof(py_function),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
@@ -66,7 +66,6 @@ py_function_new(PyObject *function, context_c* owner)
     py_function* self = (py_function*)PyType_GenericAlloc(py_function_type, 0);
     PyErr_PROPAGATE(self);
     self->isolate_state = isolate_state;
-    self->js_template = new Persistent<FunctionTemplate>();
     Py_INCREF((PyObject*)function);
     self->function = function;
     if (PyMethod_Check_abi3(function)) {
@@ -101,7 +100,7 @@ py_function_new(PyObject *function, context_c* owner)
     else {
         js_template = FunctionTemplate::New(isolate, CallbackBoundary<py_function_callback>::call, js_self, Local<Signature>(), length);
     }
-    self->js_template->Reset(isolate, js_template);
+    self->js_template.Set(isolate_state, isolate, js_template);
     return (PyObject *) self;
 }
 
@@ -113,7 +112,7 @@ py_function_to_template(PyObject *func, context_c* owner)
 
     PyObject *templ = PyDict_GetItem(cache, func);
     if (templ != NULL) {
-        return templ;
+        return owned_template(templ);
     }
 
     templ = py_function_new(func, owner);
@@ -123,7 +122,7 @@ py_function_to_template(PyObject *func, context_c* owner)
         return NULL;
     }
     Py_DECREF((PyObject*)templ);
-    return PyDict_GetItem(cache, func);
+    return owned_template(PyDict_GetItem(cache, func));
 }
 
 void
@@ -131,10 +130,6 @@ py_function_dealloc(py_function *self)
 {
     PyObject_GC_UnTrack(self);
     function_clear(self);
-    if (self->js_template != NULL) {
-        self->js_template->Reset();
-        delete self->js_template;
-    }
     TP_FREE_ABI3(py_function_type, self);
 }
 
@@ -144,12 +139,12 @@ py_template_to_function(py_function *self, Local<Context> context)
     Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
     if (self->isolate_state != isolate_state) {
-        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate; use pyv8.transfer() to copy it");
         return Local<Function>();
     }
     EscapableHandleScope hs(isolate);
     Local<Function> function;
-    if (!self->js_template->Get(isolate)->GetFunction(context).ToLocal(&function)) {
+    if (!without_gil([&] { return self->js_template.Get(isolate)->GetFunction(context).ToLocal(&function); })) {
         PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript function template");
         return Local<Function>();
     }

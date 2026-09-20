@@ -18,8 +18,8 @@ PACKAGE = pathlib.Path(pyv8.__file__).parent
 NATIVE_STUB = PACKAGE / "_pyv8.pyi"
 PACKAGE_STUB = PACKAGE / "__init__.pyi"
 
-# init_v8 is deliberately private: this package calls it at import time, and hands
-# out nothing that would have a caller point it at a different ICU data file.
+# init_v8 is deliberately private: it is the primitive behind configure(), which is
+# what a caller should use to name a different ICU data file or set startup flags.
 INTERNAL_NATIVE = {"init_v8"}
 
 # These two are how a Python class on this type hooks attribute access; the type
@@ -78,3 +78,33 @@ def test_every_package_stub_member_exists_on_the_package():
         declared = getattr(pyv8, node.name)
         for name in members_of(node):
             assert hasattr(declared, name), "%s.%s" % (node.name, name)
+
+
+# The module a native type reports is where its repr, its pickle and every message
+# that names it point: "_pyv8env" was a module that never existed, and "_pyv8" is
+# not what a host imports -- `pyv8` is.
+TYPE_MODULE = "pyv8"
+
+
+def native_types():
+    for name in dir(native):
+        value = getattr(native, name)
+        if isinstance(value, type):
+            yield name, value
+
+
+def test_every_native_type_names_the_module_it_lives_in():
+    for name, value in native_types():
+        assert value.__module__ == TYPE_MODULE, "%s claims to live in %s" % (
+            name,
+            value.__module__,
+        )
+
+
+def test_every_native_type_is_named_after_the_name_it_is_exported_under():
+    mismatched = {
+        name: value.__name__
+        for name, value in native_types()
+        if not name.startswith("_") and value.__name__ != name
+    }
+    assert mismatched == {}

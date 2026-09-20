@@ -63,9 +63,10 @@ There is one isolate per realm, and V8 requires that a realm be entered by one
 thread at a time.  `ExecutionScope` is how a Python entry point says "I am entering
 this realm": it takes the isolate lock and builds the handle and context scopes the
 work needs.  `IN_ISOLATE`/`IN_CONTEXT` are the older, macro-shaped way of doing the
-same thing.  Crossing back into Python releases nothing implicitly: the GIL is
-held throughout, which is the discipline the pair table and the owner lists rely
-on (`context_resources.cpp` says so where it matters).
+same thing.  Waiting for the isolate lock releases the GIL, and so does the window
+in which V8 actually runs: `CallbackBoundary` takes it back at every V8 -> Python
+entry, which is the discipline the pair table and the owner lists rely on
+(`context_resources.cpp` says so where it matters).
 
 ## The boundary
 

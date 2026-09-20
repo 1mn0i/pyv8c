@@ -13,6 +13,57 @@ RuntimeManager::~RuntimeManager()
     // Explicit shutdown owns teardown; preserve the previous DLL-unload behavior.
     default_isolate_.release();
     custom_isolates_.clear();
+    // The owned configuration is deliberately not released here.  This object lives
+    // as long as the process, and the destructor runs while the interpreter is being
+    // finalized (or after the DLL is unloaded), where touching Python refcounts is
+    // not safe.  configure() releases what it replaces while the GIL is held.
+}
+
+bool
+RuntimeManager::configure(PyObject* icu, PyObject* params)
+{
+    if (is_initialized())
+    {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "V8 has already started; pyv8.configure() must be called before the first use");
+        return false;
+    }
+    if (platform_.is_disposed())
+    {
+        PyErr_SetString(PyExc_RuntimeError, "V8 has been shut down");
+        return false;
+    }
+    // Validated here rather than at first use so a wrong argument is reported where
+    // it was passed; the same check runs again in PlatformState::initialize.
+    if (!PlatformState::validate_config(icu, params))
+        return false;
+
+    PyObject* previous_icu = configured_icu_path_;
+    Py_XINCREF(icu);
+    configured_icu_path_ = icu;
+    Py_XDECREF(previous_icu);
+
+    PyObject* previous_params = configured_params_;
+    Py_XINCREF(params);
+    configured_params_ = params;
+    Py_XDECREF(previous_params);
+    return true;
+}
+
+void
+RuntimeManager::set_default_icu_path(PyObject* path)
+{
+    PyObject* previous = default_icu_path_;
+    Py_XINCREF(path);
+    default_icu_path_ = path;
+    Py_XDECREF(previous);
+}
+
+PyObject*
+RuntimeManager::pending_icu_path() const
+{
+    return configured_icu_path_ != nullptr ? configured_icu_path_ : default_icu_path_;
 }
 
 bool
@@ -46,20 +97,33 @@ RuntimeManager::is_initialized() const
 }
 
 bool
-RuntimeManager::require_initialized() const
+RuntimeManager::ensure_initialized()
 {
     if (is_initialized())
         return true;
-    PyErr_SetString(PyExc_RuntimeError,
-                    platform_.is_disposed() ? "V8 has been shut down"
-                                            : "V8 has not been initialized");
-    return false;
+    if (platform_.is_disposed())
+    {
+        PyErr_SetString(PyExc_RuntimeError, "V8 has been shut down");
+        return false;
+    }
+    // Startup runs with the GIL held -- every entry point here is reached through a
+    // Python call -- so this flag only has to catch a start that is already under
+    // way, not to serialize two threads.
+    if (initializing_)
+    {
+        PyErr_SetString(PyExc_RuntimeError, "V8 initialization is already in progress");
+        return false;
+    }
+    initializing_ = true;
+    const bool started = initialize(pending_icu_path(), configured_params_);
+    initializing_ = false;
+    return started;
 }
 
 IsolateState*
 RuntimeManager::create_isolate()
 {
-    if (!require_initialized())
+    if (!ensure_initialized())
         return nullptr;
 
     IsolateState* state = new (std::nothrow) IsolateState();
@@ -115,6 +179,8 @@ RuntimeManager::find_isolate(v8::Isolate* isolate) const
 bool
 RuntimeManager::shutdown(bool report_error)
 {
+    // Never starts V8: a runtime that was never used has nothing to shut down, and
+    // shutdown_v8() must not be the call that brings it up.
     if (!is_initialized())
         return false;
     if (!custom_isolates_.empty())

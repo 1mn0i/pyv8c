@@ -2,11 +2,15 @@
 #define PYV8_CALLBACK_BOUNDARY_H
 #include <v8.h>
 #include "boundary.h"
+#include "gil_scope.h"
 
+// Every V8 -> Python entry point: V8 calls this from inside an execution window,
+// where the GIL is released, so it is taken back here.
 template<auto Function> struct CallbackBoundary;
 template<class R, class... Args, R (*Function)(Args...)>
 struct CallbackBoundary<Function> {
     static R call(Args... args) {
+        GILAcquireScope acquire;
         try { return Function(args...); }
         catch (...) {
             translate_native_exception();

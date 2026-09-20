@@ -11,9 +11,9 @@ they rendered the index into a decimal name to reach this same table by a longer
 route.  These tests pin the behaviour that made them unreachable, so that the
 next person to look at this does not have to rediscover it.
 
-The class below is named WindowProperties because that name is how the binding
-recognises the table: the name of the class is the world its template is built
-for.
+The class below declares ``named_properties_object`` because the flag, not the
+class name, is how the binding recognises the table; the name is kept because the
+world its template is built for is still read from it.
 """
 
 import unittest
@@ -25,7 +25,10 @@ from pyv8 import IdlSpec
 def window_properties_class(seen):
     class WindowProperties:
         __v8_idl_spec__ = IdlSpec(
-            constructor_behavior=0, has_constructor=0, to_string_tag="WindowProperties"
+            constructor_behavior=0,
+            has_constructor=0,
+            to_string_tag="WindowProperties",
+            named_properties_object=True,
         )
 
         def __v8_property_name_get__(self, name):
@@ -73,7 +76,10 @@ class TestWindowNameTable(unittest.TestCase):
     def test_a_declined_lookup_is_undefined(self):
         class WindowProperties:
             __v8_idl_spec__ = IdlSpec(
-                constructor_behavior=0, has_constructor=0, to_string_tag="WindowProperties"
+                constructor_behavior=0,
+                has_constructor=0,
+                to_string_tag="WindowProperties",
+                named_properties_object=True,
             )
 
             def __v8_property_name_get__(self, name):

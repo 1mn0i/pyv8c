@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-import os
-
 from . import _pyv8
 from . import flag as _flag
 from .flag import *  # noqa: F401,F403 - flag constants are public API
 
 
-_pyv8.init_v8(
-    icudtl_path=os.path.join(os.path.dirname(__file__), "icudtl.dat"),
-    # params=["--expose-gc"],
-)
+# Importing this package starts no V8.  The extension registers its types, records
+# the icudtl.dat sitting beside it, and waits; the runtime comes up on the first call
+# that needs it -- Context, Isolate, Script, new, current_context, v8_gc -- and
+# pyv8.configure() is how a caller says what that startup should use.  Nothing added
+# here may touch the engine at import time.
 
 # Everything the extension publishes, less what this package owns itself.  Derived
 # rather than listed: a name added to the extension is exported here without anyone
 # having to remember it, and the tests check that the two stay in step.  init_v8 is
-# the one that stays private -- this module has already called it by now.
+# the one that stays private -- configure() is its public face, and a second way to
+# name the ICU data file would be one too many.
 _INTERNAL_NATIVE = {"init_v8"}
 _NATIVE_EXPORTS = tuple(
     sorted(
@@ -30,8 +30,8 @@ globals().update({name: getattr(_pyv8, name) for name in _NATIVE_EXPORTS})
 
 __version__ = "2.1.2"
 
-# These two come after init_v8 on purpose: both reach back into this package, and
-# what they need of the extension has to exist by then.  The `as` form is what
+# These two come after the re-exported names on purpose: both reach back into this
+# package, and the types they use have to exist by then.  The `as` form is what
 # tells a reader -- and pyflakes -- that the names are re-exported, not unused.
 from .devtools import (  # noqa: E402
     DevToolsHandle as DevToolsHandle,
@@ -60,7 +60,48 @@ class ArrayType:
 
 # The flag constants come from flag.py, which is also where a new one is declared,
 # so its __all__ is the list rather than a copy of it kept here.
-_HELPER_EXPORTS = set(_flag.__all__) | {"format_trace", "log_trace"}
+_HELPER_EXPORTS = set(_flag.__all__) | {"format_trace", "log_trace", "transfer"}
+
+#: Values that cross an isolate boundary as they are.
+_TRANSFERABLE_LEAVES = (bool, int, float, str, bytes, bytearray)
+
+_NOT_TRANSFERABLE = (
+    "{} cannot cross isolates; only primitives, arrays and plain objects"
+    " can be transferred"
+)
+
+
+def _crossable(value):
+    """The structure of *value*, or an error naming what cannot cross."""
+    if value is None or value is Undefined or value is Null:
+        return value
+    if type(value) in _TRANSFERABLE_LEAVES:
+        return value
+    if isinstance(value, JSObject):
+        # `to_python` materialises arrays and plain objects; anything else comes
+        # back as a handle, which is what cannot cross.
+        materialized = value.to_python()
+        if isinstance(materialized, JSObject):
+            raise TypeError(_NOT_TRANSFERABLE.format(type(value).__name__))
+        return _crossable(materialized)
+    if isinstance(value, list):
+        return [_crossable(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_crossable(item) for item in value)
+    if isinstance(value, dict):
+        return {key: _crossable(item) for key, item in value.items()}
+    raise TypeError(_NOT_TRANSFERABLE.format(type(value).__name__))
+
+
+def transfer(value, target_context):
+    """Copy *value* into another isolate's realm.
+
+    Only structure crosses: primitives, arrays and plain objects.  A function, a
+    Promise, a typed array or a host object has no meaning in the other isolate's
+    heap, so it is refused instead of being wrapped in a handle that would fail
+    on first use.
+    """
+    return target_context.to_js(_crossable(value))
 __all__ = [
     *_NATIVE_EXPORTS,
     "ArrayType",

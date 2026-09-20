@@ -57,7 +57,7 @@ static PyType_Slot py_class_slots[] = {
     {0, NULL} };
 
 static PyType_Spec py_class_spec = {
-    "_pyv8.Class",
+    "pyv8.Class",
     sizeof(py_class),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
@@ -80,8 +80,6 @@ py_class_dealloc(py_class* self)
 {
     PyObject_GC_UnTrack(self);
     class_clear(self);
-    //Py_XDECREF(self->parent);
-    //Py_TYPE((PyObject*)self)->tp_free((PyObject*)self);
     TP_FREE_ABI3(py_class_type, self);
 }
 
@@ -95,7 +93,7 @@ PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
     PyObject *templ = PyDict_GetItem(py_ctx->class_template_cache, cls);
     if (templ != NULL)
     {
-        return templ;
+        return owned_template(templ);
     }
     if (py_ctx->lazy_factory != nullptr && PyDict_Contains(py_ctx->class_configs, cls) == 0 &&
         PySet_Contains(py_ctx->resolving_classes, cls) == 0)
@@ -131,7 +129,7 @@ PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
             Py_DECREF((PyObject*)resolved);
             templ = PyDict_GetItemWithError(py_ctx->class_template_cache, cls);
             if (templ != nullptr || PyErr_Occurred())
-                return templ;
+                return owned_template(templ);
         }
         else
             Py_DECREF((PyObject*)name);
@@ -161,7 +159,7 @@ PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
         return NULL;
     }
     Py_DECREF((PyObject*)templ);
-    return PyDict_GetItem(py_ctx->class_template_cache, cls);
+    return owned_template(PyDict_GetItem(py_ctx->class_template_cache, cls));
 }
 int add_to_template(PyObject* cls, context_c* py_ctx, PyObject* member_name, PyObject* member_value, Local<FunctionTemplate> templ, Local<Signature> sig, const char* world);
 
@@ -227,14 +225,14 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     const IdlSpec& config = self->idl_spec == nullptr ? defaults : *(IdlSpec*)self->idl_spec;
     Local<External> js_self = isolate_state->callback_data(py_ctx, (PyObject*)self);
     if (js_self.IsEmpty()) { Py_DECREF((PyObject*)self); return nullptr; }
-    int templ_lenght = (int)config.length;
+    int templ_length = (int)config.length;
     self->constructor_behavior = (int)config.constructor_behavior;
     self->unconstructable = config.unconstructable;
     self->constructor_adapter = config.constructor_adapter;
     Py_XINCREF(self->constructor_adapter);
 
     Local<FunctionTemplate> templ = FunctionTemplate::New(isolate, CallbackBoundary<py_class_construct_callback>::call, js_self,
-            Local<Signature>(), templ_lenght, ConstructorBehavior::kAllow);
+            Local<Signature>(), templ_length, ConstructorBehavior::kAllow);
     
     const char* world = PyUnicode_AsUTF8_abi3(self->cls_name);
     if (world == NULL) {
@@ -366,7 +364,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         self->has_constructor = (int)config.has_constructor;
     }
 
-    if ((py_ctx->traceable|| config.name_get) && strcmp(world, "WindowProperties") != 0)
+    if ((py_ctx->traceable|| config.name_get) && !config.named_properties_object)
     {
         auto handler_flags = v8::PropertyHandlerFlags::kNone;
         if (config.undetectable) {
@@ -391,7 +389,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         templ->InstanceTemplate()->SetHandler(callbacks);
     }
 
-    if ((py_ctx->traceable|| config.index_get) && strcmp(world, "WindowProperties") != 0)
+    if ((py_ctx->traceable|| config.index_get) && !config.named_properties_object)
     {
         auto handler_flags = v8::PropertyHandlerFlags::kNone;
         if (config.undetectable) {
@@ -433,7 +431,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         }
     }
 
-    if (strcmp(world, "WindowProperties") == 0) {
+    if (config.named_properties_object) {
         NamedPropertyHandlerConfiguration name_callbacks(
             CallbackBoundary<properties_named_getter>::call, nullptr,
             CallbackBoundary<properties_named_query>::call, CallbackBoundary<properties_named_deleter>::call,
@@ -483,12 +481,12 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         }
         templ->Inherit(superclass_templ->templ.Get(isolate));
         self->parent = (PyObject*)superclass_templ;
+        Py_DECREF((PyObject*)superclass_templ);
     }
 
     if (config.as_object)
     {
         self->to_obj = 1;
-        //v8::Local<v8::ObjectTemplate> namespace_object_template = templ.As<v8::ObjectTemplate>();
         templ->Set(Symbol::GetToStringTag(isolate), v8_tag, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
     }
     else
@@ -501,7 +499,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
 
     templ->InstanceTemplate()->SetInternalFieldCount(OBJECT_INTERNAL_FIELDS);
 
-    self->templ.Reset(isolate, templ);
+    self->templ.Set(isolate_state, isolate, templ);
     return (PyObject *) self;
 }
                                                        
@@ -513,8 +511,7 @@ add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObjec
     Isolate* isolate = py_ctx->isolate_state->isolate();
     HandleScope hs(isolate);
     Local<Context> no_ctx;
-    // I can't use an AccessorSignature here because then property access on
-    // the global object from this gets fucked up.
+    // An AccessorSignature here would break property access on the global object.
     if (PyUnicode_Check(member_name) && PyUnicode_AsUTF8_abi3(member_name)[0] == '_')
     {
         return 0;
@@ -554,7 +551,10 @@ add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObjec
     // otherwise just convert
     if (PyType_Check(member_value) && std::isupper(static_cast<unsigned char>(PyUnicode_AsUTF8_abi3(member_name)[0])))
     {
-        py_class_to_template(member_value, py_ctx);
+        PyObject* member_template = py_class_to_template(member_value, py_ctx);
+        if (member_template == nullptr)
+            return -1;
+        Py_DECREF(member_template);
         return 0;
     }
 
@@ -567,7 +567,7 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
 {
     Isolate* isolate = v8_compat::context_isolate(context);
     if (self->isolate_state == nullptr || self->isolate_state->isolate() != isolate) {
-        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate; use pyv8.transfer() to copy it");
         return Local<Function>();
     }
     Context::Scope cs(context);
@@ -586,7 +586,7 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
         }
     }
     Local<Function> function;
-    if (!self->templ.Get(isolate)->GetFunction(context).ToLocal(&function)) {
+    if (!without_gil([&] { return self->templ.Get(isolate)->GetFunction(context).ToLocal(&function); })) {
         PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript class template");
         return Local<Function>();
     }
@@ -673,7 +673,7 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
 {
     Isolate* isolate = v8_compat::context_isolate(context);
     if (self->isolate_state == nullptr || self->isolate_state->isolate() != isolate) {
-        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate; use pyv8.transfer() to copy it");
         return Local<Object>();
     }
     EscapableHandleScope hs(isolate);
@@ -684,7 +684,9 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
     if (!object.IsEmpty()) {
         return hs.Escape(object);
     }
-    if (!self->templ.Get(isolate)->InstanceTemplate()->NewInstance(context).ToLocal(&object)) {
+    if (!without_gil([&] {
+            return self->templ.Get(isolate)->InstanceTemplate()->NewInstance(context).ToLocal(&object);
+        })) {
         PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript object template");
         return Local<Object>();
     }
@@ -704,7 +706,7 @@ delete_constructor(py_class* self, Local<Context> context)
         self->has_constructor = 1;
         v8::Local<v8::FunctionTemplate> interface_template = self->templ.Get(isolate);
         v8::Local<v8::Function> function;
-        if (interface_template->GetFunction(context).ToLocal(&function)) {
+        if (without_gil([&] { return interface_template->GetFunction(context).ToLocal(&function); })) {
             v8::Local<v8::Value> prototype_value;
             if (function->Get(context, V8String(isolate, "prototype")).ToLocal(&prototype_value)) {
                 v8::Local<v8::Object> prototype_object = prototype_value.As<v8::Object>();

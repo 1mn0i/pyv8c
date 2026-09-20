@@ -15,6 +15,7 @@
 #include "polyfill.h"
 #include "exception.h"
 #include "abi3.h"
+#include "gil_scope.h"
 #include "jsnull.h"
 #include "jsundefined.h"
 #include "runtime.h"

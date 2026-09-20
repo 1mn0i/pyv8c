@@ -23,7 +23,7 @@ static int script_clear(script_c* self) {
     std::unique_ptr<IsolateLockScope> lock;
     if (self->isolate_state) lock.reset(new IsolateLockScope(self->isolate_state));
     self->registration.detach();
-    self->registration.reset(self->script, self->isolate_state);
+    self->script.Reset();
     self->isolate_state = nullptr;
     Py_CLEAR(self->script_name);
     Py_CLEAR(self->source);
@@ -41,7 +41,7 @@ static PyType_Slot script_slots[] = {
     {0, NULL}};
 
 static PyType_Spec script_spec = {
-    "_pyv8.Script",
+    "pyv8.Script",
     sizeof(script_c),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
@@ -61,7 +61,7 @@ script_type_init()
 PyObject *
 script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
-    if (!runtime_manager.require_initialized())
+    if (!runtime_manager.ensure_initialized())
         return NULL;
     context_c *py_ctx;
     static const char *keywords[] = {"context", "source", "filename", NULL};
@@ -105,8 +105,7 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->py_context = (PyObject*)py_ctx;
     Py_INCREF((PyObject*)py_ctx);
     self->registration.attach(py_ctx, (PyObject*)self, (int (*)(PyObject*))script_clear);
-    self->script.Reset(isolate, script);
-    isolate_state->retain_v8_handle();
+    self->script.Set(isolate_state, isolate, script);
     if (py_ctx->py_isolate != nullptr) {
         self->py_isolate = py_ctx->py_isolate;
         Py_INCREF(self->py_isolate);
@@ -125,14 +124,13 @@ script_compile(Local<Context> context, PyObject *source, PyObject *filename)
     Isolate* isolate = v8_compat::context_isolate(context);
     EscapableHandleScope hs(isolate);
     MaybeLocal<UnboundScript> maybe_script;
-    // fucking god / c++
     if (filename != Py_None) {
         ScriptOrigin origin(js_from_py(filename, context));
         ScriptCompiler::Source js_source(js_from_py(source, context).As<String>(), origin);
-        maybe_script = ScriptCompiler::CompileUnboundScript(isolate, &js_source);
+        maybe_script = without_gil([&] { return ScriptCompiler::CompileUnboundScript(isolate, &js_source); });
     } else {
         ScriptCompiler::Source js_source(js_from_py(source, context).As<String>());
-        maybe_script = ScriptCompiler::CompileUnboundScript(isolate, &js_source);
+        maybe_script = without_gil([&] { return ScriptCompiler::CompileUnboundScript(isolate, &js_source); });
     }
     Local<UnboundScript> script;
     if (!maybe_script.ToLocal(&script))

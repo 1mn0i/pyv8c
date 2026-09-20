@@ -3,6 +3,7 @@
 #include "idl_spec.h"
 #include <v8.h>
 #include <cstring>
+#include <string>
 
 #include "context.h"
 #include "convert.h"
@@ -16,7 +17,7 @@
 #include "pyfunction.h"
 #include "debugger.h"
 #include "isolate.h"
-#include "timeout_guard.h"
+#include "watchdog.h"
 
 #ifdef V8_OS_WIN
 #define LIB_EXPORT __declspec(dllexport)
@@ -50,6 +51,30 @@ py_shutdown_v8(PyObject *self, PyObject *args)
     if (PyErr_Occurred())
         return NULL;
     return PyBool_FromLong(shut_down);
+}
+
+// The public way to say what the next startup should use.  Startup itself is left
+// to the first entry point that needs V8, so importing the package starts nothing.
+static PyObject *
+py_configure(PyObject *self, PyObject *args, PyObject *kw)
+{
+    static const char *keywords[] = {"icudtl_path", "params", NULL};
+    PyObject *icu = NULL;
+    PyObject *params = NULL;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kw, "|OO", (char**)keywords, &icu, &params))
+    {
+        return NULL;
+    }
+    if (!runtime_manager.configure(icu, params))
+        return NULL;
+    return PyBool_FromLong(true);
+}
+
+static PyObject *
+py_is_initialized(PyObject *self, PyObject *args)
+{
+    return PyBool_FromLong(runtime_manager.is_initialized());
 }
 
 static PyObject* mark_spec_flag(PyObject* thing, const char* key)
@@ -87,7 +112,7 @@ mark_unconstructable(PyObject *self, PyObject *thing)
 PyObject *
 trigger_low_memory_notification(PyObject *self, PyObject *args)
 {
-    if (!runtime_manager.require_initialized())
+    if (!runtime_manager.ensure_initialized())
         return NULL;
     IsolateState* isolate_state = runtime_manager.default_isolate();
     IN_ISOLATE(isolate_state);
@@ -98,7 +123,7 @@ trigger_low_memory_notification(PyObject *self, PyObject *args)
 PyObject *
 construct_new_object(PyObject *self, PyObject *args)
 {
-    if (!runtime_manager.require_initialized())
+    if (!runtime_manager.ensure_initialized())
         return NULL;
     int argc = (int)PyTuple_Size(args);
     if (argc == 0)
@@ -134,7 +159,7 @@ construct_new_object(PyObject *self, PyObject *args)
     argc--;
 
     MaybeLocal<Value> result;
-    TimeoutGuard timeout_guard(context);
+    DeadlineScope timeout_guard(context);
     V8ValueArguments argv(argc);
     if (!argv.valid())
     {
@@ -149,7 +174,9 @@ construct_new_object(PyObject *self, PyObject *args)
         return NULL;
     if (!timeout_guard.start())
         return NULL;
-    result = object->CallAsConstructor(isolate->GetCurrentContext(), argc, argv.data());
+    result = without_gil([&] {
+        return object->CallAsConstructor(isolate->GetCurrentContext(), argc, argv.data());
+    });
 
     if (!timeout_guard.stop())
         return NULL;
@@ -169,7 +196,7 @@ construct_new_object(PyObject *self, PyObject *args)
 PyObject *
 context_get_current(PyObject *self, PyObject *args)
 {
-    if (!runtime_manager.require_initialized())
+    if (!runtime_manager.ensure_initialized())
         return NULL;
     PyObject* py_isolate = Py_None;
     if (!PyArg_ParseTuple(args, "|O", &py_isolate))
@@ -199,7 +226,7 @@ context_get_current(PyObject *self, PyObject *args)
 PyObject*
 context_get_incumbent(PyObject* self, PyObject* args)
 {
-    if (!runtime_manager.require_initialized())
+    if (!runtime_manager.ensure_initialized())
         return NULL;
     PyObject* py_isolate = Py_None;
     if (!PyArg_ParseTuple(args, "|O", &py_isolate))
@@ -234,7 +261,7 @@ v8_version(PyObject *self, PyObject *args)
 PyObject *
 v8_gc(PyObject *self, PyObject *args)
 {
-    if (!runtime_manager.require_initialized())
+    if (!runtime_manager.ensure_initialized())
         return NULL;
     IsolateState* isolate_state = runtime_manager.default_isolate();
     IN_ISOLATE(isolate_state);
@@ -251,6 +278,8 @@ static PyMethodDef v8_methods[] = {
     {"low_memory_notification", trigger_low_memory_notification, METH_NOARGS, "Trigger V8 low memory notification"},
     {"init_v8", (PyCFunction)PythonBoundary<py_initialize_v8>::call, METH_VARARGS | METH_KEYWORDS, "initialize v8 platform and isolate"},
     {"shutdown_v8", py_shutdown_v8, METH_NOARGS, "shut down v8 platform and isolate"},
+    {"configure", (PyCFunction)PythonBoundary<py_configure>::call, METH_VARARGS | METH_KEYWORDS, "set the ICU data file and V8 flags the next startup should use"},
+    {"is_initialized", (PyCFunction)PythonBoundary<py_is_initialized>::call, METH_NOARGS, "whether v8 has been started"},
     {"v8_version", v8_version, METH_NOARGS, "v8 version"},
     {"v8_gc", v8_gc, METH_NOARGS, "v8 gc"},
     {NULL},
@@ -281,10 +310,53 @@ require_supported_python_runtime()
 #endif
 }
 
+// icudtl.dat ships beside the extension, so the module can name the default data
+// file itself instead of the package handing one in at import.  Recording it is not
+// starting V8: nothing is read or hashed until something first needs the runtime.
+static int
+record_default_icu_path(PyObject* module)
+{
+    PyObject* filename = PyModule_GetFilenameObject(module);
+    if (filename == nullptr)
+        return -1;
+
+    const char* path = PyUnicode_AsUTF8_abi3(filename);
+    if (path == nullptr)
+    {
+        Py_DECREF(filename);
+        return -1;
+    }
+
+    std::string directory(path);
+    const size_t separator = directory.find_last_of("\\/");
+    if (separator == std::string::npos)
+    {
+        Py_DECREF(filename);
+        PyErr_SetString(PyExc_ImportError,
+                        "cannot locate icudtl.dat: _pyv8 was imported without a file path");
+        return -1;
+    }
+    directory.resize(separator + 1);
+    directory += "icudtl.dat";
+
+    PyObject* icu_path =
+        PyUnicode_FromStringAndSize(directory.data(), (Py_ssize_t)directory.size());
+    Py_DECREF(filename);
+    if (icu_path == nullptr)
+        return -1;
+
+    runtime_manager.set_default_icu_path(icu_path);
+    Py_DECREF(icu_path);
+    return 0;
+}
+
 static int
 pyv8_module_exec(PyObject* module)
 {
     if (!require_supported_python_runtime())
+        return -1;
+
+    if (record_default_icu_path(module) < 0)
         return -1;
 
     if (idl_spec_init(module) < 0)

@@ -30,11 +30,13 @@
     <ClCompile Include="values\jsnull.cpp" />
     <ClCompile Include="values\jsundefined.cpp" />
     <ClCompile Include="values\jsvalue.cpp" />
-    <ClCompile Include="isolate\timeout_guard.cpp" />
+    <ClCompile Include="values\error_map.cpp" />
+    <ClCompile Include="isolate\watchdog.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="isolate\context.h" />
     <ClInclude Include="values\convert.h" />
+    <ClInclude Include="values\error_map.h" />
     <ClInclude Include="tools\debugger.h" />
     <ClInclude Include="values\exception.h" />
     <ClInclude Include="isolate\isolate.h" />
@@ -44,12 +46,14 @@
     <ClInclude Include="polyfill.h" />
     <ClInclude Include="interfaces\pyclass.h" />
     <ClInclude Include="interfaces\pyclass_cross_origin_handlers.h" />
+    <ClInclude Include="interfaces\handler_table.def" />
     <ClInclude Include="interfaces\pyclass_handlers.h" />
     <ClInclude Include="interfaces\pyfunction.h" />
     <ClInclude Include="pyv8.h" />
     <ClInclude Include="isolate\platform_state.h" />
     <ClInclude Include="isolate\runtime.h" />
     <ClInclude Include="handles\script.h" />
+    <ClInclude Include="isolate\v8_handle_slot.h" />
     <ClInclude Include="isolate\v8_string_cache.h" />
     <ClInclude Include="interfaces\v8tools.h" />
     <ClInclude Include="tools\trace.h" />
@@ -60,6 +64,7 @@
     <ClInclude Include="values\jsnull.h" />
     <ClInclude Include="values\jsundefined.h" />
     <ClInclude Include="values\jsvalue.h" />
-    <ClInclude Include="isolate\timeout_guard.h" />
+    <ClInclude Include="isolate\watchdog.h" />
+    <ClInclude Include="gil_scope.h" />
   </ItemGroup>
 </Project>

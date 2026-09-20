@@ -10,7 +10,7 @@ class IsolateState;
 typedef struct {
     PyObject_HEAD
     IsolateState* isolate_state;
-    v8::Persistent<v8::Object> object;
+    V8HandleSlot<v8::Object> object;
     PyObject* py_context;
     PyObject* py_isolate;
     HandleRegistration registration;

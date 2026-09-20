@@ -49,10 +49,10 @@ namespace bindings {
                     js_throw_py();
                     return;
                 }
-                py_cls = py_class_to_template(cls, py_ctx);
+                PyObject* owned = py_class_to_template(cls, py_ctx);
                 PySet_Discard(py_ctx->resolving_classes, cls);
                 Py_DECREF((PyObject*)cls);
-                if (py_cls == NULL) {
+                if (owned == NULL) {
                     Py_DECREF((PyObject*)name);
                     js_throw_py();
                     return;
@@ -60,17 +60,19 @@ namespace bindings {
                 // py_class_to_template keys the cache by the Python class
                 // __name__, while this accessor looks interfaces up by their IDL
                 // name. Alias the entry when the two differ.
-                PyObject* existing = PyDict_GetItem(py_ctx->class_template_cache, name);
-                if (existing == NULL &&
-                    PyDict_SetItem(py_ctx->class_template_cache, name, py_cls) < 0) {
+                if (PyDict_GetItem(py_ctx->class_template_cache, name) == NULL &&
+                    PyDict_SetItem(py_ctx->class_template_cache, name, owned) < 0) {
+                    Py_DECREF(owned);
                     Py_DECREF((PyObject*)name);
                     js_throw_py();
                     return;
                 }
+                Py_DECREF(owned);
             }
             else {
                 Py_DECREF((PyObject*)cls);
             }
+            py_cls = PyDict_GetItem(py_ctx->class_template_cache, name);
         }
         if (py_cls == NULL) {
             Py_DECREF((PyObject*)name);

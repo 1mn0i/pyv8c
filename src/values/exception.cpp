@@ -6,8 +6,63 @@
 
 #include "handle_resource.h"
 #include "convert.h"
+#include "error_map.h"
 
 using namespace v8;
+
+namespace
+{
+// A Python failure crossing into JavaScript has no Python frame left to return
+// to, so its traceback travels on the error object itself: a line on stderr
+// could not be taken back, and this one can be read by the host and seen in
+// DevTools.
+PyObject* format_python_exception(PyObject* exc_type, PyObject* exc_value, PyObject* exc_traceback)
+{
+    PyObject* module = PyImport_ImportModule("traceback");
+    if (module == nullptr)
+    {
+        PyErr_Clear();
+        return nullptr;
+    }
+    PyObject* lines = PyObject_CallMethod(module, "format_exception", "OOO",
+                                          exc_type, exc_value, exc_traceback);
+    Py_DECREF(module);
+    if (lines == nullptr)
+    {
+        PyErr_Clear();
+        return nullptr;
+    }
+    PyObject* separator = PyUnicode_FromString("");
+    if (separator == nullptr)
+    {
+        Py_DECREF(lines);
+        PyErr_Clear();
+        return nullptr;
+    }
+    PyObject* text = PyUnicode_Join(separator, lines);
+    Py_DECREF(separator);
+    Py_DECREF(lines);
+    if (text == nullptr)
+        PyErr_Clear();
+    return text;
+}
+
+void attach_python_traceback(Isolate* isolate, Local<Context> context, Local<Object> exception,
+                             PyObject* exc_type, PyObject* exc_value, PyObject* exc_traceback)
+{
+    PyObject* text = format_python_exception(exc_type, exc_value, exc_traceback);
+    if (text == nullptr)
+        return;
+    const char* utf8 = PyUnicode_GetLength(text) > 0 ? PyUnicode_AsUTF8_abi3(text) : nullptr;
+    if (utf8 != nullptr)
+    {
+        bool worked;
+        exception->Set(context, V8String(isolate, "pythonTraceback"),
+                       V8String(isolate, utf8)).To(&worked);
+    }
+    Py_DECREF(text);
+}
+}
 
 static PyObject* js_exception_original(PyObject* self, void*) {
     JsExceptionState* state = js_exception_get_state(self);
@@ -33,7 +88,7 @@ static PyType_Slot js_exception_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_exception_spec = {
-    "_pyv8.JSException",
+    "pyv8.JSException",
     0,
     0,
     Py_TPFLAGS_DEFAULT,
@@ -53,9 +108,6 @@ int clear_exception_state(JsExceptionState* state)
     context_unregister_handle((context_c*)state->py_context, (PyObject*)state);
     state->exception.Reset();
     state->message.Reset();
-    if (state->retained_handle && state->isolate_state != nullptr)
-        state->isolate_state->release_v8_handle();
-    state->retained_handle = false;
     state->isolate_state = nullptr;
     Py_CLEAR(state->py_context);
     Py_CLEAR(state->py_isolate);
@@ -97,7 +149,7 @@ js_exception_type_init()
         {Py_tp_dealloc, (void*)PythonBoundary<release_exception_state>::call},
         {Py_tp_clear, (void*)PythonBoundary<clear_exception_state>::call},
         {Py_tp_traverse, (void*)PythonBoundary<traverse_exception_state>::call}, {0, nullptr}};
-    PyType_Spec state_spec = {"_pyv8.ExceptionState", sizeof(JsExceptionState), 0,
+    PyType_Spec state_spec = {"pyv8.ExceptionState", sizeof(JsExceptionState), 0,
                              Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, state_slots};
     exception_state_type = (PyTypeObject*)PyType_FromSpec(&state_spec);
     if (!exception_state_type) return -1;
@@ -112,7 +164,6 @@ js_exception_type_init()
     js_exception_type = (PyTypeObject*)PyType_FromSpecWithBases(&js_exception_spec, bases);
     Py_DECREF((PyObject*)bases);
 
-    //js_exception_type = (PyTypeObject*)PyType_FromSpec(&js_exception_spec);
     if (js_exception_type == NULL)
     {
         return -1;
@@ -126,7 +177,7 @@ PyTypeObject* js_terminated_type = NULL;
 int 
 js_terminated_type_init()
 {
-    js_terminated_type = (PyTypeObject*)PyErr_NewException("_pyv8env.JavaScriptTerminated", PyExc_BaseException, nullptr);
+    js_terminated_type = (PyTypeObject*)PyErr_NewException("pyv8.JavaScriptTerminated", PyExc_BaseException, nullptr);
     if (js_terminated_type == NULL)
     {
         return -1;
@@ -229,10 +280,8 @@ js_exception_new(Local<Value> exception, Local<Message> message)
         return NULL;
     }
     state->isolate_state = isolate_state;
-    state->exception.Reset(isolate, exception);
-    state->message.Reset(isolate, message);
-    isolate_state->retain_v8_handle();
-    state->retained_handle = true;
+    state->exception.Set(isolate_state, isolate, exception);
+    state->message.Set(isolate_state, isolate, message);
     Local<Context> context = isolate->GetCurrentContext();
     if (!context.IsEmpty()) {
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
@@ -335,20 +384,6 @@ js_throw_py()
         PyErr_Clear();
     }
 
-    if (!PyObject_HasAttrString(exc_value, "__v8_error__")) {
-        PyObject* traceback_module = PyImport_ImportModule("traceback");
-        if (traceback_module) {
-            PyObject* print_exception_fn = PyObject_GetAttrString(traceback_module, "print_exception");
-            if (print_exception_fn) {
-                PyObject* result = PyObject_CallFunctionObjArgs(
-                    print_exception_fn, exc_type, exc_value, exc_traceback, NULL);
-                Py_XDECREF((PyObject*)result);
-                Py_DECREF((PyObject*)print_exception_fn);
-            }
-            Py_DECREF((PyObject*)traceback_module);
-        }
-    }
-
     PyObject* exc_value_str = PyObject_Str(exc_value);
     const char* exc_message = "Python exception";
     if (exc_value_str != NULL) {
@@ -404,29 +439,11 @@ js_throw_py()
             exception = state->exception.Get(isolate).As<Object>();
         }
     }
-    else if (strcmp(exc_type_name, "V8TypeError") == 0 ||
-             (has_explicit_js_error_name && strcmp(exc_type_name, "TypeError") == 0))
+    else if (Local<Object> mapped = error_map::js_error_for(
+                 isolate, exc_type_name, exc_message, has_explicit_js_error_name);
+             !mapped.IsEmpty())
     {
-        exception = Exception::TypeError(V8String(isolate, exc_message)).As<Object>();
-    }
-    else if (strcmp(exc_type_name, "V8Error") == 0 ||
-             (has_explicit_js_error_name && strcmp(exc_type_name, "Error") == 0)) {
-        exception = Exception::Error(V8String(isolate, exc_message)).As<Object>();
-    }
-    else if (strcmp(exc_type_name, "V8RangeError") == 0 ||
-             (has_explicit_js_error_name && strcmp(exc_type_name, "RangeError") == 0))
-    {
-        exception = Exception::RangeError(V8String(isolate, exc_message)).As<Object>();
-    }
-    else if (strcmp(exc_type_name, "V8ReferenceError") == 0 ||
-             (has_explicit_js_error_name && strcmp(exc_type_name, "ReferenceError") == 0))
-    {
-        exception = Exception::ReferenceError(V8String(isolate, exc_message)).As<Object>();
-    }
-    else if (strcmp(exc_type_name, "V8SyntaxError") == 0 ||
-             (has_explicit_js_error_name && strcmp(exc_type_name, "SyntaxError") == 0))
-    {
-        exception = Exception::SyntaxError(V8String(isolate, exc_message)).As<Object>();
+        exception = mapped;
     }
     else if (strcmp(exc_type_name, "DOMException") == 0)
     {
@@ -485,6 +502,14 @@ js_throw_py()
                 capture_stack_trace->Call(context, Undefined(isolate), 1, args);
             }
         }
+    }
+
+    // A mapped error, or a DOMException, is a plain V8 object: the Python
+    // traceback has nowhere else to go.  A host-object exception carries it
+    // natively, and restoring it there is what keeps the round trip exact.
+    if (!exception.IsEmpty() && !context.IsEmpty() && exception->InternalFieldCount() == 0)
+    {
+        attach_python_traceback(isolate, context, exception, exc_type, exc_value, exc_traceback);
     }
 
     Py_XDECREF((PyObject*)exc_cls_name);

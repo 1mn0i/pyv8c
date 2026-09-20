@@ -6,7 +6,6 @@
 #include <iostream>
 
 #include "jsvalue.h"
-#include "timeout_guard.h"
 
 using namespace v8;
 
@@ -30,7 +29,7 @@ static int value_clear(js_value* self) {
     std::unique_ptr<IsolateLockScope> lock;
     if (state) lock.reset(new IsolateLockScope(state));
     self->registration.detach();
-    self->registration.reset(self->value, self->isolate_state);
+    self->value.Reset();
     self->isolate_state = nullptr;
     Py_CLEAR(self->py_context);
     Py_CLEAR(self->py_isolate);
@@ -103,7 +102,7 @@ static PyType_Slot js_value_slots[] = {
     {0, NULL}};
 
 static PyType_Spec js_value_spec = {
-    "_pyv8.JSValue",
+    "pyv8.JSValue",
     sizeof(js_value),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
@@ -133,8 +132,7 @@ js_value_new(Local<Value> value, Local<Context> context)
 
     if (self != NULL) {
         self->isolate_state = isolate_state;
-        self->value.Reset(isolate, value);
-        isolate_state->retain_v8_handle();
+        self->value.Set(isolate_state, isolate, value);
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
             context_c* py_context = context_from_v8(context);

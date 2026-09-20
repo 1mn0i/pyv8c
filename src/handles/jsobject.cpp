@@ -9,7 +9,7 @@
 #include "jsfunction.h"
 #include "jspromise.h"
 #include "jstypedarray.h"
-#include "timeout_guard.h"
+#include "watchdog.h"
 
 using namespace v8;
 
@@ -24,10 +24,10 @@ static PyObject* js_object_read(js_object* self, PyObject* name) {
     Local<Value> key = js_from_py(name, context);
     if (key.IsEmpty() || PyErr_Occurred()) return nullptr;
     JS_TRY
-    TimeoutGuard guard(context);
+    DeadlineScope guard(context);
     if (!guard.start()) return nullptr;
     Local<Value> value;
-    bool success = object->Get(context, key).ToLocal(&value);
+    bool success = without_gil([&] { return object->Get(context, key).ToLocal(&value); });
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
     if (!success) {
@@ -48,7 +48,7 @@ static PyObject* js_object_to_python(js_object* self, PyObject*) {
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
-    TimeoutGuard guard(context);
+    DeadlineScope guard(context);
     if (!guard.start()) return nullptr;
     PyObject* result = py_materialize(object, context);
     if (!guard.stop()) { Py_XDECREF(result); return nullptr; }
@@ -69,10 +69,10 @@ static PyObject* js_object_number(js_object* self, PyObject*) {
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
-    TimeoutGuard guard(context);
+    DeadlineScope guard(context);
     if (!guard.start()) return nullptr;
     Local<Number> value;
-    bool success = object->ToNumber(context).ToLocal(&value);
+    bool success = without_gil([&] { return object->ToNumber(context).ToLocal(&value); });
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
     if (!success) {
@@ -90,10 +90,10 @@ static PyObject* js_object_iterator_method(js_object* self, PyObject*) {
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
-    TimeoutGuard guard(context);
+    DeadlineScope guard(context);
     if (!guard.start()) return nullptr;
     Local<Value> result;
-    bool success = object->Get(context, Symbol::GetIterator(isolate)).ToLocal(&result);
+    bool success = without_gil([&] { return object->Get(context, Symbol::GetIterator(isolate)).ToLocal(&result); });
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
     if (!success) {
@@ -120,10 +120,12 @@ static PyObject* js_object_invoke(js_object* self, PyObject* args) {
     jss_from_pys(args, converted.data(), context);
     if (PyErr_Occurred()) return nullptr;
     JS_TRY
-    TimeoutGuard guard(context);
+    DeadlineScope guard(context);
     if (!guard.start()) return nullptr;
     Local<Value> result;
-    bool success = object->CallAsFunction(context, converted.data()[0], length - 1, converted.data() + 1).ToLocal(&result);
+    bool success = without_gil([&] {
+        return object->CallAsFunction(context, converted.data()[0], length - 1, converted.data() + 1).ToLocal(&result);
+    });
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
     if (!success) {
@@ -141,11 +143,14 @@ static PyObject* js_object_keys(js_object* self, PyObject*) {
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
-    TimeoutGuard guard(context);
+    DeadlineScope guard(context);
     if (!guard.start()) return nullptr;
     Local<Array> keys;
-    bool success = object->GetOwnPropertyNames(context,
-        static_cast<PropertyFilter>(ONLY_ENUMERABLE | SKIP_SYMBOLS), KeyConversionMode::kConvertToString).ToLocal(&keys);
+    bool success = without_gil([&] {
+        return object->GetOwnPropertyNames(context,
+            static_cast<PropertyFilter>(ONLY_ENUMERABLE | SKIP_SYMBOLS),
+            KeyConversionMode::kConvertToString).ToLocal(&keys);
+    });
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
     if (!success) {
@@ -194,7 +199,7 @@ static PyType_Slot js_object_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_object_spec = {
-    "_pyv8.JSObject",
+    "pyv8.JSObject",
     sizeof(js_object),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
@@ -243,8 +248,7 @@ js_object_set_persistent(js_object* self, Local<Object> object,
     Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
     self->isolate_state = isolate_state;
-    self->object.Reset(isolate, object);
-    isolate_state->retain_v8_handle();
+    self->object.Set(isolate_state, isolate, object);
     if (!context.IsEmpty()) {
         Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
         if (context_data->IsExternal()) {
@@ -312,7 +316,7 @@ void
 js_object_weak_callback(const WeakCallbackInfo<js_object> &info)
 {
     js_object *self = info.GetParameter();
-    self->registration.reset(self->object, self->isolate_state);
+    self->object.Reset();
     self->weak_owned = false;
     self->isolate_state->defer_release(&self->deferred_release, (PyObject*)self);
 }
@@ -342,7 +346,8 @@ js_object_weak_new(Local<Object> object, Local<Context> context)
         // The V8 weak callback owns this reference and releases it on GC.
         Py_INCREF((PyObject*)self);
         self->weak_owned = true;
-        self->object.SetWeak(self, js_object_weak_callback, WeakCallbackType::kParameter);
+        self->object.persistent().SetWeak(
+            self, js_object_weak_callback, WeakCallbackType::kParameter);
     }
     return self;
 }
@@ -404,9 +409,9 @@ js_object_lookup(js_object* self, PyObject* name, MissingProperty missing)
         return NULL;
     }
     JS_TRY
-    TimeoutGuard timeout_guard(context);
+    DeadlineScope timeout_guard(context);
     if (!timeout_guard.start()) return NULL;
-    Maybe<bool> maybe_has_property = object->Has(context, js_name);
+    Maybe<bool> maybe_has_property = without_gil([&] { return object->Has(context, js_name); });
     if (!timeout_guard.stop()) return NULL;
     PY_PROPAGATE_JS;
     bool has_property;
@@ -437,7 +442,7 @@ js_object_lookup(js_object* self, PyObject* name, MissingProperty missing)
     }
 
     if (!timeout_guard.start()) return NULL;
-    MaybeLocal<Value> js_value = object->Get(context, js_name);
+    MaybeLocal<Value> js_value = without_gil([&] { return object->Get(context, js_name); });
     if (!timeout_guard.stop()) return NULL;
 
     PY_PROPAGATE_JS;
@@ -453,7 +458,7 @@ js_object_lookup(js_object* self, PyObject* name, MissingProperty missing)
     if (Py_TYPE((PyObject*)value) == js_function_type) {
         js_function *func = (js_function *) value;
 
-        func->js_this.Reset(isolate, object);
+        func->js_this.Set(func->base.isolate_state, isolate, object);
     }
     return value;
 }
@@ -508,12 +513,14 @@ js_object_setattro(js_object *self, PyObject *name, PyObject *value)
         if (PyErr_Occurred()) return -1;
     }
 
-    TimeoutGuard timeout_guard(context);
+    DeadlineScope timeout_guard(context);
     if (!timeout_guard.start()) return -1;
 
-    Maybe<bool> maybe_worked = value != NULL
-        ? object->Set(context, js_name, js_value)
-        : object->Delete(context, js_name);
+    Maybe<bool> maybe_worked = without_gil([&] {
+        return value != NULL
+            ? object->Set(context, js_name, js_value)
+            : object->Delete(context, js_name);
+    });
 
     if (!timeout_guard.stop()) return -1;
 
@@ -550,9 +557,9 @@ js_object_dir(js_object *self)
     Context::Scope cs(context);
     JS_TRY
 
-    TimeoutGuard timeout_guard(context);
+    DeadlineScope timeout_guard(context);
     if (!timeout_guard.start()) return NULL;
-    MaybeLocal<Array> maybe_properties = object->GetOwnPropertyNames(context, ALL_PROPERTIES);
+    MaybeLocal<Array> maybe_properties = without_gil([&] { return object->GetOwnPropertyNames(context, ALL_PROPERTIES); });
     if (!timeout_guard.stop()) return NULL;
     PY_PROPAGATE_JS;
     Local<Array> properties;
@@ -647,11 +654,11 @@ js_object_repr(js_object *self)
     Local<Object> object = self->object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
-    TimeoutGuard timeout_guard(context);
+    DeadlineScope timeout_guard(context);
     if (!timeout_guard.start())
         return NULL;
     Local<String> v8_str;
-    MaybeLocal<String> maybe_v8_str = object->ToString(context);
+    MaybeLocal<String> maybe_v8_str = without_gil([&] { return object->ToString(context); });
     if (!timeout_guard.stop())
         return NULL;
     if (!maybe_v8_str.ToLocal(&v8_str)) {
@@ -680,7 +687,7 @@ int js_object_clear(js_object* self)
     self->registration.detach();
     if (PyObject_TypeCheck((PyObject*)self, js_function_type))
         ((js_function*)self)->js_this.Reset();
-    self->registration.reset(self->object, self->isolate_state);
+    self->object.Reset();
     if (self->weak_owned) {
         self->weak_owned = false;
         state->defer_release(&self->deferred_release, (PyObject*)self);

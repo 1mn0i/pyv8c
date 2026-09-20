@@ -8,6 +8,8 @@
 #include <unordered_set>
 #include <memory>
 
+#include "v8_handle_slot.h"
+
 class IsolateState;
 struct context_c;
 enum class ContextState { Active, Closing, Closed };
@@ -15,23 +17,46 @@ struct ContextLifetime {
     context_c* owner;
 
     // The pair table: a Python host object -> the JavaScript object standing for
-    // it in this realm.  Values are IsolateState::PythonObjectOwner*, opaque to
-    // keep this header free of the isolate's internals.  The table owns neither
-    // side; an entry goes when its owner is released.  It lives here, not on the
-    // context, so a handle that outlives the context reads an empty table.
-    std::unordered_map<PyObject*, void*> js_object_cache;
+    // it in this realm.  The table owns neither side; an entry goes when its
+    // owner is released.  It lives here, not on the context, so a handle that
+    // outlives the context reads an empty table.
+    std::unordered_map<PyObject*, PythonObjectOwner*> js_object_cache;
 
     explicit ContextLifetime(context_c* owner) : owner(owner) {}
 };
 
 struct ContextResources {
     std::shared_ptr<ContextLifetime> lifetime;
-    std::unordered_set<void*> python_owners;
+    std::unordered_set<PythonObjectOwner*> python_owners;
     std::unordered_set<void*> callbacks;
     std::unordered_map<PyObject*, int (*)(PyObject*)> handles;
     std::unordered_set<context_c*> dependents;
     std::unordered_set<context_c*> dependencies;
+    // Where each dependency sits in `owner->dependencies`, so removing one is a
+    // swap instead of a scan of the list.
+    std::unordered_map<context_c*, Py_ssize_t> dependency_slots;
 };
+
+struct PythonObjectOwner;
+
+// Every Python reference a realm owns.  The struct, the traversal and the close
+// walk all read this one list, so a field cannot be added without being visited.
+#define CONTEXT_PY_FIELDS(X) \
+    X(py_isolate)            \
+    X(class_template_cache)  \
+    X(function_template_cache) \
+    X(callback_targets)      \
+    X(class_configs)         \
+    X(lazy_factory)          \
+    X(resolving_classes)     \
+    X(lazy_names)            \
+    X(py_global)             \
+    X(trace_callback)        \
+    X(trace_context_type)    \
+    X(trace_event_names)     \
+    X(uncaught_handler)      \
+    X(rejection_handler)     \
+    X(dependencies)
 
 typedef struct context_c
 {
@@ -39,7 +64,7 @@ typedef struct context_c
 
     IsolateState* isolate_state;
     PyObject* py_isolate;
-    v8::Persistent<v8::Context> js_context;
+    V8HandleSlot<v8::Context> js_context;
     PyObject* class_template_cache;
     PyObject* function_template_cache;
     PyObject* callback_targets;
@@ -66,6 +91,16 @@ typedef struct context_c
     PyObject* trace_context_type;
     PyObject* trace_event_names;
 } context_c;
+
+// A realm's template caches own their entries for as long as the realm lives; a
+// lookup hands the caller a reference of its own, which it releases as soon as
+// it is done.  Returning the cached reference itself left callers unsure
+// whether releasing it was allowed.
+inline PyObject* owned_template(PyObject* templ)
+{
+    Py_XINCREF(templ);
+    return templ;
+}
 
 bool context_is_active(context_c* self);
 context_c* context_from_v8(v8::Local<v8::Context> context);
@@ -103,10 +138,10 @@ PyObject* context_set_error_hooks(context_c* self, PyObject* args, PyObject* kwa
 #define ERROR_PROTOTYPE_SLOT 3
 #define CTX_TYPE 4
 
-PyObject* context_get_global(context_c* self, void* shit);
+PyObject* context_get_global(context_c* self, void* ignored);
 
-PyObject* context_get_timeout(context_c* self, void* shit);
-int context_set_timeout(context_c* self, PyObject* value, void* shit);
+PyObject* context_get_timeout(context_c* self, void* ignored);
+int context_set_timeout(context_c* self, PyObject* value, void* ignored);
 
 PyObject* context_getattro(context_c* self, PyObject* name);
 PyObject* context_getitem(context_c* self, PyObject* name);

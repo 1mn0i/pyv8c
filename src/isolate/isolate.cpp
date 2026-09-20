@@ -35,7 +35,7 @@ static PyType_Slot isolate_slots[] = {
 };
 
 static PyType_Spec isolate_spec = {
-    "_pyv8.Isolate",
+    "pyv8.Isolate",
     sizeof(isolate_c),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,

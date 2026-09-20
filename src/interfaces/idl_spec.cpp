@@ -42,6 +42,7 @@ static Field IdlSpec_fields[] = {
     {"unconstructable", Kind::Bool, offsetof(IdlSpec, unconstructable), 0, 1},
     {"hidden", Kind::Bool, offsetof(IdlSpec, hidden), 0, 1},
     {"skip_inherit", Kind::Bool, offsetof(IdlSpec, skip_inherit), 0, 1},
+    {"named_properties_object", Kind::Bool, offsetof(IdlSpec, named_properties_object), 0, 1},
     {"attributes", Kind::Attributes, offsetof(IdlSpec, attributes), 0, 0},
     {"methods", Kind::Methods, offsetof(IdlSpec, methods), 0, 0},
     {"constants_value", Kind::Constants, offsetof(IdlSpec, constants_value), 0, 0},
@@ -107,12 +108,17 @@ struct Definition
     size_t count;
     PyGetSetDef *getters;
 };
+// The count is the array's own length: a field added above is registered without
+// anyone having to remember to bump a number, which is what kept the last field of
+// IdlSpec unregistered.
+#define PYV8_FIELD_COUNT(fields) (sizeof(fields) / sizeof((fields)[0]))
 static Definition definitions[] = {
-    {&idl_spec_type, "pyv8.IdlSpec", sizeof(IdlSpec), IdlSpec_fields, 40, nullptr},
-    {&attribute_spec_type, "pyv8.AttributeSpec", sizeof(AttributeSpec), AttributeSpec_fields, 10, nullptr},
-    {&method_spec_type, "pyv8.MethodSpec", sizeof(MethodSpec), MethodSpec_fields, 8, nullptr},
-    {&constant_spec_type, "pyv8.ConstantSpec", sizeof(ConstantSpec), ConstantSpec_fields, 2, nullptr},
+    {&idl_spec_type, "pyv8.IdlSpec", sizeof(IdlSpec), IdlSpec_fields, PYV8_FIELD_COUNT(IdlSpec_fields), nullptr},
+    {&attribute_spec_type, "pyv8.AttributeSpec", sizeof(AttributeSpec), AttributeSpec_fields, PYV8_FIELD_COUNT(AttributeSpec_fields), nullptr},
+    {&method_spec_type, "pyv8.MethodSpec", sizeof(MethodSpec), MethodSpec_fields, PYV8_FIELD_COUNT(MethodSpec_fields), nullptr},
+    {&constant_spec_type, "pyv8.ConstantSpec", sizeof(ConstantSpec), ConstantSpec_fields, PYV8_FIELD_COUNT(ConstantSpec_fields), nullptr},
 };
+#undef PYV8_FIELD_COUNT
 static Definition &definition(PyTypeObject *type)
 {
     for (auto &item : definitions)

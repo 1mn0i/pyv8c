@@ -18,7 +18,7 @@ static PyType_Slot js_undefined_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_undefined_spec = {
-    "_pyv8.UndefinedType",
+    "pyv8.UndefinedType",
     sizeof(js_undefined),
     0,
     Py_TPFLAGS_DEFAULT,

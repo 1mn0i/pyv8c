@@ -14,7 +14,13 @@ from .devtools import (
 from .flag import *  # noqa: F401,F403 - flag constants are public API
 from .trace import format_trace as format_trace, log_trace as log_trace
 
+from typing import Any
+
 __version__: str
+
+def transfer(value: Any, target_context: Context) -> Any:
+    """Copy a value's structure into another isolate's realm."""
+    ...
 
 class ArrayType:
     """Numeric identifiers accepted by :class:`JSTypeArray`."""

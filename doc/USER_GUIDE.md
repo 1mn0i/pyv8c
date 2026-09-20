@@ -213,11 +213,36 @@ python setup.py build_ext --inplace
 产物位于 `.pyv8-build\versions\15.2.20.1\v8\out\pyv8-x64.release`，其中
 `obj\v8_monolith.lib` 和同目录的 `icudtl.dat` 必须来自同一次构建。
 
+### 初始化时机
+
+`import pyv8` 不启动 V8：扩展只注册类型、记下与自己同目录的 `icudtl.dat`，并做两项
+廉价校验（free-threaded CPython、非主解释器会被拒绝）。V8 平台与默认 Isolate 在**首次
+使用**时才启动——首次 `pyv8.Context(...)`、`pyv8.Isolate()`、`pyv8.Script(...)`、
+`pyv8.new(...)`、`pyv8.current_context()`、`pyv8.v8_gc()`、`pyv8.low_memory_notification()`
+或 typed array/Promise 的默认 Isolate 回退。此后每次判定只是一次布尔检查。
+
+`pyv8.v8_version()` 与 `pyv8.hidden`/`pyv8.unconstructable` 不启动 V8。
+
+启动内容由 `pyv8.configure(...)` 决定，且只能在首次使用前调用：
+
+```python
+import pyv8
+
+pyv8.configure(params=["--expose-gc"], icudtl_path="/path/to/icudtl.dat")
+print(pyv8.is_initialized())  # False
+context = pyv8.Context(object)  # 到这里才启动
+print(pyv8.is_initialized())  # True
+```
+
+参数类型错误在 `configure()` 时就报出来。V8 启动后再调用会抛出 `RuntimeError`
+（启动参数与 ICU 数据文件无法在启动后更改）。
+
 ### ICU 数据约束
 
-构建时会计算 `icudtl.dat` 的 SHA-256，并把结果编译进 `_pyv8`。导入 pyv8 时会在
-V8 初始化前重新计算文件哈希。如果文件不是构建时使用的那一份，导入会直接抛出
-`RuntimeError`，避免不匹配的 ICU 数据在 `Intl` 初始化中造成 native crash 或 OOM。
+构建时会计算 `icudtl.dat` 的 SHA-256，并把结果编译进 `_pyv8`。首次使用 V8 时会在
+V8 启动前重新计算文件哈希。如果文件不是构建时使用的那一份，这次调用会抛出
+`RuntimeError`，避免不匹配的 ICU 数据在 `Intl` 初始化中造成 native crash 或 OOM；
+文件读不到时错误会给出可操作提示，可用 `pyv8.configure(icudtl_path=...)` 指向它。
 
 哈希相同只表示文件内容没有变化。仍应保证 `v8_monolith` 和 `icudtl.dat` 来自同一个
 V8/ICU 构建，不要单独替换其中一个文件。
@@ -1133,7 +1158,8 @@ pyv8.shutdown_v8()
 
 - 存在活动自定义 Isolate 时会拒绝 `shutdown_v8()`。
 - 存在默认 Isolate 的活动句柄时会拒绝关闭。
-- V8 Dispose 后不能在同一进程重新初始化。
+- `shutdown_v8()` 不会为了关闭而启动 V8：从未使用过时直接返回 `False`。
+- V8 Dispose 后不能在同一进程重新初始化，之后首次使用会抛出 `RuntimeError`。
 - 第二次调用 `shutdown_v8()` 返回 `False`。
 - subinterpreter 和 free-threaded CPython 当前被明确拒绝。
 
@@ -1224,8 +1250,10 @@ devtools://devtools/bundled/inspector.html?experiments=true&ws=127.0.0.1:9005/de
 | `pyv8.current_context(isolate=None)` | 获取当前执行 Context |
 | `pyv8.incumbent_context(isolate=None)` | 获取 incumbent Context |
 | `pyv8.v8_gc()` | 请求默认 Isolate 执行完整 GC |
-| `pyv8.v8_version()` | 返回实际链接的 V8 版本 |
-| `pyv8.shutdown_v8()` | 永久关闭进程级 V8 Runtime |
+| `pyv8.v8_version()` | 返回实际链接的 V8 版本；不启动 V8 |
+| `pyv8.configure(params=None, icudtl_path=None)` | 指定下一次启动的 V8 参数与 ICU 数据；仅首次使用前有效 |
+| `pyv8.is_initialized()` | V8 是否已经启动 |
+| `pyv8.shutdown_v8()` | 永久关闭进程级 V8 Runtime；不启动 V8 |
 | `pyv8.start_devtools(...)` | 启动 Chrome DevTools bridge |
 | `pyv8.Null` | JavaScript `null` 单例 |
 | `pyv8.Undefined` | JavaScript `undefined` 单例 |

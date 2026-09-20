@@ -7,7 +7,7 @@
 #include "jsobject.h"
 #include "convert.h"
 #include "context.h"
-#include "timeout_guard.h"
+#include "watchdog.h"
 
 using namespace v8;
 
@@ -21,7 +21,7 @@ static PyType_Slot js_function_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_function_spec = {
-    "_pyv8.BoundFunction",
+    "pyv8.JSFunction",
     sizeof(js_function),
     0,
     Py_TPFLAGS_DEFAULT,
@@ -75,7 +75,7 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
     }
     const int argc = static_cast<int>(argument_count);
     MaybeLocal<Value> result;
-    TimeoutGuard timeout_guard(context);
+    DeadlineScope timeout_guard(context);
     V8ValueArguments argv(argc);
     if (!argv.valid())
     {
@@ -85,7 +85,7 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
     jss_from_pys(args, argv.data(), context);
     if (PyErr_Occurred()) return NULL;
     if (!timeout_guard.start()) return NULL;
-    result = object->CallAsFunction(context, js_this, argc, argv.data());
+    result = without_gil([&] { return object->CallAsFunction(context, js_this, argc, argv.data()); });
     if (!timeout_guard.stop()) return NULL;
     PY_PROPAGATE_JS;
     Local<Value> js_result;
@@ -107,7 +107,7 @@ PyObject* js_function_repr(js_function* self) {
     Local<Object> object = self->base.object.Get(isolate);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
-    TimeoutGuard timeout_guard(context);
+    DeadlineScope timeout_guard(context);
     if (!timeout_guard.start())
         return NULL;
     String::Utf8Value str(isolate, object);

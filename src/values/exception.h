@@ -4,16 +4,16 @@
 #include <Python.h>
 #include <v8.h>
 #include "context.h"
+#include "v8_handle_slot.h"
 
 struct JsExceptionState
 {
     PyObject_HEAD
     IsolateState* isolate_state;
-    v8::Persistent<v8::Value> exception;
-    v8::Persistent<v8::Message> message;
+    V8HandleSlot<v8::Value> exception;
+    V8HandleSlot<v8::Message> message;
     PyObject* py_context;
     PyObject* py_isolate;
-    bool retained_handle;
 };
 
 extern PyTypeObject* js_exception_type;

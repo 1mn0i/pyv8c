@@ -1,5 +1,6 @@
 #include "isolate_scope.h"
 
+#include "gil_scope.h"
 #include "isolate_state.h"
 
 #include <Python.h>
@@ -30,39 +31,43 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
     python_owner_ = state_->python_owner;
     Py_XINCREF((PyObject*)python_owner_);
     ++state_->entry_users;
-    // A contended locker blocks, and the thread holding the isolate usually needs
-    // the GIL to make progress, so the GIL is dropped while acquiring it.
-    PyThreadState* gil_state = nullptr;
-    bool acquired = try_only;
+    bool locked = try_only;
+    bool closed = false;
     try
     {
-        gil_state = PyEval_SaveThread();
+        // Waiting (mutex and locker) must not hold the GIL; the scope restores
+        // it before this function returns.
+        GILReleaseScope waiting;
         if (!try_only) state_->entry_mutex.lock();
-        acquired = true;
+        locked = true;
         isolate_ = state_->isolate();
-        if (isolate_ == nullptr) {
+        if (isolate_ == nullptr)
+        {
             state_->entry_mutex.unlock();
-            PyEval_RestoreThread(gil_state);
-            PyErr_SetString(PyExc_RuntimeError, "V8 isolate has been closed");
-            --state_->entry_users;
-            Py_XDECREF((PyObject*)python_owner_);
-            python_owner_ = nullptr;
-            return;
+            locked = false;
+            closed = true;
         }
-        locker_.reset(new v8::Locker(isolate_));
+        else
+        {
+            locker_.reset(new v8::Locker(isolate_));
+        }
     }
     catch (...)
     {
-        if (gil_state != nullptr)
-        {
-            PyEval_RestoreThread(gil_state);
-        }
-        if (acquired) state_->entry_mutex.unlock();
+        if (locked) state_->entry_mutex.unlock();
         --state_->entry_users;
         Py_XDECREF((PyObject*)python_owner_);
+        python_owner_ = nullptr;
         throw;
     }
-    PyEval_RestoreThread(gil_state);
+    if (closed)
+    {
+        --state_->entry_users;
+        Py_XDECREF((PyObject*)python_owner_);
+        python_owner_ = nullptr;
+        PyErr_SetString(PyExc_RuntimeError, "V8 isolate has been closed");
+        return;
+    }
     isolate_->Enter();
     entered_ = true;
     ++state_->entry_depth;

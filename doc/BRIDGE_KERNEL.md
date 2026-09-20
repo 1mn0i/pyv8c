@@ -32,8 +32,10 @@ code uses handles until its Web IDL conversion explicitly needs Python data.
 
 `ExecutionScope` pins the Context and subject, acquires isolate access and
 validates the Context again after waiting. Same-thread nested entries reuse
-the existing locker. Waiting releases the GIL; callbacks and cleanup hold it.
-The current scheduling topology is unchanged.
+the existing locker. Waiting releases the GIL, and so does the window in which
+V8 runs: a crossing into JavaScript gives it up and every callback boundary
+takes it back before host code runs. Cleanup holds it. The current scheduling
+topology is unchanged.
 
 Contexts move from Active to Closing to Closed. Closing rejects new entry.
 In-flight callbacks retain their metadata and finish before deferred teardown.

@@ -13,45 +13,24 @@
 using namespace v8;
 
 enum FlagConstructor {
-    kDontAll = 0,
     kNew = 1 << 0,
     kCall = 1 << 1,
-    kAll = kNew | kCall,
 };
 
 
 
 // The handler an interface declares for *which*, or null when it declares none.
-//
-// The spec-backed ids are in the order of the fields they name, so this is a
-// jump table rather than a chain of comparisons.
+// Both switches below are generated from handler_table.def: the ids are in the
+// order of the fields they name, so each stays a jump table.
 static PyObject* declared_handler(const IdlSpec& spec, HandlerId which)
 {
     switch (which)
     {
-    case HandlerId::NameGet: return spec.name_get;
-    case HandlerId::NameSet: return spec.name_set;
-    case HandlerId::NameQuery: return spec.name_query;
-    case HandlerId::NameEnum: return spec.name_enum;
-    case HandlerId::NameDel: return spec.name_del;
-    case HandlerId::IndexGet: return spec.index_get;
-    case HandlerId::IndexSet: return spec.index_set;
-    case HandlerId::IndexQuery: return spec.index_query;
-    case HandlerId::IndexEnum: return spec.index_enum;
-    case HandlerId::IndexDel: return spec.index_del;
-    case HandlerId::CrossOriginCheck: return spec.cross_origin_check;
-    case HandlerId::CrossOriginNameGet: return spec.cross_origin_name_get;
-    case HandlerId::CrossOriginNameSet: return spec.cross_origin_name_set;
-    case HandlerId::CrossOriginNameQuery: return spec.cross_origin_name_query;
-    case HandlerId::CrossOriginNameEnum: return spec.cross_origin_name_enum;
-    case HandlerId::CrossOriginNameDel: return spec.cross_origin_name_del;
-    case HandlerId::CrossOriginIndexGet: return spec.cross_origin_index_get;
-    case HandlerId::CrossOriginIndexSet: return spec.cross_origin_index_set;
-    case HandlerId::CrossOriginIndexQuery: return spec.cross_origin_index_query;
-    case HandlerId::CrossOriginIndexEnum: return spec.cross_origin_index_enum;
-    case HandlerId::CrossOriginIndexDel: return spec.cross_origin_index_del;
-    case HandlerId::PropertyNameGet:
-    case HandlerId::PropertyNameQuery:
+#define PYV8_HANDLER(id, declaration, field) case HandlerId::id: return spec.field;
+#define PYV8_PROPERTY_NAME_HANDLER(id, declaration) case HandlerId::id:
+#include "handler_table.def"
+#undef PYV8_HANDLER
+#undef PYV8_PROPERTY_NAME_HANDLER
     case HandlerId::Count:
         break;
     }
@@ -66,30 +45,13 @@ static const char* handler_declaration_name(HandlerId which)
 {
     switch (which)
     {
-    case HandlerId::NameGet: return "__v8_name_get__";
-    case HandlerId::NameSet: return "__v8_name_set__";
-    case HandlerId::NameQuery: return "__v8_name_query__";
-    case HandlerId::NameEnum: return "__v8_name_enum__";
-    case HandlerId::NameDel: return "__v8_name_del__";
-    case HandlerId::IndexGet: return "__v8_index_get__";
-    case HandlerId::IndexSet: return "__v8_index_set__";
-    case HandlerId::IndexQuery: return "__v8_index_query__";
-    case HandlerId::IndexEnum: return "__v8_index_enum__";
-    case HandlerId::IndexDel: return "__v8_index_del__";
-    case HandlerId::CrossOriginCheck: return "__v8_cross_origin_check__";
-    case HandlerId::CrossOriginNameGet: return "__v8_cross_origin_name_get__";
-    case HandlerId::CrossOriginNameSet: return "__v8_cross_origin_name_set__";
-    case HandlerId::CrossOriginNameQuery: return "__v8_cross_origin_name_query__";
-    case HandlerId::CrossOriginNameEnum: return "__v8_cross_origin_name_enum__";
-    case HandlerId::CrossOriginNameDel: return "__v8_cross_origin_name_del__";
-    case HandlerId::CrossOriginIndexGet: return "__v8_cross_origin_index_get__";
-    case HandlerId::CrossOriginIndexSet: return "__v8_cross_origin_index_set__";
-    case HandlerId::CrossOriginIndexQuery: return "__v8_cross_origin_index_query__";
-    case HandlerId::CrossOriginIndexEnum: return "__v8_cross_origin_index_enum__";
-    case HandlerId::CrossOriginIndexDel: return "__v8_cross_origin_index_del__";
-    case HandlerId::PropertyNameGet: return "__v8_property_name_get__";
-    case HandlerId::PropertyNameQuery: return "__v8_property_name_query__";
-    case HandlerId::Count: break;
+#define PYV8_HANDLER(id, declaration, field) case HandlerId::id: return declaration;
+#define PYV8_PROPERTY_NAME_HANDLER(id, declaration) case HandlerId::id: return declaration;
+#include "handler_table.def"
+#undef PYV8_HANDLER
+#undef PYV8_PROPERTY_NAME_HANDLER
+    case HandlerId::Count:
+        break;
     }
     return nullptr;
 }

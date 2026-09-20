@@ -58,6 +58,7 @@ IsolateState::initialize()
     }
 
     isolate_->SetData(0, this);
+    watchdog_ = std::make_unique<Watchdog>(isolate_);
     isolate_->SetCaptureStackTraceForUncaughtExceptions(
         true, 100,
         static_cast<StackTrace::StackTraceOptions>(
@@ -165,6 +166,12 @@ IsolateState::shutdown(bool report_error)
         callback_data_.clear();
         v8_strings_->reset();
     }
+
+    // The isolate is about to go away, and a watchdog that reached it afterwards
+    // would be a call into freed memory.  A shutdown that failed above left it
+    // running, which is what keeps a still-open isolate on its deadline.
+    if (watchdog_ != nullptr)
+        watchdog_->shutdown();
 
     v8_strings_.reset();
     isolate_->Dispose();

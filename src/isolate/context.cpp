@@ -10,14 +10,20 @@
 #include "script.h"
 #include "convert.h"
 #include "jsobject.h"
+#include "jsvalue.h"
 #include "pyclass.h"
 #include "v8tools.h"
 #include "isolate.h"
-#include "timeout_guard.h"
+#include "watchdog.h"
 
 using namespace v8;
 
 static PyObject* context_try_inspector(context_c* self, PyObject* args);
+static PyObject* context_to_js(context_c* self, PyObject* value);
+static PyObject* context_import_handle(context_c* self, PyObject* handle);
+static PyObject* context_set_deadline(context_c* self, PyObject* args, PyObject* kwargs);
+static PyObject* context_clear_deadline(context_c* self, PyObject* ignored);
+static PyObject* context_terminate(context_c* self, PyObject* ignored);
 static int context_clear(context_c* self);
 static int context_traverse(context_c* self, visitproc visit, void* arg);
 
@@ -74,18 +80,51 @@ bool context_retain_dependency(Local<Context> target, PyObject* source) {
         if (owner->resources == nullptr) owner->resources = new ContextResources();
         origin->resources->dependents.insert(owner);
         owner->resources->dependencies.insert(origin);
+        owner->resources->dependency_slots[origin] = PyList_Size(owner->dependencies);
     } catch (const std::bad_alloc&) {
         if (origin->resources) origin->resources->dependents.erase(owner);
-        if (owner->resources) owner->resources->dependencies.erase(origin);
+        if (owner->resources) {
+            owner->resources->dependencies.erase(origin);
+            owner->resources->dependency_slots.erase(origin);
+        }
         PyErr_NoMemory();
         return false;
     }
     if (PyList_Append(owner->dependencies, source) < 0) {
         origin->resources->dependents.erase(owner);
         owner->resources->dependencies.erase(origin);
+        owner->resources->dependency_slots.erase(origin);
         return false;
     }
     return true;
+}
+
+// Drops *origin* from *owner*'s reference list, by swapping the last entry into
+// its place: the list is the strong references, and the slot map says where the
+// entry is, so neither lookup nor removal walks it.
+static void context_drop_dependency(context_c* owner, context_c* origin) {
+    if (owner->dependencies == nullptr || owner->resources == nullptr)
+        return;
+    auto slot = owner->resources->dependency_slots.find(origin);
+    if (slot == owner->resources->dependency_slots.end())
+        return;
+    const Py_ssize_t index = slot->second;
+    const Py_ssize_t last = PyList_Size(owner->dependencies) - 1;
+    owner->resources->dependency_slots.erase(slot);
+    if (index < 0 || index > last)
+        return;
+    if (index != last) {
+        PyObject* moved = PyList_GetItem(owner->dependencies, last);
+        if (moved != nullptr) {
+            Py_INCREF(moved);
+            // Releasing the entry it replaces is the reference this drops.
+            if (PyList_SetItem(owner->dependencies, index, moved) == 0)
+                owner->resources->dependency_slots[(context_c*)moved] = index;
+            else
+                Py_DECREF(moved);
+        }
+    }
+    PySequence_DelItem(owner->dependencies, last);
 }
 
 static void context_unlink_dependencies(context_c* self) {
@@ -95,15 +134,13 @@ static void context_unlink_dependencies(context_c* self) {
             auto* target = *dependents.begin();
             dependents.erase(target);
             if (target->resources != nullptr) target->resources->dependencies.erase(self);
-            if (target->dependencies == nullptr) continue;
-            for (Py_ssize_t i = PyList_Size(target->dependencies); i-- > 0;)
-                if (PyList_GetItem(target->dependencies, i) == (PyObject*)self)
-                    PySequence_DelItem(target->dependencies, i);
+            context_drop_dependency(target, self);
         }
         for (auto* origin : self->resources->dependencies) {
             if (origin->resources != nullptr) origin->resources->dependents.erase(self);
         }
         self->resources->dependencies.clear();
+        self->resources->dependency_slots.clear();
     }
     Py_CLEAR(self->dependencies);
 }
@@ -121,6 +158,11 @@ PyMethodDef context_methods[] = {
     {"set_error_hooks", (PyCFunction)PythonBoundary<context_set_error_hooks>::call,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"close", (PyCFunction)PythonBoundary<context_close>::call, METH_NOARGS, NULL},
+    {"to_js", (PyCFunction)PythonBoundary<context_to_js>::call, METH_O, NULL},
+    {"import_handle", (PyCFunction)PythonBoundary<context_import_handle>::call, METH_O, NULL},
+    {"set_deadline", (PyCFunction)PythonBoundary<context_set_deadline>::call, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"clear_deadline", (PyCFunction)PythonBoundary<context_clear_deadline>::call, METH_NOARGS, NULL},
+    {"terminate", (PyCFunction)PythonBoundary<context_terminate>::call, METH_NOARGS, NULL},
     {NULL},
 };
 
@@ -157,7 +199,6 @@ static PyObject* context_try_inspector(context_c* self, PyObject* args) {
     Py_DECREF((PyObject*)result);
     Py_RETURN_TRUE;
 }
-// Python is wrong. The first entry is not modifiable and should be const char *
 static PyObject* context_isolate_id(context_c* self, void*) {
     auto state = context_require_isolate(self);
     if (!state) return nullptr;
@@ -189,7 +230,7 @@ static PyType_Slot context_slots[] = {
     {0, NULL} };
 
 static PyType_Spec context_spec = {
-    "_pyv8env.Context",
+    "pyv8.Context",
     sizeof(context_c),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
@@ -213,7 +254,7 @@ int context_type_init()
 PyObject *
 context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
-    if (!runtime_manager.require_initialized())
+    if (!runtime_manager.ensure_initialized())
         return NULL;
 
     double timeout = 0;
@@ -380,13 +421,12 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         }
         Local<FunctionTemplate> global_inteface_template = templ->templ.Get(isolate);
         global_template = global_inteface_template->InstanceTemplate();
+        Py_DECREF((PyObject*)templ);
 
     }
 
     IN_CONTEXT(Context::New(isolate, NULL, global_template));
-    self->js_context.Reset(isolate, context);
-
-    isolate_state->retain_v8_handle();
+    self->js_context.Set(isolate_state, isolate, context);
     self->has_done = true;
 
     // add env to vm
@@ -411,28 +451,11 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 
 // Every Python reference this object owns, walked by both traverse and clear so
 // the two lists cannot disagree.
-static const std::size_t context_gc_fields[] = {
-    offsetof(context_c, py_isolate),
-    offsetof(context_c, class_template_cache),
-    offsetof(context_c, function_template_cache),
-    offsetof(context_c, callback_targets),
-    offsetof(context_c, class_configs),
-    offsetof(context_c, lazy_factory),
-    offsetof(context_c, resolving_classes),
-    offsetof(context_c, lazy_names),
-    offsetof(context_c, py_global),
-    offsetof(context_c, trace_callback),
-    offsetof(context_c, trace_context_type),
-    offsetof(context_c, trace_event_names),
-    offsetof(context_c, uncaught_handler),
-    offsetof(context_c, rejection_handler),
-    offsetof(context_c, dependencies),
-};
-
-// The place a PyObject* lives in this object, for a given entry of the list.
-static PyObject** context_gc_slot(context_c* self, std::size_t offset)
+static void context_clear_python_fields(context_c* self)
 {
-    return reinterpret_cast<PyObject**>(reinterpret_cast<char*>(self) + offset);
+#define PYV8_CLEAR_FIELD(name) Py_CLEAR(self->name);
+    CONTEXT_PY_FIELDS(PYV8_CLEAR_FIELD)
+#undef PYV8_CLEAR_FIELD
 }
 
 void
@@ -462,20 +485,16 @@ context_finish_close(context_c *self)
     // The V8 side goes first: the references below are Python's, and dropping
     // them while the realm they came from is still standing is exactly what
     // closing is meant to avoid.
-    if (!self->js_context.IsEmpty()) {
-        self->js_context.Reset();
-        if (self->isolate_state != nullptr)
-            self->isolate_state->release_v8_handle();
-    }
-    for (std::size_t offset : context_gc_fields)
-        Py_CLEAR(*context_gc_slot(self, offset));
+    self->js_context.Reset();
+    context_clear_python_fields(self);
     self->isolate_state = nullptr;
     self->state = ContextState::Closed;
 }
 
 static int context_traverse(context_c* self, visitproc visit, void* arg) {
-    for (std::size_t offset : context_gc_fields)
-        Py_VISIT(*context_gc_slot(self, offset));
+#define PYV8_VISIT_FIELD(name) Py_VISIT(self->name);
+    CONTEXT_PY_FIELDS(PYV8_VISIT_FIELD)
+#undef PYV8_VISIT_FIELD
     if (self->isolate_state != nullptr)
         return self->isolate_state->traverse_context_owners(self, visit, arg);
     return 0;
@@ -546,7 +565,6 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     PyObject *filename = Py_None;
     double timeout = self->timeout;
     static const char *keywords[] = {"program", "filename", "timeout", NULL};
-    // python needs to fix their shit and make it const
     if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|Od", (char **) keywords, &program, &filename, &timeout) < 0) {
         return NULL;
     }
@@ -585,10 +603,10 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     Py_XDECREF((PyObject*)program);
     Local<Script> script = unbound_script->BindToCurrentContext();
 
-    TimeoutGuard timeout_guard(timeout, isolate);
+    DeadlineScope timeout_guard(timeout, isolate);
     if (!timeout_guard.start()) return NULL;
     debugger_prepare_script(self);
-    MaybeLocal<Value> result = script->Run(context);
+    MaybeLocal<Value> result = without_gil([&] { return script->Run(context); });
 
     if (!timeout_guard.stop()) return NULL;
     PY_PROPAGATE_JS;
@@ -628,13 +646,13 @@ context_set_trace(context_c* self, PyObject* value, void*)
 }
 
 PyObject *
-context_get_timeout(context_c *self, void *shit)
+context_get_timeout(context_c *self, void *ignored)
 {
     return PyFloat_FromDouble(self->timeout);
 }
 
 int
-context_set_timeout(context_c *self, PyObject *value, void *shit)
+context_set_timeout(context_c *self, PyObject *value, void *ignored)
 {
     double timeout = PyFloat_AsDouble(value);
     if (PyErr_Occurred())
@@ -644,7 +662,7 @@ context_set_timeout(context_c *self, PyObject *value, void *shit)
 }
 
 PyObject *
-context_get_global(context_c *self, void *shit)
+context_get_global(context_c *self, void *ignored)
 {
     ExecutionScope execution(self);
     if (!execution) return nullptr;
@@ -762,5 +780,110 @@ context_set_error_hooks(context_c *self, PyObject *args, PyObject *kwargs)
     if (!execution) return nullptr;
     if (!error_hooks_install(self, on_uncaught, on_rejection))
         return NULL;
+    PYV8_RETURN_NONE;
+}
+
+PyObject*
+context_to_js(context_c* self, PyObject* value)
+{
+    // Converts a Python value into this realm: the structural counterpart of
+    // `pyv8.transfer`, and the reason a transfer needs no JavaScript trampoline.
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    Local<Context> base = execution.context();
+    Local<Value> converted = js_from_py(value, base);
+    if (converted.IsEmpty() || PyErr_Occurred())
+        return nullptr;
+    return py_from_js(converted, base);
+}
+
+PyObject*
+context_import_handle(context_c* self, PyObject* handle)
+{
+    // A handle from another realm of the same isolate: taking a reference on its
+    // realm here is what keeps that realm alive until this one closes.
+    auto* state = context_require_isolate(self);
+    if (state == nullptr)
+        return nullptr;
+    PyObject* source = nullptr;
+    if (PyObject_TypeCheck(handle, js_object_type))
+    {
+        js_object* value = (js_object*)handle;
+        if (!js_object_require_active(value))
+            return nullptr;
+        if (value->isolate_state != state)
+        {
+            PyErr_SetString(PyExc_RuntimeError,
+                            "JavaScript value belongs to another isolate; "
+                            "use pyv8.transfer() to copy it");
+            return nullptr;
+        }
+        source = value->py_context;
+    }
+    else if (PyObject_TypeCheck(handle, js_value_type))
+    {
+        js_value* value = (js_value*)handle;
+        if (value->isolate_state != state)
+        {
+            PyErr_SetString(PyExc_RuntimeError,
+                            "JavaScript value belongs to another isolate; "
+                            "use pyv8.transfer() to copy it");
+            return nullptr;
+        }
+        source = value->py_context;
+    }
+    else
+    {
+        PyErr_SetString(PyExc_TypeError, "import_handle expects a JSObject or JSValue");
+        return nullptr;
+    }
+    if (source == nullptr || source == (PyObject*)self)
+    {
+        Py_INCREF(handle);
+        return handle;
+    }
+    IN_ISOLATE(state);
+    if (!context_retain_dependency(self->js_context.Get(isolate), source))
+        return nullptr;
+    Py_INCREF(handle);
+    return handle;
+}
+
+PyObject*
+context_set_deadline(context_c* self, PyObject* args, PyObject* kwargs)
+{
+    PyObject* seconds = NULL;
+    static const char* keywords[] = {"seconds", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char**)keywords, &seconds))
+        return NULL;
+    double value = PyFloat_AsDouble(seconds);
+    if (PyErr_Occurred())
+        return NULL;
+    auto* state = context_require_isolate(self);
+    if (state == nullptr)
+        return NULL;
+    state->watchdog().arm(value);
+    PYV8_RETURN_NONE;
+}
+
+PyObject*
+context_clear_deadline(context_c* self, PyObject* ignored)
+{
+    (void)ignored;
+    auto* state = context_require_isolate(self);
+    if (state == nullptr)
+        return NULL;
+    state->watchdog().disarm();
+    PYV8_RETURN_NONE;
+}
+
+PyObject*
+context_terminate(context_c* self, PyObject* ignored)
+{
+    (void)ignored;
+    auto* state = context_require_isolate(self);
+    if (state == nullptr)
+        return NULL;
+    state->watchdog().terminate_now();
     PYV8_RETURN_NONE;
 }

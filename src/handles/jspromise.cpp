@@ -19,7 +19,7 @@ static PyType_Slot js_promise_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_promise_spec = {
-    "_pyv8.Promise",
+    "pyv8.JSPromise",
     sizeof(js_promise),
     0,
     Py_TPFLAGS_DEFAULT,
@@ -49,7 +49,7 @@ int js_promise_type_init()
 PyObject *
 js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 {
-    if (!runtime_manager.require_initialized())
+    if (!runtime_manager.ensure_initialized())
         return NULL;
     IsolateState* isolate_state = current_isolate_state();
     if (isolate_state == nullptr)

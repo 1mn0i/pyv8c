@@ -256,7 +256,8 @@ python -m pytest
 
 ## 重要限制
 
-- `import pyv8` 会初始化进程级 V8 Runtime 和默认 Isolate。
+- `import pyv8` 不启动 V8：进程级 V8 Runtime 和默认 Isolate 在首次使用时才创建，启动内容
+  由仅在首次使用前有效的 `pyv8.configure(...)` 决定，`pyv8.is_initialized()` 可查询状态。
 - `shutdown_v8()` 是不可逆操作，关闭后不能在同一进程重新初始化 V8。
 - 关闭 Isolate 前必须释放它创建的 Context、Script、JSObject 和 JSFunction。
 - JSObject、JSFunction、JSPromise、JSTypeArray 和 Script 不能跨 Isolate 使用。

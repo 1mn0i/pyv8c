@@ -2,6 +2,7 @@
 #define PYV8_HANDLE_RESOURCE_H
 #include "context.h"
 #include "isolate_state.h"
+#include "v8_handle_slot.h"
 
 // How an object standing for a Python one carries it: the first internal field
 // marks it, the second is the owner.
@@ -24,11 +25,6 @@ struct HandleRegistration {
         context_unregister_handle(context, subject);
         context = nullptr;
         subject = nullptr;
-    }
-    template<class T> void reset(v8::Persistent<T>& handle, IsolateState* state) {
-        if (handle.IsEmpty()) return;
-        handle.Reset();
-        state->release_v8_handle();
     }
 };
 #endif

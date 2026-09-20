@@ -4,6 +4,7 @@
 #include <Python.h>
 #include "context.h"
 #include "handle_resource.h"
+#include "v8_handle_slot.h"
 
 typedef struct {
     PyObject_HEAD
@@ -22,7 +23,7 @@ typedef struct {
     // Error.prototype, then 1 when they do and -1 when they do not.  The answer
     // belongs to the class, so it is reached once and remembered.
     int error_prototype;
-    v8::Persistent<v8::FunctionTemplate> templ;
+    V8HandleSlot<v8::FunctionTemplate> templ;
 } py_class;
 
 int py_class_type_init();
@@ -30,6 +31,7 @@ extern PyTypeObject* py_class_type;
 
 PyObject* py_class_new(PyObject* cls, context_c *py_ctx);
 void py_class_dealloc(py_class* self);
+// Returns a reference of its own; the realm's cache keeps the template alive.
 PyObject* py_class_to_template(PyObject* cls, context_c *py_ctx);
 v8::Local<v8::Function> py_class_get_constructor(v8::Local<v8::Context> context, py_class* self, py_class* parent);
 v8::Local<v8::Object> py_class_create_js_object(py_class *self, PyObject *py_object, v8::Local<v8::Context> context);

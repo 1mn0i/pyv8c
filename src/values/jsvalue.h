@@ -11,7 +11,7 @@ typedef struct
 {
     PyObject_HEAD
     IsolateState* isolate_state;
-    v8::Persistent<v8::Value> value;
+    V8HandleSlot<v8::Value> value;
     PyObject* py_context;
     PyObject* py_isolate;
     HandleRegistration registration;

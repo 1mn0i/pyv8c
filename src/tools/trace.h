@@ -25,7 +25,7 @@ inline PyObject* trace_value(v8::Local<v8::Value> value, v8::Local<v8::Context> 
     if (!value->IsObject()) return py_from_js(value, context);
     auto object = value.As<v8::Object>();
     auto* state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
-    if (object->InternalFieldCount() == OBJECT_INTERNAL_FIELDS &&
+    if (object->InternalFieldCount() == OBJECT_INTERNAL_FIELDS && state != nullptr &&
         object->GetInternalField(PYTHON_MAGIC_FIELD) == state->v8_string(V8StringId::PythonObjectMagic)) {
         auto* result = IsolateState::python_object(object);
         Py_XINCREF((PyObject*)result);
