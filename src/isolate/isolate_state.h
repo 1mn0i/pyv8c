@@ -57,10 +57,20 @@ public:
     bool error_hooks_installed() const { return error_hooks_installed_; }
     void set_error_hooks_installed(bool installed) { error_hooks_installed_ = installed; }
 
-    PyObject* javascript_name();
     v8::Local<v8::String> v8_string(V8StringId id) const;
 
     bool track_python_object(v8::Local<v8::Object> object, PyObject* py_object, context_c* context);
+    // The JavaScript object that already stands for *py_object* in *context*.
+    //
+    // Wrapping a Python object twice in one realm would give JavaScript two
+    // objects where it can only tell one apart, so the pair is remembered and
+    // handed back.  An empty handle means "not wrapped here yet".
+    v8::Local<v8::Object> cached_js_object(context_c* context, PyObject* py_object);
+    // The Python handle for that same pair, built on first use.
+    //
+    // Answers a new reference, or null with no error set when the pair is not
+    // known here.
+    PyObject* cached_js_wrapper(context_c* context, PyObject* py_object);
     static PyObject* python_object(v8::Local<v8::Object> object);
     static void restore_python_exception(v8::Local<v8::Object> object);
     int traverse_context_owners(context_c* context, visitproc visit, void* arg);
@@ -81,6 +91,7 @@ public:
 
 private:
     struct PythonObjectOwner;
+    static PythonObjectOwner* find_python_owner(context_c* context, PyObject* py_object);
     PythonObjectOwner* pending_owners_ = nullptr;
     DeferredPythonRelease* pending_wrappers_ = nullptr;
 
@@ -93,7 +104,6 @@ private:
     std::unique_ptr<V8StringCache> v8_strings_;
     v8::Isolate* isolate_;
     std::size_t live_v8_handles_;
-    PyObject* javascript_name_;
     bool error_hooks_installed_;
     std::unordered_set<PythonObjectOwner*> python_owners_;
     std::unordered_set<CallbackData*> callback_data_;

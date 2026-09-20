@@ -2,7 +2,6 @@
 
 #include "error_hooks.h"
 #include "isolate_scope.h"
-#include "pyclass.h"
 #include "context.h"
 #include "v8_compat.h"
 
@@ -14,7 +13,6 @@ using namespace v8;
 IsolateState::IsolateState()
     : isolate_(nullptr),
       live_v8_handles_(0),
-      javascript_name_(nullptr),
       error_hooks_installed_(false),
       disposed_(false)
 {
@@ -154,7 +152,6 @@ IsolateState::shutdown(bool report_error)
         // The reporters go first: they hold references into Python and could
         // otherwise be called while the isolate is already being torn down.
         error_hooks_uninstall(this);
-        Py_CLEAR(javascript_name_);
         clear_python_owners();
         drain_deferred();
         for (auto* data : callback_data_) {

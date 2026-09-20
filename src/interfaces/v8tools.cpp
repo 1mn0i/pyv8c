@@ -2,7 +2,7 @@
 #include "idl_spec.h"
 #include "convert.h"
 #include "faker/trace.h"
-#include "pyclass_handlers_internal.h"
+#include "pyclass_handlers.h"
 
 #include <climits>
 

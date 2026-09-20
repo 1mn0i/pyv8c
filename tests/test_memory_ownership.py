@@ -283,3 +283,75 @@ def test_shutdown_and_close_in_subprocess(source):
         capture_output=True, text=True, timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_host_object_pairs_do_not_accumulate_or_alias_over_a_long_run():
+    """Python 对象与 JS 对象的配对表必须随对象一起收缩。
+
+    长时间运行的程序会不停创建新的宿主对象。每一轮都必须:新对象拿到新的 JS
+    对象(留下旧条目的表会把上一个 JS 对象交回来,WeakSet 立刻能认出来),并且
+    一旦双方都放掉,配对条目就要消失——条目持有着对 Python 对象的强引用,留下
+    来就等于把宿主对象永久钉在内存里。
+    """
+    context = pyv8.Context(Window())
+    try:
+        class Payload:
+            pass
+
+        context.exec_js("globalThis.seen = new WeakSet()")
+        refs = []
+        for _ in range(300):
+            payload = Payload()
+            refs.append(weakref.ref(payload))
+            context.expose(payload=payload)
+            assert context.exec_js("seen.has(payload) === false")
+            context.exec_js("seen.add(payload); payload = null")
+            del payload
+        collect()
+        assert [ref for ref in refs if ref() is not None] == []
+    finally:
+        context.close()
+
+
+def test_host_object_identity_survives_unhashable_and_slotted_types():
+    """不可哈希或不可创建弱引用的宿主对象也只能有一个 JS 对象。
+
+    身份表按对象地址索引,不把对象当作字典键,也不要求它可被弱引用;这两种宿主
+    类以前拿不到缓存,每次跨边界都会长出第二个 JS 对象。
+    """
+    context = pyv8.Context(Window())
+    try:
+        class Unhashable:
+            __hash__ = None
+
+        class Slotted:
+            __slots__ = ()
+
+        for cls in (Unhashable, Slotted):
+            instance = cls()
+            context.expose(first=instance, second=instance)
+            assert context.exec_js("first === second") is True
+            context.exec_js("first = second = null")
+            del instance
+    finally:
+        context.close()
+
+
+def test_close_releases_host_object_pairs_and_their_handles():
+    """关闭 Context 必须放掉配对表里的每一对,包括已经交给 Python 的句柄。"""
+
+    class Payload:
+        pass
+
+    context = pyv8.Context(Window())
+    payload = Payload()
+    ref = weakref.ref(payload)
+    context.expose(payload=payload)
+    handle = context.js_obj(payload)
+    assert handle is not None
+    context.close()
+    with pytest.raises(RuntimeError):
+        handle.marker
+    del handle, payload
+    collect()
+    assert ref() is None

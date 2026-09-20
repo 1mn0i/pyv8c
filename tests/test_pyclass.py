@@ -68,6 +68,40 @@ class TestPyClass(unittest.TestCase):
         # 验证结果
         self.assertEqual(list(result), [10, 20])
 
+    def test_exception_subclass_instances_are_javascript_errors(self):
+        """继承 Exception 的类,其实例必须是 JavaScript 的 Error。
+
+        这个判断是类级的:实例的原型链由类决定,所以它既要在第一个实例上成立,
+        也要在这个判断已经被用过之后再建实例时成立。先建子类再建基类是最容易
+        出错的那一边,因为标记在第一次使用时就被清掉了。
+        """
+        constructible = IdlSpec(constructor_behavior=pyv8.FlagConstructor.kAll)
+
+        class MyError(Exception):
+            __v8_idl_spec__ = constructible
+
+            def __init__(self, win=None):
+                Exception.__init__(self)
+
+        class SubError(MyError):
+            __v8_idl_spec__ = constructible
+
+        class Plain:
+            __v8_idl_spec__ = constructible
+
+            def __init__(self, win=None):
+                pass
+
+        self.context.expose(MyError=MyError, SubError=SubError, Plain=Plain)
+
+        self.assertTrue(self.context.exec_js("new SubError() instanceof Error"))
+        self.assertTrue(self.context.exec_js("new MyError() instanceof Error"))
+        self.assertTrue(self.context.exec_js(
+            "try { throw new MyError(); } catch (e) { e instanceof MyError }"))
+        self.assertFalse(self.context.exec_js("new Plain() instanceof Error"))
+        self.assertTrue(self.context.exec_js(
+            "Object.getPrototypeOf(Plain.prototype) === Object.prototype"))
+
     def test_class_properties(self):
         """测试实类属性调用"""
         class ClassWithProperties:

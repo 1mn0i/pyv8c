@@ -34,10 +34,11 @@ from v8_build import (  # noqa: E402
 )
 
 # 获取源文件列表
+# The directories under src belong to the source layout, not to the build, so the
+# list is collected by recursing: a new group must not need a new glob here.
 sources = sorted(
     str(path.relative_to(PROJECT_ROOT)).replace(os.sep, "/")
-    for source_dir in (PROJECT_ROOT / "src", PROJECT_ROOT / "src" / "faker")
-    for path in source_dir.glob("*.cpp")
+    for path in (PROJECT_ROOT / "src").rglob("*.cpp")
 )
 
 # 库配置
@@ -351,7 +352,17 @@ ext_modules = [
     Extension(
         'pyv8._pyv8',
         sources=sources,
-        include_dirs=['src'],
+        # Every source keeps including its neighbours by bare file name, so the
+        # layout groups are added as include roots rather than written into the
+        # includes themselves.
+        include_dirs=[
+            'src',
+            'src/isolate',
+            'src/values',
+            'src/handles',
+            'src/tools',
+            'src/interfaces',
+        ],
         library_dirs=[],
         libraries=libraries,
         extra_compile_args=extra_compile_args,

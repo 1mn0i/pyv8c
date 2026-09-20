@@ -111,7 +111,7 @@ PyObject* js_function_repr(js_function* self) {
             maybe_raw_tostring = faker.As<v8::Object>()->Get(
                 context, self->base.isolate_state->v8_string(V8StringId::RawToString));
             if (maybe_raw_tostring.ToLocal(&raw_tostring) && raw_tostring->IsFunction()) {
-                v8::MaybeLocal<v8::Value> maybe_ret = raw_tostring.As<v8::Function>()->Call(context, object, 0, NULL);
+                maybe_ret = raw_tostring.As<v8::Function>()->Call(context, object, 0, NULL);
                 if (maybe_ret.ToLocal(&ret)) {
                     String::Utf8Value str(isolate, ret);
                     repr = PyUnicode_DecodeUTF8(*str, str.length(), NULL);

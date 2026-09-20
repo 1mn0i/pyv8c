@@ -4,8 +4,7 @@
 #include <new>
 #include <sstream>
 
-#include "script.h"
-#include "pyclass.h"
+#include "handle_resource.h"
 #include "convert.h"
 
 using namespace v8;

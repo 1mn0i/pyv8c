@@ -31,6 +31,68 @@ class TestConversion(unittest.TestCase):
         self.assertEqual(js_int, 42)
         self.assertAlmostEqual(js_float, 3.14)
 
+    def test_strings_survive_both_directions_byte_for_byte(self):
+        """字符串在两个方向上都必须是同一串字符。
+
+        转换对短字符串走的是字节级快路(ASCII 原样,高位字节按 Latin-1),所以
+        这里覆盖的正是"字节级捷径可能出错"的那些用例:高位字节、超出一个字节
+        的字符、内嵌 NUL、以及内联缓冲两侧的长度。
+        """
+        cases = [
+            "",
+            "abc",
+            "a" * 127,
+            "a" * 128,
+            "a" * 129,
+            "\xe9",
+            "caf\xe9",
+            "\xe9" * 130,
+            "h\u00e9llo w\u00f6rld",
+            "\u4e16\u754c",
+            "a\x00b",
+            "\xff\xfe",
+            "\U0001f600",
+        ]
+
+        def echo(value):
+            self.assertIsInstance(value, str)
+            return value
+
+        self.context.expose(echo=echo)
+        for text in cases:
+            with self.subTest(text=repr(text)):
+                self.context.expose(value=text)
+                self.assertEqual(self.context.exec_js("typeof value"), "string")
+                # JavaScript counts UTF-16 code units, not code points.
+                self.assertEqual(
+                    self.context.exec_js("value.length"),
+                    len(text.encode("utf-16-le")) // 2,
+                )
+                self.assertEqual(self.context.exec_js("echo(value)"), text)
+                self.assertEqual(self.context.exec_js("echo(echo(value))"), text)
+
+    def test_strings_made_in_javascript_convert_unchanged(self):
+        """JavaScript 造出来的字符串也要按同样的规则落到 Python。"""
+        expected = {
+            "''": "",
+            "'abc'": "abc",
+            "'\\u00e9'": "\xe9",
+            "'\\u00e9'.repeat(200)": "\xe9" * 200,
+            "'a'.repeat(300)": "a" * 300,
+            "'\\u4e16\\u754c'": "\u4e16\u754c",
+            "'\\ud83d\\ude00'": "\U0001f600",
+            "'a\\u0000b'": "a\x00b",
+        }
+        for script, text in expected.items():
+            with self.subTest(script=script):
+                self.assertEqual(self.context.exec_js(script), text)
+
+        # A lone surrogate has no UTF-8 encoding.  The conversion may replace it,
+        # but it must not crash and must not lose the text around it.
+        lone = self.context.exec_js("'a\\ud800b'")
+        self.assertIsInstance(lone, str)
+        self.assertTrue(lone.startswith("a") and lone.endswith("b"), repr(lone))
+
     def test_large_integer_conversion_does_not_truncate_on_lp64(self):
         """验证超过 Int32 的 Python 整数不会在 C++ 层被截断。"""
         self.context.expose(large_positive=3_000_000_000,

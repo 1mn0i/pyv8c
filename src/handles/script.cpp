@@ -59,27 +59,6 @@ script_type_init()
 }
 
 PyObject *
-construct_script_name(Local<Context> context, Local<Value> js_name, int id)
-{
-    PyObject *name;
-    if (js_name.IsEmpty() || js_name->IsUndefined()) {
-        IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
-        name = isolate_state->javascript_name();
-        PyErr_PROPAGATE(name);
-        Py_INCREF((PyObject*)name);
-    } else {
-        name = py_from_js(js_name, context);
-        PyErr_PROPAGATE(name);
-    }
-    if (id == 0) {
-        return name;
-    }
-    PyObject *script_name = PyUnicode_FromFormat("%S-%d", name, id);
-    Py_XDECREF((PyObject*)name);
-    return script_name;
-}
-
-PyObject *
 script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
     if (!runtime_manager.require_initialized())

@@ -13,6 +13,21 @@ struct context_c;
 enum class ContextState { Active, Closing, Closed };
 struct ContextLifetime {
     context_c* owner;
+
+    // The pair table of this realm: a Python host object and the JavaScript
+    // object that stands for it here.  The value is an
+    // IsolateState::PythonObjectOwner*, kept opaque so this header stays free of
+    // the isolate's internals.
+    //
+    // Neither side is owned by the table.  The key is a borrowed pointer that the
+    // owner -- the value -- holds the only strong reference to, and an entry is
+    // erased the moment its owner is released, so the table can never make a
+    // Python object immortal and never keeps a JavaScript object from being
+    // collected.  It lives here rather than on the context because a handle may
+    // outlive the context and still has to see an empty table instead of freed
+    // memory.
+    std::unordered_map<PyObject*, void*> js_object_cache;
+
     explicit ContextLifetime(context_c* owner) : owner(owner) {}
 };
 
@@ -32,7 +47,6 @@ typedef struct context_c
     IsolateState* isolate_state;
     PyObject* py_isolate;
     v8::Persistent<v8::Context> js_context;
-    PyObject* js_object_cache;
     PyObject* class_template_cache;
     PyObject* function_template_cache;
     PyObject* callback_targets;
@@ -95,9 +109,6 @@ PyObject* context_set_error_hooks(context_c* self, PyObject* args, PyObject* kwa
 #define OBJECT_PROTOTYPE_SLOT 2
 #define ERROR_PROTOTYPE_SLOT 3
 #define CTX_TYPE 4
-
-v8::Local<v8::Object> context_get_cached_jsobject(v8::Local<v8::Context> context, PyObject* py_object);
-void context_set_cached_jsobject(v8::Local<v8::Context> context, PyObject* py_object, v8::Local<v8::Object> object);
 
 PyObject* context_get_global(context_c* self, void* shit);
 

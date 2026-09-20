@@ -6,6 +6,7 @@
 #include "jsobject.h"
 #include "pyfunction.h"
 #include "pyclass.h"
+#include "pyclass_handlers.h"
 #include "idl_spec.h"
 #include "pyclass_cross_origin_handlers.h"
 #include "v8tools.h"
@@ -195,6 +196,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     self->unconstructable = 0;
     self->has_constructor = 0;
     self->to_obj = 0;
+    self->error_prototype = 0;
     self->templ.Reset();
 
     self->operation_callback_data = PyList_New(0);
@@ -515,16 +517,6 @@ py_class_new(PyObject *cls, context_c * py_ctx)
 }
                                                        
 
-bool 
-if_property_has(PyObject *property, const char *what)
-{
-    if (!PyObject_TypeCheck(property, &PyProperty_Type))
-        return true;
-    PyObject *value = PyObject_GetAttrString(property, what);
-    Py_XDECREF((PyObject*)value);
-    return value == Py_None;
-}
-
 // 0 on success, -1 on failure
 int 
 add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObject *member_value, Local<FunctionTemplate> templ, Local<Signature> sig, const char* world)
@@ -626,20 +618,22 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
     return function;
 }
 
-bool
-py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context)
+// Whether the class an object was made from stands for a JavaScript Error, and
+// if so, the act of giving its prototype Error.prototype.
+//
+// The answer is a property of the class, not of the instance: the marker this
+// reads is deleted as it is applied, so an object that already inherits from
+// Error finds nothing and keeps what it has.  It is still per *class* work,
+// which is why the caller settles it once and remembers the answer -- walking
+// the prototype chain of every object a class ever produces is a cost that grows
+// with the class hierarchy for an answer that cannot change.
+//
+// Answers 1 when the class inherits from Error, -1 when it does not, and 0 when
+// it could not be told (with the Python error set).
+static int
+resolve_error_prototype(Local<Object> js_object, Local<Context> context,
+                        Isolate* isolate, IsolateState* isolate_state)
 {
-    Isolate* isolate = v8_compat::context_isolate(context);
-    IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
-    auto* owner = context_from_v8(context);
-    if (!isolate_state->track_python_object(js_object, py_object, owner)) {
-        return false;
-    }
-    js_object->SetInternalField(
-        PYTHON_MAGIC_FIELD,
-        isolate_state->v8_string(V8StringId::PythonObjectMagic));
-    // find out if the object is supposed to inherit from Error 
-    // the information is in an internal field on the last prototype
     Local<Value> last_proto = js_object;
     Local<Object> last_proto_object;
     while (!last_proto->StrictEquals(context->GetEmbedderData(OBJECT_PROTOTYPE_SLOT))) {
@@ -652,25 +646,45 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
     Local<Value> proto_override;
     if (!last_proto_object->GetPrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).ToLocal(&proto_override)) {
         PyErr_SetString(PyExc_RuntimeError, "failed to read JavaScript prototype marker");
+        return 0;
+    }
+    if (!proto_override->StrictEquals(
+            isolate_state->v8_string(V8StringId::ErrorPrototypeMagic)))
+        return -1;
+    bool delete_worked;
+    if (!last_proto_object->DeletePrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).To(&delete_worked)) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to clear JavaScript prototype marker");
+        return 0;
+    }
+    bool set_worked;
+    if (!last_proto_object->SetPrototype(context, context->GetEmbedderData(ERROR_PROTOTYPE_SLOT)).To(&set_worked)) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript error prototype");
+        return 0;
+    }
+    return 1;
+}
+
+bool
+py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context,
+                        py_class* self)
+{
+    Isolate* isolate = v8_compat::context_isolate(context);
+    IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
+    auto* owner = context_from_v8(context);
+    if (!isolate_state->track_python_object(js_object, py_object, owner)) {
         return false;
     }
-    if (proto_override->StrictEquals(
-            isolate_state->v8_string(V8StringId::ErrorPrototypeMagic))) {
-        bool delete_worked;
-        if (!last_proto_object->DeletePrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).To(&delete_worked)) {
-            PyErr_SetString(PyExc_RuntimeError, "failed to clear JavaScript prototype marker");
+    js_object->SetInternalField(
+        PYTHON_MAGIC_FIELD,
+        isolate_state->v8_string(V8StringId::PythonObjectMagic));
+    if (self == nullptr || self->error_prototype == 0) {
+        const int error_prototype = resolve_error_prototype(js_object, context, isolate, isolate_state);
+        if (error_prototype == 0)
             return false;
-        }
-        bool set_worked;
-        if (!last_proto_object->SetPrototype(context, context->GetEmbedderData(ERROR_PROTOTYPE_SLOT)).To(&set_worked)) {
-            PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript error prototype");
-            return false;
-        }
+        if (self != nullptr)
+            self->error_prototype = error_prototype;
     }
-    context_set_cached_jsobject(context, py_object, js_object);
-    if (PyErr_Occurred()) {
-        return false;
-    }
+    // The pair is published by track_python_object, which owns it.
     return true;
 }
 
@@ -683,18 +697,19 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
         return Local<Object>();
     }
     EscapableHandleScope hs(isolate);
-    Local<Object> object = context_get_cached_jsobject(context, py_object);
+    context_c* owner_context = context_from_v8(context);
+    Local<Object> object = owner_context == nullptr
+        ? Local<Object>()
+        : self->isolate_state->cached_js_object(owner_context, py_object);
     if (!object.IsEmpty()) {
         return hs.Escape(object);
     }
-    if (PyErr_Occurred())
-        return Local<Object>();
     if (!self->templ.Get(isolate)->InstanceTemplate()->NewInstance(context).ToLocal(&object)) {
         PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript object template");
         return Local<Object>();
     }
     delete_constructor(self, context);
-    if (!py_class_init_js_object(object, py_object, context)) {
+    if (!py_class_init_js_object(object, py_object, context, self)) {
         return Local<Object>();
     }
     return hs.Escape(object);

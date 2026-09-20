@@ -7,7 +7,7 @@
 #include "convert.h"
 #include "pyclass.h"
 #include "idl_spec.h"
-#include "pyclass_handlers_internal.h"
+#include "pyclass_handlers.h"
 #include "faker/trace.h"
 
 using namespace v8;
@@ -19,16 +19,24 @@ enum FlagConstructor {
     kAll = kNew | kCall,
 };
 
-#define SETUP                                                         \
-    Isolate* isolate = info.GetIsolate();                             \
-    HandleScope hs(isolate);                                          \
-    Local<Context> context = isolate->GetCurrentContext();            \
-    Context::Scope cs(context);  
-
-
-
-#define Info(T) const PropertyCallbackInfo<T> &info
-
+// The keyword a constructor is offered its window under.
+//
+// A construction used to build a dictionary for this one keyword, every time:
+// the name is therefore interned once and handed to the call as a key-name tuple
+// instead, which is the whole of what a keyword call needs.
+static PyObject* constructor_window_keyword()
+{
+    static PyObject* cached = nullptr;
+    if (cached == nullptr)
+    {
+        PyObject* name = PyUnicode_InternFromString("win");
+        if (name == nullptr)
+            return nullptr;
+        cached = PyTuple_Pack(1, name);
+        Py_DECREF((PyObject*)name);
+    }
+    return cached;
+}
 
 static void
 py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
@@ -67,34 +75,97 @@ py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
         return;
     }
 
-    PyObject* kwargs = PyDict_New();
-    if (kwargs == NULL) {
-        js_throw_py();
-        return;
+    // The arguments travel as a vectorcall array: the JavaScript ones, then the
+    // window under the one keyword a constructor is offered.  A tuple and a
+    // keyword dictionary per `new Something()` were two allocations for an
+    // argument list that is almost always empty.
+    const int argument_count = info.Length();
+    const int keyword_count = py_context->py_global != nullptr ? 1 : 0;
+    PyObject* inline_arguments[8] = {};
+    std::unique_ptr<PyObject*[]> heap_arguments;
+    PyObject** arguments = inline_arguments;
+    const int capacity = argument_count + keyword_count;
+    if (capacity > (int)(sizeof(inline_arguments) / sizeof(inline_arguments[0]))) {
+        heap_arguments.reset(new (std::nothrow) PyObject*[capacity]());
+        if (heap_arguments == nullptr) {
+            PyErr_NoMemory();
+            js_throw_py();
+            return;
+        }
+        arguments = heap_arguments.get();
     }
-    if (PyDict_SetItemString(kwargs, "win", py_context->py_global) < 0) {
+    // *owned* counts the arguments this function holds a reference to: the
+    // converted JavaScript ones.  The window travels borrowed, so it is never in
+    // that count and never decref'd.
+    int owned = 0;
+    int filled = 0;
+    for (int index = 0; index < argument_count; ++index) {
+        PyObject* argument = py_argument_from_js(info[index], context);
+        if (argument == nullptr) {
+            while (owned > 0) Py_DECREF(arguments[--owned]);
+            js_throw_py();
+            return;
+        }
+        arguments[filled++] = argument;
+        owned++;
+    }
+    PyObject* keywords = nullptr;
+    if (keyword_count != 0) {
+        arguments[filled++] = py_context->py_global;
+        keywords = constructor_window_keyword();
+        if (keywords == nullptr) {
+            while (owned > 0) Py_DECREF(arguments[--owned]);
+            js_throw_py();
+            return;
+        }
+    }
+    PyObject* new_object = nullptr;
+    if (self->constructor_adapter != NULL) {
+        // An adapter takes the class, the arguments and the keywords as three
+        // objects, so this path still has to build them.
+        PyObject* args = PyTuple_New(owned);
+        if (args == nullptr) {
+            while (owned > 0) Py_DECREF(arguments[--owned]);
+            js_throw_py();
+            return;
+        }
+        for (int index = 0; index < owned; ++index) {
+            Py_INCREF(arguments[index]);
+            PyTuple_SetItem(args, index, arguments[index]);
+        }
+        PyObject* kwargs = PyDict_New();
+        if (kwargs == NULL) {
+            Py_DECREF((PyObject*)args);
+            while (owned > 0) Py_DECREF(arguments[--owned]);
+            js_throw_py();
+            return;
+        }
+        if (keyword_count != 0 &&
+            PyDict_SetItem(kwargs, PyTuple_GetItem(keywords, 0), py_context->py_global) < 0) {
+            Py_DECREF((PyObject*)args);
+            Py_DECREF((PyObject*)kwargs);
+            while (owned > 0) Py_DECREF(arguments[--owned]);
+            js_throw_py();
+            return;
+        }
+        new_object = PyObject_CallFunctionObjArgs(
+            self->constructor_adapter, self->cls, args, kwargs, NULL);
+        Py_DECREF((PyObject*)args);
         Py_DECREF((PyObject*)kwargs);
-        js_throw_py();
-        return;
     }
-    PyObject* args = pys_from_jss(info, context);
-    if (args == NULL) {
-        Py_DECREF((PyObject*)kwargs);
-        js_throw_py();
-        return;
+    else {
+        // The count is of positional arguments: the keyword's value is the entry
+        // after them, which is where the call reads it from.
+        new_object = PyObject_Vectorcall(
+            self->cls, arguments, (size_t)owned, keywords);
     }
-    PyObject* new_object = self->constructor_adapter != NULL
-        ? PyObject_CallFunctionObjArgs(
-            self->constructor_adapter, self->cls, args, kwargs, NULL)
-        : PyObject_Call(self->cls, args, kwargs);
-    Py_DECREF((PyObject*)args);
-    Py_DECREF((PyObject*)kwargs);
+    while (owned > 0) Py_DECREF(arguments[--owned]);
     if (new_object == NULL) {
         js_throw_py();
         return;
     }
     if (!py_class_init_js_object(
-            v8_compat::callback_holder(info), new_object, context)) {
+            v8_compat::callback_holder(info), new_object, context, self)) {
         Py_DECREF((PyObject*)new_object);
         js_throw_py();
         return;

@@ -45,7 +45,7 @@ Console 的 Runtime.evaluate 不消耗首句暂停。默认每个 Target 生命�
 
 | 层 | 文件 | 职责 |
 | --- | --- | --- |
-| V8 Inspector | src/debugger.cpp | 每 Isolate 一个 InspectorHub，Context 独立 group，session 独立原生会话 |
+| V8 Inspector | src/tools/debugger.cpp | 每 Isolate 一个 InspectorHub，Context 独立 group，session 独立原生会话 |
 | 原生进入调度 | src/isolate_scope.cpp、Context._try_inspector | 非阻塞进入 Isolate，忙时登记释放通知 |
 | 调度 | pyv8/devtools/scheduler.py | 每 Isolate 一个邮箱，启动等待和嵌套暂停共享命令，不搬运临时队列 |
 | 会话与执行状态 | session.py | ready、启动等待、首句暂停、原生会话关闭 |

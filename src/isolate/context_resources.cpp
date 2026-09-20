@@ -1,5 +1,7 @@
 #include "isolate_state.h"
 #include "context.h"
+#include "jsobject.h"
+#include "pyv8.h"
 #include "pyclass.h"
 #include "v8_compat.h"
 #include <cassert>
@@ -9,7 +11,7 @@ using namespace v8;
 struct IsolateState::PythonObjectOwner
 {
     explicit PythonObjectOwner(IsolateState* isolate_state)
-        : isolate_state(isolate_state), context(nullptr), py_object(nullptr), exc_type(nullptr), exc_traceback(nullptr)
+        : isolate_state(isolate_state), context(nullptr), py_object(nullptr), exc_type(nullptr), exc_traceback(nullptr), wrapper(nullptr)
     {
     }
 
@@ -19,6 +21,14 @@ struct IsolateState::PythonObjectOwner
     PyObject* py_object;
     PyObject* exc_type;
     PyObject* exc_traceback;
+    // Shared with the context so the pair table stays reachable -- and writable --
+    // even while the context is being torn down.
+    std::shared_ptr<ContextLifetime> lifetime;
+    // The Python handle this pair hands to Python, built the first time one is
+    // asked for.  Borrowed here: the one reference it holds belongs to V8's weak
+    // callback, which gives it back when the JavaScript object dies, or to the
+    // context, which gives it back when it closes.
+    PyObject* wrapper;
     PythonObjectOwner* next_pending = nullptr;
 };
 
@@ -28,13 +38,7 @@ IsolateState::python_object_weak_callback(
 {
     PythonObjectOwner* owner = info.GetParameter();
     owner->object.Reset();
-    auto* state = owner->isolate_state;
-    if (owner->context && owner->context->resources)
-        owner->context->resources->python_owners.erase(owner);
-    owner->context = nullptr;
-    state->python_owners_.erase(owner);
-    owner->next_pending = state->pending_owners_;
-    state->pending_owners_ = owner;
+    owner->isolate_state->release_python_owner(owner);
 }
 
 void IsolateState::defer_release(DeferredPythonRelease* record, PyObject* object) {
@@ -128,14 +132,6 @@ PyObject* IsolateState::callback_target(Local<Value> value) {
     return PyList_GetItem(owner->callback_targets, data->target_index);
 }
 
-PyObject*
-IsolateState::javascript_name()
-{
-    if (javascript_name_ == nullptr)
-        javascript_name_ = PyUnicode_InternFromString("javascript");
-    return javascript_name_;
-}
-
 Local<String>
 IsolateState::v8_string(V8StringId id) const
 {
@@ -167,7 +163,10 @@ IsolateState::track_python_object(Local<Object> object, PyObject* py_object, con
     {
         python_owners_.insert(owner);
         if (!context->resources) context->resources = new ContextResources();
-        context->resources->python_owners.insert(owner);
+        auto* resources = context->resources;
+        if (!resources->lifetime) resources->lifetime = std::make_shared<ContextLifetime>(context);
+        resources->python_owners.insert(owner);
+        owner->lifetime = resources->lifetime;
     }
     catch (const std::bad_alloc&)
     {
@@ -182,7 +181,94 @@ IsolateState::track_python_object(Local<Object> object, PyObject* py_object, con
     owner->object.SetWeak(owner, python_object_weak_callback,
                           WeakCallbackType::kParameter);
     object->SetInternalField(PYTHON_OWNER_FIELD, v8_compat::external_new(isolate_, owner));
+
+    // Published last, so the table never names an owner whose fields are not
+    // filled in yet.  Failing to publish is a miss rather than an error: the pair
+    // is made and works, JavaScript just gets a second object for this Python one
+    // the next time it asks.  Nothing is retained either way, which is what keeps
+    // the table safe to lose.
+    try
+    {
+        owner->lifetime->js_object_cache[py_object] = owner;
+    }
+    catch (const std::bad_alloc&)
+    {
+        // Same as an entry that was never written.
+    }
     return true;
+}
+
+IsolateState::PythonObjectOwner*
+IsolateState::find_python_owner(context_c* context, PyObject* py_object)
+{
+    if (context == nullptr || py_object == nullptr)
+        return nullptr;
+    ContextResources* resources = context->resources;
+    if (resources == nullptr || resources->lifetime == nullptr)
+        return nullptr;
+
+    auto& cache = resources->lifetime->js_object_cache;
+    auto item = cache.find(py_object);
+    if (item == cache.end())
+        return nullptr;
+    return static_cast<PythonObjectOwner*>(item->second);
+}
+
+v8::Local<v8::Object>
+IsolateState::cached_js_object(context_c* context, PyObject* py_object)
+{
+    auto* owner = find_python_owner(context, py_object);
+    if (owner == nullptr || owner->object.IsEmpty())
+        return v8::Local<v8::Object>();
+    // A weak handle keeps its object alive until V8 has run the callback that
+    // releases the owner, and that callback erases this entry in the same step,
+    // so what is read here is either the live object or nothing at all.
+    return owner->object.Get(isolate_);
+}
+
+PyObject*
+IsolateState::cached_js_wrapper(context_c* context, PyObject* py_object)
+{
+    // Asked for on every attribute read of a context, so an answer that is
+    // already there must not cost a trip into the isolate: the table is keyed by
+    // Python object and the handle is a Python object, and neither needs V8.  The
+    // GIL is held throughout, and it is held by everyone who writes the table or
+    // takes an entry out of it, which is what makes reading it here safe.
+    auto* owner = find_python_owner(context, py_object);
+    if (owner == nullptr)
+        return nullptr;
+    PyObject* wrapper = owner->wrapper;
+    if (wrapper == nullptr)
+    {
+        // Building the first handle is the only part that needs the isolate, so
+        // it is the only part that pays to enter it.
+        IN_ISOLATE(this);
+        // Entering released the GIL while it waited, so the pair may be gone, or
+        // replaced by a newer one, by now: what was found before the wait cannot
+        // be used after it.
+        owner = find_python_owner(context, py_object);
+        if (owner == nullptr)
+            return nullptr;
+        wrapper = owner->wrapper;
+        if (wrapper == nullptr)
+        {
+            Local<Object> object = owner->object.Get(isolate);
+            Local<Context> js_context = context->js_context.Get(isolate);
+            if (object.IsEmpty() || js_context.IsEmpty())
+                return nullptr;
+            // Weak on purpose.  A handle that held the JavaScript object strongly
+            // would hold its owner alive, and the owner is what holds the Python
+            // object alive: one cycle and neither side would ever be collected
+            // again.  V8 gives this reference back when the object dies, and the
+            // context gives it back when it closes.
+            wrapper = (PyObject*)js_object_weak_new(object, js_context);
+            if (wrapper == nullptr)
+                return nullptr;
+            owner->wrapper = wrapper;
+        }
+    }
+    Py_INCREF(wrapper);
+    return wrapper;
 }
 
 bool
@@ -236,6 +322,17 @@ void IsolateState::restore_python_exception(Local<Object> object) {
 void
 IsolateState::release_python_owner(PythonObjectOwner* owner)
 {
+    if (owner->lifetime != nullptr && owner->py_object != nullptr)
+    {
+        auto& cache = owner->lifetime->js_object_cache;
+        auto item = cache.find(owner->py_object);
+        // Only the entry this owner published.  A later wrap of the same Python
+        // object -- which the death of the first one's JavaScript object makes
+        // possible -- replaces it, and releasing the older owner must not take
+        // the newer one's entry away.
+        if (item != cache.end() && item->second == owner)
+            cache.erase(item);
+    }
     python_owners_.erase(owner);
     if (owner->context && owner->context->resources)
         owner->context->resources->python_owners.erase(owner);

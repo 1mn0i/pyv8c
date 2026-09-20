@@ -1,7 +1,7 @@
 #include "Faker.h"
-#include "../runtime.h"
-#include "../isolate_state.h"
-#include "../convert.h"
+#include "runtime.h"
+#include "isolate_state.h"
+#include "convert.h"
 
 #include <climits>
 #include <memory>

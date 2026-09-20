@@ -5,17 +5,9 @@
 #include "exception.h"
 #include "pyclass.h"
 #include "pyclass_cross_origin_handlers.h"
-#include "pyclass_handlers_internal.h"
+#include "pyclass_handlers.h"
 
 using namespace v8;
-
-#define SETUP                                                         \
-    Isolate* isolate = info.GetIsolate();                             \
-    HandleScope hs(isolate);                                          \
-    Local<Context> context = isolate->GetCurrentContext();            \
-    Context::Scope cs(context);
-
-#define Info(T) const PropertyCallbackInfo<T>& info
 
 // Cross-origin callbacks are kept separate from ordinary named/indexed
 // handlers because they use the accessing context and a different self lookup.
@@ -26,7 +18,7 @@ Intercepted cross_origin_named_getter(Local<Name> js_name, Info(Value)) {
     PyObject* self = get_self_cross_origin(info);
     return property_getter_handler(
         py_from_js(js_name, context), info, context, self,
-        "__v8_cross_origin_name_get__");
+        HandlerId::CrossOriginNameGet);
 }
 
 Intercepted cross_origin_named_setter(
@@ -39,7 +31,7 @@ Intercepted cross_origin_named_setter(
     PyObject* self = get_self_cross_origin(info);
     return property_setter_handler(
         py_from_js(js_name, context), js_value, info, context, self,
-        "__v8_cross_origin_name_set__");
+        HandlerId::CrossOriginNameSet);
 }
 
 Intercepted cross_origin_named_deleter(Local<Name> js_name, Info(Boolean)) {
@@ -49,7 +41,7 @@ Intercepted cross_origin_named_deleter(Local<Name> js_name, Info(Boolean)) {
     PyObject* self = get_self_cross_origin(info);
     return property_deleter_handler(
         py_from_js(js_name, context), info, self,
-        "__v8_cross_origin_name_del__");
+        HandlerId::CrossOriginNameDel);
 }
 
 Intercepted cross_origin_named_query(Local<Name> js_name, Info(Integer)) {
@@ -59,7 +51,7 @@ Intercepted cross_origin_named_query(Local<Name> js_name, Info(Integer)) {
     PyObject* self = get_self_cross_origin(info);
     return property_query_handler(
         py_from_js(js_name, context), info, self,
-        "__v8_cross_origin_name_query__");
+        HandlerId::CrossOriginNameQuery);
 }
 
 void cross_origin_named_enumerator(Info(Array)) {
@@ -68,7 +60,7 @@ void cross_origin_named_enumerator(Info(Array)) {
 
     PyObject* self = get_self_cross_origin(info);
     named_enumerator_handler(
-        info, context, self, "__v8_cross_origin_name_enum__");
+        info, context, self, HandlerId::CrossOriginNameEnum);
 }
 
 Intercepted cross_origin_indexed_getter(uint32_t index, Info(Value)) {
@@ -78,7 +70,7 @@ Intercepted cross_origin_indexed_getter(uint32_t index, Info(Value)) {
     PyObject* self = get_self_cross_origin(info);
     return property_getter_handler(
         PyLong_FromSize_t(index), info, context, self,
-        "__v8_cross_origin_index_get__");
+        HandlerId::CrossOriginIndexGet);
 }
 
 Intercepted cross_origin_indexed_setter(
@@ -91,7 +83,7 @@ Intercepted cross_origin_indexed_setter(
     PyObject* self = get_self_cross_origin(info);
     return property_setter_handler(
         PyLong_FromSize_t(index), js_value, info, context, self,
-        "__v8_cross_origin_index_set__");
+        HandlerId::CrossOriginIndexSet);
 }
 
 Intercepted cross_origin_indexed_deleter(uint32_t index, Info(Boolean)) {
@@ -101,7 +93,7 @@ Intercepted cross_origin_indexed_deleter(uint32_t index, Info(Boolean)) {
     PyObject* self = get_self_cross_origin(info);
     return property_deleter_handler(
         PyLong_FromSize_t(index), info, self,
-        "__v8_cross_origin_index_del__");
+        HandlerId::CrossOriginIndexDel);
 }
 
 Intercepted cross_origin_indexed_query(uint32_t index, Info(Integer)) {
@@ -111,7 +103,7 @@ Intercepted cross_origin_indexed_query(uint32_t index, Info(Integer)) {
     PyObject* self = get_self_cross_origin(info);
     return property_query_handler(
         PyLong_FromSize_t(index), info, self,
-        "__v8_cross_origin_index_query__");
+        HandlerId::CrossOriginIndexQuery);
 }
 
 void cross_origin_indexed_enumerator(Info(Array)) {
@@ -120,7 +112,7 @@ void cross_origin_indexed_enumerator(Info(Array)) {
 
     PyObject* self = get_self_cross_origin(info);
     indexed_enumerator_handler(
-        info, context, self, "__v8_cross_origin_index_enum__");
+        info, context, self, HandlerId::CrossOriginIndexEnum);
 }
 
 bool cross_origin_access_check(
@@ -141,7 +133,7 @@ bool cross_origin_access_check(
         return false;
     PyObject* interviewee = interviewee_ctx_c->py_global;
     PyObject* checker = py_class_handler(
-        interviewee, "__v8_cross_origin_check__", interviewee_ctx_c);
+        interviewee, HandlerId::CrossOriginCheck, interviewee_ctx_c);
     if (checker == nullptr) {
         if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
             PyErr_Clear();
@@ -150,7 +142,8 @@ bool cross_origin_access_check(
         PyErr_Clear();
         return false;
     }
-    PyObject* value = PyObject_CallFunctionObjArgs(checker, accessor, nullptr);
+    PyObject* argv[] = {interviewee, accessor};
+    PyObject* value = call_handler(checker, argv, 2);
     Py_DECREF((PyObject*)checker);
     if (value == nullptr) {
         // Keep the Python exception pending in the accessing JS realm.  In

@@ -12,85 +12,11 @@
 #include <climits>
 #include <new>
 #include <unordered_map>
-#include <vector>
 
 using namespace v8;
 
-bool PythonArguments::convert(const FunctionCallbackInfo<Value>& info,
-                              Local<Context> context, PyObject* receiver) {
-    size_t offset = receiver ? 1 : 0;
-    if (receiver) { Py_INCREF((PyObject*)receiver); values_[0] = receiver; }
-    for (int i = 0; i < info.Length(); ++i) {
-        values_[i + offset] = py_argument_from_js(info[i], context);
-        if (!values_[i + offset]) return false;
-    }
-    return true;
-}
-
 namespace
 {
-class JsToPyConversionContext
-{
-public:
-    explicit JsToPyConversionContext(Isolate* isolate)
-        : isolate_(isolate)
-    {
-    }
-
-    PyObject* find(Local<Object> object)
-    {
-        const int identity_hash = object->GetIdentityHash();
-        auto bucket = visited_.find(identity_hash);
-        if (bucket == visited_.end())
-            return NULL;
-        for (const Entry& entry : bucket->second)
-        {
-            if (entry.object->StrictEquals(object))
-            {
-                Py_INCREF(entry.result);
-                return entry.result;
-            }
-        }
-        return NULL;
-    }
-
-    bool remember(Local<Object> object, PyObject* result)
-    {
-        try
-        {
-            visited_[object->GetIdentityHash()].emplace_back(object, result);
-        }
-        catch (const std::bad_alloc&)
-        {
-            PyErr_NoMemory();
-            return false;
-        }
-        return true;
-    }
-
-private:
-    struct Entry
-    {
-        Entry(Local<Object> object, PyObject* result)
-            : object(object), result(result)
-        {
-        }
-
-        Entry(Entry&&) noexcept = default;
-        Entry& operator=(Entry&&) noexcept = default;
-        Entry(const Entry&) = delete;
-        Entry& operator=(const Entry&) = delete;
-
-        Local<Object> object;
-        PyObject* result;
-    };
-
-    // V8 identity hashes make lookups constant-time on average. StrictEquals
-    // remains the final check because identity hashes are not unique.
-    std::unordered_map<int, std::vector<Entry>> visited_;
-    Isolate* isolate_;
-};
-
 class PyToJsConversionContext
 {
 public:
@@ -149,241 +75,6 @@ private:
 };
 }
 
-static PyObject *
-py_from_js_impl(Local<Value> value,
-                Local<Context> context,
-                JsToPyConversionContext* conversion)
-{
-    Isolate* isolate = v8_compat::context_isolate(context);
-    IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
-    if (value->IsSymbol())
-    {
-        value = value.As<Symbol>()->Description(v8_compat::context_isolate(context));
-    }
-    if (value->IsNull())
-    {
-        Py_INCREF((PyObject*)js_null_object);
-        return js_null_object;
-    }
-    if (value->IsUndefined())
-    {
-        Py_INCREF((PyObject*)js_undefined_object);
-        return js_undefined_object;
-    }
-    if (value->IsBoolean())
-    {
-        if (value.As<Boolean>()->Value())
-            PYV8_RETURN_TRUE;
-        PYV8_RETURN_FALSE;
-    }
-
-    if (value->IsString())
-    {
-        String::Utf8Value utf8(isolate, value.As<String>());
-        return PyUnicode_DecodeUTF8(*utf8, utf8.length(), "replace");
-    }
-
-    if (value->IsArray())
-    {
-        JsToPyConversionContext local_conversion(isolate);
-        if (conversion == nullptr)
-            conversion = &local_conversion;
-
-        Local<Array> array = value.As<Array>();
-        PyObject* existing = conversion->find(array);
-        if (existing != NULL || PyErr_Occurred())
-            return existing;
-
-        const uint32_t length = array->Length();
-        PyObject *list = PyList_New(length);
-        if (!list)
-            return NULL;
-        if (!conversion->remember(array, list))
-        {
-            Py_DECREF((PyObject*)list);
-            return NULL;
-        }
-
-        for (uint32_t i = 0; i < length; i++)
-        {
-            Local<Value> js_value;
-            if (!array->Get(context, i).ToLocal(&js_value))
-            {
-                Py_DECREF((PyObject*)list);
-                return NULL;
-            }
-
-            PyObject *obj = py_from_js_impl(js_value, context, conversion);
-            if (obj == NULL)
-            {
-                Py_DECREF((PyObject*)list);
-                return NULL;
-            }
-            PyList_SetItem(list, i, obj);
-        }
-        return list;
-    }
-
-    if (value->IsObject())
-    {
-        Local<Object> obj_value = value.As<Object>();
-        if (context.IsEmpty())
-        {
-            context = obj_value->GetCreationContextChecked();
-        }
-        // Native-backed objects already carry their Python identity. Inspect
-        // it before probing JS properties: Window security interceptors may
-        // reject even a Symbol.toStringTag query on a cross-origin facade.
-        if (obj_value->InternalFieldCount() == OBJECT_INTERNAL_FIELDS)
-        {
-            Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
-            if (magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
-            {
-                PyObject* object = IsolateState::python_object(obj_value);
-                if (!object) return nullptr;
-                Py_INCREF((PyObject*)object);
-                return object;
-            }
-        }
-        bool has_to_string_tag;
-        Maybe<bool> maybe_has_to_string_tag = obj_value->HasOwnProperty(context, Symbol::GetToStringTag(v8_compat::context_isolate(context)));
-        if (!maybe_has_to_string_tag.To(&has_to_string_tag))
-        {
-            PyErr_SetString(PyExc_RuntimeError, "failed to inspect JavaScript object");
-            return NULL;
-        }
-        if (obj_value->GetPrototype()->StrictEquals(context->GetEmbedderData(OBJECT_PROTOTYPE_SLOT)) && !has_to_string_tag)
-        {
-            JsToPyConversionContext local_conversion(isolate);
-            if (conversion == nullptr)
-                conversion = &local_conversion;
-
-            PyObject* existing = conversion->find(obj_value);
-            if (existing != NULL || PyErr_Occurred())
-                return existing;
-
-            PyObject *dict = PyDict_New();
-            if (!dict)
-                return NULL;
-            if (!conversion->remember(obj_value, dict))
-            {
-                Py_DECREF((PyObject*)dict);
-                return NULL;
-            }
-
-            Local<Array> js_keys;
-            if (!obj_value->GetPropertyNames(context).ToLocal(&js_keys))
-            {
-                Py_XDECREF((PyObject*)dict);
-                PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object properties");
-                return NULL;
-            }
-            for (uint32_t i = 0; i < js_keys->Length(); i++)
-            {
-                Local<Value> js_key;
-                if (!js_keys->Get(context, i).ToLocal(&js_key))
-                {
-                    Py_XDECREF((PyObject*)dict);
-                    PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object property key");
-                    return NULL;
-                }
-                PyObject *key = py_from_js_impl(js_key, context, conversion);
-                if (key == NULL)
-                {
-                    Py_XDECREF((PyObject*)dict);
-                    return NULL;
-                }
-                Local<Value> js_value;
-                if (!obj_value->Get(context, js_key).ToLocal(&js_value))
-                {
-                    Py_XDECREF((PyObject*)key);
-                    Py_XDECREF((PyObject*)dict);
-                    PyErr_SetString(PyExc_RuntimeError, "failed to get JavaScript object property value");
-                    return NULL;
-                }
-                PyObject *dict_value = py_from_js_impl(js_value, context, conversion);
-                if (dict_value == NULL)
-                {
-                    Py_XDECREF((PyObject*)dict);
-                    Py_XDECREF((PyObject*)key);
-                    return NULL;
-                }
-                if (PyDict_SetItem(dict, key, dict_value) < 0)
-                {
-                    Py_XDECREF((PyObject*)key);
-                    Py_XDECREF((PyObject*)dict_value);
-                    Py_XDECREF((PyObject*)dict);
-                    return NULL;
-                }
-                Py_XDECREF((PyObject*)key);
-                Py_XDECREF((PyObject*)dict_value);
-            }
-            return dict;
-        }
-
-        if (obj_value->InternalFieldCount() == OBJECT_INTERNAL_FIELDS)
-        {
-            Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
-            if (magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
-            {
-                PyObject *object = IsolateState::python_object(obj_value);
-                if (!object) return nullptr;
-                Py_INCREF((PyObject*)object);
-                return object;
-            }
-        }
-        return (PyObject *)js_object_new(obj_value, context);
-    }
-
-    if (value->IsUint32() || value->IsInt32())
-    {
-        return PyLong_FromLongLong((PY_LONG_LONG)value.As<Integer>()->Value());
-    }
-    if (value->IsNumber())
-    {
-        return PyFloat_FromDouble(value.As<Number>()->Value());
-    }
-
-    if (value->IsBigInt()) {
-        return (PyObject*)js_value_new(value, context);
-    }
-    // i'm not quite ready to turn this into an assert quite yet
-    // i'll do that when I've special-cased every primitive type
-    printf("cannot convert\n");
-    PYV8_RETURN_NONE;
-}
-
-PyObject *
-py_materialize(Local<Value> value, Local<Context> context)
-{
-    return py_from_js_impl(value, context, nullptr);
-}
-
-PyObject *
-py_from_js(Local<Value> value, Local<Context> context)
-{
-    if (value->IsSymbol())
-        return (PyObject*)js_value_new(value, context);
-    if (value->IsObject()) {
-        Local<Object> object = value.As<Object>();
-        auto* state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
-        if (object->InternalFieldCount() == OBJECT_INTERNAL_FIELDS &&
-            object->GetInternalField(PYTHON_MAGIC_FIELD) == state->v8_string(V8StringId::PythonObjectMagic)) {
-            auto* result = IsolateState::python_object(object);
-            if (!result) return nullptr;
-            Py_INCREF((PyObject*)result);
-            return result;
-        }
-        // Do not enumerate, probe prototypes, read accessors, or iterate here.
-        return (PyObject*)js_object_new(object, context);
-    }
-    return py_from_js_impl(value, context, nullptr);
-}
-
-PyObject* py_argument_from_js(Local<Value> value, Local<Context> context) {
-    return py_from_js(value, context);
-}
-
 static Local<Value>
 js_from_py_impl(PyObject *value,
                  Local<Context> context,
@@ -424,10 +115,36 @@ js_from_py_impl(PyObject *value,
                             "Python string is too large for a V8 string");
             return Local<Value>();
         }
+        const int length = static_cast<int>(len);
+        // ASCII is what a page hands over most of the time, and UTF-8 spells it
+        // one byte per code unit: V8 can take those bytes as they are instead of
+        // decoding a multi-byte sequence that cannot be in them.  The scan runs
+        // over the UTF-8 buffer CPython already cached on the object, and is
+        // shorter work than the decode it saves.
+        bool ascii = true;
+        for (Py_ssize_t index = 0; index < len; ++index)
+        {
+            if ((static_cast<unsigned char>(str[index]) & 0x80) != 0)
+            {
+                ascii = false;
+                break;
+            }
+        }
         Local<String> js_value;
+        if (ascii)
+        {
+            if (!String::NewFromOneByte(
+                    isolate, reinterpret_cast<const uint8_t*>(str),
+                    NewStringType::kNormal, length).ToLocal(&js_value))
+            {
+                PyErr_SetString(PyExc_RuntimeError, "failed to create JavaScript string");
+                return Local<Value>();
+            }
+            return js_value;
+        }
         if (!String::NewFromUtf8(
                 isolate, str, NewStringType::kNormal,
-                static_cast<int>(len)).ToLocal(&js_value))
+                length).ToLocal(&js_value))
         {
             PyErr_SetString(PyExc_RuntimeError, "failed to create JavaScript string");
             return Local<Value>();
@@ -479,9 +196,19 @@ js_from_py_impl(PyObject *value,
         }
         else
         {
-            // TODO make this work right
-            printf("what the hell kind of number is this?!");
-            return Undefined(isolate);
+            // A Python number that is neither an int nor a float: Decimal and
+            // Fraction land here.  JavaScript has no number to give them, and an
+            // undefined that says nothing is worse than an error that says why.
+            PyObject* kind = PyType_GetName(Py_TYPE(value));
+            if (kind != nullptr) {
+                PyErr_Format(PyExc_TypeError,
+                             "cannot convert a Python %U to a JavaScript number", kind);
+                Py_DECREF(kind);
+            } else {
+                PyErr_SetString(PyExc_TypeError,
+                                "cannot convert a Python number to a JavaScript number");
+            }
+            return Local<Value>();
         }
         return js_value;
     }
@@ -573,7 +300,6 @@ js_from_py_impl(PyObject *value,
     }
     if (PyFunction_Check_abi3(value) || PyMethod_Check_abi3(value))
     {
-        IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
         auto* owner = context_from_v8(context);
         if (owner == nullptr) {
             PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
@@ -751,24 +477,6 @@ js_from_py(PyObject *value, Local<Context> context, Isolate* target_isolate)
     if (result.IsEmpty())
         return result;
     return hs.Escape(result);
-}
-
-PyObject *
-pys_from_jss(const FunctionCallbackInfo<Value> &js_args, Local<Context> context)
-{
-    PyObject *py_args = PyTuple_New(js_args.Length());
-    PyErr_PROPAGATE(py_args);
-    for (int i = 0; i < js_args.Length(); i++)
-    {
-        PyObject *arg = py_argument_from_js(js_args[i], context);
-        if (arg == NULL)
-        {
-            Py_DECREF((PyObject*)py_args);
-            return NULL;
-        }
-        PyTuple_SetItem(py_args, i, arg);
-    }
-    return py_args;
 }
 
 // js_args is an out parameter, expected to contain enough space
