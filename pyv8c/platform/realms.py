@@ -172,6 +172,7 @@ class PageRealm:
             traceable=browser.traceable,
         ))
         self.binding_session.attach_context(self.context)
+        self.executor.attach_deadline_source(self.context)
         context_created = time.perf_counter_ns()
         deferred_globals = _declare_realm_interfaces(
             self.context, self.binding_session,

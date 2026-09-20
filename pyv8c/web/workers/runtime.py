@@ -30,14 +30,11 @@ class WorkerRuntime:
         self._scope = None
         self._devtools = None
         self.debug_target = None
-        # Start asynchronously and return immediately.  ``new Worker()`` runs
-        # on the page owner thread while it is inside the V8 constructor
-        # callback; blocking there until the worker realm is fully initialised
-        # lets that realm contend for the same V8 lock / GIL the owner still
-        # holds, which deadlocks as soon as a second realm is also live.
-        # Worker messages are still ordered correctly: ``_run`` was posted
-        # first, so every later ``_dispatch_message`` runs after the scope
-        # exists (or is dropped while ``_stop`` is set after a failed start).
+        # Start asynchronously and return immediately, which is also what
+        # ``new Worker()`` is: the constructor does not wait for the script to
+        # run.  Messages stay ordered because ``_run`` is posted first, so every
+        # later ``_dispatch_message`` runs after the scope exists (or is dropped
+        # while ``_stop`` is set after a failed start).
         self.executor.post(self._run)
 
     def _run(self):
@@ -58,6 +55,7 @@ class WorkerRuntime:
                 services=self._realm.services,
             )
             self._context = self._realm.initialize(self._scope)
+            self.executor.attach_deadline_source(self._context)
             # A worker global schedules its own work, so the failures V8 raises
             # on its own -- a microtask job that threw, a promise nobody handled
             # -- have to be reported from this realm rather than the page's.

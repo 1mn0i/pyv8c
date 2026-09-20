@@ -44,7 +44,10 @@ class WindowProperties(EventTarget):
     use a separate callback family from Window's own named interceptors.
     """
     __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0, has_constructor=0, to_string_tag="WindowProperties"
+        constructor_behavior=0,
+        has_constructor=0,
+        to_string_tag="WindowProperties",
+        named_properties_object=True,
     )
 
     _NAMED_TAGS = frozenset(("embed", "form", "img", "object"))

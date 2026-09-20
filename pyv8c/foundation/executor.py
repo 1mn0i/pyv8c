@@ -87,6 +87,7 @@ class RealmExecutor:
         self.default_timeout = _default_call_timeout() if default_timeout is _UNSET else default_timeout
         self._error_sink = None
         self._rejections = None
+        self._deadline_source = None
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         # Start without waiting for the thread to be scheduled.  The command
         # queue is unbounded and thread safe, so post/call/close behave
@@ -130,6 +131,16 @@ class RealmExecutor:
         """
         self._rejections = tracker
 
+    def attach_deadline_source(self, source):
+        """Attach the realm's deadline holder (its native Context).
+
+        The executor arms it for the length of one command, which is what lets a
+        command that is *already running* be preempted: the isolate terminates the
+        script and stays usable, so a wedged realm surfaces as
+        :class:`pyv8.JavaScriptTerminated` instead of a caller that waits forever.
+        """
+        self._deadline_source = source
+
     def wakeup(self):
         # A no-op command wakes the command wait without executing user code.
         self._wake.set()
@@ -156,12 +167,10 @@ class RealmExecutor:
         except FutureTimeoutError:
             if future.done():
                 return future.result()
-            # A command which is still queued can be cancelled safely.  This
-            # prevents a timed-out navigation/evaluate from running later and
-            # mutating a page after its caller has already handled the error.
-            # Once execution has started Python/V8 has no safe pre-emption
-            # point; in that case retain the late-result drain and report the
-            # timeout without pretending the callback was interrupted.
+            # A command which is still queued can be cancelled safely.  A command
+            # that is already running has been preempted by the realm's deadline
+            # (see ``attach_deadline_source``); if it outlived that too, the
+            # realm is wedged and the late result is drained rather than awaited.
             cancelled = future.cancel()
             if not cancelled:
                 future.add_done_callback(_swallow)
@@ -194,6 +203,11 @@ class RealmExecutor:
             # The caller timed out while this command was waiting in the
             # queue.  Do not execute it as a ghost side effect.
             return
+        source = self._deadline_source
+        budget = self.default_timeout
+        armed = source is not None and bool(budget)
+        if armed:
+            source.set_deadline(budget)
         try:
             result = callback(*args, **kwargs)
         except BaseException as exc:  # reported below or mirrored
@@ -206,6 +220,14 @@ class RealmExecutor:
         else:
             if future is not None:
                 future.set_result(result)
+        finally:
+            if armed:
+                try:
+                    source.clear_deadline()
+                except BaseException:
+                    # The command may have closed the context it borrowed; that is
+                    # not a reason to lose whatever it was going to return.
+                    pass
 
     def _report_exception(self, exc):
         """Handle an exception raised by a fire-and-forget command.

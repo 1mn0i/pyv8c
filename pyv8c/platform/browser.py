@@ -644,7 +644,8 @@ class Browser:
         self.trace_callback = trace_callback
         started = time.perf_counter_ns()
         self._closed = False
-        # pyv8 initializes its process-global V8 runtime during package import.
+        # pyv8 starts its process-global V8 runtime on first use rather than at
+        # import, so the first realm created below carries that startup cost.
         self.contexts = []
         self.resource_loader = resource_loader
         self.resource_interceptor = resource_interceptor
