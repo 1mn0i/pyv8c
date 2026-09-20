@@ -1,0 +1,23 @@
+remove: drop the v8n kernel and its facade
+
+v8n was the rewrite.  native/ built a second extension, _v8n, around a
+declarative interface model of its own, and v8n/ was the Python package in front
+of it.  Measured against the binding it was meant to replace it lost: slower on
+every hot path, with a per-crossing cost that grew with the number of live
+objects.  The host is bound back to this extension, so the two directories were a
+second extension to build, to test, and to keep working for nothing.
+
+Removed with them, the .gitignore block describing the artifacts native/setup.py
+generated beside the facade (icudtl.dat, _v8n*.pyd, _v8n*.so, __pycache__).
+Sixty-one tracked files, and 170 MB of build output that was never tracked.
+
+Nothing else referred to them: the root setup.py, pyproject.toml, MANIFEST.in and
+both suites only ever built and tested this extension, and a search of the tree
+for "v8n" now comes back empty outside the binaries of that extension.
+
+None of it is lost -- c420db3 added both directories and 6e5baeb touched them, so
+`git checkout c420db3 -- native v8n` brings any of it back.
+
+Verified: 338 binding tests, tools/check_layout.py --enforce reporting layout ok,
+the extension importing as pyv8 2.1.2 on V8 15.2.20.1, and v8n no longer
+importable.
