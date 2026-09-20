@@ -1,0 +1,119 @@
+# Architecture
+
+What the binding is made of, and what holds the pieces together.  `SOURCE_LAYOUT.md`
+says where a file goes; this says why the parts are what they are.
+
+## The layers
+
+```
+Python                 pyv8/            the package: flags, tracing helpers, devtools
+                          |
+extension              pyv8.cpp         the module: init, shutdown, the free functions
+                          |
+interfaces             interfaces/      declarations -> templates -> callbacks
+                          |
+handles                handles/         the Python types that stand for JavaScript values
+values                 values/          values and errors crossing the boundary
+isolate                isolate/         the isolate, the realm, and their lifetimes
+shims                  *.h at the root  ABI3 and V8-version compatibility
+```
+
+A file may include its own layer and the ones below it.  The exceptions are
+listed in `tools/check_layout.py` under `COMPOSITION_POINTS`, each with a reason:
+an aggregate header, the module entry point, and the five files whose job is to
+tie layers together (a realm building interfaces, a converter reaching into the
+handle types it produces).  `python tools/check_layout.py --enforce` holds the
+tree to that, and to two build files: `setup.py` has to offer every group as an
+include root, because sources include their neighbours by bare name, and
+`pyproject.toml` has to name package data that exists.
+
+## Lifetimes, in the order they are nested
+
+**The isolate** owns the V8 heap, the interned strings (`V8StringCache`, one entry
+per `V8StringId`), the pair table's owners, and the callback data.  Everything
+that belongs to it is torn down in `IsolateState::shutdown`, in one order that
+matters: reporters first (they reach into Python and must not run while the
+isolate is being taken apart), then the inspectors built on it, then the Python
+references, then `Isolate::Dispose`.
+
+**The realm** (`context_c`) owns a V8 context, the classes installed into it, and
+the Python objects it must keep alive.  Those references are listed once, in
+`context_gc_fields`, which `context_traverse` and `context_finish_close` both
+walk -- the two used to be written out by hand, one edit apart from disagreeing.
+
+**The pair table** is what makes `Py -> JS` identity work: a Python object and the
+JavaScript object that stands for it in one realm, keyed by the Python object's
+address.  It lives in `ContextLifetime`, which outlives the context so that a
+handle closed later reads an empty table rather than freed memory, and it holds
+no strong reference on either side -- the entry *is* the `PythonObjectOwner` that
+holds the one strong reference to the Python object, and it is erased in the same
+step that releases it.  Neither side can be kept alive by the table, and neither
+can be collected out from under it.
+
+**Handles** (`js_object`, `js_function`, `jspromise`, `jstypedarray`, `js_value`)
+are Python objects standing for V8 values.  Each holds a persistent handle, counts
+it in `live_v8_handles_`, and participates in the context's handle registry: a
+context can be closed, which invalidates every handle, or collected, which happens
+only when no handle is left.  A handle that outlives its realm answers with an
+error -- "no active V8 isolate" or "closed" -- and never reads V8.
+
+## Threads
+
+There is one isolate per realm, and V8 requires that a realm be entered by one
+thread at a time.  `ExecutionScope` is how a Python entry point says "I am entering
+this realm": it takes the isolate lock and builds the handle and context scopes the
+work needs.  `IN_ISOLATE`/`IN_CONTEXT` are the older, macro-shaped way of doing the
+same thing.  Crossing back into Python releases nothing implicitly: the GIL is
+held throughout, which is the discipline the pair table and the owner lists rely
+on (`context_resources.cpp` says so where it matters).
+
+## The boundary
+
+`values/` is the direction-of-travel split: `convert_to_javascript.cpp` and
+`convert_to_python.cpp`.  Between them sit the two rules that keep the boundary
+honest:
+
+* A value crossing back and forth keeps its identity where the host can tell the
+  difference: `ps_from_js`/`js_from_py` remember the pairs they made.
+* A failure has to arrive as the failure it was.  A JavaScript exception becomes a
+  Python exception carrying the original value; a Python exception raised inside a
+  callback is re-thrown into JavaScript; and a failure with no exception of its own
+  is given a message, because CPython reports "returned NULL without setting an
+  exception" as a `SystemError` about the binding rather than about the value.
+
+## Errors
+
+`set_error_map` lets the host own the error hierarchy: the binding does not keep a
+table of names, it asks the map it was given, and `__v8_error_name__` on the mapped
+class tells it what to call the error on the way back.  Uncaught exceptions and
+unhandled rejections are reported through the hooks installed with
+`Context.set_error_hooks`, which is also where a host that wants the page's `error`
+event gets its chance.
+
+## Interfaces
+
+`interfaces/` turns a declaration into templates and callbacks:
+
+```
+IdlSpec (Python)   ->  py_class (one per class per context)  ->  FunctionTemplate
+                   ->  CallbackData (one per member per context) -> info.Data()
+```
+
+`AttributeSpec`/`MethodSpec`/`ConstantSpec` are the host's declarations;
+`InstallAttribute` and `InstallOperation` turn them into templates; at call time
+`IsolateState::callback_target` turns `info.Data()` back into the spec, and
+`py_class_handler` reaches the Python callable by `HandlerId`.  Interceptors are
+per class, and the window's own name table is a separate, layered thing:
+`pyclass_interceptors.cpp` implements both halves, and the note in
+`tests/test_window_name_table.py` explains what an index means to it.
+
+## What is checked, and where
+
+| Decision | Held by |
+|---|---|
+| Layer direction, build files | `tools/check_layout.py --enforce` |
+| The public surface: stubs, exports, the extension | `tests/test_public_surface.py` |
+| Identity and lifetime of the pair table | `tests/test_memory_ownership.py` |
+| Attribute protocol: hooks, errors, subscript | `tests/test_jsobject.py` |
+| The window name table and indices | `tests/test_window_name_table.py` |
+| Cost of crossing, installing, strings | `benchmarks/` |

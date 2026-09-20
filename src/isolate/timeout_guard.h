@@ -8,6 +8,8 @@
 #include <unistd.h>
 #endif
 
+// A deadline on one crossing into JavaScript.  Every start() is paired with a
+// stop(), and the destructor stops the timer whatever the caller did.
 class TimeoutGuard
 {
 public:

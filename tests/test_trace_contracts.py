@@ -244,8 +244,14 @@ def test_context_isolation_and_disabled_fast_path():
 
 def test_no_javascript_trace_dispatch(traced):
     context, target, events = traced
-    assert context.exec_js("typeof faker.hook") == "undefined"
-    context.exec_js("faker.hook=false; faker.getter=faker.setter=faker.method=faker.construct=()=>{throw 123}")
+    # The binding installs no dispatch object of its own, and one a script defines
+    # for itself changes nothing: the trace is native either way.
+    assert context.exec_js("typeof faker") == "undefined"
+    context.exec_js("""
+        globalThis.faker = {hook: false, getter: () => { throw 123 },
+                            setter: () => { throw 123 }, method: () => { throw 123 },
+                            construct: () => { throw 123 }};
+    """)
     events.clear()
     assert context.exec_js("[target.value,target.value=8,target.add(1,2),new Target().value]").to_python() == [5,8,3,5]
     assert {event[0] for event in events} == {"get", "set", "method", "construct"}

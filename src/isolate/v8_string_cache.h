@@ -11,14 +11,7 @@ enum class V8StringId : std::uint8_t
 {
     ErrorPrototypeMagic,
     PythonObjectMagic,
-    Constructor,
-    Prototype,
     Message,
-    Length,
-    Name,
-    Faker,
-    RawToString,
-    Callback,
     Count,
 };
 

@@ -64,7 +64,6 @@ PyObject *py_argument_from_js(v8::Local<v8::Value> value, v8::Local<v8::Context>
 v8::Local<v8::Value> js_from_py(PyObject *py_value, v8::Local<v8::Context> context);
 v8::Local<v8::Value> js_from_py(PyObject *py_value, v8::Local<v8::Context> context, v8::Isolate* isolate);
 
-PyObject *pys_from_jss(const v8::FunctionCallbackInfo<v8::Value> &js_args, v8::Local<v8::Context> context);
 void jss_from_pys(PyObject *py_args, v8::Local<v8::Value> *js_args, v8::Local<v8::Context> context);
 
 v8::Local<v8::Object> pyexception_to_jsexception(PyObject* value, v8::Local<v8::Context> context);

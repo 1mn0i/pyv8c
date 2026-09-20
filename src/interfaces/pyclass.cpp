@@ -10,7 +10,6 @@
 #include "idl_spec.h"
 #include "pyclass_cross_origin_handlers.h"
 #include "v8tools.h"
-#include "faker/Faker.h"
 
 using namespace v8;
 
@@ -180,7 +179,10 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     // functions.
     Local<Context> no_ctx;
 
-    assert(cls != (PyObject *) &PyBaseObject_Type);
+    // There used to be an assertion here that the class was not ``object``
+    // itself.  It was wrong: a realm for a bare ``object()`` is exactly what a
+    // host that wants no interface at all builds, several tests do it, and the
+    // assertion only stayed quiet because a release build has no assertions.
 
     py_class *self = (py_class *) PyType_GenericAlloc(py_class_type, 0);
     PyErr_PROPAGATE(self);
@@ -251,9 +253,6 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     }
 
     Local<Signature> sig = Signature::New(isolate, templ);
-    if (config.global_this) {
-        Faker::Register(isolate, templ);
-    }
 
     if (self->idl_spec == nullptr) {
         PyObject* class_dict = PyObject_GetAttrString(cls, "__dict__");
@@ -310,15 +309,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         Py_DECREF((PyObject*)self);
         return NULL;
     }
-        
-    if (config.constants_callback != NULL &&
-        !bindings::InstallConstantCallbacks(
-            isolate, world, templ, sig, config.constants_callback))
-    {
-        Py_DECREF((PyObject*)self);
-        return NULL;
-    }
-        
+
     if (config.call != NULL)
     {
         PyObject* args = PyTuple_New(0);
@@ -477,11 +468,9 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     Py_XDECREF((PyObject*)bases);
 
     if (last_base == PyExc_Exception || last_base == PyExc_BaseException) {
-        // if the superclass is Exception, ignore that fact and make the superclass Error
-        // we do this by putting a magic internal field count on the prototype which py_class_init_js_object detects
-        // and sets the prototype's prototype to Error.prototype, which it finds in an embedder data slot on the context
-        // it has to be a magic count instead of a field because you can't set an internal field on a template
-        // only an object
+        // A class extending Exception gets Error.prototype.  The marker below is
+        // what resolve_error_prototype reads; it has to be a private property
+        // because a template cannot carry an internal field, only an object can.
         templ->PrototypeTemplate()->SetPrivate(
             v8::Private::ForApi(isolate, JSTR("__proto__")),
             isolate_state->v8_string(V8StringId::ErrorPrototypeMagic));
@@ -618,18 +607,9 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
     return function;
 }
 
-// Whether the class an object was made from stands for a JavaScript Error, and
-// if so, the act of giving its prototype Error.prototype.
-//
-// The answer is a property of the class, not of the instance: the marker this
-// reads is deleted as it is applied, so an object that already inherits from
-// Error finds nothing and keeps what it has.  It is still per *class* work,
-// which is why the caller settles it once and remembers the answer -- walking
-// the prototype chain of every object a class ever produces is a cost that grows
-// with the class hierarchy for an answer that cannot change.
-//
-// Answers 1 when the class inherits from Error, -1 when it does not, and 0 when
-// it could not be told (with the Python error set).
+// Does this class stand for a JavaScript Error, and if so give its prototype
+// Error.prototype.  Answers 1, or -1 for no, or 0 when it could not be told (with
+// the Python error set).  The answer belongs to the class, so the caller caches it.
 static int
 resolve_error_prototype(Local<Object> js_object, Local<Context> context,
                         Isolate* isolate, IsolateState* isolate_state)

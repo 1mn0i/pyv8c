@@ -14,18 +14,11 @@ enum class ContextState { Active, Closing, Closed };
 struct ContextLifetime {
     context_c* owner;
 
-    // The pair table of this realm: a Python host object and the JavaScript
-    // object that stands for it here.  The value is an
-    // IsolateState::PythonObjectOwner*, kept opaque so this header stays free of
-    // the isolate's internals.
-    //
-    // Neither side is owned by the table.  The key is a borrowed pointer that the
-    // owner -- the value -- holds the only strong reference to, and an entry is
-    // erased the moment its owner is released, so the table can never make a
-    // Python object immortal and never keeps a JavaScript object from being
-    // collected.  It lives here rather than on the context because a handle may
-    // outlive the context and still has to see an empty table instead of freed
-    // memory.
+    // The pair table: a Python host object -> the JavaScript object standing for
+    // it in this realm.  Values are IsolateState::PythonObjectOwner*, opaque to
+    // keep this header free of the isolate's internals.  The table owns neither
+    // side; an entry goes when its owner is released.  It lives here, not on the
+    // context, so a handle that outlives the context reads an empty table.
     std::unordered_map<PyObject*, void*> js_object_cache;
 
     explicit ContextLifetime(context_c* owner) : owner(owner) {}

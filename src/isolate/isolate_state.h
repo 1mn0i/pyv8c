@@ -60,16 +60,12 @@ public:
     v8::Local<v8::String> v8_string(V8StringId id) const;
 
     bool track_python_object(v8::Local<v8::Object> object, PyObject* py_object, context_c* context);
-    // The JavaScript object that already stands for *py_object* in *context*.
-    //
-    // Wrapping a Python object twice in one realm would give JavaScript two
-    // objects where it can only tell one apart, so the pair is remembered and
-    // handed back.  An empty handle means "not wrapped here yet".
+    // The JavaScript object that already stands for *py_object* in *context*;
+    // wrapping one Python object twice would give JavaScript two objects where it
+    // can only tell one apart.  Empty means "not wrapped here yet".
     v8::Local<v8::Object> cached_js_object(context_c* context, PyObject* py_object);
-    // The Python handle for that same pair, built on first use.
-    //
-    // Answers a new reference, or null with no error set when the pair is not
-    // known here.
+    // The Python handle for that same pair, built on first use: a new reference, or
+    // null with no error set when the pair is not known here.
     PyObject* cached_js_wrapper(context_c* context, PyObject* py_object);
     static PyObject* python_object(v8::Local<v8::Object> object);
     static void restore_python_exception(v8::Local<v8::Object> object);

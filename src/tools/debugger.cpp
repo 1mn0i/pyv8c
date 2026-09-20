@@ -215,6 +215,29 @@ bool debugger_context_can_close(context_c* context) {
     }
     return true;
 }
+void debugger_isolate_closed(Isolate* isolate) {
+    // The registry is keyed by address and lives as long as the process, so an
+    // entry must not outlive its isolate: the inspector belongs to this one and
+    // has to go before Dispose().
+    auto found = inspector_hubs.find(isolate);
+    if (found == inspector_hubs.end()) return;
+    auto hub = found->second.lock();
+    if (hub) {
+        auto sessions = hub->sessions;
+        for (auto session : sessions) {
+            if (session->state == nullptr) continue;
+            session->state->pending_pause = false;
+            // Dropping both keeps the inspector from being used after the isolate;
+            // the Debugger then answers "Debugger is closed".
+            session->state->session.reset();
+            session->state->hub.reset();
+        }
+        hub->sessions.clear();
+        hub->groups.clear();
+        hub->inspector.reset();
+    }
+    inspector_hubs.erase(isolate);
+}
 void debugger_context_closed(context_c* context) {
     if (!context->isolate_state) return;
     IN_ISOLATE(context->isolate_state);

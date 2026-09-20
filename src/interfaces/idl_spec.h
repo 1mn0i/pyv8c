@@ -21,7 +21,6 @@ struct IdlSpec
     PyObject *attributes = nullptr;
     PyObject *methods = nullptr;
     PyObject *constants_value = nullptr;
-    PyObject *constants_callback = nullptr;
     PyObject *call = nullptr;
     PyObject *constructor_adapter = nullptr;
     PyObject *parent_class = nullptr;
@@ -59,7 +58,6 @@ struct AttributeSpec
     PyObject *name = nullptr;
     PyObject *getter = nullptr;
     PyObject *setter = nullptr;
-    int64_t callback_type = 0;
     int64_t location = 1;
     int64_t property_flags = 0;
     int64_t receiver_check = 0;
@@ -78,7 +76,6 @@ struct MethodSpec
     PyObject *callback = nullptr;
     PyObject *trace_receiver = nullptr;
     int64_t length = 0;
-    int64_t callback_type = 0;
     int64_t location = 1;
     int64_t property_flags = 0;
     int64_t receiver_check = 0;
@@ -93,13 +90,6 @@ struct ConstantSpec
     int64_t value = 0;
 };
 extern PyTypeObject *constant_spec_type;
-
-struct ConstantCallbackSpec
-{
-    PyObject_HEAD PyObject *name = nullptr;
-    PyObject *callback = nullptr;
-};
-extern PyTypeObject *constantcallback_spec_type;
 
 int idl_spec_init(PyObject *module);
 PyObject *idl_spec_for(PyObject *owner);

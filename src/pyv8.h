@@ -23,25 +23,9 @@
 #include "execution.h"
 #include "callback_boundary.h"
 
-#define HOOKHANDLE "faker"
-
-#define STRING_BUFFER_SIZE 512
-static uint16_t string_buffer[STRING_BUFFER_SIZE] = {};
-
-#define NORETURN __attribute__ ((noreturn))
-
 #define JSTR(str) v8::String::NewFromUtf8(isolate, str).ToLocalChecked()
 
 #define V8String(isolate, str) v8::String::NewFromUtf8(isolate, str).ToLocalChecked()
-
-#define PYDUMP(obj) printf("%s\n", PyUnicode_AsUTF8_abi3(obj));
-
-
-#define JSDUMP(obj)                           \
-    {                                         \
-        v8::String::Utf8Value value(obj);     \
-        printf("%s\n", *value);               \
-    }
 
 #define IN_ISOLATE(state)                            \
     IsolateLockScope isolate_lock_scope(state);       \

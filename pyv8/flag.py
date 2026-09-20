@@ -1,9 +1,4 @@
 
-class CallbackType:
-    kPy = 0         # 回调Python类方法
-    kJs = 1         # 回调Javascript方法 例如：faker.Window_get_frames
-
-
 class FlagImmutable:
     instance = 1 << 0
     prototype = 1 << 1
@@ -60,7 +55,7 @@ class FlagArrayProto:
 
 
 __all__ = [
-    "CallbackType", "FlagImmutable", "V8Attribute", "FlagLocation",
+    "FlagImmutable", "V8Attribute", "FlagLocation",
     "FlagReceiverCheck", "FlagCrossOriginCheck", "FlagExposed",
     "FlagConstructor", "SideEffectType", "FlagArrayProto",
 ]

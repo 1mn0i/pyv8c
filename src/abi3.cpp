@@ -33,8 +33,3 @@ int
 PyMethod_Check_abi3(PyObject* op) {
     return PyObject_IsInstance(op, g_method_type);
 }
-
-PyObject* PyMethod_New_abi3(PyObject* callback, PyObject* receiver)
-{
-    return PyObject_CallFunctionObjArgs(g_method_type, callback, receiver, nullptr);
-}

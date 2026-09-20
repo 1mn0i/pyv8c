@@ -5,7 +5,7 @@ import unittest
 import weakref
 
 import pyv8
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec, ConstantSpec, ConstantCallbackSpec
+from pyv8 import IdlSpec, AttributeSpec, MethodSpec, ConstantSpec
 
 
 class TestIdlSpec(unittest.TestCase):
@@ -19,7 +19,7 @@ class TestIdlSpec(unittest.TestCase):
         self.assertEqual(other.length, 3)
         self.assertIs(other.methods, spec.methods)
         for value in (spec, member, AttributeSpec(name="x", getter="get_x"),
-                      ConstantSpec(name="READY", value=1), ConstantCallbackSpec(name="READY", callback="ready")):
+                      ConstantSpec(name="READY", value=1)):
             with self.subTest(value=type(value)):
                 with self.assertRaises((AttributeError, TypeError)):
                     value.length = 4
@@ -120,7 +120,7 @@ class TestIdlSpec(unittest.TestCase):
             __v8_idl_spec__ = IdlSpec(length=2)
         class Child(Base):
             pass
-        pyv8._pyv8.hidden(Child)
+        pyv8.hidden(Child)
         self.assertFalse(Base.__v8_idl_spec__.hidden)
         self.assertTrue(Child.__v8_idl_spec__.hidden)
 
@@ -157,14 +157,10 @@ class TestIdlSpec(unittest.TestCase):
         self.assertEqual(context.exec_js("generic.implicit"), 7)
 
 
-def test_javascript_callback_types_and_native_boundaries():
+def test_undetectable_requires_a_call_and_constant_ranges():
     import pytest
-    from pyv8 import AttributeSpec, MethodSpec, IdlSpec, ConstantSpec
+    from pyv8 import IdlSpec, ConstantSpec
 
-    with pytest.raises(TypeError, match="Faker"):
-        MethodSpec(name="bad", callback=lambda: None, callback_type=1)
-    with pytest.raises(TypeError, match="Faker"):
-        AttributeSpec(name="bad", getter=lambda: None, callback_type=1)
     with pytest.raises(TypeError, match="requires a call"):
         IdlSpec(undetectable=True)
     for value in (-2147483648, 4294967295):

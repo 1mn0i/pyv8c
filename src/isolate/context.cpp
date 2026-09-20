@@ -14,7 +14,6 @@
 #include "v8tools.h"
 #include "isolate.h"
 #include "timeout_guard.h"
-#include "faker/trace.h"
 
 using namespace v8;
 
@@ -34,6 +33,8 @@ context_c* context_from_v8(Local<Context> context) {
     return lifetime ? lifetime->owner : nullptr;
 }
 
+// Whether an intercepted access may proceed.  The accepting path costs a few
+// reads and a state check, no allocation and no string.
 bool context_check_callback(Local<Context> context) {
     // Context::New may call interceptors before embedder data is installed.
     if (!context.IsEmpty() &&
@@ -59,11 +60,15 @@ void context_unregister_handle(context_c* self, PyObject* handle) {
 bool context_retain_dependency(Local<Context> target, PyObject* source) {
     auto* owner = context_from_v8(target);
     if (source == nullptr || owner == nullptr || source == (PyObject*)owner) return true;
+    auto* origin = (context_c*)source;
+    // Already recorded?  The reverse index knows, so the list below does not have
+    // to be searched to answer that: the list is there to hold the strong
+    // references that keep the origins alive, and reading through it turned a
+    // second and third window into a scan of the first.
+    if (owner->resources != nullptr && owner->resources->dependencies.count(origin) != 0)
+        return true;
     if (owner->dependencies == nullptr) owner->dependencies = PyList_New(0);
     if (owner->dependencies == nullptr) return false;
-    for (Py_ssize_t i = 0; i < PyList_Size(owner->dependencies); ++i)
-        if (PyList_GetItem(owner->dependencies, i) == source) return true;
-    auto* origin = (context_c*)source;
     try {
         if (origin->resources == nullptr) origin->resources = new ContextResources();
         if (owner->resources == nullptr) owner->resources = new ContextResources();
@@ -404,6 +409,32 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     return (PyObject *) self;
 }
 
+// Every Python reference this object owns, walked by both traverse and clear so
+// the two lists cannot disagree.
+static const std::size_t context_gc_fields[] = {
+    offsetof(context_c, py_isolate),
+    offsetof(context_c, class_template_cache),
+    offsetof(context_c, function_template_cache),
+    offsetof(context_c, callback_targets),
+    offsetof(context_c, class_configs),
+    offsetof(context_c, lazy_factory),
+    offsetof(context_c, resolving_classes),
+    offsetof(context_c, lazy_names),
+    offsetof(context_c, py_global),
+    offsetof(context_c, trace_callback),
+    offsetof(context_c, trace_context_type),
+    offsetof(context_c, trace_event_names),
+    offsetof(context_c, uncaught_handler),
+    offsetof(context_c, rejection_handler),
+    offsetof(context_c, dependencies),
+};
+
+// The place a PyObject* lives in this object, for a given entry of the list.
+static PyObject** context_gc_slot(context_c* self, std::size_t offset)
+{
+    return reinterpret_cast<PyObject**>(reinterpret_cast<char*>(self) + offset);
+}
+
 void
 context_finish_close(context_c *self)
 {
@@ -428,48 +459,23 @@ context_finish_close(context_c *self)
         delete self->resources;
         self->resources = nullptr;
     }
-    Py_CLEAR(self->function_template_cache);
-    Py_CLEAR(self->callback_targets);
-    Py_CLEAR(self->uncaught_handler);
-    Py_CLEAR(self->rejection_handler);
-    Py_CLEAR(self->dependencies);
-    Py_CLEAR(self->class_template_cache);
-    Py_CLEAR(self->class_configs);
-    Py_CLEAR(self->lazy_factory);
-
-    Py_CLEAR(self->trace_callback);
-    Py_CLEAR(self->trace_context_type);
-    Py_CLEAR(self->trace_event_names);
-    Py_CLEAR(self->resolving_classes);
-    Py_CLEAR(self->lazy_names);
+    // The V8 side goes first: the references below are Python's, and dropping
+    // them while the realm they came from is still standing is exactly what
+    // closing is meant to avoid.
     if (!self->js_context.IsEmpty()) {
         self->js_context.Reset();
         if (self->isolate_state != nullptr)
             self->isolate_state->release_v8_handle();
     }
-    Py_CLEAR(self->py_global);
-
-    Py_CLEAR(self->py_isolate);
+    for (std::size_t offset : context_gc_fields)
+        Py_CLEAR(*context_gc_slot(self, offset));
     self->isolate_state = nullptr;
     self->state = ContextState::Closed;
 }
 
 static int context_traverse(context_c* self, visitproc visit, void* arg) {
-    Py_VISIT(self->py_isolate);
-    Py_VISIT(self->class_template_cache);
-    Py_VISIT(self->function_template_cache);
-    Py_VISIT(self->callback_targets);
-    Py_VISIT(self->class_configs);
-    Py_VISIT(self->lazy_factory);
-    Py_VISIT(self->resolving_classes);
-    Py_VISIT(self->lazy_names);
-    Py_VISIT(self->py_global);
-    Py_VISIT(self->trace_callback);
-    Py_VISIT(self->trace_context_type);
-    Py_VISIT(self->trace_event_names);
-    Py_VISIT(self->uncaught_handler);
-    Py_VISIT(self->rejection_handler);
-    Py_VISIT(self->dependencies);
+    for (std::size_t offset : context_gc_fields)
+        Py_VISIT(*context_gc_slot(self, offset));
     if (self->isolate_state != nullptr)
         return self->isolate_state->traverse_context_owners(self, visit, arg);
     return 0;
@@ -514,11 +520,8 @@ context_dealloc(context_c *self)
 PyObject*
 context_js_obj(context_c* self, PyObject* py_object)
 {
-    // No scope is entered here: a pair that already has a handle is answered from
-    // the table alone, which is what makes reading one cheap, and the only call
-    // that has to reach the isolate -- building the first handle -- enters it
-    // itself.  A closed context answers with an error rather than reading a table
-    // the close has already taken away.
+    // A pair that already has a handle is answered from the table alone; only
+    // building the first one enters the isolate.
     if (!context_is_active(self)) {
         PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
         return nullptr;
@@ -716,11 +719,9 @@ PyObject *
 context_enqueue_microtask(context_c *self, PyObject *function)
 {
 #ifndef V8_CPPGC_MICROTASK_QUEUE
-    // v8::MicrotaskQueue's class layout follows this macro, and the library only
-    // defines it on its own compile command line.  Built without it, this
-    // translation unit would disagree with the library about the class and every
-    // virtual call into a queue would reach the wrong slot.  Refuse instead, and
-    // keep the reason visible from Python.
+    // The macro decides MicrotaskQueue's layout and only the library's own command
+    // line defines it: built without it, every virtual call would reach the wrong
+    // slot.
     PyErr_SetString(PyExc_RuntimeError,
                     "this V8 build does not use cppgc microtask queues");
     return NULL;

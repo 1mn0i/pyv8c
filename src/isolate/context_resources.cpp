@@ -182,11 +182,9 @@ IsolateState::track_python_object(Local<Object> object, PyObject* py_object, con
                           WeakCallbackType::kParameter);
     object->SetInternalField(PYTHON_OWNER_FIELD, v8_compat::external_new(isolate_, owner));
 
-    // Published last, so the table never names an owner whose fields are not
-    // filled in yet.  Failing to publish is a miss rather than an error: the pair
-    // is made and works, JavaScript just gets a second object for this Python one
-    // the next time it asks.  Nothing is retained either way, which is what keeps
-    // the table safe to lose.
+    // Published last, so the table never names an owner whose fields are unset.
+    // Failing to publish is only a miss: the pair works, JavaScript just gets a
+    // second object for this Python one next time.
     try
     {
         owner->lifetime->js_object_cache[py_object] = owner;
@@ -229,23 +227,18 @@ IsolateState::cached_js_object(context_c* context, PyObject* py_object)
 PyObject*
 IsolateState::cached_js_wrapper(context_c* context, PyObject* py_object)
 {
-    // Asked for on every attribute read of a context, so an answer that is
-    // already there must not cost a trip into the isolate: the table is keyed by
-    // Python object and the handle is a Python object, and neither needs V8.  The
-    // GIL is held throughout, and it is held by everyone who writes the table or
-    // takes an entry out of it, which is what makes reading it here safe.
+    // Asked for on every attribute read of a context, so the answer when it is
+    // already there must not cost a trip into the isolate.  The GIL is held
+    // throughout, by readers and writers alike.
     auto* owner = find_python_owner(context, py_object);
     if (owner == nullptr)
         return nullptr;
     PyObject* wrapper = owner->wrapper;
     if (wrapper == nullptr)
     {
-        // Building the first handle is the only part that needs the isolate, so
-        // it is the only part that pays to enter it.
+        // Only building the first handle needs the isolate, and entering released
+        // the GIL while it waited, so the pair is looked up again.
         IN_ISOLATE(this);
-        // Entering released the GIL while it waited, so the pair may be gone, or
-        // replaced by a newer one, by now: what was found before the wait cannot
-        // be used after it.
         owner = find_python_owner(context, py_object);
         if (owner == nullptr)
             return nullptr;
@@ -256,11 +249,8 @@ IsolateState::cached_js_wrapper(context_c* context, PyObject* py_object)
             Local<Context> js_context = context->js_context.Get(isolate);
             if (object.IsEmpty() || js_context.IsEmpty())
                 return nullptr;
-            // Weak on purpose.  A handle that held the JavaScript object strongly
-            // would hold its owner alive, and the owner is what holds the Python
-            // object alive: one cycle and neither side would ever be collected
-            // again.  V8 gives this reference back when the object dies, and the
-            // context gives it back when it closes.
+            // Weak on purpose: a strong handle would hold its owner alive, and the
+            // owner holds the Python object -- a cycle neither side would leave.
             wrapper = (PyObject*)js_object_weak_new(object, js_context);
             if (wrapper == nullptr)
                 return nullptr;

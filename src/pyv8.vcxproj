@@ -138,8 +138,7 @@
     <ClCompile Include="isolate\execution.cpp" />
     <ClCompile Include="isolate\error_hooks.cpp" />
     <ClCompile Include="interfaces\idl_spec.cpp" />
-    <ClCompile Include="tools\faker\Faker.cpp" />
-    <ClCompile Include="tools\faker\tools.cpp" />
+
     <ClCompile Include="isolate\isolate.cpp" />
     <ClCompile Include="isolate\isolate_scope.cpp" />
     <ClCompile Include="isolate\isolate_state.cpp" />
@@ -175,9 +174,7 @@
     <ClInclude Include="values\handle_resource.h" />
     <ClInclude Include="isolate\error_hooks.h" />
     <ClInclude Include="interfaces\idl_spec.h" />
-    <ClInclude Include="tools\faker\Faker.h" />
-    <ClInclude Include="tools\faker\trace.h" />
-    <ClInclude Include="tools\faker\tools.h" />
+    <ClInclude Include="tools\trace.h" />
     <ClInclude Include="isolate\isolate.h" />
     <ClInclude Include="isolate\isolate_scope.h" />
     <ClInclude Include="isolate\isolate_state.h" />

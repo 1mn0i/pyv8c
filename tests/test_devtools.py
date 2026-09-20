@@ -108,6 +108,31 @@ def test_native_reentrant_close_is_reported_not_destroyed():
         context.close()
 
 
+def test_a_finished_realm_leaves_no_inspector_behind():
+    """一个 realm 结束后,它的 inspector 不能影响下一个 realm。
+
+    会话属于创建它的 isolate:注册表按 isolate 地址索引,并且和进程一样长寿,所以
+    一个活过自己 isolate 的条目比泄漏更糟——下一个 isolate 可能拿到同一个地址,然后
+    被交给一个建在已销毁 isolate 上的 inspector。关闭 Context 会断开它的会话,isolate
+    销毁路径再清一遍注册表,这里验证的是结果:旧会话只给出干净的失败,新 realm 拿到
+    全新会话。
+    """
+    context = pyv8.Context(Window())
+    probe = Probe(context)
+    probe.request("Debugger.enable")
+    context.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        probe.send(b'{"id": 1, "method": "Runtime.enable"}')
+
+    fresh_context = pyv8.Context(Window())
+    fresh = Probe(fresh_context)
+    try:
+        assert fresh.request("Runtime.enable")["id"] == 1
+    finally:
+        fresh.disconnect()
+        fresh_context.close()
+
+
 def test_ready_is_notification_not_implicit_pause(inspector):
     context, probe = inspector
     probe.request("Runtime.evaluate", expression="'Runtime.runIfWaitingForDebugger'")

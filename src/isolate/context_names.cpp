@@ -7,7 +7,7 @@
 #include "idl_spec.h"
 #include "pyclass.h"
 #include "v8tools.h"
-#include "faker/trace.h"
+#include "trace.h"
 
 using namespace v8;
 
@@ -19,7 +19,7 @@ using namespace v8;
 PyObject *
 context_expose(context_c *self, PyObject *args, PyObject *kwargs)
 {
-    faker::TraceSilence silence(self);
+    trace::TraceSilence silence(self);
     ExecutionScope execution(self);
     if (!execution) return nullptr;
     auto* isolate = execution.isolate();

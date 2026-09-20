@@ -5,7 +5,11 @@
 #include "convert.h"
 #include "jsobject.h"
 
-namespace faker {
+// The tracing hook the interface layer wraps its entry points in: a scope emits
+// one event when it goes out of style with the value the call is about to
+// return, silence keeps a nested call from reporting a second time, and the
+// event hands the Python-side objects to the sink the realm was given.
+namespace trace {
 
 class TraceSilence {
 public:
@@ -108,5 +112,6 @@ private:
     TraceEvent event;
 };
 
-}
+}  // namespace trace
+
 #endif

@@ -564,7 +564,7 @@ Python 构造器会额外收到 `win=<当前 Context 的 Python global_this>` �
 | `IdlSpec.length` | JavaScript 构造器的 `length` |
 | `IdlSpec.constructor_behavior` | 是否允许 `new Interface()` 和直接调用 |
 | `IdlSpec.has_constructor` | 是否在 prototype 上安装 `constructor` |
-| `IdlSpec.global_this` | 标记全局 Window-like 类并注册 Faker 支持 |
+| `IdlSpec.global_this` | 标记全局 Window-like 类（决定哪个 Python 对象是 JavaScript 全局对象） |
 | `IdlSpec.skip_inherit` | 子类建立原型链时跳过该中间基类 |
 | `IdlSpec.undetectable` | 使用 V8 undetectable object 行为 |
 | `IdlSpec.unconstructable` | 构造时抛出“不是构造器”错误 |
@@ -602,7 +602,7 @@ class Calculator:
 ```
 
 `getter`、`setter` 和 `callback` 接受 Python 回调名或 callable。名称在绑定时解析一次；
-显式 IDL 路径不会反射安装未声明的成员。`callback_type=CallbackType.kJs` 使用 Faker 回调名。
+显式 IDL 路径不会反射安装未声明的成员。
 getter/setter 分别使用 `cross_origin_get_check` / `cross_origin_set_check` 配置跨域规则。
 
 描述对象只读，使用 `spec.replace(**changes)` 创建新配置并共享未变化的成员。
@@ -652,9 +652,6 @@ class ReadyState:
 ```
 
 常量会安装在 interface object 和 prototype 上，并使用只读、不可删除的 descriptor。
-
-`IdlSpec.constants_callback` 用于从 `faker` JavaScript callback 延迟获取常量，属于高级
-补环境接口。
 
 ### 原型继承
 

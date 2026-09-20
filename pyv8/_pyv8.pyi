@@ -16,7 +16,6 @@ class IdlSpec:
         attributes: tuple[AttributeSpec, ...] = ...,
         methods: tuple[MethodSpec, ...] = ...,
         constants_value: tuple[ConstantSpec, ...] = ...,
-        constants_callback: tuple[ConstantCallbackSpec, ...] = ...,
         call: str | Callable[..., Any] | None = ...,
         constructor_adapter: str | Callable[..., Any] | None = ...,
         parent_class: type | None = ...,
@@ -72,8 +71,6 @@ class IdlSpec:
     def methods(self) -> tuple[MethodSpec, ...]: ...
     @property
     def constants_value(self) -> tuple[ConstantSpec, ...]: ...
-    @property
-    def constants_callback(self) -> tuple[ConstantCallbackSpec, ...]: ...
     @property
     def call(self) -> str | Callable[..., Any] | None: ...
     @property
@@ -133,7 +130,6 @@ class AttributeSpec:
         name: str,
         getter: str | Callable[..., Any],
         setter: str | Callable[..., Any] | None = ...,
-        callback_type: int = ...,
         location: int = ...,
         property_flags: int = ...,
         receiver_check: int = ...,
@@ -148,8 +144,6 @@ class AttributeSpec:
     def getter(self) -> str | Callable[..., Any]: ...
     @property
     def setter(self) -> str | Callable[..., Any] | None: ...
-    @property
-    def callback_type(self) -> int: ...
     @property
     def location(self) -> int: ...
     @property
@@ -171,7 +165,6 @@ class MethodSpec:
         name: str,
         callback: str | Callable[..., Any],
         length: int = ...,
-        callback_type: int = ...,
         location: int = ...,
         property_flags: int = ...,
         receiver_check: int = ...,
@@ -184,8 +177,6 @@ class MethodSpec:
     def callback(self) -> str | Callable[..., Any]: ...
     @property
     def length(self) -> int: ...
-    @property
-    def callback_type(self) -> int: ...
     @property
     def location(self) -> int: ...
     @property
@@ -208,17 +199,6 @@ class ConstantSpec:
     @property
     def value(self) -> int: ...
     def replace(self, **changes: Any) -> ConstantSpec: ...
-
-class ConstantCallbackSpec:
-    def __init__(self, *,
-        name: str,
-        callback: str,
-    ) -> None: ...
-    @property
-    def name(self) -> str: ...
-    @property
-    def callback(self) -> str: ...
-    def replace(self, **changes: Any) -> ConstantCallbackSpec: ...
 
 class Isolate:
     """独立的 V8 Isolate。"""
@@ -267,12 +247,18 @@ class Context:
     # 下面的方法实际上操作的是globalThis对象
     def __getattr__(self, name: str) -> Any: ...
     def __setattr__(self, name: str, value: Any) -> None: ...
-    def __getitem__(self, name: str) -> Any: ...
-    def __setitem__(self, name: str, value: Any) -> None: ...
+    # 没有 __getitem__/__setitem__:上下文类型没有装 mapping 槽,名字用属性形式访问
+    # 已经足够(ctx["name"] 会抛 TypeError,而不是像过去那样只存在于 stub 里)。
+    def enqueue_microtask(self, function: Any) -> None: ...
+    def set_error_hooks(
+        self, on_uncaught: Any = None, on_rejection: Any = None
+    ) -> None: ...
 
 class Script:
     """V8 JavaScript脚本"""
-    def __init__(self, context: Context, source: str, name: Optional[str] = None) -> None: ...
+    # 关键字名与实现一致:构造时接受的是 filename(见 src/handles/script.cpp 的
+    # PyArg_ParseTupleAndKeywords)。
+    def __init__(self, context: Context, source: str, filename: Optional[str] = None) -> None: ...
 
 class Debugger:
     """V8 JavaScript调试器"""
@@ -316,7 +302,7 @@ class JSPromise(JSObject):
 
 class JSTypeArray(JSObject):
     """JavaScript TypedArray的Python封装"""
-    def __init__(self, data: List[Union[int, float]], typed: int) -> None: ...
+    def __init__(self, data: Union[List[Union[int, float]], JSObject], typed: int) -> None: ...
     def __repr__(self) -> str: ...
 
 class JSValue:
@@ -329,20 +315,34 @@ class JSException(BaseException):
     """JavaScript异常的Python封装"""
     @property
     def original(self) -> Any: ...
+    @property
+    def value(self) -> Any: ...
+    @value.setter
+    def value(self, value: Any) -> None: ...
 
-class JavaScriptTerminated(Exception):
+class JavaScriptTerminated(BaseException):
     """JavaScript执行终止异常"""
     pass
 
-# 单例对象
-Null: JSObject
-Undefined: JSObject
+# 单例对象。它们不是 JSObject:NullType/UndefinedType 是各自独立的类型,不继承
+# JSObject,所以这里不声明成 JSObject。
+Null: Any
+Undefined: Any
 
 # 初始化v8
 def init_v8(icudtl_path: Optional[str] = None, params: Optional[List[str]] = None) -> bool: ...
 
 # 永久关闭 V8；仍有活动 Context/JS 对象时会拒绝关闭
 def shutdown_v8() -> bool: ...
+
+# 把标记写进类自己的 IdlSpec:接受类(或任何带 __v8_idl_spec__ 的对象),合并标记后
+# 回写并返回同一个对象,所以可以直接当装饰器用:@hidden。
+def hidden(thing: type) -> type: ...
+
+def unconstructable(thing: type) -> type: ...
+
+# 直接触发一次 V8 的低内存通知(作用在默认 isolate 上)。
+def low_memory_notification() -> None: ...
 
 # Trigger production V8 collection through LowMemoryNotification.
 def v8_gc() -> None: ...

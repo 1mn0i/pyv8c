@@ -12,7 +12,6 @@ import unittest
 
 import pyv8
 from pyv8.flag import (
-    CallbackType,
     FlagConstructor,
     FlagLocation,
     FlagReceiverCheck,
@@ -39,7 +38,6 @@ def make_widget_class():
                     name="describe",
                     callback="fn_describe",
                     length=0,
-                    callback_type=CallbackType.kPy,
                     location=FlagLocation.kPrototype,
                     property_flags=0,
                     receiver_check=FlagReceiverCheck.kCheck,
@@ -52,7 +50,6 @@ def make_widget_class():
                     name="label",
                     getter="get_label",
                     setter=None,
-                    callback_type=CallbackType.kPy,
                     location=FlagLocation.kInstance,
                     property_flags=V8Attribute.ReadOnly,
                     receiver_check=FlagReceiverCheck.kCheck,

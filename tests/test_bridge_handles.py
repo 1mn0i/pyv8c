@@ -93,5 +93,5 @@ def test_exception_context_cycle_is_collectable():
     del window, context
     for _ in range(3):
         gc.collect()
-        pyv8._pyv8.low_memory_notification()
+        pyv8.low_memory_notification()
     assert reference() is None

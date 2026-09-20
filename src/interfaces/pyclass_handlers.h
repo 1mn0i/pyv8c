@@ -112,15 +112,9 @@ inline PyObject* get_self_cross_origin(const v8::FunctionCallbackInfo<T>& info) 
     return get_handler_self(info, true);
 }
 
-// Which of an interface's declared handlers a lookup wants.
-//
-// Every interceptor knows the answer as a constant -- one is the named getter,
-// one is the indexed deleter -- so a lookup takes an id instead of the name of
-// the Python attribute that holds the handler.  A name would have to be compared
-// letter by letter against every handler an interface can declare, on every
-// access, only to rediscover what the caller already knew.  The spec-backed ids
-// are in the order of the fields in IdlSpec, which is what keeps the switch that
-// reads them a table lookup.
+// Which of an interface's declared handlers a lookup wants.  The spec-backed ids
+// are in IdlSpec's field order, which keeps the switch that reads them a table
+// lookup rather than a chain of comparisons.
 enum class HandlerId {
     NameGet, NameSet, NameQuery, NameEnum, NameDel,
     IndexGet, IndexSet, IndexQuery, IndexEnum, IndexDel,
@@ -135,17 +129,13 @@ enum class HandlerId {
     Count,
 };
 
-// The handler *receiver* declares for *which*, as a new reference, or null when
-// this realm has nothing to offer for it -- which is how an interface that does
-// not declare a handler declines the operation.  A Python error is set only when
-// the lookup itself failed.
+// The handler *receiver* declares for *which*, as a new reference, or null when it
+// declares none -- which is how an interface declines an operation.  A Python
+// error is set only when the lookup itself failed.
 PyObject* py_class_handler(PyObject* receiver, HandlerId which, context_c* context);
 
-// Invokes a handler found for a receiver, with argv[0] holding that receiver.
-//
-// A handler declared as a plain function -- which is what this binding installs --
-// takes the receiver as its first parameter; one that is already a bound method
-// takes it from its own binding and must not be handed a second one.
+// argv[0] holds the receiver.  A declared handler takes it as its first parameter;
+// a bound method already carries one.
 PyObject* call_handler(PyObject* handler, PyObject* argv[], size_t count);
 
 // Machinery the entry points of the other translation unit reach as well: one

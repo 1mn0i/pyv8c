@@ -7,7 +7,6 @@ PyTypeObject *idl_spec_type = nullptr;
 PyTypeObject *attribute_spec_type = nullptr;
 PyTypeObject *method_spec_type = nullptr;
 PyTypeObject *constant_spec_type = nullptr;
-PyTypeObject *constantcallback_spec_type = nullptr;
 
 enum class Kind
 {
@@ -21,8 +20,7 @@ enum class Kind
     Type,
     Attributes,
     Methods,
-    Constants,
-    ConstantCallbacks
+    Constants
 };
 struct Field
 {
@@ -47,7 +45,6 @@ static Field IdlSpec_fields[] = {
     {"attributes", Kind::Attributes, offsetof(IdlSpec, attributes), 0, 0},
     {"methods", Kind::Methods, offsetof(IdlSpec, methods), 0, 0},
     {"constants_value", Kind::Constants, offsetof(IdlSpec, constants_value), 0, 0},
-    {"constants_callback", Kind::ConstantCallbacks, offsetof(IdlSpec, constants_callback), 0, 0},
     {"call", Kind::Callback, offsetof(IdlSpec, call), 0, 0},
     {"constructor_adapter", Kind::Callback, offsetof(IdlSpec, constructor_adapter), 0, 0},
     {"parent_class", Kind::Type, offsetof(IdlSpec, parent_class), 0, 0},
@@ -79,7 +76,6 @@ static Field AttributeSpec_fields[] = {
     {"name", Kind::RequiredString, offsetof(AttributeSpec, name), 0, 0},
     {"getter", Kind::RequiredCallback, offsetof(AttributeSpec, getter), 0, 0},
     {"setter", Kind::Callback, offsetof(AttributeSpec, setter), 0, 0},
-    {"callback_type", Kind::Int, offsetof(AttributeSpec, callback_type), 0, 1},
     {"location", Kind::Int, offsetof(AttributeSpec, location), 1, 2},
     {"property_flags", Kind::Int, offsetof(AttributeSpec, property_flags), 0, 7},
     {"receiver_check", Kind::Int, offsetof(AttributeSpec, receiver_check), 0, 1},
@@ -92,7 +88,6 @@ static Field MethodSpec_fields[] = {
     {"name", Kind::RequiredString, offsetof(MethodSpec, name), 0, 0},
     {"callback", Kind::RequiredCallback, offsetof(MethodSpec, callback), 0, 0},
     {"length", Kind::Int, offsetof(MethodSpec, length), 0, 255},
-    {"callback_type", Kind::Int, offsetof(MethodSpec, callback_type), 0, 1},
     {"location", Kind::Int, offsetof(MethodSpec, location), 1, 2},
     {"property_flags", Kind::Int, offsetof(MethodSpec, property_flags), 0, 7},
     {"receiver_check", Kind::Int, offsetof(MethodSpec, receiver_check), 0, 1},
@@ -102,10 +97,6 @@ static Field MethodSpec_fields[] = {
 static Field ConstantSpec_fields[] = {
     {"name", Kind::RequiredString, offsetof(ConstantSpec, name), 0, 0},
     {"value", Kind::Signed, offsetof(ConstantSpec, value), 0, 0},
-};
-static Field ConstantCallbackSpec_fields[] = {
-    {"name", Kind::RequiredString, offsetof(ConstantCallbackSpec, name), 0, 0},
-    {"callback", Kind::RequiredString, offsetof(ConstantCallbackSpec, callback), 0, 0},
 };
 struct Definition
 {
@@ -117,12 +108,10 @@ struct Definition
     PyGetSetDef *getters;
 };
 static Definition definitions[] = {
-    {&idl_spec_type, "pyv8.IdlSpec", sizeof(IdlSpec), IdlSpec_fields, 41, nullptr},
-    {&attribute_spec_type, "pyv8.AttributeSpec", sizeof(AttributeSpec), AttributeSpec_fields, 11, nullptr},
-    {&method_spec_type, "pyv8.MethodSpec", sizeof(MethodSpec), MethodSpec_fields, 9, nullptr},
+    {&idl_spec_type, "pyv8.IdlSpec", sizeof(IdlSpec), IdlSpec_fields, 40, nullptr},
+    {&attribute_spec_type, "pyv8.AttributeSpec", sizeof(AttributeSpec), AttributeSpec_fields, 10, nullptr},
+    {&method_spec_type, "pyv8.MethodSpec", sizeof(MethodSpec), MethodSpec_fields, 8, nullptr},
     {&constant_spec_type, "pyv8.ConstantSpec", sizeof(ConstantSpec), ConstantSpec_fields, 2, nullptr},
-    {&constantcallback_spec_type, "pyv8.ConstantCallbackSpec", sizeof(ConstantCallbackSpec),
-     ConstantCallbackSpec_fields, 2, nullptr},
 };
 static Definition &definition(PyTypeObject *type)
 {
@@ -208,14 +197,12 @@ static int assign_field(PyObject *self, const Field &field, PyObject *value)
         break;
     case Kind::Attributes:
     case Kind::Methods:
-    case Kind::Constants:
-    case Kind::ConstantCallbacks: {
+    case Kind::Constants: {
         if (!PyTuple_Check(value))
             goto invalid;
         PyTypeObject *expected = field.kind == Kind::Attributes  ? attribute_spec_type
                                  : field.kind == Kind::Methods   ? method_spec_type
-                                 : field.kind == Kind::Constants ? constant_spec_type
-                                                                 : constantcallback_spec_type;
+                                                                 : constant_spec_type;
         for (Py_ssize_t index = 0; index < PyTuple_Size(value); ++index)
             if (Py_TYPE(PyTuple_GetItem(value, index)) != expected)
                 goto invalid;
@@ -281,12 +268,7 @@ static int apply_fields(PyObject *self, PyObject *changes)
     if (Py_TYPE((PyObject*)self) == method_spec_type)
     {
         auto &spec = *(MethodSpec *)self;
-        if (spec.callback_type == 1 && !PyUnicode_Check(spec.callback))
-        {
-            PyErr_SetString(PyExc_TypeError, "JavaScript callbacks require a Faker callback name");
-            return -1;
-        }
-        spec.callbacks_resolved = spec.callback_type == 1 || callbacks_resolved;
+        spec.callbacks_resolved = callbacks_resolved;
         spec.pass_receiver = spec.location != 2 && !PyMethod_Check_abi3(spec.callback);
         Py_CLEAR(spec.trace_receiver);
         if (PyMethod_Check_abi3(spec.callback)) {
@@ -297,13 +279,7 @@ static int apply_fields(PyObject *self, PyObject *changes)
     if (Py_TYPE((PyObject*)self) == attribute_spec_type)
     {
         auto &spec = *(AttributeSpec *)self;
-        if (spec.callback_type == 1 &&
-            (!PyUnicode_Check(spec.getter) || (spec.setter != nullptr && !PyUnicode_Check(spec.setter))))
-        {
-            PyErr_SetString(PyExc_TypeError, "JavaScript accessors require Faker callback names");
-            return -1;
-        }
-        spec.callbacks_resolved = spec.callback_type == 1 || callbacks_resolved;
+        spec.callbacks_resolved = callbacks_resolved;
         spec.getter_receiver = spec.location != 2 && !PyMethod_Check_abi3(spec.getter);
         spec.setter_receiver =
             spec.location != 2 && (spec.setter == nullptr || !PyMethod_Check_abi3(spec.setter));
@@ -461,10 +437,7 @@ PyObject *idl_spec_resolve(PyObject *original, PyObject *owner)
     }
     PyObject *changes = nullptr;
     auto &def = definition(Py_TYPE((PyObject*)original));
-    bool python = Py_TYPE((PyObject*)original) == idl_spec_type ||
-                  (Py_TYPE((PyObject*)original) == attribute_spec_type ? ((AttributeSpec *)original)->callback_type == 0
-                                                            : ((MethodSpec *)original)->callback_type == 0);
-    for (size_t index = 0; python && index < def.count; ++index)
+    for (size_t index = 0; index < def.count; ++index)
     {
         const Field &field = def.fields[index];
         if (field.kind != Kind::Callback && field.kind != Kind::RequiredCallback)

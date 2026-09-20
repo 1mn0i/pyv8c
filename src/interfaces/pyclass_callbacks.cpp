@@ -8,7 +8,7 @@
 #include "pyclass.h"
 #include "idl_spec.h"
 #include "pyclass_handlers.h"
-#include "faker/trace.h"
+#include "trace.h"
 
 using namespace v8;
 
@@ -19,11 +19,8 @@ enum FlagConstructor {
     kAll = kNew | kCall,
 };
 
-// The keyword a constructor is offered its window under.
-//
-// A construction used to build a dictionary for this one keyword, every time:
-// the name is therefore interned once and handed to the call as a key-name tuple
-// instead, which is the whole of what a keyword call needs.
+// The keyword a constructor is offered its window under, interned once and handed
+// to the call as a key-name tuple rather than as a dictionary.
 static PyObject* constructor_window_keyword()
 {
     static PyObject* cached = nullptr;
@@ -185,7 +182,7 @@ void py_class_construct_callback(const FunctionCallbackInfo<Value>& info) {
         return;
     if (context_trace_enabled(ctx_c)) {
         {
-            faker::TraceScope construct_trace(info, 3, self->cls_name, self->cls, ctx_c);
+            trace::TraceScope construct_trace(info, 3, self->cls_name, self->cls, ctx_c);
             py_class_construct_impl(info, context, self, ctx_c);
         }
         if (PyErr_Occurred())
@@ -242,7 +239,7 @@ void py_class_method_callback(const FunctionCallbackInfo<Value> &info)
         if (trace_receiver == Py_None && binding->trace_receiver)
             trace_receiver = binding->trace_receiver;
         {
-            faker::TraceScope operation_trace(info, 2, binding->name, trace_receiver, owner);
+            trace::TraceScope operation_trace(info, 2, binding->name, trace_receiver, owner);
             py_class_method_impl(info, context, receiver, binding);
         }
         if (PyErr_Occurred())
@@ -262,7 +259,8 @@ static void attribute_get_impl(const FunctionCallbackInfo<Value>& info) {
     PyObject* self = binding->getter_receiver ? get_self(info) : Py_None;
     if (!self) { js_throw_py(); return; }
     PyOwnedRef keep_self(PyV8_NewRef(self));
-    PyOwnedRef keep_binding(PyV8_NewRef((PyObject*)binding));
+    // No reference is taken on binding: nothing reads it after the call below,
+    // and the callback it runs may close the context, which is what releases it.
     PyObject* argv[] = {self};
     PyObject* result = PyObject_Vectorcall(binding->getter, argv, self == Py_None ? 0 : 1, nullptr);
     JS_PROPAGATE_PY(result);
@@ -280,7 +278,7 @@ void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
     auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
     if (binding == nullptr) { js_throw_py(); return; }
     PyObject* receiver = binding->getter_receiver ? get_self(info) : Py_None;
-    faker::TraceScope observation(info, 0, binding->name, receiver, owner);
+    trace::TraceScope observation(info, 0, binding->name, receiver, owner);
     attribute_get_impl(info);
 }
 
@@ -296,6 +294,9 @@ static void attribute_set_impl(const FunctionCallbackInfo<Value>& info, bool ins
     PyObject* self = binding->setter_receiver ? get_self(info) : Py_None;
     if (!self) { js_throw_py(); return; }
     PyOwnedRef keep_self(PyV8_NewRef(self));
+    // This one is load-bearing: replaceable is read off binding *after* the
+    // setter runs, and a setter that closes its context drops the reference the
+    // context held on the spec.
     PyOwnedRef keep_binding(PyV8_NewRef((PyObject*)binding));
     PyObject* value = py_argument_from_js(info[0], context);
     JS_PROPAGATE_PY(value);
@@ -321,7 +322,7 @@ static void attribute_set(const FunctionCallbackInfo<Value>& info, bool instance
     auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
     if (binding == nullptr) { js_throw_py(); return; }
     PyObject* receiver = binding->setter_receiver ? get_self(info) : Py_None;
-    faker::TraceScope observation(info, 1, binding->name, receiver, owner);
+    trace::TraceScope observation(info, 1, binding->name, receiver, owner);
     attribute_set_impl(info, instance);
 }
 

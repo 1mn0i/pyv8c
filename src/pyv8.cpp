@@ -183,7 +183,15 @@ context_get_current(PyObject *self, PyObject *args)
     {
         PYV8_RETURN_NONE;
     }
+    // A context the engine is running in need not be one this binding owns: a
+    // realm whose owner has already been released, or one V8 itself made, answers
+    // with nothing here.  Answering "no context" is what the caller expects from
+    // an empty stack; taking a reference to it is not.
     PyObject *context = (PyObject*)context_from_v8(current_context);
+    if (context == nullptr)
+    {
+        PYV8_RETURN_NONE;
+    }
     Py_INCREF((PyObject*)context);
     return context;
 }
@@ -205,7 +213,13 @@ context_get_incumbent(PyObject* self, PyObject* args)
     {
         PYV8_RETURN_NONE;
     }
+    // See context_get_current: a realm this binding does not own is answered as
+    // "no context", never as a reference to nothing.
     PyObject* context = (PyObject*)context_from_v8(current_context);
+    if (context == nullptr)
+    {
+        PYV8_RETURN_NONE;
+    }
     Py_INCREF((PyObject*)context);
     return context;
 }

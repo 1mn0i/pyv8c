@@ -30,12 +30,8 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
     python_owner_ = state_->python_owner;
     Py_XINCREF((PyObject*)python_owner_);
     ++state_->entry_users;
-    // A v8::Locker that is contended for blocks until the owning thread leaves
-    // the isolate.  Acquiring it while still holding the GIL would starve every
-    // other Python thread -- the owning thread itself usually needs the GIL to
-    // make progress, so the wait would never end.  Drop the GIL for the
-    // duration of the acquisition and re-acquire it before entering the
-    // isolate (Python callbacks from inside V8 run while holding it).
+    // A contended locker blocks, and the thread holding the isolate usually needs
+    // the GIL to make progress, so the GIL is dropped while acquiring it.
     PyThreadState* gil_state = nullptr;
     bool acquired = try_only;
     try

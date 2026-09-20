@@ -1,11 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="tools\faker">
-      <UniqueIdentifier>{d3fab5f2-db1d-46d0-8178-687c99e85723}</UniqueIdentifier>
-    </Filter>
-  </ItemGroup>
-  <ItemGroup>
     <ClCompile Include="isolate\context.cpp" />
     <ClCompile Include="isolate\context_names.cpp" />
     <ClCompile Include="values\convert_to_python.cpp" />
@@ -27,12 +22,7 @@
     <ClCompile Include="isolate\runtime.cpp" />
     <ClCompile Include="handles\script.cpp" />
     <ClCompile Include="isolate\v8_string_cache.cpp" />
-    <ClCompile Include="tools\faker\tools.cpp">
-      <Filter>tools\faker</Filter>
-    </ClCompile>
-    <ClCompile Include="tools\faker\Faker.cpp">
-      <Filter>tools\faker</Filter>
-    </ClCompile>
+
     <ClCompile Include="interfaces\v8tools.cpp" />
     <ClCompile Include="abi3.cpp" />
     <ClCompile Include="handles\jspromise.cpp" />
@@ -61,16 +51,8 @@
     <ClInclude Include="isolate\runtime.h" />
     <ClInclude Include="handles\script.h" />
     <ClInclude Include="isolate\v8_string_cache.h" />
-    <ClInclude Include="tools\faker\tools.h">
-      <Filter>tools\faker</Filter>
-    </ClInclude>
-    <ClInclude Include="tools\faker\Faker.h">
-      <Filter>tools\faker</Filter>
-    </ClInclude>
     <ClInclude Include="interfaces\v8tools.h" />
-    <ClInclude Include="tools\faker\trace.h">
-      <Filter>tools\faker</Filter>
-    </ClInclude>
+    <ClInclude Include="tools\trace.h" />
     <ClInclude Include="abi3.h" />
     <ClInclude Include="handles\jsfunction.h" />
     <ClInclude Include="handles\jspromise.h" />

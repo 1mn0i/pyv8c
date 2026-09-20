@@ -111,7 +111,6 @@ class TestPyClassMaintenance(unittest.TestCase):
                         name="marker",
                         callback="get_marker",
                         length=0,
-                        callback_type=0,
                         location=1,
                         property_flags=0,
                         receiver_check=0,

@@ -8,7 +8,7 @@
 #include "pyclass.h"
 #include "pyfunction.h"
 #include "idl_spec.h"
-#include "faker/trace.h"
+#include "trace.h"
 
 using namespace v8;
 
@@ -203,6 +203,6 @@ py_function_callback(const FunctionCallbackInfo<Value> &info)
     // the callable belongs to (None for a plain function), the arguments are the
     // JavaScript ones and the value is whatever the call produced.
     PyObject* receiver = self->receiver ? self->receiver : Py_None;
-    faker::TraceScope observation(info, 2, self->function_name, receiver, owner);
+    trace::TraceScope observation(info, 2, self->function_name, receiver, owner);
     py_function_invoke(info, self, context);
 }

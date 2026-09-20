@@ -41,12 +41,10 @@ See `pyv8/_pyv8.pyi` for complete keyword signatures and read-only properties.
 - `MethodSpec`: required `name` and `callback`; `length` in 0..255, `location`,
   `property_flags`, `receiver_check`, `cross_origin_check`, `side_effect`.
 - `ConstantSpec`: `name` and integer `value` in -2147483648..4294967295.
-- `ConstantCallbackSpec`: `name` and a Faker JavaScript `callback` name.
 
 Python callbacks accept a callable or a class member name, resolved once when
 binding. Instance/prototype callbacks receive the Python receiver unless already
-bound; interface callbacks do not. Attribute/method `callback_type=CallbackType.kJs`
-requires a string referencing `globalThis.faker`, never a Python callable.
+bound; interface callbacks do not.
 Callbacks are retained by the template; later class-member reassignment does not
 change an installed explicit binding. Callback function objects are not modified.
 

@@ -10,27 +10,23 @@ namespace
 constexpr std::size_t kStringCount =
     static_cast<std::size_t>(V8StringId::Count);
 
-constexpr std::array<std::string_view, kStringCount> kStringValues = {
-    "Error Prototype Will Appear Here",
-    "A wild object appeared!",
-    "constructor",
-    "prototype",
-    "message",
-    "length",
-    "name",
-    "faker",
-    "raw_tostring",
-    "cb",
-};
+// Each literal beside the id it belongs to: a positional list would shift as soon
+// as an id is added anywhere but the end.
+constexpr std::array<std::pair<V8StringId, std::string_view>, kStringCount> kStringValues = {{
+    {V8StringId::ErrorPrototypeMagic, "Error Prototype Will Appear Here"},
+    {V8StringId::PythonObjectMagic, "A wild object appeared!"},
+    {V8StringId::Message, "message"},
+}};
 }
 
 bool
 V8StringCache::initialize(v8::Isolate* isolate)
 {
     reset();
-    for (std::size_t i = 0; i < kStringValues.size(); ++i)
+    std::array<bool, kCount> filled = {};
+    for (const auto& entry : kStringValues)
     {
-        const std::string_view text = kStringValues[i];
+        const std::string_view text = entry.second;
         if (text.size() > static_cast<std::size_t>(INT_MAX))
         {
             reset();
@@ -48,8 +44,18 @@ V8StringCache::initialize(v8::Isolate* isolate)
             reset();
             return false;
         }
-        values_[i].Reset(isolate, value);
+        const std::size_t index = static_cast<std::size_t>(entry.first);
+        values_[index].Reset(isolate, value);
+        filled[index] = true;
     }
+    // An id with no literal is found by a lookup returning nothing, somewhere
+    // else entirely, so it is found here instead.
+    for (bool present : filled)
+        if (!present)
+        {
+            reset();
+            return false;
+        }
     return true;
 }
 

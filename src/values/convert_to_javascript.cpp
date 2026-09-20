@@ -117,10 +117,8 @@ js_from_py_impl(PyObject *value,
         }
         const int length = static_cast<int>(len);
         // ASCII is what a page hands over most of the time, and UTF-8 spells it
-        // one byte per code unit: V8 can take those bytes as they are instead of
-        // decoding a multi-byte sequence that cannot be in them.  The scan runs
-        // over the UTF-8 buffer CPython already cached on the object, and is
-        // shorter work than the decode it saves.
+        // one byte per code unit: V8 can take those bytes as they are.  The scan
+        // is over the buffer CPython already cached and costs less than the decode.
         bool ascii = true;
         for (Py_ssize_t index = 0; index < len; ++index)
         {
@@ -289,12 +287,15 @@ js_from_py_impl(PyObject *value,
                 return Local<Value>();
 
             bool set_worked;
-            if (!array->Set(context, static_cast<uint32_t>(i), js_item).To(&set_worked))
+            // The engine answering "no" without throwing is a failed write too,
+            // and the assertion that used to say so was compiled out of a release
+            // build, which left a half-filled array behind.
+            if (!array->Set(context, static_cast<uint32_t>(i), js_item).To(&set_worked) ||
+                !set_worked)
             {
                 PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript array item");
                 return Local<Value>();
             }
-            assert(set_worked);
         }
         return array;
     }

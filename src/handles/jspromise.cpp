@@ -39,7 +39,6 @@ int js_promise_type_init()
     js_promise_type = (PyTypeObject*)PyType_FromSpecWithBases(&js_promise_spec, bases);
     Py_DECREF((PyObject*)bases);
 
-    //js_promise_type = (PyTypeObject*)PyType_FromSpec(&js_promise_spec);
     if (js_promise_type == NULL)
     {
         return -1;

@@ -360,21 +360,3 @@ py_from_js(Local<Value> value, Local<Context> context)
 PyObject* py_argument_from_js(Local<Value> value, Local<Context> context) {
     return py_from_js(value, context);
 }
-
-PyObject *
-pys_from_jss(const FunctionCallbackInfo<Value> &js_args, Local<Context> context)
-{
-    PyObject *py_args = PyTuple_New(js_args.Length());
-    PyErr_PROPAGATE(py_args);
-    for (int i = 0; i < js_args.Length(); i++)
-    {
-        PyObject *arg = py_argument_from_js(js_args[i], context);
-        if (arg == NULL)
-        {
-            Py_DECREF((PyObject*)py_args);
-            return NULL;
-        }
-        PyTuple_SetItem(py_args, i, arg);
-    }
-    return py_args;
-}

@@ -5,7 +5,7 @@
 #include "convert.h"
 #include "context.h"
 #include "pyclass_handlers.h"
-#include "faker/trace.h"
+#include "trace.h"
 
 using namespace v8;
 
@@ -162,7 +162,7 @@ Intercepted named_query(Local<Name> js_name, Info(Integer)) {
         return Intercepted::kNo;
     }
     Py_INCREF((PyObject*)key);
-    faker::TraceEvent observation(info.GetIsolate(), owner, self);
+    trace::TraceEvent observation(info.GetIsolate(), owner, self);
     auto result = property_query_handler(key, info, self, HandlerId::NameQuery);
     // ``'name' in target`` is an existence probe, not a read: it is reported as
     // its own event carrying the answer the engine reaches for this name.
@@ -225,7 +225,7 @@ Intercepted indexed_query(uint32_t index, Info(Integer)) {
         return Intercepted::kNo;
     }
     Py_INCREF((PyObject*)key);
-    faker::TraceEvent observation(info.GetIsolate(), owner, self);
+    trace::TraceEvent observation(info.GetIsolate(), owner, self);
     auto result = property_query_handler(key, info, self, HandlerId::IndexQuery);
     const bool exists = v8_compat::callback_holder(info)
         ->HasRealIndexedProperty(context, index).FromMaybe(false);
@@ -257,7 +257,7 @@ Intercepted named_descriptor(Local<Name> js_name, Info(Value)) {
                 js_throw_py();
                 return Intercepted::kNo;
             }
-            faker::TraceEvent observation(info.GetIsolate(), owner, self);
+            trace::TraceEvent observation(info.GetIsolate(), owner, self);
             observation.emit(5, key, Boolean::New(isolate, own_real_property_exists(info, js_name, context)));
             Py_DECREF((PyObject*)key);
         }
@@ -270,7 +270,7 @@ Intercepted named_descriptor(Local<Name> js_name, Info(Value)) {
     }
     if (!report) return property_descriptor(key, info, context, self, HandlerId::NameGet, false);
     Py_INCREF((PyObject*)key);
-    faker::TraceEvent observation(info.GetIsolate(), owner, self);
+    trace::TraceEvent observation(info.GetIsolate(), owner, self);
     auto result = property_descriptor(key, info, context, self, HandlerId::NameGet, false);
     // A descriptor probe asks what the own property is, not what it holds, so it
     // is reported as its own event and never as a getter event.
@@ -293,7 +293,7 @@ Intercepted indexed_descriptor(uint32_t index, Info(Value)) {
     if (!context_trace_enabled(owner) || self == Py_None)
         return property_descriptor(key, info, context, self, HandlerId::IndexGet, true);
     Py_INCREF((PyObject*)key);
-    faker::TraceEvent observation(info.GetIsolate(), owner, self);
+    trace::TraceEvent observation(info.GetIsolate(), owner, self);
     auto result = property_descriptor(key, info, context, self, HandlerId::IndexGet, true);
     const bool exists = v8_compat::callback_holder(info)
         ->HasRealIndexedProperty(context, index).FromMaybe(false);

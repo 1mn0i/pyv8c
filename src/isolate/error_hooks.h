@@ -6,25 +6,11 @@
 class IsolateState;
 struct context_c;
 
-// Route the failures V8 handles by itself back into Python.
-//
-// An embedder sees every exception it caused: the call it made returns as a
-// Python error.  What it cannot see is what V8 runs on its own -- microtask
-// jobs and promise reactions never return to a Python frame -- and an unhandled
-// rejection is not an exception at all.  V8 reports both through isolate-wide
-// callbacks instead, and using those is also the cheap way to do it: they are
-// installed once, where wrapping every enqueued function in JavaScript would
-// cost on every call.
-//
-// ``on_uncaught`` is called as ``(message, source, line, column, error)`` with
-// the exception V8 could not deliver, and ``on_rejection`` as
-// ``(event, identity, promise, reason)``, where ``event`` is ``"unhandledrejection"`` or
-// ``"rejectionhandled"``.  Either may be ``None`` to leave that report alone.
-//
-// Both run on the thread executing the isolate, with the GIL held -- V8 only
-// calls them while a realm thread is inside JavaScript -- and the pending
-// Python error state is restored around the call, so a reporter cannot disturb
-// the JavaScript failure it is reporting.
+// Route the failures V8 handles by itself back into Python: an exception from a
+// microtask job or promise reaction, and a rejection.  Both run on the isolate's
+// thread with the GIL held; either may be None.
+//   on_uncaught(message, source, line, column, error)
+//   on_rejection(event, identity, promise, reason)
 bool error_hooks_install(context_c* context, PyObject* on_uncaught, PyObject* on_rejection);
 
 // Remove the native listeners. Python reporters are released by Context.close.

@@ -10,7 +10,7 @@ _EXCLUDED_GETTERS = frozenset((
     "debug", "undebug", "inspect", "copy", "queryObjects", "monitor", "unmonitor",
     "$", "$$", "$_", "$0", "$1", "$2", "$3", "$4", "$x", "DataView", "String", "Array",
     "Date", "Object", "window", "Symbol", "Number", "Function", "parseFloat", "parseInt",
-    "Math", "BigInt", "RegExp", "console", "isNaN", "Boolean", "faker", "NaN", "Infinity",
+    "Math", "BigInt", "RegExp", "console", "isNaN", "Boolean", "NaN", "Infinity",
     "Symbol.toPrimitive", "Symbol.toStringTag", "unescape", "decodeURIComponent",
 ))
 

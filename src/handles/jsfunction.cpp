@@ -1,6 +1,7 @@
 #include <Python.h>
 #include "pyv8.h"
 #include <v8.h>
+#include <climits>
 
 #include "jsfunction.h"
 #include "jsobject.h"
@@ -53,7 +54,6 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
     if (!execution || !js_object_require_active(&self->base)) return nullptr;
     auto* isolate = execution.isolate();
     Local<Object> object = self->base.object.Get(isolate);
-    //IN_CONTEXT(object->CreationContext());
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
 
@@ -63,7 +63,17 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
     } else {
         js_this = self->js_this.Get(isolate);
     }
-    int argc = PyTuple_Size(args);
+    // The tuple's length is a Py_ssize_t and every V8 entry point that takes one
+    // takes it as an int, so the narrowing is made here, once, with a check
+    // instead of a warning.
+    const Py_ssize_t argument_count = PyTuple_Size(args);
+    if (argument_count < 0)
+        return NULL;
+    if (argument_count > INT_MAX) {
+        PyErr_SetString(PyExc_OverflowError, "too many arguments for a JavaScript call");
+        return NULL;
+    }
+    const int argc = static_cast<int>(argument_count);
     MaybeLocal<Value> result;
     TimeoutGuard timeout_guard(context);
     V8ValueArguments argv(argc);
@@ -100,30 +110,8 @@ PyObject* js_function_repr(js_function* self) {
     TimeoutGuard timeout_guard(context);
     if (!timeout_guard.start())
         return NULL;
-    PyObject* repr = NULL;
-    if (object->IsFunction()) {
-        Local<Object> global = context->Global();
-        v8::Local<v8::Value> faker, raw_tostring, ret;
-        v8::MaybeLocal<v8::Value> maybe_faker, maybe_raw_tostring, maybe_ret;
-        maybe_faker = global->Get(
-            context, self->base.isolate_state->v8_string(V8StringId::Faker));
-        if (maybe_faker.ToLocal(&faker) && faker->IsObject()) {
-            maybe_raw_tostring = faker.As<v8::Object>()->Get(
-                context, self->base.isolate_state->v8_string(V8StringId::RawToString));
-            if (maybe_raw_tostring.ToLocal(&raw_tostring) && raw_tostring->IsFunction()) {
-                maybe_ret = raw_tostring.As<v8::Function>()->Call(context, object, 0, NULL);
-                if (maybe_ret.ToLocal(&ret)) {
-                    String::Utf8Value str(isolate, ret);
-                    repr = PyUnicode_DecodeUTF8(*str, str.length(), NULL);
-                }
-            }
-        }
-    }
-    if (repr == NULL) {
-        String::Utf8Value str(isolate, object);
-        //String::Utf8Value str(isolate, object->ToString(context).ToLocalChecked());
-        repr = PyUnicode_DecodeUTF8(*str, str.length(), NULL);
-    }
+    String::Utf8Value str(isolate, object);
+    PyObject* repr = PyUnicode_DecodeUTF8(*str, str.length(), NULL);
 
     if (!timeout_guard.stop())
         return NULL;

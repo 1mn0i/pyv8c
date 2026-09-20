@@ -27,12 +27,8 @@ private:
 };
 
 
-// CPython 3.12 changed the Py_RETURN_* macros for immortal singletons to
-// return borrowed pointers.  That implementation is correct for 3.12+, but
-// it is not safe when an abi3 extension built with those headers is loaded by
-// Python 3.10 or 3.11.  Keep the new-reference contract explicit in our
-// source and use the stable ABI function rather than a version-dependent
-// header macro.
+// CPython 3.12 made Py_RETURN_* hand back borrowed singletons, which is unsafe
+// for an abi3 build loaded by 3.10 or 3.11: keep the new-reference contract here.
 static inline PyObject *
 PyV8_NewRef(PyObject *value)
 {
@@ -73,18 +69,6 @@ int cache_FunctionType_init();
 
 int PyFunction_Check_abi3(PyObject* op);
 int PyMethod_Check_abi3(PyObject* op);
-PyObject* PyMethod_New_abi3(PyObject* callback, PyObject* receiver);
-
-
-static inline PyObject *
-PyObject_CallMethodNoArgs_abi3(PyObject* self, PyObject* name) {
-    return PyObject_CallMethodObjArgs(self, name, NULL);
-}
-
-static inline PyObject*
-PyObject_CallMethodOneArg_abi3(PyObject* self, PyObject* name, PyObject* arg) {
-    return PyObject_CallMethodObjArgs(self, name, arg, NULL);
-}
 
 
 #endif

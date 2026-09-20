@@ -30,7 +30,13 @@ static PyObject* js_object_read(js_object* self, PyObject* name) {
     bool success = object->Get(context, key).ToLocal(&value);
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
-    if (!success) return nullptr;
+    if (!success) {
+        // Nothing was thrown, so this message is the only thing that can tell the
+        // caller what went wrong: a NULL return with no exception is reported by
+        // CPython as a SystemError, which hides the real reason.
+        PyErr_SetString(PyExc_RuntimeError, "failed to read JavaScript property");
+        return nullptr;
+    }
     return py_argument_from_js(value, context);
 }
 
@@ -69,7 +75,10 @@ static PyObject* js_object_number(js_object* self, PyObject*) {
     bool success = object->ToNumber(context).ToLocal(&value);
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
-    if (!success) return nullptr;
+    if (!success) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to convert JavaScript object to a number");
+        return nullptr;
+    }
     return PyFloat_FromDouble(value->Value());
 }
 
@@ -87,7 +96,10 @@ static PyObject* js_object_iterator_method(js_object* self, PyObject*) {
     bool success = object->Get(context, Symbol::GetIterator(isolate)).ToLocal(&result);
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
-    if (!success) return nullptr;
+    if (!success) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to read the JavaScript iterator");
+        return nullptr;
+    }
     return py_argument_from_js(result, context);
 }
 
@@ -114,7 +126,10 @@ static PyObject* js_object_invoke(js_object* self, PyObject* args) {
     bool success = object->CallAsFunction(context, converted.data()[0], length - 1, converted.data() + 1).ToLocal(&result);
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
-    if (!success) return nullptr;
+    if (!success) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to invoke JavaScript callable");
+        return nullptr;
+    }
     return py_argument_from_js(result, context);
 }
 
@@ -133,7 +148,10 @@ static PyObject* js_object_keys(js_object* self, PyObject*) {
         static_cast<PropertyFilter>(ONLY_ENUMERABLE | SKIP_SYMBOLS), KeyConversionMode::kConvertToString).ToLocal(&keys);
     if (!guard.stop()) return nullptr;
     PY_PROPAGATE_JS;
-    if (!success) return nullptr;
+    if (!success) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to read JavaScript property names");
+        return nullptr;
+    }
     return py_materialize(keys, context);
 }
 
@@ -144,6 +162,8 @@ static PyObject* js_object_is_array(js_object* self, PyObject*) {
     auto* isolate = execution.isolate();
     return PyBool_FromLong(self->object.Get(isolate)->IsArray());
 }
+
+static PyObject* js_object_getitem(js_object* self, PyObject* key);
 
 PyMethodDef js_object_methods[] = {
     {"_iterator_method", (PyCFunction)PythonBoundary<js_object_iterator_method>::call, METH_NOARGS, nullptr},
@@ -163,7 +183,7 @@ static PyType_Slot js_object_slots[] = {
     {Py_tp_clear, (void*)PythonBoundary<js_object_clear>::call},
     {Py_tp_getattro, (void*)PythonBoundary<js_object_getattro>::call},    // __getattribute__
     {Py_tp_setattro, (void*)PythonBoundary<js_object_setattro>::call},    // __setattribute__
-    {Py_mp_subscript, (void*)PythonBoundary<js_object_getattro>::call},  // __getitem__
+    {Py_mp_subscript, (void*)PythonBoundary<js_object_getitem>::call},  // __getitem__
     {Py_mp_ass_subscript, (void*)PythonBoundary<js_object_setattro>::call},  // __setitem__
     {Py_tp_iter, (void*)PythonBoundary<js_object_getiter>::call},
     {Py_tp_richcompare, (void*)PythonBoundary<js_object_richcompare>::call},
@@ -273,16 +293,12 @@ js_object_new(Local<Object> object, Local<Context> context)
     js_object *self;
     
     if (object->IsPromise()) {
-        //self = (js_object *) js_promise_type.tp_alloc(&js_promise_type, 0);
         self = (js_object*)PyType_GenericAlloc(js_promise_type, 0);
     } else if (object->IsCallable()) {
-        //self = (js_object *) js_function_type.tp_alloc(&js_function_type, 0);
         self = (js_object *)PyType_GenericAlloc(js_function_type, 0);
     } else if (object->IsTypedArray()) {
-        //self = (js_object*)js_typedarray_type.tp_alloc(&js_typedarray_type, 0);
         self = (js_object*)PyType_GenericAlloc(js_typedarray_type, 0);
     } else {
-        //self = (js_object *) js_object_type.tp_alloc(&js_object_type, 0);
         self = (js_object*)PyType_GenericAlloc(js_object_type, 0);
     }
 
@@ -309,19 +325,15 @@ js_object_weak_new(Local<Object> object, Local<Context> context)
     Context::Scope cs(context);
     js_object *self;
     if (object->IsPromise()) {
-        //self = (js_object *) js_promise_type.tp_alloc(&js_promise_type, 0);
         self = (js_object*)PyType_GenericAlloc(js_promise_type, 0);
     }
     else if (object->IsCallable()) {
-        //self = (js_object *) js_function_type.tp_alloc(&js_function_type, 0);
         self = (js_object*)PyType_GenericAlloc(js_function_type, 0);
     }
     else if (object->IsTypedArray()) {
-        //self = (js_object*)js_typedarray_type.tp_alloc(&js_typedarray_type, 0);
         self = (js_object*)PyType_GenericAlloc(js_typedarray_type, 0);
     }
     else {
-        //self = (js_object *) js_object_type.tp_alloc(&js_object_type, 0);
         self = (js_object*)PyType_GenericAlloc(js_object_type, 0);
     }
 
@@ -330,22 +342,52 @@ js_object_weak_new(Local<Object> object, Local<Context> context)
         // The V8 weak callback owns this reference and releases it on GC.
         Py_INCREF((PyObject*)self);
         self->weak_owned = true;
-        //self->object.SetWeak(self, js_object_weak_callback, WeakCallbackType::kFinalizer);
         self->object.SetWeak(self, js_object_weak_callback, WeakCallbackType::kParameter);
     }
     return self;
 }
 
-PyObject *
-js_object_getattro(js_object *self, PyObject *name)
+// Python's own lookup, __getattr__ included.  NULL with no error means Python has
+// nothing -- the caller's cue to ask JavaScript -- and NULL with an error means
+// Python itself failed.
+static PyObject*
+js_object_python_attribute(js_object* self, PyObject* name)
+{
+    PyObject* value = PyObject_GenericGetAttr((PyObject*)self, name);
+    if (value != nullptr)
+        return value;
+    if (!PyErr_ExceptionMatches(PyExc_AttributeError))
+        return nullptr;
+    PyErr_Clear();
+    PyObject* hook = PyObject_GetAttrString((PyObject*)Py_TYPE((PyObject*)self), "__getattr__");
+    if (hook == nullptr) {
+        if (!PyErr_ExceptionMatches(PyExc_AttributeError))
+            return nullptr;
+        PyErr_Clear();
+        return nullptr;
+    }
+    // A plain function on the type, so the receiver goes with it; a bound method
+    // already carries one.
+    PyObject* result = PyMethod_Check_abi3(hook)
+        ? PyObject_CallFunctionObjArgs(hook, name, NULL)
+        : PyObject_CallFunctionObjArgs(hook, self, name, NULL);
+    Py_DECREF(hook);
+    return result;
+}
+
+// obj.name and obj["name"] are one lookup here but two different failures.
+enum class MissingProperty { Attribute, Key };
+
+static PyObject*
+js_object_lookup(js_object* self, PyObject* name, MissingProperty missing)
 {
     if (js_object_should_try_python_attribute(self, name))
     {
-        PyObject *attr_value = PyObject_GenericGetAttr((PyObject *)self, name);
-        if (attr_value == NULL)
-            PyErr_Clear();
-        else
+        PyObject* attr_value = js_object_python_attribute(self, name);
+        if (attr_value != nullptr)
             return attr_value;
+        if (PyErr_Occurred())
+            return nullptr;
     }
 
     if (!js_object_require_active(self))
@@ -374,16 +416,23 @@ js_object_getattro(js_object *self, PyObject *name)
         return NULL;
     }
     if (!has_property) {
-        // TODO fix this so that it works
-        PyObject *class_name = py_from_js(object->GetConstructorName(), context);
+        // A key error carries the key; an attribute error names the object, and
+        // says less when the engine knows no constructor name.
+        if (missing == MissingProperty::Key) {
+            PyErr_SetObject(PyExc_KeyError, name);
+            return NULL;
+        }
+        Local<String> constructor_name = object->GetConstructorName();
+        if (constructor_name.IsEmpty()) {
+            PyErr_Format(PyExc_AttributeError,
+                "JavaScript object has no attribute '%.400S'", name);
+            return NULL;
+        }
+        PyObject *class_name = py_from_js(constructor_name, context);
         PyErr_PROPAGATE(class_name);
-        PyObject *class_name_string = PyObject_Str(class_name);
+        PyErr_Format(PyExc_AttributeError, "'%.50S' JavaScript object has no attribute '%.400S'",
+                class_name, name);
         Py_XDECREF((PyObject*)class_name);
-        PyErr_PROPAGATE(class_name_string);
-
-        PyErr_Format(PyExc_AttributeError, "'%.50S' JavaScript object has no attribute '%.400S'", 
-                class_name_string, name);
-        Py_XDECREF((PyObject*)class_name_string);
         return NULL;
     }
 
@@ -409,6 +458,18 @@ js_object_getattro(js_object *self, PyObject *name)
     return value;
 }
 
+PyObject *
+js_object_getattro(js_object *self, PyObject *name)
+{
+    return js_object_lookup(self, name, MissingProperty::Attribute);
+}
+
+static PyObject*
+js_object_getitem(js_object* self, PyObject* key)
+{
+    return js_object_lookup(self, key, MissingProperty::Key);
+}
+
 int 
 js_object_setattro(js_object *self, PyObject *name, PyObject *value)
 {
@@ -417,6 +478,11 @@ js_object_setattro(js_object *self, PyObject *name, PyObject *value)
         PyObject *attr_value = PyObject_GenericGetAttr((PyObject *)self, name);
         if (attr_value == NULL)
         {
+            // Python owns a name it already has.  A lookup that failed for any
+            // other reason is a failure, not an absence, and writing to
+            // JavaScript instead would hide it.
+            if (!PyErr_ExceptionMatches(PyExc_AttributeError))
+                return -1;
             PyErr_Clear();
         }
         else

@@ -1,5 +1,6 @@
 #include "isolate_state.h"
 
+#include "debugger.h"
 #include "error_hooks.h"
 #include "isolate_scope.h"
 #include "context.h"
@@ -152,6 +153,9 @@ IsolateState::shutdown(bool report_error)
         // The reporters go first: they hold references into Python and could
         // otherwise be called while the isolate is already being torn down.
         error_hooks_uninstall(this);
+        // Inspectors go with the isolate that owns them, and this is the last
+        // point at which that is still true.
+        debugger_isolate_closed(isolate_);
         clear_python_owners();
         drain_deferred();
         for (auto* data : callback_data_) {

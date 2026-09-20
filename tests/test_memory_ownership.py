@@ -13,7 +13,7 @@ class Window:
 
 def collect():
     for _ in range(3):
-        pyv8._pyv8.low_memory_notification()
+        pyv8.low_memory_notification()
         gc.collect()
 
 
@@ -168,6 +168,38 @@ def test_explicit_close_removes_incoming_context_dependencies():
     collect()
     assert ref() is None
     assert target.exec_js('try { foreign(); false } catch (e) { true }')
+    target.close()
+
+
+def test_several_sources_can_depend_on_one_context_and_one_can_repeat():
+    """一个 context 可以有多个来源依赖它,同一个来源登记两次是幂等的。
+
+    依赖表同时保存两样东西:一张给 Python 看的强引用列表(让来源不被回收),和
+    一张反向索引(谁依赖谁)。登记前先问反向索引"是否已经记过",重复登记就认出
+    来了,而不必把引用列表从头扫一遍。
+    """
+
+    class Context(pyv8.Context):
+        pass
+
+    target = pyv8.Context(Window())
+    first = Context(Window())
+    second = Context(Window())
+    first.expose(callback=lambda: 42)
+    second.expose(callback=lambda: 7)
+    # 同一个来源取两个句柄:第二次登记必须认出它已经在表里。
+    target.expose(one=first.exec_js("callback"), also=first.exec_js("callback"))
+    target.expose(two=second.exec_js("callback"))
+    assert target.exec_js("one()") == 42
+    assert target.exec_js("also()") == 42
+    assert target.exec_js("two()") == 7
+
+    first.close()
+    second.close()
+    del first, second
+    collect()
+    # 来源关闭后,target 仍要继续工作,调用已失效的句柄应当是可控的失败。
+    assert target.exec_js("try { one(); false } catch (e) { true }")
     target.close()
 
 

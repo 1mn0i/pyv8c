@@ -4,3 +4,6 @@ recursive-include src *.h
 recursive-include doc *.md
 recursive-include benchmarks *.py *.json *.png *.svg
 recursive-include tools *.sh
+# The type surface travels with the package: the extension's stub, the package's
+# own stub, and the marker that says they are there.
+recursive-include pyv8 *.pyi py.typed

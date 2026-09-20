@@ -99,7 +99,6 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         PyErr_SetString(PyExc_RuntimeError, "failed to compile JavaScript");
         return NULL;
     }
-    //script_c *self = (script_c *) type->tp_alloc(type, 0);
     script_c *self = (script_c *)PyType_GenericAlloc(type, 0);
     PyErr_PROPAGATE(self);
     self->isolate_state = isolate_state;
@@ -146,6 +145,5 @@ script_dealloc(script_c *self)
 {
     PyObject_GC_UnTrack(self);
     script_clear(self);
-    //Py_TYPE((PyObject*)self)->tp_free((PyObject *) self);
     TP_FREE_ABI3(script_type, self);
 }

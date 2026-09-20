@@ -8,7 +8,7 @@
 #include "pyclass.h"
 #include "idl_spec.h"
 #include "pyclass_handlers.h"
-#include "faker/trace.h"
+#include "trace.h"
 
 using namespace v8;
 
@@ -121,15 +121,8 @@ PyObject* py_class_handler(PyObject* receiver, HandlerId which, context_c* conte
     return method;
 }
 
-// Invokes a handler found for *self*, with argv[0] holding the receiver.
-//
-// The declarations this binding installs are plain functions whose first
-// parameter is the receiver, so they are called with it spelled out.  A handler
-// that is already a bound method -- what a declaration naming a bound method
-// looks like -- receives it from its own binding and must not be handed a second
-// one.  Binding the function into a method first made both cases look alike at
-// the cost of one method object per access, which is one allocation on every
-// intercepted property read.
+// argv[0] holds the receiver.  The declarations this binding installs are plain
+// functions taking it, while a bound method already carries one.
 PyObject* call_handler(PyObject* handler, PyObject* argv[], size_t count)
 {
     if (PyMethod_Check_abi3(handler))
@@ -144,11 +137,6 @@ static PyObject* get_handler_method(PyObject* self, HandlerId which)
     auto* context = context_from_v8(current);
     return py_class_handler(self, which, context);
 }
-
-Intercepted property_getter_handler(
-    PyObject* key, const PropertyCallbackInfo<Value>& info,
-    Local<Context> context, PyObject* self, const char* method_name,
-    Local<Name> js_name, bool report_declined);
 
 // Legacy platform objects report failed writes/deletes through the V8
 // callback result.  Python callbacks cannot see ShouldThrowOnError(), so a
@@ -356,12 +344,8 @@ static bool declares_operation(PyObject* methods, PyObject* name) {
     return false;
 }
 
-// Does the receiver's interface declare this name as one of its own members?
-// Declared attributes and operations observe themselves, through the accessor or
-// the call the binding installs, so reporting them here as well would log every
-// declared property access twice.  Only names the interface does not declare are
-// reported by the interceptor: native globals such as ``eval``, JavaScript
-// expandos and properties inherited from plain JavaScript objects.
+// Does the receiver's interface declare this name?  Declared members observe
+// themselves, so reporting them here too would log every access twice.
 static bool declares_member(PyObject* receiver, context_c* context, PyObject* name, bool setter) {
     if (receiver == nullptr || receiver == Py_None || context == nullptr || name == nullptr) return false;
     if (!PyUnicode_Check(name)) return false;
@@ -375,13 +359,9 @@ static bool declares_member(PyObject* receiver, context_c* context, PyObject* na
     return !setter && declares_operation(spec.methods, name);
 }
 
-// The value the engine produces for a name this interceptor declined, or an
-// empty handle when producing it would require running JavaScript.
-//
-// Only a real data property is read.  Resolving an accessor here would run the
-// getter the engine is about to run a second time, so an accessor and a missing
-// name both yield an empty handle: those reads stay unreported instead of being
-// reported with a value this layer never obtained.
+// What the engine produced for a declined name, or an empty handle when getting
+// it would run JavaScript.  Only real data properties are read: resolving an
+// accessor would run the getter the engine is about to run.
 static Local<Value> declined_property_value(const PropertyCallbackInfo<Value>& info,
                                             Local<Name> js_name, Local<Context> context) {
     if (js_name.IsEmpty()) return Local<Value>();
@@ -405,7 +385,7 @@ Intercepted property_getter_handler(PyObject* key, const PropertyCallbackInfo<Va
     auto* owner = context_from_v8(context);
     if (!context_trace_enabled(owner)) return property_getter_handler_impl(key, info, context, self, which);
     Py_XINCREF((PyObject*)key);
-    faker::TraceEvent observation(info.GetIsolate(), owner, self);
+    trace::TraceEvent observation(info.GetIsolate(), owner, self);
     auto result = property_getter_handler_impl(key, info, context, self, which);
     if (result == Intercepted::kYes || observation.failed()) {
         observation.emit(0, key, info.GetReturnValue().Get());
@@ -427,7 +407,7 @@ Intercepted property_setter_handler(PyObject* key, Local<Value> value, const Pro
     auto* owner = context_from_v8(context);
     if (!context_trace_enabled(owner)) return property_setter_handler_impl(key, value, info, context, self, which);
     Py_XINCREF((PyObject*)key);
-    faker::TraceEvent observation(info.GetIsolate(), owner, self);
+    trace::TraceEvent observation(info.GetIsolate(), owner, self);
     auto result = property_setter_handler_impl(key, value, info, context, self, which);
     if (result == Intercepted::kYes || observation.failed()) {
         observation.emit(1, key, value);

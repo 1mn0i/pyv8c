@@ -31,10 +31,6 @@ static int value_clear(js_value* self) {
     if (state) lock.reset(new IsolateLockScope(state));
     self->registration.detach();
     self->registration.reset(self->value, self->isolate_state);
-    if (self->weak_owned) {
-        self->weak_owned = false;
-        state->defer_release(&self->deferred_release, (PyObject*)self);
-    }
     self->isolate_state = nullptr;
     Py_CLEAR(self->py_context);
     Py_CLEAR(self->py_isolate);
@@ -153,44 +149,6 @@ js_value_new(Local<Value> value, Local<Context> context)
     }
     return self;
 }
-
-void js_value_weak_callback(const WeakCallbackInfo<js_value> &info)
-{
-    js_value *self = info.GetParameter();
-    self->registration.reset(self->value, self->isolate_state);
-    self->weak_owned = false;
-    self->isolate_state->defer_release(&self->deferred_release, (PyObject*)self);
-}
-
-js_value *
-js_value_weak_new(Local<Value> value, Local<Context> context)
-{
-    IsolateState* isolate_state = runtime_manager.find_isolate(v8_compat::context_isolate(context));
-    IN_ISOLATE(isolate_state);
-    Context::Scope cs(context);
-    js_value*self;
-    self = (js_value*)PyType_GenericAlloc(js_value_type, 0);
-    if (self != NULL) {
-        self->isolate_state = isolate_state;
-        self->value.Reset(isolate, value);
-        isolate_state->retain_v8_handle();
-        Local<Value> context_data = context->GetEmbedderData(CONTEXT_OBJECT_SLOT);
-        if (context_data->IsExternal()) {
-            context_c* py_context = context_from_v8(context);
-            self->registration.attach(py_context, (PyObject*)self, (int (*)(PyObject*))value_clear);
-            if (py_context->py_isolate != nullptr) {
-                self->py_isolate = py_context->py_isolate;
-                Py_INCREF(self->py_isolate);
-            }
-        }
-        Py_INCREF((PyObject*)self);
-        self->weak_owned = true;
-        //self->object.SetWeak(self, js_object_weak_callback, WeakCallbackType::kFinalizer);
-        self->value.SetWeak(self, js_value_weak_callback, WeakCallbackType::kParameter);
-    }
-    return self;
-}
-
 
 PyObject *
 js_value_repr(js_value *self)

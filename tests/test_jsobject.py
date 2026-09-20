@@ -117,8 +117,11 @@ class TestJSObject(unittest.TestCase):
         
         # 使用字典方式删除
         del js_obj["name"]
-        with self.assertRaises(Exception):
+        # 下标缺失是 KeyError:obj["name"] 与 obj.name 是同一次查找,但对 Python
+        # 是两种失败——映射找不到键抛 KeyError,代码捕获其一就是为了区分它们。
+        with self.assertRaises(KeyError) as caught:
             _ = js_obj["name"]
+        self.assertEqual(caught.exception.args[0], "name")
     
     def test_js_object_dir(self):
         """测试使用dir()获取JavaScript对象的属性"""
@@ -221,6 +224,44 @@ class TestJSObject(unittest.TestCase):
         self.assertEqual(js_obj._value, 42)
         js_obj._value = 84
         self.assertEqual(js_obj._value, 84)
+
+    def test_subclass_getattr_hook_runs_before_the_javascript_lookup(self):
+        """子类定义的 __getattr__ 必须先被咨询。
+
+        属性查找只调 GenericGetAttr 是不够的:__getattr__ 藏在类型的槽包装后面,
+        只有完整的 Python 协议才走到它。子类写了这个钩子,就是要它生效。
+        """
+
+        class Hooked(pyv8.JSObject):
+            def __getattr__(self, name):
+                return "hook:%s" % name
+
+        self.assertEqual(Hooked().anything, "hook:anything")
+
+    def test_a_failing_descriptor_is_not_mistaken_for_a_missing_attribute(self):
+        """取值失败的描述符要抛出它自己的异常,不能被当成"没有属性"。"""
+
+        class Failing(pyv8.JSObject):
+            @property
+            def broken(self):
+                raise ValueError("boom")
+
+        with self.assertRaises(ValueError):
+            _ = Failing().broken
+
+    def test_a_missing_attribute_still_names_the_object(self):
+        """属性缺失仍是 AttributeError,消息里给出对象的类名。"""
+        js_obj = self.context.exec_js("class Thing {}; new Thing();")
+        with self.assertRaises(AttributeError) as caught:
+            _ = js_obj.nope
+        self.assertIn("Thing", str(caught.exception))
+
+    def test_a_missing_key_carries_the_key(self):
+        """下标缺失抛出 KeyError,args[0] 就是那个键。"""
+        js_obj = self.context.exec_js("({a: 1})")
+        with self.assertRaises(KeyError) as caught:
+            _ = js_obj["missing"]
+        self.assertEqual(caught.exception.args[0], "missing")
 
 if __name__ == "__main__":
     unittest.main()

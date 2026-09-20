@@ -67,7 +67,6 @@ class TestChromiumContracts(unittest.TestCase):
                         name="userAgent",
                         getter="get_user_agent",
                         setter=None,
-                        callback_type=pyv8.CallbackType.kPy,
                         location=pyv8.FlagLocation.kPrototype,
                         property_flags=pyv8.V8Attribute.DontEnum
                         | pyv8.V8Attribute.DontDelete,
@@ -121,7 +120,6 @@ class TestChromiumContracts(unittest.TestCase):
                         name="parse",
                         callback="fn_parse",
                         length=1,
-                        callback_type=pyv8.CallbackType.kPy,
                         location=pyv8.FlagLocation.kInterface,
                         property_flags=pyv8.V8Attribute.ReadOnly
                         | pyv8.V8Attribute.DontEnum

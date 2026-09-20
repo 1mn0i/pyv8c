@@ -57,7 +57,6 @@ js_typedarray_type_init()
     js_typedarray_type = (PyTypeObject*)PyType_FromSpecWithBases(&js_typedarray_spec, bases);
     Py_DECREF((PyObject*)bases);
 
-    //js_typedarray_type = (PyTypeObject*)PyType_FromSpec(&js_typedarray_spec);
     if (js_typedarray_type == NULL)
     {
         return -1;

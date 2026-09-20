@@ -10,13 +10,7 @@
 namespace bindings {
 
 
-    void FakerJsFunctionAccessorNameGetterCallback(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
     void ConstructAccessorNameGetterCallback(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
-
-    enum class CallbackType {
-        kPy = 0,
-        kJs = 1,
-    };
 
     enum class FlagLocation {
         kInstance = 0,
@@ -86,14 +80,6 @@ namespace bindings {
         int64_t value;
     };
 
-    struct ConstantCallbackConfig {
-        ConstantCallbackConfig& operator=(const ConstantCallbackConfig&) = delete;
-
-        const char* name;
-        const char* callback_name;
-        v8::AccessorNameGetterCallback callback;
-    };
-
     struct ExposedConstructConfig {
         ExposedConstructConfig& operator=(const ExposedConstructConfig&) = delete;
 
@@ -141,12 +127,6 @@ namespace bindings {
         v8::Local<v8::Signature> signature,
         PyObject* configs);
 
-
-    bool InstallConstantCallbacks(v8::Isolate* isolate,
-        const char* world,
-        v8::Local<v8::FunctionTemplate> interface_template,
-        v8::Local<v8::Signature> signature,
-        PyObject* configs);
 
     void InstallExposedConstruct(v8::Isolate* isolate, v8::Local<v8::ObjectTemplate> instance_template, const char* name);
 
