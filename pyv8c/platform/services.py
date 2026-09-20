@@ -118,7 +118,10 @@ class _RealmCapability(_TaskSource):
             if operation == "get":
                 try:
                     return target[name]
-                except AttributeError:
+                except (KeyError, AttributeError):
+                    # The property is not there, whichever way the binding says
+                    # so: reading a JavaScript object by key raises KeyError, and
+                    # only the attribute form raises AttributeError.
                     import pyv8
                     return pyv8.Undefined
             if operation == "set":

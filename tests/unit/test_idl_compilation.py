@@ -123,14 +123,3 @@ def test_duplicate_declarations_fail_before_session_commit(universe, monkeypatch
     assert not session.configs
 
 
-def test_faker_callback_references_remain_javascript_callbacks(universe, monkeypatch):
-    from pyv8 import CallbackType
-
-    cls = universe.class_for("Node")
-    declaration = cls.__v8_idl_spec__
-    method = declaration.methods[0].replace(callback="fakerNodeMethod", callback_type=CallbackType.kJs)
-    monkeypatch.setattr(cls, "__v8_idl_spec__", declaration.replace(methods=(method,) + declaration.methods[1:]))
-    compiled = universe.class_config_for("Node")
-    result = next(member for member in compiled.methods if member.name == method.name)
-    assert result.callback == "fakerNodeMethod"
-    assert result.callback_type == CallbackType.kJs

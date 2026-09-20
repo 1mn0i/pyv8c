@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from pyv8 import AttributeSpec, ConstantSpec, IdlSpec, MethodSpec
 from pyv8.flag import (
-    CallbackType,
     FlagCrossOriginCheck,
     FlagLocation,
     FlagReceiverCheck,
@@ -172,15 +171,6 @@ class InterfaceCompiler:
             )
             if kind == "operation":
                 declared = declared_methods.pop(public_name, None)
-                if declared is not None and declared.callback_type == CallbackType.kJs:
-                    methods.append(
-                        declared.replace(
-                            length=member.get("length", declared.length),
-                            cross_origin_check=_cross_origin(member.get("cross_origin")),
-                            **common,
-                        )
-                    )
-                    continue
                 static = location == "interface"
                 if declared is not None:
                     raw = self.wrappers._raw_callback(cls, declared.callback)
@@ -194,16 +184,6 @@ class InterfaceCompiler:
                 )
             else:
                 declared = declared_attributes.pop(public_name, None)
-                if declared is not None and declared.callback_type == CallbackType.kJs:
-                    attributes.append(
-                        declared.replace(
-                            setter=None if "setter" in member and member["setter"] is None else declared.setter,
-                            cross_origin_get_check=_cross_origin(member.get("cross_origin")),
-                            cross_origin_set_check=_cross_origin(member.get("cross_origin")),
-                            **common,
-                        )
-                    )
-                    continue
                 getter = (
                     self.wrappers._raw_callback(cls, declared.getter)
                     if declared
@@ -225,9 +205,6 @@ class InterfaceCompiler:
         for public_name, declared in declared_methods.items():
             if universe._member(name, public_name, "operation") is None:
                 raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
-            if declared.callback_type == CallbackType.kJs:
-                methods.append(declared)
-                continue
             raw = self.wrappers._raw_callback(cls, declared.callback)
             static = declared.location == FlagLocation.kInterface
             callback = self.wrappers.method(cls, name, public_name, raw, static=static)
@@ -237,9 +214,6 @@ class InterfaceCompiler:
         for public_name, declared in declared_attributes.items():
             if declared.setter is not None and universe._member(name, public_name, "attribute") is None:
                 raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
-            if declared.callback_type == CallbackType.kJs:
-                attributes.append(declared)
-                continue
             getter = self.wrappers._raw_callback(cls, declared.getter)
             setter = None
             if declared.setter is not None:

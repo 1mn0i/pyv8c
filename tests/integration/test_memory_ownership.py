@@ -9,7 +9,7 @@ from pyv8c import Browser
 
 def collect():
     for _ in range(3):
-        pyv8._pyv8.low_memory_notification()
+        pyv8.low_memory_notification()
         gc.collect()
 
 

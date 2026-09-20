@@ -88,7 +88,7 @@ handler 未处理时，V8 继续原来的查找；观察器不会额外读取后
 
 - [realms.py](../pyv8c/platform/realms.py)：装配 native Context 参数。
 - [engine/trace.py](../pyv8c/engine/trace.py)：统一 Loguru sink。
-- [native trace.h](../../_pyv8/src/faker/trace.h)：RAII 观察、轻量转换、异常隔离和重入保护。
+- [native trace.h](../../_pyv8/src/tools/trace.h)：RAII 观察、轻量转换、异常隔离和重入保护。
 - [集成测试](../tests/integration/test_trace.py)：实际浏览器、开关、延迟接口、Worker 与跨源。
 - [native 被动测试](../../_pyv8/tests/test_trace_passive.py)：不重复执行、不触发 Proxy/getter/toString、异常身份与终止恢复。
 
