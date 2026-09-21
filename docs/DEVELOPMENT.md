@@ -40,6 +40,23 @@ from pyv8c.platform.bootstrap import validate_feature_catalog
 validate_feature_catalog()
 ```
 
+## 策略检查
+
+提交前跑一次，三层闸门：
+
+```powershell
+python tools/check_policy.py                  # 工作区 vs HEAD
+python tools/check_policy.py --base main      # 与分支比较
+python tools/check_policy.py --strict         # 把"实现改动没配测试"的告警当成失败
+python tools/check_policy.py --record-startup # 接受当前启动时延作为新预算
+```
+
+- `layers`：分层规则，委托 `tests/unit/test_architecture.py`，不在此重复实现。
+- `companions`：`pyv8c/` 下改了 `.py` 却没有任何 `tests/` 文件随之改动时告警。
+- `startup`：与 `tools/startup_baseline.json` 记录的预算比较（中位数 +10% +5ms）。测量的是新
+  进程里 `Browser() -> new_context() -> new_page() -> set_content()` 的耗时与导入模块数；换
+  机器、或有意改变启动开销后需要重新记录。
+
 ## Baseline 更新
 
 运行 `tools/fetch_chromium.py` 和 `tools/extract_interfaces.py` 前确认 Chromium 版本、生成目录和输出 ZIP。baseline 不应依赖人工 review JSON；抽取器只使用 Chromium 生成元数据。更新后运行抽取器、baseline、IDL 编译和完整浏览器测试。

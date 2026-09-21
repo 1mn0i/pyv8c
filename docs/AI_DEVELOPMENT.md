@@ -38,8 +38,13 @@
 
 ```powershell
 python -m pytest -q
+python tools/check_policy.py
 git diff --check
 ```
+
+`tools/check_policy.py` 是提交前的三层闸门：分层规则（委托 `tests/unit/test_architecture.py`）、
+实现改动是否配了测试、启动时延是否超出记录预算。启动这一层的数字属于记录它的机器，换机器或
+有意改变启动开销后用 `--record-startup` 重新记录。
 
 按改动范围额外运行：
 
