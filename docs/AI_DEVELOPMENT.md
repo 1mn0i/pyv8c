@@ -52,6 +52,7 @@ git diff --check
 - IndexedDB：`tests/integration/test_indexeddb.py`。
 - DevTools：`tests/browser/test_devtools.py`。
 - 绑定编译和 baseline：`tests/unit/test_idl_compilation.py`、`tests/unit/test_interface_extractor.py`、`tests/integration/test_baseline_versions.py`。
+- Web API 行为：`tests/repros/`（声明式语料 + 本机 Chrome 对照）。改动 `pyv8c/web/` 下任何接口成员后跑 `python -m pytest tests/repros -q -rs`；被排除的用例都带 `known_divergence` 原因，实现补齐后该用例会失败并要求删除排除项。新增行为时优先往语料里加一例，而不是只写一条本地断言。
 
 报告测试结果时给出实际命令和通过/失败数量；区分代码失败、环境缺少 `pyv8`、原生构建失败和既有无关工作区改动。
 

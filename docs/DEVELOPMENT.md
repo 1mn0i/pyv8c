@@ -57,6 +57,26 @@ python tools/check_policy.py --record-startup # 接受当前启动时延作为�
   进程里 `Browser() -> new_context() -> new_page() -> set_content()` 的耗时与导入模块数；换
   机器、或有意改变启动开销后需要重新记录。
 
+## 行为语料与真 Chrome 对照
+
+`tests/repros/` 里的每个用例声明「页面 + 一段脚本 + 这段脚本必须观测到什么」，同一份用例跑两
+遍：一遍在 pyv8c，一遍在**本机已安装的 Chrome**（不下载、不驱动 Playwright 自带的 Chromium）。
+
+```powershell
+python -m pytest tests/repros -q -rs     # -rs 显示被排除的用例及原因
+```
+
+- `corpus.py` 的每个 `Repro` 里 `expected` 是 pyv8c 的答案，每次运行都被断言；`expect_error` 用于
+  该抛错的用例。
+- `harness.py` 用 `PYV8C_CHROME` 指定的 `chrome.exe`，未设置时按常见安装路径查找；找不到 Chrome
+  或未安装 `playwright`（`pip install playwright`）时，对照那一半整体跳过，pyv8c 那一半照跑。
+- 两侧的观测只有「值」或「抛出的错误类」参与比较：错误消息是写给人的，不比较。
+- 本机已知差异写在用例的 `known_divergence` 上并带原因，报告中作为 excluded 列出，不算通过也不
+  算失败；差异消失时该用例会失败并要求删除这条排除，所以排除清单不会腐坏。
+- 语料要小、每例只问一个角落，且两引擎都能回答。新增用例时先看它在 pyv8c 侧的真实观测，再决定
+  是修正预期、还是记一条 `known_divergence`。
+- `-rs` 列出的排除项就是当前的已知缺口清单：要引用时看运行输出，不要在本文件里再抄一份。
+
 ## Baseline 更新
 
 运行 `tools/fetch_chromium.py` 和 `tools/extract_interfaces.py` 前确认 Chromium 版本、生成目录和输出 ZIP。baseline 不应依赖人工 review JSON；抽取器只使用 Chromium 生成元数据。更新后运行抽取器、baseline、IDL 编译和完整浏览器测试。

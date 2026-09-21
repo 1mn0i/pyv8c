@@ -20,6 +20,9 @@ dev = [
     "pytest-timeout>=2.2",
     "pytest-repeat>=0.9",
 ]
+# The reference browser for tests/repros.  It drives the Chrome already installed on
+# the machine (PYV8C_CHROME points it elsewhere); nothing else is downloaded.
+reference = ["playwright>=1.40"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
