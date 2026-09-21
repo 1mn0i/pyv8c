@@ -245,8 +245,10 @@ class CSSStyleDeclaration:
     def _write(self, declarations):
         if self._element is None: return
         text = "".join(f"{n}: {v}{' !important' if p else ''}; " for n, v, p in declarations).strip()
+        # Chromium leaves the attribute behind and empties it, so removing the last
+        # declaration reads back as getAttribute('style') === "" rather than null.
         if text: self._element.attributes["style"] = text
-        else: self._element.attributes.pop("style", None)
+        elif "style" in self._element.attributes: self._element.attributes["style"] = ""
     def _set(self, name, value, priority=""):
         name = _property_name(name)
         if not name: return

@@ -64,7 +64,12 @@ def test_style_methods_priority_removal_and_css_text(page):
         "2px", "", "border: 1px; opacity: .5 !important;", "important",
         "1px", 2,
     ]
-    assert page.evaluate("target.style.cssText = ''; [target.style.length, target.hasAttribute('style')]" ) == [0, False]
+    # Chromium leaves the attribute behind and empties it; only an element that never
+    # carried a style attribute has none.
+    assert page.evaluate(
+        "target.style.cssText = ''; [target.style.length, target.hasAttribute('style'),"
+        " target.getAttribute('style')]"
+    ) == [0, True, ""]
 
 
 def test_style_named_properties_only_exist_when_supported(page):

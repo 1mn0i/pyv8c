@@ -348,6 +348,18 @@ def test_an_option_derives_text_label_and_value(page):
     """) == [["Spaced text", "Spaced text", "Spaced text"], "L", "L", "Spaced text", "v"]
 
 
+def test_removing_the_last_declaration_empties_the_attribute(page):
+    assert page.evaluate("""
+        (() => {
+            const element = document.createElement('div');
+            element.setAttribute('style', 'color: blue');
+            const removed = element.style.removeProperty('color');
+            return [removed, element.getAttribute('style'), element.hasAttribute('style'),
+                    element.style.cssText];
+        })()
+    """) == ["blue", "", True, ""]
+
+
 def test_canvas_text_baseline_round_trips(page):
     assert page.evaluate("""
         (function () {

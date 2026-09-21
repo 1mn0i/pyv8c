@@ -761,4 +761,375 @@ CASES = (
         known_divergence="URLSearchParams has no @@iterator of its own; Chrome yields"
         " [['a', '1'], ['b', '2']]",
     ),
+    # -- fetch types -----------------------------------------------------------
+    Repro(
+        name="headers_construction_and_lookup",
+        note="Names are case-insensitive and appending combines with ', '.",
+        script="""
+            (() => {
+              const headers = new Headers({'content-type': 'text/html'});
+              headers.append('x-a', '1');
+              headers.append('x-a', '2');
+              headers.set('X-B', 'b');
+              headers.delete('content-type');
+              return [headers.get('X-A'), headers.get('x-a'), headers.has('Content-Type'),
+                      headers.get('x-b'), headers.has('nope')];
+            })()
+        """,
+        expected=["1, 2", "1, 2", False, "b", False],
+    ),
+    Repro(
+        name="headers_copy_and_override",
+        script="""
+            (() => {
+              const first = new Headers([['a', '1'], ['b', '2']]);
+              const second = new Headers(first);
+              second.set('A', '9');
+              return [first.get('a'), second.get('a'), second.get('b'),
+                      new Headers().get('a') === null];
+            })()
+        """,
+        expected=["1", "9", "2", True],
+    ),
+    Repro(
+        name="headers_iterate_sorted_by_name",
+        note="The list is sorted by name however it was built.",
+        script="""
+            (() => {
+              const headers = new Headers([['b', '2'], ['a', '1']]);
+              return [Array.from(headers.keys()), Array.from(headers.values()),
+                      Array.from(headers.entries())];
+            })()
+        """,
+        expected=[["a", "b"], ["1", "2"], [["a", "1"], ["b", "2"]]],
+    ),
+    Repro(
+        name="request_fields",
+        script="""
+            (() => {
+              const request = new Request('http://example.test/a?x=1');
+              return [request.method, request.url, request.headers.get('content-type'),
+                      request.bodyUsed, request.destination, request.mode];
+            })()
+        """,
+        expected=["GET", "http://example.test/a?x=1", None, False, "", "cors"],
+    ),
+    Repro(
+        name="request_resolves_a_relative_url_and_keeps_its_init",
+        script="""
+            (() => {
+              const request = new Request('/x', {method: 'post', headers: {'x-a': '1'}});
+              return [request.url, request.method, request.headers.get('X-A')];
+            })()
+        """,
+        expected=["http://repro.test/x", "POST", "1"],
+    ),
+    Repro(
+        name="response_fields",
+        note="A response a script builds is type 'default', not 'basic'.",
+        script="""
+            (() => {
+              const response = new Response('hello', {status: 201, statusText: 'Created',
+                                                      headers: {'x-a': '1'}});
+              return [response.status, response.ok, response.statusText,
+                      response.headers.get('x-a'), response.bodyUsed, response.type,
+                      response.redirected, response.url];
+            })()
+        """,
+        expected=[201, True, "Created", "1", False, "default", False, ""],
+    ),
+    Repro(
+        name="response_clone_is_independent",
+        script="""
+            (() => {
+              const response = new Response('hello', {status: 201, headers: {'x-a': '1'}});
+              const copy = response.clone();
+              copy.headers.set('x-a', '2');
+              return [copy instanceof Response, copy !== response, copy.bodyUsed,
+                      response.bodyUsed, [response.status, copy.status],
+                      [response.headers.get('x-a'), copy.headers.get('x-a')]];
+            })()
+        """,
+        expected=[True, True, False, False, [201, 201], ["1", "2"]],
+    ),
+    # -- storage ----------------------------------------------------------------
+    # Chromium's key order is its own, so a case that reads the keys sorts them.
+    Repro(
+        name="storage_round_trip_length_and_order",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              localStorage.clear();
+              localStorage.setItem('a', '1');
+              localStorage.setItem('b', '2');
+              localStorage.setItem('c', '3');
+              const keys = [];
+              for (let index = 0; index < localStorage.length; index += 1) {
+                keys.push(localStorage.key(index));
+              }
+              const removed = localStorage.removeItem('b');
+              return [localStorage.getItem('a'), localStorage.getItem('b'), keys.sort(),
+                      localStorage.length, removed, localStorage.key(9)];
+            })()
+        """,
+        expected=["1", None, ["a", "b", "c"], 2, None, None],
+    ),
+    Repro(
+        name="storage_coerces_values_and_keys",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              localStorage.clear();
+              localStorage.setItem(7, 42);
+              return [localStorage.getItem('7'), localStorage.getItem(7),
+                      localStorage.length, localStorage.getItem('missing')];
+            })()
+        """,
+        expected=["42", "42", 1, None],
+    ),
+    Repro(
+        name="storage_clears_and_separates_the_two_kinds",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              localStorage.clear();
+              sessionStorage.clear();
+              localStorage.setItem('a', '1');
+              sessionStorage.setItem('a', '2');
+              const both = [localStorage.getItem('a'), sessionStorage.getItem('a')];
+              localStorage.clear();
+              return [both, [localStorage.length, sessionStorage.length],
+                      localStorage === localStorage];
+            })()
+        """,
+        expected=[["1", "2"], [0, 1], True],
+    ),
+    Repro(
+        name="storage_as_named_properties",
+        note="A stored name is also a property, and the prototype's members stay "
+             "themselves.",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              localStorage.clear();
+              localStorage.token = 'v';
+              const read = [localStorage.token, localStorage.getItem('token'),
+                            'token' in localStorage];
+              delete localStorage.token;
+              return [read, [localStorage.token, localStorage.getItem('token')],
+                      localStorage.getItem === undefined ? 'shadowed' : 'kept'];
+            })()
+        """,
+        expected=[["v", "v", True], [None, None], "kept"],
+    ),
+    # -- selectors --------------------------------------------------------------
+    Repro(
+        name="attribute_and_child_selectors",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              const root = document.createElement('div');
+              root.innerHTML = '<p class="x" data-kind="a">1</p><p data-kind="b">2</p>'
+                             + '<span data-kind="a">3</span>';
+              document.body.appendChild(root);
+              return [root.querySelectorAll('p[data-kind]').length,
+                      root.querySelectorAll('[data-kind="a"]').length,
+                      root.querySelectorAll('div > p').length,
+                      root.querySelectorAll('p + p').length,
+                      root.querySelector('p[data-kind="b"]').textContent];
+            })()
+        """,
+        expected=[2, 2, 2, 1, "2"],
+    ),
+    Repro(
+        name="nth_child_and_first_last_selectors",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              const list = document.createElement('ul');
+              list.innerHTML = '<li>1</li><li>2</li><li>3</li><li>4</li>';
+              document.body.appendChild(list);
+              return [list.querySelectorAll('li:first-child').length,
+                      list.querySelectorAll('li:last-child').length,
+                      list.querySelectorAll('li:nth-child(2)').length,
+                      list.querySelectorAll('li:nth-child(odd)').length,
+                      list.querySelector('li:nth-child(3)').textContent];
+            })()
+        """,
+        expected=[1, 1, 1, 2, "3"],
+    ),
+    Repro(
+        name="not_and_group_selectors",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              const root = document.createElement('div');
+              root.innerHTML = '<p class="a">1</p><p class="b">2</p><span class="a">3</span>';
+              document.body.appendChild(root);
+              return [root.querySelectorAll('p:not(.a)').length,
+                      root.querySelectorAll('p, span').length,
+                      root.querySelectorAll('.a').length,
+                      root.querySelectorAll('p:not(.b):not(.c)').length];
+            })()
+        """,
+        expected=[1, 3, 2, 1],
+    ),
+    Repro(
+        name="selector_lists_are_document_order_and_unique",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              const root = document.createElement('div');
+              root.innerHTML = '<i class="hit">1</i><b class="hit">2</b><u class="hit">3</u>';
+              document.body.appendChild(root);
+              const names = Array.from(root.querySelectorAll('.hit, .hit, b'),
+                                       node => node.tagName);
+              return [names, root.querySelectorAll('.hit').length];
+            })()
+        """,
+        expected=[["I", "B", "U"], 3],
+    ),
+    # -- classList and CSSOM ----------------------------------------------------
+    Repro(
+        name="class_list_toggle_replace_and_value",
+        note="toggle with force reports the state it left, and value writes the "
+             "attribute verbatim.",
+        script="""
+            (() => {
+              const element = document.createElement('div');
+              element.className = 'a b';
+              const toggled = [element.classList.toggle('c'),
+                               element.classList.toggle('a'),
+                               element.classList.toggle('c', true),
+                               element.classList.contains('c')];
+              const replaced = [element.classList.replace('b', 'd'), element.className];
+              element.classList.value = 'x  y';
+              return [toggled, replaced, element.className, element.classList.length];
+            })()
+        """,
+        expected=[[True, False, True, True], [True, "d c"], "x  y", 2],
+    ),
+    Repro(
+        name="style_set_property_and_css_text",
+        note="cssText replaces the whole declaration block, and removing the last "
+             "declaration leaves the attribute behind but empty.",
+        script="""
+            (() => {
+              const element = document.createElement('div');
+              element.style.setProperty('color', 'red');
+              element.style.setProperty('margin-top', '4px', 'important');
+              const read = [element.style.getPropertyValue('color'),
+                            element.style.getPropertyPriority('margin-top'),
+                            element.getAttribute('style')];
+              element.style.cssText = 'padding-top: 2px; padding-left: 3px';
+              return [read, [element.style.length, element.style.item(0),
+                             element.style.getPropertyValue('color'),
+                             element.style.cssText]];
+            })()
+        """,
+        expected=[["red", "important", "color: red; margin-top: 4px !important;"],
+                  [2, "padding-top", "", "padding-top: 2px; padding-left: 3px;"]],
+    ),
+    Repro(
+        name="style_remove_property_returns_the_old_value",
+        script="""
+            (() => {
+              const element = document.createElement('div');
+              element.style.color = 'blue';
+              const removed = element.style.removeProperty('color');
+              const missing = element.style.removeProperty('color');
+              return [removed, missing, element.getAttribute('style')];
+            })()
+        """,
+        expected=["blue", "", ""],
+    ),
+    Repro(
+        name="emptying_the_style_block_leaves_the_attribute_behind",
+        note="Removing the last declaration, assigning cssText or assigning an empty "
+             "value all leave style=\"\"; an element that never carried one has no "
+             "attribute at all.",
+        script="""
+            (() => {
+              const emptied = kind => {
+                const element = document.createElement('div');
+                element.style.color = 'blue';
+                if (kind === 'remove') element.style.removeProperty('color');
+                else if (kind === 'text') element.style.cssText = '';
+                else element.style.color = '';
+                return [element.getAttribute('style'), element.hasAttribute('style')];
+              };
+              const untouched = document.createElement('div');
+              untouched.style.color = '';
+              return [emptied('remove'), emptied('text'), emptied('value'),
+                      [untouched.getAttribute('style'), untouched.hasAttribute('style')]];
+            })()
+        """,
+        expected=[["", True], ["", True], ["", True], [None, False]],
+    ),
+    Repro(
+        name="computed_style_reports_declared_values",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              const root = document.createElement('div');
+              root.innerHTML = '<div id="outer" style="color: rgb(1, 2, 3); font-size: 12px">'
+                             + '<span id="inner">t</span></div>';
+              document.body.appendChild(root);
+              return [getComputedStyle(document.getElementById('inner')).fontSize,
+                      getComputedStyle(document.getElementById('outer')).color,
+                      root.querySelector('#outer').style.color];
+            })()
+        """,
+        expected=["12px", "rgb(1, 2, 3)", "rgb(1, 2, 3)"],
+    ),
+    # -- what is still missing here ---------------------------------------------
+    Repro(
+        name="response_body_is_a_stream",
+        note="Excluded: there is no ReadableStream here, so a response has no body "
+             "to read as a stream.",
+        script="""
+            (() => {
+              const response = new Response('hello');
+              return [typeof response.body, response.body === null];
+            })()
+        """,
+        expected=["undefined", False],
+        known_divergence="ReadableStream is not modelled; Chrome reports ['object',"
+        " false]",
+    ),
+    Repro(
+        name="storage_spread_copies_the_entries",
+        note="Excluded: Object.keys lists the stored names and reading one works, but "
+             "copying them into an object does not.",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              localStorage.clear();
+              localStorage.setItem('a', '1');
+              return JSON.stringify({...localStorage});
+            })()
+        """,
+        expected="{}",
+        known_divergence="spreading a Storage copies nothing: the own-property"
+        " definer hook that path needs is not wired; Chrome yields '{\"a\":\"1\"}'",
+    ),
+    Repro(
+        name="computed_style_inherits_color",
+        note="Excluded: inherited properties are not passed down, so a child asks "
+             "for a colour its parent declared and reads nothing.",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              const outer = document.createElement('div');
+              outer.setAttribute('style', 'color: rgb(1, 2, 3)');
+              const inner = document.createElement('span');
+              outer.appendChild(inner);
+              document.body.appendChild(outer);
+              return getComputedStyle(inner).color;
+            })()
+        """,
+        expected="",
+        known_divergence="getComputedStyle does not inherit colour from an ancestor;"
+        " Chrome reports 'rgb(1, 2, 3)'",
+    ),
 )

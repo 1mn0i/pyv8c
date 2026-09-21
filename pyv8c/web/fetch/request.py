@@ -19,6 +19,8 @@ class Request:
             AttributeSpec(name="headers", getter="get_headers", side_effect=1),
             AttributeSpec(name="mode", getter="get_mode", side_effect=1),
             AttributeSpec(name="credentials", getter="get_credentials", side_effect=1),
+            AttributeSpec(name="destination", getter="get_destination", side_effect=1),
+            AttributeSpec(name="bodyUsed", getter="get_bodyUsed", side_effect=1),
         ),
         constructor_behavior=1,
         length=1,
@@ -70,6 +72,12 @@ class Request:
     def get_headers(self): return self._headers
     def get_mode(self): return self._mode
     def get_credentials(self): return self._credentials
+    def get_destination(self):
+        """A request a script built was not created by the browser for a target."""
+        return ""
+    def get_bodyUsed(self):
+        # Nothing here consumes the body by streaming it; it is read in Python.
+        return False
 
 
 __all__ = ["Request"]

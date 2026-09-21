@@ -28,6 +28,7 @@ class Response:
             MethodSpec(name="text", callback="fn_text", side_effect=1),
             MethodSpec(name="json", callback="fn_json", side_effect=1),
             MethodSpec(name="arrayBuffer", callback="fn_arrayBuffer", side_effect=1),
+            MethodSpec(name="clone", callback="fn_clone", side_effect=1),
         ),
         constructor_behavior=1,
         length=1,
@@ -61,7 +62,9 @@ class Response:
             raise V8TypeError("Failed to construct 'Response': Invalid statusText")
         self.url = str(options.get("url", ""))
         self.redirected = bool(options.get("redirected", False))
-        self.type = str(options.get("type", "basic"))
+        # A response a script builds is "default"; "basic" is what a same-origin
+        # fetch returns, and "cors"/"opaque" belong to the network layer.
+        self.type = str(options.get("type", "default"))
         self.body_used = False
 
     def get_status(self): return self.status
@@ -72,6 +75,19 @@ class Response:
     def get_type(self): return self.type
     def get_headers(self): return self.headers
     def get_bodyUsed(self): return self.body_used
+
+    def fn_clone(self, *_extra):
+        """A response with the same body, headers, status and type, usable on its own.
+
+        Nothing about the copy points back at this one, and neither side counts as
+        consumed until something reads it.
+        """
+        if self.body_used:
+            raise V8TypeError("Body has already been consumed.")
+        return Response(self.body, {"status": self.status, "statusText": self.status_text,
+                                    "headers": self.headers, "url": self.url,
+                                    "redirected": self.redirected, "type": self.type},
+                        services=self._services)
 
     def body_text(self):
         if is_nullish(self.body):

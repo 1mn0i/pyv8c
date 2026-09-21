@@ -64,6 +64,25 @@ def error_name(text):
     return names[-1] if names else ""
 
 
+def normalize(value):
+    """A value the two engines can be held to the same record by.
+
+    The reference side hands back what it can serialize, and there a JavaScript
+    ``null`` and an ``undefined`` are both simply absent.  pyv8's two singletons mean
+    the same thing at that boundary, so they read as ``None`` here as well: a case
+    that needs to tell them apart asks for ``typeof``, which is a string.
+    """
+    import pyv8
+
+    if value is pyv8.Null or value is pyv8.Undefined:
+        return None
+    if isinstance(value, list):
+        return [normalize(item) for item in value]
+    if isinstance(value, dict):
+        return {key: normalize(item) for key, item in value.items()}
+    return value
+
+
 def chrome_executable():
     """``(path, "")`` for the Chrome to compare against, or ``(None, reason)``."""
     override = os.environ.get(REFERENCE_ENV)
@@ -93,7 +112,7 @@ def observe_here(case: Repro) -> Observation:
         page.set_content(case.html, url=case.url)
         page.run_until_idle(timeout=1)
         try:
-            return Observation(value=page.evaluate(case.script))
+            return Observation(value=normalize(page.evaluate(case.script)))
         except BaseException as error:  # a script that throws is an observation too
             return Observation(
                 error=error_name(str(error)) or type(error).__name__, detail=str(error)
@@ -121,7 +140,7 @@ class ChromeReference:
             )
             page.goto(case.url)
             try:
-                return Observation(value=page.evaluate(case.script))
+                return Observation(value=normalize(page.evaluate(case.script)))
             except BaseException as error:
                 return Observation(
                     error=error_name(str(error)) or type(error).__name__, detail=str(error)

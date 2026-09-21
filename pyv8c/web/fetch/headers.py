@@ -26,8 +26,24 @@ class Headers:
             MethodSpec(name="append", callback="fn_append", length=2),
             MethodSpec(name="delete", callback="fn_delete", length=1),
             MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
+            MethodSpec(name="keys", callback="fn_keys", side_effect=1),
+            MethodSpec(name="values", callback="fn_values", side_effect=1),
+            MethodSpec(name="entries", callback="fn_entries", side_effect=1),
         ), constructor_behavior=1, length=1, has_constructor=1,
     )
+
+    def _sorted_names(self):
+        """Header names in the order Chromium iterates them: sorted by name."""
+        return sorted(self._data)
+
+    def fn_keys(self, *_extra):
+        return self._sorted_names()
+
+    def fn_values(self, *_extra):
+        return [self._data[name] for name in self._sorted_names()]
+
+    def fn_entries(self, *_extra):
+        return [(name, self._data[name]) for name in self._sorted_names()]
 
     def __init__(self, init=pyv8.Undefined, *_extra, **_):
         self._data = {}
