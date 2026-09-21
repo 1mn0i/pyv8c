@@ -870,10 +870,14 @@ PyObject*
 context_clear_deadline(context_c* self, PyObject* ignored)
 {
     (void)ignored;
-    auto* state = context_require_isolate(self);
-    if (state == nullptr)
-        return NULL;
-    state->watchdog().disarm();
+    // A command clears the deadline of the context it borrowed, and that command may
+    // have closed the context while it ran.  The arm being undone belongs to the
+    // isolate's watchdog, which is still there, so it is disarmed through the isolate
+    // rather than through the context: leaving it armed would fire on whatever runs
+    // next, long after the command that asked for it finished.
+    IsolateState* state = self->isolate_state;
+    if (state != nullptr && state->is_active())
+        state->watchdog().disarm();
     PYV8_RETURN_NONE;
 }
 

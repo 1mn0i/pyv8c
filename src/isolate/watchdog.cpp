@@ -51,13 +51,15 @@ void Watchdog::arm(double seconds)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     start_thread_locked();
+    // The counter saturates: past kMaxNesting there is no slot to write, and a depth
+    // that kept climbing would leave the array holding deadlines nothing owns.
     if (depth_ < kMaxNesting)
     {
         deadlines_[depth_] = seconds > 0
             ? Clock::now() + std::chrono::microseconds(static_cast<long long>(seconds * 1e6))
             : Clock::time_point::max();
+        ++depth_;
     }
-    ++depth_;
     refresh_deadline_locked();
     wake_.notify_all();
 }
@@ -70,6 +72,9 @@ void Watchdog::disarm()
     if (depth_ == 0)
         return;
     --depth_;
+    // The slot this scope occupied goes with it.  A deadline left behind stays the
+    // earliest one every later command sees, and fires on whichever runs then.
+    deadlines_[depth_] = Clock::time_point::max();
     refresh_deadline_locked();
     wake_.notify_all();
 }
@@ -98,8 +103,8 @@ void Watchdog::begin_crossing(double seconds)
         deadlines_[depth_] = seconds > 0
             ? Clock::now() + std::chrono::microseconds(static_cast<long long>(seconds * 1e6))
             : Clock::time_point::max();
+        ++depth_;
     }
-    ++depth_;
     refresh_deadline_locked();
     wake_.notify_all();
 }
@@ -152,6 +157,16 @@ void Watchdog::run()
             continue;
         armed_ = false;
         terminated_ = true;
+        // The deadline that fired is spent, and the scopes it stood for are about to
+        // unwind.  Keeping those entries would make every later refresh arm on a
+        // moment already past, so one overrun would terminate a run of scripts that
+        // have nothing to do with it.  Clearing them leaves the next deadline to be
+        // the next scope that arms one.
+        for (auto& deadline : deadlines_)
+            deadline = Clock::time_point::max();
+        depth_ = 0;
+        refresh_deadline_locked();
+        wake_.notify_all();
         // TerminateExecution is the one V8 call that is meant for another thread.
         lock.unlock();
         isolate_->TerminateExecution();

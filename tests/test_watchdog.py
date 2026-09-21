@@ -71,6 +71,31 @@ def test_terminate_aborts_and_the_next_crossing_resumes():
         context.close()
 
 
+def test_a_deadline_that_fired_does_not_preempt_what_runs_next():
+    """One overrun preempts one script, not every script that follows it.
+
+    The deadline the watchdog fired on is spent and the scope it stood for is
+    unwinding.  An entry left behind would make the next crossing see a moment
+    already past and terminate whatever runs then, which is a run of unrelated
+    terminations rather than one.
+    """
+    context = pyv8.Context(Window())
+    try:
+        context.set_deadline(0.1)
+        try:
+            context.exec_js(BUSY)
+            raise AssertionError("the deadline did not fire")
+        except pyv8.JavaScriptTerminated:
+            pass
+        context.clear_deadline()
+        # Nothing re-arms the deadline that already fired, so this script and the
+        # one after it run to completion.
+        context.exec_js("var t = Date.now(); while (Date.now() - t < 200) {}")
+        assert context.exec_js("40 + 2") == 42
+    finally:
+        context.close()
+
+
 def test_a_deadline_only_terminates_the_isolate_it_was_armed_on():
     busy_isolate = pyv8.Isolate()
     other_isolate = pyv8.Isolate()
