@@ -12,6 +12,14 @@ from websockets.sync.client import connect
 from pyv8c import Browser, DevToolsOptions
 from pyv8c.foundation.errors import DOMException
 
+#: How long a client waits for something the browser has to answer.  The answer is
+#: produced in-process, but it can still queue behind a busy realm or a machine
+#: running the suite twice over: replies come back inside 250 ms on an idle machine
+#: and took over 4 s under load, which is what a 4 s budget used to fail on.  A test
+#: that really hangs is caught by the per-test timeout, so this only has to be
+#: generous.
+REPLY_TIMEOUT = 30
+
 
 class Client:
     def __init__(self, handle, path="/"):
@@ -34,7 +42,7 @@ class Client:
             if predicate(message):
                 return self.inbox.pop(index)
         while True:
-            message = json.loads(self.ws.recv(timeout=4))
+            message = json.loads(self.ws.recv(timeout=REPLY_TIMEOUT))
             if predicate(message):
                 return message
             self.inbox.append(message)
@@ -114,7 +122,7 @@ def test_only_one_service_and_client(devtools_page):
         first.request("Target.getTargets")
         with Client(handle) as second:
             with pytest.raises(ConnectionClosed) as closed:
-                second.ws.recv(timeout=2)
+                second.ws.recv(timeout=REPLY_TIMEOUT)
             assert closed.value.rcvd.code == 1013
 
 
