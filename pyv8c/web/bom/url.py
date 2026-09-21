@@ -28,10 +28,16 @@ from ..fetch.blob import Blob
 
 __all__ = ["URL", "URLSearchParams"]
 
+#: What the URL parser drops before it parses anything: leading and trailing C0
+#: controls and spaces, and every tab or newline wherever it sits.
+_URL_TRIM = "".join(chr(code) for code in range(0x21))
+_URL_DROP = str.maketrans("", "", "\t\n\r")
+
 
 @interface('URLSearchParams', None)
 class URLSearchParams:
     __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="size", getter="get_size", side_effect=1),),
         methods=(
             MethodSpec(name="append", callback="fn_append", length=2),
             MethodSpec(name="delete", callback="fn_delete", length=1),
@@ -41,6 +47,12 @@ class URLSearchParams:
             MethodSpec(name="set", callback="fn_set", length=2),
             MethodSpec(name="sort", callback="fn_sort"),
             MethodSpec(name="toString", callback="fn_toString", side_effect=1),
+            # Chromium hands back an iterator per name; these return the array that
+            # ``Array.from``, spread and ``for..of`` all accept, which is what a page
+            # written against the iterators reads.
+            MethodSpec(name="keys", callback="fn_keys", side_effect=1),
+            MethodSpec(name="values", callback="fn_values", side_effect=1),
+            MethodSpec(name="entries", callback="fn_entries", side_effect=1),
         ),
         constructor_behavior=1,
         length=1,
@@ -134,6 +146,18 @@ class URLSearchParams:
     def fn_sort(self, *_extra):
         self._refresh(); self._items.sort(key=lambda item: item[0]); self._commit()
 
+    def get_size(self):
+        self._refresh(); return len(self._items)
+
+    def fn_keys(self, *_extra):
+        self._refresh(); return [key for key, _ in self._items]
+
+    def fn_values(self, *_extra):
+        self._refresh(); return [value for _, value in self._items]
+
+    def fn_entries(self, *_extra):
+        self._refresh(); return [(key, value) for key, value in self._items]
+
     def fn_toString(self, *_extra):
         from urllib.parse import urlencode
         self._refresh()
@@ -158,8 +182,15 @@ class URL:
 
     @staticmethod
     def _resolve(url, base=None):
-        raw = str(url)
-        if not raw or any(ch.isspace() for ch in raw):
+        """The absolute form of ``url``, with what a browser does to its spaces.
+
+        The parser trims and drops whitespace, then percent-encodes every space left
+        -- in the authority as much as in the path -- so ``https://a.te st/`` becomes
+        ``https://a.te%20st/``.  A space in the port is what makes a URL invalid, and
+        reading the port is where that turns up.
+        """
+        raw = str(url).translate(_URL_DROP).strip(_URL_TRIM).replace(" ", "%20")
+        if not raw:
             raise V8TypeError("Invalid URL")
         value = raw if base is None else urljoin(str(base), raw)
         try:

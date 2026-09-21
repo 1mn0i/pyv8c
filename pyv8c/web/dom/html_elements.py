@@ -11,7 +11,7 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
-from ...foundation.arguments import MISSING, boolean, dom_string, interface_value, is_nullish, missing_error
+from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, is_nullish, missing_error
 from ...foundation.errors import InvalidCharacterError, NotFoundError, V8SyntaxError, V8TypeError
 from ...foundation.urls import origin_string
 from .character_data import Text
@@ -560,6 +560,8 @@ class HTMLImageElement(HTMLElement):
         attributes=(
             _url_attr("src", "get_src", "set_src"),
             _attribute("alt", "get_alt", "set_alt"),
+            AttributeSpec(name="width", getter="get_width", setter="set_width"),
+            AttributeSpec(name="height", getter="get_height", setter="set_height"),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -572,6 +574,26 @@ class HTMLImageElement(HTMLElement):
     def set_alt(self, value):
         value = dom_string(value)
         self.attributes['alt'] = str(value)
+    def _dimension(self, name):
+        """One image dimension: the number the attribute starts with, else 0.
+
+        Chromium parses these as dimension values, so ``12px`` and ``12%`` read back
+        as 12, and an attribute with no leading number at all as 0.
+        """
+        digits = ""
+        for character in str(self.attributes.get(name, "")).strip():
+            if character not in "0123456789":
+                break
+            digits += character
+        return int(digits) if digits else 0
+    def _set_dimension(self, name, value):
+        # A dimension is not an unsigned long: a negative one is stored as 0 rather
+        # than wrapped around.
+        self.attributes[name] = str(max(0, integer(value, signed=True)))
+    def get_width(self): return self._dimension("width")
+    def set_width(self, value): self._set_dimension("width", value)
+    def get_height(self): return self._dimension("height")
+    def set_height(self, value): self._set_dimension("height", value)
 
 
 @interface('HTMLScriptElement', 'HTMLElement')

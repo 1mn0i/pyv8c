@@ -221,7 +221,21 @@ class Node(EventTarget):
     def get_childNodes(self): return self._child_nodes_view
     def get_firstChild(self): return self.firstChild
     def get_lastChild(self): return self.lastChild
-    def get_textContent(self): return "".join(n.get_textContent() or "" for n in self._children)
+    def get_textContent(self):
+        """This subtree's text: a leaf reports its own data, a tree its children's.
+
+        A comment is character data but not text, so it contributes nothing to an
+        ancestor's ``textContent`` even though its own ``textContent`` is its data.
+        """
+        from .character_data import Comment
+
+        if not self._children:
+            value = getattr(self, "nodeValue", None)
+            return "" if value is None else str(value)
+        return "".join(
+            "" if isinstance(child, Comment) else child.get_textContent() or ""
+            for child in self._children
+        )
     def set_textContent(self, value):
         from .character_data import Text
 

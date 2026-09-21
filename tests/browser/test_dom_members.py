@@ -303,6 +303,51 @@ def test_html_button_reflects_name_value_and_type(page):
     assert page.evaluate("document.createElement('form') instanceof HTMLFormElement") is True
 
 
+def test_text_content_reports_data_but_skips_comments(page):
+    assert page.evaluate("""
+        (() => {
+            const div = document.createElement('div');
+            div.innerHTML = 'a<b>c</b>d<!--e-->';
+            const text = document.createTextNode('t');
+            const comment = document.createComment('c');
+            return [div.textContent, text.textContent, comment.textContent,
+                    text.nodeValue, comment.data];
+        })()
+    """) == ["acd", "t", "c", "t", "c"]
+
+
+def test_image_dimensions_are_dimension_values(page):
+    assert page.evaluate("""
+        (() => {
+            const read = value => {
+                const image = document.createElement('img');
+                image.setAttribute('width', value);
+                return image.width;
+            };
+            const image = document.createElement('img');
+            const empty = [image.width, image.height];
+            image.height = '30';
+            image.width = -5;
+            return [empty, image.width, image.getAttribute('width'), image.height,
+                    read('12px'), read('12%'), read('abc'), read('-5'), read(' 12 ')];
+        })()
+    """) == [[0, 0], 0, "0", 30, 12, 12, 0, 0, 12]
+
+
+def test_an_option_derives_text_label_and_value(page):
+    assert page.evaluate("""
+        (() => {
+            const option = document.createElement('option');
+            option.textContent = '  Spaced   text ';
+            const derived = [option.text, option.label, option.value];
+            option.label = 'L';
+            option.value = 'v';
+            return [derived, option.label, option.getAttribute('label'), option.text,
+                    option.value];
+        })()
+    """) == [["Spaced text", "Spaced text", "Spaced text"], "L", "L", "Spaced text", "v"]
+
+
 def test_canvas_text_baseline_round_trips(page):
     assert page.evaluate("""
         (function () {

@@ -62,6 +62,8 @@ class HTMLOptionElement(HTMLElement):
         attributes=(
             AttributeSpec(name="selected", getter="get_selected", setter="set_selected"),
             AttributeSpec(name="value", getter="get_value", setter="set_value"),
+            AttributeSpec(name="text", getter="get_text", side_effect=1),
+            AttributeSpec(name="label", getter="get_label", setter="set_label"),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -93,9 +95,19 @@ class HTMLOptionElement(HTMLElement):
         return select._selects_first_option(self) if select is not None else False
     def set_selected(self, value):
         self._selected_state = boolean(value)
+    def _own_text(self):
+        """The option's own text: its text content with whitespace collapsed."""
+        return " ".join(str(self.get_textContent() or "").split())
+    def get_text(self): return self._own_text()
+    def get_label(self):
+        """The label attribute, or the option's text when it carries none."""
+        value = self.attributes.get("label")
+        return str(value) if value is not None else self._own_text()
+    def set_label(self, value):
+        self.attributes['label'] = str(dom_string(value))
     def get_value(self):
         value = self.attributes.get("value")
-        return str(value) if value is not None else " ".join(str(self.get_textContent() or "").split())
+        return str(value) if value is not None else self._own_text()
     def set_value(self, value):
         self.attributes['value'] = str(dom_string(value))
 
