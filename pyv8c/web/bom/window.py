@@ -4,7 +4,7 @@ Cross-origin access to another window goes through :mod:`dom.window_proxy`,
 which :meth:`Window._view` imports on first use.
 """
 import pyv8
-from pyv8 import IdlSpec
+from pyv8 import AttributeSpec, IdlSpec
 
 from ...engine.features import LazyValueStore, interface
 from ...foundation.arguments import (
@@ -19,12 +19,28 @@ from ...foundation.arguments import (
 from ...foundation.environment import BrowserEnvironment
 from ...foundation.errors import SecurityError
 from ...foundation.urls import origin_tuple, serialize_origin
+from ..dom.custom_elements import CustomElementRegistry
 from ..dom.events import EventTarget
 from ..fetch.request import Request
+from .accessories import (
+    CrashReportContext,
+    External,
+    LaunchQueue,
+    Scheduler,
+    SpeechSynthesis,
+    StyleMedia,
+    Viewport,
+)
+from .crypto import Crypto
+from .media import MediaQueryList
+from .navigation_api import Navigation
+from .trusted_types import TrustedTypePolicyFactory
+from .visual_viewport import VisualViewport
+from .performance import Performance
 from .scheduling import _SchedulingMixin
-from .utils import deny_cross_origin, window_attribute, window_method
+from .utils import deny_cross_origin, is_secure_context, window_attribute, window_method
 
-__all__ = ["Window", "WindowProperties"]
+__all__ = ["BarProp", "Window", "WindowProperties"]
 
 #: Names :class:`~dom.window_proxy.WindowProxy` exposes to a cross-origin
 #: caller.  ``Window`` enumerates the same set when a proxy asks it for its own
@@ -86,6 +102,24 @@ class WindowProperties(EventTarget):
 
 
 
+@interface('BarProp', None)
+class BarProp:
+    """One of a window's bars: only ``visible`` is observable, and always true."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="visible", getter="get_visible", side_effect=1),),
+        constructor_behavior=0,
+        to_string_tag="BarProp",
+        has_constructor=1,
+    )
+
+    def __init__(self, name="", visible=True, **_):
+        self._name, self._visible = str(name), bool(visible)
+
+    def get_visible(self):
+        return self._visible
+
+
 class _WindowFeatureValues(LazyValueStore):
     """The Window's feature slots, built by their Feature on first access.
 
@@ -135,6 +169,57 @@ class Window(_SchedulingMixin, WindowProperties):
             window_attribute("outerHeight", "get_outerHeight", cross_origin=True),
             window_attribute("orientation", "get_orientation", cross_origin=True),
             window_attribute("devicePixelRatio", "get_devicePixelRatio", cross_origin=True),
+            # Values a page reads about the window itself.
+            window_attribute("origin", "get_origin", cross_origin=True),
+            window_attribute("scrollX", "get_scrollX", cross_origin=True),
+            window_attribute("scrollY", "get_scrollY", cross_origin=True),
+            window_attribute("pageXOffset", "get_pageXOffset", cross_origin=True),
+            window_attribute("pageYOffset", "get_pageYOffset", cross_origin=True),
+            window_attribute("screenX", "get_screenX", cross_origin=True),
+            window_attribute("screenY", "get_screenY", cross_origin=True),
+            window_attribute("screenLeft", "get_screenLeft", cross_origin=True),
+            window_attribute("screenTop", "get_screenTop", cross_origin=True),
+            window_attribute("isSecureContext", "get_isSecureContext", cross_origin=True),
+            window_attribute("crossOriginIsolated", "get_crossOriginIsolated", cross_origin=True),
+            window_attribute("originAgentCluster", "get_originAgentCluster", cross_origin=True),
+            window_attribute("credentialless", "get_credentialless", cross_origin=True),
+            window_attribute("status", "get_status", "set_status", cross_origin=True),
+            window_attribute("frameElement", "get_frameElement", cross_origin=True),
+            window_attribute("performance", "get_performance", cross_origin=True),
+            window_attribute("crypto", "get_crypto", cross_origin=True),
+            window_attribute("customElements", "get_customElements", cross_origin=True),
+            window_attribute("visualViewport", "get_visualViewport", cross_origin=True),
+            window_attribute("viewport", "get_viewport", cross_origin=True),
+            window_attribute("external", "get_external", cross_origin=True),
+            window_attribute("styleMedia", "get_styleMedia", cross_origin=True),
+            window_attribute("crashReport", "get_crashReport", cross_origin=True),
+            window_attribute("launchQueue", "get_launchQueue", cross_origin=True),
+            window_attribute("speechSynthesis", "get_speechSynthesis", cross_origin=True),
+            window_attribute("scheduler", "get_scheduler", cross_origin=True),
+            window_attribute("navigation", "get_navigation", cross_origin=True),
+            window_attribute("trustedTypes", "get_trustedTypes", cross_origin=True),
+            window_attribute("fence", "get_fence", cross_origin=True),
+            # Declared, and answered as absent, exactly as Chrome presents them.
+            window_attribute("event", "get_event", cross_origin=True),
+            window_attribute("caches", "get_caches", cross_origin=True),
+            window_attribute("cookieStore", "get_cookieStore", cross_origin=True),
+            window_attribute("crossOriginEmbedderPolicy", "get_crossOriginEmbedderPolicy",
+                             cross_origin=True),
+            window_attribute("defaultStatus", "get_defaultStatus", cross_origin=True),
+            window_attribute("defaultstatus", "get_defaultstatus", cross_origin=True),
+            window_attribute("documentPictureInPicture", "get_documentPictureInPicture",
+                             cross_origin=True),
+            window_attribute("printing", "get_printing", cross_origin=True),
+            window_attribute("sharedStorage", "get_sharedStorage", cross_origin=True),
+            window_attribute("subApps", "get_subApps", cross_origin=True),
+            window_attribute("testOriginTrialGlobalAttribute",
+                             "get_testOriginTrialGlobalAttribute", cross_origin=True),
+            window_attribute("locationbar", "get_locationbar", cross_origin=True),
+            window_attribute("menubar", "get_menubar", cross_origin=True),
+            window_attribute("toolbar", "get_toolbar", cross_origin=True),
+            window_attribute("statusbar", "get_statusbar", cross_origin=True),
+            window_attribute("scrollbars", "get_scrollbars", cross_origin=True),
+            window_attribute("personalbar", "get_personalbar", cross_origin=True),
         ),
         methods=(
             window_method("setTimeout", "fn_setTimeout", 1, cross_origin=True),
@@ -150,6 +235,7 @@ class Window(_SchedulingMixin, WindowProperties):
             window_method("blur", "fn_blur"),
             window_method("postMessage", "fn_postMessage", 1),
             window_method("webkitRequestFileSystem", "fn_webkitRequestFileSystem", 3, cross_origin=True),
+            window_method("matchMedia", "fn_matchMedia", 1, cross_origin=True),
             window_method("getComputedStyle", "fn_getComputedStyle", 1, cross_origin=True),
         ),
         constructor_behavior=0,
@@ -342,6 +428,148 @@ class Window(_SchedulingMixin, WindowProperties):
         """
         self._require_same_origin()
         return 0
+    # -- what a page reads about the window itself -----------------------------
+    def _window_value(self, name, factory):
+        """The one object this window hands out for a ``[SameObject]`` member."""
+        values = getattr(self, "_window_values", None)
+        if values is None:
+            values = self._window_values = {}
+        if name not in values:
+            values[name] = factory()
+        return values[name]
+
+    def get_origin(self):
+        """The current document's origin."""
+        self._require_same_origin()
+        return self.location.get_origin()
+
+    def get_scrollX(self):
+        """How far the view has scrolled: nothing here scrolls one."""
+        self._require_same_origin()
+        return 0
+
+    def get_scrollY(self): self._require_same_origin(); return 0
+    def get_pageXOffset(self): return self.get_scrollX()
+    def get_pageYOffset(self): return self.get_scrollY()
+
+    def get_screenX(self):
+        """Where the window sits on the screen: the top-left corner here."""
+        self._require_same_origin()
+        return 0
+
+    def get_screenY(self): self._require_same_origin(); return 0
+    def get_screenLeft(self): return self.get_screenX()
+    def get_screenTop(self): return self.get_screenY()
+
+    def get_isSecureContext(self):
+        """Whether the document's origin is one a browser treats as trustworthy."""
+        self._require_same_origin()
+        return is_secure_context(self.location.get_href())
+
+    def get_crossOriginIsolated(self):
+        """Whether the document is cross-origin isolated: no COOP/COEP is set."""
+        self._require_same_origin()
+        return False
+
+    def get_originAgentCluster(self): self._require_same_origin(); return False
+    def get_credentialless(self): self._require_same_origin(); return False
+
+    def get_status(self):
+        """The window's status bar text, which starts empty and only a page sets."""
+        self._require_same_origin()
+        return getattr(self, "_status", "")
+
+    def set_status(self, value):
+        self._require_same_origin()
+        self._status = dom_string(value)
+
+    def get_frameElement(self):
+        """The frame a child window lives in; a top-level window has none."""
+        self._require_same_origin()
+        parent = self._parent_window
+        if parent is self:
+            return pyv8.Null
+        document = parent._services.document_services.document
+        return next((frame for frame in document.fn_querySelectorAll("iframe")
+                     if frame._child_services is not None
+                     and frame._child_services.window is self), pyv8.Null)
+
+    def get_performance(self):
+        self._require_same_origin()
+        return self._window_value("performance", Performance)
+
+    def get_crypto(self):
+        self._require_same_origin()
+        return self._window_value(
+            "crypto", lambda: Crypto(is_secure_context(self.location.get_href())))
+
+    def get_customElements(self):
+        self._require_same_origin()
+        return self._window_value(
+            "customElements", lambda: CustomElementRegistry(services=self._services))
+
+    def get_visualViewport(self):
+        self._require_same_origin()
+        return self._window_value("visualViewport", lambda: VisualViewport(window=self))
+
+    # -- the smaller accessory objects ----------------------------------------
+    def get_viewport(self): self._require_same_origin(); return self._window_value("viewport", Viewport)
+    def get_external(self): self._require_same_origin(); return self._window_value("external", External)
+    def get_crashReport(self): self._require_same_origin(); return self._window_value("crashReport", CrashReportContext)
+    def get_launchQueue(self): self._require_same_origin(); return self._window_value("launchQueue", LaunchQueue)
+    def get_speechSynthesis(self): self._require_same_origin(); return self._window_value("speechSynthesis", SpeechSynthesis)
+
+    def get_styleMedia(self):
+        self._require_same_origin()
+        return self._window_value("styleMedia", lambda: StyleMedia(self))
+
+    def get_scheduler(self):
+        self._require_same_origin()
+        return self._window_value("scheduler", lambda: Scheduler(services=self._services))
+
+    def get_navigation(self):
+        self._require_same_origin()
+        return self._window_value("navigation", lambda: Navigation(window=self))
+
+    def get_trustedTypes(self):
+        self._require_same_origin()
+        return self._window_value("trustedTypes", TrustedTypePolicyFactory)
+
+    def get_fence(self):
+        """An unfenced page has no fence, which Chrome reports as null."""
+        self._require_same_origin()
+        return pyv8.Null
+
+    #: Chrome knows these names and answers undefined -- they gate on a secure
+    #: context, or are gone -- so the value is the same and the log is quiet.
+    def get_event(self): self._require_same_origin(); return pyv8.Undefined
+    def get_caches(self): self._require_same_origin(); return pyv8.Undefined
+    def get_cookieStore(self): self._require_same_origin(); return pyv8.Undefined
+    def get_crossOriginEmbedderPolicy(self): self._require_same_origin(); return pyv8.Undefined
+    def get_defaultStatus(self): self._require_same_origin(); return pyv8.Undefined
+    def get_defaultstatus(self): self._require_same_origin(); return pyv8.Undefined
+    def get_documentPictureInPicture(self): self._require_same_origin(); return pyv8.Undefined
+    def get_printing(self): self._require_same_origin(); return pyv8.Undefined
+    def get_sharedStorage(self): self._require_same_origin(); return pyv8.Undefined
+    def get_subApps(self): self._require_same_origin(); return pyv8.Undefined
+    def get_testOriginTrialGlobalAttribute(self): self._require_same_origin(); return pyv8.Undefined
+
+    def get_locationbar(self): self._require_same_origin(); return self._bar("locationbar")
+    def get_menubar(self): self._require_same_origin(); return self._bar("menubar")
+    def get_toolbar(self): self._require_same_origin(); return self._bar("toolbar")
+    def get_statusbar(self): self._require_same_origin(); return self._bar("statusbar")
+    def get_scrollbars(self): self._require_same_origin(); return self._bar("scrollbars")
+    def get_personalbar(self): self._require_same_origin(); return self._bar("personalbar")
+
+    def _bar(self, name):
+        return self._window_value(name, lambda: BarProp(name))
+
+    def fn_matchMedia(self, query=MISSING, *_extra):
+        """The query list for *query*, answered against this window's viewport."""
+        if query is MISSING:
+            raise missing_error('Window', 'matchMedia', 1, 0, constructor=False)
+        self._require_same_origin()
+        return MediaQueryList(dom_string(query), self.innerWidth, self.innerHeight)
     def fn_fetch(self, request=MISSING, options=None, *_extra):
         promise, resolve, reject = self._services.realm_services.make_promise()
         try:

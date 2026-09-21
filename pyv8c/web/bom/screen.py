@@ -24,6 +24,8 @@ class Screen(EventTarget):
                     "height",
                     "availWidth",
                     "availHeight",
+                    "availLeft",
+                    "availTop",
                     "colorDepth",
                     "pixelDepth",
                 )
@@ -42,5 +44,8 @@ class Screen(EventTarget):
     def get_height(self): return self.height
     def get_availWidth(self): return self.availWidth
     def get_availHeight(self): return self.availHeight
+    #: The available area starts at the screen's own origin here.
+    def get_availLeft(self): return 0
+    def get_availTop(self): return 0
     def get_colorDepth(self): return self.colorDepth
     def get_pixelDepth(self): return self.pixelDepth

@@ -215,7 +215,13 @@ class IncrementalDOMParser(_TreeBuilderMixin):
                 from .character_data import DocumentType
                 parts = value.split(None, 1); self.target.append_child(DocumentType(name=parts[1].strip() if len(parts) > 1 else "html", services=self.services))
             if self.services.document_services.parser_is_blocked(): return False
-        self.done = True; return True
+        self.done = True
+        # Last moment the parse is still running, so the nodes moved into the body
+        # do not look like an insertion the page made afterwards.
+        ensure_skeleton = getattr(self.root, "_ensure_skeleton", None)
+        if ensure_skeleton is not None:
+            ensure_skeleton()
+        return True
 
 
 def parse_fragment(html, services, parent):

@@ -271,6 +271,7 @@ class StorageQuotaConfig(_ConfigMapping):
 class BrowserEnvironment:
     user_agent: str = DEFAULT_USER_AGENT
     app_version: str | None = None
+    vendor: str = "Google Inc."
     platform: str = "Win32"
     language: str = DEFAULT_LANGUAGES[0]
     languages: tuple[str, ...] = DEFAULT_LANGUAGES

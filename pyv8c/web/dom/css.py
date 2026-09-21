@@ -182,12 +182,40 @@ INHERITED_PROPERTIES = frozenset((
 ))
 
 #: The initial value the cascade starts from for each supported property.
+#:
+#: Every inherited property needs one; ``display`` is overridden per element by
+#: :func:`initial_values_for`.
 INITIAL_VALUES = {
     "display": "block", "position": "static", "visibility": "visible",
     "font-family": "sans-serif", "font-size": "16px", "font-weight": "400",
     "font-style": "normal", "line-height": "normal", "letter-spacing": "normal",
     "word-spacing": "normal", "box-sizing": "content-box",
+    "color": "rgb(0, 0, 0)", "white-space": "normal",
 }
+
+#: The display a tag starts from, measured from Chrome 153's user-agent sheet.
+TAG_DISPLAY = {
+    "a": "inline", "body": "block", "button": "inline-block", "canvas": "inline",
+    "div": "block", "form": "block", "head": "none", "html": "block",
+    "iframe": "inline", "img": "inline", "input": "inline-block", "link": "none",
+    "meta": "none", "option": "block", "script": "none", "select": "inline-block",
+    "span": "inline", "style": "none", "table": "table", "td": "table-cell",
+    "template": "none", "textarea": "inline-block", "tr": "table-row",
+}
+
+#: What an element with no entry in :data:`TAG_DISPLAY` starts from.
+UNTAGGED_DISPLAY = "inline"
+
+
+def initial_values_for(element):
+    """The cascade's starting values for ``element``.
+
+    Every property starts from :data:`INITIAL_VALUES`; ``display`` is the one that
+    also depends on what the element is.
+    """
+    values = dict(INITIAL_VALUES)
+    values["display"] = TAG_DISPLAY.get(getattr(element, "localName", ""), UNTAGGED_DISPLAY)
+    return values
 
 
 def parse_declarations(raw):

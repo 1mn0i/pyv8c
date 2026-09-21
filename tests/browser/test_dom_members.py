@@ -360,6 +360,131 @@ def test_removing_the_last_declaration_empties_the_attribute(page):
     """) == ["blue", "", True, ""]
 
 
+def test_a_mutation_observer_reports_child_and_attribute_changes(page):
+    page.evaluate("""(() => {
+        window.__records = [];
+        const target = document.createElement('div');
+        document.body.appendChild(target);
+        new MutationObserver(records => {
+          window.__records.push(...records.map(
+              record => [record.type, record.target.tagName, record.addedNodes.length]));
+        }).observe(target, {childList: true, attributes: true});
+        target.appendChild(document.createElement('span'));
+        target.setAttribute('data-x', '1');
+        target.removeAttribute('data-x');
+    })()""")
+    assert page.evaluate("window.__records") == [
+        ["childList", "DIV", 1], ["attributes", "DIV", 0], ["attributes", "DIV", 0],
+    ]
+
+
+def test_a_mutation_observer_hears_only_what_it_asked_for(page):
+    """Records are queued, not delivered: ``takeRecords`` takes them first."""
+    assert page.evaluate("""(() => {
+        const heard = [];
+        const target = document.createElement('div');
+        document.body.appendChild(target);
+        const observer = new MutationObserver(records => {
+          heard.push(...records.map(record => record.type));
+        });
+        observer.observe(target, {attributes: true});
+        target.appendChild(document.createElement('i'));
+        target.setAttribute('data-y', '2');
+        const taken = observer.takeRecords().map(record => record.type);
+        observer.disconnect();
+        target.setAttribute('data-z', '3');
+        return [taken, observer.takeRecords().length, heard.length];
+    })()""") == [["attributes"], 0, 0]
+
+
+def test_rows_and_cells_are_live_and_held_onto(page):
+    assert page.evaluate("""(() => {
+        const table = document.createElement('table');
+        document.body.appendChild(table);
+        table.innerHTML = '<tr><td>1</td></tr>';
+        const rows = table.rows;
+        const cells = rows[0].cells;
+        const added = document.createElement('tr');
+        table.appendChild(added);
+        rows[0].appendChild(document.createElement('td'));
+        return [rows.length, cells.length, table.rows === rows, rows[0].cells === cells,
+                added.rowIndex, table.rows[1] === added];
+    })()""") == [2, 2, True, True, 1, True]
+
+
+def test_a_nested_table_keeps_its_own_rows(page):
+    assert page.evaluate("""(() => {
+        const table = document.createElement('table');
+        document.body.appendChild(table);
+        table.innerHTML = '<tr><td>1</td></tr>'
+                        + '<tr><td><table><tr><td>n</td></tr></table></td></tr>';
+        return [table.rows.length, table.rows[1].cells.length,
+                table.querySelectorAll('tr').length];
+    })()""") == [2, 1, 3]
+
+
+def test_cell_and_row_indexes_outside_a_table(page):
+    assert page.evaluate("""(() => {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        row.appendChild(cell);
+        return [row.rowIndex, cell.cellIndex, document.createElement('td').cellIndex,
+                document.createElement('tr').rowIndex];
+    })()""") == [-1, 0, -1, -1]
+
+
+def test_xpath_walks_the_document(page):
+    page.set_content('<p class="x">one</p><p class="x">two</p><p>three</p>',
+                     url="https://secure.test/")
+    assert page.evaluate("""(() => {
+        const snapshot = document.evaluate("//p[@class='x']", document, null,
+            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        const second = document.createExpression("//p[2]", null)
+            .evaluate(document, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        const href = document.evaluate("//a/@href", document, null,
+            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        return [snapshot.snapshotLength, snapshot.snapshotItem(1).textContent,
+                second.singleNodeValue.textContent, href.snapshotLength];
+    })()""") == [2, "two", "two", 0]
+
+
+def test_a_lock_request_runs_its_callback(page):
+    page.set_content("<body></body>", url="https://secure.test/")
+    page.evaluate("""window.__held = [];
+        navigator.locks.request('res', lock => {
+          window.__held.push(lock.name, lock.mode);
+          return 'done';
+        });""")
+    assert page.evaluate("window.__held") == ["res", "exclusive"]
+    assert page.evaluate("typeof navigator.locks.query") == "function"
+
+
+def test_a_fragment_gets_a_body_of_its_own(page):
+    """Markup with no html/body of its own is wrapped, not adopted as the body."""
+    page.set_content(
+        '<div id="x" style="color: red">hi</div>', url="http://fragment.test/",
+    )
+    assert page.evaluate("""(() => {
+        const element = document.getElementById('x');
+        return [document.body === element, document.body.tagName,
+                document.body.getAttribute('id') === null,
+                document.body.getAttribute('style') === null,
+                document.body.childNodes.length, document.documentElement.tagName,
+                document.body.parentNode === document.documentElement,
+                document.head !== null];
+    })()""") == [False, "BODY", True, True, 1, "HTML", True, True]
+
+
+def test_an_empty_document_still_has_the_skeleton(page):
+    page.set_content("", url="http://empty.test/")
+    assert page.evaluate("""(() => {
+        return [document.documentElement.tagName, document.head.tagName,
+                document.body.tagName, document.body.childNodes.length,
+                document.documentElement.parentNode === document,
+                document.head.parentNode === document.documentElement];
+    })()""") == ["HTML", "HEAD", "BODY", 0, True, True]
+
+
 def test_canvas_text_baseline_round_trips(page):
     assert page.evaluate("""
         (function () {

@@ -3,6 +3,7 @@ import time
 
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8.flag import FlagLocation
 
 from ...engine.features import interface
 from ...foundation.arguments import (
@@ -922,8 +923,8 @@ class EventTarget:
 # on ``EditContext``; composition events still dispatch through
 # ``addEventListener('compositionstart', ...)``.
 #
-# Declaring the slots here also exposes them on ``EventTarget.prototype``, which
-# a real browser does not; that is the price of a single declaration site.
+# The slots are installed with ``FlagLocation.kInstance``, which keeps them off
+# ``EventTarget.prototype``: a browser leaves only the listener methods there.
 _HANDLER_SLOTS = (
     # Document and resource lifecycle
     "onload", "onerror", "onreadystatechange", "onpageshow", "onpagehide",
@@ -954,6 +955,34 @@ _HANDLER_SLOTS = (
     # Clipboard and unhandled rejections
     "oncopy", "oncut", "onpaste", "onselectstart", "onselectionchange",
     "onunhandledrejection", "onrejectionhandled",
+    # Media playback
+    "oncanplay", "oncanplaythrough", "ondurationchange", "onemptied", "onended",
+    "onloadeddata", "onloadedmetadata", "onpause", "onplay", "onplaying",
+    "onratechange", "onseeked", "onseeking", "onstalled", "onsuspend",
+    "ontimeupdate", "onvolumechange", "onwaiting",
+    # Drag and drop
+    "ondrag", "ondragend", "ondragenter", "ondragleave", "ondragover", "ondragstart",
+    "ondrop",
+    # Device and network state
+    "ondevicemotion", "ondeviceorientation", "ondeviceorientationabsolute",
+    "ononline", "onoffline", "onlanguagechange", "onorientationchange",
+    # Printing, installation and page lifecycle
+    "onafterprint", "onbeforeprint", "onbeforetoggle", "onbeforematch", "onbeforefilter",
+    "onbeforeinstallprompt", "onappinstalled", "onpageswap", "onpagereveal",
+    "oncommand", "oncomplete",
+    # Window and frame geometry, plus scrolling overshoot
+    "onmove", "onresize", "onscrollend", "onscrollsnapchange", "onscrollsnapchanging",
+    "onoverscrollstart", "onoverscrollchanging", "onoverscrollend", "onoverscrollcancel",
+    # Gamepads and canvases
+    "ongamepadconnected", "ongamepaddisconnected", "ongamepadrawinputchanged",
+    "oncontextlost", "oncontextrestored",
+    # The remaining slots the baseline declares somewhere
+    "oncancel", "onclose", "oncuechange", "onformdata", "onmousewheel",
+    "onpointerrawupdate", "onsearch", "onsecuritypolicyviolation", "onslotchange",
+    "ontimezonechange", "ontoggle", "onbeforexrselect",
+    "oncontentvisibilityautostatechange",
+    "onwebkitanimationstart", "onwebkitanimationend", "onwebkitanimationiteration",
+    "onwebkittransitionend",
 )
 
 
@@ -977,7 +1006,8 @@ def _install_handler_slots(cls, names):
         setter.__name__ = "set_" + name
         setattr(cls, getter.__name__, getter)
         setattr(cls, setter.__name__, setter)
-        attributes.append(AttributeSpec(name=name, getter=getter.__name__, setter=setter.__name__))
+        attributes.append(AttributeSpec(name=name, getter=getter.__name__, setter=setter.__name__,
+                                        location=FlagLocation.kInstance))
     return tuple(attributes)
 
 

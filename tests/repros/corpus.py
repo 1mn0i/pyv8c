@@ -716,8 +716,8 @@ CASES = (
     # -- what is still missing here --------------------------------------------
     Repro(
         name="table_rows_and_cells",
-        note="Excluded: HTMLTableElement.rows is not implemented, so a table cannot "
-             "be walked the way a page walks it.",
+        note="A table is walked the way a page walks it: its rows in order, then the "
+             "cells of a row.",
         script="""
             (() => {
               const table = document.createElement('table');
@@ -728,9 +728,92 @@ CASES = (
                       rows[1].rowIndex, rows[0].cells[0].parentNode.tagName];
             })()
         """,
-        expect_error="TypeError",
-        known_divergence="HTMLTableElement.rows and the row/cell collections are not"
-        " implemented; Chrome answers [2, 2, 0, 1, 'TR']",
+        expected=[2, 2, 0, 1, "TR"],
+    ),
+    Repro(
+        name="rows_come_from_the_sections_in_document_order",
+        note="A row's place is its place among all the table's rows, whichever "
+             "section holds it.",
+        script="""
+            (() => {
+              const table = document.createElement('table');
+              document.body.appendChild(table);
+              table.innerHTML = '<thead><tr><td>h</td></tr></thead>'
+                              + '<tbody><tr><td>b</td></tr></tbody>'
+                              + '<tfoot><tr><td>f</td></tr></tfoot>';
+              return [table.rows.length, table.rows[0].cells[0].textContent,
+                      table.rows[2].cells[0].textContent, table.rows[1].rowIndex];
+            })()
+        """,
+        expected=[3, "h", "f", 1],
+    ),
+    Repro(
+        name="a_nested_table_keeps_its_own_rows",
+        note="A table nested inside a cell is a table of its own: its rows belong to "
+             "it, not to the table around it.",
+        script="""
+            (() => {
+              const table = document.createElement('table');
+              document.body.appendChild(table);
+              table.innerHTML = '<tr><td>1</td></tr>'
+                              + '<tr><td><table><tr><td>n</td></tr></table></td></tr>';
+              return [table.rows.length, table.rows[1].cells.length,
+                      table.querySelectorAll('tr').length];
+            })()
+        """,
+        expected=[2, 1, 3],
+    ),
+    Repro(
+        name="a_th_counts_as_a_cell",
+        note="A heading cell is a cell: it is in the row's collection and knows its "
+             "place in it.",
+        script="""
+            (() => {
+              const row = document.createElement('tr');
+              const head = document.createElement('th');
+              row.appendChild(head);
+              document.body.appendChild(row);
+              return [row.cells.length, head.cellIndex,
+                      head instanceof HTMLTableCellElement, head.constructor.name,
+                      row.constructor.name];
+            })()
+        """,
+        expected=[1, 0, True, "HTMLTableCellElement", "HTMLTableRowElement"],
+    ),
+    Repro(
+        name="row_and_cell_indexes_outside_a_table",
+        note="A cell knows its place as soon as a row holds it, while a row that no "
+             "table owns has no place to report.",
+        script="""
+            (() => {
+              const row = document.createElement('tr');
+              const cell = document.createElement('td');
+              row.appendChild(cell);
+              return [row.rowIndex, cell.cellIndex, document.createElement('td').cellIndex,
+                      document.createElement('tr').rowIndex];
+            })()
+        """,
+        expected=[-1, 0, -1, -1],
+    ),
+    Repro(
+        name="rows_and_cells_are_live_and_held_onto",
+        note="Reaching for the collection twice gives the same live object, so it "
+             "shows a row or cell added afterwards.",
+        script="""
+            (() => {
+              const table = document.createElement('table');
+              document.body.appendChild(table);
+              table.innerHTML = '<tr><td>1</td></tr>';
+              const rows = table.rows;
+              const cells = rows[0].cells;
+              const added = document.createElement('tr');
+              table.appendChild(added);
+              rows[0].appendChild(document.createElement('td'));
+              return [rows.length, cells.length, table.rows === rows,
+                      rows[0].cells === cells, added.rowIndex, table.rows[1] === added];
+            })()
+        """,
+        expected=[2, 2, True, True, 1, True],
     ),
     Repro(
         name="a_label_element_and_its_html_for",
@@ -745,12 +828,10 @@ CASES = (
     ),
     Repro(
         name="an_empty_document_still_has_html_head_and_body",
-        note="Excluded: parsed from no markup at all this build has no document "
-             "element, where a browser builds the skeleton every document has.",
-        script="[document.documentElement.tagName, document.body !== null]",
-        expect_error="TypeError",
-        known_divergence="a document set from an empty string has no html/head/body"
-        " here; Chrome reports ['HTML', true]",
+        note="No markup at all still parses into the skeleton every document has.",
+        script="[document.documentElement.tagName, document.body !== null,"
+               " document.head !== null]",
+        expected=["HTML", True, True],
     ),
     Repro(
         name="url_search_params_is_itself_iterable",
@@ -1114,9 +1195,7 @@ CASES = (
         " definer hook that path needs is not wired; Chrome yields '{\"a\":\"1\"}'",
     ),
     Repro(
-        name="computed_style_inherits_color",
-        note="Excluded: inherited properties are not passed down, so a child asks "
-             "for a colour its parent declared and reads nothing.",
+        name="computed_style_inherits_an_inline_colour",
         html=EMPTY_PAGE,
         script="""
             (() => {
@@ -1128,8 +1207,396 @@ CASES = (
               return getComputedStyle(inner).color;
             })()
         """,
+        expected="rgb(1, 2, 3)",
+    ),
+    Repro(
+        name="computed_style_inherits_from_a_stylesheet_rule",
+        note="Both children read the rule's colour, and the one that declares its own "
+             "spacing keeps it.",
+        html=page(body="""
+            <style>.outer { color: rgb(4, 5, 6); font-weight: 700; }
+                   .inner { letter-spacing: 3px; }</style>
+            <div class="outer"><span class="inner">t</span></div>
+            <div class="outer"><span>t</span></div>
+        """),
+        script="""
+            (() => {
+              const inner = document.querySelector('span.inner');
+              const plain = document.querySelectorAll('span')[1];
+              return [getComputedStyle(inner).color, getComputedStyle(plain).color,
+                      getComputedStyle(plain).fontWeight,
+                      getComputedStyle(inner).fontWeight,
+                      getComputedStyle(inner).letterSpacing];
+            })()
+        """,
+        expected=["rgb(4, 5, 6)", "rgb(4, 5, 6)", "700", "700", "3px"],
+    ),
+    Repro(
+        name="a_fragment_gets_a_body_of_its_own",
+        note="Markup that carries no html/body is wrapped, so the fragment's element "
+             "is a child of the body rather than a node that is the body.",
+        html='<div id="x" style="color: red">hi</div>',
+        script="""
+            (() => {
+              const element = document.getElementById('x');
+              return [document.body === element, document.body.tagName,
+                      document.body.getAttribute('id'), document.body.getAttribute('style'),
+                      document.body.childNodes.length,
+                      document.documentElement.tagName,
+                      document.body.parentNode === document.documentElement];
+            })()
+        """,
+        expected=[False, "BODY", None, None, 1, "HTML", True],
+    ),
+    Repro(
+        name="the_navigation_api_reports_the_current_entry",
+        note="A page that has not moved has one entry, nothing behind or ahead of it,"
+             " and no transition.",
+        html=page(body=""),
+        script="""
+            (() => {
+              const current = navigation.currentEntry;
+              return [navigation.canGoBack, navigation.canGoForward,
+                      navigation.entries.length, current === navigation.currentEntry,
+                      current.index, current.url, current.sameDocument,
+                      current.getState(), navigation.transition,
+                      typeof navigation.activation, typeof current.key];
+            })()
+        """,
+        expected=[False, False, 0, True, 0, "http://repro.test/dir/page", True,
+                  None, None, "object", "string"],
+    ),
+    Repro(
+        name="trusted_types_wraps_what_a_policy_returns",
+        note="A policy calls the page's own callback and wraps the string it returns.",
+        html=page(body=""),
+        script="""
+            (() => {
+              const policy = trustedTypes.createPolicy('repro', {
+                createHTML: value => '<b>' + value,
+                createScriptURL: value => '/safe/' + value,
+              });
+              const html = policy.createHTML('x');
+              const url = policy.createScriptURL('x.js');
+              return [trustedTypes.emptyHTML.toString(), trustedTypes.emptyScript.toString(),
+                      trustedTypes.emptyHTML === trustedTypes.emptyHTML,
+                      trustedTypes.defaultPolicy === null, policy.name,
+                      html.toString(), String(html), typeof html,
+                      trustedTypes.isHTML(html), trustedTypes.isHTML('x'),
+                      trustedTypes.isScriptURL(url), trustedTypes.isScriptURL(html),
+                      url.toString()];
+            })()
+        """,
+        expected=["", "", True, True, "repro", "<b>x", "<b>x", "object", True, False,
+                  True, False, "/safe/x.js"],
+    ),
+    Repro(
+        name="trusted_types_answers_nothing_about_attribute_types",
+        note="Excluded: the spec's attribute and property type tables are not modelled,"
+             " so the queries answer nothing.",
+        html=page(body=""),
+        script="""
+            (() => {
+              return [trustedTypes.getAttributeType('div', 'onclick'),
+                      trustedTypes.getPropertyType('div', 'innerHTML'),
+                      trustedTypes.getTypeMapping()];
+            })()
+        """,
+        expected=["", None, None],
+        known_divergence="attribute and property types come from a spec table this DOM"
+        " does not model, so the queries answer nothing where Chrome consults the table",
+    ),
+    Repro(
+        name="get_image_data_reads_the_drawn_pixels",
+        note="A drawn pixel comes back as its own RGBA bytes, the array is a real"
+             " Uint8ClampedArray, and outside the canvas pixels are transparent black.",
+        html=page(body='<canvas id="c" width="4" height="2"></canvas>'),
+        script="""
+            (() => {
+              const canvas = document.getElementById('c');
+              const context = canvas.getContext('2d');
+              context.fillStyle = '#ff0000';
+              context.fillRect(0, 0, 2, 1);
+              const image = context.getImageData(0, 0, 4, 2);
+              const outside = context.getImageData(-1, -1, 1, 1);
+              return [image.width, image.height, image.data.length,
+                      image.data instanceof Uint8ClampedArray, image.colorSpace,
+                      image.data === image.data, Array.from(image.data.slice(0, 4)),
+                      [outside.width, outside.height, outside.data.length, outside.data[3]]];
+            })()
+        """,
+        expected=[4, 2, 32, True, "srgb", True, [255, 0, 0, 255], [1, 1, 4, 0]],
+    ),
+    Repro(
+        name="window_accessories_report_their_idle_state",
+        note="Each accessory object is present and says nothing is happening.",
+        html=page(body=""),
+        script="""
+            (() => {
+              return [external.constructor.name, typeof external.AddSearchProvider,
+                      styleMedia.type, styleMedia.matchMedium('screen'),
+                      styleMedia.matchMedium('print'),
+                      crashReport.constructor.name, typeof crashReport.set,
+                      launchQueue.constructor.name, typeof launchQueue.setConsumer,
+                      fence === null, typeof viewport.segments];
+            })()
+        """,
+        expected=["External", "function", "screen", True, False,
+                  "CrashReportContext", "function", "LaunchQueue", "function",
+                  True, "object"],
+    ),
+    Repro(
+        name="speech_synthesis_and_the_scheduler_start_idle",
+        note="Nothing is spoken, and scheduling hands back a promise.",
+        html=page(body=""),
+        script="""
+            (() => {
+              return [speechSynthesis.pending, speechSynthesis.speaking,
+                      speechSynthesis.paused, speechSynthesis.getVoices().length,
+                      typeof speechSynthesis.speak,
+                      scheduler.constructor.name, typeof scheduler.postTask,
+                      typeof scheduler.yield];
+            })()
+        """,
+        expected=[False, False, False, 0, "function",
+                  "Scheduler", "function", "function"],
+    ),
+    Repro(
+        name="a_xpath_expression_walks_the_document",
+        note="One compiled expression, evaluated against the document and walked a "
+             "node at a time.",
+        html=page(body="<p>one</p>"),
+        script="""
+            (() => {
+              const expression = document.createExpression('//html', null);
+              const result = expression.evaluate(document, XPathResult.ANY_TYPE, null);
+              const first = result.iterateNext();
+              return [result.resultType, first.tagName, result.iterateNext(),
+                      result instanceof XPathResult];
+            })()
+        """,
+        expected=[4, "HTML", None, True],
+    ),
+    Repro(
+        name="xpath_predicates_and_snapshots",
+        note="An attribute predicate and a positional one select what a page expects, "
+             "and a snapshot reports its length and hands nodes back by index.",
+        html=page(body='<p class="x">1</p><p class="x">2</p><p>3</p>'),
+        script="""
+            (() => {
+              const snapshot = document.evaluate("//p[@class='x']", document, null,
+                  XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+              const second = document.evaluate("//p[2]", document, null,
+                  XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+              const none = document.evaluate("//p[@class='z']", document, null,
+                  XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+              return [snapshot.snapshotLength, snapshot.snapshotItem(0).textContent,
+                      snapshot.snapshotItem(1).textContent, second.singleNodeValue.textContent,
+                      none.snapshotLength, snapshot.snapshotItem(9)];
+            })()
+        """,
+        expected=[2, "1", "2", "2", 0, None],
+    ),
+    Repro(
+        name="an_xpath_function_is_outside_the_subset",
+        note="Excluded: functions and the other axes are refused rather than answered "
+             "with the wrong nodes.",
+        html=page(body="<p>one</p>"),
+        script="""
+            (() => {
+              return document.evaluate("count(//p)", document, null,
+                  XPathResult.NUMBER_TYPE, null).numberValue;
+            })()
+        """,
+        expect_error="NotSupportedError",
+        known_divergence="this DOM evaluates a path subset only, so count(//p) raises "
+        "NotSupportedError where Chrome answers 1",
+    ),
+    Repro(
+        name="a_lock_manager_needs_a_secure_context",
+        note="No lock manager is offered outside a secure context, which is where "
+             "Chrome offers one too.",
+        html=page(body=""),
+        script="navigator.locks === undefined",
+        expected=True,
+    ),
+    Repro(
+        name="a_custom_element_registry_remembers_its_definitions",
+        note="Defining a name makes it readable back, and an unregistered class has"
+             " no name at all.",
+        html=page(body=""),
+        script="""
+            (() => {
+              const Ctor = function () {};
+              const unknown = [customElements.get('x-unknown'), customElements.getName(Ctor)];
+              customElements.define('x-corpus', Ctor);
+              return [unknown, customElements.get('x-corpus') === Ctor,
+                      customElements.getName(Ctor),
+                      typeof customElements.whenDefined('x-corpus').then];
+            })()
+        """,
+        expected=[[None, None], True, "x-corpus", "function"],
+    ),
+    Repro(
+        name="defining_a_name_without_a_dash_is_rejected",
+        html=page(body=""),
+        script="customElements.define('nodash', function () {})",
+        expect_error="SyntaxError",
+    ),
+    Repro(
+        name="the_visual_viewport_matches_the_window_here",
+        html=page(body=""),
+        script="""
+            (() => {
+              const view = visualViewport;
+              return [view.width === innerWidth, view.height === innerHeight, view.scale,
+                      view.offsetLeft, view.offsetTop, view.pageLeft, view.pageTop,
+                      view === visualViewport];
+            })()
+        """,
+        expected=[True, True, 1, 0, 0, 0, 0, True],
+    ),
+    Repro(
+        name="create_event_makes_an_uninitialised_event",
+        html=page(body=""),
+        script="""
+            (() => {
+              const made = ['Event', 'HTMLEvents', 'MouseEvent'].map(
+                  name => document.createEvent(name).constructor.name);
+              return [made, document.createEvent('Event').type,
+                      document.createEvent('MouseEvent').type];
+            })()
+        """,
+        expected=[["Event", "Event", "MouseEvent"], "", ""],
+    ),
+    Repro(
+        name="create_event_rejects_a_type_it_does_not_know",
+        html=page(body=""),
+        script="document.createEvent('Nope')",
+        expect_error="NotSupportedError",
+    ),
+    Repro(
+        name="a_form_action_falls_back_to_the_document_url",
+        note="With no action attribute the submission URL is the document's own, and a"
+             " declared one resolves with its fragment dropped.",
+        html=page(body='<form id=f action="/go#frag"></form>'),
+        script="""
+            (() => {
+              const form = document.getElementById('f');
+              const declared = [form.action, form.getAttribute('action')];
+              form.removeAttribute('action');
+              return [declared, form.action, form.getAttribute('action')];
+            })()
+        """,
+        expected=[["http://repro.test/go#frag", "/go#frag"],
+                  "http://repro.test/dir/page", None],
+    ),
+    Repro(
+        name="a_scripts_inner_text_is_its_source",
+        html=page(body="<script>window.__seen = 1;</script>"),
+        script="document.querySelector('script').innerText",
+        expected="window.__seen = 1;",
+    ),
+    Repro(
+        name="screen_avail_left_and_top_and_do_not_track",
+        html=page(body=""),
+        script="[screen.availLeft, screen.availTop, navigator.doNotTrack]",
+        expected=[0, 0, None],
+    ),
+    Repro(
+        name="an_event_target_prototype_has_no_handler_attributes",
+        note="Handler attributes belong to the interfaces that own them, so they do"
+             " not show up on EventTarget, which a browser gives three methods.",
+        html=page(body=""),
+        script="Object.getOwnPropertyNames(EventTarget.prototype)"
+               ".filter(name => name.startsWith('on'))",
+        expected=[],
+    ),
+    Repro(
+        name="a_window_handler_slot_starts_empty",
+        note="A handler attribute is null until a page sets one, and holds what it set.",
+        html=page(body=""),
+        script="""
+            (() => {
+              const before = window.ononline;
+              const handler = () => {};
+              window.ononline = handler;
+              const held = window.ononline === handler;
+              window.ononline = null;
+              return [before === null, held, window.ononline === null,
+                      typeof window.onresize];
+            })()
+        """,
+        expected=[True, True, True, "object"],
+    ),
+    Repro(
+        name="a_style_added_by_script_applies",
+        note="Rules a page builds at runtime are read from the tree, so the cached "
+             "sheet has to be dropped when a style element arrives.",
+        html=page(body="<div id=t>t</div>"),
+        script="""
+            (() => {
+              const style = document.createElement('style');
+              style.textContent = '#t { color: rgb(4, 5, 6); }';
+              document.body.appendChild(style);
+              return getComputedStyle(document.getElementById('t')).color;
+            })()
+        """,
+        expected="rgb(4, 5, 6)",
+    ),
+    Repro(
+        name="an_undeclared_colour_is_the_initial_one",
+        note="Nothing declared anywhere: the computed colour is the browser's initial "
+             "black, not an empty value.",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              const element = document.createElement('div');
+              document.body.appendChild(element);
+              return [getComputedStyle(element).color, element.style.color];
+            })()
+        """,
+        expected=["rgb(0, 0, 0)", ""],
+    ),
+    Repro(
+        name="every_tag_starts_from_its_own_display",
+        note="The initial display is picked per tag: a span is inline where a div is"
+             " block, head content is out of the flow, a table part says which part it"
+             " is, and a tag this DOM does not model is inline like a custom element.",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              const tags = ['span', 'div', 'img', 'input', 'select', 'button', 'head',
+                            'style', 'template', 'table', 'tr', 'td', 'x-thing'];
+              const out = {};
+              for (const tag of tags) {
+                const element = document.createElement(tag);
+                document.body.appendChild(element);
+                out[tag] = getComputedStyle(element).display;
+              }
+              return [out.span, out.div, out.img, out.input, out.select, out.button,
+                      out.head, out.style, out.template, out.table, out.tr, out.td,
+                      out['x-thing']];
+            })()
+        """,
+        expected=["inline", "block", "inline", "inline-block", "inline-block",
+                  "inline-block", "none", "none", "none", "table", "table-row",
+                  "table-cell", "inline"],
+    ),
+    Repro(
+        name="an_undeclared_property_reports_its_initial_value",
+        note="Excluded: only the properties the cascade starts from have an initial "
+             "value, so a supported property nobody declared computes to nothing.",
+        html=EMPTY_PAGE,
+        script="""
+            (() => {
+              const element = document.createElement('div');
+              document.body.appendChild(element);
+              return getComputedStyle(element).marginTop;
+            })()
+        """,
         expected="",
-        known_divergence="getComputedStyle does not inherit colour from an ancestor;"
-        " Chrome reports 'rgb(1, 2, 3)'",
+        known_divergence="margin-top computes to '' with nothing declared; Chrome"
+        " reports its initial '0px'",
     ),
 )

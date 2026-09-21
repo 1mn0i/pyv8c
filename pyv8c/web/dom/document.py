@@ -5,7 +5,7 @@ from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error
-from ...foundation.errors import InvalidCharacterError, V8TypeError
+from ...foundation.errors import InvalidCharacterError, V8TypeError, dom_exception
 from .character_data import Comment, DocumentType, Text
 from .collections import HTMLAllCollection, HTMLCollection, NodeList
 from .html_classes import class_for_tag
@@ -23,6 +23,7 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="URL", getter="get_URL", side_effect=1),
             AttributeSpec(name="documentURI", getter="get_URL", side_effect=1),
             AttributeSpec(name="documentElement", getter="get_documentElement", side_effect=1),
+            AttributeSpec(name="scrollingElement", getter="get_scrollingElement", side_effect=1),
             AttributeSpec(name="body", getter="get_body", side_effect=1),
             AttributeSpec(name="head", getter="get_head", side_effect=1),
             AttributeSpec(name="images", getter="get_images", side_effect=1),
@@ -51,6 +52,9 @@ class Document(_ParentNodeMixin, Node):
             MethodSpec(name="createComment", callback="fn_createComment", length=1),
             MethodSpec(name="createDocumentFragment", callback="fn_createDocumentFragment"),
             MethodSpec(name="createAttribute", callback="fn_createAttribute", length=1),
+            MethodSpec(name="createEvent", callback="fn_createEvent", length=1),
+            MethodSpec(name="createExpression", callback="fn_createExpression", length=1),
+            MethodSpec(name="evaluate", callback="fn_evaluate", length=2, side_effect=1),
             MethodSpec(name="getElementById", callback="fn_getElementById", length=1, side_effect=1),
             MethodSpec(name="getElementsByName", callback="fn_getElementsByName", length=1, side_effect=1),
             MethodSpec(name="getElementsByTagName", callback="fn_getElementsByTagName", length=1, side_effect=1),
@@ -142,6 +146,85 @@ class Document(_ParentNodeMixin, Node):
             if head is not pyv8.Null:
                 return head
         return next((x for x in self._descendants() if isinstance(x, Element) and x.localName == "head"), pyv8.Null)
+    def _first_named(self, parent, name):
+        return next((child for child in parent._children
+                     if isinstance(child, Element) and child.localName == name), None)
+    def _content_index(self):
+        """Where the root element belongs: after the doctype and any leading comment."""
+        return next((position for position, child in enumerate(self._children)
+                     if isinstance(child, (Element, Text))), len(self._children))
+    def fn_createExpression(self, expression=MISSING, resolver=None, *_extra):
+        """An expression a page compiles once and evaluates against each node."""
+        from .xpath import create_expression
+        return create_expression(expression)
+
+    def fn_evaluate(self, expression=MISSING, context=MISSING, resolver=None, type=0,
+                    result=None, *_extra):
+        """The same evaluation in one step, as ``XPathEvaluator`` offers it."""
+        from .xpath import create_expression
+        if expression is MISSING:
+            raise missing_error('Document', 'evaluate', 2, 0, constructor=False)
+        if context is MISSING:
+            raise missing_error('Document', 'evaluate', 2, 1, constructor=False)
+        return create_expression(expression).fn_evaluate(context, type, result)
+
+    def fn_createEvent(self, type=MISSING, *_extra):
+        """An uninitialised event of the legacy interface name asked for."""
+        if type is MISSING:
+            raise missing_error('Document', 'createEvent', 1, 0, constructor=False)
+        from .events import CustomEvent, Event, KeyboardEvent, MouseEvent, UIEvent
+        kinds = {
+            "event": Event, "events": Event, "htmlevents": Event, "uievents": UIEvent,
+            "mouseevent": MouseEvent, "mouseevents": MouseEvent,
+            "keyboardevent": KeyboardEvent, "keyevents": KeyboardEvent,
+            "customevent": CustomEvent,
+        }
+        kind = kinds.get(dom_string(type).lower())
+        if kind is None:
+            raise dom_exception(
+                "NotSupportedError",
+                "Failed to execute 'createEvent' on 'Document': The provided event type"
+                f" ('{type}') is invalid.")
+        return kind("")
+
+    def get_scrollingElement(self):
+        """The element that scrolls the view: the root, as a standards document has it."""
+        return self.get_documentElement()
+
+    def _ensure_skeleton(self):
+        """Wrap a parsed document in the ``html``/``head``/``body`` a browser builds.
+
+        A ``head`` or ``body`` the markup wrote is adopted, not duplicated, and
+        what is left outside the root moves into the body.
+        """
+        html = self._first_named(self, "html")
+        strays = [child for child in list(self._children) if child is not html]
+        if html is None:
+            # Nothing wraps the markup: the root is made here, and a head or body
+            # the markup wrote at this level is adopted rather than duplicated.
+            head = next((child for child in strays if getattr(child, "localName", "") == "head"), None)
+            body = next((child for child in strays if getattr(child, "localName", "") == "body"), None)
+            html = self._new_element("html")
+            self._adopt_child(html, self._content_index())
+        else:
+            head = self._first_named(html, "head")
+            body = self._first_named(html, "body")
+        if head is None:
+            head = self._new_element("head")
+        if body is None:
+            body = self._new_element("body")
+        # The head comes first because that is the order a browser builds them in,
+        # whether they were parsed or made here.
+        html._adopt_child(head, 0)
+        html._adopt_child(body)
+        elements = [position for position, child in enumerate(strays) if isinstance(child, Element)]
+        first, last = (elements[0], elements[-1]) if elements else (len(strays), -1)
+        for position, child in enumerate(strays):
+            if child is head or child is body or isinstance(child, (DocumentType, Comment)):
+                continue
+            if isinstance(child, Text) and not str(child.nodeValue or "").strip() and not first < position < last:
+                continue
+            body._adopt_child(child)
     def get_defaultView(self):
         if self._services is None:
             return pyv8.Null

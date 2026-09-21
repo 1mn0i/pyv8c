@@ -15,6 +15,9 @@ from .html_elements import (
     HTMLMetaElement,
     HTMLScriptElement,
     HTMLStyleElement,
+    HTMLTableCellElement,
+    HTMLTableElement,
+    HTMLTableRowElement,
     HTMLTemplateElement,
     HTMLUnknownElement,
     _html_class,
@@ -29,11 +32,14 @@ from .html_input import (
 #: Interface name -> implementation class, for every modelled interface.
 HTML_CLASSES = {
     **{name: _html_class(name) for name in (
-        "HTMLHtmlElement", "HTMLHeadElement", "HTMLBodyElement", "HTMLDivElement", "HTMLSpanElement",
-        "HTMLMediaElement", "HTMLTableElement", "HTMLTableRowElement", "HTMLTableCellElement")},
+        "HTMLHtmlElement", "HTMLHeadElement", "HTMLBodyElement", "HTMLDivElement",
+        "HTMLSpanElement", "HTMLMediaElement")},
     # Interfaces with members of their own carry a hand-written class.
     "HTMLFormElement": HTMLFormElement,
     "HTMLButtonElement": HTMLButtonElement,
+    "HTMLTableElement": HTMLTableElement,
+    "HTMLTableRowElement": HTMLTableRowElement,
+    "HTMLTableCellElement": HTMLTableCellElement,
     "HTMLAnchorElement": HTMLAnchorElement,
     "HTMLTextAreaElement": HTMLTextAreaElement,
     "HTMLOptionElement": HTMLOptionElement,
@@ -72,6 +78,7 @@ TAG_CLASSES = {
     "style": HTML_CLASSES["HTMLStyleElement"],
     "table": HTML_CLASSES["HTMLTableElement"],
     "td": HTML_CLASSES["HTMLTableCellElement"],
+    "th": HTML_CLASSES["HTMLTableCellElement"],
     "template": HTML_CLASSES["HTMLTemplateElement"],
     "textarea": HTML_CLASSES["HTMLTextAreaElement"],
     "tr": HTML_CLASSES["HTMLTableRowElement"],

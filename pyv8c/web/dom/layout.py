@@ -14,7 +14,12 @@ except Exception:  # optional dependency  # pragma: no cover
 
 from ...foundation.errors import V8SyntaxError
 from .character_data import Text
-from .css import INHERITED_PROPERTIES, INITIAL_VALUES, CSSStyleDeclaration, parse_declarations
+from .css import (
+    INHERITED_PROPERTIES,
+    CSSStyleDeclaration,
+    initial_values_for,
+    parse_declarations,
+)
 from .html_elements import Element
 from .selectors import matches
 
@@ -121,13 +126,16 @@ def _parse_style_elements(document):
 
 
 def _cascade(element, rules):
-    values = dict(INITIAL_VALUES)
+    values = initial_values_for(element)
     parent = getattr(element, "parentElement", None)
     if parent is not None:
         inherited = _cascade(parent, rules)
+        # Inheriting walks every inherited property, not the ones that happen to have an
+        # initial value here: `color` and `white-space` were passed down only when they
+        # were also in INITIAL_VALUES, so a declared colour never reached a child.
         values.update({
-            key: inherited.get(key, default)
-            for key, default in INITIAL_VALUES.items() if key in INHERITED_PROPERTIES
+            name: inherited.get(name, values.get(name, ""))
+            for name in INHERITED_PROPERTIES
         })
     for selectors, declarations in rules:
         if not any(_selector_matches(element, part) for part in selectors):

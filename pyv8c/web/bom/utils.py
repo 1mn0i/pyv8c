@@ -27,6 +27,17 @@ def document_key(url):
     return (parts.scheme, parts.netloc, parts.path, parts.query)
 
 
+def is_secure_context(url):
+    """Whether *url* is an origin a browser treats as potentially trustworthy."""
+    parts = urlsplit(str(url))
+    scheme, host = parts.scheme.lower(), (parts.hostname or "").lower()
+    if scheme in ("https", "wss", "file", "data", "blob"):
+        return True
+    if scheme in ("http", "ws"):
+        return host in ("localhost", "127.0.0.1", "::1") or host.endswith(".localhost")
+    return False
+
+
 def window_attribute(name, getter, setter=None, *, cross_origin=False, flags=0, side_effect=SideEffectType.kHasSideEffect):
     check = FlagCrossOriginCheck.kCheck if cross_origin else FlagCrossOriginCheck.kDoNotCheck
     return AttributeSpec(name=name, getter=getter, setter=setter, location=FlagLocation.kInstance, property_flags=flags, cross_origin_get_check=check, cross_origin_set_check=check, side_effect=side_effect)

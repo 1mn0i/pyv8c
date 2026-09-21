@@ -150,7 +150,11 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if name is MISSING:
             raise missing_error('Element', 'removeAttribute', 1, 0, constructor=False)
         name = dom_string(name)
-        self.attributes.pop(str(name).lower(), None)
+        lowered = str(name).lower()
+        previous = self.attributes.pop(lowered, None)
+        if previous is not None:
+            from .mutation import record_mutation
+            record_mutation(self, "attributes", attribute_name=lowered, old_value=previous)
     def fn_hasAttribute(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('Element', 'hasAttribute', 1, 0, constructor=False)
@@ -197,7 +201,12 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         value = dom_string(value)
         if not _VALID_NAME_RE.match(name):
             raise InvalidCharacterError("The attribute name provided is invalid.")
-        self.attributes[name.lower()] = str(value)
+        lowered = name.lower()
+        previous = self.attributes.get(lowered)
+        self.attributes[lowered] = str(value)
+        from .mutation import record_mutation
+        record_mutation(self, "attributes", attribute_name=lowered,
+                        old_value=previous)
     def fn_removeAttributeNS(self, namespace=MISSING, local_name=MISSING, *_extra):
         if namespace is MISSING:
             raise missing_error('Element', 'removeAttributeNS', 2, 0, constructor=False)
@@ -465,10 +474,16 @@ class HTMLFormElement(HTMLElement):
         attributes=(
             AttributeSpec(name="elements", getter="get_elements", side_effect=1),
             AttributeSpec(name="length", getter="get_length", side_effect=1),
+            AttributeSpec(name="action", getter="get_action", setter="set_action"),
         ),
         constructor_behavior=0,
         has_constructor=1,
     )
+    def get_action(self):
+        """The submission URL: the document's own URL, without its fragment, when
+        the attribute is absent."""
+        return _url_value(self, "action") or _document_url(self).split("#", 1)[0]
+    def set_action(self, value): _set_url_value(self, "action", value)
     def _owns(self, node):
         """Whether this form is ``node``'s form owner."""
         if "form" in node.attributes:
@@ -519,6 +534,91 @@ class HTMLButtonElement(HTMLElement):
         value = self._attr("type").lower()
         return value if value in _BUTTON_TYPES else "submit"
     def set_type(self, value): self._set_string("type", value)
+
+
+def _owning_table(row):
+    """The nearest ``table`` ancestor of *row*, which is the table that counts it."""
+    parent = getattr(row, "parentElement", None)
+    while parent is not None:
+        if isinstance(parent, HTMLTableElement):
+            return parent
+        parent = getattr(parent, "parentElement", None)
+    return None
+
+
+@interface('HTMLTableElement', 'HTMLElement')
+class HTMLTableElement(HTMLElement):
+    """``<table>``: the rows a page walks.
+
+    ``rows`` holds every row this table owns -- those in its sections, in document
+    order -- and not the rows of a table nested inside it, which belong to that
+    table instead.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="rows", getter="get_rows", side_effect=1),),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
+
+    def get_rows(self):
+        view = getattr(self, "_rows_view", None)
+        if view is None:
+            view = self._rows_view = HTMLCollection(owner=self, getter=self._rows)
+        return view
+
+    def _rows(self):
+        return [node for node in self._descendants()
+                if isinstance(node, HTMLTableRowElement) and _owning_table(node) is self]
+
+
+@interface('HTMLTableRowElement', 'HTMLElement')
+class HTMLTableRowElement(HTMLElement):
+    """``<tr>``: the cells it holds and where the row sits in its table."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="cells", getter="get_cells", side_effect=1),
+            AttributeSpec(name="rowIndex", getter="get_rowIndex"),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
+
+    def get_cells(self):
+        view = getattr(self, "_cells_view", None)
+        if view is None:
+            view = self._cells_view = HTMLCollection(owner=self, getter=self._cells)
+        return view
+
+    def _cells(self):
+        """A row's own cells: its ``td`` and ``th`` children, in document order."""
+        return [child for child in self._children if isinstance(child, HTMLTableCellElement)]
+
+    def get_rowIndex(self):
+        """The row's position in its table's ``rows``, or -1 when no table owns it."""
+        table = _owning_table(self)
+        if table is None:
+            return -1
+        return next((index for index, row in enumerate(table._rows()) if row is self), -1)
+
+
+@interface('HTMLTableCellElement', 'HTMLElement')
+class HTMLTableCellElement(HTMLElement):
+    """``<td>`` and ``<th>``: where the cell sits in its row."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="cellIndex", getter="get_cellIndex"),),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
+
+    def get_cellIndex(self):
+        """The cell's position in its row's ``cells``, or -1 when no row holds it."""
+        row = getattr(self, "parentElement", None)
+        if not isinstance(row, HTMLTableRowElement):
+            return -1
+        return next((index for index, cell in enumerate(row._cells()) if cell is self), -1)
 
 
 def _html_class(name):
@@ -604,10 +704,14 @@ class HTMLScriptElement(HTMLElement):
             _attribute("type", "get_type", "set_type"),
             _attribute("async", "get_async", "set_async"),
             _attribute("defer", "get_defer", "set_defer"),
+            AttributeSpec(name="innerText", getter="get_innerText"),
         ),
         constructor_behavior=0,
         has_constructor=1,
     )
+    def get_innerText(self):
+        """A script is not rendered, so its text is what ``innerText`` reads."""
+        return self.get_textContent()
     def get_src(self): return _url_value(self, "src")
     def set_src(self, value): _set_url_value(self, "src", value)
     def get_type(self): return self.attributes.get("type", "")

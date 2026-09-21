@@ -13,7 +13,7 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
-from ...foundation.arguments import dom_string
+from ...foundation.arguments import MISSING, dom_string, missing_error
 from .html_elements import HTMLElement
 
 #: ``textBaseline`` accepts these spellings; any other value leaves the state
@@ -46,6 +46,32 @@ def _canvas_color(value):
     return (0, 0, 0, 255)
 
 
+@interface('ImageData', None)
+class ImageData:
+    """A rectangle of RGBA pixels, as ``getImageData`` hands it back."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="width", getter="get_width", side_effect=1),
+            AttributeSpec(name="height", getter="get_height", side_effect=1),
+            AttributeSpec(name="data", getter="get_data", side_effect=1),
+            AttributeSpec(name="colorSpace", getter="get_colorSpace", side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="ImageData",
+        has_constructor=1,
+    )
+
+    def __init__(self, pixels=b"", width=0, height=0, **_):
+        self._width, self._height = int(width), int(height)
+        self._data = pyv8.JSTypeArray(list(pixels), pyv8.ArrayType.Uint8ClampedArray)
+
+    def get_width(self): return self._width
+    def get_height(self): return self._height
+    def get_data(self): return self._data
+    def get_colorSpace(self): return "srgb"
+
+
 @interface('CanvasRenderingContext2D', None)
 class CanvasRenderingContext2D:
     __v8_idl_spec__ = IdlSpec(
@@ -55,6 +81,7 @@ class CanvasRenderingContext2D:
                     AttributeSpec(name="font", getter="get_font", setter="set_font"),
                     AttributeSpec(name="textBaseline", getter="get_textBaseline", setter="set_textBaseline")),
         methods=(
+            MethodSpec(name="getImageData", callback="fn_getImageData", length=4, side_effect=1),
             MethodSpec(name="fillRect", callback="fn_fillRect"),
             MethodSpec(name="clearRect", callback="fn_clearRect"),
             MethodSpec(name="fillText", callback="fn_fillText"),
@@ -109,6 +136,23 @@ class CanvasRenderingContext2D:
                 if f: return ImageFont.truetype(f, max(1, int(size)))
             except OSError: pass
         return ImageFont.load_default()
+    def fn_getImageData(self, x=MISSING, y=MISSING, sw=MISSING, sh=MISSING, *_extra):
+        """The pixels of one rectangle, transparent black outside the canvas."""
+        for position, value in enumerate((x, y, sw, sh)):
+            if value is MISSING:
+                raise missing_error('CanvasRenderingContext2D', 'getImageData', 4, position,
+                                    constructor=False)
+        left, top = int(math.floor(float(x))), int(math.floor(float(y)))
+        width, height = int(float(sw)), int(float(sh))
+        if width < 0 or height < 0:
+            from ...foundation.errors import IndexSizeError
+            raise IndexSizeError(
+                "Failed to execute 'getImageData' on 'CanvasRenderingContext2D':"
+                " The source width or height is negative.")
+        pixels = (bytes(4 * width * height) if self._image is None else
+                  self._image.crop((left, top, left + width, top + height)).tobytes())
+        return ImageData(pixels, width, height)
+
     def fn_fillRect(self, x=0, y=0, w=0, h=0, *_):
         if self._draw:
             self._draw.rectangle((float(x), float(y), float(x)+float(w), float(y)+float(h)), fill=_canvas_color(self._fill))

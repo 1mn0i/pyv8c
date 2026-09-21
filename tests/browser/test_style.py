@@ -34,6 +34,41 @@ def test_style_identity_cssom_and_initial_parse(page):
     ]
 
 
+def test_every_tag_starts_from_its_own_display(page):
+    """A span is inline where a div is block, and head content is out of the flow."""
+    assert page.evaluate("""(() => {
+        const tags = ['span', 'div', 'img', 'input', 'select', 'button', 'head',
+                      'style', 'template', 'table', 'tr', 'td', 'x-thing'];
+        const out = {};
+        for (const tag of tags) {
+          const element = document.createElement(tag);
+          document.body.appendChild(element);
+          out[tag] = getComputedStyle(element).display;
+        }
+        return [out.span, out.div, out.img, out.input, out.select, out.button, out.head,
+                out.style, out.template, out.table, out.tr, out.td, out['x-thing']];
+    })()""") == ["inline", "block", "inline", "inline-block", "inline-block",
+                 "inline-block", "none", "none", "none", "table", "table-row",
+                 "table-cell", "inline"]
+
+
+def test_computed_style_inherits_and_starts_from_the_initial_value(page):
+    """A declared colour reaches a child; the inline object still reads its own only."""
+    assert page.evaluate("""(() => {
+        const style = document.createElement('style');
+        style.textContent = '.outer { color: rgb(4, 5, 6); white-space: pre; }';
+        document.body.appendChild(style);
+        const outer = document.createElement('div');
+        outer.className = 'outer';
+        const inner = document.createElement('span');
+        outer.appendChild(inner);
+        document.body.appendChild(outer);
+        return [getComputedStyle(inner).color, getComputedStyle(inner).whiteSpace,
+                getComputedStyle(outer).color, getComputedStyle(target).color,
+                inner.style.color, outer.style.color];
+    })()""") == ["rgb(4, 5, 6)", "pre", "rgb(4, 5, 6)", "blue", "", ""]
+
+
 def test_style_named_properties_and_custom_properties(page):
     assert page.evaluate("""(() => {
         const s = target.style;

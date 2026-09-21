@@ -3,17 +3,34 @@
 from ...engine.builtin_errors import implementations as error_interfaces
 from ...engine.features import FeatureImplementation
 from ...foundation.environment import BrowserEnvironment
-from ..bom import navigation, screen, storage, url, window
+from ..bom import (
+    accessories,
+    crypto,
+    locks,
+    media,
+    navigation,
+    navigation_api,
+    performance,
+    screen,
+    storage,
+    trusted_types,
+    url,
+    visual_viewport,
+    window,
+)
 from ..dom import (
     character_data,
     collections,
+    custom_elements,
     document,
     events,
     html_canvas,
     html_classes,
     html_elements,
     html_input,
+    mutation,
     nodes,
+    xpath,
 )
 from ..fetch import blob, headers, request, response, xhr
 from ..fetch import events as fetch_events
@@ -39,7 +56,7 @@ FEATURE = FeatureImplementation(
         html_elements.HTMLIFrameElement, html_elements.HTMLImageElement, html_elements.HTMLLinkElement,
         html_elements.HTMLMetaElement, html_elements.HTMLScriptElement, html_elements.HTMLStyleElement,
         html_elements.HTMLTemplateElement,
-        html_canvas.HTMLCanvasElement, html_canvas.CanvasRenderingContext2D,
+        html_canvas.HTMLCanvasElement, html_canvas.CanvasRenderingContext2D, html_canvas.ImageData,
         html_input.ValidityState, html_input.FileList,
         *(html_classes.HTML_CLASSES[name] for name in (
             "HTMLHtmlElement", "HTMLHeadElement", "HTMLBodyElement", "HTMLDivElement", "HTMLSpanElement",
@@ -51,7 +68,20 @@ FEATURE = FeatureImplementation(
         fetch_events.ErrorEvent, fetch_events.ProgressEvent, xhr.XMLHttpRequestEventTarget, xhr.XMLHttpRequest,
         navigation.Location, navigation.History, screen.Screen, storage.Storage,
         url.URLSearchParams, url.URL,
-        window.Window, window.WindowProperties,
+        window.Window, window.WindowProperties, window.BarProp,
+        media.MediaQueryList, performance.Performance, crypto.Crypto,
+        mutation.MutationObserver, mutation.MutationRecord,
+        custom_elements.CustomElementRegistry, visual_viewport.VisualViewport,
+        accessories.CrashReportContext, accessories.External, accessories.LaunchQueue,
+        accessories.Scheduler, accessories.SpeechSynthesis, accessories.StyleMedia,
+        accessories.Viewport,
+        locks.Lock, locks.LockManager,
+        navigation_api.Navigation, navigation_api.NavigationActivation,
+        navigation_api.NavigationHistoryEntry,
+        trusted_types.TrustedHTML, trusted_types.TrustedScript,
+        trusted_types.TrustedScriptURL, trusted_types.TrustedTypePolicy,
+        trusted_types.TrustedTypePolicyFactory,
+        xpath.XPathEvaluator, xpath.XPathExpression, xpath.XPathResult,
     ),
     {
         "location": lambda owner: navigation.Location(services=owner._services),

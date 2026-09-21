@@ -58,10 +58,19 @@ class Observation:
         return json.dumps(self.value, sort_keys=True, default=repr)
 
 
-def error_name(text):
-    """The class of a reported error, without the prose around it."""
+def error_name(text, error=None):
+    """The class of a reported error: named in the prose, or carried by the error.
+
+    Playwright names the class in the message, pyv8's DOMException keeps it in
+    ``name`` only, so the prose is read first and the error itself after that.
+    """
     names = ERROR_NAME.findall(text or "")
-    return names[-1] if names else ""
+    if names:
+        return names[-1]
+    for name in (getattr(error, "name", None), getattr(error, "_name", None)):
+        if isinstance(name, str) and name:
+            return name
+    return ""
 
 
 def normalize(value):
@@ -115,7 +124,7 @@ def observe_here(case: Repro) -> Observation:
             return Observation(value=normalize(page.evaluate(case.script)))
         except BaseException as error:  # a script that throws is an observation too
             return Observation(
-                error=error_name(str(error)) or type(error).__name__, detail=str(error)
+                error=error_name(str(error), error) or type(error).__name__, detail=str(error)
             )
     finally:
         browser.close()
@@ -143,7 +152,7 @@ class ChromeReference:
                 return Observation(value=normalize(page.evaluate(case.script)))
             except BaseException as error:
                 return Observation(
-                    error=error_name(str(error)) or type(error).__name__, detail=str(error)
+                    error=error_name(str(error), error) or type(error).__name__, detail=str(error)
                 )
         finally:
             page.close()

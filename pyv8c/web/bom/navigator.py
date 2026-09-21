@@ -20,6 +20,8 @@ from ...foundation.errors import V8TypeError
 from ...foundation.realm import post_or_call
 from ..dom.events import EventTarget
 from ..dom.mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
+from .locks import LockManager
+from .utils import is_secure_context
 from ..dom.utils import ITERABLE_FLAGS
 
 
@@ -429,7 +431,10 @@ class Navigator:
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="userAgent", getter="get_userAgent", side_effect=1),
+            AttributeSpec(name="appName", getter="get_appName", side_effect=1),
             AttributeSpec(name="appVersion", getter="get_appVersion", side_effect=1),
+            AttributeSpec(name="product", getter="get_product", side_effect=1),
+            AttributeSpec(name="productSub", getter="get_productSub", side_effect=1),
             AttributeSpec(name="platform", getter="get_platform", side_effect=1),
             AttributeSpec(name="language", getter="get_language", side_effect=1),
             AttributeSpec(name="languages", getter="get_languages", side_effect=1),
@@ -437,6 +442,9 @@ class Navigator:
             AttributeSpec(name="hardwareConcurrency", getter="get_hardwareConcurrency", side_effect=1),
             AttributeSpec(name="deviceMemory", getter="get_deviceMemory", side_effect=1),
             AttributeSpec(name="maxTouchPoints", getter="get_maxTouchPoints", side_effect=1),
+            AttributeSpec(name="vendor", getter="get_vendor", side_effect=1),
+            AttributeSpec(name="locks", getter="get_locks", side_effect=1),
+            AttributeSpec(name="doNotTrack", getter="get_doNotTrack", side_effect=1),
             AttributeSpec(name="webdriver", getter="get_webdriver", side_effect=1),
             AttributeSpec(name="connection", getter="get_connection", side_effect=1),
             AttributeSpec(name="webkitTemporaryStorage", getter="get_webkitTemporaryStorage", side_effect=1),
@@ -459,6 +467,10 @@ class Navigator:
         self._features = _NavigatorFeatureValues(self)
 
     def get_userAgent(self): return self._environment.user_agent
+    # Frozen compatibility values, as Chrome reports them.
+    def get_appName(self): return "Netscape"
+    def get_product(self): return "Gecko"
+    def get_productSub(self): return "20030107"
     def get_appVersion(self): return self._environment.app_version
     def get_platform(self): return self._environment.platform
     def get_language(self): return self._environment.language
@@ -467,6 +479,19 @@ class Navigator:
     def get_hardwareConcurrency(self): return self._environment.hardware_concurrency
     def get_deviceMemory(self): return self._environment.device_memory
     def get_maxTouchPoints(self): return self._environment.max_touch_points
+    def get_vendor(self): return self._environment.vendor
+    def get_locks(self):
+        """Its own manager, in a secure context only -- where Chrome exposes one."""
+        if self._worker or self._services is None:
+            return pyv8.Undefined
+        document = getattr(getattr(self._services, "document_services", None), "document", None)
+        if not is_secure_context(getattr(document, "url", "")):
+            return pyv8.Undefined
+        manager = getattr(self, "_locks", None)
+        if manager is None:
+            manager = self._locks = LockManager(services=self._services)
+        return manager
+    def get_doNotTrack(self): return pyv8.Null
     def get_webdriver(self): return self._environment.webdriver
     def get_connection(self): return self._features.value("connection")
     def get_webkitTemporaryStorage(self):

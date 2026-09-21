@@ -17,7 +17,14 @@ CORE_INTERFACES = (
     "HTMLTableCellElement", "HTMLSelectElement", "HTMLTextAreaElement", "HTMLButtonElement", "HTMLOptionElement",
     "HTMLUnknownElement", "Headers", "Blob", "Request", "Response", "ProgressEvent", "MessageEvent", "CloseEvent", "ErrorEvent",
     "XMLHttpRequestEventTarget", "XMLHttpRequest", "Location", "Screen", "Storage", "URLSearchParams", "URL",
-    "History", "Window", "WindowProperties",
+    "History", "Window", "WindowProperties", "BarProp", "MediaQueryList", "Performance", "Crypto",
+    "MutationObserver", "MutationRecord", "CustomElementRegistry", "VisualViewport",
+    "External", "StyleMedia", "CrashReportContext", "LaunchQueue", "SpeechSynthesis",
+    "Scheduler", "Viewport", "ImageData", "Navigation", "NavigationActivation",
+    "NavigationHistoryEntry",
+    "TrustedHTML", "TrustedScript", "TrustedScriptURL", "TrustedTypePolicy",
+    "TrustedTypePolicyFactory", "XPathEvaluator", "XPathExpression", "XPathResult",
+    "Lock", "LockManager",
 )
 
 INDEXEDDB_INTERFACES = (

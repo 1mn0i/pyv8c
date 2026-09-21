@@ -60,6 +60,12 @@ def _contains_style(node):
     return False
 
 
+def _record_mutation(target, kind, **details):
+    """Report one change to the document's mutation observers."""
+    from .mutation import record_mutation
+    record_mutation(target, kind, **details)
+
+
 def _bump_style_version(node):
     """Note that the document's ``<style>`` derived data may have changed.
 
@@ -250,18 +256,29 @@ class Node(EventTarget):
     def set_nodeValue(self, value):
         if not is_nullish(value):
             value = dom_string(value)
+        previous = self.nodeValue
         self.nodeValue = value
         _bump_style_version(self)
+        if previous != value:
+            _record_mutation(self, "characterData", old_value=previous)
 
     @staticmethod
     def _detach_from_parent(node):
         parent = node.parentNode
         if parent is not None:
+            children = parent._children
+            position = children.index(node) if node in children else None
+            previous = children[position - 1] if position else None
+            next_ = (children[position + 1]
+                     if position is not None and position + 1 < len(children) else None)
             try:
-                parent._children.remove(node)
+                children.remove(node)
             except ValueError:
                 pass
             node.parentNode = None
+            if position is not None:
+                _record_mutation(parent, "childList", removed=[node],
+                                 previous=previous, next_=next_)
 
     def _ensure_adoptable(self, node):
         if not isinstance(node, Node): raise V8TypeError("The new child is not a Node")
@@ -285,14 +302,22 @@ class Node(EventTarget):
         services = getattr(self, "_services", None)
         document_services = getattr(services, "document_services", None)
         if document_services is not None and not document_services.parsing:
+            position = self._children.index(node)
+            _record_mutation(self, "childList", added=[node],
+                             previous=self._children[position - 1] if position else None,
+                             next_=(self._children[position + 1]
+                                    if position + 1 < len(self._children) else None))
             callback = getattr(document_services, "node_adopted", None)
             if callback is not None: callback(node)
         return node
 
     def _replace_children(self, nodes):
-        for child in self._children:
+        removed = list(self._children)
+        for child in removed:
             _bump_style_version(child)
             child.parentNode = None
+        if removed:
+            _record_mutation(self, "childList", removed=removed)
         self._children = []
         for node in nodes:
             self._adopt_child(node)
