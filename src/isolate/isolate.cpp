@@ -11,6 +11,7 @@ static PyObject* isolate_close(isolate_c* self, PyObject* args);
 static PyObject* isolate_context(isolate_c* self, PyObject* args, PyObject* kwargs);
 static PyObject* isolate_gc(isolate_c* self, PyObject* args);
 static PyObject* isolate_get_closed(isolate_c* self, void* closure);
+static PyObject* isolate_get_external_memory(isolate_c* self, void* closure);
 
 static PyMethodDef isolate_methods[] = {
     {"close", (PyCFunction)PythonBoundary<isolate_close>::call, METH_NOARGS, "close this V8 isolate"},
@@ -22,6 +23,10 @@ static PyMethodDef isolate_methods[] = {
 
 static PyGetSetDef isolate_getset[] = {
     {(char*)"closed", (getter)PythonBoundary<isolate_get_closed>::call, nullptr, nullptr, nullptr},
+    {(char*)"external_memory",
+     (getter)PythonBoundary<isolate_get_external_memory>::call, nullptr,
+     (char*)"bytes this isolate has reported to V8 as kept alive outside its heap",
+     nullptr},
     {nullptr},
 };
 
@@ -150,4 +155,12 @@ static PyObject*
 isolate_get_closed(isolate_c* self, void* closure)
 {
     return PyBool_FromLong(self->state == nullptr || !self->state->is_active());
+}
+
+// Bytes this isolate has reported to V8 as kept alive outside its heap.
+static PyObject*
+isolate_get_external_memory(isolate_c* self, void* closure)
+{
+    const int64_t bytes = self->state == nullptr ? 0 : self->state->external_memory();
+    return PyLong_FromLongLong((long long)bytes);
 }

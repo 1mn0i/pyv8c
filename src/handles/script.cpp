@@ -8,6 +8,17 @@
 
 using namespace v8;
 
+namespace
+{
+
+// A character is at least a byte, and the stable ABI counts them without copying.
+int64_t source_weight(PyObject* source)
+{
+    const Py_ssize_t length = PyUnicode_GetLength(source);
+    return length > 0 ? static_cast<int64_t>(length) : 0;
+}
+
+}
 
 PyTypeObject* script_type = NULL;
 
@@ -24,6 +35,8 @@ static int script_clear(script_c* self) {
     if (self->isolate_state) lock.reset(new IsolateLockScope(self->isolate_state));
     self->registration.detach();
     self->script.Reset();
+    if (self->isolate_state != nullptr && self->source != nullptr)
+        self->isolate_state->account_external_memory(-source_weight(self->source));
     self->isolate_state = nullptr;
     Py_CLEAR(self->script_name);
     Py_CLEAR(self->source);
@@ -114,6 +127,7 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->script_name = filename;
     Py_INCREF((PyObject*)source);
     self->source = source;
+    isolate_state->account_external_memory(source_weight(source));
 
     return (PyObject *) self;
 }

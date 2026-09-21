@@ -367,5 +367,59 @@ class TestConversion(unittest.TestCase):
         self.assertEqual(self.context.get_type(self.context.bigint_val), 'bigint')
         self.assertEqual(self.context.get_type(self.context.BigInt(11)), 'bigint')
 
+    def test_a_proto_key_becomes_an_own_property(self):
+        """字典的 __proto__ 键必须是自有属性，不能改写对象原型。
+
+        JSON.parse 把 "__proto__" 当自有属性，Python 字典过桥也该如此：交给
+        Object.prototype 上的 __proto__ 访问器处理，数据就能替换掉原型。
+        """
+        self.context.expose(give_dict=lambda: {"__proto__": {"polluted": 1}, "a": 2})
+        keys, prototype_is_object, leaked = snapshot(self.context.exec_js(
+            "(() => { const o = give_dict(); return [Object.keys(o),"
+            " Object.getPrototypeOf(o) === Object.prototype, typeof o.polluted]; })()"
+        ))
+        self.assertEqual(keys, ["__proto__", "a"])
+        self.assertIs(prototype_is_object, True)
+        self.assertEqual(leaked, "undefined")
+
+    def test_a_key_that_is_not_a_string_keeps_its_property_key_form(self):
+        """非字符串键按 JavaScript 的属性键规则成键：1 与 False 各自可读。"""
+        self.context.expose(give_dict=lambda: {1: "one", False: "no"})
+        keys, one, no = snapshot(self.context.exec_js(
+            "(() => { const o = give_dict(); return [Object.keys(o), o[1], o.false]; })()"
+        ))
+        self.assertEqual(keys, ["1", "false"])
+        self.assertEqual(one, "one")
+        self.assertEqual(no, "no")
+
+    def test_building_an_object_does_not_run_a_setter_from_the_prototype(self):
+        """转换 Python 字典不该触发页面上 Object.prototype 的 setter。"""
+        self.context.exec_js(
+            "Object.defineProperty(Object.prototype, 'trap', {"
+            " set(value) { this.__trapped = value; }, configurable: true });"
+        )
+        self.context.expose(give_dict=lambda: {"trap": 1})
+        value, setter_skipped = snapshot(self.context.exec_js(
+            "(() => { const o = give_dict();"
+            " return [o.trap, typeof o.__trapped === 'undefined']; })()"
+        ))
+        self.assertEqual(value, 1)
+        self.assertIs(setter_skipped, True)
+
+    def test_building_an_array_does_not_run_a_setter_from_the_prototype(self):
+        """转换 Python 列表同理：不该触发 Array.prototype 的 setter。"""
+        self.context.exec_js(
+            "Object.defineProperty(Array.prototype, '0', {"
+            " set(value) { this.__trapped = value; }, configurable: true });"
+        )
+        self.context.expose(give_list=lambda: [7, 8])
+        first, length, setter_skipped = snapshot(self.context.exec_js(
+            "(() => { const a = give_list();"
+            " return [a[0], a.length, typeof a.__trapped === 'undefined']; })()"
+        ))
+        self.assertEqual(first, 7)
+        self.assertEqual(length, 2)
+        self.assertIs(setter_skipped, True)
+
 if __name__ == "__main__":
     unittest.main()

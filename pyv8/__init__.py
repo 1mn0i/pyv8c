@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+
 from . import _pyv8
 from . import flag as _flag
 from .flag import *  # noqa: F401,F403 - flag constants are public API
@@ -30,18 +32,28 @@ globals().update({name: getattr(_pyv8, name) for name in _NATIVE_EXPORTS})
 
 __version__ = "2.1.2"
 
-# These two come after the re-exported names on purpose: both reach back into this
-# package, and the types they use have to exist by then.  The `as` form is what
-# tells a reader -- and pyflakes -- that the names are re-exported, not unused.
-from .devtools import (  # noqa: E402
-    DevToolsHandle as DevToolsHandle,
-    DevToolsOptions as DevToolsOptions,
-    start_devtools as start_devtools,
-)
-from .trace import (  # noqa: E402,F401 - re-exported, not called from here
-    format_trace as format_trace,
-    log_trace as log_trace,
-)
+# DevTools and the trace helpers are re-exported, not imported: the service brings a
+# websocket server and its asyncio tail with it, which a process that never debugs
+# should not pay for at import.  They load on first attribute access.
+_LAZY_EXPORTS = {
+    "devtools": ".devtools",
+    "DevToolsHandle": ".devtools",
+    "DevToolsOptions": ".devtools",
+    "start_devtools": ".devtools",
+    "trace": ".trace",
+    "format_trace": ".trace",
+    "log_trace": ".trace",
+}
+
+
+def __getattr__(name):
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = import_module(module_name, __name__)
+    value = module if name == module_name.lstrip(".") else getattr(module, name)
+    globals()[name] = value
+    return value
 
 
 class ArrayType:

@@ -247,6 +247,27 @@ V8 启动前重新计算文件哈希。如果文件不是构建时使用的那�
 哈希相同只表示文件内容没有变化。仍应保证 `v8_monolith` 和 `icudtl.dat` 来自同一个
 V8/ICU 构建，不要单独替换其中一个文件。
 
+### 堆上限与外部内存
+
+V8 的堆上限默认按物理内存推算，也可以在启动前用 `--max-old-space-size` 指定（见
+`pyv8.configure`）。接近上限时 `_pyv8` 让上限按有限步长抬升：每步是启动上限的 1/8，
+累计不超过启动上限的 1/2；越过这个界限后仍按 V8 原本的方式报
+`Fatal JavaScript out of memory: Reached heap limit`。抬升按比例而非定值，所以收紧过
+上限的宿主拿到的是相称的余量。
+
+桥接层为 JavaScript 持有的 Python 内存（编译过的脚本源码、被 JavaScript 引用的宿主对象）
+V8 看不见，因此由 `_pyv8` 报给它，让它据此决定何时回收：
+
+```python
+isolate = pyv8.Isolate()
+context = isolate.context(object)
+print(isolate.external_memory)  # 已报给 V8 的字节数
+```
+
+该数值随宿主对象被包装而增长、随其释放而回落，isolate 关闭后为 0。脚本源码按字符数计量，
+宿主对象按固定成本估算（稳定 ABI 无法查询任意对象的大小），因此它表达的是压力规模，不是
+内存核算。
+
 ## Context 与脚本执行
 
 ### 创建 Context
@@ -1278,6 +1299,7 @@ devtools://devtools/bundled/inspector.html?experiments=true&ws=127.0.0.1:9005/de
 | `gc()` | 请求该 Isolate 完整 GC |
 | `close()` | 无活动句柄时关闭 Isolate |
 | `closed` | Isolate 是否已关闭 |
+| `external_memory` | 已报给 V8 的隔离堆外内存字节数 |
 
 ## 测试
 
@@ -1344,6 +1366,8 @@ python -c "import struct, sys; print(sys.version); print(struct.calcsize('P') * 
 
 建议：
 
+- 堆上限在接近上限时会按比例有限抬升（见 [堆上限与外部内存](#堆上限与外部内存)）；走到该界限
+  之后才是这里描述的 fatal error
 - 确保 ICU 数据和 V8 静态库匹配
 - 给不可信脚本设置 `timeout`
 - 将高风险任务放入独立子进程

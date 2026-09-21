@@ -8,6 +8,15 @@
 #include <new>
 using namespace v8;
 
+namespace
+{
+
+// Nominal cost of one wrapped host object: the stable ABI cannot size an arbitrary
+// object, so this is an estimate rather than a measurement.
+constexpr int64_t kHostObjectExternalBytes = 256;
+
+}
+
 struct PythonObjectOwner
 {
     explicit PythonObjectOwner(IsolateState* isolate_state)
@@ -68,6 +77,8 @@ void IsolateState::drain_deferred() {
             Py_XDECREF(owner->exc_type);
             Py_XDECREF(owner->exc_traceback);
             delete owner;
+            // The references go away here, so the report does too.
+            account_external_memory(-kHostObjectExternalBytes);
         }
         while (pending_context_closes) {
             auto* context = pending_context_closes;
@@ -198,6 +209,8 @@ IsolateState::track_python_object(Local<Object> object, PyObject* py_object, con
     {
         // Same as an entry that was never written.
     }
+    // Counted last: the paths above that fail take the owner with them.
+    account_external_memory(kHostObjectExternalBytes);
     return true;
 }
 

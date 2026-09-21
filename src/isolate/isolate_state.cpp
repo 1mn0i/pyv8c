@@ -12,7 +12,9 @@
 using namespace v8;
 
 IsolateState::IsolateState()
-    : isolate_(nullptr),
+    : heap_growth_granted_(0),
+      external_memory_bytes_(0),
+      isolate_(nullptr),
       live_v8_handles_(0),
       error_hooks_installed_(false),
       disposed_(false)
@@ -27,6 +29,35 @@ IsolateState::~IsolateState()
         v8_strings_.release();
         allocator_.release();
     }
+}
+
+std::size_t
+IsolateState::near_heap_limit_callback(void* data, std::size_t current_limit,
+                                       std::size_t initial_limit)
+{
+    IsolateState* state = static_cast<IsolateState*>(data);
+    if (state == nullptr || initial_limit == 0)
+        return current_limit;
+
+    const std::size_t step = initial_limit / kHeapGrowthStepDivisor;
+    const std::size_t cap = initial_limit / kHeapGrowthCapDivisor;
+    if (step == 0 || state->heap_growth_granted_ + step > cap)
+        return current_limit; // at the bound V8 reports OOM as it always did
+
+    state->heap_growth_granted_ += step;
+    // Only the limit grows: reporting the grant as external memory would double it.
+    return current_limit + step;
+}
+
+void
+IsolateState::account_external_memory(int64_t delta)
+{
+    if (isolate_ == nullptr || delta == 0)
+        return;
+    external_memory_bytes_ += delta;
+    if (external_memory_bytes_ < 0)
+        external_memory_bytes_ = 0;
+    external_memory_.Update(isolate_, delta);
 }
 
 bool
@@ -58,6 +89,7 @@ IsolateState::initialize()
     }
 
     isolate_->SetData(0, this);
+    isolate_->AddNearHeapLimitCallback(&IsolateState::near_heap_limit_callback, this);
     watchdog_ = std::make_unique<Watchdog>(isolate_);
     isolate_->SetCaptureStackTraceForUncaughtExceptions(
         true, 100,
@@ -174,6 +206,11 @@ IsolateState::shutdown(bool report_error)
         watchdog_->shutdown();
 
     v8_strings_.reset();
+    // The accounter's invariant: what it reported goes back to zero before disposal.
+    if (external_memory_bytes_ != 0)
+        external_memory_.Update(isolate_, -external_memory_bytes_);
+    external_memory_bytes_ = 0;
+    isolate_->RemoveNearHeapLimitCallback(&IsolateState::near_heap_limit_callback, 0);
     isolate_->Dispose();
     isolate_ = nullptr;
     allocator_.reset();

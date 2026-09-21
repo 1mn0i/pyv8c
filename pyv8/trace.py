@@ -1,7 +1,5 @@
 """Context-level diagnostics, independent of browser classes and JS globals."""
 
-from loguru import logger
-
 from . import JSFunction, Null, Undefined
 
 
@@ -63,6 +61,9 @@ def format_trace(event, receiver, name, arguments, value, error, is_construct, c
 
 def log_trace(event, receiver, name, arguments, value, error, is_construct, ctx_type):
     """Default standalone pyv8 sink; configure logger to view it."""
+    # Imported here so that a process which never logs never pays for loguru.
+    from loguru import logger
+
     message = format_trace(event, receiver, name, arguments, value, error, is_construct, ctx_type)
     if message is not None:
         logger.debug(message)

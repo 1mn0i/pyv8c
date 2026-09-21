@@ -243,8 +243,31 @@ js_from_py_impl(PyObject *value,
             {
                 return Local<Value>();
             }
+            // A property key, as JavaScript would take one: names as they are, and
+            // anything else -- an int key, say -- by its string form.
+            Local<Name> js_name;
+            if (js_key->IsName())
+            {
+                js_name = js_key.As<Name>();
+            }
+            else
+            {
+                Local<String> text;
+                if (!js_key->ToString(context).ToLocal(&text))
+                {
+                    PyErr_SetString(PyExc_RuntimeError, "failed to convert JavaScript property key");
+                    return Local<Value>();
+                }
+                js_name = text;
+            }
+
             bool set_worked;
-            if (!js_dict->Set(context, js_key, js_value).To(&set_worked))
+            // Define rather than assign, as for array items: assigning would route a
+            // "__proto__" key through Object.prototype's accessor and hand the data
+            // control of the object's prototype.  A "no" that threw nothing is a
+            // failed write too.
+            if (!js_dict->CreateDataProperty(context, js_name, js_value).To(&set_worked) ||
+                !set_worked)
             {
                 PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript object property");
                 return Local<Value>();
@@ -288,10 +311,10 @@ js_from_py_impl(PyObject *value,
                 return Local<Value>();
 
             bool set_worked;
-            // The engine answering "no" without throwing is a failed write too,
-            // and the assertion that used to say so was compiled out of a release
-            // build, which left a half-filled array behind.
-            if (!array->Set(context, static_cast<uint32_t>(i), js_item).To(&set_worked) ||
+            // Define rather than assign: building an array must not run a setter a
+            // page put on Array.prototype, and a "no" that threw nothing is a failure.
+            if (!array->CreateDataProperty(context, static_cast<uint32_t>(i), js_item)
+                     .To(&set_worked) ||
                 !set_worked)
             {
                 PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript array item");

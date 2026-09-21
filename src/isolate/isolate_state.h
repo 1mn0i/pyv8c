@@ -11,6 +11,7 @@
 #endif
 
 #include <v8.h>
+#include <v8-external-memory-accounter.h>
 
 #include "v8_string_cache.h"
 #include "watchdog.h"
@@ -57,6 +58,10 @@ public:
     void release_v8_handle();
     std::size_t live_v8_handles() const { return live_v8_handles_; }
 
+    // Python memory held for JavaScript; V8 cannot see it, so it is reported.
+    void account_external_memory(int64_t delta);
+    int64_t external_memory() const { return external_memory_bytes_; }
+
     Watchdog& watchdog() { return *watchdog_; }
 
     // The listeners are isolate-wide; Python reporters belong to each Context.
@@ -94,6 +99,17 @@ public:
 
 private:
     static PythonObjectOwner* find_python_owner(context_c* context, PyObject* py_object);
+
+    // Growth near the heap limit: one step per call, capped.  Both are fractions of
+    // the limit V8 started with, so --max-old-space-size still decides the scale.
+    static constexpr std::size_t kHeapGrowthStepDivisor = 8;
+    static constexpr std::size_t kHeapGrowthCapDivisor = 2;
+    static std::size_t near_heap_limit_callback(void* data, std::size_t current_limit,
+                                                std::size_t initial_limit);
+    std::size_t heap_growth_granted_;
+
+    v8::ExternalMemoryAccounter external_memory_;
+    int64_t external_memory_bytes_;
     PythonObjectOwner* pending_owners_ = nullptr;
     DeferredPythonRelease* pending_wrappers_ = nullptr;
 
