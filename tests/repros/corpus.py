@@ -27,6 +27,25 @@ def page(head="", body=""):
     return f"<html><head>{head}</head><body>{body}</body></html>"
 
 
+#: A form holding one of everything the collection rules tell apart: an image button
+#: (submittable, not listed), controls outside it that name it with ``form=``, and an
+#: element whose tag is unmodelled here but is still a listed element in both engines.
+FORM_PAGE = page(body="""
+    <form id=f>
+      <input id=one name=a>
+      <input type=image id=image name=img>
+      <fieldset id=fs><input id=nested name=n></fieldset>
+      <object id=obj name=o></object>
+      <output id=out name=u></output>
+      <button id=btn name=btn value=bv>x</button>
+      <select id=sel name=s></select>
+      <textarea id=ta name=t></textarea>
+    </form>
+    <input id=outside form=f>
+    <input id=other>
+""")
+
+
 @dataclasses.dataclass(frozen=True)
 class Repro:
     name: str
@@ -179,19 +198,76 @@ CASES = (
         expected=[3, "b", "BUTTON", "INPUT,INPUT,BUTTON"],
     ),
     Repro(
-        name="a_button_keeps_its_name",
-        script="typeof document.createElement('button').name",
-        expected="undefined",
-        known_divergence="HTMLButtonElement.name is not implemented, so a button's name is"
-        " undefined here; Chrome reflects the name attribute as a string",
+        name="a_button_reflects_name_value_and_type",
+        note="type reports one of its three states: a value it does not know, and a"
+        " missing attribute, are both submit.",
+        script="""
+            (() => {
+              const button = document.createElement('button');
+              const empty = [typeof button.name, button.name, button.value, button.type];
+              button.name = 'n';
+              button.value = 'v';
+              const written = [button.name, button.getAttribute('name'),
+                               button.getAttribute('value')];
+              button.setAttribute('type', 'reset');
+              const reset = button.type;
+              button.type = 'bogus';
+              return [empty, written, reset, [button.getAttribute('type'), button.type]];
+            })()
+        """,
+        expected=[["string", "", "", "submit"], ["n", "n", "v"], "reset", ["bogus", "submit"]],
     ),
     Repro(
-        name="a_form_exposes_its_elements_collection",
-        script="typeof document.forms[0].elements",
-        html=page(body="<form><input name=a></form>"),
-        expected="undefined",
-        known_divergence="HTMLFormControlsCollection is not implemented, so .elements is"
-        " undefined here; Chrome exposes the collection",
+        name="a_form_control_reports_its_name",
+        html=FORM_PAGE,
+        script="[document.getElementById('sel').name, document.getElementById('ta').name,"
+               " document.getElementById('btn').name]",
+        expected=["s", "t", "btn"],
+    ),
+    Repro(
+        name="form_elements_follows_the_document_order",
+        note="Ordered by the document, not by the form: a control that names the form"
+        " with form= sits where the document puts it, and an image button is not listed.",
+        html=FORM_PAGE,
+        script="""
+            (() => {
+              const form = document.forms[0];
+              return [Array.from(form.elements, element => element.id), form.elements.length,
+                      form.length, form.elements === form.elements];
+            })()
+        """,
+        expected=[["one", "fs", "nested", "obj", "out", "btn", "sel", "ta", "outside"],
+                  9, 9, True],
+    ),
+    Repro(
+        name="form_elements_is_indexed_named_and_live",
+        html=FORM_PAGE,
+        script="""
+            (() => {
+              const form = document.forms[0];
+              const elements = form.elements;
+              const before = elements.length;
+              const added = document.createElement('input');
+              added.id = 'late';
+              form.appendChild(added);
+              return [elements.namedItem('outside') === document.getElementById('outside'),
+                      elements.one === document.getElementById('one'),
+                      elements[1] === document.getElementById('fs'),
+                      before, elements.length,
+                      Array.from(elements, element => element.id).pop()];
+            })()
+        """,
+        expected=[True, True, True, 9, 10, "outside"],
+    ),
+    Repro(
+        name="a_control_belongs_to_the_form_its_attribute_names",
+        note="form= wins over the ancestor: naming a form that is not there leaves the"
+        " control owned by nobody rather than by the form it sits in.",
+        html=page(body="<form id=first><input id=inside form=nosuch><input id=plain>"
+                       "<input id=moved form=second></form><form id=second></form>"),
+        script="[Array.from(document.forms[0].elements, element => element.id),"
+               " Array.from(document.forms[1].elements, element => element.id)]",
+        expected=[["plain"], ["moved"]],
     ),
     Repro(
         name="computed_style_follows_the_cascade",

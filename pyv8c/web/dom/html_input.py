@@ -36,10 +36,13 @@ class HTMLTextAreaElement(HTMLElement):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="defaultValue", getter="get_defaultValue", setter="set_defaultValue"),
+            AttributeSpec(name="name", getter="get_name", setter="set_name"),
         ),
         constructor_behavior=0,
         has_constructor=1,
     )
+    def get_name(self): return self._attr("name")
+    def set_name(self, value): self._set_string("name", value)
     def get_defaultValue(self): return str(self.get_textContent())
     def set_defaultValue(self, value): self.set_textContent(str(dom_string(value)))
 
@@ -108,6 +111,7 @@ class HTMLSelectElement(HTMLElement):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="value", getter="get_value", setter="set_value"),
+            AttributeSpec(name="name", getter="get_name", setter="set_name"),
             AttributeSpec(name="options", getter="get_options", side_effect=1),
             AttributeSpec(name="selectedIndex", getter="get_selectedIndex", setter="set_selectedIndex"),
             AttributeSpec(name="length", getter="get_length", side_effect=1),
@@ -118,6 +122,8 @@ class HTMLSelectElement(HTMLElement):
     )
     def _options(self):
         return [node for node in self._descendants() if isinstance(node, HTMLOptionElement)]
+    def get_name(self): return self._attr("name")
+    def set_name(self, value): self._set_string("name", value)
     def get_options(self):
         value = getattr(self, "_options_collection", None)
         if value is None:
@@ -356,19 +362,6 @@ class HTMLInputElement(HTMLElement):
         self._files = None
 
     # -- reflected helpers ------------------------------------------------
-
-    def _attr(self, name):
-        value = self.attributes.get(name)
-        return "" if value is None else str(value)
-
-    def _set_string(self, name, value):
-        value = dom_string(value)
-        self.attributes[name] = str(value)
-
-    def _bool(self, name): return name in self.attributes
-    def _set_bool(self, name, value):
-        if boolean(value): self.attributes[name] = ""
-        else: self.attributes.pop(name, None)
 
     def _long(self, name):
         try: return int(str(self.attributes.get(name)))

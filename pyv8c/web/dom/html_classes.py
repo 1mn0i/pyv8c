@@ -7,6 +7,8 @@ of them, while those modules only need the node model below.
 from .html_canvas import HTMLCanvasElement
 from .html_elements import (
     HTMLAnchorElement,
+    HTMLButtonElement,
+    HTMLFormElement,
     HTMLIFrameElement,
     HTMLImageElement,
     HTMLLinkElement,
@@ -28,10 +30,10 @@ from .html_input import (
 HTML_CLASSES = {
     **{name: _html_class(name) for name in (
         "HTMLHtmlElement", "HTMLHeadElement", "HTMLBodyElement", "HTMLDivElement", "HTMLSpanElement",
-        "HTMLFormElement", "HTMLMediaElement",
-        "HTMLTableElement", "HTMLTableRowElement", "HTMLTableCellElement",
-        "HTMLButtonElement")},
+        "HTMLMediaElement", "HTMLTableElement", "HTMLTableRowElement", "HTMLTableCellElement")},
     # Interfaces with members of their own carry a hand-written class.
+    "HTMLFormElement": HTMLFormElement,
+    "HTMLButtonElement": HTMLButtonElement,
     "HTMLAnchorElement": HTMLAnchorElement,
     "HTMLTextAreaElement": HTMLTextAreaElement,
     "HTMLOptionElement": HTMLOptionElement,

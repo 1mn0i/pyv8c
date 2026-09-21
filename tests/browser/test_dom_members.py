@@ -219,6 +219,90 @@ def test_select_options_collection_moves_the_selection_too(page):
     """) == ["B", 1]
 
 
+def test_form_elements_collects_its_listed_elements(page):
+    assert page.evaluate("""
+        (() => {
+            const form = document.createElement('form');
+            form.id = 'created';
+            document.body.appendChild(form);
+            for (const tag of ['input', 'fieldset', 'select', 'textarea']) {
+                const element = document.createElement(tag);
+                element.id = tag;
+                form.appendChild(element);
+            }
+            const image = document.createElement('input');
+            image.id = 'image';
+            image.type = 'image';
+            form.appendChild(image);
+            const external = document.createElement('input');
+            external.id = 'external';
+            external.setAttribute('form', 'created');
+            document.body.appendChild(external);
+            return [Array.from(form.elements, element => element.id), form.length,
+                    form.elements === form.elements,
+                    form.elements.namedItem('external') === external];
+        })()
+    """) == [["input", "fieldset", "select", "textarea", "external"], 5, True, True]
+
+
+def test_a_control_belongs_to_the_form_its_attribute_names(page):
+    assert page.evaluate("""
+        (() => {
+            const first = document.createElement('form');
+            first.id = 'first';
+            const second = document.createElement('form');
+            second.id = 'second';
+            document.body.appendChild(first);
+            document.body.appendChild(second);
+            const plain = document.createElement('input');
+            plain.id = 'plain';
+            const missing = document.createElement('input');
+            missing.id = 'missing';
+            missing.setAttribute('form', 'nosuch');
+            const moved = document.createElement('input');
+            moved.id = 'moved';
+            moved.setAttribute('form', 'second');
+            for (const element of [plain, missing, moved]) first.appendChild(element);
+            return [Array.from(first.elements, element => element.id),
+                    Array.from(second.elements, element => element.id)];
+        })()
+    """) == [["plain"], ["moved"]]
+
+
+def test_a_form_control_reports_its_name(page):
+    assert page.evaluate("""
+        (() => {
+            const select = document.createElement('select');
+            select.name = 's';
+            const area = document.createElement('textarea');
+            area.name = 't';
+            const button = document.createElement('button');
+            button.name = 'b';
+            return [select.name, area.name, button.name,
+                    select.getAttribute('name'), area.getAttribute('name')];
+        })()
+    """) == ["s", "t", "b", "s", "t"]
+
+
+def test_html_button_reflects_name_value_and_type(page):
+    assert page.evaluate("""
+        (() => {
+            const button = document.createElement('button');
+            const empty = [button.name, button.value, button.type,
+                           button instanceof HTMLButtonElement];
+            button.name = 'n';
+            button.value = 'v';
+            button.setAttribute('type', 'RESET');
+            const reflected = [button.name, button.value, button.type,
+                               button.getAttribute('name'), button.getAttribute('value')];
+            button.type = 'bogus';
+            return [empty, reflected, [button.getAttribute('type'), button.type]];
+        })()
+    """) == [["", "", "submit", True], ["n", "v", "reset", "n", "v"],
+             ["bogus", "submit"]]
+    assert page.evaluate("document.createElement('form') instanceof HTMLFormElement") is True
+
+
 def test_canvas_text_baseline_round_trips(page):
     assert page.evaluate("""
         (function () {

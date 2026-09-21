@@ -3,7 +3,7 @@
 from ...engine.features import FeatureCatalog, FeatureSpec
 
 CORE_INTERFACES = (
-    "DOMException", "DOMError", "DOMImplementation", "DOMStringMap", "DOMTokenList", "HTMLAllCollection", "HTMLCollection", "HTMLOptionsCollection", "NamedNodeMap", "NodeList",
+    "DOMException", "DOMError", "DOMImplementation", "DOMStringMap", "DOMTokenList", "HTMLAllCollection", "HTMLCollection", "HTMLFormControlsCollection", "HTMLOptionsCollection", "NamedNodeMap", "NodeList",
     "CustomEvent", "Event", "EventTarget", "KeyboardEvent", "MouseEvent", "UIEvent",
     "FocusEvent", "InputEvent", "CompositionEvent", "PointerEvent", "WheelEvent",
     "PopStateEvent", "HashChangeEvent", "StorageEvent", "AnimationEvent", "TransitionEvent",

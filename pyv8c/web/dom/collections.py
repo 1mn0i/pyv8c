@@ -521,3 +521,19 @@ class HTMLOptionsCollection(HTMLCollection):
         owner = self._owner
         if owner is not None:
             owner.set_selectedIndex(index)
+
+
+@interface('HTMLFormControlsCollection', 'HTMLCollection')
+class HTMLFormControlsCollection(HTMLCollection):
+    """``form.elements``: the form's listed elements as a live list.
+
+    Everything it offers -- indexed access, ``length``, ``item``, ``namedItem`` and
+    the names -- comes from the collection it extends; which elements belong to it
+    is the form's rule, so the form supplies the getter.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        constructor_behavior=0,
+        to_string_tag="HTMLFormControlsCollection",
+        has_constructor=1,
+    )
