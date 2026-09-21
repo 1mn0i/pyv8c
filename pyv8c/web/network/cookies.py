@@ -16,7 +16,7 @@ from http.cookies import SimpleCookie
 from threading import RLock
 from urllib.parse import urlsplit
 
-from loguru import logger
+from ...foundation.logging import logger
 
 _INVALID_COOKIE_NAME_CHARS = frozenset("()<>@,;:") | {"\\", "[", "]", "?", "=", "{", "}", " ", "\t"}
 

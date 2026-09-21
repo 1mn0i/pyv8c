@@ -31,6 +31,16 @@ def test_compilation_and_signature_analysis_are_not_repeated(universe, monkeypat
     assert compiler.wrappers._parameter_cache._values == parameters
 
 
+def test_descendant_lookup_is_computed_once(universe):
+    catalog = universe._catalog
+    first = catalog.descendants("EventTarget")
+    assert isinstance(first, tuple)
+    # The same answer object, not an equal rebuild: one member lookup walks
+    # ancestors, and each of them asks for the same descendant set again.
+    assert catalog.descendants("EventTarget") is first
+    assert "Element" in first
+
+
 def test_session_commits_ancestors_atomically_and_can_retry(universe):
     session = universe.binding_session()
     batches = []

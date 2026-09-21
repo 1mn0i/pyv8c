@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 import pyv8
-from loguru import logger
+from ..foundation.logging import logger
 
 from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
 from ..foundation.urls import DEFAULT_PORTS, same_origin

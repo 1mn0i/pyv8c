@@ -20,7 +20,7 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
 
-from loguru import logger
+from .logging import logger
 
 from . import timer_resolution
 from .errors import RealmBusyError

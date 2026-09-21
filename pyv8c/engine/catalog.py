@@ -15,6 +15,7 @@ class InterfaceCatalog:
         self._children = None
         self._positions = None
         self._exposed = {}
+        self._descendants = {}
 
     def positions(self):
         if self._positions is None:
@@ -32,6 +33,15 @@ class InterfaceCatalog:
         return self._children
 
     def descendants(self, name):
+        # The baseline is immutable and one member lookup asks for the same name
+        # once per ancestor it walks, so the answer is computed once per name.
+        cached = self._descendants.get(name)
+        if cached is None:
+            cached = self._compute_descendants(name)
+            self._descendants[name] = cached
+        return cached
+
+    def _compute_descendants(self, name):
         seen = set()
         pending = list(self.children().get(name, ()))
         while pending:

@@ -8,7 +8,7 @@ via ``stub_logging``.
 from __future__ import annotations
 
 import pyv8
-from loguru import logger
+from ..foundation.logging import logger
 
 
 def mark_stub(callback):

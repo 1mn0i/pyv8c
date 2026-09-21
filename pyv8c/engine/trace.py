@@ -1,6 +1,6 @@
 """One shared sink per realm; browser classes carry no trace methods."""
 
-from loguru import logger
+from ..foundation.logging import logger
 from pyv8.trace import format_trace
 
 

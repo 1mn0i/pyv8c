@@ -7,6 +7,8 @@ root: ``Page`` forwards its public API and delegates behaviour to those
 controllers, so each concern can be read and tested on its own.
 """
 
+from __future__ import annotations
+
 import os
 import threading
 import time
@@ -17,7 +19,7 @@ from types import MappingProxyType
 # Kept as a module attribute: tests patch ``pyv8c.platform.browser.pyv8``
 # to instrument native Context construction on the PageRealm path.
 import pyv8  # patch target for native Context instrumentation tests
-from loguru import logger
+from ..foundation.logging import logger
 
 from ..engine.universe import BaselineRepository, InterfaceUniverse
 from ..foundation.arguments import is_nullish
