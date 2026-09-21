@@ -217,3 +217,33 @@ def test_html_element_reflected_title_and_hidden(page):
         "return [on, div.hidden, div.hasAttribute('hidden')]; })()"
     )
     assert result == [["tt", "tt", True, True], False, False]
+
+
+def test_dataset_reads_writes_and_deletes_data_attributes(page):
+    assert page.evaluate("""
+        (() => {
+          const span = document.querySelector('span');
+          const declared = [span.dataset.n, span.getAttribute('data-n')];
+          span.dataset.fooBar = 'x';
+          const written = [span.getAttribute('data-foo-bar'), span.dataset.fooBar];
+          const names = Object.keys(span.dataset).sort();
+          delete span.dataset.fooBar;
+          return [declared, written, names,
+                  [span.hasAttribute('data-foo-bar'), typeof span.dataset.fooBar]];
+        })()
+    """) == [["1", "1"], ["x", "x"], ["fooBar", "n"], [False, "undefined"]]
+
+
+def test_dataset_reflects_attribute_writes_and_keeps_the_prototype(page):
+    assert page.evaluate("""
+        (() => {
+          const div = document.createElement('div');
+          const dataset = div.dataset;
+          div.setAttribute('data-x-y', 'v');
+          return [dataset === div.dataset, Object.keys(dataset), dataset.xY,
+                  'xY' in div.dataset, 'absent' in div.dataset,
+                  dataset.toString === Object.prototype.toString,
+                  div.setAttribute('data-', 'ignored') === undefined,
+                  Object.keys(dataset)];
+        })()
+    """) == [True, ["xY"], "v", True, False, True, True, ["xY"]]

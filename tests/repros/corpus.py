@@ -119,6 +119,24 @@ CASES = (
         expected=[False, False, "B"],
     ),
     Repro(
+        name="a_select_exposes_its_options_collection",
+        note="The collection is the same object every read, and it is live.",
+        html=page(body="<select><option value=a>A</option><option value=b>B</option></select>"),
+        script="""
+            (() => {
+              const select = document.querySelector('select');
+              const options = select.options;
+              const before = options.length;
+              const added = document.createElement('option');
+              added.value = 'c';
+              select.appendChild(added);
+              return [before, options.length, options[2] === added, options.item(1).value,
+                      select.length, options === select.options];
+            })()
+        """,
+        expected=[2, 3, True, "b", 3, True],
+    ),
+    Repro(
         name="a_select_reports_its_own_value_and_index",
         html=page(body="<select><option value=a>A</option></select>"),
         script="""
@@ -128,17 +146,25 @@ CASES = (
               return [typeof select.selectedIndex, select.value];
             })()
         """,
-        expected=["undefined", "a"],
-        known_divergence="HTMLSelectElement.selectedIndex is not implemented, so it is"
-        " undefined here; Chrome reports the index as a number",
+        expected=["number", "a"],
     ),
     Repro(
-        name="a_select_exposes_its_options_collection",
-        script="typeof document.querySelector('select').options",
-        html=page(body="<select><option value=a>A</option></select>"),
-        expected="undefined",
-        known_divergence="HTMLOptionsCollection is not implemented, so .options is undefined"
-        " here; Chrome exposes the collection",
+        name="selected_index_moves_the_selection",
+        note="A position outside the list clears the selection rather than clamping it.",
+        html=page(body="<select><option value=a>A</option><option value=b>B</option>"
+                       "<option value=c>C</option></select>"),
+        script="""
+            (() => {
+              const select = document.querySelector('select');
+              select.selectedIndex = 2;
+              const chosen = [select.selectedIndex, select.value,
+                              select.options.selectedIndex, select.selectedOptions.length];
+              select.selectedIndex = -1;
+              return [chosen, [select.selectedIndex, select.value,
+                               select.selectedOptions.length]];
+            })()
+        """,
+        expected=[[2, "c", 2, 1], [-1, "", 0]],
     ),
     Repro(
         name="form_controls_are_in_document_order",
@@ -208,9 +234,36 @@ CASES = (
     Repro(
         name="an_element_exposes_its_dataset",
         script="typeof document.createElement('div').dataset",
-        expected="undefined",
-        known_divergence="DOMStringMap is not implemented, so .dataset is undefined here;"
-        " Chrome exposes one",
+        expected="object",
+    ),
+    Repro(
+        name="dataset_writes_reads_and_deletes_its_attributes",
+        note="A map name and its data-* attribute are the same value from two sides.",
+        script="""
+            (() => {
+              const element = document.createElement('div');
+              element.dataset.fooBar = 'x';
+              const written = element.getAttribute('data-foo-bar');
+              delete element.dataset.fooBar;
+              return [written, element.hasAttribute('data-foo-bar'),
+                      typeof element.dataset.fooBar];
+            })()
+        """,
+        expected=["x", False, "undefined"],
+    ),
+    Repro(
+        name="dataset_reads_attributes_written_as_attributes",
+        script="""
+            (() => {
+              const element = document.createElement('div');
+              element.setAttribute('data-x-y', 'v');
+              element.setAttribute('data-plain', '2');
+              return [element.dataset.xY, element.dataset.plain,
+                      Object.keys(element.dataset).sort(),
+                      'xY' in element.dataset, 'absent' in element.dataset];
+            })()
+        """,
+        expected=["v", "2", ["plain", "xY"], True, False],
     ),
     Repro(
         name="document_cookie_writes_and_reads_back",

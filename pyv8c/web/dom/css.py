@@ -9,7 +9,7 @@ from pyv8.flag import V8Attribute
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
-from .utils import OBJECT_PROTOTYPE_NAMES
+from .utils import OBJECT_PROTOTYPE_NAMES, camel_name as _camel_name, dash_name as _dash_name
 
 _NAME_RE = re.compile(r"^(?:--[A-Za-z0-9_-]+|-?[A-Za-z_][A-Za-z0-9_-]*)$")
 _OBJECT_NAMES = OBJECT_PROTOTYPE_NAMES | {
@@ -23,19 +23,6 @@ def _property_name(value):
         return value if _NAME_RE.match(value) else ""
     value = value.lower()
     return value if _NAME_RE.match(value) else ""
-
-def _camel_name(name):
-    if name.startswith("--"): return name
-    result = name
-    while "-" in result:
-        left, right = result.split("-", 1)
-        if not right: return ""
-        result = left + right[0].upper() + right[1:]
-    return result
-
-def _dash_name(name):
-    if name.startswith("--"): return name
-    return re.sub(r"([A-Z])", lambda m: "-" + m.group(1).lower(), name)
 
 def _normalize_value(value):
     value = str(dom_string(value)).strip()

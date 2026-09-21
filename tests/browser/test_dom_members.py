@@ -170,6 +170,55 @@ def test_textarea_option_and_select_values(page):
     """) == [["a", True, False, "a", "B"], ["B", False, True], ["", False, False]]
 
 
+def test_select_options_collection_is_live_and_indexable(page):
+    assert page.evaluate("""
+        (function () {
+            const select = document.querySelector('select');
+            const options = select.options;
+            const before = options.length;
+            const added = document.createElement('option');
+            added.value = 'c';
+            select.appendChild(added);
+            return [before, options.length, options === select.options, select.length,
+                    options[2] === added, options.item(0).value, options.item(9) === null];
+        })()
+    """) == [2, 3, True, 3, True, "a", True]
+    assert page.evaluate("""
+        (function () {
+            const select = document.querySelector('select');
+            const second = select.querySelectorAll('option')[1];
+            second.setAttribute('id', 'second');
+            return [select.options.namedItem('second') === second, select.options.item(-1) === null];
+        })()
+    """) == [True, True]
+
+
+def test_select_selected_index_reads_and_moves_the_selection(page):
+    assert page.evaluate("""
+        (function () {
+            const select = document.querySelector('select');
+            const initial = [select.selectedIndex, select.options.selectedIndex,
+                             select.selectedOptions.length];
+            select.selectedIndex = 1;
+            const moved = [select.selectedIndex, select.value, select.selectedOptions.length,
+                           select.options.selectedIndex];
+            select.selectedIndex = -1;
+            return [initial, moved,
+                    [select.selectedIndex, select.value, select.selectedOptions.length]];
+        })()
+    """) == [[0, 0, 1], [1, "B", 1, 1], [-1, "", 0]]
+
+
+def test_select_options_collection_moves_the_selection_too(page):
+    assert page.evaluate("""
+        (function () {
+            const select = document.querySelector('select');
+            select.options.selectedIndex = 1;
+            return [select.value, select.selectedIndex];
+        })()
+    """) == ["B", 1]
+
+
 def test_canvas_text_baseline_round_trips(page):
     assert page.evaluate("""
         (function () {

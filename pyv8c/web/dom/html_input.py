@@ -20,7 +20,7 @@ from ...foundation.arguments import (
     missing_error,
 )
 from ...foundation.errors import InvalidStateError, NotSupportedError, V8TypeError
-from .collections import NodeList
+from .collections import HTMLCollection, HTMLOptionsCollection, NodeList
 from .html_elements import Element, HTMLElement, _attribute, _set_url_value, _url_attr, _url_value
 from .mixins import ReadOnlyIndexedPropertyMixin
 
@@ -99,19 +99,50 @@ class HTMLOptionElement(HTMLElement):
 
 @interface('HTMLSelectElement', 'HTMLElement')
 class HTMLSelectElement(HTMLElement):
-    """``<select>``: ``value`` reads and writes the selected option.
+    """``<select>``: the option list, what is selected, and ``value`` over both.
 
-    Only ``value`` is modelled so far -- ``options``/``selectedIndex`` are still
-    baseline stubs -- so the option list is walked directly.
+    ``options`` is the live view a page expects and ``selectedIndex`` reports and
+    moves the selection; ``value`` stays the shortcut over that same state.
     """
 
     __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="value", getter="get_value", setter="set_value"),),
+        attributes=(
+            AttributeSpec(name="value", getter="get_value", setter="set_value"),
+            AttributeSpec(name="options", getter="get_options", side_effect=1),
+            AttributeSpec(name="selectedIndex", getter="get_selectedIndex", setter="set_selectedIndex"),
+            AttributeSpec(name="length", getter="get_length", side_effect=1),
+            AttributeSpec(name="selectedOptions", getter="get_selectedOptions", side_effect=1),
+        ),
         constructor_behavior=0,
         has_constructor=1,
     )
     def _options(self):
         return [node for node in self._descendants() if isinstance(node, HTMLOptionElement)]
+    def get_options(self):
+        value = getattr(self, "_options_collection", None)
+        if value is None:
+            value = self._options_collection = HTMLOptionsCollection(owner=self, getter=self._options)
+        return value
+    def get_selectedIndex(self):
+        """The first selected option's position, or -1 when nothing is selected."""
+        return next((index for index, option in enumerate(self._options()) if option.get_selected()), -1)
+    def set_selectedIndex(self, index):
+        """Select one option by position; a position outside the list clears them all."""
+        index = integer(index)
+        options = self._options()
+        chosen = options[index] if 0 <= index < len(options) else None
+        for option in options:
+            option.set_selected(option is chosen)
+    def get_length(self):
+        return len(self._options())
+    def get_selectedOptions(self):
+        value = getattr(self, "_selected_options", None)
+        if value is None:
+            value = self._selected_options = HTMLCollection(
+                owner=self,
+                getter=lambda: [option for option in self._options() if option.get_selected()],
+            )
+        return value
     def _selects_first_option(self, option):
         """Whether ``option`` is this select's default selection.
 

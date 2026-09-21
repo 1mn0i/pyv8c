@@ -32,6 +32,35 @@ OBJECT_PROTOTYPE_NAMES = frozenset((
 NAMED_PROPERTY_ATTRIBUTES = V8Attribute.ReadOnly | V8Attribute.DontEnum
 
 
+def dash_name(name):
+    """``fooBar`` -> ``foo-bar``: the dashed spelling a camelCase name reflects.
+
+    One rule serves both a CSS property name and the ``data-*`` attribute behind
+    ``DOMStringMap``, so it lives here rather than in either reader.  A name that
+    already starts with ``--`` is its own dashed spelling.
+    """
+    if name.startswith("--"):
+        return name
+    return re.sub(r"([A-Z])", lambda match: "-" + match.group(1).lower(), name)
+
+
+def camel_name(name):
+    """``foo-bar`` -> ``fooBar``; ``""`` when a dash ends the name.
+
+    The empty string is what a caller checks for: a trailing dash cannot be spelled
+    back, so the name is not one a reader may expose.
+    """
+    if name.startswith("--"):
+        return name
+    result = name
+    while "-" in result:
+        left, right = result.split("-", 1)
+        if not right:
+            return ""
+        result = left + right[0].upper() + right[1:]
+    return result
+
+
 def as_nodes(values, parent):
     """Convert a Web IDL ``(Node or DOMString)...`` argument list to nodes."""
     # Imported here rather than at module scope: the node model imports this

@@ -15,7 +15,7 @@ from ...foundation.arguments import MISSING, boolean, dom_string, interface_valu
 from ...foundation.errors import InvalidCharacterError, NotFoundError, V8SyntaxError, V8TypeError
 from ...foundation.urls import origin_string
 from .character_data import Text
-from .collections import DOMTokenList, HTMLCollection, NamedNodeMap
+from .collections import DOMStringMap, DOMTokenList, HTMLCollection, NamedNodeMap
 from .css import CSSStyleDeclaration
 from .mixins import _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, _ParentNodeMixin
 from .nodes import Attr, DocumentFragment, Node
@@ -355,6 +355,7 @@ class HTMLElement(Element):
             AttributeSpec(name="title", getter="get_title", setter="set_title"),
             AttributeSpec(name="hidden", getter="get_hidden", setter="set_hidden"),
             AttributeSpec(name="style", getter="get_style", side_effect=1),
+            AttributeSpec(name="dataset", getter="get_dataset", side_effect=1),
             AttributeSpec(name="offsetParent", getter="get_offsetParent", side_effect=1),
             AttributeSpec(name="offsetTop", getter="get_offsetTop", side_effect=1),
             AttributeSpec(name="offsetLeft", getter="get_offsetLeft", side_effect=1),
@@ -377,6 +378,11 @@ class HTMLElement(Element):
         value = getattr(self, "_style_declaration", None)
         if value is None:
             value = self._style_declaration = CSSStyleDeclaration(element=self)
+        return value
+    def get_dataset(self):
+        value = getattr(self, "_dataset_map", None)
+        if value is None:
+            value = self._dataset_map = DOMStringMap(self)
         return value
     def get_offsetParent(self):
         if not self.isConnected: return pyv8.Null

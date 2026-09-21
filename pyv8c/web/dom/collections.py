@@ -15,7 +15,7 @@ from ...foundation.errors import (
     dom_exception,
 )
 from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
-from .utils import ITERABLE_FLAGS
+from .utils import ITERABLE_FLAGS, OBJECT_PROTOTYPE_NAMES, camel_name, dash_name
 
 
 @interface('NodeList', None)
@@ -415,3 +415,109 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
     def fn_toString(self, *_extra):
         return self.get_value()
     def __iter__(self): return iter(self._tokens())
+
+
+#: The attribute prefix ``dataset`` maps over.
+_DATA_PREFIX = "data-"
+
+
+@interface('DOMStringMap', None)
+class DOMStringMap:
+    """``element.dataset``: the ``data-*`` attributes as a writable name map.
+
+    The attributes stay the source of truth -- this holds no state of its own -- so
+    ``dataset.fooBar = 'x'`` and ``setAttribute('data-foo-bar', 'x')`` are the same
+    write seen from two sides.  A name reads back only when writing it would produce
+    the same attribute, which is what keeps an attribute like ``data-foo-`` from
+    looking readable.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        constructor_behavior=0,
+        to_string_tag="DOMStringMap",
+        has_constructor=1,
+        name_get="__v8_name_get__",
+        name_set="__v8_name_set__",
+        name_query="__v8_name_query__",
+        name_del="__v8_name_del__",
+        name_enum="__v8_name_enum__",
+    )
+
+    def __init__(self, element=None, **_):
+        self._element = element
+
+    def _attributes(self):
+        element = self._element
+        return getattr(element, "attributes", {}) if element is not None else {}
+
+    def _attribute_name(self, name):
+        """The attribute a map name reads and writes, or ``""`` when it has none."""
+        if not isinstance(name, str) or not name or name in OBJECT_PROTOTYPE_NAMES:
+            return ""
+        return _DATA_PREFIX + dash_name(name)
+
+    def _visible_names(self):
+        """The names present now: the attributes that spell back to themselves."""
+        names = []
+        for attribute in self._attributes():
+            if not attribute.startswith(_DATA_PREFIX):
+                continue
+            name = camel_name(attribute[len(_DATA_PREFIX):])
+            if name and _DATA_PREFIX + dash_name(name) == attribute:
+                names.append(name)
+        return names
+
+    def __v8_name_get__(self, name):
+        attribute = self._attribute_name(name)
+        attributes = self._attributes()
+        if not attribute or attribute not in attributes:
+            return None
+        return str(attributes[attribute])
+
+    def __v8_name_set__(self, name, value):
+        attribute = self._attribute_name(name)
+        if not attribute:
+            return None
+        self._attributes()[attribute] = str(dom_string(value))
+        return True
+
+    def __v8_name_query__(self, name):
+        attribute = self._attribute_name(name)
+        return 0 if attribute and attribute in self._attributes() else None
+
+    def __v8_name_del__(self, name):
+        attribute = self._attribute_name(name)
+        if not attribute:
+            return None
+        self._attributes().pop(attribute, None)
+        return True
+
+    def __v8_name_enum__(self):
+        return self._visible_names()
+
+
+@interface('HTMLOptionsCollection', 'HTMLCollection')
+class HTMLOptionsCollection(HTMLCollection):
+    """``select.options``: the select's options as a live list.
+
+    ``length``, ``item`` and ``namedItem`` come from the collection it extends; what
+    this adds is the selected index, which is the select's own answer.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="selectedIndex", getter="get_selectedIndex", setter="set_selectedIndex"),
+        ),
+        constructor_behavior=0,
+        to_string_tag="HTMLOptionsCollection",
+        has_constructor=1,
+    )
+
+    def get_selectedIndex(self):
+        owner = self._owner
+        return owner.get_selectedIndex() if owner is not None else -1
+
+    def set_selectedIndex(self, index):
+        owner = self._owner
+        if owner is not None:
+            owner.set_selectedIndex(index)
