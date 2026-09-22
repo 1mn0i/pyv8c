@@ -19,7 +19,6 @@ from .collections import (
     DOMStringMap,
     DOMTokenList,
     HTMLCollection,
-    HTMLFormControlsCollection,
     NamedNodeMap,
 )
 from .css import CSSStyleDeclaration
@@ -30,6 +29,14 @@ from .utils import _VALID_NAME_RE, XHTML_NAMESPACE
 
 #: ``insertAdjacent*`` positions, in the order Chromium validates them.
 _ADJACENT_POSITIONS = ("beforebegin", "afterbegin", "beforeend", "afterend")
+
+# HTML void elements serialize without children or an end tag.  Keep this
+# local to the element serializer so programmatically-created nodes follow the
+# same rule as parser-created nodes.
+_VOID_ELEMENTS = frozenset({
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+})
 
 
 @interface('Element', 'Node')
@@ -360,6 +367,8 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         return pyv8.Null
     def outer_html(self):
         attrs = "".join(f' {k}="{escape(str(v), quote=True)}"' for k, v in self.attributes.items())
+        if self.localName in _VOID_ELEMENTS:
+            return f"<{self.localName}{attrs}>"
         return f"<{self.localName}{attrs}>{self.get_innerHTML()}</{self.localName}>"
     def _clone_shallow(self): return type(self)(self.localName, services=self._services, attributes=self.attributes.copy())
 
@@ -443,72 +452,6 @@ class HTMLUnknownElement(HTMLElement):
     )
 
 
-#: The tags a form collects: its listed elements.  An ``input`` in the
-#: image-button state is submittable but is not one of them.
-_LISTED_ELEMENT_TAGS = frozenset((
-    "button", "fieldset", "input", "object", "output", "select", "textarea",
-))
-
-
-def _is_listed_element(node):
-    """Whether ``node`` is a listed element, by tag and input type."""
-    if not isinstance(node, Element) or node.localName not in _LISTED_ELEMENT_TAGS:
-        return False
-    if node.localName != "input":
-        return True
-    return str(node.attributes.get("type", "")).strip().lower() != "image"
-
-
-@interface('HTMLFormElement', 'HTMLElement')
-class HTMLFormElement(HTMLElement):
-    """``<form>``: the controls it owns.
-
-    ``elements`` holds the listed elements whose form owner this form is --
-    descendants, and the controls elsewhere in the document that name it with
-    ``form=`` -- which is why the list follows the document's order and not the
-    form's.  A control's owner is the form its ``form`` attribute names, and the
-    nearest ancestor form only when it has no such attribute, so a control naming a
-    form that is not there belongs to no form at all.
-    """
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="elements", getter="get_elements", side_effect=1),
-            AttributeSpec(name="length", getter="get_length", side_effect=1),
-            AttributeSpec(name="action", getter="get_action", setter="set_action"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
-    def get_action(self):
-        """The submission URL: the document's own URL, without its fragment, when
-        the attribute is absent."""
-        return _url_value(self, "action") or _document_url(self).split("#", 1)[0]
-    def set_action(self, value): _set_url_value(self, "action", value)
-    def _owns(self, node):
-        """Whether this form is ``node``'s form owner."""
-        if "form" in node.attributes:
-            form_id = str(node.attributes.get("form", "")).strip()
-            lookup = getattr(self.root_node(), "fn_getElementById", None)
-            owner = lookup(form_id) if lookup is not None and form_id else None
-            return owner is self
-        for ancestor in node._ancestors():
-            if isinstance(ancestor, HTMLFormElement):
-                return ancestor is self
-        return False
-    def _controls(self):
-        return [node for node in self.root_node()._descendants()
-                if _is_listed_element(node) and self._owns(node)]
-    def get_elements(self):
-        value = getattr(self, "_elements_collection", None)
-        if value is None:
-            value = self._elements_collection = HTMLFormControlsCollection(
-                owner=self, getter=self._controls)
-        return value
-    def get_length(self):
-        return len(self._controls())
-
-
 #: The states ``button.type`` reports.  A missing attribute and a value the button
 #: does not know are both the submit button.
 _BUTTON_TYPES = frozenset(("submit", "reset", "button"))
@@ -523,6 +466,7 @@ class HTMLButtonElement(HTMLElement):
             AttributeSpec(name="name", getter="get_name", setter="set_name"),
             AttributeSpec(name="value", getter="get_value", setter="set_value"),
             AttributeSpec(name="type", getter="get_type", setter="set_type"),
+            AttributeSpec(name="form", getter="get_form", side_effect=1),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -535,6 +479,20 @@ class HTMLButtonElement(HTMLElement):
         value = self._attr("type").lower()
         return value if value in _BUTTON_TYPES else "submit"
     def set_type(self, value): self._set_string("type", value)
+    def get_form(self):
+        from .html_form import HTMLFormElement
+        form_id = self.attributes.get("form")
+        document = getattr(getattr(self._services, "document_services", None), "document", None)
+        if form_id and document is not None:
+            owner = document.fn_getElementById(form_id)
+            if isinstance(owner, HTMLFormElement):
+                return owner
+        node = self.parentElement
+        while isinstance(node, Element):
+            if isinstance(node, HTMLFormElement):
+                return node
+            node = node.parentElement
+        return pyv8.Null
 
 
 def _owning_table(row):

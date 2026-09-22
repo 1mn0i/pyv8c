@@ -4,8 +4,8 @@ A child ``Window`` is a global object owned by its own V8 Context, so it must
 never be handed to a different Context.  Every cross-origin reference therefore
 goes through :class:`WindowProxy`, a native-backed facade that keeps identity
 stable while exposing only the browser's safe cross-origin surface.
-``Window._view`` caches one proxy per target window and imports this module on
-first use, which keeps :mod:`dom.window` out of the cycle the reverse import
+``Window._view`` caches one proxy per browsing context and imports this module
+on first use, which keeps :mod:`dom.window` out of the cycle the reverse import
 would otherwise create.
 """
 
@@ -46,8 +46,12 @@ class _CrossOriginLocation:
         methods=(MethodSpec(name="replace", callback="fn_replace", length=1),),
     )
 
-    def __init__(self, location):
-        self._location = location
+    def __init__(self, proxy):
+        self._proxy = proxy
+
+    @property
+    def _location(self):
+        return self._proxy._child_window.location
 
     def get_href(self): deny_cross_origin()
     def get_origin(self): deny_cross_origin()
@@ -117,8 +121,17 @@ class WindowProxy:
 
     def __init__(self, parent_window, child_window):
         self._parent_window = parent_window
-        self._child_window = child_window
-        self._location = _CrossOriginLocation(child_window.location)
+        #: The frame outlives the Window, which a navigation replaces.
+        self._frame = getattr(child_window, "_frame_element", None)
+        self._child_context = child_window._services
+        self._location = _CrossOriginLocation(self)
+
+    @property
+    def _child_window(self):
+        frame = self._frame
+        if frame is not None and getattr(frame, "_child_services", None) is not None:
+            return frame._child_services.window
+        return self._child_context.window
 
     #: The names a cross-origin caller may read; see :mod:`dom.window`.
     _safe_names = _PROXY_SAFE_NAMES
@@ -183,8 +196,8 @@ class WindowProxy:
     def get_window(self): return self
     def get_self(self): return self
     def get_frames(self): return self
-    def get_top(self): return self._accessor()._view(self._child_window._top_window)
-    def get_parent(self): return self._accessor()._view(self._child_window._parent_window)
+    def get_top(self): return self._accessor()._view(self._child_window._top_target())
+    def get_parent(self): return self._accessor()._view(self._child_window._parent_target())
     def get_opener(self): return pyv8.Null
     def get_length(self): return self._child_window.get_length()
     def get_closed(self): return self._child_window.get_closed()

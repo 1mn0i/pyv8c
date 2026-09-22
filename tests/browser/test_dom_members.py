@@ -448,6 +448,49 @@ def test_xpath_walks_the_document(page):
     })()""") == [2, "two", "two", 0]
 
 
+def test_a_frames_window_keeps_its_identity_across_a_navigation(page):
+    page.set_content('<body><iframe id="f" src="about:blank"></iframe></body>',
+                     url="https://frame.test/")
+    assert page.evaluate("""(() => {
+        window.__saved = document.getElementById('f').contentWindow;
+        return window.__saved === document.getElementById('f').contentWindow;
+    })()""") is True
+    page.evaluate("document.getElementById('f').srcdoc = '<p>second</p>'")
+    assert page.evaluate("""(() => {
+        const frame = document.getElementById('f');
+        return [window.__saved === frame.contentWindow,
+                window.__saved.document === frame.contentDocument,
+                frame.contentDocument.body.textContent];
+    })()""") == [True, True, "second"]
+
+
+def test_a_navigation_gives_the_page_a_new_window_and_keeps_the_context(page):
+    page.set_content("<body>first</body>", url="https://nav.test/one")
+    page.evaluate("""(() => {
+        window.__mark = 'first';
+        window.name = 'kept';
+        sessionStorage.setItem('k', 'v');
+    })()""")
+    page.set_content("<body>second</body>", url="https://nav.test/two")
+    assert page.evaluate("""(() => {
+        return [window.__mark === undefined, window.name,
+                sessionStorage.getItem('k'), location.href,
+                window.top === window, window.parent === window,
+                window.window === window, document.body.textContent];
+    })()""") == [True, "kept", "v", "https://nav.test/two", True, True, True, "second"]
+
+
+def test_a_frames_top_and_parent_follow_their_pages_navigations(page):
+    page.set_content('<body><iframe src="about:blank"></iframe></body>',
+                     url="https://top.test/first")
+    child = next(iter(page._owned.frames))
+    assert child.evaluate("[parent.location.href, top.location.href]") == \
+        ["https://top.test/first", "https://top.test/first"]
+    page.set_content("<body></body>", url="https://top.test/second")
+    assert child.evaluate("[parent.location.href, top.location.href]") == \
+        ["https://top.test/second", "https://top.test/second"]
+
+
 def test_a_lock_request_runs_its_callback(page):
     page.set_content("<body></body>", url="https://secure.test/")
     page.evaluate("""window.__held = [];

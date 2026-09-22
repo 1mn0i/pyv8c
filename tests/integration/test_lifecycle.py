@@ -44,16 +44,17 @@ def test_document_lifecycle_and_resource_events_are_queued():
 def test_navigation_teardown_and_beforeunload_cancellation():
     browser = Browser()
     page = browser.new_context().new_page()
-    page.set_content("<body></body>", url="http://example.test/old")
+    page.set_content("""<body></body><script>
+        const mark = value => sessionStorage.setItem('teardown',
+            ((sessionStorage.getItem('teardown') || '') + ' ' + value).trim());
+        addEventListener('beforeunload', () => mark('beforeunload'));
+        addEventListener('pagehide', e => mark('pagehide:' + e.persisted));
+        addEventListener('unload', () => mark('unload'));
+    </script>""", url="http://example.test/old")
     page.run_until_idle()
-    page.evaluate("""
-        window.__teardown = [];
-        window.addEventListener('beforeunload', e => __teardown.push('beforeunload'));
-        window.addEventListener('pagehide', e => __teardown.push(['pagehide', e.persisted]));
-        window.addEventListener('unload', () => __teardown.push('unload'));
-    """)
     page.set_content("<body>new</body>", url="http://example.test/new")
-    assert page.evaluate("__teardown") == ["beforeunload", ["pagehide", False], "unload"]
+    assert page.evaluate("sessionStorage.getItem('teardown')") == \
+        "beforeunload pagehide:false unload"
     assert page.evaluate("document.URL") == "http://example.test/new"
 
     page.evaluate("window.onbeforeunload = e => e.preventDefault()")

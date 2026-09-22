@@ -173,12 +173,12 @@ def test_chrome_method_calls_are_reported_with_their_results():
         events.clear()
         assert page.evaluate("chrome.app.getDetails()") is pyv8.Null
         assert _messages(events) == [
-            "[Window] getter: Window.chrome -> <JSObject>",
-            "[Window] method: ChromeBindings.getDetails() -> null",
+            "[TOP] getter: Window.chrome -> <JSObject>",
+            "[TOP] method: ChromeBindings.getDetails() -> null",
         ]
         events.clear()
         page.evaluate("chrome.loadTimes().navigationType")
-        assert _messages(events)[-1] == "[Window] method: ChromeBindings.loadTimes() -> <JSObject>"
+        assert _messages(events)[-1] == "[TOP] method: ChromeBindings.loadTimes() -> <JSObject>"
     finally:
         browser.close()
 

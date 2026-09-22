@@ -337,14 +337,23 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
 
     def _update(self, values):
         values = list(dict.fromkeys(values))
+        old = self._raw_value()
         if values or self._attr in self._element.attributes:
             self._element.attributes[self._attr] = " ".join(values)
+        new = self._raw_value()
+        changed = getattr(self._element, "_attribute_changed", None)
+        if changed is not None and old != new:
+            changed(self._attr, old, new)
 
     def get_length(self): return len(self._tokens())
     def get_value(self): return self._raw_value()
     def set_value(self, value):
         value = dom_string(value)
+        old = self._raw_value()
         self._element.attributes[self._attr] = str(value)
+        changed = getattr(self._element, "_attribute_changed", None)
+        if changed is not None and old != str(value):
+            changed(self._attr, old, str(value))
     def fn_item(self, index=MISSING, *_extra):
         if index is MISSING:
             raise missing_error('DOMTokenList', 'item', 1, 0, constructor=False)

@@ -12,7 +12,7 @@ from ..web.bom.chrome import install_window_chrome
 from .services import WorkerRealmServices
 
 
-def _context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False):
+def _context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False, exposure_type=None):
     """Shared native Context arguments assembled from one binding session."""
     return {
         "trace": trace,
@@ -20,7 +20,7 @@ def _context_kwargs(session, context_type, trace, on_materialize=None, trace_cal
         "trace_callback": (log_trace if trace_callback is None else trace_callback) if trace or traceable else None,
         "ctx_type": context_type,
         "class_configs": session.configs,
-        "lazy_factory": session.lazy_factory(context_type, on_materialize=on_materialize),
+        "lazy_factory": session.lazy_factory(exposure_type or context_type, on_materialize=on_materialize),
     }
 
 
@@ -172,8 +172,11 @@ class PageRealm:
             "Window", roots=self.binding_session.universe.eager_names("Window"),
         )
         binding_prepared = time.perf_counter_ns()
+        #: A frame's realm is not the top page's: the label says which it is.
+        context_type = "FRAME" if page.parent_page is not None else "TOP"
         self.context = pyv8.Context(page.window, **_context_kwargs(
-            self.binding_session, "Window", page.trace,
+            self.binding_session, context_type, page.trace,
+            exposure_type="Window",
             on_materialize=self._record_deferred_materialized,
             trace_callback=browser.trace_callback,
             traceable=browser.traceable,
@@ -189,6 +192,7 @@ class PageRealm:
         deferred_declared_at = time.perf_counter_ns()
         # Chromium installs window.chrome before any page script runs.
         install_window_chrome(self.context, page.services)
+        page.window._publish_name()
         chrome_installed_at = time.perf_counter_ns()
         # The realm owns the compiled JavaScript helpers, and the page's script
         # controller borrows this instance, so the isolate's error hooks and

@@ -259,9 +259,9 @@ class Window(_SchedulingMixin, WindowProperties):
     def __init__(self, services=None, feature_runtime=None, **kw):
         super().__init__(services=services, **kw); self._services = services
         self._origin = getattr(services, "_origin", ("opaque", object()))
-        self._parent_window = self
-        self._top_window = self
         self._proxies = {}
+        #: Set for a window a frame owns; the element is what survives navigation.
+        self._frame_element = None
         environment = getattr(getattr(services, "realm_services", None), "environment", None)
         viewport = BrowserEnvironment.from_value(environment).viewport
         if feature_runtime is None:
@@ -371,16 +371,29 @@ class Window(_SchedulingMixin, WindowProperties):
 
     def get_window(self): return self
     def get_self(self): return self
-    def get_parent(self): return self._view(self._parent_window)
-    def get_top(self): return self._view(self._top_window)
+    def get_parent(self): return self._view(self._parent_target())
+    def get_top(self): return self._view(self._top_target())
+
+    def _parent_target(self):
+        parent = self._services.parent_window()
+        return self if parent is None else parent
+
+    def _top_target(self):
+        top = self._services.top_window()
+        return self if top is None else top
 
     def _view(self, target):
         if target is self:
             return self
-        if target not in self._proxies:
+        # One proxy per browsing context, not per Window: a navigation replaces
+        # the Window while the reference a page holds stays the same object.
+        frame = getattr(target, "_frame_element", None)
+        key = frame if frame is not None else target._services
+        proxy = self._proxies.get(key)
+        if proxy is None:
             from .window_proxy import WindowProxy
-            self._proxies[target] = WindowProxy(self, target)
-        return self._proxies[target]
+            proxy = self._proxies[key] = WindowProxy(self, target)
+        return proxy
 
     def __v8_index_get__(self, index):
         frames = self._frame_windows()
@@ -393,9 +406,6 @@ class Window(_SchedulingMixin, WindowProperties):
                      for node in self._services.document_services.document.fn_querySelectorAll("iframe")
                      if node._child_services is not None)
 
-    def _set_frame_parent(self, parent_window):
-        self._parent_window = parent_window if parent_window is not None else self
-        self._top_window = parent_window._top_window if parent_window is not None else self
     def get_document(self): self._require_same_origin(); return self._services.document_services.document
     def get_frames(self): return self
     def get_length(self): return len(self._frame_windows())
@@ -427,6 +437,10 @@ class Window(_SchedulingMixin, WindowProperties):
     def set_name(self, value):
         self._require_same_origin()
         self._window_name = str(value)
+        self._publish_name()
+    def _publish_name(self):
+        """Assign the name over the one a fresh global object already carries."""
+        self._services.realm_services.window_property("set", "name", self.get_name())
     def get_orientation(self):
         """Chromium's deprecated alias for the screen orientation angle.
 
@@ -493,8 +507,8 @@ class Window(_SchedulingMixin, WindowProperties):
     def get_frameElement(self):
         """The frame a child window lives in; a top-level window has none."""
         self._require_same_origin()
-        parent = self._parent_window
-        if parent is self:
+        parent = self._parent_target()
+        if parent is self or parent._origin != self._accessor_origin():
             return pyv8.Null
         document = parent._services.document_services.document
         return next((frame for frame in document.fn_querySelectorAll("iframe")

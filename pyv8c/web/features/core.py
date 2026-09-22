@@ -29,6 +29,7 @@ from ..dom import (
     html_classes,
     html_elements,
     html_iframe,
+    html_form,
     html_input,
     mutation,
     nodes,
@@ -46,6 +47,7 @@ FEATURE = FeatureImplementation(
     _interfaces(
         *error_interfaces(),
         collections.DOMStringMap, collections.DOMTokenList, collections.HTMLAllCollection, collections.HTMLCollection, collections.HTMLFormControlsCollection, collections.HTMLOptionsCollection, collections.NamedNodeMap, collections.NodeList,
+        html_form.RadioNodeList,
         events.CustomEvent, events.Event, events.EventTarget, events.KeyboardEvent, events.MouseEvent, events.UIEvent,
         events.AnimationEvent, events.BeforeUnloadEvent, events.CompositionEvent, events.FocusEvent,
         events.HashChangeEvent, events.InputEvent, events.PageTransitionEvent, events.PointerEvent,

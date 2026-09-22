@@ -9,7 +9,6 @@ from .html_elements import (
     HTMLAnchorElement,
     HTMLAudioElement,
     HTMLButtonElement,
-    HTMLFormElement,
     HTMLImageElement,
     HTMLLinkElement,
     HTMLMediaElement,
@@ -24,6 +23,7 @@ from .html_elements import (
     HTMLVideoElement,
     _html_class,
 )
+from .html_form import HTMLFormElement
 from .html_iframe import HTMLIFrameElement
 from .html_input import (
     HTMLInputElement,

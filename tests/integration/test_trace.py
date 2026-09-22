@@ -70,7 +70,7 @@ def test_declined_reads_are_reported_with_the_value_they_resolve_to():
         page.set_content("<body></body>", url="https://example.test/")
         events.clear()
         assert page.evaluate("eval") is not None
-        assert _messages(events) == ["[Window] getter: Window.eval -> function eval() { [native code] }"]
+        assert _messages(events) == ["[TOP] getter: Window.eval -> function eval() { [native code] }"]
         events.clear()
         # A name no property provides has no value to show, so it stays silent.
         assert page.evaluate("window.notThere") is pyv8.Undefined
@@ -93,16 +93,16 @@ def test_probes_are_reported_separately_from_reads():
         assert page.evaluate("Object.getOwnPropertyDescriptor(window, 'eval') === undefined") is False
         probes = [message for message in _messages(events) if " has: " in message or " descriptor: " in message]
         assert probes == [
-            "[Window] has: Window.eval -> True",
-            "[Window] has: Window.notThere -> False",
-            "[Window] descriptor: Window.eval -> True",
+            "[TOP] has: Window.eval -> True",
+            "[TOP] has: Window.notThere -> False",
+            "[TOP] descriptor: Window.eval -> True",
         ]
         assert [event for event in events if event[0] == "get" and event[2] == "eval"] == []
         events.clear()
         assert page.evaluate("typeof window.eval") == 'function'
         assert [event for event in events if event[0] in ("has", "descriptor")] == []
         assert [message for message in _messages(events) if "eval" in message] == [
-            "[Window] getter: Window.eval -> function eval() { [native code] }"]
+            "[TOP] getter: Window.eval -> function eval() { [native code] }"]
     finally:
         browser.close()
 
@@ -118,10 +118,27 @@ def test_declared_getters_are_reported_once_with_their_value():
         page.evaluate("navigator.userAgent")
         messages = _messages(events)
         assert [message.split(" -> ")[0] for message in messages] == [
-            "[Window] getter: Window.navigator",
-            "[Window] getter: Navigator.userAgent",
+            "[TOP] getter: Window.navigator",
+            "[TOP] getter: Navigator.userAgent",
         ]
         assert "undefined" not in messages[-1]
+    finally:
+        browser.close()
+
+
+def test_a_frames_realm_is_labelled_apart_from_the_pages_own():
+    """A frame's realm is not the page's: its events say FRAME, not TOP."""
+    events = []
+    browser = Browser(trace=True, traceable=True, trace_callback=lambda *event: events.append(event),
+                      stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        events.clear()
+        page.set_content('<body><iframe srcdoc="&lt;script&gt;navigator.userAgent&lt;/script&gt;">'
+                         "</iframe></body>", url="https://example.test/")
+        messages = _messages(events)
+        assert any(message.startswith("[FRAME] ") and "userAgent" in message for message in messages)
+        assert not any(message.startswith("[TOP] ") and "userAgent" in message for message in messages)
     finally:
         browser.close()
 

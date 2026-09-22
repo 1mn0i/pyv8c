@@ -149,8 +149,6 @@ class Page:
         self.realm.executor.attach_rejection_tracker(self.rejections)
         self.context = self.realm.context
         Window._bind_context(self.context, self.window)
-        if parent is not None:
-            self.window._set_frame_parent(parent.window)
 
     @property
     def trace(self):
@@ -244,6 +242,45 @@ class Page:
     @property
     def binding_session(self):
         return self.realm.binding_session
+
+    def _window_name_of(self, previous_window, previous_realm):
+        """The browsing context's name, which a page may have set from script."""
+        context = previous_realm.context
+        if context is not None:
+            try:
+                return str(context.exec_js("String(this.name)"))
+            except BaseException:
+                pass
+        return getattr(previous_window, "_window_name", "")
+
+    def _renew_document_realm(self, url):
+        """Give the page the Window and realm a new document comes with.
+
+        Only browsing-context state comes along; a new realm is a new global
+        object, so the last document's properties go with the last document.
+        """
+        previous_window, previous_realm = self.window, self.realm
+        window = Window(
+            services=self.services,
+            feature_runtime=self.context_owner.browser.interface_universe.runtime,
+        )
+        window._frame_element = previous_window._frame_element
+        window._window_name = self._window_name_of(previous_window, previous_realm)
+        for slot in ("history", "localStorage", "sessionStorage"):
+            window._features._cache(slot, previous_window._features.value(slot))
+        self.window = window
+        self.services.window = window
+        self.realm = PageRealm(self)
+        self.services.bind_realm(self.realm)
+        self.realm.executor.attach_task_queue(self.tasks)
+        self.realm.executor.attach_rejection_tracker(self.rejections)
+        self.context = self.realm.context
+        Window._bind_context(self.context, window)
+        Window._unbind_context(previous_realm.context)
+        # The old realm is running the command that got here: closing it from its
+        # own queue would run inside that command.
+        threading.Thread(target=previous_realm.close, daemon=True).start()
+        return window
 
     @property
     def url(self):

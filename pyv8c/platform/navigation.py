@@ -37,10 +37,14 @@ class NavigationController:
             lifecycle.dispatch_page_hide(False)
             lifecycle.dispatch_unload()
         self.generation += 1
+        # A later document replaces the realm; the first one is the page's own.
+        renew_realm = self.has_navigation
         self.has_navigation = True
         self.parser_done = lifecycle.dom_content_loaded = lifecycle.document_load_fired = False
         self.page.resources.reset()
         self.page.scripts.reset()
+        if renew_realm:
+            self.page._renew_document_realm(str(url))
         self.page._update_origin(url)
         self.page.window.location.href = str(url)
         self.page.window.sync_history_url(str(url))

@@ -256,6 +256,12 @@ class _ResourceCapability:
     def ensure_iframe_context(self, iframe):
         return self._owner._resources.ensure_iframe_context(iframe)
 
+    def discard_iframe_context(self, iframe):
+        return self._owner._resources.discard_iframe_context(iframe)
+
+    def load_iframe_markup(self, iframe, markup):
+        return self._owner._resources.load_iframe_markup(iframe, markup)
+
     def resolve_worker_source(self, script_url):
         return self._owner._resources.resolve_worker_source(script_url)
 
@@ -315,6 +321,8 @@ class _DocumentCapability:
 
     def node_adopted(self, node):
         if getattr(node, "localName", "") == "iframe":
+            if not node._is_connected():
+                return None
             # An inserted frame gets a browsing context of its own, the way a
             # browser creates one for ``about:blank``.  Building a whole realm is
             # left to a queued task: an insertion happens while a script is
@@ -322,7 +330,7 @@ class _DocumentCapability:
             # one's executor.
             services = self._owner._resources
             services.ensure_iframe_context(node)
-            if (node.get_src() and node.attributes.get("srcdoc") is None
+            if (node.get_src()
                     and not getattr(node, "_resource_started", False)):
                 services.discover_element_resource(node)
             return None
@@ -512,6 +520,22 @@ class PageServices:
 
     def bind_realm(self, page_realm):
         self._page_realm = page_realm
+
+    def parent_window(self):
+        """The window of the page this one is framed by; ``None`` at the top."""
+        page = self._realm_page()
+        parent = None if page is None else page.parent_page
+        return None if parent is None else parent.window
+
+    def top_window(self):
+        """The window of this page's top-level page; ``None`` when it is that page."""
+        page = self._realm_page()
+        top = None if page is None else page.top_page
+        return None if top is None or top is page else top.window
+
+    def _realm_page(self):
+        realm = self._page_realm
+        return None if realm is None else realm.page
 
 
 __all__ = ["PageServices", "WorkerContext", "WorkerRealmServices"]

@@ -263,6 +263,13 @@ class Node(EventTarget):
             _record_mutation(self, "characterData", old_value=previous)
 
     @staticmethod
+    def _notify_removed(node):
+        for descendant in (node, *tuple(node._descendants())):
+            callback = getattr(descendant, "_on_removed_from_document", None)
+            if callback is not None:
+                callback()
+
+    @staticmethod
     def _detach_from_parent(node):
         parent = node.parentNode
         if parent is not None:
@@ -307,11 +314,8 @@ class Node(EventTarget):
                              previous=self._children[position - 1] if position else None,
                              next_=(self._children[position + 1]
                                     if position + 1 < len(self._children) else None))
+        if document_services is not None:
             callback = getattr(document_services, "node_adopted", None)
-            # A frame needs its browsing context even while the parser is still
-            # running: a script that inserts one reads ``contentWindow`` right
-            # away.  Scripts defer to the adoption callback only once parsing has
-            # finished, which is what keeps a parsed script's execution order.
             framed = getattr(node, "localName", "") == "iframe"
             if callback is not None and (not document_services.parsing or framed):
                 callback(node)
@@ -322,6 +326,7 @@ class Node(EventTarget):
         for child in removed:
             _bump_style_version(child)
             child.parentNode = None
+            self._notify_removed(child)
         if removed:
             _record_mutation(self, "childList", removed=removed)
         self._children = []
@@ -363,7 +368,9 @@ class Node(EventTarget):
         node = interface_value(node, 'Node', 'Node', 'removeChild', 1, nullable=False)
         if node not in self._children: raise NotFoundError("The node to be removed is not a child.")
         _bump_style_version(node)
-        self._children.remove(node); node.parentNode = None; return node
+        self._children.remove(node); node.parentNode = None
+        self._notify_removed(node)
+        return node
     def fn_replaceChild(self, new=MISSING, old=MISSING, *_extra):
         if new is MISSING:
             raise missing_error('Node', 'replaceChild', 2, 0, constructor=False)

@@ -9,7 +9,7 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
-from ...foundation.arguments import boolean, dom_string
+from ...foundation.arguments import MISSING, boolean, dom_string
 from .collections import DOMTokenList
 from .html_elements import HTMLElement, _attribute, _set_url_value, _url_attr, _url_value
 
@@ -53,22 +53,79 @@ class HTMLIFrameElement(HTMLElement):
     def __init__(self, tag_name="iframe", services=None, **kw):
         super().__init__(tag_name, services=services, **kw)
         self._child_services = None
+
+    def _is_connected(self):
+        """Whether this element is currently attached to a Document.
+
+        Chromium does not start an iframe navigation while the element is
+        detached.  The browsing context is created by the adoption hook when
+        it is inserted instead.
+        """
+        node = self
+        while node is not None:
+            if getattr(node, "nodeType", None) == 9:  # Document
+                return True
+            node = getattr(node, "parentNode", None)
+        return False
+
+    def _on_removed_from_document(self):
+        if self._child_services is not None:
+            self._services.resource_services.discard_iframe_context(self)
+
+    def _attribute_changed(self, name, old, new):
+        """Apply the navigation side effects of reflected content attributes."""
+        if old == new:
+            return
+        if name == "name":
+            if self._child_services is not None:
+                self._child_services.window._window_name = str(new or "")
+            return
+        if name not in ("src", "srcdoc"):
+            return
+        if name == "src" and "srcdoc" in self.attributes:
+            return
+        self._resource_started = False
+        if not self._is_connected() or self._services is None:
+            return
+        resources = self._services.resource_services
+        if resources is None:
+            return
+        self._services.realm_services.post_task(lambda: resources.load_iframe(self)
+                                                if self._is_connected() else None)
+
+    def fn_setAttributeNS(self, namespace=MISSING, name=MISSING, value=MISSING, *_extra):
+        old = self.attributes.get(str(name).lower()) if name is not MISSING else None
+        result = super().fn_setAttributeNS(namespace, name, value, *_extra)
+        if name is not MISSING:
+            self._attribute_changed(str(name).lower(), old,
+                                    self.attributes.get(str(name).lower()))
+        return result
+
+    def fn_removeAttribute(self, name=MISSING, *_extra):
+        old_name = None if name is MISSING else str(dom_string(name)).lower()
+        old = self.attributes.get(old_name) if old_name is not None else None
+        result = super().fn_removeAttribute(name, *_extra)
+        if old_name is not None:
+            self._attribute_changed(old_name, old, self.attributes.get(old_name))
+        return result
     def get_src(self): return _url_value(self, "src")
     def set_src(self, value):
         _set_url_value(self, "src", value)
         self._resource_started = False
-        if self._services:
+        if self._services and self._is_connected() and "srcdoc" not in self.attributes:
             resource_services = self._services.resource_services
             if resource_services is not None: resource_services.load_iframe(self)
     def get_srcdoc(self): return self.attributes.get("srcdoc", "")
     def set_srcdoc(self, value):
         markup = str(dom_string(value))
+        old = self.attributes.get("srcdoc")
         self.attributes["srcdoc"] = markup
         self._resource_started = False
-        if self._services is not None and self._child_services is not None:
+        if self._services is not None and self._is_connected() and old != markup:
             resource_services = self._services.resource_services
-            self._services.realm_services.post_task(
-                lambda: resource_services.load_iframe_markup(self, markup))
+            if resource_services is not None:
+                self._services.realm_services.post_task(
+                    lambda: resource_services.load_iframe_markup(self, markup))
     def get_name(self): return self.attributes.get("name", "")
     def set_name(self, value):
         self.attributes["name"] = str(dom_string(value))

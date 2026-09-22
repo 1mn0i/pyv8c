@@ -49,31 +49,28 @@ def test_deferred_scripts_run_before_dom_content_loaded_and_after_ready_state():
 
 
 def test_page_show_and_hide_are_page_transition_events():
+    record = """
+        const mark = (kind, event) => sessionStorage.setItem(kind,
+            [event instanceof PageTransitionEvent, event.persisted].join());
+    """
     browser = Browser(stub_logging="off")
     try:
         page = browser.new_context().new_page()
-        page.set_content("<body></body>", url="https://example.test/first")
+        page.set_content(
+            "<body></body><script>" + record +
+            "addEventListener('pagehide', e => mark('hide', e));</script>",
+            url="https://example.test/first",
+        )
         page.run_until_idle()
-        page.evaluate("""
-            window.__transitions = [];
-            window.addEventListener('pageshow', e => __transitions.push(
-                ['show', e instanceof PageTransitionEvent, e.persisted]));
-        """)
-        page.set_content("<body>next</body>", url="https://example.test/second")
+        page.set_content(
+            "<body>next</body><script>" + record +
+            "addEventListener('pageshow', e => mark('show', e));</script>",
+            url="https://example.test/second",
+        )
         page.run_until_idle()
-        assert page.evaluate("__transitions") == [["show", True, False]]
-
-        page.evaluate("""
-            window.addEventListener('pagehide', e => __transitions.push(
-                ['hide', e instanceof PageTransitionEvent, e.persisted]));
-        """)
-        page.set_content("<body>third</body>", url="https://example.test/third")
-        page.run_until_idle()
-        assert page.evaluate("__transitions") == [
-            ["show", True, False],
-            ["hide", True, False],
-            ["show", True, False],
-        ]
+        assert page.evaluate(
+            "[sessionStorage.getItem('hide'), sessionStorage.getItem('show')]"
+        ) == ["true,false", "true,false"]
     finally:
         browser.close()
 

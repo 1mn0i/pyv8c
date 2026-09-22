@@ -37,12 +37,25 @@ class HTMLTextAreaElement(HTMLElement):
         attributes=(
             AttributeSpec(name="defaultValue", getter="get_defaultValue", setter="set_defaultValue"),
             AttributeSpec(name="name", getter="get_name", setter="set_name"),
+            AttributeSpec(name="form", getter="get_form", side_effect=1),
         ),
         constructor_behavior=0,
         has_constructor=1,
     )
     def get_name(self): return self._attr("name")
     def set_name(self, value): self._set_string("name", value)
+    def get_form(self): return self._find_form()
+    def _find_form(self):
+        document = getattr(getattr(self._services, "document_services", None), "document", None)
+        form_id = self.attributes.get("form")
+        if form_id and document is not None:
+            owner = document.fn_getElementById(form_id)
+            if getattr(owner, "localName", None) == "form": return owner
+        node = self.parentElement
+        while isinstance(node, Element):
+            if node.localName == "form": return node
+            node = node.parentElement
+        return pyv8.Null
     def get_defaultValue(self): return str(self.get_textContent())
     def set_defaultValue(self, value): self.set_textContent(str(dom_string(value)))
 
@@ -124,6 +137,7 @@ class HTMLSelectElement(HTMLElement):
         attributes=(
             AttributeSpec(name="value", getter="get_value", setter="set_value"),
             AttributeSpec(name="name", getter="get_name", setter="set_name"),
+            AttributeSpec(name="form", getter="get_form", side_effect=1),
             AttributeSpec(name="options", getter="get_options", side_effect=1),
             AttributeSpec(name="selectedIndex", getter="get_selectedIndex", setter="set_selectedIndex"),
             AttributeSpec(name="length", getter="get_length", side_effect=1),
@@ -136,6 +150,17 @@ class HTMLSelectElement(HTMLElement):
         return [node for node in self._descendants() if isinstance(node, HTMLOptionElement)]
     def get_name(self): return self._attr("name")
     def set_name(self, value): self._set_string("name", value)
+    def get_form(self):
+        form_id = self.attributes.get("form")
+        document = getattr(getattr(self._services, "document_services", None), "document", None)
+        if form_id and document is not None:
+            owner = document.fn_getElementById(form_id)
+            if getattr(owner, "localName", None) == "form": return owner
+        node = self.parentElement
+        while isinstance(node, Element):
+            if node.localName == "form": return node
+            node = node.parentElement
+        return pyv8.Null
     def get_options(self):
         value = getattr(self, "_options_collection", None)
         if value is None:

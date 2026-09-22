@@ -63,6 +63,28 @@ class ResourceController:
             handle.cancel()
         self.resources.clear()
 
+    def cancel_node(self, node):
+        """Cancel an in-flight request owned by a DOM resource node."""
+        for token, (_generation, owner, _kind, handle) in tuple(self.resources.items()):
+            if owner is node:
+                handle.cancel()
+                self.resources.pop(token, None)
+
+    def discard_iframe_context(self, iframe):
+        self.cancel_node(iframe)
+        services = getattr(iframe, "_child_services", None)
+        iframe._child_services = None
+        if services is None:
+            return
+        services.closed = True
+        page = getattr(getattr(services, "_page_realm", None), "page", None)
+        if page is not None and not page.closed:
+            # Removal can happen while the parent realm is executing.  Closing
+            # the child synchronously would wait on an executor that is itself
+            # reachable from that script and deadlock; teardown is dispatched
+            # after the parent turn.
+            page.tasks.post(page.close)
+
     def _cache_key(self, target, request):
         if not self.page.cache_enabled:
             return None
@@ -407,8 +429,7 @@ class ResourceController:
             src = node.attributes.get("src", "")
         elif tag == "iframe":
             if node.attributes.get("srcdoc") is not None:
-                self.load_iframe(node)
-                return
+                return  # the element's own markup is the document
             src = node.attributes.get("src", "") or "about:blank"
         else:
             return
@@ -541,6 +562,11 @@ class ResourceController:
             return self.load_iframe_markup(iframe, str(markup))
         page = self.page
         child = self._child_frame_page(iframe, "about:blank")
+        # When a URL/srcdoc is present, the initial about:blank is replaced as
+        # part of the same insertion navigation and must not emit its own
+        # iframe load events.
+        if iframe.get_src() or "srcdoc" in iframe.attributes:
+            return child
         child.set_content("", url="about:blank")
         child.lifecycle.when_loaded(lambda ok: page.tasks.post(
             lambda: self.dispatch_frame_completion(iframe, ok)))
@@ -549,6 +575,7 @@ class ResourceController:
     def load_iframe_markup(self, iframe, markup):
         """Load markup the frame carries itself; nothing is fetched."""
         page = self.page
+        self.cancel_node(iframe)
         child = self._child_frame_page(iframe, "about:srcdoc")
         child.set_content(markup, url="about:srcdoc")
         child.lifecycle.when_loaded(lambda ok: page.tasks.post(
@@ -566,12 +593,14 @@ class ResourceController:
             child = Page(page.context_owner, url=target, environment=page.environment, parent=page,
                          origin=self._frame_origin(iframe))
             iframe._child_services = child.services
-            child.services.sandbox_tokens = self._sandbox_tokens(iframe)
-            child.window._window_name = str(iframe.attributes.get("name", ""))
             page.services.context_services.track_frame(child)
             devtools = page.context_owner._devtools
             if devtools is not None:
                 child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
+        child.services.sandbox_tokens = self._sandbox_tokens(iframe)
+        child.window._window_name = str(iframe.attributes.get("name", ""))
+        child.window._publish_name()
+        child.window._frame_element = iframe
         return child
 
     def load_iframe_response(self, iframe, response, callback):
@@ -586,6 +615,7 @@ class ResourceController:
 
     def load_iframe(self, iframe):
         page = self.page
+        self.cancel_node(iframe)
         markup = iframe.attributes.get("srcdoc")
         if markup is not None:
             return self.load_iframe_markup(iframe, str(markup))

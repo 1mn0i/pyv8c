@@ -117,6 +117,7 @@ def test_borrowed_prototype_uses_owning_document(page):
         childProperties.unique === undefined, 'childOnly' in childProperties,
         'unique' in childProperties]''') == [True, True, True, False]
     child.set_content('<div id="childOnly"></div>', url='http://other.test/child')
+    page.context.expose(childProperties=child.evaluate('Object.getPrototypeOf(Window.prototype)'))
     assert page.evaluate('try { childProperties.childOnly; } catch (e) { [e.name, e.code]; }') == ['SecurityError', 18]
 
 
