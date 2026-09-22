@@ -34,7 +34,7 @@ def origin_tuple(value, *, inherited=None):
     raw = str(value)
     parts = urlsplit(raw)
     scheme = parts.scheme.lower()
-    if scheme == "about" and parts.path.lower() == "blank" and inherited is not None:
+    if scheme == "about" and parts.path.lower() in ("blank", "srcdoc") and inherited is not None:
         return tuple(inherited)
     if scheme == "blob":
         embedded_origin = origin_tuple(raw[5:], inherited=inherited)

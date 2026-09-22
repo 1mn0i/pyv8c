@@ -8,6 +8,7 @@ from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_err
 from ...foundation.errors import InvalidCharacterError, V8TypeError, dom_exception
 from .character_data import Comment, DocumentType, Text
 from .collections import HTMLAllCollection, HTMLCollection, NodeList
+from .css import StyleSheetList
 from .html_classes import class_for_tag
 from .html_elements import Element
 from .mixins import _ParentNodeMixin
@@ -22,6 +23,11 @@ class Document(_ParentNodeMixin, Node):
         attributes=(
             AttributeSpec(name="URL", getter="get_URL", side_effect=1),
             AttributeSpec(name="documentURI", getter="get_URL", side_effect=1),
+            AttributeSpec(name="referrer", getter="get_referrer", side_effect=1),
+            AttributeSpec(name="compatMode", getter="get_compatMode", side_effect=1),
+            AttributeSpec(name="contentType", getter="get_contentType", side_effect=1),
+            AttributeSpec(name="dir", getter="get_dir", setter="set_dir"),
+            AttributeSpec(name="styleSheets", getter="get_styleSheets", side_effect=1),
             AttributeSpec(name="documentElement", getter="get_documentElement", side_effect=1),
             AttributeSpec(name="scrollingElement", getter="get_scrollingElement", side_effect=1),
             AttributeSpec(name="body", getter="get_body", side_effect=1),
@@ -191,40 +197,47 @@ class Document(_ParentNodeMixin, Node):
         """The element that scrolls the view: the root, as a standards document has it."""
         return self.get_documentElement()
 
-    def _ensure_skeleton(self):
-        """Wrap a parsed document in the ``html``/``head``/``body`` a browser builds.
+    def get_styleSheets(self):
+        view = getattr(self, "_style_sheets", None)
+        if view is None:
+            view = self._style_sheets = StyleSheetList(self)
+        return view
 
-        A ``head`` or ``body`` the markup wrote is adopted, not duplicated, and
-        what is left outside the root moves into the body.
+    def get_referrer(self):
+        """The page that led here; a navigation nothing linked from reads as empty."""
+        return str(getattr(self, "_referrer", "") or "")
+
+    def get_compatMode(self):
+        """``CSS1Compat`` under a doctype and ``BackCompat`` without one, as Chrome reads it."""
+        return "CSS1Compat" if any(getattr(child, "nodeType", None) == 10
+                                   for child in self._children) else "BackCompat"
+
+    def get_contentType(self): return "text/html"
+
+    def get_dir(self):
+        html = self.get_documentElement()
+        value = str(getattr(html, "attributes", {}).get("dir", "")).lower()
+        return value if value in ("ltr", "rtl", "auto") else ""
+
+    def set_dir(self, value):
+        html = self.get_documentElement()
+        if html is not pyv8.Null:
+            html.attributes["dir"] = str(dom_string(value))
+
+    def _ensure_skeleton(self):
+        """Make the html/head/body a document has when nothing was parsed.
+
+        The parser builds them as it reads, so this only fills in what is
+        missing, and never moves a node the parse already placed.
         """
         html = self._first_named(self, "html")
-        strays = [child for child in list(self._children) if child is not html]
         if html is None:
-            # Nothing wraps the markup: the root is made here, and a head or body
-            # the markup wrote at this level is adopted rather than duplicated.
-            head = next((child for child in strays if getattr(child, "localName", "") == "head"), None)
-            body = next((child for child in strays if getattr(child, "localName", "") == "body"), None)
             html = self._new_element("html")
-            self._adopt_child(html, self._content_index())
-        else:
-            head = self._first_named(html, "head")
-            body = self._first_named(html, "body")
-        if head is None:
-            head = self._new_element("head")
-        if body is None:
-            body = self._new_element("body")
-        # The head comes first because that is the order a browser builds them in,
-        # whether they were parsed or made here.
-        html._adopt_child(head, 0)
-        html._adopt_child(body)
-        elements = [position for position, child in enumerate(strays) if isinstance(child, Element)]
-        first, last = (elements[0], elements[-1]) if elements else (len(strays), -1)
-        for position, child in enumerate(strays):
-            if child is head or child is body or isinstance(child, (DocumentType, Comment)):
-                continue
-            if isinstance(child, Text) and not str(child.nodeValue or "").strip() and not first < position < last:
-                continue
-            body._adopt_child(child)
+            self._adopt_child(html)
+        if self._first_named(html, "head") is None:
+            html._adopt_child(self._new_element("head"), 0)
+        if self._first_named(html, "body") is None:
+            html._adopt_child(self._new_element("body"))
     def get_defaultView(self):
         if self._services is None:
             return pyv8.Null

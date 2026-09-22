@@ -152,7 +152,14 @@ class PageRealm:
         self.binding_session = browser.interface_universe.binding_session(page.services)
         page.services.bind_realm(self)
         try:
-            self.executor.call(self._initialize)
+            if pyv8.current_context() is not None:
+                # Asked for from inside a running script, where the caller already
+                # holds what the realm's own thread would wait on: build it here.
+                # An inserted frame is the case -- its window has to exist before
+                # the script that inserted it returns.
+                self._initialize()
+            else:
+                self.executor.call(self._initialize)
         except BaseException:
             self.close()
             raise

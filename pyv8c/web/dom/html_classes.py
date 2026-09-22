@@ -7,11 +7,12 @@ of them, while those modules only need the node model below.
 from .html_canvas import HTMLCanvasElement
 from .html_elements import (
     HTMLAnchorElement,
+    HTMLAudioElement,
     HTMLButtonElement,
     HTMLFormElement,
-    HTMLIFrameElement,
     HTMLImageElement,
     HTMLLinkElement,
+    HTMLMediaElement,
     HTMLMetaElement,
     HTMLScriptElement,
     HTMLStyleElement,
@@ -20,8 +21,10 @@ from .html_elements import (
     HTMLTableRowElement,
     HTMLTemplateElement,
     HTMLUnknownElement,
+    HTMLVideoElement,
     _html_class,
 )
+from .html_iframe import HTMLIFrameElement
 from .html_input import (
     HTMLInputElement,
     HTMLOptionElement,
@@ -33,10 +36,13 @@ from .html_input import (
 HTML_CLASSES = {
     **{name: _html_class(name) for name in (
         "HTMLHtmlElement", "HTMLHeadElement", "HTMLBodyElement", "HTMLDivElement",
-        "HTMLSpanElement", "HTMLMediaElement")},
+        "HTMLSpanElement")},
     # Interfaces with members of their own carry a hand-written class.
     "HTMLFormElement": HTMLFormElement,
     "HTMLButtonElement": HTMLButtonElement,
+    "HTMLMediaElement": HTMLMediaElement,
+    "HTMLAudioElement": HTMLAudioElement,
+    "HTMLVideoElement": HTMLVideoElement,
     "HTMLTableElement": HTMLTableElement,
     "HTMLTableRowElement": HTMLTableRowElement,
     "HTMLTableCellElement": HTMLTableCellElement,
@@ -59,6 +65,7 @@ HTML_CLASSES = {
 #: because ``HTMLMediaElement`` and ``HTMLUnknownElement`` are not tags.
 TAG_CLASSES = {
     "a": HTML_CLASSES["HTMLAnchorElement"],
+    "audio": HTML_CLASSES["HTMLAudioElement"],
     "body": HTML_CLASSES["HTMLBodyElement"],
     "button": HTML_CLASSES["HTMLButtonElement"],
     "canvas": HTML_CLASSES["HTMLCanvasElement"],
@@ -82,6 +89,7 @@ TAG_CLASSES = {
     "template": HTML_CLASSES["HTMLTemplateElement"],
     "textarea": HTML_CLASSES["HTMLTextAreaElement"],
     "tr": HTML_CLASSES["HTMLTableRowElement"],
+    "video": HTML_CLASSES["HTMLVideoElement"],
 }
 
 

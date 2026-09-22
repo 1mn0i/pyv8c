@@ -10,7 +10,33 @@ from ...engine.features import interface
 from ...foundation.environment import BrowserEnvironment
 from ..dom.events import EventTarget
 
-__all__ = ["Screen"]
+__all__ = ["Screen", "ScreenOrientation"]
+
+
+@interface('ScreenOrientation', 'EventTarget')
+class ScreenOrientation(EventTarget):
+    """The display's orientation: a desktop screen is wider than it is tall."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="angle", getter="get_angle", side_effect=1),
+            AttributeSpec(name="type", getter="get_type", side_effect=1),
+            AttributeSpec(name="onchange", getter="get_onchange", setter="set_onchange"),
+        ),
+        constructor_behavior=0,
+        to_string_tag="ScreenOrientation",
+        has_constructor=1,
+    )
+
+    def __init__(self, width=1280, height=720, **_):
+        super().__init__(**_)
+        self._width, self._height = float(width), float(height)
+
+    def get_angle(self): return 0
+    def get_type(self):
+        return "landscape-primary" if self._width >= self._height else "portrait-primary"
+    def get_onchange(self): return self._get_handler("onchange")
+    def set_onchange(self, value): self._set_handler("onchange", value)
 
 
 @interface('Screen', 'EventTarget')
@@ -28,6 +54,7 @@ class Screen(EventTarget):
                     "availTop",
                     "colorDepth",
                     "pixelDepth",
+                    "orientation",
                 )
 
         ),
@@ -40,6 +67,7 @@ class Screen(EventTarget):
         self.width, self.height = config.width, config.height
         self.availWidth, self.availHeight = config.avail_width, config.avail_height
         self.colorDepth, self.pixelDepth = config.color_depth, config.pixel_depth
+        self._orientation = None
     def get_width(self): return self.width
     def get_height(self): return self.height
     def get_availWidth(self): return self.availWidth
@@ -49,3 +77,8 @@ class Screen(EventTarget):
     def get_availTop(self): return 0
     def get_colorDepth(self): return self.colorDepth
     def get_pixelDepth(self): return self.pixelDepth
+    def get_orientation(self):
+        """The one orientation object this screen hands out."""
+        if self._orientation is None:
+            self._orientation = ScreenOrientation(width=self.width, height=self.height)
+        return self._orientation

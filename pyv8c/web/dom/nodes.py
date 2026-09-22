@@ -308,7 +308,13 @@ class Node(EventTarget):
                              next_=(self._children[position + 1]
                                     if position + 1 < len(self._children) else None))
             callback = getattr(document_services, "node_adopted", None)
-            if callback is not None: callback(node)
+            # A frame needs its browsing context even while the parser is still
+            # running: a script that inserts one reads ``contentWindow`` right
+            # away.  Scripts defer to the adoption callback only once parsing has
+            # finished, which is what keeps a parsed script's execution order.
+            framed = getattr(node, "localName", "") == "iframe"
+            if callback is not None and (not document_services.parsing or framed):
+                callback(node)
         return node
 
     def _replace_children(self, nodes):

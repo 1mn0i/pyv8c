@@ -169,6 +169,7 @@ class Window(_SchedulingMixin, WindowProperties):
             window_attribute("outerHeight", "get_outerHeight", cross_origin=True),
             window_attribute("orientation", "get_orientation", cross_origin=True),
             window_attribute("devicePixelRatio", "get_devicePixelRatio", cross_origin=True),
+            window_attribute("name", "get_name", "set_name", cross_origin=True),
             # Values a page reads about the window itself.
             window_attribute("origin", "get_origin", cross_origin=True),
             window_attribute("scrollX", "get_scrollX", cross_origin=True),
@@ -420,6 +421,12 @@ class Window(_SchedulingMixin, WindowProperties):
     def get_outerWidth(self): self._require_same_origin(); return self.outerWidth
     def get_outerHeight(self): self._require_same_origin(); return self.outerHeight
     def get_devicePixelRatio(self): self._require_same_origin(); return self.devicePixelRatio
+    def get_name(self):
+        """The name a page gave this window; empty until it sets one."""
+        return str(getattr(self, "_window_name", "") or "")
+    def set_name(self, value):
+        self._require_same_origin()
+        self._window_name = str(value)
     def get_orientation(self):
         """Chromium's deprecated alias for the screen orientation angle.
 

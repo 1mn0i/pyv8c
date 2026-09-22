@@ -90,6 +90,7 @@ class Page:
             url, inherited=getattr(parent, "origin", None)
         )
         self.origin = context._blob_origins.get(str(url), self.origin)
+        self._opaque_origin = origin is not None and self.origin[0] == "opaque"
         self.environment = context.browser.environment.overlay(environment)
         self.resource_interceptor = context.browser.resource_interceptor
         # A page can override the browser default without changing the
@@ -170,6 +171,8 @@ class Page:
         self.realm.executor.call(update)
 
     def _update_origin(self, url):
+        if self._opaque_origin:
+            return
         self.origin = origin_tuple(url, inherited=getattr(self.parent_page, "origin", None))
         self.origin = self.context_owner._blob_origins.get(str(url), self.origin)
         self.services._origin = self.origin

@@ -280,7 +280,12 @@ class DocumentLifecycle:
             return
         self.document_load_fired = True
         self.set_ready_state("complete")
-        self.dispatch_page_event("load", page.window, {"bubbles": False})
+        # A window's load event is fired at the window with the document as its
+        # target, which is what a page -- and a script watching for it -- reads.
+        event = self.event_class("load")("load", {"bubbles": False})
+        event._trusted = True
+        event.target = page.document
+        page.window.fn_dispatchEvent(event)
         self.dispatch_page_show(False)
         waiters, self.load_waiters = self.load_waiters, []
         for callback in waiters:

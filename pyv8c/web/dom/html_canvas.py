@@ -21,6 +21,42 @@ from .html_elements import HTMLElement
 _TEXT_BASELINES = frozenset(("alphabetic", "bottom", "hanging", "ideographic", "middle", "top"))
 
 
+@interface('TextMetrics', None)
+class TextMetrics:
+    """What ``measureText`` returns.  Only ``width`` is measured; the boxes a
+    caller rarely reads report that same run's edges, as Chrome's do."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=tuple(
+            AttributeSpec(name=name, getter="get_" + name, side_effect=1)
+            for name in ("width", "actualBoundingBoxLeft", "actualBoundingBoxRight",
+                         "actualBoundingBoxAscent", "actualBoundingBoxDescent",
+                         "fontBoundingBoxAscent", "fontBoundingBoxDescent",
+                         "emHeightAscent", "emHeightDescent", "hangingBaseline",
+                         "alphabeticBaseline", "ideographicBaseline")
+        ),
+        constructor_behavior=0,
+        to_string_tag="TextMetrics",
+        has_constructor=1,
+    )
+
+    def __init__(self, width=0.0, **_):
+        self._width = float(width)
+
+    def get_width(self): return self._width
+    def get_actualBoundingBoxLeft(self): return 0.0
+    def get_actualBoundingBoxRight(self): return self._width
+    def get_actualBoundingBoxAscent(self): return 0.0
+    def get_actualBoundingBoxDescent(self): return 0.0
+    def get_fontBoundingBoxAscent(self): return 0.0
+    def get_fontBoundingBoxDescent(self): return 0.0
+    def get_emHeightAscent(self): return 0.0
+    def get_emHeightDescent(self): return 0.0
+    def get_hangingBaseline(self): return 0.0
+    def get_alphabeticBaseline(self): return 0.0
+    def get_ideographicBaseline(self): return 0.0
+
+
 def _canvas_color(value):
     value = str(value or "").strip().lower()
     named = {"red": (255, 0, 0, 255), "green": (0, 128, 0, 255), "blue": (0, 0, 255, 255),
@@ -194,10 +230,9 @@ class CanvasRenderingContext2D:
                 outline=_canvas_color(self._stroke), width=1,
             )
     def fn_measureText(self, text='', *_):
-        class Metrics: pass
-        m = Metrics()
-        m.width = self._draw.textlength(str(text), font=self._font_obj()) if self._draw else len(str(text))*10
-        return m
+        width = (self._draw.textlength(str(text), font=self._font_obj())
+                 if self._draw else len(str(text)) * 10)
+        return TextMetrics(width)
     def fn_save(self, *_): self._stack.append((self._fill, self._stroke, self._font, self._baseline))
     def fn_restore(self, *_):
         if self._stack: self._fill, self._stroke, self._font, self._baseline = self._stack.pop()

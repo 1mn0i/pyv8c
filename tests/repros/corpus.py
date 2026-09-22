@@ -1362,6 +1362,185 @@ CASES = (
                   "Scheduler", "function", "function"],
     ),
     Repro(
+        name="a_document_with_no_referrer_reads_empty",
+        note="A navigation nothing linked to has an empty referrer, and reading it as a"
+             " string is what a script does.",
+        html=page(body=""),
+        script="[typeof document.referrer, document.referrer, document.referrer.length]",
+        expected=["string", "", 0],
+    ),
+    Repro(
+        name="the_page_reports_its_sheets_orientation_and_timings",
+        note="The sheet list counts what the page wrote, the screen's orientation follows"
+             " its dimensions, and the deprecated timing objects are still there.",
+        html=page(head="<style>.a{color:red}</style>", body="<div class=a>x</div>"),
+        script="""(() => {
+            return [document.styleSheets.length, typeof document.styleSheets,
+                    screen.orientation.type, screen.orientation.angle,
+                    screen.orientation.constructor.name,
+                    typeof performance.timing.navigationStart,
+                    performance.timing.navigationStart > 0,
+                    performance.navigation.type, performance.navigation.redirectCount,
+                    performance.navigation.constructor.name];
+        })()""",
+        expected=[1, "object", "landscape-primary", 0, "ScreenOrientation", "number", True,
+                  0, 0, "PerformanceNavigation"],
+    ),
+    Repro(
+        name="a_media_element_reports_its_idle_state",
+        note="Nothing decodes here, so an audio element reports the state a fresh one"
+             " has, and canPlayType answers the types Chrome answers.",
+        html=page(body=""),
+        script="""
+            (() => {
+              const audio = document.createElement('audio');
+              const video = document.createElement('video');
+              const read = (fn) => { try { return fn(); } catch (error) { return error.name; } };
+              return [audio.tagName, audio.constructor.name, video.constructor.name,
+                      audio.canPlayType('audio/mpeg'), audio.canPlayType('audio/mp4'),
+                      audio.canPlayType('video/webm'), audio.canPlayType('nonsense/thing'),
+                      audio.canPlayType.length,
+                      audio.textTracks.length, read(() => video.videoTracks.length),
+                      audio.paused, audio.ended, audio.currentTime, String(audio.duration),
+                      audio.readyState, audio.networkState, audio.volume, audio.muted,
+                      audio.loop, audio.autoplay, audio.controls, audio.preload,
+                      audio.src, audio.currentSrc, audio.crossOrigin,
+                      audio.defaultPlaybackRate, audio.playbackRate, audio.seeking,
+                      audio.error, audio.buffered.length, audio.played.length,
+                      audio.seekable.length, typeof audio.play().then];
+            })()
+        """,
+        expected=["AUDIO", "HTMLAudioElement", "HTMLVideoElement", "probably", "maybe",
+                  "maybe", "", 1, 0, "TypeError", True, False, 0, "NaN", 0, 0, 1, False,
+                  False, False, False, "metadata", "", "", None, 1, 1, False, None, 0, 0,
+                  0, "function"],
+    ),
+    Repro(
+        name="the_document_reports_its_mode_and_type",
+        note="A page with no doctype is in quirks mode, and what it is, where its"
+             " direction comes from, and what the browser promises about cookies.",
+        html="<html><head></head><body></body></html>",
+        script="""[document.compatMode, document.contentType, document.dir,
+                    navigator.cookieEnabled, navigator.pdfViewerEnabled,
+                    navigator.webdriver === undefined || typeof navigator.webdriver,
+                    document.querySelectorAll('*').length]""",
+        expected=["BackCompat", "text/html", "", True, True, "boolean", 3],
+    ),
+    Repro(
+        name="a_page_with_a_doctype_is_in_standards_mode",
+        html="<!DOCTYPE html><html><head></head><body></body></html>",
+        script="[document.compatMode, document.dir]",
+        expected=["CSS1Compat", ""],
+    ),
+    Repro(
+        name="a_sandbox_blocks_scripts_it_does_not_grant",
+        note="Without allow-scripts the frame's own script never runs, while the "
+             "element and its text stay in the document.",
+        html=page(head="<script>window.__ran = 'no';</script>",
+                  body='<iframe id="f" sandbox="allow-same-origin" srcdoc='
+                       '"&lt;script&gt;parent.__ran = &quot;yes&quot;;&lt;/script&gt;">'
+                       '</iframe>'),
+        script="""(() => {
+            const frame = document.getElementById('f');
+            return [window.__ran,
+                    frame.contentDocument.querySelectorAll('script').length];
+        })()""",
+        expected=["no", 1],
+    ),
+    Repro(
+        name="a_sandbox_that_grants_scripts_runs_them",
+        note="The same frame with allow-scripts runs the script it carries.",
+        html=page(head="<script>window.__ran = 'no';</script>",
+                  body='<iframe id="f" sandbox="allow-scripts allow-same-origin" srcdoc='
+                       '"&lt;script&gt;parent.__ran = &quot;yes&quot;;&lt;/script&gt;">'
+                       '</iframe>'),
+        script="""(() => {
+            const frame = document.getElementById('f');
+            return [window.__ran,
+                    frame.contentDocument.querySelectorAll('script').length];
+        })()""",
+        expected=["yes", 1],
+    ),
+    Repro(
+        name="an_inserted_frame_has_its_window_right_away",
+        note="A frame with no document yet hands out no window; the insertion gives "
+             "it one in the same turn, and every read returns that same object.",
+        html=page(body=""),
+        script="""(() => {
+            const frame = document.createElement('iframe');
+            const detached = frame.contentWindow;
+            document.head.append(frame);
+            return [detached, frame.contentWindow === null,
+                    frame.contentWindow === frame.contentWindow,
+                    frame.contentDocument !== null, window.length,
+                    frame.contentDocument.readyState];
+        })()""",
+        expected=[None, False, True, True, 1, "complete"],
+    ),
+    Repro(
+        name="an_iframe_reports_the_attributes_it_was_given",
+        note="Every reflecting attribute reads back the way a browser reads it, and "
+             "the frame counts towards the window's frames.",
+        html=page(body='<iframe id="f" name="given" allow="camera" allowfullscreen '
+                       'width="100" height="50" referrerpolicy="no-referrer" '
+                       'loading="lazy"></iframe>'),
+        script="""(() => {
+            const frame = document.getElementById('f');
+            return [frame.name, frame.allow, frame.allowFullscreen, frame.width,
+                    frame.height, frame.referrerPolicy, frame.loading,
+                    frame.getSVGDocument(), frame.sandbox.value,
+                    frame.sandbox.supports('allow-scripts'), window.length,
+                    window.frames[0] === frame.contentWindow];
+        })()""",
+        expected=["given", "camera", True, "100", "50", "no-referrer", "lazy", None,
+                  "", True, 1, True],
+    ),
+    Repro(
+        name="an_iframe_reads_back_the_defaults_a_browser_reports",
+        note="Absent attributes read as the empty string, ``loading`` as ``auto``, and "
+             "a value outside the allowed set falls back to it.",
+        html=page(body=""),
+        script="""(() => {
+            const frame = document.createElement('iframe');
+            const before = [frame.width, frame.height, frame.loading,
+                            frame.referrerPolicy, frame.sandbox.value,
+                            frame.allowFullscreen, frame.name, frame.getSVGDocument()];
+            frame.loading = 'bogus';
+            frame.referrerPolicy = 'bogus';
+            frame.width = 100;
+            return before.concat([frame.width, frame.loading, frame.referrerPolicy,
+                                  frame.getAttribute('width')]);
+        })()""",
+        expected=["", "", "auto", "", "", False, "", None, "100", "auto", "", "100"],
+    ),
+    Repro(
+        name="a_srcdoc_frame_holds_its_own_markup",
+        note="A frame whose markup travels with the element parses it as a document of "
+             "its own, same-origin with the page that wrote it.",
+        html=page(body='<iframe id="f" srcdoc="&lt;p&gt;hi&lt;/p&gt;"></iframe>'),
+        script="""(() => {
+            const frame = document.getElementById('f');
+            return [frame.contentDocument.body.textContent, frame.contentDocument.URL,
+                    frame.contentDocument.readyState, frame.contentWindow.name];
+        })()""",
+        expected=["hi", "about:srcdoc", "complete", ""],
+    ),
+    Repro(
+        name="a_sandboxed_frame_is_cross_origin",
+        note="Without ``allow-same-origin`` the frame gets an opaque origin, so its "
+             "document is hidden and its window refuses the read.",
+        html=page(body='<iframe id="f" sandbox="allow-scripts" '
+                       'srcdoc="&lt;p&gt;hi&lt;/p&gt;"></iframe>'),
+        script="""(() => {
+            const frame = document.getElementById('f');
+            let name;
+            try { name = frame.contentWindow.name; }
+            catch (error) { name = error.name; }
+            return [frame.contentDocument, name, window.length];
+        })()""",
+        expected=[None, "SecurityError", 1],
+    ),
+    Repro(
         name="a_xpath_expression_walks_the_document",
         note="One compiled expression, evaluated against the document and walked a "
              "node at a time.",

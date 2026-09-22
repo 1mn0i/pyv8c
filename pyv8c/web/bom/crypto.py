@@ -19,9 +19,11 @@ class Crypto:
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="subtle", getter="get_subtle", side_effect=1),
-            AttributeSpec(name="randomUUID", getter="get_randomUUID", side_effect=1),
         ),
-        methods=(MethodSpec(name="getRandomValues", callback="fn_getRandomValues", length=1),),
+        methods=(
+            MethodSpec(name="getRandomValues", callback="fn_getRandomValues", length=1),
+            MethodSpec(name="randomUUID", callback="fn_randomUUID", length=0, side_effect=1),
+        ),
         constructor_behavior=0,
         to_string_tag="Crypto",
         has_constructor=1,
@@ -33,7 +35,8 @@ class Crypto:
     def get_subtle(self):
         return pyv8.Undefined
 
-    def get_randomUUID(self):
+    def fn_randomUUID(self, *_extra):
+        """Secure-context only, which is where Chrome exposes it."""
         return str(uuid.uuid4()) if self._secure else pyv8.Undefined
 
     def fn_getRandomValues(self, array=MISSING, *_extra):

@@ -13,8 +13,60 @@ from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
 from ..dom.events import EventTarget
 
-#: When this process started: what ``timeOrigin`` and ``now`` count from.
+#: When this process started: what ``timeOrigin`` counts from.
 _STARTED = time.time() * 1000.0
+
+#: The fields ``PerformanceTiming`` exposes.  Chrome fills each with a wall-clock
+#: mark; only the start of the navigation is known here, so the rest read 0.
+_TIMING_FIELDS = (
+    "navigationStart", "unloadEventStart", "unloadEventEnd", "redirectStart", "redirectEnd",
+    "fetchStart", "domainLookupStart", "domainLookupEnd", "connectStart", "connectEnd",
+    "secureConnectionStart", "requestStart", "responseStart", "responseEnd", "domLoading",
+    "domInteractive", "domContentLoadedEventStart", "domContentLoadedEventEnd", "domComplete",
+    "loadEventStart", "loadEventEnd",
+)
+
+
+@interface('PerformanceTiming', None)
+class PerformanceTiming:
+    """Navigation timings: when the clock started, and nothing measured after it."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=tuple(AttributeSpec(name=field, getter="get_" + field, side_effect=1)
+                         for field in _TIMING_FIELDS),
+        constructor_behavior=0,
+        to_string_tag="PerformanceTiming",
+        has_constructor=1,
+    )
+
+
+def _timing_reader(field):
+    def read(self): return _STARTED if field == "navigationStart" else 0
+    return read
+
+
+for _field in _TIMING_FIELDS:
+    setattr(PerformanceTiming, "get_" + _field, _timing_reader(_field))
+
+
+@interface('PerformanceNavigation', None)
+class PerformanceNavigation:
+    """This navigation: a normal load, with no redirect behind it."""
+
+    TYPE_NAVIGATE, TYPE_RELOAD, TYPE_BACK_FORWARD, TYPE_RESERVED = 0, 1, 2, 255
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="type", getter="get_type", side_effect=1),
+            AttributeSpec(name="redirectCount", getter="get_redirectCount", side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="PerformanceNavigation",
+        has_constructor=1,
+    )
+
+    def get_type(self): return self.TYPE_NAVIGATE
+    def get_redirectCount(self): return 0
 
 
 @interface('Performance', 'EventTarget')
@@ -22,6 +74,8 @@ class Performance(EventTarget):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="timeOrigin", getter="get_timeOrigin", side_effect=1),
+            AttributeSpec(name="timing", getter="get_timing", side_effect=1),
+            AttributeSpec(name="navigation", getter="get_navigation", side_effect=1),
             AttributeSpec(name="onresourcetimingbufferfull",
                           getter="get_onresourcetimingbufferfull",
                           setter="set_onresourcetimingbufferfull"),
@@ -44,6 +98,17 @@ class Performance(EventTarget):
 
     def get_timeOrigin(self):
         return _STARTED
+
+    def get_timing(self):
+        """The one timing object this clock hands out."""
+        if getattr(self, "_timing", None) is None:
+            self._timing = PerformanceTiming()
+        return self._timing
+
+    def get_navigation(self):
+        if getattr(self, "_navigation", None) is None:
+            self._navigation = PerformanceNavigation()
+        return self._navigation
 
     def fn_getEntries(self, *_extra):
         return []

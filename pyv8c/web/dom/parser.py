@@ -24,6 +24,16 @@ class _TreeBuilderMixin:
     #: of their content verbatim rather than parsing child tags.
     raw_text_tags = {"script", "style", "textarea", "title"}
 
+    #: Tags a browser puts in the head while it is still building one.
+    head_tags = frozenset({
+        "base", "basefont", "bgsound", "link", "meta", "title", "noscript",
+        "noframes", "style", "template", "script",
+    })
+
+    def _append(self, node):
+        """Put *node* where the parse belongs: a fragment's innermost element."""
+        self.target.append_child(node)
+
     @property
     def current(self): return self.stack[-1]
     @property
@@ -57,7 +67,7 @@ class _TreeBuilderMixin:
             name = str(name).lower()
             if name.startswith("on"):
                 self.services.document_services.install_inline_handler(node, name, value or "")
-        self.target.append_child(node)
+        self._append(node)
         return node
 
     def _close_element(self, tag):
@@ -103,16 +113,16 @@ class DOMParser(_TreeBuilderMixin, HTMLParser):
             self.current._raw_text = getattr(self.current, "_raw_text", "") + data
             _bump_style_version(self.current)
             return
-        self.target.append_child(Text(data, services=self.services))
+        self._append(Text(data, services=self.services))
     def handle_entityref(self, name): self.handle_data(unescape("&" + name + ";"))
     def handle_charref(self, name): self.handle_data(unescape("&#" + name + ";"))
-    def handle_comment(self, data): self.target.append_child(Comment(data, services=self.services))
+    def handle_comment(self, data): self._append(Comment(data, services=self.services))
     def handle_decl(self, decl):
         if decl.lower().startswith("doctype"):
             from .character_data import DocumentType
             parts = decl.split(None, 1)
             name = parts[1].strip() if len(parts) > 1 else "html"
-            self.target.append_child(DocumentType(name=name, services=self.services))
+            self._append(DocumentType(name=name, services=self.services))
 
 
 def _iter_tokens(source):
@@ -173,6 +183,116 @@ class IncrementalDOMParser(_TreeBuilderMixin):
         self.services, self.root = services, root
         self.tokens = list(_iter_tokens(str(source)))
         self.index, self.stack, self.done = 0, [root], False
+        #: A document parse builds html/head/body as it reads; the fragment parse
+        #: ``document.write`` runs after parsing has no modes of its own.
+        self.building = getattr(root, "nodeType", None) == 9
+        self.mode = "before-html" if self.building else None
+        self.html = self.head = self.body = None
+
+    # -- insertion modes -------------------------------------------------
+    def _depth(self):
+        """The stack depth at which the current mode is placing a node."""
+        if self.mode == "before-html":
+            return 1
+        if self.mode in ("before-head", "after-head"):
+            return 2
+        return 3
+
+    def _enter(self):
+        """Point the stack at this mode's container, unless something is open."""
+        if len(self.stack) > self._depth():
+            return
+        if self.mode in ("in-body", "after-body") and self.body is not None:
+            self.stack = [self.root, self.html, self.body]
+        elif self.mode == "in-head" and self.head is not None:
+            self.stack = [self.root, self.html, self.head]
+        elif self.html is not None:
+            self.stack = [self.root, self.html]
+        else:
+            self.stack = [self.root]
+
+    def _append(self, node):
+        if not self.building or len(self.stack) > self._depth():
+            self.target.append_child(node)
+            return
+        self._place(node)
+
+    def _make(self, parent, tag):
+        node = self.services.document_services.element_class(tag)(
+            tag, services=self.services, attributes={},
+        )
+        parent.append_child(node)
+        return node
+
+    def _place(self, node):
+        """Where a top-level node goes: what a browser's insertion modes put there."""
+        kind, name = getattr(node, "nodeType", None), getattr(node, "localName", None)
+        text = str(node.nodeValue or "") if kind == 3 else None
+        if kind in (8, 10):                     # a comment or a doctype
+            self._enter()
+            self.target.append_child(node)
+            return
+        if text is not None and not text.strip():
+            if self.mode in ("before-html", "before-head"):
+                return                          # whitespace before the head is dropped
+            if self.mode == "in-head":
+                self._enter()
+                self.target.append_child(node)
+                return
+            if self.mode == "after-head":
+                self.stack = [self.root, self.html]
+                self.html.append_child(node)
+                return
+        if name == "html":
+            if self.html is not None:
+                return                          # a second root is ignored
+            self.stack = [self.root]
+            self.root.append_child(node)
+            self.html, self.mode = node, "before-head"
+            return
+        if name == "head":
+            if self.head is not None:
+                return
+            self._open_html()
+            self.stack = [self.root, self.html]
+            self.html.append_child(node)
+            self.head, self.mode = node, "in-head"
+            return
+        if name == "body":
+            if self.body is not None:
+                return
+            self._open_head()
+            self.stack = [self.root, self.html]
+            self.html.append_child(node)
+            self.body, self.mode = node, "in-body"
+            return
+        if name in self.head_tags and self.mode in (
+                "before-html", "before-head", "in-head", "after-head"):
+            self._open_head()
+            self.stack = [self.root, self.html, self.head]
+            self.head.append_child(node)
+            return
+        self._open_body()
+        self.stack = [self.root, self.html, self.body]
+        self.body.append_child(node)
+
+    def _open_html(self):
+        if self.html is None:
+            self.html = self._make(self.root, "html")
+        if self.mode == "before-html":
+            self.mode = "before-head"
+
+    def _open_head(self):
+        self._open_html()
+        if self.head is None:
+            self.head = self._make(self.html, "head")
+        self.mode = "in-head"
+
+    def _open_body(self):
+        self._open_head()
+        if self.body is None:
+            self.body = self._make(self.html, "body")
+        self.mode = "in-body"
 
     def _start(self, raw):
         helper = _StartTagParser(); helper.feed(raw); helper.close()
@@ -182,9 +302,23 @@ class IncrementalDOMParser(_TreeBuilderMixin):
         node = self._create_element(tag, attrs)
         if tag == "script": self.services.document_services.parser_script_start(node)
         elif tag not in self.raw_text_tags: self.services.resource_services.discover_element_resource(node)
-        if tag not in self.void and not raw.rstrip().endswith("/>"): self.stack.append(node)
+        # An ignored duplicate (a second html/head/body) never reached the tree.
+        if tag not in self.void and not raw.rstrip().endswith("/>") and node.parentNode is not None:
+            self.stack.append(node)
 
-    def _end(self, tag): self._close_element(str(tag).lower())
+    def _end(self, tag):
+        tag = str(tag).lower()
+        self._close_element(tag)
+        if not self.building:
+            return
+        if tag == "head" and self.head is not None and self.mode == "in-head":
+            self.mode = "after-head"
+        elif tag == "body" and self.body is not None:
+            # Content after ``</body>`` still goes into the body, which is where
+            # the insertion modes put it.
+            self.mode = "after-body"
+        elif tag == "html" and self.html is not None:
+            self.mode = "after-body"
 
     def write_markup(self, markup):
         """Splice written markup into the input stream (``document.write``).
@@ -203,24 +337,26 @@ class IncrementalDOMParser(_TreeBuilderMixin):
     def run(self):
         while self.index < len(self.tokens):
             kind, value = self.tokens[self.index]; self.index += 1
+            if self.building:
+                self._enter()
             if kind == "start": self._start(value)
             elif kind == "end": self._end(value)
             elif kind == "data":
                 if self._is_raw_text_container(self.current):
                     self.current._raw_text = getattr(self.current, "_raw_text", "") + value
                     _bump_style_version(self.current)
-                else: self.target.append_child(Text(unescape(value), services=self.services))
-            elif kind == "comment": self.target.append_child(Comment(value, services=self.services))
+                else: self._append(Text(unescape(value), services=self.services))
+            elif kind == "comment": self._append(Comment(value, services=self.services))
             elif kind == "decl":
                 from .character_data import DocumentType
-                parts = value.split(None, 1); self.target.append_child(DocumentType(name=parts[1].strip() if len(parts) > 1 else "html", services=self.services))
+                parts = value.split(None, 1); self._append(DocumentType(name=parts[1].strip() if len(parts) > 1 else "html", services=self.services))
             if self.services.document_services.parser_is_blocked(): return False
+        if self.building:
+            # A document whose markup had nothing to place still has the skeleton
+            # every document has.  Making it is the last step, and no node that
+            # the parse already placed is ever moved.
+            self._open_body()
         self.done = True
-        # Last moment the parse is still running, so the nodes moved into the body
-        # do not look like an insertion the page made afterwards.
-        ensure_skeleton = getattr(self.root, "_ensure_skeleton", None)
-        if ensure_skeleton is not None:
-            ensure_skeleton()
         return True
 
 

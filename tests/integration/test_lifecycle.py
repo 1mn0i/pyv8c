@@ -18,7 +18,8 @@ def test_document_lifecycle_and_resource_events_are_queued():
     page.evaluate("""
         window.__events = []; window.__order = [];
         window.addEventListener('DOMContentLoaded', e => __events.push(['dom', e.target === document, e.currentTarget === window]));
-        window.addEventListener('load', e => __events.push(['window-load', e.target === window]));
+        // A window's load event targets the document, as Chrome's does.
+        window.addEventListener('load', e => __events.push(['window-load', e.target === document, e.currentTarget === window]));
         window.addEventListener('pageshow', () => __events.push('pageshow'));
     """)
     page.set_content("""
@@ -36,7 +37,7 @@ def test_document_lifecycle_and_resource_events_are_queued():
     assert "inline" in events and "image-load" in events
     assert ["dom", True, True] in events
     assert ["rs", "interactive"] in events and ["rs", "complete"] in events
-    assert events.index(["dom", True, True]) < events.index(["window-load", True]) < events.index("pageshow")
+    assert events.index(["dom", True, True]) < events.index(["window-load", True, True]) < events.index("pageshow")
     browser.close()
 
 

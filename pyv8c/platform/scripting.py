@@ -81,6 +81,8 @@ class ScriptController:
         the value is cleared again before an error handler runs and the previous
         one is restored for a caller that is itself executing a script.
         """
+        if self._sandboxed("allow-scripts"):
+            return False
         document = self.page.document
         previous = document.current_script
         document.current_script = node
@@ -143,6 +145,11 @@ class ScriptController:
 
     # -- parser / DOM script coordination ------------------------------
 
+    def _sandboxed(self, token):
+        """True when this realm is sandboxed without granting *token*."""
+        tokens = self.page.services.sandbox_tokens
+        return tokens is not None and token not in tokens
+
     def node_adopted(self, node):
         if getattr(node, "localName", "") == "script":
             self.dynamic_script_updated(node)
@@ -150,6 +157,8 @@ class ScriptController:
     def dynamic_script_updated(self, node):
         page = self.page
         if page.closed or getattr(node, "_resource_started", False) and getattr(node, "_dynamic_started", False):
+            return
+        if self._sandboxed("allow-scripts"):
             return
         # Setting src/text on a detached script does not fetch or execute it.
         # The adoption callback will retry once it is connected to this
@@ -181,6 +190,8 @@ class ScriptController:
             page.tasks.post(lambda n=node: self.execute_script(n, n._raw_text, page.url))
 
     def install_inline_handler(self, node, name, source):
+        if self._sandboxed("allow-scripts"):
+            return
         try:
             fn = self.page.context.exec_js("(function(event){" + str(source) + "})")
             node._handlers[str(name).lower()] = fn

@@ -385,6 +385,9 @@ class ResourceController:
             return
         tag = getattr(node, "localName", "")
         if tag == "script":
+            tokens = page.services.sandbox_tokens
+            if tokens is not None and "allow-scripts" not in tokens:
+                return
             src = node.get_src() if hasattr(node, "get_src") else node.attributes.get("src", "")
             if not src:
                 return
@@ -403,6 +406,9 @@ class ResourceController:
         elif tag in ("img", "audio", "video", "source"):
             src = node.attributes.get("src", "")
         elif tag == "iframe":
+            if node.attributes.get("srcdoc") is not None:
+                self.load_iframe(node)
+                return
             src = node.attributes.get("src", "") or "about:blank"
         else:
             return
@@ -498,12 +504,56 @@ class ResourceController:
         item = self.resources.pop(token, None)
         if item is not None:
             item[3].finish()
+        self.dispatch_frame_completion(node, ok)
+
+    def dispatch_frame_completion(self, node, ok):
+        """The events a frame's document load fires on the frame element."""
+        page = self.page
         page.lifecycle.dispatch_page_event("load" if ok else "error", node, {"bubbles": False})
         if ok:
             # Legacy iframe-only signal, fired after the child document loaded.
             page.lifecycle.dispatch_page_event("DOMFrameContentLoaded", node, {"bubbles": False})
         page.lifecycle.dispatch_progress_event(node, "loadend")
         page.lifecycle.maybe_fire_document_load()
+
+    def _sandbox_tokens(self, iframe):
+        """The tokens a frame's ``sandbox`` attribute grants; ``None`` if absent."""
+        sandbox = iframe.attributes.get("sandbox")
+        return None if sandbox is None else frozenset(str(sandbox).lower().split())
+
+    def _frame_origin(self, iframe):
+        """A sandboxed frame without same-origin access has an opaque origin."""
+        tokens = self._sandbox_tokens(iframe)
+        if tokens is None or "allow-same-origin" in tokens:
+            return None
+        return "opaque", object()
+
+    def ensure_iframe_context(self, iframe):
+        """The context an inserted frame gets, on the task after its insertion.
+
+        A browser builds it while inserting the element; building a realm is not
+        reentrant with a running script here, so it happens on the next task.
+        """
+        if getattr(iframe, "_child_services", None) is not None:
+            return iframe._child_services
+        markup = iframe.attributes.get("srcdoc")
+        if markup is not None:
+            return self.load_iframe_markup(iframe, str(markup))
+        page = self.page
+        child = self._child_frame_page(iframe, "about:blank")
+        child.set_content("", url="about:blank")
+        child.lifecycle.when_loaded(lambda ok: page.tasks.post(
+            lambda: self.dispatch_frame_completion(iframe, ok)))
+        return child
+
+    def load_iframe_markup(self, iframe, markup):
+        """Load markup the frame carries itself; nothing is fetched."""
+        page = self.page
+        child = self._child_frame_page(iframe, "about:srcdoc")
+        child.set_content(markup, url="about:srcdoc")
+        child.lifecycle.when_loaded(lambda ok: page.tasks.post(
+            lambda: self.dispatch_frame_completion(iframe, ok)))
+        return child
 
     def _child_frame_page(self, iframe, target):
         """Return the live child page for ``iframe``, creating it on demand."""
@@ -513,8 +563,11 @@ class ResourceController:
         child_services = getattr(iframe, "_child_services", None)
         child = child_services._page_realm.page if child_services is not None else None
         if child is None or child.closed:
-            child = Page(page.context_owner, url=target, environment=page.environment, parent=page)
+            child = Page(page.context_owner, url=target, environment=page.environment, parent=page,
+                         origin=self._frame_origin(iframe))
             iframe._child_services = child.services
+            child.services.sandbox_tokens = self._sandbox_tokens(iframe)
+            child.window._window_name = str(iframe.attributes.get("name", ""))
             page.services.context_services.track_frame(child)
             devtools = page.context_owner._devtools
             if devtools is not None:
@@ -533,6 +586,9 @@ class ResourceController:
 
     def load_iframe(self, iframe):
         page = self.page
+        markup = iframe.attributes.get("srcdoc")
+        if markup is not None:
+            return self.load_iframe_markup(iframe, str(markup))
         target = urljoin(page.url, iframe.get_src() or "about:blank")
         if page.navigation.has_navigation and not page.navigation.parsing:
             self.discover_element_resource(iframe)

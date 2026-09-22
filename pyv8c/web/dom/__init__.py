@@ -3,8 +3,9 @@
 The implementations live in the sibling modules -- :mod:`dom.nodes` (``Node``,
 ``DocumentFragment``, ``Attr``), :mod:`dom.character_data` (``CharacterData``,
 ``Text``, ``Comment``, ``DocumentType``), :mod:`dom.document` (``Document``),
-:mod:`dom.html_elements` / :mod:`dom.html_input` / :mod:`dom.html_canvas` (the
-HTML tag classes) with :mod:`dom.html_classes` mapping local names onto them,
+:mod:`dom.html_elements` / :mod:`dom.html_input` / :mod:`dom.html_canvas` /
+:mod:`dom.html_iframe` (the HTML tag classes) with :mod:`dom.html_classes`
+mapping local names onto them,
 plus :mod:`dom.mixins`, :mod:`dom.utils`, :mod:`dom.collections` and
 :mod:`dom.events`.  This package re-exports them so ``pyv8c.web.dom`` is the
 single flat DOM namespace.
@@ -31,7 +32,6 @@ from .html_classes import HTML_CLASSES
 from .html_elements import (
     Element,
     HTMLElement,
-    HTMLIFrameElement,
     HTMLImageElement,
     HTMLLinkElement,
     HTMLMetaElement,
@@ -39,6 +39,7 @@ from .html_elements import (
     HTMLStyleElement,
     HTMLTemplateElement,
 )
+from .html_iframe import HTMLIFrameElement
 from .nodes import Attr, DocumentFragment, Node
 
 __all__ = [

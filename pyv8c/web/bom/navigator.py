@@ -444,6 +444,8 @@ class Navigator:
             AttributeSpec(name="maxTouchPoints", getter="get_maxTouchPoints", side_effect=1),
             AttributeSpec(name="vendor", getter="get_vendor", side_effect=1),
             AttributeSpec(name="locks", getter="get_locks", side_effect=1),
+            AttributeSpec(name="cookieEnabled", getter="get_cookieEnabled", side_effect=1),
+            AttributeSpec(name="pdfViewerEnabled", getter="get_pdfViewerEnabled", side_effect=1),
             AttributeSpec(name="doNotTrack", getter="get_doNotTrack", side_effect=1),
             AttributeSpec(name="webdriver", getter="get_webdriver", side_effect=1),
             AttributeSpec(name="connection", getter="get_connection", side_effect=1),
@@ -480,6 +482,9 @@ class Navigator:
     def get_deviceMemory(self): return self._environment.device_memory
     def get_maxTouchPoints(self): return self._environment.max_touch_points
     def get_vendor(self): return self._environment.vendor
+    #: This browser keeps cookies and shows PDFs, the way Chrome reports both.
+    def get_cookieEnabled(self): return True
+    def get_pdfViewerEnabled(self): return True
     def get_locks(self):
         """Its own manager, in a secure context only -- where Chrome exposes one."""
         if self._worker or self._services is None:

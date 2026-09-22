@@ -253,6 +253,9 @@ class _ResourceCapability:
     def load_iframe(self, iframe):
         return self._owner._resources.load_iframe(iframe)
 
+    def ensure_iframe_context(self, iframe):
+        return self._owner._resources.ensure_iframe_context(iframe)
+
     def resolve_worker_source(self, script_url):
         return self._owner._resources.resolve_worker_source(script_url)
 
@@ -311,6 +314,18 @@ class _DocumentCapability:
         return self._owner._navigation.write_markup(markup)
 
     def node_adopted(self, node):
+        if getattr(node, "localName", "") == "iframe":
+            # An inserted frame gets a browsing context of its own, the way a
+            # browser creates one for ``about:blank``.  Building a whole realm is
+            # left to a queued task: an insertion happens while a script is
+            # running, and entering another realm from there would re-enter this
+            # one's executor.
+            services = self._owner._resources
+            services.ensure_iframe_context(node)
+            if (node.get_src() and node.attributes.get("srcdoc") is None
+                    and not getattr(node, "_resource_started", False)):
+                services.discover_element_resource(node)
+            return None
         return self._owner._scripts.node_adopted(node)
 
     def request_navigation(self, url):
@@ -469,6 +484,8 @@ class PageServices:
         self.document = None
         self._page_realm = None
         self._origin = ("opaque", object())
+        #: Granted ``sandbox`` tokens, or ``None`` when the realm is not sandboxed.
+        self.sandbox_tokens = None
 
         # Narrow capabilities handed to web packages.
         self.realm_services = _RealmCapability(self)

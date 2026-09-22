@@ -157,7 +157,9 @@ class History:
         self._entries = [(initial_url if initial_url is not None else getattr(getattr(services, "realm_services", None), "url", "about:blank"), None)]
         self._index = 0
     def get_length(self): return len(self._entries)
-    def get_state(self): return self._entries[self._index][1]
+    def get_state(self):
+        state = self._entries[self._index][1]
+        return pyv8.Null if state is None else state
     def _url(self, value): return urljoin(self._services.realm_services.url, str(value))
     def _validate_target(self, url):
         from ...foundation.urls import same_origin

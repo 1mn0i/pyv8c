@@ -352,4 +352,28 @@ class CSSStyleDeclaration:
     def __v8_index_del__(self, index): return None
     def __v8_index_enum__(self): return self.get_length()
 
-__all__ = ["CSSStyleDeclaration", "SUPPORTED_NAMES", "parse_declarations", "supported"]
+@interface('StyleSheetList', None)
+class StyleSheetList:
+    """The document's sheets: its ``<style>`` elements and stylesheet links."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
+        constructor_behavior=0,
+        to_string_tag="StyleSheetList",
+        has_constructor=1,
+    )
+
+    def __init__(self, document=None, **_):
+        self._document = document
+
+    def get_length(self):
+        count = 0
+        for node in self._document._descendants():
+            name = getattr(node, "localName", None)
+            rel = str(getattr(node, "attributes", {}).get("rel", "")).lower().split()
+            if name == "style" or (name == "link" and "stylesheet" in rel):
+                count += 1
+        return count
+
+
+__all__ = ["CSSStyleDeclaration", "StyleSheetList", "SUPPORTED_NAMES", "parse_declarations", "supported"]
