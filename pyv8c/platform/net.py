@@ -3,7 +3,7 @@
 Driving a page from Python usually means talking to the same site it is on.  That
 means sending the cookies it collected, the headers a browser would send, and
 doing it over whichever transport the page itself uses -- cycronet, curl_cffi or
-a host-supplied engine (see ``web/network/registry.py``).  This facade is that
+a host-supplied engine (see ``network/registry.py``).  This facade is that
 shortcut.
 
 It lives in the platform layer because it holds the context's transport and its
@@ -18,7 +18,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from urllib.parse import urlencode, urljoin
 
 from ..foundation.errors import InvalidStateError, NetworkError
-from ..web.network.models import NetworkRequest, NetworkResponse
+from ..network.models import NetworkRequest, NetworkResponse
 
 #: Headers every request starts from when the environment does not say otherwise.
 _FALLBACK_ACCEPT = "*/*"
@@ -75,7 +75,7 @@ class PageNet:
     def _backend(self):
         backend = self._page.network_backend
         if backend is None or not backend.http_available:
-            raise NetworkError("page.net requires an HTTP engine; set network_engine= or real_network=True")
+            raise NetworkError("page.net requires an HTTP engine; set http_engine= or real_network=True")
         if self._closed:
             raise InvalidStateError("page.net is closed")
         return backend

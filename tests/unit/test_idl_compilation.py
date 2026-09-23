@@ -4,8 +4,11 @@ from collections import Counter
 
 import pytest
 
-from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse
-from pyv8c.platform.bootstrap import bootstrap_runtime
+pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytestmark = pytest.mark.native
+
+from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse  # noqa: E402
+from pyv8c.platform.bootstrap import bootstrap_runtime  # noqa: E402
 
 
 @pytest.fixture

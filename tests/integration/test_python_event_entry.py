@@ -55,7 +55,7 @@ def test_dispatch_event_reports_cancellation(host_page):
     assert host_page.dispatch_event("click", selector="#go") is False
 
 
-def test_dispatch_event_validates_its_target(host_page):
+def test_dispatch_event_validates_its_arguments(host_page):
     with pytest.raises(DOMException) as missing:
         host_page.dispatch_event("click", selector="#missing")
     assert missing.value.get_name() == "NotFoundError"
@@ -63,9 +63,6 @@ def test_dispatch_event_validates_its_target(host_page):
         host_page.dispatch_event("click", target="body")
     with pytest.raises(TypeError):
         host_page.dispatch_event("click", target=object())
-
-
-def test_dispatch_event_rejects_an_unknown_event_class(host_page):
     with pytest.raises(TypeError):
         host_page.dispatch_event("click", event_class="NotAnInterface")
 

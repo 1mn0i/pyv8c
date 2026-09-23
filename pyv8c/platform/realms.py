@@ -58,6 +58,9 @@ class WorkerRealm:
     def __init__(self, page, config):
         self.page = page
         self.config = config
+        #: Written by the runtime that starts the worker, which is where the URL
+        #: comes from; the realm only reads it.
+        self.script_url = ""
         self.isolate = None
         self.context = None
         self.scope = None

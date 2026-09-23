@@ -34,26 +34,19 @@ def document_page():
         browser.close()
 
 
-def test_class_for_tag_resolves_modelled_tags():
+def test_class_for_tag_resolves_modelled_tags_and_falls_back():
     for tag in ("div", "span", "form", "table", "select", "option", "button",
                 "a", "html", "head", "body", "script", "style", "link", "meta",
                 "template", "canvas", "input") + IRREGULAR_TAGS:
-        assert class_for_tag(tag) is TAG_CLASSES[tag], tag
-        assert class_for_tag(tag.upper()) is TAG_CLASSES[tag], tag
         assert class_for_tag(tag) is not HTMLUnknownElement, tag
-
-
-def test_class_for_tag_falls_back_to_html_unknown_element():
+        assert class_for_tag(tag.upper()) is class_for_tag(tag), tag
     for tag in UNMODELLED_TAGS + ("", "DIV-", "x-y"):
         assert class_for_tag(tag) is HTMLUnknownElement, tag
-
-
-def test_registry_exposes_the_explicit_html_unknown_element():
     assert HTML_CLASSES["HTMLUnknownElement"] is HTMLUnknownElement
-    # Every tag maps to a class the registry knows about.
+    # Every tag maps to a class the registry knows about, and the fallback
+    # interface is not a tag of its own.
     for tag, cls in TAG_CLASSES.items():
         assert cls in HTML_CLASSES.values(), tag
-    # The fallback interface is not a tag of its own.
     assert "unknown" not in TAG_CLASSES
 
 

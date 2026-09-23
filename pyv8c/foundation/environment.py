@@ -1,401 +1,490 @@
-"""Immutable browser-environment configuration shared by all realms."""
+"""Immutable browser environment: one flat table of dotted keys.
 
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+The defaults are a profile collected from a real Chrome
+(``data/chrome-environment.json``), so an unconfigured browser presents what that
+browser reported; a caller overrides any key by name, and the keys that follow
+``user_agent`` move with it.
+"""
+from __future__ import annotations
+
+import json
+import math
+import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
-)
-DEFAULT_LANGUAGES = ("zh-CN", "en", "en-US")
+SCHEMA_VERSION = 1
+ENVELOPE_KEYS = ("schema", "source")
+PROFILE = Path(__file__).parents[1] / "data" / "chrome-environment.json"
+
+#: The version Chrome's frozen "Not_A Brand" entry carries.
+_NOT_A_BRAND_VERSION = "8"
 
 
-def _number_validator(label, cast, boundary, boundary_message):
-    """Build a ``(value, name) -> number`` validator with one boundary check."""
+def _text(value):
+    if value is None:
+        raise TypeError("must be a string")
+    return str(value)
 
-    def validate(value, name):
-        if isinstance(value, bool):
-            raise TypeError(f"{name} must be {label}")
-        try:
-            number = cast(value)
-        except (TypeError, ValueError):
-            raise TypeError(f"{name} must be {label}") from None
-        if not boundary(number):
-            raise ValueError(f"{name} {boundary_message}")
-        return number
 
+def _integer(value):
+    if isinstance(value, bool):
+        raise TypeError("must be an integer")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise TypeError("must be an integer") from None
+
+
+def _number(value):
+    if isinstance(value, bool):
+        raise TypeError("must be a number")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise TypeError("must be a number") from None
+
+
+def _optional_number(value):
+    """A simulated coordinate: absent until a caller gives one."""
+    return None if value is None else _number(value)
+
+
+def _tokens(value):
+    if isinstance(value, str):
+        value = (value,)
+    return tuple(str(item) for item in value)
+
+
+def _enum(*allowed):
+    def validate(value):
+        text = str(value).lower()
+        if text not in allowed:
+            raise ValueError(f"must be one of {', '.join(allowed)}")
+        return text
     return validate
 
 
-_positive_int = _number_validator("an integer", int, lambda value: value > 0, "must be greater than zero")
-_non_negative_int = _number_validator("an integer", int, lambda value: value >= 0, "must not be negative")
-_positive_float = _number_validator("a number", float, lambda value: value > 0, "must be greater than zero")
-_non_negative_float = _number_validator("a number", float, lambda value: value >= 0, "must not be negative")
+def _brands(value):
+    brands = tuple(_brand(entry) for entry in value)
+    return brands
 
 
-class _ConfigMapping:
-    """Shared ``from_value`` for the frozen environment configuration records.
-
-    Every nested configuration accepts an instance, a mapping of field values,
-    and (for the optional ones) ``None`` meaning "use the defaults".
-    """
-
-    #: Label used in the type error, e.g. ``"viewport"``.
-    _config_label = "config"
-    #: ``str.format`` template for the type error.
-    _type_error = "{label} must be a {name} or mapping"
-    #: When true, ``None`` builds a default record instead of raising.
-    _none_default = False
-
-    @classmethod
-    def from_value(cls, value):
-        if value is None and cls._none_default:
-            return cls()
-        if isinstance(value, cls):
-            return value
-        if not isinstance(value, Mapping):
-            raise TypeError(cls._type_error.format(label=cls._config_label, name=cls.__name__))
-        return cls(**dict(value))
+def _brand(entry):
+    if isinstance(entry, Mapping):
+        brand, version = entry.get("brand"), entry.get("version")
+    else:
+        brand, version = entry
+    if brand is None or version is None:
+        raise TypeError("entries need both a brand and a version")
+    return {"brand": str(brand), "version": str(version)}
 
 
-@dataclass(frozen=True)
-class MimeTypeConfig(_ConfigMapping):
-    """A browser MIME type advertised by a built-in plugin."""
+def _plugins(value):
+    if isinstance(value, Mapping):
+        value = (value,)
+    plugins = tuple(_plugin(entry) for entry in value)
+    if len({plugin["name"] for plugin in plugins}) != len(plugins):
+        raise ValueError("must not repeat a plugin name")
+    return plugins
 
-    _config_label = "plugin mime_types entries"
-    _type_error = "{label} must be {name} instances or mappings"
 
-    type: str
-    suffixes: str = ""
-    description: str = ""
+def _plugin(entry):
+    if not isinstance(entry, Mapping):
+        raise TypeError("entries must be mappings")
+    mime_types = tuple(_mime_type(mime) for mime in entry.get("mime_types", ()))
+    if len({mime["type"] for mime in mime_types}) != len(mime_types):
+        raise ValueError("must not repeat a mime type")
+    return {
+        "name": _text(entry.get("name")),
+        "filename": str(entry.get("filename", "")),
+        "description": str(entry.get("description", "")),
+        "mime_types": mime_types,
+    }
 
-    def __post_init__(self):
-        for name in ("type", "suffixes", "description"):
-            value = str(getattr(self, name))
-            if name == "type" and not value:
-                raise ValueError("mime type must not be empty")
-            object.__setattr__(self, name, value)
+
+def _mime_type(entry):
+    return {
+        "type": _text(entry.get("type")),
+        "suffixes": str(entry.get("suffixes", "")),
+        "description": str(entry.get("description", "")),
+    }
 
 
 @dataclass(frozen=True)
-class PluginConfig(_ConfigMapping):
-    """A browser plugin and the MIME types it exposes."""
-
-    _config_label = "plugins entries"
-    _type_error = "{label} must be {name} instances or mappings"
+class Field:
+    """One setting: its dotted key, how a given value is checked, whether a browser reports it."""
 
     name: str
-    filename: str = ""
-    description: str = ""
-    mime_types: tuple[MimeTypeConfig, ...] = ()
+    validate: Callable[[object], object]
+    collected: bool = False
+    default: object = None
 
-    def __post_init__(self):
-        for name in ("name", "filename", "description"):
-            value = str(getattr(self, name))
-            if name == "name" and not value:
-                raise ValueError("plugin name must not be empty")
-            object.__setattr__(self, name, value)
-        values = self.mime_types
-        if isinstance(values, Mapping):
-            # Runtime callers may pass a lone mapping for a single entry even
-            # though the dataclass annotation says sequence.
-            values = (values,)  # type: ignore[assignment]
+
+#: The keys a browser reports for itself, plus the simulation-only ones it cannot.
+FIELDS: tuple[Field, ...] = (
+    Field("user_agent", _text, True),
+    Field("app_version", _text, True),
+    Field("vendor", _text, True),
+    Field("platform", _text, True),
+    Field("language", _text, True),
+    Field("languages", _tokens, True),
+    Field("on_line", bool, True),
+    Field("hardware_concurrency", _integer, True),
+    Field("device_memory", _number, True),
+    Field("max_touch_points", _integer, True),
+    Field("webdriver", bool, True),
+    Field("timezone", _text, True),
+    Field("viewport.width", _integer, True),
+    Field("viewport.height", _integer, True),
+    Field("viewport.device_scale_factor", _number, True),
+    Field("viewport.mobile", bool, default=False),
+    Field("viewport.touch", bool, default=False),
+    Field("screen.width", _integer, True),
+    Field("screen.height", _integer, True),
+    Field("screen.avail_width", _integer, True),
+    Field("screen.avail_height", _integer, True),
+    Field("screen.color_depth", _integer, True),
+    Field("screen.pixel_depth", _integer, True),
+    Field("geolocation.permission", _enum("denied", "granted"), default="denied"),
+    Field("geolocation.latitude", _optional_number),
+    Field("geolocation.longitude", _optional_number),
+    Field("geolocation.accuracy", _optional_number),
+    Field("connection.effective_type", _enum("slow-2g", "2g", "3g", "4g"), True),
+    Field("connection.rtt", _integer, True),
+    Field("connection.downlink", _number, True),
+    Field("connection.save_data", bool, True),
+    Field("connection.type", _enum("bluetooth", "cellular", "ethernet", "mixed", "none",
+                                   "other", "unknown", "wifi", "wimax"), default="unknown"),
+    Field("connection.downlink_max", _number, default=float("inf")),
+    Field("battery.charging", bool, True),
+    Field("battery.charging_time", _number, True),
+    Field("battery.discharging_time", _number, True),
+    Field("battery.level", _number, True),
+    Field("storage.temporary.usage", _integer, True),
+    Field("storage.temporary.quota", _integer, True),
+    Field("storage.persistent.usage", _integer, default=0),
+    Field("storage.persistent.quota", _integer, default=0),
+    Field("client_hints.brands", _brands, True),
+    Field("client_hints.full_version_list", _brands, True),
+    Field("client_hints.mobile", bool, True),
+    Field("client_hints.platform", _text, True),
+    Field("client_hints.platform_version", _text, True),
+    Field("client_hints.architecture", _text, True),
+    Field("client_hints.bitness", _text, True),
+    Field("client_hints.wow64", bool, True),
+    Field("client_hints.model", _text, True),
+    Field("client_hints.form_factors", _tokens, True),
+    Field("plugins", _plugins, True),
+)
+
+_BY_NAME = {field.name: field for field in FIELDS}
+
+#: The keys a collected profile carries, exactly.
+COLLECTED_KEYS: tuple[str, ...] = tuple(field.name for field in FIELDS if field.collected)
+
+_PROFILE = {name: value for name, value in
+            json.loads(PROFILE.read_text(encoding="utf-8")).items()
+            if name not in ENVELOPE_KEYS}
+
+DEFAULTS = MappingProxyType({
+    field.name: field.validate(_PROFILE[field.name]) if field.name in _PROFILE else field.default
+    for field in FIELDS
+})
+
+
+@dataclass(frozen=True)
+class ViewportView:
+    width: int
+    height: int
+    device_scale_factor: float
+    mobile: bool
+    touch: bool
+
+
+@dataclass(frozen=True)
+class ScreenView:
+    width: int
+    height: int
+    avail_width: int
+    avail_height: int
+    color_depth: int
+    pixel_depth: int
+
+
+@dataclass(frozen=True)
+class GeolocationView:
+    permission: str
+    latitude: float | None
+    longitude: float | None
+    accuracy: float | None
+
+
+@dataclass(frozen=True)
+class ConnectionView:
+    effective_type: str
+    rtt: int
+    downlink: float
+    save_data: bool
+    type: str
+    downlink_max: float
+
+
+@dataclass(frozen=True)
+class BatteryView:
+    charging: bool
+    charging_time: float
+    discharging_time: float
+    level: float
+
+
+@dataclass(frozen=True)
+class QuotaView:
+    usage: int
+    quota: int
+
+
+@dataclass(frozen=True)
+class StorageView:
+    temporary: QuotaView
+    persistent: QuotaView
+
+
+@dataclass(frozen=True)
+class Brand:
+    brand: str
+    version: str
+
+
+@dataclass(frozen=True)
+class ClientHintsView:
+    brands: tuple[Brand, ...]
+    full_version_list: tuple[Brand, ...]
+    mobile: bool
+    platform: str
+    platform_version: str
+    architecture: str
+    bitness: str
+    wow64: bool
+    model: str
+    form_factors: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MimeTypeView:
+    type: str
+    suffixes: str
+    description: str
+
+
+@dataclass(frozen=True)
+class PluginView:
+    name: str
+    filename: str
+    description: str
+    mime_types: tuple[MimeTypeView, ...]
+
+
+def _platform_name(user_agent, fallback):
+    for token, name in (
+        ("Windows", "Windows"), ("Android", "Android"), ("iPhone", "iOS"),
+        ("iPad", "iOS"), ("CrOS", "Chrome OS"), ("Macintosh", "macOS"),
+        ("Linux", "Linux"),
+    ):
+        if token in user_agent:
+            return name
+    return fallback
+
+
+def _derive(values):
+    """The keys that follow the user agent, so a changed one moves them too."""
+    user_agent = str(values["user_agent"])
+    version = re.search(r"Chrome/(\d+)", user_agent)
+    major = version.group(1) if version is not None else ""
+    brands = tuple(
+        {"brand": brand, "version": _NOT_A_BRAND_VERSION if brand == "Not_A Brand" else major}
+        for brand in ("Google Chrome", "Not_A Brand", "Chromium")
+    )
+    return {
+        "app_version": user_agent.removeprefix("Mozilla/"),
+        "language": str(tuple(values["languages"])[0]),
+        "client_hints.brands": brands,
+        "client_hints.mobile": "Mobile" in user_agent,
+        "client_hints.platform": _platform_name(user_agent, str(values["client_hints.platform"])),
+    }
+
+
+def _resolved(explicit):
+    values = dict(DEFAULTS)
+    values.update(explicit)
+    values.update(_derive(values))
+    values.update(explicit)
+    return values
+
+
+def _json_value(value):
+    """A non-finite number travels as its own name: ``Infinity`` is not JSON."""
+    if isinstance(value, float) and not math.isfinite(value):
+        if value != value:
+            return "NaN"
+        return "Infinity" if value > 0 else "-Infinity"
+    if isinstance(value, Mapping):
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def _accepted(data):
+    """Validate a mapping of dotted keys into the values it sets."""
+    if data is None:
+        return {}
+    if not isinstance(data, Mapping):
+        raise TypeError("environment must be a mapping of dotted keys")
+    accepted = {}
+    for name, value in data.items():
+        if name in ENVELOPE_KEYS:
+            if name == "schema" and value != SCHEMA_VERSION:
+                raise ValueError(f"environment schema {value!r} is not version {SCHEMA_VERSION}")
+            continue
+        field = _BY_NAME.get(name)
+        if field is None:
+            raise TypeError(f"unknown environment key: {name}")
         try:
-            values = tuple(MimeTypeConfig.from_value(value) for value in values)
-        except TypeError:
-            raise TypeError("plugin mime_types must be a sequence") from None
-        if len({value.type for value in values}) != len(values):
-            raise ValueError("plugin mime_types must not contain duplicate types")
-        object.__setattr__(self, "mime_types", values)
+            accepted[name] = field.validate(value)
+        except (TypeError, ValueError) as error:
+            raise type(error)(f"{name} {error}") from None
+    return accepted
 
 
-_PDF_MIME_TYPES = (
-    MimeTypeConfig("application/pdf", "pdf", "Portable Document Format"),
-    MimeTypeConfig("text/pdf", "pdf", "Portable Document Format"),
-)
-DEFAULT_PLUGINS = (
-    PluginConfig("PDF Viewer", "internal-pdf-viewer", "Portable Document Format", _PDF_MIME_TYPES),
-    PluginConfig("Chrome PDF Viewer", "internal-pdf-viewer", "Portable Document Format", _PDF_MIME_TYPES),
-    PluginConfig("Chromium PDF Viewer", "internal-pdf-viewer", "Portable Document Format", _PDF_MIME_TYPES),
-    PluginConfig("Microsoft Edge PDF Viewer", "internal-pdf-viewer", "Portable Document Format", _PDF_MIME_TYPES),
-    PluginConfig("WebKit built-in PDF", "internal-pdf-viewer", "Portable Document Format", _PDF_MIME_TYPES),
-)
-
-@dataclass(frozen=True)
-class ViewportConfig(_ConfigMapping):
-    _config_label = "viewport"
-    _none_default = True
-
-    width: int = 1280
-    height: int = 720
-    device_scale_factor: float = 1.0
-    mobile: bool = False
-    touch: bool = False
-
-    def __post_init__(self):
-        object.__setattr__(self, "width", _positive_int(self.width, "viewport.width"))
-        object.__setattr__(self, "height", _positive_int(self.height, "viewport.height"))
-        object.__setattr__(
-            self, "device_scale_factor",
-            _positive_float(self.device_scale_factor, "viewport.device_scale_factor"),
-        )
-        object.__setattr__(self, "mobile", bool(self.mobile))
-        object.__setattr__(self, "touch", bool(self.touch))
-
-
-@dataclass(frozen=True)
-class ScreenConfig(_ConfigMapping):
-    _config_label = "screen"
-    _none_default = True
-
-    width: int = 1920
-    height: int = 1080
-    avail_width: int = 1920
-    avail_height: int = 1080
-    color_depth: int = 24
-    pixel_depth: int = 24
-
-    def __post_init__(self):
-        for name in ("width", "height", "avail_width", "avail_height"):
-            object.__setattr__(self, name, _positive_int(getattr(self, name), f"screen.{name}"))
-        for name in ("color_depth", "pixel_depth"):
-            value = _positive_int(getattr(self, name), f"screen.{name}")
-            object.__setattr__(self, name, value)
-
-
-@dataclass(frozen=True)
-class GeolocationConfig(_ConfigMapping):
-    _config_label = "geolocation"
-    _none_default = True
-
-    permission: str = "denied"
-    latitude: float | None = None
-    longitude: float | None = None
-    accuracy: float | None = None
-
-    def __post_init__(self):
-        permission = str(self.permission).lower()
-        if permission not in ("denied", "granted"):
-            raise ValueError("geolocation.permission must be 'denied' or 'granted'")
-        object.__setattr__(self, "permission", permission)
-        for name, low, high in (("latitude", -90.0, 90.0), ("longitude", -180.0, 180.0)):
-            value = getattr(self, name)
-            if value is not None:
-                try:
-                    value = float(value)
-                except (TypeError, ValueError):
-                    raise TypeError(f"geolocation.{name} must be a number or None") from None
-                if not low <= value <= high:
-                    raise ValueError(f"geolocation.{name} is outside its valid range")
-                object.__setattr__(self, name, value)
-        if self.accuracy is not None:
-            accuracy = _non_negative_float(self.accuracy, "geolocation.accuracy")
-            object.__setattr__(self, "accuracy", accuracy)
-
-
-@dataclass(frozen=True)
-class NetworkInformationConfig(_ConfigMapping):
-    _config_label = "connection"
-    _none_default = True
-
-    effective_type: str = "4g"
-    rtt: int = 100
-    downlink: float = 10.0
-    save_data: bool = False
-    type: str = "unknown"
-    downlink_max: float = float("inf")
-
-    def __post_init__(self):
-        effective_type = str(self.effective_type)
-        if effective_type not in ("slow-2g", "2g", "3g", "4g"):
-            raise ValueError("connection.effective_type must be 'slow-2g', '2g', '3g', or '4g'")
-        connection_type = str(self.type)
-        if connection_type not in (
-            "bluetooth", "cellular", "ethernet", "mixed", "none",
-            "other", "unknown", "wifi", "wimax",
-        ):
-            raise ValueError("connection.type is not a valid connection type")
-        object.__setattr__(self, "effective_type", effective_type)
-        object.__setattr__(self, "rtt", _non_negative_int(self.rtt, "connection.rtt"))
-        object.__setattr__(self, "downlink", _non_negative_float(self.downlink, "connection.downlink"))
-        object.__setattr__(self, "save_data", bool(self.save_data))
-        object.__setattr__(self, "type", connection_type)
-        downlink_max = float(self.downlink_max)
-        if downlink_max < 0:
-            raise ValueError("connection.downlink_max must not be negative")
-        object.__setattr__(self, "downlink_max", downlink_max)
-
-
-@dataclass(frozen=True)
-class BatteryConfig(_ConfigMapping):
-    _config_label = "battery"
-    _none_default = True
-
-    charging: bool = True
-    charging_time: float = 0.0
-    discharging_time: float = float("inf")
-    level: float = 1.0
-
-    def __post_init__(self):
-        object.__setattr__(self, "charging", bool(self.charging))
-        object.__setattr__(self, "charging_time", _non_negative_float(self.charging_time, "battery.charging_time"))
-        object.__setattr__(
-            self, "discharging_time",
-            _non_negative_float(self.discharging_time, "battery.discharging_time"),
-        )
-        level = float(self.level)
-        if not 0.0 <= level <= 1.0:
-            raise ValueError("battery.level must be between zero and one")
-        object.__setattr__(self, "level", level)
-
-
-@dataclass(frozen=True)
-class StorageQuotaConfig(_ConfigMapping):
-    _config_label = "storage quota"
-    _none_default = True
-
-    usage: int = 0
-    quota: int = 0
-
-    def __post_init__(self):
-        usage = _non_negative_int(self.usage, "storage quota usage")
-        quota = _non_negative_int(self.quota, "storage quota quota")
-        if usage > quota:
-            raise ValueError("storage quota usage must not exceed quota")
-        object.__setattr__(self, "usage", usage)
-        object.__setattr__(self, "quota", quota)
-
-
-@dataclass(frozen=True)
 class BrowserEnvironment:
-    user_agent: str = DEFAULT_USER_AGENT
-    app_version: str | None = None
-    vendor: str = "Google Inc."
-    platform: str = "Win32"
-    language: str = DEFAULT_LANGUAGES[0]
-    languages: tuple[str, ...] = DEFAULT_LANGUAGES
-    on_line: bool = True
-    hardware_concurrency: int = 8
-    device_memory: float = 8.0
-    max_touch_points: int = 0
-    webdriver: bool = False
-    viewport: ViewportConfig = field(default_factory=ViewportConfig)
-    screen: ScreenConfig = field(default_factory=ScreenConfig)
-    timezone: str = "UTC"
-    geolocation: GeolocationConfig = field(default_factory=GeolocationConfig)
-    connection: NetworkInformationConfig = field(default_factory=NetworkInformationConfig)
-    battery: BatteryConfig = field(default_factory=BatteryConfig)
-    temporary_storage_quota: StorageQuotaConfig = field(default_factory=StorageQuotaConfig)
-    persistent_storage_quota: StorageQuotaConfig = field(default_factory=StorageQuotaConfig)
-    plugins: tuple[PluginConfig, ...] = DEFAULT_PLUGINS
+    """One flat ``dotted.key -> value`` configuration, frozen once built.
 
-    def __post_init__(self):
-        object.__setattr__(self, "user_agent", str(self.user_agent))
-        app_version = self.app_version
-        if app_version is None:
-            app_version = self.user_agent.removeprefix("Mozilla/")
-        object.__setattr__(self, "app_version", str(app_version))
-        object.__setattr__(self, "platform", str(self.platform))
-        if not self.user_agent:
-            raise ValueError("user_agent must not be empty")
-        if not self.platform:
-            raise ValueError("platform must not be empty")
-        languages = self.languages
-        if isinstance(languages, str):
-            languages = (languages,)
-        try:
-            languages = tuple(str(value) for value in languages)
-        except TypeError:
-            raise TypeError("languages must be a sequence of strings") from None
-        if not languages or any(not value for value in languages):
-            raise ValueError("languages must contain at least one non-empty value")
-        object.__setattr__(self, "languages", languages)
-        language = self.language if self.language is not None else languages[0]
-        language = str(language)
-        if not language:
-            raise ValueError("language must not be empty")
-        object.__setattr__(self, "language", language)
-        object.__setattr__(self, "on_line", bool(self.on_line))
-        object.__setattr__(
-            self, "hardware_concurrency",
-            _positive_int(self.hardware_concurrency, "hardware_concurrency"),
-        )
-        object.__setattr__(self, "device_memory", _positive_float(self.device_memory, "device_memory"))
-        object.__setattr__(self, "max_touch_points", _non_negative_int(self.max_touch_points, "max_touch_points"))
-        object.__setattr__(self, "webdriver", bool(self.webdriver))
-        object.__setattr__(self, "viewport", ViewportConfig.from_value(self.viewport))
-        object.__setattr__(self, "screen", ScreenConfig.from_value(self.screen))
-        timezone = str(self.timezone)
-        if not timezone:
-            raise ValueError("timezone must not be empty")
-        object.__setattr__(self, "timezone", timezone)
-        object.__setattr__(self, "geolocation", GeolocationConfig.from_value(self.geolocation))
-        object.__setattr__(self, "connection", NetworkInformationConfig.from_value(self.connection))
-        object.__setattr__(self, "battery", BatteryConfig.from_value(self.battery))
-        object.__setattr__(
-            self, "temporary_storage_quota",
-            StorageQuotaConfig.from_value(self.temporary_storage_quota),
-        )
-        object.__setattr__(
-            self, "persistent_storage_quota",
-            StorageQuotaConfig.from_value(self.persistent_storage_quota),
-        )
-        plugins = self.plugins
-        if isinstance(plugins, Mapping):
-            # Runtime callers may pass a lone mapping for a single entry even
-            # though the dataclass annotation says sequence.
-            plugins = (plugins,)  # type: ignore[assignment]
-        try:
-            plugins = tuple(PluginConfig.from_value(plugin) for plugin in plugins)
-        except TypeError:
-            raise TypeError("plugins must be a sequence") from None
-        if len({plugin.name for plugin in plugins}) != len(plugins):
-            raise ValueError("plugins must not contain duplicate names")
-        object.__setattr__(self, "plugins", plugins)
+    ``to_dict()`` gives back only the keys this environment was given; the rest follow
+    the shipped profile or the user agent, which ``resolved()`` and the views read.
+    """
+
+    __slots__ = (
+        "_explicit", "_resolved",
+        "viewport", "screen", "geolocation", "connection", "battery", "storage",
+        "client_hints", "plugins",
+    )
+
+    def __init__(self, data=None, *, base=None):
+        explicit = dict(base._explicit) if base is not None else {}
+        if isinstance(data, BrowserEnvironment):
+            explicit.update(data._explicit)
+        else:
+            explicit.update(_accepted(data))
+        values = _resolved(explicit)
+        for kind in ("temporary", "persistent"):
+            if values[f"storage.{kind}.usage"] > values[f"storage.{kind}.quota"]:
+                raise ValueError(f"storage.{kind}.usage must not exceed storage.{kind}.quota")
+        object.__setattr__(self, "_explicit", MappingProxyType(explicit))
+        object.__setattr__(self, "_resolved", MappingProxyType(values))
+        object.__setattr__(self, "viewport", ViewportView(
+            values["viewport.width"], values["viewport.height"],
+            values["viewport.device_scale_factor"], values["viewport.mobile"],
+            values["viewport.touch"],
+        ))
+        object.__setattr__(self, "screen", ScreenView(
+            values["screen.width"], values["screen.height"],
+            values["screen.avail_width"], values["screen.avail_height"],
+            values["screen.color_depth"], values["screen.pixel_depth"],
+        ))
+        object.__setattr__(self, "geolocation", GeolocationView(
+            values["geolocation.permission"], values["geolocation.latitude"],
+            values["geolocation.longitude"], values["geolocation.accuracy"],
+        ))
+        object.__setattr__(self, "connection", ConnectionView(
+            values["connection.effective_type"], values["connection.rtt"],
+            values["connection.downlink"], values["connection.save_data"],
+            values["connection.type"], values["connection.downlink_max"],
+        ))
+        object.__setattr__(self, "battery", BatteryView(
+            values["battery.charging"], values["battery.charging_time"],
+            values["battery.discharging_time"], values["battery.level"],
+        ))
+        object.__setattr__(self, "storage", StorageView(
+            QuotaView(values["storage.temporary.usage"], values["storage.temporary.quota"]),
+            QuotaView(values["storage.persistent.usage"], values["storage.persistent.quota"]),
+        ))
+        object.__setattr__(self, "client_hints", ClientHintsView(
+            tuple(Brand(**entry) for entry in values["client_hints.brands"]),
+            tuple(Brand(**entry) for entry in values["client_hints.full_version_list"]),
+            values["client_hints.mobile"], values["client_hints.platform"],
+            values["client_hints.platform_version"], values["client_hints.architecture"],
+            values["client_hints.bitness"], values["client_hints.wow64"],
+            values["client_hints.model"], tuple(values["client_hints.form_factors"]),
+        ))
+        object.__setattr__(self, "plugins", tuple(
+            PluginView(entry["name"], entry["filename"], entry["description"],
+                       tuple(MimeTypeView(**mime) for mime in entry["mime_types"]))
+            for entry in values["plugins"]
+        ))
+
+    def __setattr__(self, name, value):
+        raise AttributeError("BrowserEnvironment is immutable")
+
+    def __getattr__(self, name):
+        """A resolved key is also readable as an attribute."""
+        values = object.__getattribute__(self, "_resolved")
+        if name in values:
+            return values[name]
+        raise AttributeError(f"unknown environment key: {name}")
 
     @classmethod
-    def from_value(cls, value=None, *, base=None):
-        if value is None:
-            return base if base is not None else cls()
-        if isinstance(value, cls):
-            return value
-        if not isinstance(value, Mapping):
-            raise TypeError("environment must be a BrowserEnvironment or mapping")
-        values = asdict(base or cls())
-        supplied = dict(value)
-        # ``language`` follows the first entry when callers override only the
-        # language list, matching browser Navigator semantics.
-        if "languages" in supplied and "language" not in supplied:
-            values["language"] = None
-        if "user_agent" in supplied and "app_version" not in supplied:
-            values["app_version"] = None
-        for name in (
-            "viewport", "screen", "geolocation", "connection", "battery",
-            "temporary_storage_quota", "persistent_storage_quota",
-        ):
-            nested = supplied.get(name)
-            if isinstance(nested, Mapping):
-                merged = dict(values[name])
-                merged.update(nested)
-                supplied[name] = merged
-        values.update(supplied)
-        return cls(**values)
+    def from_dict(cls, data=None, *, base=None):
+        """Build from a mapping of dotted keys, an instance, or nothing."""
+        if isinstance(data, cls) and base is None:
+            return data
+        return cls(data, base=base)
 
-    def overlay(self, value=None):
-        return self.from_value(value, base=self)
+    @classmethod
+    def loads(cls, text, *, base=None):
+        return cls.from_dict(json.loads(text), base=base)
+
+    @classmethod
+    def from_file(cls, path, *, base=None):
+        return cls.loads(Path(path).read_text(encoding="utf-8"), base=base)
+
+    def overlay(self, data=None):
+        """This configuration with *data* applied on top of it."""
+        return type(self).from_dict(data, base=self)
 
     def to_dict(self):
-        return asdict(self)
+        """Only the keys this environment was given, in table order."""
+        return {name: self._explicit[name] for name in _BY_NAME if name in self._explicit}
 
-    @property
-    def readonly(self):
-        """Return a read-only mapping useful for diagnostics and integrations."""
-        return MappingProxyType(self.to_dict())
+    def resolved(self):
+        """Every key, with the profile and the user agent filled in."""
+        return dict(self._resolved)
+
+    def dumps(self, *, resolved=False, source=None):
+        document = {"schema": SCHEMA_VERSION}
+        if source is not None:
+            document["source"] = dict(source)
+        values = self.resolved() if resolved else self.to_dict()
+        document.update({name: _json_value(value) for name, value in values.items()})
+        return json.dumps(document, indent=2) + "\n"
+
+    def to_file(self, path, *, resolved=True, source=None):
+        Path(path).write_text(self.dumps(resolved=resolved, source=source), encoding="utf-8")
+
+    def __eq__(self, other):
+        if not isinstance(other, BrowserEnvironment):
+            return NotImplemented
+        return self._resolved == other._resolved
+
+    def __repr__(self):
+        keys = ", ".join(f"{name}={value!r}" for name, value in self.to_dict().items())
+        return f"BrowserEnvironment({keys})"
 
 
 __all__ = [
-    "BrowserEnvironment", "ViewportConfig", "ScreenConfig", "GeolocationConfig",
-    "NetworkInformationConfig", "BatteryConfig", "StorageQuotaConfig",
-    "PluginConfig", "MimeTypeConfig",
+    "BrowserEnvironment", "Field", "FIELDS", "SCHEMA_VERSION", "COLLECTED_KEYS", "PROFILE",
+    "ViewportView", "ScreenView", "GeolocationView", "ConnectionView", "BatteryView",
+    "StorageView", "QuotaView", "ClientHintsView", "Brand", "PluginView", "MimeTypeView",
 ]

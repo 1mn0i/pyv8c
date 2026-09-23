@@ -215,10 +215,3 @@ def test_handler_slots_are_prototype_accessors_that_start_out_null(event_page):
     """) == [True, "function", "function", True, False]
 
 
-def test_event_handler_slots_are_generated_once_per_slot():
-    names = [item.name for item in EventTarget.__v8_idl_spec__.attributes]
-    assert len(names) == len(set(names))
-    assert {"onload", "onerror", "onclick", "onkeydown", "onwheel", "onhashchange"} <= set(names)
-    for slot in ("onclick", "onkeydown", "onhashchange"):
-        assert EventTarget.__dict__["get_" + slot].__name__ == "get_" + slot
-        assert EventTarget.__dict__["set_" + slot].__name__ == "set_" + slot

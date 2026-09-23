@@ -27,6 +27,7 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytestmark = pytest.mark.race
 
 from pyv8c.foundation.errors import V8Error
 from pyv8c.foundation.executor import RealmExecutor

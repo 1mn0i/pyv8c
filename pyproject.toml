@@ -41,4 +41,4 @@ include = ["pyv8c*"]
 exclude = ["build*", "dist*", "tests*"]
 
 [tool.setuptools.package-data]
-pyv8c = ["baselines/*.zip"]
+pyv8c = ["baselines/*.zip", "data/*.json"]

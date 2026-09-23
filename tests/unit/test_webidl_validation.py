@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytestmark = pytest.mark.native
 
 from pyv8c import Browser
 from pyv8c.web.dom import DOMTokenList
@@ -115,7 +116,7 @@ def test_runtime_has_no_signature_driven_argument_validator():
     runtime = Path(__file__).resolve().parents[2] / "pyv8c"
     assert not (runtime / "engine" / "webidl.py").exists()
     for path in runtime.rglob("*.py"):
-        if "extractor" in path.parts:
+        if "tools" in path.parts:
             continue
         source = path.read_text(encoding="utf-8")
         for forbidden in ("validate_arguments", "BindingPlan", "compile_parameter", "from .webidl import"):

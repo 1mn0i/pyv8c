@@ -1,14 +1,9 @@
 """The ``websockets`` engine: the page's sockets on a real WebSocket client.
 
-It is the default WebSocket engine, so ``new WebSocket`` works without any
-optional client installed.  Every socket gets a thread of its own running
-``websockets.sync``: a blocking connection matches this project's thread model,
-where events are delivered on the realm's task queue and V8 is only ever touched
-on the owner thread.  No event loop of ours, and no polling.
-
-A handshake goes out the way a browser's does: the environment's ``User-Agent``
-and ``Accept-Language``, the context's cookies for the target URL, the page's
-``Origin``, and then whatever ``ws_options={"headers": ...}`` adds on top.
+It is the default engine, so ``new WebSocket`` works with nothing optional
+installed.  Each socket gets a thread of its own running ``websockets.sync``,
+because a blocking connection matches the project's thread model (events are
+delivered on the realm's task queue).
 """
 import importlib
 import inspect
@@ -22,8 +17,7 @@ from .models import NetworkUnavailableError
 #: Options this engine consumes itself instead of handing to ``websockets``.
 _BRIDGE_KEYS = frozenset({"cookies", "headers"})
 
-#: Keyword names this engine supplies itself, so a caller may not set them:
-#: the connection target and the handshake are the engine's business.
+#: Keyword names the engine supplies itself; the target and handshake are its own.
 _MANAGED_KEYS = frozenset({"uri", "subprotocols", "additional_headers", "logger", "origin"})
 
 
@@ -159,8 +153,7 @@ class _Socket:
 class WebSocketsTransport:
     """Opens WebSockets with ``websockets``; one connection per thread."""
 
-    #: The context's cookie jar, assigned once the context has one; a handshake
-    #: carries the same cookies a request to the same URL would.
+    #: The context's cookie jar; a handshake carries what a request to the URL would.
     cookies = None
 
     @classmethod

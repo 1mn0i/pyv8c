@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -119,3 +120,31 @@ def test_an_unknown_gate_is_rejected(tool):
     )
     assert result.returncode != 0
     assert "unknown gate" in result.stderr
+
+
+@pytest.mark.skipif(
+    os.environ.get("PYV8C_OFFLINE") == "1",
+    reason="the offline gate runs this suite; the nested run must not recurse",
+)
+def test_the_offline_gate_holds_the_unit_suite_to_its_promise(tool):
+    """``tests/unit`` must import nothing native: that is where offline runs it."""
+    assert tool.gate_offline() is True
+
+
+COPY = (0.94, "tests/browser/test_copy.py", 12, "test_copy", "a_case", 34)
+
+
+def test_a_test_that_repeats_a_corpus_case_is_reported(tool, monkeypatch, capsys):
+    monkeypatch.setattr(tool, "duplicate_findings", lambda: [COPY])
+    assert tool.gate_duplicates(strict=False) is True
+    assert "tests/browser/test_copy.py:12" in capsys.readouterr().out
+
+
+def test_the_duplicate_gate_fails_only_when_asked_to_be_strict(tool, monkeypatch):
+    monkeypatch.setattr(tool, "duplicate_findings", lambda: [COPY])
+    assert tool.gate_duplicates(strict=True) is False
+
+
+def test_no_test_repeats_a_corpus_case(tool):
+    """The corpus is where page behaviour lives, and Chrome is run against it."""
+    assert tool.duplicate_findings() == []

@@ -6,10 +6,12 @@ import math
 from pathlib import Path
 
 import pytest
-import pyv8
 
-from pyv8c.foundation.arguments import boolean, byte_string, dom_string, integer, missing_error, usv_string
-from pyv8c.foundation.errors import V8TypeError
+pyv8 = pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytestmark = pytest.mark.native
+
+from pyv8c.foundation.arguments import boolean, byte_string, dom_string, integer, missing_error, usv_string  # noqa: E402
+from pyv8c.foundation.errors import V8TypeError  # noqa: E402
 
 
 @pytest.mark.parametrize(

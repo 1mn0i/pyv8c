@@ -22,9 +22,12 @@
 - Feature 实现模块必须显式导出 `FEATURE`，接口映射必须完整；不要重新引入 `vars(module)` 扫描、注册表冻结后写入或散落的 loader。
 - Optional Feature 首次接口/Window 槽位访问时加载；同一 Feature 在一个 Browser 中只加载一次，在一个 Realm 中原子物化其关联接口。
 - Window 值必须通过 Feature 槽位创建并保持对象身份；不要重新引入由 Window 自己维护的 `_lazy_bom` 或局部动态 import。
-- Feature 内部的低频子对象必须在对应属性或方法首次使用时实例化。Window 槽位和 Feature 内部子对象统一使用 `LazyValueStore`：getter 只做可用性判断并调用 `.value("slot")`，集中式 `_create_value()` 负责构造。不要新增 `_object()`、逐属性 nullable 字段或 `dict.get()` 缓存。重复访问必须返回同一实例；构造父对象时不得预先创建 NetworkInformation、BatteryManager、Geolocation、Plugin 集合、存储配额等低频对象。
+- Feature 内部的低频子对象必须在对应属性或方法首次使用时实例化。Window 槽位用 `LazyValueStore`，由 `FeatureSpec.window_slots` 声明、`FeatureImplementation.window_values` 构造；owner 自己持有的多条槽位（Navigator、Screen、Navigation、URL、Worker 全局与 Window 的 `[SameObject]` 成员）统一用 `LazyValueStore({name: factory})` 表：getter 只做可用性判断并调用 `.value("name")`，构造留给表里的工厂。子类只允许 Window 槽位那一个（构造权属于 Feature，须经 runtime 路由）；不要新增 `_object()`、逐属性 nullable 字段或 `dict.get()` 缓存。重复访问必须返回同一实例；构造父对象时不得预先创建 NetworkInformation、BatteryManager、Geolocation、Plugin 集合、存储配额等低频对象。
 - 参数语义、转换顺序、同步异常和 Promise 拒绝属于 API 实现；不要增加签名驱动的统一校验 wrapper。
+- `baseline_mismatch` 默认 `warn`：手写实现与所选 baseline 的成员/接口差异记一次警告并跳过，所以跨版本（例如 145）运行不会因为小偏差挡住装配。怀疑自己实现写错时才切到 `error`——此时手写实现声明的成员、接口与父接口必须能在 baseline 里找到，否则装配当场失败。
+- 基线声明了 named/indexed（含 cross-origin）handler 而类没声明的，由 `StubFactory.handler` 补占位——**以基线为唯一依据，类不设豁免**；漏声明会当场暴露，而不是静默丢掉拦截器。占位在普通属性探测中就会运行（`Window` 与 `WindowProperties` 的 named 占位同样会跑），而 loguru 首次使用约 75ms、被刻意推迟到第一条日志，所以占位默认静默，只有 `stub_logging="verbose"` 时按 (接口, 回调) 报一次 "待实现"。唯一例外是 cross-origin 访问检查 `__v8_cross_origin_check__`：它是许可判定，占位会让类没打算守的路径被拒，所以仍只给无手写实现的类补。
 - `interface-baseline.zip` 提供结构、继承、成员和模板元数据，不是运行时参数调度器。
+- 产出随包数据的离线脚本（接口 baseline、环境 profile）实现在 `pyv8c/tools/`，仓库根 `tools/` 只放同名壳：壳只从同名模块转发 `main`，逻辑不写在壳里；域包不得 import 它们。`tests/unit/test_architecture.py` 守卫这条配对。
 
 ## 修改方法
 
@@ -42,9 +45,18 @@ python tools/check_policy.py
 git diff --check
 ```
 
-`tools/check_policy.py` 是提交前的三层闸门：分层规则（委托 `tests/unit/test_architecture.py`）、
-实现改动是否配了测试、启动时延是否超出记录预算。启动这一层的数字属于记录它的机器，换机器或
-有意改变启动开销后用 `--record-startup` 重新记录。
+`tools/check_policy.py` 是提交前的五层闸门：分层规则（委托 `tests/unit/test_architecture.py`）、
+实现改动是否配了测试、启动时延是否超出记录预算、`tests/unit` 在**没有原生扩展**的路径上仍能运行
+（这是离线抽取器 `pyv8c/tools/extract_interfaces.py` 的使用前提，`--gates offline` 会隐藏
+`_pyv8` 跑一遍），以及有没有测试在重复语料用例（`--gates duplicates`，脚本相似度启发式，只告警；
+`--strict` 才失败）。启动这一层的数字属于记录它的机器，换机器或有意改变启动开销后用
+`--record-startup` 重新记录。
+
+按时间成本选范围（marker 见 `pyproject.toml`）：
+
+- 不需要原生扩展的快速通道：`python -m pytest tests/unit -m "not native"`。
+- 跳过长跑与并发回归：`python -m pytest -m "not slow and not race"`。
+- 并发/时序回归重复跑（需 dev extras 里的 `pytest-repeat`）：`python -m pytest -m race --count=5`。
 
 按改动范围额外运行：
 
@@ -53,6 +65,7 @@ git diff --check
 - DevTools：`tests/browser/test_devtools.py`。
 - 绑定编译和 baseline：`tests/unit/test_idl_compilation.py`、`tests/unit/test_interface_extractor.py`、`tests/integration/test_baseline_versions.py`。
 - Web API 行为：`tests/repros/`（声明式语料 + 本机 Chrome 对照）。改动 `pyv8c/web/` 下任何接口成员后跑 `python -m pytest tests/repros -q -rs`；被排除的用例都带 `known_divergence` 原因，实现补齐后该用例会失败并要求删除排除项。新增行为时优先往语料里加一例，而不是只写一条本地断言。
+- 页面可观察行为的断言以语料为准：`browser/` 与 `integration/` 的测试若与某个语料用例重叠，只保留语料覆盖不到的那部分，并在注释里写明各自归属（例如“href/hash 归语料 `anchor_href_resolves_against_the_document`”）。`python tools/check_policy.py --gates duplicates` 会提示疑似重复。
 
 报告测试结果时给出实际命令和通过/失败数量；区分代码失败、环境缺少 `pyv8`、原生构建失败和既有无关工作区改动。
 

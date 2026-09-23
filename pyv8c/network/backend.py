@@ -1,13 +1,7 @@
 """One context's network stack: an HTTP engine and a WebSocket engine.
 
-The two are chosen independently (``network_engine`` and ``ws_engine``, see
-``registry.py``), so a context can have either, both, or -- with networking off
--- neither.  This is what the rest of the engine holds: requests go to the HTTP
-engine, sockets to the WebSocket engine, and a call for an engine that was never
-assembled is refused with an error naming what to set.
-
-Both engines are handed the context's single cookie jar, so a document, its
-requests and its sockets are one session as far as a server is concerned.
+Both are handed the context's single cookie jar, so a document, its requests and
+its sockets are one session as far as a server is concerned.
 """
 from threading import RLock
 
@@ -68,7 +62,7 @@ class NetworkBackend:
     def _http_engine(self):
         if self._http is None:
             raise NetworkUnavailableError(
-                "this context has no HTTP engine; set network_engine= or real_network=True"
+                "this context has no HTTP engine; set http_engine= or real_network=True"
             )
         return self._http
 

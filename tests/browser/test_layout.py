@@ -17,17 +17,18 @@ def page():
 
 
 def test_hidden_element_keeps_layout_and_font_size_changes_height(page):
+    # Height is the pinned text metric for one 114px ``DFPhelvetica`` line.
     assert page.evaluate("""(() => {
         const div = document.createElement('div');
         div.style.visibility = 'hidden';
         document.body.appendChild(div);
         div.innerHTML = '<span style="font-family:mmllii;font-size:114px">mmmmmmmmmmmlliii</span>';
         div.style.fontFamily = 'DFPhelvetica';
-        return [div.offsetWidth, div.offsetHeight,
+        return [div.offsetWidth === window.innerWidth, div.offsetHeight,
             getComputedStyle(div).fontFamily,
             getComputedStyle(div.firstElementChild).fontSize,
             div.getBoundingClientRect().height > 0];
-    })()""") == [1280, 137, "DFPhelvetica", "114px", True]
+    })()""") == [True, 137, "DFPhelvetica", "114px", True]
 
 
 def test_style_rules_and_basic_flex_grid_geometry(page):

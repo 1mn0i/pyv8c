@@ -1,4 +1,5 @@
 """Navigator, geolocation, and browser-compatible plugin collections."""
+import json
 import time
 
 import pyv8
@@ -10,12 +11,14 @@ from ...foundation.arguments import (
     boolean,
     callback_value,
     dictionary,
+    dom_string,
     event_handler,
     integer,
     is_nullish,
     missing_error,
+    sequence,
 )
-from ...foundation.environment import BrowserEnvironment, MimeTypeConfig
+from ...foundation.environment import BrowserEnvironment, MimeTypeView
 from ...foundation.errors import V8TypeError
 from ...foundation.realm import post_or_call
 from ..dom.events import EventTarget
@@ -75,7 +78,7 @@ class MimeType:
     )
 
     def __init__(self, config=None, enabled_plugin=None, **_):
-        self._config = MimeTypeConfig.from_value(config or {"type": "application/pdf"})
+        self._config = config or MimeTypeView("application/pdf", "", "")
         self._enabled_plugin = enabled_plugin
 
     def get_type(self): return self._config.type
@@ -179,7 +182,7 @@ class MimeTypeArray(_LegacyNamedCollection):
 
 def create_plugin_collections(environment):
     """Create stable Navigator plugin and MIME collections for one realm."""
-    environment = BrowserEnvironment.from_value(environment)
+    environment = BrowserEnvironment.from_dict(environment)
     plugins = PluginArray(environment.plugins)
     return plugins, MimeTypeArray(plugins._plugins)
 
@@ -198,7 +201,7 @@ class Geolocation:
 
     def __init__(self, services=None, environment=None, **_):
         self._services = services
-        self._environment = BrowserEnvironment.from_value(environment)
+        self._environment = BrowserEnvironment.from_dict(environment)
         self._watchers = {}
         self._next_watch = 1
 
@@ -393,37 +396,119 @@ class DeprecatedStorageQuota:
         post_or_call(self._services, success, min(requested, self._config.quota))
 
 
-class _NavigatorFeatureValues(LazyValueStore):
-    __slots__ = ("_navigator",)
+#: The three members every ``getHighEntropyValues`` result carries.
+_LOW_ENTROPY_HINTS = frozenset(("brands", "mobile", "platform"))
 
-    def __init__(self, navigator):
-        super().__init__()
-        self._navigator = navigator
 
-    def _create_value(self, name):
-        navigator = self._navigator
-        environment = navigator._environment
-        services = navigator._services
-        if name == "connection":
-            return NetworkInformation(environment.connection, services=services)
-        if name == "battery":
-            return BatteryManager(environment.battery, services=services)
-        if name == "geolocation":
-            return Geolocation(services=services, environment=environment)
-        if name == "webkitTemporaryStorage":
-            return DeprecatedStorageQuota(
-                environment.temporary_storage_quota, services=services
-            )
-        if name == "webkitPersistentStorage":
-            return DeprecatedStorageQuota(
-                environment.persistent_storage_quota, services=services
-            )
-        if name in ("plugins", "mimeTypes"):
-            plugins, mime_types = create_plugin_collections(environment)
-            self._cache("plugins", plugins)
-            self._cache("mimeTypes", mime_types)
-            return plugins if name == "plugins" else mime_types
-        raise AttributeError(f"unknown Navigator feature value: {name!r}")
+@interface('NavigatorUAData', None)
+class NavigatorUAData:
+    """``navigator.userAgentData``: the brand and version hints a page may read.
+
+    Not ``[SameObject]``: every read of ``navigator.userAgentData`` hands out a
+    new one of these.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="brands", getter="get_brands", side_effect=1),
+            AttributeSpec(name="mobile", getter="get_mobile", side_effect=1),
+            AttributeSpec(name="platform", getter="get_platform", side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="getHighEntropyValues", callback="fn_getHighEntropyValues", length=1),
+            MethodSpec(name="toJSON", callback="fn_toJSON"),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+        to_string_tag="NavigatorUAData",
+    )
+
+    def __init__(self, environment=None, services=None, **_):
+        self._services = services
+        self._data = BrowserEnvironment.from_dict(environment).client_hints
+
+    def get_brands(self): return self._frozen(self._pairs(self._data.brands))
+    def get_mobile(self): return self._data.mobile
+    def get_platform(self): return self._data.platform
+
+    def fn_toJSON(self, *_extra):
+        return {"brands": self._pairs(self._data.brands),
+                "mobile": self._data.mobile, "platform": self._data.platform}
+
+    def fn_getHighEntropyValues(self, hints=MISSING, *_extra):
+        """The hints asked for, and the low-entropy three either way."""
+        services = self._services
+        promise, resolve, reject = services.realm_services.make_promise()
+
+        def settle():
+            try:
+                result = self._high_entropy(hints)
+            except BaseException as error:
+                # The hints convert when the promise settles, so a bad argument
+                # rejects rather than throwing.
+                reject(services.realm_services.js_error_value(error))
+                return
+            resolve(result)
+
+        services.task_services.schedule(settle, 0, repeat=False)
+        return promise
+
+    def _high_entropy(self, hints):
+        requested = frozenset(sequence(hints, lambda hint: str(dom_string(hint))))
+        #: Alphabetical, the order Chrome's own result carries.
+        values = {
+            "architecture": self._data.architecture,
+            "bitness": self._data.bitness,
+            "brands": self._pairs(self._data.brands),
+            "formFactors": list(self._data.form_factors),
+            "fullVersionList": self._pairs(self._data.full_version_list),
+            "mobile": self._data.mobile,
+            "model": self._data.model,
+            "platform": self._data.platform,
+            "platformVersion": self._data.platform_version,
+            "uaFullVersion": self._full_version(),
+            "wow64": self._data.wow64,
+        }
+        return {name: value for name, value in values.items()
+                if name in requested or name in _LOW_ENTROPY_HINTS}
+
+    def _full_version(self):
+        """The build's own version, from the brand list's Google Chrome entry."""
+        return next((entry.version for entry in self._data.full_version_list
+                     if entry.brand == "Google Chrome"), "")
+
+    def _pairs(self, entries):
+        return [{"brand": entry.brand, "version": entry.version} for entry in entries]
+
+    def _frozen(self, values):
+        """A fresh frozen array, the way the ``brands`` member hands one out."""
+        return self._services.realm_services.evaluate_script(
+            "Object.freeze(" + json.dumps(values) + ")")
+
+
+def _navigator_values(navigator):
+    """The sub-objects a Navigator hands out, built on first read."""
+    environment = navigator._environment
+    services = navigator._services
+
+    def plugins():
+        # Reading either collection builds both, so the twin is cached with it.
+        collection, mime_types = create_plugin_collections(environment)
+        values._cache("mimeTypes", mime_types)
+        return collection
+
+    values = LazyValueStore({
+        "connection": lambda: NetworkInformation(environment.connection, services=services),
+        "locks": lambda: LockManager(services=services),
+        "battery": lambda: BatteryManager(environment.battery, services=services),
+        "geolocation": lambda: Geolocation(services=services, environment=environment),
+        "webkitTemporaryStorage": lambda: DeprecatedStorageQuota(
+            environment.storage.temporary, services=services),
+        "webkitPersistentStorage": lambda: DeprecatedStorageQuota(
+            environment.storage.persistent, services=services),
+        "plugins": plugins,
+    })
+    return values
 
 
 @interface('Navigator', None)
@@ -431,6 +516,7 @@ class Navigator:
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="userAgent", getter="get_userAgent", side_effect=1),
+            AttributeSpec(name="userAgentData", getter="get_userAgentData", side_effect=1),
             AttributeSpec(name="appName", getter="get_appName", side_effect=1),
             AttributeSpec(name="appVersion", getter="get_appVersion", side_effect=1),
             AttributeSpec(name="product", getter="get_product", side_effect=1),
@@ -462,13 +548,19 @@ class Navigator:
 
     def __init__(self, user_agent=None, services=None, environment=None, worker=False, **_):
         self._services = services
-        self._environment = BrowserEnvironment.from_value(environment)
+        self._environment = BrowserEnvironment.from_dict(environment)
         self._worker = bool(worker)
         if user_agent is not None:
-            self._environment = BrowserEnvironment.from_value({"user_agent": user_agent}, base=self._environment)
-        self._features = _NavigatorFeatureValues(self)
+            self._environment = self._environment.overlay({"user_agent": user_agent})
+        self._features = _navigator_values(self)
 
     def get_userAgent(self): return self._environment.user_agent
+    def get_userAgentData(self):
+        """A fresh UA-CH object per read, and only in a secure context."""
+        services = self._services
+        if services is None or not is_secure_context(services.realm_services.url):
+            return pyv8.Undefined
+        return NavigatorUAData(environment=self._environment, services=services)
     # Frozen compatibility values, as Chrome reports them.
     def get_appName(self): return "Netscape"
     def get_product(self): return "Gecko"
@@ -492,10 +584,7 @@ class Navigator:
         document = getattr(getattr(self._services, "document_services", None), "document", None)
         if not is_secure_context(getattr(document, "url", "")):
             return pyv8.Undefined
-        manager = getattr(self, "_locks", None)
-        if manager is None:
-            manager = self._locks = LockManager(services=self._services)
-        return manager
+        return self._features.value("locks")
     def get_doNotTrack(self): return pyv8.Null
     def get_webdriver(self): return self._environment.webdriver
     def get_connection(self): return self._features.value("connection")
@@ -522,8 +611,8 @@ class Navigator:
 
 
 __all__ = [
-    "Navigator", "Geolocation", "Plugin", "PluginArray", "MimeType", "MimeTypeArray",
-    "NetworkInformation", "BatteryManager", "DeprecatedStorageQuota",
+    "Navigator", "NavigatorUAData", "Geolocation", "Plugin", "PluginArray", "MimeType",
+    "MimeTypeArray", "NetworkInformation", "BatteryManager", "DeprecatedStorageQuota",
 ]
 
 
@@ -538,6 +627,7 @@ FEATURE = FeatureImplementation(
         "BatteryManager": BatteryManager,
         "DeprecatedStorageQuota": DeprecatedStorageQuota,
         "Navigator": Navigator,
+        "NavigatorUAData": NavigatorUAData,
     },
     {
         "navigator": lambda window: Navigator(

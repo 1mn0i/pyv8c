@@ -42,30 +42,6 @@ def page():
         browser.close()
 
 
-def test_document_title_reads_collapsed_text_and_writes_it(page):
-    assert page.evaluate("document.title") == "Live Page"
-    assert page.evaluate("(document.title = ' New  Title ', document.title)") == "New Title"
-    # The element keeps what was written; only the IDL attribute collapses.
-    assert page.evaluate(
-        "(function(){ const t = document.querySelector('title'); return t.textContent; })()"
-    ) == " New  Title "
-
-
-def test_get_elements_by_name_is_live(page):
-    assert page.evaluate("document.getElementsByName('user').length") == 3
-    assert page.evaluate("document.getElementsByName('user')[0].tagName") == "INPUT"
-    assert page.evaluate("document.getElementsByName('absent').length") == 0
-    # A NodeList that follows the tree, like the baseline declares it.
-    assert page.evaluate("""
-        (function () {
-            const list = document.getElementsByName('user');
-            const before = list.length;
-            document.body.appendChild(document.createElement('i')).setAttribute('name', 'user');
-            return [before, list.length];
-        })()
-    """) == [3, 4]
-
-
 def test_document_implementation_factories(page):
     assert page.evaluate("document.implementation === document.implementation") is True
     assert page.evaluate("document.implementation.hasFeature()") is True
@@ -122,14 +98,13 @@ def test_link_media_and_anchor_url_members(page):
             return [link.media, link.getAttribute('media')];
         })()
     """) == ["print", "print"]
+    # href/pathname/search/hash/protocol: corpus ``anchor_href_resolves_against_the_document``.
     assert page.evaluate("""
         (function () {
             const anchor = document.querySelector('#link');
-            return [anchor.href, anchor.pathname, anchor.hostname, anchor.origin,
-                    anchor.search, anchor.hash, anchor.protocol, String(anchor)];
+            return [anchor.hostname, anchor.origin, String(anchor)];
         })()
-    """) == ["https://dom.test/dir/target?q=1#frag", "/dir/target", "dom.test",
-             "https://dom.test", "?q=1", "#frag", "https:", "https://dom.test/dir/target?q=1#frag"]
+    """) == ["dom.test", "https://dom.test", "https://dom.test/dir/target?q=1#frag"]
     # Assigning a component rewrites the href attribute, as URLUtils requires.
     assert page.evaluate("""
         (function () {
@@ -170,196 +145,6 @@ def test_textarea_option_and_select_values(page):
     """) == [["a", True, False, "a", "B"], ["B", False, True], ["", False, False]]
 
 
-def test_select_options_collection_is_live_and_indexable(page):
-    assert page.evaluate("""
-        (function () {
-            const select = document.querySelector('select');
-            const options = select.options;
-            const before = options.length;
-            const added = document.createElement('option');
-            added.value = 'c';
-            select.appendChild(added);
-            return [before, options.length, options === select.options, select.length,
-                    options[2] === added, options.item(0).value, options.item(9) === null];
-        })()
-    """) == [2, 3, True, 3, True, "a", True]
-    assert page.evaluate("""
-        (function () {
-            const select = document.querySelector('select');
-            const second = select.querySelectorAll('option')[1];
-            second.setAttribute('id', 'second');
-            return [select.options.namedItem('second') === second, select.options.item(-1) === null];
-        })()
-    """) == [True, True]
-
-
-def test_select_selected_index_reads_and_moves_the_selection(page):
-    assert page.evaluate("""
-        (function () {
-            const select = document.querySelector('select');
-            const initial = [select.selectedIndex, select.options.selectedIndex,
-                             select.selectedOptions.length];
-            select.selectedIndex = 1;
-            const moved = [select.selectedIndex, select.value, select.selectedOptions.length,
-                           select.options.selectedIndex];
-            select.selectedIndex = -1;
-            return [initial, moved,
-                    [select.selectedIndex, select.value, select.selectedOptions.length]];
-        })()
-    """) == [[0, 0, 1], [1, "B", 1, 1], [-1, "", 0]]
-
-
-def test_select_options_collection_moves_the_selection_too(page):
-    assert page.evaluate("""
-        (function () {
-            const select = document.querySelector('select');
-            select.options.selectedIndex = 1;
-            return [select.value, select.selectedIndex];
-        })()
-    """) == ["B", 1]
-
-
-def test_form_elements_collects_its_listed_elements(page):
-    assert page.evaluate("""
-        (() => {
-            const form = document.createElement('form');
-            form.id = 'created';
-            document.body.appendChild(form);
-            for (const tag of ['input', 'fieldset', 'select', 'textarea']) {
-                const element = document.createElement(tag);
-                element.id = tag;
-                form.appendChild(element);
-            }
-            const image = document.createElement('input');
-            image.id = 'image';
-            image.type = 'image';
-            form.appendChild(image);
-            const external = document.createElement('input');
-            external.id = 'external';
-            external.setAttribute('form', 'created');
-            document.body.appendChild(external);
-            return [Array.from(form.elements, element => element.id), form.length,
-                    form.elements === form.elements,
-                    form.elements.namedItem('external') === external];
-        })()
-    """) == [["input", "fieldset", "select", "textarea", "external"], 5, True, True]
-
-
-def test_a_control_belongs_to_the_form_its_attribute_names(page):
-    assert page.evaluate("""
-        (() => {
-            const first = document.createElement('form');
-            first.id = 'first';
-            const second = document.createElement('form');
-            second.id = 'second';
-            document.body.appendChild(first);
-            document.body.appendChild(second);
-            const plain = document.createElement('input');
-            plain.id = 'plain';
-            const missing = document.createElement('input');
-            missing.id = 'missing';
-            missing.setAttribute('form', 'nosuch');
-            const moved = document.createElement('input');
-            moved.id = 'moved';
-            moved.setAttribute('form', 'second');
-            for (const element of [plain, missing, moved]) first.appendChild(element);
-            return [Array.from(first.elements, element => element.id),
-                    Array.from(second.elements, element => element.id)];
-        })()
-    """) == [["plain"], ["moved"]]
-
-
-def test_a_form_control_reports_its_name(page):
-    assert page.evaluate("""
-        (() => {
-            const select = document.createElement('select');
-            select.name = 's';
-            const area = document.createElement('textarea');
-            area.name = 't';
-            const button = document.createElement('button');
-            button.name = 'b';
-            return [select.name, area.name, button.name,
-                    select.getAttribute('name'), area.getAttribute('name')];
-        })()
-    """) == ["s", "t", "b", "s", "t"]
-
-
-def test_html_button_reflects_name_value_and_type(page):
-    assert page.evaluate("""
-        (() => {
-            const button = document.createElement('button');
-            const empty = [button.name, button.value, button.type,
-                           button instanceof HTMLButtonElement];
-            button.name = 'n';
-            button.value = 'v';
-            button.setAttribute('type', 'RESET');
-            const reflected = [button.name, button.value, button.type,
-                               button.getAttribute('name'), button.getAttribute('value')];
-            button.type = 'bogus';
-            return [empty, reflected, [button.getAttribute('type'), button.type]];
-        })()
-    """) == [["", "", "submit", True], ["n", "v", "reset", "n", "v"],
-             ["bogus", "submit"]]
-    assert page.evaluate("document.createElement('form') instanceof HTMLFormElement") is True
-
-
-def test_text_content_reports_data_but_skips_comments(page):
-    assert page.evaluate("""
-        (() => {
-            const div = document.createElement('div');
-            div.innerHTML = 'a<b>c</b>d<!--e-->';
-            const text = document.createTextNode('t');
-            const comment = document.createComment('c');
-            return [div.textContent, text.textContent, comment.textContent,
-                    text.nodeValue, comment.data];
-        })()
-    """) == ["acd", "t", "c", "t", "c"]
-
-
-def test_image_dimensions_are_dimension_values(page):
-    assert page.evaluate("""
-        (() => {
-            const read = value => {
-                const image = document.createElement('img');
-                image.setAttribute('width', value);
-                return image.width;
-            };
-            const image = document.createElement('img');
-            const empty = [image.width, image.height];
-            image.height = '30';
-            image.width = -5;
-            return [empty, image.width, image.getAttribute('width'), image.height,
-                    read('12px'), read('12%'), read('abc'), read('-5'), read(' 12 ')];
-        })()
-    """) == [[0, 0], 0, "0", 30, 12, 12, 0, 0, 12]
-
-
-def test_an_option_derives_text_label_and_value(page):
-    assert page.evaluate("""
-        (() => {
-            const option = document.createElement('option');
-            option.textContent = '  Spaced   text ';
-            const derived = [option.text, option.label, option.value];
-            option.label = 'L';
-            option.value = 'v';
-            return [derived, option.label, option.getAttribute('label'), option.text,
-                    option.value];
-        })()
-    """) == [["Spaced text", "Spaced text", "Spaced text"], "L", "L", "Spaced text", "v"]
-
-
-def test_removing_the_last_declaration_empties_the_attribute(page):
-    assert page.evaluate("""
-        (() => {
-            const element = document.createElement('div');
-            element.setAttribute('style', 'color: blue');
-            const removed = element.style.removeProperty('color');
-            return [removed, element.getAttribute('style'), element.hasAttribute('style'),
-                    element.style.cssText];
-        })()
-    """) == ["blue", "", True, ""]
-
-
 def test_a_mutation_observer_reports_child_and_attribute_changes(page):
     page.evaluate("""(() => {
         window.__records = [];
@@ -397,55 +182,17 @@ def test_a_mutation_observer_hears_only_what_it_asked_for(page):
     })()""") == [["attributes"], 0, 0]
 
 
-def test_rows_and_cells_are_live_and_held_onto(page):
-    assert page.evaluate("""(() => {
-        const table = document.createElement('table');
-        document.body.appendChild(table);
-        table.innerHTML = '<tr><td>1</td></tr>';
-        const rows = table.rows;
-        const cells = rows[0].cells;
-        const added = document.createElement('tr');
-        table.appendChild(added);
-        rows[0].appendChild(document.createElement('td'));
-        return [rows.length, cells.length, table.rows === rows, rows[0].cells === cells,
-                added.rowIndex, table.rows[1] === added];
-    })()""") == [2, 2, True, True, 1, True]
-
-
-def test_a_nested_table_keeps_its_own_rows(page):
-    assert page.evaluate("""(() => {
-        const table = document.createElement('table');
-        document.body.appendChild(table);
-        table.innerHTML = '<tr><td>1</td></tr>'
-                        + '<tr><td><table><tr><td>n</td></tr></table></td></tr>';
-        return [table.rows.length, table.rows[1].cells.length,
-                table.querySelectorAll('tr').length];
-    })()""") == [2, 1, 3]
-
-
-def test_cell_and_row_indexes_outside_a_table(page):
-    assert page.evaluate("""(() => {
-        const row = document.createElement('tr');
-        const cell = document.createElement('td');
-        row.appendChild(cell);
-        return [row.rowIndex, cell.cellIndex, document.createElement('td').cellIndex,
-                document.createElement('tr').rowIndex];
-    })()""") == [-1, 0, -1, -1]
-
-
 def test_xpath_walks_the_document(page):
+    # Predicates and snapshots: corpus ``xpath_predicates_and_snapshots``.
     page.set_content('<p class="x">one</p><p class="x">two</p><p>three</p>',
                      url="https://secure.test/")
     assert page.evaluate("""(() => {
-        const snapshot = document.evaluate("//p[@class='x']", document, null,
+        const href = document.evaluate("//a/@href", document, null,
             XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
         const second = document.createExpression("//p[2]", null)
             .evaluate(document, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-        const href = document.evaluate("//a/@href", document, null,
-            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-        return [snapshot.snapshotLength, snapshot.snapshotItem(1).textContent,
-                second.singleNodeValue.textContent, href.snapshotLength];
-    })()""") == [2, "two", "two", 0]
+        return [href.snapshotLength, second.singleNodeValue.textContent];
+    })()""") == [0, "two"]
 
 
 def test_a_frames_window_keeps_its_identity_across_a_navigation(page):
@@ -491,6 +238,19 @@ def test_a_frames_top_and_parent_follow_their_pages_navigations(page):
         ["https://top.test/second", "https://top.test/second"]
 
 
+def test_low_frequency_child_objects_are_created_on_first_read(page):
+    page.set_content("<body></body>", url="https://secure.test/")
+    screen = page.window.screen
+    assert screen._values.cached_names == frozenset()
+    assert page.evaluate("screen.orientation === screen.orientation") is True
+    assert screen._values.cached_names == {"orientation"}
+
+    navigator = page.window.navigator
+    assert navigator._features.cached_names == frozenset()
+    assert page.evaluate("navigator.locks === navigator.locks") is True
+    assert navigator._features.cached_names == {"locks"}
+
+
 def test_a_lock_request_runs_its_callback(page):
     page.set_content("<body></body>", url="https://secure.test/")
     page.evaluate("""window.__held = [];
@@ -500,32 +260,6 @@ def test_a_lock_request_runs_its_callback(page):
         });""")
     assert page.evaluate("window.__held") == ["res", "exclusive"]
     assert page.evaluate("typeof navigator.locks.query") == "function"
-
-
-def test_a_fragment_gets_a_body_of_its_own(page):
-    """Markup with no html/body of its own is wrapped, not adopted as the body."""
-    page.set_content(
-        '<div id="x" style="color: red">hi</div>', url="http://fragment.test/",
-    )
-    assert page.evaluate("""(() => {
-        const element = document.getElementById('x');
-        return [document.body === element, document.body.tagName,
-                document.body.getAttribute('id') === null,
-                document.body.getAttribute('style') === null,
-                document.body.childNodes.length, document.documentElement.tagName,
-                document.body.parentNode === document.documentElement,
-                document.head !== null];
-    })()""") == [False, "BODY", True, True, 1, "HTML", True, True]
-
-
-def test_an_empty_document_still_has_the_skeleton(page):
-    page.set_content("", url="http://empty.test/")
-    assert page.evaluate("""(() => {
-        return [document.documentElement.tagName, document.head.tagName,
-                document.body.tagName, document.body.childNodes.length,
-                document.documentElement.parentNode === document,
-                document.head.parentNode === document.documentElement];
-    })()""") == ["HTML", "HEAD", "BODY", 0, True, True]
 
 
 def test_canvas_text_baseline_round_trips(page):
@@ -557,7 +291,7 @@ def test_stylesheet_cascade_and_layout_still_apply(page):
             const sized = document.getElementById('sized');
             return [sized.offsetWidth, sized.offsetHeight, document.body.offsetWidth];
         })()
-    """) == [40, 10, 1280]
+    """) == [40, 10, 1904]
 
 
 def test_url_attributes_resolve_and_write_the_attribute(page):

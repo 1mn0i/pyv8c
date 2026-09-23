@@ -1,24 +1,16 @@
-"""Browser, browser context and Page orchestration facade.
-
-The heavy lifting lives in small controllers owned by ``Page``:
-``platform/navigation.py``, ``platform/lifecycle.py``, ``platform/scripting.py``
-and ``platform/resource_loading.py``.  This module stays a thin composition
-root: ``Page`` forwards its public API and delegates behaviour to those
-controllers, so each concern can be read and tested on its own.
-"""
-
+"""Browser and browser context: the lifecycle that owns a Page."""
 from __future__ import annotations
 
 import os
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from types import MappingProxyType
+from typing import Literal
 
-# Kept as a module attribute: tests patch ``pyv8c.platform.browser.pyv8``
-# to instrument native Context construction on the PageRealm path.
-import pyv8  # patch target for native Context instrumentation tests
+import pyv8  # patch target for native Context instrumentation
 from ..foundation.logging import logger
 
 from ..engine.universe import BaselineRepository, InterfaceUniverse
@@ -31,13 +23,14 @@ from ..foundation.tasks import TaskQueue
 from ..foundation.urls import origin_string, origin_tuple
 from ..web.bom.window import Window
 from ..web.dom.document import Document
-from ..web.network.backend import NetworkBackend
-from ..web.network.cookies import CookieJar
-from ..web.network.registry import create_transport
+from ..network.assembly import assemble_backend
+from ..network.cookies import CookieJar
+from ..network.registry import HttpTransport, WebSocketTransport
 from .bootstrap import bootstrap_runtime
 from .lifecycle import DocumentLifecycle
 from .navigation import NavigationController
 from .net import PageNet
+from .page import Page
 from .realms import PageRealm
 from .resource_loading import ResourceController
 from .scripting import ScriptController
@@ -45,529 +38,23 @@ from .services import PageServices
 from .state import Ownership
 
 
-class _TaskHostAdapter:
-    """Minimal host surface handed to the page's TaskQueue.
-
-    ``TaskQueue`` (foundation) may only ask its host the two TaskHost
-    questions.  Holding a ``Page`` there would let foundation reach the
-    whole platform object, so the queue receives this adapter instead: its
-    only members are the protocol ones.
-    """
-
-    def __init__(self, page):
-        self._page = page
-
-    def is_closed(self):
-        return self._page.closed
-
-    def parser_blocked(self):
-        return self._page.navigation.parser_is_blocked()
-
-
-class _ContextBootstrapProxy:
-    """Placeholder published while native Context installs templates."""
-
-    def __init__(self):
-        self.args = ()
-        self.kw = {}
-
-    def expose(self, *_args, **_kwargs):
-        return None
-
-    def exec_js(self, *_args, **_kwargs):
-        return None
-
-    def close(self):
-        return None
-
-
-class Page:
-    def __init__(self, context, url="about:blank", *, trace=None, environment=None, parent=None, origin=None):
-        self.context_owner = context
-        self.parent_page = parent
-        self.top_page = parent.top_page if parent is not None else self
-        self.origin = tuple(origin) if origin is not None else origin_tuple(
-            url, inherited=getattr(parent, "origin", None)
-        )
-        self.origin = context._blob_origins.get(str(url), self.origin)
-        self._opaque_origin = origin is not None and self.origin[0] == "opaque"
-        self.environment = context.browser.environment.overlay(environment)
-        self.resource_interceptor = context.browser.resource_interceptor
-        # A page can override the browser default without changing the
-        # configuration used by other pages in the same browser.
-        self._trace = context.browser.trace if trace is None else bool(trace)
-        self.closed = False
-        self._resource_scope = ResourceScope()
-        self._close_lock = threading.Lock()
-        self._closing = False
-        self.navigation = NavigationController(self)
-        self.lifecycle = DocumentLifecycle(self)
-        self.scripts = ScriptController(self)
-        self.resources = ResourceController(self)
-        # The task queue lives in foundation and may only ask its host the two
-        # TaskHost questions; hand it a narrow adapter instead of this Page.
-        self.tasks = TaskQueue(_TaskHostAdapter(self))
-        # Uncaught exceptions are currently invisible: surface them the way a
-        # browser does, as an ErrorEvent on the realm's window.
-        self._reporting_error = False
-        self.tasks.set_error_sink(self.report_exception)
-        # V8 reports a rejection before the turn that caused it ends, so the
-        # candidates wait for the executor's next boundary to be published.
-        self.rejections = RejectionTracker(self.report_rejection)
-        self._owned = Ownership()
-        # Web-facing objects never see this Page; they receive the narrow
-        # PageServices surface assembled from the controllers above.
-        self.services = PageServices(
-            context, self.environment, self.trace, self._owned,
-            self.navigation, self.scripts, self.resources, self.tasks,
-            self._resource_scope,
-        )
-        self.services._origin = self.origin
-        self.document = Document(services=self.services, url=url, ready_state="complete")
-        self.resource_loader = context.browser.resource_loader
-        self.resource_interceptor = context.browser.resource_interceptor
-        self.cache_enabled = context.browser.cache_enabled
-        self.network_backend = context.network_backend
-        self.window = Window(
-            services=self.services,
-            feature_runtime=context.browser.interface_universe.runtime,
-        )
-        self.services.window = self.window
-        self.services.document = self.document
-        self.window.location.href = str(url)
-        # Host-side HTTP for this page: carries its cookies and headers through
-        # the context's transport (see platform/net.py).
-        self.net = PageNet(self)
-        # Native template installation can inspect the global object before
-        # Context.__init__ returns.  Publish a sentinel so Window callbacks
-        # never observe a partially initialized Page attribute.
-        self.context = _ContextBootstrapProxy()
-        self._devtools_target = None
-        self.realm = PageRealm(self)
-        self.services.bind_realm(self.realm)
-        self.realm.executor.attach_task_queue(self.tasks)
-        self.realm.executor.attach_rejection_tracker(self.rejections)
-        self.context = self.realm.context
-        Window._bind_context(self.context, self.window)
-
-    @property
-    def trace(self):
-        return self._trace
-
-    @trace.setter
-    def trace(self, enabled):
-        if not isinstance(enabled, bool):
-            raise TypeError("trace must be a bool")
-
-        def update():
-            if self.closed or self.context_owner.closed:
-                raise RuntimeError("page is closed")
-            self.context.trace = enabled
-            self._trace = enabled
-            self.services.trace = enabled
-
-        self.realm.executor.call(update)
-
-    def _update_origin(self, url):
-        if self._opaque_origin:
-            return
-        self.origin = origin_tuple(url, inherited=getattr(self.parent_page, "origin", None))
-        self.origin = self.context_owner._blob_origins.get(str(url), self.origin)
-        self.services._origin = self.origin
-        self.window._origin = self.origin
-        # The native access-check callback resolves the accessing realm from
-        # this table.  Navigation can change the origin after the Context has
-        # already been created, so keep the bound entry in sync.
-        entry = Window._context_origins.get(id(self.context))
-        if entry is not None:
-            Window._context_origins[id(self.context)] = (entry[0], self.origin)
-
-    # -- error reporting ---------------------------------------------------
-    # One entry point for everything that notices an exception: TaskQueue routes
-    # a task that raised here through its error sink, the DOM reports a listener
-    # that threw, and the isolate's hooks report what V8 ran without returning
-    # to Python at all.  All of them surface on the window as an ``error`` event
-    # instead of vanishing.
-
-    def report_exception(self, error=None, *, message=None, filename="", line=0,
-                         column=0, value=None):
-        """Mirror an uncaught exception onto the realm's window.
-
-        Either a Python *error*, which brings its own text and (usually) the
-        JavaScript value behind it, or -- for an exception that never reached
-        Python -- the *message*, position and thrown *value* V8 captured.
-
-        The guard keeps a page handler that throws while handling this from
-        re-entering the reporter.
-        """
-        if self.closed or self._reporting_error:
-            return
-        self._reporting_error = True
-        try:
-            self.lifecycle.dispatch_script_error(
-                None, error, message=message, filename=filename, line=line,
-                column=column, value=value,
-            )
-        except BaseException:  # reporting a script error must not raise
-            logger.debug("failed to report an exception", exc_info=True)
-        finally:
-            self._reporting_error = False
-
-    def report_uncaught_message(self, message, source, line, column, error):
-        """Report the pieces of an exception V8 raised on its own.
-
-        This is the isolate's uncaught-exception hook: a microtask job that
-        threw never returns to a Python frame, so V8 hands over the message, the
-        throw site and the exception value it captured.
-        """
-        if is_nullish(source):
-            source = ""
-        self.report_exception(
-            message=str(message), filename=str(source), line=int(line),
-            column=int(column), value=error,
-        )
-
-    def report_rejection(self, event_type, promise, reason):
-        """Mirror a rejection notice onto the window's rejection events."""
-        if self.closed or self._reporting_error:
-            return
-        self._reporting_error = True
-        try:
-            self.lifecycle.dispatch_rejection(event_type, promise, reason)
-        except BaseException:  # reporting a rejection must not raise
-            logger.debug("failed to report a rejection", exc_info=True)
-        finally:
-            self._reporting_error = False
-
-    @property
-    def binding_session(self):
-        return self.realm.binding_session
-
-    def _window_name_of(self, previous_window, previous_realm):
-        """The browsing context's name, which a page may have set from script."""
-        context = previous_realm.context
-        if context is not None:
-            try:
-                return str(context.exec_js("String(this.name)"))
-            except BaseException:
-                pass
-        return getattr(previous_window, "_window_name", "")
-
-    def _renew_document_realm(self, url):
-        """Give the page the Window and realm a new document comes with.
-
-        Only browsing-context state comes along; a new realm is a new global
-        object, so the last document's properties go with the last document.
-        """
-        previous_window, previous_realm = self.window, self.realm
-        window = Window(
-            services=self.services,
-            feature_runtime=self.context_owner.browser.interface_universe.runtime,
-        )
-        window._frame_element = previous_window._frame_element
-        window._window_name = self._window_name_of(previous_window, previous_realm)
-        for slot in ("history", "localStorage", "sessionStorage"):
-            window._features._cache(slot, previous_window._features.value(slot))
-        self.window = window
-        self.services.window = window
-        self.realm = PageRealm(self)
-        self.services.bind_realm(self.realm)
-        self.realm.executor.attach_task_queue(self.tasks)
-        self.realm.executor.attach_rejection_tracker(self.rejections)
-        self.context = self.realm.context
-        Window._bind_context(self.context, window)
-        Window._unbind_context(previous_realm.context)
-        # The old realm is running the command that got here: closing it from its
-        # own queue would run inside that command.
-        threading.Thread(target=previous_realm.close, daemon=True).start()
-        return window
-
-    @property
-    def url(self):
-        return self.window.location.href
-
-    @url.setter
-    def url(self, value):
-        self.goto(value)
-
-    # -- public API ------------------------------------------------------
-    # Everything else web-facing code needs is served by ``self.services``
-    # (PageServices); controllers reach each other through the Page attributes
-    # directly.  Only user-facing forwards remain here.
-
-    def set_content(self, html, url="about:blank"):
-        return self.realm.executor.call(self.navigation.set_content, html, url)
-
-    def goto(self, url, *, timeout=30, wait_until="load"):
-        return self.realm.executor.call(
-            self.navigation.goto, url, timeout=timeout, wait_until=wait_until,
-        )
-
-    def evaluate(self, script, filename=None):
-        def evaluate_data():
-            value = self.scripts.evaluate(script, filename=filename)
-            return value.to_python() if isinstance(value, pyv8.JSObject) else value
-        return self.realm.executor.call(evaluate_data)
-
-    def evaluate_handle(self, script, filename=None):
-        return self.realm.executor.call(
-            self.scripts.evaluate, script, filename=filename,
-        )
-
-    def run_until_idle(self, timeout=0):
-        self.realm.executor.call(self.tasks.run_until_idle, timeout)
-
-    def dispatch_event(self, event_type, *, target="window", selector=None, event_class=None, init=None):
-        """Dispatch a host-trusted event and report whether it was not cancelled.
-
-        ``target`` is ``"window"`` (default), ``"document"`` or a DOM node from
-        :meth:`query_selector`; ``selector`` resolves the target from the current
-        document instead.  ``event_class`` names the event interface to build
-        (inferred from ``event_type`` when omitted) and ``init`` is a plain dict
-        of EventInit members.
-        """
-        return self.realm.executor.call(
-            self.lifecycle.dispatch_event, event_type,
-            target=target, selector=selector, event_class=event_class, init=init,
-        )
-
-    def query_selector(self, selector):
-        """Return the host-side DOM node matching a CSS selector, else ``None``."""
-        def resolve():
-            node = self.document.fn_querySelector(str(selector))
-            return None if node is pyv8.Null else node
-
-        return self.realm.executor.call(resolve)
-
-    def set_visibility(self, hidden):
-        """Switch the document visibility state and fire its lifecycle events."""
-        return self.realm.executor.call(self.lifecycle.set_visibility, hidden)
-
-    def close(self):
-        with self._close_lock:
-            if self.closed:
-                return
-            # A concurrent close is already doing the owner-thread teardown;
-            # leave the scope OPEN so a failed owner call can be retried.
-            if self._closing:
-                return
-            self._closing = True
-        # A paused inspector loop or a start-paused gate blocks the realm
-        # owner. Wake it before synchronously asking that owner to perform
-        # the teardown.
-        if not self.realm.executor.is_owner_thread():
-            target = self._devtools_target
-            if target is not None:
-                target.wake_waiting_owner()
-        try:
-            return self.realm.executor.call(self._close_owner)
-        finally:
-            with self._close_lock:
-                self._closing = False
-            # _close_owner closes the scope after all owner-thread cleanup.
-            # If dispatch timed out before it started, retain OPEN state and
-            # allow a subsequent close() to retry instead of losing resources.
-            if self.closed:
-                self._resource_scope.close()
-
-    def _close_owner(self):
-        if self.closed:
-            return
-        first_error = None
-
-        def attempt(callback, *args):
-            nonlocal first_error
-            try:
-                callback(*args)
-                return True
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
-                return False
-
-        if not getattr(self, "_unload_dispatched", False):
-            self._unload_dispatched = True
-            if self.navigation.has_navigation:
-                attempt(self.lifecycle.dispatch_beforeunload)
-                attempt(self.lifecycle.dispatch_page_hide, False)
-                attempt(self.lifecycle.dispatch_unload)
-        # Drop cached JS scripts before the V8 context goes away.
-        self.scripts.clear_js_helpers()
-        self.scripts.reset()
-        if self._devtools_target is not None:
-            if self.context_owner._devtools is not None:
-                if attempt(self.context_owner._devtools.unregister, self):
-                    self._devtools_target = None
-            else:
-                self._devtools_target = None
-        attempt(self.net.close)
-        attempt(self.tasks.close)
-        attempt(self.resources.reset)
-        self.rejections.close()
-        self.lifecycle.load_waiters.clear()
-        for frame in self._owned.drain("frames"):
-            if attempt(frame.close):
-                self.services.context_services.discard_frame(frame)
-            else:
-                self._owned.track("frames", frame)
-        for ws in self._owned.drain("websockets"):
-            if not self.network_backend or attempt(self.network_backend.close_websocket, ws):
-                self.services.context_services.discard_websocket(ws)
-            else:
-                self._owned.track("websockets", ws)
-        for worker in self._owned.drain("workers"):
-            if attempt(worker.fn_terminate):
-                self.services.worker_services.discard_worker(worker)
-            else:
-                self._owned.track("workers", worker)
-        if first_error is not None:
-            # Keep the realm owner available to retry failed native resources.
-            raise first_error
-        Window._unbind_context(self.context)
-        self.realm.close()
-        self.context = None
-        self.closed = True
-        self.context_owner._discard_page(self)
-        parent_cleanup = getattr(self, "_parent_scope_cleanup", None)
-        if callable(parent_cleanup):
-            parent_cleanup()
-            self._parent_scope_cleanup = None
-        # Close callbacks that were not explicitly drained (for example,
-        # asynchronous resource cancellation handles).  This is idempotent
-        # and guarantees eventual cleanup even when close() was initiated by
-        # another thread and its waiting call timed out.
-        self._resource_scope.close()
-
-
-#: The engines ``real_network=True`` assembles for whichever role was not named.
-#: Both are ordinary engines: naming a role replaces its default, and naming
-#: neither role -- with no networking asked for -- leaves both empty.
-DEFAULT_HTTP_ENGINE = "curl_cffi"
-DEFAULT_WS_ENGINE = "websockets"
-
-
-def _options(browser, role):
-    """The options the *role* engine is handed; a copy, so callers keep theirs.
-
-    ``None`` rather than an empty dictionary when nothing was configured, which
-    is the shape a registered engine is documented to be called with -- it lets
-    a host tell "no options" from "options, all of them defaults" if it cares.
-    """
-    return dict(getattr(browser, f"{role}_options")) or None
-
-
-def _roles(candidate):
-    """Which roles an engine object serves, decided by what it can do."""
-    return (
-        candidate if hasattr(candidate, "request_sync") else None,
-        candidate if hasattr(candidate, "websocket") else None,
-    )
-
-
-def _resolve_injected(browser, value):
-    """Resolve ``network_backend=`` into the roles the given object serves.
-
-    A bare callable is a factory and is called with no arguments.  Which roles
-    the result fills is what it can do -- ``request_sync`` makes it the HTTP
-    engine, ``websocket`` the socket engine -- so an engine for one role leaves
-    the other to ``network_engine`` and ``ws_engine``.
-
-    Options for a role an injected object fills are refused: it was built before
-    the context existed, so nothing would read them.
-    """
-    candidate = value
-    if not any(_roles(candidate)) and callable(candidate):
-        candidate = candidate()
-    http, ws = _roles(candidate)
-    if http is None and ws is None:
-        raise TypeError(
-            "network_backend must be an engine name, an engine instance with "
-            "request_sync or websocket, or a factory"
-        )
-    for role, filled in (("http", http is not None), ("ws", ws is not None)):
-        if filled and getattr(browser, f"{role}_options"):
-            named = "network_engine" if role == "http" else "ws_engine"
-            raise TypeError(
-                f"{role}_options cannot configure an injected network_backend; "
-                f"name the engine with {named} to pass options to it"
-            )
-    return http, ws
-
-
-def _refuse_unconsumed_options(browser):
-    """Reject options no engine would read, instead of dropping them quietly."""
-    given = [role for role in ("http", "ws") if getattr(browser, f"{role}_options")]
-    if given:
-        listed = " and ".join(f"{role}_options" for role in given)
-        raise TypeError(
-            f"{listed} was given but no network engine is configured; "
-            "set real_network=True, network_engine or ws_engine"
-        )
-
-
-def _refuse_shared_options(browser, name):
-    """One engine cannot be configured twice; say which options to move."""
-    if browser.ws_options:
-        raise TypeError(
-            f"network_engine and ws_engine both name {name!r}, which is built once, "
-            "so ws_options would be ignored; give the WebSocket role its own engine "
-            "or move those settings into http_options"
-        )
-
-
-def _build_network_backend(browser):
-    """Assemble one context's HTTP engine and its WebSocket engine.
-
-    ``network_backend`` wins for the roles it can serve.  Otherwise
-    ``network_engine`` names the HTTP engine and ``ws_engine`` the socket engine,
-    while ``real_network=True`` fills in the default for whichever role was left
-    unnamed -- so naming one role assembles exactly that role.
-
-    Each role's options are checked against the engine that will read them, so a
-    key it does not accept is reported here instead of reaching a client that
-    would ignore it, and options with no engine to read them are refused rather
-    than dropped.
-    """
-    http = ws = None
-    shared = None
-    injected = browser.network_backend
-    if isinstance(injected, str):
-        # A name here has always meant "the HTTP engine to use for this context".
-        http = create_transport(injected, options=_options(browser, "http"), strict=True)
-        shared = injected if injected == browser.ws_engine else None
-    elif injected is not None:
-        http, ws = _resolve_injected(browser, injected)
-
-    http_name, ws_name = browser.network_engine, browser.ws_engine
-    if http is None and http_name is None and browser.real_network:
-        http_name = DEFAULT_HTTP_ENGINE
-    if ws is None and ws_name is None and browser.real_network:
-        ws_name = DEFAULT_WS_ENGINE
-
-    if http is None and http_name is not None:
-        http = create_transport(http_name, options=_options(browser, "http"), strict=True)
-    if ws is None and ws_name is not None:
-        if http is not None and ws_name in (http_name, shared):
-            # One name, one engine: building it twice would mean two clients,
-            # two pools and two connection caches for the same context.
-            _refuse_shared_options(browser, ws_name)
-            ws = http
-        else:
-            ws = create_transport(ws_name, kind="ws", options=_options(browser, "ws"), strict=True)
-
-    if http is None and ws is None:
-        _refuse_unconsumed_options(browser)
-        return None
-    return NetworkBackend(http, ws)
-
-
 class BrowserContext:
+    """A browsing session: its own cookies, blob URLs and network stack.
+
+    Pages created here share that state, so a document, the ``fetch`` calls it
+    makes and a ``page.net`` request are one session as far as a server is
+    concerned; ``context.pages`` lists the pages still open and
+    ``context.cookies`` is the jar behind them.  Contexts of one browser share
+    nothing else -- cookies, cached responses and engines are per context --
+    except for a disk cache directory when one was configured.
+    """
+
     def __init__(self, browser):
         self.browser, self.pages = browser, []
         self.cookies = CookieJar()
         self.resource_cache_dir = browser.cache_dir if browser.cache_enabled else None
         self.resource_cache_lock = threading.RLock()
-        self.network_backend = _build_network_backend(browser)
+        self.network_backend = assemble_backend(browser)
         if self.network_backend is not None:
             self.network_backend.cookies = self.cookies
         self._blob_urls = {}
@@ -612,7 +99,28 @@ class BrowserContext:
     def cookie_jar(self):
         return self.cookies
 
-    def new_page(self, url="about:blank", *, trace=None, environment=None):
+    def new_page(self,
+                 url: str = "about:blank",
+                 *,
+                 trace: bool | None = None,
+                 environment: dict | BrowserEnvironment | None = None) -> Page:
+        """Create a page in this context and return it.
+
+        A URL other than ``about:blank`` is loaded right away with
+        :meth:`Page.goto <pyv8c.platform.page.Page.goto>`; when that load fails
+        the new page is closed again and the error propagates, so a returned page
+        is always usable.
+
+        :param url: initial URL; the default creates an empty document without
+            touching the loader.
+        :param trace: start this page traced; ``None`` inherits the Browser
+            setting.
+        :param environment: keys overlaying the Browser environment for this page
+            only.
+        :returns: the new :class:`Page <pyv8c.platform.page.Page>`, appended to
+            :attr:`pages`.
+        :raises InvalidStateError: the context or its browser is closed.
+        """
         self._ensure_open()
         page = Page(self, trace=trace, environment=environment)
         self.pages.append(page)
@@ -630,7 +138,24 @@ class BrowserContext:
         except ValueError:
             pass
 
-    def start_devtools(self, page: Page, *, options: pyv8.DevToolsOptions | None = None) -> pyv8.DevToolsHandle:
+    def start_devtools(self,
+                       page: Page,
+                       *,
+                       options: pyv8.DevToolsOptions | None = None) -> pyv8.DevToolsHandle:
+        """Attach a DevTools server to *page* and return its handle.
+
+        One server per context, driving a single debugger client; the supported
+        protocol domains and the startup handshake are in ``docs/DEVTOOLS.md``.
+
+        :param page: a page of this context that is still open.
+        :param options: :class:`pyv8.DevToolsOptions`; the defaults bind
+            ``127.0.0.1`` on a system-chosen port and pause once, at the next
+            host statement after the handshake.
+        :returns: the handle -- ``url``, ``wait_for_connection``,
+            ``wait_for_ready``, ``close``, and a context manager.
+        :raises InvalidStateError: the context is closed, the page belongs to
+            another context or is closed, or a server is already attached.
+        """
         self._ensure_open()
         if page not in self.pages or page.closed:
             raise InvalidStateError("Page does not belong to this BrowserContext")
@@ -639,7 +164,13 @@ class BrowserContext:
         from .devtools import start_devtools
         return start_devtools(self, page, options=options)
 
-    def close(self):
+    def close(self) -> None:
+        """Close the context: its pages, then DevTools and the network stack.
+
+        Best effort and idempotent: each part is close-attempted even when an
+        earlier one raised, blob URLs are dropped, and the first error is
+        re-raised once the rest was attempted.
+        """
         if self.closed:
             return
         first_error = None
@@ -672,15 +203,92 @@ class BrowserContext:
 
 
 class Browser:
+    """A browser: the configuration every context and page starts from.
+
+    One instance owns the native runtime, the interface baseline and the
+    environment its contexts derive from.  :meth:`new_context` creates an
+    isolated session and :meth:`close` closes every session it handed out; the
+    engines a context needs are built when that context is created.
+
+    JS objects belong to the thread that owns their realm (see ``docs/USAGE.md``).
+    """
+
     def __init__(self, *,
-                 environment=None,
-                 real_network=False, resource_loader=None, resource_interceptor=None,
-                 network_engine=None, ws_engine=None, network_backend=None,
-                 http_options=None, ws_options=None, default_headers=None,
-                 trace=False, trace_callback=None, traceable=False,
-                 cache=True, cache_dir=None,
-                 expose_unimplemented=True,
-                 stub_logging="info", interface_baseline_path=None):
+                 environment: dict | BrowserEnvironment | None = None,
+                 real_network: bool = True,
+                 resource_loader: Callable | None = None,
+                 resource_interceptor: Callable | None = None,
+                 http_engine: Literal["cronet", "curl_cffi"] | HttpTransport | Callable | None = "curl_cffi",
+                 http_options: dict | None = None,
+                 ws_engine: Literal["cronet", "websockets"] | WebSocketTransport | Callable | None = "websockets",
+                 ws_options: dict | None = None,
+                 default_headers: dict | None = None,
+                 traceable: bool = False,
+                 trace: bool = False,
+                 trace_callback: Callable | None = None,
+                 cache: bool = True,
+                 cache_dir: str | os.PathLike | None = None,
+                 expose_unimplemented: bool = True,
+                 stub_logging: Literal["on", "verbose", "off"] = "off",
+                 interface_baseline_path: str | os.PathLike | None = None,
+                 baseline_mismatch: Literal["error", "warn"] = "warn"):
+        """Configure one browser.
+
+        Every value is read here: native templates and the interface baseline are
+        assembled in this call and are not reconfigured later, so another baseline
+        means another Browser.
+
+        :param environment: flat "dotted key" dict or
+            :class:`~pyv8c.foundation.environment.BrowserEnvironment`; keys left
+            out come from the bundled Chrome profile.  Contexts and pages may
+            overlay it.
+        :param real_network: assemble ``http_engine`` and ``ws_engine``; ``False``
+            keeps this browser offline, and a ready engine handed to either of them
+            is then refused rather than dropped.  The default engines come from the
+            ``[network]`` extra.
+        :param resource_loader: synchronous ``loader(url, request) -> Response``
+            answering every load this browser performs; what it answers never
+            reaches a transport.  The offline way to serve a page.
+        :param resource_interceptor: ``interceptor(url, request)`` consulted
+            before each load: ``None``/``True`` loads normally, ``False`` answers
+            with an empty 200, anything else (``Response``, dict, str) is the
+            response.
+        :param http_engine: the HTTP engine -- a registered name (built with
+            ``http_options``), a ready object with ``request_sync``, or a factory
+            called once per context; ``None`` leaves the role empty.  Further
+            engines can be added with
+            :func:`~pyv8c.network.registry.register_transport`.
+        :param http_options: options handed to the HTTP engine; a key it does not
+            accept is refused when a context is created rather than reaching it.
+        :param ws_engine: the WebSocket engine -- a registered name (built with
+            ``ws_options``), a ready object with ``websocket``, or a factory called
+            once per context; ``None`` leaves the role empty.  Further engines can
+            be added with
+            :func:`~pyv8c.network.registry.register_ws_transport`.
+        :param ws_options: options handed to the WebSocket engine, same rule.
+        :param default_headers: headers every ``page.net`` request starts from.
+        :param trace: start each page with tracing on.
+        :param trace_callback: receives trace events instead of Loguru.
+        :param traceable: allow a page to switch tracing on later (see
+            :attr:`Page.trace <pyv8c.platform.page.Page.trace>`); ``trace=True``
+            implies it.
+        :param cache: enable the per-context resource cache.
+        :param cache_dir: keep that cache on disk under this directory; without
+            it responses are cached in memory only.
+        :param expose_unimplemented: let the exposure plan include baseline
+            interfaces with no hand-written implementation (they answer with
+            stubs).
+        :param stub_logging: ``"off"`` (the default) reports nothing, ``"on"``
+            reports each unimplemented member once, and ``"verbose"`` also reports
+            the placeholder handlers the baseline required.
+        :param interface_baseline_path: Chromium interface baseline JSON or ZIP to
+            use instead of the bundled one.
+        :param baseline_mismatch: ``"warn"`` (the default) logs a difference
+            between hand-written implementations and the chosen baseline once and
+            skips it, which is how another Chromium version's baseline is run;
+            ``"error"`` fails at assembly instead, which is what keeps a mistake in
+            one's own implementation from passing silently.
+        """
         if trace_callback is not None and not callable(trace_callback):
             raise TypeError("trace_callback must be callable or None")
         self.trace_callback = trace_callback
@@ -693,18 +301,12 @@ class Browser:
         self.resource_interceptor = resource_interceptor
         self.cache_enabled = bool(cache)
         self.cache_dir = Path(cache_dir).expanduser() if cache_dir is not None else None
-        # A transport is built when one was asked for: either through
-        # ``real_network`` or by naming or injecting an engine directly.
-        #: Whether a context should assemble the default engines for whichever
-        #: role was not named; naming a role assembles exactly that role.
+        #: ``False`` assembles no engines; a ready engine is then refused.
         self.real_network = bool(real_network)
-        self.network_engine = None if network_engine is None else str(network_engine)
-        self.ws_engine = None if ws_engine is None else str(ws_engine)
-        self.network_backend = network_backend
-        #: Options for the HTTP engine and for the WebSocket engine.  Each engine
-        #: says which keys it accepts and a context refuses the rest, so a
-        #: misspelt key is reported when the context is created, not passed on
-        #: unread.
+        self.http_engine = http_engine
+        self.ws_engine = ws_engine
+        #: Options for the two engines; a key an engine does not accept is refused
+        #: when a context is created rather than passed on unread.
         self.http_options = dict(http_options or {})
         self.ws_options = dict(ws_options or {})
         #: Headers every host request starts from, on top of the ones derived
@@ -712,9 +314,9 @@ class Browser:
         self.default_headers = dict(default_headers or {})
         self.trace = bool(trace)
         self.traceable = bool(traceable) or self.trace
-        self.environment = BrowserEnvironment.from_value(environment)
+        self.environment = BrowserEnvironment.from_dict(environment)
         self.expose_unimplemented = bool(expose_unimplemented)
-        self.stub_logging = str(stub_logging or "info")
+        self.stub_logging = str(stub_logging or "off")
         self._startup_stats = {}
         snapshot = BaselineRepository.load(interface_baseline_path)
         loaded = time.perf_counter_ns()
@@ -722,6 +324,7 @@ class Browser:
             snapshot, runtime=bootstrap_runtime(),
             stub_logging=self.stub_logging,
             expose_unimplemented=self.expose_unimplemented,
+            baseline_mismatch=baseline_mismatch,
         )
         validation_finished = validation_started = loaded
         self.interface_baseline_path = snapshot.path
@@ -742,21 +345,39 @@ class Browser:
         })
 
     @property
-    def startup_stats(self):
+    def startup_stats(self) -> MappingProxyType:
+        """Read-only snapshot of this Browser's startup timings and counts.
+
+        Baseline read/cache/compile/decode, validation and browser-init
+        milliseconds, context-creation cost, and how many interfaces the Window
+        exposure plan knows, materialized or still deferred.  Set
+        ``PYV8C_STARTUP_STATS=0`` to record nothing.
+        """
         return MappingProxyType(dict(self._startup_stats))
 
     def _record_startup(self, **values):
         if os.environ.get("PYV8C_STARTUP_STATS", "1") != "0":
             self._startup_stats.update(values)
 
-    def new_context(self):
+    def new_context(self) -> BrowserContext:
+        """Create an isolated session: its own cookies, blobs and network stack.
+
+        :returns: the new :class:`BrowserContext`, appended to :attr:`contexts`.
+        :raises InvalidStateError: the browser is closed.
+        """
         if self._closed:
             raise InvalidStateError("Browser is closed")
         context = BrowserContext(self)
         self.contexts.append(context)
         return context
 
-    def close(self):
+    def close(self) -> None:
+        """Close every context, then mark the browser closed.
+
+        Best effort and idempotent: every context gets its close attempt even
+        when an earlier one raised, and the first error is re-raised afterwards.
+        A closed browser refuses new contexts.
+        """
         if self._closed:
             return
         first_error = None

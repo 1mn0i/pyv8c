@@ -2,9 +2,13 @@ import json
 import zipfile
 from pathlib import Path
 
-from pyv8c.engine import extractor as extract_interfaces
-from pyv8c.engine.extractor.cpp import (
+import pytest
+
+from pyv8c.tools import extract_interfaces
+from pyv8c.tools.extract_interfaces import (
     _constant_definitions,
+    _idl_handler_findings,
+    _idl_property_families,
     extract_constants,
     extract_template,
     write_baseline,
@@ -131,8 +135,83 @@ void Install() {
     }
 
 
+def test_cross_origin_configurations_are_not_the_interfaces_own_handlers():
+    """Cross-origin setups build their own configurations, inside the access check.
+
+    Reading those as the interface's own handlers is what gave a global named
+    handlers its IDL never declares.
+    """
+    text = r'''
+void Install(InstanceTemplate* instance_template) {
+  v8::NamedPropertyHandlerConfiguration(
+      V8Widget::NamedPropertyGetterCallback,
+      V8Widget::NamedPropertySetterCallback,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      v8::Local<v8::Value>(),
+      v8::PropertyHandlerFlags::kNone);
+  instance_template->SetAccessCheckCallbackAndHandler(
+      CrossOriginAccessCheckCallback,
+      v8::NamedPropertyHandlerConfiguration(
+          CrossOriginNamedGetterCallback,
+          CrossOriginNamedSetterCallback,
+          CrossOriginNamedQueryCallback,
+          CrossOriginNamedDeleterCallback,
+          CrossOriginNamedEnumeratorCallback,
+          CrossOriginNamedDefinerCallback,
+          v8::Local<v8::Value>(),
+          v8::PropertyHandlerFlags::kNone),
+      v8::IndexedPropertyHandlerConfiguration(
+          CrossOriginIndexedGetterCallback,
+          nullptr,
+          nullptr,
+          nullptr,
+          nullptr,
+          nullptr,
+          v8::Local<v8::Value>(),
+          v8::PropertyHandlerFlags::kNone));
+}
+'''
+    handlers = extract_template(text)["handlers"]
+    assert handlers["named"] == {
+        "get": "V8Widget::NamedPropertyGetterCallback",
+        "set": "V8Widget::NamedPropertySetterCallback",
+    }
+    assert handlers["indexed"] == {}
+    assert handlers["cross_origin"]["named"] == {
+        "get": "CrossOriginNamedGetterCallback", "set": "CrossOriginNamedSetterCallback",
+        "query": "CrossOriginNamedQueryCallback", "del": "CrossOriginNamedDeleterCallback",
+        "enum": "CrossOriginNamedEnumeratorCallback", "definer": "CrossOriginNamedDefinerCallback",
+    }
+    assert handlers["cross_origin"]["indexed"] == {"get": "CrossOriginIndexedGetterCallback"}
+
+
+def test_a_named_handler_needs_a_named_getter_in_the_idl():
+    """The IDL decides which families a set of generated handlers can belong to."""
+    named = _idl_property_families("  [NotEnumerable, CrossOrigin] getter object (DOMString name);\n")
+    indexed = _idl_property_families("  getter Widget (unsigned long index);\n")
+    assert named == {"named": {"get": True}, "indexed": {}}
+    assert indexed == {"named": {}, "indexed": {"get": True}}
+
+    metadata = {"Window": {"properties": indexed}, "Storage": {"properties": named}}
+    extracted = {
+        "Window": {"template": {"handlers": {"named": {"get": "callback"}}}},
+        "Storage": {"template": {"handlers": {"named": {"get": "callback"}}}},
+    }
+    assert _idl_handler_findings(extracted, metadata) == [{
+        "interface": "Window",
+        "family": "named",
+        "handlers": ["get"],
+        "reason": "no named getter or setter in the interface's IDL",
+    }]
+
+
 def test_real_renderer_snapshot_has_members_for_core_interfaces():
     root = Path(__file__).resolve().parents[3] / "_pyv8env" / "renderer"
+    if not root.is_dir():
+        pytest.skip(f"no generated Chromium sources at {root}")
     snapshot = extract_interfaces.extract(root)
     for name in ("Event", "EventTarget", "Node", "Document", "Element", "Window", "Headers", "Blob", "Request", "Response", "URL"):
         entry = snapshot[name]

@@ -1462,6 +1462,52 @@ CASES = (
         expected=["yes", 1],
     ),
     Repro(
+        name="the_client_hints_report_the_browser_shape",
+        note="Brands, their frozen array and the object's own identity, none of "
+             "which depend on the build the way the version numbers do.",
+        url="https://repro.test/dir/page",
+        html=page(body=""),
+        script="""(() => {
+            const data = navigator.userAgentData;
+            const brands = data.brands;
+            return [typeof data, data.constructor.name,
+                    brands.map(brand => brand.brand).join(','),
+                    brands.every(brand => /^\\d+$/.test(brand.version)),
+                    typeof data.mobile, typeof data.platform,
+                    Object.isFrozen(brands), brands === data.brands,
+                    data === navigator.userAgentData,
+                    Object.keys(data.toJSON()).join(','),
+                    data.toJSON().brands === data.toJSON().brands,
+                    String(data), data instanceof NavigatorUAData];
+        })()""",
+        expected=["object", "NavigatorUAData", "Google Chrome,Not_A Brand,Chromium",
+                  True, "boolean", "string", True, False, False,
+                  "brands,mobile,platform", False, "[object NavigatorUAData]", True],
+    ),
+    Repro(
+        name="the_client_hints_agree_with_the_user_agent",
+        note="Both come from the same build: the hint's Chromium version is the "
+             "one the user agent string names.",
+        url="https://repro.test/dir/page",
+        html=page(body=""),
+        script="""(() => {
+            const version = navigator.userAgent.match(/Chrome\\/(\\d+)/)[1];
+            const brands = navigator.userAgentData.brands;
+            const chromium = brands.find(brand => brand.brand === 'Chromium');
+            const chrome = brands.find(brand => brand.brand === 'Google Chrome');
+            return [chromium.version === version, chrome.version === version, brands.length];
+        })()""",
+        expected=[True, True, 3],
+    ),
+    Repro(
+        name="the_client_hints_are_hidden_outside_a_secure_context",
+        note="Chrome exposes no userAgentData on an insecure origin.",
+        url="http://repro.test/dir/page",
+        html=page(body=""),
+        script="[typeof navigator.userAgentData, isSecureContext]",
+        expected=["undefined", False],
+    ),
+    Repro(
         name="an_inserted_frame_has_its_window_right_away",
         note="A frame with no document yet hands out no window; the insertion gives "
              "it one in the same turn, and every read returns that same object.",
@@ -1494,6 +1540,45 @@ CASES = (
         })()""",
         expected=["given", "camera", True, "100", "50", "no-referrer", "lazy", None,
                   "", True, 1, True],
+    ),
+    Repro(
+        name="a_window_indexes_its_child_frames",
+        note="The indexed slots are the child browsing contexts: they belong to the "
+             "window itself and they enumerate in order.",
+        html=page(body="<iframe name=f></iframe>"),
+        script="""(() => {
+            const slots = [];
+            for (const key in window) if (/^[0-9]+$/.test(key)) slots.push(key);
+            return [window.length, typeof window[0], Object.hasOwn(window, '0'),
+                    0 in window, Object.keys(window).includes('0'), slots];
+        })()""",
+        expected=[1, "object", True, True, True, ["0"]],
+    ),
+    Repro(
+        name="a_frame_slot_is_neither_writable_nor_deletable",
+        note="Assigning over a slot is refused: silent outside strict mode, a TypeError "
+             "inside it.  Deleting one leaves the frame in place, and a slot holding "
+             "nothing is not a property at all.",
+        html=page(body="<iframe name=f></iframe>"),
+        script="""(() => {
+            let thrown = null;
+            try { (function () { 'use strict'; window[0] = 5; })(); }
+            catch (error) { thrown = error.name; }
+            window[7] = 'seven';
+            return [thrown, typeof window[0], typeof window[7], 7 in window,
+                    Reflect.deleteProperty(window, 0), Reflect.deleteProperty(window, 9)];
+        })()""",
+        expected=["TypeError", "object", "undefined", False, False, True],
+    ),
+    Repro(
+        name="a_reflected_indexed_define_is_refused",
+        note="A define aimed at a slot the window does not have changes nothing; the "
+             "store is refused either way.",
+        html=page(body="<iframe name=f></iframe>"),
+        script="Reflect.defineProperty(window, 7, {value: 1})",
+        expect_error="TypeError",
+        known_divergence="the native indexed definer answers a refused define with false, "
+                         "so Reflect.defineProperty throws here where Chrome returns true",
     ),
     Repro(
         name="an_iframe_reads_back_the_defaults_a_browser_reports",

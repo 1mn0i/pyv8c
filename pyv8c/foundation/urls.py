@@ -2,7 +2,7 @@
 
 Origin computation and origin serialization are pure URL facts: they need
 neither a DOM, nor a network transport, nor a page.  Keeping them here gives
-``web/network``, ``web/bom`` and ``platform`` one implementation of the
+``network``, ``web/bom`` and ``platform`` one implementation of the
 special-scheme list and the default-port table, and lets platform code ask for
 an origin without importing a transport module.
 """

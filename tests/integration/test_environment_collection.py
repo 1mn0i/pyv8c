@@ -1,0 +1,77 @@
+"""Collecting a profile from a browser that is actually installed."""
+import json
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("pyv8")
+
+from pyv8c import Browser, BrowserEnvironment  # noqa: E402
+from pyv8c.foundation.environment import COLLECTED_KEYS  # noqa: E402
+from pyv8c.tools import collect_environment as collector  # noqa: E402
+
+
+def chrome_or_skip():
+    try:
+        return collector.find_chrome()
+    except collector.CollectionError as missing:
+        pytest.skip(str(missing))
+
+
+def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, capsys):
+    path = tmp_path / "profile.json"
+    assert collector.main(["--chrome", str(chrome_or_skip()), "--out", str(path)]) == 0
+    assert "wrote" in capsys.readouterr().err
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["source"]["browser"].startswith(("Chrome", "Chromium", "HeadlessChrome"))
+    assert set(document) == {"schema", "source", *COLLECTED_KEYS}
+
+    profile = BrowserEnvironment.from_file(path)
+    collected = profile.resolved()
+    browser = Browser(environment=profile, stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://profile.test/")
+        assert page.evaluate("""[
+            navigator.userAgent, navigator.appVersion, navigator.platform, navigator.vendor,
+            navigator.language, navigator.languages, navigator.hardwareConcurrency,
+            navigator.deviceMemory, navigator.maxTouchPoints, navigator.onLine,
+            navigator.webdriver, innerWidth, innerHeight, devicePixelRatio,
+            screen.width, screen.height, screen.availWidth, screen.availHeight,
+            screen.colorDepth, screen.pixelDepth,
+            navigator.connection.effectiveType, navigator.connection.rtt,
+            navigator.connection.downlink, navigator.connection.saveData,
+            navigator.userAgentData.platform,
+            navigator.userAgentData.brands.map(brand => brand.brand + '/' + brand.version),
+            navigator.plugins.length,
+        ]""") == [
+            collected["user_agent"], collected["app_version"], collected["platform"],
+            collected["vendor"], collected["language"], list(collected["languages"]),
+            collected["hardware_concurrency"], collected["device_memory"],
+            collected["max_touch_points"], collected["on_line"], collected["webdriver"],
+            collected["viewport.width"], collected["viewport.height"],
+            collected["viewport.device_scale_factor"],
+            collected["screen.width"], collected["screen.height"], collected["screen.avail_width"],
+            collected["screen.avail_height"], collected["screen.color_depth"],
+            collected["screen.pixel_depth"],
+            collected["connection.effective_type"], collected["connection.rtt"],
+            collected["connection.downlink"], collected["connection.save_data"],
+            collected["client_hints.platform"],
+            [f"{brand['brand']}/{brand['version']}" for brand in collected["client_hints.brands"]],
+            len(collected["plugins"]),
+        ]
+    finally:
+        browser.close()
+
+
+def test_the_high_entropy_hints_are_read_not_derived(tmp_path):
+    path = tmp_path / "profile.json"
+    assert collector.main(["--chrome", str(chrome_or_skip()), "--out", str(path),
+                           "--timeout", "60"]) == 0
+    profile = BrowserEnvironment.from_file(path)
+    # The user agent alone cannot say these; the browser had to be asked.
+    assert profile.client_hints.platform_version.split(".")[0].isdigit()
+    assert profile.client_hints.bitness in ("32", "64")
+    assert profile.client_hints.architecture in ("x86", "arm")
+    assert [brand.version for brand in profile.client_hints.full_version_list][0].count(".") == 3

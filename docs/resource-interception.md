@@ -81,10 +81,10 @@ interceptor 接收 request 的副本；仅修改副本不是受支持的请求�
 python -m pip install -e ".[network]"
 ```
 
-使用 Browser(real_network=True)。每个 BrowserContext 拥有自己的网络栈（默认 HTTP=curl_cffi、WebSocket=websockets）和 CookieJar。
-两个角色可用 network_engine / ws_engine 分别替换，http_options / ws_options 传该引擎的参数：引擎不认识的键（拼错，或属于另一个角色的引擎）会在创建 Context 时报错，不会被静默转交或丢弃；缺少依赖同样在创建 Context 时失败，不会静默伪装联网成功。
+默认联网（HTTP=curl_cffi、WebSocket=websockets，见 [Browser 参数](USAGE.md#browser-参数)），Browser(real_network=False) 表示不装配引擎。每个 BrowserContext 拥有自己的网络栈和 CookieJar。
+两个角色可用 http_engine / ws_engine 分别替换，http_options / ws_options 传该引擎的参数：引擎不认识的键（拼错，或属于另一个角色的引擎）会在创建 Context 时报错，不会被静默转交或丢弃；缺少依赖同样在创建 Context 时失败，不会静默伪装联网成功。
 选引擎、参数含义、校验规则、握手与自定义引擎见 [网络引擎与参数](network-engines.md)。
-网络实现见 [registry.py](../pyv8c/web/network/registry.py) 与 [backend.py](../pyv8c/web/network/backend.py)，响应策略包含基础同源/CORS/no-cors 处理，但不是完整 Fetch/CORS 协议栈。
+网络实现见 [registry.py](../pyv8c/network/registry.py) 与 [backend.py](../pyv8c/network/backend.py)，响应策略包含基础同源/CORS/no-cors 处理，但不是完整 Fetch/CORS 协议栈。
 不要假定拦截响应、缓存命中和所有同步 loader 路径都重新执行相同的安全策略。
 
 ## 磁盘缓存
@@ -105,4 +105,4 @@ cache=False 关闭响应缓存使用；Browser.close 不删除显式持久目录
 
 [导航测试](../tests/integration/test_navigation.py)、[网络后端测试](../tests/unit/test_network_backend.py)、
 [生命周期测试](../tests/integration/test_lifecycle.py)、[竞态回归](../tests/integration/test_race_regressions.py)。
-实际 Cookie 行为见 [cookies.py](../pyv8c/web/network/cookies.py) 与 [document.cookie 测试](../tests/browser/test_document_cookie.py)。
+实际 Cookie 行为见 [cookies.py](../pyv8c/network/cookies.py) 与 [document.cookie 测试](../tests/browser/test_document_cookie.py)。

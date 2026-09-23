@@ -5,8 +5,8 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import FeatureImplementation, interface
-from ...foundation.arguments import (
+from ..engine.features import FeatureImplementation, interface
+from ..foundation.arguments import (
     MISSING,
     dom_string,
     event_handler,
@@ -16,11 +16,11 @@ from ...foundation.arguments import (
     sequence,
     usv_string,
 )
-from ...foundation.errors import InvalidStateError, V8SyntaxError, dom_exception
-from ..dom.events import Event, EventTarget
-from ..fetch.blob import Blob, bytes_from_value
-from ..fetch.events import CloseEvent, ErrorEvent, MessageEvent
-from .models import NetworkUnavailableError
+from ..foundation.errors import InvalidStateError, V8SyntaxError, dom_exception
+from .dom.events import Event, EventTarget
+from .fetch.blob import Blob, bytes_from_value
+from .fetch.events import CloseEvent, ErrorEvent, MessageEvent
+from ..network.models import NetworkUnavailableError
 
 
 @interface('WebSocket', 'EventTarget')

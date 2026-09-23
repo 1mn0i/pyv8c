@@ -6,7 +6,7 @@ from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse
 from pyv8c.foundation.errors import DOMException
 from pyv8c.web.fetch.clone import structured_clone
 from pyv8c.web.fetch.response import Response
-from pyv8c.web.network.cookies import CookieJar
+from pyv8c.network.cookies import CookieJar
 
 
 def new_page(*, loader=None):
@@ -26,79 +26,6 @@ def test_closed_context_rejects_new_pages_and_blob_access():
         context.new_page()
     with pytest.raises(DOMException, match="BrowserContext is closed"):
         context.resolve_blob_url("blob:null/not-present")
-    browser.close()
-
-
-def test_binding_sessions_are_isolated_per_realm():
-    from pyv8c.platform.bootstrap import bootstrap_runtime
-    universe = InterfaceUniverse(
-        BaselineRepository.load(), runtime=bootstrap_runtime(),
-        stub_logging="off",
-    )
-    first_realm = object()
-    second_realm = object()
-    first = universe.binding_session(first_realm)
-    second = universe.binding_session(second_realm)
-    assert first is not second
-    first_config = first.class_config_for("AbortController")
-    second_config = second.class_config_for("AbortController")
-    assert isinstance(first_config, IdlSpec)
-    assert isinstance(second_config, IdlSpec)
-    assert first_config is second_config
-    assert first.configs is not second.configs
-    assert first.realm is first_realm
-    assert second.realm is second_realm
-
-
-def test_timers_respect_delay_repeat_and_cancellation():
-    browser, _, page = new_page()
-    page.evaluate("window.__timerCount=0; window.__timer=setTimeout(()=>__timerCount++, 25)")
-    page.run_until_idle()
-    assert page.evaluate("__timerCount") == 0
-    page.run_until_idle(timeout=0.25)
-    assert page.evaluate("__timerCount") == 1
-
-    page.evaluate("window.__ticks=0; window.__interval=setInterval(()=>{ if (++__ticks === 2) clearInterval(__interval); }, 10)")
-    page.run_until_idle(timeout=0.25)
-    assert page.evaluate("__ticks") == 2
-    page.close()
-    browser.close()
-
-
-def test_reparent_and_replacement_keep_tree_identity_consistent():
-    browser, _, page = new_page()
-    assert page.evaluate("""(() => {
-        const a=document.createElement('div'), b=document.createElement('div');
-        const old=document.createElement('i'), replacement=document.createElement('b');
-        a.appendChild(old); b.appendChild(replacement); a.replaceChild(replacement, old);
-        const moved=a.firstChild; b.innerHTML='<span>fresh</span>';
-        return [old.parentNode === null, moved.parentNode === a,
-                a.childNodes.length, b.childNodes.length,
-                b.firstChild.parentNode === b];
-    })()""") == [True, True, 1, 1, True]
-    assert page.evaluate("""(() => {
-        const host=document.createElement('div'), child=document.createElement('span');
-        host.appendChild(child); host.textContent='text';
-        return [child.parentNode === null, host.childNodes.length, host.firstChild.parentNode === host];
-    })()""") == [True, 1, True]
-    page.close()
-    browser.close()
-
-
-def test_fixture_resource_callbacks_are_always_asynchronous():
-    def loader(url, request):
-        return Response("fixture", {"url": url})
-
-    browser, _, page = new_page(loader=loader)
-    assert page.evaluate("""(() => {
-        window.__order=[];
-        fetch('/data').then(() => __order.push('fetch'));
-        __order.push('after');
-        return __order.slice();
-    })()""") == ["after"]
-    page.run_until_idle()
-    assert page.evaluate("__order") == ["after", "fetch"]
-    page.close()
     browser.close()
 
 

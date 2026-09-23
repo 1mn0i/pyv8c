@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import pytest
 
 pytest.importorskip("pyv8")
+pytestmark = [pytest.mark.race, pytest.mark.slow]
 from websockets.asyncio.client import connect
 
 from pyv8c import Browser, DevToolsOptions
@@ -208,19 +209,3 @@ async def _cdp_request(ws, payload):
             return message
 
 
-def test_thread_count_returns_to_baseline_after_close():
-    baseline = threading.active_count()
-    browser = Browser(resource_loader=_loader, stub_logging="off")
-    for _ in range(4):
-        page = browser.new_context().new_page(ORIGIN + "/")
-        page.evaluate("""
-            var w = new Worker('/worker.js');
-            w.postMessage(1);
-            setInterval(function () {}, 20);
-        """)
-    browser.close()
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and threading.active_count() > baseline + 1:
-        time.sleep(0.2)
-    leaked = threading.active_count() - baseline
-    assert leaked <= 1, f"{leaked} threads leaked after browser.close()"

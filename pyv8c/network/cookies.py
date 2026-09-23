@@ -1,11 +1,9 @@
 """Cookie storage and matching for page and network contexts.
 
-One :class:`CookieJar` belongs to a browser context and is the single store both
-sides of it share: the document reads and writes it through ``document.cookie``,
-the network engines send it and fold responses back into it.  Matching follows
-RFC 6265's host/path/secure rules, with the two views the two callers need --
-``header_for`` (what goes on the wire, ``HttpOnly`` included) and ``document_for``
-(what script may see).
+One :class:`CookieJar` per context is the single store both sides share, which is
+what makes a document and its requests one session.  Matching follows RFC 6265's
+host/path/secure rules, in the two views callers need: ``header_for`` (what goes
+on the wire, ``HttpOnly`` included) and ``document_for`` (what script may see).
 """
 import re
 import time
@@ -16,14 +14,12 @@ from http.cookies import SimpleCookie
 from threading import RLock
 from urllib.parse import urlsplit
 
-from ...foundation.logging import logger
+from ..foundation.logging import logger
 
 _INVALID_COOKIE_NAME_CHARS = frozenset("()<>@,;:") | {"\\", "[", "]", "?", "=", "{", "}", " ", "\t"}
 
-#: Several ``Set-Cookie`` headers arrive joined into one line with ``, ``.  A
-#: comma starts a new cookie only when what follows looks like ``token=`` before
-#: any ``;`` or ``,``; the comma inside an ``expires`` date (``Sat, 13 Sep 2036``)
-#: fails that test because nothing before the next delimiter reads as ``name=``.
+#: Joined ``Set-Cookie`` lines: a comma starts a new cookie only when ``token=``
+#: follows before any ``;`` or ``,``, so the one inside an ``expires`` date does not.
 _SET_COOKIE_SEPARATOR = re.compile(r",(?=\s*[^;=,\s]+\s*=)")
 
 

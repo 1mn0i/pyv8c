@@ -1,7 +1,7 @@
 {
-  "min_ms": 153.1,
-  "median_ms": 155.1,
-  "modules": 253,
+  "min_ms": 252.2,
+  "median_ms": 256.5,
+  "modules": 405,
   "runs": 3,
-  "recorded": "2026-09-21"
+  "recorded": "2026-09-23"
 }

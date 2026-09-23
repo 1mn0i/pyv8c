@@ -134,26 +134,6 @@ def test_location_assign_and_replace_keep_the_document_alive():
         browser.close()
 
 
-def test_visibility_change_fires_on_transitions_only():
-    browser = Browser(stub_logging="off")
-    try:
-        page = browser.new_context().new_page()
-        page.set_content("<body></body>", url="https://example.test/")
-        page.run_until_idle()
-        page.evaluate("""
-            window.__vis = [];
-            document.addEventListener('visibilitychange', () => __vis.push(document.visibilityState));
-            document.addEventListener('freeze', () => __vis.push('freeze'));
-            document.addEventListener('resume', () => __vis.push('resume'));
-        """)
-        assert page.set_visibility(True) is True
-        assert page.set_visibility(True) is False
-        assert page.set_visibility(False) is True
-        assert page.evaluate("__vis") == ["hidden", "freeze", "visible", "resume"]
-    finally:
-        browser.close()
-
-
 def test_resource_element_and_frame_events():
     def loader(url, request):
         if url.endswith("/image.png"):

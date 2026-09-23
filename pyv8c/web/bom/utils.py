@@ -29,9 +29,13 @@ def document_key(url):
 
 def is_secure_context(url):
     """Whether *url* is an origin a browser treats as potentially trustworthy."""
-    parts = urlsplit(str(url))
+    text = str(url)
+    # A blob (or filesystem) URL is as trustworthy as the origin it carries.
+    if text[:5].lower() == "blob:":
+        return is_secure_context(text[5:])
+    parts = urlsplit(text)
     scheme, host = parts.scheme.lower(), (parts.hostname or "").lower()
-    if scheme in ("https", "wss", "file", "data", "blob"):
+    if scheme in ("https", "wss", "file", "data"):
         return True
     if scheme in ("http", "ws"):
         return host in ("localhost", "127.0.0.1", "::1") or host.endswith(".localhost")

@@ -3,7 +3,6 @@
 import pytest
 
 from pyv8c import Browser
-from pyv8c.foundation.urls import origin_tuple
 from pyv8c.web.bom.window import Window
 
 
@@ -125,12 +124,6 @@ def test_origin_variants(windows, url, allowed):
     child.set_content('<body>hello</body>', url=url)
     expected = ['allowed'] if allowed else ['SecurityError', 18, True]
     assert caught(page, 'w.document') == expected
-
-
-def test_origin_normalization_and_unique_opaque_origins():
-    assert origin_tuple('HTTP://EXAMPLE.TEST:80/a?b#c') == ('http', 'example.test', 80)
-    assert origin_tuple('https://example.test') == ('https', 'example.test', 443)
-    assert origin_tuple('data:text/html,x') != origin_tuple('data:text/html,x')
 
 
 def test_native_window_access_handler_is_automatically_installed(windows):

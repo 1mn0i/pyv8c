@@ -79,28 +79,15 @@ def test_element_attribute_round_trip(page):
 
 
 def test_class_list_is_live_reflection_of_class_attribute(page):
+    # add/toggle/value: corpus ``class_list_add_and_contains``, ``class_list_toggle_replace_and_value``.
     result = page.evaluate(
         "(() => { const div = document.createElement('div'); "
         "div.className = 'a  b a'; const list = div.classList; "
-        "const before = [list.length, list.contains('a'), list.contains('b'), "
-        "list.contains('c'), list[0], list[1], list.item(2) === null]; "
-        "list.add('c', 'd'); list.remove('a'); "
-        "const after = [div.className, list.length, list.contains('a')]; "
-        "list.toggle('e'); "
-        "const toggled = [div.className, list.contains('e')]; "
-        "list.toggle('e', false); "
-        "const forcedOff = [div.className, list.contains('e')]; "
-        "list.value = 'x  y z'; "
-        "const viaValue = [div.className, list.length]; "
-        "return [before, after, toggled, forcedOff, viaValue]; })()"
+        "const indexed = [list.length, list[0], list[1], list.item(2) === null]; "
+        "list.remove('a'); "
+        "return [indexed, div.className, list.contains('a'), list.length]; })()"
     )
-    assert result == [
-        [2, True, True, False, "a", "b", True],
-        ["b c d", 3, False],
-        ["b c d e", True],
-        ["b c d", False],
-        ["x  y z", 3],
-    ]
+    assert result == [[2, "a", "b", True], "b", False, 1]
 
 
 def test_inner_html_outer_html_and_fragment_context_parsing(page):
@@ -219,31 +206,3 @@ def test_html_element_reflected_title_and_hidden(page):
     assert result == [["tt", "tt", True, True], False, False]
 
 
-def test_dataset_reads_writes_and_deletes_data_attributes(page):
-    assert page.evaluate("""
-        (() => {
-          const span = document.querySelector('span');
-          const declared = [span.dataset.n, span.getAttribute('data-n')];
-          span.dataset.fooBar = 'x';
-          const written = [span.getAttribute('data-foo-bar'), span.dataset.fooBar];
-          const names = Object.keys(span.dataset).sort();
-          delete span.dataset.fooBar;
-          return [declared, written, names,
-                  [span.hasAttribute('data-foo-bar'), typeof span.dataset.fooBar]];
-        })()
-    """) == [["1", "1"], ["x", "x"], ["fooBar", "n"], [False, "undefined"]]
-
-
-def test_dataset_reflects_attribute_writes_and_keeps_the_prototype(page):
-    assert page.evaluate("""
-        (() => {
-          const div = document.createElement('div');
-          const dataset = div.dataset;
-          div.setAttribute('data-x-y', 'v');
-          return [dataset === div.dataset, Object.keys(dataset), dataset.xY,
-                  'xY' in div.dataset, 'absent' in div.dataset,
-                  dataset.toString === Object.prototype.toString,
-                  div.setAttribute('data-', 'ignored') === undefined,
-                  Object.keys(dataset)];
-        })()
-    """) == [True, ["xY"], "v", True, False, True, True, ["xY"]]

@@ -22,7 +22,7 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
         modules = {
             "idb": "pyv8c.web.bom.indexeddb",
             "navigator": "pyv8c.web.bom.navigator",
-            "websocket": "pyv8c.web.network.websocket",
+            "websocket": "pyv8c.web.websocket",
             "worker": "pyv8c.web.workers.api",
             "filesystem": "pyv8c.web.bom.filesystem",
         }

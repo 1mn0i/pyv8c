@@ -1,6 +1,7 @@
 import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytestmark = pytest.mark.native
 
 from pyv8c import Browser, V8TypeError
 

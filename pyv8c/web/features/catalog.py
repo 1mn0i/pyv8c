@@ -36,6 +36,7 @@ INDEXEDDB_INTERFACES = (
 NAVIGATOR_INTERFACES = (
     "MimeType", "Plugin", "PluginArray", "MimeTypeArray", "Geolocation",
     "NetworkInformation", "BatteryManager", "DeprecatedStorageQuota", "Navigator",
+    "NavigatorUAData",
 )
 FILESYSTEM_INTERFACES = (
     "DOMFileSystem", "Entry", "DirectoryEntry", "FileEntry", "DirectoryReader", "FileWriter", "File",
@@ -49,6 +50,6 @@ CATALOG = FeatureCatalog((
     FeatureSpec("navigator", "pyv8c.web.bom.navigator", NAVIGATOR_INTERFACES, ("navigator",)),
     FeatureSpec("indexeddb", "pyv8c.web.bom.indexeddb", INDEXEDDB_INTERFACES, ("indexedDB",), requires=("core",)),
     FeatureSpec("filesystem", "pyv8c.web.bom.filesystem", FILESYSTEM_INTERFACES, requires=("core",)),
-    FeatureSpec("websocket", "pyv8c.web.network.websocket", ("WebSocket",), requires=("core",)),
+    FeatureSpec("websocket", "pyv8c.web.websocket", ("WebSocket",), requires=("core",)),
     FeatureSpec("workers", "pyv8c.web.workers.api", WORKER_INTERFACES, requires=("core",)),
 ))

@@ -24,6 +24,7 @@ from .features import FeatureRuntime, InterfaceSpec
 from .sessions import BindingSession
 from .stubs import StubFactory
 from .wrappers import BindingWrapperFactory
+from ..foundation.logging import logger
 
 __all__ = [
     "DEFAULT_BASELINE_PATH",
@@ -43,12 +44,19 @@ DEFAULT_EAGER_INTERFACES = (
 class InterfaceUniverse:
     """One isolated baseline view and FeatureRuntime class config set."""
 
-    def __init__(self, baseline: BaselineSnapshot, *, runtime: FeatureRuntime, stub_logging="info",
-                 expose_unimplemented=True):
+    def __init__(self, baseline: BaselineSnapshot, *, runtime: FeatureRuntime, stub_logging="off",
+                 expose_unimplemented=True, baseline_mismatch="warn"):
         self.baseline = baseline
         self.runtime = runtime
-        self.stub_logging = str(stub_logging or "info").lower()
+        self.stub_logging = str(stub_logging or "off").lower()
         self.expose_unimplemented = bool(expose_unimplemented)
+        if self.stub_logging not in ("on", "verbose", "off"):
+            raise ValueError("stub_logging must be 'on', 'verbose' or 'off'")
+        self.baseline_mismatch = str(baseline_mismatch or "error").lower()
+        if self.baseline_mismatch not in ("error", "warn"):
+            raise ValueError("baseline_mismatch must be 'error' or 'warn'")
+        #: Reported mismatches, so each difference warns once.
+        self._mismatches = set()
         self.eager_interfaces = DEFAULT_EAGER_INTERFACES
         self._validated = False
         self.deferred_globals = True
@@ -68,11 +76,27 @@ class InterfaceUniverse:
         self._wrappers = BindingWrapperFactory(self)
         self._assembly = InterfaceCompiler(self, self._stubs, self._wrappers, self._lock)
 
+    def report_mismatch(self, message):
+        """Report an implementation/baseline mismatch; true when it is tolerated.
+
+        ``warn`` mode reports it once and lets the caller skip what the baseline
+        does not describe; ``error`` mode leaves raising to the caller.
+        """
+        if self.baseline_mismatch != "warn":
+            return False
+        if message not in self._mismatches:
+            self._mismatches.add(message)
+            if self.stub_logging != "off":
+                logger.warning("pyv8c: {}", message)
+        return True
+
     def spec(self, name):
         """The raw baseline spec of one interface (collaborator query surface)."""
         try:
             return self.baseline.interfaces[name]
         except KeyError as exc:
+            if self.report_mismatch(f"interface {name!r} is missing from the interface baseline"):
+                return {}
             raise TypeError(f"interface {name!r} is missing from Chromium interface baseline") from exc
 
     def own_members(self, interface_name):

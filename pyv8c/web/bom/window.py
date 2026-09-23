@@ -17,7 +17,7 @@ from ...foundation.arguments import (
     usv_string,
 )
 from ...foundation.environment import BrowserEnvironment
-from ...foundation.errors import SecurityError
+from ...foundation.errors import LegacyPropertyError, SecurityError
 from ...foundation.urls import origin_tuple, serialize_origin
 from ..dom.custom_elements import CustomElementRegistry
 from ..dom.events import EventTarget
@@ -33,7 +33,7 @@ from .accessories import (
 )
 from .crypto import Crypto
 from .media import MediaQueryList
-from .navigation_api import Navigation
+from .navigation import Navigation
 from .trusted_types import TrustedTypePolicyFactory
 from .visual_viewport import VisualViewport
 from .performance import Performance
@@ -138,6 +138,33 @@ class _WindowFeatureValues(LazyValueStore):
 
     def _create_value(self, slot):
         return self._runtime.create_window_value(slot, self._window)
+
+
+#: The window's own bar properties, one name each.
+BAR_NAMES = ("locationbar", "menubar", "toolbar", "statusbar", "scrollbars", "personalbar")
+
+
+def _singleton_values(window):
+    """The ``[SameObject]`` objects a page reads off the window itself."""
+    def bar(name):
+        return lambda: BarProp(name)
+
+    return LazyValueStore({
+        "performance": Performance,
+        "crypto": lambda: Crypto(is_secure_context(window.location.get_href())),
+        "customElements": lambda: CustomElementRegistry(services=window._services),
+        "visualViewport": lambda: VisualViewport(window=window),
+        "viewport": Viewport,
+        "external": External,
+        "crashReport": CrashReportContext,
+        "launchQueue": LaunchQueue,
+        "speechSynthesis": SpeechSynthesis,
+        "styleMedia": lambda: StyleMedia(window),
+        "scheduler": lambda: Scheduler(services=window._services),
+        "navigation": lambda: Navigation(window=window),
+        "trustedTypes": TrustedTypePolicyFactory,
+        **{name: bar(name) for name in BAR_NAMES},
+    })
 
 
 @interface('Window', 'WindowProperties')
@@ -252,9 +279,14 @@ class Window(_SchedulingMixin, WindowProperties):
         cross_origin_index_set="__v8_cross_origin_index_set__",
         cross_origin_index_del="__v8_cross_origin_index_del__",
         index_get="__v8_index_get__",
+        # No ``index_query``: the native definer would then refuse every define.
+        index_set="__v8_index_set__",
+        index_del="__v8_index_del__",
+        index_enum="__v8_index_enum__",
     )
     # Ordinary members use Web IDL bindings; dynamic names live on
-    # WindowProperties, not a generic Python interceptor on Window.
+    # WindowProperties, not a generic Python interceptor on Window.  The
+    # baseline's named handlers are still filled as placeholders.
     _context_origins = {}
     def __init__(self, services=None, feature_runtime=None, **kw):
         super().__init__(services=services, **kw); self._services = services
@@ -263,10 +295,11 @@ class Window(_SchedulingMixin, WindowProperties):
         #: Set for a window a frame owns; the element is what survives navigation.
         self._frame_element = None
         environment = getattr(getattr(services, "realm_services", None), "environment", None)
-        viewport = BrowserEnvironment.from_value(environment).viewport
+        viewport = BrowserEnvironment.from_dict(environment).viewport
         if feature_runtime is None:
             raise RuntimeError("Window requires the Browser FeatureRuntime")
         self._features = _WindowFeatureValues(feature_runtime, self)
+        self._window_values = _singleton_values(self)
         self.location = self._features.value("location")
         self.innerWidth, self.innerHeight = viewport.width, viewport.height
         self.outerWidth, self.outerHeight = viewport.width, viewport.height
@@ -401,6 +434,20 @@ class Window(_SchedulingMixin, WindowProperties):
             return self._view(frames[index])
         return None
 
+    def __v8_index_set__(self, index, value):
+        """A slot holds a live window: nothing may be assigned over it."""
+        raise LegacyPropertyError.indexed(
+            "set", index, "Window", "Indexed property setter is not supported."
+        )
+
+    def __v8_index_del__(self, index):
+        """A frame slot refuses deletion; a slot holding nothing is already gone."""
+        return not 0 <= index < len(self._frame_windows())
+
+    def __v8_index_enum__(self):
+        """The child frames, in the order their slots are indexed."""
+        return len(self._frame_windows())
+
     def _frame_windows(self):
         return tuple(node._child_services.window
                      for node in self._services.document_services.document.fn_querySelectorAll("iframe")
@@ -450,14 +497,9 @@ class Window(_SchedulingMixin, WindowProperties):
         self._require_same_origin()
         return 0
     # -- what a page reads about the window itself -----------------------------
-    def _window_value(self, name, factory):
+    def _window_value(self, name):
         """The one object this window hands out for a ``[SameObject]`` member."""
-        values = getattr(self, "_window_values", None)
-        if values is None:
-            values = self._window_values = {}
-        if name not in values:
-            values[name] = factory()
-        return values[name]
+        return self._window_values.value(name)
 
     def get_origin(self):
         """The current document's origin."""
@@ -517,44 +559,42 @@ class Window(_SchedulingMixin, WindowProperties):
 
     def get_performance(self):
         self._require_same_origin()
-        return self._window_value("performance", Performance)
+        return self._window_value("performance")
 
     def get_crypto(self):
         self._require_same_origin()
-        return self._window_value(
-            "crypto", lambda: Crypto(is_secure_context(self.location.get_href())))
+        return self._window_value("crypto")
 
     def get_customElements(self):
         self._require_same_origin()
-        return self._window_value(
-            "customElements", lambda: CustomElementRegistry(services=self._services))
+        return self._window_value("customElements")
 
     def get_visualViewport(self):
         self._require_same_origin()
-        return self._window_value("visualViewport", lambda: VisualViewport(window=self))
+        return self._window_value("visualViewport")
 
     # -- the smaller accessory objects ----------------------------------------
-    def get_viewport(self): self._require_same_origin(); return self._window_value("viewport", Viewport)
-    def get_external(self): self._require_same_origin(); return self._window_value("external", External)
-    def get_crashReport(self): self._require_same_origin(); return self._window_value("crashReport", CrashReportContext)
-    def get_launchQueue(self): self._require_same_origin(); return self._window_value("launchQueue", LaunchQueue)
-    def get_speechSynthesis(self): self._require_same_origin(); return self._window_value("speechSynthesis", SpeechSynthesis)
+    def get_viewport(self): self._require_same_origin(); return self._window_value("viewport")
+    def get_external(self): self._require_same_origin(); return self._window_value("external")
+    def get_crashReport(self): self._require_same_origin(); return self._window_value("crashReport")
+    def get_launchQueue(self): self._require_same_origin(); return self._window_value("launchQueue")
+    def get_speechSynthesis(self): self._require_same_origin(); return self._window_value("speechSynthesis")
 
     def get_styleMedia(self):
         self._require_same_origin()
-        return self._window_value("styleMedia", lambda: StyleMedia(self))
+        return self._window_value("styleMedia")
 
     def get_scheduler(self):
         self._require_same_origin()
-        return self._window_value("scheduler", lambda: Scheduler(services=self._services))
+        return self._window_value("scheduler")
 
     def get_navigation(self):
         self._require_same_origin()
-        return self._window_value("navigation", lambda: Navigation(window=self))
+        return self._window_value("navigation")
 
     def get_trustedTypes(self):
         self._require_same_origin()
-        return self._window_value("trustedTypes", TrustedTypePolicyFactory)
+        return self._window_value("trustedTypes")
 
     def get_fence(self):
         """An unfenced page has no fence, which Chrome reports as null."""
@@ -575,15 +615,12 @@ class Window(_SchedulingMixin, WindowProperties):
     def get_subApps(self): self._require_same_origin(); return pyv8.Undefined
     def get_testOriginTrialGlobalAttribute(self): self._require_same_origin(); return pyv8.Undefined
 
-    def get_locationbar(self): self._require_same_origin(); return self._bar("locationbar")
-    def get_menubar(self): self._require_same_origin(); return self._bar("menubar")
-    def get_toolbar(self): self._require_same_origin(); return self._bar("toolbar")
-    def get_statusbar(self): self._require_same_origin(); return self._bar("statusbar")
-    def get_scrollbars(self): self._require_same_origin(); return self._bar("scrollbars")
-    def get_personalbar(self): self._require_same_origin(); return self._bar("personalbar")
-
-    def _bar(self, name):
-        return self._window_value(name, lambda: BarProp(name))
+    def get_locationbar(self): self._require_same_origin(); return self._window_value("locationbar")
+    def get_menubar(self): self._require_same_origin(); return self._window_value("menubar")
+    def get_toolbar(self): self._require_same_origin(); return self._window_value("toolbar")
+    def get_statusbar(self): self._require_same_origin(); return self._window_value("statusbar")
+    def get_scrollbars(self): self._require_same_origin(); return self._window_value("scrollbars")
+    def get_personalbar(self): self._require_same_origin(); return self._window_value("personalbar")
 
     def fn_matchMedia(self, query=MISSING, *_extra):
         """The query list for *query*, answered against this window's viewport."""

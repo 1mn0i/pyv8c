@@ -1,21 +1,15 @@
 """Transport-neutral request and response values shared by every backend.
 
-A backend owns how bytes travel, never what they mean: it is handed a
-:class:`NetworkRequest` and returns a :class:`NetworkResponse`, both of which
-say nothing about the client behind them.  That is what lets a context swap
+A backend owns how bytes travel, never what they mean, so a context can swap
 cycronet for curl_cffi (or for a host-supplied backend) without the resource
-loader noticing.
-
-``request.options`` carries the settings only some transports understand
-(impersonation, proxies, certificate verification).  A backend ignores the ones
-it has no equivalent for, so a caller can pass its whole preference set and let
-the engine honour what it can.
+loader noticing.  ``request.options`` carries settings only some transports
+understand; a backend ignores the ones it has no equivalent for.
 """
 import json as json_module
 from dataclasses import dataclass, field
 from threading import RLock
 
-from ...foundation.urls import same_origin
+from ..foundation.urls import same_origin
 from .cookies import split_set_cookie
 
 
@@ -26,9 +20,8 @@ class NetworkUnavailableError(RuntimeError):
 class RequestHandle:
     """Thread-safe cancellation handle for a network future.
 
-    The delivery side only ever reads :attr:`cancelled` and the resource loader
-    only ever calls :meth:`cancel`, so the lock covers the future swap itself:
-    a completion that lands between the two must not cancel the wrong work.
+    The lock covers the future swap: a completion landing between the read of
+    :attr:`cancelled` and the swap must not cancel the wrong work.
     """
 
     def __init__(self):
@@ -66,19 +59,17 @@ class NetworkRequest:
     mode: str = "cors"
     redirect: str = "follow"
     origin: str | None = None
-    #: Transport extensions (impersonate, proxies, verify, ...).  Unknown keys
-    #: are ignored by backends that cannot honour them.
+    #: Transport extensions (impersonate, proxies, verify, ...); unknown keys are
+    #: ignored by backends that cannot honour them.
     options: dict[str, object] = field(default_factory=dict)
 
 
 def cookie_header(jar, request) -> str:
     """The ``Cookie`` header *request* may carry from *jar*, if any.
 
-    The one implementation of the rule every engine applies, because
-    ``credentials`` is what decides whether a request may take the jar's cookies
-    with it: ``"omit"`` sends none, ``"include"`` may send them anywhere, and
+    The rule every engine applies: ``"omit"`` sends none, ``"include"`` anywhere,
     ``"same-origin"`` (the default) only where the origins match.  A host-level
-    request has no origin of its own, so nothing about it can be cross-origin.
+    request has no origin, so nothing about it can be cross-origin.
     """
     if jar is None or request.credentials == "omit":
         return ""
@@ -141,8 +132,7 @@ class NetworkResponse:
     def cookies(self):
         """The cookies the response set, as ``name -> value``.
 
-        A ``Set-Cookie`` line is split the way the jar splits its own, not with
-        a naive ``split(",")``.
+        Split the way the jar splits its own, not with a naive ``split(",")``.
         """
         header = self.headers.get("set-cookie") if isinstance(self.headers, dict) else None
         if not header:

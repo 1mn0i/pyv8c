@@ -20,11 +20,19 @@ def mark_stub(callback):
 class StubFactory:
     """Build the safe, logging shells used for unimplemented members."""
 
-    def __init__(self, stub_logging="info"):
-        self.stub_logging = str(stub_logging or "info").lower()
+    #: The level that also reports placeholder handlers: they run on ordinary
+    #: property probes, where logging would pay loguru's import at startup.
+    HANDLER_LEVEL = "verbose"
+
+    def __init__(self, stub_logging="off"):
+        self.stub_logging = str(stub_logging or "off").lower()
+        self.reports_handlers = self.stub_logging == self.HANDLER_LEVEL
+        #: A reporting handler speaks once per interface and callback, not once
+        #: per probe.
+        self._reported = set()
 
     def _log(self, message, *args):
-        if self.stub_logging not in ("off", "none", "disabled"):
+        if self.stub_logging != "off":
             logger.info(message, *args)
 
     def method(self, interface_name, member_name, *, static=False):
@@ -62,6 +70,10 @@ class StubFactory:
 
     def handler(self, interface_name, method_name):
         def handler(*args):
+            reported = (interface_name, method_name)
+            if self.reports_handlers and reported not in self._reported:
+                self._reported.add(reported)
+                self._log("pyv8c: {}.{} 待实现", interface_name, method_name)
             # Returning None tells V8 that the interceptor did not handle it;
             # enum interceptors report "nothing to enumerate" with an empty tuple.
             if method_name.endswith("enum__"):

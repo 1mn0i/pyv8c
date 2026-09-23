@@ -1,19 +1,16 @@
 """The cycronet engine: one optional client that can serve both roles.
 
-Naming it as ``network_engine="cronet"`` gives a context its HTTP engine, naming
-it as ``ws_engine="cronet"`` gives it its socket engine, and naming it for both
-shares one instance.  It is optional: the defaults are curl_cffi for requests and
-websockets for sockets.  The values it exchanges are :mod:`models` values.
+Named for both roles a context shares one instance, so requests and sockets share
+one connection cache.
 """
 import importlib
 import inspect
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
 
-# Tests patch cookie-change logging through this module attribute.
 from loguru import logger  # patch target for cookie-change logging tests
 
-from ...foundation.errors import InvalidStateError
+from ..foundation.errors import InvalidStateError
 from .cookies import CookieJar
 from .models import (
     NetworkRequest,
@@ -45,20 +42,17 @@ def _cycronet_client_type(module):
 class CronetTransport:
     """Owns one optional cycronet client, which serves both engine roles.
 
-    The same client performs requests and opens sockets, so a context that names
-    cycronet for both roles is handed one instance -- one client, one connection
-    cache -- while a context that names it for one role gets only that.  It never
-    touches V8: everything it delivers goes through the task capability it was
-    given, which posts to the realm's queue.
+    The same client performs requests and opens sockets, so naming cycronet for
+    both roles hands a context one instance.  It never touches V8: what it
+    delivers goes through the task capability it was given.
     """
 
     @classmethod
     def accepted_option_keys(cls, kind: str = "http") -> frozenset[str] | None:
         """The keys the *kind* role's options may carry: the client's, plus ours.
 
-        Every option left over goes straight to the installed client, so its
-        constructor is the list -- introspecting it keeps that promise and still
-        catches a misspelt key.  Only the request role owns a thread pool, which
+        Every option left over goes straight to the installed client, so its own
+        constructor is the list.  Only the request role owns a thread pool, which
         is what ``max_workers`` configures.
         """
         client_keys = signature_option_keys(_cycronet_client_type(_cycronet_module()))
@@ -68,9 +62,7 @@ class CronetTransport:
 
     def __init__(self, *, options=None):
         self.options = dict(options or {})
-        # ``max_workers`` configures this bridge's Python executor; it is not
-        # a cycronet client option.  Remove it before constructing the client
-        # so strict cycronet implementations do not reject the extra keyword.
+        # Ours, not the client's: consume it before the client is built.
         max_workers = int(self.options.pop("max_workers", 4))
         self.cycronet = _cycronet_module()
         self.client = self._new_client()

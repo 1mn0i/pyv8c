@@ -1,6 +1,11 @@
 # 使用与配置
 
-[返回文档索引](README.md)。本页对应 [Browser/Page 实现](../pyv8c/platform/browser.py)，不假定与 Playwright 或 Chrome API 等价。
+[返回文档索引](README.md)。本页对应 [Browser 实现](../pyv8c/platform/browser.py) 与 [Page 实现](../pyv8c/platform/page.py)，不假定与 Playwright 或 Chrome API 等价。
+
+顶层只导出对象模型（`Browser`、`BrowserContext`、`Page`、`DevToolsHandle`、`DevToolsOptions`、`BrowserEnvironment`）、
+可捕获的错误（`V8Error` 家族、`DOMException`、`NetworkUnavailableError`）与网络扩展点（`NetworkBackend`、
+`HttpTransport`/`WebSocketTransport`、`register_transport`/`register_ws_transport`/`transport_names`、
+`NetworkRequest`/`NetworkResponse`）。引擎实现类从各自模块导入，例如 `pyv8c.network.cronet.CronetTransport`。
 
 ## 创建与关闭
 
@@ -26,7 +31,7 @@ Context 关闭会关闭其页面、DevTools 和网络客户端，并清理 Blob 
 | API | 语义 |
 | --- | --- |
 | `context.new_page(url="about:blank", trace=None, environment=None)` | 创建页面；非 about:blank URL 会触发 goto，失败后关闭该页面 |
-| `page.set_content(html, url="about:blank")` | 提交新文档并启动解析；设置 URL 不等于从该 URL 下载 HTML |
+| `page.set_content(html=空 HTML 文档, url="about:blank")` | 提交新文档并启动解析；省略 html 得到 `<!DOCTYPE html>` 开头的空 standards 文档；设置 URL 不等于从该 URL 下载 HTML |
 | `page.goto(url, timeout=30, wait_until="load")` | 加载并导航，通常返回 Response；beforeunload 阻止时可返回 None |
 | `page.evaluate(script, filename=None)` | 在 owner 线程执行 JS 源码；filename 用于脚本定位 |
 | `page.run_until_idle(timeout=0)` | 驱动就绪任务；正 timeout 允许等待定时器/异步工作，到期返回，不承诺所有工作完成 |
@@ -38,6 +43,7 @@ Context 关闭会关闭其页面、DevTools 和网络客户端，并清理 Blob 
 
 `goto.wait_until` 支持 `commit`、`domcontentloaded`、`load`，以及内部接受的 None；不支持 networkidle。
 `set_content` 的默认 URL 是 about:blank，重复调用时需显式传 URL 才能保持预期 origin。
+省略 html 得到一份空 standards 文档（`document.compatMode` 为 `CSS1Compat`）；传 `"<body></body>"` 这类不带 doctype 的片段则是 `BackCompat`，按需选择。
 `evaluate` 不是自动等待 Promise 的异步求值器；可将完成结果写到 JS 全局，再推进队列并读取。
 
 ```python
@@ -98,39 +104,88 @@ finally:
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
 | resource_loader | None | 同步 Python 资源提供函数；离线测试首选 |
-| real_network | False | 为未指定名字的角色装配默认引擎（HTTP=curl_cffi、WebSocket=websockets） |
-| network_engine / ws_engine | None / None | 分别选择 HTTP 引擎与 WebSocket 引擎；只装其中一半也可以 |
-| network_backend | None | 整体注入引擎实例或工厂，按对象能做的角色填充 |
+| real_network | True | 是否装配 http_engine / ws_engine 指定的引擎；False 表示这个 Browser 不联网 |
+| http_engine / ws_engine | curl_cffi / websockets | 各给一个引擎：已注册的名字、现成对象（HTTP 要有 request_sync，socket 要有 websocket）或工厂（每个 Context 调一次）；None 表示该角色不装配 |
 | http_options / ws_options | None / None | 分别交给两个引擎的参数；引擎不认识的键在创建 Context 时报错 |
 | resource_interceptor | None | 主动跳过/替换请求，区别于被动 trace |
 | cache / cache_dir | True / None | 允许缓存；只有显式目录才持久化资源响应 |
-| environment | None | 不可变 BrowserEnvironment 或字典 |
+| environment | None | 扁平点号键字典或不可变 BrowserEnvironment |
 | trace / traceable | False / False | 初始观察状态 / 是否允许后续开启 |
 | trace_callback | None | 共享事件回调；未提供时使用 Loguru 输出 |
 | interface_baseline_path | None | 默认随包 ZIP，可指定 compact schema 5 JSON/ZIP |
+| baseline_mismatch | warn | warn（默认）对实现与所选 baseline 的成员/接口差异记一次警告并跳过；error 改为当场失败，用来盯住自己的实现写错 |
 | expose_unimplemented | True | exposure 计划是否包含没有手写实现的 baseline 接口 |
-| stub_logging | info | 未实现成员日志；off/none/disabled 可关闭 |
+| stub_logging | off | 未实现成员日志：off 关闭（默认）、on 每个未实现成员报一次、verbose 额外报告占位 handler |
 
 关闭 stub_logging 只关闭日志，不会让占位成员获得实现。
 原生 binding 描述和已创建模板不是热更新配置；更换 baseline 或修改接口声明后应创建新的 Browser/Context。
 
-## 环境覆盖
+## 环境配置
+
+环境是一份扁平的「点号键」配置：每个设置一个键（`viewport.width`、`client_hints.brands` …），
+一份配置可以整体写出、读回、叠加，没有第二套嵌套记录类型。字段表见
+[environment.py](../pyv8c/foundation/environment.py) 的 `FIELDS`，校验集中在构造时，报错会指明键名。
 
 ```python
-from pyv8c import Browser
+from pyv8c import Browser, BrowserEnvironment
 
-browser = Browser(environment={"languages": ["zh-CN", "en"], "viewport": {"width": 800}}, stub_logging="off")
+environment = BrowserEnvironment({
+    "languages": ["zh-CN", "en"],
+    "viewport.width": 800,
+    "screen.width": 2560,
+})
+browser = Browser(environment=environment, stub_logging="off")
 try:
-    page = browser.new_context().new_page(environment={"viewport": {"width": 390}})
+    page = browser.new_context().new_page(environment={"viewport.width": 390})
     assert page.evaluate("[navigator.language, innerWidth]") == ["zh-CN", 390]
 finally:
     browser.close()
 ```
 
-支持 user_agent、platform、language/languages、on_line、hardware_concurrency、device_memory、max_touch_points，
-以及 viewport、screen、geolocation、plugins 等结构配置。详见 [environment.py](../pyv8c/foundation/environment.py)。
-配置会校验并冻结；页面覆盖基于 Browser 配置合成。几何数值是环境模拟，不代表存在布局引擎。
-配置中出现 timezone 也不能推断所有原生 Date/Intl 行为已切换。
+| 入口 | 语义 |
+| --- | --- |
+| `BrowserEnvironment(data)` / `from_dict(data)` | 逐键校验；未知键、类型或取值不符时抛错并指明键名 |
+| `overlay(data)` | 在自身之上叠加若干键；页面级覆盖走同一条路径 |
+| `to_dict()` | 只含显式给出的键 |
+| `resolved()` | 默认值与推导补齐后的完整键集 |
+| `dumps()` / `loads()`、`to_file()` / `from_file()` | 带 `schema` 版本号的文本或文件往返；版本不符即报错 |
+| `viewport` `screen` `geolocation` `connection` `battery` `storage` `client_hints` `plugins` | 分组视图，属性名与 Web API 取值一致 |
+
+未给出的键取**随包的默认 profile**（`pyv8c/data/chrome-environment.json`，一份真实 Chrome 的采集结果），
+其中 `app_version`、`language`、`client_hints.brands`/`mobile`/`platform` 会**跟随 `user_agent`** 重新推导，
+所以换 `user_agent` 时这些值一起变；推导结果不写回显式集合，要钉住某一项就显式给出它。
+其余高熵值（架构、位数、平台版本、完整版本列表）无法从 UA 推出，仍取 profile 或显式值。
+
+分组视图的读法：`environment.storage.temporary.quota`、`environment.client_hints.platform`、
+`environment.plugins[0].mime_types[0].type`。
+
+## 从真实浏览器采集配置
+
+`pyv8c/tools/collect_environment.py` 用调试端口启动本机已装的 Chrome（`PYV8C_CHROME` 可指向别的可执行文件），
+在 localhost 这个安全源上读取浏览器自己能上报的每一项，写出可直接加载的配置；
+`tools/collect_environment.py` 是它的命令行壳：
+
+```powershell
+$env:PYTHONPATH = 'D:\src\pyv8env\pyv8c'
+python tools/collect_environment.py                       # chrome-<版本>-<平台>.json
+python tools/collect_environment.py --out -               # 写到标准输出
+python tools/collect_environment.py --headed --window-size 1920,1080 --accept-lang en-US,en
+```
+
+- 产物只含**真实读到**的键（字段表中 `collected=True` 的那批）：缺一个即报错并以非零码退出，不会静默回落默认值。
+- 浏览器无法上报的项不进产物，只作为覆盖项存在：`geolocation.*`（权限与坐标）、`viewport.mobile`、
+  `viewport.touch`、`connection.type`、`connection.downlink_max`、`storage.persistent.*`。
+- 产物带 `schema` 与 `source`（浏览器版本、可执行文件、平台、采集时间、启动参数），
+  `BrowserEnvironment.from_file(path)` 可直接载入。
+- 默认无头启动，UA 因而会是 `HeadlessChrome/…`；要正常 UA 加 `--headed`。
+- 调试端口本身会让 `navigator.webdriver` 为真；采集器用 `--disable-blink-features=AutomationControlled`
+  中和这项由自己引入的痕迹，该参数同样记录在 `source.arguments` 中，便于复核。
+- `screen.*`、`viewport.*` 是采集那一刻显示器与窗口的值，`storage.*.quota` 随 profile 与磁盘变化。
+
+`pyv8c/data/chrome-environment.json` 是随包的默认 profile，也是一份真实采集的样例，离线测试直接用它。
+
+配置会校验并冻结；几何数值是环境模拟，不代表存在布局引擎。
+配置中出现 `timezone` 也不能推断所有原生 Date/Intl 行为已切换。
 
 ## window.chrome
 
@@ -157,9 +212,9 @@ page.evaluate("chrome.csi()")
 
 ## 网络与资源
 
-默认不联网；本地 HTML 用 set_content，导航或外部脚本使用明确的 loader。
-真实网络需要另外安装项目的 network extra，并使用 Browser(real_network=True)。
-`[network]` extra 装的是默认两个引擎（curl_cffi 与 websockets）；network_engine / ws_engine 可分别改选其它已注册引擎（如 `"cronet"`，需装 `[cronet]` extra），http_options / ws_options 传各自的参数。
+默认联网：`Browser()` 为每个 context 装配 curl_cffi（HTTP）与 websockets（WebSocket），两者来自 `[network]` extra，缺失时在创建 Context 时报错并指明要装什么。
+离线测试用 `Browser(real_network=False)` 配 resource_loader，或直接用 set_content 提交本地 HTML。
+http_engine / ws_engine 可改选其它已注册引擎（如 `"cronet"`，需装 `[cronet]` extra），也可直接给现成引擎对象或工厂，或传 None 关掉某个角色；http_options / ws_options 只对"按名字"的引擎生效，给现成对象时传会被拒绝。
 选引擎、参数含义、校验规则和自定义引擎见 [网络引擎与参数](network-engines.md)；完整 loader 契约、响应格式、拦截和缓存风险见 [资源加载与拦截](resource-interception.md)。
 
 ## DevTools

@@ -17,10 +17,6 @@ from .nodes import Node, _bump_style_version
 
 @interface('CharacterData', 'Node')
 class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
-    # ``data`` is writable in Chromium, but the bundled baseline carries an
-    # unresolved setter signature for it, so declaring the setter would break
-    # strict validation. Writes go through the identical ``nodeValue`` /
-    # ``textContent`` setters until the baseline is regenerated.
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="data", getter="get_data", side_effect=1),

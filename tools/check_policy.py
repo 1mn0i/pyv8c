@@ -1,6 +1,6 @@
 """The gates a change has to pass, runnable before it is committed.
 
-Three gates, each one something this repository has until now relied on a person
+Five gates, each one something this repository has until now relied on a person
 remembering:
 
 * ``layers``     -- the layering rules.  Delegated to
@@ -8,6 +8,9 @@ remembering:
                     there is one implementation and no drift.
 * ``companions`` -- an implementation file changed with no test changed alongside it.
 * ``startup``    -- the documented startup measurement, against a recorded budget.
+* ``offline``    -- ``tests/unit`` runs with no native extension on the path.
+* ``duplicates`` -- a test outside the corpus that repeats a corpus case, which is
+                    a warning: the corpus case is the one run against Chrome.
 
 Usage::
 
@@ -25,9 +28,12 @@ a browser, so that one stays a review rule.
 from __future__ import annotations
 
 import argparse
+import ast
 import datetime
+import difflib
 import json
 import os
+import re
 import statistics
 import subprocess
 import sys
@@ -60,7 +66,7 @@ elapsed = (time.perf_counter() - started) * 1000.0
 print(round(elapsed, 1), len(sys.modules))
 """
 
-GATES = ("layers", "companions", "startup")
+GATES = ("layers", "companions", "startup", "offline", "duplicates")
 
 
 def changed_paths(base):
@@ -144,6 +150,111 @@ def gate_layers():
     return False
 
 
+#: Script similarity at which a test reads as a copy of a corpus case.
+DUPLICATE_RATIO = 0.80
+
+
+def _squeeze(text):
+    """The script with its whitespace collapsed, so formatting does not matter."""
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _script_literals(path):
+    """``(test name, line, [scripts])`` for *path*; short strings are not scripts."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found = []
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test_"):
+            continue
+        scripts = [
+            item.value for item in ast.walk(node)
+            if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            and len(item.value) > 60 and "(" in item.value and "def " not in item.value
+        ]
+        if scripts:
+            found.append((node.name, node.lineno, scripts))
+    return found
+
+
+def corpus_cases():
+    """``(case name, line, script)`` for every case the corpus declares."""
+    tree = ast.parse((REPO / "tests" / "repros" / "corpus.py").read_text(encoding="utf-8"))
+    cases = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or getattr(node.func, "id", "") != "Repro":
+            continue
+        keywords = {item.arg: item.value for item in node.keywords}
+        name, script = keywords.get("name"), keywords.get("script")
+        if isinstance(name, ast.Constant) and isinstance(script, ast.Constant):
+            cases.append((name.value, node.lineno, script.value))
+    return cases
+
+
+def duplicate_findings():
+    """``(ratio, path, line, test, case, case line)`` for near-identical scripts."""
+    cases = [(name, line, _squeeze(script)) for name, line, script in corpus_cases()]
+    findings = []
+    for path in sorted((REPO / "tests").rglob("test_*.py")):
+        if "repros" in path.parts or "__pycache__" in path.parts:
+            continue
+        for test, line, scripts in _script_literals(path):
+            best = None
+            for script in scripts:
+                text = _squeeze(script)
+                for name, case_line, case_text in cases:
+                    matcher = difflib.SequenceMatcher(None, text, case_text)
+                    if matcher.real_quick_ratio() < DUPLICATE_RATIO or matcher.quick_ratio() < DUPLICATE_RATIO:
+                        continue
+                    ratio = matcher.ratio()
+                    if best is None or ratio > best[0]:
+                        best = (ratio, name, case_line)
+            if best is not None and best[0] >= DUPLICATE_RATIO:
+                findings.append(
+                    (best[0], path.relative_to(REPO).as_posix(), line, test, best[1], best[2])
+                )
+    return sorted(findings, reverse=True)
+
+
+def gate_duplicates(strict):
+    """A test outside the corpus that repeats a corpus case is the copy to drop."""
+    findings = duplicate_findings()
+    if not findings:
+        print("ok   duplicates: no test repeats a corpus case")
+        return True
+    print(f"!    duplicates: {len(findings)} test(s) repeat a corpus case:")
+    for ratio, path, line, test, case, case_line in findings:
+        print(f"       {ratio:.2f} {path}:{line} {test} ~ tests/repros/corpus.py:{case_line} {case}")
+    print("       keep the corpus case (it is compared against Chrome too) and drop the"
+          " copy, or say why the test needs one")
+    return not strict
+
+
+def gate_offline():
+    """``tests/unit`` has to run with no native extension on the import path.
+
+    That is where the offline extractor is used; a module importing pyv8 fails
+    there as a collection error, which goes unnoticed when pyv8 is on the path.
+    ``PYV8C_OFFLINE`` keeps this gate's own test from recursing.
+    """
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(REPO)
+    environment["PYV8C_OFFLINE"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/unit", "-q"],
+        cwd=REPO,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        print("ok   offline: tests/unit runs without the native extension")
+        return True
+    print("!    offline: tests/unit needs the native extension:")
+    for line in [line for line in result.stdout.strip().splitlines() if line.strip()][-4:]:
+        print(f"       {line}")
+    return False
+
+
 def gate_companions(base, strict):
     paths = changed_paths(base)
     findings = companion_findings(paths)
@@ -216,6 +327,10 @@ def main(argv=None):
         results.append(gate_companions(arguments.base, arguments.strict))
     if "startup" in selected:
         results.append(gate_startup(arguments.runs, arguments.record_startup))
+    if "offline" in selected:
+        results.append(gate_offline())
+    if "duplicates" in selected:
+        results.append(gate_duplicates(arguments.strict))
 
     failed = results.count(False)
     print(f"{'FAIL' if failed else 'PASS'}: {len(results) - failed}/{len(results)} gate(s) clean")

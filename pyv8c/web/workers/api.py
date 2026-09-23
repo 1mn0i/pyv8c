@@ -4,7 +4,7 @@ from urllib.parse import urljoin
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagLocation
 
-from ...engine.features import FeatureImplementation, interface
+from ...engine.features import FeatureImplementation, LazyValueStore, interface
 from ...foundation.arguments import (
     MISSING,
     dictionary,
@@ -20,6 +20,20 @@ from ..bom.scheduling import _SchedulingMixin
 from ..dom.events import EventTarget
 from ..fetch.clone import message_transfer
 from ..fetch.events import ErrorEvent, MessageEvent
+
+
+def _worker_values(scope):
+    """The worker global's own objects, built on first read.
+
+    The Navigator class belongs to the navigator Feature, so it is asked of the
+    realm rather than imported: that both loads the Feature and commits its
+    config to this realm.
+    """
+    def navigator():
+        cls = scope._services.realm_services.materialize_interface("Navigator")
+        return cls(environment=scope._environment, worker=True, services=scope._services)
+
+    return LazyValueStore({"navigator": navigator})
 
 
 @interface('WorkerGlobalScope', 'EventTarget')
@@ -54,11 +68,11 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
     def __init__(self, runtime=None, environment=None, services=None, **kw):
         super().__init__(services=services, **kw)
         self._runtime = runtime
-        from ..bom.navigator import Navigator
-        self.navigator = Navigator(environment=environment, worker=True)
+        self._environment = environment
+        self._values = _worker_values(self)
 
     def get_self(self): return self
-    def get_navigator(self): return self.navigator
+    def get_navigator(self): return self._values.value("navigator")
     def get_onmessage(self): return self._get_handler("onmessage")
     def set_onmessage(self, value):
         if not is_nullish(value):

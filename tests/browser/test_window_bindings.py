@@ -17,14 +17,14 @@ def page():
         browser.close()
 
 
-def test_window_config_has_no_ordinary_named_handlers():
+def test_window_declares_no_named_handler_of_its_own():
     browser = Browser(cache=False, stub_logging="off")
     try:
         universe = browser.interface_universe
         config = universe.class_config_for("Window")
+        # Stub filling is covered by test_interface_stubs; here the class declares none.
         for suffix in ("get", "set", "query", "del", "enum"):
             name = "__v8_name_" + suffix + "__"
-            assert getattr(config, name[5:-2]) is None
             assert not any(name in base.__dict__ for base in Window.__mro__)
         assert config.index_get
         assert config.cross_origin_check
@@ -46,6 +46,9 @@ def test_normal_access_never_calls_python_named_handler(page, monkeypatch):
         return original(self, name)
 
     monkeypatch.setattr(Window, "__getattribute__", traced)
+    # Window inherits the named-properties-object flag from WindowProperties, so
+    # the engine installs no named interceptor here and the handlers the
+    # baseline declares stay inert stubs.
     assert page.evaluate('''(() => {
         for (let i = 0; i < 100; i++) {
             window.answer = i;

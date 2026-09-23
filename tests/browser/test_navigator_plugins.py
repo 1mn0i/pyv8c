@@ -2,15 +2,7 @@ import pytest
 
 pytest.importorskip("pyv8")
 
-from pyv8c import (
-    BatteryConfig,
-    Browser,
-    BrowserEnvironment,
-    MimeTypeConfig,
-    NetworkInformationConfig,
-    PluginConfig,
-    StorageQuotaConfig,
-)
+from pyv8c import Browser, BrowserEnvironment
 
 
 def new_page(environment=None):
@@ -150,37 +142,40 @@ def test_environment_plugins_support_mapping_and_page_overrides():
 
 
 def test_plugin_configuration_is_immutable_and_validated():
-    environment = BrowserEnvironment(
-        plugins=(PluginConfig("Test", mime_types=(MimeTypeConfig("application/test"),)),),
-    )
+    environment = BrowserEnvironment({
+        "plugins": [{"name": "Test", "mime_types": [{"type": "application/test"}]}],
+    })
     assert environment.plugins[0].mime_types[0].type == "application/test"
     with pytest.raises(ValueError):
-        BrowserEnvironment(plugins=[{"name": "duplicate"}, {"name": "duplicate"}])
+        BrowserEnvironment({"plugins": [{"name": "duplicate"}, {"name": "duplicate"}]})
     with pytest.raises(ValueError):
-        BrowserEnvironment(plugins=[{
+        BrowserEnvironment({"plugins": [{
             "name": "invalid",
             "mime_types": [
                 {"type": "application/test"},
                 {"type": "application/test"},
             ],
-        }])
+        }]})
     with pytest.raises(TypeError):
-        BrowserEnvironment(plugins="not a plugin sequence")
+        BrowserEnvironment({"plugins": "not a plugin sequence"})
 
 
 def test_navigator_runtime_surfaces_match_chrome_shapes_and_identity():
     browser, page = new_page({
         "user_agent": "Mozilla/5.0 Test Browser",
         "webdriver": True,
-        "connection": {
-            "effective_type": "3g", "rtt": 250, "downlink": 1.5,
-            "save_data": True, "type": "wifi", "downlink_max": 25,
-        },
-        "battery": {
-            "charging": False, "charging_time": 120,
-            "discharging_time": 3600, "level": 0.75,
-        },
-        "persistent_storage_quota": {"usage": 10, "quota": 40},
+        "connection.effective_type": "3g",
+        "connection.rtt": 250,
+        "connection.downlink": 1.5,
+        "connection.save_data": True,
+        "connection.type": "wifi",
+        "connection.downlink_max": 25,
+        "battery.charging": False,
+        "battery.charging_time": 120,
+        "battery.discharging_time": 3600,
+        "battery.level": 0.75,
+        "storage.persistent.usage": 10,
+        "storage.persistent.quota": 40,
     })
     try:
         assert page.evaluate("""
@@ -263,17 +258,17 @@ def test_navigator_environment_records_validate_defaults():
     environment = BrowserEnvironment()
     assert environment.app_version == environment.user_agent.removeprefix("Mozilla/")
     assert environment.webdriver is False
-    assert environment.connection == NetworkInformationConfig()
-    assert environment.battery == BatteryConfig()
-    assert environment.persistent_storage_quota == StorageQuotaConfig()
+    assert environment.connection.effective_type == "4g"
+    assert environment.connection.downlink_max == float("inf")
+    assert environment.battery.level == 1.0
+    assert environment.storage.persistent.usage == 0
+    assert environment.storage.persistent.quota == 0
 
     assert environment.overlay({"user_agent": "Custom UA"}).app_version == "Custom UA"
     assert environment.overlay({
         "user_agent": "Custom UA", "app_version": "Explicit Version",
     }).app_version == "Explicit Version"
     with pytest.raises(ValueError):
-        BrowserEnvironment(connection={"effective_type": "5g"})
+        BrowserEnvironment({"connection.effective_type": "5g"})
     with pytest.raises(ValueError):
-        BrowserEnvironment(battery={"level": 1.1})
-    with pytest.raises(ValueError):
-        BrowserEnvironment(persistent_storage_quota={"usage": 2, "quota": 1})
+        BrowserEnvironment({"storage.persistent.usage": 2, "storage.persistent.quota": 1})

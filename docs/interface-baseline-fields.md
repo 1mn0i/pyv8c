@@ -50,6 +50,9 @@ ZIP 的 renderer_snapshot 是生成目录来源信息，不含足以独立证明
 | constants | 常量，避免重复放入 interface 成员列表 |
 
 handler 角色包含 get/set/query/del/enum/definer；compact 产物用 1 等存在性标记代替 C++ 符号。
+`named`/`indexed` 是接口自己的拦截器，只来自 plain 的 `*PropertyHandlerConfiguration`；由
+`SetAccessCheckCallbackAndHandler` 构建的那两份属于 `cross_origin.*`。抽取器用
+`_webidl.report.handler_findings` 守住这条：plain 的 named 家族必须能在接口 IDL 里找到 named getter。
 这些标记不是 Python callable；InterfaceCompiler 结合手写 IdlSpec 决定最终 handler。
 
 operation 常含 name、length、flags、receiver、cross_origin、side_effect、signature；

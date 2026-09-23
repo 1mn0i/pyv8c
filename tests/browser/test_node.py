@@ -140,6 +140,12 @@ def test_clone_node_keeps_tree_shape(page):
     assert result == [0, 1, 1, "span", "x", "hi", False]
 
 
+def test_to_string_tag_follows_the_generated_interface(page):
+    assert page.evaluate(
+        "Object.prototype.toString.call(document.createElement('div'))"
+    ) == "[object HTMLDivElement]"
+
+
 def test_node_identity_equality_and_document_position(page):
     result = page.evaluate(
         "(() => { const rootEl = document.createElement('div'); "

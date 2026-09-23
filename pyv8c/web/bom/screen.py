@@ -6,7 +6,7 @@ page sees the dimensions its environment was given.
 
 from pyv8 import AttributeSpec, IdlSpec
 
-from ...engine.features import interface
+from ...engine.features import LazyValueStore, interface
 from ...foundation.environment import BrowserEnvironment
 from ..dom.events import EventTarget
 
@@ -39,6 +39,13 @@ class ScreenOrientation(EventTarget):
     def set_onchange(self, value): self._set_handler("onchange", value)
 
 
+def _screen_values(screen):
+    """The sub-objects a Screen hands out, built on first read."""
+    return LazyValueStore({
+        "orientation": lambda: ScreenOrientation(width=screen.width, height=screen.height),
+    })
+
+
 @interface('Screen', 'EventTarget')
 class Screen(EventTarget):
     __v8_idl_spec__ = IdlSpec(
@@ -63,11 +70,11 @@ class Screen(EventTarget):
     )
     def __init__(self, environment=None, **_):
         super().__init__(**_)
-        config = BrowserEnvironment.from_value(environment).screen
+        config = BrowserEnvironment.from_dict(environment).screen
         self.width, self.height = config.width, config.height
         self.availWidth, self.availHeight = config.avail_width, config.avail_height
         self.colorDepth, self.pixelDepth = config.color_depth, config.pixel_depth
-        self._orientation = None
+        self._values = _screen_values(self)
     def get_width(self): return self.width
     def get_height(self): return self.height
     def get_availWidth(self): return self.availWidth
@@ -77,8 +84,4 @@ class Screen(EventTarget):
     def get_availTop(self): return 0
     def get_colorDepth(self): return self.colorDepth
     def get_pixelDepth(self): return self.pixelDepth
-    def get_orientation(self):
-        """The one orientation object this screen hands out."""
-        if self._orientation is None:
-            self._orientation = ScreenOrientation(width=self.width, height=self.height)
-        return self._orientation
+    def get_orientation(self): return self._values.value("orientation")

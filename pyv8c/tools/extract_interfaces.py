@@ -8,7 +8,7 @@ import os
 import re
 from pathlib import Path
 
-from ..schema import write_baseline
+from ..engine.schema import write_baseline
 
 INTERFACE_DECL = re.compile(r"const\s+WrapperTypeInfo\s+V8(?P<binding>[A-Za-z0-9_]+)::wrapper_type_info_\s*\{")
 FUNCTION_DECL = re.compile(r"(?:void|v8::Local\s*<\s*v8::Value\s*>)\s+(?P<name>[A-Za-z0-9_]+Callback)\s*\([^)]*\)\s*\{")
@@ -18,7 +18,7 @@ IDL_INTERFACE_DECL = re.compile(
     r"(?:(?P<attrs>\[[\s\S]*?\])\s*)?interface(?:\s+mixin)?\s+"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*(?P<parent>[A-Za-z_][A-Za-z0-9_]*))?\s*\{")
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CHROMIUM_ROOT = Path(
     os.environ.get("CHROMIUM_ROOT", PROJECT_ROOT / ".chromium-build" / "chromium")
 )
@@ -313,6 +313,63 @@ def _constant_definitions(root):
     return definitions
 
 
+#: The callback tuple both property handler configurations use, in order.
+HANDLER_ROLES = ("get", "set", "query", "del", "enum", "definer")
+
+
+def _handler_configurations(text, skip=()):
+    """``{named/indexed: {role: callback}}`` from the configurations in *text*.
+
+    Spans in *skip* are cross-origin configurations: their callbacks belong to
+    the cross-origin family, not to the interface's own handlers.
+    """
+    found = {}
+    labels = (("named", "NamedPropertyHandlerConfiguration"),
+              ("indexed", "IndexedPropertyHandlerConfiguration"))
+    for kind, label in labels:
+        for match in re.finditer(label + r"\s*\(([^;]*?)\)", text, re.S):
+            if any(start <= match.start() < end for start, end in skip):
+                continue
+            data = {}
+            for role, callback in zip(HANDLER_ROLES, split_top_level(match.group(1))):
+                callback = _clean_callback_reference(callback)
+                if callback and callback != "nullptr":
+                    data[role] = callback
+            if data:
+                found[kind] = data
+    return found
+
+
+def _cross_origin_spans(text):
+    """The spans of every ``SetAccessCheckCallbackAndHandler`` call."""
+    spans = []
+    for match in re.finditer(r"SetAccessCheckCallbackAndHandler\s*\(", text):
+        try:
+            spans.append((match.start(), balanced_end(text, match.end() - 1, "(", ")")))
+        except ValueError:
+            continue
+    return spans
+
+
+def _cross_origin_handler_names(text):
+    """Cross-origin callbacks named in generated helper functions instead."""
+    found = {"named": {}, "indexed": {}}
+    for kind in ("named", "indexed"):
+        for role in HANDLER_ROLES:
+            patterns = (
+                rf"CrossOrigin{kind.title()}[^\n]*{role}",
+                rf"{kind.title()}Property[^\n]*CrossOrigin[^\n]*{role}",
+            )
+            for pattern in patterns:
+                match = re.search(pattern, text, re.I)
+                if match:
+                    callback = re.search(r"([A-Za-z_][A-Za-z0-9_]*Callback)", match.group(0))
+                    if callback:
+                        found[kind][role] = callback.group(1)
+                        break
+    return found
+
+
 def extract_template(text):
     """Extract V8 template switches and interceptor callback names.
 
@@ -338,34 +395,16 @@ def extract_template(text):
             "callback": access.group(1),
             "with_handler": bool(re.search(r"SetAccessCheckCallbackAndHandler\s*\(", text)),
         }
+    cross_origin = _cross_origin_spans(text)
     handlers = {"named": {}, "indexed": {}, "cross_origin": {"named": {}, "indexed": {}}}
-    # Both NamedPropertyHandlerConfiguration and IndexedPropertyHandlerConfiguration
-    # use a stable callback tuple: getter, setter, query, deleter, enumerator.
-    for kind, label in (("named", "NamedPropertyHandlerConfiguration"), ("indexed", "IndexedPropertyHandlerConfiguration")):
-        for match in re.finditer(label + r"\s*\(([^;]*?)\)", text, re.S):
-            args = split_top_level(match.group(1))
-            names = ("get", "set", "query", "del", "enum", "definer")
-            data = {}
-            for index, callback in enumerate(args[:len(names)]):
-                callback = _clean_callback_reference(callback)
-                if callback and callback != "nullptr":
-                    data[names[index]] = callback
-            if data:
-                handlers[kind] = data
-    # Cross-origin handlers are commonly named in generated helper functions.
-    for kind in ("named", "indexed"):
-        for role in ("get", "set", "query", "del", "enum", "definer"):
-            patterns = [
-                rf"CrossOrigin{kind.title()}[^\\n]*{role}",
-                rf"{kind.title()}Property[^\\n]*CrossOrigin[^\\n]*{role}",
-            ]
-            for pattern in patterns:
-                match = re.search(pattern, text, re.I)
-                if match:
-                    callback = re.search(r"([A-Za-z_][A-Za-z0-9_]*Callback)", match.group(0))
-                    if callback:
-                        handlers["cross_origin"][kind][role] = callback.group(1)
-                        break
+    handlers.update(_handler_configurations(text, skip=cross_origin))
+    for span in cross_origin:
+        for kind, data in _handler_configurations(text[span[0]:span[1]]).items():
+            handlers["cross_origin"][kind].update(data)
+    if not any(handlers["cross_origin"].values()):
+        # Older bindings name the cross-origin callbacks in helper functions
+        # instead of building the configuration inline.
+        handlers["cross_origin"] = _cross_origin_handler_names(text)
     template["handlers"] = handlers
     return template
 
@@ -458,6 +497,7 @@ def _idl_metadata(root):
                                                 "resolved": _primitive_constant(expression) is not None}
             metadata[match.group("name")] = {
                 "parent": match.group("parent"),
+                "properties": _idl_property_families(body),
                 "exposed_in": exposed_in,
                 "exposed": (bool(exposed_in) and "LegacyNoInterfaceObject" not in attrs)
                 if exposure_match or "LegacyNoInterfaceObject" in attrs else None,
@@ -466,6 +506,38 @@ def _idl_metadata(root):
                 "constants": constants,
             }
     return metadata
+
+
+def _idl_property_families(body):
+    """``{named/indexed: {get, set}}`` for the property getters an IDL body declares."""
+    found = {"named": {}, "indexed": {}}
+    for match in re.finditer(r"(?m)^\s*(?:\[[^\]]*\]\s*)?(getter|setter)\s+([^;]+);", body):
+        # Named getters take a DOMString, indexed getters take an index.
+        kind = "indexed" if re.search(r"\b(?:unsigned\s+)?(?:long|short)\b", match.group(2)) else "named"
+        found[kind]["set" if match.group(1) == "setter" else "get"] = True
+    return found
+
+
+def _idl_handler_findings(extracted, metadata):
+    """Generated handlers the interface's own IDL does not declare.
+
+    A named family needs a named getter or setter; indexed families are exempt,
+    because Blink also generates indexed callbacks for named-only interfaces.
+    """
+    findings = []
+    for name, item in extracted.items():
+        info = metadata.get(name)
+        if name.startswith("_") or info is None:
+            continue
+        named = ((item.get("template") or {}).get("handlers") or {}).get("named") or {}
+        if named and not info["properties"]["named"]:
+            findings.append({
+                "interface": name,
+                "family": "named",
+                "handlers": sorted(named),
+                "reason": "no named getter or setter in the interface's IDL",
+            })
+    return findings
 
 
 def _apply_idl_metadata(extracted, metadata):
@@ -564,9 +636,12 @@ def extract(root, idl_root=None):
             if current is None or (not current.get("resolved") and entry.get("resolved")):
                 extracted_constants[name] = entry
         item["constants"] = list(extracted_constants.values())
+    findings = []
     if idl_root is not None:
-        _apply_idl_metadata(result, _idl_metadata(Path(idl_root)))
-    result["_report"] = _report(result, duplicate_sources, parse_failures)
+        metadata = _idl_metadata(Path(idl_root))
+        _apply_idl_metadata(result, metadata)
+        findings = _idl_handler_findings(result, metadata)
+    result["_report"] = _report(result, duplicate_sources, parse_failures, findings)
     return result
 
 
@@ -574,7 +649,7 @@ def _signature_status(signature):
     return (signature or {}).get("status", "unresolved")
 
 
-def _report(result, duplicate_sources=0, parse_failures=()):
+def _report(result, duplicate_sources=0, parse_failures=(), handler_findings=()):
     interfaces = {name: item for name, item in result.items() if not name.startswith("_")}
     signatures = []
     for item in interfaces.values():
@@ -594,6 +669,7 @@ def _report(result, duplicate_sources=0, parse_failures=()):
         "unresolved_signatures": sum(_signature_status(signature) == "unresolved" for signature in signatures),
         "duplicate_sources": duplicate_sources,
         "parse_failures": sorted(set(parse_failures)),
+        "handler_findings": list(handler_findings),
     }
 
 

@@ -42,6 +42,7 @@ class WorkerRuntime:
             config = self.services.worker_services.worker_configuration()
             source = self.services.resource_services.resolve_worker_source(self.script_url)
             self._realm = self.services.worker_services.create_worker_realm(config)
+            self._realm.script_url = self.script_url
             # The worker drives its own task queue from this thread, so timers
             # and microtasks make progress while the parent page is idle.  A
             # failing callback reaches the parent as the worker's error event.

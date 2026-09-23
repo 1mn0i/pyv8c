@@ -2,6 +2,8 @@ import pyv8
 from loguru import logger
 
 from pyv8c import Browser
+from pyv8c.engine.assembly import CROSS_ORIGIN_FAMILIES, HANDLER_FAMILIES
+from pyv8c.web.features.catalog import CATALOG
 
 
 def test_baseline_only_interface_is_generated_and_keeps_metadata():
@@ -28,7 +30,7 @@ def test_stub_method_logs_and_real_member_wins():
     messages = []
     token = logger.add(lambda message: messages.append(str(message)), format="{message}")
     try:
-        browser = Browser()
+        browser = Browser(stub_logging="on")
         page = browser.new_context().new_page()
         assert page.evaluate("new AbortController().abort()") is pyv8.Undefined
         assert page.evaluate("AbortSignal.abort()") is pyv8.Undefined
@@ -69,6 +71,72 @@ def test_stub_identity_and_direct_callback_markers_are_separate():
         url_callback = to_string.callback
         assert not hasattr(url_callback, "__v8_direct_callback__")
         assert not hasattr(url_callback, "__v8_idl_stub__")
+    finally:
+        browser.close()
+
+
+def test_a_declared_handler_the_class_forgot_is_filled():
+    """A baseline handler a hand-written class omits is filled, not silenced."""
+    browser = Browser(stub_logging="off")
+    try:
+        universe = browser.interface_universe
+        storage = universe.class_config_for("Storage")
+        assert not getattr(storage.name_get, "__v8_idl_stub__", False)
+        assert storage.index_get.__v8_idl_stub__ is True
+        assert storage.index_set.__v8_idl_stub__ is True
+        # Window hands dynamic names to WindowProperties and still takes the
+        # baseline's named handlers as stubs: the baseline alone decides.
+        window = universe.class_config_for("Window")
+        assert window.name_get.__v8_idl_stub__ is True
+        assert window.name_query.__v8_idl_stub__ is True
+    finally:
+        browser.close()
+
+
+def test_a_filled_handler_reports_itself_only_when_asked():
+    """The placeholder runs on ordinary probes, so it logs at the verbose level."""
+    messages = []
+    token = logger.add(lambda message: messages.append(str(message)), format="{message}")
+    try:
+        browser = Browser(stub_logging="on")
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://secure.test/")
+        assert page.evaluate("localStorage[0]") is pyv8.Undefined
+        assert not any("__v8_index_get__ 待实现" in message for message in messages)
+
+        noisy = Browser(stub_logging="verbose")
+        try:
+            page = noisy.new_context().new_page()
+            page.set_content("<body></body>", url="https://secure.test/")
+            assert page.evaluate("localStorage[0]") is pyv8.Undefined
+            assert page.evaluate("localStorage[1]") is pyv8.Undefined
+            assert any("Storage.__v8_index_get__ 待实现" in message for message in messages)
+            assert len([m for m in messages if "Storage.__v8_index_get__" in m]) == 1
+        finally:
+            noisy.close()
+    finally:
+        logger.remove(token)
+        browser.close()
+
+
+def test_every_declared_handler_is_installed_or_filled():
+    """The baseline decides: what it declares the class declares or a stub does."""
+    browser = Browser(stub_logging="off")
+    try:
+        universe = browser.interface_universe
+        runtime = universe.runtime
+        for feature in CATALOG.specs.values():
+            runtime.load(feature.name)
+        for name in dict(runtime.implementations):
+            config = universe.class_config_for(name)
+            handlers = (universe.spec(name).get("template") or {}).get("handlers") or {}
+            for family, mapping in HANDLER_FAMILIES + CROSS_ORIGIN_FAMILIES:
+                table = (handlers.get("cross_origin") or {}) if "cross_origin" in mapping[0][1] \
+                    else handlers
+                for key, callback in mapping:
+                    if not (table.get(family) or {}).get(key):
+                        continue
+                    assert getattr(config, callback[5:-2], None) is not None, (name, callback)
     finally:
         browser.close()
 

@@ -18,7 +18,7 @@ from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
 from ..foundation.urls import DEFAULT_PORTS, same_origin
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
-from ..web.network.models import NetworkRequest
+from ..network.models import NetworkRequest
 
 
 class RequestHandle:
@@ -584,7 +584,7 @@ class ResourceController:
 
     def _child_frame_page(self, iframe, target):
         """Return the live child page for ``iframe``, creating it on demand."""
-        from .browser import Page
+        from .page import Page
 
         page = self.page
         child_services = getattr(iframe, "_child_services", None)

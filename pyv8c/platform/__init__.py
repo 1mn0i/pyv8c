@@ -2,7 +2,8 @@
 
 from importlib import import_module
 
-from .browser import Browser, BrowserContext, Page
+from .browser import Browser, BrowserContext
+from .page import Page
 from .realms import PageRealm, WorkerRealm
 
 __all__ = ["Browser", "BrowserContext", "Page", "PageRealm", "WorkerRealm", "DevToolsHandle", "DevToolsOptions"]

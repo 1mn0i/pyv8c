@@ -1,10 +1,13 @@
-"""``Location`` and ``History``: the realm's view of navigation.
+"""``Location``, ``History`` and the Navigation API: the realm's view of navigation.
 
-Both drive ``document_services`` and keep the entry table in step with the
-committed URL, and each calls the other: assigning ``location`` pushes or
-replaces a history entry, while ``history.back()`` assigns an entry's URL back
-into ``location``.  A same-document (fragment) change is committed without
-rebuilding the document, so it fires ``hashchange`` and no load events.
+``Location`` and ``History`` drive ``document_services`` and keep the entry table
+in step with the committed URL, and each calls the other: assigning ``location``
+pushes or replaces a history entry, while ``history.back()`` assigns an entry's
+URL back into ``location``.  A same-document (fragment) change is committed
+without rebuilding the document, so it fires ``hashchange`` and no load events.
+The Navigation API reads the same entry table: a page that has not moved yet has
+exactly one entry, nothing behind or ahead of it, and no transition, and
+``navigate``/``reload`` drive the navigation ``location`` does.
 """
 
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -12,13 +15,13 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
-from ...foundation.arguments import MISSING, dom_string, integer, is_nullish, missing_error, usv_string
+from ...engine.features import LazyValueStore, interface
+from ...foundation.arguments import MISSING, dictionary, dom_string, integer, is_nullish, missing_error, usv_string
 from ...foundation.errors import SecurityError
-from ..dom.events import HashChangeEvent, PopStateEvent
+from ..dom.events import EventTarget, HashChangeEvent, PopStateEvent, _install_handler_slots
 from .utils import document_key
 
-__all__ = ["Location", "History"]
+__all__ = ["Location", "History", "Navigation", "NavigationHistoryEntry"]
 
 
 #: Location components the implementation actually assigns; the baseline marks
@@ -221,3 +224,161 @@ class History:
             change = HashChangeEvent("hashchange", {"oldURL": previous, "newURL": str(entry[0])})
             change._trusted = True
             window.fn_dispatchEvent(change)
+
+
+#: The Navigation API's handler slots.
+HANDLERS = ("oncurrententrychange", "onnavigate", "onnavigateerror", "onnavigatesuccess")
+
+
+def _navigation_values(navigation):
+    """The sub-objects a Navigation hands out, built on first read."""
+    return LazyValueStore({
+        "currentEntry": lambda: NavigationHistoryEntry(
+            navigation._window.location.get_href(), 0,
+            None if not hasattr(navigation, "_state") else navigation._state),
+        "activation": lambda: NavigationActivation(navigation._current()),
+    })
+
+
+@interface('NavigationHistoryEntry', 'EventTarget')
+class NavigationHistoryEntry(EventTarget):
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="url", getter="get_url", side_effect=1),
+            AttributeSpec(name="key", getter="get_key", side_effect=1),
+            AttributeSpec(name="id", getter="get_id", side_effect=1),
+            AttributeSpec(name="index", getter="get_index", side_effect=1),
+            AttributeSpec(name="sameDocument", getter="get_sameDocument", side_effect=1),
+            AttributeSpec(name="ondispose", getter="get_ondispose", setter="set_ondispose"),
+        ),
+        methods=(MethodSpec(name="getState", callback="fn_getState", side_effect=1),),
+        constructor_behavior=0,
+        to_string_tag="NavigationHistoryEntry",
+        has_constructor=1,
+    )
+
+    def __init__(self, url="", index=0, state=None, **_):
+        super().__init__(**_)
+        self._url, self._index, self._state = str(url), int(index), state
+        self._key = str(index)
+
+    def get_url(self): return self._url
+    def get_key(self): return self._key
+    def get_id(self): return self._key
+    def get_index(self): return self._index
+    def get_sameDocument(self): return True
+    def get_ondispose(self): return self._get_handler("ondispose")
+    def set_ondispose(self, value): self._set_handler("ondispose", value)
+
+    def fn_getState(self, *_extra):
+        return pyv8.Undefined if self._state is None else self._state
+
+    def set_state(self, state):
+        self._state = state
+
+
+@interface('NavigationActivation', None)
+class NavigationActivation:
+    """What the last activation says, from the entry the page is on."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="entry", getter="get_entry", side_effect=1),
+            AttributeSpec(name="from", getter="get_from", side_effect=1),
+            AttributeSpec(name="navigationType", getter="get_navigationType", side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="NavigationActivation",
+        has_constructor=1,
+    )
+
+    def __init__(self, entry=None, **_):
+        self._entry = entry
+
+    def get_entry(self):
+        return pyv8.Null if self._entry is None else self._entry
+
+    def get_from(self): return pyv8.Null
+    def get_navigationType(self): return "push"
+
+
+@interface('Navigation', 'EventTarget')
+class Navigation(EventTarget):
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="currentEntry", getter="get_currentEntry", side_effect=1),
+            AttributeSpec(name="entries", getter="get_entries", side_effect=1),
+            AttributeSpec(name="canGoBack", getter="get_canGoBack", side_effect=1),
+            AttributeSpec(name="canGoForward", getter="get_canGoForward", side_effect=1),
+            AttributeSpec(name="transition", getter="get_transition", side_effect=1),
+            AttributeSpec(name="activation", getter="get_activation", side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="navigate", callback="fn_navigate", length=1),
+            MethodSpec(name="reload", callback="fn_reload", length=0),
+            MethodSpec(name="back", callback="fn_back", length=0),
+            MethodSpec(name="forward", callback="fn_forward", length=0),
+            MethodSpec(name="traverseTo", callback="fn_traverseTo", length=1),
+            MethodSpec(name="updateCurrentEntry", callback="fn_updateCurrentEntry", length=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="Navigation",
+        has_constructor=1,
+    )
+
+    def __init__(self, window=None, **_):
+        super().__init__(**_)
+        self._window = window
+        self._values = _navigation_values(self)
+
+    def _current(self): return self._values.value("currentEntry")
+
+    def get_currentEntry(self): return self._current()
+    #: A document set from markup records no entry, and nothing keeps a history.
+    def get_entries(self): return []
+    def get_canGoBack(self): return False
+    def get_canGoForward(self): return False
+    def get_transition(self): return pyv8.Null
+
+    def get_activation(self): return self._values.value("activation")
+
+    def fn_navigate(self, url=MISSING, options=None, *_extra):
+        """Ask for the navigation, and answer with the two promises it reports through.
+
+        The request replaces this realm, so both promises carry the entry this
+        realm still has rather than the one the new document will build.
+        """
+        if url is MISSING:
+            raise missing_error('Navigation', 'navigate', 1, 0, constructor=False)
+        target = urljoin(self._window.location.get_href(), dom_string(url))
+        return self._navigate_to(target)
+
+    def fn_reload(self, options=None, *_extra):
+        return self._navigate_to(self._window.location.get_href())
+
+    def _navigate_to(self, target):
+        services = self._window._services
+        entry = self._current()
+        committed, resolve_committed, _reject = services.realm_services.make_promise()
+        finished, resolve_finished, _reject_again = services.realm_services.make_promise()
+        services.document_services.request_navigation(target)
+        resolve_committed(entry)
+        resolve_finished(entry)
+        return {"committed": committed, "finished": finished}
+
+    #: There is no history to walk in either direction.
+    def fn_back(self, *_extra): return None
+    def fn_forward(self, *_extra): return None
+    def fn_traverseTo(self, key=MISSING, *_extra): return None
+
+    def fn_updateCurrentEntry(self, options=MISSING, *_extra):
+        if options is MISSING:
+            raise missing_error('Navigation', 'updateCurrentEntry', 1, 0, constructor=False)
+        settings = dictionary(options)
+        self._state = settings.get("state")
+        self._current().set_state(self._state)
+
+
+Navigation.__v8_idl_spec__ = Navigation.__v8_idl_spec__.replace(
+    attributes=Navigation.__v8_idl_spec__.attributes + _install_handler_slots(Navigation, HANDLERS)
+)

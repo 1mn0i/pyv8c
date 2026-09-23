@@ -77,7 +77,7 @@ def origin():
 def page(origin):
     browser = Browser(
         stub_logging="off",
-        network_engine="curl_cffi",
+        http_engine="curl_cffi",
         default_headers={"X-Custom": "browser"},
     )
     instance = browser.new_context().new_page(origin + "/")
@@ -92,7 +92,7 @@ def test_page_net_sends_the_environment_headers_and_the_jar(page, origin):
     payload = page.net.get("/echo").json()
 
     assert payload["ua"].startswith("Mozilla/5.0")
-    assert payload["language"] == "zh-CN, en, en-US"
+    assert payload["language"] == "zh-CN, zh"
     assert payload["custom"] == "browser", "Browser(default_headers=...) applies"
     assert payload["cookie"] == "a=1; b=2", "both cookies the response set are sent back"
 
@@ -160,7 +160,7 @@ def test_the_host_api_stays_out_of_the_realm():
 
 
 def test_page_net_without_a_transport_says_so():
-    browser = Browser(stub_logging="off")
+    browser = Browser(stub_logging="off", real_network=False)
     try:
         instance = browser.new_context().new_page()
         # ``NetworkError`` is a DOMException factory in this codebase, so the

@@ -25,3 +25,5 @@ dist/
 # Extracted bundled-baseline caches. Releases only contain the ZIP artifact.
 pyv8c/baselines/*.json
 pyv8c/baselines/*.pyv8ccache
+/baselines/*.json
+/baselines/*.pyv8ccache

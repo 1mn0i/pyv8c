@@ -17,6 +17,7 @@ from uuid import uuid4
 import pytest
 
 pytest.importorskip("pyv8")
+pytestmark = pytest.mark.slow
 from pyv8c import Browser
 
 ORIGIN = "http://127.0.0.1:9"

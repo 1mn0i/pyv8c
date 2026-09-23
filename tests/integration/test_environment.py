@@ -2,12 +2,7 @@ import pytest
 
 pytest.importorskip("pyv8")
 
-from pyv8c import (
-    Browser,
-    BrowserEnvironment,
-    GeolocationConfig,
-    ViewportConfig,
-)
+from pyv8c import Browser, BrowserEnvironment
 
 
 def test_environment_defaults_and_mapping_overlay_are_immutable():
@@ -16,16 +11,18 @@ def test_environment_defaults_and_mapping_overlay_are_immutable():
     assert not default.user_agent.startswith("'")
     assert default.language == default.languages[0]
     assert default.languages
-    assert default.viewport.width == 1280
+    assert default.viewport.width == 1904
 
-    custom = default.overlay({"languages": ["zh-CN", "en"], "viewport": {"width": 390}})
+    custom = default.overlay({"languages": ["zh-CN", "en"], "viewport.width": 390})
     assert custom.language == "zh-CN"
     assert custom.languages == ("zh-CN", "en")
-    assert custom.viewport == ViewportConfig(width=390, height=720)
-    with pytest.raises(Exception):
-        custom.viewport = ViewportConfig()
+    assert custom.viewport.width == 390
+    assert custom.viewport.height == default.viewport.height
+    assert custom.to_dict() == {"languages": ("zh-CN", "en"), "viewport.width": 390}
+    with pytest.raises(AttributeError):
+        custom.viewport = None
     with pytest.raises(ValueError):
-        BrowserEnvironment(geolocation=GeolocationConfig(permission="granted", latitude=91, longitude=0))
+        BrowserEnvironment({"geolocation.permission": "sometimes"})
 
 
 def test_environment_drives_navigator_viewport_and_screen():
@@ -36,14 +33,57 @@ def test_environment_drives_navigator_viewport_and_screen():
         "hardware_concurrency": 12,
         "device_memory": 4,
         "max_touch_points": 5,
-        "viewport": {"width": 390, "height": 844, "device_scale_factor": 3},
-        "screen": {"width": 1080, "height": 2400, "avail_width": 1080, "avail_height": 2300},
+        "viewport.width": 390,
+        "viewport.height": 844,
+        "viewport.device_scale_factor": 3,
+        "screen.width": 1080,
+        "screen.height": 2400,
+        "screen.avail_width": 1080,
+        "screen.avail_height": 2300,
     })
     try:
         page = browser.new_context().new_page()
         assert page.evaluate("[navigator.userAgent, navigator.platform, navigator.language, navigator.languages, navigator.hardwareConcurrency, navigator.deviceMemory, navigator.maxTouchPoints, innerWidth, innerHeight, outerWidth, outerHeight, devicePixelRatio, screen.width, screen.availHeight]") == [
             "Example UA", "Linux x86_64", "zh-CN", ["zh-CN", "en"], 12, 4, 5,
             390, 844, 390, 844, 3, 1080, 2300,
+        ]
+    finally:
+        browser.close()
+
+
+def test_environment_drives_the_client_hints():
+    browser = Browser(environment={
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+                      " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "client_hints.platform_version": "6.5.0",
+    })
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://secure.test/")
+        assert page.evaluate("""(() => {
+            const data = navigator.userAgentData;
+            return [data.platform, data.mobile,
+                    data.brands.map(brand => brand.brand + '/' + brand.version)];
+        })()""") == ["Linux", False, ["Google Chrome/120", "Not_A Brand/8", "Chromium/120"]]
+
+        # The hints are derived from the user agent, and an explicit member wins.
+        page.evaluate("""(() => {
+            window.__hints = 'pending';
+            navigator.userAgentData
+                .getHighEntropyValues(['architecture', 'bitness', 'platformVersion',
+                                       'uaFullVersion', 'formFactors'])
+                .then(value => window.__hints = [value.architecture, value.bitness,
+                                                 value.platformVersion, value.uaFullVersion,
+                                                 value.formFactors],
+                      error => window.__hints = error.name);
+        })()""")
+        page.run_until_idle(timeout=1)
+        # The full version is not derivable from a user agent, so it stays the
+        # profile's, while the platform the UA names is worked out again.
+        assert page.evaluate("window.__hints") == [
+            "x86", "64", "6.5.0",
+            BrowserEnvironment().client_hints.full_version_list[0].version,
+            ["Desktop"],
         ]
     finally:
         browser.close()
@@ -56,10 +96,10 @@ def test_page_environment_override_and_iframe_inheritance():
     )
     try:
         context = browser.new_context()
-        first = context.new_page(environment={"user_agent": "Page UA", "viewport": {"width": 800}})
+        first = context.new_page(environment={"user_agent": "Page UA", "viewport.width": 800})
         second = context.new_page()
         assert first.evaluate("[navigator.userAgent, innerWidth]") == ["Page UA", 800]
-        assert second.evaluate("navigator.userAgent") == "Browser UA"
+        assert second.evaluate("[navigator.userAgent, innerWidth]") == ["Browser UA", 1904]
         iframe = first.document.fn_createElement("iframe")
         iframe.set_src("https://example.test/frame")
         child = first.resources.load_iframe(iframe)
@@ -70,7 +110,10 @@ def test_page_environment_override_and_iframe_inheritance():
 
 def test_geolocation_is_async_and_clear_watch_cancels_pending_callback():
     browser = Browser(environment={
-        "geolocation": {"permission": "granted", "latitude": 31.2, "longitude": 121.5, "accuracy": 5},
+        "geolocation.permission": "granted",
+        "geolocation.latitude": 31.2,
+        "geolocation.longitude": 121.5,
+        "geolocation.accuracy": 5,
     })
     try:
         page = browser.new_context().new_page()
@@ -92,12 +135,12 @@ def test_geolocation_is_async_and_clear_watch_cancels_pending_callback():
 @pytest.mark.parametrize(
     ("geolocation", "expected"),
     [
-        ({"permission": "denied"}, [1, "User denied Geolocation"]),
-        ({"permission": "granted"}, [2, "Unable to determine the position"]),
+        ({"geolocation.permission": "denied"}, [1, "User denied Geolocation"]),
+        ({"geolocation.permission": "granted"}, [2, "Unable to determine the position"]),
     ],
 )
 def test_geolocation_reports_permission_and_position_errors(geolocation, expected):
-    browser = Browser(environment={"geolocation": geolocation})
+    browser = Browser(environment=geolocation)
     try:
         page = browser.new_context().new_page()
         page.evaluate("navigator.geolocation.getCurrentPosition(() => globalThis.geoError = ['success'], error => globalThis.geoError = [error.code, error.message])")

@@ -5,7 +5,7 @@ controllers (navigation, scripts, resources, tasks) and builds the six narrow
 capability objects from ``foundation.realm`` -- ``realm_services``,
 ``task_services``, ``resource_services``, ``document_services``,
 ``worker_services`` and ``context_services``.  Web packages (``web/dom``,
-``web/fetch``, ``web/network``, ``web/bom``, ``web/workers``) reach platform
+``web/fetch``, ``web/bom``, ``web/workers``) reach platform
 functionality only through those capability facets, never through the Page.
 
 ``PageServices`` is only an assembly object. Protocol implementations live on
@@ -180,6 +180,10 @@ class _WorkerRealmCapability(_TaskSource):
     def __init__(self, tasks, runtime):
         super().__init__(tasks)
         self._runtime = runtime
+
+    def materialize_interface(self, name):
+        """Load the interface's feature and commit its config to this realm."""
+        return self._runtime.config.session.materialize(name)
 
     @property
     def url(self):

@@ -7,11 +7,9 @@ of them, while those modules only need the node model below.
 from .html_canvas import HTMLCanvasElement
 from .html_elements import (
     HTMLAnchorElement,
-    HTMLAudioElement,
     HTMLButtonElement,
     HTMLImageElement,
     HTMLLinkElement,
-    HTMLMediaElement,
     HTMLMetaElement,
     HTMLScriptElement,
     HTMLStyleElement,
@@ -20,7 +18,6 @@ from .html_elements import (
     HTMLTableRowElement,
     HTMLTemplateElement,
     HTMLUnknownElement,
-    HTMLVideoElement,
     _html_class,
 )
 from .html_form import HTMLFormElement
@@ -31,6 +28,7 @@ from .html_input import (
     HTMLSelectElement,
     HTMLTextAreaElement,
 )
+from .html_media import HTMLAudioElement, HTMLMediaElement, HTMLVideoElement
 
 #: Interface name -> implementation class, for every modelled interface.
 HTML_CLASSES = {

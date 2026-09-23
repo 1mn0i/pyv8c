@@ -64,7 +64,19 @@ def test_goto_decodes_http_charset_and_requires_a_loader_or_network_backend():
     assert page.evaluate("document.body.textContent") == "中文页面"
     browser.close()
 
-    browser = Browser()
+    browser = Browser(real_network=False)
     with pytest.raises(Exception, match="Network access requires"):
         browser.new_context().new_page("http://example.test/")
     browser.close()
+
+
+def test_set_content_without_markup_starts_an_empty_standards_document():
+    browser = Browser(stub_logging="off")
+    page = browser.new_context().new_page()
+    try:
+        assert page.set_content() is page
+        assert page.evaluate(
+            "[document.compatMode, document.documentElement.tagName, document.body.textContent]"
+        ) == ["CSS1Compat", "HTML", ""]
+    finally:
+        browser.close()

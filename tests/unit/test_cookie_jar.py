@@ -3,8 +3,9 @@
 import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytestmark = pytest.mark.native
 
-from pyv8c.web.network.cookies import CookieJar, split_set_cookie
+from pyv8c.network.cookies import CookieJar, split_set_cookie
 
 URL = "https://www.cde.org.cn/main/xxgk/listpage/9f9c74c73e0f8f56a8bfbc646055026d"
 MERGED = (

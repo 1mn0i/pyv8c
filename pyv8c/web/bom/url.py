@@ -11,7 +11,7 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
 
-from ...engine.features import interface
+from ...engine.features import LazyValueStore, interface
 from ...foundation.arguments import (
     MISSING,
     dictionary,
@@ -164,6 +164,13 @@ class URLSearchParams:
         return urlencode(self._items)
 
 
+def _url_values(url):
+    """The sub-objects a URL hands out, built on first read."""
+    return LazyValueStore({
+        "searchParams": lambda: URLSearchParams(url.get_search(), _url=url),
+    })
+
+
 @interface('URL', None)
 class URL:
     def __init__(self, url=MISSING, base=pyv8.Undefined, *_extra, _realm=None, **_):
@@ -178,7 +185,7 @@ class URL:
             self.href = self._resolve(url, base)
         except V8TypeError as exc:
             raise V8TypeError("Failed to construct 'URL': Invalid URL") from exc
-        self._search_params = None
+        self._values = _url_values(self)
 
     @staticmethod
     def _resolve(url, base=None):
@@ -277,10 +284,7 @@ class URL:
     def set_hash(self, value):
         value = dom_string(value)
         self._replace(fragment=str(value).lstrip('#'))
-    def get_searchParams(self):
-        if self._search_params is None:
-            self._search_params = URLSearchParams(self.get_search(), _url=self)
-        return self._search_params
+    def get_searchParams(self): return self._values.value("searchParams")
     def fn_toString(self, *_extra):
         return self.href
     def fn_toJSON(self, *_extra):

@@ -135,7 +135,7 @@ def test_websocket_validation_precedes_network_and_state(argument_page):
         return false;
     })()""")
     from pyv8c.foundation.errors import DOMException
-    from pyv8c.web.network.websocket import WebSocket
+    from pyv8c.web.websocket import WebSocket
 
     socket=object.__new__(WebSocket)
     socket._state_value=WebSocket.OPEN

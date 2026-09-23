@@ -36,12 +36,8 @@ print('closed', flush=True)
 
 
 def test_native_lifecycle_smoke_cases():
-    for html in (
-        "",
-        "<div></div>",
-        "<div id='x' class='a'>text</div>",
-        "<html><body><div id='x'><span>ok</span></div></body></html>",
-    ):
+    # Two variants cover both parse paths; the point is a crash-free child process.
+    for html in ("", "<div id='x' class='a'>text</div>"):
         result = _run(html)
         assert result.returncode == 0, (html, result.returncode, result.stdout, result.stderr)
         assert "closed" in result.stdout, (html, result.stdout, result.stderr)

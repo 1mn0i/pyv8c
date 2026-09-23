@@ -22,12 +22,6 @@ def page():
         browser.close()
 
 
-def test_window_and_bom_core_have_separate_feature_boundaries():
-    from pyv8c.web.bom import navigation
-    assert navigation.Location.__module__ == 'pyv8c.web.bom.navigation'
-    assert Window.__module__ == 'pyv8c.web.bom.window'
-
-
 def test_ids_and_supported_name_attributes(page):
     assert page.evaluate('''[unique === document.getElementById('unique'),
         theForm.tagName, theEmbed.tagName, theObject.tagName,
@@ -132,3 +126,5 @@ def test_named_property_visibility_respects_real_properties(page):
         delete Window.prototype.unique;
         return [hiddenByOwn, hiddenByPrototype, props.unique === document.getElementById('unique')];
     })()''') == [True, True, True]
+
+

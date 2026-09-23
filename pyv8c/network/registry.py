@@ -1,23 +1,13 @@
 """Naming, choosing and extending the engines of a browser context.
 
-Networking is two independent parts.  An HTTP engine performs requests, a
-WebSocket engine opens sockets, and a context chooses each on its own -- by name,
-or by being handed an instance -- and assembles whatever it was given:
+An HTTP engine performs requests and a WebSocket engine opens sockets; a context
+chooses each on its own, by name or by being handed an instance.  Which keys an
+engine's ``options`` may carry is the engine's own business: each declares its
+set, and a context that passes anything else is told so before it is built (see
+:func:`accepted_option_keys`).
 
-    register_transport("my-http", lambda options: MyHttp(**options))
-    register_ws_transport("my-socket", lambda options: MySocket(**options))
-
-:class:`HttpTransport` is what a request needs and :class:`WebSocketTransport`
-what the page's ``WebSocket`` needs, so one object may serve both roles: the
-cycronet engine does.
-
-Which keys an engine's ``options`` may carry is the engine's own business: each
-one declares its set, and a context that passes anything else is told so before
-the engine is built; see :func:`accepted_option_keys`.
-
-The wording here is deliberate: this package may not mention the context's own
-backend attribute by name (see ``tests/unit/test_architecture.py``), so the
-registry talks about transports and engines.
+The wording is deliberate: this module may not name the context's own transport
+attribute (``tests/unit/test_architecture.py``), so it talks about engines.
 """
 import inspect
 from collections.abc import Callable
@@ -34,8 +24,7 @@ KINDS: tuple[str, str] = ("http", "ws")
 class HttpTransport(Protocol):
     """What the rest of the engine needs from an HTTP engine."""
 
-    #: The context's cookie jar, assigned after construction so the engine and
-    #: the page share one store.
+    #: The context's cookie jar, assigned after construction so both share it.
     cookies: CookieJar
 
     def request_sync(self, request: NetworkRequest) -> NetworkResponse:
@@ -91,12 +80,10 @@ def _typed_dict_keys(annotation) -> frozenset[str] | None:
 def signature_option_keys(target) -> frozenset[str] | None:
     """The keyword names *target* accepts, or ``None`` when it is open-ended.
 
-    A client spells the options it takes as keyword parameters, so its own
-    signature is the honest list of what its engine may hand it.  A callable that
-    swallows ``**kwargs`` without naming them declares nothing, and then there is
-    no list to check against: the engine stays unvalidated instead of being given
-    an invented one.  An engine whose client declares its names to type checkers
-    only -- curl_cffi does -- lands in the same case.
+    A client's own signature is the honest list of what its engine may hand it.
+    One that swallows ``**kwargs`` without naming them declares nothing -- as
+    does one that types its parameters to type checkers only -- so the engine
+    stays unvalidated rather than being given an invented list.
     """
     try:
         parameters = inspect.signature(target).parameters
@@ -119,8 +106,7 @@ def signature_option_keys(target) -> frozenset[str] | None:
 #: Built-in engines of each kind by name, plus anything a host registers.
 _FACTORIES: dict[str, dict[str, Callable[..., Any]]] = {kind: {} for kind in KINDS}
 
-#: Lazy providers of the keys each engine accepts.  An engine absent from here
-#: declares no set, which turns validation off for it.
+#: Lazy providers of each engine's accepted keys; absent means "not validated".
 _OPTION_KEYS: dict[str, dict[str, Callable[[], frozenset[str] | None]]] = {kind: {} for kind in KINDS}
 
 
@@ -136,13 +122,11 @@ def register_transport(name: str, factory: Callable[..., Any], *,
                        option_keys: Callable[[], frozenset[str] | None] | None = None) -> None:
     """Make *factory* available as an HTTP engine name.
 
-    The factory is called as ``factory(options=<dict or None>)`` when a context
-    is created, so one engine can serve several contexts with different
-    settings.  Registering an existing name replaces it.
-
-    *option_keys* says which keys ``options`` may carry: a callable returning
-    them, or ``None`` when the engine cannot say -- which leaves it unvalidated.
-    It runs lazily and may import the client it introspects.
+    The factory is called as ``factory(options=<dict or None>)`` per context, so
+    one engine can serve several with different settings; registering an existing
+    name replaces it.  *option_keys* returns the keys ``options`` may carry, or
+    ``None`` when the engine cannot say -- which leaves it unvalidated.  It runs
+    lazily and may import the client it introspects.
     """
     _register("http", name, factory, option_keys)
 
@@ -176,11 +160,10 @@ def transport_names(kind: str = "http") -> tuple[str, ...]:
 def accepted_option_keys(name: str, kind: str = "http") -> frozenset[str] | None:
     """The option keys the *kind* engine registered as *name* accepts.
 
-    ``None`` means the engine declares no set -- it is not registered, or it
-    cannot enumerate what it takes -- and it is therefore not validated.  The
-    provider runs lazily and may import the optional client it reads the keys
-    from, so a missing dependency surfaces here exactly as it would from the
-    engine's own constructor.
+    ``None`` means it declares no set -- unregistered, or unable to enumerate
+    what it takes -- and is therefore not validated.  The provider may import the
+    optional client, so a missing dependency surfaces here exactly as it would
+    from the engine's own constructor.
     """
     provider = _OPTION_KEYS[_kind(kind)].get(str(name).strip())
     return None if provider is None else provider()
@@ -191,13 +174,9 @@ def create_transport(name: str, *, kind: str = "http", options: dict | None = No
     """Build the *kind* engine registered as *name*.
 
     Unknown names and missing optional dependencies both raise
-    :class:`NetworkUnavailableError`, with the registered names in the message:
-    a typo in the engine option should read as a configuration mistake rather
-    than as a network failure.
-
-    With *strict*, an option the engine does not accept raises ``TypeError``
-    before the engine is built, rather than reaching a client that would ignore
-    or refuse it.
+    :class:`NetworkUnavailableError` naming what is registered, so a typo reads
+    as a configuration mistake rather than a network failure.  With *strict*, an
+    option the engine does not accept raises ``TypeError`` before it is built.
     """
     which = _kind(kind)
     key = str(name).strip()
@@ -234,7 +213,7 @@ def _curl_cffi(*, options=None):
 
 
 def _websockets(*, options=None):
-    from .ws_websockets import WebSocketsTransport
+    from .websockets import WebSocketsTransport
 
     return WebSocketsTransport(options=options)
 
@@ -258,7 +237,7 @@ def _curl_cffi_keys():
 
 
 def _websockets_keys():
-    from .ws_websockets import WebSocketsTransport
+    from .websockets import WebSocketsTransport
 
     return WebSocketsTransport.accepted_option_keys()
 

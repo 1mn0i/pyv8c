@@ -93,6 +93,13 @@ CROSS_ORIGIN_FAMILIES = (
     ),
 )
 
+#: Every named/indexed callback, plain and cross-origin: what a missing handler
+#: may be filled with when the baseline declares it.
+HANDLER_CALLBACKS = frozenset(
+    callback for _family, mapping in HANDLER_FAMILIES + CROSS_ORIGIN_FAMILIES
+    for _key, callback in mapping
+)
+
 
 @dataclass(frozen=True)
 class CompiledInterface:
@@ -108,6 +115,16 @@ class InterfaceCompiler:
         self.wrappers = wrappers
         self._compiled = {}
         self._lock = lock
+
+    def _fills_stub(self, callback_name, registration):
+        """Whether a handler the class does not declare is filled with a stub.
+
+        Every named/indexed callback the baseline declares is filled, so a
+        forgotten handler reports itself instead of dropping the interceptor.
+        The cross-origin access check is not one of those: a placeholder there
+        would deny reads the class never meant to guard.
+        """
+        return callback_name in HANDLER_CALLBACKS or registration is None
 
     def _members(self, cls, parent, field, public_names):
         members = {}
@@ -144,9 +161,12 @@ class InterfaceCompiler:
             if registration.parent and registration.parent not in universe.runtime.catalog.interfaces:
                 raise TypeError(f"{name} refers to unknown parent {registration.parent}")
             if parent_name is not None and registration.parent != parent_name:
-                raise TypeError(f"{name} parent does not match baseline")
+                if not universe.report_mismatch(
+                        f"{name} parent {registration.parent!r} is not {parent_name!r} in the interface baseline"):
+                    raise TypeError(f"{name} parent does not match baseline")
             if registration.parent and universe.class_for(registration.parent) not in cls.__mro__[1:]:
-                raise TypeError(f"{name} must explicitly inherit {registration.parent}")
+                if not universe.report_mismatch(f"{name} must explicitly inherit {registration.parent}"):
+                    raise TypeError(f"{name} must explicitly inherit {registration.parent}")
         source = cls.__dict__.get("__v8_idl_spec__", IdlSpec())
         entries = list(universe.own_members(name))
         public_methods = {member.get("name") for _, member in entries if member.get("kind") == "operation"}
@@ -204,7 +224,10 @@ class InterfaceCompiler:
                 )
         for public_name, declared in declared_methods.items():
             if universe._member(name, public_name, "operation") is None:
-                raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
+                if not universe.report_mismatch(
+                        f"{name}.{public_name} is not present in the interface baseline"):
+                    raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
+                continue
             raw = self.wrappers._raw_callback(cls, declared.callback)
             static = declared.location == FlagLocation.kInterface
             callback = self.wrappers.method(cls, name, public_name, raw, static=static)
@@ -213,7 +236,10 @@ class InterfaceCompiler:
             methods.append(declared.replace(callback=callback))
         for public_name, declared in declared_attributes.items():
             if declared.setter is not None and universe._member(name, public_name, "attribute") is None:
-                raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
+                if not universe.report_mismatch(
+                        f"{name}.{public_name} is not present in the interface baseline"):
+                    raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
+                continue
             getter = self.wrappers._raw_callback(cls, declared.getter)
             setter = None
             if declared.setter is not None:
@@ -244,7 +270,7 @@ class InterfaceCompiler:
             )
             if reference is not None:
                 options[key] = self.wrappers._raw_callback(cls, reference)
-            elif registration is None and callback_name in enabled:
+            elif callback_name in enabled and self._fills_stub(callback_name, registration):
                 options[key] = self.stubs.handler(name, callback_name)
         constants = {entry.name: entry for entry in source.constants_value}
         for field, value in cls.__dict__.items():

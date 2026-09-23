@@ -117,12 +117,17 @@ class FeatureCatalog:
 
 
 class LazyValueStore:
-    """Identity-preserving values created by a single owning factory."""
+    """Identity-preserving values, built on first read.
 
-    __slots__ = ("_values",)
+    A table of factories is the usual way in; a subclass overrides
+    :meth:`_create_value` when the construction belongs somewhere else.
+    """
 
-    def __init__(self):
+    __slots__ = ("_values", "_factories")
+
+    def __init__(self, factories=None):
         self._values = {}
+        self._factories = factories or {}
 
     @property
     def cached_names(self):
@@ -141,7 +146,11 @@ class LazyValueStore:
         return value
 
     def _create_value(self, name):
-        raise NotImplementedError
+        try:
+            factory = self._factories[name]
+        except KeyError:
+            raise AttributeError(f"no value {name!r}") from None
+        return factory()
 
 
 class FeatureRuntime:

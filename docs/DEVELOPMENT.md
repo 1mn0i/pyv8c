@@ -42,7 +42,7 @@ validate_feature_catalog()
 
 ## 策略检查
 
-提交前跑一次，三层闸门：
+提交前跑一次，五层闸门：
 
 ```powershell
 python tools/check_policy.py                  # 工作区 vs HEAD
@@ -56,6 +56,11 @@ python tools/check_policy.py --record-startup # 接受当前启动时延作为�
 - `startup`：与 `tools/startup_baseline.json` 记录的预算比较（中位数 +10% +5ms）。测量的是新
   进程里 `Browser() -> new_context() -> new_page() -> set_content()` 的耗时与导入模块数；换
   机器、或有意改变启动开销后需要重新记录。
+- `offline`：把 `_pyv8` 从 `PYTHONPATH` 上拿掉后跑 `tests/unit`，确保它不依赖原生扩展——离线
+  抽取器 `pyv8c/tools/extract_interfaces.py` 就是在这种环境里用的。需要扩展的用例统一
+  `pytest.importorskip("pyv8")` 并打 `@pytest.mark.native`。
+- `duplicates`：脚本相似度（阈值 0.80）提示"`tests/repros/` 之外的测试在重复语料用例"。语料用例
+  同时与真实 Chrome 对照，所以重复的那份该删；因为相似度只是启发式，默认只告警，`--strict` 才失败。
 
 ## 行为语料与真 Chrome 对照
 
@@ -80,6 +85,16 @@ python -m pytest tests/repros -q -rs     # -rs 显示被排除的用例及原因
 ## Baseline 更新
 
 运行 `tools/fetch_chromium.py` 和 `tools/extract_interfaces.py` 前确认 Chromium 版本、生成目录和输出 ZIP。baseline 不应依赖人工 review JSON；抽取器只使用 Chromium 生成元数据。更新后运行抽取器、baseline、IDL 编译和完整浏览器测试。
+
+生成 Blink bindings 只需生成、不必编译整棵树：`gn gen out/X` 加
+`ninja -C out/X third_party/blink/renderer/bindings:generate_bindings_all`。Windows 上 VS 或 Windows SDK
+装在非默认路径时，用 `vs2022_install`、`WINDOWSSDKDIR` 指定路径，并设 `DEPOT_TOOLS_WIN_TOOLCHAIN=0`
+走本机工具链，否则 `gn gen` 会去找 Google 下发的固定工具链。
+
+抽取器的 `_webidl.report.handler_findings` 列出"生成代码声明了 named handler、但接口 IDL 没有 named
+getter"的条目。cross-origin 的配置由 `SetAccessCheckCallbackAndHandler` 构建，只能归入
+`handlers.cross_origin`，不能计入接口自己的 named/indexed——否则全局对象会凭空多出一套 named handler。
+（另外，Blink 会为只声明 named 属性的接口生成 indexed 转发回调，所以 indexed 家族不参与这条检查。）
 
 ## 性能和并发
 

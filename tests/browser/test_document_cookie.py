@@ -98,7 +98,7 @@ def test_document_cookie_honors_path_httponly_and_deletion(browser, local_server
 def test_document_cookie_ignores_invalid_script_assignments_and_logs_changes(browser, local_server, monkeypatch):
     messages = []
     monkeypatch.setattr(
-        "pyv8c.web.network.cronet.logger.debug",
+        "pyv8c.network.cronet.logger.debug",
         lambda message, value: messages.append((message, value)),
     )
     page = browser.new_context().new_page(f"{local_server}/")

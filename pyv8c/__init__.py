@@ -1,8 +1,9 @@
-"""Small public runtime surface for pyv8c.
+"""Public runtime surface for pyv8c.
 
-Web interface implementation classes are Feature internals.  Applications use
-them through JavaScript in a :class:`Browser` realm rather than importing
-their Python implementation classes from this package.
+Applications drive a :class:`Browser` realm through JavaScript.  Web interface
+implementation classes are Feature internals: they stay in the package that owns
+them, and the root exports only the object model, the errors an application
+catches, and the network extension points.
 """
 
 from __future__ import annotations
@@ -10,32 +11,26 @@ from __future__ import annotations
 from importlib import import_module
 
 _EXPORTS = {
-    "Browser": ".platform", "BrowserContext": ".platform", "Page": ".platform",
-    "DevToolsHandle": ".platform", "DevToolsOptions": ".platform",
-    "BrowserEnvironment": ".foundation.environment", "ViewportConfig": ".foundation.environment",
-    "ScreenConfig": ".foundation.environment", "GeolocationConfig": ".foundation.environment",
-    "NetworkInformationConfig": ".foundation.environment", "BatteryConfig": ".foundation.environment",
-    "StorageQuotaConfig": ".foundation.environment",
-    "PluginConfig": ".foundation.environment", "MimeTypeConfig": ".foundation.environment",
-    # Networking: the two engine roles a context assembles, how to extend them,
-    # and the values they exchange with the engine.
-    "HttpTransport": ".web.network.registry",
-    "WebSocketTransport": ".web.network.registry",
-    "register_transport": ".web.network.registry",
-    "register_ws_transport": ".web.network.registry",
-    "transport_names": ".web.network.registry",
-    "NetworkBackend": ".web.network.backend",
-    "CronetTransport": ".web.network.cronet",
-    "CurlCffiTransport": ".web.network.curl_cffi",
-    "WebSocketsTransport": ".web.network.ws_websockets",
-    "NetworkRequest": ".web.network.models", "NetworkResponse": ".web.network.models",
-    "NetworkUnavailableError": ".web.network.models",
+    "Browser": ".platform",
+    "BrowserContext": ".platform",
+    "Page": ".platform",
+    "DevToolsHandle": ".platform",
+    "DevToolsOptions": ".platform",
+    "BrowserEnvironment": ".foundation.environment",
+    # The engine roles, how to register one, and the values engines exchange.
+    "HttpTransport": ".network.registry",
+    "WebSocketTransport": ".network.registry",
+    "register_transport": ".network.registry",
+    "register_ws_transport": ".network.registry",
+    "transport_names": ".network.registry",
+    "NetworkBackend": ".network.backend",
+    "NetworkRequest": ".network.models",
+    "NetworkResponse": ".network.models",
+    "NetworkUnavailableError": ".network.models",
 }
 for _name in (
     "V8Error", "V8TypeError", "V8RangeError", "V8ReferenceError", "V8SyntaxError", "V8URIError", "V8EvalError",
-    "DOMException", "DOMError", "dom_exception", "IndexSizeError", "InvalidCharacterError", "HierarchyRequestError",
-    "NotFoundError", "NotSupportedError", "InvalidStateError", "InvalidAccessError", "SecurityError", "NetworkError",
-    "AbortError", "TimeoutError", "QuotaExceededError", "DataCloneError", "as_js_error",
+    "DOMException",
 ):
     _EXPORTS[_name] = ".foundation.errors"
 

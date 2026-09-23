@@ -1,6 +1,6 @@
 # 网络引擎与参数
 
-[返回文档索引](README.md)。实现入口：[registry.py](../pyv8c/web/network/registry.py)（注册与校验）、[backend.py](../pyv8c/web/network/backend.py)（装配），以及三个引擎模块 [cronet.py](../pyv8c/web/network/cronet.py)、[curl_cffi.py](../pyv8c/web/network/curl_cffi.py)、[ws_websockets.py](../pyv8c/web/network/ws_websockets.py)。
+[返回文档索引](README.md)。实现入口：[registry.py](../pyv8c/network/registry.py)（注册与校验）、[assembly.py](../pyv8c/network/assembly.py)（按 Browser 选项装配）、[backend.py](../pyv8c/network/backend.py)（一个 context 的网络栈），以及三个引擎模块 [cronet.py](../pyv8c/network/cronet.py)、[curl_cffi.py](../pyv8c/network/curl_cffi.py)、[websockets.py](../pyv8c/network/websockets.py)。
 本页讲“用哪个引擎、给它什么参数”；loader、拦截与缓存见 [资源加载与拦截](resource-interception.md)。
 
 ## 两个角色
@@ -9,11 +9,10 @@
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
-| real_network | False | 为没指定名字的角色装配默认引擎（http=curl_cffi、ws=websockets） |
-| network_engine | None | HTTP 引擎的名字 |
-| ws_engine | None | WebSocket 引擎的名字 |
-| network_backend | None | 整体注入；对象填哪些角色由它自己能做什么决定 |
-| http_options / ws_options | None | 分别交给两个部件的参数，见下 |
+| real_network | True | 是否装配 http_engine / ws_engine 指定的引擎；False 表示不联网 |
+| http_engine | curl_cffi | HTTP 引擎：已注册的名字、现成对象（要有 request_sync）或工厂；None 表示该角色不装配 |
+| ws_engine | websockets | WebSocket 引擎：已注册的名字、现成对象（要有 websocket）或工厂；None 表示该角色不装配 |
+| http_options / ws_options | None | 分别交给两个部件的参数，见下（给现成对象时不能传） |
 
 ```python
 from pyv8c import Browser, transport_names
@@ -21,18 +20,21 @@ from pyv8c import Browser, transport_names
 transport_names("http")  # ('cronet', 'curl_cffi')
 transport_names("ws")    # ('cronet', 'websockets')
 
-browser = Browser(real_network=True)                            # 默认：curl_cffi + websockets
-browser = Browser(network_engine="cronet")                      # 只装 HTTP
-browser = Browser(ws_engine="websockets")                       # 只装 socket
-browser = Browser(network_engine="cronet", ws_engine="cronet")  # 一个引擎两个角色，只构造一次
-browser = Browser(network_backend=MyHttpOnly())                 # 注入 HTTP，socket 照常装配
+browser = Browser()                                             # 默认：curl_cffi + websockets
+browser = Browser(http_engine="cronet")                      # 换 HTTP 引擎，socket 仍用 websockets
+browser = Browser(ws_engine=None)                               # 只装 HTTP
+browser = Browser(http_engine=None)                          # 只装 socket
+browser = Browser(http_engine="cronet", ws_engine="cronet")  # 一个引擎两个角色，只构造一次
+browser = Browser(http_engine=MyHttpOnly())                     # 现成 HTTP 引擎，socket 照常装配
+browser = Browser(real_network=False)                           # 不联网：两个角色都不装配
 ```
 
 边界：
 
-- `real_network=True` 只补“没说名字”的角色；给角色指定名字就装配**恰好**那个角色。因此只装 socket 的 context 里 `page.net`、资源加载会以“没有 HTTP 引擎”失败，而 `new WebSocket` 可用；反过来只装 HTTP 时 `new WebSocket` 会报“没有 WebSocket 引擎”。
-- 注入的对象按能力认角色：有 `request_sync` 就是 HTTP 引擎，有 `websocket` 就是 socket 引擎；它没填的角色照常按上面的规则装配。注入对象已经构造完成，所以它填的那个角色的 options 会被拒绝（`TypeError`），不会被静默丢掉。
-- 同名同时担任两个角色时只构造一次实例——否则会多出一个客户端、线程池与连接缓存；此时 `ws_options` 会被拒绝，而不是静默忽略。
+- 角色互不影响：`ws_engine=None` 只关掉 socket，`http_engine=None` 只关掉 HTTP，`real_network=False` 两个都关（离线）。缺 HTTP 时 `page.net` 与资源加载报“没有 HTTP 引擎”（离线改用 `resource_loader`），缺 WebSocket 时 `new WebSocket` 报“没有 WebSocket 引擎”。
+- 每个角色可以给**名字**、**现成对象**（HTTP 要有 `request_sync`，socket 要有 `websocket`）或**工厂**（每个 context 调一次，各拿一个实例）。现成对象已经构造完成，所以给它设置对应的 options 会被拒绝（`TypeError`），不会被静默丢掉。
+- `real_network=False` 时不装配任何引擎：名字只是偏好、就此不用，而现成对象会被拒绝（不静默丢弃）。
+- 两个角色给同一个名字或同一个对象时只构造/使用一次——否则会多出一个客户端、线程池与连接缓存；此时 `ws_options` 会被拒绝，而不是静默忽略。
 
 ## 参数与校验
 
@@ -57,7 +59,7 @@ browser = Browser(network_backend=MyHttpOnly())                 # 注入 HTTP，
 | 注入的引擎填了该角色 | `TypeError`：它已构造完成，不会读这些 options |
 
 ```python
-browser = Browser(network_engine="cronet", http_options={"timeout_ms": 5000, "impersonete": "chrome"})
+browser = Browser(http_engine="cronet", http_options={"timeout_ms": 5000, "impersonete": "chrome"})
 browser.new_context()
 # TypeError: unknown option 'impersonete' for http engine 'cronet';
 #            accepted: base_url, chrometls, default_domain, headers, max_workers, proxies, timeout_ms, verify
@@ -97,7 +99,7 @@ register_transport("my-http", lambda options: MyHttp(options), option_keys=lambd
 register_ws_transport("my-sockets", lambda options: MySockets(options))
 ```
 
-一个对象同时提供两组方法就能同时担任两个角色（cycronet 就是这样），因此在 `network_engine` 与 `ws_engine` 同名时会被复用一次。
+一个对象同时提供两组方法就能同时担任两个角色（cycronet 就是这样），因此在 `http_engine` 与 `ws_engine` 同名时会被复用一次。
 
 ## 与每请求参数的区别
 
