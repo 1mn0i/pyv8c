@@ -39,6 +39,9 @@ Context 关闭会关闭其页面、DevTools 和网络客户端，并清理 Blob 
 | `page.query_selector(selector)` | 返回宿主侧 DOM 节点句柄，未命中返回 None |
 | `page.set_visibility(hidden)` | 切换文档可见性并派发 visibilitychange/ freeze / resume |
 | `page.trace = True/False` | 切换该页面观察状态，需要创建时配置观察能力 |
+| `page.fetch(url, *, method="GET", headers=None, body=None, credentials=None, timeout=30)` | 用页面自己的 `fetch` 发请求并等它落定；返回快照对象（见下节） |
+| `page.fetch_async(...)` | 同上，返回 `concurrent.futures.Future`，不阻塞页面 |
+| `page.xhr(url, ...)` / `page.xhr_async(...)` | 用页面自己的 `XMLHttpRequest`，同样分别返回快照对象 / `Future` |
 | `page.close()` | 关闭页面及其拥有的资源 |
 
 `goto.wait_until` 支持 `commit`、`domcontentloaded`、`load`，以及内部接受的 None；不支持 networkidle。
@@ -212,6 +215,8 @@ page.evaluate("chrome.csi()")
 
 ## 网络与资源
 
+`page.fetch` / `page.xhr` 在页面里调用 JS 的 `fetch` / `XMLHttpRequest`：命中**页面重写后**的实现（埋点、测试库常见），请求走页面的资源栈（CORS、拦截器、缓存），返回宿主侧快照对象（`status`、`status_text`、`url`、`headers`、`body`，以及 `.ok`、`.text`、`.json()`）；XHR 那份的 `headers` 为空，因为该实现没有 `getAllResponseHeaders`。
+`page.net.*` 相反：直接用 context 的传输，不经 JS、不做 CORS。需要哪种语义就选哪条路。
 默认联网：`Browser()` 为每个 context 装配 curl_cffi（HTTP）与 websockets（WebSocket），两者来自 `[network]` extra，缺失时在创建 Context 时报错并指明要装什么。
 离线测试用 `Browser(real_network=False)` 配 resource_loader，或直接用 set_content 提交本地 HTML。
 http_engine / ws_engine 可改选其它已注册引擎（如 `"cronet"`，需装 `[cronet]` extra），也可直接给现成引擎对象或工厂，或传 None 关掉某个角色；http_options / ws_options 只对"按名字"的引擎生效，给现成对象时传会被拒绝。

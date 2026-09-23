@@ -319,6 +319,16 @@ def test_page_keeps_only_user_facing_api():
         assert not hasattr(Page, name), name
 
 
+@pytest.mark.native
+def test_page_exposes_the_host_http_entry_points():
+    """Both ways out of the page stay public: the JS APIs and the host transport."""
+    pytest.importorskip("pyv8", reason="imports platform modules bound to the native extension")
+    from pyv8c.platform.browser import Page
+
+    for name in ("fetch", "fetch_async", "xhr", "xhr_async"):
+        assert hasattr(Page, name), name
+
+
 def test_web_capability_split_has_no_legacy_mixed_modules():
     assert not (ROOT / "web" / "fetch" / "backend.py").exists()
     assert not (ROOT / "web" / "fetch" / "api.py").exists()
