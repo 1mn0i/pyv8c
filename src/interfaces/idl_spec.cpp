@@ -61,6 +61,7 @@ static Field IdlSpec_fields[] = {
     {"index_query", Kind::Callback, offsetof(IdlSpec, index_query), 0, 0},
     {"index_enum", Kind::Callback, offsetof(IdlSpec, index_enum), 0, 0},
     {"index_del", Kind::Callback, offsetof(IdlSpec, index_del), 0, 0},
+    {"iterate", Kind::Callback, offsetof(IdlSpec, iterate), 0, 0},
     {"cross_origin_check", Kind::Callback, offsetof(IdlSpec, cross_origin_check), 0, 0},
     {"cross_origin_name_get", Kind::Callback, offsetof(IdlSpec, cross_origin_name_get), 0, 0},
     {"cross_origin_name_set", Kind::Callback, offsetof(IdlSpec, cross_origin_name_set), 0, 0},

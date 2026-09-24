@@ -42,6 +42,7 @@ struct IdlSpec
     PyObject *index_query = nullptr;
     PyObject *index_enum = nullptr;
     PyObject *index_del = nullptr;
+    PyObject *iterate = nullptr;
     PyObject *cross_origin_check = nullptr;
     PyObject *cross_origin_name_get = nullptr;
     PyObject *cross_origin_name_set = nullptr;

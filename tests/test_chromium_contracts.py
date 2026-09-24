@@ -284,6 +284,64 @@ class TestChromiumContracts(unittest.TestCase):
             ))
         )
 
+    def test_pair_iterable_views_come_from_the_binding(self):
+        """声明 iteration source 的接口应得到 Chromium 那套迭代视图。"""
+
+        class PairSource:
+            __v8_idl_spec__ = IdlSpec(
+                constructor_behavior=pyv8.FlagConstructor.kAll,
+                has_constructor=1,
+                iterate="__v8_iterate__",
+            )
+
+            def __init__(self, win=None):
+                self.items = [("a", "1"), ("b", "2")]
+
+            def __v8_iterate__(self, index):
+                return self.items[index] if index < len(self.items) else None
+
+        self.context.expose(PairSource)
+        result = snapshot(self.context.exec_js(
+            """
+            (() => {
+                const source = new PairSource();
+                const iterator = source.entries();
+                const prototype = Object.getPrototypeOf(iterator);
+                return [
+                    Array.from(source),
+                    Array.from(source.keys()),
+                    Array.from(source.values()),
+                    PairSource.prototype[Symbol.iterator] === PairSource.prototype.entries,
+                    Object.getOwnPropertyNames(prototype).join(),
+                    iterator.constructor.name,
+                    Object.prototype.toString.call(iterator),
+                    iterator[Symbol.iterator]() === iterator,
+                    JSON.stringify(iterator.next()),
+                    JSON.stringify(iterator.next()),
+                    JSON.stringify(iterator.next()),
+                    String(PairSource.prototype.entries)
+                ];
+            })()
+            """
+        ))
+        self.assertEqual(
+            result,
+            [
+                [["a", "1"], ["b", "2"]],
+                ["a", "b"],
+                ["1", "2"],
+                True,
+                "next",
+                "Iterator",
+                "[object PairSource Iterator]",
+                True,
+                '{"done":false,"value":["a","1"]}',
+                '{"done":false,"value":["b","2"]}',
+                '{"done":true}',
+                "function entries() { [native code] }",
+            ],
+        )
+
     def test_array_prototype_intrinsics_keep_their_native_semantics(self):
         class IterableCollection:
             __v8_idl_spec__ = IdlSpec(

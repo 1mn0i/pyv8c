@@ -23,7 +23,11 @@ typedef struct {
     // Error.prototype, then 1 when they do and -1 when they do not.  The answer
     // belongs to the class, so it is reached once and remembered.
     int error_prototype;
+    // 0 until an iteration source's iterator prototype is finished, 1 afterwards.
+    int iterator_prototype;
     V8HandleSlot<v8::FunctionTemplate> templ;
+    // The iterator an interface with an iteration source hands out; empty otherwise.
+    V8HandleSlot<v8::FunctionTemplate> iterator_templ;
 } py_class;
 
 int py_class_type_init();

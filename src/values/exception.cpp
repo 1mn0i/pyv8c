@@ -358,6 +358,26 @@ py_throw_js(Local<Value> js_exc, Local<Message> js_message)
     }
 }
 
+PyObject*
+pyexception_message(PyObject* value)
+{
+    PyObject* args = value == nullptr ? nullptr : PyObject_GetAttrString(value, "args");
+    if (args != nullptr && PyTuple_Check(args) && PyTuple_Size(args) > 0)
+    {
+        PyObject* first = PyTuple_GetItem(args, 0);
+        if (first != nullptr && PyUnicode_Check(first))
+        {
+            Py_INCREF(first);
+            Py_DECREF((PyObject*)args);
+            return first;
+        }
+    }
+    Py_XDECREF((PyObject*)args);
+    if (PyErr_Occurred())
+        PyErr_Clear();
+    return value == nullptr ? nullptr : PyObject_Str(value);
+}
+
 void 
 js_throw_py()
 {
@@ -384,7 +404,7 @@ js_throw_py()
         PyErr_Clear();
     }
 
-    PyObject* exc_value_str = PyObject_Str(exc_value);
+    PyObject* exc_value_str = pyexception_message(exc_value);
     const char* exc_message = "Python exception";
     if (exc_value_str != NULL) {
         const char* message = PyUnicode_AsUTF8_abi3(exc_value_str);

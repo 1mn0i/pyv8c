@@ -4,6 +4,7 @@
 
 #include "convert.h"
 #include "error_map.h"
+#include "exception.h"
 #include "pyfunction.h"
 #include "pyclass.h"
 #include "jsobject.h"
@@ -531,7 +532,7 @@ pyexception_to_jsexception(PyObject *value, Local<Context> context)
     {
         return exception;
     }
-    PyObject *exc_value_str = PyObject_Str(value);
+    PyObject *exc_value_str = pyexception_message(value);
     if (exc_value_str == NULL)
     {
         return exception;

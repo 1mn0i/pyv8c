@@ -25,6 +25,11 @@ PyObject* js_exception_new(v8::Local<v8::Value> exception, v8::Local<v8::Message
 JsExceptionState* js_exception_get_state(PyObject* exception);
 PyObject* js_exception_get_value(PyObject* self, void* args);
 
+// The message a Python exception becomes in JavaScript, as a new reference: its
+// message, not its string form, so a class whose __str__ adds its name (a
+// DOMException) does not arrive with the name twice.
+PyObject* pyexception_message(PyObject* value);
+
 void py_throw_js(v8::Local<v8::Value> js_exc, v8::Local<v8::Message> js_message);
 #define JS_TRY v8::TryCatch tc(isolate);
 #define PY_PROPAGATE_JS_RET(retval)                    \

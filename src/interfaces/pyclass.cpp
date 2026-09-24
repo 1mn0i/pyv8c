@@ -8,6 +8,7 @@
 #include "pyclass.h"
 #include "pyclass_handlers.h"
 #include "idl_spec.h"
+#include "iterable.h"
 #include "pyclass_cross_origin_handlers.h"
 #include "v8tools.h"
 
@@ -41,6 +42,7 @@ static int class_traverse(py_class* self, visitproc visit, void* arg) {
 
 static int class_clear(py_class* self) {
     self->templ.Reset();
+    self->iterator_templ.Reset();
     Py_CLEAR(self->cls);
     Py_CLEAR(self->idl_spec);
     Py_CLEAR(self->cls_name);
@@ -197,6 +199,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     self->has_constructor = 0;
     self->to_obj = 0;
     self->error_prototype = 0;
+    self->iterator_prototype = 0;
     self->templ.Reset();
 
     self->operation_callback_data = PyList_New(0);
@@ -303,6 +306,13 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     if (config.constants_value != NULL &&
         !bindings::InstallConstantValues(
             isolate, world, templ, sig, config.constants_value))
+    {
+        Py_DECREF((PyObject*)self);
+        return NULL;
+    }
+
+    // After the declared methods, so an iteration source replaces their views.
+    if (!install_pair_iterable(isolate, self, js_self, templ, sig))
     {
         Py_DECREF((PyObject*)self);
         return NULL;
@@ -713,6 +723,13 @@ delete_constructor(py_class* self, Local<Context> context)
                 properties_delete_constructor(prototype_object, context);
             }
         }
+    }
+
+    // An iteration source needs the prototype object, which the constructor guard
+    // above does not always reach; finished before a page can look at either.
+    if (self->iterator_prototype == 0) {
+        self->iterator_prototype = 1;
+        install_pair_iterator_prototype(self, context);
     }
 
     if (self->parent != NULL) {
