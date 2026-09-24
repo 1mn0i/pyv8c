@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlsplit
 __all__ = [
     "DEFAULT_PORTS", "SPECIAL_SCHEMES",
     "origin_tuple", "same_origin", "serialize_origin", "origin_string",
-    "absolute_url",
+    "absolute_url", "quote_form", "form_urlencoded",
 ]
 
 #: Schemes whose origin is derived from host and port ("special schemes" in
@@ -98,3 +98,28 @@ def absolute_url(url, base):
     if parts.scheme and parts.netloc:
         return str(url)
     return urljoin(str(base), str(url))
+
+
+#: The characters the urlencoded serializers leave alone, per the URL standard.
+_FORM_SAFE = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789*-._"
+)
+
+
+def quote_form(text):
+    """One name or value in ``application/x-www-form-urlencoded`` spelling."""
+    out = []
+    for byte in str(text).encode("utf-8"):
+        char = chr(byte)
+        if char in _FORM_SAFE:
+            out.append(char)
+        elif char == " ":
+            out.append("+")
+        else:
+            out.append(f"%{byte:02X}")
+    return "".join(out)
+
+
+def form_urlencoded(entries):
+    """The ``application/x-www-form-urlencoded`` spelling of *entries*."""
+    return "&".join(f"{quote_form(name)}={quote_form(value)}" for name, value in entries)

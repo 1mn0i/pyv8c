@@ -37,7 +37,9 @@ INDEXEDDB_INTERFACES = (
 NAVIGATOR_INTERFACES = (
     "MimeType", "Plugin", "PluginArray", "MimeTypeArray", "Geolocation",
     "NetworkInformation", "BatteryManager", "DeprecatedStorageQuota", "Navigator",
-    "NavigatorUAData",
+    "NavigatorUAData", "MediaDeviceInfo", "MediaDevices", "Permissions", "PermissionStatus",
+    "MediaMetadata", "MediaSession", "ServiceWorkerContainer", "CredentialsContainer",
+    "Bluetooth", "StorageManager",
 )
 FILESYSTEM_INTERFACES = (
     "DOMFileSystem", "Entry", "DirectoryEntry", "FileEntry", "DirectoryReader", "FileWriter", "File",

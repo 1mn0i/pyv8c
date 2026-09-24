@@ -39,6 +39,7 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="forms", getter="get_forms", side_effect=1),
             AttributeSpec(name="scripts", getter="get_scripts", side_effect=1),
             AttributeSpec(name="defaultView", getter="get_defaultView", side_effect=1),
+            AttributeSpec(name="location", getter="get_location", setter="set_location", side_effect=1),
             AttributeSpec(name="childNodes", getter="get_childNodes", side_effect=1),
             AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
             AttributeSpec(name="hidden", getter="get_hidden", side_effect=1),
@@ -276,12 +277,29 @@ class Document(_ParentNodeMixin, Node):
             html._adopt_child(self._new_element("head"), 0)
         if self._first_named(html, "body") is None:
             html._adopt_child(self._new_element("body"))
+    def _browsing_window(self):
+        """The window this document is the active document of, or ``None``."""
+        services = getattr(self._services, "document_services", None)
+        if services is None or getattr(services, "document", None) is not self:
+            return None
+        return getattr(services, "window", None)
     def get_defaultView(self):
-        if self._services is None:
+        target = self._browsing_window()
+        if target is None:
             return pyv8.Null
         from ..bom.window import Window
-        target = self._services.document_services.window
         return Window._accessor_window(target)._view(target)
+    def get_location(self):
+        """The document's ``Location``: the object ``window.location`` is."""
+        window = self._browsing_window()
+        return pyv8.Null if window is None else window.location
+    def set_location(self, value):
+        """Assigning to it assigns ``location.href``; without a window it throws."""
+        window = self._browsing_window()
+        if window is None:
+            raise V8TypeError("Failed to set the 'location' property on 'Document': "
+                              "The attribute value is not an object")
+        window.location.set_href(value)
     def get_readyState(self): return self.ready_state
     def get_hidden(self): return self.hidden
     def get_characterSet(self): return 'UTF-8'

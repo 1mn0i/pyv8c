@@ -286,10 +286,13 @@ class InterfaceCompiler:
             methods=tuple(methods),
             attributes=tuple(attributes),
             constants_value=tuple(constants.values()),
-            parent_class=parent,
             to_string_tag=baseline.get("tag") or source.to_string_tag or name,
             has_constructor=source.has_constructor if "__v8_idl_spec__" in cls.__dict__ else 1,
         )
+        if parent_name is not None:
+            # A parent that is not an interface has no template: unset, the binding
+            # reads the Python base instead.
+            options["parent_class"] = parent
         if source.call is not None:
             options["call"] = self.wrappers._raw_callback(cls, source.call)
         elif any("__call__" in base.__dict__ for base in cls.__mro__):

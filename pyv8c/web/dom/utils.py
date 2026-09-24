@@ -6,6 +6,7 @@ from urllib.parse import urlsplit, urlunsplit
 from pyv8.flag import FlagArrayProto, V8Attribute
 
 from ...foundation.arguments import dom_string
+from ...foundation.urls import form_urlencoded
 
 #: XML-compatible qualified name, shared by ``Document.createElement`` and the
 #: attribute-creating APIs.
@@ -99,11 +100,6 @@ URLENCODED = "application/x-www-form-urlencoded"
 MULTIPART = "multipart/form-data"
 TEXT_PLAIN = "text/plain"
 
-#: The characters the urlencoded serializer leaves alone, per the URL standard.
-_SAFE = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789*-._"
-)
-
 #: Chromium's multipart boundary prefix, followed by sixteen random characters.
 _BOUNDARY_PREFIX = "----WebKitFormBoundary"
 _BOUNDARY_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
@@ -127,7 +123,7 @@ def replace_query(url, query):
 
 def urlencoded(entries):
     """The ``application/x-www-form-urlencoded`` spelling of *entries*."""
-    return "&".join(f"{_quote(name)}={_quote(value)}" for name, value in entries)
+    return form_urlencoded(entries)
 
 
 def encode_entries(entries, enctype):
@@ -141,20 +137,6 @@ def encode_entries(entries, enctype):
     if enctype == TEXT_PLAIN:
         return _text_plain(entries), TEXT_PLAIN
     return urlencoded(entries).encode("utf-8"), URLENCODED
-
-
-def _quote(text):
-    """One name or value in ``application/x-www-form-urlencoded`` spelling."""
-    out = []
-    for byte in str(text).encode("utf-8"):
-        char = chr(byte)
-        if char in _SAFE:
-            out.append(char)
-        elif char == " ":
-            out.append("+")
-        else:
-            out.append(f"%{byte:02X}")
-    return "".join(out)
 
 
 def _text_plain(entries):

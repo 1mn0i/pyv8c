@@ -167,6 +167,7 @@ FIELDS: tuple[Field, ...] = (
     Field("storage.temporary.quota", _integer, True),
     Field("storage.persistent.usage", _integer, default=0),
     Field("storage.persistent.quota", _integer, default=0),
+    Field("bluetooth.available", bool, default=True),
     Field("client_hints.brands", _brands, True),
     Field("client_hints.full_version_list", _brands, True),
     Field("client_hints.mobile", bool, True),
@@ -250,6 +251,11 @@ class QuotaView:
 class StorageView:
     temporary: QuotaView
     persistent: QuotaView
+
+
+@dataclass(frozen=True)
+class BluetoothView:
+    available: bool
 
 
 @dataclass(frozen=True)
@@ -369,7 +375,7 @@ class BrowserEnvironment:
     __slots__ = (
         "_explicit", "_resolved",
         "viewport", "screen", "geolocation", "connection", "battery", "storage",
-        "client_hints", "plugins",
+        "bluetooth", "client_hints", "plugins",
     )
 
     def __init__(self, data=None, *, base=None):
@@ -411,6 +417,7 @@ class BrowserEnvironment:
             QuotaView(values["storage.temporary.usage"], values["storage.temporary.quota"]),
             QuotaView(values["storage.persistent.usage"], values["storage.persistent.quota"]),
         ))
+        object.__setattr__(self, "bluetooth", BluetoothView(values["bluetooth.available"]))
         object.__setattr__(self, "client_hints", ClientHintsView(
             tuple(Brand(**entry) for entry in values["client_hints.brands"]),
             tuple(Brand(**entry) for entry in values["client_hints.full_version_list"]),
@@ -486,5 +493,6 @@ class BrowserEnvironment:
 __all__ = [
     "BrowserEnvironment", "Field", "FIELDS", "SCHEMA_VERSION", "COLLECTED_KEYS", "PROFILE",
     "ViewportView", "ScreenView", "GeolocationView", "ConnectionView", "BatteryView",
-    "StorageView", "QuotaView", "ClientHintsView", "Brand", "PluginView", "MimeTypeView",
+    "StorageView", "QuotaView", "BluetoothView", "ClientHintsView", "Brand", "PluginView",
+    "MimeTypeView",
 ]

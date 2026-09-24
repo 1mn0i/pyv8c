@@ -213,7 +213,7 @@ finally:
 | `to_dict()` | 只含显式给出的键 |
 | `resolved()` | 默认值与推导补齐后的完整键集 |
 | `dumps()` / `loads()`、`to_file()` / `from_file()` | 带 `schema` 版本号的文本或文件往返；版本不符即报错 |
-| `viewport` `screen` `geolocation` `connection` `battery` `storage` `client_hints` `plugins` | 分组视图，属性名与 Web API 取值一致 |
+| `viewport` `screen` `geolocation` `connection` `battery` `storage` `bluetooth` `client_hints` `plugins` | 分组视图，属性名与 Web API 取值一致 |
 
 未给出的键取**随包的默认 profile**（`pyv8c/data/chrome-environment.json`，一份真实 Chrome 的采集结果），
 其中 `app_version`、`language`、`client_hints.brands`/`mobile`/`platform` 会**跟随 `user_agent`** 重新推导，
@@ -273,6 +273,29 @@ page.evaluate("chrome.csi()")
   `function csi() { [native code] }`，`chrome.csi.name` 为 `csi`。
 - 时间以当前文档的导航起点为锚，`goto`/`set_content` 之后会重新计时；精度高于 Windows `time.time()` 的
   15ms 刻度，连续两次 `chrome.csi().pageT` 不相等。
+
+## Navigator
+
+`mediaDevices`、`permissions`、`mediaSession`、`serviceWorker`、`credentials`、`bluetooth`、`storage` 与 `javaEnabled()` 按 Chrome 的可见性安装：`mediaDevices`/`serviceWorker`/`credentials`/`bluetooth`/`storage` 只在安全上下文出现，`permissions` 与 `mediaSession` 任何上下文都有，Worker 里只有 `permissions` 与 `storage`；`javaEnabled()` 恒为 `false`。七个对象都是 `[SameObject]`，取值、拒绝错误与文案逐项对照过本机 Chrome 153（`tests/repros/test_navigator_members_vs_chrome.py`）。
+
+- `permissions.query({name})` 返回 `PermissionStatus` 的 Promise，初值表按 Chrome 153 固化（多数 `prompt`，`clipboard-write`/`accelerometer` 等为 `granted`，`periodic-background-sync` 为 `denied`）；非枚举名抛 `TypeError`，`push` 拒绝 `NotSupportedError`；`geolocation` 跟随 `environment.geolocation.permission`。
+- `mediaDevices.enumerateDevices()` 只有一个默认 `audiooutput`（设备名与 id 为空），`getSupportedConstraints()` 是 Chrome 的 36 项；`getUserMedia` 无参抛 `TypeError`、有参拒绝 `NotFoundError`。
+- `mediaSession` 只做状态与动作转发：`metadata` 必须是 `MediaMetadata`，`playbackState` 的非法值被忽略，`setPositionState` 校验时长与位置；`metadata.artwork` 的 `src` 按文档 URL 解析，且每次读取返回新的冻结数组。
+- `storage.estimate()` 取环境的配额与用量（`usageDetails` 为空对象），`persisted()`/`persist()` 为 `false`；`bluetooth.getAvailability()` 取 `environment.bluetooth.available`（默认 `true`）。
+- `serviceWorker.register()` 会真的取脚本并按 Chrome 的规则校验（跨源、空 URL、非 JS 的 MIME 都拒绝 `SecurityError`），通过校验后拒绝 `NotSupportedError`：这里不安装 Service Worker。
+- 三处需要用户或存储层才能完成的调用拒绝而不是等待：`getDisplayMedia()` 拒绝 `NotAllowedError`、`bluetooth.requestDevice()` 拒绝 `NotFoundError`、`storage.getDirectory()` 拒绝 `NotSupportedError`（Chrome 在这三处等选择器或返回 OPFS 句柄）。
+
+## URL 与 URLSearchParams
+
+`URL` 按 URL 标准解析与序列化组件，`URL.searchParams` 是同一个查询串的**活视图**：对它的每次改动都写回 URL（用与 `toString()` 相同的序列化），对 `url.search` 的赋值也立刻反映到视图。`URLSearchParams` 本身按 Chrome 153 逐项对齐：
+
+- `delete(name, value)` 与 `has(name, value)` 的第二个参数可选：给了就只匹配同名同值的条目（`delete('a', 1)` 只去掉 `a=1`，`has('a', 2)` 在有 `a=2` 时才为真），**省略或传 `undefined`** 才算"没给"（`null` 是字符串 `"null"`，`delete('a')` 去掉同名的全部条目）。
+- 构造可以是字符串（按 URL 标准解析：只去掉**一个**前导 `?`，`+` 是空格，非法的百分号序列原样保留）、另一个 `URLSearchParams`（复制它**当前**的列表）、`[name, value]` 对的序列或记录对象；序列里有非二元组抛 `TypeError`。
+- 编码与表单同一套（`application/x-www-form-urlencoded`）：只保留字母数字与 `*-._`，空格写 `+`，其余按 UTF-8 百分号编码，所以 `~` 写成 `%7E`。
+- `sort()` 稳定地按 **UTF-16 码元**比较名字；`forEach(callback, thisArg)` 的实参是 `(value, name, params)`、`this` 是 `thisArg`，并且和标准一样按索引遍历**活列表**——回调里删掉的条目会被跳过。
+- `keys()`/`values()`/`entries()` 返回真正的迭代器：`next()`、`[Symbol.iterator]()` 返回自身、每次 `next()` 重读列表（所以是活的），`[Symbol.iterator]` 就是 `entries` 本身，`for..of`、展开与 `Array.from` 都按 Chrome 的行为工作。视图由绑定按 `iterate="__v8_iterate__"` 声明的**迭代源**安装（`IdlSpec.iterate`，宿主只回答"第 N 项是什么"），所以它们是 `[native code]` 的原生函数，Worker 全局同样有。
+
+已知缺口：`new URL('http://h/p?')` 会丢掉空查询串的 `?`（URL 解析器不保留"有查询串但为空"的状态，与这里的视图行为无关）。
 
 ## 网络与资源
 

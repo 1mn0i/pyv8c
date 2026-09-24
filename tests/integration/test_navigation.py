@@ -54,6 +54,27 @@ def test_new_page_url_and_location_assignment_navigate_automatically():
     browser.close()
 
 
+def test_document_location_is_the_windows_and_assigning_it_navigates():
+    """The navigation an assignment performs needs a server; the corpus has none."""
+    pages = {
+        "http://example.test/first": "<html><body><h1>first</h1></body></html>",
+        "http://example.test/next": "<html><body><h1>next</h1></body></html>",
+    }
+    browser = Browser(resource_loader=lambda url, _request: Response(pages[url], {"url": url}),
+                      stub_logging="off")
+    page = browser.new_context().new_page("http://example.test/first")
+    try:
+        assert page.evaluate("document.location === location") is True
+        page.evaluate("document.location = '/next'")
+        page.run_until_idle(timeout=1)
+        assert page.evaluate("[location.href, document.location.href, "
+                             "document.querySelector('h1').textContent]") == [
+            "http://example.test/next", "http://example.test/next", "next",
+        ]
+    finally:
+        browser.close()
+
+
 def test_goto_decodes_http_charset_and_requires_a_loader_or_network_backend():
     html = "<html><body>中文页面</body></html>".encode("gb18030")
     browser = Browser(resource_loader=lambda url, _request: Response(

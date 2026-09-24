@@ -44,6 +44,18 @@ def test_history_security_error_and_fetch_rejection_object():
     browser.close()
 
 
+def test_a_dom_exception_reaches_python_as_the_browser_stringifies_it():
+    browser = Browser(); page = browser.new_context().new_page()
+    value = page.evaluate(
+        "e = new DOMException('Service workers are not implemented here.',"
+        " 'NotSupportedError'); e")
+    assert str(value) == "NotSupportedError: Service workers are not implemented here."
+    assert str(page.evaluate("new DOMException('m')")) == "Error: m"
+    assert str(page.evaluate("new DOMException('m', '')")) == "m"
+    assert str(page.evaluate("new DOMException()")) == "Error"
+    browser.close()
+
+
 def test_error_classes_are_v8_bridge_exceptions():
     assert V8TypeError("boom").__v8_error__ is True
     with pytest.raises(V8TypeError):

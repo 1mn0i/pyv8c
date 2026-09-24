@@ -14,6 +14,7 @@ from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
 from ...engine.features import LazyValueStore, interface
 from ...foundation.arguments import (
     MISSING,
+    callback_value,
     dictionary,
     dom_string,
     interface_value,
@@ -23,7 +24,7 @@ from ...foundation.arguments import (
     usv_string,
 )
 from ...foundation.errors import InvalidStateError, V8TypeError, V8URIError
-from ...foundation.urls import SPECIAL_SCHEMES
+from ...foundation.urls import SPECIAL_SCHEMES, form_urlencoded
 from ..fetch.blob import Blob
 
 __all__ = ["URL", "URLSearchParams"]
@@ -32,6 +33,19 @@ __all__ = ["URL", "URLSearchParams"]
 #: controls and spaces, and every tab or newline wherever it sits.
 _URL_TRIM = "".join(chr(code) for code in range(0x21))
 _URL_DROP = str.maketrans("", "", "\t\n\r")
+
+
+def _optional_value(value):
+    """The ``delete``/``has`` second argument; ``None`` when it was left out."""
+    if value is MISSING or value is pyv8.Undefined:
+        return None
+    return str(dom_string(value))
+
+
+def _js_call(fn, this, *args):
+    if hasattr(fn, "call"):
+        return fn.call(this, *args)
+    return fn(*args)
 
 
 @interface('URLSearchParams', None)
@@ -47,13 +61,10 @@ class URLSearchParams:
             MethodSpec(name="set", callback="fn_set", length=2),
             MethodSpec(name="sort", callback="fn_sort"),
             MethodSpec(name="toString", callback="fn_toString", side_effect=1),
-            # Chromium hands back an iterator per name; these return the array that
-            # ``Array.from``, spread and ``for..of`` all accept, which is what a page
-            # written against the iterators reads.
-            MethodSpec(name="keys", callback="fn_keys", side_effect=1),
-            MethodSpec(name="values", callback="fn_values", side_effect=1),
-            MethodSpec(name="entries", callback="fn_entries", side_effect=1),
+            MethodSpec(name="forEach", callback="fn_forEach", length=1, side_effect=1),
         ),
+        # keys/values/entries/@iterator come from the iteration source.
+        iterate="__v8_iterate__",
         constructor_behavior=1,
         length=1,
         has_constructor=1,
@@ -62,8 +73,11 @@ class URLSearchParams:
     def __init__(self, init='', *_extra, _url=None, **_):
         if init is pyv8.Undefined:
             init = ''
-        from urllib.parse import parse_qsl
         self._url = _url
+        if isinstance(init, URLSearchParams):
+            init._refresh()
+            self._items = list(init._items)
+            return
         iterable = isinstance(init, (list, tuple))
         iterator = MISSING
         if isinstance(init, pyv8.JSObject):
@@ -73,23 +87,32 @@ class URLSearchParams:
             def convert_pair(entry):
                 pair = sequence(entry, usv_string)
                 if len(pair) != 2:
-                    raise V8TypeError("Failed to construct 'URLSearchParams': Sequence initializer must only contain pair elements.")
+                    # Chromium words the constructor's failure twice over.
+                    raise V8TypeError(
+                        "Failed to construct 'URLSearchParams': Failed to construct "
+                        "'URLSearchParams': Sequence initializer must only contain "
+                        "pair elements")
                 return tuple(pair)
             self._items = sequence(init, convert_pair, iterator_method=iterator)
         elif isinstance(init, (dict, pyv8.JSObject)):
             self._items = [(usv_string(key), usv_string(value)) for key, value in dictionary(init).items()]
         else:
-            self._items = list(parse_qsl(usv_string(init).lstrip("?"), keep_blank_values=True))
+            self._items = self._parse(usv_string(init))
+
+    @staticmethod
+    def _parse(text):
+        """The entries *text* spells; only the first ``?`` is a delimiter."""
+        from urllib.parse import parse_qsl
+        query = text[1:] if text.startswith("?") else text
+        return list(parse_qsl(query, keep_blank_values=True))
 
     def _refresh(self):
         if self._url is not None:
-            from urllib.parse import parse_qsl
-            self._items = list(parse_qsl(urlsplit(self._url.href).query, keep_blank_values=True))
+            self._items = self._parse(urlsplit(self._url.href).query)
 
     def _commit(self):
         if self._url is not None:
-            from urllib.parse import urlencode
-            self._url._set_search_from_params(urlencode(self._items))
+            self._url._set_search_from_params(form_urlencoded(self._items))
 
     def fn_append(self, name=MISSING, value=MISSING, *_extra):
         if name is MISSING:
@@ -100,11 +123,18 @@ class URLSearchParams:
         value = dom_string(value)
         self._refresh(); self._items.append((str(name), str(value))); self._commit()
 
-    def fn_delete(self, name=MISSING, *_extra):
+    def fn_delete(self, name=MISSING, value=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('URLSearchParams', 'delete', 1, 0, constructor=False)
-        name = dom_string(name)
-        self._refresh(); name = str(name); self._items = [(k, v) for k, v in self._items if k != name]; self._commit()
+        name = str(dom_string(name))
+        value = _optional_value(value)
+        self._refresh()
+        if value is None:
+            self._items = [(key, item) for key, item in self._items if key != name]
+        else:
+            self._items = [(key, item) for key, item in self._items
+                           if key != name or item != value]
+        self._commit()
 
     def fn_get(self, name=MISSING, *_extra):
         if name is MISSING:
@@ -121,11 +151,14 @@ class URLSearchParams:
         name = dom_string(name)
         self._refresh(); name = str(name); return [value for key, value in self._items if key == name]
 
-    def fn_has(self, name=MISSING, *_extra):
+    def fn_has(self, name=MISSING, value=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('URLSearchParams', 'has', 1, 0, constructor=False)
-        name = dom_string(name)
-        self._refresh(); name = str(name); return any(key == name for key, _ in self._items)
+        name = str(dom_string(name))
+        value = _optional_value(value)
+        self._refresh()
+        return any(key == name and (value is None or item == value)
+                   for key, item in self._items)
 
     def fn_set(self, name=MISSING, value=MISSING, *_extra):
         if name is MISSING:
@@ -144,24 +177,38 @@ class URLSearchParams:
         self._items = result; self._commit()
 
     def fn_sort(self, *_extra):
-        self._refresh(); self._items.sort(key=lambda item: item[0]); self._commit()
+        # Names compare by UTF-16 code unit, not by Python's code point order.
+        self._refresh()
+        self._items.sort(key=lambda item: item[0].encode("utf-16-be"))
+        self._commit()
 
     def get_size(self):
         self._refresh(); return len(self._items)
 
-    def fn_keys(self, *_extra):
-        self._refresh(); return [key for key, _ in self._items]
-
-    def fn_values(self, *_extra):
-        self._refresh(); return [value for _, value in self._items]
-
-    def fn_entries(self, *_extra):
-        self._refresh(); return [(key, value) for key, value in self._items]
+    def __v8_iterate__(self, index):
+        """The pair at *index*, re-read so a view stays live; None ends the walk."""
+        self._refresh()
+        if index >= len(self._items):
+            return None
+        return self._items[index]
 
     def fn_toString(self, *_extra):
-        from urllib.parse import urlencode
         self._refresh()
-        return urlencode(self._items)
+        return form_urlencoded(self._items)
+
+    def fn_forEach(self, callback=MISSING, this_arg=pyv8.Undefined, *_extra):
+        if callback is MISSING:
+            raise missing_error('URLSearchParams', 'forEach', 1, 0, constructor=False)
+        callback = callback_value(callback)
+        # Indexed, not over a copy: a removal skips the entry that takes its place.
+        index = 0
+        while True:
+            self._refresh()
+            if index >= len(self._items):
+                return
+            name, value = self._items[index]
+            _js_call(callback, this_arg, value, name, self)
+            index += 1
 
 
 def _url_values(url):

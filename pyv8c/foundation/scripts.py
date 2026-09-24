@@ -95,7 +95,9 @@ class RealmScripts:
                 "V8ReferenceError": "ReferenceError", "V8SyntaxError": "SyntaxError",
                 "V8URIError": "URIError", "V8EvalError": "EvalError",
             }.get(type(error).__name__, "Error")
-        message = str(error)
+        # A DOMException carries its message beside its name; other errors' string
+        # form is that message.
+        message = error._message if hasattr(error, "_message") else str(error)
         # DOMException's name is stored on the Python instance, while native
         # Error subclasses use the constructor name.  Keep DOMException
         # construction separate so its name/code remain observable.

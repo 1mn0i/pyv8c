@@ -97,12 +97,20 @@ _DOM_CODES = {
 }
 
 
-class DOMException(RuntimeError):
+def _error_text(name, message):
+    """What ``Error.prototype.toString`` produces for the same pair."""
+    if not name:
+        return message
+    return f"{name}: {message}" if message else name
+
+
+class DOMException(Exception):
     """A browser-visible DOMException.
 
+    Extending ``Exception`` is what gives it ``Error.prototype`` in the realm.
     The legacy numeric ``code`` is derived from :data:`_DOM_CODES` rather than
-    duplicated as class constants; scripts read it through the ``code``
-    accessor registered in ``engine.builtin_errors``.
+    duplicated as class constants; scripts read it through the ``code`` accessor
+    registered in ``engine.builtin_errors``.
     """
 
     __v8_error__ = True
@@ -119,6 +127,9 @@ class DOMException(RuntimeError):
         self._name = name
         self._code = int(_DOM_CODES.get(self._name, 0) if code is None else code)
         Exception.__init__(self, self._message)
+
+    def __str__(self):
+        return _error_text(self._name, self._message)
 
     def get_name(self): return self._name
     def get_message(self): return self._message
@@ -139,6 +150,9 @@ class DOMError(Exception):
         self._message = message
         self._name = name
         Exception.__init__(self, self._message)
+
+    def __str__(self):
+        return _error_text(self._name, self._message)
 
     def get_name(self): return self._name
     def get_message(self): return self._message

@@ -690,6 +690,165 @@ CASES = (
                   [["a", "1"], ["b", "2"], ["a", "3"]], 3],
     ),
     Repro(
+        name="url_search_params_is_itself_iterable",
+        note="The object iterates its entries, a view is an iterator over the list "
+             "rather than a snapshot array, and Symbol.iterator is entries itself.",
+        script="""
+            (() => {
+              const params = new URLSearchParams('a=1&b=2');
+              const keys = params.keys();
+              return [Array.from(params), typeof keys.next, keys[Symbol.iterator]() === keys,
+                      URLSearchParams.prototype[Symbol.iterator] === URLSearchParams.prototype.entries,
+                      URLSearchParams.prototype[Symbol.iterator].name,
+                      Object.prototype.toString.call(params.entries())];
+            })()
+        """,
+        expected=[[["a", "1"], ["b", "2"]], "function", True, True, "entries",
+                  "[object URLSearchParams Iterator]"],
+    ),
+    Repro(
+        name="url_search_params_views_are_native",
+        note="The views come from the binding, like Chromium's, rather than from a "
+             "wrapper a host wrote in JavaScript.",
+        script="""
+            [String(URLSearchParams.prototype.entries), URLSearchParams.prototype.entries.name,
+             URLSearchParams.prototype.entries.length, URLSearchParams.prototype.keys.name,
+             URLSearchParams.prototype[Symbol.iterator] === URLSearchParams.prototype.entries,
+             Object.getOwnPropertyNames(Object.getPrototypeOf(new URLSearchParams('a=1').entries())).join()]
+        """,
+        expected=["function entries() { [native code] }", "entries", 0, "keys", True, "next"],
+    ),
+    Repro(
+        name="url_search_params_views_are_live",
+        note="A view reads the list when next() runs, so an entry added after the "
+             "view was made is still visited.",
+        script="""
+            (() => {
+              const params = new URLSearchParams('a=1');
+              const values = params.values();
+              params.append('b', '2');
+              return [values.next().value, values.next().value, values.next().done];
+            })()
+        """,
+        expected=["1", "2", True],
+    ),
+    Repro(
+        name="url_search_params_delete_takes_an_optional_value",
+        note="A second argument narrows the match to that value; undefined means it "
+             "was left out, while null is the string 'null'.",
+        script="""
+            (() => {
+              const params = new URLSearchParams('a=1&a=2&b=3');
+              params.delete('a', 1);
+              params.delete('b', undefined);
+              return [params.toString(), params.has('a', '1'), params.has('a', '2'),
+                      params.has('a', 2)];
+            })()
+        """,
+        expected=["a=2", False, True, True],
+    ),
+    Repro(
+        name="url_search_params_delete_removes_every_match",
+        note="The pairs it keeps are the ones that are not that name and value.",
+        script="""
+            (() => {
+              const params = new URLSearchParams('a=1&a=1&a=2&b=null');
+              params.delete('a', '1');
+              params.delete('b', null);
+              return params.toString();
+            })()
+        """,
+        expected="a=2",
+    ),
+    Repro(
+        name="url_search_params_serializes_the_way_the_url_does",
+        note="A space is '+', '*' and '-' are literal, and '~' is encoded.",
+        script="""
+            [new URLSearchParams('a=a b').toString(), new URLSearchParams('a=~*!').toString(),
+             new URLSearchParams('a=%').toString(), new URLSearchParams('a=1&a=2').toString()]
+        """,
+        expected=["a=a+b", "a=%7E*%21", "a=%25", "a=1&a=2"],
+    ),
+    Repro(
+        name="url_search_params_writes_the_url_spelling_back",
+        note="What a mutation writes into the URL is what toString() would spell, and "
+             "removing the last entry takes the '?' with it.",
+        script="""
+            (() => {
+              const url = new URL('https://example.test/p');
+              url.searchParams.set('a', 'x~y z');
+              const written = url.href;
+              url.searchParams.delete('a');
+              return [written, url.href, url.search];
+            })()
+        """,
+        expected=["https://example.test/p?a=x%7Ey+z", "https://example.test/p", ""],
+    ),
+    Repro(
+        name="url_search_params_copies_another_params",
+        note="The copy is its own list: later changes to the source leave it alone.",
+        script="""
+            (() => {
+              const source = new URLSearchParams('a=1');
+              const copy = new URLSearchParams(source);
+              source.append('b', '2');
+              return [copy.toString(), copy === source, new URLSearchParams(source).size];
+            })()
+        """,
+        expected=["a=1", False, 2],
+    ),
+    Repro(
+        name="url_search_params_sorts_by_code_unit",
+        note="Stable by name, comparing UTF-16 code units: an astral name sorts before "
+             "U+FFFF, which a code point order would reverse.",
+        script="""
+            (() => {
+              const params = new URLSearchParams('b=1&A=2&a=3&\\u00e9=4');
+              params.sort();
+              const astral = new URLSearchParams();
+              astral.append('\\u{1f600}', 'x');
+              astral.append('\\uffff', 'y');
+              astral.sort();
+              return [params.toString(), Array.from(astral.keys()).map(
+                  (name) => name.codePointAt(0).toString(16)).join(',')];
+            })()
+        """,
+        expected=["A=2&a=3&b=1&%C3%A9=4", "1f600,ffff"],
+    ),
+    Repro(
+        name="url_search_params_forEach_arguments",
+        note="The callback gets the value first, then the name, then the params, and "
+             "runs with the given this.",
+        script="""
+            (() => {
+              const params = new URLSearchParams('a=1&b=2');
+              const seen = [];
+              const result = params.forEach(function (value, name, source) {
+                seen.push([value, name, source === params, this === undefined ? 'none' : this.tag,
+                           arguments.length]);
+              }, {tag: 'tagged'});
+              return [seen, String(result), URLSearchParams.prototype.forEach.length];
+            })()
+        """,
+        expected=[[["1", "a", True, "tagged", 3], ["2", "b", True, "tagged", 3]], "undefined", 1],
+    ),
+    Repro(
+        name="url_search_params_forEach_walks_the_list_as_it_changes",
+        note="Removing an entry during the walk drops it from the rest of the walk.",
+        script="""
+            (() => {
+              const params = new URLSearchParams('a=1&b=2');
+              const seen = [];
+              params.forEach((value, name) => {
+                seen.push(name);
+                if (name === 'a') params.delete('b');
+              });
+              return [seen, params.toString()];
+            })()
+        """,
+        expected=[["a"], "a=1"],
+    ),
+    Repro(
         name="url_relative_resolution",
         script="new URL('../x?q=1', 'https://example.test/dir/page').href",
         expected="https://example.test/x?q=1",
@@ -846,15 +1005,6 @@ CASES = (
         script="[document.documentElement.tagName, document.body !== null,"
                " document.head !== null]",
         expected=["HTML", True, True],
-    ),
-    Repro(
-        name="url_search_params_is_itself_iterable",
-        note="Excluded: the views iterate, but the object does not, so Array.from of "
-             "the params themselves finds nothing.",
-        script="Array.from(new URLSearchParams('a=1&b=2'))",
-        expected=[],
-        known_divergence="URLSearchParams has no @@iterator of its own; Chrome yields"
-        " [['a', '1'], ['b', '2']]",
     ),
     # -- fetch types -----------------------------------------------------------
     Repro(
@@ -1447,6 +1597,49 @@ CASES = (
         expected=["CSS1Compat", ""],
     ),
     Repro(
+        name="the_navigator_answers_by_secure_context",
+        note="An insecure origin keeps permissions and mediaSession and withholds the rest.",
+        html=EMPTY_PAGE,
+        script="""['mediaDevices', 'permissions', 'mediaSession', 'serviceWorker', 'credentials',
+                   'bluetooth', 'storage'].map((name) => typeof navigator[name])
+                   .concat([navigator.javaEnabled()])""",
+        expected=["undefined", "object", "object", "undefined", "undefined", "undefined",
+                  "undefined", False],
+    ),
+    Repro(
+        name="a_document_location_is_the_windows_location",
+        note="One Location per window, from an own accessor, not the prototype.",
+        html=page(body=""),
+        script="""(() => {
+            const own = Object.getOwnPropertyDescriptor(document, 'location');
+            return [document.location === window.location, document.location.href,
+                    document.location.pathname, typeof document.location,
+                    'location' in document,
+                    Object.getOwnPropertyDescriptor(Document.prototype, 'location') === undefined,
+                    own.enumerable, own.configurable,
+                    typeof own.get, typeof own.set];
+        })()""",
+        expected=[True, URL, "/dir/page", "object", True, True,
+                  True, False, "function", "function"],
+    ),
+    Repro(
+        name="a_document_with_no_browsing_context_has_neither_location_nor_view",
+        note="A document a script built has no window, so both read null.",
+        html=page(body=""),
+        script="""(() => {
+            const made = document.implementation.createHTMLDocument('t');
+            return [String(made.location), String(made.defaultView)];
+        })()""",
+        expected=["null", "null"],
+    ),
+    Repro(
+        name="assigning_location_on_that_document_throws",
+        note="The assignment has no window to forward to.",
+        html=page(body=""),
+        script="(() => { document.implementation.createHTMLDocument('t').location = '/x'; })()",
+        expect_error="TypeError",
+    ),
+    Repro(
         name="a_sandbox_blocks_scripts_it_does_not_grant",
         note="Without allow-scripts the frame's own script never runs, while the "
              "element and its text stay in the document.",
@@ -1928,6 +2121,31 @@ CASES = (
         html=EMPTY_PAGE,
         script="btoa('\\u2028')",
         expect_error="InvalidCharacterError",
+    ),
+    Repro(
+        name="dom_exception_stringifies_like_an_error",
+        note="It extends Error, so toString and toLocaleString are Error's own, over "
+             "its name and message.",
+        script="""
+            (() => {
+              const failure = new DOMException('Service workers are not implemented here.',
+                                               'NotSupportedError');
+              return [
+                failure.toLocaleString(), failure.toString(), String(failure), `${failure}`,
+                Object.getPrototypeOf(DOMException.prototype) === Error.prototype,
+                failure instanceof Error,
+                DOMException.prototype.toLocaleString === Error.prototype.toLocaleString,
+                new DOMException().toString(),
+                new DOMException('m', '').toString(),
+                new DOMException('m').toLocaleString()
+              ];
+            })()
+        """,
+        expected=["NotSupportedError: Service workers are not implemented here.",
+                  "NotSupportedError: Service workers are not implemented here.",
+                  "NotSupportedError: Service workers are not implemented here.",
+                  "NotSupportedError: Service workers are not implemented here.",
+                  True, True, True, "Error", "m", "Error: m"],
     ),
     Repro(
         name="a_latin1_string_survives_a_round_trip",
