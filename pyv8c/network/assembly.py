@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from .backend import NetworkBackend
-from .registry import create_transport
+from .proxy import PROXY_OPTION, RAW_OPTION_KEYS
+from .registry import accepts_proxy, create_transport
 
 #: The method that makes an object an engine for each role.
 _SERVES = {"http": "request_sync", "ws": "websocket"}
@@ -13,12 +14,53 @@ def _options(browser, role):
     return dict(getattr(browser, f"{role}_options")) or None
 
 
+def _configured_raw_proxy(options):
+    """The engine's own proxy keys already in *options*, if any.
+
+    Those are how a proxy was configured before ``proxy=`` existed, and the two
+    ways of saying it must not be mixed: whichever lost would be invisible.
+    """
+    return sorted(key for key in RAW_OPTION_KEYS if key in (options or {}))
+
+
+def _with_proxy(role, name, options, proxy):
+    """The *role* engine's options with the context's proxy merged in.
+
+    The engine is asked first, and an engine that does not carry traffic through
+    a proxy is handed nothing: a key it never declared would only be refused,
+    and there is no environment proxy for it to pick up unasked either.
+
+    For one that does, the key is always set -- ``""`` when nothing was
+    configured, which is what pins a direct connection.  Leaving it out is not
+    the same thing: both engines would read a proxy out of the environment.
+    """
+    configured = _configured_raw_proxy(options)
+    if configured and proxy is not None:
+        listed = ", ".join(repr(key) for key in configured)
+        raise TypeError(
+            f"proxy= and {role}_options[{listed}] were both given for {role} engine "
+            f"{name!r}; keep one -- the other would be overwritten"
+        )
+    if not accepts_proxy(name, role):
+        if proxy is not None:
+            raise TypeError(
+                f"{role} engine {name!r} cannot be sent through a proxy; configure it "
+                f"with {role}_options instead, or name an engine that declares one"
+            )
+        return options
+    if configured:
+        # A proxy set through the engine's own keys is that engine's business,
+        # and it is the one that knows how to honor it.
+        return options
+    return {**(options or {}), PROXY_OPTION: "" if proxy is None else proxy}
+
+
 def _serves(candidate, role):
     """Whether *candidate* can perform this role."""
     return hasattr(candidate, _SERVES[role])
 
 
-def _engine(browser, role, value):
+def _engine(browser, role, value, proxy):
     """One role's engine: a registered name, a ready object, or a factory.
 
     A name is built from the registry with that role's options; a factory is
@@ -28,7 +70,13 @@ def _engine(browser, role, value):
     if value is None:
         return None
     if isinstance(value, str):
-        return create_transport(value, kind=role, options=_options(browser, role), strict=True)
+        options = _with_proxy(role, value, _options(browser, role), proxy)
+        return create_transport(value, kind=role, options=options or None, strict=True)
+    if proxy is not None:
+        raise TypeError(
+            f"proxy cannot configure a ready {role}_engine; name a registered engine "
+            "so the setting has somewhere to go"
+        )
     engine = value() if callable(value) and not _serves(value, role) else value
     if not _serves(engine, role):
         raise TypeError(
@@ -75,18 +123,30 @@ def _refuse_shared_options(browser, value):
         )
 
 
-def assemble_backend(browser):
+def _refuse_proxy_without_engine(proxy):
+    """A configured proxy with nothing to carry it is a mistake, not a no-op."""
+    if proxy is not None:
+        raise TypeError(
+            "proxy was given but no network engine is configured; "
+            "set real_network=True, http_engine or ws_engine"
+        )
+
+
+def assemble_backend(browser, proxy=None):
     """Assemble one context's engines from what the Browser was built with.
 
-    ``real_network=False`` assembles neither role, and options are checked against
-    the engine that will read them rather than ignored.
+    *proxy* is the context's resolved proxy value (see :mod:`network.proxy`),
+    merged into each role's options once that engine has been asked to accept
+    it.  ``real_network=False`` assembles neither role, and options are checked
+    against the engine that will read them rather than ignored.
     """
     if not browser.real_network:
         _refuse_ready_engines(browser)
+        _refuse_proxy_without_engine(proxy)
         _refuse_unconsumed_options(browser)
         return None
 
-    http = _engine(browser, "http", browser.http_engine)
+    http = _engine(browser, "http", browser.http_engine, proxy)
     ws_value = browser.ws_engine
     if ws_value is None:
         ws = None
@@ -97,9 +157,10 @@ def assemble_backend(browser):
         _refuse_shared_options(browser, ws_value)
         ws = http
     else:
-        ws = _engine(browser, "ws", ws_value)
+        ws = _engine(browser, "ws", ws_value, proxy)
 
     if http is None and ws is None:
+        _refuse_proxy_without_engine(proxy)
         _refuse_unconsumed_options(browser)
         return None
     return NetworkBackend(http, ws)

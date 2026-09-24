@@ -216,6 +216,9 @@ _INPUT_TYPES = frozenset((
     "week", "time", "datetime-local", "number", "range", "color", "checkbox", "radio",
     "file", "submit", "image", "reset", "button",
 ))
+#: Types whose click runs an activation behavior: the checkable ones toggle
+#: their checkedness, the two submittable ones submit, and ``reset`` resets.
+_ACTIVATION_INPUT_TYPES = frozenset(("checkbox", "radio", "submit", "image", "reset"))
 #: Types whose ``value`` the user edits as text, so the selection APIs apply.
 _SELECTABLE_INPUT_TYPES = frozenset(("text", "search", "tel", "url", "password"))
 _DATE_INPUT_TYPES = frozenset(("date", "month", "week", "time", "datetime-local"))
@@ -378,7 +381,6 @@ class HTMLInputElement(HTMLElement):
             MethodSpec(name="showPicker", callback="fn_showPicker"),
             MethodSpec(name="stepDown", callback="fn_stepDown"),
             MethodSpec(name="stepUp", callback="fn_stepUp"),
-            MethodSpec(name="click", callback="fn_click"),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -882,13 +884,32 @@ class HTMLInputElement(HTMLElement):
 
     # -- activation --------------------------------------------------------
 
-    def fn_click(self, *_extra):
-        """The ``click()`` method: checkbox/radio flip their checkedness and
-        fire ``input`` and ``change``, like a user activation in Chrome."""
+    def _activatable(self):
+        """The input types a click does something to besides firing the event."""
+        return self.get_type() in _ACTIVATION_INPUT_TYPES
+
+    def _run_activation(self, event=None):
+        """A click toggles a checkable input, or acts on the form it belongs to.
+
+        The ``input``/``change`` pair a toggled checkbox or radio fires is
+        trusted, like the one Chromium fires -- it follows a user activation
+        whichever way the click was delivered.
+        """
         kind = self.get_type()
+        trusted = bool(getattr(event, "_trusted", False))
         if kind in ("checkbox", "radio"):
             self._dirty_checked = True
             self._checked = not self._checked if kind == "checkbox" else True
             from .events import Event
             for event_type, bubbles in (("input", False), ("change", True)):
-                self.fn_dispatchEvent(Event(event_type, {"bubbles": bubbles, "cancelable": False}))
+                event = Event(event_type, {"bubbles": bubbles, "cancelable": False})
+                event._trusted = True
+                self.fn_dispatchEvent(event)
+            return
+        form = self._form_owner()
+        if form is None:
+            return
+        if kind in ("submit", "image"):
+            form._submit(self, user_activated=trusted)
+        elif kind == "reset":
+            form.fn_reset()

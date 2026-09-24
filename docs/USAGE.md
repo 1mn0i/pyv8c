@@ -38,10 +38,18 @@ Context 关闭会关闭其页面、DevTools 和网络客户端，并清理 Blob 
 | `page.dispatch_event(type, *, target="window", selector=None, event_class=None, init=None)` | 宿主侧派发 trusted 事件；返回是否未被取消，详见下节 |
 | `page.query_selector(selector)` | 返回宿主侧 DOM 节点句柄，未命中返回 None |
 | `page.set_visibility(hidden)` | 切换文档可见性并派发 visibilitychange/ freeze / resume |
+| `page.mouse.move(x, y, steps=1)` | 移动指针并派发整串边界/移动事件，见下节 |
+| `page.mouse.down(*, button="left", click_count=None)` / `page.mouse.up(...)` | 按下 / 抬起；一次按下抬起在最近公共祖先上产生 click |
+| `page.mouse.click(x=None, y=None, *, button="left", click_count=None)` | 给了坐标先移动，再按下抬起 |
+| `page.mouse.dblclick(x=None, y=None, *, button="left")` | 两次计数连续的点击，第二次之后追加 dblclick |
+| `page.mouse.move_to_element(element, *, force=False)` / `click_element(...)` | 按元素（而非坐标）移动 / 点击，中心被遮挡时报错 |
+| `page.click(selector, *, button="left", click_count=1, force=False)` | 移到元素中心点击，含激活行为 |
+| `page.dblclick(selector, *, button="left", force=False)` | 同上，双击 |
+| `page.hover(selector, *, force=False)` | 移到元素中心，元素保持 hover |
 | `page.trace = True/False` | 切换该页面观察状态，需要创建时配置观察能力 |
-| `page.fetch(url, *, method="GET", headers=None, body=None, credentials=None, timeout=30)` | 用页面自己的 `fetch` 发请求并等它落定；返回快照对象（见下节） |
-| `page.fetch_async(...)` | 同上，返回 `concurrent.futures.Future`，不阻塞页面 |
-| `page.xhr(url, ...)` / `page.xhr_async(...)` | 用页面自己的 `XMLHttpRequest`，同样分别返回快照对象 / `Future` |
+| `page.net.fetch(url, *, method="GET", headers=None, body=None, credentials=None, timeout=30)` | 用页面自己的 `fetch` 发请求并等它落定；返回快照对象（见下节） |
+| `page.net.fetch_async(...)` | 同上，返回 `concurrent.futures.Future`，不阻塞页面 |
+| `page.net.xhr(url, ...)` / `page.net.xhr_async(...)` | 用页面自己的 `XMLHttpRequest`，同样分别返回快照对象 / `Future` |
 | `page.close()` | 关闭页面及其拥有的资源 |
 
 `goto.wait_until` 支持 `commit`、`domcontentloaded`、`load`，以及内部接受的 None；不支持 networkidle。
@@ -93,6 +101,58 @@ finally:
 
 边界：`PromiseRejectionEvent`、`StorageEvent`、`AnimationEvent`/`TransitionEvent` 目前只提供构造与显式派发，不会自动触发（分别需要原生 Promise 拒绝回调、跨窗口 storage 广播与 CSS 动画引擎）；元素 `abort` 仅在显式取消路径可达。页面 `close()` 或导航重建文档时不会补发被取消资源的事件。
 
+## 鼠标输入
+
+三条路各管一段：`page.dispatch_event` 只发**一个** trusted 事件（事件类由你指定，不模拟输入）；`page.mouse` 是一台状态机，把位置、按键掩码与点击计数摊开；`page.click`/`hover`/`dblclick` 是选择器糖，负责把元素换算成坐标。
+
+```python
+from pyv8c import Browser
+
+browser = Browser(stub_logging="off")
+try:
+    page = browser.new_context().new_page()
+    page.set_content('<a id=next href="#next">next</a>', url="https://example.test/")
+    page.hover("#next")                     # 移到中心并保持 hover
+    page.mouse.move(10, 10)                 # 也可以直接给坐标
+    page.mouse.click(None, None, button="right")
+    page.click("#next")                     # 移动 + 按下 + 抬起，含激活行为
+    assert page.url == "https://example.test/#next"
+finally:
+    browser.close()
+```
+
+序列与 Chrome 153 实测一致（`tests/repros/test_mouse_events_vs_chrome.py` 把同一批场景在两个浏览器里各跑一遍逐项比对）：
+
+| 动作 | 事件 |
+| --- | --- |
+| 移动到新元素 | `pointerout` → `pointerover` → `mouseout` → `mouseover` → `pointermove` → `mousemove` |
+| 一次点击 | `pointerdown` → `mousedown` → `focus` → `focusin` → `pointerup` → `mouseup` → `click` |
+| 连续第二次点击 | 上述序列的 `mousedown`/`mouseup`/`click` 报 `detail=2`，其后追加 `dblclick` |
+| 右键 | `… → mouseup` → `auxclick` → `contextmenu`（左键才是 `click`） |
+| `mousedown` 被 `preventDefault` | 只少掉聚焦，`click` 与激活行为照旧 |
+| 目标被禁用（`disabled`） | 只剩 pointer 事件，无 `mousedown`/`mouseup`/`click`、不聚焦 |
+
+`pointerenter`/`pointerleave`/`mouseenter`/`mouseleave` 不冒泡，传播路径只有元素本身（祖先的捕获监听看不到它们，与 Chrome 相同）。`click` 的目标是**按下与抬起的最近公共祖先**，所以在同一元素上按下抬起会落在它自己，跨元素拖动则落在共同祖先上。
+
+`detail` 由计数决定：同元素、0.5 秒内、4 像素内的下一次点击计为同一次连续点击；`click_count=` 可显式指定，`mousedown`/`mouseup`/`click` 共用同一个计数。
+
+激活行为在 `click` 未被取消时执行：`<a href>` 走 `location`（因此 `#fragment` 是同文档导航）、checkbox/radio 翻转并触发 trusted 的 `input`/`change`、`<label>` 先聚焦再点它的控件、submit/reset 按钮按 `requestSubmit`/`reset` 走（含校验与 `submit` 事件，被取消则不提交；提交本身发出什么见下一段）。`<a download>` 不导航，`target="_blank"` 不新开页面。
+
+`element.click()` 走同一套：派发一个 `isTrusted=false`、`detail=0`、坐标为原点的 `click`，再执行激活行为。所以 `a.click()` 会导航、`checkbox.click()` 会翻转，而被禁用的控件什么都不派发。`<label>` 的转发分两种：真实鼠标点击转发的是**它收到的那次按下**（保留坐标、计数与 trust），脚本 `label.click()` 转发的则是合成点击。
+
+表单提交成的是 HTML 说的那个请求，而不是对 action 的一次普通导航：条目是控件的**树序**，且只含成功的控件——没有 `name` 属性、被禁用（含 `fieldset` 祖先）、未选中的 checkbox/radio、`reset` 按钮，以及**没有被按下**的提交按钮都不参与；`<select multiple>` 每个选中项一条、`<textarea>` 的换行在提交时归一为 CRLF。GET 把 action 的查询串**替换**成编码后的条目（一个条目都没有时也留一个孤立的 `?`），POST 保留 action 的查询串并把它放进 body；编码按 `enctype` 分 `application/x-www-form-urlencoded`（不编码的只有字母数字与 `*-._`，空格转 `+`，其余按 UTF-8 百分号编码）、`multipart/form-data`（`----WebKitFormBoundary` 加 16 位随机字符）与 `text/plain`（一条一行 CRLF）。请求头随之变化：`Content-Type`、非安全方法总带的 `Origin`、`Cache-Control: max-age=0`，以及**用户手势**带来的 `Sec-Fetch-User: ?1`——`page.click` 是手势，页面自己的 `form.submit()` 与 `button.click()` 不是，但后者照样把被点按钮的条目算进 body。以上取值与顺序逐项对照过本机 Chrome 153（`tests/repros/test_form_submission_vs_chrome.py`）。
+
+焦点模型只做到够用的程度：`document.activeElement` 默认是 `body`，可聚焦的是表单控件（未禁用、非 `type=hidden`）、带 `href` 的 `a`/`area`、`iframe`，以及带 `tabindex` 的任何元素；`HTMLElement.focus()` 对别的元素无效（`div` 不会因此拿到焦点）。点击时聚焦最近的可聚焦祖先，找不到就清空焦点（原本聚焦的输入框会收到 `blur`/`focusout`）。没有 tab 顺序、`:focus` 样式与 shadow DOM。
+
+命中测试由 `document.elementFromPoint`/`elementsFromPoint` 提供（此前是 baseline stub，调用返回 `undefined`）：`display:none` 整棵子树不参与，`visibility:hidden` 与 `pointer-events:none` 只跳过元素自身、子元素把任一属性改回来仍可命中，视口外的点返回 `null`。
+
+边界与取舍：
+
+- 几何只有 `dom.layout` 一套，它不实现定位（`position:absolute/fixed` 的元素按流式位置参与命中）、不实现 UA 样式表（表单控件的 border/padding/margin 不在盒子里）与滚动，且内联元素的宽度取容器宽。这些元素的坐标因此与 Chrome 有差，`page.click` 对它们可能需要 `force=True`；差异本身由语料库用例记录（`a_form_control_box_is_its_attribute_size`）。
+- `page.click`/`hover`/`dblclick` 不等待：没有渲染循环，也就没有“元素稳定”可等。选择器未命中抛 `NotFoundError`，元素无盒子（未渲染）抛 `InvalidStateError`；中心被别的元素占住时默认拒绝并说明是谁，`force=True` 表示“照点”，此时事件落在遮挡者身上。提交请求同样是排队发出的，`page.click` 不等待它：要看结果用 `page.run_until_idle()` 或等 `page.url` 变化。
+- 表单提交还不实现提交者对 action/enctype/method 的覆盖（`formaction`/`formenctype`/`formmethod`/`formnovalidate`，`<button>` 上也还没有这些属性）、`method=dialog`（没有对话框 UI，视为不提交）、`<input type=file>`（没有文件选择器，永远不产生条目）与 `input type=image` 的 x/y 坐标。
+- 没有滚轮、键盘、触摸与拖放 API；`page.mouse` 不实现指针捕获与 `pointercancel`。
+
 ## 文档写入
 
 解析期调用 `document.write`（或 `writeln`）时，文本按**插入点**进入解析器：元素落在写脚本所在的位置，写入的 `<script>`
@@ -110,6 +170,7 @@ finally:
 | real_network | True | 是否装配 http_engine / ws_engine 指定的引擎；False 表示这个 Browser 不联网 |
 | http_engine / ws_engine | curl_cffi / websockets | 各给一个引擎：已注册的名字、现成对象（HTTP 要有 request_sync，socket 要有 websocket）或工厂（每个 Context 调一次）；None 表示该角色不装配 |
 | http_options / ws_options | None / None | 分别交给两个引擎的参数；引擎不认识的键在创建 Context 时报错 |
+| proxy | None | 出口代理 `http://[user:pass@]host:port`；None 与 `""` 都是直连（不看环境变量），可被 `new_context(proxy=...)` 覆盖，详见「网络代理」 |
 | resource_interceptor | None | 主动跳过/替换请求，区别于被动 trace |
 | cache / cache_dir | True / None | 允许缓存；只有显式目录才持久化资源响应 |
 | environment | None | 扁平点号键字典或不可变 BrowserEnvironment |
@@ -215,12 +276,52 @@ page.evaluate("chrome.csi()")
 
 ## 网络与资源
 
-`page.fetch` / `page.xhr` 在页面里调用 JS 的 `fetch` / `XMLHttpRequest`：命中**页面重写后**的实现（埋点、测试库常见），请求走页面的资源栈（CORS、拦截器、缓存），返回宿主侧快照对象（`status`、`status_text`、`url`、`headers`、`body`，以及 `.ok`、`.text`、`.json()`）；XHR 那份的 `headers` 为空，因为该实现没有 `getAllResponseHeaders`。
-`page.net.*` 相反：直接用 context 的传输，不经 JS、不做 CORS。需要哪种语义就选哪条路。
+`page.net` 是页面的网络入口，两种语义各一条路。`page.net.fetch` / `page.net.xhr` 在页面里调用 JS 的 `fetch` / `XMLHttpRequest`：命中**页面重写后**的实现（埋点、测试库常见），请求走页面的资源栈（CORS、拦截器、缓存），返回宿主侧快照对象（`status`、`status_text`、`url`、`headers`、`body`，以及 `.ok`、`.text`、`.json()`）；XHR 那份的 `headers` 为空，因为该实现没有 `getAllResponseHeaders`。
+`page.net.get` / `page.net.post` 等相反：直接用 context 的传输，不经 JS、不做 CORS。需要哪种语义就选哪条路，但两者发出的头**一样**——都是本机 Chrome 会发的那一套（`Accept`、`Sec-Fetch-*`、`sec-ch-ua*`、`Referer`、`Origin` 等，取值来自 environment），见 [请求头对齐](request-headers.md)。
 默认联网：`Browser()` 为每个 context 装配 curl_cffi（HTTP）与 websockets（WebSocket），两者来自 `[network]` extra，缺失时在创建 Context 时报错并指明要装什么。
 离线测试用 `Browser(real_network=False)` 配 resource_loader，或直接用 set_content 提交本地 HTML。
 http_engine / ws_engine 可改选其它已注册引擎（如 `"cronet"`，需装 `[cronet]` extra），也可直接给现成引擎对象或工厂，或传 None 关掉某个角色；http_options / ws_options 只对"按名字"的引擎生效，给现成对象时传会被拒绝。
 选引擎、参数含义、校验规则和自定义引擎见 [网络引擎与参数](network-engines.md)；完整 loader 契约、响应格式、拦截和缓存风险见 [资源加载与拦截](resource-interception.md)。
+
+## 网络代理
+
+`Browser(proxy=...)` 是这个 Browser 所有 Context 的默认出口，`browser.new_context(proxy=...)` 可以按 Context 覆盖，所以同一个 Browser 里可以同时存在走代理与直连的会话（Cookie、缓存、引擎本来就各自独立）。
+
+```python
+from pyv8c import Browser
+
+browser = Browser(stub_logging="off", proxy="http://user:pass@127.0.0.1:3128")
+try:
+    through = browser.new_context()                                # 走 Browser 的代理
+    direct = browser.new_context(proxy="")                         # 显式直连
+    another = browser.new_context(proxy="http://127.0.0.1:8080")   # 换一个出口
+    print(through.proxy, direct.proxy, another.proxy)
+finally:
+    browser.close()
+```
+
+取值的三态：
+
+| 值 | 含义 |
+| --- | --- |
+| 省略 / None | Browser 层：直连；Context 层：继承 Browser |
+| `""` | 显式直连 |
+| `http://[user:pass@]host:port`（也接受 `https://`） | 经该代理；URL 里的凭据会作为 `Proxy-Authorization` 发给代理 |
+
+覆盖的流量：导航主文档、子资源、页面内 `fetch`/`XMLHttpRequest`（走资源栈）、`page.net` 的宿主请求，以及 `ws://`/`wss://` 握手；https 与 wss 经 `CONNECT` 隧道。`resource_loader`/`resource_interceptor` 直接应答的加载在传输层之前返回，因此不经过代理。
+
+**未配置代理时不读环境变量**：按直连处理，即使进程里有 `HTTP_PROXY`/`ALL_PROXY` —— libcurl 与 websockets 客户端各自都会去读它们，pyv8c 会明确告诉两个引擎不要读。也不实现 bypass/no_proxy 列表：需要直连的 host 请在 `resource_interceptor` 里自行处理。
+
+配置错误在最早的位置报出：
+
+| 情况 | 行为 |
+| --- | --- |
+| 非 http/https（如 `socks5://`）、缺 scheme、缺主机、端口不可解析 | 构造 Browser 或 `new_context(proxy=...)` 时 `ValueError`（非字符串为 `TypeError`） |
+| `real_network=False` 却给了代理 | 创建 Context 时 `TypeError`：没有引擎能承载它 |
+| 引擎不声明支持代理（如 cronet） | 创建 Context 时 `TypeError`，指出该引擎不能被代理 |
+| 同时给了 `proxy=` 与该角色自己的代理键（`proxy`/`proxies`/`proxy_auth`） | 创建 Context 时 `TypeError`，指出该保留哪一个 |
+
+不做的部分：SOCKS4/5、PAC、页级覆盖、代理健康检查。自定义引擎要用代理，需在注册时声明 `proxy=True`（见 [网络引擎与参数](network-engines.md)）。
 
 ## DevTools
 

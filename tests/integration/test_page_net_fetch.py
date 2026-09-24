@@ -1,9 +1,9 @@
-"""``page.fetch``/``page.xhr``: host calls that run the page's own JS APIs.
+"""``page.net.fetch``/``page.net.xhr``: host calls that run the page's own JS APIs.
 
 What these methods are for is the implementation the *page* has: a page that
 replaced ``fetch`` or ``XMLHttpRequest`` -- instrumentation, a test harness -- is
 the one that answers, and the request carries the page's rules (CORS, the
-interceptor, the cache) instead of the host transport ``page.net`` uses.
+interceptor, the cache) instead of the transport the ``get``/``post`` helpers run on.
 """
 import json
 
@@ -42,7 +42,7 @@ def page():
 
 def test_fetch_reads_the_response_through_the_page_stack(page):
     page.set_content(DOCUMENT, url="http://example.test/")
-    answer = page.fetch("/echo")
+    answer = page.net.fetch("/echo")
 
     assert (answer.ok, answer.status, answer.url) == (True, 200, "http://example.test/echo")
     assert answer.headers["x-demo"] == "1"
@@ -52,7 +52,7 @@ def test_fetch_reads_the_response_through_the_page_stack(page):
 
 def test_fetch_posts_a_body_and_headers(page):
     page.set_content(DOCUMENT, url="http://example.test/")
-    answer = page.fetch("/echo", method="POST", body="payload", headers={"X-Test": "1"})
+    answer = page.net.fetch("/echo", method="POST", body="payload", headers={"X-Test": "1"})
 
     seen = answer.json()
     assert seen["method"] == "POST"
@@ -74,7 +74,7 @@ def test_fetch_uses_a_replaced_fetch(page):
       };
     """)
 
-    answer = page.fetch("/hooked", method="PUT")
+    answer = page.net.fetch("/hooked", method="PUT")
 
     assert page.evaluate("seen") == [["/hooked", "PUT"]]
     assert (answer.status, answer.status_text, answer.url) == (299, "Replaced", "http://example.test/ovr")
@@ -83,7 +83,7 @@ def test_fetch_uses_a_replaced_fetch(page):
 
 def test_fetch_async_settles_on_the_realm_queue(page):
     page.set_content(DOCUMENT, url="http://example.test/")
-    future = page.fetch_async("/echo")
+    future = page.net.fetch_async("/echo")
 
     answer = future.result(timeout=10)
     assert answer.json()["url"] == "http://example.test/echo"
@@ -94,9 +94,9 @@ def test_a_rejected_fetch_raises_the_pages_error(page):
     page.evaluate("globalThis.fetch = () => Promise.reject(new TypeError('nope'));")
 
     with pytest.raises(DOMException, match="nope"):
-        page.fetch("/echo")
+        page.net.fetch("/echo")
     with pytest.raises(DOMException, match="TypeError"):
-        page.fetch_async("/echo").result(timeout=10)
+        page.net.fetch_async("/echo").result(timeout=10)
 
 
 def test_a_fetch_that_never_settles_times_out(page):
@@ -104,12 +104,12 @@ def test_a_fetch_that_never_settles_times_out(page):
     page.evaluate("globalThis.fetch = () => new Promise(() => {});")
 
     with pytest.raises(TimeoutError, match="did not settle"):
-        page.fetch("/forever", timeout=0.2)
+        page.net.fetch("/forever", timeout=0.2)
 
 
 def test_xhr_reads_the_response_text(page):
     page.set_content(DOCUMENT, url="http://example.test/")
-    answer = page.xhr("/echo")
+    answer = page.net.xhr("/echo")
 
     assert (answer.ok, answer.status) == (True, 200)
     assert answer.json()["url"] == "http://example.test/echo"
@@ -124,14 +124,14 @@ def test_xhr_uses_a_replaced_xmlhttprequest(page):
       globalThis.XMLHttpRequest = function () { made += 1; return new Original(); };
     """)
 
-    page.xhr("/echo")
+    page.net.xhr("/echo")
 
     assert page.evaluate("made") == 1
 
 
 def test_xhr_async_settles_on_the_realm_queue(page):
     page.set_content(DOCUMENT, url="http://example.test/")
-    future = page.xhr_async("/echo")
+    future = page.net.xhr_async("/echo")
 
     assert future.result(timeout=10).json()["url"] == "http://example.test/echo"
 
@@ -141,9 +141,9 @@ def test_a_closed_page_refuses_both(page):
     page.close()
 
     with pytest.raises(RuntimeError, match="closed"):
-        page.fetch("/echo")
+        page.net.fetch("/echo")
     with pytest.raises(RuntimeError, match="closed"):
-        page.xhr("/echo")
+        page.net.xhr("/echo")
     # The async form hands the closed realm back through its future.
     with pytest.raises(RuntimeError, match="closed"):
-        page.fetch_async("/echo").result(timeout=1)
+        page.net.fetch_async("/echo").result(timeout=1)

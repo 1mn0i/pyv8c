@@ -4,7 +4,7 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
-from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error
+from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error, number
 from ...foundation.errors import InvalidCharacterError, V8TypeError, dom_exception
 from .character_data import Comment, DocumentType, Text
 from .collections import HTMLAllCollection, HTMLCollection, NodeList
@@ -51,6 +51,7 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="title", getter="get_title", setter="set_title"),
             AttributeSpec(name="implementation", getter="get_implementation", side_effect=1),
             AttributeSpec(name="currentScript", getter="get_currentScript", side_effect=1),
+            AttributeSpec(name="activeElement", getter="get_activeElement", side_effect=1),
         ),
         methods=(
             MethodSpec(name="createElement", callback="fn_createElement", length=1),
@@ -70,11 +71,17 @@ class Document(_ParentNodeMixin, Node):
             MethodSpec(name="querySelectorAll", callback="fn_querySelectorAll", length=1, side_effect=1),
             MethodSpec(name="write", callback="fn_write"),
             MethodSpec(name="writeln", callback="fn_writeln"),
+            MethodSpec(name="hasFocus", callback="fn_hasFocus"),
+            MethodSpec(name="elementFromPoint", callback="fn_elementFromPoint", length=2, side_effect=1),
+            MethodSpec(name="elementsFromPoint", callback="fn_elementsFromPoint", length=2, side_effect=1),
         ),
     )
     def __init__(self, services=None, url="about:blank", ready_state="complete", **kw):
         super().__init__(services=services, node_type=Node.DOCUMENT_NODE, node_name="#document", **kw)
         self.url = url; self._parser = None; self.ready_state = str(ready_state); self.hidden = False
+        #: The element focus is on, maintained by :mod:`dom.focus`; ``None``
+        #: means nothing was focused, which ``activeElement`` reports as the body.
+        self._focused_element = None
         #: The script element whose code is running, maintained by the runner.
         self.current_script = None
         #: Bumped by the DOM whenever a ``<style>`` is added, removed or edited;
@@ -115,6 +122,37 @@ class Document(_ParentNodeMixin, Node):
         return implementation
     def get_currentScript(self):
         return self.current_script if self.current_script is not None else pyv8.Null
+    def get_activeElement(self):
+        """The focused element, or the body while nothing was focused.
+
+        Chromium reports the body for a document that was never focused, and
+        falls back to it again when the focused element left the document.
+        """
+        from .focus import active_element
+        return active_element(self)
+    def fn_hasFocus(self, *_extra):
+        """A page in this DOM is always the focused document.
+
+        There is one document per realm and no window manager to take focus
+        away from it, which is what a real page reports while its window is
+        active -- the state a script checks before stealing focus itself.
+        """
+        return True
+    def fn_elementFromPoint(self, x=MISSING, y=MISSING, *_extra):
+        if x is MISSING:
+            raise missing_error('Document', 'elementFromPoint', 2, 0, constructor=False)
+        if y is MISSING:
+            raise missing_error('Document', 'elementFromPoint', 2, 1, constructor=False)
+        from .hit_testing import element_from_point
+        found = element_from_point(self, number(x), number(y))
+        return pyv8.Null if found is None else found
+    def fn_elementsFromPoint(self, x=MISSING, y=MISSING, *_extra):
+        if x is MISSING:
+            raise missing_error('Document', 'elementsFromPoint', 2, 0, constructor=False)
+        if y is MISSING:
+            raise missing_error('Document', 'elementsFromPoint', 2, 1, constructor=False)
+        from .hit_testing import elements_from_point
+        return elements_from_point(self, number(x), number(y))
     def get_documentElement(self):
         """The document's first element child, whatever its local name.
 

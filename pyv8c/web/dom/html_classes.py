@@ -9,6 +9,7 @@ from .html_elements import (
     HTMLAnchorElement,
     HTMLButtonElement,
     HTMLImageElement,
+    HTMLLabelElement,
     HTMLLinkElement,
     HTMLMetaElement,
     HTMLScriptElement,
@@ -38,6 +39,7 @@ HTML_CLASSES = {
     # Interfaces with members of their own carry a hand-written class.
     "HTMLFormElement": HTMLFormElement,
     "HTMLButtonElement": HTMLButtonElement,
+    "HTMLLabelElement": HTMLLabelElement,
     "HTMLMediaElement": HTMLMediaElement,
     "HTMLAudioElement": HTMLAudioElement,
     "HTMLVideoElement": HTMLVideoElement,
@@ -74,6 +76,7 @@ TAG_CLASSES = {
     "iframe": HTML_CLASSES["HTMLIFrameElement"],
     "img": HTML_CLASSES["HTMLImageElement"],
     "input": HTML_CLASSES["HTMLInputElement"],
+    "label": HTML_CLASSES["HTMLLabelElement"],
     "link": HTML_CLASSES["HTMLLinkElement"],
     "meta": HTML_CLASSES["HTMLMetaElement"],
     "option": HTML_CLASSES["HTMLOptionElement"],

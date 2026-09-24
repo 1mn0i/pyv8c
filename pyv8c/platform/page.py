@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import threading
-from concurrent.futures import Future
 from typing import Literal
 
 import pyv8
 from ..foundation.logging import logger
 
 from ..foundation.arguments import is_nullish
+from ..foundation.errors import NotFoundError
 from ..foundation.lifecycle import ResourceScope
 from ..foundation.rejections import RejectionTracker
 from ..foundation.tasks import TaskQueue
@@ -18,7 +18,6 @@ from ..web.bom.window import Window
 from ..web.dom.document import Document
 from ..web.dom.nodes import Node
 from ..web.fetch.response import Response
-from .js_http import JsHttpController, JsHttpResponse
 from .lifecycle import DocumentLifecycle
 from .navigation import NavigationController
 from .net import PageNet
@@ -72,14 +71,13 @@ class Page:
     """One document and the host API around it.
 
     A page owns a realm -- a native V8 context with its Window and Document -- and
-    is the supported way to reach it: :meth:`evaluate` runs script,
+    is the supported way to reach it:     :meth:`evaluate` runs script,
     :attr:`window` and :attr:`document` are the host-side handles, :attr:`net`
-    talks HTTP with the page's own cookies (its request parameters --
-    ``headers``/``params``/``data``/``json``/``cookies``/``timeout``/``referer``/
-    ``options`` -- are described on
-    :class:`~pyv8c.platform.net.PageNet`), and :attr:`url`/:attr:`origin`
-    describe the current document.  Whatever a script sees is served inside the
-    realm.
+    is the network API (``get``/``post`` and ``fetch``/``xhr``, described on
+    :class:`~pyv8c.platform.net.PageNet`), :attr:`mouse` moves the pointer and
+    clicks (with :meth:`click` and :meth:`hover` for the common case), and
+    :attr:`url`/:attr:`origin` describe the current document.  Whatever a
+    script sees is served inside the realm.
 
     Navigating replaces that realm, so a JS handle taken before a :meth:`goto` or
     :meth:`set_content` must not be used after it.
@@ -142,10 +140,12 @@ class Page:
         self.services.window = self.window
         self.services.document = self.document
         self.window.location.href = str(url)
-        # Host-side HTTP for this page: carries its cookies and headers through
-        # the context's transport (see platform/net.py).
+        # Host-side HTTP for this page, both flavours (see platform/net.py).
         self.net = PageNet(self)
-        self.js_http = JsHttpController(self)
+        # Host-driven mouse input, the state machine in platform/input.py.  It
+        # is built on first use: the module reaches the layout model, which
+        # drags font measurement into a startup that does not need it yet.
+        self._mouse = None
         # Native template installation can inspect the global object before
         # Context.__init__ returns.  Publish a sentinel so Window callbacks
         # never observe a partially initialized Page attribute.
@@ -258,6 +258,19 @@ class Page:
     @property
     def binding_session(self):
         return self.realm.binding_session
+
+    @property
+    def mouse(self) -> MouseInput:
+        """The page's mouse: position, buttons and the events a move produces.
+
+        Built on first read -- see :class:`~pyv8c.platform.input.MouseInput` --
+        and shared for the life of the page, so the position carries over from
+        one move to the next.
+        """
+        if self._mouse is None:
+            from .input import MouseInput
+            self._mouse = MouseInput(self)
+        return self._mouse
 
     def _window_name_of(self, previous_window, previous_realm):
         """The browsing context's name, which a page may have set from script."""
@@ -474,108 +487,57 @@ class Page:
         """
         return self.realm.executor.call(self.lifecycle.set_visibility, hidden)
 
-    def fetch(self,
-              url: str,
+    def _require_element(self, selector: str):
+        """The node *selector* matches, or the error a missing one is worth."""
+        node = self.query_selector(selector)
+        if node is None:
+            raise NotFoundError(f"No element matches the selector {selector!r}")
+        return node
+
+    def click(self,
+              selector: str,
               *,
-              method: str = "GET",
-              headers: dict | None = None,
-              body: str | None = None,
-              credentials: str | None = None,
-              timeout: float = 30) -> JsHttpResponse:
-        """Run the page's own ``fetch`` and return what it answered.
+              button: str = "left",
+              click_count: int = 1,
+              force: bool = False) -> None:
+        """Click the element *selector* matches, the way a user would.
 
-        The request runs in the realm, so the page's ``fetch`` performs it -- a
-        page that replaced it answers here -- and it carries the page's rules:
-        CORS, the resource interceptor, the cache.  ``page.net`` is the other
-        choice: a host request on the context's transport, outside those rules.
+        The mouse is moved to the element's centre and pressed and released
+        there, so the page sees the whole sequence a real click produces: the
+        boundary and move events on the way, focus, and finally ``click`` --
+        with any activation behavior the element has (a link navigates, a
+        checkbox toggles, a submit button submits, a label reaches its control).
 
-        :param url: URL to request; a relative URL resolves against :attr:`url`.
-        :param method: HTTP method, upper-cased.
-        :param headers: request headers, as a plain dict.
-        :param body: request body as text; ``None`` sends none.
-        :param credentials: ``"omit"``, ``"same-origin"`` or ``"include"``, as the
-            JS ``RequestInit`` names them.
-        :param timeout: seconds to wait for the request to settle.
-        :returns: the :class:`~pyv8c.platform.js_http.JsHttpResponse` snapshot.
-        :raises NetworkError: the page's ``fetch`` rejected.
-        :raises TimeoutError: the request had not settled within *timeout*.
-        :raises RuntimeError: the page is closed.
+        :param selector: a CSS selector, resolved against the current document.
+        :param button: ``"left"``, ``"middle"`` or ``"right"``.
+        :param click_count: the ``detail`` the press and the click report.
+        :param force: click the centre even when another element is on top of
+            it, which is the one thing that would otherwise refuse the click.
+        :raises NotFoundError: *selector* matches nothing.
+        :raises InvalidStateError: the element has no box to click, or its
+            centre is covered by another element and *force* is false.
         """
-        return self.js_http.fetch(url, method=method, headers=headers, body=body,
-                                  credentials=credentials, timeout=timeout)
+        return self.mouse.click_element(
+            self._require_element(selector), button=button, click_count=click_count, force=force,
+        )
 
-    def fetch_async(self,
-                    url: str,
-                    *,
-                    method: str = "GET",
-                    headers: dict | None = None,
-                    body: str | None = None,
-                    credentials: str | None = None) -> Future:
-        """Start the page's own ``fetch`` and return a ``Future`` for its answer.
+    def dblclick(self, selector: str, *, button: str = "left", force: bool = False) -> None:
+        """Double-click the element *selector* matches.
 
-        The future settles on the realm's queue, so polling it
-        (``future.result(timeout=...)``) is the caller's business and nothing
-        blocks the page meanwhile.
-
-        :param url: URL to request; a relative URL resolves against :attr:`url`.
-        :param method: HTTP method, upper-cased.
-        :param headers: request headers, as a plain dict.
-        :param body: request body as text; ``None`` sends none.
-        :param credentials: as the JS ``RequestInit`` names them.
-        :returns: a :class:`concurrent.futures.Future` holding the
-            :class:`~pyv8c.platform.js_http.JsHttpResponse` snapshot, or the error.
+        Two clicks counted as one run, so the second reports ``detail`` 2 and a
+        ``dblclick`` follows it.
         """
-        return self.js_http.fetch_async(url, method=method, headers=headers, body=body,
-                                        credentials=credentials)
+        node = self._require_element(selector)
+        self.mouse.move_to_element(node, force=force)
+        return self.mouse.dblclick(button=button)
 
-    def xhr(self,
-            url: str,
-            *,
-            method: str = "GET",
-            headers: dict | None = None,
-            body: str | None = None,
-            credentials: str | None = None,
-            timeout: float = 30) -> JsHttpResponse:
-        """Run the page's own ``XMLHttpRequest`` and return what it answered.
+    def hover(self, selector: str, *, force: bool = False) -> None:
+        """Move the mouse to the centre of the element *selector* matches.
 
-        Like :meth:`fetch`, the page's constructor answers -- a page that replaced
-        ``XMLHttpRequest`` is the one reached -- and the request goes through the
-        page's resource stack.  This implementation exposes no
-        ``getAllResponseHeaders``, so the snapshot's ``headers`` is empty.
-
-        :param url: URL to request; a relative URL resolves against :attr:`url`.
-        :param method: HTTP method, upper-cased.
-        :param headers: request headers, sent with ``setRequestHeader``.
-        :param body: request body as text; ``None`` sends none.
-        :param credentials: ``"include"`` turns on ``withCredentials``.
-        :param timeout: seconds to wait for the request to settle.
-        :returns: the :class:`~pyv8c.platform.js_http.JsHttpResponse` snapshot.
-        :raises NetworkError: the request failed.
-        :raises TimeoutError: the request had not settled within *timeout*.
-        :raises RuntimeError: the page is closed.
+        The element is left hovered, which is what the boundary events report:
+        a page watching ``mouseover`` sees the move arrive.
         """
-        return self.js_http.xhr(url, method=method, headers=headers, body=body,
-                                credentials=credentials, timeout=timeout)
-
-    def xhr_async(self,
-                  url: str,
-                  *,
-                  method: str = "GET",
-                  headers: dict | None = None,
-                  body: str | None = None,
-                  credentials: str | None = None) -> Future:
-        """Start the page's own ``XMLHttpRequest``; the ``Future`` gets its answer.
-
-        :param url: URL to request; a relative URL resolves against :attr:`url`.
-        :param method: HTTP method, upper-cased.
-        :param headers: request headers, sent with ``setRequestHeader``.
-        :param body: request body as text; ``None`` sends none.
-        :param credentials: ``"include"`` turns on ``withCredentials``.
-        :returns: a :class:`concurrent.futures.Future` holding the
-            :class:`~pyv8c.platform.js_http.JsHttpResponse` snapshot, or the error.
-        """
-        return self.js_http.xhr_async(url, method=method, headers=headers, body=body,
-                                      credentials=credentials)
+        return self.mouse.move_to_element(self._require_element(selector), force=force)
 
     def close(self) -> None:
         """Close the page and everything it owns.

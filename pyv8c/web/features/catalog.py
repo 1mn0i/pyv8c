@@ -15,6 +15,7 @@ CORE_INTERFACES = (
     "HTMLBodyElement", "HTMLDivElement", "HTMLSpanElement", "HTMLAnchorElement", "HTMLInputElement",
     "HTMLFormElement", "HTMLCanvasElement", "HTMLMediaElement", "HTMLTableElement", "HTMLTableRowElement",
     "HTMLTableCellElement", "HTMLSelectElement", "HTMLTextAreaElement", "HTMLButtonElement", "HTMLOptionElement",
+    "HTMLLabelElement",
     "HTMLUnknownElement", "HTMLAudioElement", "HTMLVideoElement", "TextTrackList", "TimeRanges",
     "StyleSheetList", "ScreenOrientation", "PerformanceTiming", "PerformanceNavigation",
     "Headers", "Blob", "Request", "Response", "ProgressEvent", "MessageEvent", "CloseEvent", "ErrorEvent",

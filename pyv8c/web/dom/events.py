@@ -112,6 +112,8 @@ class Event:
         # Trust is host state, never an EventInit member.
         self._trusted = bool(init.get("isTrusted", False)) if type(options) is dict else False
         self._persisted = bool(init.get("persisted", False)) if type(options) is dict else False
+        # Enter and leave events reach their target alone (see fn_dispatchEvent).
+        self._non_propagating = False
     def get_type(self): return self.type
     def get_target(self): return self.target or pyv8.Null
     def get_currentTarget(self): return self.currentTarget or pyv8.Null
@@ -833,13 +835,19 @@ class EventTarget:
         if not isinstance(event, Event):
             raise V8TypeError("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
         event.target = event.target or self
-        path = []
-        node = self
-        while node is not None:
-            path.append(node)
-            node = getattr(node, "parentNode", None)
-            if node is None and getattr(path[-1], "nodeType", None) == _DOCUMENT_NODE:
-                node = getattr(getattr(getattr(path[-1], "_services", None), "document_services", None), "window", None)
+        # A non-propagating event reaches its target alone.  Chromium dispatches
+        # ``mouseenter``/``mouseleave`` and their pointer twins with a
+        # propagation path of just the node, which is why an ancestor's capture
+        # listener never sees them; every other event walks the whole tree.
+        path = [self]
+        if not event._non_propagating:
+            node = self
+            while node is not None:
+                node = getattr(node, "parentNode", None)
+                if node is None and getattr(path[-1], "nodeType", None) == _DOCUMENT_NODE:
+                    node = getattr(getattr(getattr(path[-1], "_services", None), "document_services", None), "window", None)
+                if node is not None:
+                    path.append(node)
         event._path = list(path)
         for target in reversed(path[1:]):
             event.eventPhase, event.currentTarget = 1, target

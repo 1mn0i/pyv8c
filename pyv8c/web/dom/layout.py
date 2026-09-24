@@ -158,12 +158,30 @@ class Box:
     top: float = 0
 
 
-def layout(element, containing_width=None, top=0.0, rules=None, style=None):
+def layout(element, containing_width=None, top=0.0, rules=None, style=None, collected=None):
+    """The box *element* measures, laying out its children to find its height.
+
+    The offset travels down the recursion: a child is placed at the position
+    its preceding siblings leave for it, so a box is only as absolute as the
+    ``top`` it was called with -- asking for a nested element on its own starts
+    at 0 again.  Callers that need real positions pass *collected*, a mapping
+    the walk fills with every box it builds (see :func:`positioned_box`).
+    """
     if rules is None:
         rules = document_rules(getattr(element, "ownerDocument", None))
     if style is None:
         style = _cascade(element, rules)
-    if style.get("display") == "none" or not getattr(element, "isConnected", False): return Box()
+    if style.get("display") == "none" or not getattr(element, "isConnected", False):
+        box = Box()
+        if collected is not None:
+            collected[element] = box
+        return box
+
+    def record(box):
+        if collected is not None:
+            collected[element] = box
+        return box
+
     if containing_width is None:
         realm = getattr(getattr(element, "_services", None), "realm_services", None)
         viewport = getattr(getattr(realm, "environment", None), "viewport", None)
@@ -180,14 +198,16 @@ def layout(element, containing_width=None, top=0.0, rules=None, style=None):
     inline_height = 0.0
     if style.get("display") == "flex":
         row = style.get("flex-direction", "row") not in ("column", "column-reverse")
-        boxes = [layout(child, content_width, top, rules) for child in children if isinstance(child, Element)]
+        boxes = [layout(child, content_width, top, rules, collected=collected)
+                 for child in children if isinstance(child, Element)]
         if row:
             height += max((box.height for box in boxes), default=0)
         else:
             height += sum(box.height for box in boxes)
     elif style.get("display") == "grid":
         columns = max(1, len(str(style.get("grid-template-columns", "1fr")).split()))
-        boxes = [layout(child, content_width / columns, top, rules) for child in children if isinstance(child, Element)]
+        boxes = [layout(child, content_width / columns, top, rules, collected=collected)
+                 for child in children if isinstance(child, Element)]
         for index in range(0, len(boxes), columns):
             height += max((box.height for box in boxes[index:index + columns]), default=0)
     else:
@@ -199,7 +219,8 @@ def layout(element, containing_width=None, top=0.0, rules=None, style=None):
                 inline_height = max(inline_height, line)
             else:
                 child_style = _cascade(child, rules)
-                child_box = layout(child, content_width, top + height, rules, child_style)
+                child_box = layout(child, content_width, top + height, rules, child_style,
+                                   collected=collected)
                 if child_style.get("display", "block") in ("inline", "inline-block"):
                     inline_width += child_box.width; inline_height = max(inline_height, child_box.height)
                 else:
@@ -209,7 +230,26 @@ def layout(element, containing_width=None, top=0.0, rules=None, style=None):
     explicit_height = style.get("height", "auto")
     if explicit_height != "auto": height = _px(explicit_height, containing_width)
     height += 2 * (padding + border)
-    return Box(width=width, height=max(0, height), top=top)
+    return record(Box(width=width, height=max(0, height), top=top))
+
+
+def positioned_box(element):
+    """*element*'s box with the offset its ancestors put it at.
+
+    ``layout()`` threads the offset down from the top of the tree, so a box
+    asked for on its own reports ``top`` 0 however deep the element sits.
+    Walking the document once and reading the element's box out of that pass is
+    what gives ``getBoundingClientRect`` -- and the hit test that has to agree
+    with it -- viewport coordinates, as Chromium reports them.
+    """
+    document = getattr(element, "ownerDocument", None)
+    if document is None:
+        return Box()
+    collected = {}
+    root = document.get_documentElement()
+    if isinstance(root, Element):
+        layout(root, collected=collected)
+    return collected.get(element, Box())
 
 
 class ComputedStyle(CSSStyleDeclaration):
@@ -223,4 +263,7 @@ class ComputedStyle(CSSStyleDeclaration):
 def computed_style_object(element): return ComputedStyle(element, computed_style(element))
 
 
-__all__ = ["Box", "computed_style", "computed_style_object", "document_rules", "layout"]
+__all__ = [
+    "Box", "computed_style", "computed_style_object", "document_rules", "layout",
+    "positioned_box",
+]

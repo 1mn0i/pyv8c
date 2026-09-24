@@ -7,9 +7,10 @@ def run(page, url):
     page.goto(url, wait_until="domcontentloaded")
     # page.goto(url)
     # page.run_until_idle(timeout=3)
-    # res = page.net.get(url)
-    res = page.fetch(url)
-    # print(res.text)
+    res = page.net.get(url)
+    # res = page.net.fetch(url)
+    # res = page.net.xhr(url)
+    print(res.text)
     logger.info(f"res: {res.status}, {len(res.text)}")
 
 

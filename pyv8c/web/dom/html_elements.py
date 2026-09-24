@@ -135,8 +135,8 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
     def get_scrollWidth(self): return self.get_clientWidth()
     def get_scrollHeight(self): return self.get_clientHeight()
     def fn_getBoundingClientRect(self, *_extra):
-        from .layout import layout
-        box = layout(self)
+        from .layout import positioned_box
+        box = positioned_box(self)
         return {"x": box.left, "y": box.top, "top": box.top, "left": box.left,
                 "right": box.left + box.width, "bottom": box.top + box.height,
                 "width": box.width, "height": box.height}
@@ -371,6 +371,20 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         return f"<{self.localName}{attrs}>{self.get_innerHTML()}</{self.localName}>"
     def _clone_shallow(self): return type(self)(self.localName, services=self._services, attributes=self.attributes.copy())
 
+    # -- activation --------------------------------------------------------
+    # A click on an element runs its activation behavior after the event, and
+    # the behavior belongs to the nearest ancestor that has one (see
+    # dom.activation).  Most elements have none, which is why the default pair
+    # answers "nothing here"; the subclasses below that do override them.
+
+    def _activatable(self):
+        """Whether a click at or below this element runs a behavior here."""
+        return False
+
+    def _run_activation(self, event=None):
+        """What a click does to this element beyond dispatching the event."""
+        return None
+
 
 @interface('HTMLElement', 'Element')
 class HTMLElement(Element):
@@ -385,6 +399,12 @@ class HTMLElement(Element):
             AttributeSpec(name="offsetLeft", getter="get_offsetLeft", side_effect=1),
             AttributeSpec(name="offsetWidth", getter="get_offsetWidth", side_effect=1),
             AttributeSpec(name="offsetHeight", getter="get_offsetHeight", side_effect=1),
+            AttributeSpec(name="tabIndex", getter="get_tabIndex", setter="set_tabIndex"),
+        ),
+        methods=(
+            MethodSpec(name="click", callback="fn_click"),
+            MethodSpec(name="focus", callback="fn_focus"),
+            MethodSpec(name="blur", callback="fn_blur"),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -431,6 +451,52 @@ class HTMLElement(Element):
     def get_offsetHeight(self):
         from .layout import layout
         return int(round(layout(self).height))
+
+    # -- focus, tab order and activation -----------------------------------
+
+    def get_tabIndex(self):
+        """The element's tab index: the attribute when it is there, else its default.
+
+        Chromium answers 0 for the elements that are focusable areas on their
+        own and -1 for everything else, and a value it cannot parse reads as 0.
+        """
+        from .focus import focusable
+        value = self.attributes.get("tabindex")
+        if value is None:
+            return 0 if focusable(self) else -1
+        digits = str(value).strip().lstrip("+-")
+        return int(digits) if digits.isdigit() else 0
+
+    def set_tabIndex(self, value):
+        self.attributes["tabindex"] = str(integer(value, signed=True))
+
+    def fn_focus(self, *_extra):
+        """Focus this element when it is a focusable area.
+
+        Chrome ignores the call on anything else -- a plain ``div`` without a
+        ``tabindex`` keeps the document's focus where it was -- so the check
+        lives in :func:`dom.focus.focus` rather than here.
+        """
+        from .focus import focus
+        focus(self)
+
+    def fn_blur(self, *_extra):
+        """Drop focus, when this element is the one holding it."""
+        from .focus import blur
+        document = self.ownerDocument
+        if document is not None and getattr(document, "_focused_element", None) is self:
+            blur(document)
+
+    def fn_click(self, *_extra):
+        """Run the synthetic click activation steps a script asked for.
+
+        Chrome fires an untrusted ``click`` at the origin, and the activation
+        behavior follows when no listener cancelled it -- so ``a.click()``
+        navigates, ``checkbox.click()`` toggles, and a disabled control
+        dispatches nothing at all.
+        """
+        from .activation import click_element
+        click_element(self)
 
 
 @interface('HTMLUnknownElement', 'HTMLElement')
@@ -492,6 +558,28 @@ class HTMLButtonElement(HTMLElement):
                 return node
             node = node.parentElement
         return pyv8.Null
+
+    # -- activation --------------------------------------------------------
+
+    def _activatable(self):
+        """A submit or reset button clicks into its form; a plain one does nothing."""
+        return self.get_type() in ("submit", "reset") and not self._bool("disabled")
+
+    def _run_activation(self, event=None):
+        """Submit or reset the form this button belongs to.
+
+        This button is the submission's *submitter*, so its name and value join
+        the entry list; whether the click was a user gesture decides the
+        ``Sec-Fetch-User`` the request carries.
+        """
+        form = self.get_form()
+        if form is None or form is pyv8.Null:
+            return
+        if self.get_type() == "submit":
+            from .activation import user_activated
+            form._submit(self, user_activated=user_activated(event))
+        else:
+            form.fn_reset()
 
 
 def _owning_table(row):
@@ -610,6 +698,93 @@ def _set_url_value(element, name, value):
 def _url_attr(name, getter, setter):
     """Declare a URL-reflecting attribute; pair it with the two helpers above."""
     return _attribute(name, getter, setter)
+
+
+#: The elements a ``label`` may point at, by the HTML definition.
+_LABELABLE_TAGS = frozenset(("button", "meter", "output", "progress", "select", "textarea"))
+
+
+def _is_labelable(node):
+    """Whether *node* is a labelable element, the kind a ``label`` can label."""
+    if not isinstance(node, Element):
+        return False
+    if node.localName == "input":
+        return str(node.get_type()) != "hidden"
+    return node.localName in _LABELABLE_TAGS
+
+
+@interface('HTMLLabelElement', 'HTMLElement')
+class HTMLLabelElement(HTMLElement):
+    """``<label>``: the control it labels, and the click it forwards to it.
+
+    The labeled control is the one ``for`` names by id, or the label's first
+    labelable descendant when the attribute is absent -- the two ways HTML
+    defines it, and both of them reach the control the way Chromium does:
+    a focus first, then a click event on the control itself.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            _attribute("htmlFor", "get_htmlFor", "set_htmlFor"),
+            AttributeSpec(name="control", getter="get_control", side_effect=1),
+            AttributeSpec(name="form", getter="get_form", side_effect=1),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
+    def get_htmlFor(self): return self._attr("for")
+    def set_htmlFor(self, value): self._set_string("for", value)
+    def get_control(self):
+        control = self._labeled_control()
+        return pyv8.Null if control is None else control
+    def _labeled_control(self):
+        """The control this label labels, or ``None`` when it labels nothing."""
+        target_id = self.attributes.get("for")
+        if target_id:
+            document = getattr(getattr(self._services, "document_services", None), "document", None)
+            found = document.fn_getElementById(target_id) if document is not None else pyv8.Null
+            return found if _is_labelable(found) else None
+        return next((node for node in self._descendants() if _is_labelable(node)), None)
+    def get_form(self):
+        """The labeled control's form, so ``label.form`` answers what Chromium's does."""
+        control = self._labeled_control()
+        finder = getattr(control, "get_form", None)
+        if finder is not None:
+            form = finder()
+            if form is not None and form is not pyv8.Null:
+                return form
+        node = self.parentElement
+        while isinstance(node, Element):
+            if node.localName == "form":
+                return node
+            node = node.parentElement
+        return pyv8.Null
+
+    # -- activation --------------------------------------------------------
+
+    def _activatable(self):
+        """A label clicks into the control it labels."""
+        return self._labeled_control() is not None
+
+    def _run_activation(self, event=None):
+        """Focus the labeled control and click it, the order Chrome uses.
+
+        The click the control receives is the press the label received, not a
+        fresh synthetic one: Chrome keeps the coordinates, the click count and
+        the trust, so a real mouse click on a label reaches its checkbox as a
+        trusted ``detail`` 1 click while ``label.click()`` reaches it as an
+        untrusted one.
+        """
+        control = self._labeled_control()
+        if control is None:
+            return
+        from .activation import click_element, repeat_click
+        from .focus import focus
+        focus(control)
+        if event is None:
+            click_element(control)
+        else:
+            repeat_click(control, event)
 
 
 @interface('HTMLImageElement', 'HTMLElement')
@@ -796,6 +971,31 @@ class HTMLAnchorElement(HTMLElement):
         return ("#" + fragment) if fragment else ""
     def set_hash(self, value): self._set_component(fragment=str(dom_string(value)).lstrip("#"))
     def fn_toString(self, *_extra): return self._href()
+
+    # -- activation --------------------------------------------------------
+
+    def _activatable(self):
+        """A link with an ``href`` navigates when it is clicked.
+
+        ``download`` links are not: Chromium saves the target instead of
+        following it, and this DOM has nowhere to save it to, so it declines
+        the click rather than navigating somewhere Chrome would not.
+        """
+        return bool(self._href()) and "download" not in self.attributes
+
+    def _run_activation(self, event=None):
+        """Follow the link, exactly as assigning ``location.href`` would.
+
+        Going through the location object is what keeps a ``#fragment`` link a
+        same-document navigation instead of a reload, which is how Chromium
+        treats a link to the page's own fragment.
+        """
+        href = self._href()
+        if not href:
+            return
+        window = getattr(getattr(self._services, "document_services", None), "window", None)
+        if window is not None:
+            window.location.set_href(href)
 
 
 @interface('HTMLStyleElement', 'HTMLElement')

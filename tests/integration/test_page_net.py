@@ -46,6 +46,12 @@ class _EchoHandler(BaseHTTPRequestHandler):
                 "language": self.headers.get("Accept-Language"),
                 "custom": self.headers.get("X-Custom"),
                 "referer": self.headers.get("Referer"),
+                "accept": self.headers.get("Accept"),
+                "encoding": self.headers.get("Accept-Encoding"),
+                "destination": self.headers.get("Sec-Fetch-Dest"),
+                "mode": self.headers.get("Sec-Fetch-Mode"),
+                "site": self.headers.get("Sec-Fetch-Site"),
+                "hints": self.headers.get("Sec-CH-UA"),
             })
             return
         self._reply(b"<html><body>page</body></html>", content_type="text/html; charset=utf-8")
@@ -92,9 +98,16 @@ def test_page_net_sends_the_environment_headers_and_the_jar(page, origin):
     payload = page.net.get("/echo").json()
 
     assert payload["ua"].startswith("Mozilla/5.0")
-    assert payload["language"] == "zh-CN, zh"
+    assert payload["language"] == "zh-CN,zh;q=0.9"
     assert payload["custom"] == "browser", "Browser(default_headers=...) applies"
     assert payload["cookie"] == "a=1; b=2", "both cookies the response set are sent back"
+    # A host request now carries what the page's own fetch would carry.
+    assert payload["accept"] == "*/*"
+    assert payload["encoding"] == "gzip, deflate, br, zstd"
+    assert payload["destination"] == "empty"
+    assert payload["mode"] == "cors"
+    assert payload["site"] == "same-origin"
+    assert payload["hints"] == '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"'
 
 
 def test_headers_override_in_three_layers(page):

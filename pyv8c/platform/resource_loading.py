@@ -15,10 +15,11 @@ import pyv8
 from ..foundation.logging import logger
 
 from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
-from ..foundation.urls import DEFAULT_PORTS, same_origin
+from ..foundation.urls import DEFAULT_PORTS, absolute_url, same_origin
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
 from ..network.models import NetworkRequest
+from .request_headers import browser_headers, fetch_mode
 
 
 class RequestHandle:
@@ -213,7 +214,7 @@ class ResourceController:
 
     @staticmethod
     def _network_request(target, request, page):
-        request = ResourceController._request_with_environment_headers(request, page)
+        request = ResourceController._request_with_environment_headers(request, page, target)
         return NetworkRequest(
             target,
             str(request.get("method", "GET")).upper(),
@@ -227,16 +228,39 @@ class ResourceController:
         )
 
     @staticmethod
-    def _request_with_environment_headers(request, page):
+    def _destination(request):
+        """The Fetch destination a request dict stands for; ``resource_type`` names
+        the loader's bucket, so a caller that knows better passes the destination."""
+        explicit = request.get("destination")
+        if explicit:
+            return str(explicit)
+        resource_type = str(request.get("resource_type") or "")
+        if resource_type in ("document", "iframe", "script", "style", "image"):
+            return resource_type
+        if resource_type == "media":
+            return "video"
+        return "empty"
+
+    @staticmethod
+    def _request_with_environment_headers(request, page, target):
+        """The request dict with the headers the browser would send for it."""
         request = dict(request or {})
-        headers = ResourceController.header_dict(request.get("headers"))
-        names = {str(key).lower() for key in headers}
-        environment = page.environment
-        if "user-agent" not in names:
-            headers["User-Agent"] = environment.user_agent
-        if "accept-language" not in names:
-            headers["Accept-Language"] = ", ".join(environment.languages)
-        request["headers"] = headers
+        destination = ResourceController._destination(request)
+        # An https URL negotiates h2, where Chrome sends no Connection header.
+        http_version = 2 if urlsplit(str(target)).scheme == "https" else 1
+        request["headers"] = browser_headers(
+            page.environment,
+            destination=destination,
+            mode=fetch_mode(destination, request.get("mode")),
+            method=str(request.get("method", "GET")).upper(),
+            url=target,
+            current_url=page.url,
+            browser_initiated=bool(request.get("browser_initiated")),
+            user_activated=bool(request.get("user_activated")),
+            content_type=request.get("content_type"),
+            http_version=http_version,
+            extra=ResourceController.header_dict(request.get("headers")),
+        )
         return request
 
     @staticmethod
@@ -254,8 +278,8 @@ class ResourceController:
         page = self.page
         if page.closed or page.context_owner.closed:
             raise InvalidStateError("Page is closed")
-        target = urljoin(page.url, str(url))
-        request = self._request_with_environment_headers(request or {"method": "GET"}, page)
+        target = absolute_url(url, page.url)
+        request = self._request_with_environment_headers(request or {"method": "GET"}, page, target)
         intercepted = self._intercept(target, request)
         if intercepted is not None:
             return intercepted
@@ -333,7 +357,7 @@ class ResourceController:
             page.tasks.post(lambda: deliver(None, InvalidStateError("Page is closed")))
             return handle
         target = urljoin(page.url, str(url))
-        request = self._request_with_environment_headers(request, page)
+        request = self._request_with_environment_headers(request, page, target)
         try:
             intercepted = self._intercept(target, request)
         except BaseException as exc:
@@ -437,7 +461,11 @@ class ResourceController:
             return
         node._resource_started = True
         resource_type = "style" if tag == "link" else "image" if tag == "img" else "media" if tag in ("audio", "video", "source") else tag
-        request = {"method": "GET", "resource_type": resource_type}
+        # ``media`` lumps three elements, and the browser reports a different
+        # destination for each, so the element decides it here.
+        destination = {"link": "style", "img": "image", "audio": "audio",
+                       "video": "video", "source": "video"}.get(tag, tag)
+        request = {"method": "GET", "resource_type": resource_type, "destination": destination}
         if tag == "iframe":
             request["mode"] = "navigate"
         self.track_document_resource(node, src, request, tag)
@@ -624,10 +652,12 @@ class ResourceController:
             self.discover_element_resource(iframe)
             return getattr(iframe, "_child_services", None)
         child = self._child_frame_page(iframe, target)
-        response = self.load_resource(target, {"method": "GET"})
+        response = self.load_resource(target, {"method": "GET", "destination": "iframe"})
         child.set_content(response.body_text(), url=target)
         return child
 
     def resolve_worker_source(self, script_url):
-        response = self.load_resource(script_url, {"method": "GET", "mode": "same-origin"})
+        response = self.load_resource(
+            script_url, {"method": "GET", "mode": "same-origin", "destination": "worker"},
+        )
         return response.body_text()

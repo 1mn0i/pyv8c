@@ -7,11 +7,12 @@ special-scheme list and the default-port table, and lets platform code ask for
 an origin without importing a transport module.
 """
 
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 __all__ = [
     "DEFAULT_PORTS", "SPECIAL_SCHEMES",
     "origin_tuple", "same_origin", "serialize_origin", "origin_string",
+    "absolute_url",
 ]
 
 #: Schemes whose origin is derived from host and port ("special schemes" in
@@ -83,3 +84,17 @@ def origin_string(url):
         return f"{parts.scheme}://{host}{suffix}"
     except (TypeError, ValueError):
         return "null"
+
+
+def absolute_url(url, base):
+    """Resolve *url* against *base*, keeping it verbatim when it is already absolute.
+
+    ``urljoin`` drops a bare ``?``, and an empty query is still a query: a GET
+    form with no successful controls lands on ``/echo?`` in Chrome, and the
+    request line says so.  A URL that already carries a scheme and a host is
+    therefore sent exactly as the page wrote it.
+    """
+    parts = urlsplit(str(url))
+    if parts.scheme and parts.netloc:
+        return str(url)
+    return urljoin(str(base), str(url))

@@ -110,10 +110,18 @@ class DocumentLifecycle:
             event_class or EVENT_CLASS_BY_TYPE.get(str(event_type), "Event")
         )
 
-    def dispatch_page_event(self, event_type, target, options=None, *, event_class=None):
+    def dispatch_page_event(self, event_type, target, options=None, *, event_class=None,
+                            propagates=True):
+        """Dispatch one trusted event at *target* and return it.
+
+        *propagates* is ``False`` for the enter/leave pair, whose propagation
+        path is the target alone -- Chromium dispatches ``mouseenter`` and its
+        relatives that way, so no ancestor capture listener sees them.
+        """
         cls = Event if event_class is None else self.materialize_event_class(event_class)
         event = cls(event_type, options or {})
         event._trusted = True
+        event._non_propagating = not propagates
         if event_type in ("pagehide", "pageshow"):
             event._persisted = bool((options or {}).get("persisted", False))
         target.fn_dispatchEvent(event)

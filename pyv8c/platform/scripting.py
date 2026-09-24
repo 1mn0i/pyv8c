@@ -117,11 +117,15 @@ class ScriptController:
         side_effects = re.findall(r"(?:^|;)\s*import\s*(['\"])([^'\"]+)\1\s*;?", source)
         for _prefix, _clause, _quote, specifier in imports:
             dep_url = urljoin(key, specifier)
-            dep = self.page.resources.load_resource(dep_url, {"method": "GET", "mode": "cors"})
+            dep = self.page.resources.load_resource(
+                dep_url, {"method": "GET", "mode": "cors", "destination": "script"},
+            )
             self.execute_module(dep.body_text(), dep.url or dep_url, trail)
         for _quote, specifier in side_effects:
             dep_url = urljoin(key, specifier)
-            dep = self.page.resources.load_resource(dep_url, {"method": "GET", "mode": "cors"})
+            dep = self.page.resources.load_resource(
+                dep_url, {"method": "GET", "mode": "cors", "destination": "script"},
+            )
             self.execute_module(dep.body_text(), dep.url or dep_url, trail)
         transformed = re.sub(r"(?:^|;)\s*import\s+([\s\S]*?)\s+from\s+(['\"])([^'\"]+)\2\s*;?", "", source)
         transformed = re.sub(r"(?:^|;)\s*import\s*(['\"])([^'\"]+)\1\s*;?", "", transformed)

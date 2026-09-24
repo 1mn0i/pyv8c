@@ -13,9 +13,12 @@ from threading import RLock
 from loguru import logger
 
 from .models import NetworkUnavailableError
+from .proxy import PROXY_OPTION, websockets_proxy
 
-#: Options this engine consumes itself instead of handing to ``websockets``.
-_BRIDGE_KEYS = frozenset({"cookies", "headers"})
+#: Options this engine consumes itself instead of handing to ``websockets``: the
+#: handshake ingredients, and the proxy, which is translated before it is passed
+#: on because the client reads its own default out of the environment.
+_BRIDGE_KEYS = frozenset({"cookies", "headers", PROXY_OPTION})
 
 #: Keyword names the engine supplies itself; the target and handshake are its own.
 _MANAGED_KEYS = frozenset({"uri", "subprotocols", "additional_headers", "logger", "origin"})
@@ -197,9 +200,13 @@ class WebSocketsTransport:
         websocket.close(1000, "page closed")
 
     def _connect_kwargs(self, url, given):
-        """The ``connect`` arguments for one socket, handshake included."""
+        """The ``connect`` arguments for one socket, handshake and proxy included."""
         call = dict(given or {})
         kwargs = {name: value for name, value in self.options.items() if name not in _BRIDGE_KEYS}
+        # Always given, never left out: the client's own default is ``True``,
+        # which means "read the environment", and a context that was not handed
+        # a proxy is meant to connect directly.
+        kwargs["proxy"] = websockets_proxy(self.options.get(PROXY_OPTION))
         user_agent, headers = self._handshake_headers(url, call)
         if user_agent is not None:
             kwargs.setdefault("user_agent_header", user_agent)

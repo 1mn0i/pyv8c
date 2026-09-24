@@ -320,13 +320,16 @@ def test_page_keeps_only_user_facing_api():
 
 
 @pytest.mark.native
-def test_page_exposes_the_host_http_entry_points():
-    """Both ways out of the page stay public: the JS APIs and the host transport."""
+def test_page_net_exposes_both_http_flavours():
+    """The host transport and the page's own JS APIs are one surface, under ``net``."""
     pytest.importorskip("pyv8", reason="imports platform modules bound to the native extension")
-    from pyv8c.platform.browser import Page
+    from pyv8c.platform.net import PageNet
+    from pyv8c.platform.page import Page
 
+    for name in ("get", "post", "fetch", "fetch_async", "xhr", "xhr_async"):
+        assert hasattr(PageNet, name), name
     for name in ("fetch", "fetch_async", "xhr", "xhr_async"):
-        assert hasattr(Page, name), name
+        assert not hasattr(Page, name), f"{name} belongs to page.net"
 
 
 def test_web_capability_split_has_no_legacy_mixed_modules():

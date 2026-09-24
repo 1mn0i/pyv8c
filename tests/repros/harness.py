@@ -138,6 +138,11 @@ class ChromeReference:
         self.executable = executable
         self.version = version
 
+    @property
+    def browser(self):
+        """The live Playwright browser, for a test that drives it itself."""
+        return self._browser
+
     def observe(self, case: Repro) -> Observation:
         page = self._browser.new_page()
         try:

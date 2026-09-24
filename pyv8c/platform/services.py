@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..foundation.urls import origin_string
+from .request_headers import ACCEPT_ENCODING, accept_language
 from .state import Ownership
 
 
@@ -340,8 +341,8 @@ class _DocumentCapability:
             return None
         return self._owner._scripts.node_adopted(node)
 
-    def request_navigation(self, url):
-        return self._owner._navigation.request_navigation(url)
+    def request_navigation(self, url, **options):
+        return self._owner._navigation.request_navigation(url, **options)
 
     @property
     def parsing(self):
@@ -424,12 +425,16 @@ class _ContextCapability:
         )
 
     def _handshake(self):
-        """What the page contributes to a WebSocket handshake."""
+        """What the page contributes to a WebSocket handshake; Chrome sends no client
+        hint or ``Sec-Fetch-*`` on one, and the engine owns the ``Sec-WebSocket-*``."""
         environment = self._owner.environment
         options = {
             "headers": {
+                "Pragma": "no-cache",
+                "Cache-Control": "no-cache",
                 "User-Agent": environment.user_agent,
-                "Accept-Language": ", ".join(environment.languages),
+                "Accept-Encoding": ACCEPT_ENCODING,
+                "Accept-Language": accept_language(environment.languages),
             },
         }
         origin = origin_string(self._owner.realm_services.url)

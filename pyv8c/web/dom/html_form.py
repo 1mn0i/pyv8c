@@ -1,9 +1,12 @@
-"""``HTMLFormElement``: the controls it owns, and its legacy access surface.
+"""``HTMLFormElement``: the controls it owns, its legacy access surface, and the
+entry list its submission sends.
 
 ``form[name]`` and ``form[index]`` are an independent legacy platform object in
 Chromium, so the handlers and the ``RadioNodeList`` they hand out live here with
 the element.
 """
+
+from typing import NamedTuple
 
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
@@ -13,6 +16,7 @@ from ...foundation.arguments import boolean, dom_string
 from ...foundation.errors import LegacyPropertyError, V8TypeError
 from .collections import DOMTokenList, HTMLFormControlsCollection, NodeList
 from .html_elements import Element, HTMLElement, _document_url, _set_url_value, _url_value
+from .utils import crlf, encode_entries, replace_query, urlencoded
 
 
 @interface("RadioNodeList", "NodeList")
@@ -54,6 +58,89 @@ def _is_listed_element(node):
     if node.localName != "input":
         return True
     return str(node.attributes.get("type", "")).strip().lower() != "image"
+
+
+class Submission(NamedTuple):
+    """One form submission as the transport receives it."""
+
+    url: str
+    method: str
+    body: bytes | None
+    content_type: str | None
+
+
+def submission(form, submitter=None):
+    """The request this form's submission makes, or ``None`` for ``method=dialog``."""
+    method = form.get_method()
+    if method == "dialog":
+        return None
+    entries = entry_list(form, submitter)
+    if method == "get":
+        return Submission(replace_query(form.get_action(), urlencoded(entries)),
+                          "GET", None, None)
+    body, content_type = encode_entries(entries, form.get_enctype())
+    return Submission(form.get_action(), "POST", body, content_type)
+
+
+def entry_list(form, submitter=None):
+    """The form's entries as ``(name, value)`` pairs, in tree order.
+
+    *submitter* is the pressed button: the only submit button that contributes.
+    """
+    entries = []
+    for control in form._controls():
+        if not _is_successful(control, submitter):
+            continue
+        entries.extend(_entries_of(control, str(control.attributes.get("name", ""))))
+    return entries
+
+
+def _is_successful(control, submitter):
+    """Whether *control* contributes an entry."""
+    # Lazy: keep the selector engine off the startup path.
+    from .selectors import _is_disabled
+
+    if "name" not in control.attributes or _is_disabled(control):
+        return False
+    tag = control.localName
+    if tag == "button":
+        return control.get_type() == "submit" and control is submitter
+    if tag == "input":
+        kind = control.get_type()
+        if kind in ("file", "reset", "button"):
+            # file: no picker in this DOM; reset and plain buttons: never sent.
+            return False
+        if kind in ("checkbox", "radio"):
+            return control.get_checked()
+        if kind in ("submit", "image"):
+            return control is submitter
+        return True
+    return tag in ("select", "textarea")
+
+
+def _entries_of(control, name):
+    """The entries one successful control contributes."""
+    if control.localName == "select" and _is_multiple(control):
+        return [(name, option.get_value()) for option in control._options()
+                if option.get_selected()]
+    return [(name, _value_of(control))]
+
+
+def _value_of(control):
+    """The value a control contributes, with the line endings the wire wants."""
+    getter = getattr(control, "get_value", None)
+    if getter is None:
+        # No live textarea value in this DOM: its raw value is what a page wrote.
+        return crlf(control.get_defaultValue())
+    return crlf(getter()) if control.localName == "textarea" else str(getter())
+
+
+def _is_multiple(select):
+    """Whether a ``select`` takes one entry per selected option."""
+    if "multiple" in select.attributes:
+        return True
+    size = str(select.attributes.get("size", "0")).strip()
+    return size.isdigit() and int(size) > 1
 
 
 @interface('HTMLFormElement', 'HTMLElement')
@@ -262,20 +349,45 @@ class HTMLFormElement(HTMLElement):
                 raise V8TypeError("The specified value is not a submit button.")
             if getattr(submitter, "localName", "") == "button" and submitter.get_type() != "submit":
                 raise V8TypeError("The specified value is not a submit button.")
-        if not self.get_noValidate() and not self._check_validity(report=True):
-            return pyv8.Undefined
-        from .events import Event
-        event = Event("submit", {"bubbles": True, "cancelable": True})
-        event._trusted = True
-        self.fn_dispatchEvent(event)
+        else:
+            submitter = None
+        self._submit(submitter)
         return pyv8.Undefined
+
+    def _submit(self, submitter=None, *, validate=True, fire_event=True,
+                user_activated=False):
+        """The submission algorithm: validation, the ``submit`` event, the request.
+
+        A clicked submit button, ``requestSubmit()`` and ``submit()`` all end
+        up here.  They differ in what they skip on the way -- the method skips
+        both the validation and the event -- and in the request they produce:
+        *submitter* is the button whose name and value join the entry list, and
+        *user_activated* says whether a user gesture asked for this, which
+        Chromium reports as ``Sec-Fetch-User``.
+        """
+        if validate and not self.get_noValidate() and not self._check_validity(report=True):
+            return False
+        if fire_event:
+            from .events import Event
+            event = Event("submit", {"bubbles": True, "cancelable": True})
+            event._trusted = True
+            if not self.fn_dispatchEvent(event):
+                return False
+        services = self._services
+        if services is None:
+            return False
+        request = submission(self, submitter)
+        if request is None:
+            return False
+        services.document_services.request_navigation(
+            request.url, method=request.method, body=request.body,
+            content_type=request.content_type, user_activated=user_activated,
+        )
+        return True
 
     def fn_submit(self, *_extra):
         """The DOM ``submit()`` method bypasses validation and submit events."""
-        action = self.get_action()
-        services = self._services
-        if services is not None:
-            services.document_services.request_navigation(action)
+        self._submit(validate=False, fire_event=False)
 
     def fn_reset(self, *_extra):
         from .html_input import HTMLInputElement, HTMLTextAreaElement, HTMLSelectElement

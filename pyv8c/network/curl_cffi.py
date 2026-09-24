@@ -22,6 +22,7 @@ from .models import (
     RequestHandle,
     cookie_header,
 )
+from .proxy import PROXY_OPTION, curl_proxies
 from .registry import signature_option_keys
 
 #: Per-request options forwarded straight to ``curl_cffi``; others are ignored here.
@@ -58,8 +59,9 @@ class CurlCffiTransport:
     WebSocket engine the context assembled alongside it.
     """
 
-    #: Options this bridge consumes itself: the pool size and ``default_headers``.
-    bridge_option_keys = frozenset({"default_headers", "max_workers"})
+    #: Options this bridge consumes itself: the pool size, ``default_headers``, and
+    #: the proxy, which is applied per request rather than handed to the session.
+    bridge_option_keys = frozenset({"default_headers", "max_workers", PROXY_OPTION})
 
     @classmethod
     def accepted_option_keys(cls) -> frozenset[str] | None:
@@ -79,6 +81,7 @@ class CurlCffiTransport:
         # Ours, not the session's: consume it here and never forward it.
         max_workers = int(self.options.pop("max_workers", 4))
         default_headers = bool(self.options.pop("default_headers", False))
+        self.proxies = curl_proxies(self.options.pop(PROXY_OPTION, None))
         self.curl_cffi = _curl_cffi_module()
         self.session = self._new_session(default_headers)
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="pyv8c-curl")
@@ -117,6 +120,12 @@ class CurlCffiTransport:
             kwargs["data"] = request.body
         if request.timeout is not None:
             kwargs["timeout"] = request.timeout
+        if self.proxies is not None:
+            # Set before the per-request options below, so a caller that names a
+            # proxy on the request itself still has the last word -- and set at
+            # all, because libcurl would otherwise read HTTP_PROXY and friends
+            # out of the environment on its own.
+            kwargs["proxies"] = dict(self.proxies)
         for name in _EXTRA_KWARGS:
             if options.get(name) is not None:
                 kwargs[name] = options[name]

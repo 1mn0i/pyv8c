@@ -109,6 +109,11 @@ _FACTORIES: dict[str, dict[str, Callable[..., Any]]] = {kind: {} for kind in KIN
 #: Lazy providers of each engine's accepted keys; absent means "not validated".
 _OPTION_KEYS: dict[str, dict[str, Callable[[], frozenset[str] | None]]] = {kind: {} for kind in KINDS}
 
+#: Engines that send their traffic through a proxy.  Absent means it does not:
+#: an engine whose options are open-ended cannot be caught by the key check, so
+#: a proxy it would quietly ignore has to be refused from here instead.
+_ACCEPTS_PROXY: dict[str, dict[str, bool]] = {kind: {} for kind in KINDS}
+
 
 def _kind(value: str) -> str:
     """The engine kind a caller named, checked against the two that exist."""
@@ -119,7 +124,8 @@ def _kind(value: str) -> str:
 
 
 def register_transport(name: str, factory: Callable[..., Any], *,
-                       option_keys: Callable[[], frozenset[str] | None] | None = None) -> None:
+                       option_keys: Callable[[], frozenset[str] | None] | None = None,
+                       proxy: bool = False) -> None:
     """Make *factory* available as an HTTP engine name.
 
     The factory is called as ``factory(options=<dict or None>)`` per context, so
@@ -127,18 +133,24 @@ def register_transport(name: str, factory: Callable[..., Any], *,
     name replaces it.  *option_keys* returns the keys ``options`` may carry, or
     ``None`` when the engine cannot say -- which leaves it unvalidated.  It runs
     lazily and may import the client it introspects.
+
+    *proxy* declares that this engine honours the ``proxy`` option; an engine
+    that does not declare it is refused one rather than being handed a setting
+    it would ignore.
     """
-    _register("http", name, factory, option_keys)
+    _register("http", name, factory, option_keys, proxy)
 
 
 def register_ws_transport(name: str, factory: Callable[..., Any], *,
-                          option_keys: Callable[[], frozenset[str] | None] | None = None) -> None:
+                          option_keys: Callable[[], frozenset[str] | None] | None = None,
+                          proxy: bool = False) -> None:
     """Make *factory* available as a WebSocket engine name; see :func:`register_transport`."""
-    _register("ws", name, factory, option_keys)
+    _register("ws", name, factory, option_keys, proxy)
 
 
 def _register(kind: str, name: str, factory: Callable[..., Any],
-              option_keys: Callable[[], frozenset[str] | None] | None) -> None:
+              option_keys: Callable[[], frozenset[str] | None] | None,
+              proxy: bool = False) -> None:
     key = str(name).strip()
     if not key:
         raise ValueError("a transport name must not be empty")
@@ -151,6 +163,7 @@ def _register(kind: str, name: str, factory: Callable[..., Any],
         _OPTION_KEYS[kind].pop(key, None)
     else:
         _OPTION_KEYS[kind][key] = option_keys
+    _ACCEPTS_PROXY[kind][key] = bool(proxy)
 
 
 def transport_names(kind: str = "http") -> tuple[str, ...]:
@@ -167,6 +180,16 @@ def accepted_option_keys(name: str, kind: str = "http") -> frozenset[str] | None
     """
     provider = _OPTION_KEYS[_kind(kind)].get(str(name).strip())
     return None if provider is None else provider()
+
+
+def accepts_proxy(name: str, kind: str = "http") -> bool:
+    """Whether the *kind* engine registered as *name* can be sent through a proxy.
+
+    An engine that never declared it is taken to mean no: a proxy it cannot
+    honour is a configuration mistake the caller is told about, not a setting
+    quietly dropped on the way in.
+    """
+    return _ACCEPTS_PROXY[_kind(kind)].get(str(name).strip(), False)
 
 
 def create_transport(name: str, *, kind: str = "http", options: dict | None = None,
@@ -242,10 +265,12 @@ def _websockets_keys():
     return WebSocketsTransport.accepted_option_keys()
 
 
-register_transport("curl_cffi", _curl_cffi, option_keys=_curl_cffi_keys)
-register_transport("cronet", _cronet, option_keys=_cronet_http_keys)
-register_ws_transport("websockets", _websockets, option_keys=_websockets_keys)
-register_ws_transport("cronet", _cronet, option_keys=_cronet_ws_keys)
+register_transport("curl_cffi", _curl_cffi, option_keys=_curl_cffi_keys, proxy=True)
+# The cronet client takes **kwargs and names no proxy, so a proxy has nowhere
+# to go: it is refused rather than accepted and ignored (see ``accepts_proxy``).
+register_transport("cronet", _cronet, option_keys=_cronet_http_keys, proxy=False)
+register_ws_transport("websockets", _websockets, option_keys=_websockets_keys, proxy=True)
+register_ws_transport("cronet", _cronet, option_keys=_cronet_ws_keys, proxy=False)
 
 
 __all__ = [
@@ -253,6 +278,7 @@ __all__ = [
     "HttpTransport",
     "WebSocketTransport",
     "accepted_option_keys",
+    "accepts_proxy",
     "create_transport",
     "register_transport",
     "register_ws_transport",

@@ -15,13 +15,12 @@ from __future__ import annotations
 
 import json as json_module
 from concurrent.futures import Future, ThreadPoolExecutor
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urljoin, urlsplit
 
 from ..foundation.errors import InvalidStateError, NetworkError
 from ..network.models import NetworkRequest, NetworkResponse
-
-#: Headers every request starts from when the environment does not say otherwise.
-_FALLBACK_ACCEPT = "*/*"
+from .js_http import JsHttpController, JsHttpResponse
+from .request_headers import browser_headers
 
 #: Methods the convenience helpers exist for.
 _METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
@@ -51,10 +50,16 @@ def _merge_headers(*layers):
 
 
 class PageNet:
-    """The page's own HTTP client, carrying its cookies and headers."""
+    """The page's network API, in two flavours.
+
+    ``get``/``post``/... are host requests on the context's transport; ``fetch`` and
+    ``xhr`` run the page's own JavaScript APIs instead, so a page that replaced either
+    one is the implementation reached.  Both carry the page's cookies and headers.
+    """
 
     def __init__(self, page):
         self._page = page
+        self._js_http = JsHttpController(page)
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pyv8c-net")
         self._closed = False
         #: What the browser applies to every host request, read once because it
@@ -82,13 +87,17 @@ class PageNet:
 
     # -- request construction --------------------------------------------
 
-    def _default_headers(self):
-        environment = self._page.environment
-        return {
-            "User-Agent": environment.user_agent,
-            "Accept-Language": ", ".join(environment.languages),
-            "Accept": _FALLBACK_ACCEPT,
-        }
+    def _default_headers(self, target, method):
+        """The headers the page's own ``fetch`` would send for this request."""
+        return browser_headers(
+            self._page.environment,
+            destination="empty",
+            mode="cors",
+            method=method,
+            url=target,
+            current_url=self._page.url,
+            http_version=2 if urlsplit(str(target)).scheme == "https" else 1,
+        )
 
     def _resolved_url(self, url, params):
         target = urljoin(self._page.url, str(url))
@@ -109,8 +118,9 @@ class PageNet:
     def build(self, method, url, *, headers=None, params=None, data=None, json=None,
               cookies=True, timeout=None, referer=None, options=None):
         """Turn a host call into one :class:`NetworkRequest`."""
+        target = self._resolved_url(url, params)
         merged = _merge_headers(
-            self._default_headers(),
+            self._default_headers(target, method),
             self._browser_headers,
             self.headers,
             headers,
@@ -120,7 +130,7 @@ class PageNet:
         body = self._body(data, json, merged)
         transport_options = dict(options or {})
         request = NetworkRequest(
-            url=self._resolved_url(url, params),
+            url=target,
             method=str(method).upper(),
             headers=merged,
             body=body,
@@ -181,6 +191,105 @@ class PageNet:
 
         self._executor.submit(run)
         return future
+
+    # -- the page's own fetch and XMLHttpRequest -------------------------
+
+    def fetch(self,
+              url: str,
+              *,
+              method: str = "GET",
+              headers: dict | None = None,
+              body: str | None = None,
+              credentials: str | None = None,
+              timeout: float = 30) -> JsHttpResponse:
+        """Run the page's own ``fetch`` and return what it answered.
+
+        The realm performs the request, so a page that replaced ``fetch`` is the
+        implementation reached and the page's rules apply: CORS, the interceptor,
+        the cache.  ``page.net.get`` is the other choice: a host request on the
+        context's transport, outside those rules.
+
+        :param url: URL to request; a relative one resolves against the page.
+        :param method: HTTP method, upper-cased.
+        :param headers: request headers, as a plain dict.
+        :param body: request body as text; ``None`` sends none.
+        :param credentials: ``"omit"``, ``"same-origin"`` or ``"include"``, as the
+            JS ``RequestInit`` names them.
+        :param timeout: seconds to wait for the request to settle.
+        :returns: the :class:`~pyv8c.platform.js_http.JsHttpResponse` snapshot.
+        :raises NetworkError: the page's ``fetch`` rejected.
+        :raises TimeoutError: the request had not settled within *timeout*.
+        :raises RuntimeError: the page is closed.
+        """
+        return self._js_http.fetch(url, method=method, headers=headers, body=body,
+                                   credentials=credentials, timeout=timeout)
+
+    def fetch_async(self,
+                    url: str,
+                    *,
+                    method: str = "GET",
+                    headers: dict | None = None,
+                    body: str | None = None,
+                    credentials: str | None = None) -> Future:
+        """Start the page's own ``fetch``; the ``Future`` settles on its answer.
+
+        :param url: URL to request; a relative one resolves against the page.
+        :param method: HTTP method, upper-cased.
+        :param headers: request headers, as a plain dict.
+        :param body: request body as text; ``None`` sends none.
+        :param credentials: as the JS ``RequestInit`` names them.
+        :returns: a :class:`concurrent.futures.Future` holding the
+            :class:`~pyv8c.platform.js_http.JsHttpResponse` snapshot, or the error.
+        """
+        return self._js_http.fetch_async(url, method=method, headers=headers, body=body,
+                                         credentials=credentials)
+
+    def xhr(self,
+            url: str,
+            *,
+            method: str = "GET",
+            headers: dict | None = None,
+            body: str | None = None,
+            credentials: str | None = None,
+            timeout: float = 30) -> JsHttpResponse:
+        """Run the page's own ``XMLHttpRequest`` and return what it answered.
+
+        Like :meth:`fetch`, the page's constructor answers.  This implementation
+        exposes no ``getAllResponseHeaders``, so the snapshot's ``headers`` is empty.
+
+        :param url: URL to request; a relative one resolves against the page.
+        :param method: HTTP method, upper-cased.
+        :param headers: request headers, sent with ``setRequestHeader``.
+        :param body: request body as text; ``None`` sends none.
+        :param credentials: ``"include"`` turns on ``withCredentials``.
+        :param timeout: seconds to wait for the request to settle.
+        :returns: the :class:`~pyv8c.platform.js_http.JsHttpResponse` snapshot.
+        :raises NetworkError: the request failed.
+        :raises TimeoutError: the request had not settled within *timeout*.
+        :raises RuntimeError: the page is closed.
+        """
+        return self._js_http.xhr(url, method=method, headers=headers, body=body,
+                                 credentials=credentials, timeout=timeout)
+
+    def xhr_async(self,
+                  url: str,
+                  *,
+                  method: str = "GET",
+                  headers: dict | None = None,
+                  body: str | None = None,
+                  credentials: str | None = None) -> Future:
+        """Start the page's own ``XMLHttpRequest``; the ``Future`` gets its answer.
+
+        :param url: URL to request; a relative one resolves against the page.
+        :param method: HTTP method, upper-cased.
+        :param headers: request headers, sent with ``setRequestHeader``.
+        :param body: request body as text; ``None`` sends none.
+        :param credentials: ``"include"`` turns on ``withCredentials``.
+        :returns: a :class:`concurrent.futures.Future` holding the
+            :class:`~pyv8c.platform.js_http.JsHttpResponse` snapshot, or the error.
+        """
+        return self._js_http.xhr_async(url, method=method, headers=headers, body=body,
+                                       credentials=credentials)
 
     def close(self):
         if self._closed:

@@ -163,8 +163,16 @@ def test_resource_loader_gets_environment_headers_and_explicit_headers_win():
         calls.clear()
         page.resources.load_resource("/one")
         page.resources.load_resource("/two", {"headers": {"user-agent": "Explicit UA", "ACCEPT-LANGUAGE": "de"}})
-        assert calls[0]["headers"] == {"User-Agent": "Env UA", "Accept-Language": "fr-FR, en"}
-        assert calls[1]["headers"] == {"user-agent": "Explicit UA", "ACCEPT-LANGUAGE": "de"}
+        assert calls[0]["headers"]["User-Agent"] == "Env UA"
+        assert calls[0]["headers"]["Accept-Language"] == "fr-FR,en;q=0.9"
+        assert calls[0]["headers"]["Accept"] == "*/*"
+        assert calls[0]["headers"]["Sec-Fetch-Site"] == "same-origin"
+        assert calls[0]["headers"]["Referer"] == "https://example.test/"
+        assert calls[1]["headers"]["user-agent"] == "Explicit UA"
+        assert calls[1]["headers"]["ACCEPT-LANGUAGE"] == "de"
+        assert calls[1]["headers"]["Accept"] == "*/*"
+        assert calls[1]["headers"]["Sec-Fetch-Dest"] == "empty"
+        assert "User-Agent" not in calls[1]["headers"]
     finally:
         browser.close()
 
@@ -271,10 +279,14 @@ def test_fetch_and_xhr_receive_environment_headers():
         page.evaluate("const xhr = new XMLHttpRequest(); xhr.open('GET', '/xhr'); xhr.onload = () => globalThis.xhrDone = true; xhr.send()")
         page.run_until_idle(1)
         assert page.evaluate("[fetchDone, xhrDone]") == [True, True]
-        assert [headers for _, headers in calls] == [
-            {"User-Agent": "Async UA", "Accept-Language": "ko-KR, en"},
-            {"User-Agent": "Async UA", "Accept-Language": "ko-KR, en"},
-        ]
+        # fetch and XHR are one destination on the wire: the browser set, identical.
+        assert [headers for _, headers in calls][0] == [headers for _, headers in calls][1]
+        for _url, headers in calls:
+            assert headers["User-Agent"] == "Async UA"
+            assert headers["Accept-Language"] == "ko-KR,en;q=0.9"
+            assert headers["Sec-Fetch-Mode"] == "cors"
+            assert headers["Sec-Fetch-Dest"] == "empty"
+            assert headers["Referer"] == "https://example.test/"
     finally:
         browser.close()
 

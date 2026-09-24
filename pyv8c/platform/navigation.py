@@ -1,10 +1,10 @@
 """Navigation and HTML document parsing for a single Page."""
 
 import re
-from urllib.parse import urljoin
 
 from ..foundation.errors import InvalidStateError, TimeoutError
 from ..foundation.tasks import TaskSource
+from ..foundation.urls import absolute_url
 from ..web.dom.document import Document
 from ..web.dom.parser import IncrementalDOMParser
 
@@ -87,6 +87,18 @@ class NavigationController:
 
     def goto(self, url, *, timeout=30, wait_until="load"):
         """Download and navigate to an HTML document."""
+        return self._load(url, timeout=timeout, wait_until=wait_until, browser_initiated=True)
+
+    def _load(self, url, *, timeout, wait_until, browser_initiated,
+              method="GET", body=None, content_type=None, user_activated=False):
+        """Load *url*, carrying whatever the request that asked for it must send.
+
+        Everything navigates with a plain ``GET`` except a form submission,
+        which brings *method*, *body* and *content_type* along.  Only a
+        browser-initiated navigation has no initiator and so sends no
+        ``Referer``; a navigation a user gesture asked for is the other way
+        ``Sec-Fetch-User`` appears, which is what *user_activated* marks.
+        """
         if self.page.closed or self.page.context_owner.closed:
             raise InvalidStateError("Page is closed")
         states = {
@@ -97,18 +109,22 @@ class NavigationController:
         }
         if wait_until not in states:
             raise ValueError("wait_until must be 'commit', 'domcontentloaded', or 'load'")
-        target = urljoin(self.page.url, str(url))
+        target = absolute_url(url, self.page.url)
         if not self.navigation_allowed():
             return None
         timeout_value = None if timeout is None else max(0.0, float(timeout))
-        response = self.page.resources.load_resource(
-            target,
-            {
-                "method": "GET", "mode": "navigate", "credentials": "include",
-                "resource_type": "document",
-                "timeout": timeout_value,
-            },
-        )
+        request = {
+            "method": method, "mode": "navigate", "credentials": "include",
+            "resource_type": "document", "destination": "document",
+            "browser_initiated": browser_initiated,
+            "user_activated": user_activated,
+            "timeout": timeout_value,
+        }
+        if body is not None:
+            request["body"] = body
+        if content_type:
+            request["content_type"] = content_type
+        response = self.page.resources.load_resource(target, request)
         final_url = response.url or target
         self.commit_content(self.decode_html(response), final_url)
         ready = states[wait_until]
@@ -122,17 +138,21 @@ class NavigationController:
                 raise TimeoutError(f"Navigation to {target} timed out")
         return response
 
-    def request_navigation(self, url):
-        """Queue navigation requested by the JavaScript Location object."""
+    def request_navigation(self, url, *, method="GET", body=None,
+                           content_type=None, user_activated=False):
+        """Queue a navigation a script, a link or a form submission asked for."""
         if self.page.closed or self.page.context_owner.closed:
             raise InvalidStateError("Page is closed")
-        target = urljoin(self.page.url, str(url))
+        target = absolute_url(url, self.page.url)
         self.pending += 1
         request_id = self.pending
 
         def navigate():
             if request_id == self.pending and not self.page.closed:
-                self.goto(target)
+                self._load(target, timeout=30, wait_until="load",
+                           browser_initiated=False, method=method, body=body,
+                           content_type=content_type,
+                           user_activated=user_activated)
 
         self.page.tasks.post(navigate)
         return target

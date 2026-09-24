@@ -45,7 +45,8 @@ browser = Browser(real_network=False)                           # 不联网：�
 | max_workers | 两个内置 HTTP 引擎的桥接层 | 桥接线程池大小，默认 4；不转发给客户端 |
 | default_headers | curl_cffi | 作为会话选项传入；默认 False，本环境不额外添加请求头 |
 | cookies / headers | websockets | 握手是否带 context 的 cookie（默认带）；`headers` 追加握手头 |
-| 其余键 | 该引擎的客户端 | 按其构造签名转交，如 cronet 的 `timeout_ms`/`verify`、curl_cffi 的 `impersonate`、websockets 的 `open_timeout`/`ping_interval`/`max_size`/`proxy` |
+| proxy | 两个内置引擎的桥接层 | 出口代理，由 `Browser(proxy=...)`/`new_context(proxy=...)` 解析后注入；空串表示直连。curl_cffi 逐请求传 `proxies`（空串即钉住直连），websockets 传 `connect(proxy=...)`。见 [USAGE 的网络代理](USAGE.md) |
+| 其余键 | 该引擎的客户端 | 按其构造签名转交，如 cronet 的 `timeout_ms`/`verify`、curl_cffi 的 `impersonate`、websockets 的 `open_timeout`/`ping_interval`/`max_size` |
 
 校验发生在**创建 Context 时**（`new_context()`），并且**按角色分别进行**：
 
@@ -57,6 +58,8 @@ browser = Browser(real_network=False)                           # 不联网：�
 | 宿主注册的引擎未声明键集合 | 不校验 |
 | 给了 options 却没有引擎读它 | `TypeError` |
 | 注入的引擎填了该角色 | `TypeError`：它已构造完成，不会读这些 options |
+| 给了 `proxy=` 但该角色的引擎不声明支持代理 | `TypeError`，指出哪个引擎不能被代理 |
+| 给了 `proxy=` 又给了该角色自己的代理键（`proxy`/`proxies`/`proxy_auth`） | `TypeError`，指出该保留哪一个 |
 
 ```python
 browser = Browser(http_engine="cronet", http_options={"timeout_ms": 5000, "impersonete": "chrome"})
@@ -82,10 +85,10 @@ browser = Browser(ws_engine="websockets", ws_options={"cookies": False, "headers
 
 两个角色各有注册入口：
 
-- `register_transport(name, factory, option_keys=...)`：HTTP 引擎。
-- `register_ws_transport(name, factory, option_keys=...)`：socket 引擎。
+- `register_transport(name, factory, option_keys=..., proxy=False)`：HTTP 引擎。
+- `register_ws_transport(name, factory, option_keys=..., proxy=False)`：socket 引擎。
 
-factory 按 `factory(options=<字典或 None>)` 调用，每个 Context 一次；`option_keys` 是惰性可调用，返回该引擎接受的键，不声明就不校验（由宿主自己负责）。HTTP 引擎需要 `request_sync`/`request_async`，socket 引擎需要 `websocket`/`close_websocket`，两者都需要 `close`；`cookies` 由 Context 在构造后赋值。
+factory 按 `factory(options=<字典或 None>)` 调用，每个 Context 一次；`option_keys` 是惰性可调用，返回该引擎接受的键，不声明就不校验（由宿主自己负责）。HTTP 引擎需要 `request_sync`/`request_async`，socket 引擎需要 `websocket`/`close_websocket`，两者都需要 `close`；`cookies` 由 Context 在构造后赋值。`proxy=True` 声明该引擎会走 `proxy` 选项（值形如 `http://host:port` 或空串表示直连）；不声明即不接受，装配时给了代理会报错而不是把设置丢掉。
 
 ```python
 from pyv8c import register_transport, register_ws_transport
@@ -110,3 +113,5 @@ page.net.get("https://example.test/", options={"impersonate": "chrome"})
 ```
 
 每请求参数按请求交给当前 HTTP 引擎，各引擎忽略自己没有对应物的键（cronet 目前只使用其中的 `timeout` 字段，不读 `options`），与 `http_options` 的校验无关。
+
+会话级代理由桥接层逐请求下发，因此调用方在单次请求里给出 `proxies`/`proxy`（curl_cffi）时会覆盖它——顺序上后写的胜出，这是刻意的：更靠近请求的一层说话。`page.net.<method>(..., options={...})` 是唯一能这样覆盖的地方，页面内的请求不行。

@@ -817,14 +817,28 @@ CASES = (
     ),
     Repro(
         name="a_label_element_and_its_html_for",
-        note="Excluded: <label> is not a modelled tag here, so it comes out as an "
-             "HTMLUnknownElement with no htmlFor.",
-        html=page(body="<label for=f>L</label>"),
+        note="<label> has its own interface, its htmlFor reflects the attribute, and "
+             "its control resolves the element it labels.",
+        html=page(body="<label for=f>L</label><input id=f>"),
         script="(() => { const label = document.querySelector('label');"
-               " return [label.constructor.name, typeof label.htmlFor]; })()",
-        expected=["HTMLUnknownElement", "undefined"],
-        known_divergence="HTMLLabelElement is not modelled; Chrome reports"
-        " ['HTMLLabelElement', 'string'] for the same page",
+               " return [label.constructor.name, typeof label.htmlFor, label.htmlFor,"
+               "         label.control === document.getElementById('f'),"
+               "         label.control.constructor.name]; })()",
+        expected=["HTMLLabelElement", "string", "f", True, "HTMLInputElement"],
+    ),
+    Repro(
+        name="a_form_control_box_is_its_attribute_size",
+        note="Excluded: in a standards-mode document the box model measures a control "
+             "from its attributes alone, so the user-agent sheet's border, padding and "
+             "margins are not part of the box.",
+        html="<!DOCTYPE html>" + page(
+            body='<input id=i type=text style="margin:0;width:120px;height:20px">'),
+        script="""(() => { const r = document.getElementById('i').getBoundingClientRect();
+                   return [r.width, r.height]; })()""",
+        expected=[120, 20],
+        known_divergence="a standards-mode Chrome adds the UA sheet's 2px inset border and"
+        " 1px 2px padding, measuring the same input 128x26; its quirks-mode sheet switches"
+        " the control to border-box and agrees",
     ),
     Repro(
         name="an_empty_document_still_has_html_head_and_body",
@@ -1862,5 +1876,77 @@ CASES = (
         expected="",
         known_divergence="margin-top computes to '' with nothing declared; Chrome"
         " reports its initial '0px'",
+    ),
+    Repro(
+        name="atob_decodes_what_it_can",
+        note="Forgiving decode: whitespace goes, padding is optional, and the low bits "
+             "of an unfinished quartet are dropped.",
+        html=EMPTY_PAGE,
+        script="""
+            [atob('YQ=='), atob('YQ'), atob('YR'), atob(' YQ =='),
+             Array.from(atob('/w=='), (character) => character.charCodeAt(0))]
+        """,
+        expected=["a", "a", "a", "a", [255]],
+    ),
+    Repro(
+        name="atob_refuses_a_length_it_cannot_decode",
+        html=EMPTY_PAGE,
+        script="atob('abcde')",
+        expect_error="InvalidCharacterError",
+    ),
+    Repro(
+        name="atob_refuses_a_character_outside_the_alphabet",
+        html=EMPTY_PAGE,
+        script="atob('%')",
+        expect_error="InvalidCharacterError",
+    ),
+    Repro(
+        name="atob_refuses_a_code_unit_above_latin1",
+        note="Chrome words this one as a range problem instead of an encoding one; both "
+             "are an InvalidCharacterError.",
+        html=EMPTY_PAGE,
+        script="atob('\\u2028')",
+        expect_error="InvalidCharacterError",
+    ),
+    Repro(
+        name="atob_is_a_native_window_function",
+        html=EMPTY_PAGE,
+        script="""
+            [atob.length, atob.name, String(atob), window.hasOwnProperty('atob'),
+             'atob' in Window.prototype]
+        """,
+        expected=[1, "atob", "function atob() { [native code] }", True, False],
+    ),
+    Repro(
+        name="btoa_encodes_latin1_with_padding",
+        html=EMPTY_PAGE,
+        script="[btoa(''), btoa('a'), btoa('ab'), btoa('abc'), btoa('\\u00ff'), btoa('\\u0000')]",
+        expected=["", "YQ==", "YWI=", "YWJj", "/w==", "AA=="],
+    ),
+    Repro(
+        name="btoa_refuses_a_code_unit_above_latin1",
+        html=EMPTY_PAGE,
+        script="btoa('\\u2028')",
+        expect_error="InvalidCharacterError",
+    ),
+    Repro(
+        name="a_latin1_string_survives_a_round_trip",
+        note="Encode then decode returns the same code units, and a hand-written"
+             " quartet decodes to the byte it names.",
+        html=EMPTY_PAGE,
+        script="""
+            [Array.from(atob(btoa('k\\u00e6\\u00ff')), (character) => character.charCodeAt(0)),
+             btoa(atob('6Q=='))]
+        """,
+        expected=[[107, 230, 255], "6Q=="],
+    ),
+    Repro(
+        name="btoa_is_a_native_window_function",
+        html=EMPTY_PAGE,
+        script="""
+            [btoa.length, btoa.name, String(btoa), window.hasOwnProperty('btoa'),
+             'btoa' in Window.prototype]
+        """,
+        expected=[1, "btoa", "function btoa() { [native code] }", True, False],
     ),
 )

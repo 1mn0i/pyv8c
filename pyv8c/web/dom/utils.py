@@ -1,6 +1,7 @@
 """Shared DOM helpers and the metadata every legacy Web IDL collection uses."""
 
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 from pyv8.flag import FlagArrayProto, V8Attribute
 
@@ -90,3 +91,88 @@ def is_element(node):
 
         _element_type = Element
     return isinstance(node, _element_type)
+
+
+# -- form submission serialization --------------------------------------------
+#: The three encodings ``<form enctype>`` selects between.
+URLENCODED = "application/x-www-form-urlencoded"
+MULTIPART = "multipart/form-data"
+TEXT_PLAIN = "text/plain"
+
+#: The characters the urlencoded serializer leaves alone, per the URL standard.
+_SAFE = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789*-._"
+)
+
+#: Chromium's multipart boundary prefix, followed by sixteen random characters.
+_BOUNDARY_PREFIX = "----WebKitFormBoundary"
+_BOUNDARY_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def crlf(text):
+    """*text* with every line ending normalized to CRLF."""
+    return str(text).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+
+
+def replace_query(url, query):
+    """*url* with its query replaced by *query*.
+
+    The ``?`` stays even for an empty query: Chrome lands on ``/echo?``.
+    """
+    parts = urlsplit(str(url))
+    base = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    fragment = f"#{parts.fragment}" if parts.fragment else ""
+    return f"{base}?{query}{fragment}"
+
+
+def urlencoded(entries):
+    """The ``application/x-www-form-urlencoded`` spelling of *entries*."""
+    return "&".join(f"{_quote(name)}={_quote(value)}" for name, value in entries)
+
+
+def encode_entries(entries, enctype):
+    """The ``(body, Content-Type)`` *entries* are posted as; the body is UTF-8 bytes."""
+    if enctype == MULTIPART:
+        # Lazy: multipart is rare, and this has no place on the startup path.
+        import random
+
+        boundary = _BOUNDARY_PREFIX + "".join(random.choices(_BOUNDARY_ALPHABET, k=16))
+        return _multipart(entries, boundary), f"{MULTIPART}; boundary={boundary}"
+    if enctype == TEXT_PLAIN:
+        return _text_plain(entries), TEXT_PLAIN
+    return urlencoded(entries).encode("utf-8"), URLENCODED
+
+
+def _quote(text):
+    """One name or value in ``application/x-www-form-urlencoded`` spelling."""
+    out = []
+    for byte in str(text).encode("utf-8"):
+        char = chr(byte)
+        if char in _SAFE:
+            out.append(char)
+        elif char == " ":
+            out.append("+")
+        else:
+            out.append(f"%{byte:02X}")
+    return "".join(out)
+
+
+def _text_plain(entries):
+    """Raw values, one CRLF-terminated line per entry."""
+    return "".join(f"{name}={value}\r\n" for name, value in entries).encode("utf-8")
+
+
+def _multipart(entries, boundary):
+    """One part per entry, each with only a ``Content-Disposition`` header."""
+    parts = []
+    for name, value in entries:
+        parts.append(f"--{boundary}\r\n"
+                     f'Content-Disposition: form-data; name="{_escape(name)}"\r\n'
+                     f"\r\n{value}\r\n")
+    parts.append(f"--{boundary}--\r\n")
+    return "".join(parts).encode("utf-8")
+
+
+def _escape(name):
+    """A part name with the characters that would break the header escaped."""
+    return (str(name).replace("\r", "%0D").replace("\n", "%0A").replace('"', "%22"))

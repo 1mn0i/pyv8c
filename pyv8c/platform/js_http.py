@@ -1,10 +1,9 @@
 """Host calls that run the page's own ``fetch`` and ``XMLHttpRequest``.
 
-The realm's JavaScript performs the request, so a page that replaced either API --
-instrumentation, a test harness -- is the implementation that answers.  The
-request therefore carries the page's own rules: CORS, the resource interceptor
-and the cache.  :mod:`platform.net` is the other side of that line: a host
-request on the context's transport, with no JavaScript in the way.
+Reached through ``page.net.fetch``/``page.net.xhr``.  The realm's JavaScript performs
+the request, so a page that replaced either API -- instrumentation, a test harness --
+is the implementation that answers, and the page's own rules apply: CORS, the
+resource interceptor, the cache.
 """
 from __future__ import annotations
 

@@ -25,6 +25,7 @@ from ..web.bom.window import Window
 from ..web.dom.document import Document
 from ..network.assembly import assemble_backend
 from ..network.cookies import CookieJar
+from ..network.proxy import normalize_proxy
 from ..network.registry import HttpTransport, WebSocketTransport
 from .bootstrap import bootstrap_runtime
 from .lifecycle import DocumentLifecycle
@@ -49,12 +50,15 @@ class BrowserContext:
     except for a disk cache directory when one was configured.
     """
 
-    def __init__(self, browser):
+    def __init__(self, browser, *, proxy=None):
         self.browser, self.pages = browser, []
         self.cookies = CookieJar()
+        #: The proxy this context's traffic goes through: its own setting, or the
+        #: browser's while it was given none (see :meth:`Browser.new_context`).
+        self.proxy = browser.proxy if proxy is None else proxy
         self.resource_cache_dir = browser.cache_dir if browser.cache_enabled else None
         self.resource_cache_lock = threading.RLock()
-        self.network_backend = assemble_backend(browser)
+        self.network_backend = assemble_backend(browser, proxy=self.proxy)
         if self.network_backend is not None:
             self.network_backend.cookies = self.cookies
         self._blob_urls = {}
@@ -222,6 +226,7 @@ class Browser:
                  http_options: dict | None = None,
                  ws_engine: Literal["cronet", "websockets"] | WebSocketTransport | Callable | None = "websockets",
                  ws_options: dict | None = None,
+                 proxy: str | None = None,
                  default_headers: dict | None = None,
                  traceable: bool = False,
                  trace: bool = False,
@@ -266,6 +271,12 @@ class Browser:
             be added with
             :func:`~pyv8c.network.registry.register_ws_transport`.
         :param ws_options: options handed to the WebSocket engine, same rule.
+        :param proxy: the ``http://`` or ``https://`` proxy every request and
+            WebSocket handshake of this browser's contexts goes through, with
+            any credentials in the URL (``http://user:pass@host:port``).  Left
+            out, traffic goes directly even when the environment names a proxy;
+            ``""`` asks for the same thing explicitly.  A context may override
+            it with :meth:`new_context`, and SOCKS is not supported.
         :param default_headers: headers every ``page.net`` request starts from.
         :param trace: start each page with tracing on.
         :param trace_callback: receives trace events instead of Loguru.
@@ -309,6 +320,9 @@ class Browser:
         #: when a context is created rather than passed on unread.
         self.http_options = dict(http_options or {})
         self.ws_options = dict(ws_options or {})
+        #: The proxy every context starts from; ``None`` is a direct connection
+        #: and ``""`` asks for one explicitly (see :mod:`pyv8c.network.proxy`).
+        self.proxy = normalize_proxy(proxy)
         #: Headers every host request starts from, on top of the ones derived
         #: from the browser environment (see ``platform.net.PageNet``).
         self.default_headers = dict(default_headers or {})
@@ -359,15 +373,21 @@ class Browser:
         if os.environ.get("PYV8C_STARTUP_STATS", "1") != "0":
             self._startup_stats.update(values)
 
-    def new_context(self) -> BrowserContext:
+    def new_context(self, *, proxy: str | None = None) -> BrowserContext:
         """Create an isolated session: its own cookies, blobs and network stack.
 
+        :param proxy: where this context's traffic goes, overriding
+            :attr:`proxy` for it alone: left out it keeps the browser's setting,
+            a URL sends it through that proxy instead, and ``""`` sends it
+            directly even when the browser has one.  Contexts of one browser may
+            therefore leave by different exits at the same time.
         :returns: the new :class:`BrowserContext`, appended to :attr:`contexts`.
         :raises InvalidStateError: the browser is closed.
+        :raises ValueError: the proxy value is not an ``http``/``https`` URL.
         """
         if self._closed:
             raise InvalidStateError("Browser is closed")
-        context = BrowserContext(self)
+        context = BrowserContext(self, proxy=None if proxy is None else normalize_proxy(proxy))
         self.contexts.append(context)
         return context
 

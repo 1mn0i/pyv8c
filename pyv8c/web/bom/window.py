@@ -16,8 +16,9 @@ from ...foundation.arguments import (
     missing_error,
     usv_string,
 )
+from ...foundation.base64 import forgiving_base64_decode, forgiving_base64_encode
 from ...foundation.environment import BrowserEnvironment
-from ...foundation.errors import LegacyPropertyError, SecurityError
+from ...foundation.errors import InvalidCharacterError, LegacyPropertyError, SecurityError, V8TypeError
 from ...foundation.urls import origin_tuple, serialize_origin
 from ..dom.custom_elements import CustomElementRegistry
 from ..dom.events import EventTarget
@@ -41,6 +42,28 @@ from .scheduling import _SchedulingMixin
 from .utils import deny_cross_origin, is_secure_context, window_attribute, window_method
 
 __all__ = ["BarProp", "Window", "WindowProperties"]
+
+#: The two ways V8 words a failed string conversion, which a method prefixes.
+_CONVERSION_FAILURES = frozenset({
+    "Cannot convert a Symbol value to a string",
+    "Cannot convert object to primitive value",
+})
+
+
+def _string_argument(value, member):
+    """A ``DOMString`` argument, worded the way WebIDL reports a failed conversion.
+
+    An exception a caller's own ``toString`` threw is not a conversion failure and is
+    passed through untouched.
+    """
+    try:
+        return dom_string(value)
+    except pyv8.JSException as error:
+        original = getattr(error, "original", None)
+        reason = str(original._get("message")) if isinstance(original, pyv8.JSObject) else ""
+        if reason not in _CONVERSION_FAILURES:
+            raise
+        raise V8TypeError(f"Failed to execute '{member}' on 'Window': {reason}") from None
 
 #: Names :class:`~dom.window_proxy.WindowProxy` exposes to a cross-origin
 #: caller.  ``Window`` enumerates the same set when a proxy asks it for its own
@@ -265,6 +288,8 @@ class Window(_SchedulingMixin, WindowProperties):
             window_method("webkitRequestFileSystem", "fn_webkitRequestFileSystem", 3, cross_origin=True),
             window_method("matchMedia", "fn_matchMedia", 1, cross_origin=True),
             window_method("getComputedStyle", "fn_getComputedStyle", 1, cross_origin=True),
+            window_method("atob", "fn_atob", 1),
+            window_method("btoa", "fn_btoa", 1),
         ),
         constructor_behavior=0,
         to_string_tag="Window",
@@ -647,6 +672,32 @@ class Window(_SchedulingMixin, WindowProperties):
         }, lambda response, error: reject(self._services.realm_services.js_error_value(error)) if error else resolve(response))
         return promise
     
+    def fn_atob(self, data=MISSING, *_extra):
+        if data is MISSING:
+            raise missing_error("Window", "atob", 1, 0, constructor=False)
+        # Chrome takes the argument as Latin1 before it decodes anything, and says so.
+        text = _string_argument(data, "atob")
+        if any(ord(character) > 0xFF for character in text):
+            raise InvalidCharacterError(
+                "Failed to execute 'atob' on 'Window': The string to be decoded contains"
+                " characters outside of the Latin1 range.")
+        decoded = forgiving_base64_decode(text)
+        if decoded is None:
+            raise InvalidCharacterError(
+                "Failed to execute 'atob' on 'Window': The string to be decoded is not"
+                " correctly encoded.")
+        return decoded
+
+    def fn_btoa(self, data=MISSING, *_extra):
+        if data is MISSING:
+            raise missing_error("Window", "btoa", 1, 0, constructor=False)
+        text = _string_argument(data, "btoa")
+        if any(ord(character) > 0xFF for character in text):
+            raise InvalidCharacterError(
+                "Failed to execute 'btoa' on 'Window': The string to be encoded contains"
+                " characters outside of the Latin1 range.")
+        return forgiving_base64_encode(text)
+
     def fn_close(self, *_extra): return None
     def fn_focus(self, *_extra): return None
     def fn_blur(self, *_extra): return None
