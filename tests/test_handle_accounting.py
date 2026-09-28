@@ -44,6 +44,21 @@ def test_a_python_function_template_is_released_with_its_realm():
     assert isolate.close()
 
 
+def test_the_two_handle_counts_are_visible_and_fall_with_the_realm():
+    isolate = pyv8.Isolate()
+    context = isolate.context(Window)
+    kept = context.exec_js("({ value: 1 })")
+    assert context.live_handles >= 1
+    assert isolate.live_v8_handles >= 1
+    del kept
+    gc.collect()
+    assert context.live_handles >= 0
+    del context
+    gc.collect()
+    assert isolate.live_v8_handles == 0
+    assert isolate.close()
+
+
 def test_a_host_object_pair_is_released_with_its_realm():
     isolate = pyv8.Isolate()
     context = isolate.context(Window)

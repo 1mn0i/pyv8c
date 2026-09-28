@@ -204,9 +204,16 @@ static PyObject* context_isolate_id(context_c* self, void*) {
     if (!state) return nullptr;
     return PyLong_FromVoidPtr(state->isolate());
 }
+// The Python wrappers this realm still owns; zero once it has released them.
+static PyObject* context_live_handles(context_c* self, void*) {
+    auto* resources = self->resources;
+    return PyLong_FromSsize_t(resources == nullptr ? 0
+                              : static_cast<Py_ssize_t>(resources->handles.size()));
+}
 
 PyGetSetDef context_getset[] = {
     {(char*)"isolate_id", (getter)PythonBoundary<context_isolate_id>::call, NULL, NULL, NULL},
+    {(char*)"live_handles", (getter)PythonBoundary<context_live_handles>::call, NULL, NULL, NULL},
     {(char*)"glob", (getter)PythonBoundary<context_get_global>::call, NULL, NULL, NULL},
     {(char*)"trace", (getter)PythonBoundary<context_get_trace>::call, (setter)PythonBoundary<context_set_trace>::call, NULL, NULL},
     {(char*)"timeout", (getter)PythonBoundary<context_get_timeout>::call, (setter)PythonBoundary<context_set_timeout>::call, NULL, NULL},
