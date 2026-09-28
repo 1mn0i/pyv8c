@@ -351,13 +351,13 @@ class Document(_ParentNodeMixin, Node):
             raise missing_error('Document', 'getElementsByTagName', 1, 0, constructor=False)
         value = dom_string(value)
         value = str(value).lower()
-        return HTMLCollection(owner=self, getter=lambda: [x for x in self._descendants() if isinstance(x, Element) and (value == "*" or x.localName == value)])
+        return HTMLCollection(owner=self, getter=lambda: [x for x in self._descendant_snapshot() if isinstance(x, Element) and (value == "*" or x.localName == value)])
     def fn_getElementsByClassName(self, value=MISSING, *_extra):
         if value is MISSING:
             raise missing_error('Document', 'getElementsByClassName', 1, 0, constructor=False)
         value = dom_string(value)
         names = set(str(value).split())
-        return HTMLCollection(owner=self, getter=lambda: [x for x in self._descendants() if isinstance(x, Element) and names.issubset(set(x.get_className().split()))])
+        return HTMLCollection(owner=self, getter=lambda: [x for x in self._descendant_snapshot() if isinstance(x, Element) and names.issubset(set(x.get_className().split()))])
     def fn_getElementsByTagNameNS(self, namespace=MISSING, local_name=MISSING, *_extra):
         return tag_name_ns_collection(self, 'Document', namespace, local_name)
     def fn_querySelector(self, selector=MISSING, *_extra):

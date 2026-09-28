@@ -6,6 +6,7 @@ urlencoded serializers and the header-name rule ride along, so the wire spelling
 sit in one place.
 """
 
+from functools import lru_cache
 from urllib.parse import urljoin, urlsplit
 
 __all__ = [
@@ -65,8 +66,9 @@ def serialize_origin(origin):
     return f"{scheme}://{host}{port_suffix}"
 
 
-def origin_string(url):
-    """Serialize the origin of ``url``; ``"null"`` for an opaque origin."""
+@lru_cache(maxsize=2048)
+def _origin_string(url):
+    """The origin of one URL string, parsing it once per distinct URL."""
     try:
         parts = urlsplit(str(url))
         if parts.scheme not in SPECIAL_SCHEMES or not parts.hostname:
@@ -79,6 +81,18 @@ def origin_string(url):
         suffix = (":" + str(port)) if port is not None and port != default_port else ""
         return f"{parts.scheme}://{host}{suffix}"
     except (TypeError, ValueError):
+        return "null"
+
+
+def origin_string(url):
+    """Serialize the origin of ``url``; ``"null"`` for an opaque origin.
+
+    A page asks for the origin of the same few URLs on every request it makes, and
+    the answer only depends on the URL, so it is parsed once and remembered.
+    """
+    try:
+        return _origin_string(url)
+    except TypeError:  # an argument lru_cache cannot key, which is still "null"
         return "null"
 
 

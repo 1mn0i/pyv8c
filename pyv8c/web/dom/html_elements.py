@@ -21,6 +21,7 @@ from .collections import (
 )
 from .css import CSSStyleDeclaration
 from .mixins import _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, _ParentNodeMixin
+from .mutation import record_mutation
 from .nodes import Attr, DocumentFragment, Node
 from .utils import _VALID_NAME_RE, XHTML_NAMESPACE
 
@@ -146,9 +147,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             raise missing_error('Element', 'setAttribute', 2, 0, constructor=False)
         if value is MISSING:
             raise missing_error('Element', 'setAttribute', 2, 1, constructor=False)
-        name = dom_string(name)
-        value = dom_string(value)
-        self.fn_setAttributeNS(None, name, value)
+        self._set_attribute(dom_string(name), dom_string(value))
     def fn_removeAttribute(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('Element', 'removeAttribute', 1, 0, constructor=False)
@@ -156,7 +155,6 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         lowered = str(name).lower()
         previous = self.attributes.pop(lowered, None)
         if previous is not None:
-            from .mutation import record_mutation
             record_mutation(self, "attributes", attribute_name=lowered, old_value=previous)
     def fn_hasAttribute(self, name=MISSING, *_extra):
         if name is MISSING:
@@ -198,15 +196,18 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             raise missing_error('Element', 'setAttributeNS', 3, 1)
         if value is MISSING:
             raise missing_error('Element', 'setAttributeNS', 3, 2)
-        namespace = None if is_nullish(namespace) else dom_string(namespace)
-        name = dom_string(name)
-        value = dom_string(value)
+        if not is_nullish(namespace):
+            # Only the HTML namespace exists, but WebIDL converts the argument anyway.
+            dom_string(namespace)
+        self._set_attribute(dom_string(name), dom_string(value))
+
+    def _set_attribute(self, name, value):
+        """Write one attribute; both spellings convert their arguments first."""
         if not _VALID_NAME_RE.match(name):
             raise InvalidCharacterError("The attribute name provided is invalid.")
         lowered = name.lower()
         previous = self.attributes.get(lowered)
         self.attributes[lowered] = str(value)
-        from .mutation import record_mutation
         record_mutation(self, "attributes", attribute_name=lowered,
                         old_value=previous)
     def fn_removeAttributeNS(self, namespace=MISSING, local_name=MISSING, *_extra):
@@ -251,7 +252,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if name not in self.attributes: raise NotFoundError("The attribute was not found.")
         return Attr(name, self.attributes.pop(name), ownerElement=self, services=self._services)
     def _descendant_elements(self):
-        return [node for node in self._descendants() if isinstance(node, Element)]
+        return [node for node in self._descendant_snapshot() if isinstance(node, Element)]
     def fn_getElementsByTagName(self, tag_name=MISSING, *_extra):
         if tag_name is MISSING:
             raise missing_error('Element', 'getElementsByTagName', 1, 0, constructor=False)

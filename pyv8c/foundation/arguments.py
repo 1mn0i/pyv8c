@@ -201,10 +201,21 @@ def sequence(value, convert=None, *, iterator_method=MISSING):
     return [convert(item) for item in result] if convert else result
 
 
+#: ``__idl_spec__`` is fixed when a class is defined, so the answer cannot change for a
+#: type; the walk this replaces ran on every DOM call, and was the parser's hottest.
+_INTERFACE_CHECKS: dict[tuple[type, str], bool] = {}
+
+
 def interface_value(value, expected, interface, method, position, *, nullable=False):
     if nullable and is_nullish(value):
         return None
-    if any(getattr(getattr(base, "__idl_spec__", None), "name", None) == expected for base in type(value).__mro__):
+    key = (type(value), expected)
+    matched = _INTERFACE_CHECKS.get(key)
+    if matched is None:
+        matched = any(getattr(getattr(base, "__idl_spec__", None), "name", None) == expected
+                      for base in type(value).__mro__)
+        _INTERFACE_CHECKS[key] = matched
+    if matched:
         return value
     raise V8TypeError(
         f"Failed to execute '{method}' on '{interface}': parameter {position} is not of type '{expected}'."

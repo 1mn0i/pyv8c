@@ -8,7 +8,7 @@ import inspect
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
 
-from loguru import logger  # patch target for cookie-change logging tests
+from ..foundation.logging import logger  # patch target for cookie-change logging tests
 
 from ..foundation.errors import InvalidStateError
 from .backend import RequestDelivery

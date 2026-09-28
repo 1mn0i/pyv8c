@@ -100,6 +100,18 @@ getter"的条目。cross-origin 的配置由 `SetAccessCheckCallbackAndHandler` 
 
 不要用未经测量的“提速”描述替代基准。Feature 模块应在首次使用时导入，Browser Runtime 状态不能跨实例共享；Realm Session 配置不能跨页面共享。网络线程不得同步等待页面 owner 线程，关闭操作必须幂等。
 
+`tools/benchmark.py` 是这句话的落点：11 个用例覆盖启动、页面开合、跨桥调用、DOM 构建/解析/查询、事件派发、子资源加载与常驻内存，全程离线、各自新建 Browser，每个用例报中位数与最小值。
+
+```powershell
+python tools/benchmark.py --record     # 接受当前数字为基线，写 tools/perf_baseline.json
+python tools/benchmark.py              # 与基线对比，中位数与最小值双双变慢的用例会标出来
+python tools/benchmark.py --cases dom_query --runs 5
+```
+
+两次测量之间机器负载不同，差异可能落在噪声里；要看结论，先用 `git stash` 量一次改动前再量改动后。`resident_pages` 的 MB 数是进程提交内存的差值，偏粗；同一条里的“每页 Python 句柄数”是精确值（`Context.live_handles`，原生侧另有 `Isolate.live_v8_handles` 可在关闭前确认句柄归零）。
+
+按这个口径实测过一轮（2026-09-28，`git stash` 回 HEAD 对照）：`dom_query` −57%、`dom_build` −48%、`host_call` −33%、`resource_batch` −23%、`dom_parse` −3%，启动中位数 259 → 245 ms（导入模块 435 → 394）。跨桥一次约 3.7 µs 降到约 1.9 µs，其中原生派发只占 0.18 µs——宿主方法体才是跨桥成本所在，所以先查 Python 侧再看 C++。
+
 ## 交付
 
 最终说明列出实现变化、测试命令和结果、环境限制、未处理失败以及是否创建 commit。删除代码或文档时说明原因；不恢复历史日志文件，不修改任务范围外的 IndexedDB、DevTools、trace 或相邻仓库改动。

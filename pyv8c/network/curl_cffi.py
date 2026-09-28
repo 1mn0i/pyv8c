@@ -9,7 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
 
-from loguru import logger
+from ..foundation.logging import logger
 
 from ..foundation.errors import InvalidStateError, NetworkError
 from .backend import RequestDelivery

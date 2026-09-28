@@ -1,0 +1,84 @@
+{
+  "recorded": "2026-09-28",
+  "python": "3.12.9",
+  "cases": {
+    "startup": {
+      "median": 258.9,
+      "min": 257.2,
+      "unit": "ms",
+      "detail": "435 modules imported",
+      "runs": 3
+    },
+    "page_cycle": {
+      "median": 5.698426665427784,
+      "min": 5.5315133339415,
+      "unit": "ms/op",
+      "detail": "open then close, 15 cycles",
+      "runs": 3
+    },
+    "evaluate": {
+      "median": 0.03492421999108046,
+      "min": 0.03197331998962909,
+      "unit": "ms/op",
+      "detail": "evaluate('1')",
+      "runs": 3
+    },
+    "host_call": {
+      "median": 54.73939992953092,
+      "min": 54.68780000228435,
+      "unit": "ms",
+      "detail": "20000 setAttribute calls",
+      "runs": 3
+    },
+    "js_loop": {
+      "median": 0.3696000203490257,
+      "min": 0.27359998784959316,
+      "unit": "ms",
+      "detail": "20000 additions, no host call",
+      "runs": 3
+    },
+    "dom_build": {
+      "median": 215.6724000815302,
+      "min": 209.34309996664524,
+      "unit": "ms",
+      "detail": "4000 divs with a span each",
+      "runs": 3
+    },
+    "dom_parse": {
+      "median": 374.7178999474272,
+      "min": 370.5480999778956,
+      "unit": "ms",
+      "detail": "4000 rows",
+      "runs": 3
+    },
+    "dom_query": {
+      "median": 2532.8076999867335,
+      "min": 2502.536299987696,
+      "unit": "ms",
+      "detail": "200 scans of a 4000-row tree",
+      "runs": 3
+    },
+    "event_dispatch": {
+      "median": 360.3405999019742,
+      "min": 356.92039993591607,
+      "unit": "ms",
+      "detail": "20000 dispatches through one listener",
+      "runs": 3
+    },
+    "resource_batch": {
+      "median": 43.12079993542284,
+      "min": 42.05579997505993,
+      "unit": "ms",
+      "detail": "200 images",
+      "runs": 3
+    },
+    "resident_pages": {
+      "median": 0.0,
+      "min": 0.0,
+      "unit": "MB/page",
+      "detail": "8 live pages",
+      "runs": 3
+    }
+  },
+  "unavailable": {}
+}

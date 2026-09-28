@@ -56,6 +56,33 @@ def _contains_style(node):
     return False
 
 
+#: Moves on every structural change in the document, so a tree walk can cache its answer
+#: until the next change; one counter for the process cannot miss a mutation site.
+_tree_version = 0
+
+
+def _bump_tree_version():
+    global _tree_version
+    _tree_version += 1
+
+
+class _ChildList(list):
+    """A node's children: every change moves the version a tree walk keys on.
+
+    Building a node changes no tree, so a fresh list does not move the version --
+    only a change to the list it belongs to does.
+    """
+
+    def append(self, value): _bump_tree_version(); super().append(value)
+    def insert(self, index, value): _bump_tree_version(); super().insert(index, value)
+    def remove(self, value): _bump_tree_version(); super().remove(value)
+    def pop(self, index=-1): _bump_tree_version(); return super().pop(index)
+    def clear(self): _bump_tree_version(); super().clear()
+    def extend(self, values): _bump_tree_version(); super().extend(values)
+    def __setitem__(self, index, value): _bump_tree_version(); super().__setitem__(index, value)
+    def __delitem__(self, index): _bump_tree_version(); super().__delitem__(index)
+
+
 def _record_mutation(target, kind, **details):
     """Report one change to the document's mutation observers."""
     from .mutation import record_mutation
@@ -131,7 +158,7 @@ class Node(EventTarget):
         super().__init__(services=services, **kw)
         self.nodeType, self.nodeName, self.nodeValue = node_type, node_name, value
         self.parentNode = None
-        self._children = []
+        self._children = _ChildList()
         self._child_nodes_view = NodeList(owner=self, getter=lambda: self._children)
 
     @property
@@ -193,12 +220,33 @@ class Node(EventTarget):
             yield node
             node = node.parentNode
 
+    def _walk_descendants(self):
+        """Yield every descendant of ``self`` in tree order."""
+        for child in self._children:
+            yield child
+            if isinstance(child, Node):
+                yield from child._walk_descendants()
+
     def _descendants(self):
         """Yield every descendant of ``self`` in tree order."""
         for child in self._children:
             yield child
             if isinstance(child, Node):
-                yield from child._descendants()
+                yield from child._walk_descendants()
+
+    def _descendant_snapshot(self):
+        """The same walk as a tuple, reused until the tree changes.
+
+        A query reads the whole tree and filters it, and a page runs the same query
+        far more often than it changes the tree.  A caller that stops at the first
+        match wants ``_descendants`` instead, which stays lazy -- materialising the
+        tuple for one of those turned parsing into a quadratic walk.
+        """
+        cached = self.__dict__.get("_descendants_cache")
+        if cached is None or cached[0] != _tree_version:
+            cached = (_tree_version, tuple(self._walk_descendants()))
+            self.__dict__["_descendants_cache"] = cached
+        return cached[1]
 
     def get_nodeType(self): return self.nodeType
     def get_nodeName(self): return self.nodeName
@@ -281,13 +329,15 @@ class Node(EventTarget):
         node.parentNode = self
         if index is None:
             self._children.append(node)
+            position = len(self._children) - 1
         else:
-            self._children.insert(index, node)
+            position = index if index >= 0 else max(len(self._children) + index, 0)
+            position = min(position, len(self._children))
+            self._children.insert(position, node)
         _bump_style_version(node)
         services = getattr(self, "_services", None)
         document_services = getattr(services, "document_services", None)
         if document_services is not None and not document_services.parsing:
-            position = self._children.index(node)
             _record_mutation(self, "childList", added=[node],
                              previous=self._children[position - 1] if position else None,
                              next_=(self._children[position + 1]
@@ -307,7 +357,7 @@ class Node(EventTarget):
             self._notify_removed(child)
         if removed:
             _record_mutation(self, "childList", removed=removed)
-        self._children = []
+        self._children = _ChildList()
         for node in nodes:
             self._adopt_child(node)
 

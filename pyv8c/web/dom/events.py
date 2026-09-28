@@ -28,7 +28,7 @@ _DOCUMENT_NODE = 9  # DOM standard nodeType of Document; hardcoded to avoid a do
 
 
 def _js_call(fn, this, *args):
-    if hasattr(fn, "call"):
+    if isinstance(fn, pyv8.JSObject):
         return fn.call(this, *args)
     return fn(*args)
 
@@ -854,7 +854,13 @@ class EventTarget:
         return not event.defaultPrevented
 
     def _invoke(self, event, capture):
-        for listener, registered_capture, once, passive, signal, _order in list(self._listeners.get(event.type, ())):
+        listeners = self._listeners.get(event.type)
+        handler = self._handlers.get("on" + event.type)
+        # A dispatch visits every node on the path, and most of them listen for
+        # nothing: this is the check that keeps those visits to two dict reads.
+        if listeners is None and handler is None:
+            return
+        for listener, registered_capture, once, passive, signal, _order in list(listeners or ()):
             if registered_capture != capture:
                 continue
             if signal is not None and getattr(signal, "aborted", False): continue
@@ -875,7 +881,6 @@ class EventTarget:
             if once: self._listeners[event.type] = [x for x in self._listeners.get(event.type, ()) if x[0] is not listener or x[1] != registered_capture]
             if event._immediate:
                 return
-        handler = self._handlers.get("on" + event.type)
         # EventHandler slots may hold non-callable objects; Blink invokes their function.
         if not capture and callable(handler):
             try:
@@ -899,7 +904,8 @@ class EventTarget:
         raise AttributeError(name)
 
     def __setattr__(self, name, value):
-        if name.startswith("on") and name != "one" and "_handlers" in self.__dict__:
+        # A plain index beats str.startswith, and almost every assignment fails it.
+        if name[:2] == "on" and name != "one" and "_handlers" in self.__dict__:
             self._handlers[name] = value
             return
         object.__setattr__(self, name, value)

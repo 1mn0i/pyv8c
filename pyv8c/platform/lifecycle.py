@@ -66,24 +66,35 @@ class DocumentLifecycle:
         self.dom_content_loaded = False
         self.document_load_fired = False
         self.load_waiters = []
+        self._event_classes = {}
+        self._event_session = None
 
     def materialize_event_class(self, event_class):
         """Resolve ``event_class`` (an interface name or a class) for this realm.
 
         The native side needs a committed class config before a Python-built event
-        can become a JS object; a second call is a no-op.
+        can become a JS object; a second call is a no-op.  One document loading two
+        hundred images resolves the same class for every one of them, so the answer
+        is remembered until a navigation replaces the realm.
         """
+        session = self.page.binding_session
+        if session is not self._event_session:
+            self._event_classes = {}
+            self._event_session = session
+        cached = self._event_classes.get(event_class)
+        if cached is not None:
+            return cached
         name = event_class if isinstance(event_class, str) else getattr(
             getattr(event_class, "__idl_spec__", None), "name", None
         )
         if name is None:
             return event_class
-        session = self.page.binding_session
         if name not in session.interface_names("Window"):
             raise TypeError(f"unknown event interface {name!r}")
         cls = session.materialize(name)
         if not issubclass(cls, Event):
             raise TypeError(f"{name!r} is not an Event interface")
+        self._event_classes[event_class] = cls
         return cls
 
     def event_class(self, event_type, event_class=None):

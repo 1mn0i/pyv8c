@@ -133,6 +133,24 @@ def test_node_list_exposes_web_idl_iterable_helpers(page):
     ]
 
 
+def test_a_query_repeated_after_a_mutation_sees_it(page):
+    """A cached tree walk must not hide a change made between two reads."""
+    result = page.evaluate("""
+(() => {
+  const byTag = document.getElementsByTagName('span');
+  const byClass = document.getElementsByClassName('a');
+  const bySelector = document.querySelectorAll('span');
+  const before = [byTag.length, byClass.length, bySelector.length];
+  const added = document.createElement('span');
+  added.className = 'a';
+  document.getElementById('root').appendChild(added);
+  return [before, byTag.length, byClass.length, bySelector.length,
+          byTag[byTag.length - 1] === added, byClass[byClass.length - 1] === added];
+})()
+""")
+    assert result == [[2, 1, 2], 3, 2, 2, True, True]
+
+
 def test_html_collection_named_properties_match_web_idl(page):
     result = page.evaluate("""
 (() => {

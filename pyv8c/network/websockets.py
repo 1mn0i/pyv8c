@@ -9,7 +9,7 @@ import inspect
 import threading
 from threading import RLock
 
-from loguru import logger
+from ..foundation.logging import logger
 
 from ..foundation.urls import header_set as _header_set
 from .models import NetworkUnavailableError

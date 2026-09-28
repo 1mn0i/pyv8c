@@ -166,15 +166,48 @@ def _is_checked(node):
     input_type = str(getattr(node, "attributes", {}).get("type", "text")).lower()
     return input_type in {"checkbox", "radio"} and "checked" in node.attributes
 
+def _matches_attribute(actual, op, wanted):
+    """Whether *actual* satisfies ``[name<op>wanted]``."""
+    if op == "=":
+        return actual == wanted
+    if op == "^=":
+        return actual.startswith(wanted)
+    if op == "$=":
+        return actual.endswith(wanted)
+    if op == "*=":
+        return wanted in actual
+    if op == "~=":
+        return wanted in actual.split()
+    return actual == wanted or actual.startswith(wanted + "-")
+
+
+def _class_set(node):
+    """The classes of *node*, split once per value of its class attribute.
+
+    A query walks the same tree over and over, and the split used to happen again
+    for every node of every scan.
+    """
+    class_name = node.attributes.get("class", "")
+    cached = node.__dict__.get("_selector_classes")
+    if cached is None or cached[0] != class_name:
+        cached = (class_name, frozenset(class_name.split()))
+        node.__dict__["_selector_classes"] = cached
+    return cached[1]
+
+
 def _simple_match(node, simple):
     if not isinstance(node, Element) or (simple.tag != "*" and node.localName != simple.tag): return False
-    if any(node.get_id() != value for value in simple.ids): return False
-    classes = set(node.get_className().split())
-    if any(value not in classes for value in simple.classes): return False
+    attributes = node.attributes
+    for value in simple.ids:
+        if attributes.get("id", "") != value: return False
+    if simple.classes:
+        classes = _class_set(node)
+        for value in simple.classes:
+            if value not in classes: return False
     for name, op, wanted in simple.attrs:
-        actual = node.attributes.get(name)
+        actual = attributes.get(name)
         if actual is None: return False
-        if op and not {"=": actual == wanted, "^=": actual.startswith(wanted), "$=": actual.endswith(wanted), "*=": wanted in actual, "~=": wanted in actual.split(), "|=": actual == wanted or actual.startswith(wanted + "-")}[op]: return False
+        if op and not _matches_attribute(actual, op, wanted): return False
     for name, arg in simple.pseudos:
         pos, sibling_count = _sibling_position(node, name.endswith("of-type"))
         if name == "first-child" and pos != 1 or name == "last-child" and pos != sibling_count: return False
@@ -213,6 +246,14 @@ def matches(node, selector): return any(_matches_ast(node, group) for group in p
 
 def select(root, selector):
     ast = parse(selector); nodes = []
+    if len(ast) == 1:
+        # One group is the common case, where the per-node generator `any` costs more
+        # than the match itself.
+        group = ast[0]
+        if isinstance(root, Element) and _matches_ast(root, group): nodes.append(root)
+        nodes.extend(n for n in root._descendant_snapshot()
+                     if isinstance(n, Element) and _matches_ast(n, group))
+        return nodes
     if isinstance(root, Element) and any(_matches_ast(root, group) for group in ast): nodes.append(root)
-    nodes.extend(n for n in root._descendants() if isinstance(n, Element) and any(_matches_ast(n, group) for group in ast))
+    nodes.extend(n for n in root._descendant_snapshot() if isinstance(n, Element) and any(_matches_ast(n, group) for group in ast))
     return nodes
