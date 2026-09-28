@@ -1,9 +1,5 @@
-"""HTML element implementations.
-
-The node tree lives in :mod:`dom.nodes`, the document algorithms in
-:mod:`dom.document` and the shared tag helpers in :mod:`dom.utils`; this
-module owns the HTML tag-specific interfaces and the tag-to-class factory.
-"""
+"""HTML element implementations: the tag-specific interfaces and the tag-to-class
+factory."""
 from html import escape
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -29,9 +25,7 @@ from .utils import _VALID_NAME_RE, XHTML_NAMESPACE
 #: ``insertAdjacent*`` positions, in the order Chromium validates them.
 _ADJACENT_POSITIONS = ("beforebegin", "afterbegin", "beforeend", "afterend")
 
-# HTML void elements serialize without children or an end tag.  Keep this
-# local to the element serializer so programmatically-created nodes follow the
-# same rule as parser-created nodes.
+# HTML void elements serialize without children or an end tag, programmatic nodes too.
 _VOID_ELEMENTS = frozenset({
     "area", "base", "br", "col", "embed", "hr", "img", "input",
     "link", "meta", "param", "source", "track", "wbr",
@@ -184,9 +178,8 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if force: self.attributes[name] = ""
         else: self.attributes.pop(name, None)
         return force
-    # Only the HTML namespace is modelled, so the *NS variants behave exactly
-    # like their namespace-free counterparts for a null/HTML namespace and
-    # match nothing for a foreign one.
+    # Only the HTML namespace exists, so the *NS variants behave like their plain
+    # counterparts for a null/HTML namespace and match nothing for a foreign one.
     def fn_getAttributeNS(self, namespace=MISSING, local_name=MISSING, *_extra):
         if namespace is MISSING:
             raise missing_error('Element', 'getAttributeNS', 2, 0, constructor=False)
@@ -301,8 +294,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if parent is None:
             return
         for node in nodes:
-            # Re-locate ``self`` on every step: adopting a node that is
-            # already a sibling detaches it first and shifts the list.
+            # Re-locate ``self`` each step: adopting a sibling detaches it and shifts the list.
             index = parent._children.index(self) + (0 if where == "beforebegin" else 1)
             parent._adopt_child(node, index)
     def fn_insertAdjacentElement(self, where=MISSING, element=MISSING, *_extra):
@@ -371,11 +363,8 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         return f"<{self.localName}{attrs}>{self.get_innerHTML()}</{self.localName}>"
     def _clone_shallow(self): return type(self)(self.localName, services=self._services, attributes=self.attributes.copy())
 
-    # -- activation --------------------------------------------------------
-    # A click on an element runs its activation behavior after the event, and
-    # the behavior belongs to the nearest ancestor that has one (see
-    # dom.activation).  Most elements have none, which is why the default pair
-    # answers "nothing here"; the subclasses below that do override them.
+    # A click runs the behavior of the nearest ancestor that has one (see
+    # dom.activation); most elements have none, hence the default pair below.
 
     def _activatable(self):
         """Whether a click at or below this element runs a behavior here."""
@@ -452,14 +441,9 @@ class HTMLElement(Element):
         from .layout import layout
         return int(round(layout(self).height))
 
-    # -- focus, tab order and activation -----------------------------------
-
     def get_tabIndex(self):
-        """The element's tab index: the attribute when it is there, else its default.
-
-        Chromium answers 0 for the elements that are focusable areas on their
-        own and -1 for everything else, and a value it cannot parse reads as 0.
-        """
+        """The element's tab index: the attribute when present, else Chromium's default
+        -- 0 for a focusable area, -1 otherwise; an unparseable value reads as 0."""
         from .focus import focusable
         value = self.attributes.get("tabindex")
         if value is None:
@@ -471,12 +455,8 @@ class HTMLElement(Element):
         self.attributes["tabindex"] = str(integer(value, signed=True))
 
     def fn_focus(self, *_extra):
-        """Focus this element when it is a focusable area.
-
-        Chrome ignores the call on anything else -- a plain ``div`` without a
-        ``tabindex`` keeps the document's focus where it was -- so the check
-        lives in :func:`dom.focus.focus` rather than here.
-        """
+        """Focus this element when it is a focusable area; Chrome ignores the call on
+        anything else, so the check lives in :func:`dom.focus.focus`."""
         from .focus import focus
         focus(self)
 
@@ -488,26 +468,17 @@ class HTMLElement(Element):
             blur(document)
 
     def fn_click(self, *_extra):
-        """Run the synthetic click activation steps a script asked for.
-
-        Chrome fires an untrusted ``click`` at the origin, and the activation
-        behavior follows when no listener cancelled it -- so ``a.click()``
-        navigates, ``checkbox.click()`` toggles, and a disabled control
-        dispatches nothing at all.
-        """
+        """Run the synthetic click activation steps a script asked for: an untrusted
+        ``click`` at the origin, then the behavior unless a listener cancelled it."""
         from .activation import click_element
         click_element(self)
 
 
 @interface('HTMLUnknownElement', 'HTMLElement')
 class HTMLUnknownElement(HTMLElement):
-    """The interface Chromium exposes for tags it has no dedicated class for.
-
-    That covers the obsolete tags (``bgsound``, ``blink``, ``isindex``,
-    ``keygen``, ``multicol``, ``nextid``, ``spacer``), custom element names and
-    anything else this DOM does not model.  The baseline declares no members
-    beyond ``HTMLElement`` and ``allow_new=false``, so the constructor throws;
-    the host still builds instances through ``__init__``.
+    """The interface Chromium exposes for tags with no dedicated class: obsolete
+    tags, custom element names and anything else unmodelled.  ``allow_new=false``,
+    so the constructor throws; the host still builds instances through ``__init__``.
     """
 
     __v8_idl_spec__ = IdlSpec(
@@ -517,8 +488,7 @@ class HTMLUnknownElement(HTMLElement):
     )
 
 
-#: The states ``button.type`` reports.  A missing attribute and a value the button
-#: does not know are both the submit button.
+#: The states ``button.type`` reports; a missing or unknown value is ``submit``.
 _BUTTON_TYPES = frozenset(("submit", "reset", "button"))
 
 
@@ -559,19 +529,13 @@ class HTMLButtonElement(HTMLElement):
             node = node.parentElement
         return pyv8.Null
 
-    # -- activation --------------------------------------------------------
-
     def _activatable(self):
         """A submit or reset button clicks into its form; a plain one does nothing."""
         return self.get_type() in ("submit", "reset") and not self._bool("disabled")
 
     def _run_activation(self, event=None):
-        """Submit or reset the form this button belongs to.
-
-        This button is the submission's *submitter*, so its name and value join
-        the entry list; whether the click was a user gesture decides the
-        ``Sec-Fetch-User`` the request carries.
-        """
+        """Submit or reset the form this button belongs to; this button is the
+        submission's submitter, so its name and value join the entries."""
         form = self.get_form()
         if form is None or form is pyv8.Null:
             return
@@ -594,12 +558,8 @@ def _owning_table(row):
 
 @interface('HTMLTableElement', 'HTMLElement')
 class HTMLTableElement(HTMLElement):
-    """``<table>``: the rows a page walks.
-
-    ``rows`` holds every row this table owns -- those in its sections, in document
-    order -- and not the rows of a table nested inside it, which belong to that
-    table instead.
-    """
+    """``<table>``: the rows it owns -- those in its sections, in document order --
+    but not the rows of a table nested inside it, which belong to that table."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="rows", getter="get_rows", side_effect=1),),
@@ -681,12 +641,8 @@ def _document_url(element):
 
 
 def _url_value(element, name):
-    """A URL attribute's value, resolved against the element's document.
-
-    Chromium's URL getters return an absolute URL while the content attribute
-    keeps exactly what the page wrote, and an absent or empty attribute reads
-    back as an empty string rather than as the document's own URL.
-    """
+    """A URL attribute's value, resolved against the element's document: the content
+    attribute keeps what the page wrote, and absent or empty reads back as ``""``."""
     raw = str(element.attributes.get(name, ""))
     return urljoin(_document_url(element), raw) if raw else ""
 
@@ -715,13 +671,8 @@ def _is_labelable(node):
 
 @interface('HTMLLabelElement', 'HTMLElement')
 class HTMLLabelElement(HTMLElement):
-    """``<label>``: the control it labels, and the click it forwards to it.
-
-    The labeled control is the one ``for`` names by id, or the label's first
-    labelable descendant when the attribute is absent -- the two ways HTML
-    defines it, and both of them reach the control the way Chromium does:
-    a focus first, then a click event on the control itself.
-    """
+    """``<label>``: the control it labels (by ``for`` id, or its first labelable
+    descendant) and the click it forwards to it -- a focus, then a click event."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -760,21 +711,13 @@ class HTMLLabelElement(HTMLElement):
             node = node.parentElement
         return pyv8.Null
 
-    # -- activation --------------------------------------------------------
-
     def _activatable(self):
         """A label clicks into the control it labels."""
         return self._labeled_control() is not None
 
     def _run_activation(self, event=None):
-        """Focus the labeled control and click it, the order Chrome uses.
-
-        The click the control receives is the press the label received, not a
-        fresh synthetic one: Chrome keeps the coordinates, the click count and
-        the trust, so a real mouse click on a label reaches its checkbox as a
-        trusted ``detail`` 1 click while ``label.click()`` reaches it as an
-        untrusted one.
-        """
+        """Focus the labeled control and click it, the order Chrome uses.  The
+        click repeats the label's own press (same coordinates, count and trust)."""
         control = self._labeled_control()
         if control is None:
             return
@@ -808,11 +751,8 @@ class HTMLImageElement(HTMLElement):
         value = dom_string(value)
         self.attributes['alt'] = str(value)
     def _dimension(self, name):
-        """One image dimension: the number the attribute starts with, else 0.
-
-        Chromium parses these as dimension values, so ``12px`` and ``12%`` read back
-        as 12, and an attribute with no leading number at all as 0.
-        """
+        """One image dimension: the number the attribute starts with, else 0 --
+        Chromium parses ``12px``/``12%`` as 12."""
         digits = ""
         for character in str(self.attributes.get(name, "")).strip():
             if character not in "0123456789":
@@ -820,8 +760,7 @@ class HTMLImageElement(HTMLElement):
             digits += character
         return int(digits) if digits else 0
     def _set_dimension(self, name, value):
-        # A dimension is not an unsigned long: a negative one is stored as 0 rather
-        # than wrapped around.
+        # Not an unsigned long: a negative dimension stores as 0 rather than wrapping.
         self.attributes[name] = str(max(0, integer(value, signed=True)))
     def get_width(self): return self._dimension("width")
     def set_width(self, value): self._set_dimension("width", value)
@@ -888,12 +827,8 @@ class HTMLLinkElement(HTMLElement):
 
 @interface('HTMLAnchorElement', 'HTMLElement')
 class HTMLAnchorElement(HTMLElement):
-    """``<a>``, adding the URL decomposition members ``href`` carries.
-
-    The getters share :func:`_url_value` with the other URL attributes, and
-    assigning one of them parses the current href, replaces that component and
-    writes the result back into the attribute, as URLUtils requires.
-    """
+    """``<a>``: the URL decomposition members ``href`` carries.  Assigning one parses
+    the current href, replaces that component and writes the result back, per URLUtils."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -972,24 +907,14 @@ class HTMLAnchorElement(HTMLElement):
     def set_hash(self, value): self._set_component(fragment=str(dom_string(value)).lstrip("#"))
     def fn_toString(self, *_extra): return self._href()
 
-    # -- activation --------------------------------------------------------
-
     def _activatable(self):
-        """A link with an ``href`` navigates when it is clicked.
-
-        ``download`` links are not: Chromium saves the target instead of
-        following it, and this DOM has nowhere to save it to, so it declines
-        the click rather than navigating somewhere Chrome would not.
-        """
+        """A link with an ``href`` navigates when clicked; a ``download`` link is
+        declined (Chromium saves it, and this DOM has nowhere to save it)."""
         return bool(self._href()) and "download" not in self.attributes
 
     def _run_activation(self, event=None):
-        """Follow the link, exactly as assigning ``location.href`` would.
-
-        Going through the location object is what keeps a ``#fragment`` link a
-        same-document navigation instead of a reload, which is how Chromium
-        treats a link to the page's own fragment.
-        """
+        """Follow the link via the location object, so a ``#fragment`` link stays a
+        same-document navigation instead of a reload, as Chromium treats it."""
         href = self._href()
         if not href:
             return

@@ -55,8 +55,7 @@ class _LegacyNamedCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMi
             )
         return str(args[0])
 
-    # Declared per subclass through ``__v8_idl_spec__``;
-    # the bodies only depend on ``_indexed_items``/``_named_item`` and the
+    # The bodies depend only on ``_indexed_items``/``_named_item`` and the
     # registered interface name, so they live here once.
     def get_length(self): return len(self._indexed_items())
     def fn_item(self, *args):
@@ -404,10 +403,8 @@ _LOW_ENTROPY_HINTS = frozenset(("brands", "mobile", "platform"))
 
 @interface('NavigatorUAData', None)
 class NavigatorUAData:
-    """``navigator.userAgentData``: the brand and version hints a page may read.
-
-    Not ``[SameObject]``: every read of ``navigator.userAgentData`` hands out a
-    new one of these.
+    """``navigator.userAgentData``; not ``[SameObject]``, so every read hands
+    out a new one.
     """
 
     __v8_idl_spec__ = IdlSpec(

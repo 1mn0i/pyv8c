@@ -1,10 +1,7 @@
 """URL and origin primitives shared by every layer.
 
-Origin computation and origin serialization are pure URL facts: they need
-neither a DOM, nor a network transport, nor a page.  Keeping them here gives
-``network``, ``web/bom`` and ``platform`` one implementation of the
-special-scheme list and the default-port table, and lets platform code ask for
-an origin without importing a transport module.
+Origin computation is a pure URL fact, so the special-scheme list and default-port
+table live here and any layer can ask for an origin without a transport.
 """
 
 from urllib.parse import urljoin, urlsplit
@@ -15,8 +12,7 @@ __all__ = [
     "absolute_url", "quote_form", "form_urlencoded",
 ]
 
-#: Schemes whose origin is derived from host and port ("special schemes" in
-#: the URL standard).  Every other URL has an opaque origin.
+#: Schemes whose origin is derived from host and port ("special schemes"); the rest are opaque.
 SPECIAL_SCHEMES = frozenset({"http", "https", "ws", "wss", "ftp"})
 
 #: Port implied by a special scheme when the URL omits it.
@@ -24,13 +20,11 @@ DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443, "ftp": 21}
 
 
 def origin_tuple(value, *, inherited=None):
-    """Return the browser origin triple for a URL.
+    """Return the browser origin triple for a URL, ``(scheme, host, port)``.
 
-    A tuple origin is ``(scheme, host, port)``.  Opaque origins are
-    ``("opaque", sentinel)``: the sentinel is a fresh object so two unrelated
-    opaque origins never compare equal, which is exactly how browsers treat
-    them.  ``inherited`` supplies the origin that ``about:blank`` and
-    unresolvable ``blob:`` URLs borrow from their creator.
+    An opaque origin is ``("opaque", sentinel)`` with a fresh sentinel, so two never
+    compare equal; ``inherited`` is what ``about:blank`` and unresolvable ``blob:``
+    URLs borrow from their creator.
     """
     raw = str(value)
     parts = urlsplit(raw)
@@ -89,10 +83,8 @@ def origin_string(url):
 def absolute_url(url, base):
     """Resolve *url* against *base*, keeping it verbatim when it is already absolute.
 
-    ``urljoin`` drops a bare ``?``, and an empty query is still a query: a GET
-    form with no successful controls lands on ``/echo?`` in Chrome, and the
-    request line says so.  A URL that already carries a scheme and a host is
-    therefore sent exactly as the page wrote it.
+    ``urljoin`` drops a bare ``?``, but a GET form with no successful controls lands on
+    ``/echo?`` in Chrome, so an absolute URL is sent exactly as the page wrote it.
     """
     parts = urlsplit(str(url))
     if parts.scheme and parts.netloc:

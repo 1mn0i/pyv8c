@@ -40,9 +40,9 @@ class JsHttpResponse:
         return json.loads(self.body)
 
 
-#: The snippet resolves with a JSON *string*: a primitive crosses the binding
-#: without conversion surprises, and the host parses it.  It never rejects -- a
-#: failure is a resolved ``{ok: false, name, message}``.
+#: It resolves with a JSON *string* -- a primitive crosses the binding without
+#: conversion surprises -- and never rejects: a failure is a resolved
+#: ``{ok: false, name, message}``.
 _SNIPPET = """(async () => {
   const url = %(url)s;
   const init = %(init)s;
@@ -131,8 +131,6 @@ class JsHttpController:
     def __init__(self, page):
         self._page = page
 
-    # -- fetch -----------------------------------------------------------
-
     def fetch(self, url, *, method="GET", headers=None, body=None, credentials=None,
               timeout=30) -> JsHttpResponse:
         """Run the page's ``fetch`` and wait for it to settle."""
@@ -143,8 +141,6 @@ class JsHttpController:
         """Start the page's ``fetch``; the ``Future`` settles on its answer."""
         return self._future("fetch", url, self._options(method, headers, body, credentials))
 
-    # -- XMLHttpRequest --------------------------------------------------
-
     def xhr(self, url, *, method="GET", headers=None, body=None, credentials=None,
             timeout=30) -> JsHttpResponse:
         """Run the page's ``XMLHttpRequest`` and wait for it to settle."""
@@ -154,8 +150,6 @@ class JsHttpController:
                   credentials=None) -> Future:
         """Start the page's ``XMLHttpRequest``; the ``Future`` settles on its answer."""
         return self._future("xhr", url, self._options(method, headers, body, credentials))
-
-    # -- internals -------------------------------------------------------
 
     @staticmethod
     def _options(method, headers, body, credentials):

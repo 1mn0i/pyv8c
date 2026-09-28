@@ -1,6 +1,6 @@
 """The offline scripts whose artifacts ship with the package.
 
-Each module here is driven by the same-named CLI shell in the repository's
-``tools/`` directory, and writes one packaged artifact: the interface baseline
-from a Chromium checkout, or an environment profile from an installed browser.
+Each module is driven by a same-named CLI shell in the repository's ``tools/``
+directory and writes one packaged artifact: the interface baseline from a Chromium
+checkout, or an environment profile from an installed browser.
 """

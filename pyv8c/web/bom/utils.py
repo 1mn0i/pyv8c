@@ -1,11 +1,5 @@
-"""Helpers the browser object model modules share.
-
-They live here rather than beside a single interface because more than one
-module needs them: the cross-origin denial is raised by both :mod:`dom.window`
-and :mod:`dom.window_proxy`, the document key is how :mod:`dom.navigation`
-decides that a navigation stays inside the current document, and the two spec
-builders declare the members of :mod:`dom.window` with the cross-origin flags
-its interface requires.
+"""Helpers shared by the browser object model modules; more than one module
+needs each of them.
 """
 
 from urllib.parse import urlsplit
@@ -17,7 +11,6 @@ from ...foundation.errors import SecurityError
 
 
 def deny_cross_origin():
-    """Reject an access a cross-origin caller is not allowed to make."""
     raise SecurityError("Blocked a frame with origin from accessing a cross-origin frame")
 
 

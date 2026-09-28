@@ -1,12 +1,8 @@
 """Per-Browser interface universe: materialization, stubs and binding sessions.
 
-Baseline file I/O and the two-level disk cache live in :mod:`.baseline`;
-this module keeps the per-Browser :class:`InterfaceUniverse` composition
-root.  The collaborators it assembles are: :mod:`.catalog` (hierarchy and
-exposure indexes), :mod:`.stubs` (generated API shells for unimplemented
-members), :mod:`.wrappers` (realm injection adapters),
-:mod:`.assembly` (immutable IDL compilation) and :mod:`.sessions` (the
-realm-local :class:`BindingSession`).
+File I/O and the disk cache live in :mod:`.baseline`; this module is the per-Browser
+composition root, assembling :mod:`.catalog`, :mod:`.stubs`, :mod:`.wrappers`,
+:mod:`.assembly` and :mod:`.sessions`.
 """
 
 from __future__ import annotations
@@ -60,18 +56,12 @@ class InterfaceUniverse:
         self.eager_interfaces = DEFAULT_EAGER_INTERFACES
         self._validated = False
         self.deferred_globals = True
-        # Realm-independent caches. Configs are owned by each BindingSession.
-        # One re-entrant lock guards every read-modify-write cache sequence so
-        # concurrent materialisation across realms can never observe a torn
-        # cache (two distinct class objects for one interface name, a plan
-        # inserted twice, or an exposure table computed twice).
+        # One re-entrant lock guards every read-modify-write cache so concurrent realms never see a torn cache.
         self._lock = threading.RLock()
         self._classes: dict[str, type] = {}
         self._catalog = InterfaceCatalog(baseline)
         self._exposure_names = {}
-        # Collaborator factories: stubs generate unimplemented-member shells,
-        # adapters inject realm dependencies into callbacks, and
-        # the compiler combines both into immutable native descriptions.
+        # Stubs shell unimplemented members, adapters inject realms, the compiler combines them.
         self._stubs = StubFactory(self.stub_logging)
         self._wrappers = BindingWrapperFactory(self)
         self._assembly = InterfaceCompiler(self, self._stubs, self._wrappers, self._lock)
@@ -79,8 +69,8 @@ class InterfaceUniverse:
     def report_mismatch(self, message):
         """Report an implementation/baseline mismatch; true when it is tolerated.
 
-        ``warn`` mode reports it once and lets the caller skip what the baseline
-        does not describe; ``error`` mode leaves raising to the caller.
+        ``warn`` reports once and lets the caller skip undescribed members; ``error``
+        leaves raising to the caller.
         """
         if self.baseline_mismatch != "warn":
             return False
@@ -139,8 +129,7 @@ class InterfaceUniverse:
                 ))
                 return current, candidates[0][0], candidates[0][1]
             current = self.spec(current).get("parent")
-        # Blink sometimes installs WorkerGlobalScope members in a concrete
-        # descendant binding table. Keep this lookup explicit and deterministic.
+        # Blink sometimes installs WorkerGlobalScope members in a concrete descendant's table.
         for candidate_name in self._catalog.descendants(interface_name):
             for location, member in self.own_members(candidate_name):
                 if member.get("name") == public_name and member.get("kind") == kind:
@@ -150,10 +139,9 @@ class InterfaceUniverse:
     def class_for(self, name):
         """Return the one canonical class object per interface name.
 
-        The lock makes class creation idempotent under concurrent access from
-        several realms: without it, two pages materialising the same lazy
-        interface could build two distinct classes and break cross-realm
-        ``instanceof`` because the native template cache keys on the class.
+        The lock makes creation idempotent across realms: two pages materializing the
+        same lazy interface must not build distinct classes, because the native
+        template cache keys on the class and cross-realm ``instanceof`` would break.
         """
         with self._lock:
             cls = self._classes.get(name)

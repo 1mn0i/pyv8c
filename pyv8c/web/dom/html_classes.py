@@ -1,8 +1,5 @@
-"""The HTML local-name to interface-class registry.
-
-It sits above the element modules because the registry needs classes from all
-of them, while those modules only need the node model below.
-"""
+"""The HTML local-name to interface-class registry.  It sits above the element
+modules, which only need the node model below."""
 
 from .html_canvas import HTMLCanvasElement
 from .html_elements import (
@@ -59,10 +56,8 @@ HTML_CLASSES = {
     "HTMLIframeElement": HTMLIFrameElement,
 }
 
-#: Local name -> implementation class for every modelled tag.  Written out
-#: rather than derived from ``HTML_CLASSES`` because a tag name is not always
-#: the lower-cased middle of its interface name (``img``/``td``/``tr``), and
-#: because ``HTMLMediaElement`` and ``HTMLUnknownElement`` are not tags.
+#: Local name -> implementation class for every modelled tag, written out because a
+#: tag name is not always its interface's lower-cased middle (``img``/``td``/``tr``).
 TAG_CLASSES = {
     "a": HTML_CLASSES["HTMLAnchorElement"],
     "audio": HTML_CLASSES["HTMLAudioElement"],
@@ -95,13 +90,9 @@ TAG_CLASSES = {
 
 
 def class_for_tag(tag):
-    """The implementation class for an HTML local name.
-
-    Every modelled tag maps to its own interface; each remaining local name --
-    the obsolete tags (``bgsound``, ``blink``, ``isindex``, ``keygen``,
-    ``multicol``, ``nextid``, ``spacer``), custom element names and tags this
-    DOM does not model -- resolves to :class:`HTMLUnknownElement`, which is
-    what Chromium exposes for them.
+    """The implementation class for an HTML local name: a modelled tag its own
+    interface, everything else (custom-element names, unknown tags) the
+    :class:`HTMLUnknownElement` Chromium exposes.
     """
     return TAG_CLASSES.get(str(tag).lower(), HTML_CLASSES["HTMLUnknownElement"])
 

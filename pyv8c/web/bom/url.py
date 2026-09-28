@@ -1,8 +1,7 @@
 """``URL`` and the live ``URLSearchParams`` view it hands out.
 
-The two are coupled: ``URL.searchParams`` returns a ``URLSearchParams`` bound to
-its owner through ``_url``, which writes every mutation back with
-``_set_search_from_params``.
+``URL.searchParams`` is bound to its owner through ``_url``, which writes every
+mutation back with ``_set_search_from_params``.
 """
 
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -29,8 +28,7 @@ from ..fetch.blob import Blob
 
 __all__ = ["URL", "URLSearchParams"]
 
-#: What the URL parser drops before it parses anything: leading and trailing C0
-#: controls and spaces, and every tab or newline wherever it sits.
+#: C0 controls and spaces the parser strips; tabs/newlines drop anywhere.
 _URL_TRIM = "".join(chr(code) for code in range(0x21))
 _URL_DROP = str.maketrans("", "", "\t\n\r")
 
@@ -236,12 +234,9 @@ class URL:
 
     @staticmethod
     def _resolve(url, base=None):
-        """The absolute form of ``url``, with what a browser does to its spaces.
-
-        The parser trims and drops whitespace, then percent-encodes every space left
-        -- in the authority as much as in the path -- so ``https://a.te st/`` becomes
-        ``https://a.te%20st/``.  A space in the port is what makes a URL invalid, and
-        reading the port is where that turns up.
+        """The absolute form of ``url`` with a browser's whitespace handling:
+        trim and drop, then percent-encode every space left, in the authority as
+        much as the path.  Reading the port is what rejects an invalid one.
         """
         raw = str(url).translate(_URL_DROP).strip(_URL_TRIM).replace(" ", "%20")
         if not raw:
@@ -251,7 +246,6 @@ class URL:
             parts = urlsplit(value)
             if not parts.scheme or (parts.scheme in SPECIAL_SCHEMES and not parts.netloc):
                 raise V8URIError("Invalid URL")
-            # Reading the port is what rejects a URL whose port cannot be one.
             _ = parts.port
         except (ValueError, V8URIError) as exc:
             raise V8TypeError("Invalid URL") from exc

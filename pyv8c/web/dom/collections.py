@@ -1,8 +1,7 @@
 """DOM collection views: live node lists and token lists.
 
-These classes deliberately have no dependency on the node model itself:
-they read through owner-supplied getters, which keeps them importable by
-:mod:`dom.nodes` without a cycle.
+They read through owner-supplied getters rather than the node model, which keeps
+them importable by :mod:`dom.nodes` without a cycle.
 """
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
@@ -174,17 +173,10 @@ def _array_index_name(value):
 # non-enumerable (so they are omitted by ``Object.keys`` and ``for-in``).
 @interface('HTMLAllCollection', None)
 class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
-    """The legacy ``document.all`` view: undetectable, callable and live.
-
-    Chromium marks the interface undetectable, so ``typeof document.all`` is
-    ``"undefined"`` and the object is falsy, while every other operation still
-    resolves against the document element list: indexed lookup, named lookup
-    by ``id`` or ``name``, ``item()``/``namedItem()`` and the legacy call
-    form ``document.all(name)``.
-
-    The interface has no IDL parent, so it cannot reuse :class:`HTMLCollection`
-    and carries the full named/indexed interceptor set the Chromium baseline
-    declares for it.
+    """The legacy ``document.all`` view: undetectable (``typeof`` is ``"undefined"``
+    and the object is falsy), callable and live.  It has no IDL parent, so it
+    carries the full named/indexed interceptor set rather than extending
+    :class:`HTMLCollection`.
     """
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
@@ -215,8 +207,7 @@ class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
         return [n for n in self._items() if _node_id(n) == name or _all_node_name(n) == name]
 
     def _named(self, name):
-        # Chromium returns the single match, a live HTMLCollection when several
-        # elements share the id or name, and null when nothing matches.
+        # Chromium: the single match, a live collection for several, else null.
         matches = self._matches(name)
         if not matches:
             return pyv8.Null
@@ -253,14 +244,12 @@ class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
             return items[index] if index < len(items) else pyv8.Null
         return self._named(name)
 
-    # -- named interceptor ----------------------------------------------
     def _supported_names(self):
         return _supported_names(self._items(), _all_node_name)
 
     def _named_item(self, name):
         return self._named(name)
 
-    # -- indexed interceptor --------------------------------------------
     def _indexed_items(self): return self._items()
 
     def __iter__(self): return iter(self._items())
@@ -507,11 +496,8 @@ class DOMStringMap:
 
 @interface('HTMLOptionsCollection', 'HTMLCollection')
 class HTMLOptionsCollection(HTMLCollection):
-    """``select.options``: the select's options as a live list.
-
-    ``length``, ``item`` and ``namedItem`` come from the collection it extends; what
-    this adds is the selected index, which is the select's own answer.
-    """
+    """``select.options``: the select's options as a live list.  It adds only the
+    selected index, which is answered by the select itself."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -534,12 +520,8 @@ class HTMLOptionsCollection(HTMLCollection):
 
 @interface('HTMLFormControlsCollection', 'HTMLCollection')
 class HTMLFormControlsCollection(HTMLCollection):
-    """``form.elements``: the form's listed elements as a live list.
-
-    Everything it offers -- indexed access, ``length``, ``item``, ``namedItem`` and
-    the names -- comes from the collection it extends; which elements belong to it
-    is the form's rule, so the form supplies the getter.
-    """
+    """``form.elements``: the form's listed elements as a live list.  Which elements
+    belong is the form's rule, so the form supplies the getter."""
 
     __v8_idl_spec__ = IdlSpec(
         constructor_behavior=0,

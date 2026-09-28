@@ -1,15 +1,8 @@
 """Runtime contracts available to browser-facing interface objects.
 
-Web API implementations need services from the realm an object lives in
-(creating promises, converting errors, posting tasks). They consume them through
-:class:`RealmServices` so it never imports ``platform`` or reaches into Page
-privates.  The web layer is served by the other five narrow protocols, each
-covering one slice of the realm a page exposes. ``PageServices`` assembles
-the capability objects rather than implementing their protocols itself.
-
-``RealmServices`` exposes task posting and script execution without importing
-``platform``. Parameter conversion and Promise rejection belong to Web API
-implementations, not to binding wrappers.
+Web API implementations consume realm services through :class:`RealmServices` instead
+of importing ``platform`` or reaching into Page privates; each of the other protocols
+covers one slice of the realm a page exposes.
 """
 
 from typing import Any, Protocol, runtime_checkable
@@ -120,10 +113,9 @@ __all__ = [
 def realm_of(obj) -> Any:
     """Return the realm an interface object belongs to, or ``None``.
 
-    Objects receive either a realm capability directly or the page's service
-    bundle through injection (``_realm``) or ``_services``. The bundle keeps
-    the web-facing capabilities together, while this helper returns only its
-    ``realm_services`` facet to the binding engine.
+    Objects hold either a realm capability directly or the page's service bundle via
+    ``_realm``/``_services``; only the bundle's ``realm_services`` facet goes to the
+    binding engine.
     """
     services = getattr(obj, "_realm", None)
     if services is None:
@@ -134,11 +126,9 @@ def realm_of(obj) -> Any:
 def post_or_call(services, callback, *args) -> None:
     """Deliver ``callback`` through the task queue, or run it when there is none.
 
-    Web API objects are routinely built without a realm -- by tests, and by the
-    entry points that hand them a bare environment -- so they have no
-    ``task_services`` to post to.  The DOM still has to make progress in that
-    case, so the callback runs synchronously.  A ``None`` callback is a no-op,
-    which is how the optional-callback APIs spell "the caller passed none".
+    Web API objects are routinely built without a realm (tests, bare-environment entry
+    points) and have no ``task_services``, but the DOM must still progress, so the
+    callback runs synchronously.  A ``None`` callback is a no-op.
     """
     if callback is None:
         return

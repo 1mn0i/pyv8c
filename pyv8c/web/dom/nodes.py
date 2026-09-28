@@ -1,9 +1,8 @@
 """The core DOM node types: ``Node``, ``DocumentFragment`` and ``Attr``.
 
-``Node`` owns the invariant tree algorithms (adoption, insertion, cloning,
-comparison) that every other node type builds on.  References to the concrete
-``Element``/``Document``/``Text`` classes are resolved inside the handful of
-members that need them, because those modules sit above this one.
+``Node`` owns the tree algorithms (adoption, insertion, cloning, comparison);
+``Element``/``Document``/``Text`` references are resolved lazily, since those
+modules sit above this one.
 """
 
 import pyv8
@@ -30,10 +29,9 @@ from .utils import XHTML_NAMESPACE, is_element
 def _is_style_element(node):
     """Whether *node* is a ``<style>`` element.
 
-    ``nodeType`` is checked first because it is a plain attribute on every node,
-    while asking a text node for ``localName`` would fall through to the
-    ``__getattr__`` that raises.  This runs once per DOM mutation, so it has to
-    stay this cheap.
+    ``nodeType`` is checked first: it is a plain attribute on every node, while
+    ``localName`` on a text node falls through to a raising ``__getattr__``.  Runs
+    once per DOM mutation, so it must stay this cheap.
     """
     return getattr(node, "nodeType", None) == Node.ELEMENT_NODE and node.localName == "style"
 
@@ -41,10 +39,8 @@ def _is_style_element(node):
 def _contains_style(node):
     """Whether *node* is a ``<style>`` element or holds one.
 
-    Iterative rather than recursive so a deep subtree cannot exhaust the stack,
-    and it allocates nothing until it meets a node that has children.  Parsing
-    adopts each element before its children arrive, so the walk is a single step
-    on that path; only a subtree inserted whole costs more.
+    Iterative to keep a deep subtree off the stack; on the parse path (elements
+    adopted before their children) the walk is a single step.
     """
     if _is_style_element(node):
         return True
@@ -69,17 +65,9 @@ def _record_mutation(target, kind, **details):
 def _bump_style_version(node):
     """Note that the document's ``<style>`` derived data may have changed.
 
-    Layout caches the parsed sheet on the document (see
-    :func:`dom.layout.document_rules`), so a mutation that can change what a
-    ``<style>`` holds has to invalidate it: inserting, moving or removing one --
-    whole, or as part of a subtree built elsewhere -- and replacing or editing
-    the text inside it.  Callers pass the node the mutation touched, before they
-    detach it, which is enough because a text node reports the ``<style>`` it
-    sits in through its parent.  Everything else, which is the overwhelming
-    majority of DOM mutations, costs one ``localName`` read.
-
-    The walk is bounded by the mutated node's own subtree, and on the parse path
-    it is a single step: elements are adopted before their children arrive.
+    Layout caches the parsed sheet on the document, so a mutation that can change
+    what a ``<style>`` holds invalidates the cache.  Callers pass the node before
+    detaching it; everything else costs one ``localName`` read.
     """
     parent = getattr(node, "parentNode", None)
     if not (_is_style_element(parent) or _contains_style(node)):
@@ -156,11 +144,8 @@ class Node(EventTarget):
 
     @property
     def ownerDocument(self):
-        """The document this node belongs to; ``None`` for a Document itself.
-
-        A detached node keeps the document that created it, which is why this
-        reads the realm's document rather than walking up to the root.
-        """
+        """The document this node belongs to; ``None`` for a Document itself.  A
+        detached node keeps its creating document, hence the realm lookup."""
         if self.nodeType == Node.DOCUMENT_NODE:
             return None
         document_services = getattr(getattr(self, "_services", None), "document_services", None)
@@ -228,11 +213,8 @@ class Node(EventTarget):
     def get_firstChild(self): return self.firstChild
     def get_lastChild(self): return self.lastChild
     def get_textContent(self):
-        """This subtree's text: a leaf reports its own data, a tree its children's.
-
-        A comment is character data but not text, so it contributes nothing to an
-        ancestor's ``textContent`` even though its own ``textContent`` is its data.
-        """
+        """This subtree's text: a leaf reports its own data, a tree its children's.  A
+        comment contributes nothing, though its own ``textContent`` is its data."""
         from .character_data import Comment
 
         if not self._children:
@@ -248,8 +230,7 @@ class Node(EventTarget):
         if not is_nullish(value):
             value = dom_string(value)
         self._replace_children(())
-        # Replacing with the empty string leaves no child node behind (the
-        # spec removes a text node whose data is empty after replacement).
+        # An empty replacement leaves no child behind (the spec drops empty text nodes).
         if value is not None and str(value) != "":
             self.append_child(Text(str(value), services=self._services))
     def get_nodeValue(self): return self.nodeValue if self.nodeValue is not None else pyv8.Null
@@ -289,11 +270,8 @@ class Node(EventTarget):
 
     def _ensure_adoptable(self, node):
         if not isinstance(node, Node): raise V8TypeError("The new child is not a Node")
-        # A HierarchyRequestError only fires when ``node`` is an inclusive
-        # ancestor of ``self`` (the parent itself or one of its ancestors).
-        # Re-inserting a node this parent already contains is a plain *move*
-        # in the DOM, so the containment check must look at the other
-        # direction: inserting an existing descendant simply relocates it.
+        # HierarchyRequestError fires only when ``node`` is an inclusive ancestor of
+        # ``self``; re-inserting an existing descendant is a plain move.
         if node is self or node.fn_contains(self):
             raise HierarchyRequestError("The new child element contains the parent.")
 
@@ -423,8 +401,7 @@ class Node(EventTarget):
             return Node.DOCUMENT_POSITION_CONTAINS | Node.DOCUMENT_POSITION_PRECEDING
         if self in other_path:
             return Node.DOCUMENT_POSITION_CONTAINED_BY | Node.DOCUMENT_POSITION_FOLLOWING
-        # Neither contains the other: order is decided by the two branches
-        # that leave their closest common ancestor.
+        # Neither contains the other: order is set by the branches leaving their common ancestor.
         common = next(node for node in self_path if node in other_path)
         self_branch = self_path[self_path.index(common) - 1]
         other_branch = other_path[other_path.index(common) - 1]
@@ -517,12 +494,8 @@ class DocumentFragment(_ParentNodeMixin, Node):
             services = None
         super().__init__(services=services, node_type=Node.DOCUMENT_FRAGMENT_NODE, node_name="#document-fragment", **kw)
     def _document(self):
-        """The document the fragment belongs to, when it has one.
-
-        The selector engine lives above the node model, so a fragment asks its
-        document for the match, exactly like :class:`Element` does; a detached
-        fragment without services matches nothing.
-        """
+        """The document the fragment belongs to; the selector engine lives above this
+        module, so the match is delegated to the document."""
         return getattr(getattr(self._services, "document_services", None), "document", None)
     def fn_querySelector(self, selector=MISSING, *_extra):
         if selector is MISSING:

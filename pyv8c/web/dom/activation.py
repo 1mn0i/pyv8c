@@ -1,20 +1,8 @@
 """What a click does to an element besides dispatching the event.
 
-A click is not only an event: HTML gives some elements an activation behavior
-that runs after it.  The rules, each measured against Chrome 153:
-
-* the ``click`` event comes first and the behavior runs only when no listener
-  cancelled it;
-* the behavior belongs to the nearest ancestor that has one, so a click on a
-  ``span`` inside a ``button`` submits that button's form and a click on a
-  ``label`` reaches the control it labels;
-* a disabled form control is inert: ``click()`` on it dispatches nothing at
-  all, and the mouse reaches it with pointer events but without
-  ``mousedown``/``mouseup``/``click`` or focus.
-
-The behaviors themselves live on the elements (:meth:`Element._run_activation`),
-where Blink keeps them; this module is the walk that finds them and the
-synthetic click ``element.click()`` runs.
+The behavior belongs to the nearest ancestor that has one and runs only when
+the ``click`` is not cancelled; a disabled form control is inert.  Behaviour
+measured against Chrome 153.
 """
 
 import pyv8
@@ -34,22 +22,14 @@ def is_disabled_form_control(element):
 
 
 def user_activated(event):
-    """Whether *event* is a user gesture, which a submission reports as
-    ``Sec-Fetch-User: ?1``.
-
-    Measured on Chrome 153: a trusted click -- what the host's input machine
-    delivers -- is a user activation, while a page's own ``element.click()`` is
-    not.  Both still submit, and both still send the pressed button's entry.
-    """
+    """Whether *event* is a user gesture: a trusted click is, a page's own
+    ``element.click()`` is not (measured on Chrome 153)."""
     return bool(getattr(event, "_trusted", False))
 
 
 def accepts_mouse_events(element):
-    """Whether the mouse reaches *element* with its compatibility events.
-
-    A disabled form control still receives the pointer events -- a page can
-    hover it -- but Chromium dispatches neither the mouse events nor focus.
-    """
+    """Whether the mouse reaches *element*: a disabled control still gets pointer
+    events but neither mouse events nor focus."""
     return element is not None and element is not pyv8.Null and not is_disabled_form_control(element)
 
 
@@ -65,12 +45,8 @@ def activation_target(node):
 
 
 def run_activation(node, event=None):
-    """Run the activation behavior a click on *node* reaches; reports whether one ran.
-
-    *event* is the click that got here, which a behavior may pass on: a
-    ``label`` repeats the press on the control it labels, and how it repeats it
-    depends on how it was itself clicked.
-    """
+    """Run the activation behavior a click on *node* reaches; reports whether one
+    ran.  *event* is the click that got here, which a behavior may pass on."""
     target = activation_target(node)
     if target is None:
         return False
@@ -79,12 +55,8 @@ def run_activation(node, event=None):
 
 
 def click_element(element):
-    """The synthetic click activation steps ``element.click()`` runs.
-
-    Chrome builds an untrusted, uncancelled-by-default ``click`` at the origin
-    with ``detail`` 0 and then runs the behavior; a cancelled event stops
-    there, and a disabled control stops before the event.
-    """
+    """The activation steps ``element.click()`` runs: an untrusted ``click`` with
+    ``detail`` 0, then the behavior unless it was cancelled."""
     if not accepts_mouse_events(element):
         return False
     from .events import MouseEvent
@@ -99,12 +71,8 @@ def click_element(element):
 
 
 def repeat_click(element, source):
-    """Run a click on *element* that repeats *source*, trusted, as a label does.
-
-    Chromium's label forwards the press it received rather than a fresh
-    synthetic one: the control's click carries the same coordinates, the same
-    click count and the trust of the event the label was clicked with.
-    """
+    """Run a click on *element* that repeats *source* -- same coordinates, click
+    count and trust -- as a label forwards its press to the control."""
     from .events import MouseEvent
     repeated = MouseEvent("click", {
         "bubbles": True, "cancelable": True,

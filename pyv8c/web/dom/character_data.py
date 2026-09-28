@@ -1,8 +1,4 @@
-"""Textual node types: ``CharacterData``, ``Text``, ``Comment``, ``DocumentType``.
-
-All four are character-data or leaf nodes hanging off :class:`Node`; they share
-the ``ChildNode`` / ``NonDocumentTypeChildNode`` mixins from :mod:`dom.mixins`.
-"""
+"""Textual node types: ``CharacterData``, ``Text``, ``Comment``, ``DocumentType``."""
 
 from html import escape
 
@@ -94,8 +90,7 @@ class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
         self.nodeValue = data[:start] + str(value) + data[start + int(count):]
         _bump_style_version(self)
     def _clone_shallow(self):
-        # Keep the concrete Text/Comment flavour so clones expose ``data``,
-        # ``textContent`` and the correct node name/type.
+        # Keep the concrete flavour so clones expose ``data`` and the right node type.
         return type(self)(self.nodeValue or "", services=self._services)
     def get_textContent(self): return self.nodeValue or ""
     def set_textContent(self, value): self.set_data(value)

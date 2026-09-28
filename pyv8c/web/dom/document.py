@@ -80,25 +80,19 @@ class Document(_ParentNodeMixin, Node):
     def __init__(self, services=None, url="about:blank", ready_state="complete", **kw):
         super().__init__(services=services, node_type=Node.DOCUMENT_NODE, node_name="#document", **kw)
         self.url = url; self._parser = None; self.ready_state = str(ready_state); self.hidden = False
-        #: The element focus is on, maintained by :mod:`dom.focus`; ``None``
-        #: means nothing was focused, which ``activeElement`` reports as the body.
+        #: The element focus is on, maintained by :mod:`dom.focus`.
         self._focused_element = None
         #: The script element whose code is running, maintained by the runner.
         self.current_script = None
-        #: Bumped by the DOM whenever a ``<style>`` is added, removed or edited;
-        #: layout keys its parsed-sheet cache on it (see dom.layout.document_rules).
+        #: Bumped when a ``<style>`` changes; layout keys its sheet cache on it.
         self.style_version = 0
     def get_URL(self): return self.url
     def _first_element(self, local_name):
         return next((node for node in self._descendants()
                      if isinstance(node, Element) and node.localName == local_name), None)
     def get_title(self):
-        """The document title: the first ``title`` element's text, collapsed.
-
-        The HTML title algorithm folds runs of ASCII whitespace into single
-        spaces and strips the ends, which is what makes a title split over lines
-        in the markup read as one line from script.
-        """
+        """The first ``title`` element's text, collapsed as the HTML title algorithm
+        does: runs of ASCII whitespace fold to single spaces, ends stripped."""
         title = self._first_element("title")
         if title is None:
             return ""
@@ -124,20 +118,13 @@ class Document(_ParentNodeMixin, Node):
     def get_currentScript(self):
         return self.current_script if self.current_script is not None else pyv8.Null
     def get_activeElement(self):
-        """The focused element, or the body while nothing was focused.
-
-        Chromium reports the body for a document that was never focused, and
-        falls back to it again when the focused element left the document.
-        """
+        """The focused element, or the body while nothing was focused -- Chromium
+        falls back to the body again once the focused element leaves the document."""
         from .focus import active_element
         return active_element(self)
     def fn_hasFocus(self, *_extra):
-        """A page in this DOM is always the focused document.
-
-        There is one document per realm and no window manager to take focus
-        away from it, which is what a real page reports while its window is
-        active -- the state a script checks before stealing focus itself.
-        """
+        """A page in this DOM is always the focused document: one document per realm
+        and no window manager to take focus away."""
         return True
     def fn_elementFromPoint(self, x=MISSING, y=MISSING, *_extra):
         if x is MISSING:
@@ -155,28 +142,17 @@ class Document(_ParentNodeMixin, Node):
         from .hit_testing import elements_from_point
         return elements_from_point(self, number(x), number(y))
     def get_documentElement(self):
-        """The document's first element child, whatever its local name.
-
-        The DOM standard does not require it to be ``html``: a document built by
-        ``DOMImplementation.createDocument`` has the root it was asked for.
-        """
+        """The document's first element child, whatever its local name -- not
+        necessarily ``html``, since ``createDocument`` builds the requested root."""
         return next((x for x in self._children if isinstance(x, Element)), pyv8.Null)
     def _html_element(self):
-        """The ``html`` root, when this document is a full HTML document.
-
-        A document parsed from a fragment has no wrapper element, so ``body``
-        and ``head`` fall back to searching the tree instead of asking it.
-        """
+        """The ``html`` root, when this document is a full HTML document; a fragment
+        has no wrapper, so ``body``/``head`` fall back to searching the tree."""
         return next((x for x in self._children
                      if isinstance(x, Element) and x.localName == "html"), None)
     def get_body(self):
-        """The body element, per the HTML algorithm.
-
-        A full document answers with the ``body`` child of its ``html`` root; a
-        document parsed from a fragment has no such wrapper, so the first
-        ``body`` in the tree -- or, failing that, its first element -- is what a
-        page sees as ``document.body``.
-        """
+        """The body element, per the HTML algorithm: the ``body`` child of the
+        ``html`` root, or for a fragment the first ``body`` (else first element)."""
         html = self._html_element()
         if html is not None:
             body = html.fn_querySelector("body")
@@ -264,11 +240,8 @@ class Document(_ParentNodeMixin, Node):
             html.attributes["dir"] = str(dom_string(value))
 
     def _ensure_skeleton(self):
-        """Make the html/head/body a document has when nothing was parsed.
-
-        The parser builds them as it reads, so this only fills in what is
-        missing, and never moves a node the parse already placed.
-        """
+        """Fill in whichever of html/head/body was not parsed, never moving an
+        existing node."""
         html = self._first_named(self, "html")
         if html is None:
             html = self._new_element("html")
@@ -312,9 +285,8 @@ class Document(_ParentNodeMixin, Node):
     def get_forms(self): return self._collect({"form"})
     def get_images(self): return self._collect({"img"})
     def get_embeds(self):
-        """The embed/object collection, cached: Chromium marks both attributes
-        ``[SameObject]``, so ``document.embeds === document.plugins`` and the
-        identity is stable across reads."""
+        """The embed/object collection, cached: ``embeds``/``plugins`` are
+        ``[SameObject]`` in Chromium, so both reads share one identity."""
         view = getattr(self, "_embeds_view", None)
         if view is None:
             view = self._embeds_view = self._collect({"embed", "object"})
@@ -340,8 +312,7 @@ class Document(_ParentNodeMixin, Node):
         if context is not None:
             context.set_from_document(self.url, value)
     def get_all(self):
-        # One cached live view per document, like Chromium: the object identity
-        # is stable while the element list is always recomputed.
+        # Cached like Chromium: stable identity, element list recomputed each read.
         value = getattr(self, "_all_view", None)
         if value is None:
             self._materialize_interface("HTMLAllCollection")
@@ -350,12 +321,8 @@ class Document(_ParentNodeMixin, Node):
     def _all_elements(self):
         return [x for x in self._descendants() if isinstance(x, Element)]
     def _materialize_interface(self, name):
-        """Build a lazily declared interface before handing out one of its objects.
-
-        ``document.all`` returns a real ``HTMLAllCollection``, so the native
-        template has to exist even though the interface is not part of the
-        eager startup set.
-        """
+        """Build a lazily declared interface before handing out one of its objects;
+        ``document.all`` needs the native template of an eagerly-deferred interface."""
         realm = getattr(getattr(self, "_services", None), "realm_services", None)
         if realm is None or realm.interface_materialized(name):
             return
@@ -433,12 +400,7 @@ class Document(_ParentNodeMixin, Node):
         return self._write_markup("".join(dom_string(item) for item in markup) + "\n")
     def _write_markup(self, markup):
         """Hand written markup to the document's parser, like ``document.write``.
-
-        The parser owns the insertion point, so the DOM layer only forwards the
-        text; a document without services (a bare ``new Document()``) has no
-        parser and therefore writes nowhere, exactly like a document with no
-        browsing context.
-        """
+        A document without services has no parser, so it writes nowhere."""
         services = getattr(self, "_services", None)
         if services is not None:
             services.document_services.write_markup(markup)
@@ -471,12 +433,9 @@ class Document(_ParentNodeMixin, Node):
 
 @interface('DOMImplementation', None)
 class DOMImplementation:
-    """``document.implementation``: the document factories it exposes.
-
-    ``createHTMLDocument`` builds the skeleton Chromium builds -- ``html`` with
-    a ``head`` and a ``body``, plus a ``title`` when one is passed -- and the
-    other factories return a document holding the requested root.
-    """
+    """``document.implementation``: the document factories.  ``createHTMLDocument``
+    builds the skeleton Chromium builds -- ``html`` with ``head``/``body`` and an
+    optional ``title``; the others return a document holding the requested root."""
 
     __v8_idl_spec__ = IdlSpec(
         methods=(
@@ -536,6 +495,6 @@ class DOMImplementation:
                             services=self._services)
 
     def fn_hasFeature(self, *_extra):
-        """The DOM standard removed it, the baseline kept it, and it answered
-        ``true`` for every document -- which is what Chromium still returns."""
+        """Removed by the DOM standard but kept by the baseline; Chromium still
+        answers ``true`` for every document."""
         return True

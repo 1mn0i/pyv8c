@@ -25,9 +25,8 @@ from ..fetch.events import ErrorEvent, MessageEvent
 def _worker_values(scope):
     """The worker global's own objects, built on first read.
 
-    The Navigator class belongs to the navigator Feature, so it is asked of the
-    realm rather than imported: that both loads the Feature and commits its
-    config to this realm.
+    Navigator belongs to the navigator Feature, so it is asked of the realm
+    rather than imported.
     """
     def navigator():
         cls = scope._services.realm_services.materialize_interface("Navigator")
@@ -49,9 +48,7 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
         methods=(
             MethodSpec(name="postMessage", callback="fn_postMessage", length=1),
             MethodSpec(name="close", callback="fn_close"),
-            # A worker global schedules like a window: same declarations, same
-            # implementations, the only difference being that they run on the
-            # worker's own task queue.
+            # A worker global schedules like a window, on its own task queue.
             MethodSpec(name="setTimeout", callback="fn_setTimeout", length=1),
             MethodSpec(name="clearTimeout", callback="fn_clearTimeout", length=0),
             MethodSpec(name="setInterval", callback="fn_setInterval", length=1),
@@ -96,8 +93,7 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
 class DedicatedWorkerGlobalScope(WorkerGlobalScope):
     __v8_idl_spec__ = IdlSpec(
         methods=(
-            # Frame requests live on the dedicated scope itself, which is where
-            # the baseline declares them.
+            # Frame requests live on the dedicated scope, as the baseline declares.
             MethodSpec(name="requestAnimationFrame", callback="fn_requestAnimationFrame", length=1, location=FlagLocation.kInstance),
             MethodSpec(name="cancelAnimationFrame", callback="fn_cancelAnimationFrame", length=1, location=FlagLocation.kInstance),
         ),
@@ -172,9 +168,8 @@ class Worker(EventTarget):
     def _receive_uncaught(self, message, filename, line, column):
         """Report an exception V8 raised inside the worker's own realm.
 
-        The worker's error value cannot cross into this realm, so the Worker
-        object receives the text and position V8 captured -- the same shape a
-        cross-origin script error reaches a page with.
+        The error value cannot cross realms, so the Worker object receives the
+        text and position V8 captured.
         """
         if not self._terminated:
             self.fn_dispatchEvent(ErrorEvent("error", {

@@ -2,8 +2,6 @@
 
 
 class Ownership:
-    """Track page-owned websockets, workers, and frames for teardown."""
-
     __slots__ = ("websockets", "workers", "frames")
 
     def __init__(self):
@@ -18,7 +16,6 @@ class Ownership:
         getattr(self, kind).discard(obj)
 
     def drain(self, kind):
-        """Return the live set for ``kind`` and clear it."""
         bucket = getattr(self, kind)
         items = list(bucket)
         bucket.clear()

@@ -27,8 +27,7 @@ def _context_kwargs(session, context_type, trace, on_materialize=None, trace_cal
 class _RealmTaskHost:
     """The only two questions a worker's task queue may ask its realm.
 
-    Mirrors the adapter a page hands to its own queue: the queue lives in
-    ``foundation`` and must never reach the realm object itself.
+    The adapter keeps ``foundation``'s queue from reaching the realm object.
     """
 
     def __init__(self, realm):
@@ -43,7 +42,6 @@ class _RealmTaskHost:
 
 
 def _declare_realm_interfaces(context, session, *, context_type, universe):
-    """Expose eager interfaces and declare lazy names on a fresh context."""
     for name in universe.eager_names(context_type):
         context.expose(session.class_for(name), name=name)
     return context.declare_lazy(
@@ -58,16 +56,14 @@ class WorkerRealm:
     def __init__(self, page, config):
         self.page = page
         self.config = config
-        #: Written by the runtime that starts the worker, which is where the URL
-        #: comes from; the realm only reads it.
+        #: Written by the runtime that starts the worker; the realm only reads it.
         self.script_url = ""
         self.isolate = None
         self.context = None
         self.scope = None
         self.scripts = None
-        # A worker global schedules like a window does: it owns its task queue
-        # and drives it from its own owner thread, so timers, microtasks and
-        # posted messages run there rather than on the parent page.
+        # A worker global owns its task queue and drives it from its own owner
+        # thread, so timers, microtasks and posted messages run there.
         self.tasks = TaskQueue(_RealmTaskHost(self))
         self.services = WorkerRealmServices(self.tasks, self)
 
@@ -94,9 +90,8 @@ class WorkerRealm:
         self.scripts = RealmScripts(self.context)
         return self.context
 
-    # -- realm scripting -------------------------------------------------
-    # The worker's global scope reaches these through WorkerRealmServices,
-    # exactly as a page reaches its own through PageServices.
+    # The worker's global scope reaches these through WorkerRealmServices, as a
+    # page reaches its own through PageServices.
 
     def evaluate_script(self, source):
         return self.context.exec_js(source)
@@ -150,16 +145,15 @@ class PageRealm:
         #: Compiled JavaScript helpers, created with the context in _initialize.
         self.scripts = None
         browser = page.context_owner.browser
-        # Web objects constructed through this session receive PageServices,
-        # never the platform Page itself.
+        # Web objects built through this session receive PageServices, not the
+        # platform Page.
         self.binding_session = browser.interface_universe.binding_session(page.services)
         page.services.bind_realm(self)
         try:
             if pyv8.current_context() is not None:
-                # Asked for from inside a running script, where the caller already
-                # holds what the realm's own thread would wait on: build it here.
-                # An inserted frame is the case -- its window has to exist before
-                # the script that inserted it returns.
+                # Asked for inside a running script, where waiting on the realm's
+                # own thread would deadlock; an inserted frame's window must exist
+                # before the inserting script returns.
                 self._initialize()
             else:
                 self.executor.call(self._initialize)
@@ -197,12 +191,9 @@ class PageRealm:
         install_window_chrome(self.context, page.services)
         page.window._publish_name()
         chrome_installed_at = time.perf_counter_ns()
-        # The realm owns the compiled JavaScript helpers, and the page's script
-        # controller borrows this instance, so the isolate's error hooks and
-        # every Web API helper share one set.  The hooks are what make an
-        # exception V8 raises on its own -- inside a microtask job, which never
-        # returns to a Python frame -- reach the page's error handlers instead
-        # of stopping at the host's stderr.
+        # The realm owns the compiled helpers and the page's script controller
+        # borrows them, so the isolate's error hooks and every Web API helper
+        # share one set; the hooks route exceptions V8 raises on its own.
         self.scripts = RealmScripts(self.context)
         self.scripts.install_error_hooks(
             page.report_uncaught_message, page.rejections.record,

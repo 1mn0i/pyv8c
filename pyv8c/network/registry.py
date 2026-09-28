@@ -109,9 +109,7 @@ _FACTORIES: dict[str, dict[str, Callable[..., Any]]] = {kind: {} for kind in KIN
 #: Lazy providers of each engine's accepted keys; absent means "not validated".
 _OPTION_KEYS: dict[str, dict[str, Callable[[], frozenset[str] | None]]] = {kind: {} for kind in KINDS}
 
-#: Engines that send their traffic through a proxy.  Absent means it does not:
-#: an engine whose options are open-ended cannot be caught by the key check, so
-#: a proxy it would quietly ignore has to be refused from here instead.
+#: Engines that send traffic through a proxy; absent means an open-ended engine whose ignored proxy must be refused here.
 _ACCEPTS_PROXY: dict[str, dict[str, bool]] = {kind: {} for kind in KINDS}
 
 
@@ -266,8 +264,7 @@ def _websockets_keys():
 
 
 register_transport("curl_cffi", _curl_cffi, option_keys=_curl_cffi_keys, proxy=True)
-# The cronet client takes **kwargs and names no proxy, so a proxy has nowhere
-# to go: it is refused rather than accepted and ignored (see ``accepts_proxy``).
+# The cronet client takes **kwargs and names no proxy, so one is refused rather than ignored.
 register_transport("cronet", _cronet, option_keys=_cronet_http_keys, proxy=False)
 register_ws_transport("websockets", _websockets, option_keys=_websockets_keys, proxy=True)
 register_ws_transport("cronet", _cronet, option_keys=_cronet_ws_keys, proxy=False)

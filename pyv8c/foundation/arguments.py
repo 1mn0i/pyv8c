@@ -155,10 +155,8 @@ def dictionary(value, *, name="Object", prefix=""):
 def event_init(options):
     """An event constructor's EventInit dictionary as a readable mapping.
 
-    ``undefined``/``null`` mean "empty EventInit".  A JS object is read lazily
-    through :class:`Dictionary`; a plain Python dict passes through untouched so
-    the host can drive the private ``isTrusted``/``persisted`` channels that are
-    never EventInit members.
+    ``undefined``/``null`` mean an empty EventInit; a plain Python dict passes through
+    so the host can drive the private ``isTrusted``/``persisted`` channels.
     """
     if is_nullish(options):
         return {}

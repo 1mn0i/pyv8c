@@ -1,8 +1,5 @@
-"""``customElements``: the definitions a page registers.
-
-Definitions are remembered so ``get``, ``getName`` and ``whenDefined`` answer, but
-defining one does not upgrade an element: this DOM has no reaction stack.
-"""
+"""``customElements``: the definitions a page registers.  Defining one never
+upgrades an element -- this DOM has no reaction stack."""
 
 import pyv8
 from pyv8 import IdlSpec, MethodSpec

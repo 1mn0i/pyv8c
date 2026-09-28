@@ -1,9 +1,8 @@
 """The ``websockets`` engine: the page's sockets on a real WebSocket client.
 
-It is the default engine, so ``new WebSocket`` works with nothing optional
-installed.  Each socket gets a thread of its own running ``websockets.sync``,
-because a blocking connection matches the project's thread model (events are
-delivered on the realm's task queue).
+It is the default engine, so ``new WebSocket`` works with nothing optional installed.
+Each socket gets its own thread running ``websockets.sync``, because a blocking
+connection matches the project's thread model.
 """
 import importlib
 import inspect
@@ -15,9 +14,7 @@ from loguru import logger
 from .models import NetworkUnavailableError
 from .proxy import PROXY_OPTION, websockets_proxy
 
-#: Options this engine consumes itself instead of handing to ``websockets``: the
-#: handshake ingredients, and the proxy, which is translated before it is passed
-#: on because the client reads its own default out of the environment.
+#: Options the engine consumes itself: handshake ingredients and the proxy, translated before passing on.
 _BRIDGE_KEYS = frozenset({"cookies", "headers", PROXY_OPTION})
 
 #: Keyword names the engine supplies itself; the target and handshake are its own.
@@ -203,9 +200,7 @@ class WebSocketsTransport:
         """The ``connect`` arguments for one socket, handshake and proxy included."""
         call = dict(given or {})
         kwargs = {name: value for name, value in self.options.items() if name not in _BRIDGE_KEYS}
-        # Always given, never left out: the client's own default is ``True``,
-        # which means "read the environment", and a context that was not handed
-        # a proxy is meant to connect directly.
+        # Always given: the client's default ``True`` reads the environment, but this context connects directly.
         kwargs["proxy"] = websockets_proxy(self.options.get(PROXY_OPTION))
         user_agent, headers = self._handshake_headers(url, call)
         if user_agent is not None:

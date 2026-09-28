@@ -1,8 +1,6 @@
 """The Web Locks API.
 
-Nothing else in this browser takes a lock, so every request is granted at once:
-the callback runs with the lock it asked for, and the promise carries whatever it
-returned.
+Nothing else here takes a lock, so every request is granted at once.
 """
 
 import pyv8

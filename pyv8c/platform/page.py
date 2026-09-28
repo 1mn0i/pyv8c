@@ -34,10 +34,8 @@ EMPTY_DOCUMENT = "<!DOCTYPE html><html><head></head><body></body></html>"
 class _TaskHostAdapter:
     """Minimal host surface handed to the page's TaskQueue.
 
-    ``TaskQueue`` (foundation) may only ask its host the two TaskHost
-    questions.  Holding a ``Page`` there would let foundation reach the
-    whole platform object, so the queue receives this adapter instead: its
-    only members are the protocol ones.
+    The queue may only ask its host the two TaskHost questions, so holding a
+    ``Page`` there would let foundation reach the whole platform object.
     """
 
     def __init__(self, page):
@@ -98,8 +96,7 @@ class Page:
         self._opaque_origin = origin is not None and self.origin[0] == "opaque"
         self.environment = context.browser.environment.overlay(environment)
         self.resource_interceptor = context.browser.resource_interceptor
-        # A page can override the browser default without changing the
-        # configuration used by other pages in the same browser.
+        # Overriding the browser default here leaves the other pages' setting alone.
         self._trace = context.browser.trace if trace is None else bool(trace)
         self.closed = False
         self._resource_scope = ResourceScope()
@@ -109,19 +106,15 @@ class Page:
         self.lifecycle = DocumentLifecycle(self)
         self.scripts = ScriptController(self)
         self.resources = ResourceController(self)
-        # The task queue lives in foundation and may only ask its host the two
-        # TaskHost questions; hand it a narrow adapter instead of this Page.
         self.tasks = TaskQueue(_TaskHostAdapter(self))
-        # Uncaught exceptions are currently invisible: surface them the way a
-        # browser does, as an ErrorEvent on the realm's window.
+        # An uncaught exception must surface as an ErrorEvent on the window.
         self._reporting_error = False
         self.tasks.set_error_sink(self.report_exception)
         # V8 reports a rejection before the turn that caused it ends, so the
-        # candidates wait for the executor's next boundary to be published.
+        # candidates wait for the executor's next boundary.
         self.rejections = RejectionTracker(self.report_rejection)
         self._owned = Ownership()
-        # Web-facing objects never see this Page; they receive the narrow
-        # PageServices surface assembled from the controllers above.
+        # Web-facing objects see this narrow surface, never the Page itself.
         self.services = PageServices(
             context, self.environment, self.trace, self._owned,
             self.navigation, self.scripts, self.resources, self.tasks,
@@ -140,15 +133,12 @@ class Page:
         self.services.window = self.window
         self.services.document = self.document
         self.window.location.href = str(url)
-        # Host-side HTTP for this page, both flavours (see platform/net.py).
         self.net = PageNet(self)
-        # Host-driven mouse input, the state machine in platform/input.py.  It
-        # is built on first use: the module reaches the layout model, which
-        # drags font measurement into a startup that does not need it yet.
+        # Built on first use: the module reaches the layout model, which would
+        # drag font measurement into a startup that does not need it yet.
         self._mouse = None
         # Native template installation can inspect the global object before
-        # Context.__init__ returns.  Publish a sentinel so Window callbacks
-        # never observe a partially initialized Page attribute.
+        # Context.__init__ returns, so publish a sentinel until the realm exists.
         self.context = _ContextBootstrapProxy()
         self._devtools_target = None
         self.realm = PageRealm(self)
@@ -191,20 +181,15 @@ class Page:
         self.origin = self.context_owner._blob_origins.get(str(url), self.origin)
         self.services._origin = self.origin
         self.window._origin = self.origin
-        # The native access-check callback resolves the accessing realm from
-        # this table.  Navigation can change the origin after the Context has
-        # already been created, so keep the bound entry in sync.
+        # The native access-check callback resolves the accessing realm from this
+        # table, and navigation can change the origin after the Context exists.
         entry = Window._context_origins.get(id(self.context))
         if entry is not None:
             Window._context_origins[id(self.context)] = (entry[0], self.origin)
 
-    # -- error reporting ---------------------------------------------------
-    # One entry point for everything that notices an exception: TaskQueue routes
-    # a task that raised here through its error sink, the DOM reports a listener
-    # that threw, and the isolate's hooks report what V8 ran without returning
-    # to Python at all.  All of them surface on the window as an ``error`` event
-    # instead of vanishing.
-
+    # One entry point for everything that notices an exception -- a task that
+    # raised, a listener that threw, an isolate hook -- so all of them surface on
+    # the window as an ``error`` event instead of vanishing.
     def report_exception(self, error=None, *, message=None, filename="", line=0,
                          column=0, value=None):
         """Mirror an uncaught exception onto the realm's window.
@@ -306,8 +291,8 @@ class Page:
         self.context = self.realm.context
         Window._bind_context(self.context, window)
         Window._unbind_context(previous_realm.context)
-        # The old realm is running the command that got here: closing it from its
-        # own queue would run inside that command.
+        # The old realm runs the command that got here, so it is closed from a
+        # thread of its own rather than inside that command.
         threading.Thread(target=previous_realm.close, daemon=True).start()
         return window
 
@@ -321,10 +306,8 @@ class Page:
         """Navigate to *value*; assigning here is :meth:`goto`."""
         self.goto(value)
 
-    # -- public API ------------------------------------------------------
-    # Everything else web-facing code needs is served by ``self.services``
-    # (PageServices); controllers reach each other through the Page attributes
-    # directly.  Only user-facing forwards remain here.
+    # Web-facing code is served by ``self.services``; controllers reach each
+    # other through the Page attributes, so only user-facing forwards remain.
 
     def set_content(self,
                     html: str = EMPTY_DOCUMENT,
@@ -553,14 +536,13 @@ class Page:
         with self._close_lock:
             if self.closed:
                 return
-            # A concurrent close is already doing the owner-thread teardown;
-            # leave the scope OPEN so a failed owner call can be retried.
+            # A concurrent close already runs the owner-thread teardown, so the
+            # scope stays OPEN and a failed owner call can be retried.
             if self._closing:
                 return
             self._closing = True
-        # A paused inspector loop or a start-paused gate blocks the realm
-        # owner. Wake it before synchronously asking that owner to perform
-        # the teardown.
+        # A paused inspector loop or a start-paused gate blocks the realm owner;
+        # wake it before asking that owner to tear down synchronously.
         if not self.realm.executor.is_owner_thread():
             target = self._devtools_target
             if target is not None:
@@ -570,9 +552,8 @@ class Page:
         finally:
             with self._close_lock:
                 self._closing = False
-            # _close_owner closes the scope after all owner-thread cleanup.
-            # If dispatch timed out before it started, retain OPEN state and
-            # allow a subsequent close() to retry instead of losing resources.
+            # The scope closes after all owner-thread cleanup; a dispatch that
+            # timed out before starting leaves it OPEN for a later close().
             if self.closed:
                 self._resource_scope.close()
 
@@ -638,10 +619,8 @@ class Page:
         if callable(parent_cleanup):
             parent_cleanup()
             self._parent_scope_cleanup = None
-        # Close callbacks that were not explicitly drained (for example,
-        # asynchronous resource cancellation handles).  This is idempotent
-        # and guarantees eventual cleanup even when close() was initiated by
-        # another thread and its waiting call timed out.
+        # Idempotent: closes callbacks that were not drained, so cleanup still
+        # happens when another thread's close() timed out while waiting.
         self._resource_scope.close()
 
 

@@ -34,18 +34,14 @@ def _js_call(fn, this, *args):
 
 
 #: Exceptions that must interrupt the process rather than become a page's error.
-#: The same pair ``foundation.executor`` re-raises.
 _CONTROL_EXCEPTIONS = (KeyboardInterrupt, SystemExit)
 
 
 def _report_listener_exception(target, exc):
     """Report an exception a listener raised, as "report the exception" says.
 
-    The DOM is what invokes a listener, so an exception thrown there has no
-    caller left to catch it: a browser hands it to the realm's error reporting
-    and carries on with the remaining listeners.  A target whose realm is gone
-    -- a worker shutting down, an element detached from every document -- drops
-    it instead.
+    The DOM invoked the listener, so nothing can catch it: it goes to the realm's
+    error reporting and dispatching continues; a gone realm drops it.
     """
     realm = getattr(target._services, "realm_services", None)
     reporter = getattr(realm, "report_exception", None) if realm is not None else None
@@ -142,8 +138,7 @@ class Event:
     def fn_composedPath(self, *_extra):
         return list(self._path)
     def fn_initEvent(self, event_type=MISSING, bubbles=False, cancelable=False, *_extra):
-        # Legacy initializer.  Re-initializing an event that is already being
-        # dispatched is a no-op per DOM; that edge is out of scope here.
+        # Legacy initializer; the DOM's "already dispatching" no-op is out of scope here.
         if event_type is MISSING:
             raise missing_error('Event', 'initEvent', 3, 0, constructor=False)
         if bubbles is pyv8.Undefined:
@@ -224,10 +219,8 @@ class MouseEvent(UIEvent):
         self.screenY = number(init.get("screenY", 0))
         self.clientX = number(init.get("clientX", 0))
         self.clientY = number(init.get("clientY", 0))
-        # The layout model has no scrolling, so page (document-relative) and
-        # viewport coordinates coincide unless an explicit init value is given.
-        # Stored under an owner-free name: ``web`` modules must not name a host
-        # page object (tests/unit/test_architecture.py enforces that).
+        # No scrolling, so page and viewport coordinates coincide unless given.
+        # Owner-free name: ``web`` must not name a host page object.
         self._document_x = number(init.get("pageX", self.clientX))
         self._document_y = number(init.get("pageY", self.clientY))
         self.x = number(init.get("x", self.clientX))
@@ -497,8 +490,7 @@ class PointerEvent(MouseEvent):
     def get_pointerType(self): return self.pointerType
     def get_isPrimary(self): return self.isPrimary
     def get_persistentDeviceId(self): return self.persistentDeviceId
-    # No coalescing or prediction pipeline exists; the empty sequence is
-    # returned so scripts that iterate the result keep working.
+    # No coalescing/prediction pipeline; return empty so iterating scripts keep working.
     def fn_getCoalescedEvents(self, *_extra): return []
     def fn_getPredictedEvents(self, *_extra): return []
 
@@ -743,8 +735,8 @@ class BeforeUnloadEvent(Event):
         attributes=(
             AttributeSpec(name="returnValue", getter="get_returnValue", setter="set_returnValue"),
         ),
-        # ``allow_new=false`` in the baseline makes the compiled constructor
-        # non-constructible; the host still builds one through ``__init__``.
+        # ``allow_new=false`` in the baseline: non-constructible, but the host
+        # still builds one through ``__init__``.
         constructor_behavior=0,
         to_string_tag="BeforeUnloadEvent",
         has_constructor=0,
@@ -765,9 +757,7 @@ class BeforeUnloadEvent(Event):
 
 @interface('EventTarget', None)
 class EventTarget:
-    # Every ``on*`` slot -- including the load/unload family -- is generated
-    # once from ``_HANDLER_SLOTS`` at the bottom of this module, so the class
-    # body only declares the event-listener methods.
+    # Every ``on*`` slot is generated from ``_HANDLER_SLOTS`` at module bottom.
     __v8_idl_spec__ = IdlSpec(
         attributes=(),
         methods=(
@@ -835,10 +825,8 @@ class EventTarget:
         if not isinstance(event, Event):
             raise V8TypeError("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
         event.target = event.target or self
-        # A non-propagating event reaches its target alone.  Chromium dispatches
-        # ``mouseenter``/``mouseleave`` and their pointer twins with a
-        # propagation path of just the node, which is why an ancestor's capture
-        # listener never sees them; every other event walks the whole tree.
+        # A non-propagating event reaches its target alone: Chromium dispatches
+        # ``mouseenter``/``mouseleave`` (and pointer twins) with a path of just the node.
         path = [self]
         if not event._non_propagating:
             node = self
@@ -880,8 +868,7 @@ class EventTarget:
             except _CONTROL_EXCEPTIONS:
                 raise
             except BaseException as exc:  # reported, then dispatching continues
-                # Letting this escape would make dispatchEvent itself throw and
-                # silently skip every later listener, which no browser does.
+                # Escaping here would make dispatchEvent throw and skip later listeners.
                 _report_listener_exception(self, exc)
             finally:
                 event._passive = False
@@ -889,8 +876,7 @@ class EventTarget:
             if event._immediate:
                 return
         handler = self._handlers.get("on" + event.type)
-        # EventHandler slots may hold non-callable objects; Blink invokes
-        # only their effective function, not the object itself.
+        # EventHandler slots may hold non-callable objects; Blink invokes their function.
         if not capture and callable(handler):
             try:
                 if event.type == "error" and self.__class__.__name__ == "Window":
@@ -904,8 +890,7 @@ class EventTarget:
             except _CONTROL_EXCEPTIONS:
                 raise
             except BaseException as exc:  # reported, not propagated
-                # The handler slot is a listener with a shorter spelling, and an
-                # exception in it is reported the same way.
+                # The handler slot is a listener with a shorter spelling: report the same way.
                 _report_listener_exception(self, exc)
 
     def __getattr__(self, name):
@@ -921,70 +906,44 @@ class EventTarget:
 
 
 # Event-handler attributes shared by every EventTarget subclass.  Only names the
-# Chromium baseline actually declares are listed: ``assembly._compile`` installs
-# an inherited declaration on exactly those interfaces whose own member table
-# contains the name (``Window``/``HTMLElement``/``Document``/``SVGElement`` get
-# the mouse, key, pointer, animation set; ``Window`` alone gets
-# hashchange/popstate/storage/messageerror, ``Document`` alone gets
-# visibilitychange/freeze/resume).  Composition handler *slots* are absent
-# because the baseline only declares ``oncompositionstart``/``oncompositionend``
-# on ``EditContext``; composition events still dispatch through
-# ``addEventListener('compositionstart', ...)``.
-#
-# The slots are installed with ``FlagLocation.kInstance``, which keeps them off
-# ``EventTarget.prototype``: a browser leaves only the listener methods there.
+# Chromium baseline declares are listed, and composition slots are absent (the
+# baseline declares them only on ``EditContext``).  Installed with
+# ``FlagLocation.kInstance``, keeping them off ``EventTarget.prototype``.
 _HANDLER_SLOTS = (
-    # Document and resource lifecycle
     "onload", "onerror", "onreadystatechange", "onpageshow", "onpagehide",
     "onunload", "onbeforeunload",
-    # Mouse family
     "onclick", "ondblclick", "onauxclick", "oncontextmenu",
     "onmousedown", "onmouseup", "onmousemove", "onmouseover", "onmouseout",
     "onmouseenter", "onmouseleave",
-    # Focus, text input and form controls
     "onfocus", "onblur", "oninput", "onbeforeinput", "onchange",
     "onselect", "oninvalid", "onsubmit", "onreset",
-    # Keyboard
     "onkeydown", "onkeyup", "onkeypress",
-    # Pointer, wheel and scroll
     "onpointerdown", "onpointerup", "onpointermove", "onpointerover", "onpointerout",
     "onpointerenter", "onpointerleave", "onpointercancel",
     "ongotpointercapture", "onlostpointercapture", "onwheel", "onscroll",
-    # Touch
     "ontouchstart", "ontouchend", "ontouchmove", "ontouchcancel",
-    # Navigation, messaging and page visibility
     "onhashchange", "onpopstate", "onstorage", "onmessageerror",
     "onvisibilitychange", "onfreeze", "onresume",
-    # Resource loading progress
     "onloadstart", "onloadend", "onprogress", "onabort", "ontimeout",
-    # Animation and transition
     "onanimationstart", "onanimationend", "onanimationiteration", "onanimationcancel",
     "ontransitionstart", "ontransitionend", "ontransitionrun", "ontransitioncancel",
-    # Clipboard and unhandled rejections
     "oncopy", "oncut", "onpaste", "onselectstart", "onselectionchange",
     "onunhandledrejection", "onrejectionhandled",
-    # Media playback
     "oncanplay", "oncanplaythrough", "ondurationchange", "onemptied", "onended",
     "onloadeddata", "onloadedmetadata", "onpause", "onplay", "onplaying",
     "onratechange", "onseeked", "onseeking", "onstalled", "onsuspend",
     "ontimeupdate", "onvolumechange", "onwaiting",
-    # Drag and drop
     "ondrag", "ondragend", "ondragenter", "ondragleave", "ondragover", "ondragstart",
     "ondrop",
-    # Device and network state
     "ondevicemotion", "ondeviceorientation", "ondeviceorientationabsolute",
     "ononline", "onoffline", "onlanguagechange", "onorientationchange",
-    # Printing, installation and page lifecycle
     "onafterprint", "onbeforeprint", "onbeforetoggle", "onbeforematch", "onbeforefilter",
     "onbeforeinstallprompt", "onappinstalled", "onpageswap", "onpagereveal",
     "oncommand", "oncomplete",
-    # Window and frame geometry, plus scrolling overshoot
     "onmove", "onresize", "onscrollend", "onscrollsnapchange", "onscrollsnapchanging",
     "onoverscrollstart", "onoverscrollchanging", "onoverscrollend", "onoverscrollcancel",
-    # Gamepads and canvases
     "ongamepadconnected", "ongamepaddisconnected", "ongamepadrawinputchanged",
     "oncontextlost", "oncontextrestored",
-    # The remaining slots the baseline declares somewhere
     "oncancel", "onclose", "oncuechange", "onformdata", "onmousewheel",
     "onpointerrawupdate", "onsearch", "onsecuritypolicyviolation", "onslotchange",
     "ontimezonechange", "ontoggle", "onbeforexrselect",
@@ -997,10 +956,9 @@ _HANDLER_SLOTS = (
 def _install_handler_slots(cls, names):
     """Create one getter/setter pair per event-handler attribute.
 
-    ``BindingWrapperFactory._raw_callback`` resolves a callback by *name* from
-    the class ``__mro__``, so one generic accessor cannot serve several
-    attribute names; the pair is generated per slot instead.  This runs once at
-    import time and never mutates an existing instance.
+    ``_raw_callback`` resolves a callback by *name* from the class ``__mro__``, so
+    one generic accessor cannot serve several attribute names; generated per slot
+    once at import time.
     """
     attributes = []
     for name in names:

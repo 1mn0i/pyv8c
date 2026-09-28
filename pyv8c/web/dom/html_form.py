@@ -1,9 +1,6 @@
 """``HTMLFormElement``: the controls it owns, its legacy access surface, and the
-entry list its submission sends.
-
-``form[name]`` and ``form[index]`` are an independent legacy platform object in
-Chromium, so the handlers and the ``RadioNodeList`` they hand out live here with
-the element.
+entry list its submission sends.  ``form[name]``/``form[index]`` are an independent
+legacy object in Chromium, so their handlers and ``RadioNodeList`` live here.
 """
 
 from typing import NamedTuple
@@ -44,8 +41,7 @@ class RadioNodeList(NodeList):
                 item.set_checked(item.get_value() == value)
 
 
-#: The tags a form collects: its listed elements.  An ``input`` in the
-#: image-button state is submittable but is not one of them.
+#: The tags a form collects; an ``input`` in the image-button state is submittable but not listed.
 _LISTED_ELEMENT_TAGS = frozenset((
     "button", "fieldset", "input", "object", "output", "select", "textarea",
 ))
@@ -83,10 +79,8 @@ def submission(form, submitter=None):
 
 
 def entry_list(form, submitter=None):
-    """The form's entries as ``(name, value)`` pairs, in tree order.
-
-    *submitter* is the pressed button: the only submit button that contributes.
-    """
+    """The form's entries as ``(name, value)`` pairs in tree order; *submitter* is
+    the pressed button, the only submit button that contributes."""
     entries = []
     for control in form._controls():
         if not _is_successful(control, submitter):
@@ -145,14 +139,9 @@ def _is_multiple(select):
 
 @interface('HTMLFormElement', 'HTMLElement')
 class HTMLFormElement(HTMLElement):
-    """``<form>``: the controls it owns.
-
-    ``elements`` holds the listed elements whose form owner this form is --
-    descendants, and the controls elsewhere in the document that name it with
-    ``form=`` -- which is why the list follows the document's order and not the
-    form's.  A control's owner is the form its ``form`` attribute names, and the
-    nearest ancestor form only when it has no such attribute, so a control naming a
-    form that is not there belongs to no form at all.
+    """``<form>``: the controls whose form owner it is.  ``elements`` holds them in
+    document order -- descendants and controls elsewhere naming it with ``form=``;
+    the owner is the form named by the attribute, else the nearest ancestor form.
     """
 
     __v8_idl_spec__ = IdlSpec(
@@ -357,13 +346,8 @@ class HTMLFormElement(HTMLElement):
     def _submit(self, submitter=None, *, validate=True, fire_event=True,
                 user_activated=False):
         """The submission algorithm: validation, the ``submit`` event, the request.
-
-        A clicked submit button, ``requestSubmit()`` and ``submit()`` all end
-        up here.  They differ in what they skip on the way -- the method skips
-        both the validation and the event -- and in the request they produce:
-        *submitter* is the button whose name and value join the entry list, and
-        *user_activated* says whether a user gesture asked for this, which
-        Chromium reports as ``Sec-Fetch-User``.
+        A clicked button, ``requestSubmit()`` and ``submit()`` all end here;
+        *submitter* joins the entries and *user_activated* becomes ``Sec-Fetch-User``.
         """
         if validate and not self.get_noValidate() and not self._check_validity(report=True):
             return False

@@ -1,8 +1,8 @@
 """Trusted Types.
 
-A policy calls the page's own callback and wraps the string it returns, which is
-what a page reads back through ``toString``.  The type-inspection queries answer
-nothing: the table that gives an attribute or property its type is not modelled.
+A policy calls the page's own callback and wraps the string it returns; the
+type-inspection queries answer nothing because the spec's type tables are not
+modelled.
 """
 
 import pyv8
@@ -135,8 +135,7 @@ class TrustedTypePolicyFactory:
         if name is MISSING:
             raise missing_error('TrustedTypePolicyFactory', 'createPolicy', 2, 0, constructor=False)
         name = dom_string(name)
-        # Read by name: a dictionary conversion would drop the callbacks, which are
-        # exactly what the policy holds.
+        # Read by name: a dictionary conversion would drop the callbacks.
         settings = {}
         if rules is not None and not is_nullish(rules):
             for operation in ("createHTML", "createScript", "createScriptURL"):

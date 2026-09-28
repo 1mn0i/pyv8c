@@ -1,29 +1,12 @@
 """``window.indexedDB`` -- Indexed Database API (W3C IndexedDB 3.0).
 
-The implementation mirrors Chrome's observable behaviour for the interfaces
-scripts and fingerprinting probes actually use:
+Data lives in a process-wide in-memory registry keyed by origin, so pages on
+the same origin share databases the way a real browser does.
 
-* :class:`IDBFactory` -- ``open``, ``deleteDatabase``, ``databases``, ``cmp``
-* :class:`IDBDatabase` -- connections, ``createObjectStore``, ``transaction``
-* :class:`IDBTransaction` -- ``readonly`` / ``readwrite`` / ``versionchange``
-* :class:`IDBObjectStore` / :class:`IDBIndex` -- CRUD, indexes, cursors
-* :class:`IDBCursor` / :class:`IDBCursorWithValue` -- iteration
-* :class:`IDBKeyRange`, :class:`IDBRequest`, :class:`IDBOpenDBRequest`,
-  :class:`IDBVersionChangeEvent`, :class:`IDBRecord`, :class:`DOMStringList`
-
-Data lives in a process-wide registry keyed by origin, so two pages on the
-same origin share databases the way a real browser does.  Storage is
-in-memory: it survives navigation but not process exit.
-
-Known deviations, documented here rather than hidden:
-
-* Values are cloned with the runtime's ``structured_clone`` (the same one
-  ``postMessage`` uses), so exotic types are less faithful than Blink's
-  StructuredSerializeForStorage.
-* ``Date`` keys are surfaced as numeric timestamps because the runtime has no
-  first-class JS ``Date`` bridge.
-* An upgrade blocked by other connections retries for
-  ``_BLOCKED_WAIT_SECONDS`` and then proceeds, instead of blocking forever.
+Known deviations: values are cloned with the runtime's ``structured_clone``
+(less faithful than Blink's StructuredSerializeForStorage); ``Date`` keys
+surface as numeric timestamps; a blocked upgrade retries for
+``_BLOCKED_WAIT_SECONDS`` and then proceeds rather than blocking forever.
 """
 import threading
 from bisect import bisect_left, bisect_right
@@ -60,10 +43,6 @@ __all__ = [
     "IDBOpenDBRequest", "IDBVersionChangeEvent", "IDBRecord", "DOMStringList",
 ]
 
-
-# --------------------------------------------------------------------------
-# DOMException helpers
-# --------------------------------------------------------------------------
 
 def _fail(name, message):
     return dom_exception(name, message)
@@ -109,10 +88,6 @@ def _abort_error():
     return _fail("AbortError", "The transaction was aborted.")
 
 
-# --------------------------------------------------------------------------
-# Keys
-# --------------------------------------------------------------------------
-
 _NUMBER, _DATE, _STRING, _BINARY, _ARRAY = 0, 1, 2, 3, 4
 _TYPE_ORDER = {_NUMBER: 0, _DATE: 1, _STRING: 2, _BINARY: 3, _ARRAY: 4}
 
@@ -130,10 +105,8 @@ def _string_or_strings(value):
 
 
 def _to_key(value):
-    """Convert a JS value to a key tuple ``(kind, value)``.
-
-    Raises a ``DataError`` DOMException for anything that is not a valid key,
-    which is what Chrome does for ``cmp``, ``add``, ``get`` and friends.
+    """Convert a JS value to ``(kind, value)``; a bad key raises ``DataError``
+    as it does in Chrome.
     """
     value = materialize(value)
     if is_nullish(value):
@@ -195,10 +168,6 @@ def _key_sort_key(key):
         return (_TYPE_ORDER[kind], value)
     return encode(key)
 
-
-# --------------------------------------------------------------------------
-# Key paths
-# --------------------------------------------------------------------------
 
 _MISSING = object()
 
@@ -271,10 +240,6 @@ def _inject_key(value, key_path, key):
     return True
 
 
-# --------------------------------------------------------------------------
-# Key ranges
-# --------------------------------------------------------------------------
-
 class _KeyRange:
     """Internal range used for filtering; mirrors the IDBKeyRange interface."""
 
@@ -323,10 +288,6 @@ def _unpack_query(query, count):
         direction = options.get("direction", None)
     return query, count, direction
 
-
-# --------------------------------------------------------------------------
-# Storage models
-# --------------------------------------------------------------------------
 
 class _IndexModel:
     __slots__ = ("name", "key_path", "unique", "multi_entry", "entries", "_sort_keys", "_unique_keys")
@@ -560,10 +521,6 @@ def _limit(values, count):
     return values[: max(0, int(count))]
 
 
-# --------------------------------------------------------------------------
-# DOMStringList / IDBRecord
-# --------------------------------------------------------------------------
-
 @interface('DOMStringList', None)
 class DOMStringList(ReadOnlyIndexedPropertyMixin):
     __v8_idl_spec__ = IdlSpec(
@@ -626,10 +583,6 @@ class IDBRecord:
         return self._value if self._value is not None else pyv8.Undefined
 
 
-# --------------------------------------------------------------------------
-# Events
-# --------------------------------------------------------------------------
-
 @interface('IDBVersionChangeEvent', 'Event')
 class IDBVersionChangeEvent(Event):
     __v8_idl_spec__ = IdlSpec(
@@ -663,13 +616,7 @@ class IDBVersionChangeEvent(Event):
         return pyv8.Null if self.newVersion is None else self.newVersion
 
 
-# --------------------------------------------------------------------------
-# Requests
-# --------------------------------------------------------------------------
-
 class _RequestMixin:
-    """Shared IDBRequest state: done flag, result, error and event firing."""
-
     def _init_request(self, source=None, transaction=None):
         self._source = source
         self._transaction = transaction
@@ -678,10 +625,8 @@ class _RequestMixin:
         self._error = None
         self.readyState = "pending"
         self._blocked_fired = False
-        # Open requests expose the connection through ``result`` while the
-        # upgrade transaction is still running (Blink sets the result when the
-        # connection is opened, before ``upgradeneeded`` fires), even though
-        # ``readyState`` stays ``"pending"`` until ``success``.
+        # Open requests expose ``result`` before ``upgradeneeded`` fires, as in
+        # Blink, while ``readyState`` stays ``"pending"`` until ``success``.
         self._result_ready = False
 
     def _dispatch(self, event_type, options=None):
@@ -809,10 +754,6 @@ class IDBOpenDBRequest(IDBRequest):
         self._set_handler("onupgradeneeded", value)
 
 
-# --------------------------------------------------------------------------
-# Key ranges (script visible)
-# --------------------------------------------------------------------------
-
 _STATIC = dict(
     location=FlagLocation.kInterface,
     receiver_check=FlagReceiverCheck.kDoNotCheck,
@@ -908,10 +849,6 @@ class IDBKeyRange:
             raise missing_error('IDBKeyRange', 'includes', 1, 0, constructor=False)
         return self._range.contains(_to_key(value))
 
-
-# --------------------------------------------------------------------------
-# Cursors
-# --------------------------------------------------------------------------
 
 _DIRECTIONS = ("next", "nextunique", "prev", "prevunique")
 
@@ -1108,10 +1045,6 @@ class IDBCursorWithValue(IDBCursor):
         return self._value if self._value is not None else pyv8.Undefined
 
 
-# --------------------------------------------------------------------------
-# Transaction
-# --------------------------------------------------------------------------
-
 @interface('IDBTransaction', 'EventTarget')
 class IDBTransaction(EventTarget):
     __v8_idl_spec__ = IdlSpec(
@@ -1148,12 +1081,10 @@ class IDBTransaction(EventTarget):
         self._pending = 0
         self._handles = {}
         self._finish_hooks = [on_finish] if on_finish is not None else []
-        # Before-image of every store this transaction can write, captured the
-        # first time the transaction touches the database.  ``_abort_now``
-        # restores from it; ``_commit_now`` discards it.
+        # Before-image of every store this transaction can write, captured on
+        # first touch; ``_abort_now`` restores it and ``_commit_now`` drops it.
         self._snapshot = None
 
-    # -- lifecycle --------------------------------------------------------
     def _deactivate(self):
         if self._state == "active":
             self._state = "inactive"
@@ -1194,13 +1125,8 @@ class IDBTransaction(EventTarget):
         self._fire_hooks(None)
 
     def _ensure_snapshot(self):
-        """Capture a before-image of every store this transaction may write.
-
-        Called lazily at the moment the transaction first touches the
-        database (before the ``upgradeneeded`` handler for version change
-        transactions, before the first queued request otherwise), so the
-        rollback target always reflects the state other -- already committed
-        -- transactions left behind.
+        """Snapshot every store this transaction may write, lazily on first
+        touch, so the rollback target reflects already-committed transactions.
         """
         if self._snapshot is not None or self._database is None:
             return
@@ -1224,11 +1150,9 @@ class IDBTransaction(EventTarget):
         if database is not None:
             database._upgrade_version = None
             database._upgrade_transaction = None
-            # Undo every change the transaction made.  Schema (store layout)
-            # first: for an upgrade that fails, ``_layout_backup`` is the
-            # store map captured when the connection was opened, so resetting
-            # to it drops stores created by the upgrade and re-attaches any
-            # that were renamed or deleted.
+            # Undo schema first: for a failed upgrade ``_layout_backup`` is the
+            # store map from connection open, so resetting drops stores the
+            # upgrade created and restores renamed/deleted ones.
             if self._mode == "versionchange" and database._layout_backup is not None:
                 database._model.stores = dict(database._layout_backup)
             if self._snapshot:
@@ -1248,14 +1172,13 @@ class IDBTransaction(EventTarget):
     def _dispatch(self, event_type):
         return self.fn_dispatchEvent(Event(event_type, {"isTrusted": True}))
 
-    # -- request plumbing -------------------------------------------------
     def _run(self, request, operation):
         self._pending += 1
 
         def execute():
             if self._state == "finished":
-                # The transaction was aborted before this queued request could
-                # run; drop it the way browsers drop a request list on abort.
+                # Aborted before this queued request ran; drop it, as browsers
+                # drop the request list on abort.
                 self._pending -= 1
                 return
             self._pending -= 1
@@ -1264,12 +1187,12 @@ class IDBTransaction(EventTarget):
             try:
                 try:
                     result = operation()
-                except BaseException as exc:  # surfaced to JS below
+                except BaseException as exc:
                     error = exc if getattr(exc, "__v8_error__", False) else _fail(
                         "UnknownError", str(exc) or "The operation failed."
                     )
-                    # ``_dispatch`` reports ``not defaultPrevented``; a canceled
-                    # error event keeps the surrounding transaction alive.
+                    # A canceled error event (``defaultPrevented``) keeps the
+                    # surrounding transaction alive.
                     if request._fail_with(error) and self._state != "finished":
                         self._abort_now(error)
                     return
@@ -1279,7 +1202,6 @@ class IDBTransaction(EventTarget):
 
         post_or_call(self._services, execute)
 
-    # -- script API -------------------------------------------------------
     def get_objectStoreNames(self):
         if self._mode == "versionchange" and self._database is not None:
             return DOMStringList(sorted(self._database._model.stores))
@@ -1359,10 +1281,6 @@ class IDBTransaction(EventTarget):
         return None
 
 
-# --------------------------------------------------------------------------
-# Object store
-# --------------------------------------------------------------------------
-
 def _require_usable_store(handle):
     transaction = handle._transaction
     if handle._store is None:
@@ -1420,7 +1338,6 @@ class IDBObjectStore:
         self._is_index = False
         self._index_handles = {}
 
-    # -- attributes -------------------------------------------------------
     def get_name(self):
         return self._store.name if self._store is not None else ""
 
@@ -1462,7 +1379,6 @@ class IDBObjectStore:
     def get_autoIncrement(self):
         return bool(self._store.auto_increment) if self._store is not None else False
 
-    # -- key resolution ---------------------------------------------------
     def _generate_key(self):
         store = self._store
         if store.generator > _MAX_KEY_GENERATOR:
@@ -1501,7 +1417,6 @@ class IDBObjectStore:
             )
         return _store_clone(value), self._generate_key()
 
-    # -- reads ------------------------------------------------------------
     def _entries(self, query, count=None, direction=None):
         query, count, option_direction = _unpack_query(query, count)
         direction = direction or option_direction
@@ -1574,7 +1489,6 @@ class IDBObjectStore:
             return pyv8.Undefined
         return entries[0][2] if wants == "value" else _key_to_value(entries[0][0])
 
-    # -- writes -----------------------------------------------------------
     def fn_add(self, value=MISSING, key=None, *_extra):
         if value is MISSING:
             raise missing_error('IDBObjectStore', 'add', 1, 0, constructor=False)
@@ -1623,7 +1537,6 @@ class IDBObjectStore:
 
         return self._request(run)
 
-    # -- indexes ----------------------------------------------------------
     def fn_index(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('IDBObjectStore', 'index', 1, 0, constructor=False)
@@ -1702,7 +1615,6 @@ class IDBObjectStore:
         self._index_handles.pop(name, None)
         return None
 
-    # -- cursors ----------------------------------------------------------
     def fn_openCursor(self, query=None, direction='next', *_extra):
         if query is pyv8.Undefined:
             query = None
@@ -1773,7 +1685,6 @@ class IDBObjectStore:
 
         return self._request(run)
 
-    # -- helpers ----------------------------------------------------------
     def _request(self, operation):
         _require_usable_store(self)
         request = IDBRequest(services=self._services, source=self, transaction=self._transaction)
@@ -1848,7 +1759,6 @@ class IDBIndex:
             results.append((index_key, primary_key, entry[1]))
         return results
 
-    # -- attributes -------------------------------------------------------
     def get_name(self):
         return self._index.name
 
@@ -1865,7 +1775,6 @@ class IDBIndex:
     def get_unique(self):
         return self._index.unique
 
-    # -- reads ------------------------------------------------------------
     def fn_get(self, query=MISSING, *_extra):
         if query is MISSING:
             raise missing_error('IDBIndex', 'get', 1, 0, constructor=False)
@@ -1924,7 +1833,6 @@ class IDBIndex:
             return pyv8.Undefined
         return records[0][2] if wants == "value" else _key_to_value(records[0][1])
 
-    # -- cursors ----------------------------------------------------------
     def fn_openCursor(self, query=None, direction='next', *_extra):
         if query is pyv8.Undefined:
             query = None
@@ -1976,10 +1884,6 @@ class IDBIndex:
         return request
 
 
-# --------------------------------------------------------------------------
-# Database connection
-# --------------------------------------------------------------------------
-
 @interface('IDBDatabase', 'EventTarget')
 class IDBDatabase(EventTarget):
     __v8_idl_spec__ = IdlSpec(
@@ -2014,7 +1918,6 @@ class IDBDatabase(EventTarget):
         self._layout_backup = None
         self._live_transactions = []
 
-    # -- attributes -------------------------------------------------------
     def get_name(self):
         return self._model.name
 
@@ -2053,7 +1956,6 @@ class IDBDatabase(EventTarget):
         value = event_handler(value)
         self._set_handler("onversionchange", value)
 
-    # -- schema -----------------------------------------------------------
     def fn_createObjectStore(self, name=MISSING, options=None, *_extra):
         if name is MISSING:
             raise missing_error('IDBDatabase', 'createObjectStore', 1, 0, constructor=False)
@@ -2097,7 +1999,6 @@ class IDBDatabase(EventTarget):
             raise _not_found_error("The object store '%s' does not exist." % name)
         del self._model.stores[name]
 
-    # -- transactions -----------------------------------------------------
     def fn_transaction(self, store_names=MISSING, mode='readonly', options=None, *_extra):
         if store_names is MISSING:
             raise missing_error('IDBDatabase', 'transaction', 1, 0, constructor=False)
@@ -2146,7 +2047,6 @@ class IDBDatabase(EventTarget):
             self._model.connections.remove(self)
         return None
 
-    # -- internal ---------------------------------------------------------
     def _release(self, transaction):
         if transaction in self._live_transactions:
             self._live_transactions.remove(transaction)
@@ -2157,10 +2057,6 @@ class IDBDatabase(EventTarget):
         )
         self.fn_dispatchEvent(event)
 
-
-# --------------------------------------------------------------------------
-# Factory
-# --------------------------------------------------------------------------
 
 @interface('IDBFactory', None)
 class IDBFactory:
@@ -2185,7 +2081,6 @@ class IDBFactory:
         else:
             callback()
 
-    # -- open -------------------------------------------------------------
     def fn_open(self, name=MISSING, version=None, *_extra):
         if name is MISSING:
             raise missing_error('IDBFactory', 'open', 1, 0, constructor=False)
@@ -2262,9 +2157,8 @@ class IDBFactory:
 
         def finish(error):
             if error is not None:
-                # The open() never delivered a usable connection, so it must
-                # not stay registered as a live connection that blocks later
-                # upgrades or receives versionchange events.
+                # open() failed, so do not leave the connection registered as a
+                # live connection that blocks upgrades or gets versionchange.
                 connection._close_pending = True
                 if connection in model.connections:
                     model.connections.remove(connection)
@@ -2282,8 +2176,7 @@ class IDBFactory:
         connection._upgrade_version = target
         connection._live_transactions.append(transaction)
         request._transaction = transaction
-        # Snapshot before the ``upgradeneeded`` handler runs so schema edits
-        # (create/delete/rename stores and indexes) can be rolled back too.
+        # Snapshot before ``upgradeneeded`` so schema edits are rolled back too.
         transaction._ensure_snapshot()
 
         def dispatch():
@@ -2291,14 +2184,12 @@ class IDBFactory:
             request._result_ready = True
             transaction._state = "active"
             request._dispatch_version_change("upgradeneeded", old_version, target)
-            # The handler may have called ``abort()`` (or raised), which means
-            # the transaction is already finished; don't resurrect it into a
-            # commit.
+            # The handler may have aborted or raised, finishing the transaction;
+            # don't resurrect it into a commit.
             transaction._end_dispatch()
 
         post_or_call(self._services, dispatch)
 
-    # -- delete -----------------------------------------------------------
     def fn_deleteDatabase(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('IDBFactory', 'deleteDatabase', 1, 0, constructor=False)
@@ -2325,7 +2216,6 @@ class IDBFactory:
             del databases[name]
             request._succeed_version_change(old_version, None)
 
-    # -- databases / cmp --------------------------------------------------
     def fn_databases(self, *_extra):
         promise, resolve, _reject = self._services.realm_services.make_promise()
 

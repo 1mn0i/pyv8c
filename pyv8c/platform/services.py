@@ -1,16 +1,7 @@
 """Platform-owned service objects handed to web-facing interface code.
 
-``PageServices`` is the composition root for one page realm.  It owns the
-controllers (navigation, scripts, resources, tasks) and builds the six narrow
-capability objects from ``foundation.realm`` -- ``realm_services``,
-``task_services``, ``resource_services``, ``document_services``,
-``worker_services`` and ``context_services``.  Web packages (``web/dom``,
-``web/fetch``, ``web/bom``, ``web/workers``) reach platform
-functionality only through those capability facets, never through the Page.
-
-``PageServices`` is only an assembly object. Protocol implementations live on
-the individual capability objects, which prevents a second, wide forwarding
-surface from drifting away from the contracts web code actually consumes.
+``PageServices`` assembles the six capability facets web code consumes; web
+packages reach platform functionality only through them, never through the Page.
 """
 
 import threading
@@ -40,8 +31,7 @@ class WorkerContext:
 class _TaskSource:
     """Task-queue access shared by the capabilities that post to the loop.
 
-    The queue itself is held rather than reached through an owner, because a
-    worker realm drives its own queue with the same capabilities a page does.
+    A worker realm drives its own queue with the same capabilities a page does.
     """
 
     def __init__(self, tasks):
@@ -80,8 +70,8 @@ class _RealmCapability(_TaskSource):
     def enqueue_microtask(self, callback):
         """Queue *callback* on the realm's V8 microtask queue.
 
-        Promise reactions and ``queueMicrotask`` share that queue, which is what
-        gives them the single FIFO order the HTML specification requires.
+        Promise reactions share it, which gives the one FIFO order the HTML
+        specification asks for.
         """
         return self._owner._scripts.enqueue_microtask(callback)
 
@@ -97,11 +87,9 @@ class _RealmCapability(_TaskSource):
     def report_exception(self, exc):
         """Report an uncaught exception through this realm's error reporting.
 
-        The DOM is what calls page code -- listeners, handler slots -- so an
-        exception raised there has no caller left to catch it.  That is the case
-        the specification calls "report the exception", and the task queue is
-        the realm's reporting entry point: its sink turns it into the page's
-        ``error`` event.
+        The DOM calls page code, so an exception raised in a listener has no
+        caller left to catch it: this is the specification's "report the
+        exception", and the task queue's sink turns it into the ``error`` event.
         """
         self._tasks.report_error(exc)
 
@@ -120,9 +108,8 @@ class _RealmCapability(_TaskSource):
                 try:
                     return target[name]
                 except (KeyError, AttributeError):
-                    # The property is not there, whichever way the binding says
-                    # so: reading a JavaScript object by key raises KeyError, and
-                    # only the attribute form raises AttributeError.
+                    # Reading a JavaScript object by key raises KeyError; only
+                    # the attribute form raises AttributeError.
                     import pyv8
                     return pyv8.Undefined
             if operation == "set":
@@ -131,12 +118,9 @@ class _RealmCapability(_TaskSource):
                 del target[name]
             elif operation == "query":
                 return 0 if name in dir(target) else None
-        # Cross-window property access is synchronous and can originate in a
-        # V8 callback that already holds the shared isolate lock.  Posting to
-        # another executor would wait on that same lock and deadlock.  The
-        # native JSObject operation enters its saved Context reentrantly.
+        # Cross-window access is synchronous and can start inside a V8 callback
+        # holding the shared isolate lock: posting to another executor deadlocks.
         return apply()
-
 
 
 class _TaskCapability(_TaskSource):
@@ -164,10 +148,8 @@ class _TaskCapability(_TaskSource):
 class WorkerRealmServices:
     """The capability facets a worker hands to its own global scope.
 
-    A worker realm owns its task queue and its V8 context, so ``setTimeout``
-    and ``queueMicrotask`` behave exactly as they do on a page.  Everything the
-    scope needs from its *parent* travels separately, through the
-    ``WorkerServices`` facet the parent page established.
+    A worker realm owns its task queue and its V8 context, so timers behave as
+    they do on a page; what the scope needs from its parent travels separately.
     """
 
     def __init__(self, tasks, runtime):
@@ -208,9 +190,8 @@ class _WorkerRealmCapability(_TaskSource):
     def report_exception(self, exc):
         """Route a listener exception to the worker's error reporting.
 
-        A worker global has no window to report onto: its reporting is the task
-        queue's, which forwards the failure to the parent page as the worker's
-        ``error`` event.
+        A worker global has no window to report onto: the task queue forwards it
+        to the parent page as the worker's ``error`` event.
         """
         self._tasks.report_error(exc)
 
@@ -225,12 +206,8 @@ class _ResourceCapability:
         return self._owner._resources.load_resource(url, request)
 
     def load_resource_async(self, url, request, callback):
-        # A request can finish before this call returns: the network thread
-        # pool invokes ``complete`` independently of whoever issued the
-        # request.  Registering afterwards therefore lost the race -- the
-        # delivery untracked a handle that had no registration yet, and the
-        # cancel callback stayed behind until the page closed.  The state
-        # machine below makes the two orders converge on one untrack.
+        # A request can finish before this call returns, so the two orders --
+        # delivery first or registration first -- converge on one untrack.
         state = {"handle": None, "tracked": False, "done": False}
         lock = threading.Lock()
 
@@ -328,11 +305,9 @@ class _DocumentCapability:
         if getattr(node, "localName", "") == "iframe":
             if not node._is_connected():
                 return None
-            # An inserted frame gets a browsing context of its own, the way a
-            # browser creates one for ``about:blank``.  Building a whole realm is
-            # left to a queued task: an insertion happens while a script is
-            # running, and entering another realm from there would re-enter this
-            # one's executor.
+            # An inserted frame gets a browsing context of its own; building the
+            # realm is left to a queued task, because an insertion happens while a
+            # script runs and entering another realm re-enters this executor.
             services = self._owner._resources
             services.ensure_iframe_context(node)
             if (node.get_src()
@@ -474,10 +449,8 @@ class _ContextCapability:
 class PageServices:
     """Composition root assembling the six realm capabilities.
 
-    Holds controllers, the owning context, and late-bound window/document
-    references — never the Page itself, so web code cannot traverse into
-    platform internals by construction. Web packages consume the narrow
-    capability facets below (``realm_services`` .. ``context_services``).
+    Holds controllers, the owning context and late-bound window/document
+    references -- never the Page itself, which web code cannot reach through.
     """
 
     def __init__(self, context, environment, trace, ownership: Ownership,
@@ -486,15 +459,15 @@ class PageServices:
         self.environment = environment
         self.trace = trace
         self._ownership = ownership
-        # Keep the exact callback object so resources can unregister from the
-        # scope when they complete normally instead of accumulating closures.
+        # The exact callback object is kept, so a resource that completes
+        # normally can unregister instead of leaving a closure behind.
         self._registrations = {}
         self._navigation = navigation
         self._scripts = scripts
         self._resources = resources
         self._tasks = tasks
-        # Owned directly instead of reached through ``tasks.owner``: the task
-        # queue lives in foundation and must not be a back door to the Page.
+        # Held directly: the task queue lives in foundation and must not be a
+        # back door to the Page.
         self._scope = scope
         # Late-bound by Page once window/document/realm exist.
         self.window = None

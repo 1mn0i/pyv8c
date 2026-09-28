@@ -8,9 +8,9 @@ from .realms import PageRealm, WorkerRealm
 
 __all__ = ["Browser", "BrowserContext", "Page", "PageRealm", "WorkerRealm", "DevToolsHandle", "DevToolsOptions"]
 
-# The DevTools adapter is re-exported, not imported: it reaches pyv8's DevTools
-# service, which brings a websocket server and asyncio with it.  A browser that never
-# debugs should not pay for that at import, so it loads on first attribute access.
+# DevTools is re-exported, not imported: pyv8's DevTools service brings a
+# websocket server and asyncio with it, which a browser that never debugs should
+# not pay for at import.
 _LAZY_EXPORTS = {"DevToolsHandle": ".devtools", "DevToolsOptions": ".devtools"}
 
 

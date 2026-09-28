@@ -1,7 +1,7 @@
 """Window and the named-properties prototype it inherits.
 
-Cross-origin access to another window goes through :mod:`dom.window_proxy`,
-which :meth:`Window._view` imports on first use.
+Cross-origin access goes through :mod:`dom.window_proxy`, imported by
+:meth:`Window._view` on first use.
 """
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec
@@ -51,10 +51,8 @@ _CONVERSION_FAILURES = frozenset({
 
 
 def _string_argument(value, member):
-    """A ``DOMString`` argument, worded the way WebIDL reports a failed conversion.
-
-    An exception a caller's own ``toString`` threw is not a conversion failure and is
-    passed through untouched.
+    """A ``DOMString`` argument worded as WebIDL words it; an exception a
+    caller's own ``toString`` threw is passed through untouched.
     """
     try:
         return dom_string(value)
@@ -65,9 +63,7 @@ def _string_argument(value, member):
             raise
         raise V8TypeError(f"Failed to execute '{member}' on 'Window': {reason}") from None
 
-#: Names :class:`~dom.window_proxy.WindowProxy` exposes to a cross-origin
-#: caller.  ``Window`` enumerates the same set when a proxy asks it for its own
-#: keys, so the table lives here rather than in the proxy module.
+#: Names WindowProxy exposes to a cross-origin caller; the table lives here for both.
 _PROXY_SAFE_NAMES = frozenset((
     "window", "self", "top", "parent", "opener", "frames", "length", "closed",
     "location", "close", "focus", "blur", "postMessage",
@@ -78,9 +74,8 @@ _PROXY_SAFE_NAMES = frozenset((
 class WindowProperties(EventTarget):
     """The named-properties object between Window and EventTarget prototypes.
 
-    Native WindowProperties callbacks run against the *owning* Window, even
-    when its prototype is borrowed by a different realm. They intentionally
-    use a separate callback family from Window's own named interceptors.
+    Its callbacks run against the owning Window and use a separate callback
+    family from Window's own named interceptors.
     """
     __v8_idl_spec__ = IdlSpec(
         constructor_behavior=0,
@@ -119,7 +114,7 @@ class WindowProperties(EventTarget):
 
     def __v8_property_name_enum__(self):
         # Named-properties objects have no own keys, despite synthesized
-        # [[GetOwnProperty]] descriptors for currently supported names.
+        # [[GetOwnProperty]] descriptors for supported names.
         return []
 
 
@@ -146,11 +141,8 @@ class BarProp:
 class _WindowFeatureValues(LazyValueStore):
     """The Window's feature slots, built by their Feature on first access.
 
-    A Window value is declared by ``FeatureSpec.window_slots`` and constructed
-    by that Feature's ``window_values`` factory, so this store only routes a
-    slot name to :meth:`FeatureRuntime.create_window_value` and caches the
-    result: construction knowledge stays in the Feature, identity and lifetime
-    stay per Window.
+    A slot name routes to :meth:`FeatureRuntime.create_window_value` and the
+    result is cached, so construction stays in the Feature and identity per Window.
     """
 
     __slots__ = ("_runtime", "_window")
@@ -220,7 +212,6 @@ class Window(_SchedulingMixin, WindowProperties):
             window_attribute("orientation", "get_orientation", cross_origin=True),
             window_attribute("devicePixelRatio", "get_devicePixelRatio", cross_origin=True),
             window_attribute("name", "get_name", "set_name", cross_origin=True),
-            # Values a page reads about the window itself.
             window_attribute("origin", "get_origin", cross_origin=True),
             window_attribute("scrollX", "get_scrollX", cross_origin=True),
             window_attribute("scrollY", "get_scrollY", cross_origin=True),
@@ -310,8 +301,7 @@ class Window(_SchedulingMixin, WindowProperties):
         index_enum="__v8_index_enum__",
     )
     # Ordinary members use Web IDL bindings; dynamic names live on
-    # WindowProperties, not a generic Python interceptor on Window.  The
-    # baseline's named handlers are still filled as placeholders.
+    # WindowProperties, not a generic Python interceptor on Window.
     _context_origins = {}
     def __init__(self, services=None, feature_runtime=None, **kw):
         super().__init__(services=services, **kw); self._services = services
@@ -357,10 +347,8 @@ class Window(_SchedulingMixin, WindowProperties):
     def sync_history_url(self, url):
         """Re-point the current history entry at a committed document URL.
 
-        A navigation replaces the current entry's URL here (no entry is pushed),
-        so this keeps the entry table coherent for later ``back``/``forward`` and
-        fragment navigation.  ``history`` is created lazily, so a page that never
-        reads it does not materialize one just because it navigated.
+        A navigation replaces the entry rather than pushing one, and a page that
+        never reads ``history`` does not materialize one here.
         """
         if "history" in self._features.cached_names:
             self.history.replace_same_document(str(url))
@@ -514,20 +502,17 @@ class Window(_SchedulingMixin, WindowProperties):
         """Assign the name over the one a fresh global object already carries."""
         self._services.realm_services.window_property("set", "name", self.get_name())
     def get_orientation(self):
-        """Chromium's deprecated alias for the screen orientation angle.
-
-        A desktop window is never rotated, so the reported angle -- and this
-        alias with it -- is 0.
+        """Chromium's deprecated alias for the screen orientation angle; a
+        desktop window is never rotated, so it is 0.
         """
         self._require_same_origin()
         return 0
-    # -- what a page reads about the window itself -----------------------------
+
     def _window_value(self, name):
         """The one object this window hands out for a ``[SameObject]`` member."""
         return self._window_values.value(name)
 
     def get_origin(self):
-        """The current document's origin."""
         self._require_same_origin()
         return self.location.get_origin()
 
@@ -598,7 +583,6 @@ class Window(_SchedulingMixin, WindowProperties):
         self._require_same_origin()
         return self._window_value("visualViewport")
 
-    # -- the smaller accessory objects ----------------------------------------
     def get_viewport(self): self._require_same_origin(); return self._window_value("viewport")
     def get_external(self): self._require_same_origin(); return self._window_value("external")
     def get_crashReport(self): self._require_same_origin(); return self._window_value("crashReport")
@@ -721,7 +705,7 @@ class Window(_SchedulingMixin, WindowProperties):
         if success is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 2, constructor=False)
         self._require_same_origin()
         # The API is an Optional Feature: loading it commits its interface group
-        # to this realm before the first FileSystem instance is handed back.
+        # to this realm before the first instance is handed back.
         self._services.realm_services.materialize_interface("DOMFileSystem")
         from .filesystem import request_file_system
         return request_file_system(self, type, size, success, error)

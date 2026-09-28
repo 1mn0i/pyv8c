@@ -1,8 +1,6 @@
-"""``MutationObserver``: child-list and character-data records, delivered as a microtask.
-
-Attribute records come from ``setAttribute``/``removeAttribute``; a reflected
-property that writes the attribute table directly is not observed.
-"""
+"""``MutationObserver``: child-list and character-data records, delivered as a
+microtask.  Attribute records come from ``setAttribute``/``removeAttribute``; a
+reflected property that writes the attribute table directly is not observed."""
 
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec

@@ -1,7 +1,7 @@
 """Baseline catalog helpers used by :mod:`bindings.universe`.
 
-The catalog owns indexes derived from an immutable baseline.  Binding sessions
-remain responsible for realm-local configs and callback wrappers.
+The catalog owns indexes derived from an immutable baseline; binding sessions own
+realm-local configs and callback wrappers.
 """
 
 from __future__ import annotations
@@ -33,8 +33,7 @@ class InterfaceCatalog:
         return self._children
 
     def descendants(self, name):
-        # The baseline is immutable and one member lookup asks for the same name
-        # once per ancestor it walks, so the answer is computed once per name.
+        # One member lookup re-asks for the same name per ancestor, so cache the answer.
         cached = self._descendants.get(name)
         if cached is None:
             cached = self._compute_descendants(name)

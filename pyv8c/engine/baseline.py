@@ -1,10 +1,8 @@
 """Chromium interface baseline loading with a two-level disk cache.
 
-The repository reads immutable baseline snapshots (schema 5, compact) and
-shares them between Browsers when the underlying file bytes are identical.
-A binary pickle cache next to the source skips JSON parsing and validation
-on startup; any corruption silently falls back to the JSON path so startup
-can never fail because of a broken cache.
+Reads immutable schema 5 snapshots, shared between Browsers when the file bytes are
+identical; a binary pickle cache beside the source skips JSON parsing and validation,
+and any corruption silently falls back to the JSON path so startup cannot fail.
 """
 
 from __future__ import annotations
@@ -43,8 +41,7 @@ class BaselineSnapshot:
         }
 
 
-# Binary cache header. Bump the version whenever the cached payload shape
-# changes; anything unreadable is simply rebuilt from the JSON baseline.
+# Bump the magic whenever the cached payload shape changes; unreadable caches are rebuilt.
 _BINARY_CACHE_MAGIC = b"pyv8c-baseline/1"
 _BINARY_CACHE_SUFFIX = ".pyv8ccache"
 
@@ -60,9 +57,8 @@ class BaselineRepository:
     def _read_binary_cache(path, digest):
         """Return the cached ``(metadata, interfaces)`` pair, or ``None``.
 
-        A cache is only usable when it was produced from byte-identical source
-        and declares the supported schema. Any corruption or I/O problem makes
-        it fall back to the JSON path rather than failing startup.
+        Usable only when produced from byte-identical source and the supported schema;
+        any corruption or I/O problem falls back to the JSON path.
         """
         try:
             with open(path, "rb") as handle:
@@ -161,9 +157,7 @@ class BaselineRepository:
         cached_payload = (BaselineRepository._read_binary_cache(binary_cache, digest)
                           if binary_cache.is_file() else None)
         if cached_payload is not None:
-            # Skip JSON parsing, the interface projection and the cycle walk:
-            # the cache is only valid for byte-identical source that already
-            # passed every check.
+            # Skip JSON parsing, projection and cycle walk: the cache is only valid for byte-identical source.
             metadata, interfaces = cached_payload
             parsed = time.perf_counter_ns()
         else:
@@ -220,9 +214,7 @@ class BaselineRepository:
         snapshot = BaselineRepository._cache.get(key)
         cache_hit = snapshot is not None
         if snapshot is None:
-            # The decoded document is repository-owned and never mutated by
-            # runtime code. A top-level read-only view avoids recursively
-            # copying the 7.5 MB baseline during every cold process startup.
+            # Repository-owned and never mutated; a top-level read-only view avoids copying the 7.5 MB baseline.
             snapshot = BaselineSnapshot(
                 label, digest, MappingProxyType(metadata), MappingProxyType(interfaces),
             )

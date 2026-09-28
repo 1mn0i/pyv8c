@@ -1,13 +1,8 @@
 """Legacy Chromium FileSystem API used by ``webkitRequestFileSystem``.
 
-The API is deprecated in Chromium, but remains observable by older pages.  This
-implementation deliberately keeps the old callback surface while using a
-per-page temporary directory as its backing store.
-
-Only ``File`` is reachable as a global, so the module is an Optional Feature: it
-loads when a page touches that constructor or calls
-``webkitRequestFileSystem``, which materialises the interface group before the
-first object is handed back.
+Deprecated in Chromium but still observable by older pages; the old callback
+surface is kept while a per-page temporary directory backs it.  Only ``File`` is
+reachable as a global, so this is an Optional Feature.
 """
 import os
 import shutil
@@ -48,12 +43,8 @@ def _callback(value, name, position, optional=False):
 
 @interface("File", "Blob")
 class File(Blob):
-    """The ``File`` global, and the ``FileEntry.file()`` view of one path.
-
-    ``File`` is exposed as a constructor, so it takes the standard
-    ``fileBits``/``fileName``/``options`` arguments; ``size`` and ``type`` are
-    inherited from :class:`Blob`.  The legacy API hands out a file that already
-    exists on disk, which :func:`_file_from_path` builds from disk.
+    """The ``File`` global and the ``FileEntry.file()`` view; ``size``/``type``
+    come from :class:`Blob`.
     """
 
     __v8_idl_spec__ = IdlSpec(
@@ -89,8 +80,7 @@ def _file_from_path(path):
                 {"lastModified": int(path.stat().st_mtime * 1000)})
 
 
-#: ``FileWriter``'s six event-handler attributes.  ``EventTarget`` declares no
-#: ``on*`` slot for them, so the write lifecycle below needs its own.
+#: FileWriter's six on* handlers, which EventTarget does not declare.
 _WRITER_HANDLERS = ("onwritestart", "onprogress", "onwrite", "onabort", "onerror", "onwriteend")
 
 
@@ -131,13 +121,8 @@ class FileWriter(EventTarget):
             fh.seek(self._position); fh.write(raw); self._position += len(raw)
         self._report_write(len(raw))
     def _report_write(self, length):
-        """Queue the events that tell the writer's handlers the write finished.
-
-        The write above is synchronous, so Chromium's ``writestart``/``write``/
-        ``progress``/``writeend`` sequence is delivered behind it, in that
-        order, through the same task queue as this module's other callbacks.
-        ``onerror``/``onabort`` stay unfired: this writer never fails
-        asynchronously and implements no ``abort()``.
+        """Queue ``writestart``/``write``/``progress``/``writeend`` behind the
+        synchronous write; this writer has no async failure and no ``abort()``.
         """
         events = (
             Event("writestart", {"isTrusted": True}),
@@ -290,8 +275,6 @@ def request_file_system(window, kind, size, success, error):
     _post(window._services, success, fs)
 
 
-# ``FileWriter`` owns six handler attributes that ``EventTarget`` does not
-# declare, so they are installed here the way ``dom.events`` installs its own.
 FileWriter.__v8_idl_spec__ = FileWriter.__v8_idl_spec__.replace(
     attributes=FileWriter.__v8_idl_spec__.attributes
     + _install_handler_slots(FileWriter, _WRITER_HANDLERS)

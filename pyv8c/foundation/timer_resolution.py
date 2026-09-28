@@ -1,18 +1,10 @@
 """Raise the platform timer resolution while a realm sleeps towards a deadline.
 
-Windows schedules thread waits on its 64 Hz tick, so ``Event.wait(0.005)``
-returns after ~15.6 ms: every timer a realm arms would fire one tick late, and
-with the realm idle that late wake is precisely what the timer is waiting for.
-A ``setTimeout(f, 5)`` therefore took 16 ms, and a page's animation frame budget
-disappeared with it.  Chromium raises the resolution for the same reason.
-
-The request is reference counted because several realms sleep at once, and it is
-scoped to the sleeps that are waiting *for a deadline*: a realm that is busy
-running tasks needs no timer precision, and an idle host that armed no timer
-pays neither the timer overhead nor the power cost.
-
-Off Windows this is a no-op: ``select``/``poll`` and the POSIX timers behind
-``threading`` wait with the precision that was asked for.
+Windows schedules waits on its 64 Hz tick, so ``Event.wait(0.005)`` returns after
+~15.6 ms and a ``setTimeout(f, 5)`` fired a tick late; Chromium raises the resolution
+for the same reason.  The request is reference counted and scoped to deadline waits,
+so a busy or idle host pays neither the timer overhead nor the power cost.  A no-op
+off Windows.
 """
 
 from __future__ import annotations

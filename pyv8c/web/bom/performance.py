@@ -16,8 +16,7 @@ from ..dom.events import EventTarget
 #: When this process started: what ``timeOrigin`` counts from.
 _STARTED = time.time() * 1000.0
 
-#: The fields ``PerformanceTiming`` exposes.  Chrome fills each with a wall-clock
-#: mark; only the start of the navigation is known here, so the rest read 0.
+#: The PerformanceTiming fields; only navigationStart is known here, the rest read 0.
 _TIMING_FIELDS = (
     "navigationStart", "unloadEventStart", "unloadEventEnd", "redirectStart", "redirectEnd",
     "fetchStart", "domainLookupStart", "domainLookupEnd", "connectStart", "connectEnd",
@@ -100,7 +99,6 @@ class Performance(EventTarget):
         return _STARTED
 
     def get_timing(self):
-        """The one timing object this clock hands out."""
         if getattr(self, "_timing", None) is None:
             self._timing = PerformanceTiming()
         return self._timing

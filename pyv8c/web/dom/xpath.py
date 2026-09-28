@@ -1,9 +1,8 @@
 """XPath, for the expressions this DOM can answer honestly.
 
-The subset is what a page reaches for when it walks a document: absolute and
-relative paths, the child/descendant/self/parent/attribute axes, ``*``,
-``@name``, ``text()``, ``node()``, ``comment()`` and the positional, attribute
-and child-name predicates.  An expression outside it is rejected when it is
+The subset: absolute/relative paths, the child/descendant/self/parent/attribute
+axes, ``*``/``@name``/``text()``/``node()``/``comment()`` and positional,
+attribute and child-name predicates.  An expression outside it is rejected when
 evaluated rather than answered with the wrong nodes.
 """
 
@@ -85,8 +84,8 @@ def _parse_predicate(text):
 def compile_expression(expression):
     """A plan for *expression*, or None when it is valid but out of this subset.
 
-    A syntax error -- empty steps, unbalanced brackets, an unknown axis -- is
-    raised here, which is where ``createExpression`` reports it.
+    A syntax error (empty expression, unbalanced brackets, unknown axis) is raised
+    here, which is where ``createExpression`` reports it.
     """
     text = str(expression).strip()
     if not text:
@@ -100,8 +99,8 @@ def compile_expression(expression):
     for index, step in enumerate(steps):
         step = step.strip()
         if not step:
-            # A separator: the leading one is the root the walk already starts at,
-            # and a later bare ``//`` descends from there.
+            # A separator: the leading one is the root the walk starts at; a later bare
+            # ``//`` descends from there.
             if index:
                 descendant = True
             continue
@@ -159,12 +158,8 @@ def _matches(node, test, axis):
 
 
 def evaluate_plan(plan, context):
-    """The nodes *plan* selects from *context*, in document order.
-
-    A step is evaluated from each context node on its own, so a positional
-    predicate counts within one parent's children -- ``//p[2]`` is the second ``p``
-    of each parent, which is what the specification says and what a browser does.
-    """
+    """The nodes *plan* selects from *context*, in document order.  Each step runs
+    per context node, so ``//p[2]`` is the second ``p`` of each parent, as specified."""
     nodes = [context]
     for axis, test, predicates in plan:
         selected = []
@@ -220,13 +215,11 @@ class XPathResult:
     def __init__(self, nodes=(), requested=0, **_):
         self._nodes = list(nodes)
         self._position = 0
-        # Asking for nothing in particular gives an unordered iterator, which is
-        # the node-set result a page normally walks.
+        # ANY_TYPE gives an unordered iterator, the node-set result a page normally walks.
         if requested in (self.ANY_TYPE,):
             requested = self.UNORDERED_NODE_ITERATOR_TYPE
         self._type = requested
 
-    # -- what the result is --------------------------------------------------
     def get_resultType(self): return self._type
     def get_invalidIteratorState(self): return False
 

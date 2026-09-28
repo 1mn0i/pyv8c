@@ -8,8 +8,7 @@ from pyv8.flag import FlagArrayProto, V8Attribute
 from ...foundation.arguments import dom_string
 from ...foundation.urls import form_urlencoded
 
-#: XML-compatible qualified name, shared by ``Document.createElement`` and the
-#: attribute-creating APIs.
+#: XML-compatible qualified name, shared by the element/attribute-creating APIs.
 _VALID_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._:-]*$")
 
 #: The only namespace this DOM implementation models (HTML documents).
@@ -21,8 +20,7 @@ ITERABLE_FLAGS = (
     | FlagArrayProto.values | FlagArrayProto.forEach
 )
 
-#: ``Object.prototype`` string keys (plus ``__proto__``).  Legacy named
-#: properties neither shadow nor enumerate these names.
+#: ``Object.prototype`` string keys (plus ``__proto__``) that named properties never shadow.
 OBJECT_PROTOTYPE_NAMES = frozenset((
     "constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty",
     "__lookupGetter__", "__lookupSetter__", "isPrototypeOf",
@@ -35,23 +33,15 @@ NAMED_PROPERTY_ATTRIBUTES = V8Attribute.ReadOnly | V8Attribute.DontEnum
 
 
 def dash_name(name):
-    """``fooBar`` -> ``foo-bar``: the dashed spelling a camelCase name reflects.
-
-    One rule serves both a CSS property name and the ``data-*`` attribute behind
-    ``DOMStringMap``, so it lives here rather than in either reader.  A name that
-    already starts with ``--`` is its own dashed spelling.
-    """
+    """``fooBar`` -> ``foo-bar``; serves both CSS names and the ``data-*`` attribute.
+    A name already starting with ``--`` is its own dashed spelling."""
     if name.startswith("--"):
         return name
     return re.sub(r"([A-Z])", lambda match: "-" + match.group(1).lower(), name)
 
 
 def camel_name(name):
-    """``foo-bar`` -> ``fooBar``; ``""`` when a dash ends the name.
-
-    The empty string is what a caller checks for: a trailing dash cannot be spelled
-    back, so the name is not one a reader may expose.
-    """
+    """``foo-bar`` -> ``fooBar``; ``""`` when a trailing dash cannot be spelled back."""
     if name.startswith("--"):
         return name
     result = name
@@ -65,8 +55,7 @@ def camel_name(name):
 
 def as_nodes(values, parent):
     """Convert a Web IDL ``(Node or DOMString)...`` argument list to nodes."""
-    # Imported here rather than at module scope: the node model imports this
-    # module, so a module-level import would close a cycle.
+    # Local import: the node model imports this module, so a module-level import would cycle.
     from .character_data import Text
     from .nodes import Node
 
@@ -81,11 +70,8 @@ _element_type = None
 
 
 def is_element(node):
-    """Whether ``node`` is a DOM ``Element``.
-
-    ``elements`` sits above the node model, so the class is resolved on first
-    use and cached afterwards: callers run this while walking the tree.
-    """
+    """Whether ``node`` is a DOM ``Element``; the class is resolved lazily because
+    ``html_elements`` sits above the node model."""
     global _element_type
     if _element_type is None:
         from .html_elements import Element
@@ -94,7 +80,6 @@ def is_element(node):
     return isinstance(node, _element_type)
 
 
-# -- form submission serialization --------------------------------------------
 #: The three encodings ``<form enctype>`` selects between.
 URLENCODED = "application/x-www-form-urlencoded"
 MULTIPART = "multipart/form-data"
@@ -111,10 +96,7 @@ def crlf(text):
 
 
 def replace_query(url, query):
-    """*url* with its query replaced by *query*.
-
-    The ``?`` stays even for an empty query: Chrome lands on ``/echo?``.
-    """
+    """*url* with its query replaced by *query*; the ``?`` stays even when empty."""
     parts = urlsplit(str(url))
     base = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
     fragment = f"#{parts.fragment}" if parts.fragment else ""

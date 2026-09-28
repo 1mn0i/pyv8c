@@ -1,7 +1,5 @@
 """``<audio>`` and ``<video>``, with the lists their playback state exposes.
-
-Nothing decodes here, so the classes report what a fresh element reports.
-"""
+Nothing decodes here, so the classes report what a fresh element reports."""
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
@@ -63,11 +61,8 @@ class TextTrackList(EventTarget):
 
 @interface('HTMLMediaElement', 'HTMLElement')
 class HTMLMediaElement(HTMLElement):
-    """``<audio>`` and ``<video>``: the playback state a page reads.
-
-    Nothing decodes here, so the state is what a fresh element reports, and
-    ``canPlayType`` answers the MIME types Chrome answers.
-    """
+    """``<audio>`` and ``<video>``: the playback state a page reads.  Nothing decodes,
+    so it is what a fresh element reports; ``canPlayType`` matches Chrome's answers."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(

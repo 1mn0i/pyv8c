@@ -10,11 +10,7 @@ from ..web.dom.parser import IncrementalDOMParser
 
 
 class NavigationController:
-    """Own navigation and parser state; runs on the owning Page thread.
-
-    The ``Page`` facade forwards its navigation-facing API here so the Page
-    class stays a thin composition root.
-    """
+    """Own navigation and parser state; runs on the owning Page thread."""
 
     def __init__(self, page):
         self.page = page
@@ -25,8 +21,6 @@ class NavigationController:
         self.parser_generation = 0
         self.parsing = False
         self.parser_done = False
-
-    # -- navigation ----------------------------------------------------
 
     def navigation_allowed(self):
         return not self.has_navigation or self.page.lifecycle.dispatch_beforeunload()
@@ -59,9 +53,8 @@ class NavigationController:
         self.parser_generation = self.generation
         self.parser = IncrementalDOMParser(self.page.services, self.page.document, str(html))
         self.parsing = True
-        # HTML parsing runs on the caller thread until a parser-blocking
-        # external script is encountered. Lifecycle notifications remain
-        # queued, matching the browser's observable task boundary.
+        # HTML parsing runs on the caller thread until a parser-blocking external
+        # script is hit; lifecycle notifications stay queued to the task boundary.
         self.resume_parser(self.parser_generation)
         return self.page
 
@@ -93,11 +86,8 @@ class NavigationController:
               method="GET", body=None, content_type=None, user_activated=False):
         """Load *url*, carrying whatever the request that asked for it must send.
 
-        Everything navigates with a plain ``GET`` except a form submission,
-        which brings *method*, *body* and *content_type* along.  Only a
-        browser-initiated navigation has no initiator and so sends no
-        ``Referer``; a navigation a user gesture asked for is the other way
-        ``Sec-Fetch-User`` appears, which is what *user_activated* marks.
+        Only a browser-initiated navigation sends no ``Referer``; a user gesture
+        is the other source of ``Sec-Fetch-User``.
         """
         if self.page.closed or self.page.context_owner.closed:
             raise InvalidStateError("Page is closed")
@@ -129,10 +119,8 @@ class NavigationController:
         self.commit_content(self.decode_html(response), final_url)
         ready = states[wait_until]
         if ready is not None:
-            # Pump on the realm owner thread until the lifecycle state flips.
-            # The pump sleeps on the task-queue condition and is woken by the
-            # very delivery that advances the document, so this is a wait on
-            # the lifecycle state rather than a fixed-interval poll.
+            # Wait on the lifecycle state, not a fixed-interval poll: the pump
+            # sleeps on the task-queue condition and the advancing delivery wakes it.
             limit = 30.0 if timeout_value is None else timeout_value
             if not self.page.tasks.pump_until(ready, timeout=limit):
                 raise TimeoutError(f"Navigation to {target} timed out")
@@ -157,20 +145,16 @@ class NavigationController:
         self.page.tasks.post(navigate)
         return target
 
-    # -- parser --------------------------------------------------------
-
     def parser_is_blocked(self):
         return bool(self.page.scripts.dom_blocking_scripts)
 
     def write_markup(self, markup):
         """Insert JavaScript-written markup (HTML's ``document.write``).
 
-        While the document is being parsed the markup joins the token stream, so
-        written nodes land at the writing script's insertion point.  Once parsing
-        has finished, ``document.write`` implies ``document.open()``: the
-        document is emptied and the written markup becomes its new content,
-        parsed inside a fresh ``body``.  The navigation lifecycle is not replayed
-        -- the same document keeps its URL, load state and event history.
+        During parsing the markup joins the token stream at the writer's insertion
+        point; afterwards ``document.write`` implies ``document.open()`` -- the
+        document is emptied and parsed inside a fresh ``body``, keeping its URL,
+        load state and event history.
         """
         parser = self.parser
         if parser is not None and not parser.done:
@@ -193,9 +177,8 @@ class NavigationController:
     def _open_document_body(self, document):
         """Build the skeleton ``document.open()`` leaves for the new parse.
 
-        A browser restarts the insertion modes from scratch, so written markup
-        ends up inside a fresh ``html``/``body`` rather than as a sibling of the
-        document element.
+        A browser restarts the insertion modes, so written markup lands inside a
+        fresh ``html``/``body``, not beside the document element.
         """
         element_class = self.element_class
         html = element_class("html")("html", services=self.page.services, attributes={})
@@ -233,9 +216,8 @@ class NavigationController:
         node._resource_done = False
         node._resource_error = None
         node._resource_response = None
-        # A script fetch starts when its start tag is seen.  The parser may
-        # still be collecting its raw text, but async/defer/module resources
-        # are allowed to progress concurrently with parsing.
+        # A script fetch starts when its start tag is seen, so async/defer/module
+        # resources progress while the parser still collects their raw text.
         if getattr(node, "get_src", lambda: "")():
             self.page.resources.discover_element_resource(node)
 

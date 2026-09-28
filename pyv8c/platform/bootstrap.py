@@ -7,8 +7,7 @@ from ..web.features.catalog import CATALOG
 def bootstrap_runtime():
     """Return a fresh Browser-local FeatureRuntime.
 
-    The catalog is immutable and process-shared; implementation caches and
-    loaded-feature state intentionally belong to exactly one Browser.
+    The catalog is process-shared; caches and loaded state belong to one Browser.
     """
     runtime = FeatureRuntime(CATALOG)
     runtime.preload_eager()

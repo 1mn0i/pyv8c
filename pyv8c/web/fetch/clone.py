@@ -1,8 +1,7 @@
 """Structured-clone support for the message and storage channels.
 
-The Window, Worker and IndexedDB channels all move JavaScript values across a
-realm boundary, so all three share this one implementation.  It sits beside
-:class:`~pyv8c.web.fetch.blob.Blob`, the web type it knows how to deep-copy.
+The Window, Worker and IndexedDB channels all move values across a realm
+boundary, so all three share this implementation.
 """
 
 import pyv8

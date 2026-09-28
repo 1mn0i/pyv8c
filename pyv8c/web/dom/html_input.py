@@ -1,8 +1,5 @@
-"""``HTMLInputElement`` plus the constraint-validation types it exposes.
-
-Input types, their validation patterns and the step/selection arithmetic all
-live here so the tag-specific rules stay in one place.
-"""
+"""``HTMLInputElement`` plus the constraint-validation types it exposes: input
+types, validation patterns and step/selection arithmetic for the tag."""
 
 import re
 
@@ -27,11 +24,8 @@ from .mixins import ReadOnlyIndexedPropertyMixin
 
 @interface('HTMLTextAreaElement', 'HTMLElement')
 class HTMLTextAreaElement(HTMLElement):
-    """``<textarea>``: ``defaultValue`` is its raw value, the child text.
-
-    The element's live ``value`` is not modelled yet, so the raw value is what
-    a page reads and writes through this interface.
-    """
+    """``<textarea>``: ``defaultValue`` is its raw value, the child text.  The live
+    ``value`` is not modelled yet, so the raw value is what a page reads and writes."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -63,12 +57,8 @@ class HTMLTextAreaElement(HTMLElement):
 @interface('HTMLOptionElement', 'HTMLElement')
 class HTMLOptionElement(HTMLElement):
     """``<option>``: ``selected`` starts from the attribute and can be overridden.
-
-    Chromium keeps selectedness in a state separate from the ``selected``
-    content attribute (which ``defaultSelected`` reflects); the override below
-    is that state, so a script that sets ``selected`` is not undone by a later
-    attribute read.  ``value`` falls back to the option's text, which is what a
-    ``<select>`` submits when the element carries no value attribute.
+    Chromium keeps selectedness separate from the ``selected`` attribute, so a
+    script's set is not undone; ``value`` falls back to the option's text.
     """
 
     __v8_idl_spec__ = IdlSpec(
@@ -95,12 +85,8 @@ class HTMLOptionElement(HTMLElement):
             return bool(state)
         return True if "selected" in self.attributes else None
     def get_selected(self):
-        """The option's selectedness.
-
-        An explicit state wins, then the attribute, and a single-select holding
-        no selection has its first option selected -- the reset parsing runs.
-        Reading never stores that state, so a cleared selection stays cleared.
-        """
+        """The option's selectedness: explicit state, then the attribute, else a
+        single-select's first option (the reset parsing runs, without storing it)."""
         explicit = self._explicit_state()
         if explicit is not None:
             return explicit
@@ -127,11 +113,8 @@ class HTMLOptionElement(HTMLElement):
 
 @interface('HTMLSelectElement', 'HTMLElement')
 class HTMLSelectElement(HTMLElement):
-    """``<select>``: the option list, what is selected, and ``value`` over both.
-
-    ``options`` is the live view a page expects and ``selectedIndex`` reports and
-    moves the selection; ``value`` stays the shortcut over that same state.
-    """
+    """``<select>``: the option list and what is selected.  ``options`` is the live
+    view, ``selectedIndex`` reports and moves the selection, ``value`` shortcuts it."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -187,12 +170,8 @@ class HTMLSelectElement(HTMLElement):
             )
         return value
     def _selects_first_option(self, option):
-        """Whether ``option`` is this select's default selection.
-
-        The reset parsing runs picks the first option when a single-select holds
-        no selection; once every option carries an explicit state it no longer
-        applies, which is how ``value = 'missing'`` leaves the select empty.
-        """
+        """Whether ``option`` is this select's default selection: the first option of
+        a single-select with no explicit state anywhere, which ``value='missing'`` clears."""
         if "multiple" in self.attributes or str(self.attributes.get("size", "1")) not in ("", "1"):
             return False
         options = self._options()
@@ -216,8 +195,7 @@ _INPUT_TYPES = frozenset((
     "week", "time", "datetime-local", "number", "range", "color", "checkbox", "radio",
     "file", "submit", "image", "reset", "button",
 ))
-#: Types whose click runs an activation behavior: the checkable ones toggle
-#: their checkedness, the two submittable ones submit, and ``reset`` resets.
+#: Types whose click runs an activation behavior (toggle, submit or reset).
 _ACTIVATION_INPUT_TYPES = frozenset(("checkbox", "radio", "submit", "image", "reset"))
 #: Types whose ``value`` the user edits as text, so the selection APIs apply.
 _SELECTABLE_INPUT_TYPES = frozenset(("text", "search", "tel", "url", "password"))
@@ -245,11 +223,8 @@ _URL_PATTERN = re.compile(r"^[^\s:]+:[^\s]*$")
 
 @interface('FileList', None)
 class FileList(ReadOnlyIndexedPropertyMixin):
-    """The empty file list of an ``<input type=file>`` without picked files.
-
-    pyv8c models no file picker, so a file input never exposes entries; the
-    interface exists so ``files`` has Chrome's shape instead of a stub.
-    """
+    """The empty file list of an ``<input type=file>`` with no picked files: no file
+    picker is modelled, but ``files`` keeps Chrome's shape."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
@@ -307,12 +282,8 @@ class ValidityState:
 
 @interface('HTMLInputElement', 'HTMLElement')
 class HTMLInputElement(HTMLElement):
-    """The HTML ``input`` element with Chrome's value, selection and validation semantics.
-
-    ``value``/``checked`` keep their dirty flags, ``defaultValue``/``defaultChecked``
-    mirror the content attributes, text-like types support the selection APIs and
-    constraint validation computes the ``ValidityState`` flags per type.
-    """
+    """The HTML ``input`` element with Chrome's value, selection and validation
+    semantics; ``value``/``checked`` keep dirty flags and validity flags are per type."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -400,21 +371,15 @@ class HTMLInputElement(HTMLElement):
         self._validity_state = None
         self._files = None
 
-    # -- reflected helpers ------------------------------------------------
-
     def _long(self, name):
         try: return int(str(self.attributes.get(name)))
         except (TypeError, ValueError): return None
-
-    # -- type -------------------------------------------------------------
 
     def get_type(self):
         value = self._attr("type").lower()
         return value if value in _INPUT_TYPES else "text"
     def set_type(self, value):
         self._set_string("type", value)
-
-    # -- value ------------------------------------------------------------
 
     def get_value(self):
         if self._dirty_value: return self._raw_value
@@ -442,8 +407,6 @@ class HTMLInputElement(HTMLElement):
         if kind == "color":
             return value if _COLOR_PATTERN.match(value) else "#000000"
         return value.replace("\r", "").replace("\n", "")
-
-    # -- valueAsNumber / valueAsDate --------------------------------------
 
     def get_valueAsNumber(self):
         kind = self.get_type()
@@ -481,8 +444,6 @@ class HTMLInputElement(HTMLElement):
             return
         self.set_value(self._format_value(self.get_type(), milliseconds))
 
-    # -- checked ----------------------------------------------------------
-
     def get_checked(self): return self._checked
     def set_checked(self, value):
         self._dirty_checked = True
@@ -495,8 +456,6 @@ class HTMLInputElement(HTMLElement):
         if not self._dirty_checked: self._checked = value
     def get_indeterminate(self): return self._indeterminate
     def set_indeterminate(self, value): self._indeterminate = boolean(value)
-
-    # -- reflected strings, booleans and longs ----------------------------
 
     def get_accept(self): return self._attr("accept")
     def set_accept(self, value): self._set_string("accept", value)
@@ -568,8 +527,6 @@ class HTMLInputElement(HTMLElement):
         return parsed if parsed is not None and parsed > 0 else 20
     def set_size(self, value): self.attributes["size"] = str(integer(value))
 
-    # -- associations ------------------------------------------------------
-
     def get_form(self):
         owner = self._form_owner()
         return owner if owner is not None else pyv8.Null
@@ -627,8 +584,6 @@ class HTMLInputElement(HTMLElement):
         return value if value in ("click", "hide", "show", "toggle") else "click"
     def set_popoverTargetAction(self, value): self._set_string("popovertargetaction", value)
     def get_webkitEntries(self): return []
-
-    # -- validation --------------------------------------------------------
 
     def get_willValidate(self):
         if self.get_type() in _BARRED_INPUT_TYPES: return False
@@ -689,8 +644,6 @@ class HTMLInputElement(HTMLElement):
     def _dispatch_invalid(self):
         from .events import Event
         self.fn_dispatchEvent(Event("invalid", {"bubbles": False, "cancelable": True}))
-
-    # -- selection ---------------------------------------------------------
 
     def _require_selectable(self):
         if self.get_type() not in _SELECTABLE_INPUT_TYPES:
@@ -760,8 +713,6 @@ class HTMLInputElement(HTMLElement):
         else: self._selection_start, self._selection_end = self._clamp_selection(
             self._selection_start, self._selection_end)
 
-    # -- stepping ----------------------------------------------------------
-
     def _require_steppable(self):
         if self.get_type() not in _STEPPABLE_INPUT_TYPES:
             raise InvalidStateError("Failed to execute 'stepUp'/'stepDown' on 'HTMLInputElement': "
@@ -796,8 +747,6 @@ class HTMLInputElement(HTMLElement):
         self.set_value(self._format_value(kind, candidate))
     def fn_stepUp(self, count=1, *_extra): self._step(1, count)
     def fn_stepDown(self, count=1, *_extra): self._step(-1, count)
-
-    # -- value parsing and formatting --------------------------------------
 
     def _parse_value(self, kind, value):
         """The number the given type reads out of ``value``, or ``None``."""
@@ -863,8 +812,6 @@ class HTMLInputElement(HTMLElement):
         if number == int(number): return str(int(number))
         return repr(number)
 
-    # -- files and picker --------------------------------------------------
-
     def get_files(self):
         if self.get_type() != "file":
             raise InvalidStateError("Failed to read the 'files' property from 'HTMLInputElement': "
@@ -882,19 +829,13 @@ class HTMLInputElement(HTMLElement):
             raise NotSupportedError("Failed to execute 'showPicker' on 'HTMLInputElement': "
                                     f"the input element's type ('{self.get_type()}') does not support a picker.")
 
-    # -- activation --------------------------------------------------------
-
     def _activatable(self):
         """The input types a click does something to besides firing the event."""
         return self.get_type() in _ACTIVATION_INPUT_TYPES
 
     def _run_activation(self, event=None):
-        """A click toggles a checkable input, or acts on the form it belongs to.
-
-        The ``input``/``change`` pair a toggled checkbox or radio fires is
-        trusted, like the one Chromium fires -- it follows a user activation
-        whichever way the click was delivered.
-        """
+        """A click toggles a checkable input, or acts on the form it belongs to.  The
+        ``input``/``change`` pair a toggled checkbox/radio fires is trusted, as Chromium's."""
         kind = self.get_type()
         trusted = bool(getattr(event, "_trusted", False))
         if kind in ("checkbox", "radio"):

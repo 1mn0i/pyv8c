@@ -1,6 +1,5 @@
-"""CSSOM support: inline ``HTMLElement.style`` declarations, and the table of
-property names a ``CSSStyleDeclaration`` exposes as named properties.
-"""
+"""CSSOM: inline ``HTMLElement.style`` declarations and the table of property
+names a ``CSSStyleDeclaration`` resolves as named properties."""
 import re
 
 import pyv8
@@ -34,15 +33,9 @@ def _split_priority(value):
     return (value[:match.start()].rstrip(), "important") if match else (value, "")
 
 
-# ---------------------------------------------------------------------------
-# Property names the engine resolves as named properties
-# ---------------------------------------------------------------------------
-#
-# ``'color' in style`` and ``style.color`` only answer for properties the engine
-# supports, so the simulator needs the same names Chrome reports.  Vendor
-# prefixed spellings are part of that list only when Blink ships them, which is
-# why ``-webkit-`` forms are present while ``-moz-``/``-ms-``/``-o-`` ones are
-# not.  Custom properties (``--name``) are always accepted.
+# ``'color' in style`` only answers for properties the engine supports, so the
+# list matches what Chrome reports: ``-webkit-`` forms because Blink ships them,
+# no ``-moz-``/``-ms-``/``-o-``, and custom properties always accepted.
 
 #: camelCase, as reported by a real Chrome CSSStyleDeclaration.
 _CAMEL_NAMES = (
@@ -182,9 +175,6 @@ INHERITED_PROPERTIES = frozenset((
 ))
 
 #: The initial value the cascade starts from for each supported property.
-#:
-#: Every inherited property needs one; ``display`` is overridden per element by
-#: :func:`initial_values_for`.
 INITIAL_VALUES = {
     "display": "block", "position": "static", "visibility": "visible",
     "font-family": "sans-serif", "font-size": "16px", "font-weight": "400",
@@ -208,11 +198,7 @@ UNTAGGED_DISPLAY = "inline"
 
 
 def initial_values_for(element):
-    """The cascade's starting values for ``element``.
-
-    Every property starts from :data:`INITIAL_VALUES`; ``display`` is the one that
-    also depends on what the element is.
-    """
+    """The cascade's starting values for ``element``; ``display`` depends on the tag."""
     values = dict(INITIAL_VALUES)
     values["display"] = TAG_DISPLAY.get(getattr(element, "localName", ""), UNTAGGED_DISPLAY)
     return values
@@ -221,10 +207,8 @@ def initial_values_for(element):
 def parse_declarations(raw):
     """Parse ``a: b; c: d !important`` into a declaration list.
 
-    A repeated property keeps the position of its first occurrence and the
-    value of its last one, which is what ``cssText`` and ``setProperty``
-    observe.  ``_declarations``, ``set_cssText`` and the cascade reader in
-    ``dom.layout`` all go through this single parser.
+    A repeated property keeps the position of its first occurrence and the value
+    of its last; this is the single parser for ``cssText`` and the cascade reader.
     """
     declarations, positions = [], {}
     for chunk in str(raw).split(";"):
@@ -274,7 +258,7 @@ class CSSStyleDeclaration:
         if self._element is None: return
         text = "".join(f"{n}: {v}{' !important' if p else ''}; " for n, v, p in declarations).strip()
         # Chromium leaves the attribute behind and empties it, so removing the last
-        # declaration reads back as getAttribute('style') === "" rather than null.
+        # declaration reads back as "" rather than null.
         if text: self._element.attributes["style"] = text
         elif "style" in self._element.attributes: self._element.attributes["style"] = ""
     def _set(self, name, value, priority=""):
@@ -323,8 +307,7 @@ class CSSStyleDeclaration:
         if not _NAME_RE.match(dashed): return None
         value = self._value(dashed)
         if value: return value
-        # A property the engine supports but that is not declared reads as the
-        # empty string; a name no property provides stays undefined.
+        # A supported but undeclared property reads as ""; an unknown name stays undefined.
         return "" if supported(dashed) else None
     def _exists(self, name):
         """Whether the engine resolves this name to a property at all."""

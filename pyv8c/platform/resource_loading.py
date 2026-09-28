@@ -80,10 +80,9 @@ class ResourceController:
         services.closed = True
         page = getattr(getattr(services, "_page_realm", None), "page", None)
         if page is not None and not page.closed:
-            # Removal can happen while the parent realm is executing.  Closing
-            # the child synchronously would wait on an executor that is itself
-            # reachable from that script and deadlock; teardown is dispatched
-            # after the parent turn.
+            # Removal can happen while the parent realm executes; closing the
+            # child synchronously would wait on an executor that script can
+            # reach, so the teardown is dispatched after the parent turn.
             page.tasks.post(page.close)
 
     def _cache_key(self, target, request):
@@ -209,8 +208,6 @@ class ResourceController:
         response = self._response_from_loader(decision, target)
         response._services = self.page.services
         return response
-
-    # -- synchronous loading -------------------------------------------
 
     @staticmethod
     def _network_request(target, request, page):
@@ -423,8 +420,6 @@ class ResourceController:
         except BaseException as exc:
             callback(None, exc)
 
-    # -- document-subresource tracking ---------------------------------
-
     def discover_element_resource(self, node):
         page = self.page
         if page.closed or getattr(node, "_resource_started", False):
@@ -461,8 +456,7 @@ class ResourceController:
             return
         node._resource_started = True
         resource_type = "style" if tag == "link" else "image" if tag == "img" else "media" if tag in ("audio", "video", "source") else tag
-        # ``media`` lumps three elements, and the browser reports a different
-        # destination for each, so the element decides it here.
+        # ``media`` lumps three elements that the browser reports apart.
         destination = {"link": "style", "img": "image", "audio": "audio",
                        "video": "video", "source": "video"}.get(tag, tag)
         request = {"method": "GET", "resource_type": resource_type, "destination": destination}
@@ -484,8 +478,8 @@ class ResourceController:
                 page.tasks.post(lambda: self.complete_document_resource(token, generation, response, error, handle))
 
         # Register before issuing the request: a fast response runs ``done`` on
-        # another thread, and untracking a handle that was never tracked would
-        # silently leave its cancel callback behind until the page closes.
+        # another thread, and untracking an untracked handle would leave its
+        # cancel callback behind until the page closes.
         page.services.resource_services._track_resource(handle)
         handle._transport = self.load_resource_async(url, request, done)
         page.lifecycle.dispatch_progress_event(node, "loadstart")
@@ -505,10 +499,8 @@ class ResourceController:
             return
         _generation, node, kind, _handle = item
         if kind == "iframe" and not error:
-            # ``when_loaded`` resolves on the *child* realm's owner thread, so
-            # hand the completion back to this realm's queue before touching
-            # page state: materializing an event interface or advancing the
-            # document lifecycle must happen on this Page's owner thread.
+            # ``when_loaded`` resolves on the child realm's owner thread, and
+            # touching page state must happen on this Page's owner thread.
             def child_loaded(ok):
                 page.tasks.post(lambda: self.finish_iframe_resource(token, generation, node, ok))
             self.load_iframe_response(node, response, child_loaded)
@@ -536,8 +528,7 @@ class ResourceController:
                 page.scripts.execute_script(node, response.body_text(), response.url or page.url)
             elif kind == "style":
                 node._stylesheet_text = response.body_text()
-            # The transfer has already completed, so one progress event carries
-            # the whole body; there is no incremental delivery pipeline.
+            # The transfer is complete: one progress event carries the whole body.
             length = self._response_length(response)
             page.lifecycle.dispatch_progress_event(
                 node, "progress", loaded=length, total=length, length_computable=True,
@@ -590,9 +581,8 @@ class ResourceController:
             return self.load_iframe_markup(iframe, str(markup))
         page = self.page
         child = self._child_frame_page(iframe, "about:blank")
-        # When a URL/srcdoc is present, the initial about:blank is replaced as
-        # part of the same insertion navigation and must not emit its own
-        # iframe load events.
+        # With a URL or srcdoc the initial about:blank is replaced by the same
+        # insertion navigation and must not emit its own iframe load events.
         if iframe.get_src() or "srcdoc" in iframe.attributes:
             return child
         child.set_content("", url="about:blank")

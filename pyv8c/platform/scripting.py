@@ -17,8 +17,7 @@ class ScriptController:
         self.queue = deque()
         self.defer = deque()
         self.module_cache = {}
-        # The realm's compiled JS helpers, created with the V8 context and
-        # dropped when it is replaced.
+        # The realm's compiled JS helpers, created with the V8 context and dropped with it.
         self._realm_scripts = None
 
     def reset(self):
@@ -28,18 +27,13 @@ class ScriptController:
         self.module_cache.clear()
 
     def clear_js_helpers(self):
-        """Drop cached scripts when the V8 context goes away."""
         self._realm_scripts = None
-
-    # -- realm JS helpers ----------------------------------------------
 
     @property
     def _scripts(self):
-        """The realm's compiled JavaScript helpers.
+        """The realm's compiled JavaScript helpers, borrowed rather than rebuilt.
 
-        The realm creates them alongside its context and installs the isolate's
-        error hooks on that same instance, so this controller borrows the set
-        instead of compiling a second one.
+        The realm installs the isolate's error hooks on this same instance.
         """
         scripts = self._realm_scripts
         if scripts is None:
@@ -60,8 +54,6 @@ class ScriptController:
         """Queue *callback* as a microtask, in FIFO with promise reactions."""
         return self._scripts.enqueue_microtask(callback)
 
-    # -- script execution ----------------------------------------------
-
     def evaluate(self, script, filename=None):
         if self.page.closed or self.page.context_owner.closed:
             raise InvalidStateError("Page is closed")
@@ -77,9 +69,7 @@ class ScriptController:
     def execute_script(self, node, source, filename=None):
         """Run one classic script with ``document.currentScript`` set to *node*.
 
-        The IDL attribute is only non-null while the script is on the stack, so
-        the value is cleared again before an error handler runs and the previous
-        one is restored for a caller that is itself executing a script.
+        The IDL attribute is non-null only while the script is on the stack.
         """
         if self._sandboxed("allow-scripts"):
             return False
@@ -102,9 +92,8 @@ class ScriptController:
     def execute_module(self, source, filename, trail):
         """Execute static module imports in dependency-first order.
 
-        V8's public extension currently exposes classic script execution only.
-        This adapter implements the useful static-import subset while keeping
-        all module work on the Page/V8 thread.
+        V8's public extension exposes classic script execution only; this adapter
+        covers the static-import subset.
         """
         key = str(filename)
         if key in self.module_cache:
@@ -132,8 +121,8 @@ class ScriptController:
         transformed = re.sub(r"\bexport\s+default\s+", "", transformed)
         transformed = re.sub(r"\bexport\s+(?=(?:async\s+)?(?:function|class|const|let|var)\b)", "", transformed)
         transformed = re.sub(r"\bexport\s*\{[^}]*\}\s*;?", "", transformed)
-        # Imported names are global lexical bindings after dependency
-        # evaluation.  Alias forms need a local declaration in this script.
+        # Imported names are global lexical bindings from dependency evaluation; alias
+        # forms need a local declaration in this script.
         for _prefix, clause, _quote, _specifier in imports:
             for item in clause.strip().strip("{}").split(","):
                 item = item.strip()
@@ -146,8 +135,6 @@ class ScriptController:
                     transformed = f"const {parts[1].strip()} = {parts[0].strip()};\n{transformed}"
         self.evaluate(transformed, filename=key)
         self.module_cache[key] = True
-
-    # -- parser / DOM script coordination ------------------------------
 
     def _sandboxed(self, token):
         """True when this realm is sandboxed without granting *token*."""
@@ -164,9 +151,7 @@ class ScriptController:
             return
         if self._sandboxed("allow-scripts"):
             return
-        # Setting src/text on a detached script does not fetch or execute it.
-        # The adoption callback will retry once it is connected to this
-        # document.
+        # A detached script does not fetch or execute; adoption retries once connected.
         parent = getattr(node, "parentNode", None)
         connected = False
         while parent is not None:
@@ -181,8 +166,8 @@ class ScriptController:
         node._script_defer = False
         node._resource_started = False
         if node.get_src():
-            # Dynamically inserted classic scripts are async by default. An
-            # explicit async=false script is kept in insertion order.
+            # Dynamically inserted classic scripts are async by default; async=false
+            # keeps insertion order.
             node._resource_async = bool(node.get_async())
             if not node._resource_async:
                 self.dom_blocking_scripts += 1

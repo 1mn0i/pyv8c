@@ -1,5 +1,4 @@
-"""Feature declarations and implementation aggregators.
-
-Importing this package never imports a Web API implementation module.
+"""Feature declarations and implementation aggregators; importing this package
+never imports a Web API implementation module.
 """
 

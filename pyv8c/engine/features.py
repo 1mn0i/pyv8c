@@ -1,8 +1,8 @@
 """Declarative Web API features and their on-demand runtime.
 
-Feature declarations are imported at bootstrap time; implementation modules are
-not.  A feature owns every interface and Window value it supplies, so module
-loading, interface resolution and per-Window value identity share one model.
+Feature declarations are imported at bootstrap; implementation modules are not.  A
+feature owns every interface and Window value it supplies, so loading, resolution and
+per-Window identity share one model.
 """
 
 from __future__ import annotations
@@ -17,10 +17,8 @@ from types import MappingProxyType
 class InterfaceSpec:
     """What a Feature implementation class declares about its interface.
 
-    Which realms expose an interface is deliberately *not* declared here: the
-    Chromium baseline owns that field (``InterfaceCatalog.exposed_names`` reads
-    it, and the extractor fills it from the IDL ``[Exposed=...]`` attribute), so
-    a second copy on the class could only ever drift out of step with it.
+    Realm exposure is deliberately not declared here: the Chromium baseline owns that
+    field, so a second copy could only drift out of step with it.
     """
 
     name: str

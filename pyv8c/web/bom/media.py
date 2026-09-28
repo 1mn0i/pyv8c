@@ -65,10 +65,8 @@ def _matches_feature(name, value, width, height):
 
 
 def evaluate(query, width, height):
-    """Whether *query* holds for a viewport of this size.
-
-    A comma separates alternatives, ``not`` negates one, and an unknown feature
-    answers false -- as a browser answers a feature it does not support.
+    """Whether *query* holds for a viewport of this size; an unknown feature
+    answers false, as a browser answers an unsupported feature.
     """
     for alternative in str(query).split(","):
         alternative = alternative.strip().lower()

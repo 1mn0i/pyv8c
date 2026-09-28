@@ -1,25 +1,10 @@
 """Which element a point lands on, and the stack of elements behind it.
 
-The geometry is one layout pass read twice: the boxes a walk from the root
-builds (:func:`dom.layout.positioned_box`) are the ones ``getBoundingClientRect``
-reports, so a point a page computes from a rect and a point a host hit tests
-agree on the element, and a point outside the viewport reports ``null`` exactly
-where Chrome's ``elementFromPoint`` does.
-
-What is modelled, and what is deliberate:
-
-* ``display:none`` removes the subtree; ``visibility:hidden`` and
-  ``pointer-events:none`` skip the element itself but keep testing its
-  descendants, so a child that turns either back on is still reachable -- all
-  three measured against Chrome 153;
-* the topmost element wins and the rest of the stack is returned deepest
-  first, which is the paint order this DOM has: later siblings paint over
-  earlier ones, children over their parents;
-* every child is tested even when its parent's box misses the point, because a
-  box with no height still has children with one;
-* the box model carries no positioning -- ``left`` is always 0, a block
-  element is as wide as its container -- and there is no scrolling, so a hit
-  test is only as precise as the layout behind it.
+The boxes ``getBoundingClientRect`` reports are the ones hit-tested, so a point
+outside the viewport reports ``null`` where Chrome's ``elementFromPoint`` does.
+``visibility:hidden``/``pointer-events:none`` skip the element itself but keep
+its descendants reachable; the topmost element wins and the rest of the stack is
+deepest first.  Measured against Chrome 153.
 """
 
 import pyv8
@@ -27,8 +12,7 @@ import pyv8
 from .html_elements import Element
 from .layout import Box, computed_style, layout, positioned_box
 
-#: Viewport used when a document has no environment to ask, matching
-#: :func:`dom.layout.layout`.
+#: Viewport used when a document has no environment to ask, matching ``dom.layout``.
 _DEFAULT_VIEWPORT = (1280, 720)
 
 _COLLAPSED_VISIBILITY = ("hidden", "collapse")
@@ -70,10 +54,7 @@ def _hit_testable(style):
 
 def _collect(element, boxes, x, y, found):
     """Append the elements under the point in *element*'s subtree, deepest first.
-
-    Children are walked last-to-first so a later sibling is stacked above an
-    earlier one.
-    """
+    Children are walked last-to-first so a later sibling stacks above an earlier."""
     box = boxes.get(element)
     if box is None:
         return

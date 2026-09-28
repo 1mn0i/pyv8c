@@ -1,7 +1,6 @@
 """Small CSS cascade, font measurement and layout facade for DOM geometry.
 
-The property tables the cascade starts from (initial values and which
-properties inherit) live with the rest of the CSS metadata in :mod:`dom.css`.
+The property tables (initial values, inherited properties) live in :mod:`dom.css`.
 """
 import os
 import re
@@ -41,7 +40,7 @@ def _font(path_candidates, size, weight="400", italic=False):
     if ImageFont is None: return None
     for path in path_candidates:
         try: return ImageFont.truetype(path, max(1, int(round(size))))
-        except Exception: pass  # the next candidate path is tried
+        except Exception: pass
     return None
 
 
@@ -92,13 +91,9 @@ def _selector_matches(element, selector):
 def document_rules(document):
     """The document's ``<style>`` rules as ``(selectors, declarations)`` pairs.
 
-    Reading the sheet walks the document, and a page that measures layout asks
-    for it constantly -- once per ``getComputedStyle``, geometry read and
-    :func:`layout` call, and the cascade runs per ancestor on top of that -- so
-    the result is cached on the document.  The cache is keyed on the style
-    version the DOM bumps whenever a ``<style>`` is added, removed or edited
-    (see :func:`dom.nodes._bump_style_version`), which is what keeps a page that
-    builds its styles at runtime from reading stale rules.
+    Reading the sheet walks the document and every layout query re-reads it, so
+    the result is cached on the document, keyed on ``style_version`` (bumped
+    whenever a ``<style>`` is added, removed or edited).
     """
     if document is None:
         return ()
@@ -116,9 +111,8 @@ def _parse_style_elements(document):
     for node in document._descendants():
         if getattr(node, "localName", "") != "style":
             continue
-        # The element's own text is authoritative once the parser has moved it
-        # into the tree; ``_raw_text`` only covers a style the parser never
-        # closed (see ``parser._close_element``).
+        # The element's text is authoritative; ``_raw_text`` only covers a style
+        # the parser never closed (see ``parser._close_element``).
         source = node.get_textContent() or getattr(node, "_raw_text", "")
         for selector, block in re.findall(r"([^{}]+)\{([^{}]*)\}", source):
             rules.append((selector.split(","), parse_declarations(block)))
@@ -130,9 +124,7 @@ def _cascade(element, rules):
     parent = getattr(element, "parentElement", None)
     if parent is not None:
         inherited = _cascade(parent, rules)
-        # Inheriting walks every inherited property, not the ones that happen to have an
-        # initial value here: `color` and `white-space` were passed down only when they
-        # were also in INITIAL_VALUES, so a declared colour never reached a child.
+        # Inherit every inherited property, not only those with an initial value here.
         values.update({
             name: inherited.get(name, values.get(name, ""))
             for name in INHERITED_PROPERTIES
@@ -161,11 +153,9 @@ class Box:
 def layout(element, containing_width=None, top=0.0, rules=None, style=None, collected=None):
     """The box *element* measures, laying out its children to find its height.
 
-    The offset travels down the recursion: a child is placed at the position
-    its preceding siblings leave for it, so a box is only as absolute as the
-    ``top`` it was called with -- asking for a nested element on its own starts
-    at 0 again.  Callers that need real positions pass *collected*, a mapping
-    the walk fills with every box it builds (see :func:`positioned_box`).
+    The offset travels down the recursion, so a nested element asked for on its
+    own starts at ``top`` 0; callers needing real positions pass *collected*, a
+    mapping the walk fills with every box it builds (see :func:`positioned_box`).
     """
     if rules is None:
         rules = document_rules(getattr(element, "ownerDocument", None))
@@ -236,11 +226,9 @@ def layout(element, containing_width=None, top=0.0, rules=None, style=None, coll
 def positioned_box(element):
     """*element*'s box with the offset its ancestors put it at.
 
-    ``layout()`` threads the offset down from the top of the tree, so a box
-    asked for on its own reports ``top`` 0 however deep the element sits.
-    Walking the document once and reading the element's box out of that pass is
-    what gives ``getBoundingClientRect`` -- and the hit test that has to agree
-    with it -- viewport coordinates, as Chromium reports them.
+    Laying the document out once and reading the element's box from that pass is
+    what gives ``getBoundingClientRect`` -- and the hit test that must agree with
+    it -- viewport coordinates, as Chromium reports them.
     """
     document = getattr(element, "ownerDocument", None)
     if document is None:

@@ -76,9 +76,8 @@ def split_top_level(text, separator=","):
 def _clean_callback_reference(value):
     """Normalize a generated handler argument to its callback symbol.
 
-    Blink annotates handler tuple entries with comments such as ``// query``
-    and ``// enumerator``. Those comments are useful while reading generated
-    C++, but must not become part of the callback name in the baseline.
+    Blink annotates handler tuple entries with comments such as ``// query``; those
+    must not become part of the callback name in the baseline.
     """
     value = re.sub(r"//[^\r\n]*", "", value)
     value = re.sub(r"/\*[\s\S]*?\*/", "", value)
@@ -320,8 +319,8 @@ HANDLER_ROLES = ("get", "set", "query", "del", "enum", "definer")
 def _handler_configurations(text, skip=()):
     """``{named/indexed: {role: callback}}`` from the configurations in *text*.
 
-    Spans in *skip* are cross-origin configurations: their callbacks belong to
-    the cross-origin family, not to the interface's own handlers.
+    Spans in *skip* are cross-origin configurations, whose callbacks belong to the
+    cross-origin family rather than the interface's own handlers.
     """
     found = {}
     labels = (("named", "NamedPropertyHandlerConfiguration"),
@@ -373,8 +372,8 @@ def _cross_origin_handler_names(text):
 def extract_template(text):
     """Extract V8 template switches and interceptor callback names.
 
-    Chromium changes formatting frequently, so this intentionally records
-    conservative evidence rather than attempting to parse C++ expressions.
+    Chromium changes formatting frequently, so this records conservative evidence
+    rather than parsing C++ expressions.
     """
     template = {
         "immutable_proto": bool(re.search(r"SetImmutableProto\s*\(", text)),
@@ -402,8 +401,7 @@ def extract_template(text):
         for kind, data in _handler_configurations(text[span[0]:span[1]]).items():
             handlers["cross_origin"][kind].update(data)
     if not any(handlers["cross_origin"].values()):
-        # Older bindings name the cross-origin callbacks in helper functions
-        # instead of building the configuration inline.
+        # Older bindings name cross-origin callbacks in helper functions, not inline.
         handlers["cross_origin"] = _cross_origin_handler_names(text)
     template["handlers"] = handlers
     return template
@@ -459,9 +457,7 @@ def _canonical_declaration(text, match):
     tag = (re.search(r'"([A-Za-z0-9_]+)"', body) or [None, match.group("binding")])[1]
     parent_match = re.search(r"V8([A-Za-z0-9_]+)::GetWrapperTypeInfo\(\)", body)
     has_constructor = bool(CONSTRUCTOR_CALLBACK.search(text))
-    # Blink interface constructors are created with V8's throwing constructor
-    # behavior. Legacy factory functions are separate exposed functions and do
-    # not make the interface constructor callable.
+    # Blink constructors use V8's throwing constructor; legacy factory functions do not make it callable.
     allow_call = False if has_constructor else None
     return tag, parent_match.group(1) if parent_match else None, has_constructor, allow_call
 
@@ -551,8 +547,7 @@ def _apply_idl_metadata(extracted, metadata):
             item["exposed_in"] = info["exposed_in"]
         if info["exposed"] is not None:
             item["constructor"]["exposed"] = info["exposed"]
-        # Generated C++ constructor callbacks are authoritative; IDL metadata
-        # only fills gaps and must not erase a callback discovered in source.
+        # Generated constructor callbacks are authoritative; IDL metadata only fills gaps.
         item["constructor"]["allow_new"] = bool(item["constructor"].get("allow_new") or info["allow_new"])
         item["constructor"]["allow_call"] = bool(item["constructor"].get("allow_call") or info["allow_call"])
         if info.get("constants"):
@@ -709,8 +704,8 @@ def _compact_member_callback_metadata(member, *, include_audit):
 def schema5_baseline(extracted, *, include_audit=False):
     """Build the schema 5 runtime snapshot.
 
-    The default output omits callback symbols, default world values, and
-    source provenance. ``include_audit`` retains callback and provenance details.
+    The default output omits callback symbols, default world values and source
+    provenance; ``include_audit`` retains them.
     """
     output = {}
     for name, source in extracted.items():
@@ -808,8 +803,7 @@ def main():
         "renderer_snapshot": str(renderer), "report": report,
         "compact": not args.audit},
         **schema5_baseline(extracted, include_audit=args.audit)}
-    # The published snapshot is machine-consumed. Compact serialization avoids
-    # carrying indentation overhead on top of the compact schema itself.
+    # Machine-consumed snapshot: compact serialization avoids indentation overhead.
     write_baseline(output_path, output, compress=args.zip)
     if args.report: print(json.dumps(report, indent=2, sort_keys=True))
 

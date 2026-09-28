@@ -1,9 +1,8 @@
 """Cookie storage and matching for page and network contexts.
 
-One :class:`CookieJar` per context is the single store both sides share, which is
-what makes a document and its requests one session.  Matching follows RFC 6265's
-host/path/secure rules, in the two views callers need: ``header_for`` (what goes
-on the wire, ``HttpOnly`` included) and ``document_for`` (what script may see).
+One :class:`CookieJar` per context is the single store both sides share, making a
+document and its requests one session; matching follows RFC 6265's host/path/secure
+rules, with a wire view and a script-visible view.
 """
 import re
 import time
@@ -18,8 +17,7 @@ from ..foundation.logging import logger
 
 _INVALID_COOKIE_NAME_CHARS = frozenset("()<>@,;:") | {"\\", "[", "]", "?", "=", "{", "}", " ", "\t"}
 
-#: Joined ``Set-Cookie`` lines: a comma starts a new cookie only when ``token=``
-#: follows before any ``;`` or ``,``, so the one inside an ``expires`` date does not.
+#: A comma starts a new joined cookie only when ``token=`` follows before any ``;`` or ``,``.
 _SET_COOKIE_SEPARATOR = re.compile(r",(?=\s*[^;=,\s]+\s*=)")
 
 

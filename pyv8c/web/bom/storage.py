@@ -1,7 +1,7 @@
 """``Storage``: the key/value store behind the two storage properties.
 
-The table is per instance, so ``localStorage`` and ``sessionStorage`` never
-share entries and each realm gets its own pair.
+The table is per instance, so ``localStorage`` and ``sessionStorage`` never share
+entries and each realm gets its own pair.
 """
 
 import pyv8
@@ -16,12 +16,9 @@ __all__ = ["Storage"]
 
 @interface('Storage', None)
 class Storage:
-    """One origin's key/value store, as ``localStorage`` and ``sessionStorage``.
-
-    The entries are the object's named properties as well: a page may write
-    ``localStorage.token = 'x'`` and read the same value back through
-    ``getItem('token')``, and ``Object.keys`` lists the names.  A key spelled like one
-    of the prototype's own members stays that member, which is what Chromium does.
+    """One origin's key/value store; entries are also the object's named
+    properties, and a key spelled like a prototype member stays that member, as
+    in Chromium.
     """
 
     #: Names the prototype keeps even when a key is spelled like them.

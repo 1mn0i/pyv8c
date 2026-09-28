@@ -17,8 +17,8 @@ def _options(browser, role):
 def _configured_raw_proxy(options):
     """The engine's own proxy keys already in *options*, if any.
 
-    Those are how a proxy was configured before ``proxy=`` existed, and the two
-    ways of saying it must not be mixed: whichever lost would be invisible.
+    Those are how a proxy was configured before ``proxy=`` existed; the two ways of
+    saying it must not be mixed, or whichever lost would be invisible.
     """
     return sorted(key for key in RAW_OPTION_KEYS if key in (options or {}))
 
@@ -26,13 +26,9 @@ def _configured_raw_proxy(options):
 def _with_proxy(role, name, options, proxy):
     """The *role* engine's options with the context's proxy merged in.
 
-    The engine is asked first, and an engine that does not carry traffic through
-    a proxy is handed nothing: a key it never declared would only be refused,
-    and there is no environment proxy for it to pick up unasked either.
-
-    For one that does, the key is always set -- ``""`` when nothing was
-    configured, which is what pins a direct connection.  Leaving it out is not
-    the same thing: both engines would read a proxy out of the environment.
+    The engine is asked first and one that carries no proxy traffic is handed nothing.
+    For one that does, the key is always set -- ``""`` pins a direct connection, since
+    leaving it out would let both engines read a proxy from the environment.
     """
     configured = _configured_raw_proxy(options)
     if configured and proxy is not None:
@@ -49,8 +45,7 @@ def _with_proxy(role, name, options, proxy):
             )
         return options
     if configured:
-        # A proxy set through the engine's own keys is that engine's business,
-        # and it is the one that knows how to honor it.
+        # The engine's own proxy keys are its business; it knows how to honor them.
         return options
     return {**(options or {}), PROXY_OPTION: "" if proxy is None else proxy}
 
@@ -63,9 +58,8 @@ def _serves(candidate, role):
 def _engine(browser, role, value, proxy):
     """One role's engine: a registered name, a ready object, or a factory.
 
-    A name is built from the registry with that role's options; a factory is
-    called per context.  A ready engine can take no options -- it was built
-    before the context existed -- which is refused rather than ignored.
+    A name is built from the registry with that role's options; a factory is called per
+    context.  A ready engine can take no options and is refused rather than ignored.
     """
     if value is None:
         return None
@@ -135,10 +129,8 @@ def _refuse_proxy_without_engine(proxy):
 def assemble_backend(browser, proxy=None):
     """Assemble one context's engines from what the Browser was built with.
 
-    *proxy* is the context's resolved proxy value (see :mod:`network.proxy`),
-    merged into each role's options once that engine has been asked to accept
-    it.  ``real_network=False`` assembles neither role, and options are checked
-    against the engine that will read them rather than ignored.
+    *proxy* is the context's resolved proxy, merged into each role's options once that
+    engine has accepted it; options are checked against the engine that reads them.
     """
     if not browser.real_network:
         _refuse_ready_engines(browser)

@@ -1,12 +1,8 @@
 """Cross-origin access to another browsing context's ``Window``.
 
-A child ``Window`` is a global object owned by its own V8 Context, so it must
-never be handed to a different Context.  Every cross-origin reference therefore
-goes through :class:`WindowProxy`, a native-backed facade that keeps identity
-stable while exposing only the browser's safe cross-origin surface.
-``Window._view`` caches one proxy per browsing context and imports this module
-on first use, which keeps :mod:`dom.window` out of the cycle the reverse import
-would otherwise create.
+A child ``Window`` is a global owned by its own V8 Context, so every cross-origin
+reference goes through :class:`WindowProxy`, a native-backed facade that keeps
+identity stable while exposing only the safe cross-origin surface.
 """
 
 import pyv8
@@ -22,10 +18,8 @@ __all__ = ["WindowProxy"]
 
 
 class _CrossOriginLocation:
-    """The restricted Location object exposed by a cross-origin WindowProxy.
-
-    Chrome permits assigning ``other.location`` (and ``location.href``), but
-    does not expose the target URL or its parsed components to the caller.
+    """The restricted Location exposed by a cross-origin WindowProxy: assigning
+    ``location`` works, reading the target URL does not.
     """
 
     __v8_idl_spec__ = IdlSpec(
@@ -83,13 +77,7 @@ class _CrossOriginLocation:
 
 
 class WindowProxy:
-    """Stable parent-realm facade for a cross-origin iframe Window.
-
-    A child ``Window`` is a global object owned by its own V8 Context and must
-    never be handed directly to another Context.  This small native-backed
-    facade keeps identity stable while implementing the browser's safe
-    cross-origin surface.
-    """
+    """Stable parent-realm facade for a cross-origin iframe Window."""
 
     __v8_idl_spec__ = IdlSpec(
         name_get="__v8_name_get__",

@@ -1,16 +1,9 @@
 """``window.chrome``, the object Chromium installs through V8 extras.
 
-A page always finds a plain object owning ``loadTimes``, ``csi`` and ``app`` in
-that order, and the global property itself is writable and enumerable while
-staying non-configurable (Chromium keeps it, so scripts may still replace the
-value but not delete or redefine the slot).  The members are native functions
-backed by this module, so ``String(chrome.csi)`` reports native code, exactly
-like the real binding does.
-
-The object is built by :data:`_BOOTSTRAP` in JavaScript rather than by a host
-class: a host class would leak its own prototype and constructor, while
-``chrome`` has to be an ordinary object
-(``Object.getPrototypeOf(chrome) === Object.prototype``).
+The global is writable and enumerable but non-configurable, and its members are
+native functions (``String(chrome.csi)`` reports native code).  It is built by
+:data:`_BOOTSTRAP` in JavaScript rather than by a host class, so its prototype
+stays ``Object.prototype``.
 """
 import time
 
@@ -20,10 +13,8 @@ __all__ = ["ChromeBindings", "install_window_chrome"]
 
 # Blink reports a normal navigation as 15 (WebNavigationType::kNavigationTypeOther).
 _TRANSITION_TYPE = 15
-# Navigation milestones in milliseconds after navigationStart.  A milestone that
-# has not been reached yet is reported as 0, the way Chromium reports timing
-# fields it has no value for; the numbers themselves are the usual order of
-# magnitude of a document that was already parsed when the script runs.
+# Milestones in ms after navigationStart; an unreached one reports 0, as Chromium
+# does, and the values are the usual order of magnitude for a parsed document.
 _MILESTONES = (
     ("requestTime", 0.4),
     ("startLoadTime", 0.6),
@@ -49,8 +40,8 @@ _EPOCH_OFFSET_MS = time.time() * 1000.0 - time.perf_counter() * 1000.0
 def _now_ms():
     """Current time in epoch milliseconds with the resolution Chrome reports."""
     return time.perf_counter() * 1000.0 + _EPOCH_OFFSET_MS
-# Temporary global used to hand the native functions to the bootstrap; the
-# bootstrap deletes it again in the same synchronous step.
+# Temporary global handing the native functions to the bootstrap; the bootstrap
+# deletes it in the same synchronous step.
 _BRIDGE_GLOBAL = "__pyv8cChromeHost__"
 
 _BOOTSTRAP = """
@@ -86,10 +77,8 @@ class ChromeBindings:
         self._navigation_start = 0.0
 
     def _navigation_started_at(self):
-        """Epoch milliseconds of the current document's navigationStart.
-
-        A new document restarts the navigation clock, so the reported times stay
-        tied to the document that is loaded right now.
+        """Epoch milliseconds of the current document's navigationStart; a new
+        document restarts the clock.
         """
         services = self._services
         document = getattr(getattr(services, "document_services", None), "document", None)
@@ -139,17 +128,13 @@ class ChromeBindings:
 
 
 def install_window_chrome(context, services=None):
-    """Install ``window.chrome`` for one Window realm.
-
-    Chromium runs this before any page script, so the object is present for
-    inline scripts in the document head as well.  Worker globals do not get one.
+    """Install ``window.chrome`` for one Window realm, before any page script as
+    Chromium does; worker globals do not get one.
     """
     bindings = ChromeBindings(services)
     bridge = {name: getattr(bindings, name) for name in ("loadTimes", "csi", *_APP_FUNCTIONS)}
-    # Installing the object is host work, not page behaviour: neither the bridge
-    # global nor the descriptor of ``chrome`` may be reported as a trace event,
-    # and a page that never touches ``chrome`` must produce no event at all.
-    # Chromium's own V8 extras are equally invisible to instrumentation.
+    # Installing the object is host work: no trace event may be reported for the
+    # bridge global or the descriptor, matching Chromium's own V8 extras.
     tracing = bool(getattr(context, "trace", False))
     if tracing:
         context.trace = False

@@ -1,13 +1,8 @@
 """``Location``, ``History`` and the Navigation API: the realm's view of navigation.
 
-``Location`` and ``History`` drive ``document_services`` and keep the entry table
-in step with the committed URL, and each calls the other: assigning ``location``
-pushes or replaces a history entry, while ``history.back()`` assigns an entry's
-URL back into ``location``.  A same-document (fragment) change is committed
-without rebuilding the document, so it fires ``hashchange`` and no load events.
-The Navigation API reads the same entry table: a page that has not moved yet has
-exactly one entry, nothing behind or ahead of it, and no transition, and
-``navigate``/``reload`` drive the navigation ``location`` does.
+Assigning ``location`` pushes or replaces a history entry, while ``history.back()``
+assigns an entry's URL into ``location``.  A same-document (fragment) change is
+committed without rebuilding the document, firing ``hashchange`` and no load events.
 """
 
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -24,8 +19,8 @@ from .utils import document_key
 __all__ = ["Location", "History", "Navigation", "NavigationHistoryEntry"]
 
 
-#: Location components the implementation actually assigns; the baseline marks
-#: protocol/host/hostname/port writable too, and those keep their stub setter.
+#: Location components backed by a real setter; protocol/host/hostname/port keep
+#: the stub setter.
 _LOCATION_SETTERS = {
     "href": "set_href",
     "pathname": "set_pathname",
@@ -57,11 +52,8 @@ class Location:
     def _is_same_document(self, target):
         return target != self.href and document_key(target) == document_key(self.href)
     def _navigate_within_document(self, target, replace):
-        """Commit a fragment change without rebuilding the document.
-
-        Only the fragment may differ, so no ``beforeunload``/``pagehide``/
-        ``unload`` runs and resources keep their state; ``hashchange`` fires
-        because a new entry is created for the fragment.
+        """Commit a fragment change without rebuilding the document: no
+        ``beforeunload``/``pagehide``/``unload`` runs, but ``hashchange`` fires.
         """
         window = self._services.document_services.window
         # Materialize the History (which starts at the *current* URL) before the
@@ -343,10 +335,8 @@ class Navigation(EventTarget):
     def get_activation(self): return self._values.value("activation")
 
     def fn_navigate(self, url=MISSING, options=None, *_extra):
-        """Ask for the navigation, and answer with the two promises it reports through.
-
-        The request replaces this realm, so both promises carry the entry this
-        realm still has rather than the one the new document will build.
+        """Ask for the navigation, and answer with the two promises it reports
+        through; they carry this realm's entry, not the new document's.
         """
         if url is MISSING:
             raise missing_error('Navigation', 'navigate', 1, 0, constructor=False)

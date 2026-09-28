@@ -1,13 +1,7 @@
 """Web IDL mixin interfaces shared across the DOM layer.
 
-``Element``, ``CharacterData``, ``DocumentType``, ``DocumentFragment`` and
-``Document`` compose the node model out of the first three mixins.  Every
-legacy collection -- ``NodeList``, ``HTMLCollection``, ``HTMLAllCollection``,
-``DOMTokenList``, ``DOMStringList``, ``FileList`` and the plugin arrays --
-reuses :class:`ReadOnlyIndexedPropertyMixin` for its indexed-property
-interceptor, and the collections that also expose named properties share
-:class:`LegacyNamedPropertyMixin`.  Each mixin carries only the members its own
-IDL interface declares.
+Each mixin carries only the members its own IDL interface declares; the node
+model and every legacy collection are composed from them.
 """
 
 import pyv8
@@ -19,11 +13,8 @@ from .utils import NAMED_PROPERTY_ATTRIBUTES, OBJECT_PROTOTYPE_NAMES, as_nodes, 
 
 
 class _NonDocumentTypeChildNodeMixin:
-    """``previousElementSibling`` / ``nextElementSibling``.
-
-    Included by :class:`Element` and :class:`CharacterData`; document type
-    nodes are excluded, matching the ``NonDocumentTypeChildNode`` mixin.
-    """
+    """``previousElementSibling`` / ``nextElementSibling``, excluding document
+    type nodes (as the ``NonDocumentTypeChildNode`` mixin does)."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -53,11 +44,8 @@ class _NonDocumentTypeChildNodeMixin:
 
 class _ParentNodeMixin:
     """Element children plus ``append`` / ``prepend`` / ``replaceChildren``.
-
-    Included by :class:`Element`, :class:`Document` and
-    :class:`DocumentFragment`; :class:`Document` deliberately leaves out the
-    ``ChildNode`` operations, which it does not have in Chromium.
-    """
+    :class:`Document` deliberately leaves out the ``ChildNode`` operations, which
+    it does not have in Chromium."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
@@ -97,11 +85,7 @@ class _ParentNodeMixin:
 
 
 class _ChildNodeMixin:
-    """``before`` / ``after`` / ``replaceWith`` / ``remove``.
-
-    Included by :class:`Element`, :class:`CharacterData` and
-    :class:`DocumentType` -- the three interfaces carrying ``ChildNode``.
-    """
+    """``before`` / ``after`` / ``replaceWith`` / ``remove``."""
 
     __v8_idl_spec__ = IdlSpec(
         methods=(
@@ -145,12 +129,8 @@ class _ChildNodeMixin:
 
 
 class ReadOnlyIndexedPropertyMixin:
-    """Implement V8's readonly indexed-property interceptor contract.
-
-    Subclasses provide :meth:`_indexed_items`; this mixin supplies numeric
-    lookup, descriptor flags, deletion, and assignment semantics for Web IDL
-    collection objects in any browser subsystem.
-    """
+    """V8's readonly indexed-property interceptor; subclasses provide
+    :meth:`_indexed_items`."""
 
     __v8_idl_spec__ = pyv8.IdlSpec(
         index_get="__v8_index_get__",
@@ -205,15 +185,11 @@ class ReadOnlyIndexedPropertyMixin:
 
 
 class LegacyNamedPropertyMixin:
-    """V8's read-only legacy named-property interceptor contract.
+    """V8's read-only legacy named-property interceptor.
 
-    Subclasses provide :meth:`_supported_names` and :meth:`_named_item`.  The
-    named properties are read-only and never shadow a prototype member, so
-    assignment and deletion raise :class:`LegacyPropertyError` -- which V8
-    swallows silently outside strict mode, exactly like Chromium.
-
-    Always composed with :class:`ReadOnlyIndexedPropertyMixin`, which supplies
-    :meth:`_interface_name` for the error messages.
+    Subclasses provide :meth:`_supported_names` and :meth:`_named_item`; the
+    properties never shadow a prototype member, and assignment or deletion raises
+    :class:`LegacyPropertyError`, which V8 swallows outside strict mode.
     """
 
     __v8_idl_spec__ = IdlSpec(

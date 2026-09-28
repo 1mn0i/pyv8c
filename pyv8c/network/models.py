@@ -59,8 +59,7 @@ class NetworkRequest:
     mode: str = "cors"
     redirect: str = "follow"
     origin: str | None = None
-    #: Transport extensions (impersonate, proxies, verify, ...); unknown keys are
-    #: ignored by backends that cannot honour them.
+    #: Transport extensions (impersonate, proxies, verify, ...); unknown keys are ignored.
     options: dict[str, object] = field(default_factory=dict)
 
 

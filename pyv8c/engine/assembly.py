@@ -93,8 +93,7 @@ CROSS_ORIGIN_FAMILIES = (
     ),
 )
 
-#: Every named/indexed callback, plain and cross-origin: what a missing handler
-#: may be filled with when the baseline declares it.
+#: Every named/indexed callback, plain and cross-origin, that may be stubbed when the baseline declares it.
 HANDLER_CALLBACKS = frozenset(
     callback for _family, mapping in HANDLER_FAMILIES + CROSS_ORIGIN_FAMILIES
     for _key, callback in mapping
@@ -119,10 +118,9 @@ class InterfaceCompiler:
     def _fills_stub(self, callback_name, registration):
         """Whether a handler the class does not declare is filled with a stub.
 
-        Every named/indexed callback the baseline declares is filled, so a
-        forgotten handler reports itself instead of dropping the interceptor.
-        The cross-origin access check is not one of those: a placeholder there
-        would deny reads the class never meant to guard.
+        Every named/indexed callback the baseline declares is filled, so a forgotten
+        handler reports itself instead of dropping the interceptor; the cross-origin
+        access check is excluded, since a placeholder there would deny guarded reads.
         """
         return callback_name in HANDLER_CALLBACKS or registration is None
 
@@ -290,8 +288,7 @@ class InterfaceCompiler:
             has_constructor=source.has_constructor if "__v8_idl_spec__" in cls.__dict__ else 1,
         )
         if parent_name is not None:
-            # A parent that is not an interface has no template: unset, the binding
-            # reads the Python base instead.
+            # A parent that is not an interface has no template: the binding reads the Python base.
             options["parent_class"] = parent
         if source.call is not None:
             options["call"] = self.wrappers._raw_callback(cls, source.call)

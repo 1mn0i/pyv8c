@@ -1,8 +1,5 @@
-"""Window's smaller accessory objects.
-
-The legacy search hook, the style-media query, the crash reporter, the launch
-queue, the speech synthesiser, the scheduler and the viewport: each is a handful
-of members, and each reports the idle state a headless page starts in.
+"""Window's smaller accessory objects; each reports the idle state a headless
+page starts in.
 """
 
 import pyv8
@@ -158,7 +155,6 @@ class Scheduler:
         self._services = services
 
     def fn_postTask(self, callback=MISSING, options=None, *_extra):
-        """The callback runs on the task queue, and its result resolves the promise."""
         if callback is MISSING:
             raise missing_error('Scheduler', 'postTask', 1, 0, constructor=False)
         callback = callback_value(callback)

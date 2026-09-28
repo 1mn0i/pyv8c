@@ -70,8 +70,7 @@ class ResourceScope:
             try:
                 callback()
             except BaseException:  # cleanup must continue
-                # Owners can report callback failures; aborting teardown here
-                # would strand every resource below this one.
+                # Aborting teardown here would strand every resource below this one.
                 pass
         with self._lock:
             self._state = LifecycleState.CLOSED

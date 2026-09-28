@@ -1,14 +1,7 @@
 """Single-owner execution loop for a V8 realm.
 
-V8 contexts are not made thread-safe by a Python lock.  A realm therefore
-owns one executor thread; callers submit work to it and may synchronously wait
-for the result.  When no command is pending the executor turns the realm's
-event loop, so network, worker and iframe callbacks progress on their own
-instead of waiting for the embedding API to pump the queue.
-
-Waiting is event driven: the thread sleeps on a :class:`threading.Event`
-until either a command arrives or the realm's next timer is due.  A realm
-with nothing to do performs no wake-ups at all.
+One thread owns the realm, so callers submit work and may wait for it; idle time
+turns the realm's event loop, event driven, so a realm with nothing to do sleeps.
 """
 
 from __future__ import annotations
@@ -25,12 +18,10 @@ from .logging import logger
 from . import timer_resolution
 from .errors import RealmBusyError
 
-#: Exceptions that must interrupt the process rather than be logged by a
-#: background thread.
+#: Exceptions that must interrupt the process rather than be logged.
 _CONTROL_EXCEPTIONS = (KeyboardInterrupt, SystemExit)
 
-#: A queued owner-thread command: the optional result Future, then the
-#: callable and the arguments it was submitted with.
+#: A queued command: the optional result Future, then callable, args and kwargs.
 Command = tuple[Future[object] | None, Callable[..., object], tuple[object, ...], dict[str, object]]
 
 
@@ -45,9 +36,8 @@ def _default_call_timeout():
     """Seconds a synchronous ``call()`` may wait before raising.
 
     ``PYV8C_CALL_TIMEOUT`` overrides it; ``0`` or a negative value disables the
-    bound.  The default is deliberately far above every documented operation
-    (``goto`` caps at 30s, DevTools commands at 10s) so it only trips on a
-    genuinely wedged realm.
+    bound.  The default sits far above every documented operation, so it only
+    trips on a genuinely wedged realm.
     """
     raw = os.environ.get("PYV8C_CALL_TIMEOUT")
     if raw is None:
@@ -59,8 +49,8 @@ def _default_call_timeout():
     return None if value <= 0 else value
 
 
-#: Safety bound for the idle wait.  Wake-ups are event driven, so this only
-#: covers a missed notification; sleeping this long costs nothing.
+#: Safety bound for the idle wait: wake-ups are event driven, so this only covers
+#: a missed notification.
 IDLE_WAIT_MAX = 0.05
 
 _UNSET = object()
@@ -89,13 +79,8 @@ class RealmExecutor:
         self._rejections = None
         self._deadline_source = None
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
-        # Start without waiting for the thread to be scheduled.  The command
-        # queue is unbounded and thread safe, so post/call/close behave
-        # identically whether the thread has run yet or not; call() carries its
-        # own timeout for the pathological case.  Blocking here would let a
-        # realm thread inside a V8 callback (e.g. constructing a Worker) stall
-        # on the GIL while another thread holding it waits for this realm's
-        # isolate lock -- a deadlock once more than one page is live.
+        # Start without waiting for the thread to be scheduled: the command queue
+        # is unbounded, while blocking here deadlocks two realms sharing the GIL.
         self._thread.start()
 
     @property
@@ -108,36 +93,29 @@ class RealmExecutor:
     def attach_task_queue(self, task_queue):
         """Attach the queue after services and the Realm exist."""
         self._task_queue = task_queue
-        # Route fire-and-forget exceptions into the realm's error reporting so
-        # a failing network, worker or iframe callback stays observable.  The
-        # queue is the realm's single reporting entry point: it records the
-        # error and forwards it to whatever the realm installed as its sink.
+        # The queue is the realm's single reporting entry point for exceptions
+        # raised by a fire-and-forget callback.
         if self._error_sink is None:
             self._error_sink = task_queue.report_error
-        # The queue wakes this thread directly; without it a timer or a
-        # network delivery could only be noticed on the safety timeout.
+        # The queue wakes this thread directly, instead of on the safety timeout.
         task_queue.set_wakeup(self.wakeup)
         self.wakeup()
 
     def attach_rejection_tracker(self, tracker):
         """Attach the realm's queue of unhandled-rejection candidates.
 
-        V8 reports a rejection before the turn that caused it has finished, and
-        revokes the report if a handler appears before the microtask checkpoint
-        ends, so the realm can only publish ``unhandledrejection`` once the
-        checkpoint is over.  Beginning a loop iteration is that point: the owner
-        thread is back in Python after a command or a turn, by which time V8 has
-        run every microtask those queued.  See ``foundation.rejections``.
+        V8 reports a rejection before the turn that caused it ends, and revokes
+        the report if a handler appears, so ``unhandledrejection`` can only be
+        published once the microtask checkpoint is over.
         """
         self._rejections = tracker
 
     def attach_deadline_source(self, source):
         """Attach the realm's deadline holder (its native Context).
 
-        The executor arms it for the length of one command, which is what lets a
-        command that is *already running* be preempted: the isolate terminates the
-        script and stays usable, so a wedged realm surfaces as
-        :class:`pyv8.JavaScriptTerminated` instead of a caller that waits forever.
+        Arming it for one command is what lets a command already running be
+        preempted, so a wedged realm raises :class:`pyv8.JavaScriptTerminated`
+        instead of hanging the caller.
         """
         self._deadline_source = source
 
@@ -149,8 +127,7 @@ class RealmExecutor:
         """Run *callback* on the owner thread and return or raise its result.
 
         Raises :class:`RealmBusyError` when the owner thread does not pick the
-        command up within *timeout* (default: see :func:`_default_call_timeout`).
-        A wedged realm must surface as an error rather than hang the caller.
+        command up within *timeout*: a wedged realm surfaces as an error.
         """
         if self.is_owner_thread():
             return callback(*args, **kwargs)
@@ -167,10 +144,8 @@ class RealmExecutor:
         except FutureTimeoutError:
             if future.done():
                 return future.result()
-            # A command which is still queued can be cancelled safely.  A command
-            # that is already running has been preempted by the realm's deadline
-            # (see ``attach_deadline_source``); if it outlived that too, the
-            # realm is wedged and the late result is drained rather than awaited.
+            # A queued command cancels safely; a running one was already preempted
+            # by the realm's deadline, and its late result is drained, not awaited.
             cancelled = future.cancel()
             if not cancelled:
                 future.add_done_callback(_swallow)
@@ -189,8 +164,6 @@ class RealmExecutor:
         self.wakeup()
         return True
 
-    # -- loop ------------------------------------------------------------
-
     def _next_command(self):
         try:
             return self._commands.get_nowait()
@@ -200,8 +173,7 @@ class RealmExecutor:
     def _execute(self, command):
         future, callback, args, kwargs = command
         if future is not None and not future.set_running_or_notify_cancel():
-            # The caller timed out while this command was waiting in the
-            # queue.  Do not execute it as a ghost side effect.
+            # The caller timed out while this command waited in the queue.
             return
         source = self._deadline_source
         budget = self.default_timeout
@@ -210,10 +182,9 @@ class RealmExecutor:
             source.set_deadline(budget)
         try:
             result = callback(*args, **kwargs)
-        except BaseException as exc:  # reported below or mirrored
+        except BaseException as exc:
             if future is None:
-                # post() carries no Future, so this exception has nowhere to
-                # go: mirroring it onto a Future would silently drop it.
+                # post() carries no Future, so the exception has nowhere to go.
                 self._report_exception(exc)
                 return
             future.set_exception(exc)
@@ -225,16 +196,14 @@ class RealmExecutor:
                 try:
                     source.clear_deadline()
                 except BaseException:
-                    # The command may have closed the context it borrowed; that is
-                    # not a reason to lose whatever it was going to return.
+                    # The command may have closed the context it borrowed.
                     pass
 
     def _report_exception(self, exc):
         """Handle an exception raised by a fire-and-forget command.
 
         Control exceptions are re-raised so a ``Ctrl-C`` reaching the realm
-        interrupts the process instead of being written to a log; the owner
-        loop marks the executor closed before letting one escape.
+        interrupts the process instead of being written to a log.
         """
         if isinstance(exc, _CONTROL_EXCEPTIONS):
             raise exc
@@ -278,9 +247,7 @@ class RealmExecutor:
         self._owner_ident = threading.get_ident()
         self._ready.set()
         while not self._closed.is_set():
-            # Commands first: evaluate/goto/close must never queue behind
-            # page work, and a command may itself be the thing that unblocks
-            # a parser-blocked realm.
+            # Commands first: evaluate/goto/close must never queue behind page work.
             drained = False
             while not self._closed.is_set():
                 command = self._next_command()
@@ -293,16 +260,13 @@ class RealmExecutor:
                 try:
                     self._execute(command)
                 except _CONTROL_EXCEPTIONS:
-                    # _report_exception re-raises these.  Letting one escape
-                    # would leave the realm marked open while its owner thread
-                    # dies, so close it first and then propagate.
+                    # One escaping would leave the realm marked open while its
+                    # owner thread dies, so close it first and then propagate.
                     self._closed.set()
                     raise
                 else:
-                    # The command may have run JavaScript, and with it V8's
-                    # microtask checkpoint: whatever rejections it reported are
-                    # due now, before the next command is picked up rather than
-                    # after the whole batch has drained.
+                    # The command ran JavaScript and with it the microtask
+                    # checkpoint, so its rejections are due before the next one.
                     self._settle_rejections()
             if self._closed.is_set():
                 break
@@ -317,12 +281,8 @@ class RealmExecutor:
             if self._commands.empty():
                 deadline = self._next_deadline()
                 timeout = IDLE_WAIT_MAX if deadline is None else min(deadline, IDLE_WAIT_MAX)
-                # A wait towards a deadline asks for the finer platform timer;
-                # one that is only re-checking on the safety cap does not, and
-                # holding it there would charge the host for precision nothing
-                # is waiting on.  A distant deadline is waited in slices, so
-                # each of them needs it too: the slice before the deadline is
-                # the one whose overshoot would be the timer's lateness.
+                # Only a wait towards a deadline asks for the finer platform
+                # timer; a distant one is waited in slices, and each needs it too.
                 with timer_resolution.hold(deadline is not None):
                     self._wake.wait(timeout)
         self._closed.set()
@@ -332,8 +292,8 @@ class RealmExecutor:
             if self.closed:
                 return
             self._closed.set()
-            # The stop sentinel shares the command queue although it is not a
-            # command tuple; identity checks separate it in _run/_next_command.
+            # The stop sentinel shares the queue although it is not a command
+            # tuple; _run and _next_command separate it by identity.
             self._commands.put(_STOP)  # type: ignore[arg-type]
             # Complete callers waiting on commands that will no longer run.
             while True:
@@ -348,8 +308,7 @@ class RealmExecutor:
         if not self.is_owner_thread():
             self._thread.join(timeout)
             if self._thread.is_alive():
-                # A leaked owner thread keeps the realm's isolate alive, and
-                # nothing else would notice, so say so.
+                # A leaked owner thread keeps the isolate alive; say so.
                 logger.warning(f"{self._thread.name} did not exit within {timeout}s")
 
 

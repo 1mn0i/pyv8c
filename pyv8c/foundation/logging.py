@@ -1,8 +1,7 @@
 """The shared logger, imported on first use.
 
-loguru costs about 75 ms to import and brings asyncio and ssl with it, while a browser
-that never logs should not pay for that at startup.  ``logger`` stands in until the
-first call needs the real one, so every call site reads the same.
+loguru costs ~75 ms to import and drags asyncio and ssl in, so a browser that never
+logs should not pay that at startup; ``logger`` stands in until the first call.
 """
 
 from __future__ import annotations

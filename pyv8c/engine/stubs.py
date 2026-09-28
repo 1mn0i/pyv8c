@@ -1,8 +1,7 @@
 """Generated API shells for baseline interfaces without a hand-written class.
 
-Generated stubs carry ``__v8_idl_stub__`` for Python diagnostics. Native
-installation treats them exactly like other explicit callbacks.  Logging is controlled per :class:`InterfaceUniverse`
-via ``stub_logging``.
+Stubs carry ``__v8_idl_stub__`` for Python diagnostics and install like any other
+explicit callback; logging is controlled per :class:`InterfaceUniverse`.
 """
 
 from __future__ import annotations
@@ -20,15 +19,13 @@ def mark_stub(callback):
 class StubFactory:
     """Build the safe, logging shells used for unimplemented members."""
 
-    #: The level that also reports placeholder handlers: they run on ordinary
-    #: property probes, where logging would pay loguru's import at startup.
+    #: The level that reports placeholder handlers, which run on ordinary property probes.
     HANDLER_LEVEL = "verbose"
 
     def __init__(self, stub_logging="off"):
         self.stub_logging = str(stub_logging or "off").lower()
         self.reports_handlers = self.stub_logging == self.HANDLER_LEVEL
-        #: A reporting handler speaks once per interface and callback, not once
-        #: per probe.
+        #: A reporting handler speaks once per interface and callback, not per probe.
         self._reported = set()
 
     def _log(self, message, *args):
@@ -74,8 +71,7 @@ class StubFactory:
             if self.reports_handlers and reported not in self._reported:
                 self._reported.add(reported)
                 self._log("pyv8c: {}.{} 待实现", interface_name, method_name)
-            # Returning None tells V8 that the interceptor did not handle it;
-            # enum interceptors report "nothing to enumerate" with an empty tuple.
+            # None tells V8 the interceptor skipped it; enum interceptors report an empty tuple.
             if method_name.endswith("enum__"):
                 return ()
             return None

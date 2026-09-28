@@ -1,9 +1,5 @@
-"""``HTMLIFrameElement``: the frame element and the document it holds.
-
-The reflected attributes are Chromium's, including the values a missing or
-unrecognised attribute reads back as; the browsing context itself is built by
-the resource layer, which this element only asks for.
-"""
+"""``HTMLIFrameElement``: the frame element and the document it holds.  The
+reflected attributes are Chromium's; the resource layer builds the browsing context."""
 
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
@@ -55,12 +51,8 @@ class HTMLIFrameElement(HTMLElement):
         self._child_services = None
 
     def _is_connected(self):
-        """Whether this element is currently attached to a Document.
-
-        Chromium does not start an iframe navigation while the element is
-        detached.  The browsing context is created by the adoption hook when
-        it is inserted instead.
-        """
+        """Whether this element is attached to a Document.  Chromium does not start an
+        iframe navigation while detached; the adoption hook creates the context instead."""
         node = self
         while node is not None:
             if getattr(node, "nodeType", None) == 9:  # Document

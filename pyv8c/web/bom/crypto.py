@@ -1,7 +1,6 @@
-"""``window.crypto``: random values, and what a secure context adds.
-
-``getRandomValues`` fills the caller's array in place.  ``randomUUID`` is
-secure-context only, as it is in Chrome, and ``subtle`` is not modelled.
+"""``window.crypto``: ``getRandomValues`` fills the caller's array in place;
+``randomUUID`` is secure-context only, as in Chrome, and ``subtle`` is not
+modelled.
 """
 
 import os
@@ -36,7 +35,6 @@ class Crypto:
         return pyv8.Undefined
 
     def fn_randomUUID(self, *_extra):
-        """Secure-context only, which is where Chrome exposes it."""
         return str(uuid.uuid4()) if self._secure else pyv8.Undefined
 
     def fn_getRandomValues(self, array=MISSING, *_extra):

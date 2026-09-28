@@ -62,15 +62,10 @@ class PageNet:
         self._js_http = JsHttpController(page)
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pyv8c-net")
         self._closed = False
-        #: What the browser applies to every host request, read once because it
-        #: cannot change after construction.
+        #: Read once: the browser's headers cannot change after construction.
         self._browser_headers = dict(getattr(page.context_owner.browser, "default_headers", None) or {})
-        #: Page-level default headers, applied on top of the browser's and below
-        #: a request's own.  Mutable on purpose: a caller can set the token its
-        #: page needs once and forget about it.
+        #: Above the browser's and below a request's own; mutable on purpose.
         self.headers: dict[str, str] = {}
-
-    # -- transport -------------------------------------------------------
 
     @property
     def available(self):
@@ -84,8 +79,6 @@ class PageNet:
         if self._closed:
             raise InvalidStateError("page.net is closed")
         return backend
-
-    # -- request construction --------------------------------------------
 
     def _default_headers(self, target, method):
         """The headers the page's own ``fetch`` would send for this request."""
@@ -135,10 +128,9 @@ class PageNet:
             headers=merged,
             body=body,
             timeout=timeout,
-            # A host request is not a page request: it has no origin to protect
-            # and no CORS to satisfy, so it starts from the jar.  ``omit`` is what
-            # tells the transport not to add cookies itself when the caller asked
-            # for none, since the header it would add is the one being suppressed.
+            # A host request has no origin to protect and no CORS to satisfy, so
+            # it starts from the jar; ``omit`` tells the transport not to add the
+            # cookie header the caller asked to suppress.
             credentials="omit" if cookies is False else "include",
             mode="no-cors",
             redirect="follow",
@@ -162,8 +154,8 @@ class PageNet:
             part for part in from_jar.split("; ")
             if part and part.split("=", 1)[0] not in overridden
         ]
-        # The caller's own cookies lead, the way the jar leads with its most
-        # specific path: an explicit value is the most specific one there is.
+        # The caller's own cookies lead, an explicit value being the most
+        # specific one there is, the way the jar leads with its most specific path.
         explicit = [f"{name}={value}" for name, value in cookies.items()]
         return "; ".join(explicit + kept)
 
@@ -191,8 +183,6 @@ class PageNet:
 
         self._executor.submit(run)
         return future
-
-    # -- the page's own fetch and XMLHttpRequest -------------------------
 
     def fetch(self,
               url: str,

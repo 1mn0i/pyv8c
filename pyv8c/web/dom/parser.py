@@ -10,18 +10,15 @@ from .nodes import _bump_style_version
 class _TreeBuilderMixin:
     """Node-tree construction shared by the two DOM parser front-ends.
 
-    :class:`DOMParser` streams tokens out of :mod:`html.parser`, while
-    :class:`IncrementalDOMParser` replays a token list so it can suspend and
-    resume on a parser-blocking script. Both build the same tree, so the
-    shared rules -- auto-closing, attribute normalization, inline handlers,
-    raw-text elements and the end-tag algorithm -- live here exactly once.
-    Each front-end keeps its own entry points and its own script hook.
+    :class:`DOMParser` streams from :mod:`html.parser`; :class:`IncrementalDOMParser`
+    replays a token list so it can suspend on a parser-blocking script.  Both build
+    the same tree, so the shared rules (auto-closing, attribute normalization, inline
+    handlers, raw-text elements, the end-tag algorithm) live here once.
     """
 
     void = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
     auto_close = {"li": {"li"}, "dt": {"dt", "dd"}, "dd": {"dt", "dd"}, "p": {"p", "div", "section", "article", "ul", "ol"}}
-    #: Tags whose character data is raw text: the tokenizer hands them the rest
-    #: of their content verbatim rather than parsing child tags.
+    #: Tags whose character data is raw text: the rest of the content is taken verbatim.
     raw_text_tags = {"script", "style", "textarea", "title"}
 
     #: Tags a browser puts in the head while it is still building one.
@@ -46,10 +43,8 @@ class _TreeBuilderMixin:
         return getattr(node, "localName", "") in cls.raw_text_tags
 
     def _pop_auto_closing(self, tag):
-        # The parsing-context root (stack[0]) is never auto-closed: when a
-        # fragment is being parsed, the root is the innerHTML/outerHTML
-        # context element and is already implicitly closed outside the
-        # fragment (auto-closing it here would empty the stack).
+        # The parsing-context root (stack[0]) is never auto-closed: for a fragment it
+        # is the innerHTML/outerHTML context element, already closed outside the fragment.
         if (len(self.stack) > 1 and tag in self.auto_close
                 and isinstance(self.current, Element)
                 and self.current.localName in self.auto_close[tag]):
@@ -82,9 +77,8 @@ class _TreeBuilderMixin:
             if source and (tag == "script" or tag in self.raw_text_tags):
                 node.append_child(Text(source, services=self.services))
                 if tag != "script":
-                    # The text now lives in the tree, so drop the parse-time copy
-                    # a script would otherwise shadow when it edits the element.
-                    # Scripts keep theirs: re-inserting one re-runs that source.
+                    # Drop the parse-time copy now the text lives in the tree; scripts
+                    # keep theirs, since re-inserting one re-runs that source.
                     node._raw_text = ""
             del self.stack[index:]
             return True
@@ -183,13 +177,11 @@ class IncrementalDOMParser(_TreeBuilderMixin):
         self.services, self.root = services, root
         self.tokens = list(_iter_tokens(str(source)))
         self.index, self.stack, self.done = 0, [root], False
-        #: A document parse builds html/head/body as it reads; the fragment parse
-        #: ``document.write`` runs after parsing has no modes of its own.
+        #: A document parse builds html/head/body as it reads; a fragment parse has no modes.
         self.building = getattr(root, "nodeType", None) == 9
         self.mode = "before-html" if self.building else None
         self.html = self.head = self.body = None
 
-    # -- insertion modes -------------------------------------------------
     def _depth(self):
         """The stack depth at which the current mode is placing a node."""
         if self.mode == "before-html":
@@ -314,20 +306,15 @@ class IncrementalDOMParser(_TreeBuilderMixin):
         if tag == "head" and self.head is not None and self.mode == "in-head":
             self.mode = "after-head"
         elif tag == "body" and self.body is not None:
-            # Content after ``</body>`` still goes into the body, which is where
-            # the insertion modes put it.
+            # Content after ``</body>`` still goes into the body, per the insertion modes.
             self.mode = "after-body"
         elif tag == "html" and self.html is not None:
             self.mode = "after-body"
 
     def write_markup(self, markup):
-        """Splice written markup into the input stream (``document.write``).
-
-        The tokens are inserted in front of the ones still to be consumed, so
-        the written nodes are created exactly like the surrounding document:
-        they land in the element the writing script sits in, and a written
-        ``<script>`` blocks the parser like any other parser-inserted script.
-        """
+        """Splice written markup into the input stream (``document.write``): the tokens
+        go in front of the unconsumed ones, so written nodes are created exactly like
+        the surrounding document (a written ``<script>`` still blocks the parser)."""
         text = str(markup)
         if not text or self.done:
             return False
@@ -352,9 +339,7 @@ class IncrementalDOMParser(_TreeBuilderMixin):
                 parts = value.split(None, 1); self._append(DocumentType(name=parts[1].strip() if len(parts) > 1 else "html", services=self.services))
             if self.services.document_services.parser_is_blocked(): return False
         if self.building:
-            # A document whose markup had nothing to place still has the skeleton
-            # every document has.  Making it is the last step, and no node that
-            # the parse already placed is ever moved.
+            # A document whose markup placed nothing still gets the skeleton, as the last step.
             self._open_body()
         self.done = True
         return True

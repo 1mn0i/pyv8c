@@ -1,11 +1,8 @@
-"""``forgiving-base64`` decode and encode: the algorithms ``atob``/``btoa`` run.
+"""``forgiving-base64``: the algorithms ``atob``/``btoa`` run.
 
-The Infra rules -- drop ASCII whitespace, forgive padding, refuse a length that cannot
-decode, refuse a character outside the alphabet -- are applied here; the bit work goes
-to :mod:`binascii`, the C code the stdlib's own base64 is built on.
-
-Encoding takes a string whose code points are already bytes: the Latin1 check belongs
-to the caller, which is also where the browser's wording for it lives.
+The Infra rules (drop ASCII whitespace, forgive padding, reject a bad length or
+character) live here; the bit work goes to :mod:`binascii`.  Encoding takes a string
+whose code points are already bytes -- the caller owns the Latin1 check.
 """
 from __future__ import annotations
 

@@ -15,9 +15,7 @@ def apply_template_flags(config, template):
     for source, target in TEMPLATE_FLAGS:
         if template.get(source):
             config[target] = 1 if target == "immutable" else True
-    # ``array`` is the baseline marker for Web IDL indexed collections.  The
-    # native bridge uses the same bit layout as FlagArrayProto; the baseline
-    # currently only needs the iterator bit.
+    # ``array`` marks a Web IDL indexed collection; the bridge shares FlagArrayProto's bit layout.
     if template.get("array") and not config.get("array"):
         config["array"] = 1
     return config

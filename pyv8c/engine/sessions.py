@@ -1,7 +1,7 @@
 """Realm-local binding state with shared immutable compiled descriptions.
 
-Only realm-dependent callbacks are rebound. Configurations and materialized
-names become visible to the session after the native batch commit succeeds.
+Only realm-dependent callbacks are rebound; configs and materialized names become
+visible after the native batch commit succeeds.
 """
 
 from __future__ import annotations
@@ -25,10 +25,8 @@ class BindingSession:
     def attach_context(self, context):
         """Record the native Context that received our initial configs.
 
-        Called once the realm Context exists.  From that point on every newly
-        materialized config is committed through ``context.update_configs``
-        instead of being written into the mapping snapshot the native side
-        already holds.
+        From then on every newly materialized config is committed through
+        ``context.update_configs`` rather than the mapping snapshot the native side holds.
         """
         self._context = context
 
@@ -53,9 +51,8 @@ class BindingSession:
     def configs(self):
         """Read-only view of the configs materialized for this realm.
 
-        The native Context receives an independent copy at construction time
-        and is kept in sync through :meth:`materialize`'s commit step; callers
-        must not mutate the mapping behind this view.
+        The native Context holds an independent copy kept in sync by :meth:`materialize`'s
+        commit step; callers must not mutate the mapping behind this view.
         """
         return MappingProxyType(self._configs)
 
@@ -98,9 +95,8 @@ class BindingSession:
     def lazy_factory(self, context_type="Window", on_materialize=None):
         """Build the callable the native Context invokes on first access.
 
-        Returning ``None`` tells the native accessor the name does not belong to
-        this realm, which keeps it resolved as ``undefined``. ``on_materialize``
-        is notified with each name that was built on demand.
+        Returning ``None`` marks the name as not belonging to this realm, keeping it
+        ``undefined``; ``on_materialize`` is notified with each on-demand name.
         """
         allowed = set(self.lazy_names(context_type))
 

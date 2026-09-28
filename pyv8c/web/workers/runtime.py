@@ -30,11 +30,9 @@ class WorkerRuntime:
         self._scope = None
         self._devtools = None
         self.debug_target = None
-        # Start asynchronously and return immediately, which is also what
-        # ``new Worker()`` is: the constructor does not wait for the script to
-        # run.  Messages stay ordered because ``_run`` is posted first, so every
-        # later ``_dispatch_message`` runs after the scope exists (or is dropped
-        # while ``_stop`` is set after a failed start).
+        # Start asynchronously (``new Worker()`` does not wait for the script):
+        # ``_run`` is posted first, so every later ``_dispatch_message`` runs after
+        # the scope exists, and messages stay ordered.
         self.executor.post(self._run)
 
     def _run(self):
@@ -44,8 +42,7 @@ class WorkerRuntime:
             self._realm = self.services.worker_services.create_worker_realm(config)
             self._realm.script_url = self.script_url
             # The worker drives its own task queue from this thread, so timers
-            # and microtasks make progress while the parent page is idle.  A
-            # failing callback reaches the parent as the worker's error event.
+            # and microtasks progress while the parent page is idle.
             self.executor.attach_task_queue(self._realm.tasks)
             self.executor.attach_rejection_tracker(self.rejections)
             self._realm.tasks.set_error_sink(self._report_error)
@@ -58,8 +55,7 @@ class WorkerRuntime:
             self._context = self._realm.initialize(self._scope)
             self.executor.attach_deadline_source(self._context)
             # A worker global schedules its own work, so the failures V8 raises
-            # on its own -- a microtask job that threw, a promise nobody handled
-            # -- have to be reported from this realm rather than the page's.
+            # on its own are reported from this realm, not the page's.
             self._realm.scripts.install_error_hooks(
                 self._report_uncaught, self.rejections.record,
             )
@@ -119,10 +115,8 @@ class WorkerRuntime:
     def _report_uncaught(self, message, source, line, column, error):
         """Report an exception V8 raised inside this worker's realm.
 
-        The worker's global sees it first, as a browser's would, and the parent
-        page hears about it through the Worker object.  The thrown value stays
-        behind -- a JavaScript object cannot cross into another realm -- so the
-        parent's event carries the text and position instead.
+        The global sees it first; the parent hears through the Worker object,
+        which carries text and position because a value cannot cross realms.
         """
         message = str(message)
         filename = "" if is_nullish(source) else str(source)

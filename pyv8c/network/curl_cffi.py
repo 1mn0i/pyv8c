@@ -1,10 +1,8 @@
 """Thread-safe HTTP transport bridge for the optional curl_cffi package.
 
-It exists for curl_cffi's impersonation layer; the shapes are ``models.py``'s, so
-the loader cannot tell which engine answered.  The context's jar is the only
-cookie store -- the client's own is discarded, or cookies would be sent twice --
-and the transport adds no headers of its own, so what goes on the wire is exactly
-the merge the caller decided.
+It exists for curl_cffi's impersonation layer; the context's jar is the only cookie
+store (the client's own is discarded, or cookies would be sent twice) and the bridge
+adds no headers, so the wire carries exactly the caller's merge.
 """
 import importlib
 import time
@@ -67,9 +65,8 @@ class CurlCffiTransport:
     def accepted_option_keys(cls) -> frozenset[str] | None:
         """The keys ``options=`` may carry: the bridge's, plus the session's own.
 
-        curl_cffi declares its session parameters to type checkers only, so at
-        runtime there is usually no list and ``None`` says exactly that.  It costs
-        nothing: the session refuses an unknown key when it is built.
+        curl_cffi declares its session parameters to type checkers only, so ``None`` at
+        runtime says no list; the session refuses an unknown key when built.
         """
         session_keys = signature_option_keys(_curl_cffi_session_type(_curl_cffi_module()))
         if session_keys is None:
@@ -121,10 +118,7 @@ class CurlCffiTransport:
         if request.timeout is not None:
             kwargs["timeout"] = request.timeout
         if self.proxies is not None:
-            # Set before the per-request options below, so a caller that names a
-            # proxy on the request itself still has the last word -- and set at
-            # all, because libcurl would otherwise read HTTP_PROXY and friends
-            # out of the environment on its own.
+            # Set before per-request options so the caller keeps the last word, and always set: libcurl would else read HTTP_PROXY itself.
             kwargs["proxies"] = dict(self.proxies)
         for name in _EXTRA_KWARGS:
             if options.get(name) is not None:
@@ -144,9 +138,8 @@ class CurlCffiTransport:
     def _headers(raw):
         """Response headers with lower-case names and every Set-Cookie kept.
 
-        ``multi_items`` is the only view that sees repeated headers -- a dict
-        keeps just the first -- and values are joined with ``, ``, the form the
-        jar's splitter expects, because a page's ``Headers`` cannot repeat names.
+        ``multi_items`` is the only view that sees repeated headers, and values are
+        joined with ``, `` as the jar's splitter expects.
         """
         headers = getattr(raw, "headers", None)
         if headers is None:
@@ -188,9 +181,8 @@ class CurlCffiTransport:
     def request_async(self, tasks, request, callback):
         """Run *request* on the delivery pool, answering on the realm's queue.
 
-        The callback is posted through the task capability, so JavaScript is only
-        touched on the owner thread, and the in-flight counters are what let
-        ``run_until_idle`` and navigation waits see an outstanding request.
+        The callback is posted through the task capability, so JavaScript is touched only
+        on the owner thread; in-flight counters let navigation waits see the request.
         """
         handle = RequestHandle()
         with self._lock:

@@ -77,10 +77,8 @@ class Response:
     def get_bodyUsed(self): return self.body_used
 
     def fn_clone(self, *_extra):
-        """A response with the same body, headers, status and type, usable on its own.
-
-        Nothing about the copy points back at this one, and neither side counts as
-        consumed until something reads it.
+        """A response with the same body, headers, status and type, usable on
+        its own; neither side counts as consumed until something reads it.
         """
         if self.body_used:
             raise V8TypeError("Body has already been consumed.")

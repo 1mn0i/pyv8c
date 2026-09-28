@@ -53,8 +53,7 @@ class BrowserContext:
     def __init__(self, browser, *, proxy=None):
         self.browser, self.pages = browser, []
         self.cookies = CookieJar()
-        #: The proxy this context's traffic goes through: its own setting, or the
-        #: browser's while it was given none (see :meth:`Browser.new_context`).
+        #: Its own proxy setting, or the browser's while it was given none.
         self.proxy = browser.proxy if proxy is None else proxy
         self.resource_cache_dir = browser.cache_dir if browser.cache_enabled else None
         self.resource_cache_lock = threading.RLock()
@@ -97,8 +96,7 @@ class BrowserContext:
         self._blob_urls.pop(url, None)
         self._blob_origins.pop(url, None)
 
-    # Context-level services exposed to realm objects.  Keeping these methods
-    # here makes cookie/blob ownership explicit without exposing storage fields.
+    # Context-level services exposed to realm objects without exposing storage.
     @property
     def cookie_jar(self):
         return self.cookies
@@ -181,10 +179,9 @@ class BrowserContext:
         for page in list(self.pages):
             try:
                 page.close()
-            except BaseException as exc:  # the reason is the comment below
-                # Teardown is best effort across independent pages.  Do not
-                # leave later pages, DevTools or the network backend alive
-                # merely because one realm reported an error.
+            except BaseException as exc:
+                # Teardown is best effort: one realm's error must not leave the
+                # later pages, DevTools or the network backend alive.
                 if first_error is None:
                     first_error = exc
         for name in ("_devtools", "network_backend"):
@@ -305,8 +302,8 @@ class Browser:
         self.trace_callback = trace_callback
         started = time.perf_counter_ns()
         self._closed = False
-        # pyv8 starts its process-global V8 runtime on first use rather than at
-        # import, so the first realm created below carries that startup cost.
+        # pyv8 starts its global V8 runtime on first use, not at import, so the
+        # first realm created below carries that cost.
         self.contexts = []
         self.resource_loader = resource_loader
         self.resource_interceptor = resource_interceptor
@@ -320,11 +317,9 @@ class Browser:
         #: when a context is created rather than passed on unread.
         self.http_options = dict(http_options or {})
         self.ws_options = dict(ws_options or {})
-        #: The proxy every context starts from; ``None`` is a direct connection
-        #: and ``""`` asks for one explicitly (see :mod:`pyv8c.network.proxy`).
+        #: The proxy contexts start from: ``None`` is direct, ``""`` asks for it.
         self.proxy = normalize_proxy(proxy)
-        #: Headers every host request starts from, on top of the ones derived
-        #: from the browser environment (see ``platform.net.PageNet``).
+        #: Headers every host request starts from, on top of the environment ones.
         self.default_headers = dict(default_headers or {})
         self.trace = bool(trace)
         self.traceable = bool(traceable) or self.trace

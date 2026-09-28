@@ -1,8 +1,7 @@
 """The default headers Chromium puts on a request, in the order it sends them.
 
-Measured against Chrome 153 (``docs/request-headers.md``) and derived from pyv8c's
-own environment, so they agree with the user agent and ``userAgentData`` a page
-reports.  ``Host`` and ``Content-Length`` belong to the transport.
+Measured against Chrome 153 (``docs/request-headers.md``); ``Host`` and
+``Content-Length`` belong to the transport.
 """
 from __future__ import annotations
 
@@ -131,8 +130,8 @@ def fetch_mode(destination, request_mode=None) -> str:
 def same_site(left, right) -> bool:
     """Whether two URLs share a scheme and a registrable domain.
 
-    The registrable domain is the last two labels, so ``a.co.uk`` and ``b.co.uk``
-    read as one site -- the one place this cannot promise Chrome's answer.
+    The registrable domain is the last two labels -- the one place this cannot
+    promise Chrome's answer.
     """
     left_parts, right_parts = _parts(left), _parts(right)
     if not left_parts or not right_parts:
@@ -171,10 +170,8 @@ def referer_for(url, current_url) -> str:
 def include_origin(url, current_url, mode, method) -> bool:
     """Whether an ``Origin`` header belongs here: an unsafe method, or CORS.
 
-    Measured: a same-origin GET fetch carries none, a same-origin POST does, a
-    cross-origin GET does -- and so does a form POST, which navigates rather
-    than fetches.  All four follow the one Fetch rule: an unsafe method always
-    sends the origin, a safe one only sends it for a cross-origin CORS request.
+    Measured: a same-origin GET fetch carries none, a same-origin POST does, and
+    so does a cross-origin GET or form POST.
     """
     if not current_url:
         return False
@@ -189,17 +186,12 @@ def browser_headers(environment, *, destination="empty", mode=None, method="GET"
                     extra=None) -> dict:
     """The headers Chromium would send for one request, in Chromium's order.
 
-    ``browser_initiated`` marks a navigation the browser started, which has no
-    initiator: no ``Referer``, ``Sec-Fetch-Site: none`` and ``Sec-Fetch-User``.
-    ``user_activated`` is the other source of ``Sec-Fetch-User``: a navigation a
-    user gesture asked for, which is how a clicked submit button differs from
-    one a script presses.  ``http_version`` decides ``Connection``, which only
-    HTTP/1 carries.
-
-    ``content_type`` is what a request with a body declares, placed where
-    Chromium puts it on a navigation; ``extra`` is the caller's own headers: a
-    name it gives replaces the default and is spliced where Chrome puts a
-    script-set header.
+    ``browser_initiated`` marks a browser-started navigation, which has no
+    initiator: no ``Referer``, ``Sec-Fetch-Site: none`` and ``Sec-Fetch-User``,
+    whose other source is the user gesture ``user_activated`` records.
+    ``http_version`` decides ``Connection``, which only HTTP/1 carries.
+    ``extra`` replaces defaults and is spliced where Chrome puts a script-set
+    header.
     """
     hints = client_hint_headers(environment.client_hints)
     referer = "" if browser_initiated else referer_for(url, current_url)

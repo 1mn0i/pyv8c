@@ -5,20 +5,15 @@ import pyv8
 from ..foundation.errors import NotFoundError
 from ..web.dom.events import Event
 
-#: Event types the host builds as a richer class than ``Event``.  Types that are
-#: missing here fall back to ``Event``; the interface itself is materialized on
-#: demand so lazy events never inflate realm startup.
+#: Event types the host builds as a richer class than ``Event``; others fall back to ``Event``.
 EVENT_CLASS_BY_TYPE = {
-    # Mouse family
     "click": "MouseEvent", "dblclick": "MouseEvent", "auxclick": "MouseEvent",
     "contextmenu": "MouseEvent", "mousedown": "MouseEvent", "mouseup": "MouseEvent",
     "mousemove": "MouseEvent", "mouseover": "MouseEvent", "mouseout": "MouseEvent",
     "mouseenter": "MouseEvent", "mouseleave": "MouseEvent",
-    # Focus, text input and keyboard
     "focus": "FocusEvent", "blur": "FocusEvent", "focusin": "FocusEvent", "focusout": "FocusEvent",
     "input": "InputEvent", "beforeinput": "InputEvent",
     "keydown": "KeyboardEvent", "keyup": "KeyboardEvent", "keypress": "KeyboardEvent",
-    # Pointer, wheel and composition
     "pointerdown": "PointerEvent", "pointerup": "PointerEvent", "pointermove": "PointerEvent",
     "pointerover": "PointerEvent", "pointerout": "PointerEvent", "pointerenter": "PointerEvent",
     "pointerleave": "PointerEvent", "pointercancel": "PointerEvent",
@@ -26,25 +21,20 @@ EVENT_CLASS_BY_TYPE = {
     "wheel": "WheelEvent",
     "compositionstart": "CompositionEvent", "compositionupdate": "CompositionEvent",
     "compositionend": "CompositionEvent",
-    # Navigation, messaging and page visibility
     "popstate": "PopStateEvent", "hashchange": "HashChangeEvent", "storage": "StorageEvent",
     "message": "MessageEvent", "messageerror": "MessageEvent",
     "unhandledrejection": "PromiseRejectionEvent", "rejectionhandled": "PromiseRejectionEvent",
     "pageshow": "PageTransitionEvent", "pagehide": "PageTransitionEvent",
     "beforeunload": "BeforeUnloadEvent",
-    # Animation and transition
     "animationstart": "AnimationEvent", "animationend": "AnimationEvent",
     "animationiteration": "AnimationEvent", "animationcancel": "AnimationEvent",
     "transitionrun": "TransitionEvent", "transitionstart": "TransitionEvent",
     "transitionend": "TransitionEvent", "transitioncancel": "TransitionEvent",
-    # Load progress
     "error": "ErrorEvent", "progress": "ProgressEvent",
     "loadstart": "ProgressEvent", "loadend": "ProgressEvent",
 }
 
-#: Host-dispatched types that bubble by default, mirroring Blink's defaults, so
-#: ``page.dispatch_event("click", ...)`` reaches document-level delegates without
-#: the caller spelling ``bubbles`` out.
+#: Host-dispatched types that bubble by default, mirroring Blink's defaults.
 BUBBLING_EVENT_TYPES = frozenset((
     "click", "dblclick", "auxclick", "contextmenu",
     "mousedown", "mouseup", "mousemove", "mouseover", "mouseout",
@@ -77,14 +67,11 @@ class DocumentLifecycle:
         self.document_load_fired = False
         self.load_waiters = []
 
-    # -- event dispatch ------------------------------------------------
-
     def materialize_event_class(self, event_class):
         """Resolve ``event_class`` (an interface name or a class) for this realm.
 
-        The native side needs a committed class config before a Python-built
-        event can become a JS object, so a named interface is materialized
-        through this realm's binding session; the second call is a no-op.
+        The native side needs a committed class config before a Python-built event
+        can become a JS object; a second call is a no-op.
         """
         name = event_class if isinstance(event_class, str) else getattr(
             getattr(event_class, "__idl_spec__", None), "name", None
@@ -102,9 +89,8 @@ class DocumentLifecycle:
     def event_class(self, event_type, event_class=None):
         """The implementation class used to build one dispatched event.
 
-        ``event_class`` names the interface to build; when omitted the event
-        type picks a default from :data:`EVENT_CLASS_BY_TYPE`, falling back to
-        ``Event``.
+        When ``event_class`` is omitted, the type picks a default from
+        :data:`EVENT_CLASS_BY_TYPE`.
         """
         return self.materialize_event_class(
             event_class or EVENT_CLASS_BY_TYPE.get(str(event_type), "Event")
@@ -114,9 +100,8 @@ class DocumentLifecycle:
                             propagates=True):
         """Dispatch one trusted event at *target* and return it.
 
-        *propagates* is ``False`` for the enter/leave pair, whose propagation
-        path is the target alone -- Chromium dispatches ``mouseenter`` and its
-        relatives that way, so no ancestor capture listener sees them.
+        *propagates* is ``False`` for the enter/leave pair: Chromium dispatches
+        ``mouseenter`` and relatives at the target alone.
         """
         cls = Event if event_class is None else self.materialize_event_class(event_class)
         event = cls(event_type, options or {})
@@ -130,9 +115,7 @@ class DocumentLifecycle:
     def dispatch_event(self, event_type, *, target="window", selector=None, event_class=None, init=None):
         """Build a trusted event of the type's default class and dispatch it.
 
-        Returns ``True`` when the event was not cancelled.  ``target`` is
-        ``"window"``, ``"document"`` or a DOM node; ``selector`` resolves the
-        target from the current document instead.
+        Returns ``True`` when the event was not cancelled.
         """
         node = self.event_target(target, selector)
         data = dict(init or {})
@@ -200,18 +183,14 @@ class DocumentLifecycle:
                               column=0, value=None):
         """Fire ``error`` for *error*, or for the pieces V8 reported directly.
 
-        An exception the embedder caught arrives as a Python object and carries
-        its own text and, usually, the JavaScript value behind it.  One V8
-        raised on its own -- inside a microtask job -- never comes back to
-        Python as an exception, so the isolate reports the message, position and
-        thrown value instead; both spellings build the same ``ErrorEvent``.
+        An exception raised inside a microtask job never returns to Python, so
+        the isolate reports its message, position and thrown value instead.
         """
         if node is not None:
             self.dispatch_page_event("error", node, {"bubbles": False})
         if message is None:
-            # A browser hands page handlers the original JavaScript error (the
-            # fifth ``onerror`` argument), so a wrapper from the binding layer is
-            # replaced by the JS value it stands for when there is one.
+            # A browser hands handlers the original JavaScript error, so a binding
+            # wrapper is replaced by the JS value it stands for.
             original = getattr(error, "original", None)
             message = str(error)
             value = error if original is None else original
@@ -231,10 +210,9 @@ class DocumentLifecycle:
     def dispatch_rejection(self, event_type, promise, reason):
         """Fire ``unhandledrejection`` or ``rejectionhandled`` on the window.
 
-        The environment can see a rejected promise but not the handlers attached
-        to it, so the event is built from what V8 named.  Its revocation
-        notification carries no value, which leaves ``reason`` null on a
-        ``rejectionhandled``; the promise member still reaches it.
+        The environment cannot see the handlers attached to a rejected promise,
+        so the event is built from what V8 named; a ``rejectionhandled`` carries
+        no reason.
         """
         event = self.materialize_event_class(EVENT_CLASS_BY_TYPE[event_type])(
             event_type, {"promise": promise, "reason": reason},
@@ -243,13 +221,10 @@ class DocumentLifecycle:
         self.page.window.fn_dispatchEvent(event)
         return event
 
-    # -- page visibility -----------------------------------------------
-
     def set_visibility(self, hidden):
         """Flip the document visibility state and fire the lifecycle events.
 
-        Returns ``True`` when the state actually changed; a redundant call is a
-        no-op, matching the browser's "only on transition" contract.
+        A redundant call is a no-op, matching the browser's transition-only contract.
         """
         page = self.page
         hidden = bool(hidden)
@@ -259,8 +234,6 @@ class DocumentLifecycle:
         self.dispatch_page_event("visibilitychange", page.document, {"bubbles": True})
         self.dispatch_page_event("freeze" if hidden else "resume", page.document, {"bubbles": False})
         return True
-
-    # -- ready-state transitions ---------------------------------------
 
     def set_ready_state(self, value):
         if self.page.document.ready_state == value:
@@ -288,8 +261,7 @@ class DocumentLifecycle:
             return
         self.document_load_fired = True
         self.set_ready_state("complete")
-        # A window's load event is fired at the window with the document as its
-        # target, which is what a page -- and a script watching for it -- reads.
+        # A window's load event is fired at the window with the document as its target.
         event = self.event_class("load")("load", {"bubbles": False})
         event._trusted = True
         event.target = page.document

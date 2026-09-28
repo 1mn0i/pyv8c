@@ -1,7 +1,7 @@
 """The cycronet engine: one optional client that can serve both roles.
 
-Named for both roles a context shares one instance, so requests and sockets share
-one connection cache.
+Naming it for both roles shares one instance, so requests and sockets share one
+connection cache.
 """
 import importlib
 import inspect
@@ -51,9 +51,8 @@ class CronetTransport:
     def accepted_option_keys(cls, kind: str = "http") -> frozenset[str] | None:
         """The keys the *kind* role's options may carry: the client's, plus ours.
 
-        Every option left over goes straight to the installed client, so its own
-        constructor is the list.  Only the request role owns a thread pool, which
-        is what ``max_workers`` configures.
+        Leftovers go straight to the installed client, so its constructor is the list;
+        only the request role owns a thread pool, configured by ``max_workers``.
         """
         client_keys = signature_option_keys(_cycronet_client_type(_cycronet_module()))
         if client_keys is None:

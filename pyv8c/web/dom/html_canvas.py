@@ -16,8 +16,7 @@ from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
 from .html_elements import HTMLElement
 
-#: ``textBaseline`` accepts these spellings; any other value leaves the state
-#: untouched, which is how the canvas state attributes treat unknown values.
+#: ``textBaseline`` accepts these spellings; any other value leaves the state untouched.
 _TEXT_BASELINES = frozenset(("alphabetic", "bottom", "hanging", "ideographic", "middle", "top"))
 
 

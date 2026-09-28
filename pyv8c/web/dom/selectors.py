@@ -5,10 +5,9 @@ from functools import lru_cache
 from ...foundation.errors import V8SyntaxError
 from .html_elements import Element
 
-# Selector parser failures cross the Python/V8 binding boundary.  Raising the
-# project's marked error type lets V8 materialize a native SyntaxError that
-# page scripts can catch, instead of printing a Python traceback and exposing
-# a generic Error.
+# Selector parser failures cross the Python/V8 binding boundary; raising the
+# project's marked error type lets V8 materialize a native SyntaxError a page can
+# catch, rather than a Python traceback.
 SyntaxError = V8SyntaxError
 
 @dataclass

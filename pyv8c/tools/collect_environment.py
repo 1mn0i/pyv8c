@@ -1,11 +1,10 @@
 """Read a real browser's environment into a profile ``BrowserEnvironment`` can load.
 
-The collector starts the Chrome already installed on the machine with a debugging
-port, reads every key a browser reports from a local secure origin, and writes a
-profile.  Nothing is downloaded and nothing is guessed: a key that cannot be read
-fails the run, so a written profile is whole.  Headless runs report
-``HeadlessChrome`` in the user agent; use ``headed=True`` for the profile a normal
-visit presents.
+The collector starts the locally installed Chrome with a debugging port, reads every
+key a browser reports from a local secure origin, and writes a profile.  Nothing is
+downloaded and nothing is guessed: a key that cannot be read fails the run, so a
+written profile is whole.  Headless runs report ``HeadlessChrome`` in the user agent;
+use ``headed=True`` for the profile a normal visit presents.
 
 Usage::
 
@@ -144,8 +143,7 @@ def read_devtools_port(profile_dir, *, timeout, poll=0.05):
     path = Path(profile_dir) / "DevToolsActivePort"
     deadline = time.monotonic() + timeout
     while True:
-        # Chrome writes the file as this reads it: half a file, or a share
-        # violation while it holds the handle, both mean "not yet".
+        # Chrome writes the file as this reads it: half a file or a share violation means "not yet".
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
         except OSError:
@@ -289,8 +287,7 @@ def read_environment(chrome, *, headed=False, accept_lang=None, window_size=None
             "--disable-extensions",
             "--disable-background-networking",
             "--disable-sync",
-            # Attaching a debugger is our instrumentation, not the environment:
-            # without this the browser reports ``navigator.webdriver`` as true.
+            # Instrumentation, not environment: without this the browser reports ``navigator.webdriver`` as true.
             "--disable-blink-features=AutomationControlled",
         ]
         if not headed:

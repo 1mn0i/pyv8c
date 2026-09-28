@@ -1,22 +1,10 @@
 """Which element has focus, and the events that moving it fires.
 
-The parts of Chromium's model this DOM keeps, each one measured against
-Chrome 153 rather than read off the specification:
-
-* ``document.activeElement`` is the body before anything was focused, and
-  focusing the body again is not a transition -- nothing is dispatched;
-* a focusable area is a form control that is neither disabled nor
-  ``type=hidden``, an ``a``/``area`` carrying ``href``, an ``iframe``, or any
-  element with a ``tabindex`` attribute.  ``focus()`` on anything else does
-  nothing, which is what Chrome does for a plain ``div``;
-* a click focuses the nearest focusable ancestor of the element it lands on,
-  and clears focus when there is none: clicking a plain ``div`` moves focus
-  off an input;
-* focusing happens on ``mousedown``, so a ``preventDefault`` there leaves
-  focus where it was.
-
-Only the element itself is tracked: there is no tab order, no shadow DOM, and
-no ``:focus`` styling, so nothing here moves focus without being asked to.
+Focusable: a non-disabled form control (not ``type=hidden``), an ``a``/``area``
+with ``href``, an ``iframe``, or anything carrying ``tabindex``.  A click
+focuses the nearest focusable ancestor, else clears focus, and does so on
+``mousedown``.  ``activeElement`` is the body before anything was focused.
+Measured on Chrome 153.
 """
 
 import pyv8
@@ -41,8 +29,8 @@ def _disabled(element):
 def focusable(element):
     """Whether ``focus()`` does anything on *element*, as Chrome decides it.
 
-    A disconnected element is not focusable, and neither is a disabled form
-    control even when it carries a ``tabindex``: disabled controls are inert.
+    A disconnected element is not focusable, and a disabled control is inert
+    even when it carries ``tabindex``.
     """
     if element is None or element is pyv8.Null or not getattr(element, "isConnected", False):
         return False
@@ -62,11 +50,8 @@ def focusable(element):
 
 
 def active_element(document):
-    """What ``document.activeElement`` reports.
-
-    The focused element while it is still in the document; otherwise the body,
-    the root element, or ``null`` for a document that was never given one.
-    """
+    """What ``document.activeElement`` reports: the focused element while it is
+    connected, else the body, the root, or ``null``."""
     focused = getattr(document, "_focused_element", None)
     if focused is not None and getattr(focused, "isConnected", False):
         return focused
@@ -87,10 +72,9 @@ def _fire(target, event_type, *, bubbles, related):
 def _move_focus(document, element):
     """Give *document* a new focused element, firing the transition.
 
-    ``blur``/``focusout`` go to the element that had focus and ``focus``/
-    ``focusin`` to the one taking it; a document that had nothing focused
-    dispatches neither pair's first half, which is why focusing the first
-    element of a page reports only ``focus`` and ``focusin``.
+    ``blur``/``focusout`` go to the element losing focus and ``focus``/
+    ``focusin`` to the one taking it; with nothing previously focused, only the
+    second pair fires.
     """
     previous = getattr(document, "_focused_element", None)
     if previous is element:
@@ -121,11 +105,8 @@ def blur(document):
 
 
 def focus_on_mousedown(node):
-    """The focus a press lands on: the nearest focusable ancestor, else nothing.
-
-    Chrome walks up from the pressed element and focuses the first focusable
-    area it finds; finding none moves focus off whatever had it.
-    """
+    """The focus a press lands on: the nearest focusable ancestor at or above
+    *node*, else nothing (moving focus off whatever had it)."""
     document = getattr(node, "ownerDocument", None)
     if document is None:
         return False

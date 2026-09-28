@@ -38,13 +38,10 @@ from ..web.dom.hit_testing import border_box, element_from_point
 BUTTON_INDEX = {"left": 0, "middle": 1, "right": 2}
 BUTTON_BIT = {"left": 1, "middle": 4, "right": 2}
 
-#: The pointer the mouse is reported as: the primary mouse pointer, as Chrome
-#: describes it on every pointer event it derives from mouse input.
+#: The primary mouse pointer, as Chrome describes it on pointer events.
 POINTER_ID = 1
 
-#: A second click within this many seconds and this many pixels, on the same
-#: element, counts as another click of the same run -- Chromium's own window
-#: for reporting ``detail`` 2 and firing ``dblclick``.
+#: Chromium's own window for reporting ``detail`` 2 and firing ``dblclick``.
 MULTI_CLICK_INTERVAL = 0.5
 MULTI_CLICK_DISTANCE = 4.0
 
@@ -113,8 +110,6 @@ class MouseInput:
         self._count = 0
         self._last_click = None
 
-    # -- state -------------------------------------------------------------
-
     @property
     def position(self) -> tuple[float, float]:
         """The mouse position as ``(x, y)`` in viewport coordinates."""
@@ -124,8 +119,6 @@ class MouseInput:
     def pressed(self) -> frozenset[str]:
         """The buttons currently held down, as a set of names."""
         return frozenset(name for name, bit in BUTTON_BIT.items() if self._bits & bit)
-
-    # -- moving and pressing ------------------------------------------------
 
     def move(self, x: float, y: float, *, steps: int = 1) -> None:
         """Move the mouse to ``(x, y)``, moving through *steps* positions.
@@ -193,8 +186,6 @@ class MouseInput:
             self._click_element, element, self._button(button), int(click_count), force,
         )
 
-    # -- the owner-thread half ---------------------------------------------
-
     def _call(self, action, *args):
         return self._page.realm.executor.call(action, *args)
 
@@ -231,8 +222,8 @@ class MouseInput:
         if interface == "PointerEvent":
             options.update({"pointerId": POINTER_ID, "pointerType": "mouse", "isPrimary": True})
             if not event_type.endswith(("down", "up")):
-                # A pointer event that reports no button transition says so with
-                # -1; the mouse event beside it keeps the 0 Chromium gives it.
+                # No button transition is -1 on a pointer event; the mouse event
+                # beside it keeps the 0 Chromium gives it.
                 options["button"] = -1
         return self._page.lifecycle.dispatch_page_event(
             event_type, target, options, event_class=interface, propagates=propagates,
@@ -298,8 +289,7 @@ class MouseInput:
         if not accepts_mouse_events(target):
             return
         event = self._emit("mousedown", target, button=BUTTON_INDEX[button], detail=count)
-        # Focus is the one thing a cancelled press takes away: the click that
-        # follows still fires, as Chrome's does.
+        # Focus is all a cancelled press takes away; the click still fires.
         if event is None or not event.defaultPrevented:
             focus_on_mousedown(target)
 

@@ -1,10 +1,8 @@
 """The timer and microtask surface every window-like global exposes.
 
-``Window`` and ``WorkerGlobalScope`` offer the same scheduling methods, and the
-HTML specification gives both the same algorithms, so the implementations live
-here once and each global mixes them in.  The IDL declarations stay with the
-interface that exposes them: a page marks them cross-origin visible, a worker
-does not.
+``Window`` and ``WorkerGlobalScope`` share these algorithms, so the code lives
+here and each global mixes it in; the IDL declarations stay with the interface
+that exposes them.
 """
 
 import pyv8
@@ -21,9 +19,8 @@ from ...foundation.arguments import (
 class _SchedulingMixin:
     """``setTimeout``/``setInterval``/``queueMicrotask`` for one global scope.
 
-    Mixing this in requires two service facets: ``task_services``, which owns
-    the realm's timer queue, and ``realm_services`` for scripting and the
-    microtask queue.
+    Mixing this in requires ``task_services`` (timer queue) and ``realm_services``
+    (scripting and microtask queue).
     """
 
     #: Interface name the missing-argument errors report.
@@ -63,9 +60,8 @@ class _SchedulingMixin:
     def fn_requestAnimationFrame(self, callback=MISSING, *_extra):
         if callback is MISSING:
             raise missing_error(self._scheduling_interface, 'requestAnimationFrame', 1, 0, constructor=False)
-        # The realm has no compositor driving frames, so a frame request is a
-        # timer that is due immediately, which is what the callback observable
-        # behaviour reduces to.
+        # No compositor drives frames, so a frame request is a timer due
+        # immediately, which is what the callback-observable behaviour reduces to.
         return self._services.task_services.schedule(callback_value(callback), 0, repeat=False)
 
     def fn_cancelAnimationFrame(self, ident=0, *_extra):

@@ -1,7 +1,6 @@
 """``Screen``: the display the window was created on.
 
-Every field is read from the browser environment's screen configuration, so a
-page sees the dimensions its environment was given.
+Every field is read from the browser environment's screen configuration.
 """
 
 from pyv8 import AttributeSpec, IdlSpec
