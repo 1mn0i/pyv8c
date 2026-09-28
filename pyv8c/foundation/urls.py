@@ -1,7 +1,9 @@
 """URL and origin primitives shared by every layer.
 
 Origin computation is a pure URL fact, so the special-scheme list and default-port
-table live here and any layer can ask for an origin without a transport.
+table live here and any layer can ask for an origin without a transport.  The
+urlencoded serializers and the header-name rule ride along, so the wire spellings
+sit in one place.
 """
 
 from urllib.parse import urljoin, urlsplit
@@ -9,7 +11,7 @@ from urllib.parse import urljoin, urlsplit
 __all__ = [
     "DEFAULT_PORTS", "SPECIAL_SCHEMES",
     "origin_tuple", "same_origin", "serialize_origin", "origin_string",
-    "absolute_url", "quote_form", "form_urlencoded",
+    "absolute_url", "quote_form", "form_urlencoded", "credentials_netloc", "header_set",
 ]
 
 #: Schemes whose origin is derived from host and port ("special schemes"); the rest are opaque.
@@ -112,6 +114,23 @@ def quote_form(text):
     return "".join(out)
 
 
+def credentials_netloc(host, port, username, password):
+    """The ``netloc`` that *username* and *password* spell over *host* and *port*."""
+    if port is not None:
+        host += ":" + str(port)
+    if not username and not password:
+        return host
+    return f"{username}:{password}@{host}" if password else f"{username}@{host}"
+
+
 def form_urlencoded(entries):
     """The ``application/x-www-form-urlencoded`` spelling of *entries*."""
     return "&".join(f"{quote_form(name)}={quote_form(value)}" for name, value in entries)
+
+
+def header_set(headers, name, value):
+    """Set *name* unless a header of that name is already present."""
+    lowered = str(name).lower()
+    if any(str(key).lower() == lowered for key in headers):
+        return
+    headers[name] = value

@@ -11,12 +11,12 @@ from threading import RLock
 from loguru import logger  # patch target for cookie-change logging tests
 
 from ..foundation.errors import InvalidStateError
+from .backend import RequestDelivery
 from .cookies import CookieJar
 from .models import (
     NetworkRequest,
     NetworkResponse,
     NetworkUnavailableError,
-    RequestHandle,
     cookie_header,
 )
 from .registry import signature_option_keys
@@ -39,7 +39,7 @@ def _cycronet_client_type(module):
     return client_type
 
 
-class CronetTransport:
+class CronetTransport(RequestDelivery):
     """Owns one optional cycronet client, which serves both engine roles.
 
     The same client performs requests and opens sockets, so naming cycronet for
@@ -152,33 +152,6 @@ class CronetTransport:
                 continue
             path = getattr(cookie, "path", "") or "/"
             self.cookies.add_from_response(url, f"{name}={getattr(cookie, 'value', '')}; Path={path}")
-
-    def request_sync(self, request: NetworkRequest): return self._call(request)
-
-    def request_async(self, tasks, request, callback):
-        handle = RequestHandle()
-        with self._lock:
-            if self._closed:
-                tasks.post_task(lambda: callback(None, RuntimeError("network backend is closed")))
-                return handle
-            tasks.begin_network()
-            future = self.executor.submit(self._call, request)
-            handle.future = future
-
-        def complete(done):
-            try:
-                result, error = done.result(), None
-            except BaseException as exc:
-                result, error = None, exc
-            if handle.cancelled or tasks.closed:
-                tasks.complete_network()
-                return
-            tasks.post_task(
-                lambda: (tasks.complete_network(), callback(result, error))
-                if not handle.cancelled else tasks.complete_network()
-            )
-        future.add_done_callback(complete)
-        return handle
 
     def websocket(self, page, url, protocols, callbacks, options=None):
         if self._closed:

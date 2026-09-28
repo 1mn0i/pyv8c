@@ -6,7 +6,6 @@ defaults.  A viewport that never resizes never fires a change.
 
 import re
 
-import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface

@@ -11,6 +11,7 @@ from threading import RLock
 
 from loguru import logger
 
+from ..foundation.urls import header_set as _header_set
 from .models import NetworkUnavailableError
 from .proxy import PROXY_OPTION, websockets_proxy
 
@@ -58,14 +59,6 @@ def _allows_cookies(url):
         if url.startswith(scheme):
             return equivalent + url[len(scheme):]
     return url
-
-
-def _header_set(headers, name, value):
-    """Set *name* unless a header of that name is already present."""
-    lowered = str(name).lower()
-    if any(str(key).lower() == lowered for key in headers):
-        return
-    headers[name] = value
 
 
 class _Socket:

@@ -2,7 +2,6 @@
 page starts in.
 """
 
-import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface

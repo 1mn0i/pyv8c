@@ -12,12 +12,12 @@ from threading import RLock
 from loguru import logger
 
 from ..foundation.errors import InvalidStateError, NetworkError
+from .backend import RequestDelivery
 from .cookies import CookieJar
 from .models import (
     NetworkRequest,
     NetworkResponse,
     NetworkUnavailableError,
-    RequestHandle,
     cookie_header,
 )
 from .proxy import PROXY_OPTION, curl_proxies
@@ -48,7 +48,7 @@ def _curl_cffi_session_type(module):
     return session_type
 
 
-class CurlCffiTransport:
+class CurlCffiTransport(RequestDelivery):
     """HTTP transport backed by one curl_cffi session.
 
     ``use_thread_local_curl`` (curl_cffi's default) gives each thread its own
@@ -175,39 +175,6 @@ class CurlCffiTransport:
             "basic",
             float(total_seconds()) if callable(total_seconds) else float(fallback_elapsed),
         )
-
-    def request_sync(self, request: NetworkRequest): return self._call(request)
-
-    def request_async(self, tasks, request, callback):
-        """Run *request* on the delivery pool, answering on the realm's queue.
-
-        The callback is posted through the task capability, so JavaScript is touched only
-        on the owner thread; in-flight counters let navigation waits see the request.
-        """
-        handle = RequestHandle()
-        with self._lock:
-            if self._closed:
-                tasks.post_task(lambda: callback(None, RuntimeError("network backend is closed")))
-                return handle
-            tasks.begin_network()
-            future = self.executor.submit(self._call, request)
-            handle.future = future
-
-        def complete(done):
-            try:
-                result, error = done.result(), None
-            except BaseException as exc:  # delivered to the caller, not raised here
-                result, error = None, exc
-            if handle.cancelled or tasks.closed:
-                tasks.complete_network()
-                return
-            tasks.post_task(
-                lambda: (tasks.complete_network(), callback(result, error))
-                if not handle.cancelled else tasks.complete_network()
-            )
-
-        future.add_done_callback(complete)
-        return handle
 
     def close(self):
         with self._lock:

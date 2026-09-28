@@ -3,11 +3,10 @@
 Nothing else here takes a lock, so every request is granted at once.
 """
 
-import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
-from ...foundation.arguments import MISSING, callback_value, dictionary, dom_string, missing_error
+from ...foundation.arguments import MISSING, dictionary, dom_string, missing_error
 
 
 @interface('Lock', None)

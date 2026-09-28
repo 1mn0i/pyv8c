@@ -11,32 +11,17 @@ from types import MappingProxyType
 from typing import Literal
 
 import pyv8  # patch target for native Context instrumentation
-from ..foundation.logging import logger
 
 from ..engine.universe import BaselineRepository, InterfaceUniverse
-from ..foundation.arguments import is_nullish
 from ..foundation.environment import BrowserEnvironment
 from ..foundation.errors import InvalidStateError, NetworkError
-from ..foundation.lifecycle import ResourceScope
-from ..foundation.rejections import RejectionTracker
-from ..foundation.tasks import TaskQueue
 from ..foundation.urls import origin_string, origin_tuple
-from ..web.bom.window import Window
-from ..web.dom.document import Document
 from ..network.assembly import assemble_backend
 from ..network.cookies import CookieJar
 from ..network.proxy import normalize_proxy
 from ..network.registry import HttpTransport, WebSocketTransport
 from .bootstrap import bootstrap_runtime
-from .lifecycle import DocumentLifecycle
-from .navigation import NavigationController
-from .net import PageNet
 from .page import Page
-from .realms import PageRealm
-from .resource_loading import ResourceController
-from .scripting import ScriptController
-from .services import PageServices
-from .state import Ownership
 
 
 class BrowserContext:

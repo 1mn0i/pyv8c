@@ -9,6 +9,7 @@ from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, is_nullish, missing_error
 from ...foundation.errors import InvalidCharacterError, NotFoundError, V8SyntaxError, V8TypeError
+from ...foundation.urls import credentials_netloc
 from ...foundation.urls import origin_string
 from .character_data import Text
 from .collections import (
@@ -16,6 +17,7 @@ from .collections import (
     DOMTokenList,
     HTMLCollection,
     NamedNodeMap,
+    tag_name_ns_collection,
 )
 from .css import CSSStyleDeclaration
 from .mixins import _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, _ParentNodeMixin
@@ -269,16 +271,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             if wanted.issubset(set(node.get_className().split()))
         ])
     def fn_getElementsByTagNameNS(self, namespace=MISSING, local_name=MISSING, *_extra):
-        if namespace is MISSING:
-            raise missing_error('Element', 'getElementsByTagNameNS', 2, 0, constructor=False)
-        if local_name is MISSING:
-            raise missing_error('Element', 'getElementsByTagNameNS', 2, 1, constructor=False)
-        if not is_nullish(namespace):
-            namespace = dom_string(namespace)
-        local_name = dom_string(local_name)
-        if namespace not in (None, pyv8.Null, pyv8.Undefined, "", "*", XHTML_NAMESPACE):
-            return HTMLCollection(owner=self, getter=lambda: [])
-        return self.fn_getElementsByTagName(local_name)
+        return tag_name_ns_collection(self, 'Element', namespace, local_name)
     def _insert_adjacent(self, where, nodes):
         where = str(where).lower()
         if where not in _ADJACENT_POSITIONS:
@@ -874,11 +867,8 @@ class HTMLAnchorElement(HTMLElement):
         self._set_credentials(username=self.get_username(), password=str(dom_string(value)))
     def _set_credentials(self, *, username, password):
         parts = self._parts()
-        host = parts.hostname or ""
-        if parts.port is not None:
-            host += ":" + str(parts.port)
-        credentials = (username + (":" + password if password else "") + "@") if username or password else ""
-        self._set_component(netloc=credentials + host)
+        self._set_component(
+            netloc=credentials_netloc(parts.hostname or "", parts.port, username, password))
     def get_host(self): return self._parts().netloc.rsplit("@", 1)[-1]
     def set_host(self, value): self._set_component(netloc=str(dom_string(value)))
     def get_hostname(self): return self._parts().hostname or ""

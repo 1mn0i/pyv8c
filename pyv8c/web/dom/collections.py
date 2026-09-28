@@ -7,14 +7,32 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
-from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, missing_error
+from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, is_nullish, missing_error
 from ...foundation.errors import (
     InvalidCharacterError,
     V8TypeError,
     dom_exception,
 )
 from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
-from .utils import ITERABLE_FLAGS, OBJECT_PROTOTYPE_NAMES, camel_name, dash_name
+from .utils import ITERABLE_FLAGS, OBJECT_PROTOTYPE_NAMES, XHTML_NAMESPACE, camel_name, dash_name
+
+
+def tag_name_ns_collection(target, interface, namespace, local_name):
+    """The collection a ``getElementsByTagNameNS`` call answers with.
+
+    ``Document`` and ``Element`` run the same algorithm; only the name they
+    report in a missing-argument error differs.
+    """
+    if namespace is MISSING:
+        raise missing_error(interface, 'getElementsByTagNameNS', 2, 0, constructor=False)
+    if local_name is MISSING:
+        raise missing_error(interface, 'getElementsByTagNameNS', 2, 1, constructor=False)
+    if not is_nullish(namespace):
+        namespace = dom_string(namespace)
+    local_name = dom_string(local_name)
+    if namespace not in (None, pyv8.Null, pyv8.Undefined, "", "*", XHTML_NAMESPACE):
+        return HTMLCollection(owner=target, getter=lambda: [])
+    return target.fn_getElementsByTagName(local_name)
 
 
 @interface('NodeList', None)

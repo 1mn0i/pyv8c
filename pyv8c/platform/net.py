@@ -18,24 +18,13 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from urllib.parse import urlencode, urljoin, urlsplit
 
 from ..foundation.errors import InvalidStateError, NetworkError
+from ..foundation.urls import header_set as _header_set
 from ..network.models import NetworkRequest, NetworkResponse
 from .js_http import JsHttpController, JsHttpResponse
 from .request_headers import browser_headers
 
 #: Methods the convenience helpers exist for.
 _METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
-
-
-def _header_set(headers, name, value):
-    """Set *name* unless a header with that name is already present.
-
-    Header names are case-insensitive on the wire, so a caller's ``content-type``
-    has to win over the one this module would add.
-    """
-    lowered = str(name).lower()
-    if any(str(key).lower() == lowered for key in headers):
-        return
-    headers[name] = value
 
 
 def _merge_headers(*layers):

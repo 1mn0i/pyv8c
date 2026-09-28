@@ -7,13 +7,13 @@ from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error, number
 from ...foundation.errors import InvalidCharacterError, V8TypeError, dom_exception
 from .character_data import Comment, DocumentType, Text
-from .collections import HTMLAllCollection, HTMLCollection, NodeList
+from .collections import HTMLAllCollection, HTMLCollection, NodeList, tag_name_ns_collection
 from .css import StyleSheetList
 from .html_classes import class_for_tag
 from .html_elements import Element
 from .mixins import _ParentNodeMixin
 from .nodes import Attr, DocumentFragment, Node
-from .utils import _VALID_NAME_RE, XHTML_NAMESPACE
+from .utils import _VALID_NAME_RE
 
 
 @interface('Document', 'Node')
@@ -170,10 +170,6 @@ class Document(_ParentNodeMixin, Node):
     def _first_named(self, parent, name):
         return next((child for child in parent._children
                      if isinstance(child, Element) and child.localName == name), None)
-    def _content_index(self):
-        """Where the root element belongs: after the doctype and any leading comment."""
-        return next((position for position, child in enumerate(self._children)
-                     if isinstance(child, (Element, Text))), len(self._children))
     def fn_createExpression(self, expression=MISSING, resolver=None, *_extra):
         """An expression a page compiles once and evaluates against each node."""
         from .xpath import create_expression
@@ -239,17 +235,6 @@ class Document(_ParentNodeMixin, Node):
         if html is not pyv8.Null:
             html.attributes["dir"] = str(dom_string(value))
 
-    def _ensure_skeleton(self):
-        """Fill in whichever of html/head/body was not parsed, never moving an
-        existing node."""
-        html = self._first_named(self, "html")
-        if html is None:
-            html = self._new_element("html")
-            self._adopt_child(html)
-        if self._first_named(html, "head") is None:
-            html._adopt_child(self._new_element("head"), 0)
-        if self._first_named(html, "body") is None:
-            html._adopt_child(self._new_element("body"))
     def _browsing_window(self):
         """The window this document is the active document of, or ``None``."""
         services = getattr(self._services, "document_services", None)
@@ -374,16 +359,7 @@ class Document(_ParentNodeMixin, Node):
         names = set(str(value).split())
         return HTMLCollection(owner=self, getter=lambda: [x for x in self._descendants() if isinstance(x, Element) and names.issubset(set(x.get_className().split()))])
     def fn_getElementsByTagNameNS(self, namespace=MISSING, local_name=MISSING, *_extra):
-        if namespace is MISSING:
-            raise missing_error('Document', 'getElementsByTagNameNS', 2, 0, constructor=False)
-        if local_name is MISSING:
-            raise missing_error('Document', 'getElementsByTagNameNS', 2, 1, constructor=False)
-        if not is_nullish(namespace):
-            namespace = dom_string(namespace)
-        local_name = dom_string(local_name)
-        if namespace not in (None, pyv8.Null, pyv8.Undefined, "", "*", XHTML_NAMESPACE):
-            return HTMLCollection(owner=self, getter=lambda: [])
-        return self.fn_getElementsByTagName(local_name)
+        return tag_name_ns_collection(self, 'Document', namespace, local_name)
     def fn_querySelector(self, selector=MISSING, *_extra):
         if selector is MISSING:
             raise missing_error('Document', 'querySelector', 1, 0, constructor=False)

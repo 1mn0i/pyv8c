@@ -5,7 +5,44 @@ its sockets are one session as far as a server is concerned.
 """
 from threading import RLock
 
-from .models import NetworkUnavailableError
+from .models import NetworkUnavailableError, RequestHandle
+
+
+class RequestDelivery:
+    """The delivery an engine with a pool performs for a host request.
+
+    The engines run the request on their own pool and answer on the realm's
+    queue, so the closed check, the in-flight counters and the hop back to the
+    owner thread live here once.
+    """
+
+    def request_sync(self, request):
+        return self._call(request)
+
+    def request_async(self, tasks, request, callback):
+        handle = RequestHandle()
+        with self._lock:
+            if self._closed:
+                tasks.post_task(lambda: callback(None, RuntimeError("network backend is closed")))
+                return handle
+            tasks.begin_network()
+            future = self.executor.submit(self._call, request)
+            handle.future = future
+
+        def complete(done):
+            try:
+                result, error = done.result(), None
+            except BaseException as exc:  # delivered to the caller, not raised here
+                result, error = None, exc
+            if handle.cancelled or tasks.closed:
+                tasks.complete_network()
+                return
+            tasks.post_task(
+                lambda: (tasks.complete_network(), callback(result, error))
+                if not handle.cancelled else tasks.complete_network()
+            )
+        future.add_done_callback(complete)
+        return handle
 
 
 def _distinct(*parts):

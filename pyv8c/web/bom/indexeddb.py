@@ -1281,6 +1281,48 @@ class IDBTransaction(EventTarget):
         return None
 
 
+def _cursor_arguments(query, direction):
+    """The query and direction a cursor call was made with."""
+    if query is pyv8.Undefined:
+        query = None
+    if direction is pyv8.Undefined:
+        direction = 'next'
+    return query, enum_value(direction, _DIRECTIONS)
+
+
+def _new_cursor(source, query, direction, key_only):
+    """The request a cursor call answers through, and the cursor it walks.
+
+    The caller has already checked that the source is still usable; the store
+    and the index differ only in that check.
+    """
+    if direction not in _DIRECTIONS:
+        raise V8TypeError("The direction parameter is not a valid cursor direction.")
+    key_range = _to_key_range(query)
+    transaction = source._transaction
+    request = IDBRequest(services=source._services, source=source, transaction=transaction)
+    cursor_type = IDBCursor if key_only else IDBCursorWithValue
+    cursor = cursor_type(
+        source=source, key_range=key_range, direction=direction, key_only=key_only,
+        request=request,
+    )
+    transaction._pending += 1
+
+    def run():
+        transaction._pending -= 1
+        if transaction._state == "finished":
+            return
+        transaction._begin_dispatch()
+        try:
+            found = cursor._step()
+            request._succeed(cursor if found is not None else pyv8.Null)
+        finally:
+            transaction._end_dispatch()
+
+    post_or_call(transaction._services, run)
+    return request
+
+
 def _require_usable_store(handle):
     transaction = handle._transaction
     if handle._store is None:
@@ -1616,48 +1658,16 @@ class IDBObjectStore:
         return None
 
     def fn_openCursor(self, query=None, direction='next', *_extra):
-        if query is pyv8.Undefined:
-            query = None
-        if direction is pyv8.Undefined:
-            direction = 'next'
-        direction = enum_value(direction, ('next', 'nextunique', 'prev', 'prevunique'))
+        query, direction = _cursor_arguments(query, direction)
         return self._open_cursor(query, direction, key_only=False)
 
     def fn_openKeyCursor(self, query=None, direction='next', *_extra):
-        if query is pyv8.Undefined:
-            query = None
-        if direction is pyv8.Undefined:
-            direction = 'next'
-        direction = enum_value(direction, ('next', 'nextunique', 'prev', 'prevunique'))
+        query, direction = _cursor_arguments(query, direction)
         return self._open_cursor(query, direction, key_only=True)
 
     def _open_cursor(self, query, direction, key_only):
         _require_usable_store(self)
-        if direction not in _DIRECTIONS:
-            raise V8TypeError("The direction parameter is not a valid cursor direction.")
-        key_range = _to_key_range(query)
-        request = IDBRequest(services=self._services, source=self, transaction=self._transaction)
-        cursor = IDBCursor if key_only else IDBCursorWithValue
-        cursor = cursor(
-            source=self, key_range=key_range, direction=direction, key_only=key_only,
-            request=request,
-        )
-        transaction = self._transaction
-        transaction._pending += 1
-
-        def run():
-            transaction._pending -= 1
-            if transaction._state == "finished":
-                return
-            transaction._begin_dispatch()
-            try:
-                found = cursor._step()
-                request._succeed(cursor if found is not None else pyv8.Null)
-            finally:
-                transaction._end_dispatch()
-
-        post_or_call(transaction._services, run)
-        return request
+        return _new_cursor(self, query, direction, key_only)
 
     def _cursor_update(self, cursor, value):
         primary_key = cursor._primary_key
@@ -1834,48 +1844,16 @@ class IDBIndex:
         return records[0][2] if wants == "value" else _key_to_value(records[0][1])
 
     def fn_openCursor(self, query=None, direction='next', *_extra):
-        if query is pyv8.Undefined:
-            query = None
-        if direction is pyv8.Undefined:
-            direction = 'next'
-        direction = enum_value(direction, ('next', 'nextunique', 'prev', 'prevunique'))
+        query, direction = _cursor_arguments(query, direction)
         return self._open_cursor(query, direction, key_only=False)
 
     def fn_openKeyCursor(self, query=None, direction='next', *_extra):
-        if query is pyv8.Undefined:
-            query = None
-        if direction is pyv8.Undefined:
-            direction = 'next'
-        direction = enum_value(direction, ('next', 'nextunique', 'prev', 'prevunique'))
+        query, direction = _cursor_arguments(query, direction)
         return self._open_cursor(query, direction, key_only=True)
 
     def _open_cursor(self, query, direction, key_only):
         self._require_live()
-        if direction not in _DIRECTIONS:
-            raise V8TypeError("The direction parameter is not a valid cursor direction.")
-        key_range = _to_key_range(query)
-        request = IDBRequest(services=self._services, source=self, transaction=self._transaction)
-        cursor = IDBCursor if key_only else IDBCursorWithValue
-        cursor = cursor(
-            source=self, key_range=key_range, direction=direction, key_only=key_only,
-            request=request,
-        )
-        transaction = self._transaction
-        transaction._pending += 1
-
-        def run():
-            transaction._pending -= 1
-            if transaction._state == "finished":
-                return
-            transaction._begin_dispatch()
-            try:
-                found = cursor._step()
-                request._succeed(cursor if found is not None else pyv8.Null)
-            finally:
-                transaction._end_dispatch()
-
-        post_or_call(transaction._services, run)
-        return request
+        return _new_cursor(self, query, direction, key_only)
 
     def _request(self, operation):
         self._require_live()

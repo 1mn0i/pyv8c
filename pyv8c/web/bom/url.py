@@ -23,7 +23,7 @@ from ...foundation.arguments import (
     usv_string,
 )
 from ...foundation.errors import InvalidStateError, V8TypeError, V8URIError
-from ...foundation.urls import SPECIAL_SCHEMES, form_urlencoded
+from ...foundation.urls import SPECIAL_SCHEMES, credentials_netloc, form_urlencoded
 from ..fetch.blob import Blob
 
 __all__ = ["URL", "URLSearchParams"]
@@ -288,10 +288,8 @@ class URL:
         value = dom_string(value)
         self._set_credentials(username=self.get_username(), password=str(value))
     def _set_credentials(self, *, username, password):
-        parts = self._parts(); host = parts.hostname or ""
-        if parts.port is not None: host += ":" + str(parts.port)
-        credentials = (username + (":" + password if password else "") + "@") if username or password else ""
-        self._replace(netloc=credentials + host)
+        parts = self._parts()
+        self._replace(netloc=credentials_netloc(parts.hostname or "", parts.port, username, password))
     def get_host(self): return self._parts().netloc.rsplit("@", 1)[-1]
     def set_host(self, value):
         value = dom_string(value)
