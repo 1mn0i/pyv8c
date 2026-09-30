@@ -6,7 +6,7 @@ from pyv8.flag import FlagLocation, FlagReceiverCheck
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error
-from ...foundation.clock import now_ms, time_origin
+from ...foundation.clock import clock_of
 from ...foundation.errors import V8TypeError, dom_exception
 from ..dom.events import EventTarget
 
@@ -25,9 +25,9 @@ def _attribute(name, getter=None, setter=None, side_effect=1):
                          side_effect=side_effect)
 
 
-def _now():
+def _now(services=None):
     """Milliseconds since ``timeOrigin``, the unit an entry reports."""
-    return now_ms()
+    return clock_of(services).now_ms()
 
 
 def _double(value, message):
@@ -51,9 +51,14 @@ class PerformanceTiming:
         has_constructor=1,
     )
 
+    def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **_):
+        if services is pyv8.Undefined:
+            services = None
+        self._clock = clock_of(services or _realm)
+
 
 def _timing_reader(field):
-    def read(self): return time_origin() if field == "navigationStart" else 0
+    def read(self): return self._clock.time_origin() if field == "navigationStart" else 0
     return read
 
 
@@ -239,7 +244,7 @@ class PerformanceMark(PerformanceEntry):
     serialized = ()
 
     def __init__(self, name=MISSING, options=None, *, startTime=None, detail=pyv8.Undefined,
-                 navigation_id=1, **_):
+                 navigation_id=1, services=None, **_):
         message = "Failed to construct 'PerformanceMark': "
         if name is MISSING:
             raise missing_error('PerformanceMark', 'constructor', 1, 0, constructor=True)
@@ -250,7 +255,7 @@ class PerformanceMark(PerformanceEntry):
                 startTime = options.get("startTime", pyv8.Undefined)
             if detail is pyv8.Undefined:
                 detail = options.get("detail", pyv8.Undefined)
-        started = _now() if is_nullish(startTime) else _double(
+        started = _now(services) if is_nullish(startTime) else _double(
             startTime, message + "The provided value is not of type 'double'.")
         super().__init__(name, "mark", started, 0.0, navigation_id, {"detail": detail})
 
@@ -418,11 +423,11 @@ class Performance(EventTarget):
         return entry
 
     def get_timeOrigin(self):
-        return time_origin()
+        return clock_of(self._services).time_origin()
 
     def get_timing(self):
         if getattr(self, "_timing", None) is None:
-            self._timing = PerformanceTiming()
+            self._timing = PerformanceTiming(services=self._services)
         return self._timing
 
     def get_navigation(self):
@@ -524,7 +529,7 @@ class Performance(EventTarget):
         return _filtered(self._all_entries(), None, type_)
 
     def fn_now(self, *_extra):
-        return _now()
+        return clock_of(self._services).now_ms()
 
     def fn_mark(self, name=MISSING, options=pyv8.Undefined, *_extra):
         if name is MISSING:
@@ -561,7 +566,7 @@ class Performance(EventTarget):
                 started = self._measure_instant(end_option, message, 0.0) - given
                 finished = started + given
         else:
-            finished = self._measure_instant(end_option, message, _now())
+            finished = self._measure_instant(end_option, message, _now(self._services))
         entry = self._stamp(PerformanceMeasure(name, started, max(finished - started, 0.0),
                                               detail, self.navigation_id))
         self._entries.append(entry)

@@ -2,24 +2,37 @@
 
 import time
 
-#: One instant, read twice: the epoch a page can compare against ``Date.now()``, and
-#: the monotonic reading the entry offsets count from.  A document resets both.
-_STARTED_EPOCH = time.time() * 1000.0
-_STARTED_MONOTONIC = time.perf_counter()
+
+class Clock:
+    """One document's timeline: an epoch a page can compare against ``Date.now()``,
+    and the monotonic reading the entry offsets count from.  A navigation resets both."""
+
+    def __init__(self):
+        self._epoch = time.time() * 1000.0
+        self._monotonic = time.perf_counter()
+
+    def time_origin(self):
+        """The epoch milliseconds ``performance.timeOrigin`` reports."""
+        return self._epoch
+
+    def now_ms(self):
+        """Milliseconds since :meth:`time_origin`, at the resolution the platform has."""
+        return (time.perf_counter() - self._monotonic) * 1000.0
+
+    def reset(self, epoch_ms=None):
+        """Start a new timeline, as a document's navigation does."""
+        self._epoch = time.time() * 1000.0 if epoch_ms is None else float(epoch_ms)
+        self._monotonic = time.perf_counter()
 
 
-def time_origin():
-    """The epoch milliseconds ``performance.timeOrigin`` reports."""
-    return _STARTED_EPOCH
+def clock_of(services):
+    """The clock of the document *services* belongs to, or a shared fallback."""
+    realm = getattr(services, "realm_services", services)
+    performance = getattr(realm, "performance", None)
+    clock = getattr(performance, "clock", None)
+    return clock if clock is not None else FALLBACK
 
 
-def now_ms():
-    """Milliseconds since :func:`time_origin`, at the resolution the platform has."""
-    return (time.perf_counter() - _STARTED_MONOTONIC) * 1000.0
-
-
-def reset(epoch_ms=None):
-    """Start a new timeline, as a document's navigation does."""
-    global _STARTED_EPOCH, _STARTED_MONOTONIC
-    _STARTED_EPOCH = time.time() * 1000.0 if epoch_ms is None else float(epoch_ms)
-    _STARTED_MONOTONIC = time.perf_counter()
+#: For callers constructed without services.  Nobody resets it, so readings from it
+#: stay consistent -- the behaviour the process-wide clock used to have.
+FALLBACK = Clock()

@@ -14,7 +14,7 @@ from urllib.parse import urljoin, urlsplit
 import pyv8
 from ..foundation.logging import logger
 
-from ..foundation.clock import now_ms
+
 from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
 from ..foundation.urls import DEFAULT_PORTS, absolute_url, same_origin
 from ..web.fetch.headers import Headers
@@ -473,7 +473,7 @@ class ResourceController:
     def track_document_resource(self, node, url, request, kind):
         page = self.page
         # Where the entry's timing starts: the request is issued from here.
-        node._resource_request_start = now_ms()
+        node._resource_request_start = page.services.realm_services.performance.clock.now_ms()
         token = next(self.counter)
         generation = page.navigation.generation
         handle = RequestHandle()
@@ -503,13 +503,14 @@ class ResourceController:
     def record_resource_timing(self, node, kind, response):
         """Hand the realm one ``resource`` record: the URL, the initiator and the span."""
         length = self._response_length(response)
-        start = getattr(node, "_resource_request_start", None) or now_ms()
+        clock = self.page.services.realm_services.performance.clock
+        start = getattr(node, "_resource_request_start", None) or clock.now_ms()
         self.page.services.realm_services.performance.record(
             "resource",
             name=str(getattr(response, "url", "") or ""),
             initiator=str(kind),
             start=start,
-            end=now_ms(),
+            end=clock.now_ms(),
             transferSize=length,
             encodedBodySize=length,
             decodedBodySize=length,

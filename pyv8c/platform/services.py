@@ -8,7 +8,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from ..foundation.clock import now_ms, reset as reset_clock
+from ..foundation.clock import Clock
 from ..foundation.urls import origin_string
 from .request_headers import ACCEPT_ENCODING, accept_language
 from .sessions import BindingSession
@@ -58,12 +58,13 @@ class _PerformanceCapability:
     def __init__(self):
         self._records = []
         self._listeners = []
+        self.clock = Clock()
 
     def begin_navigation(self, url):
         """Start a new document's timeline: its navigation record, and nothing else."""
         self.reset()
-        reset_clock()
-        return self.record("navigation", name=str(url), start=now_ms())
+        self.clock.reset()
+        return self.record("navigation", name=str(url), start=self.clock.now_ms())
 
     def reset(self):
         del self._records[:]

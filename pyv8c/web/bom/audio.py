@@ -22,7 +22,7 @@ from ...foundation.arguments import (
     missing_error,
     sequence,
 )
-from ...foundation.clock import now_ms
+from ...foundation.clock import clock_of
 from ...foundation.errors import V8TypeError, dom_exception
 from ..dom.events import Event, EventTarget
 
@@ -755,9 +755,10 @@ class BaseAudioContext(EventTarget):
             services = None
         super().__init__(services=services or _realm)
         self._services = services or _realm
+        self._clock = clock_of(self._services)
         self._state = state
         self._sample_rate = float(sample_rate or SAMPLE_RATE)
-        self._started = now_ms()
+        self._started = self._clock.now_ms()
         self._destination = AudioDestinationNode(context=self)
         self._listener = AudioListener()
         #: Nodes a page reads a result from, which Chrome renders even without a way out.
@@ -771,7 +772,7 @@ class BaseAudioContext(EventTarget):
     def get_currentTime(self):
         if self._rendered is not None:
             return self._rendered
-        return (now_ms() - self._started) / 1000.0
+        return (self._clock.now_ms() - self._started) / 1000.0
     def get_state(self): return self._state
     def get_renderQuantumSize(self): return RENDER_QUANTUM
     def get_onstatechange(self): return self._get_handler("onstatechange")

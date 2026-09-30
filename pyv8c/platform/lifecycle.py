@@ -2,7 +2,7 @@
 
 import pyv8
 
-from ..foundation.clock import now_ms
+
 from ..foundation.errors import NotFoundError
 from ..web.bom.utils import is_secure_context
 from ..web.dom.events import Event, MOTION_EVENT_TYPES
@@ -322,10 +322,11 @@ class DocumentLifecycle:
             return
         self.dom_content_loaded = True
         self.set_ready_state("interactive")
-        page.services.realm_services.performance.note(
-            domInteractive=now_ms(), domContentLoadedEventStart=now_ms())
+        performance = page.services.realm_services.performance
+        clock = performance.clock
+        performance.note(domInteractive=clock.now_ms(), domContentLoadedEventStart=clock.now_ms())
         self.dispatch_page_event("DOMContentLoaded", page.document, {"bubbles": True})
-        page.services.realm_services.performance.note(domContentLoadedEventEnd=now_ms())
+        performance.note(domContentLoadedEventEnd=clock.now_ms())
         self.maybe_fire_document_load()
 
     def maybe_fire_document_load(self):
@@ -335,13 +336,14 @@ class DocumentLifecycle:
         self.document_load_fired = True
         self.set_ready_state("complete")
         performance = page.services.realm_services.performance
-        performance.note(domComplete=now_ms(), loadEventStart=now_ms())
+        clock = performance.clock
+        performance.note(domComplete=clock.now_ms(), loadEventStart=clock.now_ms())
         # A window's load event is fired at the window with the document as its target.
         event = self.event_class("load")("load", {"bubbles": False})
         event._trusted = True
         event.target = page.document
         page.window.fn_dispatchEvent(event)
-        performance.note(loadEventEnd=now_ms())
+        performance.note(loadEventEnd=clock.now_ms())
         self.dispatch_page_show(False)
         self.dispatch_page_reveal()
         self.deliver_motion_events()
