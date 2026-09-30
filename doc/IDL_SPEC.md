@@ -65,17 +65,29 @@ construction. Runtime receiver, cross-origin and argument checks remain.
 
 ## Registration and compilation
 
-`Context(class_configs={Interface: spec})` copies the registry. A complete
-spec replaces the class declaration rather than overlaying it. Within one
-Context, `update_configs` accepts the same spec object repeatedly as a no-op;
-a different object for an already registered type raises. Batch validation and
-registry replacement are atomic. Registration after template installation is rejected.
-Configuration changes require a new Context.
-`lazy_factory` is asked about a class the realm holds no config for when the realm
-declared that name: `declare_lazy` covers the interfaces it exposes, and
-`declare_materialisable` the ones it never exposes as a global. The answer is what
-lets an interface another realm handed over commit its overlay before the template
-is built; `None` leaves the class declaration in place.
+A realm keeps one entry per interface name it has met: the template it built and
+the spec that built it. Specs arrive from one place, the realm's `lazy_factory`,
+which is asked about a name the realm has neither a spec nor a template for.
+
+The answer is one of three things:
+
+- the class, whose declaration is then the spec;
+- `(class, {name: spec})`, and the specs it carries are kept for the names they
+  name — the whole ancestor chain a build walks, when the realm holds overlays
+  for all of it. A complete spec replaces the class declaration rather than
+  overlaying it;
+- `None` for a name the realm does not know, which leaves the class declaration
+  in place.
+
+A refusal is remembered, so a name costs one ask per realm, and a factory that
+raises is not an answer: the name stays open and is asked again. A spec named for
+a name whose template already exists is ignored, so a template is always built
+from the spec that arrived with its build and configuration cannot arrive after
+installation. `Context.install(names)` installs each name as a non-enumerable
+lazy constructor on the global; nothing is built for a name no script reads.
+
+A realm's class templates are keyed by the class's own name, so one IDL name holds one
+template and a second class claiming that name is refused.
 
 pyv8c's interface decorator records only identity, parent and exposure. A single
 Universe compiler combines baseline metadata, own declarations and implementation

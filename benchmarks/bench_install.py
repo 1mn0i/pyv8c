@@ -39,7 +39,6 @@ def attribute(name):
         name=name,
         getter="get_" + name,
         setter="set_" + name,
-        callback_type=0,
         location=0,
         property_flags=0,
         receiver_check=0,

@@ -31,38 +31,21 @@ namespace bindings {
             js_throw_py();
             return;
         }
-        PyObject* py_cls = PyDict_GetItem(py_ctx->class_template_cache, name);
-        if (py_cls == NULL && py_ctx->lazy_factory != NULL) {
-            // Lazy materialisation: ask Python for the class behind this name,
-            // build its template and remember it so later accesses resolve from
-            // the cache without another Python round trip.
-            PyObject* cls = PyObject_CallFunctionObjArgs(py_ctx->lazy_factory, name, NULL);
+        PyObject* py_cls = context_registry_get(py_ctx, name, REGISTRY_TEMPLATE);
+        if (py_cls == NULL && context_registry_askable(py_ctx, name)) {
+            // Lazy materialisation: ask the realm for the class behind this name,
+            // build its template and remember it, so a later access answers from
+            // the registry without another Python round trip.
+            PyObject* cls = context_ask_factory(py_ctx, name);
             if (cls == NULL) {
                 Py_DECREF((PyObject*)name);
                 js_throw_py();
                 return;
             }
             if (cls != Py_None) {
-                if (PySet_Add(py_ctx->resolving_classes, cls) < 0) {
-                    Py_DECREF((PyObject*)cls);
-                    Py_DECREF((PyObject*)name);
-                    js_throw_py();
-                    return;
-                }
                 PyObject* owned = py_class_to_template(cls, py_ctx);
-                PySet_Discard(py_ctx->resolving_classes, cls);
                 Py_DECREF((PyObject*)cls);
                 if (owned == NULL) {
-                    Py_DECREF((PyObject*)name);
-                    js_throw_py();
-                    return;
-                }
-                // py_class_to_template keys the cache by the Python class
-                // __name__, while this accessor looks interfaces up by their IDL
-                // name. Alias the entry when the two differ.
-                if (PyDict_GetItem(py_ctx->class_template_cache, name) == NULL &&
-                    PyDict_SetItem(py_ctx->class_template_cache, name, owned) < 0) {
-                    Py_DECREF(owned);
                     Py_DECREF((PyObject*)name);
                     js_throw_py();
                     return;
@@ -72,7 +55,7 @@ namespace bindings {
             else {
                 Py_DECREF((PyObject*)cls);
             }
-            py_cls = PyDict_GetItem(py_ctx->class_template_cache, name);
+            py_cls = context_registry_get(py_ctx, name, REGISTRY_TEMPLATE);
         }
         if (py_cls == NULL) {
             Py_DECREF((PyObject*)name);

@@ -43,13 +43,10 @@ struct PythonObjectOwner;
 // walk all read this one list, so a field cannot be added without being visited.
 #define CONTEXT_PY_FIELDS(X) \
     X(py_isolate)            \
-    X(class_template_cache)  \
+    X(registry)              \
     X(function_template_cache) \
     X(callback_targets)      \
-    X(class_configs)         \
     X(lazy_factory)          \
-    X(resolving_classes)     \
-    X(materialisable_names)  \
     X(py_global)             \
     X(trace_callback)        \
     X(trace_context_type)    \
@@ -65,7 +62,8 @@ typedef struct context_c
     IsolateState* isolate_state;
     PyObject* py_isolate;
     V8HandleSlot<v8::Context> js_context;
-    PyObject* class_template_cache;
+    //: What this realm knows about each interface name it has met: name -> entry.
+    PyObject* registry;
     PyObject* function_template_cache;
     PyObject* callback_targets;
     PyObject* uncaught_handler;
@@ -74,14 +72,9 @@ typedef struct context_c
     ContextResources* resources;
     ContextState state;
     context_c* next_pending_close;
-    PyObject* class_configs;
     // Optional callable used to materialise a class the realm holds no config for.
-    // Called with an interface name, returns the Python class or None.
+    // Called with an interface name, it answers the Python class, or (class, specs).
     PyObject* lazy_factory;
-    PyObject* resolving_classes;
-    // Names the factory is asked about: what declare_lazy exposes, plus what
-    // declare_materialisable only hands over.
-    PyObject* materialisable_names;
     PyObject* py_global;
     bool has_done;
     double timeout;
@@ -104,6 +97,21 @@ inline PyObject* owned_template(PyObject* templ)
     return templ;
 }
 
+// A realm keeps one entry per interface name it has met: the template it built,
+// the spec that built it, and where the name is in the ask-the-factory protocol.
+enum RegistrySlot { REGISTRY_TEMPLATE, REGISTRY_SPEC, REGISTRY_STATE, REGISTRY_SLOTS };
+enum RegistryState { REGISTRY_IDLE, REGISTRY_RESOLVING, REGISTRY_ASKED };
+
+//: What one name holds in one slot, or NULL when the name has no entry yet.
+PyObject* context_registry_get(context_c* self, PyObject* name, int slot);
+//: Write one slot of one name, creating the entry if this is the first fact about it.
+int context_registry_set(context_c* self, PyObject* name, int slot, PyObject* value);
+//: Whether the realm may ask its factory about this name, once, right now.
+bool context_registry_askable(context_c* self, PyObject* name);
+//: Ask about one name, keeping the specs the answer carries.  Returns the class,
+//: Py_None when the realm has no answer, or NULL with an error set.
+PyObject* context_ask_factory(context_c* self, PyObject* name);
+
 bool context_is_active(context_c* self);
 context_c* context_from_v8(v8::Local<v8::Context> context);
 bool context_check_callback(v8::Local<v8::Context> context);
@@ -125,12 +133,10 @@ void context_dealloc(context_c* self);
 PyObject* context_new(PyTypeObject* type, PyObject* args, PyObject* kwargs);
 PyObject* context_run(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_expose(context_c* self, PyObject* args, PyObject* kwargs);
-PyObject* context_expose_module(context_c* self, PyObject* module);
 PyObject* context_hide_global(context_c* self, PyObject* name);
 PyObject* context_js_obj(context_c* self, PyObject* py_object);
-PyObject* context_declare_lazy(context_c* self, PyObject* args, PyObject* kwargs);
-PyObject* context_declare_materialisable(context_c* self, PyObject* names);
-PyObject* context_update_configs(context_c* self, PyObject* mapping);
+PyObject* context_install(context_c* self, PyObject* names);
+PyObject* context_define_global(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_gc(context_c* self);
 PyObject* context_close(context_c* self, PyObject* ignored);
 PyObject* context_enqueue_microtask(context_c* self, PyObject* function);

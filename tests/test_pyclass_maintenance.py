@@ -84,12 +84,18 @@ class TestPyClassMaintenance(unittest.TestCase):
         second.__name__ = "second_callback"
         operation = lambda name, callback: MethodSpec(name=name, callback=callback)
 
-        first_context = pyv8.Context(Window(), class_configs={Interface: Interface.__v8_idl_spec__.replace(
-            methods=(operation("marker", first),),
-        )})
-        second_context = pyv8.Context(Window(), class_configs={Interface: Interface.__v8_idl_spec__.replace(
-            methods=(operation("otherMarker", second),),
-        )})
+        def answer(spec):
+            def factory(name):
+                return (Interface, {"Interface": spec}) if name == "Interface" else None
+
+            return factory
+
+        first_context = pyv8.Context(Window(), lazy_factory=answer(
+            Interface.__v8_idl_spec__.replace(methods=(operation("marker", first),)),
+        ))
+        second_context = pyv8.Context(Window(), lazy_factory=answer(
+            Interface.__v8_idl_spec__.replace(methods=(operation("otherMarker", second),)),
+        ))
         first_context.expose(Interface)
         second_context.expose(Interface)
 
@@ -131,12 +137,18 @@ class TestPyClassMaintenance(unittest.TestCase):
                 return cls(prefix + str(args[0]), **kwargs)
             return construct
 
-        first_context = pyv8.Context(Window(), class_configs={Interface: Interface.__v8_idl_spec__.replace(
-            constructor_adapter=adapter("first:"),
-        )})
-        second_context = pyv8.Context(Window(), class_configs={Interface: Interface.__v8_idl_spec__.replace(
-            constructor_adapter=adapter("second:"),
-        )})
+        def answer(spec):
+            def factory(name):
+                return (Interface, {"Interface": spec}) if name == "Interface" else None
+
+            return factory
+
+        first_context = pyv8.Context(Window(), lazy_factory=answer(
+            Interface.__v8_idl_spec__.replace(constructor_adapter=adapter("first:")),
+        ))
+        second_context = pyv8.Context(Window(), lazy_factory=answer(
+            Interface.__v8_idl_spec__.replace(constructor_adapter=adapter("second:")),
+        ))
         first_context.expose(Interface)
         second_context.expose(Interface)
 

@@ -102,7 +102,6 @@ int idl_spec_init(PyObject *module);
 PyObject *idl_spec_for(PyObject *owner);
 PyObject *idl_spec_replace(PyObject *original, PyObject *changes);
 PyObject *idl_spec_resolve(PyObject *original, PyObject *owner);
-bool idl_spec_validate_configs(PyObject *configs);
 bool idl_spec_flag(PyObject *owner, const char *key, bool *result);
 
 #endif

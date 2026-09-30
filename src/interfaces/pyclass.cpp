@@ -85,85 +85,79 @@ py_class_dealloc(py_class* self)
     TP_FREE_ABI3(py_class_type, self);
 }
 
+//: The realm's template for a class, keyed by the class's own name.
+static PyObject *cached_template(context_c *py_ctx, PyObject *cls, PyObject *name)
+{
+    PyObject *templ = context_registry_get(py_ctx, name, REGISTRY_TEMPLATE);
+    if (templ == nullptr)
+        return nullptr;
+    if (((py_class *)templ)->cls != cls)
+    {
+        PyErr_Format(PyExc_ValueError,
+                     "JavaScript class name '%U' is already registered in this Context", name);
+        return nullptr;
+    }
+    return owned_template(templ);
+}
+
 PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
 {
-    if (py_ctx->class_template_cache == NULL)
+    if (py_ctx->registry == NULL)
     {
-        PyErr_SetString(PyExc_RuntimeError, "context class template cache is unavailable");
+        PyErr_SetString(PyExc_RuntimeError, "context interface registry is unavailable");
         return NULL;
     }
-    PyObject *templ = PyDict_GetItem(py_ctx->class_template_cache, cls);
-    if (templ != NULL)
+    PyObject *name = PyObject_GetAttrString(cls, "__name__");
+    if (name == nullptr)
+        return nullptr;
+    PyObject *templ = cached_template(py_ctx, cls, name);
+    if (templ != nullptr || PyErr_Occurred())
     {
-        return owned_template(templ);
+        Py_DECREF((PyObject*)name);
+        return templ;
     }
-    if (py_ctx->lazy_factory != nullptr && PyDict_Contains(py_ctx->class_configs, cls) == 0 &&
-        PySet_Contains(py_ctx->resolving_classes, cls) == 0)
+    // The factory is where an overlay comes from: ask before the template exists.
+    if (context_registry_get(py_ctx, name, REGISTRY_SPEC) == NULL
+        && context_registry_askable(py_ctx, name))
     {
-        // Ask about a declared name so the overlay lands before the template is built:
-        // a commit arriving later is refused as an already installed template.
-        PyObject *name = PyObject_GetAttrString(cls, "__name__");
-        if (name == nullptr)
-            return nullptr;
-        int declared = PySet_Contains(py_ctx->materialisable_names, name);
-        if (declared < 0)
+        PyObject *answer = context_ask_factory(py_ctx, name);
+        if (answer == nullptr)
         {
             Py_DECREF((PyObject*)name);
             return nullptr;
         }
-        if (declared == 1)
+        bool mine = answer == Py_None || answer == cls;
+        Py_DECREF((PyObject*)answer);
+        if (!mine)
         {
-            if (PySet_Add(py_ctx->resolving_classes, cls) < 0)
-            {
-                Py_DECREF((PyObject*)name);
-                return nullptr;
-            }
-            PyObject *resolved = PyObject_CallFunctionObjArgs(py_ctx->lazy_factory, name, nullptr);
             Py_DECREF((PyObject*)name);
-            PySet_Discard(py_ctx->resolving_classes, cls);
-            if (resolved == nullptr)
-                return nullptr;
-            if (resolved != Py_None && resolved != cls)
-            {
-                Py_DECREF((PyObject*)resolved);
-                PyErr_SetString(PyExc_TypeError,
-                                "lazy factory returned a different class for the requested type");
-                return nullptr;
-            }
-            Py_DECREF((PyObject*)resolved);
-            templ = PyDict_GetItemWithError(py_ctx->class_template_cache, cls);
-            if (templ != nullptr || PyErr_Occurred())
-                return owned_template(templ);
+            PyErr_SetString(PyExc_TypeError,
+                            "lazy factory answered a different class for the requested type");
+            return nullptr;
         }
-        else
+        templ = cached_template(py_ctx, cls, name);
+        if (templ != nullptr || PyErr_Occurred())
+        {
             Py_DECREF((PyObject*)name);
+            return templ;
+        }
     }
     templ = py_class_new(cls, py_ctx);
-    PyErr_PROPAGATE(templ);
-
-    if (PyDict_SetItem(py_ctx->class_template_cache, cls, templ) < 0)
+    if (templ == nullptr)
+    {
+        Py_DECREF((PyObject*)name);
+        return nullptr;
+    }
+    if (context_registry_set(py_ctx, name, REGISTRY_TEMPLATE, templ) < 0)
     {
         Py_DECREF((PyObject*)templ);
+        Py_DECREF((PyObject*)name);
         return NULL;
     }
-    PyObject *cls_name = ((py_class *)templ)->cls_name;
-    PyObject *existing_name = PyDict_GetItem(py_ctx->class_template_cache, cls_name);
-    if (existing_name != NULL && existing_name != templ)
-    {
-        PyDict_DelItem(py_ctx->class_template_cache, cls);
-        Py_DECREF((PyObject*)templ);
-        PyErr_Format(PyExc_ValueError, "JavaScript class name '%U' is already registered in this Context",
-                     cls_name);
-        return NULL;
-    }
-    if (PyDict_SetItem(py_ctx->class_template_cache, cls_name, templ) < 0)
-    {
-        PyDict_DelItem(py_ctx->class_template_cache, cls);
-        Py_DECREF((PyObject*)templ);
-        return NULL;
-    }
+    PyObject *installed = owned_template(templ);
     Py_DECREF((PyObject*)templ);
-    return owned_template(PyDict_GetItem(py_ctx->class_template_cache, cls));
+    Py_DECREF((PyObject*)name);
+    return installed;
 }
 int add_to_template(PyObject* cls, context_c* py_ctx, PyObject* member_name, PyObject* member_value, Local<FunctionTemplate> templ, Local<Signature> sig, const char* world);
 
@@ -213,7 +207,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         return NULL;
     }
 
-    PyObject* registered = PyDict_GetItemWithError(py_ctx->class_configs, cls);
+    PyObject* registered = context_registry_get(py_ctx, self->cls_name, REGISTRY_SPEC);
     if (registered != nullptr) Py_INCREF((PyObject*)registered);
     else if (!PyErr_Occurred()) registered = idl_spec_for(cls);
     if (registered != nullptr) {

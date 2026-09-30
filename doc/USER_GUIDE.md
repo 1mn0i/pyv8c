@@ -406,12 +406,12 @@ context.expose(browserState=state, payload={"ready": True})
 context.expose(add, State, state=state, config={"debug": False})
 ```
 
-暴露 Python 模块的全部非下划线成员：
+暴露某个模块的成员要逐个点名，关键字参数就是显式的 JavaScript 名字：
 
 ```python
 import math
 
-context.expose_module(math)
+context.expose(sqrt=math.sqrt)
 assert context.exec_js("sqrt(81)") == 9
 ```
 
@@ -1291,7 +1291,9 @@ devtools://devtools/bundled/inspector.html?experiments=true&ws=127.0.0.1:9005/de
 | --- | --- |
 | `exec_js(program, filename=None, timeout=None)` | 执行字符串或 Script |
 | `expose(*objects, **named)` | 暴露 Python 值到 globalThis |
-| `expose_module(module)` | 暴露模块全部公开成员 |
+| `install(names)` | 把每个名字装成不可枚举的惰性构造器 |
+| `define_global(name, value, attributes=0)` | 按指定属性位装一个全局值 |
+| `hide_global(name)` | 撤掉一个已暴露的全局名 |
 | `js_obj(py_object)` | 查找 Python 对象对应的 JS wrapper |
 | `gc()` | 请求所属 Isolate 完整 GC |
 | `glob` | globalThis 的 JSObject wrapper |

@@ -1,8 +1,8 @@
 from tests.values import snapshot
 
-"""Lazy interface declaration via Context.declare_lazy + lazy_factory.
+"""Lazy interface declaration via Context.install + lazy_factory.
 
-declare_lazy installs a non-enumerable accessor on the global object for every
+install declares a non-enumerable accessor on the global object for every
 requested name without building a FunctionTemplate. The first property access
 calls the optional lazy_factory, builds the real template and caches it, so
 later accesses never re-enter Python.
@@ -85,15 +85,15 @@ class TestLazyConstruct(unittest.TestCase):
                 return (mapping or {}).get(name)
         return pyv8.Context(Window(), ctx_type="Top", lazy_factory=factory, **kwargs)
 
-    def test_declare_lazy_returns_declared_count(self):
+    def test_install_returns_declared_count(self):
         context = self.make_context({"Widget": self.widget})
         self.addCleanup(context.close)
-        self.assertEqual(context.declare_lazy(["Widget", "Other", "Third"]), 3)
+        self.assertEqual(context.install(["Widget", "Other", "Third"]), 3)
 
     def test_declared_names_are_visible_but_not_enumerable(self):
         context = self.make_context({"Widget": self.widget})
         self.addCleanup(context.close)
-        context.declare_lazy(["Widget"])
+        context.install(["Widget"])
 
         self.assertIn("Widget", snapshot(context.exec_js("Object.getOwnPropertyNames(globalThis)")))
         # DontEnum keeps the names out of enumeration, matching real globals.
@@ -102,19 +102,22 @@ class TestLazyConstruct(unittest.TestCase):
     def test_first_access_materialises_and_second_hits_cache(self):
         context = self.make_context({"Widget": self.widget})
         self.addCleanup(context.close)
-        context.declare_lazy(["Widget"])
+        context.install(["Widget"])
+
+        # The realm's own global class is the first thing it is asked about.
+        self.assertEqual(self.calls, ["Window"])
 
         self.assertEqual(context.exec_js("typeof Widget"), "function")
-        self.assertEqual(self.calls, ["Widget"])
+        self.assertEqual(self.calls, ["Window", "Widget"])
 
         # The template is cached after the first access.
         self.assertEqual(context.exec_js("typeof Widget"), "function")
-        self.assertEqual(self.calls, ["Widget"])
+        self.assertEqual(self.calls, ["Window", "Widget"])
 
     def test_materialised_template_is_fully_functional(self):
         context = self.make_context({"Widget": self.widget})
         self.addCleanup(context.close)
-        context.declare_lazy(["Widget"])
+        context.install(["Widget"])
 
         self.assertEqual(
             context.exec_js("Object.prototype.toString.call(Widget.prototype)"),
@@ -127,19 +130,25 @@ class TestLazyConstruct(unittest.TestCase):
     def test_factory_returning_none_yields_undefined(self):
         context = self.make_context({})
         self.addCleanup(context.close)
-        context.declare_lazy(["Missing"])
+        context.install(["Missing"])
 
         self.assertEqual(context.exec_js("typeof Missing"), "undefined")
-        self.assertEqual(self.calls, ["Missing"])
+        self.assertEqual(self.calls, ["Window", "Missing"])
+
+        # The refusal is remembered: a later access does not ask again.
+        self.assertEqual(context.exec_js("typeof Missing"), "undefined")
+        self.assertEqual(self.calls, ["Window", "Missing"])
 
     def test_factory_exception_follows_js_error_semantics(self):
         """A failing factory must behave like any other JS-thrown error."""
         def factory(name):
+            if name != "Bad":
+                return None
             raise RuntimeError("boom " + name)
 
         context = pyv8.Context(Window(), ctx_type="Top", lazy_factory=factory)
         self.addCleanup(context.close)
-        context.declare_lazy(["Bad"])
+        context.install(["Bad"])
 
         # Uncaught: surfaces to the Python caller of exec_js.
         with self.assertRaises(RuntimeError) as caught:
@@ -157,12 +166,14 @@ class TestLazyConstruct(unittest.TestCase):
         attempts = []
 
         def factory(name):
+            if name != "Bad":
+                return None
             attempts.append(name)
             raise RuntimeError("nope")
 
         context = pyv8.Context(Window(), ctx_type="Top", lazy_factory=factory)
         self.addCleanup(context.close)
-        context.declare_lazy(["Bad"])
+        context.install(["Bad"])
 
         for _ in range(2):
             with self.assertRaises(RuntimeError):
@@ -173,35 +184,15 @@ class TestLazyConstruct(unittest.TestCase):
         """Backwards compatibility: no lazy_factory keeps the old behaviour."""
         context = pyv8.Context(Window(), ctx_type="Top")
         self.addCleanup(context.close)
-        context.declare_lazy(["Widget"])
+        context.install(["Widget"])
 
         self.assertEqual(context.exec_js("typeof Widget"), "undefined")
 
-    def test_declare_lazy_skips_names_in_the_skip_set(self):
-        """Names the caller already installed keep their concrete value."""
-        context = self.make_context({"Widget": self.widget})
-        self.addCleanup(context.close)
-        context.expose(self.widget, name="Widget")
-        exposed = context.exec_js("Widget")
-
-        self.assertEqual(context.declare_lazy(["Widget", "Other"], skip=["Widget"]), 1)
-        # The eager value is untouched: still a data property, not an accessor.
-        self.assertIsNotNone(context.exec_js("Object.getOwnPropertyDescriptor(globalThis, 'Widget').value"))
-        self.assertEqual(context.exec_js("new Widget('x').describe()"), "widget:x")
-        self.assertFalse(self.calls, "the skipped name must not reach the factory")
-        self.assertIsNotNone(exposed)
-
-    def test_skip_set_accepts_any_sequence(self):
-        context = self.make_context({"Widget": self.widget})
-        self.addCleanup(context.close)
-        self.assertEqual(context.declare_lazy(["Widget"], skip=("Widget",)), 0)
-        self.assertEqual(context.declare_lazy(["Widget"], skip=set()), 1)
-
-    def test_declare_lazy_rejects_non_string_names(self):
+    def test_install_rejects_non_string_names(self):
         context = self.make_context({"Widget": self.widget})
         self.addCleanup(context.close)
         with self.assertRaises(TypeError):
-            context.declare_lazy([1, 2])
+            context.install([1, 2])
 
     def test_lazy_factory_must_be_callable(self):
         with self.assertRaises(TypeError):
@@ -212,8 +203,8 @@ class TestLazyConstruct(unittest.TestCase):
         self.addCleanup(first.close)
         second = self.make_context({})
         self.addCleanup(second.close)
-        first.declare_lazy(["Widget"])
-        second.declare_lazy(["Widget"])
+        first.install(["Widget"])
+        second.install(["Widget"])
 
         self.assertEqual(first.exec_js("typeof Widget"), "function")
         self.assertEqual(second.exec_js("typeof Widget"), "undefined")

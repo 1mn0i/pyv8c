@@ -152,13 +152,12 @@ PyMethodDef context_methods[] = {
     {"exec_js", (PyCFunction)PythonBoundary<context_run>::call, METH_VARARGS | METH_KEYWORDS, NULL},
     {"js_obj", (PyCFunction)PythonBoundary<context_js_obj>::call, METH_O, NULL},
     {"expose", (PyCFunction)PythonBoundary<context_expose>::call, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"expose_module", (PyCFunction)PythonBoundary<context_expose_module>::call, METH_O, NULL},
     {"hide_global", (PyCFunction)PythonBoundary<context_hide_global>::call, METH_O,
      "remove a name this realm exposed, as if it had never been installed"},
-    {"declare_lazy", (PyCFunction)PythonBoundary<context_declare_lazy>::call, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"declare_materialisable", (PyCFunction)PythonBoundary<context_declare_materialisable>::call,
-     METH_O, "record names this realm can materialise, installing none of them"},
-    {"update_configs", (PyCFunction)PythonBoundary<context_update_configs>::call, METH_O, NULL},
+    {"define_global", (PyCFunction)PythonBoundary<context_define_global>::call, METH_VARARGS | METH_KEYWORDS,
+     "install one global value with the property attributes the caller names"},
+    {"install", (PyCFunction)PythonBoundary<context_install>::call, METH_O,
+     "install each name as a non-enumerable lazy constructor"},
     {"gc", (PyCFunction)PythonBoundary<context_gc>::call, METH_NOARGS, NULL},
     {"heap_statistics", (PyCFunction)PythonBoundary<context_heap_statistics>::call, METH_NOARGS,
      "bytes of this isolate's heap in use, committed, and its ceiling, as a dict"},
@@ -295,15 +294,14 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* trace = Py_False;
     PyObject* ctx_type = NULL;
     PyObject* py_isolate = Py_None;
-    PyObject* class_configs = Py_None;
     PyObject* lazy_factory = Py_None;
     PyObject* trace_callback = Py_None;
     PyObject* traceable = Py_False;
-    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "class_configs", "lazy_factory", "trace_callback", "traceable", NULL};
+    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOOOO", (char **) keywords,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOOO", (char **) keywords,
                                     &global, &trace, &ctx_type, &timeout, &py_isolate,
-                                    &class_configs, &lazy_factory, &trace_callback, &traceable)) {
+                                    &lazy_factory, &trace_callback, &traceable)) {
         return NULL;
     }
 
@@ -345,34 +343,10 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         Py_INCREF((PyObject*)py_isolate);
         self->py_isolate = py_isolate;
     }
-    self->class_configs = NULL;
     self->lazy_factory = NULL;
-    self->resolving_classes = PySet_New(nullptr);
-    self->materialisable_names = PySet_New(nullptr);
     self->py_global = NULL;
-    self->class_template_cache = PyDict_New();
+    self->registry = PyDict_New();
     self->function_template_cache = PyDict_New();
-    if (class_configs != Py_None && PyDict_Check(class_configs)) {
-        // Keep the caller's mapping alive so Python can add realm-specific
-        // class overlays when a lazy interface is first accessed.
-        self->class_configs = PyDict_Copy(class_configs);
-    }
-    else {
-        self->class_configs = PyDict_New();
-    }
-    if (self->class_configs != NULL && class_configs != Py_None && !PyDict_Check(class_configs)) {
-        if (!PyMapping_Check(class_configs)) {
-            PyErr_SetString(PyExc_TypeError, "class_configs must be a mapping or None");
-            Py_DECREF((PyObject*)self);
-            Py_XDECREF((PyObject*)global);
-            return NULL;
-        }
-        if (PyDict_Update(self->class_configs, class_configs) < 0) {
-            Py_DECREF((PyObject*)self);
-            Py_XDECREF((PyObject*)global);
-            return NULL;
-        }
-    }
     if (lazy_factory != Py_None) {
         Py_INCREF((PyObject*)lazy_factory);
         self->lazy_factory = lazy_factory;
@@ -403,12 +377,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     } else {
         Py_INCREF((PyObject*)ctx_type);
     }
-    if (self->class_configs != NULL && !idl_spec_validate_configs(self->class_configs)) {
-        Py_XDECREF((PyObject*)ctx_type);
-        Py_DECREF((PyObject*)self);
-        return NULL;
-    }
-    if (ctx_type == NULL || self->class_template_cache == NULL || self->function_template_cache == NULL || self->class_configs == NULL || self->resolving_classes == nullptr || self->materialisable_names == nullptr) {
+    if (ctx_type == NULL || self->registry == NULL || self->function_template_cache == NULL) {
         Py_XDECREF((PyObject*)ctx_type);
         Py_DECREF((PyObject*)self);
         return NULL;

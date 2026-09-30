@@ -56,13 +56,25 @@ static const char* handler_declaration_name(HandlerId which)
     return nullptr;
 }
 
+//: The template of the interface a receiver was made from, or null when it has none.
+static PyObject* template_of(PyObject* receiver, context_c* context)
+{
+    if (receiver == nullptr || receiver == Py_None || context == nullptr)
+        return nullptr;
+    PyObject* name = PyObject_GetAttrString((PyObject*)Py_TYPE((PyObject*)receiver), "__name__");
+    if (name == nullptr) { PyErr_Clear(); return nullptr; }
+    PyObject* cached = context_registry_get(context, name, REGISTRY_TEMPLATE);
+    Py_DECREF(name);
+    return cached;
+}
+
 PyObject* py_class_handler(PyObject* receiver, HandlerId which, context_c* context)
 {
     if (receiver == nullptr) { PyErr_SetString(PyExc_RuntimeError, "callback receiver is unavailable"); return nullptr; }
 
     const bool named = which == HandlerId::PropertyNameGet || which == HandlerId::PropertyNameQuery;
     if (!named) {
-        PyObject* cached = context == nullptr ? nullptr : PyDict_GetItemWithError(context->class_template_cache, (PyObject*)Py_TYPE((PyObject*)receiver));
+        PyObject* cached = template_of(receiver, context);
         if (cached != nullptr && ((py_class*)cached)->idl_spec != nullptr) {
             // The interface is the authority: a handler it does not declare is a
             // decline, and nothing is looked up on the receiver.
@@ -311,7 +323,7 @@ static bool declares_operation(PyObject* methods, PyObject* name) {
 static bool declares_member(PyObject* receiver, context_c* context, PyObject* name, bool setter) {
     if (receiver == nullptr || receiver == Py_None || context == nullptr || name == nullptr) return false;
     if (!PyUnicode_Check(name)) return false;
-    PyObject* cached = PyDict_GetItemWithError(context->class_template_cache, (PyObject*)Py_TYPE((PyObject*)receiver));
+    PyObject* cached = template_of(receiver, context);
     if (cached == nullptr || ((py_class*)cached)->idl_spec == nullptr) {
         PyErr_Clear();
         return false;

@@ -76,10 +76,23 @@ class TestIdlSpec(unittest.TestCase):
 
         with self.assertRaisesRegex(TypeError, "must be an IdlSpec"):
             pyv8.Context(Invalid())
+
+        class Widget:
+            pass
+
         class Window:
             pass
+
+        # The specs an answer hands over are the realm's own; an untyped one is
+        # refused before it can build anything.
+        def factory(name):
+            return (Widget, {"Widget": {}}) if name == "Widget" else None
+
+        context = pyv8.Context(Window(), lazy_factory=factory)
+        self.addCleanup(context.close)
+        context.install(["Widget"])
         with self.assertRaisesRegex(TypeError, "IdlSpec"):
-            pyv8.Context(Window(), class_configs={Window: {}})
+            context.exec_js("typeof Widget")
 
     def test_function_metadata_uses_the_same_spec(self):
         class Window:
@@ -92,28 +105,6 @@ class TestIdlSpec(unittest.TestCase):
         context.expose(callback=callback)
         self.assertEqual(snapshot(context.exec_js("[callback.name, callback.length, callback(1, 2)]")), ["example", 2, 2])
         self.assertTrue(snapshot(context.exec_js("try { new callback(); false } catch (error) { error instanceof TypeError }")))
-
-    def test_rejected_update_is_atomic_and_context_owns_registry(self):
-        class Window:
-            pass
-        class Interface:
-            pass
-        class Other:
-            pass
-        configs = {}
-        context = pyv8.Context(Window(), class_configs=configs)
-        self.addCleanup(context.close)
-        with self.assertRaisesRegex(TypeError, "IdlSpec"):
-            context.update_configs({Interface: IdlSpec(), Window: {}})
-        with self.assertRaises(TypeError):
-            context.update_configs({"Interface": IdlSpec()})
-        spec = IdlSpec()
-        self.assertEqual(context.update_configs({Interface: spec}), 1)
-        self.assertEqual(context.update_configs({Interface: spec}), 0)
-        with self.assertRaisesRegex(RuntimeError, "already registered"):
-            context.update_configs({Other: IdlSpec(), Interface: IdlSpec()})
-        self.assertEqual(context.update_configs({Other: IdlSpec()}), 1)
-        self.assertEqual(configs, {})
 
     def test_native_decorators_do_not_mutate_parent_spec(self):
         class Base:
@@ -170,28 +161,8 @@ def test_undetectable_requires_a_call_and_constant_ranges():
             ConstantSpec(name="LIMIT", value=value)
 
 
-def test_registration_after_template_installation_is_rejected():
-    import pytest
-    import pyv8
-
-    class Interface:
-        pass
-
-    class Window:
-        pass
-
-    context = pyv8.Context(Window())
-    try:
-        context.expose(Interface)
-        with pytest.raises(RuntimeError, match="before template installation"):
-            context.update_configs({Interface: pyv8.IdlSpec()})
-        assert context.exec_js("typeof Interface") == "function"
-    finally:
-        context.close()
-
-
-def test_a_declared_name_the_realm_never_exposes_gets_its_config_committed_first():
-    """A recorded name the realm never exposes still gets its overlay committed first."""
+def test_a_name_the_realm_only_hands_over_is_answered_by_the_factory():
+    """A name that is never a global still gets its overlay before its template."""
     import pyv8
 
     class Extension:
@@ -204,31 +175,27 @@ def test_a_declared_name_the_realm_never_exposes_gets_its_config_committed_first
         pass
 
     asked = []
-    context = None
-    batch = {Extension: Extension.__v8_idl_spec__}
 
     def factory(name):
         asked.append(name)
         if name != "Extension":
             return None
-        context.update_configs(batch)
-        return Extension
+        return Extension, {"Extension": Extension.__v8_idl_spec__}
 
     context = pyv8.Context(Window(), lazy_factory=factory)
     try:
-        assert context.declare_materialisable(["Extension"]) == 1
-        # Recorded, not exposed: the name stays off the global object.
-        assert context.exec_js("'Extension' in globalThis") is False
+        assert asked == ["Window"]
+        # Handed over, never exposed: the name stays off the global object.
         context.expose(handed_over=Extension())
-        assert asked == ["Extension"]
+        assert "Extension" in asked
+        assert context.exec_js("'Extension' in globalThis") is False
         assert context.exec_js("handed_over.VENDOR") == 37445
-        assert context.update_configs(batch) == 0
     finally:
         context.close()
 
 
-def test_the_factory_is_not_asked_about_a_name_the_realm_never_declared():
-    """The factory is not asked about names the realm never declared."""
+def test_a_name_the_realm_cannot_describe_is_asked_about_once():
+    """A refusal is remembered, so an unknown name costs one ask per realm."""
     import pyv8
 
     class Other:
@@ -246,8 +213,14 @@ def test_the_factory_is_not_asked_about_a_name_the_realm_never_declared():
     context = pyv8.Context(Window(), lazy_factory=factory)
     try:
         context.expose(other=Other())
-        assert asked == []
         assert context.exec_js("typeof other") == "object"
+        assert asked == ["Window", "Other"]
+
+        # The template is built by then, so a second object under the same name
+        # answers from the registry.
+        context.expose(second=Other())
+        assert context.exec_js("typeof second") == "object"
+        assert asked == ["Window", "Other"]
     finally:
         context.close()
 
@@ -325,6 +298,18 @@ def test_explicit_callbacks_are_isolate_local_and_released_on_close():
         def read(self):
             return self.value
 
+    def realm_factory(state):
+        """A realm's answer, built the way a binding session builds one."""
+        def factory(name):
+            if name != "Interface":
+                return None
+            spec = pyv8.IdlSpec(methods=(pyv8.MethodSpec(
+                name="read", callback=state.read, location=pyv8.FlagLocation.kInterface,
+            ),))
+            return Interface, {"Interface": spec}
+
+        return factory
+
     isolates = [pyv8.Isolate(), pyv8.Isolate()]
     contexts = []
     references = []
@@ -332,13 +317,10 @@ def test_explicit_callbacks_are_isolate_local_and_released_on_close():
         for index, isolate in enumerate(isolates):
             state = State(index)
             references.append(weakref.ref(state))
-            spec = pyv8.IdlSpec(methods=(pyv8.MethodSpec(
-                name="read", callback=state.read, location=pyv8.FlagLocation.kInterface,
-            ),))
-            context = pyv8.Context(Window(), isolate=isolate, class_configs={Interface: spec})
+            context = pyv8.Context(Window(), isolate=isolate, lazy_factory=realm_factory(state))
             context.expose(Interface)
             contexts.append(context)
-            del state, spec
+            del state
         assert contexts[0].exec_js("Interface.read()") == 0
         assert contexts[1].exec_js("Interface.read()") == 1
         assert all(reference() is not None for reference in references)
@@ -368,10 +350,20 @@ def test_registered_inheritance_flags_override_class_declarations():
     class Leaf(Middle):
         pass
 
-    context = pyv8.Context(Window(), class_configs={Middle: Middle.__v8_idl_spec__.replace(skip_inherit=True)})
+    def factory(name):
+        if name != "Leaf":
+            return None
+        return Leaf, {
+            "Leaf": pyv8.IdlSpec(),
+            "Middle": Middle.__v8_idl_spec__.replace(skip_inherit=True),
+        }
+
+    context = pyv8.Context(Window(), lazy_factory=factory)
     try:
         context.expose(Leaf)
         assert context.exec_js("Object.getPrototypeOf(Leaf).name") == "Base"
+        # The class declaration changed, but the realm answered for Middle
+        # already, and its answer is what the built template carries.
         Middle.__v8_idl_spec__ = pyv8.IdlSpec(skip_inherit=False)
         context.expose(Leaf)
         assert context.exec_js("Object.getPrototypeOf(Leaf).name") == "Base"

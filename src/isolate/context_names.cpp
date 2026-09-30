@@ -11,10 +11,157 @@
 
 using namespace v8;
 
-// Installing names into a realm: what `expose`, `declare_lazy` and a module's
-// `__all__` do, and what a later realm-specific overlay changes.  This is the one
-// part of a context's life that talks to the interface layer, which is why it
-// lives on its own rather than in the middle of the lifecycle.
+// Naming things in a realm: the registry it keeps per interface name, and the
+// verbs that put a value on its global.
+
+//: An entry is [template, spec, state], and a slot stays NULL until the realm
+//: learns that fact, so an entry holds what it knows and nothing more.
+PyObject *
+context_registry_get(context_c *self, PyObject *name, int slot)
+{
+    if (self->registry == NULL || !PyUnicode_Check(name))
+        return NULL;
+    PyObject* entry = PyDict_GetItemWithError(self->registry, name);
+    if (entry == NULL)
+        return NULL;
+    return PyList_GetItem(entry, slot);
+}
+
+int
+context_registry_set(context_c *self, PyObject *name, int slot, PyObject *value)
+{
+    if (self->registry == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "V8 context is no longer active");
+        return -1;
+    }
+    if (!PyUnicode_Check(name)) {
+        PyErr_SetString(PyExc_TypeError, "an interface name must be a string");
+        return -1;
+    }
+    PyObject* entry = PyDict_GetItemWithError(self->registry, name);
+    bool created = false;
+    if (entry == NULL)
+    {
+        if (PyErr_Occurred())
+            return -1;
+        entry = PyList_New(REGISTRY_SLOTS);
+        if (entry == NULL)
+            return -1;
+        created = true;
+        if (PyDict_SetItem(self->registry, name, entry) < 0) {
+            Py_DECREF((PyObject*)entry);
+            return -1;
+        }
+    }
+    int written = PyList_SetItem(entry, slot, PyV8_NewRef(value));
+    if (created)
+        Py_DECREF((PyObject*)entry);
+    if (written < 0)
+        return -1;
+    return 0;
+}
+
+static int
+name_state(context_c *self, PyObject *name, long value)
+{
+    PyObject* state = PyLong_FromLong(value);
+    PyErr_PROPAGATE_(state);
+    int written = context_registry_set(self, name, REGISTRY_STATE, state);
+    Py_DECREF((PyObject*)state);
+    return written;
+}
+
+bool
+context_registry_askable(context_c *self, PyObject *name)
+{
+    if (self->lazy_factory == NULL || self->registry == NULL || !PyUnicode_Check(name))
+        return false;
+    PyObject* entry = PyDict_GetItemWithError(self->registry, name);
+    if (entry == NULL)
+        return !PyErr_Occurred();
+    PyObject* state = PyList_GetItem(entry, REGISTRY_STATE);
+    if (state != NULL && PyLong_AsLong(state) != REGISTRY_IDLE)
+        return false;
+    // A name that holds a spec but no template still needs its class, so having a spec
+    // is not an answer: only a built template is.
+    return PyList_GetItem(entry, REGISTRY_TEMPLATE) == NULL;
+}
+
+//: Keep the specs an answer carries.  A name whose template is already built
+//: keeps the spec that built it, so a later answer cannot rewrite it.
+static int
+record_specs(context_c *self, PyObject *mapping)
+{
+    if (!PyDict_Check(mapping) && !PyMapping_Check(mapping)) {
+        PyErr_SetString(PyExc_TypeError, "specs must map interface names to IdlSpec objects");
+        return -1;
+    }
+    PyObject* items = PyMapping_Items(mapping);
+    PyErr_PROPAGATE_(items);
+    for (Py_ssize_t index = 0; index < PyList_Size(items); ++index)
+    {
+        PyObject* pair = PyList_GetItem(items, index);
+        PyObject* key = pair == NULL ? NULL : PyTuple_GetItem(pair, 0);
+        PyObject* value = pair == NULL ? NULL : PyTuple_GetItem(pair, 1);
+        if (key == NULL || value == NULL
+            || !PyUnicode_Check(key) || Py_TYPE(value) != idl_spec_type) {
+            PyErr_SetString(PyExc_TypeError, "specs must map interface names to IdlSpec objects");
+            Py_DECREF((PyObject*)items);
+            return -1;
+        }
+        if (context_registry_get(self, key, REGISTRY_TEMPLATE) != NULL
+            || context_registry_get(self, key, REGISTRY_SPEC) != NULL)
+            continue;
+        if (context_registry_set(self, key, REGISTRY_SPEC, value) < 0) {
+            Py_DECREF((PyObject*)items);
+            return -1;
+        }
+    }
+    Py_DECREF((PyObject*)items);
+    return 0;
+}
+
+//: The realm's answer for one name: a class, or (class, {name: spec}) when the
+//: realm holds the overlay itself.  A refused or failed attempt is asked again.
+PyObject *
+context_ask_factory(context_c *self, PyObject *name)
+{
+    if (name_state(self, name, REGISTRY_RESOLVING) < 0)
+        return NULL;
+    PyObject* answer = PyObject_CallFunctionObjArgs(self->lazy_factory, name, NULL);
+    if (answer == NULL) {
+        name_state(self, name, REGISTRY_IDLE);
+        return NULL;
+    }
+    PyObject* cls = answer;
+    PyObject* specs = NULL;
+    if (PyTuple_Check(answer) && PyTuple_Size(answer) == 2) {
+        cls = PyTuple_GetItem(answer, 0);
+        specs = PyTuple_GetItem(answer, 1);
+    }
+    if (cls != Py_None && !PyType_Check(cls)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "lazy factory must answer a class, (class, specs) or None");
+        Py_DECREF((PyObject*)answer);
+        name_state(self, name, REGISTRY_IDLE);
+        return NULL;
+    }
+    if (cls == Py_None)
+        specs = NULL;
+    if (specs != NULL && record_specs(self, specs) < 0) {
+        Py_DECREF((PyObject*)answer);
+        name_state(self, name, REGISTRY_IDLE);
+        return NULL;
+    }
+    name_state(self, name, REGISTRY_ASKED);
+    if (cls == Py_None) {
+        Py_DECREF((PyObject*)answer);
+        return PyV8_NewRef(Py_None);
+    }
+    Py_INCREF(cls);
+    Py_DECREF((PyObject*)answer);
+    return cls;
+}
 
 PyObject *
 context_expose(context_c *self, PyObject *args, PyObject *kwargs)
@@ -102,119 +249,57 @@ context_expose(context_c *self, PyObject *args, PyObject *kwargs)
     PYV8_RETURN_NONE;
 }
 
-PyObject *context_update_configs(context_c *self, PyObject *mapping)
-{
-    ExecutionScope execution(self);
-    if (!execution) return nullptr;
-    if (self->class_configs == NULL || !PyDict_Check(self->class_configs))
-    {
-        PyErr_SetString(PyExc_RuntimeError, "V8 context is no longer active");
-        return NULL;
-    }
-    if (!PyDict_Check(mapping) && !PyObject_HasAttrString(mapping, "keys"))
-    {
-        PyErr_SetString(PyExc_TypeError, "update_configs requires a mapping of class configs");
-        return NULL;
-    }
-    PyObject *snapshot = PyDict_New();
-    if (snapshot == NULL)
-        return NULL;
-    if (PyDict_Update(snapshot, mapping) < 0 || !idl_spec_validate_configs(snapshot))
-    {
-        Py_DECREF((PyObject*)snapshot);
-        return NULL;
-    }
-    Py_ssize_t added = 0;
-    Py_ssize_t position = 0;
-    PyObject *key = NULL;
-    PyObject *value = NULL;
-    while (PyDict_Next(snapshot, &position, &key, &value))
-    {
-        int contained = PyDict_Contains(self->class_configs, key);
-        if (contained < 0)
-        {
-            Py_DECREF((PyObject*)snapshot);
-            return NULL;
-        }
-        if (contained == 0)
-        {
-            int installed = PyDict_Contains(self->class_template_cache, key);
-            if (installed < 0)
-            {
-                Py_DECREF((PyObject*)snapshot);
-                return nullptr;
-            }
-            if (installed)
-            {
-                Py_DECREF((PyObject*)snapshot);
-                PyErr_SetString(PyExc_RuntimeError,
-                                "IDL configuration must be registered before template installation");
-                return nullptr;
-            }
-            added++;
-        }
-        else if (PyDict_GetItemWithError(self->class_configs, key) != value)
-        {
-            Py_DECREF((PyObject*)snapshot);
-            PyErr_SetString(PyExc_RuntimeError, "IDL configuration is already registered for this type");
-            return nullptr;
-        }
-    }
-    if (added == 0)
-    {
-        Py_DECREF((PyObject*)snapshot);
-        return PyLong_FromLong(0);
-    }
-    PyObject *updated = PyDict_Copy(self->class_configs);
-    if (updated == nullptr || PyDict_Update(updated, snapshot) < 0)
-    {
-        Py_XDECREF((PyObject*)updated);
-        Py_DECREF((PyObject*)snapshot);
-        return nullptr;
-    }
-    Py_DECREF((PyObject*)snapshot);
-    Py_DECREF(self->class_configs);
-    self->class_configs = updated;
-    return PyLong_FromSsize_t(added);
-}
+//: Install one global the caller already has a value for, with the attributes it names.
 PyObject *
-context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
+context_define_global(context_c *self, PyObject *args, PyObject *kwargs)
 {
-    PyObject* names = NULL;
-    PyObject* skip = Py_None;
-    static const char *keywords[] = {"names", "skip", NULL};
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|O", (char **) keywords,
-                                    &names, &skip) < 0) {
+    PyObject* name = NULL;
+    PyObject* value = NULL;
+    unsigned int attributes = 0;
+    static const char *keywords[] = {"name", "value", "attributes", NULL};
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "OO|I", (char **) keywords,
+                                    &name, &value, &attributes) < 0) {
+        return NULL;
+    }
+    if (PyUnicode_Check(name) == 0) {
+        PyErr_SetString(PyExc_TypeError, "define_global takes a name string");
         return NULL;
     }
 
+    trace::TraceSilence silence(self);
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Context> context = self->js_context.Get(isolate);
+    Local<Object> global = context->Global();
+    Local<Value> js_name = js_from_py(name, context);
+    Local<Value> js_value = js_from_py(value, context);
+    if (js_name.IsEmpty() || js_value.IsEmpty() || PyErr_Occurred())
+        return NULL;
+    if (global->DefineOwnProperty(context, js_name.As<String>(), js_value,
+                                  static_cast<PropertyAttribute>(attributes)).IsNothing()) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to define the global property");
+        return NULL;
+    }
+    PYV8_RETURN_NONE;
+}
+
+//: Install each name as a non-enumerable lazy constructor on the realm's global.
+PyObject *
+context_install(context_c *self, PyObject *names)
+{
     ExecutionScope execution(self);
     if (!execution) return nullptr;
     auto* isolate = execution.isolate();
     Local<Context> context = self->js_context.Get(isolate);
     Local<Object> global = context->Global();
 
-    // Names the caller already installed as concrete properties. Testing
-    // membership here avoids a global property lookup per name, which would
-    // otherwise invoke Python interceptors for every declared interface.
-    PyObject* skip_set = NULL;
-    if (skip != Py_None) {
-        PyObject* skip_seq = PySequence_Fast(skip, "declare_lazy skip must be a sequence");
-        PyErr_PROPAGATE(skip_seq);
-        skip_set = PySet_New(skip_seq);
-        Py_DECREF((PyObject*)skip_seq);
-        PyErr_PROPAGATE(skip_set);
-    }
-
-    PyObject* sequence = PySequence_Fast(names, "declare_lazy requires a sequence of interface names");
-    if (sequence == NULL) {
-        Py_XDECREF((PyObject*)skip_set);
+    PyObject* sequence = PySequence_Fast(names, "install requires a sequence of interface names");
+    if (sequence == NULL)
         return NULL;
-    }
     Py_ssize_t size = PySequence_Size(sequence);
     if (size < 0) {
         Py_DECREF((PyObject*)sequence);
-        Py_XDECREF((PyObject*)skip_set);
         return NULL;
     }
 
@@ -224,96 +309,26 @@ context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
         PyObject* item = PySequence_GetItem(sequence, i);
         if (item == NULL) {
             Py_DECREF((PyObject*)sequence);
-            Py_XDECREF((PyObject*)skip_set);
             return NULL;
         }
         if (!PyUnicode_Check(item)) {
             PyErr_Format(PyExc_TypeError,
-                         "declare_lazy names must be strings, got a non-string at index %zd",
-                         i);
+                         "install names must be strings, got a non-string at index %zd", i);
             Py_DECREF((PyObject*)item);
             Py_DECREF((PyObject*)sequence);
-            Py_XDECREF((PyObject*)skip_set);
             return NULL;
         }
-        bool skipped = false;
-        if (skip_set != NULL) {
-            int contained = PySet_Contains(skip_set, item);
-            if (contained < 0) {
-                Py_DECREF((PyObject*)item);
-                Py_DECREF((PyObject*)sequence);
-                Py_XDECREF((PyObject*)skip_set);
-                return NULL;
-            }
-            skipped = contained == 1;
-        }
         const char* text = PyUnicode_AsUTF8_abi3(item);
-        if (!skipped && text != nullptr && PySet_Add(self->materialisable_names, item) < 0) {
-            Py_DECREF((PyObject*)item);
-            Py_DECREF((PyObject*)sequence);
-            Py_XDECREF((PyObject*)skip_set);
-            return nullptr;
-        }
         Py_DECREF((PyObject*)item);
         if (text == nullptr) {
             Py_DECREF((PyObject*)sequence);
-            Py_XDECREF((PyObject*)skip_set);
             return NULL;
-        }
-        if (skipped) {
-            continue;
         }
         bindings::InstallExposedConstruct(context, global, text);
         declared++;
     }
     Py_DECREF((PyObject*)sequence);
-    Py_XDECREF((PyObject*)skip_set);
     return PyLong_FromSsize_t(declared);
-}
-
-PyObject *
-context_declare_materialisable(context_c *self, PyObject *names)
-{
-    ExecutionScope execution(self);
-    if (!execution) return nullptr;
-    if (self->materialisable_names == NULL) {
-        PyErr_SetString(PyExc_RuntimeError, "V8 context is no longer active");
-        return NULL;
-    }
-    PyObject* sequence = PySequence_Fast(names, "declare_materialisable requires a sequence of interface names");
-    if (sequence == NULL)
-        return NULL;
-    Py_ssize_t size = PySequence_Size(sequence);
-    if (size < 0) {
-        Py_DECREF((PyObject*)sequence);
-        return NULL;
-    }
-    Py_ssize_t recorded = 0;
-    for (Py_ssize_t i = 0; i < size; i++)
-    {
-        PyObject* item = PySequence_GetItem(sequence, i);
-        if (item == NULL) {
-            Py_DECREF((PyObject*)sequence);
-            return NULL;
-        }
-        if (!PyUnicode_Check(item)) {
-            PyErr_Format(PyExc_TypeError,
-                         "declare_materialisable names must be strings, got a non-string at index %zd",
-                         i);
-            Py_DECREF((PyObject*)item);
-            Py_DECREF((PyObject*)sequence);
-            return NULL;
-        }
-        if (PySet_Add(self->materialisable_names, item) < 0) {
-            Py_DECREF((PyObject*)item);
-            Py_DECREF((PyObject*)sequence);
-            return NULL;
-        }
-        Py_DECREF((PyObject*)item);
-        recorded++;
-    }
-    Py_DECREF((PyObject*)sequence);
-    return PyLong_FromSsize_t(recorded);
 }
 
 PyObject *
@@ -339,50 +354,3 @@ context_hide_global(context_c *self, PyObject *name)
     return PyBool_FromLong(deleted ? 1 : 0);
 }
 
-PyObject *
-context_expose_module(context_c *self, PyObject *module)
-{
-    if (!PyModule_Check(module)) {
-        PyErr_SetString(PyExc_TypeError, "context_expose_module requires a module");
-        return NULL;
-    }
-
-    PyObject *module_all_slow = PyObject_Dir(module);
-    PyErr_PROPAGATE(module_all_slow);
-    PyObject *module_all = PySequence_Fast(module_all_slow, "o noes");
-    Py_XDECREF((PyObject*)module_all_slow);
-    PyErr_PROPAGATE(module_all);
-    PyObject *members = PyDict_New();
-    PyErr_PROPAGATE(members);
-    Py_ssize_t module_all_size = PySequence_Size(module_all);
-    for (int i = 0; i < module_all_size; i++)
-    {
-        PyObject *name = PySequence_GetItem(module_all, i);
-        if (!PyString_StartsWithString(name, "_"))
-        {
-            PyObject *value = PyObject_GetAttr(module, name);
-            if (value == NULL)
-            {
-                Py_DECREF((PyObject*)name);
-                Py_XDECREF((PyObject*)members);
-                return NULL;
-            }
-            if (PyDict_SetItem(members, name, value) < 0)
-            {
-                Py_DECREF((PyObject*)name);
-                Py_DECREF((PyObject*)value);
-                Py_XDECREF((PyObject*)members);
-                return NULL;
-            }
-            Py_DECREF((PyObject*)value);
-        }
-        Py_DECREF((PyObject*)name);
-    }
-
-    PyObject *no_args = PyTuple_New(0);
-    PyErr_PROPAGATE(no_args);
-    PyObject *result = context_expose(self, no_args, members);
-    Py_XDECREF((PyObject*)no_args);
-    Py_XDECREF((PyObject*)members);
-    return result;
-}

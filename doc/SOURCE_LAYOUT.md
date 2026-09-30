@@ -44,7 +44,7 @@ together, and they are the whole exception list:
 | `pyv8.h` | 0-2 | the aggregate header: every unit includes it, and it re-exports the shims and the two singletons |
 | `pyv8.cpp` | everything | the module entry point registers every type |
 | `context.cpp` | 1-3 | the realm owner builds the interface templates, creates the realm's handles and wires the devtools bridge |
-| `context_names.cpp` | 1-4 | installing names into a realm is what `expose`, `declare_lazy` and a module's `__all__` do, so this is the one part of a context's life that knows the interface layer |
+| `context_names.cpp` | 1-4 | installing names into a realm and keeping the registry behind them is what `install`, `expose` and the lazy factory protocol do, so this is the one part of a context's life that knows the interface layer |
 | `context_resources.cpp` | 1-3 | the pair table materialises a Python handle for a JavaScript object |
 | `convert_to_python.cpp` | 1-3 | one direction of the converter: it builds handles for objects coming in, which the handles layer defines |
 | `convert_to_javascript.cpp` | 1-4 | the other direction, which additionally has to know the class and function machinery |

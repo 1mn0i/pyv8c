@@ -490,19 +490,6 @@ PyObject *idl_spec_resolve(PyObject *original, PyObject *owner)
     Py_XDECREF((PyObject*)changes);
     return result;
 }
-bool idl_spec_validate_configs(PyObject *configs)
-{
-    Py_ssize_t position = 0;
-    PyObject *key = nullptr;
-    PyObject *value = nullptr;
-    while (PyDict_Next(configs, &position, &key, &value))
-        if (!PyType_Check(key) || Py_TYPE((PyObject*)value) != idl_spec_type)
-        {
-            PyErr_SetString(PyExc_TypeError, "class_configs must map Python types to IdlSpec objects");
-            return false;
-        }
-    return true;
-}
 bool idl_spec_flag(PyObject *owner, const char *key, bool *result)
 {
     PyObject *value = idl_spec_for(owner);
