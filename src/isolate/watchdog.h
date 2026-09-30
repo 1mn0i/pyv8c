@@ -46,7 +46,7 @@ private:
     // it into V8's own fatal path.
     static constexpr double kHeapCollectionRatio = 0.6;
     static constexpr double kHeapTerminationRatio = 0.8;
-    static constexpr std::chrono::microseconds kHeapPollInterval{200};
+    static constexpr std::chrono::microseconds kHeapPollInterval{2000};
     static void heap_check(v8::Isolate* isolate, void* data);
     // True at most once per collection interval, so the checks cannot starve the
     // script with one collection each.

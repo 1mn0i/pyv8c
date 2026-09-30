@@ -54,6 +54,9 @@ void Watchdog::arm(double seconds)
     start_thread_locked();
     // The counter saturates: past kMaxNesting there is no slot to write, and a depth
     // that kept climbing would leave the array holding deadlines nothing owns.
+    const bool was_idle = depth_ == 0;
+    const bool was_armed = armed_;
+    const Clock::time_point previous = deadline_;
     if (depth_ < kMaxNesting)
     {
         deadlines_[depth_] = seconds > 0
@@ -62,7 +65,10 @@ void Watchdog::arm(double seconds)
         ++depth_;
     }
     refresh_deadline_locked();
-    wake_.notify_all();
+    // The sleeper only recomputes its wait when the deadline moved earlier or heap
+    // watching switched on; anything else it notices at its own next wake.
+    if (was_idle || !was_armed || (armed_ && deadline_ < previous))
+        wake_.notify_all();
 }
 
 void Watchdog::disarm()
@@ -77,7 +83,7 @@ void Watchdog::disarm()
     // earliest one every later command sees, and fires on whichever runs then.
     deadlines_[depth_] = Clock::time_point::max();
     refresh_deadline_locked();
-    wake_.notify_all();
+    // The sleeper recomputes its wait at its own next wake; nothing here is urgent.
 }
 
 void Watchdog::begin_crossing(double seconds)
@@ -99,6 +105,9 @@ void Watchdog::begin_crossing(double seconds)
         terminated_ = true;
         isolate_->TerminateExecution();
     }
+    const bool was_idle = depth_ == 0;
+    const bool was_armed = armed_;
+    const Clock::time_point previous = deadline_;
     if (depth_ < kMaxNesting)
     {
         deadlines_[depth_] = seconds > 0
@@ -107,7 +116,8 @@ void Watchdog::begin_crossing(double seconds)
         ++depth_;
     }
     refresh_deadline_locked();
-    wake_.notify_all();
+    if (was_idle || !was_armed || (armed_ && deadline_ < previous))
+        wake_.notify_all();
 }
 
 void Watchdog::terminate_now()
@@ -226,8 +236,9 @@ void Watchdog::run()
             continue;
         }
         // A crossing is an open deadline scope, whether or not it carries a deadline,
-        // and the heap is watched for as long as one is running.
-        if (!armed_ && depth_ == 0)
+        // and the heap is watched for as long as one is running -- but only when a
+        // budget exists to watch it against.
+        if (!armed_ && (depth_ == 0 || heap_budget_bytes() == 0))
         {
             wake_.wait(lock);
             continue;
@@ -241,7 +252,7 @@ void Watchdog::run()
         {
             // The reading has to happen on the isolate's thread, so this thread only
             // asks for one between safepoints.
-            if (depth_ > 0 && !heap_check_pending_)
+            if (depth_ > 0 && !heap_check_pending_ && heap_budget_bytes() != 0)
             {
                 heap_check_pending_ = true;
                 lock.unlock();
