@@ -336,10 +336,6 @@ class HTMLInputElement(HTMLElement):
             AttributeSpec(name="incremental", getter="get_incremental", setter="set_incremental"),
             AttributeSpec(name="popoverTargetElement", getter="get_popoverTargetElement", setter="set_popoverTargetElement"),
             _attribute("popoverTargetAction", "get_popoverTargetAction", "set_popoverTargetAction"),
-            _attribute("alpha", "get_alpha", "set_alpha"),
-            _attribute("colorSpace", "get_colorSpace", "set_colorSpace"),
-            _attribute("switch", "get_switch", "set_switch"),
-            _attribute("capture", "get_capture", "set_capture"),
             AttributeSpec(name="webkitEntries", getter="get_webkitEntries", side_effect=1),
         ),
         methods=(
@@ -509,15 +505,6 @@ class HTMLInputElement(HTMLElement):
     def set_webkitdirectory(self, value): self._set_bool("webkitdirectory", value)
     def get_incremental(self): return self._bool("incremental")
     def set_incremental(self, value): self._set_bool("incremental", value)
-    def get_alpha(self): return self._attr("alpha")
-    def set_alpha(self, value): self._set_string("alpha", value)
-    def get_colorSpace(self): return self._attr("colorspace")
-    def set_colorSpace(self, value): self._set_string("colorspace", value)
-    def get_switch(self): return self._attr("switch")
-    def set_switch(self, value): self._set_string("switch", value)
-    def get_capture(self): return self._attr("capture")
-    def set_capture(self, value): self._set_string("capture", value)
-
     def get_maxLength(self): return self._long("maxlength")
     def set_maxLength(self, value): self.attributes["maxlength"] = str(integer(value))
     def get_minLength(self): return self._long("minlength")

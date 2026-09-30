@@ -5,8 +5,19 @@ import re
 from ..foundation.errors import InvalidStateError, TimeoutError
 from ..foundation.tasks import TaskSource
 from ..foundation.urls import absolute_url
+from ..web.bom.utils import is_secure_context
 from ..web.dom.document import Document
+from ..web.dom.motion import INSECURE_ORIGIN_INTERFACES
 from ..web.dom.parser import IncrementalDOMParser
+
+
+def hide_insecure_origin_interfaces(page):
+    """Take the motion interfaces out of a realm whose document is not secure."""
+    context = getattr(page, "context", None)
+    if context is None:
+        return
+    for name in INSECURE_ORIGIN_INTERFACES:
+        context.hide_global(name)
 
 
 class NavigationController:
@@ -28,7 +39,11 @@ class NavigationController:
     def commit_content(self, html, url):
         lifecycle = self.page.lifecycle
         if self.has_navigation:
+            # Chrome's order for the document being replaced: pageswap, pagehide, the
+            # document going hidden, then unload.
+            lifecycle.dispatch_pageswap()
             lifecycle.dispatch_page_hide(False)
+            lifecycle.dispatch_visibility_hidden()
             lifecycle.dispatch_unload()
         self.generation += 1
         # A later document replaces the realm; the first one is the page's own.
@@ -40,12 +55,19 @@ class NavigationController:
         if renew_realm:
             self.page._renew_document_realm(str(url))
         self.page._update_origin(url)
+        if not is_secure_context(str(url)):
+            # Chrome exposes these only on a secure origin; a frame commits while its
+            # parent's realm runs, so the names leave on a task of their own.
+            page = self.page
+            page.tasks.post(lambda: hide_insecure_origin_interfaces(page))
         self.page.window.location.href = str(url)
         self.page.window.sync_history_url(str(url))
         devtools = self.page.context_owner._devtools
         if devtools is not None:
             devtools.target_info_changed(self.page)
         self.page.document = Document(services=self.page.services, url=str(url), ready_state="loading")
+        # A new document starts its own timeline; earlier records belong to the old one.
+        self.page.services.realm_services.performance.begin_navigation(url)
         self.page.services.document = self.page.document
         target = self.page._devtools_target
         if target is not None:
@@ -159,19 +181,27 @@ class NavigationController:
         parser = self.parser
         if parser is not None and not parser.done:
             return parser.write_markup(markup)
+        if not self.open_document():
+            return False
+        body = self._open_document_body(self.page.document)
+        self.parser = IncrementalDOMParser(self.page.services, body, str(markup))
+        self.resume_parser(self.parser_generation)
+        return True
+
+    def open_document(self):
+        """The document open steps: an empty document, reading ``loading`` as Chrome's does."""
         if self.page.closed or self.page.context_owner.closed:
             return False
         document = self.page.document
         self.generation += 1
         self.parser_generation = self.generation
         self.parser_done = False
+        document.ready_state = "loading"
         self.page.resources.reset()
         self.page.scripts.reset()
         for child in list(document.get_childNodes() or ()):
             document.fn_removeChild(child)
-        body = self._open_document_body(document)
-        self.parser = IncrementalDOMParser(self.page.services, body, str(markup))
-        self.resume_parser(self.parser_generation)
+        self.parser = None
         return True
 
     def _open_document_body(self, document):
@@ -227,7 +257,10 @@ class NavigationController:
         script_type = str(getattr(node, "get_type", lambda: "")() or "").lower()
         is_module = script_type == "module"
         is_async = bool(getattr(node, "get_async", lambda: False)())
-        is_defer = bool(getattr(node, "get_defer", lambda: False)()) or is_module
+        # async wins over defer: an asynchronous script is not in the list the document
+        # waits for before DOMContentLoaded, and queueing it there wedges the lifecycle.
+        is_defer = not is_async and (
+            bool(getattr(node, "get_defer", lambda: False)()) or is_module)
         node._resource_async = is_async
         node._script_defer = is_defer
         if node.get_src():

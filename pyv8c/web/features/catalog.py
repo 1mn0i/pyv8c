@@ -8,9 +8,32 @@ CORE_INTERFACES = (
     "FocusEvent", "InputEvent", "CompositionEvent", "PointerEvent", "WheelEvent",
     "PopStateEvent", "HashChangeEvent", "StorageEvent", "AnimationEvent", "TransitionEvent",
     "PromiseRejectionEvent", "PageTransitionEvent", "BeforeUnloadEvent",
+    "PageRevealEvent", "PageSwapEvent",
+    "DeviceMotionEvent", "DeviceMotionEventAcceleration", "DeviceMotionEventRotationRate",
+    "DeviceOrientationEvent",
     "Node", "DocumentFragment", "Attr", "CharacterData", "Text", "Comment", "DocumentType", "Document",
     "CSSStyleDeclaration", "Element", "HTMLElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLLinkElement", "HTMLMetaElement", "CanvasRenderingContext2D",
-    "ValidityState", "FileList", "TextMetrics",
+    "OffscreenCanvas", "OffscreenCanvasRenderingContext2D",
+    "WebGLRenderingContext", "WebGLObject", "WebGLBuffer", "WebGLFramebuffer", "WebGLProgram",
+    "WebGLRenderbuffer", "WebGLShader", "WebGLTexture", "WebGLUniformLocation", "WebGLActiveInfo",
+    "WebGLShaderPrecisionFormat", "WebGLDebugRendererInfo", "WebGL2RenderingContext",
+    "WebGLVertexArrayObject", "WebGLVertexArrayObjectOES", "WebGLQuery", "WebGLTimerQueryEXT",
+    "WebGLSampler", "WebGLTransformFeedback", "WebGLSync",
+    "ANGLEInstancedArrays", "EXTBlendMinMax", "EXTClipControl", "EXTColorBufferFloat",
+    "EXTColorBufferHalfFloat", "EXTConservativeDepth", "EXTDepthClamp", "EXTDisjointTimerQuery",
+    "EXTDisjointTimerQueryWebGL2", "EXTFloatBlend", "EXTFragDepth", "EXTPolygonOffsetClamp",
+    "EXTRenderSnorm", "EXTShaderTextureLOD", "EXTTextureCompressionBPTC",
+    "EXTTextureCompressionRGTC", "EXTTextureFilterAnisotropic", "EXTTextureMirrorClampToEdge",
+    "EXTTextureNorm16", "EXTsRGB", "KHRParallelShaderCompile",
+    "NVShaderNoperspectiveInterpolation", "OESDrawBuffersIndexed", "OESElementIndexUint",
+    "OESFboRenderMipmap", "OESSampleVariables", "OESShaderMultisampleInterpolation",
+    "OESStandardDerivatives", "OESTextureFloat", "OESTextureFloatLinear", "OESTextureHalfFloat",
+    "OESTextureHalfFloatLinear", "OESVertexArrayObject", "OVRMultiview2",
+    "WebGLBlendFuncExtended", "WebGLClipCullDistance", "WebGLColorBufferFloat",
+    "WebGLCompressedTextureS3TC", "WebGLCompressedTextureS3TCsRGB", "WebGLDebugShaders",
+    "WebGLDepthTexture", "WebGLDrawBuffers", "WebGLLoseContext", "WebGLMultiDraw",
+    "WebGLPolygonMode", "WebGLProvokingVertex", "WebGLStencilTexturing",
+    "ValidityState", "FileList", "TextMetrics", "TextEncoder", "TextDecoder",
     "HTMLScriptElement", "HTMLStyleElement", "HTMLTemplateElement", "HTMLHtmlElement", "HTMLHeadElement",
     "HTMLBodyElement", "HTMLDivElement", "HTMLSpanElement", "HTMLAnchorElement", "HTMLInputElement",
     "HTMLFormElement", "HTMLCanvasElement", "HTMLMediaElement", "HTMLTableElement", "HTMLTableRowElement",
@@ -23,10 +46,14 @@ CORE_INTERFACES = (
     "History", "Window", "WindowProperties", "BarProp", "MediaQueryList", "Performance", "Crypto",
     "MutationObserver", "MutationRecord", "CustomElementRegistry", "VisualViewport",
     "External", "StyleMedia", "CrashReportContext", "LaunchQueue", "SpeechSynthesis",
-    "Scheduler", "Viewport", "ImageData", "Navigation", "NavigationActivation",
+    "Scheduler", "Scheduling", "Viewport", "ImageData", "Navigation", "NavigationActivation",
     "NavigationHistoryEntry",
     "TrustedHTML", "TrustedScript", "TrustedScriptURL", "TrustedTypePolicy",
     "TrustedTypePolicyFactory", "XPathEvaluator", "XPathExpression", "XPathResult",
+    "Notification", "MessageChannel", "MessagePort", "FontFace", "FontFaceSet", "CookieStore",
+    "MemoryInfo", "PerformanceObserver", "PerformanceEntry", "PerformanceMark",
+    "PerformanceMeasure", "PerformanceResourceTiming", "PerformanceNavigationTiming",
+    "PerformanceObserverEntryList",
     "Lock", "LockManager",
 )
 
@@ -44,7 +71,18 @@ NAVIGATOR_INTERFACES = (
 FILESYSTEM_INTERFACES = (
     "DOMFileSystem", "Entry", "DirectoryEntry", "FileEntry", "DirectoryReader", "FileWriter", "File",
 )
-WORKER_INTERFACES = ("WorkerGlobalScope", "DedicatedWorkerGlobalScope", "Worker")
+WORKER_INTERFACES = ("WorkerGlobalScope", "DedicatedWorkerGlobalScope", "Worker",
+                     "SharedWorkerGlobalScope", "SharedWorker")
+AUDIO_INTERFACES = (
+    "AudioBuffer", "AudioParam", "AudioNode", "AudioScheduledSourceNode", "OscillatorNode",
+    "AudioBufferSourceNode",
+    "AnalyserNode", "GainNode", "DynamicsCompressorNode", "AudioDestinationNode",
+    "AudioListener", "PeriodicWave",
+    "BiquadFilterNode", "ChannelMergerNode", "ChannelSplitterNode", "ConvolverNode",
+    "ConstantSourceNode", "DelayNode", "IIRFilterNode", "PannerNode", "StereoPannerNode",
+    "WaveShaperNode", "ScriptProcessorNode", "AudioProcessingEvent",
+    "BaseAudioContext", "AudioContext", "OfflineAudioContext",
+)
 
 
 CATALOG = FeatureCatalog((
@@ -55,4 +93,5 @@ CATALOG = FeatureCatalog((
     FeatureSpec("filesystem", "pyv8c.web.bom.filesystem", FILESYSTEM_INTERFACES, requires=("core",)),
     FeatureSpec("websocket", "pyv8c.web.websocket", ("WebSocket",), requires=("core",)),
     FeatureSpec("workers", "pyv8c.web.workers.api", WORKER_INTERFACES, requires=("core",)),
+    FeatureSpec("audio", "pyv8c.web.bom.audio", AUDIO_INTERFACES, requires=("core",)),
 ))

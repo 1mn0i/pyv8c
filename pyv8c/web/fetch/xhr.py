@@ -29,6 +29,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             AttributeSpec(name="statusText", getter="get_statusText", side_effect=1),
             AttributeSpec(name="responseText", getter="get_responseText", side_effect=1),
             AttributeSpec(name="response", getter="get_response", side_effect=1),
+            AttributeSpec(name="withCredentials", getter="get_withCredentials",
+                          setter="set_withCredentials"),
         ),
         methods=(
             MethodSpec(name="open", callback="fn_open", length=2),
@@ -56,12 +58,15 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self.responseText = ""
         self.response = None
         self.timeout = 0
+        self.withCredentials = False
 
     def get_readyState(self): return self.readyState
     def get_status(self): return self.status
     def get_statusText(self): return self.status_text
     def get_responseText(self): return self.responseText
     def get_response(self): return self.response
+    def get_withCredentials(self): return bool(self.withCredentials)
+    def set_withCredentials(self, value): self.withCredentials = boolean(value)
 
     def _state(self, value):
         self.readyState = value
@@ -123,6 +128,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         request = {
             "method": self._method, "headers": self._request_headers, "body": body,
             "timeout": self.timeout / 1000 if self.timeout else None,
+            "resource_type": "xhr",
         }
         if self._services:
             self._services.resource_services.load_resource_async(self._url, request, self._finish)

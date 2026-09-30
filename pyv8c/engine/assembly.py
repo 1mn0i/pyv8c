@@ -285,7 +285,10 @@ class InterfaceCompiler:
             attributes=tuple(attributes),
             constants_value=tuple(constants.values()),
             to_string_tag=baseline.get("tag") or source.to_string_tag or name,
-            has_constructor=source.has_constructor if "__v8_idl_spec__" in cls.__dict__ else 1,
+            has_constructor=(
+                source.has_constructor if "__v8_idl_spec__" in cls.__dict__
+                else (1 if (baseline.get("constructor") or {}).get("exposed") else 0)
+            ),
         )
         if parent_name is not None:
             # A parent that is not an interface has no template: the binding reads the Python base.

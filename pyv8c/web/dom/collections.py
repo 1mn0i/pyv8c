@@ -16,6 +16,17 @@ from ...foundation.errors import (
 from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
 from .utils import ITERABLE_FLAGS, OBJECT_PROTOTYPE_NAMES, XHTML_NAMESPACE, camel_name, dash_name
 
+#: The link types Blink implements, from ``rel_list.cc``: what ``relList.supports`` answers.
+LINK_REL_TOKENS = frozenset((
+    "preload", "preconnect", "dns-prefetch", "stylesheet", "icon", "alternate",
+    "prefetch", "prerender", "next", "manifest", "apple-touch-icon",
+    "apple-touch-icon-precomposed", "canonical", "modulepreload", "allowed-alt-sxg",
+    "compression-dictionary",
+))
+
+#: The same for ``<a>``, ``<area>``, ``<form>`` and the SVG anchor.
+HYPERLINK_REL_TOKENS = frozenset(("noreferrer", "noopener", "opener"))
+
 
 def tag_name_ns_collection(target, interface, namespace, local_name):
     """The collection a ``getElementsByTagNameNS`` call answers with.
@@ -76,10 +87,19 @@ class NamedNodeMap(NodeList):
         constructor_behavior=0,
         to_string_tag="NamedNodeMap",
         has_constructor=1,
+        name_get="__v8_name_get__",
+        name_query="__v8_name_query__",
     )
     def __init__(self, element=None, **_):
         self._element = element
         super().__init__(getter=self._attribute_items)
+    def __v8_name_get__(self, name):
+        # A named read: the attribute of that name, and nothing (undefined) when the
+        # element has none, which is what Chrome answers for an absent name.
+        return next((item for item in self._attribute_items() if item.get_name() == str(name)),
+                    None)
+    def __v8_name_query__(self, name):
+        return 0 if any(item.get_name() == str(name) for item in self._attribute_items()) else None
     def _attribute_items(self):
         from .nodes import Attr
         return [Attr(k, v, ownerElement=self._element, services=self._element._services)

@@ -312,3 +312,25 @@ def test_schema5_audit_switch_controls_callback_and_world_fields():
     assert audit["template"]["handlers"]["named"]["get"] == "NamedGetterCallback"
     assert audit["members"]["prototype"][0]["callback"] == "RunCallback"
     assert audit["members"]["prototype"][0]["world"] == "AllWorlds"
+
+
+def test_no_alloc_direct_call_tables_keep_their_operations():
+    """Chromium emits the fast-path methods into a table of their own, whose entries carry
+    one more brace level and a trailing ``v8::CFunction`` reference."""
+    text = r'''
+static const IDLMemberInstaller::NoAllocDirectCallOperationConfig kOperationTable[] = {
+  {{"bindBuffer", BindBufferOperationCallback, 2, unsigned(v8::None), unsigned(IDLMemberInstaller::FlagLocation::kPrototype), unsigned(IDLMemberInstaller::FlagWorld::kAllWorlds), unsigned(IDLMemberInstaller::FlagReceiverCheck::kCheck), unsigned(IDLMemberInstaller::FlagCrossOriginCheck::kCheck), unsigned(v8::SideEffectType::kHasSideEffect)}, kNoAllocDirectCallOverloadsOfBindBuffer},
+  {{"viewport", ViewportOperationCallback, 4, unsigned(v8::None), unsigned(IDLMemberInstaller::FlagLocation::kPrototype), unsigned(IDLMemberInstaller::FlagWorld::kAllWorlds), unsigned(IDLMemberInstaller::FlagReceiverCheck::kCheck), unsigned(IDLMemberInstaller::FlagCrossOriginCheck::kCheck), unsigned(v8::SideEffectType::kHasSideEffect)}, kNoAllocDirectCallOverloadsOfViewport},
+};
+void BindBufferOperationCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  if (UNLIKELY(info.Length() < 2)) { exception_state.ThrowTypeError(ExceptionMessages::NotEnoughArguments(2, info.Length())); }
+  auto&& target = NativeValueTraits<IDLUnsignedLong>::ArgumentValue(isolate, 0, info[0], exception_state);
+}
+'''
+    members = extract_interfaces.extract_members(text)
+    assert [item["name"] for item in members["prototype"]] == ["bindBuffer", "viewport"]
+    assert members["prototype"][0]["kind"] == "operation"
+    assert members["prototype"][0]["length"] == 2
+    assert members["prototype"][0]["location"] == "prototype"
+    assert members["prototype"][0]["signature"]["required"] == 2
+    assert members["prototype"][1]["length"] == 4

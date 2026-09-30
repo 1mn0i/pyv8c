@@ -1,14 +1,17 @@
 """The ``Document`` interface: collection accessors, factories and parsing hooks."""
 
+from urllib.parse import urlsplit
+
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error, number
-from ...foundation.errors import InvalidCharacterError, V8TypeError, dom_exception
+from ...foundation.errors import InvalidCharacterError, SecurityError, V8TypeError, dom_exception
 from .character_data import Comment, DocumentType, Text
 from .collections import HTMLAllCollection, HTMLCollection, NodeList, tag_name_ns_collection
 from .css import StyleSheetList
+from .fonts import FontFaceSet
 from .html_classes import class_for_tag
 from .html_elements import Element
 from .mixins import _ParentNodeMixin
@@ -26,6 +29,7 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="referrer", getter="get_referrer", side_effect=1),
             AttributeSpec(name="compatMode", getter="get_compatMode", side_effect=1),
             AttributeSpec(name="contentType", getter="get_contentType", side_effect=1),
+            AttributeSpec(name="domain", getter="get_domain", setter="set_domain"),
             AttributeSpec(name="dir", getter="get_dir", setter="set_dir"),
             AttributeSpec(name="styleSheets", getter="get_styleSheets", side_effect=1),
             AttributeSpec(name="documentElement", getter="get_documentElement", side_effect=1),
@@ -44,6 +48,7 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
             AttributeSpec(name="hidden", getter="get_hidden", side_effect=1),
             AttributeSpec(name="visibilityState", getter="get_visibilityState", side_effect=1),
+            AttributeSpec(name="prerendering", getter="get_prerendering", side_effect=1),
             AttributeSpec(name="cookie", getter="get_cookie", setter="set_cookie"),
             AttributeSpec(name="anchors", getter="get_anchors", side_effect=1),
             AttributeSpec(name="all", getter="get_all", side_effect=1),
@@ -53,6 +58,7 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="implementation", getter="get_implementation", side_effect=1),
             AttributeSpec(name="currentScript", getter="get_currentScript", side_effect=1),
             AttributeSpec(name="activeElement", getter="get_activeElement", side_effect=1),
+            AttributeSpec(name="fonts", getter="get_fonts", side_effect=1),
         ),
         methods=(
             MethodSpec(name="createElement", callback="fn_createElement", length=1),
@@ -72,6 +78,7 @@ class Document(_ParentNodeMixin, Node):
             MethodSpec(name="querySelectorAll", callback="fn_querySelectorAll", length=1, side_effect=1),
             MethodSpec(name="write", callback="fn_write"),
             MethodSpec(name="writeln", callback="fn_writeln"),
+            MethodSpec(name="open", callback="fn_open", length=0),
             MethodSpec(name="hasFocus", callback="fn_hasFocus"),
             MethodSpec(name="elementFromPoint", callback="fn_elementFromPoint", length=2, side_effect=1),
             MethodSpec(name="elementsFromPoint", callback="fn_elementsFromPoint", length=2, side_effect=1),
@@ -87,6 +94,21 @@ class Document(_ParentNodeMixin, Node):
         #: Bumped when a ``<style>`` changes; layout keys its sheet cache on it.
         self.style_version = 0
     def get_URL(self): return self.url
+    def get_domain(self):
+        domain = getattr(self, "_domain", None)
+        return domain if domain is not None else (urlsplit(self.url).hostname or "")
+    def set_domain(self, value):
+        """The setter takes the document's host or a suffix of it, as Chrome's does."""
+        value = str(dom_string(value))
+        host = self.get_domain()
+        message = "Failed to set the 'domain' property on 'Document': "
+        if not value:
+            raise SecurityError(message + "'' is an empty domain.")
+        if value != host and not host.endswith("." + value):
+            raise SecurityError(f"{message}'{value}' is not a suffix of '{host}'.")
+        if "." not in value:
+            raise SecurityError(f"{message}'{value}' is a top-level domain.")
+        self._domain = value
     def _first_element(self, local_name):
         return next((node for node in self._descendants()
                      if isinstance(node, Element) and node.localName == local_name), None)
@@ -259,10 +281,16 @@ class Document(_ParentNodeMixin, Node):
                               "The attribute value is not an object")
         window.location.set_href(value)
     def get_readyState(self): return self.ready_state
+    def get_fonts(self):
+        value = getattr(self, "_fonts", None)
+        if value is None:
+            value = self._fonts = FontFaceSet(services=self._services)
+        return value
     def get_hidden(self): return self.hidden
     def get_characterSet(self): return 'UTF-8'
     def get_charset(self): return 'UTF-8'
     def get_visibilityState(self): return "hidden" if self.hidden else "visible"
+    def get_prerendering(self): return False
     def _collect(self, names):
         """A live HTMLCollection over the elements matching one of ``names``."""
         return HTMLCollection(owner=self, getter=lambda: [
@@ -374,6 +402,12 @@ class Document(_ParentNodeMixin, Node):
         return self._write_markup("".join(dom_string(item) for item in markup))
     def fn_writeln(self, *markup):
         return self._write_markup("".join(dom_string(item) for item in markup) + "\n")
+    def fn_open(self, *_extra):
+        """Empty the document and hand it back, ready for the writes that follow."""
+        services = getattr(self, "_services", None)
+        if services is not None:
+            services.document_services.open_document()
+        return self
     def _write_markup(self, markup):
         """Hand written markup to the document's parser, like ``document.write``.
         A document without services has no parser, so it writes nowhere."""

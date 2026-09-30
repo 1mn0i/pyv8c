@@ -84,7 +84,13 @@ class ScriptController:
             return True
         except BaseException as exc:
             document.current_script = previous
-            self.page.lifecycle.dispatch_script_error(node, exc)
+            # The exception carries the position, so the page gets the throw site.
+            self.page.lifecycle.dispatch_script_error(
+                node, exc,
+                filename=str(getattr(exc, "filename", "") or ""),
+                line=int(getattr(exc, "line", 0) or 0),
+                column=int(getattr(exc, "column", 0) or 0),
+            )
             return False
         finally:
             document.current_script = previous
@@ -107,13 +113,15 @@ class ScriptController:
         for _prefix, _clause, _quote, specifier in imports:
             dep_url = urljoin(key, specifier)
             dep = self.page.resources.load_resource(
-                dep_url, {"method": "GET", "mode": "cors", "destination": "script"},
+                dep_url, {"method": "GET", "mode": "cors", "destination": "script",
+                          "resource_type": "script"},
             )
             self.execute_module(dep.body_text(), dep.url or dep_url, trail)
         for _quote, specifier in side_effects:
             dep_url = urljoin(key, specifier)
             dep = self.page.resources.load_resource(
-                dep_url, {"method": "GET", "mode": "cors", "destination": "script"},
+                dep_url, {"method": "GET", "mode": "cors", "destination": "script",
+                          "resource_type": "script"},
             )
             self.execute_module(dep.body_text(), dep.url or dep_url, trail)
         transformed = re.sub(r"(?:^|;)\s*import\s+([\s\S]*?)\s+from\s+(['\"])([^'\"]+)\2\s*;?", "", source)
@@ -173,10 +181,20 @@ class ScriptController:
                 self.dom_blocking_scripts += 1
                 self.queue.append(node)
             page.resources.track_document_resource(
-                node, node.get_src(), {"method": "GET", "mode": "same-origin"}, "script"
+                node, node.get_src(),
+                {"method": "GET", "mode": "same-origin", "resource_type": "script"}, "script"
             )
-        elif getattr(node, "_raw_text", ""):
-            page.tasks.post(lambda n=node: self.execute_script(n, n._raw_text, page.url))
+        else:
+            # A script's source is its text content: _raw_text only holds the parse-time
+            # copy, which a script built with textContent has none of.
+            source = node.get_textContent() or getattr(node, "_raw_text", "")
+            if source:
+                module = str(node.get_type() or "").lower() == "module"
+                if module:
+                    page.tasks.post(
+                        lambda n=node, text=source: self.execute_script(n, text, page.url))
+                else:
+                    self.execute_script(node, source, page.url)
 
     def install_inline_handler(self, node, name, source):
         if self._sandboxed("allow-scripts"):

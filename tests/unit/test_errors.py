@@ -9,7 +9,7 @@ from pyv8c import Browser, V8TypeError
 def test_dom_exception_constructor_and_legacy_code():
     browser = Browser(); page = browser.new_context().new_page()
     value = page.evaluate("(() => { const e = new DOMException('bad', 'InvalidStateError'); return [e.name, e.message, e.code, e instanceof DOMException, Object.prototype.toString.call(e), DOMException.length]; })()")
-    assert value == ["InvalidStateError", "bad", 11, True, "[object DOMException]", 2]
+    assert value == ["InvalidStateError", "bad", 11, True, "[object DOMException]", 0]
     browser.close()
 
 

@@ -8,6 +8,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+from ..foundation.clock import now_ms, reset as reset_clock
 from ..foundation.urls import origin_string
 from .request_headers import ACCEPT_ENCODING, accept_language
 from .state import Ownership
@@ -45,12 +46,69 @@ class _TaskSource:
         self._tasks.post(callback)
 
 
+class _PerformanceCapability:
+    """What this realm measured, as records the web layer turns into entries.
+
+    The platform times a document and the resources it fetched, and knows nothing about
+    a ``PerformanceEntry``: a record is a plain dict, and the entry the web layer builds
+    from it reads that dict live, so a navigation still growing reports what it reached.
+    """
+
+    def __init__(self):
+        self._records = []
+        self._listeners = []
+
+    def begin_navigation(self, url):
+        """Start a new document's timeline: its navigation record, and nothing else."""
+        self.reset()
+        reset_clock()
+        return self.record("navigation", name=str(url), start=now_ms())
+
+    def reset(self):
+        del self._records[:]
+        del self._listeners[:]
+
+    def record(self, kind, **facts):
+        record = {"kind": kind, **facts}
+        self._records.append(record)
+        for listener in tuple(self._listeners):
+            listener()
+        return record
+
+    def note(self, **milestones):
+        """Update the document's own record with the milestones it reached."""
+        record = self.navigation()
+        if record is not None:
+            record.update(milestones)
+
+    def records(self, kind=""):
+        if not kind:
+            return tuple(self._records)
+        return tuple(record for record in self._records if record["kind"] == kind)
+
+    def navigation(self):
+        for record in self._records:
+            if record["kind"] == "navigation":
+                return record
+        return None
+
+    def clear_resources(self):
+        self._records = [record for record in self._records if record["kind"] != "resource"]
+
+    def subscribe(self, listener):
+        """Ask to be told when a record lands, so entries can be delivered."""
+        if listener not in self._listeners:
+            self._listeners.append(listener)
+
+
 class _RealmCapability(_TaskSource):
     """Realm identity, scripting and task posting (implements RealmServices)."""
 
     def __init__(self, owner):
         super().__init__(owner._tasks)
         self._owner = owner
+        #: The realm's timeline: what the platform timed for this document.
+        self.performance = _PerformanceCapability()
 
     @property
     def url(self):
@@ -95,6 +153,11 @@ class _RealmCapability(_TaskSource):
 
     def materialize_interface(self, name):
         return self._owner._page_realm.binding_session.materialize(name)
+
+    def heap_statistics(self):
+        """V8's heap numbers for this realm's isolate, in bytes."""
+        context = getattr(self._owner._page_realm, "context", None)
+        return context.heap_statistics() if context is not None else {}
 
     def interface_materialized(self, name):
         return name in self._owner._page_realm.binding_session.materialized_interfaces
@@ -163,6 +226,11 @@ class _WorkerRealmCapability(_TaskSource):
     def __init__(self, tasks, runtime):
         super().__init__(tasks)
         self._runtime = runtime
+
+    def heap_statistics(self):
+        """V8's heap numbers for this realm's isolate, in bytes."""
+        context = getattr(self._runtime._realm, "context", None)
+        return context.heap_statistics() if context is not None else {}
 
     def materialize_interface(self, name):
         """Load the interface's feature and commit its config to this realm."""
@@ -300,6 +368,14 @@ class _DocumentCapability:
 
     def write_markup(self, markup):
         return self._owner._navigation.write_markup(markup)
+
+    def open_document(self):
+        return self._owner._navigation.open_document()
+
+    def motion_event_listener(self, event_type):
+        page = getattr(getattr(self._owner, "_page_realm", None), "page", None)
+        if page is not None:
+            page.lifecycle.motion_listener_added(str(event_type))
 
     def node_adopted(self, node):
         if getattr(node, "localName", "") == "iframe":

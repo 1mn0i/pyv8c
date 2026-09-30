@@ -23,6 +23,7 @@ from ...foundation.arguments import (
     number,
 )
 from ...foundation.errors import V8TypeError
+from ...foundation.logging import logger
 
 _DOCUMENT_NODE = 9  # DOM standard nodeType of Document; hardcoded to avoid a dom.nodes import cycle.
 
@@ -729,6 +730,57 @@ class PageTransitionEvent(Event):
     def get_persisted(self): return self._persisted
 
 
+@interface('PageRevealEvent', 'Event')
+class PageRevealEvent(Event):
+    """``pagereveal``: fired once when the page is first presented."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="viewTransition", getter="get_viewTransition",
+                                  side_effect=1),),
+        constructor_behavior=1,
+        length=1,
+        to_string_tag="PageRevealEvent",
+        has_constructor=1,
+    )
+
+    def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
+        event_type, options = event_constructor_arguments('PageRevealEvent', event_type, options)
+        super().__init__(event_type, options, **kw)
+        transition = event_init(options).get("viewTransition")
+        # A page with no view transition running has none, which Chrome reports as null.
+        self._view_transition = pyv8.Null if is_nullish(transition) else transition
+
+    def get_viewTransition(self): return self._view_transition
+
+
+@interface('PageSwapEvent', 'Event')
+class PageSwapEvent(Event):
+    """``pageswap``: the last event before a document is replaced."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="viewTransition", getter="get_viewTransition", side_effect=1),
+            AttributeSpec(name="activation", getter="get_activation", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        to_string_tag="PageSwapEvent",
+        has_constructor=1,
+    )
+
+    def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
+        event_type, options = event_constructor_arguments('PageSwapEvent', event_type, options)
+        super().__init__(event_type, options, **kw)
+        init = event_init(options)
+        transition = init.get("viewTransition")
+        activation = init.get("activation")
+        self._view_transition = pyv8.Null if is_nullish(transition) else transition
+        self._activation = pyv8.Null if is_nullish(activation) else activation
+
+    def get_viewTransition(self): return self._view_transition
+    def get_activation(self): return self._activation
+
+
 @interface('BeforeUnloadEvent', 'Event')
 class BeforeUnloadEvent(Event):
     __v8_idl_spec__ = IdlSpec(
@@ -801,6 +853,22 @@ class EventTarget:
         bucket = self._listeners.setdefault(str(event_type), [])
         if not any(item[0] is listener and item[1] == capture for item in bucket):
             self._listener_order += 1; bucket.append((listener, capture, once, passive, signal, self._listener_order))
+            self._motion_listener_added(str(event_type))
+
+    def _motion_listener_added(self, event_type):
+        """Tell the realm that a motion listener appeared on the window.
+
+        Chrome starts delivering these readings as soon as a page listens, and only
+        the realm knows where the document is in its life, so the decision is its.
+        """
+        if event_type not in MOTION_EVENT_TYPES:
+            return
+        document_services = getattr(self._services, "document_services", None)
+        if getattr(document_services, "window", None) is not self:
+            return
+        notify = getattr(document_services, "motion_event_listener", None)
+        if notify is not None:
+            notify(event_type)
 
     def fn_removeEventListener(self, event_type=MISSING, listener=MISSING, options=False, *_extra):
         if event_type is MISSING:
@@ -824,6 +892,10 @@ class EventTarget:
         event = interface_value(event, 'Event', 'EventTarget', 'dispatchEvent', 1, nullable=False)
         if not isinstance(event, Event):
             raise V8TypeError("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
+        # Every event a page receives passes through here, trusted or not.
+        logger.debug("dispatch {} on {} (trusted={}, listeners={})", event.type,
+                     type(self).__name__, event._trusted,
+                     len(self._listeners.get(event.type, ())))
         event.target = event.target or self
         # A non-propagating event reaches its target alone: Chromium dispatches
         # ``mouseenter``/``mouseleave`` (and pointer twins) with a path of just the node.
@@ -909,6 +981,10 @@ class EventTarget:
             self._handlers[name] = value
             return
         object.__setattr__(self, name, value)
+
+
+#: Types Chrome delivers on its own for a listening page, from the device sensors.
+MOTION_EVENT_TYPES = ("devicemotion", "deviceorientation", "deviceorientationabsolute")
 
 
 # Event-handler attributes shared by every EventTarget subclass.  Only names the

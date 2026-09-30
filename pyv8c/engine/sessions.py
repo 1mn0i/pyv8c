@@ -97,12 +97,19 @@ class BindingSession:
 
         Returning ``None`` marks the name as not belonging to this realm, keeping it
         ``undefined``; ``on_materialize`` is notified with each on-demand name.
+
+        The realm declares every exposed name, so the binding asks about all of them;
+        the eager core is already built by then and answers from the cache.  The realm
+        also declares the interfaces it hands over without exposing them, so those are
+        answered too: their overlay has to be committed before the object's template is
+        built.  A name the universe cannot describe answers ``None``, which leaves the
+        class declaration in place.
         """
-        allowed = set(self.lazy_names(context_type))
+        allowed = set(self.interface_names(context_type))
 
         def factory(name):
             name = str(name)
-            if name not in allowed:
+            if name not in allowed and not self.universe.describes(name):
                 return None
             cls = self.materialize(name)
             if on_materialize is not None:

@@ -60,6 +60,49 @@ def _messages(events):
     return [message for message in (format_trace(*event) for event in events) if message is not None]
 
 
+def test_an_interface_level_member_is_reported_with_its_interface_name():
+    """A static member is read off the interface itself, so that is what the trace names."""
+    events = []
+    browser = Browser(trace=True, traceable=True,
+                      trace_callback=lambda *event: events.append(event), stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://example.test/")
+        page.evaluate("Notification.permission")
+        messages = _messages(events)
+        assert "[TOP] getter: Notification.permission -> 'default'" in messages
+        assert not any(message.startswith("[TOP] getter: NoneType.") for message in messages)
+    finally:
+        browser.close()
+
+
+def test_an_object_read_stays_on_one_bounded_line():
+    """A converted object carried whole graphs, and its embedded newlines broke the
+    one-event-per-line shape of the trace; it is a preview now, and a conversion that
+    raises still reports the event instead of losing it."""
+    events = []
+    browser = Browser(trace=True, traceable=True, stub_logging="off",
+                      trace_callback=lambda *event: events.append(event))
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body><p>x</p></body>", url="https://example.test/")
+        page.evaluate("""(() => {
+            const cyclic = { name: 'cyclic' };
+            cyclic.self = cyclic;
+            window.cyclic = cyclic;
+            window.big = new Array(400).fill('line\\nline\\nline');
+            return [window.cyclic, window.big].length;
+        })()""")
+        messages = _messages(events)
+    finally:
+        browser.close()
+
+    assert any("Window.cyclic" in message for message in messages)
+    assert any("Window.big" in message for message in messages)
+    assert not any("\n" in message for message in messages)
+    assert any(message.endswith("...") for message in messages)
+
+
 def test_declined_reads_are_reported_with_the_value_they_resolve_to():
     """Native globals resolve outside the binding and still carry their value."""
     events = []

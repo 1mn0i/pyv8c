@@ -61,6 +61,7 @@ class InterfaceUniverse:
         self._classes: dict[str, type] = {}
         self._catalog = InterfaceCatalog(baseline)
         self._exposure_names = {}
+        self._unexposed_names = {}
         # Stubs shell unimplemented members, adapters inject realms, the compiler combines them.
         self._stubs = StubFactory(self.stub_logging)
         self._wrappers = BindingWrapperFactory(self)
@@ -169,6 +170,26 @@ class InterfaceUniverse:
     def walk_parent_names(self, name):
         """The interface plus its ancestor chain, innermost first."""
         yield from self._catalog.walk_parent_names(name)
+
+    def unexposed_names(self, context_type):
+        """Interfaces this realm can hand over but never exposes as a global."""
+        with self._lock:
+            cached = self._unexposed_names.get(context_type)
+        if cached is not None:
+            return cached
+        exposed = set(self.interface_names(context_type))
+        names = tuple(sorted(
+            name for name in self.runtime.catalog.interfaces if name not in exposed
+        ))
+        with self._lock:
+            self._unexposed_names[context_type] = names
+        return names
+
+    def describes(self, name):
+        """Whether this universe can commit an overlay for ``name``."""
+        if name not in self.baseline.interfaces:
+            return False
+        return getattr(self.class_for(name), "__name__", None) == name
 
     def exposed_names(self, context_type):
         return list(self._catalog.exposed_names(

@@ -153,6 +153,10 @@ class ChromeReference:
                 ),
             )
             page.goto(case.url)
+            if case.settle:
+                # Chrome may deliver what the page waits for on a task after load;
+                # this side is synchronous and has already run to idle by now.
+                page.wait_for_timeout(int(case.settle * 1000))
             try:
                 return Observation(value=normalize(page.evaluate(case.script)))
             except BaseException as error:

@@ -41,13 +41,28 @@ class _RealmTaskHost:
         return False
 
 
+def _publish_window_name(context, page):
+    """Write the window's name as host work, so no trace event reports it."""
+    tracing = bool(getattr(context, "trace", False))
+    if tracing:
+        context.trace = False
+    try:
+        page.window._publish_name()
+    finally:
+        if tracing:
+            context.trace = True
+
+
 def _declare_realm_interfaces(context, session, *, context_type, universe):
-    for name in universe.eager_names(context_type):
-        context.expose(session.class_for(name), name=name)
-    return context.declare_lazy(
-        session.lazy_names(context_type),
-        skip=universe.eager_names(context_type),
-    )
+    """Declare every name the baseline exposes for this realm.
+
+    The realm installs each one itself, which is what gives a global interface object
+    Chromium's attributes; the eager core is already compiled, so only its value waits.
+    """
+    deferred = context.declare_lazy(session.interface_names(context_type))
+    # Declared, not installed: the overlay lands before an object's template is built.
+    context.declare_materialisable(universe.unexposed_names(context_type))
+    return deferred
 
 
 class WorkerRealm:
@@ -189,7 +204,7 @@ class PageRealm:
         deferred_declared_at = time.perf_counter_ns()
         # Chromium installs window.chrome before any page script runs.
         install_window_chrome(self.context, page.services)
-        page.window._publish_name()
+        _publish_window_name(self.context, page)
         chrome_installed_at = time.perf_counter_ns()
         # The realm owns the compiled helpers and the page's script controller
         # borrows them, so the isolate's error hooks and every Web API helper

@@ -14,6 +14,7 @@ from urllib.parse import urljoin, urlsplit
 import pyv8
 from ..foundation.logging import logger
 
+from ..foundation.clock import now_ms
 from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
 from ..foundation.urls import DEFAULT_PORTS, absolute_url, same_origin
 from ..web.fetch.headers import Headers
@@ -455,6 +456,11 @@ class ResourceController:
         if not src:
             return
         node._resource_started = True
+        if tag in ("audio", "video"):
+            # A media load starts with loadstart.  Chrome sends it on a task of its own,
+            # after the markup around the element has run, and a page relies on that.
+            self.page.tasks.post(lambda element=node: self.page.lifecycle.dispatch_page_event(
+                "loadstart", element, {"bubbles": False}))
         resource_type = "style" if tag == "link" else "image" if tag == "img" else "media" if tag in ("audio", "video", "source") else tag
         # ``media`` lumps three elements that the browser reports apart.
         destination = {"link": "style", "img": "image", "audio": "audio",
@@ -466,6 +472,8 @@ class ResourceController:
 
     def track_document_resource(self, node, url, request, kind):
         page = self.page
+        # Where the entry's timing starts: the request is issued from here.
+        node._resource_request_start = now_ms()
         token = next(self.counter)
         generation = page.navigation.generation
         handle = RequestHandle()
@@ -492,12 +500,39 @@ class ResourceController:
         except TypeError:
             return 0
 
+    def record_resource_timing(self, node, kind, response):
+        """Hand the realm one ``resource`` record: the URL, the initiator and the span."""
+        length = self._response_length(response)
+        start = getattr(node, "_resource_request_start", None) or now_ms()
+        self.page.services.realm_services.performance.record(
+            "resource",
+            name=str(getattr(response, "url", "") or ""),
+            initiator=str(kind),
+            start=start,
+            end=now_ms(),
+            transferSize=length,
+            encodedBodySize=length,
+            decodedBodySize=length,
+            contentType=self._response_content_type(response),
+        )
+
+    @staticmethod
+    def _response_content_type(response):
+        headers = getattr(response, "headers", None)
+        getter = getattr(headers, "fn_get", None) if headers is not None else None
+        if getter is None:
+            return ""
+        value = getter("content-type")
+        return "" if value is None or value is pyv8.Null else str(value)
+
     def complete_document_resource(self, token, generation, response, error, handle=None):
         page = self.page
         item = self.resources.get(token)
         if item is None or generation != page.navigation.generation or page.closed or (handle is not None and handle.cancelled):
             return
         _generation, node, kind, _handle = item
+        if error is None and response is not None:
+            self.record_resource_timing(node, kind, response)
         if kind == "iframe" and not error:
             # ``when_loaded`` resolves on the child realm's owner thread, and
             # touching page state must happen on this Page's owner thread.
@@ -515,6 +550,14 @@ class ResourceController:
                 page.lifecycle.maybe_fire_document_load()
                 return
             page.scripts.drain_script_queue()
+            page.lifecycle.maybe_fire_document_load()
+            return
+        if kind in ("audio", "video", "source"):
+            # Nothing decodes here, so a media element ends the way Chrome ends bytes
+            # it cannot use: progress, suspend, error -- and never a load.
+            page.lifecycle.dispatch_page_event("progress", node, {"bubbles": False})
+            page.lifecycle.dispatch_page_event("suspend", node, {"bubbles": False})
+            page.lifecycle.dispatch_page_event("error", node, {"bubbles": False})
             page.lifecycle.maybe_fire_document_load()
             return
         if error:
@@ -642,12 +685,14 @@ class ResourceController:
             self.discover_element_resource(iframe)
             return getattr(iframe, "_child_services", None)
         child = self._child_frame_page(iframe, target)
-        response = self.load_resource(target, {"method": "GET", "destination": "iframe"})
+        response = self.load_resource(
+            target, {"method": "GET", "destination": "iframe", "resource_type": "iframe"})
         child.set_content(response.body_text(), url=target)
         return child
 
     def resolve_worker_source(self, script_url):
-        response = self.load_resource(
-            script_url, {"method": "GET", "mode": "same-origin", "destination": "worker"},
-        )
+        response = self.load_resource(script_url, {
+            "method": "GET", "mode": "same-origin", "destination": "worker",
+            "resource_type": "script",
+        })
         return response.body_text()

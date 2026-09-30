@@ -58,6 +58,9 @@ class _TreeBuilderMixin:
             attributes={name.lower(): (value or "") for name, value in attrs},
         )
         node._raw_text = ""
+        # Marks the parser as the builder: a page-inserted node is adopted by the
+        # document's own hooks instead of the parser's.
+        node._parser_created = True
         for name, value in attrs:
             name = str(name).lower()
             if name.startswith("on"):

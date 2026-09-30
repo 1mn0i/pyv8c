@@ -179,7 +179,12 @@ class RealmExecutor:
         budget = self.default_timeout
         armed = source is not None and bool(budget)
         if armed:
-            source.set_deadline(budget)
+            try:
+                source.set_deadline(budget)
+            except BaseException:
+                # The context may already be gone, which leaves nothing to preempt;
+                # the command still has work to do, cleanup above all.
+                armed = False
         try:
             result = callback(*args, **kwargs)
         except BaseException as exc:
@@ -246,6 +251,15 @@ class RealmExecutor:
     def _run(self):
         self._owner_ident = threading.get_ident()
         self._ready.set()
+        try:
+            self._loop()
+        finally:
+            # A thread that went away for any reason must take its callers with it:
+            # a closed executor fails fast instead of blocking them until timeout.
+            self._closed.set()
+            self._fail_pending()
+
+    def _loop(self):
         while not self._closed.is_set():
             # Commands first: evaluate/goto/close must never queue behind page work.
             drained = False
@@ -285,7 +299,17 @@ class RealmExecutor:
                 # timer; a distant one is waited in slices, and each needs it too.
                 with timer_resolution.hold(deadline is not None):
                     self._wake.wait(timeout)
-        self._closed.set()
+
+    def _fail_pending(self):
+        """Complete the callers still waiting on commands that will not run."""
+        while True:
+            try:
+                command = self._commands.get_nowait()
+            except queue.Empty:
+                return
+            if isinstance(command, tuple) and command and command[0] is not None:
+                if not command[0].done():
+                    command[0].set_exception(RuntimeError("realm executor is closed"))
 
     def close(self, timeout=5):
         with self._submit_lock:
@@ -295,15 +319,7 @@ class RealmExecutor:
             # The stop sentinel shares the queue although it is not a command
             # tuple; _run and _next_command separate it by identity.
             self._commands.put(_STOP)  # type: ignore[arg-type]
-            # Complete callers waiting on commands that will no longer run.
-            while True:
-                try:
-                    command = self._commands.get_nowait()
-                except queue.Empty:
-                    break
-                if isinstance(command, tuple) and command and command[0] is not None:
-                    if not command[0].done():
-                        command[0].set_exception(RuntimeError("realm executor is closed"))
+            self._fail_pending()
         self.wakeup()
         if not self.is_owner_thread():
             self._thread.join(timeout)

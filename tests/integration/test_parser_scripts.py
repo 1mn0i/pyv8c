@@ -48,6 +48,35 @@ def test_async_and_defer_order_and_dynamic_script_default_async():
     browser.close()
 
 
+def test_an_async_defer_script_does_not_hold_up_the_document():
+    """async wins over defer: an asynchronous script is not in the queue the document
+    waits for before DOMContentLoaded, so it still reaches complete with its events."""
+
+    def loader(url, request):
+        return Response("window.__ran = true;",
+                        {"url": url, "content-type": "text/javascript"})
+
+    browser = Browser(resource_loader=loader)
+    page = browser.new_context().new_page()
+    page.set_content("""
+        <head><script>
+            window.__log = [];
+            for (const t of ['DOMContentLoaded', 'load', 'pageshow'])
+                addEventListener(t, () => __log.push(t + ':' + document.readyState));
+            document.addEventListener('readystatechange',
+                () => __log.push('rs:' + document.readyState));
+        </script></head>
+        <body><script async defer src='/x.js'></script><div>body</div></body>
+    """, url="http://example.test/")
+    page.run_until_idle()
+    assert page.evaluate("__log") == [
+        "rs:interactive", "DOMContentLoaded:interactive", "rs:complete",
+        "load:complete", "pageshow:complete",
+    ]
+    assert page.evaluate("[window.__ran, document.readyState]") == [True, "complete"]
+    browser.close()
+
+
 def test_detached_dynamic_script_does_not_fetch_until_inserted():
     calls = []
     def loader(url, request):

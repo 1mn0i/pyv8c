@@ -179,6 +179,8 @@ FIELDS: tuple[Field, ...] = (
     Field("client_hints.model", _text, True),
     Field("client_hints.form_factors", _tokens, True),
     Field("plugins", _plugins, True),
+    Field("webgl.vendor", _text, True),
+    Field("webgl.renderer", _text, True),
 )
 
 _BY_NAME = {field.name: field for field in FIELDS}
@@ -293,6 +295,14 @@ class PluginView:
     mime_types: tuple[MimeTypeView, ...]
 
 
+@dataclass(frozen=True)
+class WebGLView:
+    """What ``WEBGL_debug_renderer_info`` answers: the machine's GL identity."""
+
+    vendor: str
+    renderer: str
+
+
 def _platform_name(user_agent, fallback):
     for token, name in (
         ("Windows", "Windows"), ("Android", "Android"), ("iPhone", "iOS"),
@@ -375,7 +385,7 @@ class BrowserEnvironment:
     __slots__ = (
         "_explicit", "_resolved",
         "viewport", "screen", "geolocation", "connection", "battery", "storage",
-        "bluetooth", "client_hints", "plugins",
+        "bluetooth", "client_hints", "plugins", "webgl",
     )
 
     def __init__(self, data=None, *, base=None):
@@ -430,6 +440,9 @@ class BrowserEnvironment:
             PluginView(entry["name"], entry["filename"], entry["description"],
                        tuple(MimeTypeView(**mime) for mime in entry["mime_types"]))
             for entry in values["plugins"]
+        ))
+        object.__setattr__(self, "webgl", WebGLView(
+            values["webgl.vendor"], values["webgl.renderer"],
         ))
 
     def __setattr__(self, name, value):

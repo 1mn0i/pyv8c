@@ -48,13 +48,18 @@ def test_navigation_teardown_and_beforeunload_cancellation():
         const mark = value => sessionStorage.setItem('teardown',
             ((sessionStorage.getItem('teardown') || '') + ' ' + value).trim());
         addEventListener('beforeunload', () => mark('beforeunload'));
+        addEventListener('pageswap', () => mark('pageswap'));
         addEventListener('pagehide', e => mark('pagehide:' + e.persisted));
+        addEventListener('visibilitychange',
+            () => mark('visibilitychange:' + document.visibilityState));
         addEventListener('unload', () => mark('unload'));
     </script>""", url="http://example.test/old")
     page.run_until_idle()
     page.set_content("<body>new</body>", url="http://example.test/new")
+    # Chrome's order for the document being replaced: pageswap, pagehide, the document
+    # going hidden, then unload.
     assert page.evaluate("sessionStorage.getItem('teardown')") == \
-        "beforeunload pagehide:false unload"
+        "beforeunload pageswap pagehide:false visibilitychange:hidden unload"
     assert page.evaluate("document.URL") == "http://example.test/new"
 
     page.evaluate("window.onbeforeunload = e => e.preventDefault()")

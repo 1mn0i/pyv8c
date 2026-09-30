@@ -14,6 +14,7 @@ from ...foundation.arguments import (
     integer,
     missing_error,
 )
+from ...foundation.logging import logger
 
 
 class _SchedulingMixin:
@@ -38,24 +39,35 @@ class _SchedulingMixin:
 
     def _schedule(self, callback, delay, arguments, *, repeat):
         """Queue one timer, accepting the string form HTML also allows."""
+        name = "setInterval" if repeat else "setTimeout"
+        source = None
         if not callable(callback):
             source = dom_string(callback)
 
-            def callback(): return self._services.realm_services.evaluate_script(source)
+            def body(): return self._services.realm_services.evaluate_script(source)
         elif arguments:
-            original = callback
-
-            def callback(): return original(*arguments)
+            def body(): return callback(*arguments)
+        else:
+            body = callback
         if delay is pyv8.Undefined:
             delay = 0
-        delay = integer(delay, signed=True)
-        return self._services.task_services.schedule(callback, float(delay) / 1000.0, repeat=repeat)
+        milliseconds = float(integer(delay, signed=True))
+        ident = 0
+
+        def run():
+            logger.debug("{} {} runs", name, ident)
+            return body()
+
+        ident = self._services.task_services.schedule(run, milliseconds / 1000.0, repeat=repeat)
+        logger.debug("{} {} scheduled in {} ms ({})", name, ident, milliseconds,
+                     "string" if source is not None else "function")
+        return ident
 
     def fn_clearTimeout(self, ident=0, *_extra):
-        self._cancel_timer(ident)
+        self._cancel_timer(ident, "clearTimeout")
 
     def fn_clearInterval(self, ident=0, *_extra):
-        self._cancel_timer(ident)
+        self._cancel_timer(ident, "clearInterval")
 
     def fn_requestAnimationFrame(self, callback=MISSING, *_extra):
         if callback is MISSING:
@@ -65,15 +77,17 @@ class _SchedulingMixin:
         return self._services.task_services.schedule(callback_value(callback), 0, repeat=False)
 
     def fn_cancelAnimationFrame(self, ident=0, *_extra):
-        self._cancel_timer(ident)
+        self._cancel_timer(ident, "cancelAnimationFrame")
 
     def fn_queueMicrotask(self, callback=MISSING, *_extra):
         if callback is MISSING:
             raise missing_error(self._scheduling_interface, 'queueMicrotask', 1, 0, constructor=False)
         self._services.realm_services.enqueue_microtask(callback_value(callback))
 
-    def _cancel_timer(self, ident):
-        self._services.task_services.cancel(int(integer(ident, signed=True)))
+    def _cancel_timer(self, ident, name):
+        value = int(integer(ident, signed=True))
+        logger.debug("{} {}", name, value)
+        self._services.task_services.cancel(value)
 
 
 __all__ = ["_SchedulingMixin"]

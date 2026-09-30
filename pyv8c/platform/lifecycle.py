@@ -2,8 +2,13 @@
 
 import pyv8
 
+from ..foundation.clock import now_ms
 from ..foundation.errors import NotFoundError
-from ..web.dom.events import Event
+from ..web.bom.utils import is_secure_context
+from ..web.dom.events import Event, MOTION_EVENT_TYPES
+
+#: What Chrome reports for the interval of a reading with no sensor behind it.
+DEVICE_INTERVAL_MS = 16
 
 #: Event types the host builds as a richer class than ``Event``; others fall back to ``Event``.
 EVENT_CLASS_BY_TYPE = {
@@ -26,12 +31,16 @@ EVENT_CLASS_BY_TYPE = {
     "unhandledrejection": "PromiseRejectionEvent", "rejectionhandled": "PromiseRejectionEvent",
     "pageshow": "PageTransitionEvent", "pagehide": "PageTransitionEvent",
     "beforeunload": "BeforeUnloadEvent",
+    "pagereveal": "PageRevealEvent", "pageswap": "PageSwapEvent",
     "animationstart": "AnimationEvent", "animationend": "AnimationEvent",
     "animationiteration": "AnimationEvent", "animationcancel": "AnimationEvent",
     "transitionrun": "TransitionEvent", "transitionstart": "TransitionEvent",
     "transitionend": "TransitionEvent", "transitioncancel": "TransitionEvent",
     "error": "ErrorEvent", "progress": "ProgressEvent",
     "loadstart": "ProgressEvent", "loadend": "ProgressEvent",
+    "devicemotion": "DeviceMotionEvent",
+    "deviceorientation": "DeviceOrientationEvent",
+    "deviceorientationabsolute": "DeviceOrientationEvent",
 }
 
 #: Host-dispatched types that bubble by default, mirroring Blink's defaults.
@@ -163,10 +172,29 @@ class DocumentLifecycle:
         return not event.defaultPrevented and not event.get_returnValue()
 
     def dispatch_page_show(self, persisted=False):
+        # Chrome reports pageshow as a bubbling event, though it is fired at the window.
         return self.dispatch_page_event(
-            "pageshow", self.page.window, {"bubbles": False, "persisted": bool(persisted)},
+            "pageshow", self.page.window, {"bubbles": True, "persisted": bool(persisted)},
             event_class="PageTransitionEvent",
         )
+
+    def dispatch_page_reveal(self):
+        """The one ``pagereveal`` a document gets, as Chrome sends it after load."""
+        return self.dispatch_page_event("pagereveal", self.page.window, {"bubbles": False},
+                                        event_class="PageRevealEvent")
+
+    def dispatch_pageswap(self):
+        """``pageswap``: what Chrome sends to the document being replaced."""
+        return self.dispatch_page_event("pageswap", self.page.window, {"bubbles": False},
+                                        event_class="PageSwapEvent")
+
+    def dispatch_visibility_hidden(self):
+        """A navigation hides the document, which Chrome reports before unload."""
+        page = self.page
+        if page.document.hidden:
+            return None
+        page.document.hidden = True
+        return self.dispatch_page_event("visibilitychange", page.document, {"bubbles": True})
 
     def dispatch_page_hide(self, persisted=False):
         return self.dispatch_page_event(
@@ -210,7 +238,8 @@ class DocumentLifecycle:
                 "message": message,
                 "filename": filename,
                 "lineno": line,
-                "colno": column,
+                # V8 counts a column from zero; an ErrorEvent counts from one.
+                "colno": column + 1 if line else 0,
                 "error": value,
             },
         )
@@ -252,6 +281,36 @@ class DocumentLifecycle:
         self.page.document.ready_state = value
         self.dispatch_page_event("readystatechange", self.page.document, {"bubbles": False})
 
+    def deliver_motion_events(self, event_type=None):
+        """Deliver one motion reading for each type the window listens for.
+
+        Chrome starts as soon as a page listens: the first reading arrives with the
+        document loaded, and a listener added later is handed one on the next task.
+        There is no sensor here, so the reading is the empty one Chrome sends -- every
+        field null and the interval it reports -- which is what a page reads it for.
+        """
+        page = self.page
+        window = page.window
+        if not is_secure_context(page.url):
+            return
+        for name in MOTION_EVENT_TYPES if event_type is None else (event_type,):
+            if not window._listeners.get(name):
+                continue
+            init = ({"interval": DEVICE_INTERVAL_MS} if name == "devicemotion"
+                    else {"absolute": name == "deviceorientationabsolute"})
+            self.dispatch_page_event(name, window, {"bubbles": False, **init},
+                                     event_class=self.event_class(name))
+
+    def motion_listener_added(self, event_type):
+        """A motion listener appeared on the window: hand it the reading it waits for.
+
+        Before the document has loaded, that is the load-time delivery; after it,
+        Chrome delivers one straight away, so this one is queued.
+        """
+        if event_type not in MOTION_EVENT_TYPES or not self.document_load_fired:
+            return
+        self.page.tasks.post(lambda: self.deliver_motion_events(event_type))
+
     def maybe_fire_dom_content_loaded(self):
         page = self.page
         if (
@@ -263,7 +322,10 @@ class DocumentLifecycle:
             return
         self.dom_content_loaded = True
         self.set_ready_state("interactive")
+        page.services.realm_services.performance.note(
+            domInteractive=now_ms(), domContentLoadedEventStart=now_ms())
         self.dispatch_page_event("DOMContentLoaded", page.document, {"bubbles": True})
+        page.services.realm_services.performance.note(domContentLoadedEventEnd=now_ms())
         self.maybe_fire_document_load()
 
     def maybe_fire_document_load(self):
@@ -272,12 +334,17 @@ class DocumentLifecycle:
             return
         self.document_load_fired = True
         self.set_ready_state("complete")
+        performance = page.services.realm_services.performance
+        performance.note(domComplete=now_ms(), loadEventStart=now_ms())
         # A window's load event is fired at the window with the document as its target.
         event = self.event_class("load")("load", {"bubbles": False})
         event._trusted = True
         event.target = page.document
         page.window.fn_dispatchEvent(event)
+        performance.note(loadEventEnd=now_ms())
         self.dispatch_page_show(False)
+        self.dispatch_page_reveal()
+        self.deliver_motion_events()
         waiters, self.load_waiters = self.load_waiters, []
         for callback in waiters:
             callback(True)

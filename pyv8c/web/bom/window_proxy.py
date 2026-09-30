@@ -128,14 +128,20 @@ class WindowProxy:
         if name in self._safe_names:
             return None
         if self._same_origin():
+            services = self._child_window._services.realm_services
             if isinstance(name, str):
                 getter = getattr(self._child_window, "get_" + name, None)
                 if getter is not None:
                     return getter()
                 callback = getattr(self._child_window, "fn_" + name, None)
                 if callback is not None:
+                    # The child's own member keeps the interface's name; the binding
+                    # names a Python callback ``fn_<member>`` in the page.
+                    installed = services.window_property("get", name)
+                    if isinstance(installed, pyv8.JSFunction):
+                        return installed
                     return callback
-            return self._child_window._services.realm_services.window_property("get", name)
+            return services.window_property("get", name)
         deny_cross_origin()
 
     def __v8_name_set__(self, name, value):

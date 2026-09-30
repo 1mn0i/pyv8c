@@ -27,7 +27,7 @@ finally:
 ```
 
 loader 接收解析后的绝对 URL 和 request 字典。字段依调用路径包含 method、headers、body、mode、credentials、cache、timeout、resource_type。
-resource_type 常见 document、script、style、image、media、iframe、fetch；不要假定每条路径都有所有字段。
+resource_type 常见 document、script、style、image、media、iframe、fetch、xhr；不要假定每条路径都有所有字段。
 框架会在缺失时补 User-Agent 和 Accept-Language。
 
 返回值可为 Response、包含 body/status/headers 的字典，或普通值。

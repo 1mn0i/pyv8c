@@ -36,30 +36,59 @@ def _px(value, reference=0.0):
     return _number(value, 0.0)
 
 
+_FONT_ROOTS = (
+    os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"),
+    "/usr/share/fonts/truetype/dejavu",
+    "/usr/share/fonts/truetype/liberation2",
+)
+_FONT_FALLBACKS = ("arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf")
+
+#: A page measures text far more often than a font directory changes, so the listing,
+#: the resolved paths and the loaded handles are each read once per process.
+_FONT_FILES: dict[str, tuple[str, ...]] = {}
+_FONT_PATHS: dict[tuple, list[str]] = {}
+_FONT_HANDLES: dict[tuple, object] = {}
+
+
+def _stem(value):
+    return re.sub(r"[^A-Za-z0-9]", "", str(value)).lower()
+
+
+def _font_files(root):
+    if root not in _FONT_FILES:
+        try:
+            _FONT_FILES[root] = tuple(os.listdir(root)) if os.path.isdir(root) else ()
+        except OSError:
+            _FONT_FILES[root] = ()
+    return _FONT_FILES[root]
+
+
 def _font(path_candidates, size, weight="400", italic=False):
     if ImageFont is None: return None
     for path in path_candidates:
-        try: return ImageFont.truetype(path, max(1, int(round(size))))
-        except Exception: pass
+        key = (path, max(1, int(round(size))))
+        handle = _FONT_HANDLES.get(key)
+        if handle is None:
+            try: handle = _FONT_HANDLES[key] = ImageFont.truetype(path, key[1])
+            except Exception: continue
+        return handle
     return None
 
 
 def _font_candidates(families):
-    roots = [
-        os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"),
-        "/usr/share/fonts/truetype/dejavu",
-        "/usr/share/fonts/truetype/liberation2",
-    ]
-    names = []
-    for family in families:
-        stem = re.sub(r"[^A-Za-z0-9]", "", family).lower()
-        names.extend(
-            f for root in roots if os.path.isdir(root)
-            for f in os.listdir(root)
-            if stem in re.sub(r"[^A-Za-z0-9]", "", f).lower() and f.lower().endswith((".ttf", ".otf"))
-        )
-    names.extend(["arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"])
-    return [os.path.join(root, name) for root in roots for name in names if os.path.exists(os.path.join(root, name))]
+    key = tuple(families)
+    if key not in _FONT_PATHS:
+        names = [
+            name for family in families
+            for root in _FONT_ROOTS for name in _font_files(root)
+            if name.lower().endswith((".ttf", ".otf")) and _stem(family) in _stem(name)
+        ]
+        names.extend(_FONT_FALLBACKS)
+        _FONT_PATHS[key] = [
+            os.path.join(root, name) for root in _FONT_ROOTS for name in names
+            if os.path.exists(os.path.join(root, name))
+        ]
+    return _FONT_PATHS[key]
 
 
 def text_width(text, style):

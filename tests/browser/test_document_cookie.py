@@ -99,14 +99,14 @@ def test_document_cookie_ignores_invalid_script_assignments_and_logs_changes(bro
     messages = []
     monkeypatch.setattr(
         "pyv8c.network.cronet.logger.debug",
-        lambda message, value: messages.append((message, value)),
+        lambda message, *values: messages.append((message, *values)),
     )
     page = browser.new_context().new_page(f"{local_server}/")
     page.evaluate("document.cookie = 'bad name=value'")
     assert page.evaluate("document.cookie") == ""
     page.evaluate("document.cookie = 'ok=1'")
     assert page.evaluate("document.cookie = 'ok=1'") == "ok=1"
-    assert messages == [("cookie changed: {}", "ok=1")]
+    assert [entry for entry in messages if "cookie" in entry[0]] == [("cookie changed: {}", "ok=1")]
 
 
 def test_document_cookie_cannot_overwrite_a_httponly_cookie(browser, local_server):

@@ -54,6 +54,8 @@ COLLECT_SCRIPT = """
     const estimate = await navigator.storage.estimate();
     const connection = navigator.connection;
     const brands = list => list.map(entry => ({brand: entry.brand, version: entry.version}));
+    const gl = document.createElement('canvas').getContext('webgl');
+    const rendererInfo = gl === null ? null : gl.getExtension('WEBGL_debug_renderer_info');
     return JSON.stringify({
         'user_agent': navigator.userAgent,
         'app_version': navigator.appVersion,
@@ -96,6 +98,8 @@ COLLECT_SCRIPT = """
         'client_hints.wow64': high.wow64,
         'client_hints.model': high.model,
         'client_hints.form_factors': Array.from(high.formFactors),
+        'webgl.vendor': rendererInfo ? gl.getParameter(rendererInfo.UNMASKED_VENDOR_WEBGL) : '',
+        'webgl.renderer': rendererInfo ? gl.getParameter(rendererInfo.UNMASKED_RENDERER_WEBGL) : '',
         'plugins': Array.from(navigator.plugins).map(plugin => ({
             'name': plugin.name,
             'filename': plugin.filename,

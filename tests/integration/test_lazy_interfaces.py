@@ -1,8 +1,8 @@
 """Lazy interface materialisation on the global object.
 
-Interfaces beyond the eager set are declared as native accessors at Page
-creation. They stay unbuilt until JavaScript first touches them, so a cold
-Browser materialises only the eager core while still exposing every name.
+The realm declares every interface the baseline exposes for it, and installs each
+one itself.  Nothing is built until it is read: a cold Browser builds the eager
+core, and every name is already there.
 """
 import pytest
 
@@ -18,13 +18,14 @@ def test_cold_start_materialises_no_lazy_interface():
         materialized = set(session.materialized_interfaces)
         eager = set(browser.interface_universe.eager_names("Window"))
         lazy = set(session.lazy_names("Window"))
+        exposed = set(session.interface_names("Window"))
 
         assert eager
-        # The eager core is ready, but nothing declared lazily has been built.
+        # The eager core is ready, but nothing beyond it has been built.
         # Ancestors of eager interfaces (WindowProperties) are expected too.
         assert eager <= materialized
         assert not (materialized & lazy)
-        assert browser.startup_stats["deferred_globals"] == len(lazy)
+        assert browser.startup_stats["deferred_globals"] == len(exposed)
     finally:
         browser.close()
 
@@ -147,6 +148,20 @@ def test_unknown_global_name_is_not_materialised():
     page = browser.new_context().new_page()
     try:
         assert page.evaluate("typeof DefinitelyNotAnInterface") == "undefined"
+    finally:
+        browser.close()
+
+
+def test_interfaces_the_realm_never_exposes_are_declared_but_not_installed():
+    """A realm declares more than it exposes: the name stays off the global object, and
+    its overlay is still committed when such an object arrives."""
+    browser = Browser(stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        universe = browser.interface_universe
+        assert "WebGLDebugRendererInfo" in universe.unexposed_names("Window")
+        assert page.evaluate("[typeof WebGLDebugRendererInfo,"
+                             " 'WebGLDebugRendererInfo' in window]") == ["undefined", False]
     finally:
         browser.close()
 

@@ -32,6 +32,7 @@ from .accessories import (
     StyleMedia,
     Viewport,
 )
+from .cookies import CookieStore
 from .crypto import Crypto
 from .media import MediaQueryList
 from .navigation import Navigation
@@ -165,7 +166,7 @@ def _singleton_values(window):
         return lambda: BarProp(name)
 
     return LazyValueStore({
-        "performance": Performance,
+        "performance": lambda: Performance(services=window._services),
         "crypto": lambda: Crypto(is_secure_context(window.location.get_href())),
         "customElements": lambda: CustomElementRegistry(services=window._services),
         "visualViewport": lambda: VisualViewport(window=window),
@@ -176,6 +177,7 @@ def _singleton_values(window):
         "speechSynthesis": SpeechSynthesis,
         "styleMedia": lambda: StyleMedia(window),
         "scheduler": lambda: Scheduler(services=window._services),
+        "cookieStore": lambda: CookieStore(services=window._services),
         "navigation": lambda: Navigation(window=window),
         "trustedTypes": TrustedTypePolicyFactory,
         **{name: bar(name) for name in BAR_NAMES},
@@ -238,13 +240,13 @@ class Window(_SchedulingMixin, WindowProperties):
             window_attribute("launchQueue", "get_launchQueue", cross_origin=True),
             window_attribute("speechSynthesis", "get_speechSynthesis", cross_origin=True),
             window_attribute("scheduler", "get_scheduler", cross_origin=True),
+            window_attribute("cookieStore", "get_cookieStore", cross_origin=True),
             window_attribute("navigation", "get_navigation", cross_origin=True),
             window_attribute("trustedTypes", "get_trustedTypes", cross_origin=True),
             window_attribute("fence", "get_fence", cross_origin=True),
             # Declared, and answered as absent, exactly as Chrome presents them.
             window_attribute("event", "get_event", cross_origin=True),
             window_attribute("caches", "get_caches", cross_origin=True),
-            window_attribute("cookieStore", "get_cookieStore", cross_origin=True),
             window_attribute("crossOriginEmbedderPolicy", "get_crossOriginEmbedderPolicy",
                              cross_origin=True),
             window_attribute("defaultStatus", "get_defaultStatus", cross_origin=True),
@@ -497,7 +499,6 @@ class Window(_SchedulingMixin, WindowProperties):
     def set_name(self, value):
         self._require_same_origin()
         self._window_name = str(value)
-        self._publish_name()
     def _publish_name(self):
         """Assign the name over the one a fresh global object already carries."""
         self._services.realm_services.window_property("set", "name", self.get_name())
@@ -614,7 +615,11 @@ class Window(_SchedulingMixin, WindowProperties):
     #: context, or are gone -- so the value is the same and the log is quiet.
     def get_event(self): self._require_same_origin(); return pyv8.Undefined
     def get_caches(self): self._require_same_origin(); return pyv8.Undefined
-    def get_cookieStore(self): self._require_same_origin(); return pyv8.Undefined
+    def get_cookieStore(self):
+        self._require_same_origin()
+        if not is_secure_context(self.location.get_href()):
+            return pyv8.Undefined
+        return self._window_value("cookieStore")
     def get_crossOriginEmbedderPolicy(self): self._require_same_origin(); return pyv8.Undefined
     def get_defaultStatus(self): self._require_same_origin(); return pyv8.Undefined
     def get_defaultstatus(self): self._require_same_origin(); return pyv8.Undefined

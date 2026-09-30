@@ -25,6 +25,7 @@ from ...foundation.realm import post_or_call
 from ...foundation.urls import origin_string
 from ..dom.events import EventTarget
 from ..dom.mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
+from .accessories import Scheduling
 from .locks import LockManager
 from .utils import is_secure_context
 from ..dom.utils import ITERABLE_FLAGS
@@ -506,6 +507,18 @@ _PERMISSION_GRANTED = frozenset((
     "storage-access",
 ))
 
+#: The name ``PermissionStatus.name`` reports, which is not always the one queried.
+_PERMISSION_SPEC_NAMES = {
+    "accelerometer": "sensors", "background-fetch": "background_fetch",
+    "background-sync": "background_sync", "camera": "video_capture",
+    "clipboard-read": "clipboard_read", "clipboard-write": "clipboard_write",
+    "display-capture": "display_capture", "gyroscope": "sensors",
+    "idle-detection": "idle_detection", "local-fonts": "local_fonts",
+    "magnetometer": "sensors", "microphone": "audio_capture",
+    "payment-handler": "payment_handler", "periodic-background-sync": "periodic_background_sync",
+    "persistent-storage": "durable_storage", "screen-wake-lock": "screen_wake_lock",
+}
+
 #: The ``MediaSessionAction`` values Chrome 153 accepts.
 _SESSION_ACTIONS = frozenset((
     "enterpictureinpicture", "hangup", "nextslide", "nexttrack", "pause", "play",
@@ -659,17 +672,18 @@ class Permissions:
             raise missing_error('Permissions', 'query', 1, 0, constructor=False)
         name = dictionary(descriptor).get("name")
         if name not in _PERMISSION_NAMES:
-            raise V8TypeError(
+            # The enum check rejects the promise rather than throwing at the call.
+            return _settled(self._services, error=V8TypeError(
                 "Failed to execute 'query' on 'Permissions': Failed to read the 'name' property "
                 "from 'PermissionDescriptor': The provided value "
-                f"'{name}' is not a valid enum value of type PermissionName.")
+                f"'{name}' is not a valid enum value of type PermissionName."))
         if name == "push":
             return _settled(self._services, error=dom_exception(
                 "NotSupportedError",
                 "Failed to execute 'query' on 'Permissions': Push Permission without "
                 "userVisibleOnly:true isn't supported yet."))
         return _settled(self._services, value=PermissionStatus(
-            name, self._state(name), services=self._services))
+            _PERMISSION_SPEC_NAMES.get(name, name), self._state(name), services=self._services))
 
     def _state(self, name):
         if name == "geolocation":
@@ -913,7 +927,8 @@ class ServiceWorkerContainer(EventTarget):
 
     def _script_type(self, target):
         """The script's MIME type, or ``None`` when fetching it failed."""
-        request = {"method": "GET", "mode": "same-origin", "destination": "serviceworker"}
+        request = {"method": "GET", "mode": "same-origin", "destination": "serviceworker",
+                   "resource_type": "script"}
         try:
             response = self._services.resource_services.load_resource(target, request)
         except BaseException:
@@ -1051,14 +1066,21 @@ def _navigator_values(navigator):
     environment = navigator._environment
     services = navigator._services
 
-    def plugins():
-        # Reading either collection builds both, so the twin is cached with it.
+    def collections():
         collection, mime_types = create_plugin_collections(environment)
+        values._cache("plugins", collection)
         values._cache("mimeTypes", mime_types)
-        return collection
+        return collection, mime_types
+
+    def plugins():
+        return collections()[0]
+
+    def mime_types():
+        return collections()[1]
 
     values = LazyValueStore({
         "connection": lambda: NetworkInformation(environment.connection, services=services),
+        "scheduling": lambda: Scheduling(),
         "locks": lambda: LockManager(services=services),
         "battery": lambda: BatteryManager(environment.battery, services=services),
         "geolocation": lambda: Geolocation(services=services, environment=environment),
@@ -1067,6 +1089,7 @@ def _navigator_values(navigator):
         "webkitPersistentStorage": lambda: DeprecatedStorageQuota(
             environment.storage.persistent, services=services),
         "plugins": plugins,
+        "mimeTypes": mime_types,
         "mediaDevices": lambda: MediaDevices(services=services),
         "permissions": lambda: Permissions(services=services, environment=environment),
         "mediaSession": lambda: MediaSession(services=services),
@@ -1085,6 +1108,7 @@ class Navigator:
             AttributeSpec(name="userAgent", getter="get_userAgent", side_effect=1),
             AttributeSpec(name="userAgentData", getter="get_userAgentData", side_effect=1),
             AttributeSpec(name="appName", getter="get_appName", side_effect=1),
+            AttributeSpec(name="appCodeName", getter="get_appCodeName", side_effect=1),
             AttributeSpec(name="appVersion", getter="get_appVersion", side_effect=1),
             AttributeSpec(name="product", getter="get_product", side_effect=1),
             AttributeSpec(name="productSub", getter="get_productSub", side_effect=1),
@@ -1096,12 +1120,14 @@ class Navigator:
             AttributeSpec(name="deviceMemory", getter="get_deviceMemory", side_effect=1),
             AttributeSpec(name="maxTouchPoints", getter="get_maxTouchPoints", side_effect=1),
             AttributeSpec(name="vendor", getter="get_vendor", side_effect=1),
+            AttributeSpec(name="vendorSub", getter="get_vendorSub", side_effect=1),
             AttributeSpec(name="locks", getter="get_locks", side_effect=1),
             AttributeSpec(name="cookieEnabled", getter="get_cookieEnabled", side_effect=1),
             AttributeSpec(name="pdfViewerEnabled", getter="get_pdfViewerEnabled", side_effect=1),
             AttributeSpec(name="doNotTrack", getter="get_doNotTrack", side_effect=1),
             AttributeSpec(name="webdriver", getter="get_webdriver", side_effect=1),
             AttributeSpec(name="connection", getter="get_connection", side_effect=1),
+            AttributeSpec(name="scheduling", getter="get_scheduling", side_effect=1),
             AttributeSpec(name="webkitTemporaryStorage", getter="get_webkitTemporaryStorage", side_effect=1),
             AttributeSpec(name="webkitPersistentStorage", getter="get_webkitPersistentStorage", side_effect=1),
             AttributeSpec(name="geolocation", getter="get_geolocation", side_effect=1),
@@ -1140,6 +1166,7 @@ class Navigator:
         return NavigatorUAData(environment=self._environment, services=services)
     # Frozen compatibility values, as Chrome reports them.
     def get_appName(self): return "Netscape"
+    def get_appCodeName(self): return "Mozilla"
     def get_product(self): return "Gecko"
     def get_productSub(self): return "20030107"
     def get_appVersion(self): return self._environment.app_version
@@ -1151,6 +1178,7 @@ class Navigator:
     def get_deviceMemory(self): return self._environment.device_memory
     def get_maxTouchPoints(self): return self._environment.max_touch_points
     def get_vendor(self): return self._environment.vendor
+    def get_vendorSub(self): return ""
     #: This browser keeps cookies and shows PDFs, the way Chrome reports both.
     def get_cookieEnabled(self): return True
     def get_pdfViewerEnabled(self): return True
@@ -1159,6 +1187,7 @@ class Navigator:
     def get_doNotTrack(self): return pyv8.Null
     def get_webdriver(self): return self._environment.webdriver
     def get_connection(self): return self._features.value("connection")
+    def get_scheduling(self): return self._features.value("scheduling")
     def get_webkitTemporaryStorage(self):
         if self._worker:
             return pyv8.Undefined

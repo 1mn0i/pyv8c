@@ -192,13 +192,115 @@ class Worker(EventTarget):
             self._finish_lifecycle()
 
 
-__all__ = ["Worker", "WorkerGlobalScope", "DedicatedWorkerGlobalScope"]
+@interface('SharedWorkerGlobalScope', 'WorkerGlobalScope')
+class SharedWorkerGlobalScope(WorkerGlobalScope):
+    """A shared worker's global: the port it serves arrives as a ``connect`` event."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="name", getter="get_name", side_effect=1,
+                          location=FlagLocation.kInstance),
+            AttributeSpec(name="onconnect", getter="get_onconnect", setter="set_onconnect",
+                          location=FlagLocation.kInstance),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
+
+    def get_name(self):
+        return getattr(getattr(self._runtime, "owner", None), "_worker_name", "")
+    def get_onconnect(self): return self._get_handler("onconnect")
+    def set_onconnect(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onconnect', value)
+
+
+@interface('SharedWorker', 'EventTarget')
+class SharedWorker(EventTarget):
+    """A worker an origin shares, reached through the port it hands out."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="port", getter="get_port", side_effect=1),
+            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
+        ),
+        constructor_behavior=1,
+        length=1,
+        has_constructor=1,
+    )
+
+    def __init__(self, script_url=MISSING, options=None, *_extra, _realm=None, **kw):
+        if script_url is MISSING:
+            raise missing_error('SharedWorker', 'constructor', 1, 0, constructor=True)
+        script_url = usv_string(script_url)
+        options = dictionary(options, name="WorkerOptions",
+                             prefix="Failed to construct 'SharedWorker': ")
+        self._worker_name = dom_string(options.get("name", ""))
+        self._worker_type = enum_value(options.get("type", "classic"), ("classic", "module"))
+        services = _realm
+        super().__init__(services=services, **kw)
+        self._services = services
+        self._terminated = False
+        self._script_url = (
+            urljoin(services.realm_services.url, str(script_url))
+            if services and not str(script_url).startswith("blob:") else str(script_url)
+        )
+        # Two loose ends: the runtime entangles them once the worker's realm exists,
+        # so what the page posts meanwhile is delivered on the worker's own queue.
+        from ..bom.messaging import MessagePort
+        self._port = MessagePort(services=services)
+        self._worker_port = MessagePort(services=services)
+        if services is not None:
+            services.worker_services.track_worker(self)
+            # The page waits for the worker's turns, so a reply lands before idle does.
+            services.task_services.begin_worker()
+        from .runtime import SharedWorkerRuntime
+        self._runtime = SharedWorkerRuntime(self, self._script_url)
+
+    def get_port(self): return self._port
+    def get_onerror(self): return self._get_handler("onerror")
+    def set_onerror(self, value):
+        if not is_nullish(value):
+            value = event_handler(value)
+        self._set_handler('onerror', value)
+
+    def _receive_error(self, error):
+        if not self._terminated:
+            self.fn_dispatchEvent(ErrorEvent("error", {"message": str(error), "error": error}))
+
+    def _receive_uncaught(self, message, filename, line, column):
+        if not self._terminated:
+            self.fn_dispatchEvent(ErrorEvent("error", {
+                "message": message, "filename": filename, "lineno": line, "colno": column,
+            }))
+
+    def _finish_lifecycle(self):
+        """The runtime's own report that the worker stopped."""
+        if getattr(self, "_lifecycle_finished", False): return
+        self._lifecycle_finished = True
+        if self._services is not None:
+            self._services.task_services.complete_worker()
+            self._services.worker_services.discard_worker(self)
+
+    def fn_terminate(self, *_extra):
+        """What the page's own cleanup calls: the worker and its realm go away."""
+        if not self._terminated:
+            self._terminated = True
+            self._runtime.stop()
+            self._finish_lifecycle()
+
+
+__all__ = ["Worker", "WorkerGlobalScope", "DedicatedWorkerGlobalScope",
+           "SharedWorker", "SharedWorkerGlobalScope"]
 
 
 FEATURE = FeatureImplementation(
     {
         "WorkerGlobalScope": WorkerGlobalScope,
         "DedicatedWorkerGlobalScope": DedicatedWorkerGlobalScope,
+        "SharedWorkerGlobalScope": SharedWorkerGlobalScope,
         "Worker": Worker,
+        "SharedWorker": SharedWorker,
     },
 )

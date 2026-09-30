@@ -213,7 +213,7 @@ finally:
 | `to_dict()` | 只含显式给出的键 |
 | `resolved()` | 默认值与推导补齐后的完整键集 |
 | `dumps()` / `loads()`、`to_file()` / `from_file()` | 带 `schema` 版本号的文本或文件往返；版本不符即报错 |
-| `viewport` `screen` `geolocation` `connection` `battery` `storage` `bluetooth` `client_hints` `plugins` | 分组视图，属性名与 Web API 取值一致 |
+| `viewport` `screen` `geolocation` `connection` `battery` `storage` `bluetooth` `client_hints` `plugins` `webgl` | 分组视图，属性名与 Web API 取值一致 |
 
 未给出的键取**随包的默认 profile**（`pyv8c/data/chrome-environment.json`，一份真实 Chrome 的采集结果），
 其中 `app_version`、`language`、`client_hints.brands`/`mobile`/`platform` 会**跟随 `user_agent`** 重新推导，

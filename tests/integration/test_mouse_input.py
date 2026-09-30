@@ -138,6 +138,34 @@ def test_steps_report_each_intermediate_position(page):
     assert events(page).count("mousemove") == 3
 
 
+def test_a_move_reports_the_coordinate_pairs_and_the_movement(page):
+    """Chrome reports screen and page coordinates beside the viewport pair, whole
+    pixels on a mouse event, and the movement the cursor made: none on the first
+    move, and none on a press or a click."""
+    page.evaluate("""globalThis.cursor = [];
+        for (const type of ['pointermove', 'mousemove', 'pointerdown', 'mousedown',
+                            'pointerup', 'mouseup', 'click'])
+            addEventListener(type, (e) => cursor.push([type, e.clientX, e.clientY,
+                e.screenX, e.screenY, e.pageX, e.pageY, e.movementX, e.movementY]), true);""")
+    page.mouse.move(30, 40)
+    page.mouse.move(70, 60)
+    page.mouse.down()
+    page.mouse.up()
+    page.run_until_idle(timeout=1)
+
+    assert page.evaluate("globalThis.cursor") == [
+        ["pointermove", 30, 40, 30, 40, 30, 40, 0, 0],
+        ["mousemove", 30, 40, 30, 40, 30, 40, 0, 0],
+        ["pointermove", 70, 60, 70, 60, 70, 60, 40, 20],
+        ["mousemove", 70, 60, 70, 60, 70, 60, 40, 20],
+        ["pointerdown", 70, 60, 70, 60, 70, 60, 0, 0],
+        ["mousedown", 70, 60, 70, 60, 70, 60, 0, 0],
+        ["pointerup", 70, 60, 70, 60, 70, 60, 0, 0],
+        ["mouseup", 70, 60, 70, 60, 70, 60, 0, 0],
+        ["click", 70, 60, 70, 60, 70, 60, 0, 0],
+    ]
+
+
 # -- pressing and clicking ---------------------------------------------------
 
 

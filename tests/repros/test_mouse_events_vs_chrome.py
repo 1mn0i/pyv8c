@@ -25,12 +25,16 @@ URL = "https://mouse.test/"
 
 #: What each side records: the sequence the page sees, with every member as a
 #: string so the two engines serialize identically, and coordinates rounded
-#: because the layout model measures in fractional pixels.
+#: because the layout model measures in fractional pixels.  ``screenX``/``screenY``
+#: are left out: they carry the host window's position on the screen, which this
+#: environment has no window to have.
 RECORDER = """
 globalThis.log = [];
 const record = (type) => (e) => log.push([type, e.target.id || e.target.localName,
     String(e.detail), String(e.isTrusted), String(e.button), String(e.buttons),
-    String(Math.round(e.clientX)), String(Math.round(e.clientY))]);
+    String(Math.round(e.clientX)), String(Math.round(e.clientY)),
+    String(Math.round(e.pageX)), String(Math.round(e.pageY)),
+    String(Math.round(e.movementX)), String(Math.round(e.movementY))]);
 for (const type of ['pointerover', 'pointerout', 'pointerenter', 'pointerleave', 'pointermove',
                     'pointerdown', 'pointerup', 'mouseover', 'mouseout', 'mouseenter',
                     'mouseleave', 'mousemove', 'mousedown', 'mouseup', 'click', 'dblclick',

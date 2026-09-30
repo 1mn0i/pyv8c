@@ -84,11 +84,14 @@ def test_a_declared_handler_the_class_forgot_is_filled():
         assert not getattr(storage.name_get, "__v8_idl_stub__", False)
         assert storage.index_get.__v8_idl_stub__ is True
         assert storage.index_set.__v8_idl_stub__ is True
-        # Window hands dynamic names to WindowProperties and still takes the
-        # baseline's named handlers as stubs: the baseline alone decides.
+        # Window's names arrive through WindowProperties, so the baseline declares no
+        # plain named handler for it and none is filled; the cross-origin one is the
+        # class's own.  The baseline alone decides.
         window = universe.class_config_for("Window")
-        assert window.name_get.__v8_idl_stub__ is True
-        assert window.name_query.__v8_idl_stub__ is True
+        assert window.name_get is None
+        assert window.name_query is None
+        assert not getattr(window.cross_origin_name_get, "__v8_idl_stub__", False)
+        assert universe.class_config_for("WindowProperties").name_get.__v8_idl_stub__ is True
     finally:
         browser.close()
 

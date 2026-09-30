@@ -16,6 +16,8 @@ from .collections import (
     DOMStringMap,
     DOMTokenList,
     HTMLCollection,
+    HYPERLINK_REL_TOKENS,
+    LINK_REL_TOKENS,
     NamedNodeMap,
     tag_name_ns_collection,
 )
@@ -56,6 +58,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             AttributeSpec(name="clientHeight", getter="get_clientHeight", side_effect=1),
             AttributeSpec(name="scrollWidth", getter="get_scrollWidth", side_effect=1),
             AttributeSpec(name="scrollHeight", getter="get_scrollHeight", side_effect=1),
+            AttributeSpec(name="role", getter="get_role", setter="set_role"),
         ),
         methods=(
             MethodSpec(name="getAttribute", callback="fn_getAttribute", length=1, side_effect=1),
@@ -87,6 +90,12 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         constructor_behavior=0,
         has_constructor=1,
     )
+
+    # Chrome reads ``role`` back as the attribute or null, and never validates it.
+    def get_role(self):
+        value = self.attributes.get("role")
+        return pyv8.Null if value is None else str(value)
+    def set_role(self, value): self.attributes["role"] = str(dom_string(value))
 
     def __init__(self, tag_name="div", services=None, attributes=None, **kw):
         super().__init__(services=services, node_type=Node.ELEMENT_NODE, node_name=str(tag_name).upper(), **kw)
@@ -383,6 +392,7 @@ class HTMLElement(Element):
             AttributeSpec(name="offsetWidth", getter="get_offsetWidth", side_effect=1),
             AttributeSpec(name="offsetHeight", getter="get_offsetHeight", side_effect=1),
             AttributeSpec(name="tabIndex", getter="get_tabIndex", setter="set_tabIndex"),
+            AttributeSpec(name="nonce", getter="get_nonce", setter="set_nonce"),
         ),
         methods=(
             MethodSpec(name="click", callback="fn_click"),
@@ -392,6 +402,8 @@ class HTMLElement(Element):
         constructor_behavior=0,
         has_constructor=1,
     )
+    def get_nonce(self): return self._attr("nonce")
+    def set_nonce(self, value): self._set_string("nonce", value)
     def get_title(self): return self.attributes.get("title", "")
     def set_title(self, v):
         v = dom_string(v)
@@ -770,7 +782,9 @@ class HTMLScriptElement(HTMLElement):
             _attribute("type", "get_type", "set_type"),
             _attribute("async", "get_async", "set_async"),
             _attribute("defer", "get_defer", "set_defer"),
+            _attribute("charset", "get_charset", "set_charset"),
             AttributeSpec(name="innerText", getter="get_innerText"),
+            AttributeSpec(name="text", getter="get_textContent", setter="set_textContent"),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -784,6 +798,8 @@ class HTMLScriptElement(HTMLElement):
     def set_type(self, value):
         value = dom_string(value)
         self.attributes['type'] = str(value)
+    def get_charset(self): return self.attributes.get("charset", "")
+    def set_charset(self, value): self.attributes['charset'] = str(dom_string(value))
     def get_async(self): return "async" in self.attributes
     def set_async(self, value):
         value = boolean(value)
@@ -796,6 +812,15 @@ class HTMLScriptElement(HTMLElement):
         else: self.attributes.pop("defer", None)
 
 
+#: The destinations ``link.as`` may report; anything else reads back as empty.
+LINK_AS_VALUES = frozenset({
+    "audio", "audioworklet", "document", "embed", "fetch", "font", "frame", "iframe",
+    "image", "json", "manifest", "object", "paintworklet", "report", "script",
+    "serviceworker", "sharedworker", "style", "track", "video", "webidentity", "worker",
+    "xslt",
+})
+
+
 @interface('HTMLLinkElement', 'HTMLElement')
 class HTMLLinkElement(HTMLElement):
     __v8_idl_spec__ = IdlSpec(
@@ -803,10 +828,17 @@ class HTMLLinkElement(HTMLElement):
             _url_attr("href", "get_href", "set_href"),
             _attribute("rel", "get_rel", "set_rel"),
             _attribute("media", "get_media", "set_media"),
+            _attribute("as", "get_as", "set_as"),
+            AttributeSpec(name="relList", getter="get_relList", side_effect=1),
         ),
         constructor_behavior=0,
         has_constructor=1,
     )
+    def get_relList(self):
+        value = getattr(self, "_rel_list", None)
+        if value is None:
+            value = self._rel_list = DOMTokenList(self, "rel", LINK_REL_TOKENS)
+        return value
     def get_href(self): return _url_value(self, "href")
     def set_href(self, value): _set_url_value(self, "href", value)
     def get_rel(self): return self.attributes.get("rel", "")
@@ -817,6 +849,12 @@ class HTMLLinkElement(HTMLElement):
     def set_media(self, value):
         value = dom_string(value)
         self.attributes['media'] = str(value)
+    def get_as(self):
+        value = str(self.attributes.get("as", "")).lower()
+        return value if value in LINK_AS_VALUES else ""
+    def set_as(self, value):
+        value = dom_string(value)
+        self.attributes['as'] = str(value)
 
 
 @interface('HTMLAnchorElement', 'HTMLElement')
@@ -837,6 +875,8 @@ class HTMLAnchorElement(HTMLElement):
             _attribute("pathname", "get_pathname", "set_pathname"),
             _attribute("search", "get_search", "set_search"),
             _attribute("hash", "get_hash", "set_hash"),
+            _attribute("rel", "get_rel", "set_rel"),
+            AttributeSpec(name="relList", getter="get_relList", side_effect=1),
         ),
         methods=(MethodSpec(name="toString", callback="fn_toString"),),
         constructor_behavior=0,
@@ -896,6 +936,13 @@ class HTMLAnchorElement(HTMLElement):
         fragment = self._parts().fragment
         return ("#" + fragment) if fragment else ""
     def set_hash(self, value): self._set_component(fragment=str(dom_string(value)).lstrip("#"))
+    def get_rel(self): return self.attributes.get("rel", "")
+    def set_rel(self, value): self.attributes["rel"] = str(dom_string(value))
+    def get_relList(self):
+        value = getattr(self, "_rel_list", None)
+        if value is None:
+            value = self._rel_list = DOMTokenList(self, "rel", HYPERLINK_REL_TOKENS)
+        return value
     def fn_toString(self, *_extra): return self._href()
 
     def _activatable(self):

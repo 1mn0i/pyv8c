@@ -25,6 +25,7 @@ surface.
 
 from __future__ import annotations
 
+import math
 import time
 
 import pyv8
@@ -82,6 +83,11 @@ def _common_ancestor(first, second):
     return None
 
 
+def _pixel(value):
+    """Chrome's rounding for a mouse event's coordinate: halves away from zero."""
+    return math.floor(value + 0.5) if value >= 0 else math.ceil(value - 0.5)
+
+
 def describe(element):
     """A short ``<tag id="...">`` label for error messages."""
     if element is None:
@@ -103,6 +109,9 @@ class MouseInput:
         self._page = page
         self._x = 0.0
         self._y = 0.0
+        self._movement_x = 0
+        self._movement_y = 0
+        self._moved = False
         self._bits = 0
         self._hovered = None
         self._pressed = None
@@ -215,6 +224,11 @@ class MouseInput:
             "bubbles": bubbles, "cancelable": cancelable, "detail": detail,
             "button": button, "buttons": self._bits,
             "clientX": self._x, "clientY": self._y,
+            # Nothing scrolls and no window position is modelled, so the screen pair is
+            # the viewport pair, as it is for a window at the screen's own corner.
+            "screenX": self._x, "screenY": self._y,
+            "movementX": self._movement_x if event_type.endswith("move") else 0,
+            "movementY": self._movement_y if event_type.endswith("move") else 0,
         }
         if related is not None:
             options["relatedTarget"] = related
@@ -225,6 +239,11 @@ class MouseInput:
                 # No button transition is -1 on a pointer event; the mouse event
                 # beside it keeps the 0 Chromium gives it.
                 options["button"] = -1
+        else:
+            # A mouse event reports whole pixels; the pointer event beside it keeps
+            # the fraction the layout measured.
+            for name in ("clientX", "clientY", "screenX", "screenY"):
+                options[name] = _pixel(options[name])
         return self._page.lifecycle.dispatch_page_event(
             event_type, target, options, event_class=interface, propagates=propagates,
         )
@@ -238,6 +257,13 @@ class MouseInput:
             )
 
     def _move_once(self, x, y):
+        # Chrome reports whole pixels, and the first move after the cursor arrives
+        # reports no movement at all.
+        if self._moved:
+            self._movement_x, self._movement_y = _pixel(x - self._x), _pixel(y - self._y)
+        else:
+            self._movement_x = self._movement_y = 0
+            self._moved = True
         self._x, self._y = x, y
         target = self._target()
         self._cross(target)

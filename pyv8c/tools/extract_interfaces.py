@@ -12,10 +12,21 @@ from ..engine.schema import write_baseline
 
 INTERFACE_DECL = re.compile(r"const\s+WrapperTypeInfo\s+V8(?P<binding>[A-Za-z0-9_]+)::wrapper_type_info_\s*\{")
 FUNCTION_DECL = re.compile(r"(?:void|v8::Local\s*<\s*v8::Value\s*>)\s+(?P<name>[A-Za-z0-9_]+Callback)\s*\([^)]*\)\s*\{")
-TABLE_DECL = re.compile(r"static\s+const\s+IDLMemberInstaller::(?P<kind>Attribute|Operation|ConstantValue)Config\s+(?P<name>k[A-Za-z0-9_]+Table)\s*\[\]\s*=\s*\{")
-CONSTRUCTOR_CALLBACK = re.compile(r"[A-Za-z0-9_]+ConstructorCallback")
+TABLE_DECL = re.compile(
+    r"static\s+const\s+IDLMemberInstaller::"
+    r"(?P<kind>Attribute|Operation|ConstantValue|NoAllocDirectCallOperation)Config\s+"
+    r"(?P<name>k[A-Za-z0-9_]+Table)\s*\[\]\s*=\s*\{")
+#: Table kinds that hold operations under another name: Chromium emits the no-alloc
+#: direct-call fast path into its own table, whose entries add a brace level around the
+#: operation fields and a trailing ``v8::CFunction`` reference.
+OPERATION_TABLE_KINDS = {"NoAllocDirectCallOperation": "Operation"}
+#: A constructor callback, however the code generator names it: the older shape spells
+#: it ``URLConstructorCallback`` after the interface, the newer one emits a free
+#: ``ConstructorCallback`` inside the binding's own namespace and installs it with
+#: ``SetCallHandler`` instead of a constructor table.
+CONSTRUCTOR_CALLBACK = re.compile(r"\b[A-Za-z0-9_]*ConstructorCallback\b")
 IDL_INTERFACE_DECL = re.compile(
-    r"(?:(?P<attrs>\[[\s\S]*?\])\s*)?interface(?:\s+mixin)?\s+"
+    r"(?:(?P<attrs>\[[\s\S]*?\])\s*)?(?P<partial>\bpartial\s+)?interface(?:\s+mixin)?\s+"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*(?P<parent>[A-Za-z_][A-Za-z0-9_]*))?\s*\{")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -100,10 +111,18 @@ def _table_entries(text, table_start):
     while index < len(body):
         if body[index] == "{":
             entry_end = balanced_end(body, index); fields = split_top_level(body[index + 1:entry_end - 1])
+            if fields and fields[0].startswith("{"):
+                fields = split_top_level(_unwrap(fields[0]))
             if fields and fields[0].startswith('"'): entries.append(fields)
             index = entry_end
         else: index += 1
     return entries
+
+
+def _unwrap(value):
+    """The fields inside an extra brace level, as a direct-call table writes them."""
+    value = value.strip()
+    return value[1:-1] if value.startswith("{") and value.endswith("}") else value
 
 
 def _find_functions(text):
@@ -203,8 +222,9 @@ def extract_members(text):
     for match in TABLE_DECL.finditer(text):
         try: entries = _table_entries(text, text.find("{", match.start()))
         except ValueError: continue
+        kind = OPERATION_TABLE_KINDS.get(match.group("kind"), match.group("kind"))
         for fields in entries:
-            member = _member_from_table(match.group("kind"), fields, signatures)
+            member = _member_from_table(kind, fields, signatures)
             if member is not None: members.setdefault(member.get("location", "interface"), []).append(member)
     return members
 
@@ -475,6 +495,13 @@ def _idl_metadata(root):
     for path in sorted(root.rglob("*.idl")):
         text = path.read_text(encoding="utf-8", errors="ignore")
         for match in IDL_INTERFACE_DECL.finditer(text):
+            if match.group("partial"):
+                # A partial declaration adds members to an interface another file owns.
+                # Its body must not decide the interface's exposure, constructor or
+                # constants: reading it as the interface's own replaced URL's
+                # ``[Exposed=(Window,Worker,ShadowRealm)] constructor(...)`` with a
+                # partial's silence, which is why ``new URL()`` was refused.
+                continue
             try:
                 end = balanced_end(text, text.find("{", match.start()))
             except ValueError:

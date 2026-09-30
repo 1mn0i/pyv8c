@@ -164,7 +164,8 @@ def test_installing_chrome_is_invisible_to_trace():
 
 
 def test_chrome_method_calls_are_reported_with_their_results():
-    """The members are Python-backed, so a call is traced like any host method."""
+    """The members are Python-backed, so a call is traced like any host method.  An object
+    result is reported as a bounded preview of its contents."""
     events = []
     browser = Browser(trace=True, traceable=True,
                       trace_callback=lambda *event: events.append(event), stub_logging="off")
@@ -172,13 +173,13 @@ def test_chrome_method_calls_are_reported_with_their_results():
         page = _page(browser)
         events.clear()
         assert page.evaluate("chrome.app.getDetails()") is pyv8.Null
-        assert _messages(events) == [
-            "[TOP] getter: Window.chrome -> <JSObject>",
-            "[TOP] method: ChromeBindings.getDetails() -> null",
-        ]
+        messages = _messages(events)
+        assert messages[0].startswith("[TOP] getter: Window.chrome -> ")
+        assert messages[1] == "[TOP] method: ChromeBindings.getDetails() -> null"
         events.clear()
         page.evaluate("chrome.loadTimes().navigationType")
-        assert _messages(events)[-1] == "[TOP] method: ChromeBindings.loadTimes() -> <JSObject>"
+        assert _messages(events)[-1].startswith(
+            "[TOP] method: ChromeBindings.loadTimes() -> ")
     finally:
         browser.close()
 

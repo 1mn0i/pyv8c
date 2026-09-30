@@ -11,7 +11,7 @@ from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from ...engine.features import interface
 from ...foundation.arguments import boolean, dom_string
 from ...foundation.errors import LegacyPropertyError, V8TypeError
-from .collections import DOMTokenList, HTMLFormControlsCollection, NodeList
+from .collections import DOMTokenList, HTMLFormControlsCollection, HYPERLINK_REL_TOKENS, NodeList
 from .html_elements import Element, HTMLElement, _document_url, _set_url_value, _url_value
 from .utils import crlf, encode_entries, replace_query, urlencoded
 
@@ -216,7 +216,7 @@ class HTMLFormElement(HTMLElement):
     def get_relList(self):
         value = getattr(self, "_rel_list", None)
         if value is None:
-            value = self._rel_list = DOMTokenList(self, "rel")
+            value = self._rel_list = DOMTokenList(self, "rel", HYPERLINK_REL_TOKENS)
         return value
     def get_target(self): return self.attributes.get("target", "")
     def set_target(self, value): self.attributes["target"] = str(dom_string(value))

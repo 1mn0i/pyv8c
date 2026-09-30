@@ -46,8 +46,7 @@ class WorkerRuntime:
             self.executor.attach_task_queue(self._realm.tasks)
             self.executor.attach_rejection_tracker(self.rejections)
             self._realm.tasks.set_error_sink(self._report_error)
-            from .api import DedicatedWorkerGlobalScope
-            self._scope = DedicatedWorkerGlobalScope(
+            self._scope = self._scope_class()(
                 runtime=self,
                 environment=config.environment,
                 services=self._realm.services,
@@ -71,12 +70,21 @@ class WorkerRuntime:
                 finally:
                     if self.debug_target is not None:
                         self.debug_target.after_script()
+            self._started()
         except BaseException as exc:  # a worker's failure is reported, not raised
             self._report_error(exc)
             self._stop.set()
             self._cleanup_owner()
             self._lifecycle_scope.close()
             self.executor.close()
+
+    def _scope_class(self):
+        """The global scope a worker of this kind runs its script in."""
+        from .api import DedicatedWorkerGlobalScope
+        return DedicatedWorkerGlobalScope
+
+    def _started(self):
+        """What a worker of this kind does once its script has run."""
 
     def _dispatch_message(self, value):
         if self._stop.is_set() or self._scope is None:
@@ -176,4 +184,23 @@ class WorkerRuntime:
         self._lifecycle_scope.close()
 
 
-__all__ = ["WorkerRuntime"]
+class SharedWorkerRuntime(WorkerRuntime):
+    """A shared worker: once its script has run it is handed the port it serves on."""
+
+    def _scope_class(self):
+        from .api import SharedWorkerGlobalScope
+        return SharedWorkerGlobalScope
+
+    def _started(self):
+        port = getattr(self.owner, "_worker_port", None)
+        if self._scope is None or port is None:
+            return
+        # The far end of the page's port lives here, so its messages arrive on this
+        # realm's queue; the page-side port flushes whatever it was given meanwhile.
+        port._services = self._realm.services
+        port._entangle(self.owner._port)
+        self.owner._port._entangle(port)
+        self._scope.fn_dispatchEvent(MessageEvent("connect", {"ports": [port]}))
+
+
+__all__ = ["WorkerRuntime", "SharedWorkerRuntime"]

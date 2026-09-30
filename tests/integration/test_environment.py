@@ -201,6 +201,50 @@ def test_resource_interceptor_filters_images_and_styles_and_cache_reuses_loader(
         browser.close()
 
 
+def test_every_request_a_page_makes_names_its_resource_type():
+    """A caller filters on ``resource_type``, so each path names itself: the element
+    ones, the API ones (``fetch``, ``xhr``), module imports and worker sources."""
+    kinds = {}
+    body = """<body>
+<img src="/a.png"><link rel="stylesheet" href="/app.css">
+<iframe src="/frame.html"></iframe>
+<script src="/classic.js"></script>
+<script type="module">import '/module.js';</script>
+<script>
+  new Worker('/worker.js');
+  fetch('/page-fetch');
+  var xhr = new XMLHttpRequest(); xhr.open('GET', '/page-xhr', true); xhr.send();
+</script>
+</body>"""
+
+    def loader(url, request):
+        kinds.setdefault(request.get("resource_type"), []).append(str(url))
+        name = str(url).rsplit("/", 1)[-1]
+        if name.endswith(".css"):
+            return {"body": "body{}", "url": url, "headers": {"content-type": "text/css"}}
+        if name.endswith(".js"):
+            return {"body": "0;", "url": url,
+                    "headers": {"content-type": "text/javascript"}}
+        if name.endswith(".html"):
+            return {"body": "<body>frame</body>", "url": url,
+                    "headers": {"content-type": "text/html"}}
+        return {"body": body, "url": url, "headers": {"content-type": "text/html"}}
+
+    browser = Browser(resource_loader=loader, stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.goto("http://example.test/")
+        page.run_until_idle(timeout=3)
+        page.net.fetch("/host-fetch")
+        page.net.xhr("/host-xhr")
+        page.run_until_idle(timeout=3)
+    finally:
+        browser.close()
+
+    assert None not in kinds
+    assert {"document", "script", "image", "style", "iframe", "fetch", "xhr"} <= set(kinds)
+
+
 def test_resource_cache_persists_across_browser_restart(tmp_path, monkeypatch):
     cache_dir = tmp_path / "resource-cache"
     first_calls = []
@@ -225,7 +269,7 @@ def test_resource_cache_persists_across_browser_restart(tmp_path, monkeypatch):
     messages = []
     monkeypatch.setattr(
         "pyv8c.platform.resource_loading.logger.debug",
-        lambda message, value: messages.append((message, value)),
+        lambda message, *values: messages.append((message, *values)),
     )
     browser = Browser(resource_loader=unavailable_loader, cache_dir=cache_dir)
     try:

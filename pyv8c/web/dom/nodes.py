@@ -345,7 +345,12 @@ class Node(EventTarget):
         if document_services is not None:
             callback = getattr(document_services, "node_adopted", None)
             framed = getattr(node, "localName", "") == "iframe"
-            if callback is not None and (not document_services.parsing or framed):
+            # The parser runs its own hooks for the nodes it builds; a node the page
+            # inserts while the parser still runs is not the parser's to handle, and a
+            # script inserted that way runs in both engines.
+            parser_built = getattr(node, "_parser_created", False)
+            if callback is not None and (not document_services.parsing or framed
+                                         or not parser_built):
                 callback(node)
         return node
 

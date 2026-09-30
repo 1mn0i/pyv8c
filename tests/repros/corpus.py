@@ -61,6 +61,9 @@ class Repro:
     url: str = URL
     expect_error: str = ""
     known_divergence: str = ""
+    #: Seconds the reference browser waits after load before reading, for behaviour
+    #: that lands on a task of its own; this environment runs to idle either way.
+    settle: float = 0.0
 
 
 CASES = (
@@ -1580,6 +1583,93 @@ CASES = (
                   0, "function"],
     ),
     Repro(
+        name="can_play_type_reads_the_container_and_its_codecs",
+        note="Chrome answers for the container and the codecs it carries: a codec it "
+             "does not play is an empty string, and a family with no profile a maybe.",
+        html=page(body=""),
+        script="""(() => {
+            const audio = document.createElement('audio');
+            const video = document.createElement('video');
+            const ask = (type) => (type.trim().toLowerCase().startsWith('video')
+                ? video : audio).canPlayType(type);
+            const types = [
+                'audio/mpeg', 'audio/mpeg; codecs="mp3"', 'audio/mpeg; codecs=mp3',
+                'audio/mpeg; codecs="MP3"', 'audio/mp4',
+                'audio/mp4; codecs="mp4a.40.2"', 'audio/mp4; codecs="mp4a.40.2"; foo=bar',
+                'audio/ogg; codecs="vorbis"', 'audio/ogg; codecs="opus"',
+                'audio/webm; codecs="vorbis"', 'audio/aac', 'audio/flac', 'audio/opus',
+                'audio/wav; codecs="1"', 'audio/wav; codecs="2"',
+                'video/mp4; codecs="avc1.42E01E"', 'video/mp4; codecs="avc1"',
+                'video/mp4; codecs="hvc1.1.6.L93.B0"',
+                'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+                'video/mp4; codecs="theora"', "video/mp4; codecs='avc1.42E01E'",
+                'video/webm; codecs="vp8, vorbis"', 'video/webm; codecs="vp9"',
+                'video/quicktime', 'application/ogg; codecs="vorbis"',
+                '  AUDIO/MPEG  ', 'nonsense/thing', 'audio/mpeg3',
+            ];
+            return types.reduce((all, type) => (all[type] = ask(type), all), {});
+        })()""",
+        expected={
+            "audio/mpeg": "probably",
+            'audio/mpeg; codecs="mp3"': "probably",
+            "audio/mpeg; codecs=mp3": "probably",
+            'audio/mpeg; codecs="MP3"': "",
+            "audio/mp4": "maybe",
+            'audio/mp4; codecs="mp4a.40.2"': "probably",
+            'audio/mp4; codecs="mp4a.40.2"; foo=bar': "probably",
+            'audio/ogg; codecs="vorbis"': "probably",
+            'audio/ogg; codecs="opus"': "probably",
+            'audio/webm; codecs="vorbis"': "probably",
+            "audio/aac": "probably",
+            "audio/flac": "probably",
+            "audio/opus": "",
+            'audio/wav; codecs="1"': "probably",
+            'audio/wav; codecs="2"': "",
+            'video/mp4; codecs="avc1.42E01E"': "probably",
+            'video/mp4; codecs="avc1"': "maybe",
+            'video/mp4; codecs="hvc1.1.6.L93.B0"': "probably",
+            'video/mp4; codecs="avc1.42E01E, mp4a.40.2"': "probably",
+            'video/mp4; codecs="theora"': "",
+            "video/mp4; codecs='avc1.42E01E'": "",
+            'video/webm; codecs="vp8, vorbis"': "probably",
+            'video/webm; codecs="vp9"': "probably",
+            "video/quicktime": "",
+            'application/ogg; codecs="vorbis"': "probably",
+            "  AUDIO/MPEG  ": "probably",
+            "nonsense/thing": "",
+            "audio/mpeg3": "",
+        },
+    ),
+    Repro(
+        name="a_link_reports_the_as_it_was_given",
+        note="as reflects the attribute limited to known values: an unknown one is"
+             " stored and reads back empty.",
+        html=page(body=""),
+        script="""(() => {
+            const link = document.createElement('link');
+            const set = (value) => { link.as = value;
+                return [String(link.getAttribute('as')), link.as]; };
+            return [link.as, set('script'), set('bogus'), set('SCRIPT'), set(''), set(null)];
+        })()""",
+        expected=["", ["script", "script"], ["bogus", ""], ["SCRIPT", "script"], ["", ""],
+                  ["null", ""]],
+    ),
+    Repro(
+        name="document_open_empties_the_document_and_returns_it",
+        note="open() drops what the document held and hands the document back, so the"
+             " writes that follow build a new one.",
+        html=page(body="<p id=old>old</p>"),
+        script="""(() => {
+            const before = [document.readyState, document.querySelectorAll('*').length];
+            const returned = document.open() === document;
+            const after = [document.readyState, document.querySelectorAll('*').length,
+                           String(document.getElementById('old')), String(document.body)];
+            document.write('<p id="new">new</p>');
+            return [before, returned, after, document.getElementById('new') !== null];
+        })()""",
+        expected=[["complete", 4], True, ["loading", 0, "null", "null"], True],
+    ),
+    Repro(
         name="the_document_reports_its_mode_and_type",
         note="A page with no doctype is in quirks mode, and what it is, where its"
              " direction comes from, and what the browser promises about cookies.",
@@ -1605,6 +1695,31 @@ CASES = (
                    .concat([navigator.javaEnabled()])""",
         expected=["undefined", "object", "object", "undefined", "undefined", "undefined",
                   "undefined", False],
+    ),
+    Repro(
+        name="the_mime_type_collection_answers_on_its_own",
+        note="Reading the mime types first has to work: the two legacy collections "
+             "reference each other, and neither may wait on the other being asked for.",
+        html=EMPTY_PAGE,
+        script="""(() => {
+  const collection = navigator.mimeTypes;
+  return ['mimeTypes' in navigator, Object.prototype.toString.call(collection),
+          collection === navigator.mimeTypes, typeof collection.item,
+          typeof collection.namedItem, typeof collection[Symbol.iterator],
+          Array.prototype.every.call(collection, (entry) =>
+              Object.prototype.toString.call(entry) === '[object MimeType]' &&
+              (entry.enabledPlugin === null ||
+               Object.prototype.toString.call(entry.enabledPlugin) === '[object Plugin]'))];
+})()""",
+        expected=[True, "[object MimeTypeArray]", True, "function", "function", "function", True],
+    ),
+    Repro(
+        name="a_global_interface_object_is_not_enumerable",
+        note="An interface object is an own, writable, configurable property of the "
+             "window that is not enumerable.",
+        html=EMPTY_PAGE,
+        script="""Object.keys(window).filter((name) => /^[A-Z]/.test(name)).length""",
+        expected=0,
     ),
     Repro(
         name="a_document_location_is_the_windows_location",
@@ -1715,6 +1830,103 @@ CASES = (
         expected=["undefined", False],
     ),
     Repro(
+        name="the_motion_events_arrive_with_empty_readings",
+        note="Chrome hands a page that listens for motion one reading per type when the "
+             "document loads: the fields are null, the interval is its own, and only the "
+             "absolute orientation type says so.",
+        url="https://repro.test/dir/page",
+        html=page(head="""<script>
+            window.__motion = [];
+            const note = (e) => window.__motion.push([
+                e.type,
+                [e instanceof Event, e instanceof DeviceMotionEvent,
+                 e instanceof DeviceOrientationEvent],
+                e.interval === undefined ? null : e.interval,
+                e.acceleration ? [e.acceleration.x, e.acceleration.y, e.acceleration.z] : null,
+                e.rotationRate ? [e.rotationRate.alpha, e.rotationRate.beta,
+                                  e.rotationRate.gamma] : null,
+                'alpha' in e ? e.alpha : null,
+                'absolute' in e ? e.absolute : null]);
+            for (const type of ['devicemotion', 'deviceorientation', 'deviceorientationabsolute'])
+                addEventListener(type, note);
+        </script>"""),
+        script="""(() => {
+            const seen = {};
+            for (const entry of window.__motion) seen[entry[0]] = entry.slice(1);
+            return [Object.keys(seen).sort(), seen.devicemotion, seen.deviceorientation,
+                    seen.deviceorientationabsolute];
+        })()""",
+        settle=0.3,
+        expected=[
+            ["devicemotion", "deviceorientation", "deviceorientationabsolute"],
+            [[True, True, False], 16, [None, None, None], [None, None, None], None, None],
+            [[True, False, True], None, None, None, None, False],
+            [[True, False, True], None, None, None, None, True],
+        ],
+    ),
+    Repro(
+        name="dom_exception_length_counts_only_required_arguments",
+        note="DOMException takes two optional arguments, so its constructor length is 0 "
+             "while the legacy code still answers for the name.",
+        html=page(body=""),
+        script="[DOMException.length, new DOMException('bad', 'InvalidStateError').code,"
+               " new DOMException('bad', 'InvalidStateError').name]",
+        expected=[0, 11, "InvalidStateError"],
+    ),
+    Repro(
+        name="the_motion_interfaces_are_gone_outside_a_secure_context",
+        note="Chrome exposes no device-motion interface on an insecure origin: the names "
+             "are absent, not merely silent.",
+        url="http://repro.test/dir/page",
+        html=page(body=""),
+        script="[typeof DeviceMotionEvent, typeof DeviceMotionEventAcceleration,"
+               " typeof DeviceMotionEventRotationRate, typeof DeviceOrientationEvent,"
+               " isSecureContext]",
+        expected=["undefined", "undefined", "undefined", "undefined", False],
+    ),
+    Repro(
+        name="the_time_origin_belongs_to_the_document",
+        note="Chrome counts performance.now() from the document's own navigation, so the "
+             "epoch origin plus the offset is still today and the offset starts small.",
+        url="https://repro.test/dir/page",
+        html=page(body=""),
+        script="[Math.abs(performance.timeOrigin + performance.now() - Date.now()) < 50,"
+               " Math.round(performance.now()) < 1000,"
+               " Math.abs(performance.timing.navigationStart - performance.timeOrigin) < 50]",
+        expected=[True, True, True],
+    ),
+    Repro(
+        name="pageshow_bubbles_and_the_page_is_revealed",
+        note="Chrome reports pageshow as bubbling and follows it with one pagereveal, "
+             "both fired at the window once the document has loaded.",
+        url="https://repro.test/dir/page",
+        html=page(head="""<script>
+            window.__seen = [];
+            const note = (e) => window.__seen.push([e.type, e.bubbles,
+                e.constructor && e.constructor.name]);
+            for (const name of ['pageshow', 'pagereveal']) addEventListener(name, note);
+        </script>"""),
+        script="window.__seen",
+        settle=0.3,
+        expected=[["pageshow", True, "PageTransitionEvent"],
+                  ["pagereveal", False, "PageRevealEvent"]],
+    ),
+    Repro(
+        name="a_media_element_ends_where_undecodable_bytes_end",
+        note="Nothing here decodes, and Chrome ends bytes it cannot use the same way: "
+             "loadstart, progress, suspend, error, and never a load.",
+        url="https://repro.test/dir/page",
+        html=page(head="<script>window.__media = [];</script>",
+                  body='<video id="v" src="/movie.mp4"></video><script>'
+                       'const video = document.querySelector("video");'
+                       'for (const name of ["loadstart", "progress", "suspend", "error",'
+                       ' "load", "loadend"])'
+                       ' video.addEventListener(name, (e) => __media.push(e.type));</script>'),
+        script="window.__media",
+        settle=0.5,
+        expected=["loadstart", "progress", "suspend", "error"],
+    ),
+    Repro(
         name="an_inserted_frame_has_its_window_right_away",
         note="A frame with no document yet hands out no window; the insertion gives "
              "it one in the same turn, and every read returns that same object.",
@@ -1729,6 +1941,619 @@ CASES = (
                     frame.contentDocument.readyState];
         })()""",
         expected=[None, False, True, True, 1, "complete"],
+    ),
+    Repro(
+        name="a_child_window_keeps_its_member_names",
+        note="The same-origin child is a proxy here, so what it hands back has to be the "
+             "child's own member: a Python callback reaches the page named fn_<member>.",
+        html=page(body='<iframe name="f"></iframe>'),
+        script="""(() => {
+            const frame = document.querySelector('iframe');
+            const child = frame.contentWindow;
+            return [String(child.addEventListener), child.addEventListener.name,
+                    child.addEventListener === frame.contentWindow.addEventListener,
+                    String(child.setTimeout)];
+        })()""",
+        expected=["function addEventListener() { [native code] }", "addEventListener",
+                  True, "function setTimeout() { [native code] }"],
+    ),
+    Repro(
+        name="a_webgl_context_answers_like_chrome",
+        note="No GL backend: identity, limits, object creation and the state a page can "
+             "query are the observable part; drawing calls have no effect.",
+        script="""(() => {
+  const canvas = document.createElement('canvas');
+  const gl = canvas.getContext('webgl');
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  const attributes = gl.getContextAttributes();
+  return [Object.prototype.toString.call(gl), gl instanceof WebGLRenderingContext,
+          gl.canvas === canvas, canvas.getContext('webgl') === gl,
+          [gl.drawingBufferWidth, gl.drawingBufferHeight],
+          typeof gl.getParameter(gl.VERSION), gl.getParameter(gl.MAX_TEXTURE_SIZE),
+          [gl.getParameter(gl.TRIANGLES), gl.getError()],
+          [gl.TRIANGLES, WebGLRenderingContext.TRIANGLES,
+           WebGLRenderingContext.prototype.TRIANGLES],
+          [gl.createShader(gl.VERTEX_SHADER).constructor.name,
+           gl.createProgram().constructor.name, gl.createTexture().constructor.name,
+           buffer instanceof WebGLObject],
+          [gl.isBuffer(buffer), gl.isBuffer(null), gl.isContextLost(), gl.getError()],
+          Array.from(gl.getParameter(gl.VIEWPORT)),
+          gl.getParameter(gl.VIEWPORT) instanceof Int32Array,
+          gl.getSupportedExtensions().length > 0,
+          [attributes.alpha, attributes.stencil],
+          [gl.getParameter(0), gl.getError()]];
+})()""",
+        expected=["[object WebGLRenderingContext]", True, True, True, [300, 150], "string",
+                  16384, [None, 1280], [4, 4, 4],
+                  ["WebGLShader", "WebGLProgram", "WebGLTexture", True],
+                  [True, False, False, 0], [0, 0, 300, 150], True, True, [True, False],
+                  [None, 1280]],
+    ),
+    Repro(
+        name="a_canvas_keeps_the_first_context_type",
+        note="Whichever context a canvas answers for first fixes its type for later calls.",
+        script="""(() => {
+  const drawn = document.createElement('canvas');
+  const three = document.createElement('canvas');
+  const fresh = document.createElement('canvas');
+  return [drawn.getContext('2d') !== null && drawn.getContext('webgl') === null,
+          three.getContext('webgl') !== null && three.getContext('2d') === null,
+          fresh.getContext('nope'), fresh.getContext('webgl') !== null,
+          fresh.getContext('experimental-webgl') !== null];
+})()""",
+        expected=[True, True, None, True, True],
+    ),
+    Repro(
+        name="a_canvas_answers_for_webgl2",
+        note="The second context type a canvas hands out, with the version it reports.",
+        script="""(() => {
+  const context = document.createElement('canvas').getContext('webgl2');
+  return [context !== null, Object.prototype.toString.call(context),
+          context.getParameter(context.VERSION),
+          context.getParameter(context.SHADING_LANGUAGE_VERSION)];
+})()""",
+        expected=[True, "[object WebGL2RenderingContext]",
+                  "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+                  "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"],
+    ),
+    Repro(
+        name="every_extension_a_context_lists_is_obtainable",
+        note="Every name the context lists is one `getExtension` hands back.",
+        script="""(() => {
+  const gl = document.createElement('canvas').getContext('webgl');
+  const names = gl.getSupportedExtensions();
+  return [names.length, names.filter((name) => gl.getExtension(name) === null)];
+})()""",
+        expected=[35, []],
+    ),
+    Repro(
+        name="a_webgl2_context_lists_its_own_extensions",
+        note="What WebGL 2 adds, and what it stops listing because the feature is core.",
+        script="""(() => {
+  const gl = document.createElement('canvas').getContext('webgl2');
+  const names = gl.getSupportedExtensions();
+  return [names.length, names.includes('EXT_color_buffer_float'),
+          names.includes('OES_vertex_array_object'),
+          gl.getExtension('OES_vertex_array_object')];
+})()""",
+        expected=[32, True, False, None],
+    ),
+    Repro(
+        name="the_debug_renderer_names_the_implementation",
+        note="The two pnames behind the extension carry the machine's GL identity.",
+        script="""(() => {
+  const gl = document.createElement('canvas').getContext('webgl');
+  const info = gl.getExtension('WEBGL_debug_renderer_info');
+  const vendor = gl.getParameter(info.UNMASKED_VENDOR_WEBGL);
+  const renderer = gl.getParameter(info.UNMASKED_RENDERER_WEBGL);
+  return [typeof vendor, typeof renderer, vendor.length > 0, renderer.length > 0];
+})()""",
+        expected=["string", "string", True, True],
+    ),
+    Repro(
+        name="an_extension_object_is_handed_out_once_per_context",
+        note="Asking twice for the same extension answers with the object it made first.",
+        script="""(() => {
+  const gl = document.createElement('canvas').getContext('webgl');
+  const first = gl.getExtension('OES_vertex_array_object');
+  const array = first.createVertexArrayOES();
+  return [first === gl.getExtension('OES_vertex_array_object'),
+          Object.prototype.toString.call(first),
+          Object.prototype.toString.call(array),
+          first.isVertexArrayOES(null), gl.isBuffer(null)];
+})()""",
+        expected=[True, "[object OESVertexArrayObject]", "[object WebGLVertexArrayObjectOES]",
+                  False, False],
+    ),
+    Repro(
+        name="binding_is_what_brings_a_vertex_array_into_being",
+        note="A created array is not one yet: binding makes it, deleting unmakes it.",
+        script="""(() => {
+  const gl = document.createElement('canvas').getContext('webgl');
+  const extension = gl.getExtension('OES_vertex_array_object');
+  const array = extension.createVertexArrayOES();
+  const made = extension.isVertexArrayOES(array);
+  extension.bindVertexArrayOES(array);
+  const bound = extension.isVertexArrayOES(array);
+  extension.deleteVertexArrayOES(array);
+  return [made, bound, extension.isVertexArrayOES(array)];
+})()""",
+        expected=[False, True, False],
+    ),
+    Repro(
+        name="an_extension_object_carries_its_constants",
+        note="Each extension answers with a typed object of its own.",
+        script="""(() => {
+  const gl = document.createElement('canvas').getContext('webgl');
+  const names = gl.getSupportedExtensions();
+  const tags = names.map((name) => Object.prototype.toString.call(gl.getExtension(name)));
+  const instanced = gl.getExtension('ANGLE_instanced_arrays');
+  return [tags.every((tag) => tag.startsWith('[object ')), tags.includes('[object Array]'),
+          instanced.VERTEX_ATTRIB_ARRAY_DIVISOR_ANGLE,
+          gl.getExtension('nope')];
+})()""",
+        expected=[True, False, 35070, None],
+    ),
+    Repro(
+        name="losing_the_context_is_reported",
+        note="`loseContext` loses the context, and the reference never hands it back.",
+        script="""(() => {
+  const gl = document.createElement('canvas').getContext('webgl');
+  const lose = gl.getExtension('WEBGL_lose_context');
+  const before = gl.isContextLost();
+  lose.loseContext();
+  const lost = gl.isContextLost();
+  lose.restoreContext();
+  return [before, lost, gl.isContextLost()];
+})()""",
+        expected=[False, True, True],
+    ),
+    Repro(
+        name="a_canvas_reports_its_drawing_buffer_format",
+        note="The one attribute a WebGL canvas answers about its surface.",
+        script="document.createElement('canvas').getContext('webgl').drawingBufferFormat",
+        expected=32856,
+    ),
+    Repro(
+        name="an_unknown_permission_name_rejects_the_promise",
+        note="A name outside the enum rejects the promise instead of throwing.",
+        html=page(body="""<script>
+            window.__permission = '';
+            try {
+                navigator.permissions.query({name: 'speaker'}).then(
+                    () => { window.__permission = 'resolved'; },
+                    (error) => { window.__permission = error.name + ': ' + error.message; });
+            } catch (error) {
+                window.__permission = 'threw: ' + error.name;
+            }
+        </script>"""),
+        script="window.__permission",
+        settle=0.3,
+        expected="TypeError: Failed to execute 'query' on 'Permissions': Failed to read the "
+                 "'name' property from 'PermissionDescriptor': The provided value 'speaker' "
+                 "is not a valid enum value of type PermissionName.",
+    ),
+    Repro(
+        name="a_permission_status_names_the_spec_permission",
+        note="The status reports the permission the spec names, not always the one queried.",
+        url="https://repro.test/dir/page",
+        html=page(body="""<script>
+            window.__status = '';
+            for (const name of ['camera', 'microphone', 'geolocation']) {
+                navigator.permissions.query({name: name}).then(
+                    (status) => { window.__status += status.name + ':' + status.state + ' '; },
+                    (error) => { window.__status += 'rejected '; });
+            }
+        </script>"""),
+        script="window.__status",
+        settle=0.3,
+        expected="video_capture:prompt audio_capture:prompt geolocation:prompt ",
+    ),
+    Repro(
+        name="performance_now_counts_from_the_time_origin",
+        note="now() is milliseconds since timeOrigin, which is this process' start.",
+        script="""(() => {
+  const first = performance.now();
+  const second = performance.now();
+  return [typeof first, first > 0, second >= first,
+          Math.abs(performance.timeOrigin + first - Date.now()) < 1000];
+})()""",
+        expected=["number", True, True, True],
+    ),
+    Repro(
+        name="marks_and_measures_land_in_one_buffer",
+        note="A mark keeps its detail, the buffer hands the same object back twice, and "
+             "both calls answer with the entry Chrome answers with.",
+        script="""(() => {
+  performance.clearMarks(); performance.clearMeasures();
+  const made = performance.mark('a', {detail: {x: 1}});
+  const measured = performance.measure('m', 'a');
+  const mark = performance.getEntriesByType('mark')[0];
+  return [mark.name, mark.entryType, mark.duration, mark.detail.x,
+          Object.keys(mark.toJSON()).sort().join(),
+          measured.name, measured.duration >= 0,
+          performance.getEntriesByName('a').length,
+          mark === performance.getEntriesByType('mark')[0],
+          made.entryType];
+})()""",
+        expected=["a", "mark", 0, 1, "duration,entryType,name,navigationId,startTime",
+                  "m", True, 1, True, "mark"],
+    ),
+    Repro(
+        name="the_buffer_reports_by_start_time",
+        note="getEntries() is ordered by when things happened, not by when they were "
+             "recorded: a measure that started at 100 comes last.",
+        script="""(() => {
+  performance.clearMarks(); performance.clearMeasures();
+  performance.measure('first', {start: 100, duration: 10});
+  performance.mark('second', {startTime: 1});
+  performance.mark('third', {startTime: 5});
+  return performance.getEntries()
+                      .filter(entry => entry.entryType === 'mark'
+                                       || entry.entryType === 'measure')
+                      .map(entry => entry.name);
+})()""",
+        expected=["second", "third", "first"],
+    ),
+    Repro(
+        name="clearing_takes_one_name_at_a_time",
+        note="clearMarks(name) drops the marks with that name, and only those.",
+        script="""(() => {
+  performance.clearMarks(); performance.clearMeasures();
+  performance.mark('keep'); performance.mark('drop');
+  performance.mark('keep', {startTime: 3});
+  performance.clearMarks('keep');
+  return performance.getEntriesByType('mark').map(entry => entry.name);
+})()""",
+        expected=["drop"],
+    ),
+    Repro(
+        name="a_measure_needs_the_mark_it_names",
+        note="Naming a mark that does not exist is the specification's SyntaxError.",
+        script="""(() => {
+  try { performance.measure('m', 'never-marked'); return 'no error'; }
+  catch (error) { return [error.name, error instanceof DOMException]; }
+})()""",
+        expected=["SyntaxError", True],
+    ),
+    Repro(
+        name="the_navigation_entry_carries_this_documents_milestones",
+        note="The document is its own resource: 48 fields, its milestones, and a duration "
+             "that runs from its start to its load event.",
+        script="""(() => {
+  const entry = performance.getEntriesByType('navigation')[0];
+  return [entry.name === location.href, entry.entryType, entry.startTime >= 0,
+          entry.initiatorType, entry.type, entry.redirectCount,
+          entry.domContentLoadedEventStart >= entry.startTime,
+          entry.loadEventEnd >= entry.loadEventStart,
+          entry.duration === entry.loadEventEnd - entry.startTime,
+          Object.keys(entry.toJSON()).length];
+})()""",
+        expected=[True, "navigation", True, "navigation", "navigate", 0, True, True, True, 48],
+    ),
+    Repro(
+        name="a_fetched_script_leaves_a_resource_entry",
+        note="The page times its own script fetch and its observer hears about it; the "
+             "entry reports the 34 fields Chrome writes.",
+        html=page(head="""<script>
+            window.__seen = [];
+            new PerformanceObserver(list => {
+              for (const entry of list.getEntries()) window.__seen.push(entry.entryType);
+            }).observe({type: 'resource'});
+            const url = URL.createObjectURL(new Blob(['window.__ran = 1;'],
+                                                     {type: 'text/javascript'}));
+            const made = document.createElement('script');
+            made.src = url;
+            document.head.append(made);
+        </script>"""),
+        script="""(() => {
+  const entries = performance.getEntriesByType('resource');
+  return [window.__ran, entries.length > 0,
+          entries.every(entry => entry.fetchStart === entry.startTime
+                                 && entry.responseEnd >= entry.responseStart
+                                 && entry.duration >= 0
+                                 && Object.keys(entry.toJSON()).length === 34),
+          window.__seen.length > 0];
+})()""",
+        expected=[1, True, True, True],
+    ),
+    Repro(
+        name="an_observer_is_handed_the_marks_it_asked_for",
+        note="takeRecords() hands over what the observer has collected, and the observed "
+             "type is the only one it collects.",
+        script="""(() => {
+  window.__marks = [];
+  const observer = new PerformanceObserver(list => {
+    for (const entry of list.getEntries()) window.__marks.push(entry.name);
+  });
+  observer.observe({type: 'mark'});
+  performance.mark('one');
+  performance.measure('not-a-mark', {start: 0, duration: 1});
+  performance.mark('two');
+  const pending = observer.takeRecords().length;
+  observer.disconnect();
+  return pending;
+})()""",
+        expected=2,
+    ),
+    Repro(
+        name="a_buffered_observer_is_handed_what_was_measured_before",
+        note="buffered: true reaches back to the entries already in the buffer.",
+        html=page(head="""<script>
+            window.__buffered = [];
+            performance.mark('earlier');
+            new PerformanceObserver(list => {
+              window.__buffered.push(list.getEntriesByType('mark').length);
+            }).observe({type: 'mark', buffered: true});
+        </script>"""),
+        script="String(window.__buffered)",
+        expected="1",
+    ),
+    Repro(
+        name="a_thrown_script_reports_where_it_failed",
+        note="The error event carries the source, the line and the column, and the value "
+             "the handler catches is the page's own Error.",
+        html=page(head="""<script>
+            window.__seen = [];
+            addEventListener('error', event => window.__seen.push([
+              event.filename === location.href, event.lineno > 0, event.colno > 0,
+              event.error instanceof Error, event.error.message]));
+        </script>""", body="<script>throw new Error('boom')</script>"),
+        script="window.__seen",
+        expected=[[True, True, True, True, "boom"]],
+    ),
+    Repro(
+        name="a_rel_list_knows_the_link_types_it_supports",
+        note="supports() answers for the link types Blink implements: a <link> set, a "
+             "hyperlink three, anything else an ordinary false.",
+        html=page(body=""),
+        script="""(() => {
+  const link = document.createElement('link');
+  const anchor = document.createElement('a');
+  const form = document.createElement('form');
+  const asked = (list, tokens) => tokens.map(token => list.supports(token));
+  return [asked(link.relList, ['preload', 'prefetch', 'modulepreload', 'stylesheet',
+                               'canonical', 'nonsense']),
+          asked(anchor.relList, ['noreferrer', 'noopener', 'opener', 'preload']),
+          asked(form.relList, ['noreferrer', 'preload'])];
+})()""",
+        expected=[[True, True, True, True, True, False],
+                  [True, True, True, False],
+                  [True, False]],
+    ),
+    Repro(
+        name="an_audio_context_answers_like_chrome",
+        note="The audio feature detection the log ran: a running context with its clock, "
+             "an oscillator at 440 Hz, an analyser's window, and promises that settle.",
+        script="""(() => {
+  const context = new AudioContext();
+  const oscillator = context.createOscillator();
+  const analyser = context.createAnalyser();
+  const gain = context.createGain();
+  const offline = new OfflineAudioContext(1, 44100, 44100);
+  return [context.state, context.sampleRate, typeof context.currentTime,
+          context.destination.numberOfInputs, oscillator.type, oscillator.frequency.value,
+          typeof oscillator.start, typeof oscillator.stop, analyser.fftSize,
+          analyser.frequencyBinCount, gain.gain.value, typeof context.close().then,
+          typeof context.resume().then, typeof context.decodeAudioData(new ArrayBuffer(0)).then,
+          offline.length, offline.sampleRate, typeof offline.startRendering().then,
+          context.createBuffer(2, 8, 44100).length,
+          context.createBuffer(2, 8, 44100).getChannelData(0).length];
+})()""",
+        expected=["running", 48000, "number", 1, "sine", 440, "function", "function", 2048,
+                  1024, 1, "function", "function", "function", 44100, 44100, "function", 8, 8],
+    ),
+    Repro(
+        name="every_audio_graph_node_answers_like_chrome",
+        note="What the log reported as 待实现: the nodes a page builds report Chrome's "
+             "parameters, ranges and channel metadata, measured from it and pinned here.",
+        html=page(body=""),
+        script="""(() => {
+  const context = new OfflineAudioContext(1, 128, 8000);
+  const param = (value) => [value.value, value.defaultValue, value.minValue, value.maxValue,
+                            value.automationRate];
+  const shape = (node) => [node.numberOfInputs, node.numberOfOutputs, node.channelCount,
+                           node.channelCountMode, node.channelInterpretation,
+                           Object.prototype.toString.call(node)];
+  const biquad = context.createBiquadFilter();
+  const delay = context.createDelay(0.5);
+  const panner = context.createPanner();
+  const listener = context.listener;
+  return [shape(biquad), biquad.type, param(biquad.frequency), param(biquad.detune),
+          param(biquad.Q), param(biquad.gain), shape(context.createChannelMerger(2)),
+          shape(context.createChannelSplitter(3)), shape(context.createConstantSource()),
+          param(context.createConstantSource().offset), shape(context.createConvolver()),
+          context.createConvolver().normalize, shape(delay), param(delay.delayTime),
+          shape(context.createIIRFilter([1, 0.5], [1, -0.2])), shape(panner),
+          panner.panningModel, panner.distanceModel, panner.refDistance, panner.maxDistance,
+          panner.coneInnerAngle, panner.coneOuterAngle, panner.coneOuterGain,
+          param(panner.positionX), param(panner.orientationX),
+          shape(context.createStereoPanner()), param(context.createStereoPanner().pan),
+          shape(context.createWaveShaper()), context.createWaveShaper().curve,
+          context.createWaveShaper().oversample,
+          shape(context.createScriptProcessor(4096, 2, 2)),
+          context.createScriptProcessor().bufferSize,
+          Object.prototype.toString.call(context.createPeriodicWave([0, 1], [0, 0])),
+          Object.prototype.toString.call(new PeriodicWave(context, {real: [0, 1], imag: [0, 1]})),
+          [listener instanceof AudioListener, param(listener.positionX),
+           param(listener.forwardZ), param(listener.upY)],
+          typeof biquad.getFrequencyResponse, typeof delay.start,
+          typeof context.createDelay, typeof PeriodicWave, typeof AudioListener];
+})()""",
+        expected=[
+            [1, 1, 2, "max", "speakers", "[object BiquadFilterNode]"], "lowpass",
+            [350, 350, 0, 4000, "a-rate"], [0, 0, -153600, 153600, "a-rate"],
+            [1, 1, -3.4028234663852886e+38, 3.4028234663852886e+38, "a-rate"],
+            [0, 0, -3.4028234663852886e+38, 1541.273681640625, "a-rate"],
+            [2, 1, 1, "explicit", "speakers", "[object ChannelMergerNode]"],
+            [1, 3, 3, "explicit", "discrete", "[object ChannelSplitterNode]"],
+            [0, 1, 2, "max", "speakers", "[object ConstantSourceNode]"],
+            [1, 1, -3.4028234663852886e+38, 3.4028234663852886e+38, "a-rate"],
+            [1, 1, 2, "clamped-max", "speakers", "[object ConvolverNode]"], True,
+            [1, 1, 2, "max", "speakers", "[object DelayNode]"], [0, 0, 0, 0.5, "a-rate"],
+            [1, 1, 2, "max", "speakers", "[object IIRFilterNode]"],
+            [1, 1, 2, "clamped-max", "speakers", "[object PannerNode]"],
+            "equalpower", "inverse", 1, 10000, 360, 360, 0,
+            [0, 0, -3.4028234663852886e+38, 3.4028234663852886e+38, "a-rate"],
+            [1, 1, -3.4028234663852886e+38, 3.4028234663852886e+38, "a-rate"],
+            [1, 1, 2, "clamped-max", "speakers", "[object StereoPannerNode]"],
+            [0, 0, -1, 1, "a-rate"],
+            [1, 1, 2, "max", "speakers", "[object WaveShaperNode]"], None, "none",
+            [1, 1, 2, "explicit", "speakers", "[object ScriptProcessorNode]"], 256,
+            "[object PeriodicWave]", "[object PeriodicWave]",
+            [True, [0, 0, -3.4028234663852886e+38, 3.4028234663852886e+38, "a-rate"],
+             [-1, -1, -3.4028234663852886e+38, 3.4028234663852886e+38, "a-rate"],
+             [1, 1, -3.4028234663852886e+38, 3.4028234663852886e+38, "a-rate"]],
+            "function", "undefined", "function", "function", "function",
+        ],
+    ),
+    Repro(
+        name="an_analyser_reports_its_data_like_chrome",
+        note="Both data methods on an unfed analyser: silence is -Infinity in the "
+             "frequency domain and zeros in the time domain, an array longer than the "
+             "window keeps whatever it held, and another type is refused.",
+        html=page(body=""),
+        script="""(() => {
+  const context = new OfflineAudioContext(1, 128, 8000);
+  const analyser = context.createAnalyser();
+  const spectrum = new Float32Array(analyser.frequencyBinCount);
+  analyser.getFloatFrequencyData(spectrum);
+  const window = new Float32Array(analyser.fftSize);
+  analyser.getFloatTimeDomainData(window);
+  const short = new Float32Array(3);
+  analyser.getFloatTimeDomainData(short);
+  const long = new Float32Array(analyser.fftSize + 2);
+  long.fill(7);
+  analyser.getFloatTimeDomainData(long);
+  const refused = (call, value) => {
+    try { analyser[call](value); return 'allowed'; }
+    catch (error) { return error.name; }
+  };
+  return [Array.from(spectrum.slice(0, 2)), Array.from(window.slice(0, 2)), analyser.fftSize,
+          analyser.frequencyBinCount, analyser.minDecibels, analyser.maxDecibels,
+          Array.from(short), Array.from(long.slice(-2)),
+          refused('getFloatFrequencyData', [1, 2, 3]),
+          refused('getFloatFrequencyData', new Float64Array(4)),
+          refused('getFloatTimeDomainData', undefined),
+          refused('getFloatTimeDomainData', [1]),
+          typeof analyser.getFloatFrequencyData, typeof analyser.getFloatTimeDomainData];
+})()""",
+        expected=[[float("-inf"), float("-inf")], [0, 0], 2048, 1024, -100, -30, [0, 0, 0],
+                  [7, 7], "TypeError", "TypeError", "TypeError", "TypeError",
+                  "function", "function"],
+    ),
+    Repro(
+        name="the_debug_renderer_extension_carries_its_constants",
+        note="Both constants belong on the extension object's prototype, and the interface "
+             "is not a global in either browser.",
+        script="""(() => {
+  const gl = document.createElement('canvas').getContext('webgl');
+  const info = gl.getExtension('WEBGL_debug_renderer_info');
+  return [info.UNMASKED_VENDOR_WEBGL, info.UNMASKED_RENDERER_WEBGL,
+          Object.prototype.toString.call(info),
+          gl.getExtension('WEBGL_debug_renderer_info') === info];
+})()""",
+        expected=[37445, 37446, "[object WebGLDebugRendererInfo]", True],
+    ),
+    Repro(
+        name="every_canvas_gets_the_debug_renderer_extension",
+        note="A second canvas asks for the extension again; the interface is committed to "
+             "the realm once, and asking again must not fail.",
+        script="""(() => {
+  const read = () => {
+    const canvas = document.createElement('canvas');
+    const info = canvas.getContext('webgl').getExtension('WEBGL_debug_renderer_info');
+    return [info && info.UNMASKED_VENDOR_WEBGL, info && info.UNMASKED_RENDERER_WEBGL];
+  };
+  return [read(), read(), read()];
+})()""",
+        expected=[[37445, 37446], [37445, 37446], [37445, 37446]],
+    ),
+    Repro(
+        name="an_extension_from_a_frame_keeps_its_constants",
+        note="A frame's extension object crosses in as a class with no config here: its "
+             "overlay is committed before the template is built, so the constants survive.",
+        html=page(body='<iframe name="f"></iframe>'),
+        script="""(() => {
+  const child = document.querySelector('iframe').contentWindow;
+  const childGl = child.document.createElement('canvas').getContext('webgl');
+  const handedOver = childGl.getExtension('WEBGL_debug_renderer_info');
+  const gl = document.createElement('canvas').getContext('webgl');
+  return [handedOver.UNMASKED_VENDOR_WEBGL, handedOver.UNMASKED_RENDERER_WEBGL,
+          typeof gl.getExtension('WEBGL_debug_renderer_info'),
+          typeof WebGLDebugRendererInfo, 'WebGLDebugRendererInfo' in window];
+})()""",
+        expected=[37445, 37446, "object", "undefined", False],
+    ),
+    Repro(
+        name="a_file_input_has_no_capture_member",
+        note="The reference browser has no capture, alpha, colorSpace or switch member on "
+             "HTMLInputElement; the content attribute still round-trips.",
+        script="""(() => {
+  const input = document.createElement('input');
+  input.setAttribute('type', 'file');
+  input.setAttribute('capture', 'user');
+  return [typeof input.capture, input.getAttribute('capture'),
+          ['alpha', 'colorSpace', 'switch'].map((name) => typeof input[name]),
+          ['capture', 'alpha'].map((name) => name in HTMLInputElement.prototype)];
+})()""",
+        expected=["undefined", "user", ["undefined", "undefined", "undefined"], [False, False]],
+    ),
+    Repro(
+        name="a_document_reports_its_domain",
+        note="The getter is the host, and the setter takes that host or a suffix of it.",
+        url="http://repro.test/dir/page",
+        script="""(() => {
+  const before = document.domain;
+  document.domain = 'repro.test';
+  const after = document.domain;
+  const refused = [];
+  for (const value of ['', 'test', 'other.test']) {
+    try { document.domain = value; refused.push('accepted'); }
+    catch (error) { refused.push(error.name); }
+  }
+  return [before, after, refused];
+})()""",
+        expected=["repro.test", "repro.test",
+                  ["SecurityError", "SecurityError", "SecurityError"]],
+    ),
+    Repro(
+        name="a_named_attribute_read_answers_the_attribute",
+        note="NamedNodeMap answers a named read with the Attr, and an absent name with "
+             "nothing at all.",
+        html=page(body="<p id=app data-x=1>x</p>"),
+        script="""(() => {
+  const map = document.querySelector('p').attributes;
+  return [String(map['data-x']), map.nope === undefined, 'data-x' in map, 'nope' in map,
+          map.length];
+})()""",
+        expected=["[object Attr]", True, True, False, 2],
+    ),
+    Repro(
+        name="a_performance_observer_validates_its_registration",
+        note="Observe takes entryTypes or type and never both, and the supported list is "
+             "the browser's own.",
+        script="""(() => {
+  const seen = [];
+  const attempt = (fn) => { try { fn(); } catch (error) { seen.push(error.name); } };
+  attempt(() => new PerformanceObserver());
+  attempt(() => new PerformanceObserver(1));
+  const observer = new PerformanceObserver(() => {});
+  attempt(() => observer.observe());
+  attempt(() => observer.observe({entryTypes: ['mark'], type: 'mark'}));
+  attempt(() => observer.observe({}));
+  observer.observe({entryTypes: ['mark']});
+  attempt(() => observer.observe({type: 'mark', buffered: true}));
+  const typed = new PerformanceObserver(() => {});
+  attempt(() => typed.observe({type: 'mark', buffered: true}));
+  const types = PerformanceObserver.supportedEntryTypes;
+  return [seen, observer.takeRecords(), observer.disconnect(), Array.isArray(types),
+          types.includes('mark'), types.includes('resource'), types.length,
+          Object.prototype.toString.call(observer)];
+})()""",
+        expected=[["TypeError"] * 5 + ["InvalidModificationError"], [], None, True, True, True,
+                  15, "[object PerformanceObserver]"],
     ),
     Repro(
         name="an_iframe_reports_the_attributes_it_was_given",
@@ -2166,5 +2991,80 @@ CASES = (
              'btoa' in Window.prototype]
         """,
         expected=[1, "btoa", "function btoa() { [native code] }", True, False],
+    ),
+    Repro(
+        name="performance_memory_reports_the_heap",
+        note="Chrome hands out a fresh MemoryInfo for every read, and the three numbers "
+             "are bytes ordered used <= total < limit.",
+        html=EMPTY_PAGE,
+        script="""(() => {
+            const memory = performance.memory;
+            return [typeof memory.jsHeapSizeLimit, typeof memory.totalJSHeapSize,
+                    typeof memory.usedJSHeapSize, memory.usedJSHeapSize > 0,
+                    memory.usedJSHeapSize <= memory.totalJSHeapSize,
+                    memory.totalJSHeapSize < memory.jsHeapSizeLimit,
+                    performance.memory === performance.memory, Object.keys(memory).length];
+        })()""",
+        expected=["number", "number", "number", True, True, True, False, 0],
+    ),
+    Repro(
+        name="the_font_face_set_and_cookie_store_are_modelled",
+        note="A secure origin hands out both: the face set reports itself loaded with no "
+             "faces, the cookie store an object with four promise-returning methods.",
+        html=EMPTY_PAGE,
+        url="http://127.0.0.1:8080/doc",
+        script="""(() => {
+            const faces = document.fonts;
+            const store = window.cookieStore;
+            return [faces.status, faces.size, faces.ready === faces.ready,
+                    faces.check('16px sans-serif'), Object.prototype.toString.call(faces),
+                    typeof faces[Symbol.iterator], typeof store, typeof store.get,
+                    typeof store.getAll, typeof store.set, typeof store.delete,
+                    store.get.length, store.set.length, store.onchange === null,
+                    Object.prototype.toString.call(store)];
+        })()""",
+        expected=["loaded", 0, True, True, "[object FontFaceSet]", "function", "object",
+                  "function", "function", "function", "function", 0, 1, True,
+                  "[object CookieStore]"],
+    ),
+    Repro(
+        name="text_encoding_round_trips_utf8",
+        note="The encoder writes UTF-8 and replaces a lone surrogate; the decoder reads it "
+             "back, drops a leading BOM, replaces an invalid byte and refuses a bad label.",
+        html=EMPTY_PAGE,
+        script="""(() => {
+            const encoder = new TextEncoder();
+            const decoder = new TextDecoder();
+            const bytes = encoder.encode('\\u20ac\\ud800');
+            let badLabel;
+            try { badLabel = new TextDecoder('nonsense').encoding; }
+            catch (error) { badLabel = error.name; }
+            return [Array.from(bytes), encoder instanceof TextEncoder, encoder.encoding,
+                    encoder.encode.length, TextEncoder.prototype.encodeInto.length,
+                    decoder.decode(bytes), decoder.encoding, decoder.fatal, decoder.ignoreBOM,
+                    decoder.decode(new Uint8Array([0xef, 0xbb, 0xbf, 65])),
+                    decoder.decode(new Uint8Array([0xff])), badLabel];
+        })()""",
+        expected=[[226, 130, 172, 239, 191, 189], True, "utf-8", 0, 2, "\u20ac\ufffd",
+                  "utf-8", False, False, "A", "\ufffd", "RangeError"],
+    ),
+    Repro(
+        name="a_message_channel_hands_out_two_ports",
+        note="The ports are distinct MessagePorts with the messaging surface.  Delivery is "
+             "a task, so nothing has arrived by the time the script returns.",
+        html=EMPTY_PAGE,
+        script="""(() => {
+            const channel = new MessageChannel();
+            let arrived = false;
+            channel.port2.onmessage = () => { arrived = true; };
+            channel.port1.postMessage('hello');
+            return [channel.port1 instanceof MessagePort, channel.port2 instanceof MessagePort,
+                    channel.port1 === channel.port2, typeof channel.port1.postMessage,
+                    typeof channel.port1.start, typeof channel.port1.close,
+                    channel.port1.onmessage === null, channel.port1.postMessage.length,
+                    Object.prototype.toString.call(channel), arrived];
+        })()""",
+        expected=[True, True, False, "function", "function", "function", True, 1,
+                  "[object MessageChannel]", False],
     ),
 )

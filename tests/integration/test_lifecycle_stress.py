@@ -35,6 +35,13 @@ def _loader(url, request):
             ),
             "headers": {"content-type": "text/javascript"},
         }
+    if path == "/closing.js":
+        return {
+            "status": 200,
+            "url": str(url),
+            "body": "self.onmessage = function () { self.close(); };",
+            "headers": {"content-type": "text/javascript"},
+        }
     if path.startswith("/slow"):
         time.sleep(0.4)
     return {"status": 200, "url": str(url), "body": "", "headers": {"content-type": "text/html"}}
@@ -106,6 +113,19 @@ def test_worker_message_delivery_races_page_close(browser):
     time.sleep(0.1)
     _run_threads([threading.Thread(target=first.close), threading.Thread(target=second.close)])
     assert first.closed and second.closed
+
+
+def test_a_worker_that_closed_itself_does_not_wedge_the_page_close(browser):
+    """A worker's own ``close()`` tears its realm down on the owner thread; the page's
+    ``terminate()`` must find that done rather than dispatch onto the dead context."""
+    page = browser.new_context().new_page(ORIGIN + "/")
+    page.evaluate("""
+        var w = new Worker('/closing.js');
+        w.postMessage('go');
+    """)
+    time.sleep(0.2)
+    page.close()
+    assert page.closed
 
 
 def test_network_response_landing_after_close_is_dropped(browser):

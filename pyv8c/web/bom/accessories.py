@@ -3,6 +3,7 @@ page starts in.
 """
 
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8.flag import FlagLocation, FlagReceiverCheck
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, callback_value, dom_string, missing_error
@@ -136,6 +137,35 @@ class SpeechSynthesis(EventTarget):
         if utterance is MISSING:
             raise missing_error('SpeechSynthesis', 'speak', 1, 0, constructor=False)
         return None
+
+
+@interface('Notification', 'EventTarget')
+class Notification(EventTarget):
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="permission", getter="get_permission",
+                                  location=FlagLocation.kInterface,
+                                  receiver_check=FlagReceiverCheck.kDoNotCheck),),
+        constructor_behavior=1,
+        length=1,
+        to_string_tag="Notification",
+        has_constructor=1,
+    )
+
+    #: No user is here to answer the prompt, so the page keeps the initial state.
+    @staticmethod
+    def get_permission(*_args): return "default"
+
+
+@interface('Scheduling', None)
+class Scheduling:
+    __v8_idl_spec__ = IdlSpec(
+        methods=(MethodSpec(name="isInputPending", callback="fn_isInputPending"),),
+        constructor_behavior=0,
+        to_string_tag="Scheduling",
+        has_constructor=1,
+    )
+
+    def fn_isInputPending(self, *_extra): return False
 
 
 @interface('Scheduler', None)

@@ -14,10 +14,22 @@ from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
+from .events import EventTarget
 from .html_elements import HTMLElement
+from .webgl import WebGL2RenderingContext, WebGLRenderingContext
 
 #: ``textBaseline`` accepts these spellings; any other value leaves the state untouched.
 _TEXT_BASELINES = frozenset(("alphabetic", "bottom", "hanging", "ideographic", "middle", "top"))
+
+#: The context kinds a canvas can answer for; ``experimental-webgl`` is the older spelling.
+_CONTEXT_KINDS = ("2d", "webgl", "webgl2")
+
+
+def _requested_context(kind):
+    """The context kind a page asked for, or ``None`` when a canvas has none to give."""
+    requested = str(kind).lower()
+    if requested == "experimental-webgl": return "webgl"
+    return requested if requested in _CONTEXT_KINDS else None
 
 
 @interface('TextMetrics', None)
@@ -248,6 +260,7 @@ class HTMLCanvasElement(HTMLElement):
     )
     def __init__(self, tag_name="canvas", services=None, **kw):
         super().__init__(tag_name, services=services, **kw); self._width=300; self._height=150; self._context2d=None
+        self._context_kind=None; self._webgl=None; self._webgl2=None
     def _resize(self):
         if self._context2d: self._context2d._reset()
     def get_width(self): return self._width
@@ -256,10 +269,118 @@ class HTMLCanvasElement(HTMLElement):
     def set_height(self, v):
         self._height=max(0, int(float(v))); self.attributes['height']=str(self._height); self._resize()
     def fn_getContext(self, kind='', *_):
-        if str(kind).lower() != '2d': return pyv8.Null
-        if self._context2d is None: self._context2d=CanvasRenderingContext2D(self)
-        return self._context2d
+        requested = _requested_context(kind)
+        if requested is None: return pyv8.Null
+        # The first context a canvas answers for fixes its type, as it does in Chrome.
+        if self._context_kind not in (None, requested): return pyv8.Null
+        self._context_kind = requested
+        if requested == '2d':
+            if self._context2d is None: self._context2d=CanvasRenderingContext2D(self)
+            return self._context2d
+        if requested == 'webgl2':
+            if self._webgl2 is None: self._webgl2=WebGL2RenderingContext(self)
+            return self._webgl2
+        if self._webgl is None: self._webgl=WebGLRenderingContext(self)
+        return self._webgl
     def fn_toDataURL(self, kind='image/png', *_):
-        if self._context2d is None: self.fn_getContext('2d')
-        out=io.BytesIO(); self._context2d._image.save(out, format='PNG')
+        surface = self._context2d
+        if surface is None:
+            # A WebGL canvas draws nothing, so its pixels read back transparent.
+            surface = (CanvasRenderingContext2D(self)
+                       if self._context_kind in ('webgl', 'webgl2') else None)
+            if surface is None:
+                self.fn_getContext('2d'); surface = self._context2d
+        out=io.BytesIO(); surface._image.save(out, format='PNG')
         return 'data:image/png;base64,'+base64.b64encode(out.getvalue()).decode('ascii')
+
+
+@interface('OffscreenCanvasRenderingContext2D', 'CanvasRenderingContext2D')
+class OffscreenCanvasRenderingContext2D(CanvasRenderingContext2D):
+    """The 2D context an ``OffscreenCanvas`` hands out: the same surface, no element."""
+
+
+@interface('OffscreenCanvas', 'EventTarget')
+class OffscreenCanvas(EventTarget):
+    """A canvas with no element behind it: the page keeps the surface for itself."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="width", getter="get_width", setter="set_width"),
+                    AttributeSpec(name="height", getter="get_height", setter="set_height"),
+                    AttributeSpec(name="oncontextlost", getter="get_oncontextlost",
+                                  setter="set_oncontextlost"),
+                    AttributeSpec(name="oncontextrestored", getter="get_oncontextrestored",
+                                  setter="set_oncontextrestored")),
+        methods=(MethodSpec(name="getContext", callback="fn_getContext"),
+                 MethodSpec(name="convertToBlob", callback="fn_convertToBlob"),
+                 MethodSpec(name="transferToImageBitmap", callback="fn_transferToImageBitmap"),
+                 MethodSpec(name="clearElementGeometry", callback="fn_clearElementGeometry"),
+                 MethodSpec(name="getElementTransform", callback="fn_getElementTransform"),
+                 MethodSpec(name="updateElementGeometry", callback="fn_updateElementGeometry")),
+        constructor_behavior=1, length=2, has_constructor=1,
+        to_string_tag="OffscreenCanvas",
+    )
+
+    def __init__(self, width=MISSING, height=MISSING, *args, services=pyv8.Undefined,
+                 _realm=None, **kwargs):
+        if services is pyv8.Undefined:
+            services = None
+        super().__init__(*args, services=services or _realm, **kwargs)
+        if width is MISSING:
+            raise missing_error('OffscreenCanvas', 'constructor', 2, 0, constructor=True)
+        if height is MISSING:
+            raise missing_error('OffscreenCanvas', 'constructor', 2, 1, constructor=True)
+        self._width = max(0, int(float(width)))
+        self._height = max(0, int(float(height)))
+        self._context2d = self._webgl = self._webgl2 = self._context_kind = None
+
+    def _resize(self):
+        if self._context2d: self._context2d._reset()
+    def get_width(self): return self._width
+    def set_width(self, value): self._width = max(0, int(float(value))); self._resize()
+    def get_height(self): return self._height
+    def set_height(self, value): self._height = max(0, int(float(value))); self._resize()
+    def get_oncontextlost(self): return self._get_handler("oncontextlost")
+    def set_oncontextlost(self, value): self._set_handler("oncontextlost", value)
+    def get_oncontextrestored(self): return self._get_handler("oncontextrestored")
+    def set_oncontextrestored(self, value): self._set_handler("oncontextrestored", value)
+
+    def fn_getContext(self, kind='', options=None, *_):
+        requested = _requested_context(kind)
+        if requested is None:
+            return pyv8.Null
+        if self._context_kind not in (None, requested): return pyv8.Null
+        self._context_kind = requested
+        if requested == '2d':
+            if self._context2d is None: self._context2d = OffscreenCanvasRenderingContext2D(self)
+            return self._context2d
+        if requested == 'webgl2':
+            if self._webgl2 is None: self._webgl2 = WebGL2RenderingContext(self)
+            return self._webgl2
+        if self._webgl is None: self._webgl = WebGLRenderingContext(self)
+        return self._webgl
+
+    def fn_convertToBlob(self, options=None, *_):
+        """The surface as a PNG, in the promise a caller attaches to."""
+        surface = self._context2d
+        if surface is None:
+            self.fn_getContext('2d'); surface = self._context2d
+        out = io.BytesIO()
+        if surface._image is not None:
+            surface._image.save(out, format='PNG')
+        from ..fetch.blob import Blob
+        return self._promise(Blob([out.getvalue()], {"type": "image/png"}))
+
+    def fn_transferToImageBitmap(self, *_):
+        """No ``ImageBitmap`` here, so the call answers with nothing to hand over."""
+        return None
+    def fn_clearElementGeometry(self, *_): return None
+    def fn_getElementTransform(self, *_): return None
+    def fn_updateElementGeometry(self, *_): return None
+
+    def _promise(self, value):
+        realm = getattr(getattr(self, "_services", None), "realm_services", None)
+        if realm is None:
+            return None
+        promise, resolve, _reject = realm.make_promise()
+        resolve(value)
+        return promise
