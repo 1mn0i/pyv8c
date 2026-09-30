@@ -4,6 +4,7 @@
 
 #include "context.h"
 #include "isolate_state.h"
+#include "platform_state.h"
 #include "runtime.h"
 #include "v8_compat.h"
 
@@ -129,6 +130,66 @@ void Watchdog::cancel_termination()
     isolate_->CancelTerminateExecution();
 }
 
+void Watchdog::flag_heap_pressure()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    heap_pressure_ = true;
+    wake_.notify_all();
+}
+
+void Watchdog::heap_check(v8::Isolate* isolate, void* data)
+{
+    Watchdog* self = static_cast<Watchdog*>(data);
+    {
+        std::lock_guard<std::mutex> lock(self->mutex_);
+        self->heap_check_pending_ = false;
+        if (self->heap_pressure_)
+            return; // the stop is already asked for
+    }
+    if (isolate == nullptr || isolate->IsExecutionTerminating())
+        return;
+
+    v8::HeapStatistics statistics;
+    isolate->GetHeapStatistics(&statistics);
+    // The budget is the old space the host asked for; V8's own limit covers the
+    // other spaces as well and would leave a script room to reach its fatal path.
+    const std::size_t budget = heap_budget_bytes() != 0 ? heap_budget_bytes()
+                                                        : statistics.heap_size_limit();
+    if (budget == 0)
+        return;
+    const double used = static_cast<double>(statistics.used_heap_size());
+    if (used < static_cast<double>(budget) * kHeapCollectionRatio)
+        return;
+    if (used >= static_cast<double>(budget) * kHeapTerminationRatio)
+    {
+        self->flag_heap_pressure();
+        return;
+    }
+
+    // Between the two ratios: what is only garbage goes first, so a page that happens
+    // to sit on a large amount of it is not stopped for nothing.  One collection per
+    // check would leave the script no room to run, so this is rate limited.
+    if (!self->take_collection_slot())
+        return;
+    isolate->LowMemoryNotification();
+}
+
+std::size_t Watchdog::heap_terminations() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return heap_terminations_;
+}
+
+bool Watchdog::take_collection_slot()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    const Clock::time_point now = Clock::now();
+    if (now < next_collection_)
+        return false;
+    next_collection_ = now + kHeapCollectionInterval;
+    return true;
+}
+
 bool Watchdog::terminated() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -146,15 +207,49 @@ void Watchdog::run()
     std::unique_lock<std::mutex> lock(mutex_);
     while (!stopping_)
     {
-        if (!armed_)
+        if (heap_pressure_)
+        {
+            // The terminate call belongs to this thread: one made from inside V8 --
+            // a heap-limit callback or an interrupt -- runs too late to be heard.
+            heap_pressure_ = false;
+            if (!terminated_)
+            {
+                // The crossing that is executing reports the termination, so the next
+                // one resumes the isolate: abort_next_ stays false for that reason.
+                terminated_ = true;
+                abort_next_ = false;
+                ++heap_terminations_;
+                lock.unlock();
+                isolate_->TerminateExecution();
+                lock.lock();
+            }
+            continue;
+        }
+        // A crossing is an open deadline scope, whether or not it carries a deadline,
+        // and the heap is watched for as long as one is running.
+        if (!armed_ && depth_ == 0)
         {
             wake_.wait(lock);
             continue;
         }
-        if (wake_.wait_until(lock, deadline_) != std::cv_status::timeout)
+        const Clock::time_point wake_at = armed_
+            ? std::min(deadline_, Clock::now() + kHeapPollInterval)
+            : Clock::now() + kHeapPollInterval;
+        if (wake_.wait_until(lock, wake_at) != std::cv_status::timeout)
             continue;
         if (!armed_ || Clock::now() < deadline_)
+        {
+            // The reading has to happen on the isolate's thread, so this thread only
+            // asks for one between safepoints.
+            if (depth_ > 0 && !heap_check_pending_)
+            {
+                heap_check_pending_ = true;
+                lock.unlock();
+                isolate_->RequestInterrupt(&Watchdog::heap_check, this);
+                lock.lock();
+            }
             continue;
+        }
         armed_ = false;
         terminated_ = true;
         // The deadline that fired is spent, and the scopes it stood for are about to

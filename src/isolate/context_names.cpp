@@ -248,7 +248,7 @@ context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
             skipped = contained == 1;
         }
         const char* text = PyUnicode_AsUTF8_abi3(item);
-        if (!skipped && text != nullptr && PySet_Add(self->lazy_names, item) < 0) {
+        if (!skipped && text != nullptr && PySet_Add(self->materialisable_names, item) < 0) {
             Py_DECREF((PyObject*)item);
             Py_DECREF((PyObject*)sequence);
             Py_XDECREF((PyObject*)skip_set);
@@ -269,6 +269,74 @@ context_declare_lazy(context_c *self, PyObject *args, PyObject *kwargs)
     Py_DECREF((PyObject*)sequence);
     Py_XDECREF((PyObject*)skip_set);
     return PyLong_FromSsize_t(declared);
+}
+
+PyObject *
+context_declare_materialisable(context_c *self, PyObject *names)
+{
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    if (self->materialisable_names == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "V8 context is no longer active");
+        return NULL;
+    }
+    PyObject* sequence = PySequence_Fast(names, "declare_materialisable requires a sequence of interface names");
+    if (sequence == NULL)
+        return NULL;
+    Py_ssize_t size = PySequence_Size(sequence);
+    if (size < 0) {
+        Py_DECREF((PyObject*)sequence);
+        return NULL;
+    }
+    Py_ssize_t recorded = 0;
+    for (Py_ssize_t i = 0; i < size; i++)
+    {
+        PyObject* item = PySequence_GetItem(sequence, i);
+        if (item == NULL) {
+            Py_DECREF((PyObject*)sequence);
+            return NULL;
+        }
+        if (!PyUnicode_Check(item)) {
+            PyErr_Format(PyExc_TypeError,
+                         "declare_materialisable names must be strings, got a non-string at index %zd",
+                         i);
+            Py_DECREF((PyObject*)item);
+            Py_DECREF((PyObject*)sequence);
+            return NULL;
+        }
+        if (PySet_Add(self->materialisable_names, item) < 0) {
+            Py_DECREF((PyObject*)item);
+            Py_DECREF((PyObject*)sequence);
+            return NULL;
+        }
+        Py_DECREF((PyObject*)item);
+        recorded++;
+    }
+    Py_DECREF((PyObject*)sequence);
+    return PyLong_FromSsize_t(recorded);
+}
+
+PyObject *
+context_hide_global(context_c *self, PyObject *name)
+{
+    trace::TraceSilence silence(self);
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Context> context = self->js_context.Get(isolate);
+    Local<Value> js_name = js_from_py(name, context);
+    if (js_name.IsEmpty() || PyErr_Occurred()) return nullptr;
+    if (!js_name->IsString()) {
+        PyErr_SetString(PyExc_TypeError, "hide_global requires a name");
+        return nullptr;
+    }
+    Local<Object> global = context->Global();
+    bool present = false;
+    if (!global->HasOwnProperty(context, js_name.As<String>()).To(&present)) return nullptr;
+    if (!present) return PyBool_FromLong(0);
+    // CreateDataProperty made the global configurable, so the name can leave again.
+    bool deleted = global->Delete(context, js_name.As<String>()).FromMaybe(false);
+    return PyBool_FromLong(deleted ? 1 : 0);
 }
 
 PyObject *

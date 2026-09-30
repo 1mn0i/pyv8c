@@ -64,6 +64,46 @@ void attach_python_traceback(Isolate* isolate, Local<Context> context, Local<Obj
 }
 }
 
+// The parts a page reports, not the prose they are rendered in.
+static PyObject* js_exception_filename(PyObject* self, void*) {
+    JsExceptionState* state = js_exception_get_state(self);
+    if (state == nullptr) return nullptr;
+    ExecutionScope execution((context_c*)state->py_context, self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Message> message = state->message.Get(isolate);
+    if (message.IsEmpty()) return PyUnicode_FromString("");
+    Local<Value> name = message->GetScriptResourceName();
+    if (name.IsEmpty() || name->IsUndefined() || name->IsNull())
+        return PyUnicode_FromString("");
+    v8::String::Utf8Value text(isolate, name);
+    if (!*text) return PyUnicode_FromString("");
+    return PyUnicode_DecodeUTF8(*text, text.length(), nullptr);
+}
+
+static PyObject* js_exception_line(PyObject* self, void*) {
+    JsExceptionState* state = js_exception_get_state(self);
+    if (state == nullptr) return nullptr;
+    ExecutionScope execution((context_c*)state->py_context, self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Message> message = state->message.Get(isolate);
+    int line = message.IsEmpty()
+        ? 0
+        : message->GetLineNumber(isolate->GetCurrentContext()).FromMaybe(0);
+    return PyLong_FromLong(line);
+}
+
+static PyObject* js_exception_column(PyObject* self, void*) {
+    JsExceptionState* state = js_exception_get_state(self);
+    if (state == nullptr) return nullptr;
+    ExecutionScope execution((context_c*)state->py_context, self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Message> message = state->message.Get(isolate);
+    return PyLong_FromLong(message.IsEmpty() ? 0 : message->GetStartColumn());
+}
+
 static PyObject* js_exception_original(PyObject* self, void*) {
     JsExceptionState* state = js_exception_get_state(self);
     if (!state) return nullptr;
@@ -78,6 +118,9 @@ static PyObject* js_exception_original(PyObject* self, void*) {
 PyGetSetDef js_exception_getsets[] = {
     {"original", (getter)PythonBoundary<js_exception_original>::call, NULL, NULL},
     {"value", (getter)PythonBoundary<js_exception_get_value>::call, NULL, NULL},
+    {"filename", (getter)PythonBoundary<js_exception_filename>::call, NULL, NULL},
+    {"line", (getter)PythonBoundary<js_exception_line>::call, NULL, NULL},
+    {"column", (getter)PythonBoundary<js_exception_column>::call, NULL, NULL},
     {NULL},
 };
 

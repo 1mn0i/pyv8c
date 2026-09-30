@@ -190,6 +190,68 @@ def test_registration_after_template_installation_is_rejected():
         context.close()
 
 
+def test_a_declared_name_the_realm_never_exposes_gets_its_config_committed_first():
+    """A recorded name the realm never exposes still gets its overlay committed first."""
+    import pyv8
+
+    class Extension:
+        __v8_idl_spec__ = pyv8.IdlSpec(
+            constants_value=(pyv8.ConstantSpec(name="VENDOR", value=37445),),
+            to_string_tag="Extension",
+        )
+
+    class Window:
+        pass
+
+    asked = []
+    context = None
+    batch = {Extension: Extension.__v8_idl_spec__}
+
+    def factory(name):
+        asked.append(name)
+        if name != "Extension":
+            return None
+        context.update_configs(batch)
+        return Extension
+
+    context = pyv8.Context(Window(), lazy_factory=factory)
+    try:
+        assert context.declare_materialisable(["Extension"]) == 1
+        # Recorded, not exposed: the name stays off the global object.
+        assert context.exec_js("'Extension' in globalThis") is False
+        context.expose(handed_over=Extension())
+        assert asked == ["Extension"]
+        assert context.exec_js("handed_over.VENDOR") == 37445
+        assert context.update_configs(batch) == 0
+    finally:
+        context.close()
+
+
+def test_the_factory_is_not_asked_about_a_name_the_realm_never_declared():
+    """The factory is not asked about names the realm never declared."""
+    import pyv8
+
+    class Other:
+        pass
+
+    class Window:
+        pass
+
+    asked = []
+
+    def factory(name):
+        asked.append(name)
+        return None
+
+    context = pyv8.Context(Window(), lazy_factory=factory)
+    try:
+        context.expose(other=Other())
+        assert asked == []
+        assert context.exec_js("typeof other") == "object"
+    finally:
+        context.close()
+
+
 def test_generic_object_template_member_fails_safely_without_a_context():
     import pytest
     import pyv8

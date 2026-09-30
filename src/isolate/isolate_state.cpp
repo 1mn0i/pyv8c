@@ -39,9 +39,19 @@ IsolateState::near_heap_limit_callback(void* data, std::size_t current_limit,
     if (state == nullptr || initial_limit == 0)
         return current_limit;
 
+    // The script is stopped at the first sight of the limit: V8 aborts inside its
+    // own collection a few retries later, and by then nothing can be said.  The
+    // watchdog thread makes the call, where V8 can hear it.
+    if (state->watchdog_ != nullptr)
+        state->watchdog_->flag_heap_pressure();
+
     const std::size_t step = initial_limit / kHeapGrowthStepDivisor;
-    const std::size_t cap = initial_limit / kHeapGrowthCapDivisor;
-    if (step == 0 || state->heap_growth_granted_ + step > cap)
+    // A pending termination only needs room to return to JavaScript, where it takes
+    // effect, so it may spend twice the ordinary growth budget.
+    const std::size_t bound = state->watchdog_ != nullptr && state->watchdog_->terminated()
+        ? initial_limit
+        : initial_limit / kHeapGrowthCapDivisor;
+    if (step == 0 || state->heap_growth_granted_ + step > bound)
         return current_limit; // at the bound V8 reports OOM as it always did
 
     state->heap_growth_granted_ += step;

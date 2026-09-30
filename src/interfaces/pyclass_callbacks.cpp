@@ -236,10 +236,15 @@ void py_class_method_callback(const FunctionCallbackInfo<Value> &info)
         PyObject *trace_receiver = receiver;
         if (trace_receiver == Py_None && binding->trace_receiver)
             trace_receiver = binding->trace_receiver;
+        const bool named = trace_receiver == Py_None;
+        if (named)
+            trace_receiver = trace_interface_name(info);
         {
             trace::TraceScope operation_trace(info, 2, binding->name, trace_receiver, owner);
             py_class_method_impl(info, context, receiver, binding);
         }
+        if (named)
+            Py_XDECREF(trace_receiver);
         if (PyErr_Occurred())
             js_throw_py();
     }
@@ -276,7 +281,12 @@ void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
     auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
     if (binding == nullptr) { js_throw_py(); return; }
     PyObject* receiver = binding->getter_receiver ? get_self(info) : Py_None;
+    const bool named = receiver == Py_None;
+    if (named)
+        receiver = trace_interface_name(info);
     trace::TraceScope observation(info, 0, binding->name, receiver, owner);
+    if (named)
+        Py_XDECREF(receiver);
     attribute_get_impl(info);
 }
 
@@ -320,7 +330,12 @@ static void attribute_set(const FunctionCallbackInfo<Value>& info, bool instance
     auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
     if (binding == nullptr) { js_throw_py(); return; }
     PyObject* receiver = binding->setter_receiver ? get_self(info) : Py_None;
+    const bool named = receiver == Py_None;
+    if (named)
+        receiver = trace_interface_name(info);
     trace::TraceScope observation(info, 1, binding->name, receiver, owner);
+    if (named)
+        Py_XDECREF(receiver);
     attribute_set_impl(info, instance);
 }
 

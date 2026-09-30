@@ -71,6 +71,11 @@ Context, `update_configs` accepts the same spec object repeatedly as a no-op;
 a different object for an already registered type raises. Batch validation and
 registry replacement are atomic. Registration after template installation is rejected.
 Configuration changes require a new Context.
+`lazy_factory` is asked about a class the realm holds no config for when the realm
+declared that name: `declare_lazy` covers the interfaces it exposes, and
+`declare_materialisable` the ones it never exposes as a global. The answer is what
+lets an interface another realm handed over commit its overlay before the template
+is built; `None` leaves the class declaration in place.
 
 pyv8c's interface decorator records only identity, parent and exposure. A single
 Universe compiler combines baseline metadata, own declarations and implementation

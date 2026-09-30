@@ -31,6 +31,25 @@ def test_script_retains_filename_in_runtime_error(context):
     assert context.exec_js("40 + 2") == 42
 
 
+def test_a_runtime_error_reports_where_it_was_thrown(context):
+    """A page reporting a failure needs the source and the throw site, not prose."""
+    script = pyv8.Script(context, "\n\nthrow new Error('boom')", "compiled-example.js")
+    with pytest.raises(pyv8.JSException) as caught:
+        context.exec_js(script)
+    assert caught.value.filename == "compiled-example.js"
+    assert caught.value.line == 3
+    # V8 counts a column from zero, and the statement starts at it.
+    assert caught.value.column == 0
+
+
+def test_a_failed_compilation_reports_the_position_it_found(context):
+    with pytest.raises(pyv8.JSException) as caught:
+        context.exec_js("const =", filename="broken.js")
+    assert caught.value.filename == "broken.js"
+    assert caught.value.line == 1
+    assert caught.value.column >= 0
+
+
 def test_failed_compilation_does_not_poison_next_script(context):
     with pytest.raises(pyv8.JSException) as caught:
         pyv8.Script(context, "const =", "invalid.js")

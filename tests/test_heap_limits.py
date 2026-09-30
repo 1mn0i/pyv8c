@@ -1,4 +1,4 @@
-"""堆上限与外部内存记账；上限行为在独立进程里验证，越界那一条会 abort。"""
+"""堆上限与外部内存记账；上限行为在独立进程里验证，越界终止脚本而不是进程。"""
 
 import gc
 import subprocess
@@ -18,6 +18,15 @@ HOLD_STRINGS = (
 class TestHeapLimits(unittest.TestCase):
     """验证有界堆增长与外部内存记账；上限用 16MB，默认上限撞不到。"""
 
+    def test_the_context_reports_its_isolate_heap_statistics(self):
+        """堆统计：三个字段都是字节，上限与提交量大于 0，使用量不超过提交量。"""
+        context = pyv8.Context(object)
+        statistics = context.heap_statistics()
+        self.assertEqual(sorted(statistics), ["limit", "total", "used"])
+        self.assertGreater(statistics["limit"], 0)
+        self.assertGreater(statistics["total"], 0)
+        self.assertGreaterEqual(statistics["total"], statistics["used"])
+
     def run_code(self, code, timeout=120):
         return subprocess.run(
             [sys.executable, "-c", textwrap.dedent(code)],
@@ -26,38 +35,46 @@ class TestHeapLimits(unittest.TestCase):
             timeout=timeout,
         )
 
-    def test_a_full_heap_grows_within_its_bound(self):
-        """上限内抬升：16MB 上限下持有 20MB 存活对象仍然成功。"""
+    def test_a_script_that_stays_inside_the_budget_runs(self):
+        """预算之内照常：64MB 预算下持有 32MB 存活对象仍然成功。"""
 
         result = self.run_code(
             """
             import pyv8
 
-            pyv8.configure(params=["--max-old-space-size=16"])
+            pyv8.configure(params=["--max-old-space-size=64"])
             context = pyv8.Context(object)
             held = context.exec_js(%(hold)r)
             print(round(held.length * 1024 / (1024 * 1024)))
+            context.close()
             """
-            % {"hold": HOLD_STRINGS % {"count": 20 * 1024}}
+            % {"hold": HOLD_STRINGS % {"count": 32 * 1024}}
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.split(), ["20"])
+        self.assertEqual(result.stdout.split(), ["32"])
 
-    def test_the_growth_stops_at_the_bound(self):
-        """越界后不再抬升：同一上限下持有 100MB 仍按原样 OOM。"""
+    def test_a_script_that_outgrows_the_budget_is_stopped(self):
+        """预算用尽即终止脚本：64MB 预算下无限申请抛 JavaScriptTerminated，
+        进程正常退出，随后同一个上下文照常执行。"""
 
         result = self.run_code(
             """
             import pyv8
 
-            pyv8.configure(params=["--max-old-space-size=16"])
+            pyv8.configure(params=["--max-old-space-size=64"])
             context = pyv8.Context(object)
-            context.exec_js(%(hold)r)
+            try:
+                context.exec_js(
+                    "var a = []; for (let i = 0; i < 200000000; i++) a.push(i); 1")
+                print("no termination")
+            except pyv8.JavaScriptTerminated:
+                print("terminated", context.heap_terminations)
+            print("next", context.exec_js("1 + 1"))
+            context.close()
             """
-            % {"hold": HOLD_STRINGS % {"count": 100 * 1024}}
         )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("heap limit", result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), ["terminated", "1", "next", "2"])
 
     def test_sources_and_host_objects_are_reported_and_given_back(self):
         """持有多少就报多少，释放后回到原值。"""

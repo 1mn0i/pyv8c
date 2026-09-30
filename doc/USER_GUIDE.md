@@ -250,10 +250,15 @@ V8/ICU 构建，不要单独替换其中一个文件。
 ### 堆上限与外部内存
 
 V8 的堆上限默认按物理内存推算，也可以在启动前用 `--max-old-space-size` 指定（见
-`pyv8.configure`）。接近上限时 `_pyv8` 让上限按有限步长抬升：每步是启动上限的 1/8，
-累计不超过启动上限的 1/2；越过这个界限后仍按 V8 原本的方式报
-`Fatal JavaScript out of memory: Reached heap limit`。抬升按比例而非定值，所以收紧过
-上限的宿主拿到的是相称的余量。
+`pyv8.configure`）；指定了它就是这次运行的堆预算。`_pyv8` 在 isolate 的线程上盯住用量：
+越过预算的 60% 先做一次限频回收（把只是垃圾的部分还回来），越过 80% 就在下一个安全点终止
+正在执行的脚本。脚本收到 `JavaScriptTerminated`，进程和后续执行都不受影响，
+`Context.heap_terminations` 记录发生过多少次。
+
+终止必须早于 V8 自己的堆耗尽：V8 在收集内部耗尽时直接 abort 进程，从里面调
+`TerminateExecution` 已经没有机会生效，所以 `near_heap_limit_callback` 只作为最后一道
+兜底——它会请求同一个终止，并让上限按有限步长抬升，给终止留出回旋空间；那份抬升不再是
+脚本可以依赖的余量。
 
 桥接层为 JavaScript 持有的 Python 内存（编译过的脚本源码、被 JavaScript 引用的宿主对象）
 V8 看不见，因此由 `_pyv8` 报给它，让它据此决定何时回收：
@@ -1072,8 +1077,9 @@ assert context.exec_js("6 * 7") == 42
 context.exec_js("runTask()", timeout=0.25)
 ```
 
-超时通过 V8 TerminateExecution 实现，不是操作系统级内存或进程限制。V8 native OOM、
-断言失败和 fatal error 仍可能直接终止进程。
+超时通过 V8 TerminateExecution 实现，不是操作系统级内存或进程限制。越过堆预算的脚本会被
+终止而不是拖垮进程（见 [堆上限与外部内存](#堆上限与外部内存)），但真正的分配失败、断言失败
+和其它 fatal error 仍可能直接终止进程。
 
 ## 多 Isolate 与生命周期
 
@@ -1366,8 +1372,8 @@ python -c "import struct, sys; print(sys.version); print(struct.calcsize('P') * 
 
 建议：
 
-- 堆上限在接近上限时会按比例有限抬升（见 [堆上限与外部内存](#堆上限与外部内存)）；走到该界限
-  之后才是这里描述的 fatal error
+- 越过堆预算的脚本会被终止而不是拖垮进程（见 [堆上限与外部内存](#堆上限与外部内存)）；真正的
+  分配失败与 fatal error 仍是这里描述的情况
 - 确保 ICU 数据和 V8 静态库匹配
 - 给不可信脚本设置 `timeout`
 - 将高风险任务放入独立子进程

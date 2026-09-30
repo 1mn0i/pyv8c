@@ -100,10 +100,12 @@ PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
     if (py_ctx->lazy_factory != nullptr && PyDict_Contains(py_ctx->class_configs, cls) == 0 &&
         PySet_Contains(py_ctx->resolving_classes, cls) == 0)
     {
+        // Ask about a declared name so the overlay lands before the template is built:
+        // a commit arriving later is refused as an already installed template.
         PyObject *name = PyObject_GetAttrString(cls, "__name__");
         if (name == nullptr)
             return nullptr;
-        int declared = PySet_Contains(py_ctx->lazy_names, name);
+        int declared = PySet_Contains(py_ctx->materialisable_names, name);
         if (declared < 0)
         {
             Py_DECREF((PyObject*)name);
@@ -178,11 +180,6 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     // don't have a context. So we use an empty context and special-case
     // functions.
     Local<Context> no_ctx;
-
-    // There used to be an assertion here that the class was not ``object``
-    // itself.  It was wrong: a realm for a bare ``object()`` is exactly what a
-    // host that wants no interface at all builds, several tests do it, and the
-    // assertion only stayed quiet because a release build has no assertions.
 
     py_class *self = (py_class *) PyType_GenericAlloc(py_class_type, 0);
     PyErr_PROPAGATE(self);

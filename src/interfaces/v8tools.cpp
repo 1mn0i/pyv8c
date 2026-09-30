@@ -79,18 +79,18 @@ namespace bindings {
             info.GetReturnValue().SetUndefined();
             return;
         }
-        Local<FunctionTemplate> interface_template = ((py_class*)py_cls)->templ.Get(isolate);
+        // Build the same constructor an exposure would: a lazily materialised name has
+        // to arrive finished, with no synthetic ``constructor`` and its iterator set up.
         Py_XDECREF((PyObject*)name);
-        v8::Local<v8::Function> interface_object;
-        bool get_interface_object =
-            interface_template->GetFunction(context).ToLocal(&interface_object);
-        if (get_interface_object) {
+        py_class* klass = (py_class*)py_cls;
+        Local<Function> interface_object =
+            py_class_get_constructor(context, klass, (py_class*)klass->parent);
+        if (!interface_object.IsEmpty()) {
             info.GetReturnValue().Set(interface_object);
         }
         else {
             info.GetReturnValue().SetUndefined();
         }
-        
     }
 
     template <FunctionKind kind, typename Config>

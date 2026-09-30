@@ -2,12 +2,47 @@
 
 #include "abi3.h"
 
+#include <cstdlib>
 #include <cstring>
 
 using namespace v8;
 
 namespace
 {
+
+//: What the host named, in bytes; zero until it names one.
+std::size_t g_heap_budget_bytes = 0;
+
+// V8 takes the old-space size in megabytes; the guard compares bytes.
+void
+record_heap_budget(const char* flag, PyObject* params, Py_ssize_t index)
+{
+    static const char kFlag[] = "--max-old-space-size";
+    const std::size_t length = sizeof(kFlag) - 1;
+    if (std::strncmp(flag, kFlag, length) != 0)
+        return;
+    const char* value = flag + length;
+    if (*value == '=')
+        ++value;
+    else if (*value != '\0')
+        return; // a longer flag that merely starts the same way
+    else if (index + 1 < PyList_Size(params))
+    {
+        // The value is the next parameter, the way V8 also accepts two of them.
+        value = PyUnicode_AsUTF8_abi3(PyList_GetItem(params, index + 1));
+        if (value == nullptr)
+        {
+            PyErr_Clear();
+            return;
+        }
+    }
+    else
+        return;
+
+    const long long megabytes = std::strtoll(value, nullptr, 10);
+    if (megabytes > 0)
+        g_heap_budget_bytes = static_cast<std::size_t>(megabytes) * 1024 * 1024;
+}
 
 bool
 verify_icu_data_fingerprint(PyObject* path)
@@ -95,6 +130,12 @@ verify_icu_data_fingerprint(PyObject* path)
 
 }
 
+std::size_t
+heap_budget_bytes()
+{
+    return g_heap_budget_bytes;
+}
+
 PlatformState::PlatformState()
     : initialized_(false), disposed_(false)
 {
@@ -175,6 +216,7 @@ PlatformState::initialize(PyObject* icu, PyObject* params)
             const char* item_str = PyUnicode_AsUTF8_abi3(PyList_GetItem(params, i));
             if (item_str == nullptr)
                 return false;
+            record_heap_budget(item_str, params, i);
             V8::SetFlagsFromString(item_str);
         }
     }

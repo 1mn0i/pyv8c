@@ -145,15 +145,23 @@ static void context_unlink_dependencies(context_c* self) {
     Py_CLEAR(self->dependencies);
 }
 
+static PyObject* context_heap_statistics(context_c* self, PyObject* args);
+
 PyMethodDef context_methods[] = {
     {"_try_inspector", (PyCFunction)PythonBoundary<context_try_inspector>::call, METH_VARARGS, NULL},
     {"exec_js", (PyCFunction)PythonBoundary<context_run>::call, METH_VARARGS | METH_KEYWORDS, NULL},
     {"js_obj", (PyCFunction)PythonBoundary<context_js_obj>::call, METH_O, NULL},
     {"expose", (PyCFunction)PythonBoundary<context_expose>::call, METH_VARARGS | METH_KEYWORDS, NULL},
     {"expose_module", (PyCFunction)PythonBoundary<context_expose_module>::call, METH_O, NULL},
+    {"hide_global", (PyCFunction)PythonBoundary<context_hide_global>::call, METH_O,
+     "remove a name this realm exposed, as if it had never been installed"},
     {"declare_lazy", (PyCFunction)PythonBoundary<context_declare_lazy>::call, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"declare_materialisable", (PyCFunction)PythonBoundary<context_declare_materialisable>::call,
+     METH_O, "record names this realm can materialise, installing none of them"},
     {"update_configs", (PyCFunction)PythonBoundary<context_update_configs>::call, METH_O, NULL},
     {"gc", (PyCFunction)PythonBoundary<context_gc>::call, METH_NOARGS, NULL},
+    {"heap_statistics", (PyCFunction)PythonBoundary<context_heap_statistics>::call, METH_NOARGS,
+     "bytes of this isolate's heap in use, committed, and its ceiling, as a dict"},
     {"enqueue_microtask", (PyCFunction)PythonBoundary<context_enqueue_microtask>::call, METH_O, NULL},
     {"set_error_hooks", (PyCFunction)PythonBoundary<context_set_error_hooks>::call,
      METH_VARARGS | METH_KEYWORDS, NULL},
@@ -210,10 +218,28 @@ static PyObject* context_live_handles(context_c* self, void*) {
     return PyLong_FromSsize_t(resources == nullptr ? 0
                               : static_cast<Py_ssize_t>(resources->handles.size()));
 }
+// How many crossings stopped because the heap was full; the limit itself is
+// recovered from: the next crossing resumes the isolate.
+static PyObject* context_heap_terminations(context_c* self, void*) {
+    auto state = context_require_isolate(self);
+    if (!state) return nullptr;
+    return PyLong_FromSize_t(state->watchdog().heap_terminations());
+}
+static PyObject* context_heap_statistics(context_c* self, PyObject* args) {
+    auto state = context_require_isolate(self);
+    if (!state) return nullptr;
+    v8::HeapStatistics statistics;
+    state->isolate()->GetHeapStatistics(&statistics);
+    return Py_BuildValue("{s:L,s:L,s:L}",
+                         "used", (long long)statistics.used_heap_size(),
+                         "total", (long long)statistics.total_heap_size(),
+                         "limit", (long long)statistics.heap_size_limit());
+}
 
 PyGetSetDef context_getset[] = {
     {(char*)"isolate_id", (getter)PythonBoundary<context_isolate_id>::call, NULL, NULL, NULL},
     {(char*)"live_handles", (getter)PythonBoundary<context_live_handles>::call, NULL, NULL, NULL},
+    {(char*)"heap_terminations", (getter)PythonBoundary<context_heap_terminations>::call, NULL, NULL, NULL},
     {(char*)"glob", (getter)PythonBoundary<context_get_global>::call, NULL, NULL, NULL},
     {(char*)"trace", (getter)PythonBoundary<context_get_trace>::call, (setter)PythonBoundary<context_set_trace>::call, NULL, NULL},
     {(char*)"timeout", (getter)PythonBoundary<context_get_timeout>::call, (setter)PythonBoundary<context_set_timeout>::call, NULL, NULL},
@@ -322,7 +348,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->class_configs = NULL;
     self->lazy_factory = NULL;
     self->resolving_classes = PySet_New(nullptr);
-    self->lazy_names = PySet_New(nullptr);
+    self->materialisable_names = PySet_New(nullptr);
     self->py_global = NULL;
     self->class_template_cache = PyDict_New();
     self->function_template_cache = PyDict_New();
@@ -382,7 +408,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         Py_DECREF((PyObject*)self);
         return NULL;
     }
-    if (ctx_type == NULL || self->class_template_cache == NULL || self->function_template_cache == NULL || self->class_configs == NULL || self->resolving_classes == nullptr || self->lazy_names == nullptr) {
+    if (ctx_type == NULL || self->class_template_cache == NULL || self->function_template_cache == NULL || self->class_configs == NULL || self->resolving_classes == nullptr || self->materialisable_names == nullptr) {
         Py_XDECREF((PyObject*)ctx_type);
         Py_DECREF((PyObject*)self);
         return NULL;

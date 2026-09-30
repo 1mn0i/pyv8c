@@ -115,6 +115,32 @@ inline PyObject* get_self_cross_origin(const v8::FunctionCallbackInfo<T>& info) 
     return get_handler_self(info, true);
 }
 
+// The name a trace reports for an interface-level member: the member is read off the
+// interface itself, so the holder is the interface and its name is the label.  Always a
+// new reference, ``Py_None`` included.
+inline PyObject* trace_holder_name(v8::Local<v8::Object> holder, v8::Local<v8::Context> context) {
+    if (holder->IsFunction()) {
+        PyObject* name = py_from_js(holder.As<v8::Function>()->GetName(), context);
+        if (name != nullptr)
+            return name;
+        PyErr_Clear();
+    }
+    Py_INCREF(Py_None);
+    return Py_None;
+}
+
+template <class T>
+inline PyObject* trace_interface_name(const v8::PropertyCallbackInfo<T>& info) {
+    return trace_holder_name(v8_compat::callback_holder(info),
+                             info.GetIsolate()->GetCurrentContext());
+}
+
+template <class T>
+inline PyObject* trace_interface_name(const v8::FunctionCallbackInfo<T>& info) {
+    return trace_holder_name(v8_compat::callback_holder(info),
+                             info.GetIsolate()->GetCurrentContext());
+}
+
 // Which of an interface's declared handlers a lookup wants.  Generated from
 // handler_table.def, which is also where the declaration names and the spec fields
 // come from, so the three cannot drift apart.

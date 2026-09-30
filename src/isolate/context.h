@@ -49,7 +49,7 @@ struct PythonObjectOwner;
     X(class_configs)         \
     X(lazy_factory)          \
     X(resolving_classes)     \
-    X(lazy_names)            \
+    X(materialisable_names)  \
     X(py_global)             \
     X(trace_callback)        \
     X(trace_context_type)    \
@@ -75,11 +75,13 @@ typedef struct context_c
     ContextState state;
     context_c* next_pending_close;
     PyObject* class_configs;
-    // Optional callable used to materialise lazily declared interface names.
+    // Optional callable used to materialise a class the realm holds no config for.
     // Called with an interface name, returns the Python class or None.
     PyObject* lazy_factory;
     PyObject* resolving_classes;
-    PyObject* lazy_names;
+    // Names the factory is asked about: what declare_lazy exposes, plus what
+    // declare_materialisable only hands over.
+    PyObject* materialisable_names;
     PyObject* py_global;
     bool has_done;
     double timeout;
@@ -124,8 +126,10 @@ PyObject* context_new(PyTypeObject* type, PyObject* args, PyObject* kwargs);
 PyObject* context_run(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_expose(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_expose_module(context_c* self, PyObject* module);
+PyObject* context_hide_global(context_c* self, PyObject* name);
 PyObject* context_js_obj(context_c* self, PyObject* py_object);
 PyObject* context_declare_lazy(context_c* self, PyObject* args, PyObject* kwargs);
+PyObject* context_declare_materialisable(context_c* self, PyObject* names);
 PyObject* context_update_configs(context_c* self, PyObject* mapping);
 PyObject* context_gc(context_c* self);
 PyObject* context_close(context_c* self, PyObject* ignored);

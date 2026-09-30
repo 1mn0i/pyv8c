@@ -27,6 +27,16 @@ class TestContext(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "closed"):
             self.context.exec_js("1 + 1")
 
+    def test_hide_global_removes_an_exposed_name(self):
+        """hide_global 让一个全局名消失得和从未装上一样，再撤一次则回报未删除。"""
+
+        self.context.exec_js("globalThis.Thing = 1")
+        self.assertTrue(self.context.exec_js("'Thing' in globalThis"))
+        self.assertTrue(self.context.hide_global("Thing"))
+        self.assertEqual(self.context.exec_js("typeof Thing"), "undefined")
+        self.assertFalse(self.context.exec_js("'Thing' in globalThis"))
+        self.assertFalse(self.context.hide_global("Thing"))
+
     def test_exec_js(self):
         """测试执行简单的JavaScript代码"""
         result = self.context.exec_js("1 + 1")

@@ -38,8 +38,13 @@ class TraceEvent {
 public:
     TraceEvent(v8::Isolate* isolate, context_c* owner, PyObject* receiver)
         : isolate(isolate), owner(owner), receiver(receiver), caught(isolate),
-          context(isolate->GetCurrentContext()) {}
-    ~TraceEvent() { if (caught.HasCaught()) caught.ReThrow(); }
+          context(isolate->GetCurrentContext()) {
+        Py_XINCREF(receiver);
+    }
+    ~TraceEvent() {
+        Py_XDECREF(receiver);
+        if (caught.HasCaught()) caught.ReThrow();
+    }
     TraceEvent(const TraceEvent&) = delete;
     TraceEvent& operator=(const TraceEvent&) = delete;
     bool failed() const { return caught.HasCaught(); }
