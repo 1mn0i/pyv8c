@@ -64,6 +64,8 @@ class Repro:
     #: Seconds the reference browser waits after load before reading, for behaviour
     #: that lands on a task of its own; this environment runs to idle either way.
     settle: float = 0.0
+    #: An optional dependency; a runner that cannot import it skips the case.
+    requires: str = ""
 
 
 CASES = (
@@ -1496,6 +1498,7 @@ CASES = (
         name="get_image_data_reads_the_drawn_pixels",
         note="A drawn pixel comes back as its own RGBA bytes, the array is a real"
              " Uint8ClampedArray, and outside the canvas pixels are transparent black.",
+        requires="pillow",
         html=page(body='<canvas id="c" width="4" height="2"></canvas>'),
         script="""
             (() => {

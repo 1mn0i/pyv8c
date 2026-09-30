@@ -81,6 +81,26 @@ def page(browser):
         instance.close()
 
 
+@pytest.fixture(scope="module")
+def shared_browser():
+    """A quiet offline Browser shared by a module."""
+    instance = make_browser()
+    try:
+        yield instance
+    finally:
+        instance.close()
+
+
+@pytest.fixture(scope="module")
+def shared_page(shared_browser):
+    """One Page for a whole module: only for cases that never write to it."""
+    instance = shared_browser.new_context().new_page()
+    try:
+        yield instance
+    finally:
+        instance.close()
+
+
 @pytest.fixture
 def thread_leak_check():
     """Assert the process returns to its baseline thread count.

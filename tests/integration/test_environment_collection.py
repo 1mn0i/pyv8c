@@ -10,6 +10,9 @@ from pyv8c import Browser, BrowserEnvironment  # noqa: E402
 from pyv8c.foundation.environment import COLLECTED_KEYS  # noqa: E402
 from pyv8c.tools import collect_environment as collector  # noqa: E402
 
+# Both cases drive the installed Chrome through CDP.
+pytestmark = pytest.mark.slow
+
 
 def chrome_or_skip():
     try:

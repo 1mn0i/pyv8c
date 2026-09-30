@@ -122,6 +122,7 @@ def test_an_unknown_gate_is_rejected(tool):
     assert "unknown gate" in result.stderr
 
 
+@pytest.mark.slow  # runs the whole unit suite again, through the gate
 @pytest.mark.skipif(
     os.environ.get("PYV8C_OFFLINE") == "1",
     reason="the offline gate runs this suite; the nested run must not recurse",
@@ -145,6 +146,7 @@ def test_the_duplicate_gate_fails_only_when_asked_to_be_strict(tool, monkeypatch
     assert tool.gate_duplicates(strict=True) is False
 
 
+@pytest.mark.slow  # scans every test's script for corpus overlap
 def test_no_test_repeats_a_corpus_case(tool):
     """The corpus is where page behaviour lives, and Chrome is run against it."""
     assert tool.duplicate_findings() == []

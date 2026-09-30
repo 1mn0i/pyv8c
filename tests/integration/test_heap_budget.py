@@ -1,4 +1,5 @@
 """A page that outgrows the isolate's heap budget is stopped, and the host lives."""
+import pytest
 import subprocess
 import sys
 import textwrap
@@ -32,6 +33,7 @@ print("closed")
 """
 
 
+@pytest.mark.slow  # a V8 heap limit takes the process down, not just the test
 def test_a_page_that_outgrows_the_heap_is_stopped_and_the_host_survives():
     """The runaway script ends as a terminated crossing: the document reaches an end,
     the stop is reported, and the host closes on its own terms."""

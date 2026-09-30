@@ -2,6 +2,8 @@
 
 Every expectation here was read off a real Chrome over ``page.evaluate``; the decoded
 value is compared as code units so the file stays plain ASCII.
+
+Every case only reads, so the module shares one page (``shared_page``).
 """
 
 import json
@@ -57,23 +59,23 @@ def refused(page, text):
 
 
 @pytest.mark.parametrize("text, coded", DECODED)
-def test_decodes_the_bytes_chrome_decodes(page, text, coded):
-    assert page.evaluate(
+def test_decodes_the_bytes_chrome_decodes(shared_page, text, coded):
+    assert shared_page.evaluate(
         "Array.from(atob(%s), (character) => character.charCodeAt(0))" % json.dumps(text)
     ) == coded
 
 
 @pytest.mark.parametrize("text", REFUSED)
-def test_refuses_what_cannot_be_decoded(page, text):
-    assert refused(page, text) == ["InvalidCharacterError", 5, NOT_ENCODED]
+def test_refuses_what_cannot_be_decoded(shared_page, text):
+    assert refused(shared_page, text) == ["InvalidCharacterError", 5, NOT_ENCODED]
 
 
 @pytest.mark.parametrize("text", REFUSED_AS_OUTSIDE_LATIN1)
-def test_a_code_unit_above_latin1_is_named_as_such(page, text):
-    assert refused(page, text) == ["InvalidCharacterError", 5, OUTSIDE_LATIN1]
+def test_a_code_unit_above_latin1_is_named_as_such(shared_page, text):
+    assert refused(shared_page, text) == ["InvalidCharacterError", 5, OUTSIDE_LATIN1]
 
 
-def test_a_calling_argument_is_converted_with_the_same_wording(page):
+def test_a_calling_argument_is_converted_with_the_same_wording(shared_page):
     for text, expected in (
         ("Symbol('x')", ["TypeError", "Failed to execute 'atob' on 'Window':"
                                     " Cannot convert a Symbol value to a string"]),
@@ -88,25 +90,25 @@ def test_a_calling_argument_is_converted_with_the_same_wording(page):
         ("[89,81]", ["InvalidCharacterError", NOT_ENCODED]),
         ("{}", ["InvalidCharacterError", NOT_ENCODED]),
     ):
-        assert page.evaluate(
+        assert shared_page.evaluate(
             "(() => { try { atob(%s); return 'decoded'; } catch (e) { return [e.name, e.message]; } })()"
             % text
         ) == expected, text
 
 
-def test_the_argument_count_is_enforced(page):
-    assert page.evaluate(
+def test_the_argument_count_is_enforced(shared_page):
+    assert shared_page.evaluate(
         "(() => { try { atob(); return 'decoded'; } catch (e) { return [e.name, e.message]; } })()"
     ) == ["TypeError", "Failed to execute 'atob' on 'Window': 1 argument required,"
                        " but only 0 present."]
-    assert page.evaluate("atob('YQ==', 'ignored')") == "a"
+    assert shared_page.evaluate("atob('YQ==', 'ignored')") == "a"
 
 
-def test_it_is_a_native_function_on_the_window_itself(page):
-    assert page.evaluate("[atob.length, atob.name, String(atob)]") == [
+def test_it_is_a_native_function_on_the_window_itself(shared_page):
+    assert shared_page.evaluate("[atob.length, atob.name, String(atob)]") == [
         1, "atob", "function atob() { [native code] }",
     ]
-    assert page.evaluate("""
+    assert shared_page.evaluate("""
         (() => {
           const descriptor = Object.getOwnPropertyDescriptor(window, 'atob');
           return [window.hasOwnProperty('atob'), 'atob' in Window.prototype,
@@ -115,10 +117,10 @@ def test_it_is_a_native_function_on_the_window_itself(page):
     """) == [True, False, True, True, True]
 
 
-def test_it_cannot_be_called_as_a_constructor_or_on_another_receiver(page):
-    assert page.evaluate(
+def test_it_cannot_be_called_as_a_constructor_or_on_another_receiver(shared_page):
+    assert shared_page.evaluate(
         "(() => { try { new atob('YQ=='); return 'ok'; } catch (e) { return e.message; } })()"
     ) == "atob is not a constructor"
-    assert page.evaluate(
+    assert shared_page.evaluate(
         "(() => { try { atob.call({}, 'YQ=='); return 'ok'; } catch (e) { return e.message; } })()"
     ) == "Illegal invocation"

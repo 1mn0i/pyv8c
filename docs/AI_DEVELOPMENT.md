@@ -57,6 +57,13 @@ git diff --check
 - 不需要原生扩展的快速通道：`python -m pytest tests/unit -m "not native"`。
 - 跳过长跑与并发回归：`python -m pytest -m "not slow and not race"`。
 - 并发/时序回归重复跑（需 dev extras 里的 `pytest-repeat`）：`python -m pytest -m race --count=5`。
+- `slow` 默认不跑：真实浏览器采集、重跑整个 unit 套件、V8 堆上限都在这一档。要跑它们用 `-m slow`，
+  跑全量用 `-o addopts=--strict-markers`。
+- 并行压缩墙钟时间（需 dev extras 里的 `pytest-xdist`）：`python -m pytest -n 8`（8 核实测 313 → 74 s；
+  `--dist loadfile` 更慢，别用）。时序敏感的用例（`race` 与少数语料）留在串行通道：并行下它们会因机器
+  负载假失败，所以并行跑出的失败要串行复跑确认。
+- 夹具范围：只读取页面的模块用模块级 `shared_page`（把每例约 200 ms 的 isolate/页面建立降为每模块一次，
+  `test_atob`/`test_btoa` 实测 18.3 → 1.8 s）；会写文档、全局、事件，或断言 Browser 级状态的模块仍用函数级 `page`。
 
 按改动范围额外运行：
 

@@ -1,8 +1,7 @@
 """Lazy interface materialisation on the global object.
 
-The realm declares every interface the baseline exposes for it, and installs each
-one itself.  Nothing is built until it is read: a cold Browser builds the eager
-core, and every name is already there.
+The realm declares every interface the baseline exposes for it.  A cold Browser
+builds the eager core and the stubs its members reference; the rest is built when read.
 """
 import pytest
 
@@ -10,7 +9,7 @@ pytest.importorskip("pyv8")
 from pyv8c import Browser
 
 
-def test_cold_start_materialises_no_lazy_interface():
+def test_cold_start_leaves_deferred_interfaces_for_first_access():
     browser = Browser(stub_logging="off")
     page = browser.new_context().new_page()
     try:
@@ -18,14 +17,13 @@ def test_cold_start_materialises_no_lazy_interface():
         materialized = set(session.materialized_interfaces)
         plan = browser.interface_universe.plan("Window")
         eager = set(plan.eager)
-        lazy = set(plan.deferred)
+        deferred = set(plan.deferred)
         exposed = set(session.interface_names("Window"))
 
         assert eager
-        # The eager core is ready, but nothing beyond it has been built.
-        # Ancestors of eager interfaces (WindowProperties) are expected too.
+        # Core and its referenced stubs, ancestors included; the rest waits.
         assert eager <= materialized
-        assert not (materialized & lazy)
+        assert deferred - materialized
         assert browser.startup_stats["deferred_globals"] == len(exposed)
     finally:
         browser.close()

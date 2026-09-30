@@ -148,11 +148,14 @@ def test_window_interfaces_are_materialized_on_demand():
     browser = Browser(stub_logging="off")
     try:
         page = browser.new_context().new_page()
-        eager = set(page.binding_session.materialized_interfaces)
-        assert len(eager) <= 20
-        assert "AbortController" not in eager
+        session = page.binding_session
+        at_cold_start = set(session.materialized_interfaces)
+        exposed = set(session.interface_names("Window"))
+        assert set(browser.interface_universe.plan("Window").eager) <= at_cold_start
+        assert exposed - at_cold_start
+        assert "AbortController" not in at_cold_start
         assert page.evaluate("typeof AbortController") == "function"
-        assert "AbortController" in page.binding_session.materialized_interfaces
+        assert "AbortController" in session.materialized_interfaces
         assert page.evaluate("AbortController === AbortController") is True
         assert page.evaluate("Object.getOwnPropertyNames(window).includes('AbortController')") is True
     finally:

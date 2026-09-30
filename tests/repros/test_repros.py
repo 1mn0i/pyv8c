@@ -9,6 +9,8 @@ excluded with what reason, and which diverged.
 """
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 from corpus import CASES
@@ -23,6 +25,20 @@ from harness import (
 pytest.importorskip("pyv8", reason="the corpus runs in the native environment")
 
 NAMES = [case.name for case in CASES]
+
+OPTIONAL_REQUIREMENTS = {"pillow": "PIL"}
+
+
+def missing_requirement(case):
+    """Why a case cannot run here, or ``""`` when it can."""
+    module = OPTIONAL_REQUIREMENTS.get(case.requires)
+    if module is None:
+        return ""
+    try:
+        importlib.import_module(module)
+    except ImportError as missing:
+        return f"{case.requires} is not importable: {missing}"
+    return ""
 
 
 @pytest.fixture(scope="module")
@@ -43,10 +59,15 @@ def test_the_corpus_keeps_its_own_shape():
         assert bool(case.expect_error) != (case.expected is not None), (
             f"{case.name} declares an expected value or an expected error, not both"
         )
+        assert not case.requires or case.requires in OPTIONAL_REQUIREMENTS, (
+            f"{case.name} asks for an optional dependency the runners do not know: {case.requires}"
+        )
 
 
 @pytest.mark.parametrize("case", CASES, ids=NAMES)
 def test_pyv8c_observes_what_the_case_declares(case):
+    if reason := missing_requirement(case):
+        pytest.skip(reason)
     observed = observe_here(case)
     if case.expect_error:
         assert observed.error == case.expect_error
@@ -65,6 +86,8 @@ def test_the_reference_is_the_chrome_installed_here(reference):
 
 @pytest.mark.parametrize("case", CASES, ids=NAMES)
 def test_chrome_agrees(case, reference):
+    if reason := missing_requirement(case):
+        pytest.skip(reason)
     here = observe_here(case)
     there = reference.observe(case)
     difference = divergence(here, there, reference.version)

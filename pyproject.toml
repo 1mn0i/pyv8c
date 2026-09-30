@@ -15,10 +15,14 @@ dependencies = ["loguru>=0.7", "websockets>=14"]
 network = ["curl_cffi>=0.7", "websockets>=14"]
 # The cycronet engine is optional and serves either role when it is chosen.
 cronet = ["cycronet>=144.4.7,<151"]
+# The drawing surface behind CanvasRenderingContext2D and OffscreenCanvas pixels.
+canvas = ["Pillow>=10"]
 dev = [
     "pytest>=7.4",
     "pytest-timeout>=2.2",
     "pytest-repeat>=0.9",
+    "pytest-xdist>=3.6",
+    "Pillow>=10",
 ]
 # The reference browser for tests/repros.  It drives the Chrome already installed on
 # the machine (PYV8C_CHROME points it elsewhere); nothing else is downloaded.
@@ -26,7 +30,10 @@ reference = ["playwright>=1.40"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--strict-markers"
+# ``slow`` marks coverage that drives a real browser, runs the whole unit suite
+# again, or reaches a V8 heap limit; those belong on their own channel, which
+# ``-m slow`` selects and ``-o addopts=--strict-markers`` puts back in a full run.
+addopts = "--strict-markers -m 'not slow'"
 # Safety net against a wedged realm: no single test may hang the suite.
 timeout = 300
 markers = [

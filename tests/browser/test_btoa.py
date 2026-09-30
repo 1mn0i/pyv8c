@@ -1,6 +1,8 @@
 """``Window.btoa``: the values and the messages Chrome 153 answers with.
 
 Every expectation here was read off a real Chrome over ``page.evaluate``.
+
+Every case only reads, so the module shares one page (``shared_page``).
 """
 
 import json
@@ -47,24 +49,24 @@ def called(page, expression):
 
 
 @pytest.mark.parametrize("text, encoded", ENCODED)
-def test_encodes_the_way_chrome_encodes(page, text, encoded):
-    assert page.evaluate("btoa(%s)" % json.dumps(text)) == encoded
+def test_encodes_the_way_chrome_encodes(shared_page, text, encoded):
+    assert shared_page.evaluate("btoa(%s)" % json.dumps(text)) == encoded
 
 
 @pytest.mark.parametrize("text", REFUSED)
-def test_refuses_a_code_unit_above_latin1(page, text):
-    assert page.evaluate(
+def test_refuses_a_code_unit_above_latin1(shared_page, text):
+    assert shared_page.evaluate(
         "(() => { try { btoa(%s); return 'encoded'; } catch (e) { return [e.name, e.code, e.message]; } })()"
         % json.dumps(text)
     ) == ["InvalidCharacterError", 5, OUTSIDE_LATIN1]
 
 
-def test_a_latin1_string_survives_a_round_trip(page):
+def test_a_latin1_string_survives_a_round_trip(shared_page):
     for text in ("", "a", "\u0000\u007f\u0080\u00ff", "k\u00e6\u00ff", "YQ=="):
-        assert page.evaluate("atob(btoa(%s))" % json.dumps(text)) == text
+        assert shared_page.evaluate("atob(btoa(%s))" % json.dumps(text)) == text
 
 
-def test_a_calling_argument_is_converted_with_the_same_wording(page):
+def test_a_calling_argument_is_converted_with_the_same_wording(shared_page):
     for expression, expected in (
         ("undefined", ["encoded", "dW5kZWZpbmVk"]),
         ("null", ["encoded", "bnVsbA=="]),
@@ -77,22 +79,22 @@ def test_a_calling_argument_is_converted_with_the_same_wording(page):
                                              " Cannot convert object to primitive value"]),
         ("{toString: () => { throw new Error('boom'); }}", ["Error", "boom"]),
     ):
-        assert called(page, expression) == expected, expression
+        assert called(shared_page, expression) == expected, expression
 
 
-def test_the_argument_count_is_enforced(page):
-    assert page.evaluate(
+def test_the_argument_count_is_enforced(shared_page):
+    assert shared_page.evaluate(
         "(() => { try { btoa(); return 'encoded'; } catch (e) { return [e.name, e.message]; } })()"
     ) == ["TypeError", "Failed to execute 'btoa' on 'Window': 1 argument required,"
                        " but only 0 present."]
-    assert page.evaluate("btoa('a', 'ignored')") == "YQ=="
+    assert shared_page.evaluate("btoa('a', 'ignored')") == "YQ=="
 
 
-def test_it_is_a_native_function_on_the_window_itself(page):
-    assert page.evaluate("[btoa.length, btoa.name, String(btoa)]") == [
+def test_it_is_a_native_function_on_the_window_itself(shared_page):
+    assert shared_page.evaluate("[btoa.length, btoa.name, String(btoa)]") == [
         1, "btoa", "function btoa() { [native code] }",
     ]
-    assert page.evaluate("""
+    assert shared_page.evaluate("""
         (() => {
           const descriptor = Object.getOwnPropertyDescriptor(window, 'btoa');
           return [window.hasOwnProperty('btoa'), 'btoa' in Window.prototype,
@@ -101,10 +103,10 @@ def test_it_is_a_native_function_on_the_window_itself(page):
     """) == [True, False, True, True, True]
 
 
-def test_it_cannot_be_called_as_a_constructor_or_on_another_receiver(page):
-    assert page.evaluate(
+def test_it_cannot_be_called_as_a_constructor_or_on_another_receiver(shared_page):
+    assert shared_page.evaluate(
         "(() => { try { new btoa('a'); return 'ok'; } catch (e) { return e.message; } })()"
     ) == "btoa is not a constructor"
-    assert page.evaluate(
+    assert shared_page.evaluate(
         "(() => { try { btoa.call({}, 'a'); return 'ok'; } catch (e) { return e.message; } })()"
     ) == "Illegal invocation"

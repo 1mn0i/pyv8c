@@ -1,8 +1,11 @@
 """``OffscreenCanvas`` hands out a working 2D surface with no element behind it."""
+import pytest
+
 from pyv8c import Browser
 
 
 def test_an_offscreen_canvas_draws_and_reports_its_pixels():
+    pytest.importorskip("PIL", reason="Pillow backs the canvas drawing surface")
     browser = Browser(stub_logging="off")
     try:
         page = browser.new_context().new_page()
