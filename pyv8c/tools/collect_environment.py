@@ -1,14 +1,15 @@
-"""Read a real browser's environment into a profile ``BrowserEnvironment`` can load.
+"""Read a real browser's environment and window surface into one profile.
 
 The collector starts the locally installed Chrome with a debugging port, reads every
-key a browser reports from a local secure origin, and writes a profile.  Nothing is
-downloaded and nothing is guessed: a key that cannot be read fails the run, so a
-written profile is whole.  Headless runs report ``HeadlessChrome`` in the user agent;
-use ``headed=True`` for the profile a normal visit presents.
+key a browser reports from a local secure origin, and reads what that browser installs
+on ``window`` from the same session.  Nothing is downloaded and nothing is guessed: a
+key that cannot be read fails the run, so a written profile is whole.  Headless runs
+report ``HeadlessChrome`` in the user agent; use ``headed=True`` for the profile a
+normal visit presents.
 
 Usage::
 
-    python tools/collect_environment.py                     # chrome-<version>-<platform>.json
+    python tools/collect_environment.py                     # writes the packaged profile
     python tools/collect_environment.py --out -             # to standard output
     python tools/collect_environment.py --headed --window-size 1920,1080
     python tools/collect_environment.py --accept-lang en-US,en
@@ -28,7 +29,11 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from ..foundation.environment import COLLECTED_KEYS, BrowserEnvironment
+from ..foundation.environment import COLLECTED_KEYS, SCHEMA_VERSION, BrowserEnvironment
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+#: Where a run writes unless told otherwise.
+DEFAULT_OUTPUT = PACKAGE_ROOT / "data" / "chrome-environment.json"
 
 #: The same variable the reference corpus reads, so one setting points both at Chrome.
 CHROME_ENV = "PYV8C_CHROME"
@@ -115,8 +120,15 @@ COLLECT_SCRIPT = """
 """
 
 
+#: What a page enumerates, and every own name it has.
+SURFACE_SCRIPT = """
+JSON.stringify({
+    keys: Object.keys(window).sort(),
+    own: Object.getOwnPropertyNames(window).sort()})"""
+
+
 class CollectionError(RuntimeError):
-    """The environment could not be read, with the reason."""
+    """The browser could not be read, with the reason."""
 
 
 def find_chrome(explicit=None):
@@ -275,9 +287,12 @@ def _navigate(session, url, timeout):
     raise CollectionError(f"the local page {url} never finished loading")
 
 
-def read_environment(chrome, *, headed=False, accept_lang=None, window_size=None,
-                     extra_args=(), timeout=30.0):
-    """``(payload, source)`` read from a browser started for this run."""
+def read_pages(chrome, scripts, *, headed=False, accept_lang=None, window_size=None,
+               extra_args=(), timeout=30.0):
+    """``(values, source)`` for several expressions read from one browser session.
+
+    Every answer comes from the same page, so facts read together describe one browser.
+    """
     with tempfile.TemporaryDirectory(prefix="pyv8c-chrome-") as profile:
         server, origin = _local_origin()
         arguments = [
@@ -311,7 +326,7 @@ def read_environment(chrome, *, headed=False, accept_lang=None, window_size=None
             session, browser = _session(port, timeout)
             try:
                 _navigate(session, origin, timeout)
-                payload = json.loads(session.evaluate(COLLECT_SCRIPT))
+                values = [session.evaluate(script) for script in scripts]
             finally:
                 session.close()
             source = {
@@ -321,7 +336,7 @@ def read_environment(chrome, *, headed=False, accept_lang=None, window_size=None
                 "collected": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "arguments": [argument for argument in arguments[1:] if not argument.startswith("--user-data-dir")],
             }
-            return payload, source
+            return values, source
         finally:
             process.terminate()
             try:
@@ -331,6 +346,12 @@ def read_environment(chrome, *, headed=False, accept_lang=None, window_size=None
                 process.wait(timeout=10)
             server.shutdown()
             server.server_close()
+
+
+def read_profile(chrome, **options):
+    """``(payload, surface, source)``: both readings a run makes, from one session."""
+    values, source = read_pages(chrome, (COLLECT_SCRIPT, SURFACE_SCRIPT), **options)
+    return json.loads(values[0]), build_surface(json.loads(values[1])), source
 
 
 def build_environment(payload):
@@ -344,15 +365,24 @@ def build_environment(payload):
     return BrowserEnvironment(payload)
 
 
-def default_name(source):
-    browser, _, version = str(source.get("browser", "chrome/unknown")).partition("/")
-    return f"{browser.lower() or 'chrome'}-{version or 'unknown'}-{source.get('platform', 'unknown')}.json"
+def build_surface(payload):
+    """What a browser installs on ``window``, as the profile's surface section."""
+    return {"keys": list(payload["keys"]), "own_names": list(payload["own"])}
+
+
+def build_profile(payload, surface, source):
+    """The document a run writes: the environment keys, and the surface they came with."""
+    document = {"schema": SCHEMA_VERSION, "source": dict(source)}
+    document.update(build_environment(payload).to_dict())
+    document["window_surface"] = surface
+    return document
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--chrome", help=f"browser executable; {CHROME_ENV} overrides the search")
-    parser.add_argument("--out", help="where to write the profile, or - for standard output")
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUTPUT,
+                        help="where to write the profile, or - for standard output (default: %(default)s)")
     parser.add_argument("--headed", action="store_true", help="show the browser window")
     parser.add_argument("--accept-lang", help="pin the languages the browser reports")
     parser.add_argument("--window-size", help="pin the window size as WIDTH,HEIGHT")
@@ -362,7 +392,7 @@ def main(argv=None):
 
     try:
         chrome = find_chrome(arguments.chrome)
-        payload, source = read_environment(
+        payload, surface, source = read_profile(
             chrome,
             headed=arguments.headed,
             accept_lang=arguments.accept_lang,
@@ -371,24 +401,29 @@ def main(argv=None):
             timeout=arguments.timeout,
         )
         # Only the keys the browser answered; the rest stay defaults, unclaimed.
-        text = build_environment(payload).dumps(source=source)
+        document = build_profile(payload, surface, source)
     except (CollectionError, TypeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
-    if arguments.out == "-":
+    text = json.dumps(document, indent=2) + "\n"
+    if str(arguments.out) == "-":
         sys.stdout.write(text)
         return 0
-    path = Path(arguments.out or default_name(source))
-    path.write_text(text, encoding="utf-8")
-    print(f"wrote {path}", file=sys.stderr)
+    arguments.out.parent.mkdir(parents=True, exist_ok=True)
+    arguments.out.write_text(text, encoding="utf-8")
+    print(
+        f"wrote {arguments.out}: {len(surface['own_names'])} own names,"
+        f" {len(surface['keys'])} keys, from {source.get('browser', 'unknown')}",
+        file=sys.stderr,
+    )
     return 0
 
 
 __all__ = [
-    "CHROME_ENV", "CHROME_PATHS", "COLLECT_SCRIPT", "CdpSession", "CollectionError",
-    "build_environment", "default_name", "find_chrome", "main", "read_devtools_port",
-    "read_environment",
+    "CHROME_ENV", "CHROME_PATHS", "COLLECT_SCRIPT", "DEFAULT_OUTPUT", "SURFACE_SCRIPT",
+    "CdpSession", "CollectionError", "build_environment", "build_profile", "build_surface",
+    "find_chrome", "main", "read_devtools_port", "read_pages", "read_profile",
 ]
 
 

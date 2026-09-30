@@ -4,6 +4,7 @@ from pyv8 import IdlSpec
 from pyv8c import Browser
 from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse
 from pyv8c.foundation.errors import DOMException
+from pyv8c.platform.sessions import BindingSession
 from pyv8c.web.fetch.clone import structured_clone
 from pyv8c.web.fetch.response import Response
 from pyv8c.network.cookies import CookieJar
@@ -65,7 +66,7 @@ def test_native_specs_do_not_mutate_interface_declarations(name):
     declaration = interface.__dict__["__v8_idl_spec__"]
     assert isinstance(declaration, IdlSpec)
     before = (declaration.methods, declaration.attributes, declaration.length)
-    config = universe.binding_session(object()).class_config_for(name)
+    config = BindingSession(universe, object()).class_config_for(name)
     assert isinstance(config, IdlSpec)
     assert config is not declaration
     assert (declaration.methods, declaration.attributes, declaration.length) == before

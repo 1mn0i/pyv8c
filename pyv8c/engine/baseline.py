@@ -1,8 +1,10 @@
-"""Chromium interface baseline loading with a two-level disk cache.
+"""The interface baseline: its bytes, its shape, and the lookups derived from them.
 
-Reads immutable schema 5 snapshots, shared between Browsers when the file bytes are
-identical; a binary pickle cache beside the source skips JSON parsing and validation,
-and any corruption silently falls back to the JSON path so startup cannot fail.
+One snapshot is immutable and shared between Browsers whose file bytes match.  This
+module reads and writes it, decodes each interface into what a realm asks about it
+(parent chain, members, interface object, exposure) and plans one realm from those
+answers.  Nothing here knows the native binding, which keeps it importable by the
+offline extractor.
 """
 
 from __future__ import annotations
@@ -20,6 +22,57 @@ from typing import Any
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASELINE_PATH = PACKAGE_ROOT / "baselines" / "interface-baseline.zip"
+#: The profile a collection run writes; the surface is a section of it.
+PROFILE_PATH = PACKAGE_ROOT / "data" / "chrome-environment.json"
+
+
+@dataclass(frozen=True)
+class WindowSurface:
+    """The own property names of a reference ``window``, and the browser they came from.
+
+    The baseline carries every platform and runtime flag state Chromium compiles in; the
+    reference browser installs a subset, which ``tools/collect_environment.py`` reads from
+    a running Chrome, so the difference stays data instead of a hand-written list.
+    """
+
+    chrome: str
+    own_names: frozenset
+
+    def has(self, name) -> bool:
+        return name in self.own_names
+
+
+def load_window_surface(path=None) -> WindowSurface | None:
+    """The surface the reference browser reported, or ``None``.
+
+    It is the ``window_surface`` section of the profile a collection run writes.
+    """
+    target = Path(path) if path is not None else PROFILE_PATH
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    section = payload.get("window_surface") if isinstance(payload, Mapping) else None
+    names = (section or {}).get("own_names")
+    if not isinstance(names, list) or not names:
+        return None
+    return WindowSurface(
+        chrome=str((payload.get("source") or {}).get("browser") or ""),
+        own_names=frozenset(str(name) for name in names),
+    )
+
+
+def write_baseline(output_path: Path, document: dict, *, compress: bool = False) -> Path:
+    """Write a compact schema 5 baseline as JSON or a single-member ZIP."""
+    payload = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    output_path = Path(output_path)
+    if not (compress or output_path.suffix.lower() == ".zip"):
+        output_path.write_bytes(payload)
+        return output_path
+    archive_path = output_path if output_path.suffix.lower() == ".zip" else output_path.with_suffix(".zip")
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        archive.writestr(archive_path.with_suffix(".json").name, payload)
+    return archive_path
 
 
 @dataclass(frozen=True)
@@ -229,3 +282,282 @@ class BaselineRepository:
             "baseline_binary_cache": cached_payload is not None,
         }
         return snapshot
+
+
+LOCATIONS = ("instance", "prototype", "interface")
+
+
+@dataclass(frozen=True)
+class Member:
+    """One declared member, as the snapshot states it.
+
+    ``flags``, ``receiver``, ``cross_origin`` and ``side_effect`` keep the shorthand the
+    snapshot writes; what they stand for is decided where the spec is built.
+    ``main_world`` is the one world fact a runtime snapshot keeps.
+    """
+
+    name: str
+    kind: str
+    location: str
+    flags: str
+    property_flags: int | None
+    receiver: str
+    cross_origin: str
+    side_effect: str
+    length: int | None
+    value: int | None
+    #: ``True``/``False`` when the baseline states the setter, ``None`` when it is silent.
+    setter_state: bool | None
+    main_world: bool
+
+    @property
+    def is_static(self) -> bool:
+        return self.location == "interface"
+
+
+def _member(location, entry) -> Member:
+    length = entry.get("length")
+    stated_flags = entry.get("property_flags")
+    return Member(
+        name=str(entry.get("name") or ""),
+        kind=str(entry.get("kind") or ""),
+        location=location,
+        flags=str(entry.get("flags") or ""),
+        property_flags=stated_flags if isinstance(stated_flags, int) else None,
+        receiver=str(entry.get("receiver") or ""),
+        cross_origin=str(entry.get("cross_origin") or ""),
+        side_effect=str(entry.get("side_effect") or ""),
+        length=int(length) if isinstance(length, int) else None,
+        value=(entry.get("value") if isinstance(entry.get("value"), int) else None),
+        setter_state=(bool(entry["setter"]) if "setter" in entry else None),
+        # A snapshot that predates the bit states no world name at all, which is itself
+        # the main world: the omission meant exactly that.
+        main_world=bool(entry.get("main_world", True)),
+    )
+
+
+@dataclass(frozen=True)
+class Interface:
+    """One baseline entry, with what the runtime asks for computed once."""
+
+    name: str
+    parent: str | None
+    tag: str
+    exposed_in: frozenset
+    has_interface_object: bool
+    template: Mapping
+    members: Mapping
+    constants: tuple
+    #: The constructor's declared shape; ``constructor_stated`` is False when the
+    #: baseline said nothing, which leaves the hand-written spec in charge.
+    constructor_length: int | None
+    constructor_new: bool
+    constructor_call: bool
+    constructor_stated: bool
+    raw: Mapping
+
+    def own_members(self, location) -> tuple:
+        return self.members.get(location, ())
+
+
+class InterfaceTable:
+    """Read-only indexes over one immutable baseline snapshot."""
+
+    def __init__(self, baseline, *, surface=None):
+        self.baseline = baseline
+        self.surface = surface
+        self._interfaces: dict[str, Interface] = {}
+        self._positions: dict[str, int] | None = None
+        self._children: dict[str, tuple] | None = None
+        self._descendants: dict[str, tuple] = {}
+        self._ancestors: dict[str, tuple] = {}
+        self._members: dict[tuple, Member | None] = {}
+        self._exposed: dict[tuple, tuple] = {}
+        self._aliases: dict[str, str] | None = None
+
+    def names(self) -> tuple:
+        """Every interface name, in baseline order."""
+        return tuple(self.baseline.interfaces)
+
+    def raw(self, name):
+        return self.baseline.interfaces[name]
+
+    def interface(self, name) -> Interface:
+        cached = self._interfaces.get(name)
+        if cached is None:
+            cached = self._build(name, self.baseline.interfaces[name])
+            self._interfaces[name] = cached
+        return cached
+
+    @staticmethod
+    def _build(name, entry) -> Interface:
+        members = entry.get("members") or {}
+        constructor = entry.get("constructor") or {}
+        length = constructor.get("length")
+        return Interface(
+            name=name,
+            parent=entry.get("parent"),
+            tag=str(entry.get("tag") or ""),
+            exposed_in=frozenset(entry.get("exposed_in") or ()),
+            has_interface_object=bool(constructor.get("exposed")),
+            template=entry.get("template") or {},
+            members=MappingProxyType({
+                location: tuple(_member(location, item) for item in (members.get(location) or ()))
+                for location in LOCATIONS
+            }),
+            constants=tuple(entry.get("constants") or ()),
+            constructor_length=int(length) if isinstance(length, int) else None,
+            constructor_new=bool(constructor.get("allow_new")),
+            constructor_call=bool(constructor.get("allow_call")),
+            constructor_stated=("allow_new" in constructor or "allow_call" in constructor),
+            raw=entry,
+        )
+
+    def ancestors(self, name) -> tuple:
+        """The interface and its ancestors, innermost first."""
+        cached = self._ancestors.get(name)
+        if cached is None:
+            chain, current, seen = [], name, set()
+            while current and current not in seen:
+                seen.add(current)
+                chain.append(current)
+                current = self.baseline.interfaces[current].get("parent")
+            cached = tuple(chain)
+            self._ancestors[name] = cached
+        return cached
+
+    def children(self, name) -> tuple:
+        if self._children is None:
+            index = {}
+            for candidate, entry in self.baseline.interfaces.items():
+                parent = entry.get("parent")
+                if parent:
+                    index.setdefault(parent, []).append(candidate)
+            self._children = {key: tuple(value) for key, value in index.items()}
+        return self._children.get(name, ())
+
+    def descendants(self, name) -> tuple:
+        cached = self._descendants.get(name)
+        if cached is None:
+            seen, pending = set(), list(self.children(name))
+            while pending:
+                current = pending.pop()
+                if current in seen:
+                    continue
+                seen.add(current)
+                pending.extend(self.children(current))
+            positions = self.positions()
+            cached = tuple(sorted(seen, key=positions.__getitem__))
+            self._descendants[name] = cached
+        return cached
+
+    def positions(self) -> dict:
+        if self._positions is None:
+            self._positions = {name: index
+                               for index, name in enumerate(self.baseline.interfaces)}
+        return self._positions
+
+    def own_members(self, name) -> tuple:
+        """``(location, member)`` pairs declared directly on one interface."""
+        interface = self.interface(name)
+        members = tuple(
+            (location, member)
+            for location in LOCATIONS
+            for member in interface.own_members(location)
+        )
+        if name != "Window" or self.surface is None:
+            return members
+        # The baseline carries every platform and flag state; the reference browser does not.
+        return tuple(pair for pair in members if self.surface.has(pair[1].name))
+
+    def member(self, name, public_name, kind) -> Member | None:
+        """The member an interface answers for a public name, inherited or not."""
+        key = (name, public_name, kind)
+        if key in self._members:
+            return self._members[key]
+        found = None
+        for current in self.ancestors(name):
+            match = self._own_member(current, public_name, kind)
+            if match is not None:
+                found = match
+                break
+        if found is None:
+            # Blink sometimes installs WorkerGlobalScope members in a concrete descendant.
+            for candidate in self.descendants(name):
+                found = self._own_member(candidate, public_name, kind)
+                if found is not None:
+                    break
+        self._members[key] = found
+        return found
+
+    def _own_member(self, name, public_name, kind) -> Member | None:
+        candidates = [member for _location, member in self.own_members(name)
+                      if member.name == public_name and member.kind == kind]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda member: not member.main_world)
+        return candidates[0]
+
+    def installs(self, context_type, name) -> bool:
+        """Whether the reference browser installs this Window name at all."""
+        return self.surface is None or context_type != "Window" or self.surface.has(name)
+
+    def window_aliases(self) -> dict:
+        """``alias -> interface`` for the Window aliases the reference browser installs."""
+        cached = self._aliases
+        if cached is None:
+            exposed = set(self.exposed("Window"))
+            cached = {
+                alias: name
+                for name, entry in self.baseline.interfaces.items()
+                if name in exposed
+                for alias in (entry.get("aliases") or ())
+                if self.installs("Window", alias) and alias not in exposed
+            }
+            self._aliases = cached
+        return cached
+
+    def exposed(self, context_type) -> tuple:
+        """Names the baseline exposes for *context_type*, in baseline order."""
+        cached = self._exposed.get(context_type)
+        if cached is None:
+            cached = tuple(
+                name for name, entry in self.baseline.interfaces.items()
+                if context_type in (entry.get("exposed_in") or ())
+                and self.installs(context_type, name)
+            )
+            self._exposed[context_type] = cached
+        return cached
+
+
+@dataclass(frozen=True)
+class RealmPlan:
+    """The exposure plan of one realm class."""
+
+    context_type: str
+    #: Installed on the global, built on first read.
+    declared: tuple[str, ...]
+    #: Built before the first script runs.
+    eager: tuple[str, ...]
+
+    @property
+    def deferred(self) -> tuple[str, ...]:
+        eager = set(self.eager)
+        return tuple(name for name in self.declared if name not in eager)
+
+
+def build_plan(table, context_type, *, implements=(), expose_unimplemented=True, eager=()) -> RealmPlan:
+    """Plan one realm class from the table.
+
+    The names a realm declares and the ones it pre-builds are one object, so a realm and
+    its statistics read the same plan.
+    """
+    declared = tuple(sorted(
+        name for name in table.exposed(context_type)
+        if expose_unimplemented or name in implements
+    ))
+    return RealmPlan(
+        context_type=context_type,
+        declared=declared,
+        eager=tuple(name for name in declared if name in set(eager) or name == "Window"),
+    )

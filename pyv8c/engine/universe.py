@@ -1,8 +1,8 @@
-"""Per-Browser interface universe: materialization, stubs and binding sessions.
+"""Per-Browser interface universe: one baseline view, one compiler, one plan per realm.
 
-File I/O and the disk cache live in :mod:`.baseline`; this module is the per-Browser
-composition root, assembling :mod:`.catalog`, :mod:`.stubs`, :mod:`.wrappers`,
-:mod:`.assembly` and :mod:`.sessions`.
+The composition root: reading the baseline is :mod:`.baseline`'s business, turning it
+into specs is :mod:`.assembly`'s, and this holds what the Browsers share -- the class
+each interface name answers with, and the mismatches tolerated once each.
 """
 
 from __future__ import annotations
@@ -14,12 +14,12 @@ from .baseline import (
     DEFAULT_BASELINE_PATH,
     BaselineRepository,
     BaselineSnapshot,
+    InterfaceTable,
+    RealmPlan,
+    build_plan,
+    load_window_surface,
 )
-from .catalog import InterfaceCatalog
 from .features import FeatureRuntime, InterfaceSpec
-from .sessions import BindingSession
-from .stubs import StubFactory
-from .wrappers import BindingWrapperFactory
 from ..foundation.logging import logger
 
 __all__ = [
@@ -28,7 +28,6 @@ __all__ = [
     "BaselineRepository",
     "BaselineSnapshot",
     "InterfaceUniverse",
-    "BindingSession",
 ]
 
 DEFAULT_EAGER_INTERFACES = (
@@ -37,12 +36,14 @@ DEFAULT_EAGER_INTERFACES = (
     "HTMLCollection", "NamedNodeMap",
 )
 
+
 class InterfaceUniverse:
     """One isolated baseline view and FeatureRuntime class config set."""
 
     def __init__(self, baseline: BaselineSnapshot, *, runtime: FeatureRuntime, stub_logging="off",
                  expose_unimplemented=True, baseline_mismatch="warn"):
         self.baseline = baseline
+        self.table = InterfaceTable(baseline, surface=load_window_surface())
         self.runtime = runtime
         self.stub_logging = str(stub_logging or "off").lower()
         self.expose_unimplemented = bool(expose_unimplemented)
@@ -55,17 +56,11 @@ class InterfaceUniverse:
         self._mismatches = set()
         self.eager_interfaces = DEFAULT_EAGER_INTERFACES
         self._validated = False
-        self.deferred_globals = True
         # One re-entrant lock guards every read-modify-write cache so concurrent realms never see a torn cache.
         self._lock = threading.RLock()
         self._classes: dict[str, type] = {}
-        self._catalog = InterfaceCatalog(baseline)
-        self._exposure_names = {}
-        self._unexposed_names = {}
-        # Stubs shell unimplemented members, adapters inject realms, the compiler combines them.
-        self._stubs = StubFactory(self.stub_logging)
-        self._wrappers = BindingWrapperFactory(self)
-        self._assembly = InterfaceCompiler(self, self._stubs, self._wrappers, self._lock)
+        self._plans: dict[str, RealmPlan] = {}
+        self._assembly = InterfaceCompiler(self, stub_logging=self.stub_logging, lock=self._lock)
 
     def report_mismatch(self, message):
         """Report an implementation/baseline mismatch; true when it is tolerated.
@@ -81,61 +76,33 @@ class InterfaceUniverse:
                 logger.warning("pyv8c: {}", message)
         return True
 
+    @property
+    def discrepancies(self) -> tuple:
+        """Each implementation/baseline difference this universe tolerated, once."""
+        return tuple(sorted(self._mismatches))
+
     def spec(self, name):
-        """The raw baseline spec of one interface (collaborator query surface)."""
+        """The raw baseline spec of one interface."""
         try:
-            return self.baseline.interfaces[name]
+            return self.table.raw(name)
         except KeyError as exc:
             if self.report_mismatch(f"interface {name!r} is missing from the interface baseline"):
                 return {}
             raise TypeError(f"interface {name!r} is missing from Chromium interface baseline") from exc
 
-    def own_members(self, interface_name):
-        """Yield ``(location, member)`` declared directly on one interface."""
-        spec = self.spec(interface_name)
-        for location in ("instance", "prototype", "interface"):
-            for member in (spec.get("members") or {}).get(location, ()) or ():
-                yield location, member
-
-    def interface_names(self, context_type="Window"):
-        """Return the stable global name table without materializing classes."""
+    def plan(self, context_type="Window"):
+        """What a realm of *context_type* installs, computed once."""
         with self._lock:
-            cached = self._exposure_names.get(context_type)
-        if cached is not None:
+            cached = self._plans.get(context_type)
+            if cached is None:
+                cached = build_plan(
+                    self.table, context_type,
+                    implements=self.runtime.catalog.interfaces,
+                    expose_unimplemented=self.expose_unimplemented,
+                    eager=self.eager_interfaces,
+                )
+                self._plans[context_type] = cached
             return cached
-        names = tuple(sorted(self.exposed_names(context_type)))
-        with self._lock:
-            cached = self._exposure_names.get(context_type)
-            if cached is not None:
-                return cached
-            self._exposure_names[context_type] = names
-            return names
-
-    def eager_names(self, context_type="Window"):
-        exposed = set(self.interface_names(context_type))
-        names = set(name for name in self.eager_interfaces if name in exposed or name == "Window")
-        return tuple(name for name in self.interface_names(context_type) if name in names)
-
-    def _member(self, interface_name, public_name, kind):
-        seen, current = set(), interface_name
-        while current and current not in seen:
-            seen.add(current)
-            candidates = [
-                (location, member) for location, member in self.own_members(current)
-                if member.get("name") == public_name and member.get("kind") == kind
-            ]
-            if candidates:
-                candidates.sort(key=lambda item: (
-                    item[1].get("world") not in (None, "AllWorlds", "MainWorld"),
-                ))
-                return current, candidates[0][0], candidates[0][1]
-            current = self.spec(current).get("parent")
-        # Blink sometimes installs WorkerGlobalScope members in a concrete descendant's table.
-        for candidate_name in self._catalog.descendants(interface_name):
-            for location, member in self.own_members(candidate_name):
-                if member.get("name") == public_name and member.get("kind") == kind:
-                    return candidate_name, location, member
-        return None
 
     def class_for(self, name):
         """Return the one canonical class object per interface name.
@@ -155,7 +122,7 @@ class InterfaceUniverse:
             if implementation is None:
                 cls = type(name, (parent,), {
                     "__module__": "pyv8c.engine.generated",
-                    "__init__": self._stubs.constructor(name),
+                    "__init__": self._assembly.stubs.constructor(name),
                     "__idl_spec__": InterfaceSpec(name, parent_name),
                     "__v8_idl_stub__": True,
                 })
@@ -165,25 +132,8 @@ class InterfaceUniverse:
             return cls
 
     def class_config_for(self, name, realm=None):
+        """The spec one interface is built from in one realm."""
         return self._assembly.bind(name, realm)
-
-    def walk_parent_names(self, name):
-        """The interface plus its ancestor chain, innermost first."""
-        yield from self._catalog.walk_parent_names(name)
-
-    def unexposed_names(self, context_type):
-        """Interfaces this realm can hand over but never exposes as a global."""
-        with self._lock:
-            cached = self._unexposed_names.get(context_type)
-        if cached is not None:
-            return cached
-        exposed = set(self.interface_names(context_type))
-        names = tuple(sorted(
-            name for name in self.runtime.catalog.interfaces if name not in exposed
-        ))
-        with self._lock:
-            self._unexposed_names[context_type] = names
-        return names
 
     def describes(self, name):
         """Whether this universe can commit an overlay for ``name``."""
@@ -191,23 +141,8 @@ class InterfaceUniverse:
             return False
         return getattr(self.class_for(name), "__name__", None) == name
 
-    def exposed_names(self, context_type):
-        return list(self._catalog.exposed_names(
-            context_type, self.expose_unimplemented, self.runtime.catalog.interfaces,
-        ))
-
-    def resolve_names(self, context_type, roots=()):
-        """Interface names (including ancestors) a context_type must install."""
-        names = set(self.eager_names(context_type))
-        names.update(root for root in roots if isinstance(root, str))
-        for name in tuple(names):
-            names.update(self.walk_parent_names(name))
-        return names
-
-    def binding_session(self, realm=None):
-        return BindingSession(self, realm)
-
     def validate(self):
+        """Compile every interface once, to surface mismatches before a page runs."""
         with self._lock:
             if not self._validated:
                 for name in self.baseline.interfaces:

@@ -1,10 +1,9 @@
 """Binding-snapshot semantics under multi-realm concurrency.
 
-Materialization is commit based: configs are staged per realm and pushed to
-the native Context through ``Context.update_configs``.  The Python class for a
-given interface name must be one shared object across every realm (so the
-native class template cache stays consistent), while each realm's config view
-and materialized set stay isolated from its neighbours.
+Materialization is answer based: a realm stages an overlay and hands it to the native
+Context as the lazy factory's answer.  The Python class for a given interface name must
+be one shared object across every realm (so the native registry stays consistent), while
+each realm's config view and materialized set stay isolated from its neighbours.
 """
 import threading
 
@@ -90,10 +89,10 @@ def test_commits_keep_existing_templates_stable(browser):
             window.__ctor = XPathEvaluator;
             window.__proto = XPathEvaluator.prototype;
         """)
-        # A second, unrelated commit flows through update_configs afterwards.
+        # A second, unrelated answer lands in the realm afterwards.
         page.evaluate("typeof GPUBufferUsage")
         assert "GPUBufferUsage" in page.binding_session.materialized_interfaces
-        # The cached template was not invalidated by the later commit.
+        # The cached template was not invalidated by the later answer.
         assert page.evaluate("window.__ctor === XPathEvaluator")
         assert page.evaluate("window.__proto === XPathEvaluator.prototype")
         assert page.evaluate("Object.prototype.toString.call(new XPathEvaluator())") == "[object XPathEvaluator]"

@@ -324,18 +324,20 @@ class Browser:
         self.interface_baseline_path = snapshot.path
         self.interface_baseline_info = snapshot.info
         self._startup_stats.update(BaselineRepository._last_timings)
+        plan = self.interface_universe.plan("Window")
         self._startup_stats.update({
             "validation_ms": (validation_finished - validation_started) / 1_000_000,
             "browser_init_ms": (validation_finished - started) / 1_000_000,
-            "known_interfaces": len(self.interface_universe.interface_names("Window")),
-            "core_interfaces": len(self.interface_universe.eager_names("Window")),
-            "deferred_interfaces": max(0, len(self.interface_universe.interface_names("Window")) - len(self.interface_universe.eager_names("Window"))),
+            "known_interfaces": len(plan.declared),
+            "core_interfaces": len(plan.eager),
+            "deferred_interfaces": len(plan.deferred),
             "materialized_interfaces": 0,
             "binding_assembly_ms": 0.0,
             "context_create_ms": 0.0,
             "deferred_global_declare_ms": 0.0,
             "deferred_globals": 0,
             "deferred_materialized": 0,
+            "baseline_discrepancies": len(self.interface_universe.discrepancies),
         })
 
     @property

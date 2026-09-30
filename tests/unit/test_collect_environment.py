@@ -64,10 +64,28 @@ def test_a_profile_has_to_be_complete_before_it_is_written():
         collector.build_environment(payload(**{"timezone": None}))
 
 
-def test_the_default_file_name_names_the_browser(tmp_path):
-    source = {"browser": "Chrome/153.0.8010.52", "platform": "win32"}
-    assert collector.default_name(source) == "chrome-153.0.8010.52-win32.json"
-    assert collector.default_name({}) == "chrome-unknown-unknown.json"
+def test_a_run_writes_the_environment_and_the_window_surface_together():
+    """Both facts are read from one session, so they land in one document."""
+    collected = payload()
+    surface = collector.build_surface({"keys": ["a"], "own": ["a", "b"]})
+    document = collector.build_profile(collected, surface, source={"browser": "Chrome/153.0.8010.52"})
+
+    assert document["window_surface"] == {"keys": ["a"], "own_names": ["a", "b"]}
+    assert document["source"]["browser"] == "Chrome/153.0.8010.52"
+    assert set(document) == {"schema", "source", "window_surface", *COLLECTED_KEYS}
+    # The section is not an environment key: the profile still loads as one.
+    assert BrowserEnvironment.from_dict(document).to_dict() == collected
+
+
+def test_the_surface_script_asks_for_what_the_section_carries():
+    assert "Object.keys(window)" in collector.SURFACE_SCRIPT
+    assert "Object.getOwnPropertyNames(window)" in collector.SURFACE_SCRIPT
+
+
+def test_the_default_output_is_the_profile_the_package_ships():
+    assert collector.DEFAULT_OUTPUT.name == "chrome-environment.json"
+    assert collector.DEFAULT_OUTPUT.parent.name == "data"
+    assert collector.DEFAULT_OUTPUT.exists()
 
 
 def test_a_failed_collection_exits_nonzero_with_the_reason(monkeypatch, capsys):

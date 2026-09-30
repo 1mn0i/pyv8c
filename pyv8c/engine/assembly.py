@@ -1,7 +1,17 @@
-"""Compile realm-independent IDL structure once, bind only realm-dependent callbacks."""
+"""Turn baseline declarations and hand-written classes into native IdlSpecs.
 
+The one module that knows both sides: it decodes a member's shorthand into the flags the
+binding wants, compiles the realm-independent structure once, fills undeclared members
+with safe shells, and rebinds only the callbacks that need a realm.
+"""
+
+from __future__ import annotations
+
+import inspect
+import threading
 from dataclasses import dataclass
 
+import pyv8
 from pyv8 import AttributeSpec, ConstantSpec, IdlSpec, MethodSpec
 from pyv8.flag import (
     FlagCrossOriginCheck,
@@ -11,40 +21,7 @@ from pyv8.flag import (
     V8Attribute,
 )
 
-from .config import apply_template_flags
-
-
-def _location(value):
-    return {
-        "instance": FlagLocation.kInstance,
-        "prototype": FlagLocation.kPrototype,
-        "interface": FlagLocation.kInterface,
-    }.get(value, FlagLocation.kPrototype)
-
-
-def _side_effect(value):
-    return {
-        "HasNoSideEffect": SideEffectType.kHasNoSideEffect,
-        "HasSideEffectToReceiver": SideEffectType.kHasSideEffectToReceiver,
-    }.get(value, SideEffectType.kHasSideEffect)
-
-
-def _receiver(value):
-    return FlagReceiverCheck.kDoNotCheck if value == "DoNotCheck" else FlagReceiverCheck.kCheck
-
-
-def _cross_origin(value):
-    return FlagCrossOriginCheck.kDoNotCheck if value == "DoNotCheck" else FlagCrossOriginCheck.kCheck
-
-
-def _property_flags(member):
-    flags = str(member.get("flags") or "")
-    result = V8Attribute.ReadOnly if "ReadOnly" in flags or "DontWrite" in flags else 0
-    if "DontEnum" in flags:
-        result |= V8Attribute.DontEnum
-    if "DontDelete" in flags:
-        result |= V8Attribute.DontDelete
-    return result
+from ..foundation.logging import logger
 
 
 # (baseline handler key, __v8_*__ method name) per interceptor family.
@@ -100,6 +77,211 @@ HANDLER_CALLBACKS = frozenset(
 )
 
 
+# Template fields the baseline states that map straight onto the binding's flags.
+TEMPLATE_FLAGS = (
+    ("immutable_proto", "immutable"),
+    ("undetectable", "undetectable"),
+    ("global_this", "global_this"),
+    ("as_object", "as_object"),
+    ("unconstructable", "unconstructable"),
+)
+
+_LOCATION_FLAGS = {
+    "instance": FlagLocation.kInstance,
+    "prototype": FlagLocation.kPrototype,
+    "interface": FlagLocation.kInterface,
+}
+_SIDE_EFFECTS = {
+    "HasNoEffect": SideEffectType.kHasNoSideEffect,
+    "HasNoSideEffect": SideEffectType.kHasNoSideEffect,
+    "HasSideEffectToReceiver": SideEffectType.kHasSideEffectToReceiver,
+}
+_PROPERTY_FLAGS = (
+    ("ReadOnly", V8Attribute.ReadOnly),
+    ("DontWrite", V8Attribute.ReadOnly),
+    ("DontEnum", V8Attribute.DontEnum),
+    ("DontDelete", V8Attribute.DontDelete),
+)
+
+
+def property_flags(member) -> int:
+    """The property attributes of one member.
+
+    A compact snapshot states the mask; an older one only states the flag text.
+    """
+    if member.property_flags is not None:
+        return member.property_flags
+    result = V8Attribute.kNone
+    for name, bit in _PROPERTY_FLAGS:
+        if name in member.flags:
+            result |= bit
+    return result
+
+
+def member_flags(member) -> dict:
+    """The flags every member spec carries, decoded from the member's shorthand."""
+    return dict(
+        location=_LOCATION_FLAGS.get(member.location, FlagLocation.kPrototype),
+        property_flags=property_flags(member),
+        receiver_check=(FlagReceiverCheck.kDoNotCheck if member.receiver == "DoNotCheck"
+                        else FlagReceiverCheck.kCheck),
+        side_effect=_SIDE_EFFECTS.get(member.side_effect, SideEffectType.kHasSideEffect),
+    )
+
+
+def cross_origin_check(member) -> int:
+    """Whether one member is guarded by the cross-origin access check."""
+    return (FlagCrossOriginCheck.kDoNotCheck if member.cross_origin == "DoNotCheck"
+            else FlagCrossOriginCheck.kCheck)
+
+
+def apply_template_flags(config, template):
+    """The interface-wide flags one baseline template states."""
+    for source, target in TEMPLATE_FLAGS:
+        if template.get(source):
+            config[target] = 1 if target == "immutable" else True
+    # ``array`` marks a Web IDL indexed collection; the bridge shares FlagArrayProto's bit layout.
+    if template.get("array") and not config.get("array"):
+        config["array"] = 1
+    return config
+
+
+def mark_stub(callback):
+    """Mark generated placeholders for Python diagnostics only."""
+    callback.__v8_idl_stub__ = True
+    return callback
+
+
+class StubFactory:
+    """Build the safe, logging shells used for unimplemented members."""
+
+    #: The level that reports placeholder handlers, which run on ordinary property probes.
+    HANDLER_LEVEL = "verbose"
+
+    def __init__(self, stub_logging="off"):
+        self.stub_logging = str(stub_logging or "off").lower()
+        self.reports_handlers = self.stub_logging == self.HANDLER_LEVEL
+        #: A reporting handler speaks once per interface and callback, not per probe.
+        self._reported = set()
+
+    def _log(self, message, *args):
+        if self.stub_logging != "off":
+            logger.info(message, *args)
+
+    def method(self, interface_name, member_name, *, static=False):
+        def callback(*args):
+            self._log("pyv8c: {}.{}() 待实现", interface_name, member_name)
+            return pyv8.Undefined
+        callback.__name__ = f"_pyv8c_stub_method_{interface_name}_{member_name}"
+        return mark_stub(callback)
+
+    def getter(self, interface_name, member_name):
+        def getter(*_args):
+            self._log("pyv8c: {}.{} getter 待实现", interface_name, member_name)
+            return pyv8.Undefined
+        getter.__name__ = f"_pyv8c_stub_get_{interface_name}_{member_name}"
+        return mark_stub(getter)
+
+    def setter(self, interface_name, member_name):
+        def setter(*args):
+            self._log("pyv8c: {}.{} setter 待实现", interface_name, member_name)
+        setter.__name__ = f"_pyv8c_stub_set_{interface_name}_{member_name}"
+        return mark_stub(setter)
+
+    def constructor(self, interface_name):
+        def constructor(_self, *_args, **_kwargs):
+            self._log("pyv8c: {} constructor 待实现", interface_name)
+        constructor.__name__ = interface_name
+        constructor.__v8_idl_stub__ = True
+        return constructor
+
+    def call_handler(self, interface_name):
+        def call_handler(*_args):
+            return pyv8.Undefined
+        call_handler.__name__ = f"_pyv8c_stub_call_{interface_name}"
+        return mark_stub(call_handler)
+
+    def handler(self, interface_name, method_name):
+        def handler(*args):
+            reported = (interface_name, method_name)
+            if self.reports_handlers and reported not in self._reported:
+                self._reported.add(reported)
+                self._log("pyv8c: {}.{} 待实现", interface_name, method_name)
+            # None tells V8 the interceptor skipped it; enum interceptors report an empty tuple.
+            if method_name.endswith("enum__"):
+                return ()
+            return None
+        handler.__name__ = f"_pyv8c_stub_{method_name}_{interface_name}"
+        return mark_stub(handler)
+
+
+class SignatureCache:
+    """Cache Python callback parameter names for one interface universe."""
+
+    def __init__(self):
+        self._values = {}
+
+    def names(self, callback):
+        names = self._values.get(callback)
+        if names is None:
+            names = tuple(inspect.signature(callback).parameters)
+            self._values[callback] = names
+        return names
+
+
+class BindingWrapperFactory:
+    """Bind implementation callbacks directly, injecting a realm only when requested."""
+
+    def __init__(self, universe):
+        self.universe = universe
+        self._parameter_cache = SignatureCache()
+
+    def _parameters_for(self, callback):
+        return self._parameter_cache.names(callback)
+
+    def method(self, cls, interface_name, public_name, callback_name, *, static, realm=None):
+        raw = self._raw_callback(cls, callback_name)
+        parameters = self._parameters_for(raw)
+        inject_realm = static and realm is not None and parameters[:1] == ("_realm",)
+
+        if not inject_realm:
+            return raw
+
+        def callback(*args):
+            return raw(realm, *args)
+
+        callback.__name__ = f"_pyv8c_binding_{interface_name}_{public_name}"
+        return callback
+
+    def setter(self, cls, interface_name, public_name, callback_name):
+        return self._raw_callback(cls, callback_name)
+
+    def constructor_adapter(self, interface_name, stub, realm=None):
+        implementation = self.universe.class_for(interface_name)
+        inject_realm = "_realm" in self._parameters_for(implementation)
+
+        def construct(cls, args, kwargs):
+            options = dict(kwargs)
+            if realm is not None and inject_realm:
+                options["_realm"] = realm
+            return cls(*args, **options)
+
+        construct.__name__ = f"_pyv8c_construct_{interface_name}"
+        if stub:
+            construct.__v8_idl_stub__ = True
+        return construct
+
+    @staticmethod
+    def _raw_callback(cls, name):
+        if callable(name):
+            return name
+        for base in cls.__mro__:
+            if name in base.__dict__:
+                raw = base.__dict__[name]
+                return raw.__func__ if isinstance(raw, (staticmethod, classmethod)) else raw
+        raise TypeError(f"callback {cls.__name__}.{name} is missing")
+
+
 @dataclass(frozen=True)
 class CompiledInterface:
     spec: IdlSpec
@@ -108,12 +290,15 @@ class CompiledInterface:
 
 
 class InterfaceCompiler:
-    def __init__(self, universe, stubs, wrappers, lock):
+    """Compile one interface universe's classes, once each."""
+
+    def __init__(self, universe, *, stub_logging="off", lock=None):
         self.universe = universe
-        self.stubs = stubs
-        self.wrappers = wrappers
+        self.stubs = StubFactory(stub_logging)
+        self.wrappers = BindingWrapperFactory(universe)
         self._compiled = {}
-        self._lock = lock
+        # The universe shares its lock: a compile reaches back into it for classes.
+        self._lock = lock or threading.RLock()
 
     def _fills_stub(self, callback_name, registration):
         """Whether a handler the class does not declare is filled with a stub.
@@ -150,8 +335,8 @@ class InterfaceCompiler:
     def _compile(self, name):
         universe = self.universe
         cls = universe.class_for(name)
-        baseline = universe.spec(name)
-        parent_name = baseline.get("parent")
+        interface = universe.table.interface(name)
+        parent_name = interface.parent
         parent = universe.class_for(parent_name) if parent_name else object
         implementation = universe.runtime.interface(name)
         registration = getattr(implementation, "__idl_spec__", None)
@@ -166,30 +351,25 @@ class InterfaceCompiler:
                 if not universe.report_mismatch(f"{name} must explicitly inherit {registration.parent}"):
                     raise TypeError(f"{name} must explicitly inherit {registration.parent}")
         source = cls.__dict__.get("__v8_idl_spec__", IdlSpec())
-        entries = list(universe.own_members(name))
-        public_methods = {member.get("name") for _, member in entries if member.get("kind") == "operation"}
-        public_attributes = {member.get("name") for _, member in entries if member.get("kind") == "attribute"}
+        entries = universe.table.own_members(name)
+        public_methods = {member.name for _, member in entries if member.kind == "operation"}
+        public_attributes = {member.name for _, member in entries if member.kind == "attribute"}
         declared_methods = self._members(cls, parent, "methods", public_methods)
         declared_attributes = self._members(cls, parent, "attributes", public_attributes)
         methods = []
         attributes = []
         realm_methods = []
         seen = set()
-        for location, member in entries:
-            public_name = member.get("name")
-            kind = member.get("kind")
+        for _location, member in entries:
+            public_name = member.name
+            kind = member.kind
             if not public_name or kind not in ("operation", "attribute") or (kind, public_name) in seen:
                 continue
             seen.add((kind, public_name))
-            common = dict(
-                location=_location(location),
-                property_flags=_property_flags(member),
-                receiver_check=_receiver(member.get("receiver")),
-                side_effect=_side_effect(member.get("side_effect")),
-            )
+            common = member_flags(member)
             if kind == "operation":
                 declared = declared_methods.pop(public_name, None)
-                static = location == "interface"
+                static = member.is_static
                 if declared is not None:
                     raw = self.wrappers._raw_callback(cls, declared.callback)
                     callback = self.wrappers.method(cls, name, public_name, raw, static=static)
@@ -197,8 +377,10 @@ class InterfaceCompiler:
                         realm_methods.append((len(methods), raw))
                 else:
                     callback = self.stubs.method(name, public_name, static=static)
+                length = member.length if member.length is not None else (declared.length if declared else 0)
                 methods.append(
-                    MethodSpec(name=public_name, callback=callback, length=int(member["length"] if member.get("length") is not None else declared.length if declared else 0), cross_origin_check=_cross_origin(member.get("cross_origin")), **common)
+                    MethodSpec(name=public_name, callback=callback, length=int(length),
+                               cross_origin_check=cross_origin_check(member), **common)
                 )
             else:
                 declared = declared_attributes.pop(public_name, None)
@@ -208,20 +390,21 @@ class InterfaceCompiler:
                     else self.stubs.getter(name, public_name)
                 )
                 setter = None
-                writable = bool(member.get("setter") or member.get("setter_callback") or member.get("has_setter"))
-                if "setter" not in member and declared is not None:
-                    writable = declared.setter is not None
+                writable = member.setter_state
+                if writable is None:
+                    writable = declared is not None and declared.setter is not None
                 if writable:
                     setter = (
                         self.wrappers.setter(cls, name, public_name, declared.setter)
                         if declared is not None and declared.setter is not None
                         else self.stubs.setter(name, public_name)
                     )
+                crossing = cross_origin_check(member)
                 attributes.append(
-                    AttributeSpec(name=public_name, getter=getter, setter=setter, replaceable=bool(declared and declared.replaceable), cross_origin_get_check=_cross_origin(member.get("cross_origin")), cross_origin_set_check=_cross_origin(member.get("cross_origin")), **common)
+                    AttributeSpec(name=public_name, getter=getter, setter=setter, replaceable=bool(declared and declared.replaceable), cross_origin_get_check=crossing, cross_origin_set_check=crossing, **common)
                 )
         for public_name, declared in declared_methods.items():
-            if universe._member(name, public_name, "operation") is None:
+            if universe.table.member(name, public_name, "operation") is None:
                 if not universe.report_mismatch(
                         f"{name}.{public_name} is not present in the interface baseline"):
                     raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
@@ -233,7 +416,7 @@ class InterfaceCompiler:
                 realm_methods.append((len(methods), raw))
             methods.append(declared.replace(callback=callback))
         for public_name, declared in declared_attributes.items():
-            if declared.setter is not None and universe._member(name, public_name, "attribute") is None:
+            if universe.table.member(name, public_name, "attribute") is None:
                 if not universe.report_mismatch(
                         f"{name}.{public_name} is not present in the interface baseline"):
                     raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
@@ -243,7 +426,7 @@ class InterfaceCompiler:
             if declared.setter is not None:
                 setter = self.wrappers.setter(cls, name, public_name, declared.setter)
             attributes.append(declared.replace(getter=getter, setter=setter))
-        template = baseline.get("template") or {}
+        template = interface.template
         enabled = set()
         handlers = template.get("handlers") or {}
         cross = handlers.get("cross_origin") or {}
@@ -274,20 +457,20 @@ class InterfaceCompiler:
         for field, value in cls.__dict__.items():
             if not field.startswith("_") and isinstance(value, int):
                 constants.setdefault(field, ConstantSpec(name=field, value=value))
-        for constant in baseline.get("constants") or ():
+        for constant in interface.constants:
             if constant.get("resolved") and isinstance(constant.get("value"), int):
                 constants[constant["name"]] = ConstantSpec(name=constant["name"], value=constant["value"])
-        for _, member in entries:
-            if member.get("kind") == "constant" and isinstance(member.get("value"), int):
-                constants[member["name"]] = ConstantSpec(name=member["name"], value=member["value"])
+        for _location, member in entries:
+            if member.kind == "constant" and member.value is not None:
+                constants[member.name] = ConstantSpec(name=member.name, value=member.value)
         options.update(
             methods=tuple(methods),
             attributes=tuple(attributes),
             constants_value=tuple(constants.values()),
-            to_string_tag=baseline.get("tag") or source.to_string_tag or name,
+            to_string_tag=interface.tag or source.to_string_tag or name,
             has_constructor=(
                 source.has_constructor if "__v8_idl_spec__" in cls.__dict__
-                else (1 if (baseline.get("constructor") or {}).get("exposed") else 0)
+                else (1 if interface.has_interface_object else 0)
             ),
         )
         if parent_name is not None:
@@ -302,12 +485,11 @@ class InterfaceCompiler:
         apply_template_flags(options, template)
         if source.array:
             options["array"] = source.array
-        constructor = baseline.get("constructor") or {}
-        if constructor.get("length") is not None:
-            options["length"] = int(constructor["length"])
-        if constructor.get("allow_new") is not None or constructor.get("allow_call") is not None:
-            options["constructor_behavior"] = (1 if constructor.get("allow_new") else 0) | (
-                2 if constructor.get("allow_call") else 0
+        if interface.constructor_length is not None:
+            options["length"] = interface.constructor_length
+        if interface.constructor_stated:
+            options["constructor_behavior"] = (1 if interface.constructor_new else 0) | (
+                2 if interface.constructor_call else 0
             )
         realm_constructor = False
         if options.get("constructor_behavior", source.constructor_behavior):

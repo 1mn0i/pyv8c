@@ -299,13 +299,13 @@ class Navigation(EventTarget):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
             AttributeSpec(name="currentEntry", getter="get_currentEntry", side_effect=1),
-            AttributeSpec(name="entries", getter="get_entries", side_effect=1),
             AttributeSpec(name="canGoBack", getter="get_canGoBack", side_effect=1),
             AttributeSpec(name="canGoForward", getter="get_canGoForward", side_effect=1),
             AttributeSpec(name="transition", getter="get_transition", side_effect=1),
             AttributeSpec(name="activation", getter="get_activation", side_effect=1),
         ),
         methods=(
+            MethodSpec(name="entries", callback="fn_entries", length=0),
             MethodSpec(name="navigate", callback="fn_navigate", length=1),
             MethodSpec(name="reload", callback="fn_reload", length=0),
             MethodSpec(name="back", callback="fn_back", length=0),
@@ -326,8 +326,7 @@ class Navigation(EventTarget):
     def _current(self): return self._values.value("currentEntry")
 
     def get_currentEntry(self): return self._current()
-    #: A document set from markup records no entry, and nothing keeps a history.
-    def get_entries(self): return []
+    def fn_entries(self, *_extra): return [self._current()]
     def get_canGoBack(self): return False
     def get_canGoForward(self): return False
     def get_transition(self): return pyv8.Null

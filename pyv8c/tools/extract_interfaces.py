@@ -8,7 +8,7 @@ import os
 import re
 from pathlib import Path
 
-from ..engine.schema import write_baseline
+from ..engine.baseline import write_baseline
 
 INTERFACE_DECL = re.compile(r"const\s+WrapperTypeInfo\s+V8(?P<binding>[A-Za-z0-9_]+)::wrapper_type_info_\s*\{")
 FUNCTION_DECL = re.compile(r"(?:void|v8::Local\s*<\s*v8::Value\s*>)\s+(?P<name>[A-Za-z0-9_]+Callback)\s*\([^)]*\)\s*\{")
@@ -26,7 +26,7 @@ OPERATION_TABLE_KINDS = {"NoAllocDirectCallOperation": "Operation"}
 #: ``SetCallHandler`` instead of a constructor table.
 CONSTRUCTOR_CALLBACK = re.compile(r"\b[A-Za-z0-9_]*ConstructorCallback\b")
 IDL_INTERFACE_DECL = re.compile(
-    r"(?:(?P<attrs>\[[\s\S]*?\])\s*)?(?P<partial>\bpartial\s+)?interface(?:\s+mixin)?\s+"
+    r"(?:(?P<attrs>\[[\s\S]*?\])\s*)?(?P<partial>\bpartial\s+)?(?:callback\s+)?interface(?:\s+mixin)?\s+"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*(?P<parent>[A-Za-z_][A-Za-z0-9_]*))?\s*\{")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -99,6 +99,20 @@ def _strip_unsigned(value):
     value = value.strip()
     value = re.sub(r"^unsigned\s*\(\s*", "", value)
     return re.sub(r"\s*\)$", "", value).strip()
+
+
+_V8_ATTRIBUTES = {"None": 0, "ReadOnly": 1, "DontWrite": 1, "DontEnum": 2, "DontDelete": 4}
+
+
+def _property_mask(value):
+    """The v8 attribute bitmask a table's flags field spells, or None when unreadable."""
+    words = re.findall(r"v8::([A-Za-z]+)", _strip_unsigned(value))
+    if not words or any(word not in _V8_ATTRIBUTES for word in words):
+        return None
+    mask = 0
+    for word in words:
+        mask |= _V8_ATTRIBUTES[word]
+    return mask
 
 
 def _flag(value, prefix):
@@ -185,7 +199,8 @@ def _member_from_table(kind, fields, signatures):
         result = {"name": name, "kind": "attribute", "getter": fields[1].strip(),
                 "setter": setter,
                 "readonly": fields[2].strip() == "nullptr", "location": location.lower(),
-                "flags": _strip_unsigned(fields[3]), "world": _flag(fields[5], "IDLMemberInstaller::FlagWorld"),
+                "flags": _strip_unsigned(fields[3]), "property_flags": _property_mask(fields[3]),
+                "world": _flag(fields[5], "IDLMemberInstaller::FlagWorld"),
                 "receiver": _flag(fields[6], "IDLMemberInstaller::FlagReceiverCheck"),
                 "cross_origin": _flag(fields[7], "IDLMemberInstaller::FlagCrossOriginCheck"),
                 "side_effect": _flag(fields[8], "v8::SideEffectType") if len(fields) > 8 else None,
@@ -209,7 +224,8 @@ def _member_from_table(kind, fields, signatures):
             signature["required"] = length
             signature["status"] = "unresolved"
         return {"name": name, "kind": "operation", "callback": callback, "length": length, "location": location.lower(),
-                "flags": _strip_unsigned(fields[3]), "world": _flag(fields[5], "IDLMemberInstaller::FlagWorld"),
+                "flags": _strip_unsigned(fields[3]), "property_flags": _property_mask(fields[3]),
+                "world": _flag(fields[5], "IDLMemberInstaller::FlagWorld"),
                 "receiver": _flag(fields[6], "IDLMemberInstaller::FlagReceiverCheck") if len(fields) > 6 else None,
                 "cross_origin": _flag(fields[7], "IDLMemberInstaller::FlagCrossOriginCheck") if len(fields) > 7 else None,
                 "side_effect": _flag(fields[8], "v8::SideEffectType") if len(fields) > 8 else None,
@@ -508,10 +524,16 @@ def _idl_metadata(root):
                 continue
             attrs, body = match.group("attrs"), text[text.find("{", match.start()) + 1:end - 1]
             attrs = attrs or ""
-            exposure_match = re.search(r"\bExposed\s*=\s*(?:\(([^)]*)\)|([A-Za-z_][A-Za-z0-9_]*))", attrs)
+            exposure_match = re.search(
+                r"\bExposed\s*=\s*(?:\(([^)]*)\)|(\*)|([A-Za-z_][A-Za-z0-9_]*))", attrs)
             exposed_in = []
             if exposure_match:
-                exposed_in = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", exposure_match.group(1) or exposure_match.group(2))
+                if exposure_match.group(2):
+                    # ``Exposed=*`` is every global; this runtime has two realm kinds.
+                    exposed_in = ["Window", "Worker"]
+                else:
+                    exposed_in = re.findall(r"[A-Za-z_][A-Za-z0-9_]*",
+                                            exposure_match.group(1) or exposure_match.group(3) or "")
             constants = {}
             for constant in re.finditer(r"\bconst\s+[A-Za-z_][A-Za-z0-9_<>? ]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^;]+)", body):
                 expression = constant.group(2).strip()
@@ -527,6 +549,7 @@ def _idl_metadata(root):
                 "allow_new": bool(re.search(r"\bconstructor\s*\(", body)),
                 "allow_call": bool(re.search(r"\bLegacyCallAsFunction\b", attrs)),
                 "constants": constants,
+                "aliases": re.findall(r"\bLegacyWindowAlias\s*=\s*([A-Za-z_][A-Za-z0-9_]*)", attrs),
             }
     return metadata
 
@@ -572,6 +595,8 @@ def _apply_idl_metadata(extracted, metadata):
             item["parent"] = info["parent"]
         if info["exposed_in"]:
             item["exposed_in"] = info["exposed_in"]
+        if info.get("aliases"):
+            item["aliases"] = sorted(set(item.get("aliases", ())) | set(info["aliases"]))
         if info["exposed"] is not None:
             item["constructor"]["exposed"] = info["exposed"]
         # Generated constructor callbacks are authoritative; IDL metadata only fills gaps.
@@ -700,6 +725,7 @@ def _compact_callback_metadata(item, *, include_audit):
     if include_audit:
         return
     (item.get("constructor") or {}).pop("callback", None)
+    (item.get("constructor") or {}).pop("signature", None)
     template = item.get("template") or {}
     if template.get("call_handler") is not None:
         template["call_handler"] = 1
@@ -717,15 +743,23 @@ def _compact_callback_metadata(item, *, include_audit):
 
 
 def _compact_member_callback_metadata(member, *, include_audit):
+    """Keep what the runtime reads; the audit snapshot keeps the rest.
+
+    Signatures, overloads, callback symbols and the reviewer's raw fields are audit
+    facts, and a runtime baseline states one world bit instead of the world's name.
+    """
     if include_audit:
         return
     member.pop("getter", None)
     member.pop("callback", None)
-    if member.get("world") in ("AllWorlds", "MainWorld"):
-        member.pop("world", None)
-    for overload in member.get("overloads") or ():
-        if isinstance(overload, dict):
-            _compact_member_callback_metadata(overload, include_audit=False)
+    member.pop("signature", None)
+    member.pop("setter_signature", None)
+    member.pop("overloads", None)
+    member.pop("review", None)
+    member.pop("raw", None)
+    member["main_world"] = member.pop("world", None) in (None, "AllWorlds", "MainWorld")
+    if isinstance(member.get("property_flags"), int):
+        member.pop("flags", None)
 
 
 def schema5_baseline(extracted, *, include_audit=False):
@@ -764,24 +798,26 @@ def schema5_baseline(extracted, *, include_audit=False):
                     if not include_audit:
                         member.pop("readonly", None)
                         member["setter"] = 1 if member.get("setter") else None
-                for signature_key in ("signature", "setter_signature"):
-                    signature = member.get(signature_key)
-                    if not isinstance(signature, dict):
-                        continue
-                    for parameter in signature.get("parameters") or ():
-                        parameter.pop("index", None)
-                        parameter.pop("review", None)
-                        if not parameter.get("optional"):
-                            parameter.pop("default", None)
+                if include_audit:
+                    for signature_key in ("signature", "setter_signature"):
+                        signature = member.get(signature_key)
+                        if not isinstance(signature, dict):
+                            continue
+                        for parameter in signature.get("parameters") or ():
+                            parameter.pop("index", None)
+                            parameter.pop("review", None)
+                            if not parameter.get("optional"):
+                                parameter.pop("default", None)
                 _compact_member_callback_metadata(member, include_audit=include_audit)
                 runtime_members.append(member)
             item["members"][location] = runtime_members
-        signature = constructor["signature"]
-        for parameter in signature.get("parameters") or ():
-            parameter.pop("index", None)
-            parameter.pop("review", None)
-            if not parameter.get("optional"):
-                parameter.pop("default", None)
+        if include_audit:
+            signature = constructor["signature"]
+            for parameter in signature.get("parameters") or ():
+                parameter.pop("index", None)
+                parameter.pop("review", None)
+                if not parameter.get("optional"):
+                    parameter.pop("default", None)
         _compact_callback_metadata(item, include_audit=include_audit)
         if include_audit:
             item["provenance"] = {

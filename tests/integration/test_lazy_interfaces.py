@@ -16,8 +16,9 @@ def test_cold_start_materialises_no_lazy_interface():
     try:
         session = page.binding_session
         materialized = set(session.materialized_interfaces)
-        eager = set(browser.interface_universe.eager_names("Window"))
-        lazy = set(session.lazy_names("Window"))
+        plan = browser.interface_universe.plan("Window")
+        eager = set(plan.eager)
+        lazy = set(plan.deferred)
         exposed = set(session.interface_names("Window"))
 
         assert eager
@@ -153,13 +154,18 @@ def test_unknown_global_name_is_not_materialised():
 
 
 def test_interfaces_the_realm_never_exposes_are_declared_but_not_installed():
-    """A realm declares more than it exposes: the name stays off the global object, and
-    its overlay is still committed when such an object arrives."""
+    """A realm knows more than it exposes: the name stays off the global object, and
+    the realm can still answer for it when such an object arrives."""
     browser = Browser(stub_logging="off")
     try:
         page = browser.new_context().new_page()
         universe = browser.interface_universe
-        assert "WebGLDebugRendererInfo" in universe.unexposed_names("Window")
+        # Implemented, in the baseline, but not exposed to Window: exactly the case the
+        # realm has to answer for without the name ever being installed.
+        assert "WebGLDebugRendererInfo" not in universe.plan("Window").declared
+        assert universe.runtime.interface("WebGLDebugRendererInfo") is not None
+        # The realm answers for it: an object of that interface still gets its overlay.
+        assert universe.describes("WebGLDebugRendererInfo") is True
         assert page.evaluate("[typeof WebGLDebugRendererInfo,"
                              " 'WebGLDebugRendererInfo' in window]") == ["undefined", False]
     finally:

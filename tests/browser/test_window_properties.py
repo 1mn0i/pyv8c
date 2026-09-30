@@ -30,13 +30,6 @@ def test_ids_and_supported_name_attributes(page):
         True, 'FORM', 'EMBED', 'OBJECT', 'undefined', 'undefined', 'undefined', 'function', True]
 
 
-def test_orientation_reports_the_desktop_screen_angle(page):
-    """``window.orientation`` is Chromium's deprecated screen-angle alias."""
-    assert page.evaluate(
-        "[window.orientation, typeof window.orientation, 'orientation' in window]"
-    ) == [0, "number", True]
-
-
 def test_duplicates_return_live_html_collection(page):
     assert page.evaluate('''(() => { const matches = duplicate;
         const before = [matches instanceof HTMLCollection, matches.length, matches[0].tagName, matches[1].tagName];

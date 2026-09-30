@@ -25,7 +25,10 @@ def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, c
 
     document = json.loads(path.read_text(encoding="utf-8"))
     assert document["source"]["browser"].startswith(("Chrome", "Chromium", "HeadlessChrome"))
-    assert set(document) == {"schema", "source", *COLLECTED_KEYS}
+    assert set(document) == {"schema", "source", "window_surface", *COLLECTED_KEYS}
+    # The same session that answered the keys named what it installs on ``window``.
+    assert "Object" in document["window_surface"]["own_names"]
+    assert "innerWidth" in document["window_surface"]["keys"]
 
     profile = BrowserEnvironment.from_file(path)
     collected = profile.resolved()

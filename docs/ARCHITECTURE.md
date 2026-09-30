@@ -80,7 +80,9 @@ Feature 模块加载和 Realm 物化是两件事：模块类缓存属于 Browser
 
 ## 绑定与 baseline
 
-Chromium 生成的 `interface-baseline.zip` 只提供接口结构、继承、成员、模板标志和生成签名状态。IDL 编译在 `engine/assembly.py` 完成，Realm 相关 callback 由 `engine/wrappers.py` 绑定。
+Chromium 生成的 `interface-baseline.zip` 只提供接口结构、继承、成员、模板标志和生成签名状态。IDL 编译（含占位实现与 realm 绑定回调）在 `engine/assembly.py` 完成。
+
+读它的路径只有两站：`engine/baseline.py` 负责加载、解码、查找与「一个 realm 要装什么」的计划，`platform/realms.py` 用一次 `Context.install(names)` 把名字装上去。参照浏览器实际装到多少，来自 `data/chrome-environment.json` 里 `window_surface` 段的实测（同一模块读它，`tools/collect_environment.py` 在采集环境的那次会话里一并写入），不是手写名单。原生侧 `Context.install` 是唯一的安装入口，每个 IDL 名在 realm 的注册表里一条记录，模板与 spec 都按名索引。
 
 参数转换、缺参判断、重载、异常顺序和 Promise 拒绝由每个 Web API 实现直接负责。禁止新增签名驱动的运行时验证器或统一调用 wrapper。
 

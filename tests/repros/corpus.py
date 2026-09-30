@@ -875,6 +875,21 @@ CASES = (
                   "https://a.test/ok",
                   ["https://a.te%20st/", "https://u%20s@a.test/", "REJECTED"]],
     ),
+    Repro(
+        name="a_constructor_is_not_a_function",
+        note="URL is a constructor, so calling it without new throws; Chrome words the "
+             "refusal the same way for every interface built from IDL.",
+        script="""
+            (() => {
+              try { URL('https://www.koreanair.com/'); return ['NO-THROW']; }
+              catch (error) { return [error.name, error.message, error instanceof TypeError]; }
+            })()
+        """,
+        expected=["TypeError",
+                  "Failed to construct 'URL': Please use the 'new' operator,"
+                  " this DOM object constructor cannot be called as a function.",
+                  True],
+    ),
     # -- what is still missing here --------------------------------------------
     Repro(
         name="table_rows_and_cells",
@@ -1417,21 +1432,25 @@ CASES = (
     ),
     Repro(
         name="the_navigation_api_reports_the_current_entry",
-        note="A page that has not moved has one entry, nothing behind or ahead of it,"
-             " and no transition.",
+        note="A page that has not moved has one entry -- the current one -- nothing"
+             " behind or ahead of it, and no transition.",
         html=page(body=""),
         script="""
             (() => {
               const current = navigation.currentEntry;
+              const entries = navigation.entries();
               return [navigation.canGoBack, navigation.canGoForward,
                       navigation.entries.length, current === navigation.currentEntry,
                       current.index, current.url, current.sameDocument,
                       current.getState(), navigation.transition,
-                      typeof navigation.activation, typeof current.key];
+                      typeof navigation.activation, typeof current.key,
+                      typeof navigation.entries, Array.isArray(entries), entries.length,
+                      entries[0] === current];
             })()
         """,
         expected=[False, False, 0, True, 0, "http://repro.test/dir/page", True,
-                  None, None, "object", "string"],
+                  None, None, "object", "string",
+                  "function", True, 1, True],
     ),
     Repro(
         name="trusted_types_wraps_what_a_policy_returns",
@@ -1720,6 +1739,38 @@ CASES = (
         html=EMPTY_PAGE,
         script="""Object.keys(window).filter((name) => /^[A-Z]/.test(name)).length""",
         expected=0,
+    ),
+    Repro(
+        name="the_window_hides_what_the_reference_browser_never_installs",
+        note="Retired and platform-gated Window members are absent, not present as "
+             "undefined: the baseline lists every state, a browser installs its subset.",
+        html=EMPTY_PAGE,
+        script="""['orientation', 'defaultStatus', 'defaultstatus', 'printing', 'sharedStorage',
+                   'subApps', 'crossOriginEmbedderPolicy', 'testOriginTrialGlobalAttribute',
+                   'ontouchstart', 'maximize'].map((name) => name in window)""",
+        expected=[False] * 10,
+    ),
+    Repro(
+        name="the_legacy_factory_functions_build_their_own_elements",
+        note="Image, Option and Audio are functions of their own rather than interfaces: "
+             "hidden on the window, and a call builds a detached element of the interface "
+             "they belong to.",
+        html=EMPTY_PAGE,
+        script="""(() => {
+  const main = {Image: 'HTMLImageElement', Option: 'HTMLOptionElement', Audio: 'HTMLAudioElement'};
+  return Object.keys(main).map((name) => {
+    const factory = window[name];
+    const made = name === 'Option' ? new factory('t', 'v')
+               : name === 'Audio' ? new factory() : new factory(3, 4);
+    return [typeof factory, factory.name, factory.length, name in window,
+            Object.keys(window).includes(name),
+            made instanceof window[main[name]],
+            Object.prototype.toString.call(made)];
+  });
+})()""",
+        expected=[["function", "Image", 0, True, False, True, "[object HTMLImageElement]"],
+                  ["function", "Option", 0, True, False, True, "[object HTMLOptionElement]"],
+                  ["function", "Audio", 0, True, False, True, "[object HTMLAudioElement]"]],
     ),
     Repro(
         name="a_document_location_is_the_windows_location",

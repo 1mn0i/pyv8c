@@ -4,12 +4,16 @@ import time
 
 import pyv8
 
+from pyv8.flag import V8Attribute
+
 from ..engine.trace import log_trace
 from ..foundation.executor import RealmExecutor
 from ..foundation.scripts import RealmScripts
 from ..foundation.tasks import TaskQueue
 from ..web.bom.chrome import install_window_chrome
+from ..web.bom.legacy_factories import install_legacy_factories
 from .services import WorkerRealmServices
+from .sessions import BindingSession
 
 
 def _context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False, exposure_type=None):
@@ -19,7 +23,6 @@ def _context_kwargs(session, context_type, trace, on_materialize=None, trace_cal
         "traceable": traceable,
         "trace_callback": (log_trace if trace_callback is None else trace_callback) if trace or traceable else None,
         "ctx_type": context_type,
-        "class_configs": session.configs,
         "lazy_factory": session.lazy_factory(exposure_type or context_type, on_materialize=on_materialize),
     }
 
@@ -53,16 +56,16 @@ def _publish_window_name(context, page):
             context.trace = True
 
 
-def _declare_realm_interfaces(context, session, *, context_type, universe):
-    """Declare every name the baseline exposes for this realm.
-
-    The realm installs each one itself, which is what gives a global interface object
-    Chromium's attributes; the eager core is already compiled, so only its value waits.
-    """
-    deferred = context.declare_lazy(session.interface_names(context_type))
-    # Declared, not installed: the overlay lands before an object's template is built.
-    context.declare_materialisable(universe.unexposed_names(context_type))
-    return deferred
+def _declare_realm_interfaces(context, *, context_type, universe):
+    """Declare the realm's plan; the realm answers each name itself."""
+    plan = universe.plan(context_type)
+    declared = context.install(plan.declared)
+    if context_type == "Window":
+        for alias, target in universe.table.window_aliases().items():
+            if target in plan.declared:
+                context.define_global(alias, context.glob[target],
+                                      attributes=V8Attribute.DontEnum)
+    return declared
 
 
 class WorkerRealm:
@@ -89,16 +92,15 @@ class WorkerRealm:
         self.scope = scope
         config = self.config
         session = config.session
-        session.class_configs("Worker", roots=(scope.__idl_spec__.name,))
+        session.prepare("Worker")
         self.isolate = pyv8.Isolate()
         self.context = self.isolate.context(
             scope, **_context_kwargs(session, "Worker", config.trace,
                                      trace_callback=config.browser.trace_callback,
                                      traceable=config.browser.traceable),
         )
-        session.attach_context(self.context)
         _declare_realm_interfaces(
-            self.context, session,
+            self.context,
             context_type="Worker",
             universe=config.universe,
         )
@@ -141,7 +143,7 @@ class WorkerRealm:
             self.context = None
         if self.scripts is not None and attempt(self.scripts.close):
             self.scripts = None
-        attempt(self.config.session.detach_context)
+        attempt(self.config.session.detach)
         if self.context is None:
             self.scope = None
         if self.isolate is not None and attempt(self.isolate.close):
@@ -162,7 +164,7 @@ class PageRealm:
         browser = page.context_owner.browser
         # Web objects built through this session receive PageServices, not the
         # platform Page.
-        self.binding_session = browser.interface_universe.binding_session(page.services)
+        self.binding_session = BindingSession(browser.interface_universe, page.services)
         page.services.bind_realm(self)
         try:
             if pyv8.current_context() is not None:
@@ -180,9 +182,7 @@ class PageRealm:
         page = self.page
         browser = page.context_owner.browser
         binding_started = time.perf_counter_ns()
-        self.binding_session.class_configs(
-            "Window", roots=self.binding_session.universe.eager_names("Window"),
-        )
+        self.binding_session.prepare("Window")
         binding_prepared = time.perf_counter_ns()
         #: A frame's realm is not the top page's: the label says which it is.
         context_type = "FRAME" if page.parent_page is not None else "TOP"
@@ -193,11 +193,10 @@ class PageRealm:
             trace_callback=browser.trace_callback,
             traceable=browser.traceable,
         ))
-        self.binding_session.attach_context(self.context)
         self.executor.attach_deadline_source(self.context)
         context_created = time.perf_counter_ns()
         deferred_globals = _declare_realm_interfaces(
-            self.context, self.binding_session,
+            self.context,
             context_type="Window",
             universe=browser.interface_universe,
         )
@@ -205,6 +204,10 @@ class PageRealm:
         # Chromium installs window.chrome before any page script runs.
         install_window_chrome(self.context, page.services)
         _publish_window_name(self.context, page)
+        install_legacy_factories(
+            self.context, session=self.binding_session,
+            table=browser.interface_universe.table, document=page.document,
+        )
         chrome_installed_at = time.perf_counter_ns()
         # The realm owns the compiled helpers and the page's script controller
         # borrows them, so the isolate's error hooks and every Web API helper
@@ -213,6 +216,7 @@ class PageRealm:
         self.scripts.install_error_hooks(
             page.report_uncaught_message, page.rejections.record,
         )
+        plan = self.binding_session.universe.plan("Window")
         browser._record_startup(
             binding_assembly_ms=(binding_prepared - binding_started) / 1_000_000,
             context_create_ms=(context_created - binding_prepared) / 1_000_000,
@@ -220,7 +224,7 @@ class PageRealm:
             chrome_install_ms=(chrome_installed_at - deferred_declared_at) / 1_000_000,
             core_interfaces=len(self.binding_session.materialized_interfaces),
             materialized_interfaces=len(self.binding_session.materialized_interfaces),
-            known_interfaces=len(self.binding_session.interface_names("Window")),
+            known_interfaces=len(plan.declared),
             deferred_globals=deferred_globals,
         )
 
@@ -229,7 +233,7 @@ class PageRealm:
         self.page.context_owner.browser._record_startup(
             materialized_interfaces=len(self.binding_session.materialized_interfaces),
             deferred_materialized=len(self.binding_session.materialized_interfaces)
-            - len(self.binding_session.universe.eager_names("Window")),
+            - len(self.binding_session.universe.plan("Window").eager),
         )
 
     def close(self):
@@ -239,7 +243,7 @@ class PageRealm:
             if callable(close):
                 close()
             self.context = None
-            self.binding_session.detach_context()
+            self.binding_session.detach()
             if self.scripts is not None:
                 self.scripts.close()
                 self.scripts = None

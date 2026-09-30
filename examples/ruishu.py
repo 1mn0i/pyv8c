@@ -46,13 +46,17 @@ if "__main__" == __name__:
     # run(page, "https://datasearch.nmpa.gov.cn/datasearch/home-index.html")
     # run(page,"https://www.cde.org.cn/main/xxgk/listpage/9f9c74c73e0f8f56a8bfbc646055026d")
     # run(page,"https://lib.cqvip.com/Qikan/Search/Index?from=index")
-    import json
-    print(json.dumps(page.evaluate("Object.keys(window)")))
-    print(page.evaluate("Object.keys(window).length"))
+
+    # import json
+    # print(json.dumps(page.evaluate("Object.keys(window)")))
+    # print(page.evaluate("Object.keys(window).length"))
+    # print(page.evaluate("Image.toString()"))
+    # print(page.evaluate("HTMLImageElement.prototype"))
+    print(page.evaluate("navigation.entries()"))
     # page.evaluate("navigator.mimeTypes")
     # page.evaluate("navigator.plugins.refresh = '865'")
     # print(page.evaluate("new URL('https://www.koreanair.com/')"))
-    # print(page.evaluate("URL('https://www.koreanair.com/')"))
+    # # print(page.evaluate("URL('https://www.koreanair.com/')"))
     # print(page.evaluate("navigator.plugins.refresh"))
     # print(page.evaluate("c = document.createElement('canvas');d=c.getContext('webgl');d.getExtension('WEBGL_debug_renderer_info');"))
     # print(page.evaluate("""

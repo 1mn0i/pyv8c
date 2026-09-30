@@ -9,6 +9,7 @@ from pyv8c.tools.extract_interfaces import (
     _constant_definitions,
     _idl_handler_findings,
     _idl_property_families,
+    _property_mask,
     extract_constants,
     extract_template,
     write_baseline,
@@ -89,6 +90,20 @@ def test_constant_expression_is_audit_only():
     assert compact["constants"] == [{"name": "COPY_SRC", "resolved": True, "value": 4, "location": "interface"}]
     audit = extract_interfaces.schema5_baseline(extracted, include_audit=True)["Fixture"]
     assert audit["constants"][0]["expression"] == "1 << 2"
+
+
+def test_idl_metadata_reads_star_exposure_and_callback_interfaces(tmp_path):
+    (tmp_path / "streams.idl").write_text(
+        "[\n    Exposed=*\n] interface ReadableStream {\n};\n", encoding="utf-8")
+    (tmp_path / "node_filter.idl").write_text(
+        "[\n    Exposed=Window\n] callback interface NodeFilter {\n};\n", encoding="utf-8")
+    (tmp_path / "url.idl").write_text(
+        "[\n    Exposed=Window,\n    LegacyWindowAlias=webkitURL\n] interface URL {\n};\n",
+        encoding="utf-8")
+    metadata = extract_interfaces._idl_metadata(tmp_path)
+    assert metadata["ReadableStream"]["exposed_in"] == ["Window", "Worker"]
+    assert metadata["NodeFilter"]["exposed_in"] == ["Window"]
+    assert metadata["URL"]["aliases"] == ["webkitURL"]
 
 
 def test_template_handler_comments_are_not_callback_names():
@@ -304,14 +319,26 @@ def test_schema5_audit_switch_controls_callback_and_world_fields():
     assert compact["template"]["access_check"] == {"with_handler": True, "enabled": 1}
     assert compact["template"]["handlers"]["named"]["get"] == 1
     operation, attribute = compact["members"]["prototype"]
-    assert "callback" not in operation and "world" not in operation
+    # Only what the runtime reads survives: the world's name becomes the one bit it needs.
+    assert "callback" not in operation and "signature" not in operation
+    assert operation["main_world"] is True and "world" not in operation and "raw" not in operation
     assert "getter" not in attribute and "readonly" not in attribute and attribute["setter"] == 1
+    assert "signature" not in compact["constructor"]
 
     audit = extract_interfaces.schema5_baseline(extracted, include_audit=True)["Fixture"]
     assert audit["constructor"]["callback"] == "ConstructorCallback"
     assert audit["template"]["handlers"]["named"]["get"] == "NamedGetterCallback"
     assert audit["members"]["prototype"][0]["callback"] == "RunCallback"
     assert audit["members"]["prototype"][0]["world"] == "AllWorlds"
+
+
+def test_a_member_of_another_world_states_its_bit_as_false():
+    """A runtime baseline says which world a member belongs to, not the world's name."""
+    extracted = {"Fixture": {"members": {"prototype": [
+        {"name": "run", "kind": "operation", "world": "IsolatedWorld", "length": 0},
+    ]}}}
+    compact = extract_interfaces.schema5_baseline(extracted)["Fixture"]
+    assert compact["members"]["prototype"][0]["main_world"] is False
 
 
 def test_no_alloc_direct_call_tables_keep_their_operations():

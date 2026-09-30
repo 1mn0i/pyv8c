@@ -211,7 +211,6 @@ class Window(_SchedulingMixin, WindowProperties):
             window_attribute("innerHeight", "get_innerHeight", cross_origin=True),
             window_attribute("outerWidth", "get_outerWidth", cross_origin=True),
             window_attribute("outerHeight", "get_outerHeight", cross_origin=True),
-            window_attribute("orientation", "get_orientation", cross_origin=True),
             window_attribute("devicePixelRatio", "get_devicePixelRatio", cross_origin=True),
             window_attribute("name", "get_name", "set_name", cross_origin=True),
             window_attribute("origin", "get_origin", cross_origin=True),
@@ -247,17 +246,8 @@ class Window(_SchedulingMixin, WindowProperties):
             # Declared, and answered as absent, exactly as Chrome presents them.
             window_attribute("event", "get_event", cross_origin=True),
             window_attribute("caches", "get_caches", cross_origin=True),
-            window_attribute("crossOriginEmbedderPolicy", "get_crossOriginEmbedderPolicy",
-                             cross_origin=True),
-            window_attribute("defaultStatus", "get_defaultStatus", cross_origin=True),
-            window_attribute("defaultstatus", "get_defaultstatus", cross_origin=True),
             window_attribute("documentPictureInPicture", "get_documentPictureInPicture",
                              cross_origin=True),
-            window_attribute("printing", "get_printing", cross_origin=True),
-            window_attribute("sharedStorage", "get_sharedStorage", cross_origin=True),
-            window_attribute("subApps", "get_subApps", cross_origin=True),
-            window_attribute("testOriginTrialGlobalAttribute",
-                             "get_testOriginTrialGlobalAttribute", cross_origin=True),
             window_attribute("locationbar", "get_locationbar", cross_origin=True),
             window_attribute("menubar", "get_menubar", cross_origin=True),
             window_attribute("toolbar", "get_toolbar", cross_origin=True),
@@ -502,13 +492,6 @@ class Window(_SchedulingMixin, WindowProperties):
     def _publish_name(self):
         """Assign the name over the one a fresh global object already carries."""
         self._services.realm_services.window_property("set", "name", self.get_name())
-    def get_orientation(self):
-        """Chromium's deprecated alias for the screen orientation angle; a
-        desktop window is never rotated, so it is 0.
-        """
-        self._require_same_origin()
-        return 0
-
     def _window_value(self, name):
         """The one object this window hands out for a ``[SameObject]`` member."""
         return self._window_values.value(name)
@@ -620,14 +603,7 @@ class Window(_SchedulingMixin, WindowProperties):
         if not is_secure_context(self.location.get_href()):
             return pyv8.Undefined
         return self._window_value("cookieStore")
-    def get_crossOriginEmbedderPolicy(self): self._require_same_origin(); return pyv8.Undefined
-    def get_defaultStatus(self): self._require_same_origin(); return pyv8.Undefined
-    def get_defaultstatus(self): self._require_same_origin(); return pyv8.Undefined
     def get_documentPictureInPicture(self): self._require_same_origin(); return pyv8.Undefined
-    def get_printing(self): self._require_same_origin(); return pyv8.Undefined
-    def get_sharedStorage(self): self._require_same_origin(); return pyv8.Undefined
-    def get_subApps(self): self._require_same_origin(); return pyv8.Undefined
-    def get_testOriginTrialGlobalAttribute(self): self._require_same_origin(); return pyv8.Undefined
 
     def get_locationbar(self): self._require_same_origin(); return self._window_value("locationbar")
     def get_menubar(self): self._require_same_origin(); return self._window_value("menubar")

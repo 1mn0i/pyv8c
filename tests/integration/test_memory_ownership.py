@@ -117,7 +117,7 @@ def test_worker_isolate_failure_preserves_retry_state():
             if calls.count('isolate') == 1:
                 raise RuntimeError('persistent handle')
 
-    session = SimpleNamespace(detach_context=lambda: calls.append('detach'))
+    session = SimpleNamespace(detach=lambda: calls.append('detach'))
     realm = WorkerRealm(None, SimpleNamespace(session=session))
     realm.context = SimpleNamespace(close=lambda: calls.append('context'))
     realm.isolate = Isolate()

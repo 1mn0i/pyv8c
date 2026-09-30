@@ -226,12 +226,12 @@ finally:
 ## 从真实浏览器采集配置
 
 `pyv8c/tools/collect_environment.py` 用调试端口启动本机已装的 Chrome（`PYV8C_CHROME` 可指向别的可执行文件），
-在 localhost 这个安全源上读取浏览器自己能上报的每一项，写出可直接加载的配置；
-`tools/collect_environment.py` 是它的命令行壳：
+在 localhost 这个安全源上读取浏览器自己能上报的每一项，再从**同一次会话**读出它实际装在 `window` 上的名字，
+写出一个可直接加载的 profile；`tools/collect_environment.py` 是它的命令行壳：
 
 ```powershell
 $env:PYTHONPATH = 'D:\src\pyv8env\pyv8c'
-python tools/collect_environment.py                       # chrome-<版本>-<平台>.json
+python tools/collect_environment.py                       # 写随包 profile（pyv8c/data/chrome-environment.json）
 python tools/collect_environment.py --out -               # 写到标准输出
 python tools/collect_environment.py --headed --window-size 1920,1080 --accept-lang en-US,en
 ```
@@ -241,6 +241,9 @@ python tools/collect_environment.py --headed --window-size 1920,1080 --accept-la
   `viewport.touch`、`connection.type`、`connection.downlink_max`、`storage.persistent.*`。
 - 产物带 `schema` 与 `source`（浏览器版本、可执行文件、平台、采集时间、启动参数），
   `BrowserEnvironment.from_file(path)` 可直接载入。
+- 产物还带 `window_surface` 段（`keys` 与 `own_names`）：参照浏览器实际装到多少，接口装配用它收窄 baseline，
+  不手写名单。它不属于环境键，`BrowserEnvironment` 读 profile 时跳过，`engine/baseline.py` 单独读这一段。
+  一次运行同时给出两份事实，所以两者不可能来自不同浏览器。
 - 默认无头启动，UA 因而会是 `HeadlessChrome/…`；要正常 UA 加 `--headed`。
 - 调试端口本身会让 `navigator.webdriver` 为真；采集器用 `--disable-blink-features=AutomationControlled`
   中和这项由自己引入的痕迹，该参数同样记录在 `source.arguments` 中，便于复核。

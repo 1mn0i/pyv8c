@@ -70,8 +70,8 @@ def test_ordinary_callbacks_are_bound_without_validation_wrapper():
         assert callback is Element.fn_setAttribute
         setter = next(attribute.setter for attribute in config.attributes if attribute.name == "id")
         assert setter is Element.set_id
-        assert not hasattr(universe, "binding_plan")
-        assert not hasattr(universe, "_plans")
+        # Exposure is one plan per context type, not a per-reader derivation.
+        assert universe.plan("Window") is universe.plan("Window")
     finally:
         browser.close()
 

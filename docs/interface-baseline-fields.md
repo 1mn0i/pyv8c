@@ -1,11 +1,26 @@
 # Interface baseline：格式、来源与生成
 
 [返回文档索引](README.md)。运行时读取 [interface-baseline.zip](../pyv8c/baselines/interface-baseline.zip)，加载逻辑见 [baseline.py](../pyv8c/engine/baseline.py)。
-baseline 记录接口形状和签名，不包含完整浏览器行为实现。
+baseline 记录接口形状（成员签名只在审计产物里），不包含完整浏览器行为实现。
 
 ## 当前快照与版本边界
 
-2026-09-09 实读：schema=5、compact=true、1,254 个接口条目。
+2026-09-30 实读：
+
+| 产物 | 接口 | 成员 | 形态 |
+| --- | --- | --- | --- |
+| `pyv8c/baselines/interface-baseline.zip`（运行时默认） | 1,254 | 10,630 | 旧形态：仍含成员签名 |
+| `baselines/154.0.8030.0.zip`（版本副本） | 1,254 | 10,630 | 同上 |
+| `baselines/145.0.7632.162.zip`（版本副本） | 1,224 | 10,166 | 新形态：无签名、有 `main_world` |
+
+两种形态运行时都能读：签名是审计字段，`main_world` 缺席时按主世界解释（这正合旧产物省略 world 的语义）。
+154 的产物要等到有 154 的检出再重生成。
+
+同一份实测窗口面（`data/chrome-environment.json` 的 `window_surface` 段，Chrome 153）下，两份产物的 Window 面
+不一样：145 副本声明 909 个名字、`Object.getOwnPropertyNames(window)` 缺 8 个，154 产物声明 900 个、缺 27 个
+（`ReadableStream`、`NodeFilter`、`QuotaExceededError` 等）。差的这批来自暴露元数据解析的修复（`[Exposed=*]` 等），
+154 产物生成于修复之前。要它们一致，就得用 154 的检出重生成一次。
+
 metadata.report 仍包含 unresolved 签名；接口数量、成员数量和提取成功都不能当作功能兼容率。
 
 CHROMIUM_VERSION 当前为 154.0.8030.0，它是源码获取工具的默认目标。
@@ -42,12 +57,13 @@ ZIP 的 renderer_snapshot 是生成目录来源信息，不含足以独立证明
 | parent / tag / exposed_in | 父接口、toString tag、允许的 realm 类别 |
 | constructor.exposed | 是否允许暴露接口对象，与是否能 new 不相同 |
 | constructor.allow_new / allow_call / length | 构造/普通调用许可与 JS Function.length |
-| constructor.signature | 构造参数与转换计划 |
 | template | immutable_proto、undetectable、global_this、as_object、unconstructable、array 等模板信息 |
 | template.call_handler / access_check | 可调用对象与访问检查元数据 |
 | template.handlers | named、indexed、cross_origin.named/indexed 的角色声明 |
 | members.instance / prototype / interface | 安装在实例、原型、接口对象上的成员 |
+| members[].main_world | 成员是否属于主世界；其他世界的成员只在查表排序时让位 |
 | constants | 常量，避免重复放入 interface 成员列表 |
+| audit 独有 | constructor.signature、成员的 signature/setter_signature/overloads/raw/review、常量的 expression、world 原名、provenance |
 
 handler 角色包含 get/set/query/del/enum/definer；compact 产物用 1 等存在性标记代替 C++ 符号。
 `named`/`indexed` 是接口自己的拦截器，只来自 plain 的 `*PropertyHandlerConfiguration`；由
@@ -55,20 +71,37 @@ handler 角色包含 get/set/query/del/enum/definer；compact 产物用 1 等存
 `_webidl.report.handler_findings` 守住这条：plain 的 named 家族必须能在接口 IDL 里找到 named getter。
 这些标记不是 Python callable；InterfaceCompiler 结合手写 IdlSpec 决定最终 handler。
 
-operation 常含 name、length、flags、receiver、cross_origin、side_effect、signature；
-attribute 常含 name、setter、flags、receiver、cross_origin、side_effect 和可选 setter_signature。
+compact 的成员只留运行时读的字段：name、kind、length、flags 或 property_flags、setter、
+receiver、cross_origin、side_effect、main_world。
+`property_flags` 是 `flags` 的整数形式（`V8Attribute` 位掩码），运行时优先用它；抽取器读不出
+这段表达式时不给该字段，运行时回落到解析 `flags` 文本。compact 快照在有整数时才删掉 `flags`。
 setter 为 1 表示有 setter，null 表示只读；安装位置由外层分组决定，不重复编码为位置元组。
 常量包含 name、resolved、value、location；未成功解析的常量不能凭空补值。
 
-signature.status 为 generated 或 unresolved；source_evidence 记录生成依据。
-参数按顺序记录 type/idl_type、optional、nullable、default、variadic、enum 等信息。
-签名状态与业务实现是否存在是两个独立维度。
-
 ## runtime 与 audit
 
-默认提取器删除 C++ callback 符号、常量表达式、默认 world 和 provenance 等非运行时信息。
---audit 会保留审计来源并设置 compact=false；这种输出供人工检查，不能直接交给运行时加载。
+默认提取器删除 C++ callback 符号、成员签名与重载、常量表达式、world 原名、审查用原始字段和 provenance。
+编译期用的签名信息（status 为 generated/unresolved、参数类型与转换计划）只在 audit 产物里，运行时不需要。
+--audit 会保留这些并设置 compact=false；这种输出供人工检查，不能直接交给运行时加载。
 Runtime ZIP 和 audit JSON 应分别生成，不能通过手改 compact 标记把审计文件冒充有效运行产物。
+
+## 运行时怎么读它
+
+两层，顺序是读出 baseline → 装到 realm 上：
+
+- `engine/baseline.py`：加载与缓存快照、解码每个接口（父链、成员、接口对象、按 realm 类别的暴露名单）
+  并把「一个 realm 类别要装什么」算成一份计划，首次读时算一次并缓存。成员保留快照里的简写
+  （`flags`/`receiver` 等），翻成绑定位是编译器的事。
+- `engine/assembly.py`：把这些声明编译成原生 IdlSpec，包括成员属性位、占位实现与 realm 绑定回调。
+- `platform/realms.py`：一份计划一次 `Context.install(names)` 装到全局上，接口对象的属性统一按
+  Chromium 的属性位安装；realm 自己的注册状态（`platform/sessions.py`）回答原生侧对某个名字的问询。
+
+baseline 列出的是 Chromium 能装的全部成员与接口，而参照浏览器只装其平台与设置允许的子集。
+这部分事实在 `data/chrome-environment.json` 的 `window_surface` 段：由 `tools/collect_environment.py`
+在采集环境的那次会话里从本机 Chrome 实测（`Object.getOwnPropertyNames(window)` 与 `Object.keys(window)`），
+与环境的 `source` 共用同一个浏览器与时间戳；`engine/baseline.py` 读这一段，
+`InterfaceTable` 用它收窄 Window 的成员与接口全局。
+换成别的 Chrome 版本时重采集即可，不手写名单。
 
 ## 缓存与可信输入
 

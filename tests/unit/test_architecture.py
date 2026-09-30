@@ -131,20 +131,27 @@ def test_every_offline_script_has_only_a_wrapper_in_the_repository_tools():
         assert shell.main is implementation.main, path
 
 
-def test_binding_facade_uses_separate_catalog_and_schema_helpers():
+def test_the_baseline_and_the_compiler_each_have_one_home():
     universe_source = (ROOT / "engine" / "universe.py").read_text(encoding="utf-8")
     extractor_source = (ROOT / "tools" / "extract_interfaces.py").read_text(encoding="utf-8")
-    wrappers_source = (ROOT / "engine" / "wrappers.py").read_text(encoding="utf-8")
+    baseline_source = (ROOT / "engine" / "baseline.py").read_text(encoding="utf-8")
     assembly_source = (ROOT / "engine" / "assembly.py").read_text(encoding="utf-8")
-    assert "InterfaceCatalog" in universe_source
-    assert "class SignatureCache" in wrappers_source
-    assert "class BindingWrapperFactory" in wrappers_source
-    assert "class InterfaceCompiler" in assembly_source
-    assert "apply_template_flags" in assembly_source
-    assert "from ..engine.schema import write_baseline" in extractor_source
-    assert "class InterfaceCatalog" in (ROOT / "engine" / "catalog.py").read_text(encoding="utf-8")
-    assert "class StubFactory" in (ROOT / "engine" / "stubs.py").read_text(encoding="utf-8")
-    assert "class BindingSession" in (ROOT / "engine" / "sessions.py").read_text(encoding="utf-8")
+    # A baseline is read, decoded and planned in one module.
+    for declaration in ("class BaselineRepository", "class BaselineSnapshot", "class InterfaceTable",
+                        "class RealmPlan", "class WindowSurface", "def write_baseline"):
+        assert declaration in baseline_source, declaration
+    # Turning it into native specs, and the shells and realm bindings that go with it,
+    # are one module.
+    for declaration in ("class InterfaceCompiler", "class SignatureCache",
+                        "class BindingWrapperFactory", "class StubFactory", "apply_template_flags"):
+        assert declaration in assembly_source, declaration
+    # The modules those two replaced are gone, not re-exported.
+    for gone in ("interface_table", "plan", "surface", "schema", "stubs", "wrappers", "config", "sessions"):
+        assert not (ROOT / "engine" / f"{gone}.py").exists(), gone
+    assert "InterfaceTable" in universe_source
+    assert "class InterfaceCompiler" not in universe_source
+    # The offline extractor writes baselines, so the writer has to stay reachable there.
+    assert "from ..engine.baseline import write_baseline" in extractor_source
 
 
 def test_universe_stays_a_composition_root():
@@ -159,10 +166,11 @@ def test_universe_stays_a_composition_root():
 
 
 def test_universe_collaborators_use_public_surface_only():
-    """stubs/wrappers/assembly/sessions must not reach into universe privates."""
-    for name in ("stubs", "wrappers", "assembly", "sessions"):
-        source = (ROOT / "engine" / f"{name}.py").read_text(encoding="utf-8")
-        assert "self.universe._" not in source, name
+    """The compiler and a realm's session must not reach into universe privates."""
+    for path in (ROOT / "engine" / "assembly.py", ROOT / "platform" / "sessions.py"):
+        source = path.read_text(encoding="utf-8")
+        assert "self.universe._" not in source, path
+        assert "universe._assembly" not in source, path
 
 
 def test_layering_has_no_upward_imports():

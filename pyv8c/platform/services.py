@@ -11,6 +11,7 @@ from typing import Any
 from ..foundation.clock import now_ms, reset as reset_clock
 from ..foundation.urls import origin_string
 from .request_headers import ACCEPT_ENCODING, accept_language
+from .sessions import BindingSession
 from .state import Ownership
 
 
@@ -408,7 +409,7 @@ class _WorkerCapability:
 
     def worker_configuration(self):
         browser = self._owner._context.browser
-        session = browser.interface_universe.binding_session(self._owner)
+        session = BindingSession(browser.interface_universe, self._owner)
         return WorkerContext(
             browser=browser,
             session=session,

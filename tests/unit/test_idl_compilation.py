@@ -9,6 +9,7 @@ pytestmark = pytest.mark.native
 
 from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse  # noqa: E402
 from pyv8c.platform.bootstrap import bootstrap_runtime  # noqa: E402
+from pyv8c.platform.sessions import BindingSession  # noqa: E402
 
 
 @pytest.fixture
@@ -26,48 +27,51 @@ def test_compilation_and_signature_analysis_are_not_repeated(universe, monkeypat
         return original(name)
 
     monkeypatch.setattr(compiler, "_compile", compile_once)
-    first = universe.binding_session(object()).class_config_for("Element")
+    first = BindingSession(universe, object()).class_config_for("Element")
     parameters = dict(compiler.wrappers._parameter_cache._values)
     for _ in range(4):
-        assert universe.binding_session(object()).class_config_for("Element") is first
+        assert BindingSession(universe, object()).class_config_for("Element") is first
     assert all(count == 1 for count in calls.values())
     assert compiler.wrappers._parameter_cache._values == parameters
 
 
 def test_descendant_lookup_is_computed_once(universe):
-    catalog = universe._catalog
-    first = catalog.descendants("EventTarget")
+    table = universe.table
+    first = table.descendants("EventTarget")
     assert isinstance(first, tuple)
     # The same answer object, not an equal rebuild: one member lookup walks
     # ancestors, and each of them asks for the same descendant set again.
-    assert catalog.descendants("EventTarget") is first
+    assert table.descendants("EventTarget") is first
     assert "Element" in first
 
 
-def test_session_commits_ancestors_atomically_and_can_retry(universe):
-    session = universe.binding_session()
-    batches = []
+def test_a_failed_batch_stages_nothing_and_can_be_retried(universe, monkeypatch):
+    session = BindingSession(universe)
+    calls = []
+    state = {"failing": True}
+    original = universe.class_config_for
 
-    class Context:
-        failing = True
+    def bind(name, realm=None):
+        calls.append(name)
+        if state["failing"] and name == "Node":
+            raise RuntimeError("binding failed")
+        return original(name, realm)
 
-        def update_configs(self, configs):
-            batches.append(configs)
-            if self.failing:
-                raise RuntimeError("native commit failed")
-
-    context = Context()
-    session.attach_context(context)
-    with pytest.raises(RuntimeError, match="native commit failed"):
+    monkeypatch.setattr(universe, "class_config_for", bind)
+    with pytest.raises(RuntimeError, match="binding failed"):
         session.materialize("Element")
     assert not session.configs
     assert session.materialized_interfaces == ()
-    context.failing = False
+
+    state["failing"] = False
     session.materialize("Element")
     assert set(session.materialized_interfaces) == {"EventTarget", "Node", "Element"}
-    assert set(batches[-1]) == {universe.class_for(name) for name in session.materialized_interfaces}
+    assert set(session.configs) == {universe.class_for(name) for name in session.materialized_interfaces}
+
+    # Nothing is rebuilt for a chain the realm already staged.
+    before = len(calls)
     session.materialize("Element")
-    assert len(batches) == 2
+    assert len(calls) == before
 
 
 def test_event_handler_slots_follow_the_baseline_member_table(universe):
@@ -98,8 +102,8 @@ def test_realm_dependent_callbacks_are_isolated_and_released(universe):
 
     first_realm, second_realm = Realm(), Realm()
     reference = weakref.ref(first_realm)
-    first = universe.binding_session(first_realm)
-    second = universe.binding_session(second_realm)
+    first = BindingSession(universe, first_realm)
+    second = BindingSession(universe, second_realm)
     first_spec = first.class_config_for("URL")
     second_spec = second.class_config_for("URL")
     assert first_spec is not second_spec
@@ -121,16 +125,16 @@ def test_strict_validation_is_a_single_cached_audit(universe, monkeypatch):
 
     monkeypatch.setattr(universe._assembly, "_compile", unexpected)
     universe.validate()
-    universe.binding_session().materialize("Element")
+    BindingSession(universe).materialize("Element")
     assert universe._assembly._compiled == before
 
 
-def test_duplicate_declarations_fail_before_session_commit(universe, monkeypatch):
+def test_duplicate_declarations_fail_before_the_session_stages_anything(universe, monkeypatch):
     cls = universe.class_for("Node")
     declaration = cls.__v8_idl_spec__
     duplicate = declaration.methods[0]
     monkeypatch.setattr(cls, "__v8_idl_spec__", declaration.replace(methods=(duplicate, duplicate)))
-    session = universe.binding_session()
+    session = BindingSession(universe)
     with pytest.raises(TypeError, match="duplicate methods"):
         session.materialize("Node")
     assert not session.configs

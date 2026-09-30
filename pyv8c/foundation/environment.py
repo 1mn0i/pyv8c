@@ -3,7 +3,8 @@
 The defaults are a profile collected from a real Chrome
 (``data/chrome-environment.json``), so an unconfigured browser presents what that
 browser reported; a caller overrides any key by name, and the keys that follow
-``user_agent`` move with it.
+``user_agent`` move with it.  The profile's ``window_surface`` section belongs to the
+baseline layer, so this module skips it like the other envelope keys.
 """
 from __future__ import annotations
 
@@ -16,7 +17,8 @@ from pathlib import Path
 from types import MappingProxyType
 
 SCHEMA_VERSION = 1
-ENVELOPE_KEYS = ("schema", "source")
+#: Keys of a profile that are not settings: the envelope, and what another layer reads.
+ENVELOPE_KEYS = ("schema", "source", "window_surface")
 PROFILE = Path(__file__).parents[1] / "data" / "chrome-environment.json"
 
 #: The version Chrome's frozen "Not_A Brand" entry carries.

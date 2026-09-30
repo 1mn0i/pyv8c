@@ -1052,7 +1052,6 @@ class IDBTransaction(EventTarget):
             AttributeSpec(name="objectStoreNames", getter="get_objectStoreNames", side_effect=1),
             AttributeSpec(name="mode", getter="get_mode", side_effect=1),
             AttributeSpec(name="durability", getter="get_durability", side_effect=1),
-            AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
             AttributeSpec(name="db", getter="get_db", side_effect=1),
             AttributeSpec(name="error", getter="get_error", side_effect=1),
             AttributeSpec(name="onabort", getter="get_onabort", setter="set_onabort"),
@@ -1212,9 +1211,6 @@ class IDBTransaction(EventTarget):
 
     def get_durability(self):
         return self._durability
-
-    def get_readyState(self):
-        return "active" if self._state == "active" else "inactive"
 
     def get_db(self):
         return self._database if self._database is not None else pyv8.Null
