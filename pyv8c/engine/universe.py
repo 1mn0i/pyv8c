@@ -8,6 +8,7 @@ each interface name answers with, and the mismatches tolerated once each.
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 
 from .assembly import InterfaceCompiler
 from .baseline import (
@@ -24,17 +25,10 @@ from ..foundation.logging import logger
 
 __all__ = [
     "DEFAULT_BASELINE_PATH",
-    "DEFAULT_EAGER_INTERFACES",
     "BaselineRepository",
     "BaselineSnapshot",
     "InterfaceUniverse",
 ]
-
-DEFAULT_EAGER_INTERFACES = (
-    "Window", "EventTarget", "Event", "Node", "Document", "Element",
-    "HTMLElement", "URL", "URLSearchParams", "DOMTokenList", "NodeList",
-    "HTMLCollection", "NamedNodeMap",
-)
 
 
 class InterfaceUniverse:
@@ -54,7 +48,7 @@ class InterfaceUniverse:
             raise ValueError("baseline_mismatch must be 'error' or 'warn'")
         #: Reported mismatches, so each difference warns once.
         self._mismatches = set()
-        self.eager_interfaces = DEFAULT_EAGER_INTERFACES
+        self.staged_interfaces = runtime.catalog.skeleton()
         self._validated = False
         # One re-entrant lock guards every read-modify-write cache so concurrent realms never see a torn cache.
         self._lock = threading.RLock()
@@ -99,10 +93,24 @@ class InterfaceUniverse:
                     self.table, context_type,
                     implements=self.runtime.catalog.interfaces,
                     expose_unimplemented=self.expose_unimplemented,
-                    eager=self.eager_interfaces,
+                    staged=self.staged_interfaces,
                 )
+                cached = replace(cached, startup=self._startup_names(cached.staged, context_type))
                 self._plans[context_type] = cached
             return cached
+
+    def _startup_names(self, staged, context_type):
+        """What a realm has built once ready: the skeleton, its groups' ancestors,
+        and the alias targets the window declares."""
+        seeds = set(staged)
+        if context_type == "Window":
+            seeds.update(target for target in self.table.window_aliases().values()
+                         if self.describes(target))
+        built = set()
+        for name in seeds:
+            for group_name in self.runtime.interface_group(name):
+                built.update(self.table.ancestors(group_name))
+        return tuple(sorted(built))
 
     def class_for(self, name):
         """Return the one canonical class object per interface name.

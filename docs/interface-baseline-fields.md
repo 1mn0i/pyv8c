@@ -34,11 +34,12 @@ python tools/extract_interfaces.py pyv8c/baselines/interface-baseline.zip --chro
 
 `Temporal` 两份都缺，属平台自身缺口；145 副本缺的 8 个是 145 与 154 之间新增的接口。
 
-换成这份产物后还有两处待定：冷启动会预物化 25 个接口（`plan.eager` 只有 13），其中 12 个
-（`MediaStream`、`MutationObserver`、`PermissionsPolicy`、`RTCPeerConnection`、`SpeechRecognition` 一族、
-`DOMMatrix` 一族）因窗口面把它们声明为自有名字而装上，但 plan 仍把它们算作 deferred；语料用例
-`a_file_input_has_no_capture_member` 也会失败——产物为 `HTMLInputElement` 声明了 `capture`，而实测 Chrome 153
-对 `type=file` 不暴露它。
+换成这份产物后曾有一处待定，现已解决：冷启动预物化 25 个接口，而 `plan.staged` 只有 13（骨架），
+多出的 12 个是祖先与窗口别名的目标（`webkitRTCPeerConnection` → `RTCPeerConnection`、`WebKitCSSMatrix` →
+`DOMMatrix` 等）。`plan.startup` 现在把这三类都算进来，是"启动前建好哪些"的唯一答案；
+`test_the_plan_names_every_interface_startup_builds` 守着它与实测物化集合相等的等式。
+仍待定的是语料用例 `a_file_input_has_no_capture_member`：产物为 `HTMLInputElement` 声明了 `capture`，
+而实测 Chrome 153 对 `type=file` 不暴露它。
 
 metadata.report 仍包含 unresolved 签名；接口数量、成员数量和提取成功都不能当作功能兼容率。
 

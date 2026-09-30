@@ -190,8 +190,8 @@ class PageRealm:
             self.binding_session, context_type, page.trace,
             exposure_type="Window",
             on_materialize=self._record_deferred_materialized,
-            trace_callback=browser.trace_callback,
-            traceable=browser.traceable,
+            trace_callback=page.context_owner.trace_callback,
+            traceable=page.context_owner.traceable,
         ))
         self.executor.attach_deadline_source(self.context)
         context_created = time.perf_counter_ns()
@@ -233,7 +233,7 @@ class PageRealm:
         self.page.context_owner.browser._record_startup(
             materialized_interfaces=len(self.binding_session.materialized_interfaces),
             deferred_materialized=len(self.binding_session.materialized_interfaces)
-            - len(self.binding_session.universe.plan("Window").eager),
+            - len(self.binding_session.universe.plan("Window").startup),
         )
 
     def close(self):

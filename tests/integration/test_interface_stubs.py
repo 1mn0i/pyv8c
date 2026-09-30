@@ -144,14 +144,13 @@ def test_every_declared_handler_is_installed_or_filled():
         browser.close()
 
 
-def test_window_interfaces_are_materialized_on_demand():
-    browser = Browser(stub_logging="off")
+def test_window_interfaces_are_materialized_on_demand(shared_browser):
+    page = shared_browser.new_context().new_page()
     try:
-        page = browser.new_context().new_page()
         session = page.binding_session
         at_cold_start = set(session.materialized_interfaces)
         exposed = set(session.interface_names("Window"))
-        assert set(browser.interface_universe.plan("Window").eager) <= at_cold_start
+        assert set(shared_browser.interface_universe.plan("Window").staged) <= at_cold_start
         assert exposed - at_cold_start
         assert "AbortController" not in at_cold_start
         assert page.evaluate("typeof AbortController") == "function"
@@ -159,4 +158,4 @@ def test_window_interfaces_are_materialized_on_demand():
         assert page.evaluate("AbortController === AbortController") is True
         assert page.evaluate("Object.getOwnPropertyNames(window).includes('AbortController')") is True
     finally:
-        browser.close()
+        page.close()

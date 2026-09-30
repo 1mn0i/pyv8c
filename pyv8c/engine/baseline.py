@@ -537,19 +537,22 @@ class RealmPlan:
     context_type: str
     #: Installed on the global, built on first read.
     declared: tuple[str, ...]
-    #: Built before the first script runs.
-    eager: tuple[str, ...]
+    #: The skeleton the realm stages before its first script runs.
+    staged: tuple[str, ...]
+    #: Built once the realm is ready: the skeleton, its ancestors and the alias
+    #: targets.  The only answer to "what is built before the first script runs".
+    startup: tuple[str, ...] = ()
 
     @property
     def deferred(self) -> tuple[str, ...]:
-        eager = set(self.eager)
-        return tuple(name for name in self.declared if name not in eager)
+        staged = set(self.staged)
+        return tuple(name for name in self.declared if name not in staged)
 
 
-def build_plan(table, context_type, *, implements=(), expose_unimplemented=True, eager=()) -> RealmPlan:
+def build_plan(table, context_type, *, implements=(), expose_unimplemented=True, staged=()) -> RealmPlan:
     """Plan one realm class from the table.
 
-    The names a realm declares and the ones it pre-builds are one object, so a realm and
+    The names a realm declares and the skeleton it stages are one object, so a realm and
     its statistics read the same plan.
     """
     declared = tuple(sorted(
@@ -559,5 +562,5 @@ def build_plan(table, context_type, *, implements=(), expose_unimplemented=True,
     return RealmPlan(
         context_type=context_type,
         declared=declared,
-        eager=tuple(name for name in declared if name in set(eager) or name == "Window"),
+        staged=tuple(name for name in declared if name in set(staged) or name == "Window"),
     )

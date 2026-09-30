@@ -97,7 +97,7 @@ class Page:
         self.environment = context.browser.environment.overlay(environment)
         self.resource_interceptor = context.browser.resource_interceptor
         # Overriding the browser default here leaves the other pages' setting alone.
-        self._trace = context.browser.trace if trace is None else bool(trace)
+        self._trace = context.trace if trace is None else bool(trace)
         self.closed = False
         self._resource_scope = ResourceScope()
         self._close_lock = threading.Lock()

@@ -44,9 +44,9 @@ class BindingSession:
     def prepare(self, context_type="Window"):
         """Stage the interfaces a realm builds before its first script runs.
 
-        The plan calls them eager, so this keeps that work off the first script's path.
+        The plan calls it staged, so this keeps that work off the first script's path.
         """
-        self._stage(self.universe.plan(context_type).eager)
+        self._stage(self.universe.plan(context_type).staged)
 
     def materialize(self, name):
         """Stage what *name* needs, and answer the class behind it."""

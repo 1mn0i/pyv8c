@@ -44,6 +44,8 @@ class FeatureSpec:
     requires: tuple[str, ...] = ()
     eager: bool = False
     atomic: bool = True
+    #: Interfaces a realm stages before its first script runs, seeding its plan.
+    skeleton: tuple[str, ...] = ()
 
 
 class FeatureImplementation:
@@ -112,6 +114,12 @@ class FeatureCatalog:
 
     def eager(self):
         return tuple(spec for spec in self._by_name.values() if spec.eager)
+
+    def skeleton(self):
+        """The interfaces a realm stages before its first script runs."""
+        return tuple(dict.fromkeys(
+            name for spec in self._by_name.values() for name in spec.skeleton
+        ))
 
 
 class LazyValueStore:

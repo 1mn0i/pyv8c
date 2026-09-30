@@ -83,11 +83,18 @@ AUDIO_INTERFACES = (
     "WaveShaperNode", "ScriptProcessorNode", "AudioProcessingEvent",
     "BaseAudioContext", "AudioContext", "OfflineAudioContext",
 )
+#: The realm stages these before its first script runs; a plan seeds from them.
+REALM_SKELETON = (
+    "Window", "EventTarget", "Event", "Node", "Document", "Element",
+    "HTMLElement", "URL", "URLSearchParams", "DOMTokenList", "NodeList",
+    "HTMLCollection", "NamedNodeMap",
+)
 
 
 CATALOG = FeatureCatalog((
     FeatureSpec("core", "pyv8c.web.features.core", CORE_INTERFACES,
-                ("location", "screen", "localStorage", "sessionStorage", "history"), eager=True, atomic=False),
+                ("location", "screen", "localStorage", "sessionStorage", "history"),
+                eager=True, atomic=False, skeleton=REALM_SKELETON),
     FeatureSpec("navigator", "pyv8c.web.bom.navigator", NAVIGATOR_INTERFACES, ("navigator",)),
     FeatureSpec("indexeddb", "pyv8c.web.bom.indexeddb", INDEXEDDB_INTERFACES, ("indexedDB",), requires=("core",)),
     FeatureSpec("filesystem", "pyv8c.web.bom.filesystem", FILESYSTEM_INTERFACES, requires=("core",)),

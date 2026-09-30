@@ -35,11 +35,15 @@ class BrowserContext:
     except for a disk cache directory when one was configured.
     """
 
-    def __init__(self, browser, *, proxy=None):
+    def __init__(self, browser, *, proxy=None, trace=None, traceable=None, trace_callback=None):
         self.browser, self.pages = browser, []
         self.cookies = CookieJar()
         #: Its own proxy setting, or the browser's while it was given none.
         self.proxy = browser.proxy if proxy is None else proxy
+        #: Trace settings for this context alone; ``None`` keeps the browser's.
+        self.trace = browser.trace if trace is None else bool(trace)
+        self.traceable = (browser.traceable if traceable is None else bool(traceable)) or self.trace
+        self.trace_callback = browser.trace_callback if trace_callback is None else trace_callback
         self.resource_cache_dir = browser.cache_dir if browser.cache_enabled else None
         self.resource_cache_lock = threading.RLock()
         self.network_backend = assemble_backend(browser, proxy=self.proxy)
@@ -329,7 +333,8 @@ class Browser:
             "validation_ms": (validation_finished - validation_started) / 1_000_000,
             "browser_init_ms": (validation_finished - started) / 1_000_000,
             "known_interfaces": len(plan.declared),
-            "core_interfaces": len(plan.eager),
+            "core_interfaces": len(plan.staged),
+            "startup_interfaces": len(plan.startup),
             "deferred_interfaces": len(plan.deferred),
             "materialized_interfaces": 0,
             "binding_assembly_ms": 0.0,
@@ -355,7 +360,9 @@ class Browser:
         if os.environ.get("PYV8C_STARTUP_STATS", "1") != "0":
             self._startup_stats.update(values)
 
-    def new_context(self, *, proxy: str | None = None) -> BrowserContext:
+    def new_context(self, *, proxy: str | None = None, trace: bool | None = None,
+                    traceable: bool | None = None,
+                    trace_callback: Callable | None = None) -> BrowserContext:
         """Create an isolated session: its own cookies, blobs and network stack.
 
         :param proxy: where this context's traffic goes, overriding
@@ -363,13 +370,21 @@ class Browser:
             a URL sends it through that proxy instead, and ``""`` sends it
             directly even when the browser has one.  Contexts of one browser may
             therefore leave by different exits at the same time.
+        :param trace: report trace events for this context alone; ``None`` keeps
+            the browser setting.
+        :param traceable: let its pages switch tracing on later, same defaulting.
+        :param trace_callback: receive this context's events instead of the
+            browser's callback.
         :returns: the new :class:`BrowserContext`, appended to :attr:`contexts`.
         :raises InvalidStateError: the browser is closed.
         :raises ValueError: the proxy value is not an ``http``/``https`` URL.
         """
         if self._closed:
             raise InvalidStateError("Browser is closed")
-        context = BrowserContext(self, proxy=None if proxy is None else normalize_proxy(proxy))
+        if trace_callback is not None and not callable(trace_callback):
+            raise TypeError("trace_callback must be callable or None")
+        context = BrowserContext(self, proxy=None if proxy is None else normalize_proxy(proxy),
+                                 trace=trace, traceable=traceable, trace_callback=trace_callback)
         self.contexts.append(context)
         return context
 

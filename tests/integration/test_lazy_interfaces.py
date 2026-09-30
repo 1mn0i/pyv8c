@@ -16,15 +16,28 @@ def test_cold_start_leaves_deferred_interfaces_for_first_access():
         session = page.binding_session
         materialized = set(session.materialized_interfaces)
         plan = browser.interface_universe.plan("Window")
-        eager = set(plan.eager)
+        staged = set(plan.staged)
         deferred = set(plan.deferred)
         exposed = set(session.interface_names("Window"))
 
-        assert eager
-        # Core and its referenced stubs, ancestors included; the rest waits.
-        assert eager <= materialized
+        assert staged
+        # Staged seeds the realm; ancestors and alias targets are built with it.
+        assert staged <= materialized
         assert deferred - materialized
         assert browser.startup_stats["deferred_globals"] == len(exposed)
+    finally:
+        browser.close()
+
+
+def test_the_plan_names_every_interface_startup_builds():
+    """Startup builds the skeleton, its ancestors and the alias targets, nothing else."""
+    browser = Browser(stub_logging="off")
+    page = browser.new_context().new_page()
+    try:
+        plan = browser.interface_universe.plan("Window")
+        materialized = set(page.binding_session.materialized_interfaces)
+        assert set(plan.startup) == materialized
+        assert set(plan.staged) < set(plan.startup)
     finally:
         browser.close()
 
