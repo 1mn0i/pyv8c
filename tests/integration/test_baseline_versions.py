@@ -152,7 +152,7 @@ def test_baseline_signatures_do_not_control_implementation_arguments(tmp_path):
         member for member in document["DOMTokenList"]["members"]["prototype"]
         if member["name"] == "contains"
     )
-    contains["signature"]["required"] = 2
+    contains.setdefault("signature", {})["required"] = 2
     path = tmp_path / "strict-contains.json"
     path.write_text(json.dumps(document), encoding="utf-8")
 
@@ -177,7 +177,7 @@ def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_pa
         member for member in document["DOMTokenList"]["members"]["prototype"]
         if member["name"] == "contains"
     )
-    contains["signature"]["status"] = "unresolved"
+    contains.setdefault("signature", {})["status"] = "unresolved"
     path = tmp_path / "unresolved-real.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     browser = Browser(interface_baseline_path=path, stub_logging="off")
@@ -192,7 +192,7 @@ def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_pa
         member for member in document["AbortController"]["members"]["prototype"]
         if member["name"] == "abort"
     )
-    abort["signature"]["status"] = "unresolved"
+    abort.setdefault("signature", {})["status"] = "unresolved"
     path = tmp_path / "unresolved-stub.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     browser = Browser(interface_baseline_path=path, stub_logging="off")

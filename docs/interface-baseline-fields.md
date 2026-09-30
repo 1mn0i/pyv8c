@@ -5,21 +5,40 @@ baseline 记录接口形状（成员签名只在审计产物里），不包含�
 
 ## 当前快照与版本边界
 
-2026-09-30 实读：
+2026-09-30 实读（154 产物在这一天用本地 154 检出重生成，运行时默认也换成了它）：
 
 | 产物 | 接口 | 成员 | 形态 |
 | --- | --- | --- | --- |
-| `pyv8c/baselines/interface-baseline.zip`（运行时默认） | 1,254 | 10,630 | 旧形态：仍含成员签名 |
-| `baselines/154.0.8030.0.zip`（版本副本） | 1,254 | 10,630 | 同上 |
-| `baselines/145.0.7632.162.zip`（版本副本） | 1,224 | 10,166 | 新形态：无签名、有 `main_world` |
+| `pyv8c/baselines/interface-baseline.zip`（运行时默认） | 1,254 | 10,636 | 新形态：无签名、有 `main_world` |
+| `baselines/154.0.8030.0.zip`（版本副本） | 1,254 | 10,636 | 与运行时逐字节同内容 |
+| `baselines/145.0.7632.162.zip`（版本副本） | 1,224 | 10,166 | 同上 |
+
+生成命令（两个输出各跑一次；`--chromium-root` 用相对路径，`renderer_snapshot` 才留相对形式）：
+
+```powershell
+python tools/extract_interfaces.py baselines/154.0.8030.0.zip --chromium-root .chromium-build/chromium --report
+python tools/extract_interfaces.py pyv8c/baselines/interface-baseline.zip --chromium-root .chromium-build/chromium
+```
 
 两种形态运行时都能读：签名是审计字段，`main_world` 缺席时按主世界解释（这正合旧产物省略 world 的语义）。
-154 的产物要等到有 154 的检出再重生成。
+归档内成员名随输出文件名（`154.0.8030.0.json` / `interface-baseline.json`）。
 
-同一份实测窗口面（`data/chrome-environment.json` 的 `window_surface` 段，Chrome 153）下，两份产物的 Window 面
-不一样：145 副本声明 909 个名字、`Object.getOwnPropertyNames(window)` 缺 8 个，154 产物声明 900 个、缺 27 个
-（`ReadableStream`、`NodeFilter`、`QuotaExceededError` 等）。差的这批来自暴露元数据解析的修复（`[Exposed=*]` 等），
-154 产物生成于修复之前。要它们一致，就得用 154 的检出重生成一次。
+同一份实测窗口面（`data/chrome-environment.json` 的 `window_surface` 段，Chrome 153，1,233 个名字）下，
+`Object.getOwnPropertyNames(window)` 的结果：
+
+| 产物 | 装出的名字 | 缺 |
+| --- | --- | --- |
+| 重生成后的 154（现为运行时默认） | 1,233 | 1（`Temporal`） |
+| 重生成前的 154（`1bf15cf` 的产物） | 1,207 | 27（`NodeFilter`、`QuotaExceededError`、`ReadableByteStreamController` 等） |
+| 145 副本 | 1,226 | 8（`AudioPlaybackStats`、`HTMLCameraElement`、`NodeRange` 等） |
+
+`Temporal` 两份都缺，属平台自身缺口；145 副本缺的 8 个是 145 与 154 之间新增的接口。
+
+换成这份产物后还有两处待定：冷启动会预物化 25 个接口（`plan.eager` 只有 13），其中 12 个
+（`MediaStream`、`MutationObserver`、`PermissionsPolicy`、`RTCPeerConnection`、`SpeechRecognition` 一族、
+`DOMMatrix` 一族）因窗口面把它们声明为自有名字而装上，但 plan 仍把它们算作 deferred；语料用例
+`a_file_input_has_no_capture_member` 也会失败——产物为 `HTMLInputElement` 声明了 `capture`，而实测 Chrome 153
+对 `type=file` 不暴露它。
 
 metadata.report 仍包含 unresolved 签名；接口数量、成员数量和提取成功都不能当作功能兼容率。
 

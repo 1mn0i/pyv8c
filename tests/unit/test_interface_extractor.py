@@ -253,7 +253,7 @@ def test_generated_baseline_keeps_full_runtime_snapshot_and_report():
     assert handlers["indexed"]["del"] == 1
     assert handlers["indexed"]["definer"] == 1
     entry = baseline["URL"]
-    assert set(entry) == {"constants", "constructor", "exposed_in", "members", "parent", "tag", "template"}
+    assert set(entry) == {"aliases", "constants", "constructor", "exposed_in", "members", "parent", "tag", "template"}
     assert "provenance" not in entry
     assert "handlers" in entry["template"]
     assert all(member["kind"] != "constant" for values in entry["members"].values() for member in values)
