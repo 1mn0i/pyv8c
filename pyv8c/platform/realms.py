@@ -155,10 +155,12 @@ class WorkerRealm:
 class PageRealm:
     """Own the V8 context and binding session for one page."""
 
-    def __init__(self, page):
+    def __init__(self, page, executor=None):
         self.page = page
         self.context = None
-        self.executor = RealmExecutor(name="pyv8c-page")
+        self.executor = executor if executor is not None else RealmExecutor(name="pyv8c-page")
+        #: False when the page owns the thread and hands it across navigations.
+        self._owns_executor = executor is None
         #: Compiled JavaScript helpers, created with the context in _initialize.
         self.scripts = None
         browser = page.context_owner.browser
@@ -237,6 +239,15 @@ class PageRealm:
         )
 
     def close(self):
+        self.close_context()
+        if self._owns_executor:
+            self.executor.close()
+
+    def close_context(self):
+        """Close the document-scoped parts: the context, session and scripts."""
+        if self.executor.closed:
+            return
+
         def close_context():
             context = self.context
             close = getattr(context, "close", None)
@@ -247,10 +258,8 @@ class PageRealm:
             if self.scripts is not None:
                 self.scripts.close()
                 self.scripts = None
-        if self.executor.closed:
-            return
+
         self.executor.call(close_context)
-        self.executor.close()
 
 
 __all__ = ["PageRealm", "WorkerRealm"]

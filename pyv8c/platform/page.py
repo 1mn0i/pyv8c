@@ -21,7 +21,7 @@ from ..web.fetch.response import Response
 from .lifecycle import DocumentLifecycle
 from .navigation import NavigationController
 from .net import PageNet
-from .realms import PageRealm
+from .realms import PageRealm, RealmExecutor
 from .resource_loading import ResourceController
 from .scripting import ScriptController
 from .services import PageServices
@@ -141,7 +141,10 @@ class Page:
         # Context.__init__ returns, so publish a sentinel until the realm exists.
         self.context = _ContextBootstrapProxy()
         self._devtools_target = None
-        self.realm = PageRealm(self)
+        #: One owner thread for the page's lifetime; navigations hand it to the
+        #: next realm instead of starting another.
+        self.executor = RealmExecutor(name="pyv8c-page")
+        self.realm = PageRealm(self, executor=self.executor)
         self.services.bind_realm(self.realm)
         self.realm.executor.attach_task_queue(self.tasks)
         self.realm.executor.attach_rejection_tracker(self.rejections)
@@ -284,16 +287,19 @@ class Page:
             window._features._cache(slot, previous_window._features.value(slot))
         self.window = window
         self.services.window = window
-        self.realm = PageRealm(self)
+        self.realm = PageRealm(self, executor=self.executor)
         self.services.bind_realm(self.realm)
         self.realm.executor.attach_task_queue(self.tasks)
         self.realm.executor.attach_rejection_tracker(self.rejections)
         self.context = self.realm.context
         Window._bind_context(self.context, window)
         Window._unbind_context(previous_realm.context)
-        # The old realm runs the command that got here, so it is closed from a
-        # thread of its own rather than inside that command.
-        threading.Thread(target=previous_realm.close, daemon=True).start()
+        # This command runs on the page's one owner thread, so the previous
+        # realm's document-scoped parts close inline; the thread itself stays.
+        try:
+            previous_realm.close_context()
+        except BaseException as error:
+            self.report_exception(error)
         return window
 
     @property
@@ -612,6 +618,7 @@ class Page:
             raise first_error
         Window._unbind_context(self.context)
         self.realm.close()
+        self.executor.close()
         self.context = None
         self.closed = True
         self.context_owner._discard_page(self)
