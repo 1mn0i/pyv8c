@@ -294,7 +294,9 @@ class RealmExecutor:
             self._wake.clear()
             if self._commands.empty():
                 deadline = self._next_deadline()
-                timeout = IDLE_WAIT_MAX if deadline is None else min(deadline, IDLE_WAIT_MAX)
+                # No deadline: a command or a newly scheduled timer wakes the
+                # thread, so it sleeps until one does instead of polling.
+                timeout = None if deadline is None else min(deadline, IDLE_WAIT_MAX)
                 # Only a wait towards a deadline asks for the finer platform
                 # timer; a distant one is waited in slices, and each needs it too.
                 with timer_resolution.hold(deadline is not None):
