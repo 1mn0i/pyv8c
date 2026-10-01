@@ -4,6 +4,8 @@ import re
 from collections import deque
 from urllib.parse import urljoin
 
+import pyv8
+
 from ..foundation.errors import InvalidStateError
 from ..foundation.tasks import TaskSource
 
@@ -11,12 +13,17 @@ from ..foundation.tasks import TaskSource
 class ScriptController:
     """Own script-queue state and execution; runs on the owning Page thread."""
 
+    #: Compiled ad-hoc scripts kept so a repeated evaluate skips compilation.
+    COMPILE_CACHE_LIMIT = 32
+
     def __init__(self, page):
         self.page = page
         self.dom_blocking_scripts = 0
         self.queue = deque()
         self.defer = deque()
         self.module_cache = {}
+        # (source, filename) -> pyv8.Script, most recently used last.
+        self._compiled = {}
         # The realm's compiled JS helpers, created with the V8 context and dropped with it.
         self._realm_scripts = None
 
@@ -25,6 +32,8 @@ class ScriptController:
         self.queue.clear()
         self.defer.clear()
         self.module_cache.clear()
+        # Compiled scripts die with the context they were created in.
+        self._compiled.clear()
 
     def clear_js_helpers(self):
         self._realm_scripts = None
@@ -61,10 +70,22 @@ class ScriptController:
         if target is not None:
             target.before_script()
         try:
-            return self.page.context.exec_js(str(script), filename=filename)
+            return self.page.context.exec_js(self._compiled_script(script, filename))
         finally:
             if target is not None:
                 target.after_script()
+
+    def _compiled_script(self, script, filename):
+        key = (str(script), filename)
+        compiled = self._compiled.get(key)
+        if compiled is not None:
+            self._compiled[key] = compiled
+            return compiled
+        compiled = pyv8.Script(self.page.context, str(script), filename)
+        self._compiled[key] = compiled
+        if len(self._compiled) > self.COMPILE_CACHE_LIMIT:
+            self._compiled.pop(next(iter(self._compiled)))
+        return compiled
 
     def execute_script(self, node, source, filename=None):
         """Run one classic script with ``document.currentScript`` set to *node*.
