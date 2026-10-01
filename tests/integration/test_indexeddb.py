@@ -568,3 +568,25 @@ def test_key_ordering_keyrange_and_exception_names(page):
     assert result["delOutcome"] == "deleted"
     assert name not in result["databases"]
     assert "delme" not in result["databases"]
+
+
+def test_databases_do_not_leak_across_contexts():
+    browser = Browser(resource_loader=_loader, stub_logging="off")
+    try:
+        first = browser.new_context().new_page(ORIGIN + "/")
+        first.evaluate("""(() => { globalThis.out = null;
+            const req = indexedDB.open('leaky', 1);
+            req.onupgradeneeded = () => req.result.createObjectStore('s');
+            req.onsuccess = () => { req.result.close(); globalThis.out = true; };
+            req.onerror = () => { globalThis.out = req.error && req.error.name; };
+        })()""")
+        assert wait_until(first, "globalThis.out") is True
+
+        second = browser.new_context().new_page(ORIGIN + "/")
+        second.evaluate("""(() => { globalThis.names = null;
+            indexedDB.databases().then((dbs) => { globalThis.names = dbs.map((d) => d.name); });
+        })()""")
+        assert wait_until(second, "globalThis.names !== null")
+        assert second.evaluate("globalThis.names") == []
+    finally:
+        browser.close()

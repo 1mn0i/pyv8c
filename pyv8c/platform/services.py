@@ -456,6 +456,10 @@ class _ContextCapability:
         return self._owner._context.cookies
 
     @property
+    def _databases(self):
+        return self._owner._context._databases
+
+    @property
     def network_available(self):
         return self._owner._context.network_backend is not None
 

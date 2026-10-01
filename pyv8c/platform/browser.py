@@ -51,6 +51,7 @@ class BrowserContext:
             self.network_backend.cookies = self.cookies
         self._blob_urls = {}
         self._blob_origins = {}
+        self._databases = {}
         self.closed = False
         self._devtools = None
 
@@ -185,6 +186,7 @@ class BrowserContext:
                     setattr(self, name, None)
         self._blob_urls.clear()
         self._blob_origins.clear()
+        self._databases.clear()
         if first_error is not None:
             raise first_error
         self.closed = True

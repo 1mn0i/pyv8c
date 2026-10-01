@@ -482,7 +482,6 @@ class _DatabaseModel:
 
 
 _LOCK = threading.RLock()
-_ORIGINS = {}
 _BLOCKED_WAIT_SECONDS = 5.0
 _BLOCKED_POLL_SECONDS = 0.05
 
@@ -500,7 +499,8 @@ def _origin_key(services):
 
 
 def _databases(services):
-    return _ORIGINS.setdefault(_origin_key(services), {})
+    """The origin-scoped databases of the context the realm belongs to."""
+    return services.context_services._databases.setdefault(_origin_key(services), {})
 
 
 def _store_clone(value):
