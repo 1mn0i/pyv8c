@@ -34,8 +34,10 @@ resource_type 常见 document、script、style、image、media、iframe、fetch�
 字典响应的 URL 被设为请求目标；若需要显式最终 URL，请返回 Response。
 普通值走 str 转换，字节内容应放到字典的 body 或 Response 中，避免被转换成 Python bytes 的字符串表示。
 
-loader 本身同步执行。load_resource_async 只把完成通知放入队列，不会自动把自定义 loader 搬到后台线程。
-因此长时间阻塞的 Python loader 不能被 goto 的等待超时强制抢占。
+loader 默认在页面 owner 线程上执行，所以它可以在等请求的同时看页面（在 loader 里 page.evaluate 采样 DOM 是支持的）。
+`Browser(threaded_loaders=True)` 改为在 Browser 的有界线程池上执行：被阻塞的 loader 不再冻住 realm，
+`goto` 的等待超时也终于能生效。代价是这种回调不得触碰页面——`page.evaluate`、读取页面状态都不行——
+因为它已经不在 owner 线程上了。两种模式下完成通知都经任务队列回到 realm。
 
 ## 请求顺序
 
@@ -44,7 +46,7 @@ loader 本身同步执行。load_resource_async 只把完成通知放入队列�
 同时配置 loader 与真实网络时，loader 优先，不会自动因其返回空值而回退到网络。
 
 异步完成通知通过任务队列回到 realm。RequestHandle、ResourceScope 与导航 generation 用于取消、清理和丢弃过期结果；
-导航代际保护不等于能够强制终止已经运行的任意 Python 函数。
+导航代际保护不等于能够强制终止已经运行的任意 Python 函数（`threaded_loaders` 下它在池线程上跑，至少不再挡住 realm）。
 
 ## 主动拦截
 

@@ -34,7 +34,7 @@ Context 关闭会关闭其页面、DevTools 和网络客户端，并清理 Blob 
 | `page.set_content(html=空 HTML 文档, url="about:blank")` | 提交新文档并启动解析；省略 html 得到 `<!DOCTYPE html>` 开头的空 standards 文档；设置 URL 不等于从该 URL 下载 HTML |
 | `page.goto(url, timeout=30, wait_until="load")` | 加载并导航，通常返回 Response；beforeunload 阻止时可返回 None |
 | `page.evaluate(script, filename=None)` | 在 owner 线程执行 JS 源码；filename 用于脚本定位 |
-| `page.run_until_idle(timeout=0)` | 驱动就绪任务；正 timeout 允许等待定时器/异步工作，到期返回，不承诺所有工作完成 |
+| `page.run_until_idle(timeout=0)` | 驱动就绪任务；正 timeout 允许等待定时器与在途资源/网络/worker 工作，到期返回，不承诺所有工作完成 |
 | `page.dispatch_event(type, *, target="window", selector=None, event_class=None, init=None)` | 宿主侧派发 trusted 事件；返回是否未被取消，详见下节 |
 | `page.query_selector(selector)` | 返回宿主侧 DOM 节点句柄，未命中返回 None |
 | `page.set_visibility(hidden)` | 切换文档可见性并派发 visibilitychange/ freeze / resume |
@@ -172,6 +172,7 @@ finally:
 | http_options / ws_options | None / None | 分别交给两个引擎的参数；引擎不认识的键在创建 Context 时报错 |
 | proxy | None | 出口代理 `http://[user:pass@]host:port`；None 与 `""` 都是直连（不看环境变量），可被 `new_context(proxy=...)` 覆盖，详见「网络代理」 |
 | resource_interceptor | None | 主动跳过/替换请求，区别于被动 trace |
+| threaded_loaders | False | 让 resource_loader / resource_interceptor 在 Browser 的有界线程池上执行：慢回调不再冻结 realm，代价是这种回调不得触碰页面 |
 | cache / cache_dir | True / None | 允许缓存；只有显式目录才持久化资源响应 |
 | environment | None | 扁平点号键字典或不可变 BrowserEnvironment |
 | trace / traceable | False / False | 初始观察状态 / 是否允许后续开启 |

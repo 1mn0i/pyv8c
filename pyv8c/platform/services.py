@@ -209,6 +209,12 @@ class _TaskCapability(_TaskSource):
     def complete_worker(self):
         self._tasks.complete_worker()
 
+    def begin_loader(self):
+        self._tasks.begin_loader()
+
+    def complete_loader(self):
+        self._tasks.complete_loader()
+
 
 class WorkerRealmServices:
     """The capability facets a worker hands to its own global scope.

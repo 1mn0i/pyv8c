@@ -98,7 +98,7 @@ getter"的条目。cross-origin 的配置由 `SetAccessCheckCallbackAndHandler` 
 
 ## 性能和并发
 
-不要用未经测量的“提速”描述替代基准。Feature 模块应在首次使用时导入，Browser Runtime 状态不能跨实例共享；Realm Session 配置不能跨页面共享。网络线程不得同步等待页面 owner 线程，页面回调内不得阻塞本 realm 的 loop，关闭操作必须幂等。
+不要用未经测量的“提速”描述替代基准。Feature 模块应在首次使用时导入，Browser Runtime 状态不能跨实例共享；Realm Session 配置不能跨页面共享。网络线程不得同步等待页面 owner 线程，页面回调内不得阻塞本 realm 的 loop，关闭操作必须幂等。loader/interceptor 回调默认在 owner 线程，开启 `threaded_loaders` 后在池线程上，此时不得回调 realm。
 
 `tools/benchmark.py` 是这句话的落点：11 个用例覆盖启动、页面开合、跨桥调用、DOM 构建/解析/查询、事件派发、子资源加载与常驻内存，全程离线、各自新建 Browser，每个用例报中位数与最小值。
 

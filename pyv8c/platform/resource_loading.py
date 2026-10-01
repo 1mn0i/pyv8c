@@ -194,13 +194,85 @@ class ResourceController:
                     except OSError:
                         pass
 
+    def _dispatch(self, call, tail):
+        """Run one user callback where the browser asks for it, then hand its
+        ``(value, error)`` to *tail*.
+
+        Inline, both run where the caller stands.  Offloaded, *call* runs on the pool
+        while *tail* runs on the owner thread through the queue, so a tail that reads
+        the page still does.
+        """
+        page = self.page
+
+        def gather():
+            try:
+                return call(), None
+            except BaseException as exc:  # reported to the request's own callback
+                return None, exc
+
+        if not page.context_owner.browser.threaded_loaders:
+            value, error = gather()
+            tail(value, error)
+            return
+
+        tasks = page.services.task_services
+
+        def pool_side():
+            value, error = gather()
+            # Posted first, so an idle waiter never sees neither work nor a count.
+            page.tasks.post(lambda: tail(value, error))
+            tasks.complete_loader()
+
+        tasks.begin_loader()
+        try:
+            page.context_owner.browser.loader_pool.submit(pool_side)
+        except BaseException as exc:
+            page.tasks.post(lambda: tail(None, exc))
+            tasks.complete_loader()
+
+    def _call_off(self, call, timeout=None):
+        """Run *call* and wait on this thread for its result.
+
+        The wait is a plain event rather than the realm's queue: this path is reached
+        from inside a turn (a parser-blocking script, an iframe, a worker source),
+        where nothing else can run the queue for it.
+        """
+        if not self.page.context_owner.browser.threaded_loaders:
+            return call()
+        page = self.page
+        answer = {}
+        arrived = threading.Event()
+
+        def run():
+            try:
+                value, error = call(), None
+            except BaseException as exc:
+                value, error = None, exc
+            answer["value"], answer["error"] = value, error
+            arrived.set()
+
+        try:
+            page.context_owner.browser.loader_pool.submit(run)
+        except BaseException as exc:
+            answer["error"] = exc
+            arrived.set()
+        if not arrived.wait(timeout):
+            raise TimeoutError(f"the page's loader did not answer within {timeout} seconds")
+        if answer.get("error") is not None:
+            raise answer["error"]
+        return answer["value"]
+
     def _intercept(self, target, request):
         interceptor = self.page.resource_interceptor
         if not callable(interceptor):
             return None
-        decision = interceptor(target, dict(request))
+        decision = self._call_off(lambda: interceptor(target, dict(request)), request.get("timeout"))
         if decision is None or decision is True:
             return None
+        return self._intercepted_response(decision, target)
+
+    def _intercepted_response(self, decision, target):
+        """The response one interceptor decision stands for."""
         if decision is False:
             return Response("", {
                 "status": 200, "url": target,
@@ -288,7 +360,9 @@ class ResourceController:
             body, content_type = page.context_owner.resolve_blob_url(target)
             return Response(body, {"url": target, "headers": {"content-type": content_type}})
         if page.resource_loader:
-            response = self._response_from_loader(page.resource_loader(target, request), target)
+            value = self._call_off(
+                lambda: page.resource_loader(target, request), request.get("timeout"))
+            response = self._response_from_loader(value, target)
             self._store_response(target, request, response)
             return response
         backend = page.network_backend
@@ -351,63 +425,82 @@ class ResourceController:
             handle.finish()
             callback(response, error)
 
+        def load():
+            """Everything behind the interceptor: cache, blob, loader or engine."""
+            if handle.cancelled:
+                return
+            cached = self._cached_response(target, request)
+            if cached is not None:
+                page.tasks.post(lambda: deliver(cached, None))
+                return
+            if target.split("#", 1)[0] == "about:blank":
+                page.tasks.post(lambda: deliver(Response("", {"url": target}, services=page.services), None))
+                return
+            if target.startswith("blob:"):
+                try:
+                    body, content_type = page.context_owner.resolve_blob_url(target)
+                    response, error = Response(
+                        body,
+                        {"url": target, "headers": {"content-type": content_type}},
+                        services=page.services,
+                    ), None
+                except BaseException as exc:
+                    response, error = None, exc
+                page.tasks.post(lambda: deliver(response, error))
+                return
+            req = self._network_request(target, request, page)
+            if page.resource_loader:
+                def after_loader(value, error):
+                    if error is not None:
+                        page.tasks.post(lambda: deliver(None, error))
+                        return
+                    try:
+                        response = self._response_from_loader(value, target)
+                        response._services = page.services
+                        response = self.apply_response_policy(response, request)
+                        self._store_response(target, request, response)
+                    except BaseException as exc:
+                        response, error = None, exc
+                    # Fixture loaders use the same asynchronous boundary as Cronet.
+                    page.tasks.post(lambda: deliver(response, error))
+
+                self._dispatch(lambda: page.resource_loader(target, request), after_loader)
+                return
+            backend = page.network_backend
+            if backend is not None and backend.http_available:
+                handle._transport = backend.request_async(
+                    page.services.task_services, req,
+                    lambda raw, error: self.finish_async_response(raw, error, request, deliver),
+                )
+                return
+            page.tasks.post(
+                lambda: deliver(None, NetworkError("Network access requires an explicit resource_loader or real_network=True"))
+            )
+
         if page.closed or page.context_owner.closed:
             page.tasks.post(lambda: deliver(None, InvalidStateError("Page is closed")))
             return handle
         target = urljoin(page.url, str(url))
         request = self._request_with_environment_headers(request, page, target)
-        try:
-            intercepted = self._intercept(target, request)
-        except BaseException as exc:
-            page.tasks.post(lambda exc=exc: deliver(None, exc))
+        interceptor = page.resource_interceptor
+        if not callable(interceptor):
+            load()
             return handle
-        if intercepted is not None:
-            page.tasks.post(lambda: deliver(intercepted, None))
-            return handle
-        cached = self._cached_response(target, request)
-        if cached is not None:
-            page.tasks.post(lambda: deliver(cached, None))
-            return handle
-        if target.split("#", 1)[0] == "about:blank":
-            page.tasks.post(lambda: deliver(Response("", {"url": target}, services=page.services), None))
-            return handle
-        if target.startswith("blob:"):
-            try:
-                body, content_type = page.context_owner.resolve_blob_url(target)
-                response, error = Response(
-                    body,
-                    {"url": target, "headers": {"content-type": content_type}},
-                    services=page.services,
-                ), None
-            except BaseException as exc:
-                response, error = None, exc
-            page.tasks.post(lambda: deliver(response, error))
-            return handle
-        req = self._network_request(target, request, page)
-        if page.resource_loader:
-            try:
-                response = self._response_from_loader(page.resource_loader(target, request), target)
-                response._services = page.services
+
+        def after_intercept(decision, error):
+            if error is not None:
+                page.tasks.post(lambda: deliver(None, error))
+                return
+            if decision is not None and decision is not True:
                 try:
-                    response, error = self.apply_response_policy(response, request), None
-                    self._store_response(target, request, response)
+                    response = self._intercepted_response(decision, target)
                 except BaseException as exc:
                     response, error = None, exc
-            except BaseException as exc:
-                response, error = None, exc
-            # Fixture loaders use the same asynchronous boundary as Cronet.
-            page.tasks.post(lambda: deliver(response, error))
-            return handle
-        backend = page.network_backend
-        if backend is not None and backend.http_available:
-            handle._transport = backend.request_async(
-                page.services.task_services, req,
-                lambda raw, error: self.finish_async_response(raw, error, request, deliver),
-            )
-            return handle
-        page.tasks.post(
-            lambda: deliver(None, NetworkError("Network access requires an explicit resource_loader or real_network=True"))
-        )
+                page.tasks.post(lambda: deliver(response, error))
+                return
+            load()
+
+        self._dispatch(lambda: interceptor(target, dict(request)), after_intercept)
         return handle
 
     def finish_async_response(self, raw, error, request, callback):

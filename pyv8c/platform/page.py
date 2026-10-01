@@ -412,7 +412,7 @@ class Page:
 
         A waiting helper for host code and tests rather than a loop of its own:
         the realm executor already runs the loop, and this blocks while tasks,
-        timers and in-flight network or worker completions are still arriving.
+        timers and in-flight network, worker or loader work is still arriving.
 
         :param timeout: seconds to allow for work that is not ready yet (timers,
             in-flight requests).  ``0`` drains what is queued and returns at once.

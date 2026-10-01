@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
@@ -22,6 +23,10 @@ from ..network.proxy import normalize_proxy
 from ..network.registry import HttpTransport, WebSocketTransport
 from .bootstrap import bootstrap_runtime
 from .page import Page
+
+#: With ``threaded_loaders``, loader and interceptor callbacks run here instead of on
+#: the page's owner thread, or a slow one would freeze the realm.
+_LOADER_WORKERS = 4
 
 
 class BrowserContext:
@@ -210,6 +215,7 @@ class Browser:
                  real_network: bool = True,
                  resource_loader: Callable | None = None,
                  resource_interceptor: Callable | None = None,
+                 threaded_loaders: bool = False,
                  http_engine: Literal["cronet", "curl_cffi"] | HttpTransport | Callable | None = "curl_cffi",
                  http_options: dict | None = None,
                  ws_engine: Literal["cronet", "websockets"] | WebSocketTransport | Callable | None = "websockets",
@@ -246,6 +252,11 @@ class Browser:
             before each load: ``None``/``True`` loads normally, ``False`` answers
             with an empty 200, anything else (``Response``, dict, str) is the
             response.
+        :param threaded_loaders: run ``resource_loader`` and
+            ``resource_interceptor`` on a bounded worker pool instead of the page's
+            owner thread, so a callback blocked on its own I/O does not freeze the
+            realm.  A callback running there may not touch the page, ``page.evaluate``
+            and this host's own cache included.
         :param http_engine: the HTTP engine -- a registered name (built with
             ``http_options``), a ready object with ``request_sync``, or a factory
             called once per context; ``None`` leaves the role empty.  Further
@@ -298,6 +309,9 @@ class Browser:
         self.contexts = []
         self.resource_loader = resource_loader
         self.resource_interceptor = resource_interceptor
+        self.threaded_loaders = bool(threaded_loaders)
+        self._loader_pool = None
+        self._loader_lock = threading.Lock()
         self.cache_enabled = bool(cache)
         self.cache_dir = Path(cache_dir).expanduser() if cache_dir is not None else None
         #: ``False`` assembles no engines; a ready engine is then refused.
@@ -390,6 +404,18 @@ class Browser:
         self.contexts.append(context)
         return context
 
+    @property
+    def loader_pool(self):
+        """The bounded pool the page's loader callbacks run on, created on first use."""
+        pool = self._loader_pool
+        if pool is None:
+            with self._loader_lock:
+                if self._loader_pool is None:
+                    self._loader_pool = ThreadPoolExecutor(
+                        max_workers=_LOADER_WORKERS, thread_name_prefix="pyv8c-loader")
+                pool = self._loader_pool
+        return pool
+
     def close(self) -> None:
         """Close every context, then mark the browser closed.
 
@@ -399,6 +425,11 @@ class Browser:
         """
         if self._closed:
             return
+        pool = self._loader_pool
+        if pool is not None:
+            # Loader work is not the browser's to wait for, and a callback may be
+            # blocked on its own I/O.
+            pool.shutdown(wait=False, cancel_futures=True)
         first_error = None
         for context in list(self.contexts):
             try:

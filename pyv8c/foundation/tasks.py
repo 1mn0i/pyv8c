@@ -74,6 +74,7 @@ class TaskQueue:
         self._lock = threading.Lock()
         self.network_pending = 0
         self.worker_pending = 0
+        self.loader_pending = 0
         self._parser: deque[Callable[..., object]] = deque()
         self._closed = False
         self._wakeup = None
@@ -156,6 +157,15 @@ class TaskQueue:
     def complete_worker(self):
         with self._lock:
             self.worker_pending = max(0, self.worker_pending - 1)
+        self._signal()
+
+    def begin_loader(self):
+        with self._lock:
+            self.loader_pending += 1
+
+    def complete_loader(self):
+        with self._lock:
+            self.loader_pending = max(0, self.loader_pending - 1)
         self._signal()
 
     def post(self, callback, source: TaskSource = TaskSource.POSTED):
@@ -287,7 +297,9 @@ class TaskQueue:
             if remaining == 0.0:
                 return
             deadline_hint = self.next_deadline()
-            if deadline_hint is None and not (self.network_pending or self.worker_pending):
+            if deadline_hint is None and not (
+                self.network_pending or self.worker_pending or self.loader_pending
+            ):
                 return
             wait_for = min(0.01, remaining) if deadline_hint is None else min(deadline_hint, remaining)
             self._wait(max(0.0, wait_for))
@@ -299,6 +311,7 @@ class TaskQueue:
         # Completions may arrive after close: drop wait state so a waiter cannot stay blocked.
         self.network_pending = 0
         self.worker_pending = 0
+        self.loader_pending = 0
         self._parser.clear()
         self.posted.clear()
         self._signal()
