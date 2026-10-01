@@ -58,7 +58,7 @@ postMessage 检查 targetOrigin 并设置 data、origin、source；支持 onmess
 导航和消息排入目标任务队列，默认 executor 自动推进；测试可使用 run_until_idle 等待。
 structured_clone 仅支持当前实现的类型，不能假定完整 transfer 列表或任意循环对象都可复制。
 
-同步同源代理转发使用 native 保存的目标 Context；不要在持有 isolate 锁的回调中同步等待另一 executor，避免锁互等。
+同步同源代理转发使用 native 保存的目标 Context；不要在回调里同步等待另一 executor 或阻塞本 realm 的 loop，避免互等。
 跨源检查不应被 trace 跳过；trace 只观察原有回调出口。
 
 ## 已知限制

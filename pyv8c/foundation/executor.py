@@ -1,11 +1,13 @@
 """Single-owner execution loop for a V8 realm.
 
 One thread owns the realm, so callers submit work and may wait for it; idle time
-turns the realm's event loop, event driven, so a realm with nothing to do sleeps.
+turns the realm's event loop, and an asyncio loop on the same thread sleeps until a
+command, a delivery or a deadline wakes it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import queue
 import threading
@@ -49,10 +51,6 @@ def _default_call_timeout():
     return None if value <= 0 else value
 
 
-#: Safety bound for the idle wait: wake-ups are event driven, so this only covers
-#: a missed notification.
-IDLE_WAIT_MAX = 0.05
-
 _UNSET = object()
 
 
@@ -66,12 +64,15 @@ class RealmExecutor:
     """Run all V8 and realm tasks on one dedicated thread."""
 
     def __init__(self, name="pyv8c-realm", *, auto_pump=None, default_timeout=_UNSET):
-        self._commands: queue.Queue[Command] = queue.Queue()
+        self._commands: queue.SimpleQueue[Command] = queue.SimpleQueue()
         self._closed = threading.Event()
+        # Serialises a submit against close, so a command cannot land in a stopped queue.
         self._submit_lock = threading.Lock()
-        self._ready = threading.Event()
+        # Rouses an idle park; _timed also asks the loop to break a deadline wait.
         self._wake = threading.Event()
+        self._timed = False
         self._owner_ident = None
+        self._loop = None
         self._task_queue = None
         self.auto_pump = _env_flag("PYV8C_AUTO_PUMP") if auto_pump is None else bool(auto_pump)
         self.default_timeout = _default_call_timeout() if default_timeout is _UNSET else default_timeout
@@ -97,8 +98,9 @@ class RealmExecutor:
         # raised by a fire-and-forget callback.
         if self._error_sink is None:
             self._error_sink = task_queue.report_error
-        # The queue wakes this thread directly, instead of on the safety timeout.
+        # The queue wakes the driver and sleeps it, instead of it polling.
         task_queue.set_wakeup(self.wakeup)
+        task_queue.set_wait(self._sleep)
         self.wakeup()
 
     def attach_rejection_tracker(self, tracker):
@@ -120,8 +122,18 @@ class RealmExecutor:
         self._deadline_source = source
 
     def wakeup(self):
-        # A no-op command wakes the command wait without executing user code.
+        """Rouse a sleeping owner thread: the event for an idle park, the loop for a deadline."""
         self._wake.set()
+        if not self._timed:
+            # The single-attribute read may be stale, and then the park's own re-check
+            # sees the event instead: the flag only avoids the loop hop.
+            return
+        loop = self._loop
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except RuntimeError:
+            # The loop is closed: the thread is gone or on its way out.
+            pass
 
     def call(self, callback, *args, timeout=_UNSET, **kwargs):
         """Run *callback* on the owner thread and return or raise its result.
@@ -248,59 +260,86 @@ class RealmExecutor:
         except BaseException:  # reporting must not break the loop
             logger.debug("failed to report unhandled rejections", exc_info=True)
 
-    def _run(self):
-        self._owner_ident = threading.get_ident()
-        self._ready.set()
+    def _has_work(self):
+        """Whether anything the driver would run is already queued."""
+        if not self._commands.empty():
+            return True
+        task_queue = self._task_queue
+        if task_queue is None or not self.auto_pump:
+            return False
+        return task_queue.pending()
+
+    def _sleep(self, seconds=None):
+        """Sleep the owner thread until *seconds* elapse or :meth:`wakeup` is called.
+
+        The loop's only callback stops it, so neither user code nor the pump ever
+        runs inside ``run_forever``; that is what lets a command wait in here.
+        """
+        self._wake.clear()
+        if self._has_work():
+            # A delivery that raced the sleep decision is not slept out.
+            return
+        if seconds is None:
+            # Nothing is due: park on the event instead of paying for the loop.
+            self._wake.wait()
+            return
+        loop = self._loop
+        self._timed = True
+        handle = loop.call_later(seconds, loop.stop)
         try:
-            self._loop()
+            if not self._wake.is_set():
+                # Only a wait towards a deadline asks for the finer platform timer.
+                with timer_resolution.hold():
+                    loop.run_forever()
         finally:
+            handle.cancel()
+            self._timed = False
+
+    def _run(self):
+        loop = asyncio.new_event_loop()
+        self._loop = loop
+        self._owner_ident = threading.get_ident()
+        try:
+            self._drive()
+        finally:
+            loop.close()
             # A thread that went away for any reason must take its callers with it:
             # a closed executor fails fast instead of blocking them until timeout.
             self._closed.set()
             self._fail_pending()
 
-    def _loop(self):
+    def _drive(self):
         while not self._closed.is_set():
-            # Commands first: evaluate/goto/close must never queue behind page work.
-            drained = False
-            while not self._closed.is_set():
-                command = self._next_command()
-                if command is None:
-                    break
-                drained = True
-                if command is _STOP:
-                    self._closed.set()
-                    return
-                try:
-                    self._execute(command)
-                except _CONTROL_EXCEPTIONS:
-                    # One escaping would leave the realm marked open while its
-                    # owner thread dies, so close it first and then propagate.
-                    self._closed.set()
-                    raise
-                else:
-                    # The command ran JavaScript and with it the microtask
-                    # checkpoint, so its rejections are due before the next one.
-                    self._settle_rejections()
-            if self._closed.is_set():
-                break
-            if self._run_turn():
-                # A turn ends its task, which is where the specification puts
-                # the rejection events for anything that task rejected.
-                self._settle_rejections()
-                continue
-            if drained:
-                continue
-            self._wake.clear()
-            if self._commands.empty():
-                deadline = self._next_deadline()
-                # No deadline: a command or a newly scheduled timer wakes the
-                # thread, so it sleeps until one does instead of polling.
-                timeout = None if deadline is None else min(deadline, IDLE_WAIT_MAX)
-                # Only a wait towards a deadline asks for the finer platform
-                # timer; a distant one is waited in slices, and each needs it too.
-                with timer_resolution.hold(deadline is not None):
-                    self._wake.wait(timeout)
+            self._pump()
+
+    def _pump(self):
+        """Drain the commands, then run one turn, then sleep until something arrives."""
+        self._drain_commands()
+        if self._closed.is_set():
+            return
+        if self._run_turn():
+            # A turn ends its task, which is where the specification puts the
+            # rejection events for anything that task rejected.
+            self._settle_rejections()
+            return
+        self._sleep(self._next_deadline())
+
+    def _drain_commands(self):
+        # Commands first: evaluate/goto/close must never queue behind page work.
+        while not self._closed.is_set():
+            command = self._next_command()
+            if command is None:
+                return
+            try:
+                self._execute(command)
+            except _CONTROL_EXCEPTIONS:
+                # One escaping would leave the realm marked open while its
+                # owner thread dies, so close it first and then propagate.
+                self._closed.set()
+                raise
+            # The command ran JavaScript and with it the microtask checkpoint,
+            # so its rejections are due before the next one.
+            self._settle_rejections()
 
     def _fail_pending(self):
         """Complete the callers still waiting on commands that will not run."""
@@ -318,9 +357,6 @@ class RealmExecutor:
             if self.closed:
                 return
             self._closed.set()
-            # The stop sentinel shares the queue although it is not a command
-            # tuple; _run and _next_command separate it by identity.
-            self._commands.put(_STOP)  # type: ignore[arg-type]
             self._fail_pending()
         self.wakeup()
         if not self.is_owner_thread():
@@ -330,7 +366,4 @@ class RealmExecutor:
                 logger.warning(f"{self._thread.name} did not exit within {timeout}s")
 
 
-_STOP = object()
-
-
-__all__ = ["RealmExecutor", "IDLE_WAIT_MAX"]
+__all__ = ["RealmExecutor"]

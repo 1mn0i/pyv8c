@@ -8,7 +8,7 @@ specific interleaving, which almost never occurs in a single happy-path run:
   on ``Page.realm``).  ``Debugger.disconnect`` therefore ran on whichever
   thread happened to close the target, breaking the single-owner invariant.
 - A2 -- ``TaskQueue.pump_until`` could sleep out a delivery whose notification
-  landed in the window between turning the loop and acquiring the wait lock.
+  landed in the window between turning the loop and going to sleep.
 - A3 -- an exception raised by a ``RealmExecutor.post()`` command has no
   Future to mirror onto and used to vanish inside the owner thread.
 - A4 -- a fetch/XHR or document-subresource response that completed before its
@@ -173,39 +173,46 @@ def test_devtools_page_close_records_no_disconnect_diagnostics(browser):
 
 
 def test_pump_until_does_not_sleep_out_a_delivery_that_races_the_wait():
-    """A2: a task delivered behind the last turn must wake the pump promptly.
+    """A2: a task delivered while the pump sleeps must wake it promptly.
 
-    The sequence gate is sampled before the turn, so a delivery that lands at
-    any point in the iteration is visible at the wait decision.  Without the
-    gate the pump sleeps the full next-timer bound (50 ms here) and only then
+    The delivery nudges the executor, whose wait returns at once; without the
+    nudge the pump sleeps the whole next-timer bound (50 ms here) and only then
     re-checks, which turns a microseconds-wide race into a stall.
     """
+    executor = RealmExecutor(name="test-race-a2")
     from pyv8c.foundation.tasks import TaskQueue
 
     queue = TaskQueue()
+    executor.attach_task_queue(queue)
     consumed = []
-    real_run_turn = queue.run_turn
-    delivered = {"done": False}
+    asleep = threading.Event()
+    wait = executor._sleep
 
-    def run_turn_then_deliver(*, allow_parser=True):
-        if not delivered["done"]:
-            # The turn has nothing to do, but a producer delivers immediately
-            # behind it -- the exact window a lost notification used to sleep.
-            delivered["done"] = True
-            queue.post(lambda: consumed.append("ok"))
-            return False
-        return real_run_turn(allow_parser=allow_parser)
+    def recording_wait(seconds=None):
+        asleep.set()
+        wait(seconds)
 
-    queue.run_turn = run_turn_then_deliver
-    started = time.monotonic()
+    queue.set_wait(recording_wait)
+    finished = threading.Event()
+    outcome = {}
+
+    def wait_for_delivery():
+        outcome["held"] = queue.pump_until(lambda: bool(consumed), 5)
+        finished.set()
+
     try:
-        assert queue.pump_until(lambda: bool(consumed), timeout=5) is True
+        assert executor.post(wait_for_delivery) is True
+        assert asleep.wait(1.0), "the pump never went to sleep"
+        started = time.monotonic()
+        queue.post(lambda: consumed.append("ok"))
+        assert finished.wait(1.0), "the delivery did not wake the pump"
         elapsed = time.monotonic() - started
+        assert outcome["held"] is True
         assert consumed == ["ok"]
-        # The no-timer safety bound is 50 ms; the unfixed pump slept all of it.
+        # The no-timer bound is 50 ms; a lost nudge would spend all of it.
         assert elapsed < 0.03, f"pump_until slept {elapsed * 1000:.0f}ms past the delivery"
     finally:
-        queue.close()
+        executor.close()
 
 
 # -- A3: post() exceptions must surface instead of vanishing -------

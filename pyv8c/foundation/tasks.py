@@ -17,7 +17,6 @@ from collections import deque
 from collections.abc import Callable
 from typing import Protocol
 
-from . import timer_resolution
 from .errors import as_js_error
 
 #: Timed on the finest monotonic clock Python exposes: Windows' ``time.monotonic()``
@@ -71,14 +70,14 @@ class TaskQueue:
         # Single-threaded pop with append-only producers; ``_signal`` fences a sleep.
         self.posted: deque[Callable[..., object]] = deque()
         self.errors: list[BaseException] = []
-        self.condition = threading.Condition()
+        # Guards the errors and the in-flight counters, which other threads touch.
+        self._lock = threading.Lock()
         self.network_pending = 0
         self.worker_pending = 0
         self._parser: deque[Callable[..., object]] = deque()
         self._closed = False
         self._wakeup = None
-        # Bumped on delivery so a waiter can spot work that arrived before it slept.
-        self._signal_seq = 0
+        self._wait = time.sleep
 
     @property
     def closed(self):
@@ -91,20 +90,17 @@ class TaskQueue:
     def set_wakeup(self, wakeup):
         """Install the callback that rouses the realm executor.
 
-        Without it a task posted from a worker or network thread would only be noticed
-        on the executor's safety timeout.
+        Without it a task posted from a worker or network thread would only be
+        noticed when the next command arrives.
         """
         self._wakeup = wakeup
 
-    def _signal(self):
-        """Wake waiters on this queue and, through it, the realm executor.
+    def set_wait(self, wait):
+        """Install the owner thread's sleeper, in place of :func:`time.sleep`."""
+        self._wait = wait
 
-        The sequence is bumped *inside* the lock so a waiter that samples it before
-        sleeping can tell whether anything arrived in between.
-        """
-        with self.condition:
-            self._signal_seq += 1
-            self.condition.notify_all()
+    def _signal(self):
+        """Nudge the realm executor, which owns the sleeping."""
         wakeup = self._wakeup
         if wakeup is not None:
             wakeup()
@@ -128,7 +124,7 @@ class TaskQueue:
     def _report_error(self, exc):
         """Record a task exception and hand it to the realm's reporter."""
         error = as_js_error(exc)
-        with self.condition:
+        with self._lock:
             self.errors.append(error)
         sink = self._error_sink
         if sink is not None:
@@ -139,26 +135,26 @@ class TaskQueue:
 
     def drain_task_errors(self):
         """Take and clear the task exceptions collected so far."""
-        with self.condition:
+        with self._lock:
             errors = tuple(self.errors)
             self.errors.clear()
         return errors
 
     def begin_network(self):
-        with self.condition:
+        with self._lock:
             self.network_pending += 1
 
     def complete_network(self):
-        with self.condition:
+        with self._lock:
             self.network_pending = max(0, self.network_pending - 1)
         self._signal()
 
     def begin_worker(self):
-        with self.condition:
+        with self._lock:
             self.worker_pending += 1
 
     def complete_worker(self):
-        with self.condition:
+        with self._lock:
             self.worker_pending = max(0, self.worker_pending - 1)
         self._signal()
 
@@ -194,6 +190,10 @@ class TaskQueue:
 
     def cancel(self, ident):
         self.cancelled.add(int(ident))
+
+    def pending(self):
+        """Whether a task is already queued to run."""
+        return bool(self._parser or self.posted)
 
     def next_deadline(self):
         """Seconds until the next timer is due, or ``None`` when none exists.
@@ -247,14 +247,11 @@ class TaskQueue:
 
         Runs on the realm owner thread; waits are bounded by the next timer deadline and
         interrupted by any arriving task, so a caller waiting for a document lifecycle
-        state wakes on the event that produces it.
-
-        The sleep gate samples the delivery sequence *before* the turn, so a delivery
-        racing between the turn and the sample is not slept out.
+        state wakes on the event that produces it.  A delivery racing with the sleep
+        nudges the executor, whose sleep returns at once.
         """
         deadline = _now() + float(timeout or 0)
         while True:
-            seq = self._signal_seq
             if predicate():
                 return True
             if self.closed:
@@ -269,10 +266,7 @@ class TaskQueue:
                 return predicate()
             hint = self.next_deadline()
             wait_for = min(hint, remaining) if hint is not None else min(0.05, remaining)
-            # Bounded waits, so ask for the finer platform timer while they last.
-            with timer_resolution.hold(), self.condition:
-                if not self.closed and self._signal_seq == seq:
-                    self.condition.wait(max(0.0, wait_for))
+            self._wait(max(0.0, wait_for))
 
     def run_until_idle(self, timeout=0):
         """Block until the realm has no ready work left.
@@ -282,9 +276,6 @@ class TaskQueue:
         """
         deadline = _now() + float(timeout or 0)
         while True:
-            # Sample before the drain: a delivery during this iteration bumps the
-            # sequence and the gate below skips the sleep.
-            seq = self._signal_seq
             while self.run_turn():
                 if timeout and _now() >= deadline:
                     return
@@ -299,9 +290,7 @@ class TaskQueue:
             if deadline_hint is None and not (self.network_pending or self.worker_pending):
                 return
             wait_for = min(0.01, remaining) if deadline_hint is None else min(deadline_hint, remaining)
-            with timer_resolution.hold(), self.condition:
-                if not self.closed and self._signal_seq == seq:
-                    self.condition.wait(max(0.0, wait_for))
+            self._wait(max(0.0, wait_for))
 
     def close(self):
         self._closed = True

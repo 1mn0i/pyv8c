@@ -142,7 +142,7 @@ class NavigationController:
         ready = states[wait_until]
         if ready is not None:
             # Wait on the lifecycle state, not a fixed-interval poll: the pump
-            # sleeps on the task-queue condition and the advancing delivery wakes it.
+            # sleeps on the realm executor and the advancing delivery wakes it.
             limit = 30.0 if timeout_value is None else timeout_value
             if not self.page.tasks.pump_until(ready, timeout=limit):
                 raise TimeoutError(f"Navigation to {target} timed out")

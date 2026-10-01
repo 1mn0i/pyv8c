@@ -26,7 +26,7 @@ _pyv8             V8 Context/Isolate、Python 对象桥接、Inspector、trace �
 
 - 一个 V8 `Context`；
 - 一个 Realm-local `BindingSession`；
-- 一个 owner executor，所有页面脚本和普通 Inspector 操作在此执行；
+- 一个 owner executor，所有页面脚本和普通 Inspector 操作在此执行；空闲时睡在唤醒事件上，朝定时器死线则睡在同线程的 asyncio loop 上；
 - 一个 `Window` 与 `Document` 对象。
 
 iframe 使用独立 Page/Realm，通过 `WindowProxy` 跨窗口访问。Worker 使用独立 Worker Realm 和执行器。关闭顺序是先停止新任务与网络，再在 owner 线程释放 Context/Realm，最后释放 Page/Browser 资源。
