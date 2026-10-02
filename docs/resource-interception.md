@@ -34,6 +34,11 @@ resource_type 常见 document、script、style、image、media、iframe、fetch�
 字典响应的 URL 被设为请求目标；若需要显式最终 URL，请返回 Response。
 普通值走 str 转换，字节内容应放到字典的 body 或 Response 中，避免被转换成 Python bytes 的字符串表示。
 
+返回 301/302/303/307/308 且带 `location` 时由 pyv8c 逐跳跟随，每一跳都重新调用 loader：
+301/302 把 POST 改成 GET 并丢弃 body，303 把除 HEAD 外的方法都改成 GET，307/308 保持方法与 body，
+最多跟随 20 跳。只有最终响应会被交付与缓存，`Response.url` 是最终 URL、`Response.redirected` 为 true。
+`location` 缺失或为空时原样交付该响应，无法解析为 http(s) URL 时报网络错误。
+
 loader 默认在页面 owner 线程上执行，所以它可以在等请求的同时看页面（在 loader 里 page.evaluate 采样 DOM 是支持的）。
 `Browser(threaded_loaders=True)` 改为在 Browser 的有界线程池上执行：被阻塞的 loader 不再冻住 realm，
 `goto` 的等待超时也终于能生效。代价是这种回调不得触碰页面——`page.evaluate`、读取页面状态都不行——
@@ -88,6 +93,8 @@ python -m pip install -e ".[network]"
 选引擎、参数含义、校验规则、握手与自定义引擎见 [网络引擎与参数](network-engines.md)。
 网络实现见 [registry.py](../pyv8c/network/registry.py) 与 [backend.py](../pyv8c/network/backend.py)，响应策略包含基础同源/CORS/no-cors 处理，但不是完整 Fetch/CORS 协议栈。
 不要假定拦截响应、缓存命中和所有同步 loader 路径都重新执行相同的安全策略。
+跟随由资源层完成（见 [redirects.py](../pyv8c/network/redirects.py)），引擎一律被要求不自己跟随；逐跳 CORS 只在该路径本来就会执行响应策略时进行，
+因此同步 loader 路径既不重跑策略，也不逐跳检查。重定向链的 `redirect: "manual"` 交付 opaque redirect（status 0、type opaqueredirect、url 为请求 URL），`redirect: "error"` 与跳数超限都是网络错误。
 
 ## 磁盘缓存
 
@@ -98,6 +105,7 @@ python -m pip install -e ".[network]"
 - 缓存键包含 method、URL、mode、credentials；目录按目标域名/非默认端口组织，文件名为键摘要。
 - 复用命中时输出 Loguru DEBUG 的 resource cache hit 日志。
 - 没有完整 HTTP freshness、ETag/304、Cache-Control、Vary 等缓存语义保证。
+- 重定向链只缓存最终响应，键仍是原始请求的 method/URL/mode/credentials；中间跳不单独入缓存，与 Chrome 的逐跳缓存不同。
 - 键不包含 Cookie、Authorization 或完整请求头。同一目录可能被多个 Context/Browser 共享，私有响应存在串用风险。
 - 处理鉴权、敏感或依赖 Cookie 的内容时关闭缓存，或使用隔离目录并自行控制可缓存资源。
 
@@ -107,4 +115,6 @@ cache=False 关闭响应缓存使用；Browser.close 不删除显式持久目录
 
 [导航测试](../tests/integration/test_navigation.py)、[网络后端测试](../tests/unit/test_network_backend.py)、
 [生命周期测试](../tests/integration/test_lifecycle.py)、[竞态回归](../tests/integration/test_race_regressions.py)。
+重定向的规则表见 [单元用例](../tests/unit/test_redirect_rules.py)，loader 驱动的完整行为见 [集成用例](../tests/integration/test_redirects.py)，
+与本机 Chrome 的逐条对照见 [对照用例](../tests/repros/test_redirects_vs_chrome.py)。
 实际 Cookie 行为见 [cookies.py](../pyv8c/network/cookies.py) 与 [document.cookie 测试](../tests/browser/test_document_cookie.py)。

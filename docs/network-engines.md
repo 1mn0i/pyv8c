@@ -114,4 +114,8 @@ page.net.get("https://example.test/", options={"impersonate": "chrome"})
 
 每请求参数按请求交给当前 HTTP 引擎，各引擎忽略自己没有对应物的键（cronet 目前只使用其中的 `timeout` 字段，不读 `options`），与 `http_options` 的校验无关。
 
+引擎对 `NetworkRequest.redirect` 的契约：只有 `"follow"` 表示让引擎自己跑完整链，其余取值（`"manual"`/`"error"`）都表示调用方要逐跳检查，因此引擎必须不跟随。
+跟随链、方法改写与跳数上限由资源层负责（[redirects.py](../pyv8c/network/redirects.py)）；无法被要求停止跟随的引擎声明 `FOLLOWS_ITSELF`，
+资源层对它只走 `follow` 路径（跳数与逐跳检查按引擎自己的能力打折），`manual`/`error` 直接报网络错误，而不是静默照做。
+
 会话级代理由桥接层逐请求下发，因此调用方在单次请求里给出 `proxies`/`proxy`（curl_cffi）时会覆盖它——顺序上后写的胜出，这是刻意的：更靠近请求的一层说话。`page.net.<method>(..., options={...})` 是唯一能这样覆盖的地方，页面内的请求不行。

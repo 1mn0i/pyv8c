@@ -8,6 +8,7 @@ pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.native
 
 from pyv8c import Browser
+from pyv8c.network.models import NetworkRequest
 from pyv8c.web.fetch.response import Response
 
 
@@ -171,6 +172,48 @@ def test_real_network_fetch_is_delivered_on_page_queue(monkeypatch):
     page.run_until_idle(timeout=2)
     assert page.evaluate("window.__result") == "cronet-ok"
     browser.close()
+
+
+def test_the_bridge_follows_only_a_follow_request(monkeypatch):
+    """The load path inspects every hop itself, so only "follow" asks the engine to
+    run a chain; "error" used to be followed by mistake."""
+    install_fake_curl_cffi(monkeypatch)
+    browser = Browser(real_network=True, stub_logging="off")
+    try:
+        engine = browser.new_context().network_backend.http
+        followed = {}
+        for mode in ("follow", "manual", "error"):
+            engine.request_sync(NetworkRequest("http://example.test/x", redirect=mode))
+            followed[mode] = engine.session.calls[-1][2]["allow_redirects"]
+    finally:
+        browser.close()
+    assert followed == {"follow": True, "manual": False, "error": False}
+
+
+def test_an_engine_that_cannot_stop_following_refuses_a_manual_redirect(monkeypatch):
+    """cronet follows by itself and names no way to stop it, so the modes that forbid
+    following are refused rather than quietly obeyed."""
+    class FollowingClient(FakeClient):
+        def get(self, url, **kwargs):
+            response = FakeResponse()
+            response.url = url
+            response.history = ("http://example.test/first",)
+            return response
+
+    monkeypatch.setitem(sys.modules, "cycronet", types.SimpleNamespace(CronetClient=FollowingClient))
+    browser = Browser(real_network=True, http_engine="cronet", stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="http://example.test/")
+        page.evaluate(
+            "window.__m = null;"
+            "fetch('/x', {redirect: 'manual'}).then(() => { window.__m = 'resolved'; })"
+            ".catch((e) => { window.__m = e.name + ': ' + e.message; });"
+        )
+        page.run_until_idle(timeout=3)
+        assert "cannot be told not to" in str(page.evaluate("window.__m"))
+    finally:
+        browser.close()
 
 
 def test_network_download_url_is_logged_at_debug_level(monkeypatch):

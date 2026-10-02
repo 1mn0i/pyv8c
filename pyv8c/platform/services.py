@@ -60,11 +60,18 @@ class _PerformanceCapability:
         self._listeners = []
         self.clock = Clock()
 
-    def begin_navigation(self, url):
-        """Start a new document's timeline: its navigation record, and nothing else."""
+    def begin_navigation(self, url, redirects=0, redirects_span=0.0):
+        """Start a new document's timeline: its navigation record, and nothing else.
+
+        *redirects* is how many hops the document's own request followed and
+        *redirects_span* how long they took, which the record reports as the window
+        before the document starts; the hops lie before this timeline's origin.
+        """
         self.reset()
         self.clock.reset()
-        return self.record("navigation", name=str(url), start=self.clock.now_ms())
+        return self.record("navigation", name=str(url), start=self.clock.now_ms(),
+                           redirectCount=int(redirects),
+                           redirectStart=0.0, redirectEnd=round(float(redirects_span), 3))
 
     def reset(self):
         del self._records[:]

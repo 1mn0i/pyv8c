@@ -47,6 +47,10 @@ class CronetTransport(RequestDelivery):
     delivers goes through the task capability it was given.
     """
 
+    #: cycronet follows redirects itself and names no way to stop it, so the hop-by-hop
+    #: modes are refused for it instead of being obeyed quietly (docs/network-engines.md).
+    FOLLOWS_ITSELF = True
+
     @classmethod
     def accepted_option_keys(cls, kind: str = "http") -> frozenset[str] | None:
         """The keys the *kind* role's options may carry: the client's, plus ours.

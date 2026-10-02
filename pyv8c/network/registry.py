@@ -28,7 +28,13 @@ class HttpTransport(Protocol):
     cookies: CookieJar
 
     def request_sync(self, request: NetworkRequest) -> NetworkResponse:
-        """Perform *request* on the calling thread."""
+        """Perform *request* on the calling thread.
+
+        ``request.redirect`` is the engine's own instruction: ``"follow"`` lets it run
+        the chain by itself, and every other mode means the caller inspects the hops,
+        so an engine that cannot be told to stop must declare ``FOLLOWS_ITSELF``
+        rather than follow quietly.
+        """
 
     def request_async(self, tasks, request: NetworkRequest, callback) -> RequestHandle:
         """Perform *request* off-thread, delivering ``callback(response, error)``

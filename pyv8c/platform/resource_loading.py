@@ -8,6 +8,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -20,6 +21,7 @@ from ..foundation.urls import DEFAULT_PORTS, absolute_url, same_origin
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
 from ..network.models import NetworkRequest
+from ..network.redirects import Deliver, RedirectFailure, next_hop
 from .request_headers import browser_headers, fetch_mode
 
 
@@ -158,7 +160,9 @@ class ResourceController:
 
     def _store_response(self, target, request, response):
         key = self._cache_key(target, request)
-        if key is None or response is None:
+        # An opaque-redirect response stands for a redirect the page may not read, so
+        # what it "contains" is no answer at all.
+        if key is None or response is None or response.type == "opaqueredirect":
             return
         context = self.page.context_owner
         payload = {
@@ -349,7 +353,8 @@ class ResourceController:
         if page.closed or page.context_owner.closed:
             raise InvalidStateError("Page is closed")
         target = absolute_url(url, page.url)
-        request = self._request_with_environment_headers(request or {"method": "GET"}, page, target)
+        given = dict(request or {"method": "GET"})
+        request = self._request_with_environment_headers(given, page, target)
         intercepted = self._intercept(target, request)
         if intercepted is not None:
             return intercepted
@@ -360,16 +365,14 @@ class ResourceController:
             body, content_type = page.context_owner.resolve_blob_url(target)
             return Response(body, {"url": target, "headers": {"content-type": content_type}})
         if page.resource_loader:
-            value = self._call_off(
-                lambda: page.resource_loader(target, request), request.get("timeout"))
-            response = self._response_from_loader(value, target)
+            response = self.follow(target, given, self.loader_send(page))
             self._store_response(target, request, response)
             return response
         backend = page.network_backend
         if backend is not None and backend.http_available:
-            req = self._network_request(target, request, page)
-            raw = backend.request_sync(req)
-            response = self.apply_response_policy(self.response_object(raw), request)
+            follows_itself = bool(getattr(backend.http, "FOLLOWS_ITSELF", False))
+            response = self.follow(target, given, self.engine_send(page, backend, given),
+                                   self.apply_response_policy, engine_follows=follows_itself)
             self._store_response(target, request, response)
             return response
         if target.startswith("about:blank") or target == page.url:
@@ -405,6 +408,15 @@ class ResourceController:
         if mode == "no-cors":
             response.status, response.body, response.headers, response.type = 0, "", Headers(), "opaque"
             return response
+        self.check_cors(response, request)
+        return response
+
+    def check_cors(self, response, request):
+        """The check one cross-origin response has to pass.
+
+        A redirect is checked hop by hop rather than only where it lands: Chrome
+        refuses an intermediate 302 from another origin that names no ACAO.
+        """
         allowed = response.headers.fn_get("access-control-allow-origin")
         allowed = "" if allowed is None or allowed is pyv8.Null else str(allowed)
         if allowed not in ("*", self.page.window.location.get_origin()):
@@ -415,6 +427,215 @@ class ResourceController:
                 raise SecurityError("credentialed CORS request was not allowed")
         return response
 
+    def follow(self, target, request, send, finalize=None, engine_follows=False):
+        """Follow redirects the way a browser does, and answer once.
+
+        The hops are made here rather than by an engine, because only this layer knows
+        the page's origin (the CORS check every cross-origin hop must pass), the cookie
+        jar and the request's redirect mode.  *send* performs one hop; *finalize* is the
+        page-level policy the last response passes before it is delivered.
+        """
+        carrier = self.hop_carrier(target, request)
+        carrier["started"] = time.perf_counter()
+        while True:
+            response = send(carrier["url"], self.hop_request(request, carrier))
+            finished = self.hop_policy(response, request, carrier, engine_follows, finalize)
+            if finished is not None:
+                return finished
+            try:
+                decision = self.decide(response, carrier)
+            except RedirectFailure as failure:
+                raise NetworkError(str(failure)) from failure
+            if isinstance(decision, Deliver):
+                return self.delivered(response, carrier, request, finalize, decision)
+            self.advance(carrier, decision)
+
+    def follow_async(self, target, request, send, finish, finalize=None, engine_follows=False):
+        """Follow redirects off the owner thread, answering once at the end.
+
+        *send* performs one hop and calls back on the owner thread, so the chain never
+        blocks it; *finish* hears the chain's single outcome.
+        """
+        carrier = self.hop_carrier(target, request)
+        carrier["started"] = time.perf_counter()
+
+        def landed(response, error):
+            if error is not None:
+                finish(None, error)
+                return
+            try:
+                finished = self.hop_policy(response, request, carrier, engine_follows, finalize)
+                if finished is None:
+                    decision = self.decide(response, carrier)
+                    if isinstance(decision, Deliver):
+                        finished = self.delivered(response, carrier, request, finalize, decision)
+                    else:
+                        self.advance(carrier, decision)
+                        send(carrier["url"], self.hop_request(request, carrier), landed)
+                        return
+            except BaseException as exc:  # the page hears about it, the chain stops
+                finish(None, exc)
+                return
+            finish(finished, None)
+
+        send(carrier["url"], self.hop_request(request, carrier), landed)
+
+    def hop_policy(self, response, request, carrier, engine_follows, finalize):
+        """What is settled before a hop is even asked for: the CORS check, and the
+        answer for an engine whose following cannot be turned off."""
+        if finalize is not None:
+            # Only a path that applies the response policy checks its hops: the
+            # synchronous loader path never re-ran it, and does not start now.
+            self.check_hop(response, request, carrier)
+        if engine_follows and response.redirected:
+            self.refuse_followed(carrier)
+            return self.delivered(response, carrier, request, finalize, Deliver())
+        return None
+
+    def hop_carrier(self, target, request):
+        """The state one hop carries: where it goes, how, and with which headers."""
+        return {
+            "url": target,
+            "method": str(request.get("method", "GET")),
+            "body": request.get("body"),
+            "headers": self.header_dict(request.get("headers")),
+            "mode": str(request.get("mode", "cors")),
+            "redirect": str(request.get("redirect", "follow")),
+            "hops": 0,
+            "crossed": False,
+            "started": 0.0,
+            "redirected_at": 0.0,
+        }
+
+    def hop_request(self, request, carrier):
+        """The request dict for the hop *carrier* describes, before the headers the
+        browser adds for its own URL."""
+        return {
+            **request,
+            "method": carrier["method"],
+            "body": carrier["body"],
+            "headers": carrier["headers"],
+        }
+
+    def decide(self, response, carrier):
+        """What the response asks the load path to do next."""
+        location = response.headers.fn_get("location")
+        if location is pyv8.Null or location is pyv8.Undefined:
+            location = ""
+        return next_hop(
+            status=response.status,
+            method=carrier["method"],
+            url=carrier["url"],
+            headers=carrier["headers"],
+            body=carrier["body"],
+            location=location,
+            hops=carrier["hops"],
+            mode=carrier["mode"],
+            redirect=carrier["redirect"],
+        )
+
+    def advance(self, carrier, decision):
+        carrier.update(url=decision.url, method=decision.method, body=decision.body,
+                       headers=decision.headers, hops=carrier["hops"] + 1,
+                       crossed=carrier["crossed"] or decision.cross_origin,
+                       redirected_at=time.perf_counter())
+
+    def check_hop(self, response, request, carrier):
+        """The per-hop CORS check, made before the next hop is asked for."""
+        if carrier["mode"] == "cors" and not same_origin(self.page.url, response.url):
+            self.check_cors(response, request)
+
+    def delivered(self, response, carrier, request, finalize, decision):
+        """The response a load path answers with once the chain lands."""
+        if decision.opaque:
+            return self.opaque_redirect(carrier["url"])
+        if finalize is not None:
+            response = finalize(response, request)
+        if carrier["hops"]:
+            response.redirected = True
+            response._redirect_hops = carrier["hops"]
+            response._redirect_crossed = carrier["crossed"]
+            response._redirect_span = (carrier["redirected_at"] - carrier["started"]) * 1000.0
+        return response
+
+    def refuse_followed(self, carrier):
+        """An engine that follows by itself cannot be told to stop, so the modes that
+        forbid following are refused rather than quietly obeyed."""
+        if carrier["mode"] == "navigate" or carrier["redirect"] == "follow":
+            return
+        raise NetworkError(
+            "this engine follows redirects by itself and cannot be told not to, so"
+            f" redirect: {carrier['redirect']!r} cannot be honoured"
+        )
+
+    def opaque_redirect(self, url):
+        """What ``redirect: "manual"`` reads as: no status, no headers, no body."""
+        return Response("", {"status": 0, "url": url, "type": "opaqueredirect"},
+                        services=self.page.services)
+
+    def engine_redirect(self, backend, request):
+        """What an engine is told about following: this layer's job, unless the engine
+        documents that following cannot be turned off."""
+        if getattr(backend.http, "FOLLOWS_ITSELF", False):
+            return str(request.get("redirect", "follow"))
+        return "manual"
+
+    def engine_send(self, page, backend, request):
+        """One hop an HTTP engine makes, told not to follow it itself."""
+        redirect = self.engine_redirect(backend, request)
+
+        def send(target, hop_request):
+            raw = backend.request_sync(
+                self._network_request(target, {**hop_request, "redirect": redirect}, page))
+            return self.response_object(raw)
+        return send
+
+    def engine_send_async(self, page, backend, request, handle):
+        """The same hop, on the engine's pool rather than the caller's thread."""
+        redirect = self.engine_redirect(backend, request)
+
+        def send(target, hop_request, done):
+            if handle.cancelled:
+                return
+            hop = self._network_request(target, {**hop_request, "redirect": redirect}, page)
+            handle._transport = backend.request_async(
+                page.services.task_services, hop,
+                lambda raw, error: done(None if error else self.response_object(raw), error),
+            )
+        return send
+
+    def loader_send(self, page):
+        """One hop the page's own loader answers, on this thread."""
+
+        def send(target, hop_request):
+            request = self._request_with_environment_headers(hop_request, page, target)
+            value = self._call_off(lambda: page.resource_loader(target, request), request.get("timeout"))
+            return self._response_from_loader(value, target)
+        return send
+
+    def loader_send_async(self, page, handle):
+        """The same hop, off the caller's thread as a loader is asked for."""
+
+        def send(target, hop_request, done):
+            if handle.cancelled:
+                return
+            request = self._request_with_environment_headers(hop_request, page, target)
+
+            def after_loader(value, error):
+                if error is not None:
+                    done(None, error)
+                    return
+                try:
+                    response = self._response_from_loader(value, target)
+                    response._services = page.services
+                except BaseException as exc:
+                    done(None, exc)
+                    return
+                done(response, None)
+
+            self._dispatch(lambda: page.resource_loader(target, request), after_loader)
+        return send
+
     def load_resource_async(self, url, request, callback):
         page = self.page
         handle = RequestHandle()
@@ -424,6 +645,15 @@ class ResourceController:
                 return
             handle.finish()
             callback(response, error)
+
+        def landed(response, error):
+            """Cache what the chain answered, then hand it to the page once."""
+            if error is None:
+                try:
+                    self._store_response(target, given, response)
+                except BaseException as exc:  # a cache write must not lose the answer
+                    response, error = None, exc
+            deliver(response, error)
 
         def load():
             """Everything behind the interceptor: cache, blob, loader or engine."""
@@ -448,30 +678,16 @@ class ResourceController:
                     response, error = None, exc
                 page.tasks.post(lambda: deliver(response, error))
                 return
-            req = self._network_request(target, request, page)
             if page.resource_loader:
-                def after_loader(value, error):
-                    if error is not None:
-                        page.tasks.post(lambda: deliver(None, error))
-                        return
-                    try:
-                        response = self._response_from_loader(value, target)
-                        response._services = page.services
-                        response = self.apply_response_policy(response, request)
-                        self._store_response(target, request, response)
-                    except BaseException as exc:
-                        response, error = None, exc
-                    # Fixture loaders use the same asynchronous boundary as Cronet.
-                    page.tasks.post(lambda: deliver(response, error))
-
-                self._dispatch(lambda: page.resource_loader(target, request), after_loader)
+                self.follow_async(target, given, self.loader_send_async(page, handle), landed,
+                                  finalize=self.apply_response_policy)
                 return
             backend = page.network_backend
             if backend is not None and backend.http_available:
-                handle._transport = backend.request_async(
-                    page.services.task_services, req,
-                    lambda raw, error: self.finish_async_response(raw, error, request, deliver),
-                )
+                follows_itself = bool(getattr(backend.http, "FOLLOWS_ITSELF", False))
+                self.follow_async(target, given, self.engine_send_async(page, backend, given, handle),
+                                  landed, finalize=self.apply_response_policy,
+                                  engine_follows=follows_itself)
                 return
             page.tasks.post(
                 lambda: deliver(None, NetworkError("Network access requires an explicit resource_loader or real_network=True"))
@@ -481,7 +697,8 @@ class ResourceController:
             page.tasks.post(lambda: deliver(None, InvalidStateError("Page is closed")))
             return handle
         target = urljoin(page.url, str(url))
-        request = self._request_with_environment_headers(request, page, target)
+        given = dict(request or {})
+        request = self._request_with_environment_headers(given, page, target)
         interceptor = page.resource_interceptor
         if not callable(interceptor):
             load()
@@ -502,17 +719,6 @@ class ResourceController:
 
         self._dispatch(lambda: interceptor(target, dict(request)), after_intercept)
         return handle
-
-    def finish_async_response(self, raw, error, request, callback):
-        if error:
-            callback(None, error)
-            return
-        try:
-            response = self.apply_response_policy(self.response_object(raw), request)
-            self._store_response(response.url, request, response)
-            callback(response, None)
-        except BaseException as exc:
-            callback(None, exc)
 
     def discover_element_resource(self, node):
         page = self.page

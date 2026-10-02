@@ -111,7 +111,8 @@ class CurlCffiTransport(RequestDelivery):
         kwargs = {
             "headers": headers,
             "discard_cookies": True,
-            "allow_redirects": request.redirect != "manual" if allow_redirects is None else bool(allow_redirects),
+            # Only "follow" wants a chain; every other mode inspects the hops itself.
+            "allow_redirects": request.redirect == "follow" if allow_redirects is None else bool(allow_redirects),
         }
         if request.body is not None:
             kwargs["data"] = request.body

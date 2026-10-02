@@ -54,11 +54,23 @@ class PerformanceTiming:
     def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **_):
         if services is pyv8.Undefined:
             services = None
-        self._clock = clock_of(services or _realm)
+        self._services = services or _realm
+        self._clock = clock_of(self._services)
+
+
+def _navigation_record(services):
+    """The record this document's navigation was measured into, if there is one."""
+    realm = getattr(services, "realm_services", services)
+    timeline = getattr(realm, "performance", None)
+    return None if timeline is None else timeline.navigation()
 
 
 def _timing_reader(field):
-    def read(self): return self._clock.time_origin() if field == "navigationStart" else 0
+    def read(self):
+        if field == "navigationStart":
+            return self._clock.time_origin()
+        record = _navigation_record(self._services)
+        return float(record.get(field, 0)) if record is not None else 0
     return read
 
 
@@ -82,8 +94,16 @@ class PerformanceNavigation:
         has_constructor=1,
     )
 
+    def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **_):
+        if services is pyv8.Undefined:
+            services = None
+        self._services = services or _realm
+
     def get_type(self): return self.TYPE_NAVIGATE
-    def get_redirectCount(self): return 0
+
+    def get_redirectCount(self):
+        record = _navigation_record(self._services)
+        return int(record.get("redirectCount", 0)) if record is not None else 0
 
 
 @interface('MemoryInfo', None)
@@ -432,7 +452,7 @@ class Performance(EventTarget):
 
     def get_navigation(self):
         if getattr(self, "_navigation", None) is None:
-            self._navigation = PerformanceNavigation()
+            self._navigation = PerformanceNavigation(services=self._services)
         return self._navigation
 
     def get_memory(self):

@@ -5,6 +5,7 @@ import re
 from ..foundation.errors import InvalidStateError, TimeoutError
 from ..foundation.tasks import TaskSource
 from ..foundation.urls import absolute_url
+from ..network.redirects import reportable_hops
 from ..web.bom.utils import is_secure_context
 from ..web.dom.document import Document
 from ..web.dom.motion import INSECURE_ORIGIN_INTERFACES
@@ -36,7 +37,7 @@ class NavigationController:
     def navigation_allowed(self):
         return not self.has_navigation or self.page.lifecycle.dispatch_beforeunload()
 
-    def commit_content(self, html, url):
+    def commit_content(self, html, url, response=None):
         lifecycle = self.page.lifecycle
         if self.has_navigation:
             # Chrome's order for the document being replaced: pageswap, pagehide, the
@@ -67,7 +68,13 @@ class NavigationController:
             devtools.target_info_changed(self.page)
         self.page.document = Document(services=self.page.services, url=str(url), ready_state="loading")
         # A new document starts its own timeline; earlier records belong to the old one.
-        self.page.services.realm_services.performance.begin_navigation(url)
+        hops = int(getattr(response, "_redirect_hops", 0) or 0)
+        crossed = bool(getattr(response, "_redirect_crossed", False))
+        counted = reportable_hops(hops, crossed)
+        self.page.services.realm_services.performance.begin_navigation(
+            url, redirects=counted,
+            # A chain that reports nothing reports no window either, as Chrome does.
+            redirects_span=float(getattr(response, "_redirect_span", 0.0) or 0.0) if counted else 0.0)
         self.page.services.document = self.page.document
         target = self.page._devtools_target
         if target is not None:
@@ -138,7 +145,7 @@ class NavigationController:
             request["content_type"] = content_type
         response = self.page.resources.load_resource(target, request)
         final_url = response.url or target
-        self.commit_content(self.decode_html(response), final_url)
+        self.commit_content(self.decode_html(response), final_url, response)
         ready = states[wait_until]
         if ready is not None:
             # Wait on the lifecycle state, not a fixed-interval poll: the pump

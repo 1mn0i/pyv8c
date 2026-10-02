@@ -57,6 +57,8 @@ class NetworkRequest:
     timeout: float | None = None
     credentials: str = "same-origin"
     mode: str = "cors"
+    #: ``"follow"`` lets the engine run the chain; any other mode asks for one hop,
+    #: because the caller inspects the hops itself.
     redirect: str = "follow"
     origin: str | None = None
     #: Transport extensions (impersonate, proxies, verify, ...); unknown keys are ignored.

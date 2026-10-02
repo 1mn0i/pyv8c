@@ -27,6 +27,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
             AttributeSpec(name="status", getter="get_status", side_effect=1),
             AttributeSpec(name="statusText", getter="get_statusText", side_effect=1),
+            AttributeSpec(name="responseURL", getter="get_responseURL", side_effect=1),
             AttributeSpec(name="responseText", getter="get_responseText", side_effect=1),
             AttributeSpec(name="response", getter="get_response", side_effect=1),
             AttributeSpec(name="withCredentials", getter="get_withCredentials",
@@ -55,6 +56,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self.readyState = self.UNSENT
         self.status = 0
         self.status_text = ""
+        self.response_url = ""
         self.responseText = ""
         self.response = None
         self.timeout = 0
@@ -63,6 +65,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
     def get_readyState(self): return self.readyState
     def get_status(self): return self.status
     def get_statusText(self): return self.status_text
+    def get_responseURL(self): return self.response_url
     def get_responseText(self): return self.responseText
     def get_response(self): return self.response
     def get_withCredentials(self): return bool(self.withCredentials)
@@ -145,6 +148,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self._response = response
         self.status = response.status
         self.status_text = response.status_text
+        # What the request ended at: a redirect the engine followed moves it.
+        self.response_url = str(response.url or self._url)
         self.responseText = response._body_value()
         self.response = self.responseText
         self._state(self.HEADERS_RECEIVED)

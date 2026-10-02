@@ -80,7 +80,8 @@ _XHR = """    const answer = await new Promise((resolve, reject) => {
       xhr.send(%(send)s);
     });
     return JSON.stringify({ok: true, status: answer.status, statusText: answer.statusText,
-                           url: answer.url, redirected: false, headers: [], text: answer.text});"""
+                           url: answer.url, headers: [], text: answer.text,
+                           redirected: answer.url !== new URL(url, location.href).href});"""
 
 
 def _fetch_init(options):

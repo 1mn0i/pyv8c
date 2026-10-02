@@ -53,6 +53,13 @@ Context 关闭会关闭其页面、DevTools 和网络客户端，并清理 Blob 
 | `page.close()` | 关闭页面及其拥有的资源 |
 
 `goto.wait_until` 支持 `commit`、`domcontentloaded`、`load`，以及内部接受的 None；不支持 networkidle。
+
+重定向由 pyv8c 逐跳跟随，页面的 `fetch`/`XHR`/表单提交/`goto` 与自定义 `resource_loader` 走同一套规则：
+301/302 把 POST 改成 GET 并丢弃 body，303 把除 HEAD 外的方法都改成 GET，307/308 保持方法与 body，最多 20 跳；
+`Response.url` 是最终 URL、`Response.redirected` 在跟随过至少一跳时为 true，`Response.headers` 只暴露最终跳的响应头。
+`fetch` 的 `redirect` 取 `follow`（默认）/`manual`（opaque redirect：status 0、type opaqueredirect、url 为请求 URL 且读不到任何头）/`error`（遇到 3xx 即网络错误）。
+`location` 缺失或为空的 3xx 原样交付，无法解析为 http(s) URL 时报网络错误；导航的 `performance.navigation.redirectCount` 报告同源跳数，任一跳跨源则为 0。
+规则表与逐条对照见 [资源加载文档](resource-interception.md) 与 [Chrome 对照用例](../tests/repros/test_redirects_vs_chrome.py)。
 `set_content` 的默认 URL 是 about:blank，重复调用时需显式传 URL 才能保持预期 origin。
 省略 html 得到一份空 standards 文档（`document.compatMode` 为 `CSS1Compat`）；传 `"<body></body>"` 这类不带 doctype 的片段则是 `BackCompat`，按需选择。
 `evaluate` 不是自动等待 Promise 的异步求值器；可将完成结果写到 JS 全局，再推进队列并读取。

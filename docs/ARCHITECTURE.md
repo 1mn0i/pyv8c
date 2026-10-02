@@ -91,6 +91,7 @@ Chromium 生成的 `interface-baseline.zip` 只提供接口结构、继承、成
 ## 资源与调试
 
 资源加载由 `ResourceController` 统一处理 loader、拦截器、缓存、脚本和网络响应。Trace 是被动观察；`resource_interceptor` 是主动改变请求，两者不能混用。
+HTTP 重定向也在这一层逐跳跟随（规则表在 `network/redirects.py`，引擎只被要求不要自己跟随），因为一个跳要不要跟、下一跳带什么头、跨源要不要过 CORS 检查，都只有知道页面 origin 的这一层能回答。
 
 DevTools 协议、传输、请求路由和 Inspector 会话核心位于相邻 `_pyv8` 的 `pyv8.devtools`；`pyv8c.platform.devtools` 只提供 Page/iframe/Worker 的宿主描述和关闭回调。
 
