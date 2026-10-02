@@ -229,6 +229,7 @@ class Browser:
                  cache_dir: str | os.PathLike | None = None,
                  expose_unimplemented: bool = True,
                  stub_logging: Literal["on", "verbose", "off"] = "off",
+                 interface_overrides: dict | None = None,
                  interface_baseline_path: str | os.PathLike | None = None,
                  baseline_mismatch: Literal["error", "warn"] = "warn"):
         """Configure one browser.
@@ -291,6 +292,19 @@ class Browser:
         :param stub_logging: ``"off"`` (the default) reports nothing, ``"on"``
             reports each unimplemented member once, and ``"verbose"`` also reports
             the placeholder handlers the baseline required.
+        :param interface_overrides: hooks that answer members of the baseline
+            instead of their implementation, as
+            ``{"InterfaceName": {"memberName": hook}}``.  A hook is a plain function
+            that receives what the member's position passes -- ``(receiver, *args)``
+            for a prototype or instance method, ``(*args)`` for one on the interface
+            itself, ``(receiver)`` for an attribute read and ``(receiver, value)``
+            for a write -- and what it returns is what the script sees.  An entry may
+            name the slot instead, as ``{"get": hook, "set": hook}``; a write hook
+            also makes the member writable.  An unknown interface, an unknown member,
+            a slot that member cannot answer, a write hook for a member the baseline
+            calls read-only, a bound method and anything not callable are refused
+            here.  Constructors, constants and the named/indexed handlers are not
+            covered.
         :param interface_baseline_path: Chromium interface baseline JSON or ZIP to
             use instead of the bundled one.
         :param baseline_mismatch: ``"warn"`` (the default) logs a difference
@@ -339,6 +353,7 @@ class Browser:
             stub_logging=self.stub_logging,
             expose_unimplemented=self.expose_unimplemented,
             baseline_mismatch=baseline_mismatch,
+            interface_overrides=interface_overrides,
         )
         validation_finished = validation_started = loaded
         self.interface_baseline_path = snapshot.path

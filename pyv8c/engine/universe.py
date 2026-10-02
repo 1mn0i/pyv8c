@@ -21,6 +21,7 @@ from .baseline import (
     load_window_surface,
 )
 from .features import FeatureRuntime, InterfaceSpec
+from .overrides import MemberOverrides
 from ..foundation.logging import logger
 
 __all__ = [
@@ -35,9 +36,11 @@ class InterfaceUniverse:
     """One isolated baseline view and FeatureRuntime class config set."""
 
     def __init__(self, baseline: BaselineSnapshot, *, runtime: FeatureRuntime, stub_logging="off",
-                 expose_unimplemented=True, baseline_mismatch="warn"):
+                 expose_unimplemented=True, baseline_mismatch="warn", interface_overrides=None):
         self.baseline = baseline
         self.table = InterfaceTable(baseline, surface=load_window_surface())
+        #: Host hooks that answer baseline members, checked against the baseline here.
+        self.overrides = MemberOverrides.parse(interface_overrides, self.table)
         self.runtime = runtime
         self.stub_logging = str(stub_logging or "off").lower()
         self.expose_unimplemented = bool(expose_unimplemented)
@@ -91,7 +94,8 @@ class InterfaceUniverse:
             if cached is None:
                 cached = build_plan(
                     self.table, context_type,
-                    implements=self.runtime.catalog.interfaces,
+                    # An interface somebody hooks is wanted, even with no implementation.
+                    implements=set(self.runtime.catalog.interfaces) | self.overrides.interfaces,
                     expose_unimplemented=self.expose_unimplemented,
                     staged=self.staged_interfaces,
                 )

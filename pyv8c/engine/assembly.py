@@ -22,6 +22,7 @@ from pyv8.flag import (
 )
 
 from ..foundation.logging import logger
+from .overrides import MemberOverrides
 
 
 # (baseline handler key, __v8_*__ method name) per interceptor family.
@@ -296,6 +297,7 @@ class InterfaceCompiler:
         self.universe = universe
         self.stubs = StubFactory(stub_logging)
         self.wrappers = BindingWrapperFactory(universe)
+        self.overrides = getattr(universe, "overrides", None) or MemberOverrides()
         self._compiled = {}
         # The universe shares its lock: a compile reaches back into it for classes.
         self._lock = lock or threading.RLock()
@@ -367,10 +369,15 @@ class InterfaceCompiler:
                 continue
             seen.add((kind, public_name))
             common = member_flags(member)
+            override = self.overrides.for_member(name, public_name)
+            if override is not None:
+                logger.debug("interface override: {}.{} is answered by the host", name, public_name)
             if kind == "operation":
                 declared = declared_methods.pop(public_name, None)
                 static = member.is_static
-                if declared is not None:
+                if override is not None and override.call is not None:
+                    callback = override.call
+                elif declared is not None:
                     raw = self.wrappers._raw_callback(cls, declared.callback)
                     callback = self.wrappers.method(cls, name, public_name, raw, static=static)
                     if static and self.wrappers._parameters_for(raw)[:1] == ("_realm",):
@@ -384,21 +391,28 @@ class InterfaceCompiler:
                 )
             else:
                 declared = declared_attributes.pop(public_name, None)
-                getter = (
-                    self.wrappers._raw_callback(cls, declared.getter)
-                    if declared
-                    else self.stubs.getter(name, public_name)
-                )
-                setter = None
-                writable = member.setter_state
-                if writable is None:
-                    writable = declared is not None and declared.setter is not None
-                if writable:
-                    setter = (
-                        self.wrappers.setter(cls, name, public_name, declared.setter)
-                        if declared is not None and declared.setter is not None
-                        else self.stubs.setter(name, public_name)
+                if override is not None and override.get is not None:
+                    getter = override.get
+                else:
+                    getter = (
+                        self.wrappers._raw_callback(cls, declared.getter)
+                        if declared
+                        else self.stubs.getter(name, public_name)
                     )
+                setter = None
+                if override is not None and override.set is not None:
+                    # A hook that answers the write is what makes the member writable.
+                    setter = override.set
+                else:
+                    writable = member.setter_state
+                    if writable is None:
+                        writable = declared is not None and declared.setter is not None
+                    if writable:
+                        setter = (
+                            self.wrappers.setter(cls, name, public_name, declared.setter)
+                            if declared is not None and declared.setter is not None
+                            else self.stubs.setter(name, public_name)
+                        )
                 crossing = cross_origin_check(member)
                 attributes.append(
                     AttributeSpec(name=public_name, getter=getter, setter=setter, replaceable=bool(declared and declared.replaceable), cross_origin_get_check=crossing, cross_origin_set_check=crossing, **common)

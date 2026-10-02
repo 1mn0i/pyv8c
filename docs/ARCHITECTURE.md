@@ -87,6 +87,8 @@ Chromium 生成的 `interface-baseline.zip` 只提供接口结构、继承、成
 参数转换、缺参判断、重载、异常顺序和 Promise 拒绝由每个 Web API 实现直接负责。禁止新增签名驱动的运行时验证器或统一调用 wrapper。
 
 未实现接口可以由 `StubFactory` 生成占位实现；stub 不应模拟真实参数语义。
+成员实现由 `engine/assembly.py` 在编译期合成：`Browser(interface_overrides=...)` 给的宿主钩子在同一层替换回调，
+因此不动实现类、不改 baseline，也不影响别的 Browser。
 
 ## 资源与调试
 

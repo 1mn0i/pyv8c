@@ -188,9 +188,42 @@ finally:
 | baseline_mismatch | warn | warn（默认）对实现与所选 baseline 的成员/接口差异记一次警告并跳过；error 改为当场失败，用来盯住自己的实现写错 |
 | expose_unimplemented | True | exposure 计划是否包含没有手写实现的 baseline 接口 |
 | stub_logging | off | 未实现成员日志：off 关闭（默认）、on 每个未实现成员报一次、verbose 额外报告占位 handler |
+| interface_overrides | None | 用宿主函数回答 baseline 成员（见下节）；未知接口/成员、类型不符、只读属性配写入钩子等在创建 Browser 时报错 |
 
 关闭 stub_logging 只关闭日志，不会让占位成员获得实现。
 原生 binding 描述和已创建模板不是热更新配置；更换 baseline 或修改接口声明后应创建新的 Browser/Context。
+
+## 接口成员钩子
+
+有些成员实现成本太高，或暂时不打算实现。`interface_overrides` 让宿主函数直接回答它们，
+既不碰实现类也不改 baseline，同一个实现类仍被别的 Browser 正常使用：
+
+```python
+from pyv8c import Browser
+
+browser = Browser(stub_logging="off", interface_overrides={
+    "AbortController": {"abort": lambda *_: "已接管"},
+    "Navigator": {"hardwareConcurrency": lambda *_: 8},
+    "HTMLInputElement": {"valueAsNumber": {"set": lambda self, value: None}},
+})
+try:
+    page = browser.new_context().new_page()
+    page.set_content("<input id=i>", url="https://example.test/")
+    assert page.evaluate("navigator.hardwareConcurrency") == 8
+    assert page.evaluate("new AbortController().abort()") == "已接管"
+finally:
+    browser.close()
+```
+
+- 被钩子回答的成员不再进真实实现，本来就是 stub 的也不再报「待实现」，钩子的返回值就是脚本看到的值。
+- 参数与真实实现一致，由成员位置决定（写 `lambda *_: 值` 最省心）：原型/实例方法收到 `(receiver, *args)`，
+  位于接口自身（静态）的方法只收到 `(*args)`，属性读取收到 `(receiver)`，属性写入收到 `(receiver, value)`。
+- 写法：裸函数回答该方法／该属性的读取，要指名写入用 `{"get": …}` / `{"set": …}`；配了 `set` 的成员即可写（含实现类本来没有 setter 的属性）。
+- 成员的位置（原型/实例/静态）、`length`、只读标记仍取自 baseline，原型链与 `instanceof` 不变。
+- 严格校验：接口名不在 baseline、成员名不属于该接口、槽位与该成员类型不符、给 baseline 标为只读的属性配 `set`、
+  传入 bound method（会丢掉 receiver）或不可调用的值，都在创建 Browser 时抛 `TypeError`。
+- 不覆盖：构造函数（`new` 仍走真实实现）、接口常量、`named`/`indexed` 拦截器。
+- 覆盖在首次建模板前定型：同一 Browser 的所有 context/realm（含 worker 与 iframe）看到同一套钩子，与 baseline 一样不是热更新配置。
 
 ## 环境配置
 
