@@ -17,6 +17,18 @@ def universe():
     return InterfaceUniverse(BaselineRepository.load(), runtime=bootstrap_runtime(), stub_logging="off")
 
 
+def test_an_unconfigured_universe_keeps_no_override_table(universe):
+    """Unconfigured hooks cost nothing per member: the compiler holds no table at all."""
+    assert not universe.overrides
+    assert universe._assembly.overrides is None
+
+    hooked = InterfaceUniverse(BaselineRepository.load(), runtime=bootstrap_runtime(),
+                               stub_logging="off",
+                               interface_overrides={"Navigator": {"userAgent": lambda *_: "hooked"}})
+    assert hooked.overrides
+    assert hooked._assembly.overrides is not None
+
+
 def test_compilation_and_signature_analysis_are_not_repeated(universe, monkeypatch):
     compiler = universe._assembly
     calls = Counter()

@@ -223,6 +223,7 @@ finally:
 - 严格校验：接口名不在 baseline、成员名不属于该接口、槽位与该成员类型不符、给 baseline 标为只读的属性配 `set`、
   传入 bound method（会丢掉 receiver）或不可调用的值，都在创建 Browser 时抛 `TypeError`。
 - 不覆盖：构造函数（`new` 仍走真实实现）、接口常量、`named`/`indexed` 拦截器。
+- 代价口径：钩子是替换 callable，调用期没有可测的额外开销（与同一成员未 hook 时在噪声带内一致）；编译期只在编译一个成员时查一次表，未配置钩子时那张表根本不存在，`InterfaceUniverse.validate()` 全量编译与未引入该功能时同档。只有钩子每次返回一个新对象（如 dict）才产生与真实实现同源的开销。
 - 覆盖在首次建模板前定型：同一 Browser 的所有 context/realm（含 worker 与 iframe）看到同一套钩子，与 baseline 一样不是热更新配置。
 
 ## 环境配置

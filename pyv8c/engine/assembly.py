@@ -22,7 +22,6 @@ from pyv8.flag import (
 )
 
 from ..foundation.logging import logger
-from .overrides import MemberOverrides
 
 
 # (baseline handler key, __v8_*__ method name) per interceptor family.
@@ -297,7 +296,8 @@ class InterfaceCompiler:
         self.universe = universe
         self.stubs = StubFactory(stub_logging)
         self.wrappers = BindingWrapperFactory(universe)
-        self.overrides = getattr(universe, "overrides", None) or MemberOverrides()
+        # ``None`` when nothing is hooked, so the member loop pays a check, not a lookup.
+        self.overrides = getattr(universe, "overrides", None) or None
         self._compiled = {}
         # The universe shares its lock: a compile reaches back into it for classes.
         self._lock = lock or threading.RLock()
@@ -362,6 +362,7 @@ class InterfaceCompiler:
         attributes = []
         realm_methods = []
         seen = set()
+        overrides = self.overrides
         for _location, member in entries:
             public_name = member.name
             kind = member.kind
@@ -369,7 +370,7 @@ class InterfaceCompiler:
                 continue
             seen.add((kind, public_name))
             common = member_flags(member)
-            override = self.overrides.for_member(name, public_name)
+            override = overrides.for_member(name, public_name) if overrides is not None else None
             if override is not None:
                 logger.debug("interface override: {}.{} is answered by the host", name, public_name)
             if kind == "operation":

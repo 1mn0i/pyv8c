@@ -35,6 +35,7 @@ PARSE_NODES = 4000
 QUERY_REPEATS = 200
 DISPATCH_REPEATS = 20000
 HOST_CALL_REPEATS = 20000
+MEMBER_CALL_REPEATS = 20000
 JS_LOOP_REPEATS = 20000
 EVALUATE_REPEATS = 5000
 PAGE_CYCLES = 15
@@ -180,6 +181,31 @@ def case_js_loop():
         browser.close()
 
 
+def _member_call_seconds(browser):
+    """Seconds the same member call takes, however that member is answered."""
+    page = _page(browser)
+    try:
+        elapsed = _js_seconds(page, (
+            f"for (let i = 0; i < {MEMBER_CALL_REPEATS}; i++) new AbortController().abort();"
+        ))
+        return elapsed * 1000
+    finally:
+        browser.close()
+
+
+def case_stub_call():
+    """The floor a host hook is held to: the same member call, answered by its stub."""
+    return _sample(_member_call_seconds(_browser()), "ms",
+                   f"{MEMBER_CALL_REPEATS} stub member calls")
+
+
+def case_hook_call():
+    """What answering that member from a host hook costs instead."""
+    browser = _browser(interface_overrides={"AbortController": {"abort": lambda *_: None}})
+    return _sample(_member_call_seconds(browser), "ms",
+                   f"{MEMBER_CALL_REPEATS} hooked member calls")
+
+
 def case_dom_build():
     """Building nodes from script: createElement plus appendChild."""
     browser = _browser()
@@ -276,6 +302,8 @@ CASES = (
     ("evaluate", case_evaluate),
     ("host_call", case_host_call),
     ("js_loop", case_js_loop),
+    ("stub_call", case_stub_call),
+    ("hook_call", case_hook_call),
     ("dom_build", case_dom_build),
     ("dom_parse", case_dom_parse),
     ("dom_query", case_dom_query),
