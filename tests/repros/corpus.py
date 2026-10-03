@@ -3121,4 +3121,196 @@ CASES = (
         expected=[True, True, False, "function", "function", "function", True, 1,
                   "[object MessageChannel]", False],
     ),
+    Repro(
+        name="create_element_ns_gives_the_interface_of_its_namespace",
+        note="An HTML-namespace name goes through the tag registry, an SVG name gets the "
+             "interface Chrome has for it, and MathML has the one interface.",
+        script="""(() => {
+            const SVG = 'http://www.w3.org/2000/svg';
+            const MATHML = 'http://www.w3.org/1998/Math/MathML';
+            const XHTML = 'http://www.w3.org/1999/xhtml';
+            const svg = document.createElementNS(SVG, 'svg');
+            const math = document.createElementNS(MATHML, 'math');
+            const html = document.createElementNS(XHTML, 'div');
+            return [svg.constructor.name, svg.namespaceURI, svg.localName, svg.tagName,
+                    svg.prefix, svg instanceof SVGElement, svg instanceof Element,
+                    svg instanceof HTMLElement, svg.ownerDocument === document,
+                    math.constructor.name, math.namespaceURI, math instanceof MathMLElement,
+                    html.constructor.name, html.localName, html.tagName,
+                    html instanceof HTMLDivElement, html.namespaceURI];
+        })()""",
+        expected=["SVGSVGElement", "http://www.w3.org/2000/svg", "svg", "svg", None,
+                  True, True, False, True, "MathMLElement",
+                  "http://www.w3.org/1998/Math/MathML", True, "HTMLDivElement", "div",
+                  "DIV", True, "http://www.w3.org/1999/xhtml"],
+    ),
+    Repro(
+        name="create_element_ns_keeps_the_name_it_was_given",
+        note="A name is case-sensitive and is not lower-cased: ``clippath`` is an unknown "
+             "SVG name while ``clipPath`` is not, and ``DIV`` is an unknown HTML one.  "
+             "Blink takes the first two colon-separated segments and drops the rest.",
+        script="""(() => {
+            const SVG = 'http://www.w3.org/2000/svg';
+            const XHTML = 'http://www.w3.org/1999/xhtml';
+            const clip = document.createElementNS(SVG, 'clipPath');
+            const tspan = document.createElementNS(SVG, 'tspan');
+            const blur = document.createElementNS(SVG, 'feGaussianBlur');
+            const lower = document.createElementNS(SVG, 'clippath');
+            const upper = document.createElementNS(XHTML, 'DIV');
+            const bare = document.createElementNS(null, 'thing');
+            const surplus = document.createElementNS(SVG, 'a:b:c');
+            return [clip.localName, clip.constructor.name, tspan.constructor.name,
+                    blur.constructor.name, lower.constructor.name, upper.constructor.name,
+                    upper.localName, upper.tagName, String(bare.namespaceURI), bare.tagName,
+                    bare.constructor.name, surplus.localName, surplus.prefix,
+                    surplus.tagName];
+        })()""",
+        expected=["clipPath", "SVGClipPathElement", "SVGTSpanElement",
+                  "SVGFEGaussianBlurElement", "SVGElement", "HTMLUnknownElement", "DIV",
+                  "DIV", "null", "thing", "Element", "b", "a", "a:b"],
+    ),
+    Repro(
+        name="an_element_from_another_namespace_works_as_an_element",
+        note="The element model is real whichever interface the realm bound: it holds "
+             "attributes, takes children, and is found by name in the document.",
+        html=page(body="<div id=host></div>"),
+        script="""(() => {
+            const SVG = 'http://www.w3.org/2000/svg';
+            const element = document.createElementNS(SVG, 'svg');
+            const kid = document.createElementNS(SVG, 'circle');
+            kid.setAttribute('r', '4');
+            element.appendChild(kid);
+            document.getElementById('host').appendChild(element);
+            return [element.childNodes.length, kid.namespaceURI, kid.getAttribute('r'),
+                    document.getElementsByTagName('svg').length, element.isConnected,
+                    element.ownerDocument === document, element.nodeName,
+                    typeof element.appendChild, element.getAttribute('viewBox'),
+                    element.firstChild === kid];
+        })()""",
+        expected=[1, "http://www.w3.org/2000/svg", "4", 1, True, True, "svg", "function",
+                  None, True],
+    ),
+    Repro(
+        name="an_svg_element_leaves_its_interface_members_to_the_baseline",
+        note="What an SVG element can do is its interface's business, and those "
+             "interfaces are the baseline's placeholders: the element is real, its "
+             "members are not implemented here.",
+        script="""(() => {
+            const SVG = 'http://www.w3.org/2000/svg';
+            const element = document.createElementNS(SVG, 'svg');
+            return [typeof element.getBBox, String(element.style)];
+        })()""",
+        expected=["function", "undefined"],
+        known_divergence=("the SVG element interfaces are baseline stubs, so their own "
+                          "members answer with the placeholder value instead of Chrome's"),
+    ),
+    Repro(
+        name="create_element_ns_refuses_a_prefix_without_a_namespace",
+        note="A qualified name may only carry a prefix when there is a namespace for it.",
+        script="""document.createElementNS(null, 'a:b')""",
+        expect_error="NamespaceError",
+    ),
+    Repro(
+        name="create_element_ns_refuses_a_name_it_cannot_use",
+        note="The name is checked per character, and the check is Chromium's rather than "
+             "XML's -- ``a=b`` is a name there, ``a b`` is not, and a prefix is checked "
+             "as loosely as it is split.",
+        script="""(() => {
+            const XHTML = 'http://www.w3.org/1999/xhtml';
+            const refused = ['a b', '1a', '', 'a:', 'a b:c', ':b'];
+            const accepted = ['a=b', 'a<:b', '_a', '\\u00e4x', 'a-b'];
+            return [refused.map(name => {
+                try { return document.createElementNS(XHTML, name).localName; }
+                catch (error) { return error.name; }
+            }), accepted.map(name => document.createElementNS(XHTML, name).localName)];
+        })()""",
+        expected=[["InvalidCharacterError", "InvalidCharacterError",
+                   "InvalidCharacterError", "InvalidCharacterError",
+                   "InvalidCharacterError", "InvalidCharacterError"],
+                  ["a=b", "b", "_a", "\u00e4x", "a-b"]],
+    ),
+    Repro(
+        name="a_tag_outside_the_modelled_html_table_is_an_unknown_element_here",
+        note="Both factories agree on the rule: an HTML-namespace name is looked up as "
+             "written, and whatever the table does not model is an HTMLUnknownElement.",
+        script="""(() => {
+            const XHTML = 'http://www.w3.org/1999/xhtml';
+            return [document.createElement('b').constructor.name,
+                    document.createElement('section').constructor.name,
+                    document.createElementNS(XHTML, 'a:b').constructor.name,
+                    document.createElement('div').constructor.name];
+        })()""",
+        expected=["HTMLUnknownElement", "HTMLUnknownElement", "HTMLUnknownElement",
+                  "HTMLDivElement"],
+        known_divergence=("dom.html_classes.TAG_CLASSES models 27 tags and the rest fall "
+                          "back to HTMLUnknownElement, where Chrome answers the plain "
+                          "interface the HTML spec gives the tag (b/section -> HTMLElement)"),
+    ),
+    Repro(
+        name="a_rect_reads_its_geometry_through_an_animated_length",
+        note="A geometry attribute is an SVGAnimatedLength over the attribute of that "
+             "name, and the SVGLength behind it is the same object on every read.",
+        script="""(() => {
+            const SVG = 'http://www.w3.org/2000/svg';
+            const rect = document.createElementNS(SVG, 'rect');
+            rect.setAttribute('width', '3868');
+            rect.setAttribute('x', '12');
+            const width = rect.width;
+            const base = width.baseVal;
+            return [width.constructor.name, width instanceof SVGAnimatedLength,
+                    rect.width === width, base.constructor.name, base instanceof SVGLength,
+                    base.value, base.valueAsString, base.valueInSpecifiedUnits,
+                    base.unitType, width.animVal === base, width.animVal.value,
+                    rect.x.baseVal.value, typeof rect.height, rect.ry.baseVal.value,
+                    Object.prototype.toString.call(base), rect instanceof SVGRectElement,
+                    rect instanceof SVGGeometryElement, rect instanceof SVGElement];
+        })()""",
+        expected=["SVGAnimatedLength", True, True, "SVGLength", True, 3868, "3868", 3868,
+                  1, False, 3868, 12, "object", 0, "[object SVGLength]", True, True, True],
+    ),
+    Repro(
+        name="a_rect_length_reports_the_unit_it_was_written_in",
+        note="The number as written, the unit it was written in, and -- for a relative "
+             "unit, which nothing here can resolve -- the failure Chrome reports.",
+        script="""(() => {
+            const SVG = 'http://www.w3.org/2000/svg';
+            const rect = document.createElementNS(SVG, 'rect');
+            const read = (text) => {
+                if (text === null) { rect.removeAttribute('width'); }
+                else { rect.setAttribute('width', text); }
+                const base = rect.width.baseVal;
+                let value = null, error = null;
+                try { value = base.value; } catch (e) { error = e.name; }
+                return [String(text), value, base.valueAsString,
+                        base.valueInSpecifiedUnits, base.unitType, error];
+            };
+            return [['3868', '50%', '10px', '2em', 'abc', '', null].map(read)];
+        })()""",
+        expected=[[["3868", 3868, "3868", 3868, 1, None],
+                   ["50%", None, "50%", 50, 2, "NotSupportedError"],
+                   ["10px", 10, "10px", 10, 5, None],
+                   ["2em", None, "2em", 2, 3, "NotSupportedError"],
+                   ["abc", 0, "0", 0, 1, None],
+                   ["", 0, "0", 0, 1, None],
+                   ["null", 0, "0", 0, 1, None]]],
+    ),
+    Repro(
+        name="writing_a_rect_length_rewrites_the_attribute",
+        note="The three writable faces of an SVGLength all write through to the "
+             "attribute, each keeping the unit the attribute had.",
+        script="""(() => {
+            const SVG = 'http://www.w3.org/2000/svg';
+            const rect = document.createElementNS(SVG, 'rect');
+            rect.setAttribute('width', '10');
+            rect.width.baseVal.value = 20;
+            const first = [rect.getAttribute('width'), rect.width.baseVal.valueAsString];
+            rect.width.baseVal.valueAsString = '30px';
+            const second = [rect.getAttribute('width'), rect.width.baseVal.unitType,
+                            rect.width.baseVal.value];
+            rect.width.baseVal.valueInSpecifiedUnits = 7;
+            return [first, second, [rect.getAttribute('width'),
+                                    rect.width.baseVal.value]];
+        })()""",
+        expected=[["20", "20"], ["30px", 5, 30], ["7px", 7]],
+    ),
 )

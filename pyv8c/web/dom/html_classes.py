@@ -97,4 +97,31 @@ def class_for_tag(tag):
     return TAG_CLASSES.get(str(tag).lower(), HTML_CLASSES["HTMLUnknownElement"])
 
 
-__all__ = ["HTML_CLASSES", "TAG_CLASSES", "class_for_tag"]
+def class_for_local_name(local_name):
+    """The class for a local name *as written*: ``createElementNS`` does not lower-case
+    the name it was given, so ``DIV`` is an unknown element to it.
+    """
+    return TAG_CLASSES.get(str(local_name), HTML_CLASSES["HTMLUnknownElement"])
+
+
+#: The SVG local names whose interface is not their own capitalised name.
+_SVG_NAMES = {"svg": "SVGSVGElement", "tspan": "SVGTSpanElement"}
+
+
+def svg_interface_name(local_name):
+    """The interface Chrome gives an SVG local name, matched case for case.
+
+    Whether the realm declares it is its question: Chrome answers ``SVGElement`` for a
+    name it has none for, and so does the caller when this one is not in the baseline.
+    The filter primitives keep a capital ``FE`` rather than the name's own ``fe``.
+    """
+    match = _SVG_NAMES.get(local_name)
+    if match is not None:
+        return match
+    capital = local_name[:2].upper() + local_name[2:] if local_name.startswith("fe") \
+        else local_name[:1].upper() + local_name[1:]
+    return "SVG" + capital + "Element"
+
+
+__all__ = ["HTML_CLASSES", "TAG_CLASSES", "class_for_local_name", "class_for_tag",
+           "svg_interface_name"]

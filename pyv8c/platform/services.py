@@ -163,6 +163,16 @@ class _RealmCapability(_TaskSource):
     def materialize_interface(self, name):
         return self._owner._page_realm.binding_session.materialize(name)
 
+    def interface_class(self, name):
+        """The class this realm bound for *name*, or ``None`` when the baseline
+        declares no such interface.  A foreign-namespace element is built from it, so
+        the SVG and MathML interface modules need not exist to answer ``instanceof``.
+        """
+        session = self._owner._page_realm.binding_session
+        if name not in session.universe.baseline.interfaces:
+            return None
+        return session.materialize(name)
+
     def heap_statistics(self):
         """V8's heap numbers for this realm's isolate, in bytes."""
         context = getattr(self._owner._page_realm, "context", None)

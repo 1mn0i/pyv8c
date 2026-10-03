@@ -97,13 +97,30 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         return pyv8.Null if value is None else str(value)
     def set_role(self, value): self.attributes["role"] = str(dom_string(value))
 
-    def __init__(self, tag_name="div", services=None, attributes=None, **kw):
-        super().__init__(services=services, node_type=Node.ELEMENT_NODE, node_name=str(tag_name).upper(), **kw)
-        self.localName, self.attributes = str(tag_name).lower(), dict(attributes or {})
+    def __init__(self, tag_name="div", services=None, attributes=None, namespace=None,
+                 prefix=None, local_name=None, **kw):
+        """Build one element with the name it was created under.
 
-    def get_namespaceURI(self): return XHTML_NAMESPACE
-    # HTML elements are never qualified, so the prefix is always null.
-    def get_prefix(self): return pyv8.Null
+        *namespace* is ``None`` on the HTML path -- ``createElement`` and the parser,
+        which lower-case the name they were given -- and the namespace URI on the XML
+        path, where the name is kept as written and only an HTML-namespace element
+        reports it in upper case.
+        """
+        qualified = str(tag_name)
+        if namespace is None:
+            local = (qualified if local_name is None else str(local_name)).lower()
+            node_name = local.upper()
+            self._namespace, self._prefix = XHTML_NAMESPACE, None
+        else:
+            local = qualified if local_name is None else str(local_name)
+            node_name = qualified.upper() if namespace == XHTML_NAMESPACE else qualified
+            self._namespace = None if is_nullish(namespace) else str(namespace)
+            self._prefix = None if is_nullish(prefix) else str(prefix)
+        super().__init__(services=services, node_type=Node.ELEMENT_NODE, node_name=node_name, **kw)
+        self.localName, self.attributes = local, dict(attributes or {})
+
+    def get_namespaceURI(self): return self._namespace or pyv8.Null
+    def get_prefix(self): return self._prefix or pyv8.Null
     def get_localName(self): return self.localName
     def get_tagName(self): return self.nodeName
     def get_id(self): return self.attributes.get("id", "")

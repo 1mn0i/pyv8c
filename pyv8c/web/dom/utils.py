@@ -11,8 +11,31 @@ from ...foundation.urls import form_urlencoded
 #: XML-compatible qualified name, shared by the element/attribute-creating APIs.
 _VALID_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._:-]*$")
 
-#: The only namespace this DOM implementation models (HTML documents).
+#: The namespace HTML documents use, and the two foreign ones ``createElementNS`` maps
+#: to interfaces of their own.
 XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml"
+SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+MATHML_NAMESPACE = "http://www.w3.org/1998/Math/MathML"
+
+#: A name starts with a letter, an underscore or anything above ASCII, and holds none of
+#: these anywhere: Chromium's rule, which takes ``a=b`` and ``äx`` as names and ``a b``
+#: as not one.
+_NAME_START = re.compile(r"[A-Za-z_\u0080-\U0010ffff]")
+_NAME_FORBIDDEN = frozenset(" \t\n\f\r/>\x00")
+
+
+def name_fault(value):
+    """What is wrong with *value* as a name -- ``("start", c)`` or ``("character", c)``
+    -- and ``None`` when nothing is.  Chromium names the character, so the caller can.
+    """
+    text = str(value)
+    if not text:
+        return "start", ""
+    if not _NAME_START.match(text[0]):
+        return "start", text[0]
+    invalid = next((character for character in text if character in _NAME_FORBIDDEN),
+                   None)
+    return None if invalid is None else ("character", invalid)
 
 #: Iterator bits published through ``IdlSpec(array=...)`` by iterable collections.
 ITERABLE_FLAGS = (

@@ -55,6 +55,8 @@ CORE_INTERFACES = (
     "PerformanceMeasure", "PerformanceResourceTiming", "PerformanceNavigationTiming",
     "PerformanceObserverEntryList",
     "Lock", "LockManager",
+    "SVGElement", "SVGGraphicsElement", "SVGGeometryElement", "SVGRectElement",
+    "SVGLength", "SVGAnimatedLength",
 )
 
 INDEXEDDB_INTERFACES = (

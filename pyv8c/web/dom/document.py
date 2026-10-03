@@ -12,11 +12,11 @@ from .character_data import Comment, DocumentType, Text
 from .collections import HTMLAllCollection, HTMLCollection, NodeList, tag_name_ns_collection
 from .css import StyleSheetList
 from .fonts import FontFaceSet
-from .html_classes import class_for_tag
+from .html_classes import class_for_local_name, class_for_tag, svg_interface_name
 from .html_elements import Element
 from .mixins import _ParentNodeMixin
 from .nodes import Attr, DocumentFragment, Node
-from .utils import _VALID_NAME_RE
+from .utils import MATHML_NAMESPACE, SVG_NAMESPACE, XHTML_NAMESPACE, _VALID_NAME_RE, name_fault
 
 
 @interface('Document', 'Node')
@@ -62,6 +62,7 @@ class Document(_ParentNodeMixin, Node):
         ),
         methods=(
             MethodSpec(name="createElement", callback="fn_createElement", length=1),
+            MethodSpec(name="createElementNS", callback="fn_createElementNS", length=2, side_effect=1),
             MethodSpec(name="createTextNode", callback="fn_createTextNode", length=1),
             MethodSpec(name="createComment", callback="fn_createComment", length=1),
             MethodSpec(name="createDocumentFragment", callback="fn_createDocumentFragment"),
@@ -423,6 +424,82 @@ class Document(_ParentNodeMixin, Node):
     def _new_element(self, tag):
         tag = self._validate_name(tag)
         return class_for_tag(tag)(tag, services=self._services)
+    def fn_createElementNS(self, namespace=MISSING, qualified_name=MISSING, *_extra):
+        if namespace is MISSING:
+            raise missing_error('Document', 'createElementNS', 2, 0, constructor=False)
+        if qualified_name is MISSING:
+            raise missing_error('Document', 'createElementNS', 2, 1, constructor=False)
+        value = str(dom_string(qualified_name))
+        prefix, local = self._split_qualified_name(value)
+        space = None if is_nullish(namespace) else str(dom_string(namespace))
+        if prefix is not None and not space:
+            raise dom_exception(
+                "NamespaceError",
+                "Failed to execute 'createElementNS' on 'Document': The namespace URI"
+                f" provided ('{space or ''}') is not valid for the qualified name"
+                f" provided ('{value}').")
+        # The element's name is the prefix and local name put back together, surplus dropped.
+        return self._new_element_ns(space, prefix, local,
+                                    f"{prefix}:{local}" if prefix else local)
+    def _split_qualified_name(self, value):
+        """Blink's split: the first two colon-separated segments, the rest dropped, so
+        ``a:b:c`` names the element ``a:b``.
+        """
+        if not value:
+            raise InvalidCharacterError(
+                "Failed to execute 'createElementNS' on 'Document': The qualified name"
+                " provided is empty.")
+        segments = value.split(":")
+        if len(segments) == 1:
+            return None, self._checked_name(value, value)
+        prefix, local = segments[0], segments[1]
+        if not prefix:
+            raise InvalidCharacterError(
+                "Failed to execute 'createElementNS' on 'Document': The qualified name"
+                f" provided ('{value}') has an empty namespace prefix.")
+        if not local:
+            raise InvalidCharacterError(
+                "Failed to execute 'createElementNS' on 'Document': The qualified name"
+                f" provided ('{value}') has an empty local name.")
+        return self._checked_name(prefix, value), self._checked_name(local, value)
+    def _checked_name(self, part, whole):
+        fault = name_fault(part)
+        if fault is None:
+            return part
+        raise InvalidCharacterError(
+            "Failed to execute 'createElementNS' on 'Document': The qualified name"
+            f" provided ('{whole}') contains the invalid character '{fault[1]}'.")
+    def _new_element_ns(self, namespace, prefix, local, qualified):
+        """Create the element Chrome gives this namespace and this name."""
+        # No namespace is not the HTML path: the name is kept as written, and ``Element``
+        # reads "no namespace URI" from the empty string.
+        space = "" if namespace is None else namespace
+        if not space:
+            cls = Element
+        elif space == XHTML_NAMESPACE:
+            cls = class_for_local_name(local)
+        elif space == SVG_NAMESPACE:
+            cls = (self._interface_class(svg_interface_name(local))
+                   or self._interface_class("SVGElement") or Element)
+        elif space == MATHML_NAMESPACE:
+            cls = self._interface_class("MathMLElement") or Element
+        else:
+            cls = Element
+        if getattr(cls, "__v8_idl_stub__", False):
+            # The realm bound this interface from the baseline alone, so its ``__init__``
+            # is the placeholder that reports itself; the element model is injected into
+            # the realm's class instead, which is what makes ``instanceof`` answer.
+            element = cls.__new__(cls)
+            Element.__init__(element, qualified, services=self._services,
+                             namespace=space, prefix=prefix, local_name=local)
+            return element
+        return cls(qualified, services=self._services, namespace=space,
+                   prefix=prefix, local_name=local)
+    def _interface_class(self, name):
+        """The class the realm bound for an interface, or ``None`` for one the baseline
+        does not declare -- an SVG name Chrome has no element for."""
+        realm = getattr(getattr(self, "_services", None), "realm_services", None)
+        return None if realm is None else realm.interface_class(name)
     def query_selector(self, selector, root):
         from .selectors import select
         return next(iter(select(root, selector)), pyv8.Null)
