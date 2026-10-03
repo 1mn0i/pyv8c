@@ -33,14 +33,14 @@ from ...foundation.arguments import (
 )
 from ...foundation.errors import V8TypeError, dom_exception
 from ...foundation.realm import post_or_call
+from ..dom.collections import DOMStringList
 from ..dom.events import Event, EventTarget
-from ..dom.mixins import ReadOnlyIndexedPropertyMixin
 from ..fetch.clone import structured_clone
 
 __all__ = [
     "IDBFactory", "IDBDatabase", "IDBTransaction", "IDBObjectStore", "IDBIndex",
     "IDBCursor", "IDBCursorWithValue", "IDBKeyRange", "IDBRequest",
-    "IDBOpenDBRequest", "IDBVersionChangeEvent", "IDBRecord", "DOMStringList",
+    "IDBOpenDBRequest", "IDBVersionChangeEvent", "IDBRecord",
 ]
 
 
@@ -519,36 +519,6 @@ def _limit(values, count):
     if count is None:
         return values
     return values[: max(0, int(count))]
-
-
-@interface('DOMStringList', None)
-class DOMStringList(ReadOnlyIndexedPropertyMixin):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(
-            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(name="contains", callback="fn_contains", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="DOMStringList",
-        has_constructor=1,
-    )
-
-    def __init__(self, names=(), **_):
-        self._names = tuple(str(name) for name in names)
-
-    def _indexed_items(self):
-        return self._names
-
-    def get_length(self):
-        return len(self._names)
-
-    def fn_item(self, *args):
-        index = int(args[0]) if args else 0
-        return self._names[index] if 0 <= index < len(self._names) else pyv8.Null
-
-    def fn_contains(self, *args):
-        return str(args[0]) in self._names if args else False
 
 
 @interface('IDBRecord', None)
@@ -2215,7 +2185,6 @@ class IDBFactory:
 
 FEATURE = FeatureImplementation(
     {
-        "DOMStringList": DOMStringList,
         "IDBRecord": IDBRecord,
         "IDBVersionChangeEvent": IDBVersionChangeEvent,
         "IDBRequest": IDBRequest,

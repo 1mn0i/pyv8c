@@ -53,7 +53,7 @@ def _interfaces(*classes):
 FEATURE = FeatureImplementation(
     _interfaces(
         *error_interfaces(),
-        collections.DOMStringMap, collections.DOMTokenList, collections.HTMLAllCollection, collections.HTMLCollection, collections.HTMLFormControlsCollection, collections.HTMLOptionsCollection, collections.NamedNodeMap, collections.NodeList,
+        collections.DOMStringList, collections.DOMStringMap, collections.DOMTokenList, collections.HTMLAllCollection, collections.HTMLCollection, collections.HTMLFormControlsCollection, collections.HTMLOptionsCollection, collections.NamedNodeMap, collections.NodeList,
         html_form.RadioNodeList,
         events.CustomEvent, events.Event, events.EventTarget, events.KeyboardEvent, events.MouseEvent, events.UIEvent,
         events.AnimationEvent, events.BeforeUnloadEvent, events.CompositionEvent, events.FocusEvent,

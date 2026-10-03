@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..foundation.clock import Clock
-from ..foundation.urls import origin_string
+from ..foundation.urls import origin_string, serialize_origin
 from .request_headers import ACCEPT_ENCODING, accept_language
 from .sessions import BindingSession
 from .state import Ownership
@@ -162,6 +162,20 @@ class _RealmCapability(_TaskSource):
 
     def materialize_interface(self, name):
         return self._owner._page_realm.binding_session.materialize(name)
+
+    def ancestor_origins(self):
+        """The origins of this realm's ancestors, nearest first.
+
+        This is what ``Location.ancestorOrigins`` reports, so the chain is walked from
+        the parent outwards.
+        """
+        origins = []
+        page = getattr(getattr(self._owner, "_page_realm", None), "page", None)
+        page = getattr(page, "parent_page", None)
+        while page is not None:
+            origins.append(serialize_origin(page.origin))
+            page = getattr(page, "parent_page", None)
+        return origins
 
     def interface_class(self, name):
         """The class this realm bound for *name*, or ``None`` when the baseline

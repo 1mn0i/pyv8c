@@ -13,6 +13,7 @@ from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from ...engine.features import LazyValueStore, interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, integer, is_nullish, missing_error, usv_string
 from ...foundation.errors import SecurityError
+from ..dom.collections import DOMStringList
 from ..dom.events import EventTarget, HashChangeEvent, PopStateEvent, _install_handler_slots
 from .utils import document_key
 
@@ -103,13 +104,24 @@ class Location:
     def get_pathname(self): return self._parts().path or "/"
     def get_search(self): return ("?" + self._parts().query) if self._parts().query else ""
     def get_hash(self): return ("#" + self._parts().fragment) if self._parts().fragment else ""
+    def get_ancestorOrigins(self):
+        """The origins above this document, nearest first, as one list for good."""
+        origins = getattr(self, "_ancestorOrigins", None)
+        if origins is None:
+            realm = getattr(self._services, "realm_services", None)
+            if realm is not None:
+                realm.materialize_interface("DOMStringList")
+            origins = self._ancestorOrigins = DOMStringList(
+                () if realm is None else realm.ancestor_origins())
+        return origins
+    def fn_toString(self, *_extra): return self.get_href()
     __v8_idl_spec__ = IdlSpec(
         attributes=tuple(
-
                 AttributeSpec(name=n, getter="get_" + n, setter=_LOCATION_SETTERS.get(n))
                 for n in (
                     "href",
                     "origin",
+                    "ancestorOrigins",
                     "protocol",
                     "host",
                     "hostname",
@@ -124,6 +136,7 @@ class Location:
             MethodSpec(name="assign", callback="fn_assign", length=1),
             MethodSpec(name="replace", callback="fn_replace", length=1),
             MethodSpec(name="reload", callback="fn_reload"),
+            MethodSpec(name="toString", callback="fn_toString"),
         ),
         constructor_behavior=0,
         has_constructor=1,

@@ -532,6 +532,40 @@ class DOMStringMap:
         return self._visible_names()
 
 
+@interface('DOMStringList', None)
+class DOMStringList(ReadOnlyIndexedPropertyMixin):
+    """The legacy string list: IndexedDB's store and index names, and the origins
+    ``Location.ancestorOrigins`` reports, both hand one of these out.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
+        methods=(
+            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
+            MethodSpec(name="contains", callback="fn_contains", length=1, side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="DOMStringList",
+        has_constructor=1,
+    )
+
+    def __init__(self, names=(), **_):
+        self._names = tuple(str(name) for name in names)
+
+    def _indexed_items(self):
+        return self._names
+
+    def get_length(self):
+        return len(self._names)
+
+    def fn_item(self, *args):
+        index = int(args[0]) if args else 0
+        return self._names[index] if 0 <= index < len(self._names) else pyv8.Null
+
+    def fn_contains(self, *args):
+        return str(args[0]) in self._names if args else False
+
+
 @interface('HTMLOptionsCollection', 'HTMLCollection')
 class HTMLOptionsCollection(HTMLCollection):
     """``select.options``: the select's options as a live list.  It adds only the

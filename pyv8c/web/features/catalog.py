@@ -57,10 +57,11 @@ CORE_INTERFACES = (
     "Lock", "LockManager",
     "SVGElement", "SVGGraphicsElement", "SVGGeometryElement", "SVGRectElement",
     "SVGLength", "SVGAnimatedLength",
+    "DOMStringList",
 )
 
 INDEXEDDB_INTERFACES = (
-    "DOMStringList", "IDBRecord", "IDBVersionChangeEvent", "IDBRequest", "IDBOpenDBRequest", "IDBKeyRange",
+    "IDBRecord", "IDBVersionChangeEvent", "IDBRequest", "IDBOpenDBRequest", "IDBKeyRange",
     "IDBCursor", "IDBCursorWithValue", "IDBTransaction", "IDBObjectStore", "IDBIndex", "IDBDatabase", "IDBFactory",
 )
 NAVIGATOR_INTERFACES = (
