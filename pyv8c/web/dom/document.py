@@ -31,6 +31,8 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="contentType", getter="get_contentType", side_effect=1),
             AttributeSpec(name="domain", getter="get_domain", setter="set_domain"),
             AttributeSpec(name="dir", getter="get_dir", setter="set_dir"),
+            AttributeSpec(name="designMode", getter="get_designMode",
+                          setter="set_designMode"),
             AttributeSpec(name="styleSheets", getter="get_styleSheets", side_effect=1),
             AttributeSpec(name="documentElement", getter="get_documentElement", side_effect=1),
             AttributeSpec(name="scrollingElement", getter="get_scrollingElement", side_effect=1),
@@ -88,6 +90,9 @@ class Document(_ParentNodeMixin, Node):
     def __init__(self, services=None, url="about:blank", ready_state="complete", **kw):
         super().__init__(services=services, node_type=Node.DOCUMENT_NODE, node_name="#document", **kw)
         self.url = url; self._parser = None; self.ready_state = str(ready_state); self.hidden = False
+        #: "off" until a page turns it on. Chrome ignores a value it does not know
+        #: rather than reporting it, so the stored one is always one of the two.
+        self.design_mode = "off"
         #: The element focus is on, maintained by :mod:`dom.focus`.
         self._focused_element = None
         #: The script element whose code is running, maintained by the runner.
@@ -334,6 +339,14 @@ class Document(_ParentNodeMixin, Node):
         return value
     def _all_elements(self):
         return [x for x in self._descendants() if isinstance(x, Element)]
+    def get_designMode(self): return self.design_mode
+    def set_designMode(self, value):
+        """``designMode`` is "on" or "off" and nothing else: Chrome keeps the mode it
+        had rather than store a value it does not know, and never throws."""
+        text = str(dom_string(value)).strip().lower()
+        if text in ("on", "off"):
+            self.design_mode = text
+
     def _materialize_interface(self, name):
         """Build a lazily declared interface before handing out one of its objects;
         ``document.all`` needs the native template of an eagerly-deferred interface."""

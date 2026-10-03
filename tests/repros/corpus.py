@@ -3664,6 +3664,204 @@ CASES = (
                   ["onbeforepaste", True, "function", True, False], 1],
     ),
     Repro(
+        name="a_style_element_answers_with_the_sheet_it_owns",
+        note="The sheet belongs to the document's list, so a style element in a document "
+             "answers with the very object styleSheets holds for it, and one that is in no "
+             "document answers null.",
+        html=page(head='<style id=one>p { color: red }</style>'),
+        script="""(() => {
+            const style = document.getElementById('one');
+            const loose = document.createElement('style');
+            return [style.sheet === document.styleSheets[0],
+                    style.sheet === document.styleSheets.item(0),
+                    style.sheet === style.sheet,
+                    style.sheet.ownerNode === style,
+                    Object.prototype.toString.call(style.sheet),
+                    loose.sheet === null, document.styleSheets.length];
+        })()""",
+        expected=[True, True, True, True, "[object CSSStyleSheet]", True, 1],
+    ),
+    Repro(
+        name="a_sheet_keeps_its_owner_and_says_it_has_no_rules_yet",
+        note="What a sheet answers with is the object the list holds for its owner, and the "
+             "owner is the element it came from. The rules themselves are baseline stubs "
+             "here, so cssRules is undefined where Chrome reads a CSSRuleList.",
+        html=page(head='<style id=one>p { color: red }</style>'),
+        script="""(() => {
+            const sheet = document.getElementById('one').sheet;
+            return [sheet.ownerNode === document.getElementById('one'),
+                    sheet === document.styleSheets[0],
+                    typeof sheet.cssRules,
+                    sheet.disabled];
+        })()""",
+        expected=[True, True, "undefined", False],
+        known_divergence="CSSStyleSheet's own members are baseline stubs here, so cssRules"
+                         " reads undefined where Chrome reads a CSSRuleList; the object the"
+                         " element answers with is the right one either way.",
+    ),
+    Repro(
+        name="the_contenteditable_attribute_says_which_keyword_it_holds",
+        note="The attribute is a plain string, the property is the keyword: an empty "
+             "attribute and any spelling of a keyword read back lower-cased, and anything "
+             "the enum does not hold -- an unknown keyword or no attribute at all -- reads "
+             "as inherit.",
+        html=page(body='<div id=host><span id=kid></span></div>'),
+        script="""(() => {
+            const host = document.getElementById('host');
+            const out = [[host.contentEditable, String(host.getAttribute('contenteditable')),
+                          host.isContentEditable]];
+            for (const value of ['', 'true', 'TRUE', 'True', 'false', 'FALSE', 'inherit',
+                                 'INHERIT', 'plaintext-only', 'PLAINTEXT-ONLY', 'bogus',
+                                 ' true ', 'yes']) {
+                host.setAttribute('contenteditable', value);
+                out.push([value, host.contentEditable, host.isContentEditable]);
+            }
+            return out;
+        })()""",
+        expected=[["inherit", "null", False],
+                  ["", "true", True], ["true", "true", True], ["TRUE", "true", True],
+                  ["True", "true", True], ["false", "false", False],
+                  ["FALSE", "false", False], ["inherit", "inherit", False],
+                  ["INHERIT", "inherit", False],
+                  ["plaintext-only", "plaintext-only", True],
+                  ["PLAINTEXT-ONLY", "plaintext-only", True],
+                  ["bogus", "inherit", False], [" true ", "inherit", False],
+                  ["yes", "inherit", False]],
+    ),
+    Repro(
+        name="the_contenteditable_setter_holds_four_keywords_and_refuses_the_rest",
+        note="The IDL enum is enforced, so anything but the four keywords is a "
+             "SyntaxError; what is accepted is stored in lower case, and inherit takes the "
+             "attribute away rather than writing it.",
+        script="""(() => {
+            const values = ['true', 'TRUE', 'false', 'inherit', 'plaintext-only', '',
+                            null, 5, undefined, {}, 'bogus', ' true '];
+            return values.map((v) => {
+                const el = document.createElement('div');
+                el.setAttribute('contenteditable', 'sentinel');
+                let out = null;
+                try {
+                    el.contentEditable = v;
+                    out = [el.getAttribute('contenteditable'), el.contentEditable,
+                           el.hasAttribute('contenteditable')];
+                } catch (e) { out = [e.name, e.message, e.code]; }
+                return [String(v), out];
+            });
+        })()""",
+        expected=[["true", ["true", "true", True]],
+                  ["TRUE", ["true", "true", True]],
+                  ["false", ["false", "false", True]],
+                  ["inherit", [None, "inherit", False]],
+                  ["plaintext-only", ["plaintext-only", "plaintext-only", True]],
+                  ["", ["SyntaxError", "Failed to set the 'contentEditable' property on"
+                       " 'HTMLElement': The value provided ('') is not one of 'true',"
+                       " 'false', 'plaintext-only', or 'inherit'.", 12]],
+                  ["null", ["SyntaxError", "Failed to set the 'contentEditable' property"
+                       " on 'HTMLElement': The value provided ('null') is not one of"
+                       " 'true', 'false', 'plaintext-only', or 'inherit'.", 12]],
+                  ["5", ["SyntaxError", "Failed to set the 'contentEditable' property on"
+                        " 'HTMLElement': The value provided ('5') is not one of 'true',"
+                        " 'false', 'plaintext-only', or 'inherit'.", 12]],
+                  ["undefined", ["SyntaxError", "Failed to set the 'contentEditable'"
+                       " property on 'HTMLElement': The value provided ('undefined') is"
+                       " not one of 'true', 'false', 'plaintext-only', or 'inherit'.", 12]],
+                  ["[object Object]", ["SyntaxError", "Failed to set the 'contentEditable'"
+                       " property on 'HTMLElement': The value provided ('[object Object]')"
+                       " is not one of 'true', 'false', 'plaintext-only', or 'inherit'.",
+                       12]],
+                  ["bogus", ["SyntaxError", "Failed to set the 'contentEditable' property"
+                       " on 'HTMLElement': The value provided ('bogus') is not one of"
+                       " 'true', 'false', 'plaintext-only', or 'inherit'.", 12]],
+                  [" true ", ["SyntaxError", "Failed to set the 'contentEditable' property"
+                       " on 'HTMLElement': The value provided (' true ') is not one of"
+                       " 'true', 'false', 'plaintext-only', or 'inherit'.", 12]]],
+    ),
+    Repro(
+        name="is_content_editable_walks_up_to_the_nearest_ancestor",
+        note="Inheritance runs up the tree, an explicit false stops it, and inherit hands "
+             "the question back to the ancestor above. A detached tree counts too, which is "
+             "why a loose element still answers.",
+        html=page(body='<div id=host><span id=kid></span></div>'),
+        script="""(() => {
+            const host = document.getElementById('host');
+            const kid = document.getElementById('kid');
+            host.contentEditable = 'true';
+            const inherited = kid.isContentEditable;
+            kid.contentEditable = 'false';
+            const blocked = [kid.isContentEditable, kid.contentEditable];
+            kid.contentEditable = 'inherit';
+            const back = [kid.isContentEditable, kid.contentEditable];
+            const loose = document.createElement('div');
+            loose.contentEditable = 'true';
+            const below = document.createElement('span');
+            loose.appendChild(below);
+            return [inherited, blocked, back, loose.isContentEditable, below.isContentEditable];
+        })()""",
+        expected=[True, [False, "false"], [True, "inherit"], True, True],
+    ),
+    Repro(
+        name="design_mode_is_on_or_off_and_ignores_anything_else",
+        note="Chrome keeps the mode it had rather than store a value it does not know, and "
+             "never throws. It is a property of a document, so it reaches the elements in "
+             "it: an element the page holds loose needs its own contenteditable. The "
+             "contenteditable property itself is untouched by it.",
+        html=page(body='<div id=host><span id=kid></span></div>'),
+        script="""(() => {
+            const doc = document;
+            const start = doc.designMode;
+            const seen = [];
+            for (const value of ['on', 'ON', 'On', 'bogus', 'off', 'OFF', '']) {
+                doc.designMode = value;
+                const loose = doc.createElement('div');
+                seen.push([value, doc.designMode, loose.isContentEditable,
+                           loose.contentEditable]);
+            }
+            doc.designMode = start;
+            const attached = doc.createElement('div');
+            doc.body.appendChild(attached);
+            const below = doc.createElement('span');
+            attached.appendChild(below);
+            const before = [attached.isContentEditable, below.isContentEditable];
+            doc.designMode = 'on';
+            const on = [attached.isContentEditable, below.isContentEditable,
+                        attached.contentEditable, doc.body.isContentEditable];
+            doc.designMode = 'off';
+            const off = [attached.isContentEditable];
+            for (const value of [null, 5, true, {}]) {
+                try { doc.designMode = value; seen.push([String(value), doc.designMode]); }
+                catch (e) { seen.push([String(value), e.name]); }
+            }
+            doc.designMode = start;
+            return [start, seen, before, on, off];
+        })()""",
+        expected=["off",
+                  [["on", "on", False, "inherit"], ["ON", "on", False, "inherit"],
+                   ["On", "on", False, "inherit"], ["bogus", "on", False, "inherit"],
+                   ["off", "off", False, "inherit"], ["OFF", "off", False, "inherit"],
+                   ["", "off", False, "inherit"],
+                   ["null", "off"], ["5", "off"], ["true", "off"],
+                   ["[object Object]", "off"]],
+                  [False, False], [True, True, "inherit", True], [False]],
+    ),
+    Repro(
+        name="the_editable_pair_belongs_to_html_elements_only",
+        note="Both are HTMLElement's, so an SVG element has neither, and a page cannot see "
+             "them as own properties of its element.",
+        script="""(() => {
+            const spec = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'contentEditable');
+            const second = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'isContentEditable');
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            const el = document.createElement('div');
+            return [!!spec.get, !!spec.set, !!second.get, !!second.set,
+                    el.hasOwnProperty('contentEditable'),
+                    Object.getOwnPropertyDescriptor(Element.prototype, 'contentEditable')
+                        ? 'on-Element' : 'absent',
+                    svg.contentEditable === undefined,
+                    svg.isContentEditable === undefined];
+        })()""",
+        expected=[True, True, True, False, False, "absent", True, True],
+    ),
+    Repro(
         name="inner_text_is_the_rendered_text_not_the_markup",
         note="innerText is not textContent: whitespace collapses, a block boundary and a "
              "br become newlines, and the ends are trimmed. The setter takes the string as "
