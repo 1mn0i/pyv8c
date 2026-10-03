@@ -69,7 +69,7 @@ NAVIGATOR_INTERFACES = (
     "NetworkInformation", "BatteryManager", "DeprecatedStorageQuota", "Navigator",
     "NavigatorUAData", "MediaDeviceInfo", "MediaDevices", "Permissions", "PermissionStatus",
     "MediaMetadata", "MediaSession", "ServiceWorkerContainer", "CredentialsContainer",
-    "Bluetooth", "StorageManager",
+    "Bluetooth", "StorageManager", "Serial",
 )
 FILESYSTEM_INTERFACES = (
     "DOMFileSystem", "Entry", "DirectoryEntry", "FileEntry", "DirectoryReader", "FileWriter", "File",

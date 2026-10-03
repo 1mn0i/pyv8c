@@ -1,7 +1,7 @@
 """Navigator, geolocation, and browser-compatible plugin collections."""
 import json
 import time
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
@@ -18,15 +18,18 @@ from ...foundation.arguments import (
     is_nullish,
     missing_error,
     sequence,
+    usv_string,
 )
 from ...foundation.environment import BrowserEnvironment, MimeTypeView
 from ...foundation.errors import V8TypeError, dom_exception
 from ...foundation.realm import post_or_call
 from ...foundation.urls import origin_string
+from ..fetch.blob import Blob
 from ..dom.events import EventTarget
 from ..dom.mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
 from .accessories import Scheduling
 from .locks import LockManager
+from .url import URLSearchParams
 from .utils import is_secure_context
 from ..dom.utils import ITERABLE_FLAGS
 
@@ -1097,8 +1100,50 @@ def _navigator_values(navigator):
         "credentials": lambda: CredentialsContainer(services=services),
         "bluetooth": lambda: Bluetooth(services=services, environment=environment),
         "storage": lambda: StorageManager(services=services, environment=environment),
+        "serial": lambda: Serial(services=services),
     })
     return values
+
+
+#: The content types a beacon body carries, named the way Chrome names them.
+_BEACON_TEXT = "text/plain;charset=UTF-8"
+_BEACON_FORM = "application/x-www-form-urlencoded;charset=UTF-8"
+
+
+def _beacon_body(data):
+    """``(body, contentType)`` for what a page handed ``sendBeacon``.
+
+    A Blob brings its own bytes and its own type, a URLSearchParams is form-encoded,
+    and everything else is text -- which is why an object travels as ``[object Object]``.
+    Nothing at all is no body and no type.
+    """
+    if is_nullish(data):
+        return None, None
+    if isinstance(data, Blob):
+        return data._data, data.get_type()
+    if isinstance(data, URLSearchParams):
+        return data.fn_toString(), _BEACON_FORM
+    return usv_string(data), _BEACON_TEXT
+
+
+@interface('Serial', 'EventTarget')
+class Serial(EventTarget):
+    """The Web Serial entry point; the ports behind it are the baseline's business."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="onconnect", getter="get_onconnect", setter="set_onconnect"),
+            AttributeSpec(name="ondisconnect", getter="get_ondisconnect",
+                          setter="set_ondisconnect"),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
+
+    def get_onconnect(self): return self._get_handler("onconnect")
+    def set_onconnect(self, value): self._set_handler("onconnect", value)
+    def get_ondisconnect(self): return self._get_handler("ondisconnect")
+    def set_ondisconnect(self, value): self._set_handler("ondisconnect", value)
 
 
 @interface('Navigator', None)
@@ -1140,10 +1185,12 @@ class Navigator:
             AttributeSpec(name="credentials", getter="get_credentials", side_effect=1),
             AttributeSpec(name="bluetooth", getter="get_bluetooth", side_effect=1),
             AttributeSpec(name="storage", getter="get_storage", side_effect=1),
+            AttributeSpec(name="serial", getter="get_serial", side_effect=1),
         ),
         methods=(
             MethodSpec(name="getBattery", callback="fn_getBattery"),
             MethodSpec(name="javaEnabled", callback="fn_javaEnabled"),
+            MethodSpec(name="sendBeacon", callback="fn_sendBeacon", length=1),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -1184,6 +1231,27 @@ class Navigator:
     def get_pdfViewerEnabled(self): return True
     def get_locks(self):
         return self._features.value("locks") if self._secure() else pyv8.Undefined
+    def get_serial(self):
+        return self._features.value("serial") if self._secure() else pyv8.Undefined
+    def fn_sendBeacon(self, url=MISSING, data=None, *_extra):
+        """Queue *data* as a POST to *url* and answer whether it was queued.
+
+        The request is not waited for: a beacon is on its way once it is queued, which is
+        why the answer is a boolean and there is nothing to hand back.
+        """
+        if url is MISSING:
+            raise missing_error('Navigator', 'sendBeacon', 1, 0, constructor=False)
+        services = self._services
+        target = urljoin(services.realm_services.url, usv_string(url))
+        if urlsplit(target).scheme not in ("http", "https"):
+            raise V8TypeError("Failed to execute 'sendBeacon' on 'Navigator': Beacons are"
+                              " only supported over HTTP(S).")
+        body, content_type = _beacon_body(data)
+        services.resource_services.load_resource_async(target, {
+            "method": "POST", "body": body, "resource_type": "beacon",
+            "headers": {"content-type": content_type} if content_type else {},
+        }, lambda response, error: None)
+        return True
     def get_doNotTrack(self): return pyv8.Null
     def get_webdriver(self): return self._environment.webdriver
     def get_connection(self): return self._features.value("connection")
@@ -1267,6 +1335,7 @@ FEATURE = FeatureImplementation(
         "CredentialsContainer": CredentialsContainer,
         "Bluetooth": Bluetooth,
         "StorageManager": StorageManager,
+        "Serial": Serial,
     },
     {
         "navigator": lambda window: Navigator(
