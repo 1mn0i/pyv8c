@@ -65,7 +65,7 @@ FEATURE = FeatureImplementation(
         events.PageRevealEvent, events.PageSwapEvent,
         motion.DeviceMotionEvent, motion.DeviceMotionEventAcceleration,
         motion.DeviceMotionEventRotationRate, motion.DeviceOrientationEvent,
-        nodes.Node, nodes.DocumentFragment, nodes.Attr,
+        nodes.Node, nodes.DocumentFragment, nodes.ShadowRoot, nodes.Attr,
         encoding.TextEncoder, encoding.TextDecoder,
         fonts.FontFace, fonts.FontFaceSet,
         character_data.CharacterData, character_data.Text, character_data.Comment, character_data.DocumentType,

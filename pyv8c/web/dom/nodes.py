@@ -567,6 +567,41 @@ class DocumentFragment(_ParentNodeMixin, Node):
     def _clone_shallow(self): return DocumentFragment(services=self._services)
 
 
+@interface('ShadowRoot', 'DocumentFragment')
+class ShadowRoot(DocumentFragment):
+    """The tree a host keeps to itself: it is a document fragment, so nothing of it
+    shows through the host's children, text or markup, and the mode decides whether
+    the page can reach it again through ``host.shadowRoot``.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="mode", getter="get_mode", side_effect=1),
+            AttributeSpec(name="host", getter="get_host", side_effect=1),
+            AttributeSpec(name="innerHTML", getter="get_innerHTML", setter="set_innerHTML"),
+        ),
+        constructor_behavior=0,
+        to_string_tag="ShadowRoot",
+        has_constructor=0,
+    )
+
+    def __init__(self, mode="open", host=None, services=None, **_):
+        super().__init__(services=services)
+        self._mode, self._host = mode, host
+
+    def get_mode(self): return self._mode
+    def get_host(self): return pyv8.Null if self._host is None else self._host
+    def get_innerHTML(self): return "".join(child.outer_html() for child in self._children)
+    def set_innerHTML(self, value):
+        self._replace_children(())
+        if self._services:
+            self._services.document_services.document._parse_fragment(
+                str(dom_string(value)), self)
+
+    def _clone_shallow(self):
+        return ShadowRoot(self._mode, self._host, services=self._services)
+
+
 @interface('Attr', 'Node')
 class Attr(Node):
     __v8_idl_spec__ = IdlSpec(

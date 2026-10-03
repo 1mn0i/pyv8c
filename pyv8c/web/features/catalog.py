@@ -11,7 +11,7 @@ CORE_INTERFACES = (
     "PageRevealEvent", "PageSwapEvent",
     "DeviceMotionEvent", "DeviceMotionEventAcceleration", "DeviceMotionEventRotationRate",
     "DeviceOrientationEvent",
-    "Node", "DocumentFragment", "Attr", "CharacterData", "Text", "Comment", "DocumentType", "Document",
+    "Node", "DocumentFragment", "ShadowRoot", "Attr", "CharacterData", "Text", "Comment", "DocumentType", "Document",
     "CSSStyleDeclaration", "Element", "HTMLElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLLinkElement", "HTMLMetaElement", "CanvasRenderingContext2D",
     "OffscreenCanvas", "OffscreenCanvasRenderingContext2D",
     "WebGLRenderingContext", "WebGLObject", "WebGLBuffer", "WebGLFramebuffer", "WebGLProgram",

@@ -7,8 +7,8 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
-from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, is_nullish, missing_error
-from ...foundation.errors import InvalidCharacterError, NotFoundError, V8SyntaxError, V8TypeError
+from ...foundation.arguments import MISSING, boolean, dictionary, dom_string, integer, interface_value, is_nullish, missing_error
+from ...foundation.errors import InvalidCharacterError, NotFoundError, NotSupportedError, V8SyntaxError, V8TypeError
 from ...foundation.urls import credentials_netloc
 from ...foundation.urls import origin_string
 from .character_data import Text
@@ -24,7 +24,7 @@ from .collections import (
 from .css import CSSStyleDeclaration
 from .mixins import _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, _ParentNodeMixin
 from .mutation import record_mutation
-from .nodes import Attr, DocumentFragment, Node
+from .nodes import Attr, DocumentFragment, Node, ShadowRoot
 from .utils import _VALID_NAME_RE, XHTML_NAMESPACE
 
 #: ``insertAdjacent*`` positions, in the order Chromium validates them.
@@ -59,6 +59,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             AttributeSpec(name="scrollWidth", getter="get_scrollWidth", side_effect=1),
             AttributeSpec(name="scrollHeight", getter="get_scrollHeight", side_effect=1),
             AttributeSpec(name="role", getter="get_role", setter="set_role"),
+            AttributeSpec(name="shadowRoot", getter="get_shadowRoot", side_effect=1),
         ),
         methods=(
             MethodSpec(name="getAttribute", callback="fn_getAttribute", length=1, side_effect=1),
@@ -86,6 +87,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             MethodSpec(name="webkitMatchesSelector", callback="fn_webkitMatchesSelector", length=1, side_effect=1),
             MethodSpec(name="closest", callback="fn_closest", length=1, side_effect=1),
             MethodSpec(name="getBoundingClientRect", callback="fn_getBoundingClientRect", side_effect=1),
+            MethodSpec(name="attachShadow", callback="fn_attachShadow", length=1),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -96,6 +98,49 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         value = self.attributes.get("role")
         return pyv8.Null if value is None else str(value)
     def set_role(self, value): self.attributes["role"] = str(dom_string(value))
+
+    #: What Chrome will put a shadow tree on: these tags, and any autonomous custom
+    #: element, which is a name with a hyphen in it.
+    _SHADOW_HOSTS = frozenset((
+        "article", "aside", "blockquote", "body", "div", "footer", "h1", "h2", "h3",
+        "h4", "h5", "h6", "header", "main", "nav", "p", "section", "span"))
+
+    def get_shadowRoot(self):
+        """The tree again, or null: a closed one is the host's own business."""
+        root = getattr(self, "_shadow_root", None)
+        if root is None or root.get_mode() != "open":
+            return pyv8.Null
+        return root
+    def fn_attachShadow(self, init=MISSING, *_extra):
+        """The one tree a host gets. A closed root is still handed back here; it is
+        only ``host.shadowRoot`` that stops reporting it.
+        """
+        options = init if isinstance(init, dict) else (
+            dictionary(init) if isinstance(init, pyv8.JSObject) else None)
+        if options is None:
+            raise V8TypeError("Failed to execute 'attachShadow' on 'Element': The provided"
+                              " value is not of type 'ShadowRootInit'.")
+        mode = options.get("mode", pyv8.Undefined)
+        if is_nullish(mode):
+            raise V8TypeError("Failed to execute 'attachShadow' on 'Element': Failed to"
+                              " read the 'mode' property from 'ShadowRootInit': Required"
+                              " member is undefined.")
+        mode = str(dom_string(mode))
+        if mode not in ("open", "closed"):
+            raise V8TypeError("Failed to execute 'attachShadow' on 'Element': Failed to"
+                              " read the 'mode' property from 'ShadowRootInit': The"
+                              f" provided value '{mode}' is not a valid enum value of type"
+                              " ShadowRootMode.")
+        if getattr(self, "_shadow_root", None) is not None:
+            raise NotSupportedError("Failed to execute 'attachShadow' on 'Element': Shadow"
+                                    " root cannot be created on a host which already hosts"
+                                    " a shadow tree.")
+        name = str(self.localName).lower()
+        if name not in self._SHADOW_HOSTS and "-" not in name:
+            raise NotSupportedError("Failed to execute 'attachShadow' on 'Element': This"
+                                    " element does not support attachShadow")
+        root = self._shadow_root = ShadowRoot(mode, self, services=self._services)
+        return root
 
     def __init__(self, tag_name="div", services=None, attributes=None, namespace=None,
                  prefix=None, local_name=None, **kw):

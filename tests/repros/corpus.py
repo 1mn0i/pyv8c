@@ -3575,6 +3575,90 @@ CASES = (
                                 " 'AbortSignal'."]],
     ),
     Repro(
+        name="a_shadow_tree_is_the_hosts_own",
+        note="attachShadow hands back a fragment the host keeps to itself: none of it "
+             "shows through the host's children, text or markup, and only an open tree "
+             "is reported again.",
+        html=page(body="<div id=host></div>"),
+        script="""(() => {
+            const host = document.getElementById('host');
+            const root = host.attachShadow({mode: 'open'});
+            root.innerHTML = '<span>in</span>';
+            const shut = document.createElement('div');
+            const closed = shut.attachShadow({mode: 'closed'});
+            return [root === host.shadowRoot, root.mode, root.host === host,
+                    Object.prototype.toString.call(root), root instanceof DocumentFragment,
+                    Object.getPrototypeOf(ShadowRoot.prototype)
+                      === DocumentFragment.prototype,
+                    root.nodeType, root.ownerDocument === document, root.innerHTML,
+                    host.innerHTML, host.childNodes.length, host.textContent,
+                    shut.shadowRoot === null, closed.mode, shut.shadowRoot === null];
+        })()""",
+        expected=[True, "open", True, "[object ShadowRoot]", True, True, 11, True,
+                  "<span>in</span>", "", 0, "", True, "closed", True],
+    ),
+    Repro(
+        name="attach_shadow_refuses_what_blink_refuses",
+        note="Five refusals in Blink's own words: a second tree on one host, an argument "
+             "that is not a dictionary, a dictionary with no mode, a mode that is not the "
+             "enum, and a tag that is not a shadow host.",
+        html=page(body="<div id=host></div>"),
+        script="""(() => {
+            const out = [];
+            const attempt = (host, options) => {
+                try { host.attachShadow(options); out.push('no-throw'); }
+                catch (error) { out.push([error.name, error.message]); }
+            };
+            const again = document.getElementById('host');
+            again.attachShadow({mode: 'open'});
+            attempt(again, {mode: 'open'});
+            for (const options of [undefined, null, 1, 'open', {}]) {
+                attempt(document.createElement('div'), options);
+            }
+            for (const mode of ['bogus', 'Open', 1]) {
+                attempt(document.createElement('div'), {mode});
+            }
+            for (const tag of ['img', 'li', 'table', 'body', 'head', 'button']) {
+                attempt(document.createElement(tag), {mode: 'open'});
+            }
+            return out;
+        })()""",
+        expected=[["NotSupportedError", "Failed to execute 'attachShadow' on 'Element':"
+                     " Shadow root cannot be created on a host which already hosts a"
+                     " shadow tree."],
+                  ["TypeError", "Failed to execute 'attachShadow' on 'Element': The"
+                     " provided value is not of type 'ShadowRootInit'."],
+                  ["TypeError", "Failed to execute 'attachShadow' on 'Element': The"
+                     " provided value is not of type 'ShadowRootInit'."],
+                  ["TypeError", "Failed to execute 'attachShadow' on 'Element': The"
+                     " provided value is not of type 'ShadowRootInit'."],
+                  ["TypeError", "Failed to execute 'attachShadow' on 'Element': The"
+                     " provided value is not of type 'ShadowRootInit'."],
+                  ["TypeError", "Failed to execute 'attachShadow' on 'Element': Failed to"
+                     " read the 'mode' property from 'ShadowRootInit': Required member is"
+                     " undefined."],
+                  ["TypeError", "Failed to execute 'attachShadow' on 'Element': Failed to"
+                     " read the 'mode' property from 'ShadowRootInit': The provided value"
+                     " 'bogus' is not a valid enum value of type ShadowRootMode."],
+                  ["TypeError", "Failed to execute 'attachShadow' on 'Element': Failed to"
+                     " read the 'mode' property from 'ShadowRootInit': The provided value"
+                     " 'Open' is not a valid enum value of type ShadowRootMode."],
+                  ["TypeError", "Failed to execute 'attachShadow' on 'Element': Failed to"
+                     " read the 'mode' property from 'ShadowRootInit': The provided value"
+                     " '1' is not a valid enum value of type ShadowRootMode."],
+                  ["NotSupportedError", "Failed to execute 'attachShadow' on 'Element':"
+                     " This element does not support attachShadow"],
+                  ["NotSupportedError", "Failed to execute 'attachShadow' on 'Element':"
+                     " This element does not support attachShadow"],
+                  ["NotSupportedError", "Failed to execute 'attachShadow' on 'Element':"
+                     " This element does not support attachShadow"],
+                  "no-throw",
+                  ["NotSupportedError", "Failed to execute 'attachShadow' on 'Element':"
+                     " This element does not support attachShadow"],
+                  ["NotSupportedError", "Failed to execute 'attachShadow' on 'Element':"
+                     " This element does not support attachShadow"]],
+    ),
+    Repro(
         name="a_non_constructible_interface_has_no_constructor_property",
         note="AbortSignal cannot be constructed, and this tree gives the prototype of such "
              "an interface no constructor of its own, so the name read back is the "
