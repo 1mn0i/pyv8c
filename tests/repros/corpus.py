@@ -3379,4 +3379,216 @@ CASES = (
                   ["TypeError", "Failed to execute 'sendBeacon' on 'Navigator': Beacons are"
                                 " only supported over HTTP(S)."]],
     ),
+
+    # ---- AbortController / AbortSignal -------------------------------------
+    Repro(
+        name="abort_signal_is_the_shape_chrome_describes",
+        note="A signal is an EventTarget that no page may construct, and the statics are "
+             "the three the interface object carries.",
+        script="""(() => {
+            const controller = new AbortController();
+            const signal = controller.signal;
+            return [AbortController.length, AbortController.prototype.abort.length,
+                    AbortSignal.prototype.throwIfAborted.length,
+                    [AbortSignal.abort.length, AbortSignal.any.length,
+                     AbortSignal.timeout.length],
+                    controller.signal === signal, signal.aborted, String(signal.reason),
+                    signal instanceof AbortSignal, signal instanceof EventTarget,
+                    Object.getPrototypeOf(AbortSignal.prototype) === EventTarget.prototype,
+                    Object.getPrototypeOf(AbortController.prototype) === Object.prototype,
+                    Object.prototype.toString.call(signal),
+                    Object.prototype.toString.call(controller)];
+        })()""",
+        expected=[0, 0, 0, [0, 1, 1], True, False, "undefined", True, True, True, True,
+                  "[object AbortSignal]", "[object AbortController]"],
+    ),
+    Repro(
+        name="aborting_fires_one_plain_event_and_keeps_the_first_reason",
+        note="The abort event neither bubbles nor cancels, and a second abort() keeps "
+             "the first reason and fires nothing.",
+        script="""(() => {
+            const controller = new AbortController();
+            const signal = controller.signal;
+            const seen = [];
+            signal.addEventListener('abort', (event) => seen.push([event.type, event.bubbles,
+                event.cancelable, event.composed, event.target === signal]));
+            controller.abort();
+            controller.abort('second');
+            return [seen, signal.aborted, signal.reason.name, signal.reason.message,
+                    signal.reason.code, signal.reason instanceof DOMException,
+                    String(signal.reason)];
+        })()""",
+        expected=[[["abort", False, False, False, True]], True, "AbortError",
+                  "signal is aborted without reason", 20, True,
+                  "AbortError: signal is aborted without reason"],
+    ),
+    Repro(
+        name="a_reason_the_page_chose_travels_as_itself",
+        note="Only a missing reason becomes Blink's DOMException: anything the page "
+             "passed, a primitive included, is what reason reads back.",
+        script="""(() => {
+            const withReason = (value) => {
+                const controller = new AbortController();
+                controller.abort(value);
+                return [controller.signal.aborted, controller.signal.reason === value,
+                        typeof controller.signal.reason];
+            };
+            const omitted = new AbortController();
+            omitted.abort();
+            const explicit = new AbortController();
+            explicit.abort(undefined);
+            return [withReason('why'), withReason(5), withReason(null),
+                    [omitted.signal.reason.name, omitted.signal.reason.message],
+                    [explicit.signal.reason.name, explicit.signal.reason.message]];
+        })()""",
+        expected=[[True, True, "string"], [True, True, "number"], [True, True, "object"],
+                  ["AbortError", "signal is aborted without reason"],
+                  ["AbortError", "signal is aborted without reason"]],
+    ),
+    Repro(
+        name="throw_if_aborted_throws_the_reason_and_is_silent_before",
+        note="A signal nobody aborted says nothing at all; an aborted one throws its "
+             "reason, which is how a page opts out of a silent cancellation.",
+        script="""(() => {
+            const controller = new AbortController();
+            const signal = controller.signal;
+            const quiet = signal.throwIfAborted();
+            controller.abort();
+            let caught = null;
+            try { signal.throwIfAborted(); } catch (error) { caught = [error.name, error.message]; }
+            return [String(quiet), caught, typeof signal.onabort];
+        })()""",
+        expected=["undefined", ["AbortError", "signal is aborted without reason"], "object"],
+    ),
+    Repro(
+        name="abort_any_follows_its_members_and_keeps_their_reason",
+        note="One signal for several: it is aborted as soon as any member is, carries "
+             "that member's reason, and an empty list never aborts.",
+        script="""(() => {
+            const empty = AbortSignal.any([]);
+            const first = new AbortController();
+            const combined = AbortSignal.any([first.signal, new AbortController().signal]);
+            let fired = 0;
+            combined.onabort = () => fired++;
+            first.abort('z');
+            const already = new AbortController();
+            already.abort('x');
+            const late = AbortSignal.any([new AbortController().signal, already.signal]);
+            const wait = AbortSignal.any([AbortSignal.abort(), new AbortController().signal]);
+            return [empty.aborted, String(empty.reason), empty instanceof AbortSignal,
+                    combined.aborted, combined.reason === first.signal.reason,
+                    String(combined.reason), fired, combined.signal === undefined,
+                    late.aborted, String(late.reason),
+                    wait.aborted, String(wait.reason)];
+        })()""",
+        expected=[False, "undefined", True, True, True, "z", 1, True, True, "x", True,
+                  "AbortError: signal is aborted without reason"],
+    ),
+    Repro(
+        name="the_abort_statics_check_their_arguments_in_chromes_words",
+        note="A missing argument, a value that is not iterable, an element that is not a "
+             "signal, a deadline that is not a number, and one a double cannot hold "
+             "exactly: five refusals, five wordings.",
+        script="""(() => {
+            const out = [];
+            const attempt = (body) => {
+                try { out.push(['no-throw', body()]); }
+                catch (error) { out.push([error.name, error.message]); }
+            };
+            attempt(() => AbortSignal.any());
+            attempt(() => AbortSignal.any(1));
+            attempt(() => AbortSignal.any([1]));
+            attempt(() => AbortSignal.timeout(NaN));
+            attempt(() => AbortSignal.timeout(2 ** 53));
+            attempt(() => AbortSignal.timeout(-1));
+            return out;
+        })()""",
+        expected=[["TypeError", "Failed to execute 'any' on 'AbortSignal': 1 argument"
+                               " required, but only 0 present."],
+                  ["TypeError", "Failed to execute 'any' on 'AbortSignal': The provided"
+                                " value cannot be converted to a sequence."],
+                  ["TypeError", "Failed to execute 'any' on 'AbortSignal': Failed to"
+                                " convert value to 'AbortSignal'."],
+                  ["TypeError", "Failed to execute 'timeout' on 'AbortSignal': Value is"
+                                " not of type 'unsigned long long'."],
+                  ["TypeError", "Failed to execute 'timeout' on 'AbortSignal': Value is"
+                                " outside the 'unsigned long long' value range."],
+                  ["TypeError", "Failed to execute 'timeout' on 'AbortSignal': Value is"
+                                " outside the 'unsigned long long' value range."]],
+    ),
+    Repro(
+        name="a_listener_takes_itself_back_out_when_its_signal_fires",
+        note="Registering with a signal is a lease: the listener runs until the signal "
+             "fires and never again, and one that had already fired registers nothing.",
+        html=page(body="<div id=host></div>"),
+        script="""(() => {
+            const host = document.getElementById('host');
+            const out = [];
+            const live = new AbortController();
+            let n = 0;
+            host.addEventListener('click', () => n++, {signal: live.signal});
+            host.dispatchEvent(new Event('click'));
+            live.abort();
+            host.dispatchEvent(new Event('click'));
+            out.push(n);
+            const dead = new AbortController();
+            dead.abort();
+            let k = 0;
+            host.addEventListener('click', () => k++, {signal: dead.signal});
+            host.dispatchEvent(new Event('click'));
+            out.push(k);
+            try { host.addEventListener('click', () => {}, {signal: 1}); }
+            catch (error) { out.push([error.name, error.message]); }
+            return out;
+        })()""",
+        expected=[1, 0,
+                  ["TypeError", "Failed to execute 'addEventListener' on 'EventTarget':"
+                                " Failed to read the 'signal' property from"
+                                " 'AddEventListenerOptions': Failed to convert value to"
+                                " 'AbortSignal'."]],
+    ),
+    Repro(
+        name="a_request_carries_a_signal_of_its_own",
+        note="Request.signal is never null and never the signal it was handed: naming one "
+             "makes the request's own signal follow it, reason and all, and a request built "
+             "from another request follows that one's signal the same way.",
+        script="""(() => {
+            const controller = new AbortController();
+            const named = new Request('/a', {signal: controller.signal});
+            const plain = new Request('/a');
+            const before = [named.signal.aborted, named.signal === controller.signal,
+                            plain.signal === null, plain.signal instanceof AbortSignal];
+            controller.abort('why');
+            const derived = new Request(named);
+            let error = null;
+            try { new Request('/a', {signal: 1}); }
+            catch (failure) { error = [failure.name, failure.message]; }
+            return before.concat([named.signal.aborted,
+                                  named.signal.reason === controller.signal.reason,
+                                  String(named.signal.reason),
+                                  derived.signal === named.signal, derived.signal.aborted,
+                                  error]);
+        })()""",
+        expected=[False, False, False, True, True, True, "why", False, True,
+                  ["TypeError", "Failed to construct 'Request': Failed to read the 'signal'"
+                                " property from 'RequestInit': Failed to convert value to"
+                                " 'AbortSignal'."]],
+    ),
+    Repro(
+        name="a_non_constructible_interface_has_no_constructor_property",
+        note="AbortSignal cannot be constructed, and this tree gives the prototype of such "
+             "an interface no constructor of its own, so the name read back is the "
+             "parent's; the interface object itself is still the right one.",
+        script="""(() => [AbortSignal, BeforeUnloadEvent].map((entry) => [
+            entry.name,
+            Object.getOwnPropertyDescriptor(entry.prototype, 'constructor') ? 'own'
+                                                                            : 'absent',
+            Object.getPrototypeOf(entry.prototype) === EventTarget.prototype]))()""",
+        expected=[["AbortSignal", "absent", True], ["BeforeUnloadEvent", "absent", True]],
+        known_divergence="the prototype of an interface the baseline marks allow_new=false"
+                         " carries no constructor property here, so the name read through it"
+                         " is the parent's; Chrome's own property answers 'AbortSignal'."
+                         " BeforeUnloadEvent shows the same gap, so it is a property of this"
+                         " tree's interface objects rather than of AbortSignal.",
+    ),
 )
