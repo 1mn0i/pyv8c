@@ -3862,6 +3862,87 @@ CASES = (
         expected=[True, True, True, False, False, "absent", True, True],
     ),
     Repro(
+        name="the_aria_attributes_reflect_content_attributes",
+        note="Each ARIA property is the content attribute of the same name, and the "
+             "names are not the dashed form of the property: ariaAutoComplete is "
+             "aria-autocomplete and ariaColCount is aria-colcount. A value is written as "
+             "it is given -- nothing is checked against a keyword list -- and nullish "
+             "takes the attribute away.",
+        html=page(body='<div id=host></div>'),
+        script="""(() => {
+            const host = document.getElementById('host');
+            const names = ['ariaAtomic', 'ariaAutoComplete', 'ariaColCount', 'ariaKeyShortcuts',
+                           'ariaLabel', 'ariaMultiLine', 'ariaPosInSet', 'ariaReadOnly',
+                           'ariaValueNow', 'ariaBrailleLabel'];
+            const attributes = ['aria-atomic', 'aria-autocomplete', 'aria-colcount',
+                                'aria-keyshortcuts', 'aria-label', 'aria-multiline',
+                                'aria-posinset', 'aria-readonly', 'aria-valuenow',
+                                'aria-braillelabel'];
+            const out = [];
+            for (let index = 0; index < names.length; index += 1) {
+                const name = names[index], attribute = attributes[index];
+                out.push([host[name] === null, host.getAttribute(attribute)]);
+                host.setAttribute(attribute, 'written');
+                out.push([host[name], host.getAttribute(attribute)]);
+                host[name] = 'through the property';
+                out.push([host[name], host.getAttribute(attribute)]);
+                host[name] = null;
+                out.push([host[name], host.getAttribute(attribute),
+                          host.hasAttribute(attribute)]);
+            }
+            return out;
+        })()""",
+        expected=[[True, None], ["written", "written"], ["through the property",
+                     "through the property"], [None, None, False],
+                  [True, None], ["written", "written"], ["through the property",
+                     "through the property"], [None, None, False],
+                  [True, None], ["written", "written"], ["through the property",
+                     "through the property"], [None, None, False],
+                  [True, None], ["written", "written"], ["through the property",
+                     "through the property"], [None, None, False],
+                  [True, None], ["written", "written"], ["through the property",
+                     "through the property"], [None, None, False],
+                  [True, None], ["written", "written"], ["through the property",
+                     "through the property"], [None, None, False],
+                  [True, None], ["written", "written"], ["through the property",
+                     "through the property"], [None, None, False],
+                  [True, None], ["written", "written"], ["through the property",
+                     "through the property"], [None, None, False],
+                  [True, None], ["written", "written"], ["through the property",
+                     "through the property"], [None, None, False],
+                  [True, None], ["written", "written"], ["through the property",
+                     "through the property"], [None, None, False]],
+    ),
+    Repro(
+        name="the_aria_idref_members_answer_with_the_elements_they_name",
+        note="Nine members answer with elements rather than with the string. Absent is "
+             "null, an id that names nothing contributes nothing, an empty attribute gives "
+             "an empty list, and a tree outside a document resolves nothing at all.",
+        html=page(body='<div id=host><span id=one></span><span id=two></span></div>'),
+        script="""(() => {
+            const host = document.getElementById('host');
+            const ids = (list) => list.map((e) => (e === null ? 'null' : '#' + e.id));
+            const out = [];
+            out.push([host.ariaLabelledByElements === null,
+                      host.ariaActiveDescendantElement === null]);
+            host.setAttribute('aria-labelledby', 'one two absent');
+            host.setAttribute('aria-activedescendant', 'two');
+            out.push([ids(host.ariaLabelledByElements),
+                      host.ariaActiveDescendantElement.id]);
+            host.setAttribute('aria-labelledby', '');
+            out.push([ids(host.ariaLabelledByElements), host.ariaLabelledByElements.length]);
+            const loose = document.createElement('div');
+            loose.setAttribute('aria-controls', 'one');
+            out.push([ids(loose.ariaControlsElements), loose.ariaControlsElements.length]);
+            host.removeAttribute('aria-labelledby');
+            host.removeAttribute('aria-activedescendant');
+            out.push([host.ariaLabelledByElements === null,
+                      host.ariaActiveDescendantElement === null]);
+            return out;
+        })()""",
+        expected=[[True, True], [["#one", "#two"], "two"], [[], 0], [[], 0], [True, True]],
+    ),
+    Repro(
         name="inner_text_is_the_rendered_text_not_the_markup",
         note="innerText is not textContent: whitespace collapses, a block boundary and a "
              "br become newlines, and the ends are trimmed. The setter takes the string as "

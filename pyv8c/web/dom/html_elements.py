@@ -24,6 +24,7 @@ from .collections import (
     NamedNodeMap,
     tag_name_ns_collection,
 )
+from . import aria
 from .css import CSSStyleDeclaration
 from .events import _install_handler_slots
 from .mixins import _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, _ParentNodeMixin
@@ -425,6 +426,27 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             if n.fn_matches(selector): return n
             n = n.parentElement
         return pyv8.Null
+    def _resolve_ids(self, ids):
+        """The elements *ids* names, in the order given, skipping what is not there.
+
+        The idref ARIA members answer with elements rather than with the string, and
+        an id that names nothing contributes nothing -- which is why a tree outside a
+        document resolves to an empty answer.
+        """
+        document = self.ownerDocument
+        if document is None or not self.isConnected:
+            return []
+        by_id = {}
+        for node in document._descendants():
+            if isinstance(node, Element) and node.get_id():
+                by_id.setdefault(node.get_id(), node)
+        found = []
+        for identifier in ids:
+            target = by_id.get(identifier)
+            if target is not None:
+                found.append(target)
+        return found
+
     def outer_html(self):
         attrs = "".join(f' {k}="{escape(str(v), quote=True)}"' for k, v in self.attributes.items())
         if self.localName in _VOID_ELEMENTS:
@@ -444,11 +466,14 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         return None
 
 
-#: The clipboard handlers belong to Element, not to HTMLElement, so they are installed
-#: here rather than in the table every target shares.
+#: The clipboard handlers belong to Element, not to HTMLElement, and the ARIA members
+#: do too, so both are installed on Element rather than in the table every target
+#: shares. The ARIA table is data measured from Chrome, which is why it lives in its
+#: own module.
 Element.__v8_idl_spec__ = Element.__v8_idl_spec__.replace(
     attributes=Element.__v8_idl_spec__.attributes
-    + _install_handler_slots(Element, ("onbeforecopy", "onbeforecut", "onbeforepaste")))
+    + _install_handler_slots(Element, ("onbeforecopy", "onbeforecut", "onbeforepaste"))
+    + aria.install(Element))
 
 @interface('HTMLElement', 'Element')
 class HTMLElement(Element):
