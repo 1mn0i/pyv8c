@@ -340,3 +340,34 @@ def test_an_aborted_fetch_never_delivers_the_response():
     finally:
         released.set()
         browser.close()
+
+
+def test_a_listener_takes_itself_back_out_when_the_signal_fires():
+    browser, page = _page()
+    try:
+        assert page.evaluate("""(() => {
+            const host = document.getElementById('host');
+            const out = [];
+            const live = new AbortController();
+            let n = 0;
+            host.addEventListener('click', () => n++, {signal: live.signal});
+            host.dispatchEvent(new Event('click'));
+            live.abort();
+            host.dispatchEvent(new Event('click'));
+            out.push(n);
+            const dead = new AbortController();
+            dead.abort();
+            let k = 0;
+            host.addEventListener('click', () => k++, {signal: dead.signal});
+            host.dispatchEvent(new Event('click'));
+            out.push(k);
+            try { host.addEventListener('click', () => {}, {signal: 1}); }
+            catch (e) { out.push([e.name, e.message]); }
+            return out;
+        })()""") == [1, 0,
+                     ["TypeError", "Failed to execute 'addEventListener' on 'EventTarget':"
+                      " Failed to read the 'signal' property from"
+                      " 'AddEventListenerOptions': Failed to convert value to"
+                      " 'AbortSignal'."]]
+    finally:
+        browser.close()

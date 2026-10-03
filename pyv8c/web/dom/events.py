@@ -8,6 +8,7 @@ from pyv8.flag import FlagLocation
 from ...engine.features import interface
 from ...foundation.arguments import (
     MISSING,
+    abort_signal,
     boolean,
     callback_value,
     dictionary,
@@ -847,13 +848,35 @@ class EventTarget:
         capture = boolean(options.get("capture", False)) if isinstance(options, dict) else boolean(options)
         once = bool(options.get("once", False)) if isinstance(options, dict) else False
         passive = bool(options.get("passive", False)) if isinstance(options, dict) else False
-        signal = options.get("signal") if isinstance(options, dict) else None
+        signal = None
+        if isinstance(options, dict):
+            try:
+                signal = abort_signal(options.get("signal"))
+            except V8TypeError as exc:
+                raise V8TypeError(
+                    "Failed to execute 'addEventListener' on 'EventTarget': Failed to read"
+                    " the 'signal' property from 'AddEventListenerOptions': Failed to"
+                    " convert value to 'AbortSignal'.") from exc
         if is_nullish(listener):
             return
         bucket = self._listeners.setdefault(str(event_type), [])
         if not any(item[0] is listener and item[1] == capture for item in bucket):
             self._listener_order += 1; bucket.append((listener, capture, once, passive, signal, self._listener_order))
+            if signal is not None:
+                # Chrome takes the listener back out when the signal fires; the check
+                # in ``_invoke`` only covers a signal that had already aborted here.
+                signal._subscribe(self._drop_listener(str(event_type), listener, capture))
             self._motion_listener_added(str(event_type))
+
+    def _drop_listener(self, event_type, listener, capture):
+        """What a signal runs to take one registration back out of its bucket."""
+        def drop():
+            bucket = self._listeners.get(event_type)
+            if bucket:
+                self._listeners[event_type] = [
+                    item for item in bucket
+                    if not (item[0] is listener and item[1] == capture)]
+        return drop
 
     def _motion_listener_added(self, event_type):
         """Tell the realm that a motion listener appeared on the window.
