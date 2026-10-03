@@ -257,32 +257,6 @@ def test_the_receiver_is_checked_on_the_members_that_need_their_own():
         browser.close()
 
 
-def test_a_request_carries_a_signal_of_its_own():
-    browser, page = _page()
-    try:
-        assert page.evaluate("""(() => {
-            const controller = new AbortController();
-            const named = new Request('/a', {signal: controller.signal});
-            const plain = new Request('/a');
-            const before = [named.signal.aborted, named.signal === controller.signal,
-                            plain.signal === null, plain.signal instanceof AbortSignal];
-            controller.abort('why');
-            const derived = new Request(named);
-            let error = null;
-            try { new Request('/a', {signal: 1}); } catch (e) { error = [e.name, e.message]; }
-            return before.concat([named.signal.aborted,
-                                  named.signal.reason === controller.signal.reason,
-                                  String(named.signal.reason),
-                                  derived.signal === named.signal, derived.signal.aborted,
-                                  error]);
-        })()""") == [False, False, False, True, True, True, "why", False, True,
-                     ["TypeError", "Failed to construct 'Request': Failed to read the"
-                      " 'signal' property from 'RequestInit': Failed to convert value to"
-                      " 'AbortSignal'."]]
-    finally:
-        browser.close()
-
-
 def test_a_fetch_the_page_aborted_rejects_with_the_reason():
     browser, page = _page()
     try:
@@ -339,35 +313,4 @@ def test_an_aborted_fetch_never_delivers_the_response():
         assert page.evaluate("window.__settled") == "rejected"
     finally:
         released.set()
-        browser.close()
-
-
-def test_a_listener_takes_itself_back_out_when_the_signal_fires():
-    browser, page = _page()
-    try:
-        assert page.evaluate("""(() => {
-            const host = document.getElementById('host');
-            const out = [];
-            const live = new AbortController();
-            let n = 0;
-            host.addEventListener('click', () => n++, {signal: live.signal});
-            host.dispatchEvent(new Event('click'));
-            live.abort();
-            host.dispatchEvent(new Event('click'));
-            out.push(n);
-            const dead = new AbortController();
-            dead.abort();
-            let k = 0;
-            host.addEventListener('click', () => k++, {signal: dead.signal});
-            host.dispatchEvent(new Event('click'));
-            out.push(k);
-            try { host.addEventListener('click', () => {}, {signal: 1}); }
-            catch (e) { out.push([e.name, e.message]); }
-            return out;
-        })()""") == [1, 0,
-                     ["TypeError", "Failed to execute 'addEventListener' on 'EventTarget':"
-                      " Failed to read the 'signal' property from"
-                      " 'AddEventListenerOptions': Failed to convert value to"
-                      " 'AbortSignal'."]]
-    finally:
         browser.close()

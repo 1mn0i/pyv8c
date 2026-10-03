@@ -18,14 +18,14 @@ def _baseline_document():
 
 def _custom_baseline(path):
     document = _baseline_document()
-    document["AbortController"]["parent"] = "EventTarget"
-    document["AbortController"]["tag"] = "VersionedAbortController"
-    document["AbortController"]["constructor"]["length"] = 2
-    members = document["AbortController"]["members"]["prototype"]
-    abort = next(member for member in members if member["name"] == "abort")
-    members.remove(abort)
-    replacement = copy.deepcopy(abort)
-    replacement["name"] = "alternateAbort"
+    document["ReadableStream"]["parent"] = "EventTarget"
+    document["ReadableStream"]["tag"] = "VersionedReadableStream"
+    document["ReadableStream"]["constructor"]["length"] = 2
+    members = document["ReadableStream"]["members"]["prototype"]
+    reader = next(member for member in members if member["name"] == "getReader")
+    members.remove(reader)
+    replacement = copy.deepcopy(reader)
+    replacement["name"] = "alternateGetReader"
     members.append(replacement)
     path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     return document
@@ -54,9 +54,9 @@ def test_custom_baseline_path_is_absolute_and_snapshot_is_frozen(tmp_path, monke
         document["_webidl"]["snapshot"] = "changed-after-browser-creation"
         baseline.write_text(json.dumps(document), encoding="utf-8")
         assert browser.interface_baseline_info["sha256"] == original_hash
-        assert "alternateAbort" in {
+        assert "alternateGetReader" in {
             member["name"]
-            for member in browser.interface_universe.baseline.interfaces["AbortController"]["members"]["prototype"]
+            for member in browser.interface_universe.baseline.interfaces["ReadableStream"]["members"]["prototype"]
         }
         newer = Browser(interface_baseline_path=baseline, stub_logging="off")
         try:
@@ -125,21 +125,21 @@ def test_two_browsers_keep_generated_classes_and_templates_isolated(tmp_path):
     default_browser = Browser(stub_logging="off")
     custom_browser = Browser(interface_baseline_path=custom, stub_logging="off")
     try:
-        assert default_browser.interface_universe.class_for("AbortController") is not custom_browser.interface_universe.class_for("AbortController")
+        assert default_browser.interface_universe.class_for("ReadableStream") is not custom_browser.interface_universe.class_for("ReadableStream")
         default_page = default_browser.new_context().new_page()
         custom_page = custom_browser.new_context().new_page()
-        assert default_page.evaluate("[typeof AbortController.prototype.abort, typeof AbortController.prototype.alternateAbort]") == ["function", "undefined"]
-        assert custom_page.evaluate("[typeof AbortController.prototype.abort, typeof AbortController.prototype.alternateAbort]") == ["undefined", "function"]
-        assert default_page.evaluate("Object.getPrototypeOf(AbortController.prototype) === Object.prototype") is True
-        assert custom_page.evaluate("Object.getPrototypeOf(AbortController.prototype) === EventTarget.prototype") is True
-        assert default_page.evaluate("[AbortController.length, Object.prototype.toString.call(new AbortController())]") == [0, "[object AbortController]"]
-        assert custom_page.evaluate("[AbortController.length, Object.prototype.toString.call(new AbortController())]") == [2, "[object VersionedAbortController]"]
+        assert default_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["function", "undefined"]
+        assert custom_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["undefined", "function"]
+        assert default_page.evaluate("Object.getPrototypeOf(ReadableStream.prototype) === Object.prototype") is True
+        assert custom_page.evaluate("Object.getPrototypeOf(ReadableStream.prototype) === EventTarget.prototype") is True
+        assert default_page.evaluate("[ReadableStream.length, Object.prototype.toString.call(new ReadableStream())]") == [0, "[object ReadableStream]"]
+        assert custom_page.evaluate("[ReadableStream.length, Object.prototype.toString.call(new ReadableStream())]") == [2, "[object VersionedReadableStream]"]
 
         custom_page.set_content("<main><div id='value'></div></main>")
         assert custom_page.evaluate("(() => { const node=document.querySelector('#value'); return [node instanceof Node, node instanceof Element, document instanceof Document, document.querySelector('#value') === node]; })()") == [True, True, True, True]
 
         default_browser.close()
-        assert custom_page.evaluate("new AbortController().alternateAbort()") is pyv8.Undefined
+        assert custom_page.evaluate("new ReadableStream().alternateGetReader()") is pyv8.Undefined
         assert custom_page.evaluate("typeof URL === 'function'") is True
     finally:
         default_browser.close()
@@ -188,17 +188,17 @@ def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_pa
         browser.close()
 
     document = _baseline_document()
-    abort = next(
-        member for member in document["AbortController"]["members"]["prototype"]
-        if member["name"] == "abort"
+    parse = next(
+        member for member in document["ReadableStream"]["members"]["prototype"]
+        if member["name"] == "getReader"
     )
-    abort.setdefault("signature", {})["status"] = "unresolved"
+    parse.setdefault("signature", {})["status"] = "unresolved"
     path = tmp_path / "unresolved-stub.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     browser = Browser(interface_baseline_path=path, stub_logging="off")
     try:
         page = browser.new_context().new_page()
-        assert page.evaluate("new AbortController().abort(1, 2, 3)") is pyv8.Undefined
+        assert page.evaluate("new ReadableStream().getReader(1, 2, 3)") is pyv8.Undefined
     finally:
         browser.close()
 
@@ -219,11 +219,11 @@ def test_worker_and_iframe_reuse_their_browser_universe(tmp_path):
         page.run_until_idle(timeout=1)
         frame_page = next(iter(page._owned.frames))
         assert frame_page.context_owner.browser.interface_universe is browser.interface_universe
-        assert frame_page.evaluate("[typeof AbortController.prototype.abort, typeof AbortController.prototype.alternateAbort]") == ["undefined", "function"]
+        assert frame_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["undefined", "function"]
 
         page.evaluate("""(() => {
           const source = new Blob([
-            "postMessage([typeof AbortController.prototype.abort, typeof AbortController.prototype.alternateAbort]);"
+            "postMessage([typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]);"
           ], {type: "text/javascript"});
           const worker = new Worker(URL.createObjectURL(source));
           worker.onmessage = event => window.__baselineFromWorker = event.data;

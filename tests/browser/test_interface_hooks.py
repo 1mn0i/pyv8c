@@ -25,11 +25,11 @@ def _page(browser, html="<input id=i>"):
 
 def test_a_hook_answers_a_member_that_never_had_an_implementation():
     browser = Browser(stub_logging="off", interface_overrides={
-        "AbortController": {"abort": lambda *_: "aborted!"},
+        "MediaSource": {"addSourceBuffer": lambda *_: "buffered!"},
     })
     try:
         page = _page(browser)
-        assert page.evaluate("new AbortController().abort()") == "aborted!"
+        assert page.evaluate("new MediaSource().addSourceBuffer('video/mp4')") == "buffered!"
     finally:
         browser.close()
 
@@ -39,21 +39,21 @@ def test_a_hooked_member_is_no_longer_reported_as_unimplemented():
     token = logger.add(lambda message: messages.append(str(message)), format="{message}")
     try:
         hooked = Browser(stub_logging="on", interface_overrides={
-            "AbortController": {"abort": lambda *_: "aborted!"},
+            "MediaSource": {"addSourceBuffer": lambda *_: "buffered!"},
         })
         try:
-            _page(hooked).evaluate("new AbortController().abort()")
+            _page(hooked).evaluate("new MediaSource().addSourceBuffer('video/mp4')")
         finally:
             hooked.close()
-        assert [message for message in messages if "interface override: AbortController.abort" in message]
-        assert not [message for message in messages if "abort() 待实现" in message]
+        assert [message for message in messages if "interface override: MediaSource.addSourceBuffer" in message]
+        assert not [message for message in messages if "addSourceBuffer() 待实现" in message]
 
         plain = Browser(stub_logging="on")
         try:
-            _page(plain).evaluate("new AbortController().abort()")
+            _page(plain).evaluate("new MediaSource().addSourceBuffer('video/mp4')")
         finally:
             plain.close()
-        assert [message for message in messages if "AbortController.abort() 待实现" in message]
+        assert [message for message in messages if "MediaSource.addSourceBuffer() 待实现" in message]
     finally:
         logger.remove(token)
 
@@ -138,7 +138,7 @@ def test_a_hook_answers_the_member_without_touching_the_implementation_class():
     before = frozenset(DOMTokenList.__dict__)
     browser = Browser(stub_logging="off", interface_overrides={
         "DOMTokenList": {"contains": lambda *_: True},
-        "AbortController": {"abort": lambda *_: None},
+        "MediaSource": {"addSourceBuffer": lambda *_: None},
     })
     try:
         page = _page(browser)

@@ -3579,12 +3579,16 @@ CASES = (
         note="AbortSignal cannot be constructed, and this tree gives the prototype of such "
              "an interface no constructor of its own, so the name read back is the "
              "parent's; the interface object itself is still the right one.",
-        script="""(() => [AbortSignal, BeforeUnloadEvent].map((entry) => [
-            entry.name,
-            Object.getOwnPropertyDescriptor(entry.prototype, 'constructor') ? 'own'
-                                                                            : 'absent',
-            Object.getPrototypeOf(entry.prototype) === EventTarget.prototype]))()""",
-        expected=[["AbortSignal", "absent", True], ["BeforeUnloadEvent", "absent", True]],
+        script="""(() => {
+            const describe = (entry, parent) => [entry.name,
+                Object.getOwnPropertyDescriptor(entry.prototype, 'constructor') ? 'own'
+                                                                              : 'absent',
+                Object.getPrototypeOf(entry.prototype) === parent.prototype];
+            return [describe(AbortSignal, EventTarget), describe(BeforeUnloadEvent, Event),
+                    typeof BeforeUnloadEvent];
+        })()""",
+        expected=[["AbortSignal", "absent", True], ["BeforeUnloadEvent", "absent", True],
+                  "function"],
         known_divergence="the prototype of an interface the baseline marks allow_new=false"
                          " carries no constructor property here, so the name read through it"
                          " is the parent's; Chrome's own property answers 'AbortSignal'."
