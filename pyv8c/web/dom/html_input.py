@@ -287,6 +287,7 @@ class HTMLInputElement(HTMLElement):
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(
+            AttributeSpec(name="capture", getter="get_capture", setter="set_capture"),
             _attribute("accept", "get_accept", "set_accept"),
             _attribute("alt", "get_alt", "set_alt"),
             _attribute("autocomplete", "get_autocomplete", "set_autocomplete"),
@@ -371,6 +372,12 @@ class HTMLInputElement(HTMLElement):
         try: return int(str(self.attributes.get(name)))
         except (TypeError, ValueError): return None
 
+    def get_capture(self):
+        """The slot as it was assigned, and null until it is: this attribute is not a
+        reflection, so an assignment neither writes nor reads the content attribute."""
+        return getattr(self, "_capture", pyv8.Null)
+    def set_capture(self, value):
+        self._capture = value
     def get_type(self):
         value = self._attr("type").lower()
         return value if value in _INPUT_TYPES else "text"

@@ -3575,6 +3575,95 @@ CASES = (
                                 " 'AbortSignal'."]],
     ),
     Repro(
+        name="css_supports_answers_for_a_property_and_a_value",
+        note="One argument asks whether the name is a property, two ask whether the pair "
+             "is a declaration; a name this tree does not resolve is refused by name, and "
+             "a missing argument is refused by count.",
+        script="""(() => {
+            const ask = (a, b) => {
+                try { return b === undefined ? CSS.supports(a) : CSS.supports(a, b); }
+                catch (error) { return [error.name, error.message]; }
+            };
+            return [ask('color'), ask('color: red'), ask('color: notacolor'),
+                    ask('nonsense', 'x'), ask('display', 'flex'), ask(1, 2),
+                    ask('color', 2), ask(), CSS.supports.length];
+        })()""",
+        expected=[False, True, True, False, True, False, True, False, 1],
+        known_divergence="the value half is not parsed here: this tree checks that a"
+                         " value is there, so 'color: notacolor' and a numeric value for"
+                         " a colour answer true where Chrome reads the grammar and answers"
+                         " false. The property half, the declaration form and the coercion"
+                         " of a number or a missing argument all agree.",
+    ),
+    Repro(
+        name="a_style_element_says_only_a_type_it_understands",
+        note="The type attribute keeps whatever the page wrote, but the property reads "
+             "back empty for anything that is not text/css, and an absent attribute is "
+             "the same empty string.",
+        html=page(head='<style id="s">p { color: red }</style>'),
+        script="""(() => {
+            const style = document.getElementById('s');
+            const fresh = document.createElement('style');
+            const out = [style.type, fresh.type, fresh.getAttribute('type')];
+            style.type = 'text/less';
+            out.push([style.type, style.getAttribute('type')]);
+            style.type = 'text/css';
+            out.push([style.type, style.getAttribute('type')]);
+            style.type = 'TEXT/CSS';
+            out.push([style.type, style.getAttribute('type')]);
+            style.type = '';
+            out.push([style.type, style.getAttribute('type')]);
+            return out;
+        })()""",
+        expected=["", "", None, ["text/less", "text/less"], ["text/css", "text/css"],
+                  ["TEXT/CSS", "TEXT/CSS"], ["", ""]],
+    ),
+    Repro(
+        name="the_capture_property_keeps_what_it_was_given",
+        note="capture is not a reflection in Chrome: the property hands back exactly what "
+             "was assigned, and the content attribute is never touched. A boolean "
+             "reflection is the obvious reading of an attribute called capture, and it is "
+             "wrong in both directions.",
+        html=page(body='<input id=inp type=text>'),
+        script="""(() => {
+            const input = document.getElementById('inp');
+            const out = [input.capture, input.getAttribute('capture')];
+            for (const value of [true, false, 1, 0, 'yes', null]) {
+                input.capture = value;
+                out.push([String(value), input.capture, input.getAttribute('capture')]);
+            }
+            return out;
+        })()""",
+        expected=[None, None, ["true", True, None], ["false", False, None],
+                  ["1", 1, None], ["0", 0, None], ["yes", "yes", None],
+                  ["null", None, None]],
+    ),
+    Repro(
+        name="the_clipboard_handlers_belong_to_element",
+        note="onbeforecopy, onbeforecut and onbeforepaste are Element's, not "
+             "HTMLElement's, and each is a prototype slot a page reads back unchanged.",
+        script="""(() => {
+            const out = [];
+            for (const name of ['onbeforecopy', 'onbeforecut', 'onbeforepaste']) {
+                const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, name);
+                const el = document.createElement('div');
+                const fn = () => name;
+                el[name] = fn;
+                out.push([name, !!descriptor, typeof descriptor.get, el[name] === fn,
+                          el.hasOwnProperty(name)]);
+            }
+            const el = document.createElement('div');
+            let seen = 0;
+            el.onbeforecopy = () => seen++;
+            el.dispatchEvent(new Event('beforecopy', {bubbles: true, cancelable: true}));
+            out.push(seen);
+            return out;
+        })()""",
+        expected=[["onbeforecopy", True, "function", True, False],
+                  ["onbeforecut", True, "function", True, False],
+                  ["onbeforepaste", True, "function", True, False], 1],
+    ),
+    Repro(
         name="the_style_sheet_list_answers_by_position_and_by_name",
         note="document.styleSheets is live and its entries are stable objects: the same "
              "index twice is the same sheet, a name reaches the sheet whose owner carries "

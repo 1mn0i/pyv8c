@@ -5,10 +5,12 @@ from urllib.parse import urljoin
 
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import V8Attribute
+from pyv8.flag import (FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck,
+                    V8Attribute)
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, missing_error
+from ...foundation.errors import V8TypeError
 from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
 from .utils import OBJECT_PROTOTYPE_NAMES, camel_name as _camel_name, dash_name as _dash_name
 
@@ -337,6 +339,46 @@ class CSSStyleDeclaration:
     def __v8_index_del__(self, index): return None
     def __v8_index_enum__(self): return self.get_length()
 
+@interface('CSS', None)
+class CSS:
+    """The CSSOM entry point: one question a page asks before it writes a rule."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(),
+        methods=(
+            MethodSpec(name="supports", callback="fn_supports", length=2,
+                       location=FlagLocation.kInterface,
+                       receiver_check=FlagReceiverCheck.kDoNotCheck,
+                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
+        ),
+        constructor_behavior=0,
+        to_string_tag="CSS",
+        has_constructor=0,
+    )
+
+    @staticmethod
+    def fn_supports(_realm, property=MISSING, value=MISSING, *_extra):
+        """Whether a property is one this tree resolves names for.
+
+        One argument is a whole declaration, as in ``CSS.supports("color: red")``; two
+        are a property and a value. Arguments are coerced to strings and anything
+        unparseable or unknown answers false rather than throwing, which is what
+        Chrome does with a number or a missing argument. A value is only checked for
+        being there, because a grammar per property is not modelled.
+        """
+        if value is MISSING:
+            declarations = parse_declarations(_text(property))
+            return bool(declarations) and all(supported(name)
+                                              for name, _, _ in declarations)
+        return supported(_text(property)) and bool(_text(value).strip())
+
+
+def _text(value):
+    if value is MISSING:
+        return ""
+    return value if isinstance(value, str) else dom_string(value)
+
+
 @interface('StyleSheet', None)
 class StyleSheet:
     """One stylesheet as a page sees it: where it came from, and what it is for."""
@@ -450,5 +492,5 @@ class StyleSheetList(ReadOnlyIndexedPropertyMixin, LegacyNamedPropertyMixin):
         return pyv8.Null
 
 
-__all__ = ["CSSStyleDeclaration", "CSSStyleSheet", "StyleSheet", "StyleSheetList",
+__all__ = ["CSS", "CSSStyleDeclaration", "CSSStyleSheet", "StyleSheet", "StyleSheetList",
            "SUPPORTED_NAMES", "parse_declarations", "supported"]

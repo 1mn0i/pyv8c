@@ -22,6 +22,7 @@ from .collections import (
     tag_name_ns_collection,
 )
 from .css import CSSStyleDeclaration
+from .events import _install_handler_slots
 from .mixins import _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, _ParentNodeMixin
 from .mutation import record_mutation
 from .nodes import Attr, DocumentFragment, Node, ShadowRoot
@@ -439,6 +440,12 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         """What a click does to this element beyond dispatching the event."""
         return None
 
+
+#: The clipboard handlers belong to Element, not to HTMLElement, so they are installed
+#: here rather than in the table every target shares.
+Element.__v8_idl_spec__ = Element.__v8_idl_spec__.replace(
+    attributes=Element.__v8_idl_spec__.attributes
+    + _install_handler_slots(Element, ("onbeforecopy", "onbeforecut", "onbeforepaste")))
 
 @interface('HTMLElement', 'Element')
 class HTMLElement(Element):
@@ -1026,7 +1033,8 @@ class HTMLAnchorElement(HTMLElement):
 @interface('HTMLStyleElement', 'HTMLElement')
 class HTMLStyleElement(HTMLElement):
     __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("media", "get_media", "set_media"),),
+        attributes=(_attribute("media", "get_media", "set_media"),
+                    _attribute("type", "get_type", "set_type")),
         constructor_behavior=0,
         has_constructor=1,
     )
@@ -1034,6 +1042,12 @@ class HTMLStyleElement(HTMLElement):
     def set_media(self, value):
         value = dom_string(value)
         self.attributes['media'] = str(value)
+    def get_type(self):
+        """Plain reflection, not a filtered one: whatever the page wrote reads back
+        as it was written, and an absent attribute is the empty string."""
+        return str(self.attributes.get("type", ""))
+    def set_type(self, value):
+        self.attributes["type"] = str(dom_string(value))
 
 
 @interface('HTMLMetaElement', 'HTMLElement')
