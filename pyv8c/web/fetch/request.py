@@ -5,8 +5,9 @@ from urllib.parse import urljoin, urlsplit
 from pyv8 import AttributeSpec, IdlSpec
 
 from ...engine.features import interface
-from ...foundation.arguments import MISSING, byte_string, dictionary, enum_value, is_nullish, missing_error, usv_string
+from ...foundation.arguments import MISSING, abort_signal, byte_string, dictionary, enum_value, is_nullish, missing_error, usv_string
 from ...foundation.errors import V8TypeError
+from ..bom.abort import AbortSignal
 from .headers import Headers
 
 
@@ -21,6 +22,7 @@ class Request:
             AttributeSpec(name="credentials", getter="get_credentials", side_effect=1),
             AttributeSpec(name="destination", getter="get_destination", side_effect=1),
             AttributeSpec(name="bodyUsed", getter="get_bodyUsed", side_effect=1),
+            AttributeSpec(name="signal", getter="get_signal", side_effect=1),
         ),
         constructor_behavior=1,
         length=1,
@@ -44,6 +46,7 @@ class Request:
         self._mode = enum_value(options.get("mode", original._mode if original else "cors"), ("navigate", "same-origin", "no-cors", "cors"))
         self._redirect = enum_value(options.get("redirect", original._redirect if original else "follow"), ("follow", "error", "manual"))
         self._timeout = options.get("timeout")
+        self._signal = self._read_signal(options, original)
         try:
             parts = urlsplit(self._url)
             valid_url = bool(parts.scheme) and not parts.username and not parts.password
@@ -68,6 +71,24 @@ class Request:
             raise V8TypeError("Failed to construct 'Request': Request with GET/HEAD method cannot have body.")
 
     def get_url(self): return self._url
+    def _read_signal(self, options, original):
+        """The signal this request cancels through.
+
+        A request always has a signal, and it is always its own: naming one in the
+        init makes the request's signal follow it rather than be it, so the two are
+        never the same object and the reason travels across.
+        """
+        try:
+            given = abort_signal(options.get(
+                "signal", original._signal if original else None))
+        except V8TypeError as exc:
+            raise V8TypeError("Failed to construct 'Request': Failed to read the 'signal'"
+                              " property from 'RequestInit': Failed to convert value to"
+                              " 'AbortSignal'.") from exc
+        signal = AbortSignal(services=self._services)
+        if given is not None:
+            given._subscribe(lambda: signal._abort(given._reason))
+        return signal
     def get_method(self): return self._method
     def get_headers(self): return self._headers
     def get_mode(self): return self._mode
@@ -78,6 +99,7 @@ class Request:
     def get_bodyUsed(self):
         # Nothing here consumes the body by streaming it; it is read in Python.
         return False
+    def get_signal(self): return self._signal
 
 
 __all__ = ["Request"]

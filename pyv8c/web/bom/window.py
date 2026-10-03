@@ -630,12 +630,31 @@ class Window(_SchedulingMixin, WindowProperties):
         except BaseException as exc:
             self._services.realm_services.post_task(lambda exc=exc: reject(self._services.realm_services.js_error_value(exc)))
             return promise
-        self._services.resource_services.load_resource_async(req.get_url(), {
+        handle = self._services.resource_services.load_resource_async(req.get_url(), {
             "method": req.get_method(), "headers": req.get_headers(), "body": req._body,
             "timeout": req._timeout, "credentials": req._credentials, "mode": req._mode, "redirect": req._redirect,
             "resource_type": "fetch",
         }, lambda response, error: reject(self._services.realm_services.js_error_value(error)) if error else resolve(response))
+        self._abort_fetch(handle, req._signal, reject)
         return promise
+
+    def _abort_fetch(self, handle, signal, reject):
+        """A fetch the page aborted: drop the load and reject with the reason.
+
+        Cancelling rather than waiting is what makes it an abort -- a response
+        already on its way is never delivered.  The rejection is the signal's reason
+        itself, so a page that aborted with its own value gets that value back.
+        """
+        realm = self._services.realm_services
+
+        def abort():
+            handle.cancel()
+            reason = signal._reason
+            if isinstance(reason, BaseException):
+                reason = realm.js_error_value(reason)
+            realm.post_task(lambda reason=reason: reject(reason))
+
+        signal._subscribe(abort)
     
     def fn_atob(self, data=MISSING, *_extra):
         if data is MISSING:

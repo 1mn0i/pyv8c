@@ -255,3 +255,88 @@ def test_the_receiver_is_checked_on_the_members_that_need_their_own():
                      ["TypeError", "Illegal invocation"]]
     finally:
         browser.close()
+
+
+def test_a_request_carries_a_signal_of_its_own():
+    browser, page = _page()
+    try:
+        assert page.evaluate("""(() => {
+            const controller = new AbortController();
+            const named = new Request('/a', {signal: controller.signal});
+            const plain = new Request('/a');
+            const before = [named.signal.aborted, named.signal === controller.signal,
+                            plain.signal === null, plain.signal instanceof AbortSignal];
+            controller.abort('why');
+            const derived = new Request(named);
+            let error = null;
+            try { new Request('/a', {signal: 1}); } catch (e) { error = [e.name, e.message]; }
+            return before.concat([named.signal.aborted,
+                                  named.signal.reason === controller.signal.reason,
+                                  String(named.signal.reason),
+                                  derived.signal === named.signal, derived.signal.aborted,
+                                  error]);
+        })()""") == [False, False, False, True, True, True, "why", False, True,
+                     ["TypeError", "Failed to construct 'Request': Failed to read the"
+                      " 'signal' property from 'RequestInit': Failed to convert value to"
+                      " 'AbortSignal'."]]
+    finally:
+        browser.close()
+
+
+def test_a_fetch_the_page_aborted_rejects_with_the_reason():
+    browser, page = _page()
+    try:
+        page.evaluate("""(() => {
+            window.__early = window.__custom = window.__late = null;
+            const before = new AbortController();
+            before.abort();
+            fetch('/data', {signal: before.signal}).catch(
+                (e) => window.__early = [e.name, e.message, e instanceof DOMException]);
+            const custom = new AbortController();
+            fetch('/data', {signal: custom.signal}).catch(
+                (e) => window.__custom = [e.name, e.message]);
+            custom.abort(new Error('stop'));
+            const midflight = new AbortController();
+            fetch('/data', {signal: midflight.signal}).catch(
+                (e) => window.__late = [e.name, e.message]);
+            setTimeout(() => midflight.abort(), 0);
+            return 'asked';
+        })()""")
+        page.run_until_idle(timeout=5)
+        assert page.evaluate("window.__early") == ["AbortError",
+                                                   "signal is aborted without reason", True]
+        assert page.evaluate("window.__custom") == ["Error", "stop"]
+        assert page.evaluate("window.__late") == ["AbortError",
+                                                  "signal is aborted without reason"]
+    finally:
+        browser.close()
+
+
+def test_an_aborted_fetch_never_delivers_the_response():
+    started = threading.Event()
+    released = threading.Event()
+
+    def loader(url, request):
+        started.set()
+        released.wait(5)
+        return _response(url)
+
+    browser, page = _page(loader)
+    try:
+        page.evaluate("""(() => {
+            window.__settled = 'pending';
+            const controller = new AbortController();
+            fetch('/slow', {signal: controller.signal}).then(
+                () => window.__settled = 'resolved',
+                () => window.__settled = 'rejected');
+            setTimeout(() => controller.abort(), 0);
+            return 'asked';
+        })()""")
+        page.run_until_idle(timeout=2)
+        assert started.wait(5), "the loader never ran"
+        released.set()
+        page.run_until_idle(timeout=5)
+        assert page.evaluate("window.__settled") == "rejected"
+    finally:
+        released.set()
+        browser.close()
