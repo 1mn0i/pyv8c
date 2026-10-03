@@ -3664,6 +3664,37 @@ CASES = (
                   ["onbeforepaste", True, "function", True, False], 1],
     ),
     Repro(
+        name="inner_text_is_the_rendered_text_not_the_markup",
+        note="innerText is not textContent: whitespace collapses, a block boundary and a "
+             "br become newlines, and the ends are trimmed. The setter takes the string as "
+             "written -- markup in it is not parsed, a newline becomes a br -- and null "
+             "clears the element.",
+        html=page(body="<div id=host>one<span>two</span><div>three</div></div>"),
+        script="""(() => {
+            const host = document.getElementById('host');
+            const keep = document.createElement('pre');
+            keep.appendChild(document.createTextNode('  keep  '));
+            const out = [host.innerText, keep.innerText];
+            const loose = document.createElement('div');
+            loose.innerHTML = '<div>a</div><div>b</div>';
+            out.push(loose.innerText);
+            const br = document.createElement('div');
+            br.innerHTML = 'x<br>y';
+            out.push([br.innerText, host.textContent]);
+            const el = document.createElement('div');
+            el.innerText = '<b>markup</b>';
+            out.push([el.innerHTML, el.childNodes.length]);
+            el.innerText = 'a' + String.fromCharCode(10) + 'b';
+            out.push([el.innerHTML, JSON.stringify(el.innerText)]);
+            el.innerText = null;
+            out.push([el.innerHTML, el.innerHTML === '']);
+            return out;
+        })()""",
+        expected=["onetwo\nthree", "  keep  ", "ab", ["xy", "onetwothree"],
+                  ["&lt;b&gt;markup&lt;/b&gt;", 1],
+                  ["a<br>b", '"ab"'], ["", True]],
+    ),
+    Repro(
         name="the_style_sheet_list_answers_by_position_and_by_name",
         note="document.styleSheets is live and its entries are stable objects: the same "
              "index twice is the same sheet, a name reaches the sheet whose owner carries "

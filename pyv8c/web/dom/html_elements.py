@@ -1,5 +1,6 @@
 """HTML element implementations: the tag-specific interfaces and the tag-to-class
 factory."""
+import re
 from html import escape
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -451,6 +452,9 @@ Element.__v8_idl_spec__ = Element.__v8_idl_spec__.replace(
 class HTMLElement(Element):
     __v8_idl_spec__ = IdlSpec(
         attributes=(
+            AttributeSpec(name="innerText", getter="get_innerText",
+                          setter="set_innerText"),
+
             AttributeSpec(name="title", getter="get_title", setter="set_title"),
             AttributeSpec(name="hidden", getter="get_hidden", setter="set_hidden"),
             AttributeSpec(name="style", getter="get_style", side_effect=1),
@@ -471,6 +475,70 @@ class HTMLElement(Element):
         constructor_behavior=0,
         has_constructor=1,
     )
+    #: The tags whose boundaries innerText turns into newlines. Chrome decides this
+    #: from the rendered display, which this tree does not have, so the block-level
+    #: HTML elements stand in for it.
+    _BLOCK_LEVEL = frozenset((
+        "address", "article", "aside", "blockquote", "details", "dialog", "dd", "div",
+        "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2",
+        "h3", "h4", "h5", "h6", "header", "hgroup", "hr", "li", "main", "nav", "ol",
+        "p", "pre", "section", "table", "tbody", "td", "tfoot", "th", "thead", "tr",
+        "ul"))
+
+    def get_innerText(self):
+        """The text as it would be shown: whitespace collapsed, a block boundary and a
+        ``br`` written as newlines, and the ends trimmed -- except in ``pre`` and
+        ``textarea``, where the spaces at either end are content rather than layout.
+        """
+        text = self._rendered_text(self, self.isConnected)
+        if str(getattr(self, "localName", "") or "").lower() in ("pre", "textarea"):
+            return text
+        return text.strip()
+
+    def _rendered_text(self, node, laid_out):
+        """The text of *node* and its descendants as it would be shown.
+
+        Chrome decides the line breaks from what it rendered, so a block boundary
+        only becomes a newline once the element is in a document: a tree nobody
+        attached reads as one run of text, which is what a detached element's
+        innerText does in Chrome too. Whitespace collapses unless the element keeps
+        it, as ``pre`` and ``textarea`` do. A ``script`` or ``style`` element
+        contributes its source, which is what Chrome reports for one.
+        """
+        if isinstance(node, Text):
+            return node.get_data()
+        name = str(getattr(node, "localName", "") or "").lower()
+        if name == "br":
+            return "\n" if laid_out else ""
+        joined = "".join(self._rendered_text(child, laid_out)
+                         for child in getattr(node, "_children", ()))
+        if laid_out and name in self._BLOCK_LEVEL:
+            joined = "\n" + joined + "\n"
+        if name in ("pre", "textarea"):
+            return joined
+        collapsed = re.sub(r"[ \t\r\f\v]+", " ", joined)
+        return re.sub(r" *\n *", "\n", collapsed)
+
+    def set_innerText(self, value):
+        """Replace the children with the text, one line break at a time.
+
+        The text is taken as written -- markup in it is not parsed -- and a newline
+        becomes a ``br`` rather than a character in the text, which is what makes the
+        setter and the getter round-trip. Null clears the element.
+        """
+        from .html_classes import class_for_tag
+
+        self._replace_children(())
+        if is_nullish(value):
+            return
+        for index, line in enumerate(re.split(r"\r\n|\r|\n", str(dom_string(value)))):
+            if index:
+                self.append_child(class_for_tag("br")("br", services=self._services))
+            if line:
+                self.append_child(Text(line, services=self._services))
+
+
+
     def get_nonce(self): return self._attr("nonce")
     def set_nonce(self, value): self._set_string("nonce", value)
     def get_title(self): return self.attributes.get("title", "")
@@ -852,15 +920,11 @@ class HTMLScriptElement(HTMLElement):
             _attribute("async", "get_async", "set_async"),
             _attribute("defer", "get_defer", "set_defer"),
             _attribute("charset", "get_charset", "set_charset"),
-            AttributeSpec(name="innerText", getter="get_innerText"),
             AttributeSpec(name="text", getter="get_textContent", setter="set_textContent"),
         ),
         constructor_behavior=0,
         has_constructor=1,
     )
-    def get_innerText(self):
-        """A script is not rendered, so its text is what ``innerText`` reads."""
-        return self.get_textContent()
     def get_src(self): return _url_value(self, "src")
     def set_src(self, value): _set_url_value(self, "src", value)
     def get_type(self): return self.attributes.get("type", "")
