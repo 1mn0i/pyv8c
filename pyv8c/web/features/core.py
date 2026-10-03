@@ -4,6 +4,7 @@ from ...engine.builtin_errors import implementations as error_interfaces
 from ...engine.features import FeatureImplementation
 from ...foundation.environment import BrowserEnvironment
 from ..bom import (
+    abort,
     accessories,
     cookies,
     crypto,
@@ -55,6 +56,7 @@ FEATURE = FeatureImplementation(
         *error_interfaces(),
         collections.DOMStringList, collections.DOMStringMap, collections.DOMTokenList, collections.HTMLAllCollection, collections.HTMLCollection, collections.HTMLFormControlsCollection, collections.HTMLOptionsCollection, collections.NamedNodeMap, collections.NodeList,
         html_form.RadioNodeList,
+        abort.AbortController, abort.AbortSignal,
         events.CustomEvent, events.Event, events.EventTarget, events.KeyboardEvent, events.MouseEvent, events.UIEvent,
         events.AnimationEvent, events.BeforeUnloadEvent, events.CompositionEvent, events.FocusEvent,
         events.HashChangeEvent, events.InputEvent, events.PageTransitionEvent, events.PointerEvent,

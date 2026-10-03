@@ -21,6 +21,21 @@ def is_nullish(value):
     return value is None or value is pyv8.Null or value is pyv8.Undefined
 
 
+def abort_signal(value):
+    """*value* as an ``AbortSignal``, or ``None`` for a nullish one.
+
+    Every surface that reads a signal out of a dictionary converts it here so they
+    all fail alike.  The match is by interface name, because the interface itself is
+    built on top of the layer that asks.
+    """
+    if is_nullish(value):
+        return None
+    if any(getattr(getattr(base, "__idl_spec__", None), "name", None) == "AbortSignal"
+           for base in type(value).__mro__):
+        return value
+    raise V8TypeError("Failed to convert value to 'AbortSignal'.")
+
+
 def dom_string(value):
     if isinstance(value, (pyv8.JSObject, pyv8.JSValue)):
         return value._to_string()

@@ -58,6 +58,7 @@ CORE_INTERFACES = (
     "SVGElement", "SVGGraphicsElement", "SVGGeometryElement", "SVGRectElement",
     "SVGLength", "SVGAnimatedLength",
     "DOMStringList",
+    "AbortController", "AbortSignal",
 )
 
 INDEXEDDB_INTERFACES = (
