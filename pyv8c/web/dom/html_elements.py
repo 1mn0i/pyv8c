@@ -9,7 +9,9 @@ from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dictionary, dom_string, integer, interface_value, is_nullish, missing_error
-from ...foundation.errors import InvalidCharacterError, NotFoundError, NotSupportedError, V8SyntaxError, V8TypeError
+from ...foundation.errors import (InvalidCharacterError, NotFoundError,
+                                NotSupportedError, V8SyntaxError, V8TypeError,
+                                dom_exception)
 from ...foundation.urls import credentials_netloc
 from ...foundation.urls import origin_string
 from .character_data import Text
@@ -454,6 +456,10 @@ class HTMLElement(Element):
         attributes=(
             AttributeSpec(name="innerText", getter="get_innerText",
                           setter="set_innerText"),
+            AttributeSpec(name="contentEditable", getter="get_contentEditable",
+                          setter="set_contentEditable"),
+            AttributeSpec(name="isContentEditable", getter="get_isContentEditable",
+                          side_effect=1),
 
             AttributeSpec(name="title", getter="get_title", setter="set_title"),
             AttributeSpec(name="hidden", getter="get_hidden", setter="set_hidden"),
@@ -484,6 +490,56 @@ class HTMLElement(Element):
         "h3", "h4", "h5", "h6", "header", "hgroup", "hr", "li", "main", "nav", "ol",
         "p", "pre", "section", "table", "tbody", "td", "tfoot", "th", "thead", "tr",
         "ul"))
+
+    #: What the contenteditable attribute reads back as. An empty attribute and
+    #: "true" both mean true, and anything the IDL enum does not hold -- an unknown
+    #: keyword or no attribute at all -- reads as "inherit".
+    _EDITABLE_VALUES = {"": "true", "true": "true", "false": "false",
+                        "plaintext-only": "plaintext-only", "inherit": "inherit"}
+
+    def get_contentEditable(self):
+        value = self.attributes.get("contenteditable")
+        if value is None:
+            return "inherit"
+        return self._EDITABLE_VALUES.get(str(value).lower(), "inherit")
+
+    def set_contentEditable(self, value):
+        """Set the keyword, or refuse what the IDL enum does not hold.
+
+        Chrome throws a SyntaxError for anything but the four keywords, writes the
+        keyword in lower case, and takes the attribute away for "inherit".
+        """
+        text = str(dom_string(value))
+        keyword = text.lower()
+        if keyword not in ("true", "false", "plaintext-only", "inherit"):
+            raise dom_exception(
+                "SyntaxError",
+                "Failed to set the 'contentEditable' property on 'HTMLElement': The value"
+                f" provided ('{text}') is not one of 'true', 'false', 'plaintext-only', or"
+                " 'inherit'.")
+        if keyword == "inherit":
+            self.attributes.pop("contenteditable", None)
+        else:
+            self.attributes["contenteditable"] = keyword
+
+    def get_isContentEditable(self):
+        """Whether this element is editable: the document's design mode, or the
+        nearest contenteditable at or above it. A detached tree is included, as in
+        Chrome, while design mode reaches only what is in a document.
+        """
+        document = self.ownerDocument
+        if self.isConnected and getattr(document, "design_mode", "off") == "on":
+            return True
+        node = self
+        while node is not None:
+            if isinstance(node, HTMLElement):
+                value = node.attributes.get("contenteditable")
+                if value is not None:
+                    keyword = self._EDITABLE_VALUES.get(str(value).lower(), "inherit")
+                    if keyword != "inherit":
+                        return keyword != "false"
+            node = node.parentNode
+        return False
 
     def get_innerText(self):
         """The text as it would be shown: whitespace collapsed, a block boundary and a
@@ -1098,10 +1154,21 @@ class HTMLAnchorElement(HTMLElement):
 class HTMLStyleElement(HTMLElement):
     __v8_idl_spec__ = IdlSpec(
         attributes=(_attribute("media", "get_media", "set_media"),
-                    _attribute("type", "get_type", "set_type")),
+                    _attribute("type", "get_type", "set_type"),
+                    AttributeSpec(name="sheet", getter="get_sheet", side_effect=1)),
         constructor_behavior=0,
         has_constructor=1,
     )
+    def get_sheet(self):
+        """The sheet this element owns, which is the one its document's list holds for
+        it, and null while it is in no document: the list is what owns a sheet."""
+        document = self.ownerDocument
+        if document is None:
+            return pyv8.Null
+        for owner in document.get_styleSheets()._owners():
+            if owner is self:
+                return document.get_styleSheets()._sheet_for(owner)
+        return pyv8.Null
     def get_media(self): return self.attributes.get("media", "")
     def set_media(self, value):
         value = dom_string(value)
