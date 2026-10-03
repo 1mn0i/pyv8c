@@ -76,7 +76,7 @@ FEATURE = FeatureImplementation(
         html_elements.HTMLMetaElement, html_elements.HTMLScriptElement, html_elements.HTMLStyleElement,
         html_elements.HTMLTemplateElement,
         html_media.TextTrackList, html_media.TimeRanges,
-        css.StyleSheetList,
+        css.StyleSheet, css.CSSStyleSheet, css.StyleSheetList,
         performance.PerformanceTiming, performance.PerformanceNavigation,
         screen.ScreenOrientation,
         html_canvas.HTMLCanvasElement, html_canvas.CanvasRenderingContext2D, html_canvas.ImageData,

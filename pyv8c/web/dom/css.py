@@ -1,13 +1,15 @@
 """CSSOM: inline ``HTMLElement.style`` declarations and the table of property
 names a ``CSSStyleDeclaration`` resolves as named properties."""
 import re
+from urllib.parse import urljoin
 
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import V8Attribute
 
 from ...engine.features import interface
-from ...foundation.arguments import MISSING, dom_string, integer, missing_error
+from ...foundation.arguments import MISSING, boolean, dom_string, integer, missing_error
+from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
 from .utils import OBJECT_PROTOTYPE_NAMES, camel_name as _camel_name, dash_name as _dash_name
 
 _NAME_RE = re.compile(r"^(?:--[A-Za-z0-9_-]+|-?[A-Za-z_][A-Za-z0-9_-]*)$")
@@ -335,12 +337,77 @@ class CSSStyleDeclaration:
     def __v8_index_del__(self, index): return None
     def __v8_index_enum__(self): return self.get_length()
 
+@interface('StyleSheet', None)
+class StyleSheet:
+    """One stylesheet as a page sees it: where it came from, and what it is for."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="type", getter="get_type", side_effect=1),
+            AttributeSpec(name="href", getter="get_href", side_effect=1),
+            AttributeSpec(name="title", getter="get_title", side_effect=1),
+            AttributeSpec(name="disabled", getter="get_disabled", setter="set_disabled"),
+            AttributeSpec(name="ownerNode", getter="get_ownerNode", side_effect=1),
+            AttributeSpec(name="parentStyleSheet", getter="get_parentStyleSheet", side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="StyleSheet",
+        has_constructor=0,
+    )
+
+    def __init__(self, owner=None, document=None, **_):
+        self._owner, self._document = owner, document
+
+    def get_type(self): return "text/css"
+    def get_href(self):
+        """Where a linked sheet came from; a ``<style>`` element has no URL."""
+        if self._owner is None or str(getattr(self._owner, "localName", "")).lower() != "link":
+            return pyv8.Null
+        href = self._owner.attributes.get("href")
+        if href is None:
+            return pyv8.Null
+        return urljoin(getattr(self._document, "url", "") or "", str(href))
+    def get_title(self):
+        title = None if self._owner is None else self._owner.attributes.get("title")
+        return pyv8.Null if title is None else str(title)
+    def get_disabled(self):
+        return bool(self._owner is not None and "disabled" in self._owner.attributes)
+    def set_disabled(self, value):
+        if self._owner is None:
+            return
+        if boolean(value):
+            self._owner.attributes["disabled"] = ""
+        else:
+            self._owner.attributes.pop("disabled", None)
+    def get_ownerNode(self):
+        return pyv8.Null if self._owner is None else self._owner
+    def get_parentStyleSheet(self):
+        return pyv8.Null
+
+
+@interface('CSSStyleSheet', 'StyleSheet')
+class CSSStyleSheet(StyleSheet):
+    """A sheet of CSS rules. The rules themselves are the baseline's business here;
+    what a page reads first is the owner it came from and whether it is disabled."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(),
+        constructor_behavior=0,
+        to_string_tag="CSSStyleSheet",
+        has_constructor=0,
+    )
+
+
 @interface('StyleSheetList', None)
-class StyleSheetList:
-    """The document's sheets: its ``<style>`` elements and stylesheet links."""
+class StyleSheetList(ReadOnlyIndexedPropertyMixin, LegacyNamedPropertyMixin):
+    """The document's sheets, live: ``<style>`` elements and the ``<link>`` elements
+    that are stylesheets, in document order."""
 
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
+        methods=(
+            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
+        ),
         constructor_behavior=0,
         to_string_tag="StyleSheetList",
         has_constructor=1,
@@ -349,14 +416,39 @@ class StyleSheetList:
     def __init__(self, document=None, **_):
         self._document = document
 
-    def get_length(self):
-        count = 0
+    def _owners(self):
+        owners = []
         for node in self._document._descendants():
-            name = getattr(node, "localName", None)
+            name = str(getattr(node, "localName", "") or "").lower()
             rel = str(getattr(node, "attributes", {}).get("rel", "")).lower().split()
             if name == "style" or (name == "link" and "stylesheet" in rel):
-                count += 1
-        return count
+                owners.append(node)
+        return owners
+    def _sheet_for(self, node):
+        """The sheet for one owner, kept on the node so a second read is the same
+        object, as it is in Chrome.
+        """
+        sheet = getattr(node, "_style_sheet", None)
+        if sheet is None:
+            sheet = node._style_sheet = CSSStyleSheet(node, self._document)
+        return sheet
+    def get_length(self): return len(self._owners())
+    def _indexed_items(self): return [self._sheet_for(node) for node in self._owners()]
+    def fn_item(self, index=MISSING, *_extra):
+        if index is MISSING:
+            raise missing_error('StyleSheetList', 'item', 1, 0, constructor=False)
+        items = self._indexed_items()
+        position = int(index)
+        return items[position] if 0 <= position < len(items) else pyv8.Null
+    def _supported_names(self):
+        return [str(node.attributes["id"]) for node in self._owners()
+                if node.attributes.get("id")]
+    def _named_item(self, name):
+        for node in self._owners():
+            if node.attributes.get("id") == name:
+                return self._sheet_for(node)
+        return pyv8.Null
 
 
-__all__ = ["CSSStyleDeclaration", "StyleSheetList", "SUPPORTED_NAMES", "parse_declarations", "supported"]
+__all__ = ["CSSStyleDeclaration", "CSSStyleSheet", "StyleSheet", "StyleSheetList",
+           "SUPPORTED_NAMES", "parse_declarations", "supported"]

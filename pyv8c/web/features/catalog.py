@@ -40,7 +40,7 @@ CORE_INTERFACES = (
     "HTMLTableCellElement", "HTMLSelectElement", "HTMLTextAreaElement", "HTMLButtonElement", "HTMLOptionElement",
     "HTMLLabelElement",
     "HTMLUnknownElement", "HTMLAudioElement", "HTMLVideoElement", "TextTrackList", "TimeRanges",
-    "StyleSheetList", "ScreenOrientation", "PerformanceTiming", "PerformanceNavigation",
+    "StyleSheet", "CSSStyleSheet", "StyleSheetList", "ScreenOrientation", "PerformanceTiming", "PerformanceNavigation",
     "Headers", "Blob", "Request", "Response", "ProgressEvent", "MessageEvent", "CloseEvent", "ErrorEvent",
     "XMLHttpRequestEventTarget", "XMLHttpRequest", "Location", "Screen", "Storage", "URLSearchParams", "URL",
     "History", "Window", "WindowProperties", "BarProp", "MediaQueryList", "Performance", "Crypto",

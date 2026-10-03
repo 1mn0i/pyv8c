@@ -3575,6 +3575,29 @@ CASES = (
                                 " 'AbortSignal'."]],
     ),
     Repro(
+        name="the_style_sheet_list_answers_by_position_and_by_name",
+        note="document.styleSheets is live and its entries are stable objects: the same "
+             "index twice is the same sheet, a name reaches the sheet whose owner carries "
+             "that id, and an entry says where it came from.",
+        html=page(head='<style id="sheet-one">p { color: red }</style>'
+                       '<style>div { margin: 0 }</style>'),
+        script="""(() => {
+            const sheets = document.styleSheets;
+            const first = sheets[0];
+            return [sheets.length, sheets.item(0) === first, sheets[0] === sheets[0],
+                    sheets['sheet-one'] === first, sheets['nothing'] === undefined,
+                    sheets[99], sheets.item(99),
+                    Object.prototype.toString.call(sheets),
+                    first instanceof CSSStyleSheet, first.type, first.title,
+                    first.disabled, first.ownerNode === null, first.ownerNode.localName,
+                    first.ownerNode.id, first.parentStyleSheet, first.href,
+                    sheets.item.length, sheets.item === sheets.item];
+        })()""",
+        expected=[2, True, True, True, True, None, None, "[object StyleSheetList]", True,
+                  "text/css", None, False, False, "style", "sheet-one", None, None, 1,
+                  True],
+    ),
+    Repro(
         name="a_shadow_tree_is_the_hosts_own",
         note="attachShadow hands back a fragment the host keeps to itself: none of it "
              "shows through the host's children, text or markup, and only an open tree "
