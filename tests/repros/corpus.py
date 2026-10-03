@@ -3313,4 +3313,70 @@ CASES = (
         })()""",
         expected=[["20", "20"], ["30px", 5, 30], ["7px", 7]],
     ),
+    Repro(
+        name="an_xhr_timeout_is_an_unsigned_long",
+        note="``timeout`` is an unsigned long: a negative value wraps, a fraction is "
+             "truncated, and anything that does not convert to a number becomes zero.",
+        script="""(() => {
+            const write = (value) => {
+                const xhr = new XMLHttpRequest();
+                xhr.timeout = value;
+                return [String(value), xhr.timeout];
+            };
+            return [0, 500, -1, 1.5, '500', Infinity, NaN, true, null, undefined,
+                    4294967296].map(write);
+        })()""",
+        expected=[["0", 0], ["500", 500], ["-1", 4294967295], ["1.5", 1], ["500", 500],
+                  ["Infinity", 0], ["NaN", 0], ["true", 1], ["null", 0],
+                  ["undefined", 0], ["4294967296", 0]],
+    ),
+    Repro(
+        name="a_location_reads_as_its_href",
+        note="``toString`` is the href, with the arity and the brand Chrome gives it.",
+        script="""(() => [typeof location.toString, location.toString.length, String(location),
+                            location.toString(), location.toString() === location.href,
+                            Object.prototype.toString.call(location)])()""",
+        expected=["function", 0, "http://repro.test/dir/page", "http://repro.test/dir/page",
+                  True, "[object Location]"],
+    ),
+    Repro(
+        name="ancestor_origins_is_empty_on_a_top_level_document",
+        note="A DOMStringList of the origins above this document, and the same list "
+             "answers every read.  A page that is not framed has none.",
+        script="""(() => {
+            const list = location.ancestorOrigins;
+            return [list.length, Array.from(list), list.item(0),
+                    list.contains(location.origin), list === location.ancestorOrigins,
+                    list.constructor.name, list instanceof DOMStringList,
+                    Object.prototype.toString.call(list)];
+        })()""",
+        expected=[0, [], None, False, True, "DOMStringList", True, "[object DOMStringList]"],
+    ),
+    Repro(
+        name="navigator_serial_needs_a_secure_context",
+        note="Web Serial is a secure-context interface, so an ordinary http page reads "
+             "nothing at all where a secure one reads the entry point.",
+        script="[typeof navigator.serial, navigator.serial === undefined]",
+        expected=["undefined", True],
+    ),
+    Repro(
+        name="send_beacon_answers_whether_it_was_queued",
+        note="A beacon is on its way once it is queued, so the answer is a boolean; only a "
+             "scheme that cannot carry one is refused.",
+        script="""(() => {
+            const beacon = (url, data, hasData) => {
+                try { return hasData ? navigator.sendBeacon(url, data)
+                                     : navigator.sendBeacon(url); }
+                catch (error) { return [error.name, error.message]; }
+            };
+            return [navigator.sendBeacon.length, beacon('/b1'), beacon('/b2', 'text', true),
+                    beacon('/b3', {}, true), beacon('/b4', '', true),
+                    beacon('javascript:0', 'x', true), beacon('data:text/plain,x', 'y', true)];
+        })()""",
+        expected=[1, True, True, True, True,
+                  ["TypeError", "Failed to execute 'sendBeacon' on 'Navigator': Beacons are"
+                                " only supported over HTTP(S)."],
+                  ["TypeError", "Failed to execute 'sendBeacon' on 'Navigator': Beacons are"
+                                " only supported over HTTP(S)."]],
+    ),
 )
