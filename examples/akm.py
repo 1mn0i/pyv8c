@@ -2,7 +2,7 @@ import time
 from loguru import logger
 from pyv8c import Browser
 
-logger.add("info.log", level="DEBUG")
+logger.add("akm.log", level="DEBUG")
 # logger.remove()
 
 if "__main__" == __name__:
@@ -22,12 +22,14 @@ if "__main__" == __name__:
         # trace=True, traceable=True,
         resource_interceptor=intercept,
         # interface_baseline_path=r'D:\src\pyv8env\pyv8c\baselines\145.0.7632.162.zip',
-        proxy="http://127.0.0.1:7890"
+        proxy="http://127.0.0.1:7890",
+        threaded_loaders=True,
     )
     context = browser.new_context()
     page = context.new_page()
     # url = "https://www.koreanair.com"
     url = "https://www.bestbuy.com"
+    # url = "https://www.trinityairways.com/app/main"
     # url = "https://www.dhl.com/cn-zh/home/tracking/tracking-ecommerce.html?submit=1&tracking-id=123123"
     page.goto(url, wait_until="domcontentloaded")
     # page.run_until_idle(timeout=2)

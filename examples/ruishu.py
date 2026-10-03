@@ -39,11 +39,12 @@ if "__main__" == __name__:
     browser = Browser(
         stub_logging="verbose",
         # trace=True, traceable=True,
-        resource_interceptor=intercept
+        resource_interceptor=intercept,
+        threaded_loaders=True,
     )
     context = browser.new_context()
     page = context.new_page()
-    # run(page, "https://datasearch.nmpa.gov.cn/datasearch/home-index.html")
+    run(page, "https://datasearch.nmpa.gov.cn/datasearch/home-index.html")
     # run(page,"https://www.cde.org.cn/main/xxgk/listpage/9f9c74c73e0f8f56a8bfbc646055026d")
     # run(page,"https://lib.cqvip.com/Qikan/Search/Index?from=index")
 
@@ -52,7 +53,7 @@ if "__main__" == __name__:
     # print(page.evaluate("Object.keys(window).length"))
     # print(page.evaluate("Image.toString()"))
     # print(page.evaluate("HTMLImageElement.prototype"))
-    print(page.evaluate("navigation.entries()"))
+    # print(page.evaluate("navigation.entries()"))
     # page.evaluate("navigator.mimeTypes")
     # page.evaluate("navigator.plugins.refresh = '865'")
     # print(page.evaluate("new URL('https://www.koreanair.com/')"))
