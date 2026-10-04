@@ -130,3 +130,54 @@ def test_style_attribute_changes_refresh_existing_object(page):
         target.removeAttribute('style');
         return [afterSet, s.cssText, s.length, s.color];
     })()""") == [["padding: 1px; color: green;", "1px", "green"], "", 0, ""]
+
+
+def test_a_rule_answers_with_its_style_and_lets_the_page_restyle_it(page):
+    """A rule's declaration block is the page's to edit, and the rule's own text follows
+    what it holds."""
+    page.set_content('<style id="sheet">p { color: red } .a { margin: 0 }</style>',
+                     url="http://style.test/")
+    assert page.evaluate("""(() => {
+        const sheet = document.getElementById('sheet').sheet;
+        const rules = sheet.cssRules;
+        const style = rules[0].style;
+        const before = [rules.length, rules[0].selectorText, rules[0].cssText,
+                        style.parentRule === rules[0], style.color,
+                        rules[0].parentStyleSheet === sheet];
+        style.setProperty('color', 'blue');
+        return [before, rules[0].cssText, style.getPropertyValue('color')];
+    })()""") == [[2, "p", "p { color: red; }", True, "red", True],
+                 "p { color: blue; }", "blue"]
+
+
+def test_the_rule_list_follows_the_sheet_text_the_page_rewrites(page):
+    """The parse is keyed on the owner's text, so rewriting a style element's markup
+    gives the page the rules that are there now."""
+    page.set_content('<style id="sheet">p { color: red }</style>', url="http://style.test/")
+    assert page.evaluate("""(() => {
+        const element = document.getElementById('sheet');
+        const sheet = element.sheet;
+        const before = [sheet.cssRules.length, sheet.cssRules[0].selectorText];
+        element.textContent = 'div { color: green } span { color: blue }';
+        return [before, sheet.cssRules.length, sheet.cssRules[1].selectorText,
+                sheet.cssRules[1].style.color];
+    })()""") == [[1, "p"], 2, "span", "blue"]
+
+
+def test_a_grouping_rule_holds_rules_a_page_can_add_to(page):
+    """A @media rule is a sheet inside a sheet: its own cssRules, and its own edits."""
+    page.set_content('<style id="sheet">@media screen { p { color: red } }</style>',
+                     url="http://style.test/")
+    assert page.evaluate("""(() => {
+        const sheet = document.getElementById('sheet').sheet;
+        const media = sheet.cssRules[0];
+        const out = [media.type, media.media.mediaText, media.cssRules.length,
+                     media.cssRules[0].selectorText,
+                     media.cssRules[0].parentRule === media,
+                     media.cssRules[0].parentStyleSheet === sheet];
+        out.push(media.insertRule('div { color: green }', 0));
+        out.push([media.cssRules.length, media.cssRules[0].selectorText]);
+        media.deleteRule(0);
+        out.push([media.cssRules.length, media.cssRules[0].selectorText]);
+        return out;
+    })()""") == [4, "screen", 1, "p", True, True, 0, [2, "div"], [1, "p"]]

@@ -10,7 +10,7 @@ from pyv8.flag import (FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck,
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, missing_error
-from ...foundation.errors import V8TypeError
+from ...foundation.errors import IndexSizeError, V8TypeError
 from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
 from .utils import OBJECT_PROTOTYPE_NAMES, camel_name as _camel_name, dash_name as _dash_name
 
@@ -252,13 +252,23 @@ class CSSStyleDeclaration:
         index_get="__v8_index_get__", index_set="__v8_index_set__", index_query="__v8_index_query__",
         index_del="__v8_index_del__", index_enum="__v8_index_enum__",
     )
-    def __init__(self, element=None, **_): self._element = element
+    def __init__(self, element=None, block=None, parent_rule=None, **_):
+        self._element = element
+        self._parent_rule = parent_rule
+        #: A rule's style is a declaration block rather than an element's attribute, so
+        #: the two read from different places and only one of them is ever set.
+        self._block = None if block is None else parse_declarations(str(block))
     def _declarations(self):
+        if self._block is not None:
+            return list(self._block)
         if hasattr(self, "_computed_values"):
             return [(name, value, "") for name, value in self._computed_values.items() if value not in ("", None)]
         raw = str(self._element.attributes.get("style", "")) if self._element is not None else ""
         return parse_declarations(raw)
     def _write(self, declarations):
+        if self._block is not None:
+            self._block = list(declarations)
+            return
         if self._element is None: return
         text = "".join(f"{n}: {v}{' !important' if p else ''}; " for n, v, p in declarations).strip()
         # Chromium leaves the attribute behind and empties it, so removing the last
@@ -282,7 +292,7 @@ class CSSStyleDeclaration:
     def set_cssText(self, value):
         self._write(parse_declarations(dom_string(value)))
     def get_length(self): return len(self._declarations())
-    def get_parentRule(self): return pyv8.Null
+    def get_parentRule(self): return self._parent_rule or pyv8.Null
     def get_cssFloat(self): return self._value("float")
     def set_cssFloat(self, value): self._set("float", value)
     def fn_getPropertyPriority(self, name=MISSING, *_extra):
@@ -429,15 +439,52 @@ class StyleSheet:
 
 @interface('CSSStyleSheet', 'StyleSheet')
 class CSSStyleSheet(StyleSheet):
-    """A sheet of CSS rules. The rules themselves are the baseline's business here;
-    what a page reads first is the owner it came from and whether it is disabled."""
+    """A sheet of CSS rules: the owner it came from, and the rules themselves."""
 
     __v8_idl_spec__ = IdlSpec(
-        attributes=(),
+        attributes=(AttributeSpec(name="cssRules", getter="get_cssRules",
+                                  side_effect=1),),
+        methods=(
+            MethodSpec(name="insertRule", callback="fn_insertRule", length=2),
+            MethodSpec(name="deleteRule", callback="fn_deleteRule", length=1),
+        ),
         constructor_behavior=0,
         to_string_tag="CSSStyleSheet",
         has_constructor=0,
     )
+
+    def _owner_sheet(self): return self
+
+    def get_cssRules(self):
+        """The sheet's rules, read from the owner's text and then the page's own.
+
+        The text is what the parse is keyed on, so a rule the page inserted survives
+        until the sheet's own text changes -- at which point Chrome re-parses too.
+        """
+        from .css_rules import CSSRuleList, build_rules
+        owner = getattr(self, "_owner", None)
+        text = owner.get_textContent() if owner is not None else ""
+        if getattr(self, "_rule_text", None) != text:
+            self._rule_text = text
+            self._rules = build_rules(text, self)
+        return CSSRuleList(self._rules)
+
+    def fn_insertRule(self, rule=MISSING, index=0, *_extra):
+        from .css_rules import insert_rule
+        if rule is MISSING:
+            raise missing_error('CSSStyleSheet', 'insertRule', 2, 0, constructor=False)
+        return insert_rule(self, str(dom_string(rule)), integer(index))
+
+    def fn_deleteRule(self, index=MISSING, *_extra):
+        from .css_rules import RANGE_MESSAGE
+        if index is MISSING:
+            raise missing_error('CSSStyleSheet', 'deleteRule', 1, 0, constructor=False)
+        rules = self.get_cssRules()._rules
+        position = integer(index)
+        if not 0 <= position < len(rules):
+            raise IndexSizeError(RANGE_MESSAGE)
+        del rules[position]
+        return None
 
 
 @interface('StyleSheetList', None)
