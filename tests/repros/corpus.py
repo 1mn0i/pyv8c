@@ -3862,6 +3862,72 @@ CASES = (
         expected=[True, True, True, False, False, "absent", True, True],
     ),
     Repro(
+        name="the_legacy_frame_and_image_members_answer_what_chrome_answers",
+        note="The frame's legacy members are string reflections whose attribute names are "
+             "one word -- frameborder, marginheight, marginwidth -- while longDesc is a "
+             "URL and the four modern ones are boolean flags that a false takes away. "
+             "complete is true for an image with nothing to load.",
+        script="""(() => {
+            const out = [];
+            const frame = document.createElement('iframe');
+            out.push([frame.align, frame.scrolling, frame.frameBorder, frame.longDesc,
+                      frame.marginHeight, frame.marginWidth, frame.csp,
+                      frame.privateToken]);
+            frame.align = 'left';
+            frame.scrolling = 'no';
+            frame.frameBorder = '0';
+            frame.longDesc = 'http://example.test/page.html';
+            frame.marginHeight = '4';
+            frame.marginWidth = '5';
+            frame.csp = 'default-src none';
+            frame.privateToken = 'token';
+            out.push([frame.getAttribute('align'), frame.getAttribute('scrolling'),
+                      frame.getAttribute('frameborder'), frame.getAttribute('longdesc'),
+                      frame.getAttribute('marginheight'), frame.getAttribute('marginwidth'),
+                      frame.getAttribute('csp'), frame.getAttribute('privatetoken')]);
+            out.push([frame.align, frame.longDesc, frame.marginWidth]);
+            out.push([frame.credentialless, frame.allowPaymentRequest,
+                      frame.browsingTopics, frame.adAuctionHeaders]);
+            frame.credentialless = true;
+            frame.allowPaymentRequest = 'x';
+            frame.browsingTopics = true;
+            frame.adAuctionHeaders = 0;
+            out.push([frame.credentialless, frame.allowPaymentRequest,
+                      frame.browsingTopics, frame.adAuctionHeaders,
+                      frame.hasAttribute('adauctionheaders'),
+                      frame.getAttributeNames().slice().sort()]);
+            const image = document.createElement('img');
+            out.push([image.complete]);
+            const empty = document.createElement('img');
+            empty.src = '';
+            out.push([empty.complete]);
+            out.push([Notification.maxActions]);
+            const face = new FontFace('x', 'url(y)');
+            out.push([face.ascentOverride]);
+            face.ascentOverride = '90%';
+            out.push([face.ascentOverride]);
+            out.push([document.webkitFullscreenElement === null,
+                      document.webkitIsFullScreen]);
+            return out;
+        })()""",
+        expected=[["", "", "", "", "", "", "", None],
+                  ["left", "no", "0", "http://example.test/page.html", "4", "5",
+                   "default-src none", None],
+                  ["left", "http://example.test/page.html", "5"],
+                  [False, False, None, None],
+                  [True, True, None, None, False,
+                   ["align", "allowpaymentrequest", "credentialless", "csp", "frameborder",
+                    "longdesc", "marginheight", "marginwidth", "scrolling"]],
+                  [True], [True], [2], ["normal"], ["90%"], [True, False]],
+        known_divergence="privateToken, browsingTopics and adAuctionHeaders exist only in"
+                         " a secure context, so on this insecure page Chrome leaves them"
+                         " off the element and a page that assigns to one lands the value"
+                         " on an ordinary property of its own, which reads back as what"
+                         " was written. Here the members are declared and the accessors"
+                         " answer undefined and drop the assignment, so the read is the"
+                         " same and the write is not.",
+    ),
+    Repro(
         name="the_small_element_members_answer_what_chrome_answers",
         note="The string members reflect a content attribute, part is a token list, and "
              "the geometry members answer as they do for an element nothing has laid out "
