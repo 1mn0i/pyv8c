@@ -3943,6 +3943,168 @@ CASES = (
         expected=[[True, True], [["#one", "#two"], "two"], [[], 0], [[], 0], [True, True]],
     ),
     Repro(
+        name="a_plain_reflection_keeps_the_attribute_name_chrome_writes",
+        note="Two of them are here because the attribute is not the dashed form of the "
+             "property: accessKey is accesskey. A value is kept as written, and a "
+             "nullish one is stringified rather than removing the attribute, so lang "
+             "ends up reading as the string null with the attribute still there. "
+             "focusGroup is here too, and is a sequence rather than a string.",
+        script="""(() => {
+            const el = document.createElement('div');
+            const out = [];
+            for (const [name, attribute] of [['lang', 'lang'], ['accessKey', 'accesskey']]) {
+                out.push([name, el[name], el.hasAttribute(attribute)]);
+                el[name] = 'written';
+                out.push([name, el[name], el.getAttribute(attribute)]);
+                el[name] = null;
+                out.push([name, el[name], el.hasAttribute(attribute)]);
+            }
+            out.push([Array.from(el.focusGroup), el.hasAttribute('focusgroup')]);
+            el.setAttribute('focusgroup', 'one two');
+            out.push([Array.from(el.focusGroup), el.getAttribute('focusgroup')]);
+            el.focusGroup = null;
+            out.push([Array.from(el.focusGroup), el.hasAttribute('focusgroup')]);
+            return out;
+        })()""",
+        expected=[["lang", "", False], ["lang", "written", "written"],
+                  ["lang", "null", True],
+                  ["accessKey", "", False], ["accessKey", "written", "written"],
+                  ["accessKey", "null", True],
+                  [[], False], [["one", "two"], "one two"], [["null"], True]],
+    ),
+    Repro(
+        name="a_keyword_attribute_is_written_through_and_read_back_validated",
+        note="The setter keeps whatever it is given, the attribute included, and the "
+             "getter answers from the words it knows: a value outside the set reads as "
+             "the fallback rather than as what was written. An absent attribute reads as "
+             "the default, which for popover is nothing at all.",
+        script="""(() => {
+            const el = document.createElement('div');
+            const out = [];
+            for (const name of ['dir', 'autocapitalize', 'enterKeyHint', 'inputMode',
+                                'virtualKeyboardPolicy', 'popover']) {
+                out.push([name, el[name] === null ? 'null' : el[name]]);
+                el[name] = 'not a word';
+                out.push([name, el[name], el.getAttribute(name.toLowerCase())]);
+                el[name] = null;
+                out.push([name, el[name] === null ? 'null' : el[name],
+                          el.hasAttribute(name.toLowerCase())]);
+            }
+            const valid = document.createElement('div');
+            valid.dir = 'RTL';
+            valid.inputMode = 'tel';
+            valid.popover = 'hint';
+            valid.autocapitalize = 'WORDS';
+            out.push([valid.dir, valid.inputMode, valid.popover, valid.autocapitalize,
+                      valid.getAttribute('dir'), valid.getAttribute('autocapitalize')]);
+            return out;
+        })()""",
+        expected=[["dir", ""], ["dir", "", "not a word"], ["dir", "", True],
+                  ["autocapitalize", ""], ["autocapitalize", "sentences", "not a word"],
+                  ["autocapitalize", "sentences", True],
+                  ["enterKeyHint", ""], ["enterKeyHint", "", "not a word"],
+                  ["enterKeyHint", "", True],
+                  ["inputMode", ""], ["inputMode", "", "not a word"], ["inputMode", "", True],
+                  ["virtualKeyboardPolicy", ""], ["virtualKeyboardPolicy", "", "not a word"],
+                  ["virtualKeyboardPolicy", "", True],
+                  ["popover", "null"], ["popover", "manual", "not a word"],
+                  ["popover", "null", False],
+                  ["rtl", "tel", "hint", "words", "RTL", "WORDS"]],
+    ),
+    Repro(
+        name="a_boolean_attribute_spells_itself_and_answers_from_a_default",
+        note="These five are booleans that write a word rather than a bare attribute: "
+             "translate writes yes or no, autocorrect on or off, and a nullish value is "
+             "the false end rather than a removal. An absent attribute reads as the "
+             "default, which is true for three of them and false for draggable.",
+        script="""(() => {
+            const el = document.createElement('div');
+            const out = [];
+            for (const name of ['translate', 'autocorrect', 'spellcheck', 'draggable',
+                                'writingSuggestions']) {
+                out.push([name, el[name], el.hasAttribute(name.toLowerCase())]);
+                el[name] = true;
+                out.push([name, el[name], el.getAttribute(name.toLowerCase())]);
+                el[name] = false;
+                out.push([name, el[name], el.getAttribute(name.toLowerCase())]);
+                el[name] = null;
+                out.push([name, el[name], el.getAttribute(name.toLowerCase())]);
+            }
+            const zero = document.createElement('div');
+            zero.draggable = 0;
+            zero.spellcheck = 1;
+            out.push([zero.draggable, zero.getAttribute('draggable'), zero.spellcheck,
+                      zero.getAttribute('spellcheck')]);
+            return out;
+        })()""",
+        expected=[["translate", True, False], ["translate", True, "yes"],
+                  ["translate", False, "no"], ["translate", False, "no"],
+                  ["autocorrect", True, False], ["autocorrect", True, "on"],
+                  ["autocorrect", False, "off"], ["autocorrect", False, "off"],
+                  ["spellcheck", True, False], ["spellcheck", True, "true"],
+                  ["spellcheck", False, "false"], ["spellcheck", False, "false"],
+                  ["draggable", False, False], ["draggable", True, "true"],
+                  ["draggable", False, "false"], ["draggable", False, "false"],
+                  ["writingSuggestions", "true", False],
+                  ["writingSuggestions", "true", "true"],
+                  ["writingSuggestions", "false", "false"],
+                  ["writingSuggestions", "true", "null"],
+                  [False, "false", True, "true"]],
+    ),
+    Repro(
+        name="the_boolean_flags_read_as_whether_the_attribute_is_there",
+        note="autofocus, inert and focusGroupStart are booleans in the plain sense: any "
+             "value at all makes them true, and false takes the attribute away rather "
+             "than writing false.",
+        script="""(() => {
+            const el = document.createElement('div');
+            const out = [];
+            for (const [name, attribute] of [['autofocus', 'autofocus'],
+                                             ['inert', 'inert'],
+                                             ['focusGroupStart', 'focusgroupstart']]) {
+                out.push([name, el[name], el.hasAttribute(attribute)]);
+                el[name] = 'anything';
+                out.push([name, el[name], el.getAttribute(attribute)]);
+                el[name] = false;
+                out.push([name, el[name], el.hasAttribute(attribute)]);
+                el[name] = true;
+                el[name] = null;
+                out.push([name, el[name], el.hasAttribute(attribute)]);
+            }
+            return out;
+        })()""",
+        expected=[["autofocus", False, False], ["autofocus", True, ""],
+                  ["autofocus", False, False], ["autofocus", False, False],
+                  ["inert", False, False], ["inert", True, ""],
+                  ["inert", False, False], ["inert", False, False],
+                  ["focusGroupStart", False, False], ["focusGroupStart", True, ""],
+                  ["focusGroupStart", False, False], ["focusGroupStart", False, False]],
+    ),
+    Repro(
+        name="outer_text_reads_like_inner_text_and_writes_like_a_replacement",
+        note="Reading outerText gives the same text innerText does, and writing it takes "
+             "the element out and leaves the text behind, which is what assigning to "
+             "outerText does in a browser. editContext is null here and takes what it is "
+             "given without keeping it.",
+        script="""(() => {
+            const el = document.createElement('div');
+            el.textContent = 'body text';
+            document.body.appendChild(el);
+            const read = el.outerText;
+            el.outerText = 'replaced';
+            const out = [[read, document.body.contains(el), document.body.textContent],
+                         [el.editContext === null]];
+            try { el.editContext = 'ignored'; out.push('no-throw'); }
+            catch (error) { out.push([error.name, error.message]); }
+            out.push([el.editContext === null, el.hasAttribute('editcontext')]);
+            return out;
+        })()""",
+        expected=[["body text", False, "replaced"], [True],
+                  ["TypeError", "Failed to set the 'editContext' property on"
+                   " 'HTMLElement': Failed to convert value to 'EditContext'."],
+                  [True, False]],
+    ),
+    Repro(
         name="inner_text_is_the_rendered_text_not_the_markup",
         note="innerText is not textContent: whitespace collapses, a block boundary and a "
              "br become newlines, and the ends are trimmed. The setter takes the string as "

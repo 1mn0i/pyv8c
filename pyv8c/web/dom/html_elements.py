@@ -24,7 +24,7 @@ from .collections import (
     NamedNodeMap,
     tag_name_ns_collection,
 )
-from . import aria
+from . import aria, html_props
 from .css import CSSStyleDeclaration
 from .events import _install_handler_slots
 from .mixins import _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, _ParentNodeMixin
@@ -426,6 +426,45 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             if n.fn_matches(selector): return n
             n = n.parentElement
         return pyv8.Null
+    @property
+    def _reflected(self):
+        """What a member was last given and then had taken away, per attribute.
+
+        Chrome answers such a member with the word it was given rather than with the
+        attribute or the default, which is the only way popover reads back as null.
+        """
+        store = self.__dict__.get("_reflected_store")
+        if store is None:
+            store = self.__dict__["_reflected_store"] = {}
+        return store
+
+    def _write(self, name, value, keep=None):
+        """Set or remove one content attribute.
+
+        A nullish value takes the attribute away unless *keep* says which of the two
+        ends it stands for, which is how a boolean attribute spells itself: the true
+        end is an empty attribute, the false end is no attribute.
+        """
+        if keep is not None:
+            if keep:
+                self.attributes[name] = ""
+            else:
+                self.attributes.pop(name, None)
+        elif is_nullish(value):
+            self.attributes.pop(name, None)
+        else:
+            self.attributes[name] = str(dom_string(value))
+
+    def _replace_with_text(self, value):
+        """Take this element out of its parent and leave a text node in its place."""
+        parent = self.parentNode
+        if parent is None:
+            return
+        if is_nullish(value):
+            parent.removeChild(self)
+            return
+        parent.fn_replaceChild(Text(str(dom_string(value)), services=self._services), self)
+
     def _resolve_ids(self, ids):
         """The elements *ids* names, in the order given, skipping what is not there.
 
@@ -696,6 +735,12 @@ class HTMLElement(Element):
         ``click`` at the origin, then the behavior unless a listener cancelled it."""
         from .activation import click_element
         click_element(self)
+
+
+#: The attributes HTMLElement reflects in a shape of its own, from a table measured
+#: on Chrome; see web.dom.html_props for what each shape does.
+HTMLElement.__v8_idl_spec__ = HTMLElement.__v8_idl_spec__.replace(
+    attributes=HTMLElement.__v8_idl_spec__.attributes + html_props.install(HTMLElement))
 
 
 @interface('HTMLUnknownElement', 'HTMLElement')
