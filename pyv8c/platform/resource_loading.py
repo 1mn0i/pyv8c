@@ -860,6 +860,9 @@ class ResourceController:
             page.lifecycle.dispatch_page_event("error", node, {"bubbles": False})
             page.lifecycle.maybe_fire_document_load()
             return
+        if kind == "img":
+            # ``complete`` turns true the moment a load settles, either way.
+            node._image_complete = True
         if error:
             if kind == "script":
                 page.lifecycle.dispatch_script_error(node, error)

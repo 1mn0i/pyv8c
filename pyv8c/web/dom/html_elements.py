@@ -1057,6 +1057,7 @@ class HTMLImageElement(HTMLElement):
             _attribute("alt", "get_alt", "set_alt"),
             AttributeSpec(name="width", getter="get_width", setter="set_width"),
             AttributeSpec(name="height", getter="get_height", setter="set_height"),
+            AttributeSpec(name="complete", getter="get_complete", side_effect=1),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -1085,6 +1086,15 @@ class HTMLImageElement(HTMLElement):
     def set_width(self, value): self._set_dimension("width", value)
     def get_height(self): return self._dimension("height")
     def set_height(self, value): self._set_dimension("height", value)
+    def get_complete(self):
+        """Whether the element is waiting on anything: no source, or a load that has
+        settled either way -- Chrome answers false only while one is in flight.
+        """
+        if not self.attributes.get("src"):
+            return True
+        if not getattr(self, "_resource_started", False):
+            return True
+        return bool(getattr(self, "_image_complete", False))
 
 
 @interface('HTMLScriptElement', 'HTMLElement')
