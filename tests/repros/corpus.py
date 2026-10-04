@@ -3684,20 +3684,18 @@ CASES = (
     Repro(
         name="a_sheet_keeps_its_owner_and_says_it_has_no_rules_yet",
         note="What a sheet answers with is the object the list holds for its owner, and the "
-             "owner is the element it came from. The rules themselves are baseline stubs "
-             "here, so cssRules is undefined where Chrome reads a CSSRuleList.",
+             "owner is the element it came from. The rules come from the owner's text, so "
+             "the sheet of a style element holding one rule reports one.",
         html=page(head='<style id=one>p { color: red }</style>'),
         script="""(() => {
             const sheet = document.getElementById('one').sheet;
             return [sheet.ownerNode === document.getElementById('one'),
                     sheet === document.styleSheets[0],
-                    typeof sheet.cssRules,
+                    Object.prototype.toString.call(sheet.cssRules),
+                    sheet.cssRules.length, sheet.cssRules[0].selectorText,
                     sheet.disabled];
         })()""",
-        expected=[True, True, "undefined", False],
-        known_divergence="CSSStyleSheet's own members are baseline stubs here, so cssRules"
-                         " reads undefined where Chrome reads a CSSRuleList; the object the"
-                         " element answers with is the right one either way.",
+        expected=[True, True, "[object CSSRuleList]", 1, "p", False],
     ),
     Repro(
         name="the_contenteditable_attribute_says_which_keyword_it_holds",
@@ -3860,6 +3858,78 @@ CASES = (
                     svg.isContentEditable === undefined];
         })()""",
         expected=[True, True, True, False, False, "absent", True, True],
+    ),
+    Repro(
+        name="a_sheet_answers_with_the_rules_it_holds",
+        note="cssRules is a live CSSRuleList: a style rule answers its type, its "
+             "selector, its serialised text and its style, and a @media rule answers a "
+             "medium and the rules nested in it. The text is Blink's own -- a style rule "
+             "on one line, a grouping rule over several with its children indented two "
+             "spaces, and a shorthand expanded the way the declaration block expands it.",
+        html=page(head="<style id=s>p { color: red } .a, .b { color: blue }"
+                       "@media screen { div { top: 1px } }</style>"),
+        script="""(() => {
+            const sheet = document.getElementById('s').sheet;
+            const rules = sheet.cssRules;
+            return [rules.length, Object.prototype.toString.call(rules),
+                    typeof rules.item, rules[0] === rules.item(0),
+                    [rules.item(99), rules[99]],
+                    [rules[0].type, rules[0].selectorText, rules[0].cssText,
+                     rules[0].parentRule, rules[0].parentStyleSheet === sheet,
+                     Object.prototype.toString.call(rules[0])],
+                    [rules[1].selectorText, rules[1].cssText, rules[1].style.length,
+                     rules[1].style[0], rules[1].style.getPropertyValue('color'),
+                     rules[1].style.parentRule === rules[1]],
+                    [rules[2].type, rules[2].cssText, rules[2].selectorText,
+                     rules[2].media.mediaText, rules[2].cssRules.length,
+                     Object.prototype.toString.call(rules[2]),
+                     rules[2].cssRules[0].selectorText]];
+        })()""",
+        expected=[3, "[object CSSRuleList]", "function", True, [None, None],
+                  [1, "p", "p { color: red; }", None, True, "[object CSSStyleRule]"],
+                  [".a, .b", ".a, .b { color: blue; }", 1, "color", "blue", True],
+                  [4, "@media screen {\n  div { top: 1px; }\n}", None, "screen", 1,
+                   "[object CSSMediaRule]", "div"]],
+    ),
+    Repro(
+        name="a_rule_style_keeps_a_shorthand_and_a_bare_zero_as_written",
+        note="A rule's style is a declaration block read from the sheet's text.",
+        html=page(head="<style id=s>p { margin: 0 } div { top: 0 }</style>"),
+        script="""(() => {
+            const sheet = document.getElementById('s').sheet;
+            const style = sheet.cssRules[0].style;
+            return [[style.length, style[0], style.getPropertyValue('margin')],
+                    sheet.cssRules[0].cssText, sheet.cssRules[1].cssText];
+        })()""",
+        expected=[[1, "margin", "0"], "p { margin: 0; }", "div { top: 0; }"],
+        known_divergence="a declaration block is kept as written here: the shorthand is not"
+                         " expanded into its longhands and a bare zero keeps no unit, so a"
+                         " rule's style reports one declaration where Chrome reports four"
+                         " and the text reads 0 where Chrome reads 0px. The same gap applies"
+                         " to an element's inline style, which is why it is written down"
+                         " rather than fixed in the rule layer alone.",
+    ),
+    Repro(
+        name="a_sheet_is_edited_in_place_by_insert_and_delete",
+        note="insertRule puts the rule at the index it was given and answers that index, "
+             "and deleteRule takes one away; a string that is not a rule is a "
+             "SyntaxError.",
+        html=page(head="<style id=s>p { color: red }</style>"),
+        script="""(() => {
+            const sheet = document.getElementById('s').sheet;
+            const out = [sheet.cssRules.length];
+            const at = sheet.insertRule('h1 { color: blue }', 0);
+            out.push([at, sheet.cssRules.length, sheet.cssRules[0].selectorText,
+                      sheet.cssRules[1].selectorText]);
+            sheet.deleteRule(0);
+            out.push([sheet.cssRules.length, sheet.cssRules[0].selectorText]);
+            try { sheet.insertRule('not a rule'); out.push('no-throw'); }
+            catch (error) { out.push([error.name, error.code, error.message]); }
+            return out;
+        })()""",
+        expected=[1, [0, 2, "h1", "p"], [1, "p"],
+                  ["SyntaxError", 12, "Failed to execute 'insertRule' on"
+                   " 'CSSStyleSheet': Failed to parse the rule 'not a rule'."]],
     ),
     Repro(
         name="the_legacy_frame_and_image_members_answer_what_chrome_answers",
