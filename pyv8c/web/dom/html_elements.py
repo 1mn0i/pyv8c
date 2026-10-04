@@ -65,6 +65,23 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             AttributeSpec(name="scrollHeight", getter="get_scrollHeight", side_effect=1),
             AttributeSpec(name="role", getter="get_role", setter="set_role"),
             AttributeSpec(name="shadowRoot", getter="get_shadowRoot", side_effect=1),
+            AttributeSpec(name="slot", getter="get_slot", setter="set_slot"),
+            AttributeSpec(name="part", getter="get_part", setter="set_part",
+                          side_effect=1),
+            AttributeSpec(name="assignedSlot", getter="get_assignedSlot", side_effect=1),
+            AttributeSpec(name="scrollTop", getter="get_scrollTop", setter="set_scrollTop"),
+            AttributeSpec(name="scrollLeft", getter="get_scrollLeft",
+                          setter="set_scrollLeft"),
+            AttributeSpec(name="clientTop", getter="get_clientTop", side_effect=1),
+            AttributeSpec(name="clientLeft", getter="get_clientLeft", side_effect=1),
+            AttributeSpec(name="elementTiming", getter="get_elementTiming",
+                          setter="set_elementTiming"),
+            AttributeSpec(name="currentCSSZoom", getter="get_currentCSSZoom",
+                          side_effect=1),
+            AttributeSpec(name="customElementRegistry", getter="get_customElementRegistry",
+                          side_effect=1),
+            AttributeSpec(name="activeViewTransition", getter="get_activeViewTransition",
+                          side_effect=1),
         ),
         methods=(
             MethodSpec(name="getAttribute", callback="fn_getAttribute", length=1, side_effect=1),
@@ -191,6 +208,38 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         value = dom_string(value)
         if self.parentNode: self.parentNode.fn_replaceChild(self._services.document_services.document._parse_one(str(value)), self)
     def get_children(self): return HTMLCollection(owner=self, getter=lambda: [c for c in self._children if isinstance(c, Element)])
+    def get_slot(self): return str(self.attributes.get("slot", ""))
+    def set_slot(self, value): self.attributes["slot"] = str(dom_string(value))
+    def get_part(self):
+        value = getattr(self, "_part_list", None)
+        if value is None: value = self._part_list = DOMTokenList(self, "part")
+        return value
+    def set_part(self, value):
+        # PutForwards, so an assignment lands on the token list's own value.
+        self.get_part().set_value(dom_string(value))
+    def get_assignedSlot(self): return pyv8.Null
+    # Nothing here scrolls and nothing lays a border out, so the four read as a page
+    # reads them on an element that is not rendered: Chrome answers 0 for each.
+    def get_scrollTop(self): return 0
+    def set_scrollTop(self, value): return None
+    def get_scrollLeft(self): return 0
+    def set_scrollLeft(self, value): return None
+    def get_clientTop(self): return 0
+    def get_clientLeft(self): return 0
+    def get_elementTiming(self): return str(self.attributes.get("elementtiming", ""))
+    def set_elementTiming(self, value):
+        self.attributes["elementtiming"] = str(dom_string(value))
+    def get_currentCSSZoom(self): return 1
+    def get_customElementRegistry(self):
+        """The registry ``window.customElements`` hands out, since it is one per window."""
+        from ..bom.window import Window
+        document = self.ownerDocument
+        view = document.get_defaultView() if document is not None else None
+        if not isinstance(view, Window):
+            return pyv8.Null
+        return view._window_value("customElements")
+    def get_activeViewTransition(self): return pyv8.Null
+
     def get_classList(self):
         value = getattr(self, "_class_list", None)
         if value is None: value = self._class_list = DOMTokenList(self)
@@ -511,7 +560,10 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
 #: own module.
 Element.__v8_idl_spec__ = Element.__v8_idl_spec__.replace(
     attributes=Element.__v8_idl_spec__.attributes
-    + _install_handler_slots(Element, ("onbeforecopy", "onbeforecut", "onbeforepaste"))
+    + _install_handler_slots(Element, ("onbeforecopy", "onbeforecut", "onbeforepaste",
+                                          "onfullscreenchange", "onfullscreenerror",
+                                          "onwebkitfullscreenchange",
+                                          "onwebkitfullscreenerror"))
     + aria.install(Element))
 
 @interface('HTMLElement', 'Element')
@@ -656,8 +708,6 @@ class HTMLElement(Element):
                 self.append_child(class_for_tag("br")("br", services=self._services))
             if line:
                 self.append_child(Text(line, services=self._services))
-
-
 
     def get_nonce(self): return self._attr("nonce")
     def set_nonce(self, value): self._set_string("nonce", value)

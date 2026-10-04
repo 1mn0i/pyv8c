@@ -3862,6 +3862,51 @@ CASES = (
         expected=[True, True, True, False, False, "absent", True, True],
     ),
     Repro(
+        name="the_small_element_members_answer_what_chrome_answers",
+        note="The string members reflect a content attribute, part is a token list, and "
+             "the geometry members answer as they do for an element nothing has laid out "
+             "-- which is what this tree models: it lays out widths and heights, not the "
+             "border and scroll offsets, so a rendered element's clientTop and scrollTop "
+             "stay 0 here where Chrome reports the border and what was scrolled.",
+        script="""(() => {
+            const el = document.createElement('div');
+            const out = [];
+            out.push([el.slot, el.getAttribute('slot')]);
+            el.slot = 'alpha';
+            out.push([el.slot, el.getAttribute('slot')]);
+            out.push([Object.prototype.toString.call(el.part), el.part.length,
+                      String(el.part.value)]);
+            el.part = 'one two';
+            out.push([el.getAttribute('part'), el.part.length, el.part[0], el.part[1],
+                      String(el.part)]);
+            out.push([el.assignedSlot === null, el.elementTiming,
+                      el.getAttribute('elementtiming')]);
+            el.elementTiming = 'mark';
+            out.push([el.elementTiming, el.getAttribute('elementtiming')]);
+            out.push([el.scrollTop, el.scrollLeft, el.clientTop, el.clientLeft,
+                      el.clientWidth, el.clientHeight, el.scrollWidth, el.scrollHeight,
+                      el.currentCSSZoom]);
+            el.scrollTop = 50;
+            el.scrollLeft = 50;
+            out.push([el.scrollTop, el.scrollLeft]);
+            out.push([el.activeViewTransition === null,
+                      el.customElementRegistry === window.customElements,
+                      Object.prototype.toString.call(el.customElementRegistry)]);
+            out.push(['onfullscreenchange', 'onfullscreenerror',
+                      'onwebkitfullscreenchange', 'onwebkitfullscreenerror'].map(
+                (name) => typeof Object.getOwnPropertyDescriptor(Element.prototype,
+                                                                  name).get));
+            return out;
+        })()""",
+        expected=[["", None], ["alpha", "alpha"],
+                  ["[object DOMTokenList]", 0, ""],
+                  ["one two", 2, "one", "two", "one two"],
+                  [True, "", None], ["mark", "mark"],
+                  [0, 0, 0, 0, 0, 0, 0, 0, 1], [0, 0],
+                  [True, True, "[object CustomElementRegistry]"],
+                  ["function", "function", "function", "function"]],
+    ),
+    Repro(
         name="the_aria_attributes_reflect_content_attributes",
         note="Each ARIA property is the content attribute of the same name, and the "
              "names are not the dashed form of the property: ariaAutoComplete is "
