@@ -39,6 +39,20 @@ class HTMLIFrameElement(HTMLElement):
             _attribute("height", "get_height", "set_height"),
             _attribute("referrerPolicy", "get_referrerPolicy", "set_referrerPolicy"),
             _attribute("loading", "get_loading", "set_loading"),
+            _attribute("align", "get_align", "set_align"),
+            _attribute("scrolling", "get_scrolling", "set_scrolling"),
+            _attribute("frameBorder", "get_frameBorder", "set_frameBorder"),
+            _url_attr("longDesc", "get_longDesc", "set_longDesc"),
+            _attribute("marginHeight", "get_marginHeight", "set_marginHeight"),
+            _attribute("marginWidth", "get_marginWidth", "set_marginWidth"),
+            _attribute("csp", "get_csp", "set_csp"),
+            _attribute("privateToken", "get_privateToken", "set_privateToken"),
+            _attribute("credentialless", "get_credentialless", "set_credentialless"),
+            _attribute("allowPaymentRequest", "get_allowPaymentRequest",
+                       "set_allowPaymentRequest"),
+            _attribute("browsingTopics", "get_browsingTopics", "set_browsingTopics"),
+            _attribute("adAuctionHeaders", "get_adAuctionHeaders",
+                       "set_adAuctionHeaders"),
             AttributeSpec(name="contentDocument", getter="get_contentDocument", side_effect=1),
             AttributeSpec(name="contentWindow", getter="get_contentWindow", side_effect=1),
         ),
@@ -149,6 +163,60 @@ class HTMLIFrameElement(HTMLElement):
     def set_loading(self, value):
         loading = str(dom_string(value))
         self.attributes["loading"] = loading if loading in ("lazy", "eager") else "auto"
+    def _string_attribute(self, name, value=None):
+        if value is None:
+            return str(self.attributes.get(name, ""))
+        self.attributes[name] = str(dom_string(value))
+    def _boolean_attribute(self, name, value):
+        if boolean(value):
+            self.attributes[name] = ""
+        else:
+            self.attributes.pop(name, None)
+    def get_align(self): return self._string_attribute("align")
+    def set_align(self, value): self._string_attribute("align", value)
+    def get_scrolling(self): return self._string_attribute("scrolling")
+    def set_scrolling(self, value): self._string_attribute("scrolling", value)
+    def get_frameBorder(self): return self._string_attribute("frameborder")
+    def set_frameBorder(self, value): self._string_attribute("frameborder", value)
+    def get_longDesc(self): return _url_value(self, "longdesc")
+    def set_longDesc(self, value): _set_url_value(self, "longdesc", value)
+    def get_marginHeight(self): return self._string_attribute("marginheight")
+    def set_marginHeight(self, value): self._string_attribute("marginheight", value)
+    def get_marginWidth(self): return self._string_attribute("marginwidth")
+    def set_marginWidth(self, value): self._string_attribute("marginwidth", value)
+    def get_csp(self): return self._string_attribute("csp")
+    def set_csp(self, value): self._string_attribute("csp", value)
+    def _secure_context(self):
+        """Whether this element's document is in a secure context.
+
+        Chrome exposes privateToken, browsingTopics and adAuctionHeaders only there:
+        outside one they read as undefined and nothing lands in the attributes.
+        """
+        from ..bom.utils import is_secure_context
+        return is_secure_context(str(getattr(self.ownerDocument, "url", "") or ""))
+    def get_privateToken(self):
+        return (self._string_attribute("privatetoken") if self._secure_context()
+                else pyv8.Undefined)
+    def set_privateToken(self, value):
+        if self._secure_context():
+            self._string_attribute("privatetoken", value)
+    def get_credentialless(self): return "credentialless" in self.attributes
+    def set_credentialless(self, value): self._boolean_attribute("credentialless", value)
+    def get_allowPaymentRequest(self): return "allowpaymentrequest" in self.attributes
+    def set_allowPaymentRequest(self, value):
+        self._boolean_attribute("allowpaymentrequest", value)
+    def get_browsingTopics(self):
+        return ("browsingtopics" in self.attributes if self._secure_context()
+                else pyv8.Undefined)
+    def set_browsingTopics(self, value):
+        if self._secure_context():
+            self._boolean_attribute("browsingtopics", value)
+    def get_adAuctionHeaders(self):
+        return ("adauctionheaders" in self.attributes if self._secure_context()
+                else pyv8.Undefined)
+    def set_adAuctionHeaders(self, value):
+        if self._secure_context():
+            self._boolean_attribute("adauctionheaders", value)
     def fn_getSVGDocument(self, *_args): return pyv8.Null
     def get_contentDocument(self):
         if self._child_services is None:
