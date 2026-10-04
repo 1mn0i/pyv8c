@@ -230,6 +230,20 @@ class NavigationController:
         self.parsing = False
         self.page.tasks.post(self.page.scripts.run_deferred_scripts, TaskSource.PARSER)
 
+    def close_document(self):
+        """The document close steps: stop the parser where it stands.
+
+        A page that opened a document and wrote part of it reads ``complete`` at once,
+        and the markup it never wrote is not parsed.
+        """
+        if self.page.closed or self.page.context_owner.closed:
+            return False
+        self.parser = None
+        if not self.parser_done:
+            self.finish_document_parse()
+        self.page.document.ready_state = "complete"
+        return True
+
     def resume_parser(self, generation=None):
         if self.page.closed or generation != self.generation or self.parser is None:
             return

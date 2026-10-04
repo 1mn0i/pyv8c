@@ -411,6 +411,9 @@ class _DocumentCapability:
     def open_document(self):
         return self._owner._navigation.open_document()
 
+    def close_document(self):
+        return self._owner._navigation.close_document()
+
     def motion_event_listener(self, event_type):
         page = getattr(getattr(self._owner, "_page_realm", None), "page", None)
         if page is not None:

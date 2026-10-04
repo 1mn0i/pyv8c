@@ -34,6 +34,10 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="designMode", getter="get_designMode",
                           setter="set_designMode"),
             AttributeSpec(name="styleSheets", getter="get_styleSheets", side_effect=1),
+            AttributeSpec(name="webkitFullscreenElement",
+                          getter="get_webkitFullscreenElement", side_effect=1),
+            AttributeSpec(name="webkitIsFullScreen", getter="get_webkitIsFullScreen",
+                          side_effect=1),
             AttributeSpec(name="documentElement", getter="get_documentElement", side_effect=1),
             AttributeSpec(name="scrollingElement", getter="get_scrollingElement", side_effect=1),
             AttributeSpec(name="body", getter="get_body", side_effect=1),
@@ -82,6 +86,7 @@ class Document(_ParentNodeMixin, Node):
             MethodSpec(name="write", callback="fn_write"),
             MethodSpec(name="writeln", callback="fn_writeln"),
             MethodSpec(name="open", callback="fn_open", length=0),
+            MethodSpec(name="close", callback="fn_close", length=0),
             MethodSpec(name="hasFocus", callback="fn_hasFocus"),
             MethodSpec(name="elementFromPoint", callback="fn_elementFromPoint", length=2, side_effect=1),
             MethodSpec(name="elementsFromPoint", callback="fn_elementsFromPoint", length=2, side_effect=1),
@@ -422,6 +427,14 @@ class Document(_ParentNodeMixin, Node):
         if services is not None:
             services.document_services.open_document()
         return self
+    def fn_close(self, *_extra):
+        """Finish the parse a page started with ``document.open()`` or ``write()``."""
+        services = getattr(self, "_services", None)
+        if services is not None:
+            services.document_services.close_document()
+        return None
+    def get_webkitFullscreenElement(self): return pyv8.Null
+    def get_webkitIsFullScreen(self): return False
     def _write_markup(self, markup):
         """Hand written markup to the document's parser, like ``document.write``.
         A document without services has no parser, so it writes nowhere."""
