@@ -144,6 +144,9 @@ class Notification(EventTarget):
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="permission", getter="get_permission",
                                   location=FlagLocation.kInterface,
+                                  receiver_check=FlagReceiverCheck.kDoNotCheck),
+                    AttributeSpec(name="maxActions", getter="get_maxActions",
+                                  location=FlagLocation.kInterface,
                                   receiver_check=FlagReceiverCheck.kDoNotCheck),),
         constructor_behavior=1,
         length=1,
@@ -154,6 +157,10 @@ class Notification(EventTarget):
     #: No user is here to answer the prompt, so the page keeps the initial state.
     @staticmethod
     def get_permission(*_args): return "default"
+
+    #: What Chrome allows a notification to carry.
+    @staticmethod
+    def get_maxActions(*_args): return 2
 
 
 @interface('Scheduling', None)

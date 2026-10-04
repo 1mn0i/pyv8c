@@ -29,6 +29,8 @@ class FontFace:
             AttributeSpec(name="style", getter="get_style", setter="set_style"),
             AttributeSpec(name="weight", getter="get_weight", setter="set_weight"),
             AttributeSpec(name="stretch", getter="get_stretch", setter="set_stretch"),
+            AttributeSpec(name="ascentOverride", getter="get_ascentOverride",
+                          setter="set_ascentOverride"),
             AttributeSpec(name="unicodeRange", getter="get_unicodeRange",
                           setter="set_unicodeRange"),
             AttributeSpec(name="featureSettings", getter="get_featureSettings",
@@ -56,6 +58,7 @@ class FontFace:
         self._weight = _descriptor(options, "weight", "normal")
         self._stretch = _descriptor(options, "stretch", "normal")
         self._unicode_range = _descriptor(options, "unicodeRange", "U+0-10FFFF")
+        self._ascent_override = _descriptor(options, "ascentOverride", "normal")
         self._feature_settings = _descriptor(options, "featureSettings", "normal")
         self._variation_settings = _descriptor(options, "variationSettings", "normal")
         self._display = _descriptor(options, "display", "auto")
@@ -70,6 +73,9 @@ class FontFace:
     def set_weight(self, value): self._weight = str(dom_string(value))
     def get_stretch(self): return self._stretch
     def set_stretch(self, value): self._stretch = str(dom_string(value))
+    def get_ascentOverride(self): return self._ascent_override
+    def set_ascentOverride(self, value):
+        self._ascent_override = str(dom_string(value))
     def get_unicodeRange(self): return self._unicode_range
     def set_unicodeRange(self, value): self._unicode_range = str(dom_string(value))
     def get_featureSettings(self): return self._feature_settings
