@@ -7,6 +7,10 @@ class Clock:
     """One document's timeline: an epoch a page can compare against ``Date.now()``,
     and the monotonic reading the entry offsets count from.  A navigation resets both."""
 
+    #: Chrome reports time in whole 100-microsecond steps, and a page reads the
+    #: difference: a finer clock is a fingerprint of its own.
+    RESOLUTION_MS = 0.1
+
     def __init__(self):
         self._epoch = time.time() * 1000.0
         self._monotonic = time.perf_counter()
@@ -17,7 +21,9 @@ class Clock:
 
     def now_ms(self):
         """Milliseconds since :meth:`time_origin`, at the resolution the platform has."""
-        return (time.perf_counter() - self._monotonic) * 1000.0
+        elapsed = (time.perf_counter() - self._monotonic) * 1000.0
+        # Rounding is monotonic, so readings still never run backwards.
+        return round(elapsed / self.RESOLUTION_MS) * self.RESOLUTION_MS
 
     def reset(self, epoch_ms=None):
         """Start a new timeline, as a document's navigation does."""
