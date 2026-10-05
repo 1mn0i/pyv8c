@@ -30,11 +30,11 @@ def test_element_identity_and_constructor_mapping(page):
         "div.namespaceURI, div.prefix, "
         "div instanceof HTMLDivElement, div instanceof HTMLElement, "
         "div instanceof HTMLUnknownElement, span instanceof HTMLSpanElement, "
-        "widget instanceof HTMLUnknownElement, "
+        "widget instanceof HTMLUnknownElement, widget instanceof HTMLElement, "
         "widget.localName, widget.tagName]; })()"
     )
     assert result == ["div", "DIV", "DIV", 1, "http://www.w3.org/1999/xhtml",
-                      pyv8.Null, True, True, False, True, True,
+                      pyv8.Null, True, True, False, True, False, True,
                       "my-widget", "MY-WIDGET"]
 
 

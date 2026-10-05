@@ -25,7 +25,8 @@ def border_box(element):
 
 def _inside(box, x, y):
     """Whether the point is in the box, half-open as Chromium tests it."""
-    return 0 <= x < box.width and box.top <= y < box.top + box.height
+    return (box.left <= x < box.left + box.width
+            and box.top <= y < box.top + box.height)
 
 
 def contains(element, x, y):

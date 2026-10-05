@@ -1,8 +1,11 @@
+import json
+
 import pytest
 
 pytest.importorskip("pyv8")
 
 from pyv8c import Browser, BrowserEnvironment
+from pyv8c.foundation.environment import PROFILE
 
 
 def new_page(environment=None):
@@ -168,8 +171,6 @@ def test_navigator_runtime_surfaces_match_chrome_shapes_and_identity():
         "connection.rtt": 250,
         "connection.downlink": 1.5,
         "connection.save_data": True,
-        "connection.type": "wifi",
-        "connection.downlink_max": 25,
         "battery.charging": False,
         "battery.charging_time": 120,
         "battery.discharging_time": 3600,
@@ -188,15 +189,13 @@ def test_navigator_runtime_surfaces_match_chrome_shapes_and_identity():
                 navigator.connection.rtt,
                 navigator.connection.downlink,
                 navigator.connection.saveData,
-                navigator.connection.type,
-                navigator.connection.downlinkMax,
                 navigator.webkitPersistentStorage === navigator.webkitPersistentStorage,
                 Object.prototype.toString.call(navigator.webkitPersistentStorage),
                 navigator.getBattery.length,
             ])()
         """) == [
             "5.0 Test Browser", True, True, "[object NetworkInformation]",
-            "3g", 250, 1.5, True, "wifi", 25, True,
+            "3g", 250, 1.5, True, True,
             "[object DeprecatedStorageQuota]", 0,
         ]
 
@@ -255,12 +254,13 @@ def test_navigator_subobjects_are_created_only_on_first_access():
 
 
 def test_navigator_environment_records_validate_defaults():
+    profile = json.loads(PROFILE.read_text(encoding="utf-8"))
     environment = BrowserEnvironment()
     assert environment.app_version == environment.user_agent.removeprefix("Mozilla/")
     assert environment.webdriver is False
     assert environment.connection.effective_type == "4g"
     assert environment.connection.downlink_max == float("inf")
-    assert environment.battery.level == 1.0
+    assert environment.battery.level == profile["battery.level"]
     assert environment.storage.persistent.usage == 0
     assert environment.storage.persistent.quota == 0
 

@@ -26,6 +26,7 @@ from .collections import (
 )
 from . import aria, html_props
 from .css import CSSStyleDeclaration
+from .css_typed import StylePropertyMap
 from .events import _install_handler_slots
 from .mixins import _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, _ParentNodeMixin
 from .mutation import record_mutation
@@ -250,18 +251,17 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         return value
     def get_clientWidth(self):
         from .layout import layout
-        return int(round(layout(self).width))
+        return int(round(layout(self).padding_box_width))
     def get_clientHeight(self):
         from .layout import layout
-        return int(round(layout(self).height))
+        return int(round(layout(self).padding_box_height))
     def get_scrollWidth(self): return self.get_clientWidth()
     def get_scrollHeight(self): return self.get_clientHeight()
     def fn_getBoundingClientRect(self, *_extra):
         from .layout import positioned_box
+        from .rect import DOMRect
         box = positioned_box(self)
-        return {"x": box.left, "y": box.top, "top": box.top, "left": box.left,
-                "right": box.left + box.width, "bottom": box.top + box.height,
-                "width": box.width, "height": box.height}
+        return DOMRect(box.left, box.top, box.width, box.height)
     def fn_getAttribute(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('Element', 'getAttribute', 1, 0, constructor=False)
@@ -580,6 +580,7 @@ class HTMLElement(Element):
             AttributeSpec(name="title", getter="get_title", setter="set_title"),
             AttributeSpec(name="hidden", getter="get_hidden", setter="set_hidden"),
             AttributeSpec(name="style", getter="get_style", side_effect=1),
+            AttributeSpec(name="attributeStyleMap", getter="get_attributeStyleMap", side_effect=1),
             AttributeSpec(name="dataset", getter="get_dataset", side_effect=1),
             AttributeSpec(name="offsetParent", getter="get_offsetParent", side_effect=1),
             AttributeSpec(name="offsetTop", getter="get_offsetTop", side_effect=1),
@@ -735,18 +736,34 @@ class HTMLElement(Element):
         if value is None:
             value = self._style_declaration = CSSStyleDeclaration(element=self)
         return value
+    def get_attributeStyleMap(self):
+        value = getattr(self, "_attribute_style_map", None)
+        if value is None:
+            value = self._attribute_style_map = StylePropertyMap(element=self)
+        return value
     def get_dataset(self):
         value = getattr(self, "_dataset_map", None)
         if value is None:
             value = self._dataset_map = DOMStringMap(self)
         return value
     def get_offsetParent(self):
-        if not self.isConnected: return pyv8.Null
-        return self.parentElement or pyv8.Null
+        from .layout import offset_parent
+        return offset_parent(self) or pyv8.Null
+    def _offset_box(self):
+        """This element's box, and where its ``offsetParent`` measures from."""
+        from .layout import layout, offset_parent
+        parent = offset_parent(self)
+        box = layout(self)
+        if parent is None:
+            return box, 0.0, 0.0
+        parent_box = layout(parent)
+        return box, parent_box.padding_box_left, parent_box.padding_box_top
     def get_offsetTop(self):
-        from .layout import layout
-        return int(round(layout(self).top))
-    def get_offsetLeft(self): return 0
+        box, _left, top = self._offset_box()
+        return int(round(box.top - top))
+    def get_offsetLeft(self):
+        box, left, _top = self._offset_box()
+        return int(round(box.left - left))
     def get_offsetWidth(self):
         from .layout import layout
         return int(round(layout(self).width))

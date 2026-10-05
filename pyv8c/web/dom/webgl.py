@@ -274,22 +274,35 @@ _UNMASKED_RENDERER_WEBGL = 37446
 _VOID_MEMBERS = (
     ("activeTexture", 1), ("bindAttribLocation", 3), ("blendColor", 4), ("blendEquation", 1),
     ("blendEquationSeparate", 2), ("blendFunc", 2), ("blendFuncSeparate", 4),
-    ("bufferSubData", 3), ("compileShader", 1), ("compressedTexImage2D", 7),
-    ("compressedTexSubImage2D", 8), ("copyTexImage2D", 8), ("copyTexSubImage2D", 8),
-    ("cullFace", 1), ("deleteBuffer", 1), ("deleteFramebuffer", 1), ("deleteProgram", 1),
-    ("deleteRenderbuffer", 1), ("deleteShader", 1), ("deleteTexture", 1), ("depthFunc", 1),
-    ("depthMask", 1), ("depthRange", 2), ("finish", 0), ("flush", 0), ("frontFace", 1),
-    ("generateMipmap", 1), ("hint", 2), ("lineWidth", 1), ("pixelStorei", 2),
-    ("polygonOffset", 2), ("sampleCoverage", 2),
+    ("bufferSubData", 3), ("clearDepth", 1), ("clearStencil", 1), ("compileShader", 1),
+    ("compressedTexImage2D", 7), ("compressedTexSubImage2D", 8), ("copyTexImage2D", 8),
+    ("copyTexSubImage2D", 8), ("cullFace", 1), ("deleteBuffer", 1), ("deleteFramebuffer", 1),
+    ("deleteProgram", 1), ("deleteRenderbuffer", 1), ("deleteShader", 1), ("deleteTexture", 1),
+    ("depthFunc", 1), ("depthMask", 1), ("depthRange", 2), ("disableVertexAttribArray", 1),
+    ("drawArrays", 3), ("drawElements", 4), ("drawingBufferStorage", 3),
+    ("enableVertexAttribArray", 1), ("finish", 0), ("flush", 0), ("frontFace", 1),
+    ("generateMipmap", 1), ("hint", 2), ("lineWidth", 1), ("makeXRCompatible", 0),
+    ("pixelStorei", 2), ("polygonOffset", 2), ("renderbufferStorage", 4), ("sampleCoverage", 2),
     ("stencilFunc", 3), ("stencilFuncSeparate", 4), ("stencilMask", 1),
     ("stencilMaskSeparate", 2), ("stencilOp", 3),     ("stencilOpSeparate", 4),
-    ("texParameterf", 3), ("texParameteri", 3), ("texSubImage2D", 7), ("validateProgram", 1),
+    ("texElementImage2D", 3), ("texElementSubImage2D", 5), ("texImage2D", 6),
+    ("texParameterf", 3), ("texParameteri", 3), ("texSubImage2D", 7),
+    ("uniform1f", 2), ("uniform1fv", 2), ("uniform1i", 2), ("uniform1iv", 2),
+    ("uniform2f", 3), ("uniform2fv", 2), ("uniform2i", 3), ("uniform2iv", 2),
+    ("uniform3f", 4), ("uniform3fv", 2), ("uniform3i", 4), ("uniform3iv", 2),
+    ("uniform4f", 5), ("uniform4fv", 2), ("uniform4i", 5), ("uniform4iv", 2),
+    ("uniformMatrix2fv", 3), ("uniformMatrix3fv", 3), ("uniformMatrix4fv", 3),
+    ("validateProgram", 1), ("vertexAttrib1f", 2), ("vertexAttrib1fv", 2),
+    ("vertexAttrib2f", 3), ("vertexAttrib2fv", 2), ("vertexAttrib3f", 4),
+    ("vertexAttrib3fv", 2), ("vertexAttrib4f", 5), ("vertexAttrib4fv", 2),
+    ("vertexAttribPointer", 6),
 )
 
 #: Members answered from the context' own state, with the argument count Chrome requires.
 _STATE_MEMBERS = (
     ("attachShader", 2), ("bindBuffer", 2), ("bindFramebuffer", 2), ("bindRenderbuffer", 2),
-    ("bindTexture", 2), ("bufferData", 3), ("checkFramebufferStatus", 1), ("createBuffer", 0),
+    ("bindTexture", 2), ("bufferData", 3), ("checkFramebufferStatus", 1), ("clear", 1),
+    ("clearColor", 4), ("colorMask", 4), ("createBuffer", 0),
     ("createFramebuffer", 0), ("createProgram", 0), ("createRenderbuffer", 0),
     ("createShader", 1), ("createTexture", 0), ("detachShader", 2), ("disable", 1),
     ("enable", 1), ("framebufferRenderbuffer", 4), ("framebufferTexture2D", 5),
@@ -327,9 +340,19 @@ _ENUMS = (
     ("COLOR_WRITEMASK", 3107),
 )
 
+#: The mask and formats ``clear`` and ``readPixels`` read.
+_COLOR_BUFFER_BIT = 0x4000
+_RGB = 0x1900
+_FLOAT = 0x1406
+
 
 def _typed(kind, values):
     return pyv8.JSTypeArray(list(values), kind)
+
+
+def _clamped(value):
+    """A clear colour channel the way ``clearColor`` stores it, as Chrome clamps it."""
+    return min(max(float(value), 0.0), 1.0)
 
 
 @interface('WebGLObject', None)
@@ -635,6 +658,9 @@ class WebGLRenderingContext:
         height = canvas.get_height() if canvas is not None else 150
         self._viewport = (0, 0, width, height)
         self._scissor = (0, 0, width, height)
+        self._clear_color = (0.0, 0.0, 0.0, 0.0)
+        self._color_mask = (True, True, True, True)
+        self._cleared = False
         self._context_lost = False
         self._extension_objects = {}
         self._color_space = "srgb"
@@ -692,6 +718,19 @@ class WebGLRenderingContext:
     def fn_scissor(self, x=MISSING, y=MISSING, width=MISSING, height=MISSING, *arguments):
         self._require('scissor', 4, x, y, width, height)
         self._scissor = (x, y, width, height)
+
+    def fn_clearColor(self, red=MISSING, green=MISSING, blue=MISSING, alpha=MISSING, *arguments):
+        self._require('clearColor', 4, red, green, blue, alpha)
+        self._clear_color = tuple(_clamped(value) for value in (red, green, blue, alpha))
+
+    def fn_colorMask(self, red=MISSING, green=MISSING, blue=MISSING, alpha=MISSING, *arguments):
+        self._require('colorMask', 4, red, green, blue, alpha)
+        self._color_mask = tuple(bool(value) for value in (red, green, blue, alpha))
+
+    def fn_clear(self, mask=MISSING, *arguments):
+        self._require('clear', 1, mask)
+        if int(mask) & _COLOR_BUFFER_BIT:
+            self._cleared = True
 
     def fn_bindBuffer(self, target=MISSING, buffer=MISSING, *arguments):
         self._require('bindBuffer', 2, target, buffer)
@@ -824,8 +863,10 @@ class WebGLRenderingContext:
             return _typed(pyv8.ArrayType.Int32Array, self._viewport)
         if pname == self.SCISSOR_BOX:
             return _typed(pyv8.ArrayType.Int32Array, self._scissor)
+        if pname == self.COLOR_CLEAR_VALUE:
+            return _typed(pyv8.ArrayType.Float32Array, self._clear_color)
         if pname == self.COLOR_WRITEMASK:
-            return [True, True, True, True]
+            return list(self._color_mask)
         if pname in (_UNMASKED_VENDOR_WEBGL, _UNMASKED_RENDERER_WEBGL):
             return self._unmasked(pname)
         for _name, constant, kind, values in _ARRAY_PARAMETERS:
@@ -994,9 +1035,18 @@ class WebGLRenderingContext:
         if view is None:
             self._error = self.INVALID_ENUM
             return None
-        for index in range(min(int(view._get("length")), int(width) * int(height) * 4)):
-            view[index] = 0
+        # Nothing draws yet, so the buffer holds the clear colour, or stays as it was.
+        components = 3 if format == _RGB else 4
+        values = self._pixel_values(type, components) if self._cleared else [0] * components
+        for index in range(min(int(view._get("length")), int(width) * int(height) * components)):
+            view[index] = values[index % components]
         return None
+
+    def _pixel_values(self, type, components):
+        """The clear colour as ``readPixels`` hands it back, honouring ``colorMask``."""
+        values = [value if self._color_mask[index] else 0.0
+                  for index, value in enumerate(self._clear_color[:components])]
+        return values if type == _FLOAT else [int(round(value * 255)) for value in values]
 
 
 def _void_member(name, required):

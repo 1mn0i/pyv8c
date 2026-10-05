@@ -32,10 +32,10 @@ def test_stub_method_logs_and_real_member_wins():
     try:
         browser = Browser(stub_logging="on")
         page = browser.new_context().new_page()
-        assert page.evaluate("new MediaSource().duration") is pyv8.Undefined
-        assert page.evaluate('MediaSource.isTypeSupported("video/mp4")') is pyv8.Undefined
-        assert any("MediaSource.duration getter 待实现" in message for message in messages)
-        assert any("MediaSource.isTypeSupported() 待实现" in message for message in messages)
+        assert page.evaluate("new AudioDecoder({}).state") is pyv8.Undefined
+        assert page.evaluate("AudioDecoder.isConfigSupported({})") is pyv8.Undefined
+        assert any("AudioDecoder.state getter 待实现" in message for message in messages)
+        assert any("AudioDecoder.isConfigSupported() 待实现" in message for message in messages)
         assert page.evaluate("new URL('https://example.test/').toString()") == "https://example.test/"
         assert not any("URL.toString() 待实现" in message for message in messages)
         browser.close()
@@ -55,16 +55,17 @@ def test_stub_identity_and_direct_callback_markers_are_separate():
     browser = Browser(stub_logging="off")
     try:
         universe = browser.interface_universe
-        media = universe.class_for("MediaSource")
+        decoder = universe.class_for("AudioDecoder")
         url = universe.class_for("URL")
-        assert media.__dict__["__v8_idl_stub__"] is True
+        assert decoder.__dict__["__v8_idl_stub__"] is True
         assert "__v8_idl_stub__" not in url.__dict__
 
-        media_config = universe.class_config_for("MediaSource")
-        media_item = next(item for item in media_config.methods if item.name == "isTypeSupported")
-        media_callback = media_item.callback
-        assert not hasattr(media_callback, "__v8_direct_callback__")
-        assert media_callback.__v8_idl_stub__ is True
+        decoder_config = universe.class_config_for("AudioDecoder")
+        decoder_item = next(item for item in decoder_config.methods
+                            if item.name == "isConfigSupported")
+        decoder_callback = decoder_item.callback
+        assert not hasattr(decoder_callback, "__v8_direct_callback__")
+        assert decoder_callback.__v8_idl_stub__ is True
 
         url_config = universe.class_config_for("URL")
         to_string = next(item for item in url_config.methods if item.name == "toString")

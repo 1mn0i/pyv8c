@@ -1,11 +1,11 @@
 """Read a real browser's environment and window surface into one profile.
 
 The collector starts the locally installed Chrome with a debugging port, reads every
-key a browser reports from a local secure origin, and reads what that browser installs
-on ``window`` from the same session.  Nothing is downloaded and nothing is guessed: a
-key that cannot be read fails the run, so a written profile is whole.  Headless runs
-report ``HeadlessChrome`` in the user agent; use ``headed=True`` for the profile a
-normal visit presents.
+key a browser reports from a local secure origin, and reads what that browser leaves out
+of ``window`` and of each interface's prototype from the same session.  Nothing is
+downloaded and nothing is guessed: a key that cannot be read fails the run, so a written
+profile is whole.  Headless runs report ``HeadlessChrome`` in the user agent; use
+``headed=True`` for the profile a normal visit presents.
 
 Usage::
 
@@ -29,7 +29,8 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from ..foundation.environment import COLLECTED_KEYS, SCHEMA_VERSION, BrowserEnvironment
+from ..engine.baseline import BaselineRepository, InterfaceTable
+from ..foundation.environment import COLLECTED_KEYS, SCHEMA_VERSION, BrowserEnvironment, json_value
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 #: Where a run writes unless told otherwise.
@@ -120,11 +121,39 @@ COLLECT_SCRIPT = """
 """
 
 
-#: What a page enumerates, and every own name it has.
+#: What a page enumerates: the window's own names, and each interface's prototype names.
+#: The window alone cannot answer whether ``Element.prototype`` carries ``computedRole``.
 SURFACE_SCRIPT = """
-JSON.stringify({
-    keys: Object.keys(window).sort(),
-    own: Object.getOwnPropertyNames(window).sort()})"""
+(() => {
+    const prototypes = {};
+    const read = (name, prototype) => {
+        if (!name || !prototype || typeof prototype !== 'object' || name in prototypes) return;
+        try { prototypes[name] = Object.getOwnPropertyNames(prototype).sort(); } catch (error) {}
+    };
+    for (const name of Object.getOwnPropertyNames(window)) {
+        let value = null;
+        try { value = window[name]; } catch (error) { value = null; }
+        if (typeof value === 'function') {
+            try { read(name, value.prototype); } catch (error) {}
+        }
+    }
+    // Interfaces without a global constructor are read off the objects that carry one.
+    const makers = [() => document, () => document.body, () => document.createElement('div'),
+                    () => document.createElement('canvas'), () => document.createElement('iframe'),
+                    () => document.createElement('video'), () => document.createTextNode(''),
+                    () => document.createComment(''), () => new Image(),
+                    () => new CSSStyleSheet()];
+    for (const make of makers) {
+        try {
+            const prototype = Object.getPrototypeOf(make());
+            read(prototype.constructor.name, prototype);
+        } catch (error) {}
+    }
+    return JSON.stringify({
+        keys: Object.keys(window).sort(),
+        own: Object.getOwnPropertyNames(window).sort(),
+        prototypes});
+})()"""
 
 
 class CollectionError(RuntimeError):
@@ -348,10 +377,23 @@ def read_pages(chrome, scripts, *, headed=False, accept_lang=None, window_size=N
             server.server_close()
 
 
-def read_profile(chrome, **options):
+def baseline_view(snapshot=None):
+    """``(declared prototype members, digest)`` of the baseline a run measures against.
+
+    Reading it needs no native extension, so a collection runs without pyv8.
+    """
+    snapshot = snapshot if snapshot is not None else BaselineRepository.load()
+    table = InterfaceTable(snapshot)
+    declared = {name: {member.name for member in table.interface(name).own_members("prototype")}
+                for name in table.names()}
+    return declared, str(getattr(snapshot, "digest", "") or "")
+
+
+def read_profile(chrome, view=None, **options):
     """``(payload, surface, source)``: both readings a run makes, from one session."""
+    declared, digest = view if view is not None else baseline_view()
     values, source = read_pages(chrome, (COLLECT_SCRIPT, SURFACE_SCRIPT), **options)
-    return json.loads(values[0]), build_surface(json.loads(values[1])), source
+    return json.loads(values[0]), build_surface(json.loads(values[1]), declared, digest), source
 
 
 def build_environment(payload):
@@ -365,17 +407,36 @@ def build_environment(payload):
     return BrowserEnvironment(payload)
 
 
-def build_surface(payload):
-    """What a browser installs on ``window``, as the profile's surface section."""
-    return {"keys": list(payload["keys"]), "own_names": list(payload["own"])}
+def build_surface(payload, declared=None, baseline_digest=""):
+    """What the browser does not install, as the profile's surface section.
+
+    The window names cover the globals; the prototype gaps are measured against
+    ``declared`` (``{interface: {prototype names}}``), and ``baseline_digest`` records
+    which baseline those names came from.
+    """
+    declared = declared or {}
+    gaps = {}
+    for name, names in (payload.get("prototypes") or {}).items():
+        known = declared.get(str(name))
+        if not known or not isinstance(names, list):
+            continue
+        missing = sorted(known - {str(entry) for entry in names})
+        if missing:
+            gaps[str(name)] = missing
+    return {"keys": list(payload["keys"]), "own_names": list(payload["own"]),
+            "prototype_gaps": {name: gaps[name] for name in sorted(gaps)},
+            "baseline_digest": str(baseline_digest or "")}
 
 
 def build_profile(payload, surface, source):
-    """The document a run writes: the environment keys, and the surface they came with."""
+    """The document a run writes: the environment keys, and the surface they came with.
+
+    A non-finite number travels as its name, so a strict JSON parser accepts the file.
+    """
     document = {"schema": SCHEMA_VERSION, "source": dict(source)}
     document.update(build_environment(payload).to_dict())
     document["window_surface"] = surface
-    return document
+    return json_value(document)
 
 
 def main(argv=None):
@@ -414,6 +475,7 @@ def main(argv=None):
     arguments.out.write_text(text, encoding="utf-8")
     print(
         f"wrote {arguments.out}: {len(surface['own_names'])} own names,"
+        f" {len(surface['prototype_gaps'])} interfaces with prototype gaps,"
         f" {len(surface['keys'])} keys, from {source.get('browser', 'unknown')}",
         file=sys.stderr,
     )
@@ -422,8 +484,8 @@ def main(argv=None):
 
 __all__ = [
     "CHROME_ENV", "CHROME_PATHS", "COLLECT_SCRIPT", "DEFAULT_OUTPUT", "SURFACE_SCRIPT",
-    "CdpSession", "CollectionError", "build_environment", "build_profile", "build_surface",
-    "find_chrome", "main", "read_devtools_port", "read_pages", "read_profile",
+    "CdpSession", "CollectionError", "baseline_view", "build_environment", "build_profile",
+    "build_surface", "find_chrome", "main", "read_devtools_port", "read_pages", "read_profile",
 ]
 
 

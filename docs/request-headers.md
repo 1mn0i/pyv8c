@@ -4,7 +4,7 @@
 
 pyv8c 发出的请求头在**名称、取值与排列顺序**上与 Chromium 一致。取值全部来自 pyv8c 自己的 environment（`user_agent`、`languages`、`client_hints.*`），因此与页面报告的 `navigator.userAgent`、`navigator.userAgentData` 自洽——不借用任何第三方静态指纹。
 
-基线是本机 Chrome 153.0.8010.52：用本地回声服务记录 `self.headers.items()` 的**到达顺序**，两侧跑同一页面与同一段脚本。对照用例是 `tests/repros/test_request_headers_vs_chrome.py`，顺序基线由 `tests/integration/test_request_headers_on_the_wire.py` 逐场景钉住。
+基线是本机 Chrome 154.0.8037.95：用本地回声服务记录 `self.headers.items()` 的**到达顺序**，两侧跑同一页面与同一段脚本。对照用例是 `tests/repros/test_request_headers_vs_chrome.py`，顺序基线由 `tests/integration/test_request_headers_on_the_wire.py` 逐场景钉住。
 
 ## 按场景的头
 

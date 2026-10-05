@@ -8,6 +8,7 @@ from ...engine.features import interface
 from ...foundation.arguments import MISSING, boolean, dom_string
 from .collections import DOMTokenList
 from .html_elements import HTMLElement, _attribute, _set_url_value, _url_attr, _url_value
+from .permissions_policy import PermissionsPolicy
 
 _SANDBOX_TOKENS = (
     "allow-downloads", "allow-forms", "allow-modals", "allow-orientation-lock",
@@ -55,6 +56,7 @@ class HTMLIFrameElement(HTMLElement):
                        "set_adAuctionHeaders"),
             AttributeSpec(name="contentDocument", getter="get_contentDocument", side_effect=1),
             AttributeSpec(name="contentWindow", getter="get_contentWindow", side_effect=1),
+            AttributeSpec(name="featurePolicy", getter="get_featurePolicy", side_effect=1),
         ),
         methods=(MethodSpec(name="getSVGDocument", callback="fn_getSVGDocument", side_effect=1),),
         constructor_behavior=0,
@@ -217,6 +219,13 @@ class HTMLIFrameElement(HTMLElement):
     def set_adAuctionHeaders(self, value):
         if self._secure_context():
             self._boolean_attribute("adauctionheaders", value)
+    def get_featurePolicy(self):
+        policy = getattr(self, "_feature_policy", None)
+        if policy is None:
+            document = self.ownerDocument
+            url = document.get_URL() if document is not None else ""
+            policy = self._feature_policy = PermissionsPolicy(url=url)
+        return policy
     def fn_getSVGDocument(self, *_args): return pyv8.Null
     def get_contentDocument(self):
         if self._child_services is None:

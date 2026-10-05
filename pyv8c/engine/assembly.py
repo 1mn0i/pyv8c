@@ -420,6 +420,9 @@ class InterfaceCompiler:
                 )
         for public_name, declared in declared_methods.items():
             if universe.table.member(name, public_name, "operation") is None:
+                if universe.table.declares(name, public_name, "operation"):
+                    # The baseline has it, the browser does not install it.
+                    continue
                 if not universe.report_mismatch(
                         f"{name}.{public_name} is not present in the interface baseline"):
                     raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
@@ -432,6 +435,9 @@ class InterfaceCompiler:
             methods.append(declared.replace(callback=callback))
         for public_name, declared in declared_attributes.items():
             if universe.table.member(name, public_name, "attribute") is None:
+                if universe.table.declares(name, public_name, "attribute"):
+                    # Same as operations.
+                    continue
                 if not universe.report_mismatch(
                         f"{name}.{public_name} is not present in the interface baseline"):
                     raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")

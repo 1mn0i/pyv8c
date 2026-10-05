@@ -96,6 +96,23 @@ def test_a_first_move_reports_both_over_events_then_both_move_events(page):
     ]
 
 
+def test_the_page_reports_the_cursor_arriving_in_it_once(page):
+    """Chrome fires the document's own enter when the pointer arrives, and not again
+    while it stays inside; the enter is the outermost one, before the element's."""
+    page.evaluate("""globalThis.page_log = [];
+        for (const type of ['pointerenter', 'mouseenter', 'pointerover', 'mouseover'])
+            document.addEventListener(type, event =>
+                page_log.push(type + ':' + (event.target.id || event.target.localName ||
+                                            '#document')), true);""")
+    assert page.evaluate("page_log") == []
+    page.mouse.move(*centre(page, "#a"))
+    assert page.evaluate("page_log") == ["pointerover:a", "pointerenter:#document",
+                                         "mouseover:a", "mouseenter:#document"]
+    page.evaluate("page_log.length = 0")
+    page.mouse.move(*centre(page, "#b"))
+    assert page.evaluate("page_log") == ["pointerover:b", "mouseover:b"]
+
+
 def test_crossing_into_another_element_reports_out_then_over(page):
     page.mouse.move(*centre(page, "#a"))
     clear_log(page)
@@ -119,7 +136,8 @@ def test_a_move_inside_one_element_reports_only_the_move_events(page):
 
 
 def test_enter_and_leave_reach_the_element_and_not_its_ancestors(page):
-    """Chromium dispatches them with a propagation path of just the target."""
+    """Chromium dispatches them with a propagation path of just the target, and the
+    document's own enter -- the cursor arriving in the page -- is a separate one."""
     page.evaluate("""
         globalThis.enters = [];
         document.addEventListener('mouseenter', () => enters.push('document'), true);
@@ -127,7 +145,7 @@ def test_enter_and_leave_reach_the_element_and_not_its_ancestors(page):
     """)
     page.mouse.move(*centre(page, "#a"))
     page.mouse.move(*centre(page, "#b"))
-    assert page.evaluate("enters") == ["a"]
+    assert page.evaluate("enters") == ["document", "a"]
 
 
 def test_steps_report_each_intermediate_position(page):

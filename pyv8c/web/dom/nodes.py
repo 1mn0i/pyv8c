@@ -186,8 +186,8 @@ class Node(EventTarget):
 
     @property
     def baseURI(self):
-        document = self.ownerDocument
-        return document.url if document is not None else ""
+        document = self if self.nodeType == Node.DOCUMENT_NODE else self.ownerDocument
+        return getattr(document, "url", "") if document is not None else ""
 
     def root_node(self):
         """The topmost ancestor, i.e. the root of this node's tree."""

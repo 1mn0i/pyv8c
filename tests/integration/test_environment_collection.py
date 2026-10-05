@@ -7,6 +7,7 @@ import pytest
 pytest.importorskip("pyv8")
 
 from pyv8c import Browser, BrowserEnvironment  # noqa: E402
+from pyv8c.engine.baseline import BaselineRepository  # noqa: E402
 from pyv8c.foundation.environment import COLLECTED_KEYS  # noqa: E402
 from pyv8c.tools import collect_environment as collector  # noqa: E402
 
@@ -32,6 +33,13 @@ def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, c
     # The same session that answered the keys named what it installs on ``window``.
     assert "Object" in document["window_surface"]["own_names"]
     assert "innerWidth" in document["window_surface"]["keys"]
+    # …and which of the members the baseline declares it leaves out.
+    surface = document["window_surface"]
+    gaps = surface["prototype_gaps"]
+    assert len(gaps) > 20
+    assert "computedRole" in gaps["Element"]
+    assert "slot" not in gaps["Element"]
+    assert surface["baseline_digest"] == BaselineRepository.load().digest
 
     profile = BrowserEnvironment.from_file(path)
     collected = profile.resolved()

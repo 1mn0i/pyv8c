@@ -28,18 +28,32 @@ PROFILE_PATH = PACKAGE_ROOT / "data" / "chrome-environment.json"
 
 @dataclass(frozen=True)
 class WindowSurface:
-    """The own property names of a reference ``window``, and the browser they came from.
+    """What a reference browser leaves out: its ``window`` names, and its prototype gaps.
 
-    The baseline carries every platform and runtime flag state Chromium compiles in; the
-    reference browser installs a subset, which ``tools/collect_environment.py`` reads from
-    a running Chrome, so the difference stays data instead of a hand-written list.
+    The baseline carries every platform and flag state Chromium compiles in, and
+    ``tools/collect_environment.py`` reads which of those a running Chrome omits, so the
+    difference stays data instead of a hand-written list.
     """
 
     chrome: str
     own_names: frozenset
+    #: ``interface -> prototype members the baseline declares and the browser omits``.
+    prototype_gaps: Mapping[str, frozenset] = MappingProxyType({})
+    #: The baseline those gaps were measured against; empty when the writer did not say.
+    baseline_digest: str = ""
 
     def has(self, name) -> bool:
+        """Whether the reference window carries this own name."""
         return name in self.own_names
+
+
+def _prototype_gaps(section) -> Mapping:
+    """``interface -> omitted prototype names``; a malformed entry leaves that interface whole."""
+    found = {}
+    for name, names in ((section or {}).get("prototype_gaps") or {}).items():
+        if isinstance(names, list) and names:
+            found[str(name)] = frozenset(str(entry) for entry in names)
+    return MappingProxyType(found)
 
 
 def load_window_surface(path=None) -> WindowSurface | None:
@@ -59,7 +73,15 @@ def load_window_surface(path=None) -> WindowSurface | None:
     return WindowSurface(
         chrome=str((payload.get("source") or {}).get("browser") or ""),
         own_names=frozenset(str(name) for name in names),
+        prototype_gaps=_prototype_gaps(section),
+        baseline_digest=str((section or {}).get("baseline_digest") or ""),
     )
+
+
+def _measured_against(surface, baseline) -> bool:
+    """Whether a surface's gaps describe *baseline*; gaps from another release say nothing."""
+    digest = getattr(surface, "baseline_digest", "")
+    return not digest or digest == getattr(baseline, "digest", "")
 
 
 def write_baseline(output_path: Path, document: dict, *, compress: bool = False) -> Path:
@@ -366,12 +388,17 @@ class InterfaceTable:
     def __init__(self, baseline, *, surface=None):
         self.baseline = baseline
         self.surface = surface
+        # Gaps describe one release, so this baseline decides whether they apply.
+        self._gaps = (surface.prototype_gaps
+                      if surface is not None and _measured_against(surface, baseline)
+                      else MappingProxyType({}))
         self._interfaces: dict[str, Interface] = {}
         self._positions: dict[str, int] | None = None
         self._children: dict[str, tuple] | None = None
         self._descendants: dict[str, tuple] = {}
         self._ancestors: dict[str, tuple] = {}
         self._members: dict[tuple, Member | None] = {}
+        self._declared: dict[tuple, bool] = {}
         self._exposed: dict[tuple, tuple] = {}
         self._aliases: dict[str, str] | None = None
 
@@ -458,17 +485,24 @@ class InterfaceTable:
         return self._positions
 
     def own_members(self, name) -> tuple:
-        """``(location, member)`` pairs declared directly on one interface."""
+        """``(location, member)`` pairs declared directly on one interface, surface applied."""
         interface = self.interface(name)
         members = tuple(
             (location, member)
             for location in LOCATIONS
             for member in interface.own_members(location)
         )
-        if name != "Window" or self.surface is None:
+        if self.surface is None:
             return members
-        # The baseline carries every platform and flag state; the reference browser does not.
-        return tuple(pair for pair in members if self.surface.has(pair[1].name))
+        if name == "Window":
+            # The window's own names cover every location it carries.
+            return tuple(pair for pair in members if self.surface.has(pair[1].name))
+        omitted = self._gaps.get(name)
+        if not omitted:
+            return members
+        # Only the prototype was measured, not instance or interface-object members.
+        return tuple(pair for pair in members
+                     if pair[0] != "prototype" or pair[1].name not in omitted)
 
     def member(self, name, public_name, kind) -> Member | None:
         """The member an interface answers for a public name, inherited or not."""
@@ -481,8 +515,8 @@ class InterfaceTable:
             if match is not None:
                 found = match
                 break
-        if found is None:
-            # Blink sometimes installs WorkerGlobalScope members in a concrete descendant.
+        if found is None and public_name not in self._gaps.get(name, ()):
+            # A descendant can carry a WorkerGlobalScope member, not one this browser omits.
             for candidate in self.descendants(name):
                 found = self._own_member(candidate, public_name, kind)
                 if found is not None:
@@ -497,6 +531,20 @@ class InterfaceTable:
             return None
         candidates.sort(key=lambda member: not member.main_world)
         return candidates[0]
+
+    def declares(self, name, public_name, kind) -> bool:
+        """Whether the baseline declares this member, surface or no surface."""
+        key = (name, public_name, kind)
+        found = self._declared.get(key)
+        if found is None:
+            found = any(
+                member.name == public_name and member.kind == kind
+                for current in (*self.ancestors(name), *self.descendants(name))
+                for location in LOCATIONS
+                for member in self.interface(current).own_members(location)
+            )
+            self._declared[key] = found
+        return found
 
     def installs(self, context_type, name) -> bool:
         """Whether the reference browser installs this Window name at all."""

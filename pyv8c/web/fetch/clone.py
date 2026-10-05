@@ -20,9 +20,29 @@ def message_transfer(value):
     return sequence(options.get("transfer", ()))
 
 
-def structured_clone(value, transfer=(), context=None):
-    if transfer not in (None, (), [], pyv8.Undefined, pyv8.Null):
-        raise DataCloneError("Transfer lists are not supported by this runtime")
+def transfer_ports(transfer=(), services=None, caller="Window"):
+    """The ports a transfer list moves, as the realm that receives them sees them.
+
+    Only a ``MessagePort`` is transferable here: a transfer moves the port, so the
+    reference left behind is neutered while the port itself arrives in the message
+    event's ``ports``.  Chrome names the index it cannot transfer.
+    """
+    from ..bom.messaging import MessagePort
+
+    moved = []
+    for index, item in enumerate(() if is_nullish(transfer) else transfer):
+        item = materialize(item)
+        if not isinstance(item, MessagePort):
+            raise DataCloneError(f"Failed to execute 'postMessage' on '{caller}':"
+                                 f" Value at index {index} does not have a transferable type.")
+        if item._detached:
+            raise DataCloneError(f"Failed to execute 'postMessage' on '{caller}':"
+                                 f" Port at index {index} is already neutered.")
+        moved.append(item._moved_view(services))
+    return moved
+
+
+def structured_clone(value, context=None):
     active = set()
 
     def clone(item):

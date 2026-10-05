@@ -23,11 +23,11 @@ def test_each_dispatch_reports_itself():
     finally:
         logger.remove(token)
 
-    assert any("dispatch DOMContentLoaded on Document (trusted=True" in message
+    assert any("dispatch DOMContentLoaded on HTMLDocument (trusted=True" in message
                for message in messages)
     assert any("dispatch load on Window (trusted=True, listeners=1)" in message
                for message in messages)
-    assert any("dispatch readystatechange on Document" in message for message in messages)
+    assert any("dispatch readystatechange on HTMLDocument" in message for message in messages)
     # The page's own dispatch is reported too, and marked as not trusted.
     assert any("dispatch probe on Window (trusted=False, listeners=0)" in message
                for message in messages)

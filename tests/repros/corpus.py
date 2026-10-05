@@ -1856,7 +1856,7 @@ CASES = (
                     data.toJSON().brands === data.toJSON().brands,
                     String(data), data instanceof NavigatorUAData];
         })()""",
-        expected=["object", "NavigatorUAData", "Google Chrome,Not_A Brand,Chromium",
+        expected=["object", "NavigatorUAData", "Chromium,Google Chrome,Not A(Brand",
                   True, "boolean", "string", True, False, False,
                   "brands,mobile,platform", False, "[object NavigatorUAData]", True],
     ),
@@ -2014,7 +2014,7 @@ CASES = (
     Repro(
         name="a_webgl_context_answers_like_chrome",
         note="No GL backend: identity, limits, object creation and the state a page can "
-             "query are the observable part; drawing calls have no effect.",
+             "query are the observable part; drawing leaves the clear colour in the buffer.",
         script="""(() => {
   const canvas = document.createElement('canvas');
   const gl = canvas.getContext('webgl');
@@ -2043,6 +2043,454 @@ CASES = (
                   ["WebGLShader", "WebGLProgram", "WebGLTexture", True],
                   [True, False, False, 0], [0, 0, 300, 150], True, True, [True, False],
                   [None, 1280]],
+    ),
+    Repro(
+        name="a_cleared_webgl_buffer_reads_back_the_clear_colour",
+        note="The one drawing effect this backend keeps: clear fills the buffer.",
+        script="""(() => {
+  const gl = document.createElement('canvas').getContext('webgl');
+  gl.clearColor(0.25, 0.5, 0.75, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  const pixels = new Uint8Array(4);
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  return [Array.from(pixels).join(','),
+          Array.from(gl.getParameter(gl.COLOR_CLEAR_VALUE)).join(',')];
+})()""",
+        expected=["64,128,191,255", "0.25,0.5,0.75,1"],
+    ),
+    Repro(
+        name="a_dom_parser_builds_a_document_of_every_supported_type",
+        note="An HTML parse builds the skeleton a navigation does, without scripts; an XML"
+             " parse keeps namespaces and whitespace, and reports a parsererror document"
+             " rather than throwing.  A parsed document belongs to no window.",
+        script="""(() => {
+  const answers = [];
+  const step = (label, fn) => {
+    try { answers.push(label + '=' + fn()); }
+    catch (error) { answers.push(label + '!' + error.name + ': ' + error.message); }
+  };
+  const shape = doc => [Object.prototype.toString.call(doc), doc.contentType,
+                        doc.compatMode, doc.URL === location.href,
+                        doc.defaultView === null,
+                        doc.documentElement ? doc.documentElement.localName : 'null',
+                        String(doc.doctype && doc.doctype.name),
+                        doc.location === null].join('|');
+  step('page', () => shape(document));
+  step('createHTMLDocument', () => shape(document.implementation.createHTMLDocument('t')));
+  step('createDocument', () => shape(document.implementation.createDocument(null, 'root')));
+  step('createDocument xhtml', () => shape(document.implementation.createDocument(
+    'http://www.w3.org/1999/xhtml', 'html')));
+  step('proto', () => [Object.getPrototypeOf(document) === HTMLDocument.prototype,
+    document instanceof HTMLDocument, XMLDocument.prototype instanceof Document].join(','));
+  step('parser', () => { const parser = new DOMParser();
+    return [Object.prototype.toString.call(parser), DOMParser.length,
+            Object.getPrototypeOf(parser) === DOMParser.prototype].join(','); });
+  step('html', () => shape(new DOMParser().parseFromString(
+    '<!DOCTYPE html><html><body><p id=x>hi</p></body></html>', 'text/html')));
+  step('html basics', () => { const doc = new DOMParser().parseFromString(
+      '<!DOCTYPE html><html><head><title>t</title></head><body>'
+      + '<div id=d class=c>text</div></body></html>', 'text/html');
+    const div = doc.getElementById('d');
+    return [doc.title, div.className, div.textContent, div.ownerDocument === doc,
+            div.tagName, doc.createElement('span').ownerDocument === doc].join('|'); });
+  step('html fragment', () => shape(new DOMParser().parseFromString('<b>x</b>', 'text/html')));
+  step('html empty', () => shape(new DOMParser().parseFromString('', 'text/html')));
+  step('html script not run', () => { const before = window.__ran;
+    const doc = new DOMParser().parseFromString(
+      '<!DOCTYPE html><body><script>window.__ran = 1<\\/script><img src="/nope.png"></body>',
+      'text/html');
+    return [window.__ran === before, doc.body.childNodes.length].join(','); });
+  step('html relative urls', () => { const doc = new DOMParser().parseFromString(
+      '<!DOCTYPE html><body><a id=a href="sub/page.html">x</a><img id=i src="/i.png"></body>',
+      'text/html');
+    return [doc.getElementById('a').href, doc.getElementById('i').src].join('|'); });
+  step('html is separate', () => { const doc = new DOMParser().parseFromString(
+      '<!DOCTYPE html><body><div id=d></div>', 'text/html');
+    return [doc === document, doc.getElementById('d') !== null,
+            document.getElementById('d') === null, doc.ownerDocument === null,
+            doc.parentNode === null].join(','); });
+  step('xml', () => { const doc = new DOMParser().parseFromString(
+      '<root a="1"><child/></root>', 'text/xml');
+    return [Object.prototype.toString.call(doc), doc.contentType, doc.compatMode,
+            doc.documentElement.localName, doc.documentElement.getAttribute('a'),
+            doc.documentElement.childNodes.length, String(doc.documentElement.namespaceURI),
+            doc.location === null].join('|'); });
+  step('xml declaration', () => { const doc = new DOMParser().parseFromString(
+      '<?xml version="1.0"?><root/>', 'application/xml');
+    return [doc.documentElement.localName, doc.documentElement.childNodes.length].join(','); });
+  step('xml malformed', () => { const doc = new DOMParser().parseFromString(
+      '<root><unclosed></root>', 'text/xml');
+    return [doc.documentElement.localName,
+            doc.getElementsByTagName('parsererror').length,
+            doc.documentElement.textContent.length > 0].join('|'); });
+  step('xml whitespace', () => { const doc = new DOMParser().parseFromString(
+      '<root> <a/> </root>', 'text/xml');
+    return [doc.documentElement.childNodes.length,
+            doc.documentElement.firstChild.nodeType].join(','); });
+  step('xml entities', () => { const doc = new DOMParser().parseFromString(
+      '<root a="&lt;x&gt;">a &amp; b &#65;</root>', 'text/xml');
+    return [doc.documentElement.getAttribute('a'),
+            doc.documentElement.textContent].join('|'); });
+  step('xml comment', () => { const doc = new DOMParser().parseFromString(
+      '<root><!--c--><a/></root>', 'text/xml');
+    return [doc.documentElement.childNodes.length,
+            doc.documentElement.firstChild.nodeType].join(','); });
+  step('svg', () => { const doc = new DOMParser().parseFromString(
+      '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>', 'image/svg+xml');
+    const circle = doc.documentElement.firstElementChild;
+    return [doc.contentType, String(doc.documentElement.namespaceURI),
+            String(circle.namespaceURI),
+            Object.prototype.toString.call(circle)].join('|'); });
+  step('xhtml', () => { const doc = new DOMParser().parseFromString(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>x</p></body></html>',
+      'application/xhtml+xml');
+    const p = doc.getElementsByTagName('p')[0];
+    return [doc.contentType, String(doc.documentElement.namespaceURI),
+            Object.prototype.toString.call(p)].join('|'); });
+  step('bad mime', () => { try { new DOMParser().parseFromString('<a/>', 'bogus/type');
+    return 'no throw'; } catch (error) { return error.name + ': ' + error.message; } });
+  step('mime variants', () => { const make = mime => {
+      try { return new DOMParser().parseFromString('<a/>', mime).contentType; }
+      catch (error) { return error.name; } };
+    return ['text/html', 'text/xml', 'application/xml', 'application/xhtml+xml',
+            'image/svg+xml', 'text/plain', 'TEXT/HTML', 'text/html;charset=utf-8',
+            ' application/xml ', ''].map(make).join('|'); });
+  step('missing arg', () => { try { new DOMParser().parseFromString('<a/>'); return 'no throw'; }
+    catch (error) { return error.name + ': ' + error.message; } });
+  step('computed style', () => { const doc = new DOMParser().parseFromString(
+      '<!DOCTYPE html><body><div id=d></div>', 'text/html');
+    return ['[' + getComputedStyle(doc.getElementById('d')).display + ']',
+            '[' + getComputedStyle(document.body).display + ']'].join('|'); });
+  return answers;
+})()""",
+        expected=[
+            "page=[object HTMLDocument]|text/html|BackCompat|true|false|html|null|false",
+            "createHTMLDocument=[object HTMLDocument]|text/html|CSS1Compat|false|true|html|html|true",
+            "createDocument=[object XMLDocument]|application/xml|CSS1Compat|false|true|root|null|true",
+            "createDocument xhtml=[object XMLDocument]|application/xhtml+xml|CSS1Compat|false|true|html|null|true",
+            "proto=true,true,true",
+            "parser=[object DOMParser],0,true",
+            "html=[object HTMLDocument]|text/html|CSS1Compat|true|true|html|html|true",
+            "html basics=t|c|text|true|DIV|true",
+            "html fragment=[object HTMLDocument]|text/html|BackCompat|true|true|html|null|true",
+            "html empty=[object HTMLDocument]|text/html|BackCompat|true|true|html|null|true",
+            "html script not run=true,2",
+            "html relative urls=http://repro.test/dir/sub/page.html|http://repro.test/i.png",
+            "html is separate=false,true,true,true,true",
+            "xml=[object XMLDocument]|text/xml|CSS1Compat|root|1|1|null|true",
+            "xml declaration=root,0",
+            "xml malformed=root|1|true",
+            "xml whitespace=3,3",
+            "xml entities=<x>|a & b A",
+            "xml comment=2,8",
+            "svg=image/svg+xml|http://www.w3.org/2000/svg|http://www.w3.org/2000/svg|[object SVGCircleElement]",
+            "xhtml=application/xhtml+xml|http://www.w3.org/1999/xhtml|[object HTMLParagraphElement]",
+            "bad mime=TypeError: Failed to execute 'parseFromString' on 'DOMParser':"
+            " The provided value 'bogus/type' is not a valid enum value of type SupportedType.",
+            "mime variants=text/html|text/xml|application/xml|application/xhtml+xml|image/svg+xml"
+            "|TypeError|TypeError|TypeError|TypeError|TypeError",
+            "missing arg=TypeError: Failed to execute 'parseFromString' on 'DOMParser':"
+            " 2 arguments required, but only 1 present.",
+            "computed style=[]|[block]",
+        ],
+    ),
+    Repro(
+        name="the_interface_a_tag_gets_is_the_reference_browsers",
+        note="Chrome answers a name it has no interface for without a hyphen with"
+             " HTMLUnknownElement, and a hyphenated one -- a custom element name -- with"
+             " a plain HTMLElement.",
+        script="""(() => ['p', 'h1', 'ul', 'li', 'table', 'tr', 'td', 'caption', 'tbody',
+  'form', 'input', 'a', 'img', 'br', 'hr', 'q', 'del', 'time', 'source', 'details',
+  'dialog', 'output', 'fieldset', 'legend', 'slot', 'div', 'html', 'b', 'em', 'code',
+  'nav', 'section', 'main', 'bogus', 'unknown-thing', 'my-widget']
+  .map(tag => tag + '=' + document.createElement(tag).constructor.name).join(' '))()""",
+        expected="p=HTMLParagraphElement h1=HTMLHeadingElement ul=HTMLUListElement"
+                 " li=HTMLLIElement table=HTMLTableElement tr=HTMLTableRowElement"
+                 " td=HTMLTableCellElement caption=HTMLTableCaptionElement"
+                 " tbody=HTMLTableSectionElement form=HTMLFormElement input=HTMLInputElement"
+                 " a=HTMLAnchorElement img=HTMLImageElement br=HTMLBRElement hr=HTMLHRElement"
+                 " q=HTMLQuoteElement del=HTMLModElement time=HTMLTimeElement"
+                 " source=HTMLSourceElement details=HTMLDetailsElement"
+                 " dialog=HTMLDialogElement output=HTMLOutputElement"
+                 " fieldset=HTMLFieldSetElement legend=HTMLLegendElement slot=HTMLSlotElement"
+                 " div=HTMLDivElement html=HTMLHtmlElement b=HTMLElement em=HTMLElement"
+                 " code=HTMLElement nav=HTMLElement section=HTMLElement main=HTMLElement"
+                 " bogus=HTMLUnknownElement unknown-thing=HTMLElement my-widget=HTMLElement",
+    ),
+    Repro(
+        name="a_permissions_policy_answers_the_features_a_document_controls",
+        note="The list is the reference browser's, so it is pinned to the Chrome it was read from.",
+        script="""(() => {
+  const policy = document.featurePolicy;
+  return [Object.prototype.toString.call(policy), policy.features().length,
+          policy.allowedFeatures().length, policy.allowsFeature('geolocation'),
+          policy.allowsFeature('bogus'), policy.getAllowlistForFeature('geolocation').length,
+          document.featurePolicy === policy, typeof PermissionsPolicy,
+          document.createElement('iframe').featurePolicy.allowsFeature('camera')];
+})()""",
+        expected=["[object PermissionsPolicy]", 76, 76, True, False, 1, True, "function", True],
+    ),
+    Repro(
+        name="an_attribute_style_map_reads_and_writes_the_style_attribute",
+        note="The map and the declaration are two views of one attribute.",
+        script="""(() => {
+  const element = document.createElement('div');
+  const map = element.attributeStyleMap;
+  const lines = [Object.prototype.toString.call(map), map.size];
+  element.style.opacity = '0.5';
+  lines.push(map.size, Object.prototype.toString.call(map.get('opacity')),
+             String(map.get('opacity')),
+             map.get('opacity').value + '/' + map.get('opacity').unit,
+             [...map.keys()].join(','));
+  map.set('margin-top', '4px');
+  lines.push(element.getAttribute('style'), map.size, map.has('margin-top'));
+  map.delete('margin-top');
+  lines.push(element.getAttribute('style'), map.size, String(map.get('margin-top')),
+             map.getAll('margin-top').length);
+  map.clear();
+  lines.push(JSON.stringify(element.getAttribute('style')), map.size);
+  return lines;
+})()""",
+        expected=["[object StylePropertyMap]", 0, 1, "[object CSSUnitValue]", "0.5", "0.5/number",
+                  "opacity", "opacity: 0.5; margin-top: 4px;", 2, True,
+                  "opacity: 0.5;", 1, "undefined", 0, '""', 0],
+    ),
+    Repro(
+        name="an_absolutely_positioned_box_sits_where_its_offsets_put_it",
+        note="The absolute box takes the padding box of the nearest positioned ancestor"
+             " as its containing block, and offsetLeft measures from the same place.",
+        html=page(head="<style>#outer{position:absolute;left:10px;top:10px;width:200px;height:100px}"
+                       "#box{position:absolute;left:50px;top:60px;width:40px;height:20px}</style>",
+                  body="<div id=outer><div id=box></div></div>"),
+        script="""(() => {
+  const box = document.getElementById('box');
+  const outer = document.getElementById('outer').getBoundingClientRect();
+  const rect = box.getBoundingClientRect();
+  return [rect.x, rect.y, outer.x, outer.y, box.offsetLeft, box.offsetTop,
+          box.offsetParent === document.getElementById('outer')];
+})()""",
+        expected=[60, 70, 10, 10, 50, 60, True],
+    ),
+    Repro(
+        name="a_relative_offset_and_a_left_margin_move_the_box",
+        note="A relative offset slides the box and its subtree without moving the flow;"
+             " a left margin moves the box inside its containing block.",
+        html=page(head="<style>body{margin:0}"
+                       "#rel{position:relative;left:5px;top:7px;width:40px;height:20px}"
+                       "#flow{margin-left:8px;width:40px;height:20px}</style>",
+                  body="<div id=rel></div><div id=flow></div>"),
+        script="""(() => {
+  const relNode = document.getElementById('rel');
+  const flowNode = document.getElementById('flow');
+  const rel = relNode.getBoundingClientRect();
+  const flow = flowNode.getBoundingClientRect();
+  return [rel.x, rel.y, flow.x, flow.y, relNode.offsetLeft, flowNode.offsetLeft,
+          typeof relNode.offsetLeft, typeof flowNode.offsetLeft];
+})()""",
+        expected=[5, 7, 8, 20, 5, 8, "number", "number"],
+    ),
+    Repro(
+        name="a_dom_matrix_parses_and_serializes_every_form_it_takes",
+        note="A sequence of six or sixteen numbers, a matrix string, another matrix; and"
+             " what it writes back.",
+        script="""(() => {
+  const ids = m => m.toString();
+  const identity = new DOMMatrix();
+  return [Object.prototype.toString.call(identity), ids(identity),
+          identity.is2D, identity.isIdentity,
+          ids(new DOMMatrix([1, 2, 3, 4, 5, 6])),
+          ids(new DOMMatrix('matrix(2, 0, 0, 2, 10, 20)')),
+          ids(new DOMMatrix('matrix3d(1,0,0,0, 0,1,0,0, 0,0,1,0, 5,6,7,1)')),
+          new DOMMatrix('matrix3d(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1)').is2D,
+          ids(new DOMMatrix('none')),
+          Array.from(new DOMMatrix([1, 2, 3, 4, 5, 6]).toFloat32Array()).join(','),
+          JSON.stringify(new DOMMatrix([1, 2, 3, 4, 5, 6]).toJSON())];
+})()""",
+        expected=[
+            "[object DOMMatrix]", "matrix(1, 0, 0, 1, 0, 0)", True, True,
+            "matrix(1, 2, 3, 4, 5, 6)", "matrix(2, 0, 0, 2, 10, 20)",
+            "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1)", False,
+            "matrix(1, 0, 0, 1, 0, 0)", "1,2,0,0,3,4,0,0,0,0,1,0,5,6,0,1",
+            '{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"m11":1,"m12":2,"m13":0,"m14":0,'
+            '"m21":3,"m22":4,"m23":0,"m24":0,"m31":0,"m32":0,"m33":1,"m34":0,'
+            '"m41":5,"m42":6,"m43":0,"m44":1,"is2D":true,"isIdentity":false}',
+        ],
+    ),
+    Repro(
+        name="a_dom_matrix_transforms_the_way_the_reference_does",
+        note="The quarter turn is exact, and a translation keeps what a float holds.",
+        script="""(() => {
+  const ids = m => m.toString();
+  return [ids(new DOMMatrix([1, 2, 3, 4, 5, 6]).translate(10, 20)),
+          ids(new DOMMatrix([1, 0, 0, 1, 5, 6]).scale(2, 3)),
+          ids(new DOMMatrix().rotate(45)), ids(new DOMMatrix().rotate(90)),
+          ids(new DOMMatrix().rotateAxisAngle(0, 0, 1, 90)),
+          ids(new DOMMatrix().rotateFromVector(1, 1)),
+          ids(new DOMMatrix().skewX(45)),
+          ids(new DOMMatrix([1, 0, 0, 1, 1, 1]).multiply(new DOMMatrix([2, 0, 0, 2, 0, 0]))),
+          ids(new DOMMatrix([2, 0, 0, 4, 6, 8]).inverse()),
+          ids(new DOMMatrix([2, 0, 0, 3, 4, 5]).flipX()),
+          ids(new DOMMatrix().translate(0.1, 0.2))];
+})()""",
+        expected=[
+            "matrix(1, 2, 3, 4, 75, 106)", "matrix(2, 0, 0, 3, 5, 6)",
+            "matrix(0.7071067811865476, 0.7071067811865476,"
+            " -0.7071067811865476, 0.7071067811865476, 0, 0)",
+            "matrix(0, 1, -1, 0, 0, 0)", "matrix(0, 1, -1, 0, 0, 0)",
+            "matrix(0.7071067811865476, 0.7071067811865476,"
+            " -0.7071067811865476, 0.7071067811865476, 0, 0)",
+            "matrix(1, 0, 0.9999999999999999, 1, 0, 0)",
+            "matrix(2, 0, 0, 2, 1, 1)", "matrix(0.5, 0, 0, 0.25, -3, -2)",
+            "matrix(-2, 0, 0, 3, 4, 5)",
+            "matrix(1, 0, 0, 1, 0.10000000149011612, 0.20000000298023224)",
+        ],
+    ),
+    Repro(
+        name="a_dom_matrix_writes_its_members_and_stays_3d_once_it_is",
+        script="""(() => {
+  const ids = m => m.toString();
+  const written = new DOMMatrix();
+  written.a = 5;
+  written.m13 = 9;
+  const sticky = new DOMMatrix();
+  sticky.multiplySelf(new DOMMatrix('matrix3d(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1)'));
+  const reread = new DOMMatrix();
+  reread.m11 = 2;
+  reread.m13 = 0;
+  const point = new DOMMatrix([2, 0, 0, 3, 10, 20]).transformPoint({x: 1, y: 2});
+  return [written.a, written.m11, written.is2D, ids(written),
+          sticky.is2D, sticky.isIdentity, ids(sticky),
+          reread.is2D, reread.isIdentity,
+          [point.x, point.y, point.z, point.w].join(','),
+          Object.prototype.toString.call(point),
+          new DOMMatrix() instanceof DOMMatrixReadOnly,
+          new DOMPoint() instanceof DOMPointReadOnly,
+          [new DOMPoint().x, new DOMPoint().y, new DOMPoint().z, new DOMPoint().w].join(','),
+          JSON.stringify(new DOMPoint(1, 2, 3, 4).toJSON()),
+          String(new DOMPoint(1, 2).matrixTransform(new DOMMatrix([2, 0, 0, 3, 10, 20])))];
+})()""",
+        expected=[5, 5, False, "matrix3d(5, 0, 9, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)",
+                  False, True, "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)",
+                  True, False, "12,26,0,1", "[object DOMPoint]", True, True, "0,0,0,1",
+                  '{"x":1,"y":2,"z":3,"w":4}', "[object DOMPoint]"],
+    ),
+    Repro(
+        name="a_dom_matrix_refuses_what_the_reference_refuses",
+        script="""(() => {
+  const answers = [];
+  for (const call of [
+      () => new DOMMatrix('bogus'),
+      () => new DOMMatrix([1, 2, 3]),
+      () => new DOMMatrix({a: 1}),
+      () => new DOMMatrix([1, 0, 0, 1, 0, 0]).setMatrixValue('bogus'),
+      () => new DOMMatrix().translate(NaN, 0).toString(),
+  ]) {
+    try { call(); answers.push('no throw'); }
+    catch (error) { answers.push(error.name + ': ' + error.message); }
+  }
+  return answers;
+})()""",
+        expected=[
+            "SyntaxError: Failed to construct 'DOMMatrix': Failed to parse 'bogus'.",
+            "TypeError: Failed to construct 'DOMMatrix': The sequence must contain"
+            " 6 elements for a 2D matrix or 16 elements for a 3D matrix.",
+            "SyntaxError: Failed to construct 'DOMMatrix': Failed to parse '[object Object]'.",
+            "SyntaxError: Failed to execute 'setMatrixValue' on 'DOMMatrix':"
+            " Failed to parse 'bogus'.",
+            "InvalidStateError: Failed to execute 'toString' on 'DOMMatrixReadOnly':"
+            " DOMMatrix cannot be serialized with NaN or Infinity values.",
+        ],
+    ),
+    Repro(
+        name="is_type_supported_answers_the_reference_browsers_codecs",
+        note="Both answers are this machine's Chrome: what its build carries, codec by codec.",
+        script="""(() => {
+  const types = ['audio/mp4; codecs="mp4a.40.2"', 'audio/mpeg;', 'audio/webm; codecs="vorbis"',
+                 'audio/ogg; codecs="vorbis"', 'audio/wav; codecs="1"', 'audio/ogg; codecs="speex"',
+                 'audio/ogg; codecs="flac"', 'audio/3gpp; codecs="samr"',
+                 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"', 'video/mp4; codecs="avc1.42E01E"',
+                 'video/mp4; codecs="avc1.58A01E"', 'video/mp4; codecs="avc1.4D401E"',
+                 'video/mp4; codecs="avc1.64001E"', 'video/mp4; codecs="mp4v.20.8"',
+                 'video/mp4; codecs="mp4v.20.240"', 'video/webm; codecs="vp8"',
+                 'video/ogg; codecs="theora"', 'video/ogg; codecs="dirac"',
+                 'video/3gpp; codecs="mp4v.20.8"', 'video/x-matroska; codecs="theora"'];
+  return [types.map(type => MediaSource.isTypeSupported(type) ? 1 : 0).join(''),
+          MediaSource.isTypeSupported('video/mp4'), MediaSource.isTypeSupported('audio/mpeg'),
+          MediaSource.isTypeSupported('nonsense'), MediaSource.isTypeSupported('')];
+})()""",
+        expected=["11100000111110010000", False, True, False, False],
+    ),
+    Repro(
+        name="rtp_receiver_capabilities_are_the_reference_browsers",
+        note="The codec tables are the reference build's, so they move when it moves.",
+        script="""(() => {
+  const audio = RTCRtpReceiver.getCapabilities('audio');
+  const video = RTCRtpReceiver.getCapabilities('video');
+  return [audio.codecs.length, video.codecs.length,
+          audio.headerExtensions.length, video.headerExtensions.length,
+          audio.codecs[0].mimeType, video.codecs[0].mimeType, video.codecs[18].mimeType,
+          String(RTCRtpReceiver.getCapabilities('bogus')),
+          JSON.stringify(audio).length, JSON.stringify(video).length];
+})()""",
+        expected=[8, 23, 4, 11, "audio/opus", "video/VP8", "video/H265", "null", 891, 3226],
+    ),
+    Repro(
+        name="a_webgl_context_event_carries_the_status_message_it_was_given",
+        script="""(() => {
+  const event = new WebGLContextEvent('webglcontextlost', {statusMessage: 'gone', bubbles: true});
+  return [Object.prototype.toString.call(event), event.type, event.statusMessage,
+          event.bubbles, event instanceof Event, new WebGLContextEvent('x').statusMessage];
+})()""",
+        expected=["[object WebGLContextEvent]", "webglcontextlost", "gone", True, True, ""],
+    ),
+    Repro(
+        name="a_transferred_message_port_arrives_in_the_events_ports",
+        note="A transfer moves the port: the sender's reference is neutered, and the port"
+             " arrives in the message event's ports, still entangled with its twin.",
+        html=page(body="""
+<script>
+  window.__seen = [];
+  window.__neutered = false;
+  const channel = new MessageChannel();
+  window.__channel = channel;
+  channel.port2.onmessage = () => { window.__neutered = true; };
+  onmessage = event => {
+    window.__seen.push([event.data, event.ports.length, event.ports[0] instanceof MessagePort]);
+    const moved = event.ports[0];
+    moved.onmessage = reply => window.__seen.push(['reply', reply.data]);
+    moved.start();
+    channel.port1.postMessage('from-port1');
+  };
+  postMessage('init', '*', [channel.port2]);
+</script>"""),
+        settle=0.5,
+        script="[window.__seen, window.__neutered]",
+        expected=[[["init", 1, True], ["reply", "from-port1"]], False],
+    ),
+    Repro(
+        name="a_transfer_list_refuses_what_it_cannot_move",
+        html=page(body="""
+<script>
+  window.__error = '';
+  try { postMessage('x', '*', [{}]); } catch (error) { window.__error = error.name + ': ' + error.message; }
+</script>"""),
+        script="window.__error",
+        expected="DataCloneError: Failed to execute 'postMessage' on 'Window':"
+                 " Value at index 0 does not have a transferable type.",
+    ),
+    Repro(
+        name="a_port_that_was_already_moved_cannot_be_moved_again",
+        html=page(body="""
+<script>
+  window.__error = '';
+  const channel = new MessageChannel();
+  postMessage('first', '*', [channel.port2]);
+  try { postMessage('second', '*', [channel.port2]); }
+  catch (error) { window.__error = error.name + ': ' + error.message; }
+</script>"""),
+        script="window.__error",
+        expected="DataCloneError: Failed to execute 'postMessage' on 'Window':"
+                 " Port at index 0 is already neutered.",
     ),
     Repro(
         name="a_canvas_keeps_the_first_context_type",
@@ -3230,21 +3678,22 @@ CASES = (
                   ["a=b", "b", "_a", "\u00e4x", "a-b"]],
     ),
     Repro(
-        name="a_tag_outside_the_modelled_html_table_is_an_unknown_element_here",
+        name="an_html_name_is_looked_up_the_way_its_interface_is_measured",
         note="Both factories agree on the rule: an HTML-namespace name is looked up as "
-             "written, and whatever the table does not model is an HTMLUnknownElement.",
+             "written, and whatever has no interface is an HTMLUnknownElement -- unless "
+             "the name has a hyphen, which makes it a custom element name.",
         script="""(() => {
             const XHTML = 'http://www.w3.org/1999/xhtml';
             return [document.createElement('b').constructor.name,
                     document.createElement('section').constructor.name,
                     document.createElementNS(XHTML, 'a:b').constructor.name,
+                    document.createElementNS(XHTML, 'p').constructor.name,
+                    document.createElementNS(XHTML, 'P').constructor.name,
+                    document.createElementNS(XHTML, 'my-widget').constructor.name,
                     document.createElement('div').constructor.name];
         })()""",
-        expected=["HTMLUnknownElement", "HTMLUnknownElement", "HTMLUnknownElement",
-                  "HTMLDivElement"],
-        known_divergence=("dom.html_classes.TAG_CLASSES models 27 tags and the rest fall "
-                          "back to HTMLUnknownElement, where Chrome answers the plain "
-                          "interface the HTML spec gives the tag (b/section -> HTMLElement)"),
+        expected=["HTMLElement", "HTMLElement", "HTMLElement", "HTMLParagraphElement",
+                  "HTMLUnknownElement", "HTMLElement", "HTMLDivElement"],
     ),
     Repro(
         name="a_rect_reads_its_geometry_through_an_animated_length",

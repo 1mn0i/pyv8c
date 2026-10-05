@@ -59,8 +59,8 @@ CROSS_ORIGIN = ["host", "sec-ch-ua-platform", "user-agent", "sec-ch-ua",
 RECORDS: list[dict] = []
 LOCK = threading.Lock()
 CHROME_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-             "(KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
-HINTS = '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"'
+             "(KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36")
+HINTS = '"Chromium";v="154", "Google Chrome";v="154", "Not A(Brand";v="99"'
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):

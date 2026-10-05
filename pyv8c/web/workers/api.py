@@ -157,9 +157,11 @@ class Worker(EventTarget):
             raise InvalidStateError("Worker has been terminated")
         self._runtime.post_from_parent(value, transfer)
 
-    def _receive_message(self, value):
+    def _receive_message(self, value, ports=()):
         if not self._terminated:
-            self.fn_dispatchEvent(MessageEvent("message", {"data": value, "origin": self._services.realm_services.url}))
+            self.fn_dispatchEvent(MessageEvent("message", {
+                "data": value, "origin": self._services.realm_services.url,
+                "ports": ports}))
 
     def _receive_error(self, error):
         if not self._terminated:

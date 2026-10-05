@@ -114,6 +114,9 @@ class MouseInput:
         self._moved = False
         self._bits = 0
         self._hovered = None
+        #: The pointer starts outside the page, so its first move inside reports the
+        #: document picking it up, as a window does when a cursor arrives.
+        self._inside_page = False
         self._pressed = None
         self._press_count = 1
         self._count = 0
@@ -265,28 +268,48 @@ class MouseInput:
             self._movement_x = self._movement_y = 0
             self._moved = True
         self._x, self._y = x, y
+        document = self._page.document
+        hit = element_from_point(document, x, y)
+        self._cross(hit if hit is not None else self._root(), hit is not None)
         target = self._target()
-        self._cross(target)
         self._emit("pointermove", target)
         self._emit("mousemove", target)
 
-    def _cross(self, target):
+    def _root(self):
+        document = self._page.document
+        root = document.get_documentElement()
+        return None if root is None or root is pyv8.Null else root
+
+    def _cross(self, target, inside=True):
         """Fire the boundary events a move from the hovered element to *target* makes."""
         previous = self._hovered
-        if target is previous:
+        page_changed = inside != self._inside_page
+        if target is previous and not page_changed:
             return
+        self._inside_page = inside
         self._hovered = target
         for kind, interface in (("pointer", "PointerEvent"), ("mouse", "MouseEvent")):
-            if previous is not None:
+            if previous is not None and target is not previous:
                 self._emit(f"{kind}out", previous, related=target, event_class=interface)
                 for node in _leaving(previous, target):
                     self._emit(f"{kind}leave", node, related=target, event_class=interface,
                                bubbles=False, cancelable=False, propagates=False)
-            if target is not None:
+            if target is not None and target is not previous:
                 self._emit(f"{kind}over", target, related=previous, event_class=interface)
+            # The document reports the cursor arriving in and leaving the page: its
+            # enter is the outermost one, and its leave the last.
+            if page_changed and inside:
+                self._page_event(kind, interface, "enter")
+            if target is not None and target is not previous:
                 for node in _entering(previous, target):
                     self._emit(f"{kind}enter", node, related=previous, event_class=interface,
                                bubbles=False, cancelable=False, propagates=False)
+            if page_changed and not inside:
+                self._page_event(kind, interface, "leave")
+
+    def _page_event(self, kind, interface, phase):
+        self._emit(f"{kind}{phase}", self._page.document, event_class=interface,
+                   bubbles=False, cancelable=False, propagates=False)
 
     def _count_for(self, target, click_count):
         """The ``detail`` this press reports, and the run it belongs to."""

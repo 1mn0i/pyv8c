@@ -49,7 +49,7 @@ def test_default_browser_sink_really_logs():
         page = browser.new_context().new_page()
         messages.clear()
         page.evaluate("document.createElement('div').id")
-        assert any('method: Document.createElement' in message for message in messages)
+        assert any('method: HTMLDocument.createElement' in message for message in messages)
         assert any('getter: HTMLDivElement.id' in message for message in messages)
     finally:
         browser.close()

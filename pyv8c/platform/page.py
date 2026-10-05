@@ -15,7 +15,7 @@ from ..foundation.rejections import RejectionTracker
 from ..foundation.tasks import TaskQueue
 from ..foundation.urls import origin_tuple
 from ..web.bom.window import Window
-from ..web.dom.document import Document
+from ..web.dom.document import Document, HTMLDocument
 from ..web.dom.nodes import Node
 from ..web.fetch.response import Response
 from .lifecycle import DocumentLifecycle
@@ -121,7 +121,7 @@ class Page:
             self._resource_scope,
         )
         self.services._origin = self.origin
-        self.document = Document(services=self.services, url=url, ready_state="complete")
+        self.document = HTMLDocument(services=self.services, url=url, ready_state="complete")
         self.resource_loader = context.browser.resource_loader
         self.resource_interceptor = context.browser.resource_interceptor
         self.cache_enabled = context.browser.cache_enabled

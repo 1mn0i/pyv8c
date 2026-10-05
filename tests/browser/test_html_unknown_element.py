@@ -1,9 +1,9 @@
 """``HTMLUnknownElement`` and the tag-to-interface resolution rule.
 
 ``class_for_tag`` is the single resolver both element-creation paths use:
-``Document.createElement`` and the parser's element factory.  A local name it
-does not model -- the obsolete tags, custom element names and anything else --
-becomes ``HTMLUnknownElement``, which is what Chromium exposes for them.
+``Document.createElement`` and the parser's element factory.  A local name it does
+not model becomes ``HTMLUnknownElement``, except when it has a hyphen in it: that is
+a valid custom element name, which Chromium answers with a plain ``HTMLElement``.
 """
 import pytest
 
@@ -18,9 +18,12 @@ PAGE_HTML = ("<foo id='unknown'></foo><my-widget id='custom'></my-widget>"
 IRREGULAR_TAGS = ("img", "td", "tr", "textarea", "iframe")
 
 #: Obsolete tags Chromium still maps to ``HTMLUnknownElement``, plus the names
-#: this DOM does not model at all.
-UNMODELLED_TAGS = ("foo", "my-widget", "bgsound", "blink", "isindex", "keygen",
-                   "multicol", "nextid", "spacer", "media")
+#: this DOM does not model at all and that carry no hyphen.
+UNMODELLED_TAGS = ("foo", "bgsound", "blink", "isindex", "keygen", "multicol",
+                   "nextid", "spacer", "media")
+
+#: Hyphenated names are custom element names, so an undefined one is an ``HTMLElement``.
+CUSTOM_TAGS = ("my-widget", "x-y", "DIV-")
 
 
 @pytest.fixture
@@ -40,8 +43,10 @@ def test_class_for_tag_resolves_modelled_tags_and_falls_back():
                 "template", "canvas", "input") + IRREGULAR_TAGS:
         assert class_for_tag(tag) is not HTMLUnknownElement, tag
         assert class_for_tag(tag.upper()) is class_for_tag(tag), tag
-    for tag in UNMODELLED_TAGS + ("", "DIV-", "x-y"):
+    for tag in UNMODELLED_TAGS + ("",):
         assert class_for_tag(tag) is HTMLUnknownElement, tag
+    for tag in CUSTOM_TAGS:
+        assert class_for_tag(tag) is HTML_CLASSES["HTMLElement"], tag
     assert HTML_CLASSES["HTMLUnknownElement"] is HTMLUnknownElement
     # Every tag maps to a class the registry knows about, and the fallback
     # interface is not a tag of its own.
@@ -50,16 +55,17 @@ def test_class_for_tag_resolves_modelled_tags_and_falls_back():
     assert "unknown" not in TAG_CLASSES
 
 
-def test_unknown_and_custom_element_names_are_html_unknown_element(document_page):
+def test_unknown_names_are_unknown_and_custom_ones_are_plain_elements(document_page):
     assert document_page.evaluate("""
         (() => {
           const parsed = id => document.getElementById(id).constructor.name;
           const created = tag => document.createElement(tag).constructor.name;
           return [parsed('unknown'), parsed('custom'), parsed('known'),
-                  created('foo'), created('my-widget'), created('div')];
+                  created('foo'), created('my-widget'), created('div'),
+                  document.createElement('my-widget') instanceof HTMLElement];
         })()
-    """) == ["HTMLUnknownElement", "HTMLUnknownElement", "HTMLDivElement",
-             "HTMLUnknownElement", "HTMLUnknownElement", "HTMLDivElement"]
+    """) == ["HTMLUnknownElement", "HTMLElement", "HTMLDivElement",
+             "HTMLUnknownElement", "HTMLElement", "HTMLDivElement", True]
 
 
 def test_parser_and_create_element_agree_on_every_local_name(document_page):

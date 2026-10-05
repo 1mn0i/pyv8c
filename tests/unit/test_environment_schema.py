@@ -67,9 +67,9 @@ def test_derived_keys_follow_the_user_agent_they_came_from():
     })
     assert environment.app_version == LINUX_CHROME.removeprefix("Mozilla/")
     assert [brand.brand for brand in environment.client_hints.brands] == [
-        "Google Chrome", "Not_A Brand", "Chromium",
+        "Chromium", "Google Chrome", "Not A(Brand",
     ]
-    assert [brand.version for brand in environment.client_hints.brands] == ["120", "8", "120"]
+    assert [brand.version for brand in environment.client_hints.brands] == ["120", "120", "99"]
     assert environment.client_hints.platform == "Linux"
     assert environment.client_hints.architecture == "x86"
     assert environment.client_hints.platform_version == "6.5.0"
@@ -79,7 +79,7 @@ def test_derived_keys_follow_the_user_agent_they_came_from():
     moved = environment.overlay({"user_agent": WINDOWS_CHROME})
     assert moved.client_hints.platform == "Windows"
     assert moved.client_hints.platform_version == "6.5.0"
-    assert [brand.version for brand in moved.client_hints.brands] == ["152", "8", "152"]
+    assert [brand.version for brand in moved.client_hints.brands] == ["152", "152", "99"]
 
 
 def test_group_views_read_the_values_the_table_holds():

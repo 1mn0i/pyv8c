@@ -174,7 +174,7 @@ def _singleton_values(window):
         "external": External,
         "crashReport": CrashReportContext,
         "launchQueue": LaunchQueue,
-        "speechSynthesis": SpeechSynthesis,
+        "speechSynthesis": lambda: SpeechSynthesis(services=window._services),
         "styleMedia": lambda: StyleMedia(window),
         "scheduler": lambda: Scheduler(services=window._services),
         "cookieStore": lambda: CookieStore(services=window._services),
@@ -717,11 +717,15 @@ class Window(_SchedulingMixin, WindowProperties):
         if not isinstance(element, Element):
             raise TypeError("The provided value is not an Element")
         from ..dom.layout import computed_style_object
-        return computed_style_object(element)
+        document = getattr(element, "ownerDocument", None)
+        # Nothing is rendered in a tree no window owns, and CSSOM answers empty
+        # values for one: that is what a document built by ``DOMParser`` is.
+        rendered = document is None or document.get_defaultView() is not pyv8.Null
+        return computed_style_object(element, rendered=rendered)
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
         from ...foundation.errors import V8SyntaxError
-        from ..fetch.clone import structured_clone
+        from ..fetch.clone import structured_clone, transfer_ports
         from ..fetch.events import MessageEvent
 
         # Null is an empty WindowPostMessageOptions dictionary.
@@ -741,7 +745,10 @@ class Window(_SchedulingMixin, WindowProperties):
             expected_origin = origin_tuple(target_origin)
             if expected_origin[0] == "opaque":
                 raise V8SyntaxError("Invalid target origin in postMessage")
-        data = structured_clone(message, transfer)
+        # A transfer happens at the call, as Chrome does it: a port whose target
+        # refuses the message is moved out of this realm all the same.
+        ports = transfer_ports(transfer, services=self._services)
+        data = structured_clone(message)
         serialized = serialize_origin(source._origin)
 
         def deliver():
@@ -749,6 +756,7 @@ class Window(_SchedulingMixin, WindowProperties):
                 return
             self._services.realm_services.materialize_interface("MessageEvent")
             event = MessageEvent("message", {"data": data, "origin": serialized,
-                                           "source": self._view(source), "isTrusted": True})
+                                           "source": self._view(source), "ports": ports,
+                                           "isTrusted": True})
             self.fn_dispatchEvent(event)
         self._services.realm_services.post_task(deliver)

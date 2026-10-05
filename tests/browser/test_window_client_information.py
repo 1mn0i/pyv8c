@@ -32,7 +32,7 @@ def test_client_hints_reach_a_worker():
         })()""")
         page.run_until_idle(timeout=2)
         assert page.evaluate("window.__worker") == \
-            '["object","Google Chrome,Not_A Brand,Chromium","function",true]'
+            '["object","Chromium,Google Chrome,Not A(Brand","function",true]'
     finally:
         browser.close()
 

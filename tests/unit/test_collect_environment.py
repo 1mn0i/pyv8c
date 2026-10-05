@@ -1,4 +1,5 @@
 """The collector: what it refuses, and how it agrees with the field table."""
+import json
 import re
 
 import pytest
@@ -64,22 +65,56 @@ def test_a_profile_has_to_be_complete_before_it_is_written():
         collector.build_environment(payload(**{"timezone": None}))
 
 
-def test_a_run_writes_the_environment_and_the_window_surface_together():
+def test_a_run_writes_the_environment_and_the_surface_together():
     """Both facts are read from one session, so they land in one document."""
     collected = payload()
-    surface = collector.build_surface({"keys": ["a"], "own": ["a", "b"]})
-    document = collector.build_profile(collected, surface, source={"browser": "Chrome/153.0.8010.52"})
+    surface = collector.build_surface(
+        {"keys": ["a"], "own": ["a", "b"],
+         "prototypes": {"Node": ["appendChild", "cloneNode"], "Event": []}},
+        {"Node": {"appendChild", "append", "cloneNode"}}, "digest-of-the-baseline")
+    document = collector.build_profile(collected, surface, source={"browser": "Chrome/154.0.8037.95"})
 
-    assert document["window_surface"] == {"keys": ["a"], "own_names": ["a", "b"]}
-    assert document["source"]["browser"] == "Chrome/153.0.8010.52"
+    assert document["window_surface"] == {"keys": ["a"], "own_names": ["a", "b"],
+                                          "prototype_gaps": {"Node": ["append"]},
+                                          "baseline_digest": "digest-of-the-baseline"}
+    assert document["source"]["browser"] == "Chrome/154.0.8037.95"
     assert set(document) == {"schema", "source", "window_surface", *COLLECTED_KEYS}
     # The section is not an environment key: the profile still loads as one.
     assert BrowserEnvironment.from_dict(document).to_dict() == collected
 
 
+def test_a_surface_without_gap_readings_writes_empty_sections():
+    """A browser that answered nothing about its prototypes narrows no interface."""
+    surface = collector.build_surface({"keys": ["a"], "own": ["a"]}, {"Node": {"appendChild"}})
+
+    assert surface["prototype_gaps"] == {}
+    assert surface["baseline_digest"] == ""
+
+
+def test_only_a_declared_name_can_be_a_gap():
+    """What the baseline does not declare is not a difference, so it is not recorded."""
+    surface = collector.build_surface({"keys": [], "own": [], "prototypes": {"Node": [],
+                                                                            "Unknown": ["x"]}},
+                                      {"Node": {"appendChild"}})
+
+    assert surface["prototype_gaps"] == {"Node": ["appendChild"]}
+
+
+def test_a_non_finite_number_is_written_as_its_name():
+    """A bare ``Infinity`` is not JSON, so the profile spells it out."""
+    collected = payload(**{"battery.discharging_time": float("inf")})
+    document = collector.build_profile(collected, collector.build_surface({"keys": [], "own": []}),
+                                       source={"browser": "Chrome/1"})
+
+    assert document["battery.discharging_time"] == "Infinity"
+    assert json.dumps(document, allow_nan=False)
+
+
 def test_the_surface_script_asks_for_what_the_section_carries():
     assert "Object.keys(window)" in collector.SURFACE_SCRIPT
     assert "Object.getOwnPropertyNames(window)" in collector.SURFACE_SCRIPT
+    assert "getOwnPropertyNames(prototype)" in collector.SURFACE_SCRIPT
+    assert "prototypes" in collector.SURFACE_SCRIPT
 
 
 def test_the_default_output_is_the_profile_the_package_ships():

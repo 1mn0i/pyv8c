@@ -279,6 +279,338 @@ def test_canvas_text_baseline_round_trips(page):
     """) == ["alphabetic", "middle", "middle", "middle"]
 
 
+def test_webgl_reads_back_the_colour_it_cleared_to(page):
+    assert page.evaluate("""(() => {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl');
+        const empty = new Uint8Array(4);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, empty);
+        gl.clearColor(0.25, 0.5, 0.75, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        const pixels = new Uint8Array(4);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return [Array.from(empty).join(','), Array.from(pixels).join(','),
+                Array.from(gl.getParameter(gl.COLOR_CLEAR_VALUE)).join(','), gl.getError()];
+    })()""") == ["0,0,0,0", "64,128,191,255", "0.25,0.5,0.75,1", 0]
+
+
+def test_webgl_color_mask_holds_back_the_channels_it_covers(page):
+    assert page.evaluate("""(() => {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl');
+        gl.colorMask(true, false, true, false);
+        gl.clearColor(1, 1, 1, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        const pixels = new Uint8Array(4);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return [Array.from(pixels).join(','),
+                Array.from(gl.getParameter(gl.COLOR_WRITEMASK)).join(',')];
+    })()""") == ["255,0,255,0", "true,false,true,false"]
+
+
+def test_webgl_draw_path_answers_without_an_error(page):
+    assert page.evaluate("""(() => {
+        const gl = document.createElement('canvas').getContext('webgl');
+        const shader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(shader, 'void main() {}');
+        gl.compileShader(shader);
+        const program = gl.createProgram();
+        gl.attachShader(program, shader);
+        gl.linkProgram(program);
+        gl.useProgram(program);
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0]), gl.STATIC_DRAW);
+        const attribute = gl.getAttribLocation(program, 'a');
+        gl.enableVertexAttribArray(attribute);
+        gl.vertexAttribPointer(attribute, 2, gl.FLOAT, false, 0, 0);
+        gl.vertexAttrib2f(attribute, 1, 2);
+        gl.uniform2f(gl.getUniformLocation(program, 'u'), 1, 2);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.drawElements(gl.TRIANGLES, 3, gl.UNSIGNED_SHORT, 0);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        return gl.getError();
+    })()""") == 0
+
+
+def test_feature_policy_answers_the_features_a_document_controls(page):
+    assert page.evaluate("""(() => {
+        const policy = document.featurePolicy;
+        return [Object.prototype.toString.call(policy), policy.features().length,
+                policy.allowsFeature('geolocation'), policy.allowsFeature('bogus'),
+                policy.getAllowlistForFeature('geolocation').length,
+                document.featurePolicy === policy];
+    })()""") == ["[object PermissionsPolicy]", 76, True, False, 1, True]
+
+
+def test_feature_policy_needs_a_feature_name(page):
+    assert page.evaluate("""(() => {
+        try { document.featurePolicy.allowsFeature(); return 'no throw'; }
+        catch (error) { return error.name + ': ' + error.message; }
+    })()""").startswith("TypeError: Failed to execute 'allowsFeature' on 'PermissionsPolicy'")
+
+
+def test_attribute_style_map_reads_and_writes_the_style_attribute(page):
+    assert page.evaluate("""(() => {
+        const element = document.createElement('div');
+        const map = element.attributeStyleMap;
+        const lines = [Object.prototype.toString.call(map), map.size];
+        element.style.opacity = '0.5';
+        lines.push(map.size, Object.prototype.toString.call(map.get('opacity')),
+                   String(map.get('opacity')),
+                   map.get('opacity').value + '/' + map.get('opacity').unit);
+        map.set('margin-top', '4px');
+        lines.push(element.getAttribute('style'), map.has('margin-top'));
+        map.delete('margin-top');
+        lines.push(element.getAttribute('style'), map.size, String(map.get('margin-top')));
+        map.clear();
+        lines.push(JSON.stringify(element.getAttribute('style')), map.size);
+        return lines;
+    })()""") == ["[object StylePropertyMap]", 0, 1, "[object CSSUnitValue]", "0.5", "0.5/number",
+                 "opacity: 0.5; margin-top: 4px;", True, "opacity: 0.5;", 1, "undefined", '""', 0]
+
+
+def test_attribute_style_map_refuses_what_chrome_refuses(page):
+    """The writable map validates names and values, the read-only view only names."""
+    assert page.evaluate("""(() => {
+        const element = document.createElement('div');
+        const map = element.attributeStyleMap;
+        const answers = [];
+        for (const [label, call] of [
+            ['set', () => map.set('nope-nope', 'x')],
+            ['set camelCase', () => map.set('marginTop', '4px')],
+            ['append', () => map.append('color', 'blue')],
+            ['delete', () => map.delete('nope-nope')],
+            ['get', () => map.get()],
+            ['get invalid', () => map.get('nope-nope')],
+            ['has invalid', () => map.has('nope-nope')],
+            ['getAll invalid', () => map.getAll('nope-nope')],
+            ['get missing', () => String(map.get('margin-top'))],
+            ['has missing', () => map.has('margin-top')],
+            ['set custom', () => { map.set('--probe', '1'); return element.getAttribute('style'); }],
+            ['get custom', () => String(map.get('--probe'))],
+        ]) {
+            try { answers.push(label + ': ' + call()); }
+            catch (error) { answers.push(label + ': ' + error.message); }
+        }
+        return answers;
+    })()""") == [
+        "set: Failed to execute 'set' on 'StylePropertyMap': Invalid propertyName: nope-nope",
+        "set camelCase: Failed to execute 'set' on 'StylePropertyMap':"
+        " Invalid propertyName: marginTop",
+        "append: Failed to execute 'append' on 'StylePropertyMap':"
+        " Property does not support multiple values",
+        "delete: Failed to execute 'delete' on 'StylePropertyMap': Invalid property name: nope-nope",
+        "get: Failed to execute 'get' on 'StylePropertyMapReadOnly': 1 argument required,"
+        " but only 0 present.",
+        "get invalid: Failed to execute 'get' on 'StylePropertyMapReadOnly':"
+        " Invalid propertyName: nope-nope",
+        "has invalid: Failed to execute 'has' on 'StylePropertyMapReadOnly':"
+        " Invalid propertyName: nope-nope",
+        "getAll invalid: Failed to execute 'getAll' on 'StylePropertyMapReadOnly':"
+        " Invalid propertyName: nope-nope",
+        "get missing: undefined",
+        "has missing: false",
+        "set custom: --probe: 1;",
+        "get custom: 1",
+    ]
+
+
+def test_a_transferred_message_port_arrives_in_the_events_ports(page):
+    """A transfer moves the port: the sender's reference is neutered, the twin stays
+    entangled with the port the receiving side finds in ``event.ports``.
+    """
+    page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        window.__seen = [];
+        window.__neutered = false;
+        channel.port2.onmessage = () => { window.__neutered = true; };
+        onmessage = event => {
+            window.__seen.push(event.data, event.ports.length,
+                               event.ports[0] instanceof MessagePort);
+            const moved = event.ports[0];
+            moved.onmessage = reply => window.__seen.push(reply.data);
+            moved.start();
+            channel.port1.postMessage('from-port1');
+        };
+        postMessage('init', '*', [channel.port2]);
+    })()""")
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("window.__seen") == ["init", 1, True, "from-port1"]
+    assert page.evaluate("window.__neutered") is False
+
+
+def test_a_transfer_list_refuses_what_it_cannot_move(page):
+    assert page.evaluate("""(() => {
+        const answers = [];
+        const channel = new MessageChannel();
+        for (const call of [() => postMessage('x', '*', [{}]),
+                            () => { postMessage('a', '*', [channel.port2]);
+                                    postMessage('b', '*', [channel.port2]); }]) {
+            try { call(); answers.push('no throw'); }
+            catch (error) { answers.push(error.name + ': ' + error.message); }
+        }
+        return answers;
+    })()""") == [
+        "DataCloneError: Failed to execute 'postMessage' on 'Window':"
+        " Value at index 0 does not have a transferable type.",
+        "DataCloneError: Failed to execute 'postMessage' on 'Window':"
+        " Port at index 0 is already neutered.",
+    ]
+
+
+def test_is_type_supported_answers_the_codecs_the_build_carries(page):
+    assert page.evaluate("""(() => [
+        MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E, mp4a.40.2"'),
+        MediaSource.isTypeSupported('video/mp4; codecs="mp4v.20.8"'),
+        MediaSource.isTypeSupported('video/mp4'),
+        MediaSource.isTypeSupported('audio/mpeg'),
+        MediaSource.isTypeSupported('nonsense'),
+        MediaSource.isTypeSupported(''),
+    ])()""") == [True, False, False, True, False, False]
+
+
+def test_is_type_supported_needs_a_type(page):
+    assert page.evaluate("""(() => {
+        try { MediaSource.isTypeSupported(); return 'no throw'; }
+        catch (error) { return error.name + ': ' + error.message; }
+    })()""").startswith("TypeError: Failed to execute 'isTypeSupported' on 'MediaSource'")
+
+
+def test_rtp_receiver_capabilities_are_the_reference_builds(page):
+    assert page.evaluate("""(() => {
+        const audio = RTCRtpReceiver.getCapabilities('audio');
+        const video = RTCRtpReceiver.getCapabilities('video');
+        return [audio.codecs.length, video.codecs.length,
+                audio.headerExtensions.length, video.headerExtensions.length,
+                audio.codecs[0].mimeType, video.codecs[0].mimeType,
+                Object.keys(audio.codecs[0]).join(','),
+                String(RTCRtpReceiver.getCapabilities('bogus'))];
+    })()""") == [8, 23, 4, 11, "audio/opus", "video/VP8",
+                 "channels,clockRate,mimeType,sdpFmtpLine", "null"]
+
+
+def test_a_webgl_context_event_carries_its_status_message(page):
+    assert page.evaluate("""(() => {
+        const event = new WebGLContextEvent('webglcontextlost',
+            {statusMessage: 'gone', bubbles: true});
+        return [Object.prototype.toString.call(event), event.type, event.statusMessage,
+                event.bubbles, event instanceof Event,
+                new WebGLContextEvent('x').statusMessage,
+                new WebGLContextEvent('x', {statusMessage: 5}).statusMessage];
+    })()""") == ["[object WebGLContextEvent]", "webglcontextlost", "gone", True, True, "", "5"]
+
+
+def test_a_dom_matrix_parses_serializes_and_transforms(page):
+    assert page.evaluate("""(() => {
+        const ids = m => m.toString();
+        const identity = new DOMMatrix();
+        return [Object.prototype.toString.call(identity), ids(identity),
+                identity.is2D, identity.isIdentity,
+                ids(new DOMMatrix([1, 2, 3, 4, 5, 6])),
+                ids(new DOMMatrix('matrix(2, 0, 0, 2, 10, 20)')),
+                ids(new DOMMatrix([1, 2, 3, 4, 5, 6]).translate(10, 20)),
+                ids(new DOMMatrix().rotate(90)), ids(new DOMMatrix().rotate(45)),
+                ids(new DOMMatrix([2, 0, 0, 4, 6, 8]).inverse()),
+                ids(new DOMMatrix().translate(0.1, 0.2)),
+                Array.from(new DOMMatrix([1, 2, 3, 4, 5, 6]).toFloat32Array()).join(',')];
+    })()""") == [
+        "[object DOMMatrix]", "matrix(1, 0, 0, 1, 0, 0)", True, True,
+        "matrix(1, 2, 3, 4, 5, 6)", "matrix(2, 0, 0, 2, 10, 20)",
+        "matrix(1, 2, 3, 4, 75, 106)", "matrix(0, 1, -1, 0, 0, 0)",
+        "matrix(0.7071067811865476, 0.7071067811865476,"
+        " -0.7071067811865476, 0.7071067811865476, 0, 0)",
+        "matrix(0.5, 0, 0, 0.25, -3, -2)",
+        "matrix(1, 0, 0, 1, 0.10000000149011612, 0.20000000298023224)",
+        "1,2,0,0,3,4,0,0,0,0,1,0,5,6,0,1",
+    ]
+
+
+def test_a_dom_matrix_keeps_its_2d_flag_and_fills_a_point(page):
+    assert page.evaluate("""(() => {
+        const sticky = new DOMMatrix();
+        sticky.multiplySelf(new DOMMatrix('matrix3d(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1)'));
+        const written = new DOMMatrix();
+        written.a = 5;
+        written.m13 = 9;
+        const point = new DOMMatrix([2, 0, 0, 3, 10, 20]).transformPoint({x: 1, y: 2});
+        return [sticky.is2D, sticky.isIdentity, written.is2D,
+                Object.prototype.toString.call(point),
+                [point.x, point.y, point.z, point.w].join(','),
+                [new DOMPoint().x, new DOMPoint().z, new DOMPoint().w].join(','),
+                JSON.stringify(new DOMPoint(1, 2, 3, 4).toJSON()),
+                String(new DOMPoint(1, 2).matrixTransform(new DOMMatrix([2, 0, 0, 3, 10, 20])))];
+    })()""") == [False, True, False, "[object DOMPoint]", "12,26,0,1", "0,0,1",
+                 '{"x":1,"y":2,"z":3,"w":4}', "[object DOMPoint]"]
+
+
+def test_a_dom_matrix_refuses_what_chrome_refuses(page):
+    assert page.evaluate("""(() => {
+        const answers = [];
+        for (const call of [
+            () => new DOMMatrix('bogus'),
+            () => new DOMMatrix([1, 2, 3]),
+            () => new DOMMatrix({a: 1}),
+            () => new DOMMatrix().translate(NaN, 0).toString(),
+        ]) {
+            try { call(); answers.push('no throw'); }
+            catch (error) { answers.push(error.name + ': ' + error.message); }
+        }
+        return answers;
+    })()""") == [
+        "SyntaxError: Failed to construct 'DOMMatrix': Failed to parse 'bogus'.",
+        "TypeError: Failed to construct 'DOMMatrix': The sequence must contain"
+        " 6 elements for a 2D matrix or 16 elements for a 3D matrix.",
+        "SyntaxError: Failed to construct 'DOMMatrix': Failed to parse '[object Object]'.",
+        "InvalidStateError: Failed to execute 'toString' on 'DOMMatrixReadOnly':"
+        " DOMMatrix cannot be serialized with NaN or Infinity values.",
+    ]
+
+
+def test_a_dom_parser_builds_a_document_that_belongs_to_no_window(page):
+    assert page.evaluate("""(() => {
+        const doc = new DOMParser().parseFromString(
+            '<!DOCTYPE html><body><p id=x>hi</p></body>', 'text/html');
+        return [Object.prototype.toString.call(doc), doc.contentType, doc.compatMode,
+                doc.URL === location.href, doc.defaultView === null,
+                doc.getElementById('x').textContent, doc.doctype.name,
+                doc instanceof HTMLDocument, getComputedStyle(doc.body).display,
+                doc.createElement('p').constructor.name];
+    })()""") == ["[object HTMLDocument]", "text/html", "CSS1Compat", True, True, "hi",
+                 "html", True, "", "HTMLParagraphElement"]
+
+
+def test_a_dom_parser_refuses_a_type_outside_the_enum(page):
+    assert page.evaluate("""(() => {
+        const answers = [];
+        for (const call of [() => new DOMParser().parseFromString('<a/>', 'text/plain'),
+                            () => new DOMParser().parseFromString('<a/>')]) {
+            try { call(); answers.push('no throw'); }
+            catch (error) { answers.push(error.name + ': ' + error.message); }
+        }
+        return answers;
+    })()""") == [
+        "TypeError: Failed to execute 'parseFromString' on 'DOMParser': The provided"
+        " value 'text/plain' is not a valid enum value of type SupportedType.",
+        "TypeError: Failed to execute 'parseFromString' on 'DOMParser': 2 arguments"
+        " required, but only 1 present.",
+    ]
+
+
+def test_an_xml_parse_keeps_namespaces_and_reports_its_own_error(page):
+    assert page.evaluate("""(() => {
+        const good = new DOMParser().parseFromString(
+            '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>', 'image/svg+xml');
+        const broken = new DOMParser().parseFromString('<root><x></root>', 'text/xml');
+        return [Object.prototype.toString.call(good), good.contentType,
+                String(good.documentElement.namespaceURI),
+                Object.prototype.toString.call(good.documentElement.firstElementChild),
+                broken.documentElement.localName,
+                broken.getElementsByTagName('parsererror').length];
+    })()""") == ["[object XMLDocument]", "image/svg+xml", "http://www.w3.org/2000/svg",
+                 "[object SVGCircleElement]", "root", 1]
+
+
 def test_stylesheet_cascade_and_layout_still_apply(page):
     """The cascade reads the sheet once per entry point, not once per element."""
     assert page.evaluate("getComputedStyle(document.querySelector('.item')).color") == "red"
@@ -289,9 +621,10 @@ def test_stylesheet_cascade_and_layout_still_apply(page):
     assert page.evaluate("""
         (function () {
             const sized = document.getElementById('sized');
-            return [sized.offsetWidth, sized.offsetHeight, document.body.offsetWidth];
+            return [sized.offsetWidth, sized.offsetHeight,
+                    document.documentElement.clientWidth - document.body.offsetWidth];
         })()
-    """) == [40, 10, 1904]
+    """) == [40, 10, 16]
 
 
 def test_url_attributes_resolve_and_write_the_attribute(page):

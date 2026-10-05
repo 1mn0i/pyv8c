@@ -623,6 +623,27 @@ class StorageEvent(Event):
     def get_storageArea(self): return self.storageArea
 
 
+@interface('WebGLContextEvent', 'Event')
+class WebGLContextEvent(Event):
+    """``webglcontextlost`` and its siblings: what a lost context reports."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="statusMessage", getter="get_statusMessage",
+                                  side_effect=1),),
+        constructor_behavior=1,
+        length=1,
+        to_string_tag="WebGLContextEvent",
+        has_constructor=1,
+    )
+
+    def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
+        event_type, options = event_constructor_arguments('WebGLContextEvent', event_type, options)
+        super().__init__(event_type, options, **kw)
+        self.statusMessage = dom_string(event_init(options).get("statusMessage", ""))
+
+    def get_statusMessage(self): return self.statusMessage
+
+
 @interface('AnimationEvent', 'Event')
 class AnimationEvent(Event):
     __v8_idl_spec__ = IdlSpec(

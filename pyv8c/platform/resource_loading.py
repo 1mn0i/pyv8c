@@ -872,8 +872,15 @@ class ResourceController:
         else:
             if kind == "script":
                 page.scripts.execute_script(node, response.body_text(), response.url or page.url)
-            elif kind == "style":
+            elif kind in ("style", "link"):
+                # A ``<link rel=stylesheet>`` is tracked under its own tag so that its
+                # timing entry reports ``link``, which is the kind it arrives as here.
                 node._stylesheet_text = response.body_text()
+                # The cascade caches the rules a document's sheets give, so a sheet
+                # that arrives after the first layout has to invalidate that cache.
+                document = getattr(node, "ownerDocument", None)
+                if document is not None:
+                    document.style_version = getattr(document, "style_version", 0) + 1
             # The transfer is complete: one progress event carries the whole body.
             length = self._response_length(response)
             page.lifecycle.dispatch_progress_event(

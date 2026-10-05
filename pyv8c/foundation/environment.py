@@ -21,8 +21,8 @@ SCHEMA_VERSION = 1
 ENVELOPE_KEYS = ("schema", "source", "window_surface")
 PROFILE = Path(__file__).parents[1] / "data" / "chrome-environment.json"
 
-#: The version Chrome's frozen "Not_A Brand" entry carries.
-_NOT_A_BRAND_VERSION = "8"
+#: The version Chrome's frozen "Not A(Brand" entry carries.
+_NOT_A_BRAND_VERSION = "99"
 
 
 def _text(value):
@@ -322,8 +322,8 @@ def _derive(values):
     version = re.search(r"Chrome/(\d+)", user_agent)
     major = version.group(1) if version is not None else ""
     brands = tuple(
-        {"brand": brand, "version": _NOT_A_BRAND_VERSION if brand == "Not_A Brand" else major}
-        for brand in ("Google Chrome", "Not_A Brand", "Chromium")
+        {"brand": brand, "version": _NOT_A_BRAND_VERSION if brand == "Not A(Brand" else major}
+        for brand in ("Chromium", "Google Chrome", "Not A(Brand")
     )
     return {
         "app_version": user_agent.removeprefix("Mozilla/"),
@@ -342,16 +342,16 @@ def _resolved(explicit):
     return values
 
 
-def _json_value(value):
+def json_value(value):
     """A non-finite number travels as its own name: ``Infinity`` is not JSON."""
     if isinstance(value, float) and not math.isfinite(value):
         if value != value:
             return "NaN"
         return "Infinity" if value > 0 else "-Infinity"
     if isinstance(value, Mapping):
-        return {key: _json_value(item) for key, item in value.items()}
+        return {key: json_value(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
-        return [_json_value(item) for item in value]
+        return [json_value(item) for item in value]
     return value
 
 
@@ -489,7 +489,7 @@ class BrowserEnvironment:
         if source is not None:
             document["source"] = dict(source)
         values = self.resolved() if resolved else self.to_dict()
-        document.update({name: _json_value(value) for name, value in values.items()})
+        document.update({name: json_value(value) for name, value in values.items()})
         return json.dumps(document, indent=2) + "\n"
 
     def to_file(self, path, *, resolved=True, source=None):
@@ -509,5 +509,5 @@ __all__ = [
     "BrowserEnvironment", "Field", "FIELDS", "SCHEMA_VERSION", "COLLECTED_KEYS", "PROFILE",
     "ViewportView", "ScreenView", "GeolocationView", "ConnectionView", "BatteryView",
     "StorageView", "QuotaView", "BluetoothView", "ClientHintsView", "Brand", "PluginView",
-    "MimeTypeView",
+    "MimeTypeView", "json_value",
 ]

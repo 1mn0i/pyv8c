@@ -7,7 +7,7 @@ from ..foundation.tasks import TaskSource
 from ..foundation.urls import absolute_url
 from ..network.redirects import reportable_hops
 from ..web.bom.utils import is_secure_context
-from ..web.dom.document import Document
+from ..web.dom.document import Document, HTMLDocument
 from ..web.dom.motion import INSECURE_ORIGIN_INTERFACES
 from ..web.dom.parser import IncrementalDOMParser
 
@@ -66,7 +66,8 @@ class NavigationController:
         devtools = self.page.context_owner._devtools
         if devtools is not None:
             devtools.target_info_changed(self.page)
-        self.page.document = Document(services=self.page.services, url=str(url), ready_state="loading")
+        self.page.document = HTMLDocument(services=self.page.services, url=str(url),
+                                          ready_state="loading")
         # A new document starts its own timeline; earlier records belong to the old one.
         hops = int(getattr(response, "_redirect_hops", 0) or 0)
         crossed = bool(getattr(response, "_redirect_crossed", False))

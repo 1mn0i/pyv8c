@@ -1,0 +1,94 @@
+"""``DOMRect``: the box ``getBoundingClientRect`` reports, and the edges read off it."""
+import pyv8
+from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
+
+from ...engine.features import interface
+from ...foundation.arguments import MISSING, dictionary, is_nullish
+from .point import double
+
+
+def rect_values(value):
+    """The four numbers of a ``DOMRectInit``, its defaults filled in."""
+    if is_nullish(value):
+        return 0.0, 0.0, 0.0, 0.0
+    if isinstance(value, DOMRectReadOnly):
+        return value._x, value._y, value._width, value._height
+    options = dictionary(value)
+    return (double(options.get("x", 0.0)), double(options.get("y", 0.0)),
+            double(options.get("width", 0.0)), double(options.get("height", 0.0)))
+
+
+@interface('DOMRectReadOnly', None)
+class DOMRectReadOnly:
+    __v8_idl_spec__ = IdlSpec(
+        attributes=tuple(
+            AttributeSpec(name=name, getter=f"get_{name}", side_effect=1)
+            for name in ("x", "y", "width", "height", "top", "right", "bottom", "left")),
+        methods=(
+            MethodSpec(name="toJSON", callback="fn_toJSON", side_effect=1),
+            MethodSpec(name="fromRect", callback="fn_fromRect",
+                       location=FlagLocation.kInterface,
+                       receiver_check=FlagReceiverCheck.kDoNotCheck,
+                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
+        ),
+        constructor_behavior=1,
+        length=0,
+        to_string_tag="DOMRectReadOnly",
+        has_constructor=1,
+    )
+
+    def __init__(self, x=MISSING, y=MISSING, width=MISSING, height=MISSING, *_extra, **_):
+        self._x = double(x)
+        self._y = double(y)
+        self._width = double(width)
+        self._height = double(height)
+
+    def get_x(self): return self._x
+    def get_y(self): return self._y
+    def get_width(self): return self._width
+    def get_height(self): return self._height
+    # The four edges are readings rather than storage, so an edge follows whatever the
+    # position and size it is derived from currently say.
+    def get_top(self): return self._y
+    def get_right(self): return self._x + self._width
+    def get_bottom(self): return self._y + self._height
+    def get_left(self): return self._x
+
+    def fn_toJSON(self, *_extra):
+        return {"x": self._x, "y": self._y, "width": self._width, "height": self._height,
+                "top": self.get_top(), "right": self.get_right(),
+                "bottom": self.get_bottom(), "left": self.get_left()}
+
+    @staticmethod
+    def fn_fromRect(_realm, init=None, *_extra):
+        return DOMRect(*rect_values(init))
+
+
+@interface('DOMRect', 'DOMRectReadOnly')
+class DOMRect(DOMRectReadOnly):
+    __v8_idl_spec__ = IdlSpec(
+        attributes=tuple(
+            AttributeSpec(name=name, getter=f"get_{name}", setter=f"set_{name}")
+            for name in ("x", "y", "width", "height")),
+        methods=(MethodSpec(name="fromRect", callback="fn_fromRect",
+                            location=FlagLocation.kInterface,
+                            receiver_check=FlagReceiverCheck.kDoNotCheck,
+                            cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),),
+        constructor_behavior=1,
+        length=0,
+        to_string_tag="DOMRect",
+        has_constructor=1,
+    )
+
+    @staticmethod
+    def fn_fromRect(_realm, init=None, *_extra):
+        return DOMRect(*rect_values(init))
+
+    def set_x(self, value): self._x = double(value)
+    def set_y(self, value): self._y = double(value)
+    def set_width(self, value): self._width = double(value)
+    def set_height(self, value): self._height = double(value)
+
+
+__all__ = ["DOMRect", "DOMRectReadOnly", "rect_values"]

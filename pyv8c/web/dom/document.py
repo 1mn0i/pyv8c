@@ -16,6 +16,7 @@ from .html_classes import class_for_local_name, class_for_tag, svg_interface_nam
 from .html_elements import Element
 from .mixins import _ParentNodeMixin
 from .nodes import Attr, DocumentFragment, Node
+from .permissions_policy import PermissionsPolicy
 from .utils import MATHML_NAMESPACE, SVG_NAMESPACE, XHTML_NAMESPACE, _VALID_NAME_RE, name_fault
 
 
@@ -28,12 +29,14 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="documentURI", getter="get_URL", side_effect=1),
             AttributeSpec(name="referrer", getter="get_referrer", side_effect=1),
             AttributeSpec(name="compatMode", getter="get_compatMode", side_effect=1),
+            AttributeSpec(name="doctype", getter="get_doctype", side_effect=1),
             AttributeSpec(name="contentType", getter="get_contentType", side_effect=1),
             AttributeSpec(name="domain", getter="get_domain", setter="set_domain"),
             AttributeSpec(name="dir", getter="get_dir", setter="set_dir"),
             AttributeSpec(name="designMode", getter="get_designMode",
                           setter="set_designMode"),
             AttributeSpec(name="styleSheets", getter="get_styleSheets", side_effect=1),
+            AttributeSpec(name="featurePolicy", getter="get_featurePolicy", side_effect=1),
             AttributeSpec(name="webkitFullscreenElement",
                           getter="get_webkitFullscreenElement", side_effect=1),
             AttributeSpec(name="webkitIsFullScreen", getter="get_webkitIsFullScreen",
@@ -92,9 +95,11 @@ class Document(_ParentNodeMixin, Node):
             MethodSpec(name="elementsFromPoint", callback="fn_elementsFromPoint", length=2, side_effect=1),
         ),
     )
-    def __init__(self, services=None, url="about:blank", ready_state="complete", **kw):
+    def __init__(self, services=None, url="about:blank", ready_state="complete",
+                 content_type="text/html", **kw):
         super().__init__(services=services, node_type=Node.DOCUMENT_NODE, node_name="#document", **kw)
         self.url = url; self._parser = None; self.ready_state = str(ready_state); self.hidden = False
+        self.content_type = str(content_type)
         #: "off" until a page turns it on. Chrome ignores a value it does not know
         #: rather than reporting it, so the stored one is always one of the two.
         self.design_mode = "off"
@@ -247,16 +252,31 @@ class Document(_ParentNodeMixin, Node):
             view = self._style_sheets = StyleSheetList(self)
         return view
 
+    def get_featurePolicy(self):
+        policy = getattr(self, "_feature_policy", None)
+        if policy is None:
+            policy = self._feature_policy = PermissionsPolicy(url=self.get_URL())
+        return policy
+
     def get_referrer(self):
         """The page that led here; a navigation nothing linked from reads as empty."""
         return str(getattr(self, "_referrer", "") or "")
 
     def get_compatMode(self):
-        """``CSS1Compat`` under a doctype and ``BackCompat`` without one, as Chrome reads it."""
+        """``CSS1Compat`` under a doctype and ``BackCompat`` without one in HTML; an
+        XML document is never in quirks mode."""
+        if self.content_type != "text/html":
+            return "CSS1Compat"
         return "CSS1Compat" if any(getattr(child, "nodeType", None) == 10
                                    for child in self._children) else "BackCompat"
 
-    def get_contentType(self): return "text/html"
+    def get_doctype(self):
+        for child in self._children:
+            if getattr(child, "nodeType", None) == Node.DOCUMENT_TYPE_NODE:
+                return child
+        return pyv8.Null
+
+    def get_contentType(self): return self.content_type
 
     def get_dir(self):
         html = self.get_documentElement()
@@ -544,6 +564,70 @@ class Document(_ParentNodeMixin, Node):
         return next(iter(tmp._children), Text("", services=self._services))
 
 
+class _DetachedDocumentServices:
+    """The document hooks a document outside a window works through.
+
+    It answers for itself as the active document, has no window to be shown in,
+    and has no parser to write into: writing into the page's parser from a parsed
+    document would corrupt the page.
+    """
+
+    def __init__(self, services, document):
+        self._source = getattr(services, "document_services", None)
+        self.document = document
+
+    def __getattr__(self, name):
+        return getattr(self._source, name)
+
+    @property
+    def window(self): return None
+
+    def write_markup(self, markup): return False
+    def open_document(self): return False
+    def close_document(self): return None
+    def request_navigation(self, url): return None
+    def parser_is_blocked(self): return False
+
+    def node_adopted(self, node):
+        """Nothing to adopt: a detached tree runs no script and loads nothing."""
+        return None
+
+    def parser_script_start(self, node): return None
+    def parser_script_complete(self, node, source): return None
+
+
+class _DetachedServices:
+    """The realm's services, with a document that no window owns as the active one."""
+
+    def __init__(self, services, document):
+        self._source = services
+        self.document_services = _DetachedDocumentServices(services, document)
+
+    def __getattr__(self, name):
+        return getattr(self._source, name)
+
+
+def detached_services(services, document):
+    """The services *document* uses when it is not the window's document."""
+    return _DetachedServices(services, document)
+
+
+@interface('HTMLDocument', 'Document')
+class HTMLDocument(Document):
+    """The document a page has: HTML, not XML, which is what its tag reports."""
+
+    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1,
+                             to_string_tag="HTMLDocument")
+
+
+@interface('XMLDocument', 'Document')
+class XMLDocument(Document):
+    """The document ``DOMParser`` and ``createDocument`` build from XML."""
+
+    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1,
+                             to_string_tag="XMLDocument")
+
+
 @interface('DOMImplementation', None)
 class DOMImplementation:
     """``document.implementation``: the document factories.  ``createHTMLDocument``
@@ -565,12 +649,17 @@ class DOMImplementation:
     def __init__(self, services=None, **_):
         self._services = services
 
-    def _document(self):
-        return Document(services=self._services, url="about:blank", ready_state="complete")
+    def _document(self, html=True, content_type=None):
+        cls = HTMLDocument if html else XMLDocument
+        document = cls(services=self._services, url="about:blank", ready_state="complete",
+                       content_type=content_type or ("text/html" if html else "application/xml"))
+        document._services = detached_services(self._services, document)
+        return document
 
     def fn_createHTMLDocument(self, title=pyv8.Undefined, *_extra):
         document = self._document()
         root, head, body = (document._new_element(tag) for tag in ("html", "head", "body"))
+        document.append_child(DocumentType(name="html", services=self._services))
         document.append_child(root)
         root.append_child(head)
         root.append_child(body)
@@ -585,7 +674,11 @@ class DOMImplementation:
             raise missing_error('DOMImplementation', 'createDocument', 2, 0, constructor=False)
         if qualified_name is MISSING:
             raise missing_error('DOMImplementation', 'createDocument', 2, 1, constructor=False)
-        document = self._document()
+        space = None if is_nullish(namespace) else str(dom_string(namespace))
+        # Chrome types an XML document by the namespace its root is in.
+        document = self._document(html=False,
+                                  content_type="application/xhtml+xml"
+                                  if space == XHTML_NAMESPACE else "application/xml")
         if not is_nullish(doctype):
             if not isinstance(doctype, DocumentType):
                 raise V8TypeError("Failed to execute 'createDocument' on 'DOMImplementation': "

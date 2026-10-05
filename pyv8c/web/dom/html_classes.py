@@ -6,6 +6,7 @@ from .html_elements import (
     HTMLAnchorElement,
     HTMLButtonElement,
     HTMLImageElement,
+    HTMLElement,
     HTMLLabelElement,
     HTMLLinkElement,
     HTMLMetaElement,
@@ -27,12 +28,27 @@ from .html_input import (
     HTMLTextAreaElement,
 )
 from .html_media import HTMLAudioElement, HTMLMediaElement, HTMLVideoElement
+from .html_tag_interfaces import TAG_INTERFACES
 
 #: Interface name -> implementation class, for every modelled interface.
 HTML_CLASSES = {
     **{name: _html_class(name) for name in (
         "HTMLHtmlElement", "HTMLHeadElement", "HTMLBodyElement", "HTMLDivElement",
         "HTMLSpanElement")},
+    #: The interfaces the measured tag table asks for that have nothing hand-written.
+    **{name: _html_class(name) for name in (
+        "HTMLAreaElement", "HTMLBRElement", "HTMLBaseElement", "HTMLDListElement",
+        "HTMLDataElement", "HTMLDataListElement", "HTMLDetailsElement", "HTMLDialogElement",
+        "HTMLDirectoryElement", "HTMLEmbedElement", "HTMLFieldSetElement", "HTMLFontElement",
+        "HTMLFrameElement", "HTMLFrameSetElement", "HTMLHRElement", "HTMLHeadingElement",
+        "HTMLLIElement", "HTMLLegendElement", "HTMLMapElement", "HTMLMarqueeElement",
+        "HTMLMenuElement", "HTMLMeterElement", "HTMLModElement", "HTMLOListElement",
+        "HTMLObjectElement", "HTMLOptGroupElement", "HTMLOutputElement",
+        "HTMLParagraphElement", "HTMLParamElement", "HTMLPictureElement", "HTMLPreElement",
+        "HTMLProgressElement", "HTMLQuoteElement", "HTMLSlotElement", "HTMLSourceElement",
+        "HTMLTableCaptionElement", "HTMLTableColElement", "HTMLTableSectionElement",
+        "HTMLTimeElement", "HTMLTitleElement", "HTMLTrackElement", "HTMLUListElement")},
+    "HTMLElement": HTMLElement,
     # Interfaces with members of their own carry a hand-written class.
     "HTMLFormElement": HTMLFormElement,
     "HTMLButtonElement": HTMLButtonElement,
@@ -56,52 +72,32 @@ HTML_CLASSES = {
     "HTMLIframeElement": HTMLIFrameElement,
 }
 
-#: Local name -> implementation class for every modelled tag, written out because a
-#: tag name is not always its interface's lower-cased middle (``img``/``td``/``tr``).
-TAG_CLASSES = {
-    "a": HTML_CLASSES["HTMLAnchorElement"],
-    "audio": HTML_CLASSES["HTMLAudioElement"],
-    "body": HTML_CLASSES["HTMLBodyElement"],
-    "button": HTML_CLASSES["HTMLButtonElement"],
-    "canvas": HTML_CLASSES["HTMLCanvasElement"],
-    "div": HTML_CLASSES["HTMLDivElement"],
-    "form": HTML_CLASSES["HTMLFormElement"],
-    "head": HTML_CLASSES["HTMLHeadElement"],
-    "html": HTML_CLASSES["HTMLHtmlElement"],
-    "iframe": HTML_CLASSES["HTMLIFrameElement"],
-    "img": HTML_CLASSES["HTMLImageElement"],
-    "input": HTML_CLASSES["HTMLInputElement"],
-    "label": HTML_CLASSES["HTMLLabelElement"],
-    "link": HTML_CLASSES["HTMLLinkElement"],
-    "meta": HTML_CLASSES["HTMLMetaElement"],
-    "option": HTML_CLASSES["HTMLOptionElement"],
-    "script": HTML_CLASSES["HTMLScriptElement"],
-    "select": HTML_CLASSES["HTMLSelectElement"],
-    "span": HTML_CLASSES["HTMLSpanElement"],
-    "style": HTML_CLASSES["HTMLStyleElement"],
-    "table": HTML_CLASSES["HTMLTableElement"],
-    "td": HTML_CLASSES["HTMLTableCellElement"],
-    "th": HTML_CLASSES["HTMLTableCellElement"],
-    "template": HTML_CLASSES["HTMLTemplateElement"],
-    "textarea": HTML_CLASSES["HTMLTextAreaElement"],
-    "tr": HTML_CLASSES["HTMLTableRowElement"],
-    "video": HTML_CLASSES["HTMLVideoElement"],
-}
+#: Local name -> implementation class, from the measured tag table.
+TAG_CLASSES = {tag: HTML_CLASSES[name]
+               for name, tags in TAG_INTERFACES.items() for tag in tags}
+
+
+def _unknown_or_custom(name):
+    """What Chrome answers a name it has no interface for.
+
+    A hyphenated name is a valid custom element name, so an undefined one is a plain
+    ``HTMLElement``; anything else is the :class:`HTMLUnknownElement` it exposes.
+    """
+    return HTML_CLASSES["HTMLElement" if "-" in name else "HTMLUnknownElement"]
 
 
 def class_for_tag(tag):
-    """The implementation class for an HTML local name: a modelled tag its own
-    interface, everything else (custom-element names, unknown tags) the
-    :class:`HTMLUnknownElement` Chromium exposes.
-    """
-    return TAG_CLASSES.get(str(tag).lower(), HTML_CLASSES["HTMLUnknownElement"])
+    """The implementation class for an HTML local name."""
+    name = str(tag).lower()
+    return TAG_CLASSES.get(name) or _unknown_or_custom(name)
 
 
 def class_for_local_name(local_name):
     """The class for a local name *as written*: ``createElementNS`` does not lower-case
     the name it was given, so ``DIV`` is an unknown element to it.
     """
-    return TAG_CLASSES.get(str(local_name), HTML_CLASSES["HTMLUnknownElement"])
+    name = str(local_name)
+    return TAG_CLASSES.get(name) or _unknown_or_custom(name)
 
 
 #: The SVG local names whose interface is not their own capitalised name.

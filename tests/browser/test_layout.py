@@ -60,7 +60,7 @@ def test_hidden_element_keeps_layout_and_font_size_changes_height(page):
         document.body.appendChild(div);
         div.innerHTML = '<span style="font-family:mmllii;font-size:114px">mmmmmmmmmmmlliii</span>';
         div.style.fontFamily = 'DFPhelvetica';
-        return [div.offsetWidth === window.innerWidth, div.offsetHeight,
+        return [div.offsetWidth === document.body.clientWidth, div.offsetHeight,
             getComputedStyle(div).fontFamily,
             getComputedStyle(div.firstElementChild).fontSize,
             div.getBoundingClientRect().height > 0];

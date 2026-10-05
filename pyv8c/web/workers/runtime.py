@@ -9,7 +9,7 @@ from ...foundation.executor import RealmExecutor
 from ...foundation.lifecycle import ResourceScope
 from ...foundation.rejections import RejectionTracker
 from ..dom.events import PromiseRejectionEvent
-from ..fetch.clone import structured_clone
+from ..fetch.clone import structured_clone, transfer_ports
 from ..fetch.events import ErrorEvent, MessageEvent
 
 
@@ -86,12 +86,13 @@ class WorkerRuntime:
     def _started(self):
         """What a worker of this kind does once its script has run."""
 
-    def _dispatch_message(self, value):
+    def _dispatch_message(self, value, ports=()):
         if self._stop.is_set() or self._scope is None:
             return
         try:
             self._scope.fn_dispatchEvent(MessageEvent("message", {
                 "data": value, "origin": self.services.realm_services.url,
+                "ports": ports,
             }))
         except BaseException as exc:  # a message error is reported, not raised
             self._report_error(exc)
@@ -162,11 +163,24 @@ class WorkerRuntime:
 
     def post_from_parent(self, value, transfer=()):
         if not self._stop.is_set():
-            self.executor.post(self._dispatch_message, structured_clone(value, transfer))
+            # The port moves out of the page now; the realm it moves into is the
+            # worker's, which ``_run`` has already been posted ahead of.
+            ports = transfer_ports(transfer, services=self.services, caller='Worker')
+            self.executor.post(self._dispatch_from_parent,
+                               (structured_clone(value), ports))
+
+    def _dispatch_from_parent(self, payload):
+        value, ports = payload
+        realm = self._realm
+        for port in ports:
+            port._services = realm.services if realm is not None else None
+        self._dispatch_message(value, ports)
 
     def post_to_parent(self, value, transfer=()):
-        value = structured_clone(value, transfer, context=self._context)
-        self.services.task_services.post_task(lambda: self.owner._receive_message(value))
+        ports = transfer_ports(transfer, services=self.services, caller='WorkerGlobalScope')
+        value = structured_clone(value, context=self._context)
+        self.services.task_services.post_task(
+            lambda: self.owner._receive_message(value, ports))
 
     def stop(self):
         if self.executor.closed and self._realm is None:

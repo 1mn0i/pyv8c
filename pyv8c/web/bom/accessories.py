@@ -7,7 +7,7 @@ from pyv8.flag import FlagLocation, FlagReceiverCheck
 
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, callback_value, dom_string, missing_error
-from ..dom.events import EventTarget
+from ..dom.events import Event, EventTarget
 from .media import evaluate
 
 
@@ -101,6 +101,47 @@ class Viewport:
     def get_segments(self): return []
 
 
+#: The voices Chrome reports on this platform, in the order ``getVoices`` lists them.
+_SPEECH_VOICES = (
+    ("Microsoft Huihui - Chinese (Simplified, PRC)", "zh-CN", True, True),
+    ("Microsoft Kangkang - Chinese (Simplified, PRC)", "zh-CN", True, False),
+    ("Microsoft Yaoyao - Chinese (Simplified, PRC)", "zh-CN", True, False),
+)
+
+#: How long Chrome's speech service takes to answer: a page reads the empty list
+#: first and hears about the voices after this, which is when Chrome fires them.
+_VOICES_READY_SECONDS = 0.27
+
+
+@interface('SpeechSynthesisVoice', None)
+class SpeechSynthesisVoice:
+    """One voice the synthesiser can speak with."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="voiceURI", getter="get_voiceURI", side_effect=1),
+            AttributeSpec(name="name", getter="get_name", side_effect=1),
+            AttributeSpec(name="lang", getter="get_lang", side_effect=1),
+            AttributeSpec(name="localService", getter="get_localService", side_effect=1),
+            AttributeSpec(name="default", getter="get_default", side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="SpeechSynthesisVoice",
+        has_constructor=1,
+    )
+
+    def __init__(self, name="", lang="", local_service=True, default=False, **_):
+        self._name, self._lang = str(name), str(lang)
+        self._local_service, self._default = bool(local_service), bool(default)
+
+    #: A voice's URI reads back as its name, which is how Chrome's platform voices look.
+    def get_voiceURI(self): return self._name
+    def get_name(self): return self._name
+    def get_lang(self): return self._lang
+    def get_localService(self): return self._local_service
+    def get_default(self): return self._default
+
+
 @interface('SpeechSynthesis', 'EventTarget')
 class SpeechSynthesis(EventTarget):
     __v8_idl_spec__ = IdlSpec(
@@ -123,14 +164,27 @@ class SpeechSynthesis(EventTarget):
         has_constructor=1,
     )
 
-    #: Nothing is spoken, so no utterance is ever queued or voiced.
+    def __init__(self, services=None, **_):
+        super().__init__(services=services)
+        #: None until the service answers, then the voices every later read hands out.
+        self._voices = None
+        if services is not None:
+            services.task_services.schedule(self._voices_ready, _VOICES_READY_SECONDS)
+
+    #: Nothing is spoken: the voices are there to be read, never to be used.
     def get_pending(self): return False
     def get_speaking(self): return False
     def get_paused(self): return False
     def get_onvoiceschanged(self): return self._get_handler("onvoiceschanged")
     def set_onvoiceschanged(self, value): self._set_handler("onvoiceschanged", value)
     def fn_cancel(self, *_extra): return None
-    def fn_getVoices(self, *_extra): return []
+    def _voices_ready(self):
+        self._voices = [SpeechSynthesisVoice(name=name, lang=lang, local_service=local,
+                                             default=default, services=self._services)
+                        for name, lang, local, default in _SPEECH_VOICES]
+        self.fn_dispatchEvent(Event("voiceschanged"))
+    def fn_getVoices(self, *_extra):
+        return [] if self._voices is None else list(self._voices)
     def fn_pause(self, *_extra): return None
     def fn_resume(self, *_extra): return None
     def fn_speak(self, utterance=MISSING, *_extra):

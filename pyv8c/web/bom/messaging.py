@@ -11,7 +11,7 @@ from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, is_nullish, missing_error
 from ..dom.events import EventTarget
-from ..fetch.clone import message_transfer
+from ..fetch.clone import message_transfer, transfer_ports
 from ..fetch.events import MessageEvent
 
 __all__ = ["MessageChannel", "MessagePort"]
@@ -46,14 +46,17 @@ class MessagePort(EventTarget):
         self._outbox = []
         self._enabled = False
         self._closed = False
+        #: A transferred port is moved, not closed: the reference left behind only
+        #: stops working, while the port itself carries on in its new realm.
+        self._detached = False
 
     def _entangle(self, twin):
         self._twin = twin
         if twin is None:
             return
         outbox, self._outbox = self._outbox, []
-        for message in outbox:
-            self._send(message)
+        for message, ports in outbox:
+            self._send(message, ports)
 
     def get_onmessage(self): return self._get_handler("onmessage")
     def get_onmessageerror(self): return self._get_handler("onmessageerror")
@@ -66,30 +69,50 @@ class MessagePort(EventTarget):
     def fn_postMessage(self, message=MISSING, options=None, *_extra):
         if message is MISSING:
             raise missing_error('MessagePort', 'postMessage', 1, 0, constructor=False)
-        message_transfer(options)
-        if self._closed:
+        transfer = message_transfer(options)
+        if self._closed or self._detached:
             return None
-        if self._twin is None:
-            self._outbox.append(message)
+        twin = self._twin
+        # The ports travel into the realm the twin dispatches in, which is why the
+        # transfer is read here and not where the twin receives it.
+        ports = transfer_ports(transfer, services=twin._services if twin else None,
+                               caller='MessagePort')
+        if twin is None:
+            self._outbox.append((message, ports))
             return None
-        self._send(message)
+        self._send(message, ports)
         return None
 
-    def _send(self, message):
+    def _detach(self):
+        """Move this port away: the reference left behind stops working."""
+        twin, self._twin = self._twin, None
+        self._detached = True
+        return twin
+
+    def _moved_view(self, services):
+        """The port as the realm it was moved into sees it, entangled with the twin."""
+        twin = self._detach()
+        view = MessagePort(services=services)
+        view._twin = twin
+        if twin is not None:
+            twin._twin = view
+        return view
+
+    def _send(self, message, ports=()):
         twin = self._twin
         if twin is None or twin._closed or self._closed:
             return
         services = twin._services
         if services is not None:
-            services.realm_services.post_task(lambda: twin._deliver(message))
+            services.realm_services.post_task(lambda: twin._deliver(message, ports))
 
     def fn_start(self, *_extra):
         if self._enabled:
             return None
         self._enabled = True
         pending, self._pending = self._pending, []
-        for data in pending:
-            self._deliver(data)
+        for data, ports in pending:
+            self._deliver(data, ports)
         return None
 
     def fn_close(self, *_extra):
@@ -97,17 +120,17 @@ class MessagePort(EventTarget):
         self._pending.clear()
         return None
 
-    def _deliver(self, data):
+    def _deliver(self, data, ports=()):
         if self._closed:
             return
         if not self._enabled:
-            self._pending.append(data)
+            self._pending.append((data, ports))
             return
         services = self._services
         if services is not None:
             services.realm_services.materialize_interface("MessageEvent")
         self.fn_dispatchEvent(MessageEvent("message", {"data": data, "origin": "",
-                                                       "isTrusted": True}))
+                                                       "ports": ports, "isTrusted": True}))
 
 
 @interface('MessageChannel', None)

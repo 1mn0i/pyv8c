@@ -176,8 +176,11 @@ class _StartTagParser(HTMLParser):
 class IncrementalDOMParser(_TreeBuilderMixin):
     """Resumable parser used for parser-blocking script execution."""
 
-    def __init__(self, services, root, source):
+    def __init__(self, services, root, source, active=True):
         self.services, self.root = services, root
+        #: A parse outside a browsing context (``DOMParser``) runs no script and
+        #: fetches nothing, which is how Chrome reads one.
+        self.active = active
         self.tokens = list(_iter_tokens(str(source)))
         self.index, self.stack, self.done = 0, [root], False
         #: A document parse builds html/head/body as it reads; a fragment parse has no modes.
@@ -295,8 +298,9 @@ class IncrementalDOMParser(_TreeBuilderMixin):
         if not tag: return
         self._pop_auto_closing(tag)
         node = self._create_element(tag, attrs)
-        if tag == "script": self.services.document_services.parser_script_start(node)
-        elif tag not in self.raw_text_tags: self.services.resource_services.discover_element_resource(node)
+        if self.active:
+            if tag == "script": self.services.document_services.parser_script_start(node)
+            elif tag not in self.raw_text_tags: self.services.resource_services.discover_element_resource(node)
         # An ignored duplicate (a second html/head/body) never reached the tree.
         if tag not in self.void and not raw.rstrip().endswith("/>") and node.parentNode is not None:
             self.stack.append(node)
