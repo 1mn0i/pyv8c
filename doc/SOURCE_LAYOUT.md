@@ -123,7 +123,7 @@ python benchmarks/bench_object_pairs.py
 python benchmarks/bench_strings.py
 ```
 
-The one unit failure is `test_interface_extractor.py`'s renderer snapshot test,
+The one unit failure is `test_idl_extractor.py`'s renderer snapshot test,
 which needs a `_pyv8env/renderer` checkout that is not part of this tree.
 
 Nothing in this plan changes behaviour, so the criterion is that those numbers do

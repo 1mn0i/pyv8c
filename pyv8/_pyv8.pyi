@@ -3,15 +3,18 @@ from typing import ClassVar, Iterator, Mapping, Any, Callable, Dict, Iterable, L
 class IdlSpec:
     def __init__(self, *,
         length: int = ...,
-        # What this interface borrows from Array.prototype: "iterator" (@@iterator alone),
-        # "iterable" (adding entries/keys/values/forEach), or None.  pyv8.ArrayProto spells them.
-        array: str | None = ...,
+        # What this interface borrows from Array.prototype, as bits: pyv8.ArrayProto.iterator
+        # (@@iterator alone) or .iterable (adding entries/keys/values/forEach).  0 borrows nothing,
+        # which is what an unset field holds.
+        array: int = ...,
         immutable: int = ...,
         has_constructor: int = ...,
         constructor_behavior: int = ...,
         global_this: bool = ...,
         undetectable: bool = ...,
-        as_object: bool = ...,
+        # Which interface object this builds: pyv8.DefinitionKind.kInterface (0, the default),
+        # .kIdlNamespace (1) or .kWrapperTypeNoPrototype (2).  The three are exclusive.
+        definition_kind: int = ...,
         unconstructable: bool = ...,
         hidden: bool = ...,
         skip_inherit: bool = ...,
@@ -50,7 +53,7 @@ class IdlSpec:
     @property
     def length(self) -> int: ...
     @property
-    def array(self) -> Optional[str]: ...
+    def array(self) -> int: ...
     @property
     def immutable(self) -> int: ...
     @property
@@ -62,7 +65,7 @@ class IdlSpec:
     @property
     def undetectable(self) -> bool: ...
     @property
-    def as_object(self) -> bool: ...
+    def definition_kind(self) -> int: ...
     @property
     def unconstructable(self) -> bool: ...
     @property

@@ -48,32 +48,49 @@ class TestIdlSpec(unittest.TestCase):
         with self.assertRaises(TypeError):
             ConstantSpec(name="x\0hidden", value=1)
 
-    def test_array_takes_the_name_of_the_shape_a_caller_means(self):
-        """``array`` is what an interface borrows from ``Array.prototype``, spelled in words.
+    def test_array_takes_the_bits_the_shapes_name(self):
+        """``array`` is what an interface borrows from ``Array.prototype``, as installed bits.
 
-        ``"iterator"`` is the iterator alone (``HTMLCollection``) and ``"iterable"`` is that
-        iterator with ``entries``/``keys``/``values``/``forEach`` (``NodeList``, a Maplike); both
-        shapes were measured against Chrome.  The field reads back the word it was set with: the
-        intrinsics behind it belong to the binding, and a caller never spells them.
+        ``pyv8.ArrayProto.iterator`` is the iterator alone (``HTMLCollection``) and ``.iterable``
+        is that iterator with ``entries``/``keys``/``values``/``forEach`` (``NodeList``, a
+        Maplike); both shapes were measured against Chrome.  The intrinsics behind the bits belong
+        to the binding, and ``0`` -- what an unset field holds -- borrows nothing.
         """
-        self.assertEqual(IdlSpec(array=pyv8.ArrayProto.iterator).array, "iterator")
-        self.assertEqual(IdlSpec(array=pyv8.ArrayProto.iterable).array, "iterable")
-        self.assertIsNone(IdlSpec(array=None).array)
-        self.assertIsNone(IdlSpec().array)
-        self.assertEqual(IdlSpec(array="iterable").replace(length=3).array, "iterable")
+        self.assertEqual(IdlSpec(array=pyv8.ArrayProto.iterator).array, 1)
+        self.assertEqual(IdlSpec(array=pyv8.ArrayProto.iterable).array, 31)
+        self.assertEqual(IdlSpec().array, 0)
+        self.assertEqual(IdlSpec(array=pyv8.ArrayProto.iterable).replace(length=3).array, 31)
 
-    def test_an_array_value_that_is_not_a_shape_is_told_the_two(self):
-        """One vocabulary, so one answer: name the shapes rather than explain a bitmask.
-
-        An int no longer reaches the field at all -- neither the bits of a shape nor a plain
-        ``0`` -- and ``True`` is answered the same way instead of arriving as CPython's ``1``.
-        """
-        for value in ("nope", "Iterable", "", 7, 0, 31, True, False, b"iterable", 1.5, 2 ** 32):
+    def test_an_array_value_outside_the_two_shapes_is_told_the_range(self):
+        """One vocabulary, so one answer: the two bits a shape names, and nothing else."""
+        for value in ("iterable", "", -1, 32, b"iterable", 1.5, 2 ** 32):
             with self.subTest(value=value):
-                with self.assertRaises(ValueError) as caught:
+                with self.assertRaises(TypeError) as caught:
                     IdlSpec(array=value)
-                self.assertIn("iterator", str(caught.exception))
-                self.assertIn("iterable", str(caught.exception))
+                self.assertIn("0..31", str(caught.exception))
+
+    def test_definition_kind_takes_the_number_the_kind_names(self):
+        """One field, three kinds: which interface object a definition builds.
+
+        Blink's ``WrapperTypeInfo`` decides between a function with a prototype, a namespace
+        object and a function without one, and the three are exclusive -- a namespace has no
+        prototype either, which is why one number answers both and two flags could not.
+        """
+        self.assertEqual(IdlSpec().definition_kind, pyv8.DefinitionKind.kInterface)
+        self.assertEqual(IdlSpec(definition_kind=0).definition_kind, 0)
+        self.assertEqual(
+            IdlSpec(definition_kind=pyv8.DefinitionKind.kIdlNamespace).definition_kind, 1)
+        self.assertEqual(
+            IdlSpec(definition_kind=pyv8.DefinitionKind.kWrapperTypeNoPrototype).definition_kind, 2)
+        self.assertEqual(IdlSpec(definition_kind=1).replace(length=3).definition_kind, 1)
+
+    def test_a_definition_kind_outside_the_three_is_told_the_range(self):
+        """A kind is one of the three numbers, so a name or an out-of-range int is refused."""
+        for value in ("namespace", "", -1, 3, None, b"namespace", 1.5):
+            with self.subTest(value=value):
+                with self.assertRaises(TypeError) as caught:
+                    IdlSpec(definition_kind=value)
+                self.assertIn("0..2", str(caught.exception))
 
     def test_disabled_handler_is_not_called(self):
         class Window:

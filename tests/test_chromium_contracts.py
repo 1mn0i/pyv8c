@@ -384,12 +384,12 @@ class TestChromiumContracts(unittest.TestCase):
             ],
         )
 
-    def test_the_two_array_words_are_the_two_shapes_chrome_has(self):
-        """``array="iterator"`` borrows the iterator alone; ``array="iterable"`` borrows five.
+    def test_the_two_array_values_are_the_two_shapes_chrome_has(self):
+        """``array=pyv8.ArrayProto.iterator`` borrows the iterator alone; ``.iterable`` borrows five.
 
         Measured against Chrome (2026-10-07): an interface publishes one of these two shapes and
         never a mix -- ``HTMLCollection`` has the iterator without the named methods, a
-        ``NodeList`` has both -- which is why the field takes the name of the shape.
+        ``NodeList`` has both -- which is why the field takes the number of the shape.
         """
 
         class Collection:
@@ -404,11 +404,11 @@ class TestChromiumContracts(unittest.TestCase):
 
         class IteratorOnly(Collection):
             __v8_idl_spec__ = IdlSpec(name_get="__v8_name_get__", index_get="__v8_index_get__",
-                                      array="iterator")
+                                      array=pyv8.ArrayProto.iterator)
 
         class FullIterable(Collection):
             __v8_idl_spec__ = IdlSpec(name_get="__v8_name_get__", index_get="__v8_index_get__",
-                                      array="iterable")
+                                      array=pyv8.ArrayProto.iterable)
 
         self.context.expose(one=IteratorOnly(), all=FullIterable())
         result = snapshot(self.context.exec_js(

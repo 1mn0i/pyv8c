@@ -4,6 +4,17 @@
 #include <Python.h>
 #include <cstdint>
 
+//: Which interface object an IDL definition builds.  ``pyclass.cpp`` branches on it, a document
+//: states its number, and ``pyv8.DefinitionKind`` names it; the names are Blink's --
+//: ``WrapperTypeInfo::IdlDefinitionKind`` (``kInterface``, ``kIdlNamespace``) with
+//: ``kWrapperTypeNoPrototype``, the field Blink gives a callback interface.
+enum IdlDefinitionKind
+{
+    kInterface = 0,               // a function with a prototype
+    kIdlNamespace = 1,            // a plain object
+    kWrapperTypeNoPrototype = 2,  // a function with no prototype at all
+};
+
 struct IdlSpec
 {
     PyObject_HEAD
@@ -15,7 +26,10 @@ struct IdlSpec
     int64_t constructor_behavior = 0;
     bool global_this = false;
     bool undetectable = false;
-    bool as_object = false;
+    //: One of ``IdlDefinitionKind``; the field takes those words and reads back as the one it was
+    //: set with.  A namespace and a callback interface are exclusive by construction, which two
+    //: flags could not say: a namespace has no prototype either.
+    int64_t definition_kind = kInterface;
     bool unconstructable = false;
     bool hidden = false;
     bool skip_inherit = false;

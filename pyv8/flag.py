@@ -55,16 +55,37 @@ class ArrayProto:
     ``iterable`` installs that iterator together with ``entries``/``keys``/``values``/``forEach``,
     which is what a ``NodeList``, ``Headers``, ``FormData`` or a Maplike answers.
 
-    The intrinsics behind the two are the binding's business, not a caller's: this class is the
-    whole vocabulary the field takes, so a caller cannot spell a shape the engine cannot install.
+    The values are the bits ``pyclass.cpp`` installs.  The intrinsics behind them are the
+    binding's business, not a caller's: this class is the whole vocabulary the field takes, so a
+    caller cannot spell a shape the engine cannot install.
     """
 
-    iterator = "iterator"
-    iterable = "iterable"
+    iterator = 1
+    iterable = 31
+
+
+class DefinitionKind:
+    """Which interface object an IDL definition builds, for ``IdlSpec.definition_kind``.
+
+    The names are Blink's, from ``WrapperTypeInfo``
+    (``third_party/blink/renderer/platform/bindings/wrapper_type_info.h``): ``kInterface`` is a
+    function with a prototype, ``kIdlNamespace`` is a plain object tagged on itself
+    (``SetupIDLNamespaceTemplate``), and ``kWrapperTypeNoPrototype`` is a function whose prototype
+    Blink never makes -- the shape an IDL ``callback interface`` answers
+    (``SetupIDLCallbackInterfaceTemplate``).
+
+    The three are exclusive by construction -- a namespace has no prototype either, so the shape
+    alone cannot tell it from a callback interface -- and an ordinary interface, ``kInterface``,
+    is what the field defaults to.
+    """
+
+    kInterface = 0
+    kIdlNamespace = 1
+    kWrapperTypeNoPrototype = 2
 
 
 __all__ = [
     "FlagImmutable", "V8Attribute", "FlagLocation",
     "FlagReceiverCheck", "FlagCrossOriginCheck", "FlagExposed",
-    "FlagConstructor", "SideEffectType", "ArrayProto",
+    "FlagConstructor", "SideEffectType", "ArrayProto", "DefinitionKind",
 ]

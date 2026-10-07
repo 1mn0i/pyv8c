@@ -37,7 +37,8 @@ PyObject* py_class_new(PyObject* cls, context_c *py_ctx);
 void py_class_dealloc(py_class* self);
 // Returns a reference of its own; the realm's cache keeps the template alive.
 PyObject* py_class_to_template(PyObject* cls, context_c *py_ctx);
-v8::Local<v8::Function> py_class_get_constructor(v8::Local<v8::Context> context, py_class* self, py_class* parent);
+// A function for an interface or a callback interface, an object for a namespace (``CSS``).
+v8::Local<v8::Value> py_class_get_constructor(v8::Local<v8::Context> context, py_class* self, py_class* parent);
 v8::Local<v8::Object> py_class_create_js_object(py_class *self, PyObject *py_object, v8::Local<v8::Context> context);
 // *self*, when given, is the class the object was made from; passing it lets the
 // Error.prototype decision be reached once per class instead of once per object.

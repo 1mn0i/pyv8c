@@ -359,51 +359,15 @@ js_from_py_impl(PyObject *value,
             return Local<Value>();
         }
         PyOwnedRef keep_template((PyObject*)templ);
-        if (templ->to_obj)
-        {
-            const char *world = PyUnicode_AsUTF8_abi3(templ->cls_name);
-            if (world == NULL)
-            {
-                return Local<Value>();
-            }
-            Local<String> v8_name = V8String(isolate, world);
-            bool trace = ctx_c->trace;
-            ctx_c->trace = false;
-            if (templ->to_obj == 1)
-            {
-                v8::Local<v8::ObjectTemplate> object_template = templ->templ.Get(isolate).As<v8::ObjectTemplate>();
-                Local<Object> new_instance;
-                if (!object_template->NewInstance(context).ToLocal(&new_instance))
-                {
-                    ctx_c->trace = trace;
-                    PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript object template");
-                    return Local<Value>();
-                }
-                bool set_worked;
-                if (!context->Global()->Set(context, v8_name, new_instance).To(&set_worked))
-                {
-                    ctx_c->trace = trace;
-                    PyErr_SetString(PyExc_RuntimeError, "failed to expose JavaScript object template");
-                    return Local<Value>();
-                }
-                // templ->to_obj += 1;
-            }
-            Local<Value> obj;
-            if (!context->Global()->Get(context, v8_name).ToLocal(&obj))
-            {
-                ctx_c->trace = trace;
-                PyErr_SetString(PyExc_RuntimeError, "failed to retrieve JavaScript object template");
-                return Local<Value>();
-            }
-            ctx_c->trace = trace;
-            return obj;
-        }
-        Local<Function> constructor = py_class_get_constructor(context, templ, (py_class *)templ->parent);
-        if (constructor.IsEmpty())
+        // A namespace comes back as an object and a callback interface as a function with no
+        // prototype: py_class_get_constructor is what knows which, and it does it in place.
+        Local<Value> interface_object =
+            py_class_get_constructor(context, templ, (py_class *)templ->parent);
+        if (interface_object.IsEmpty())
         {
             return Local<Value>();
         }
-        return constructor;
+        return interface_object;
     }
     if (PyObject_TypeCheck(value, js_object_type))
     {

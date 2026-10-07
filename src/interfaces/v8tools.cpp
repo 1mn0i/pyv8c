@@ -66,7 +66,7 @@ namespace bindings {
         // to arrive finished, with no synthetic ``constructor`` and its iterator set up.
         Py_XDECREF((PyObject*)name);
         py_class* klass = (py_class*)py_cls;
-        Local<Function> interface_object =
+        Local<Value> interface_object =
             py_class_get_constructor(context, klass, (py_class*)klass->parent);
         if (!interface_object.IsEmpty()) {
             info.GetReturnValue().Set(interface_object);

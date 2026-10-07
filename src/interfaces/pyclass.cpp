@@ -491,10 +491,21 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         Py_DECREF((PyObject*)superclass_templ);
     }
 
-    if (config.as_object)
+    if (config.definition_kind == kIdlNamespace)
     {
+        // A namespace is a plain object in Chrome, not a constructor: Blink builds it from an
+        // ObjectTemplate and tags the object itself (SetupIDLNamespaceTemplate).
         self->to_obj = 1;
         templ->Set(Symbol::GetToStringTag(isolate), v8_tag, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
+    }
+    else if (config.definition_kind == kWrapperTypeNoPrototype)
+    {
+        // A callback interface answers ``typeof X === 'function'`` with no ``prototype``: its
+        // object is a function whose prototype V8 never makes, which is what Blink does for
+        // ``callback interface`` in SetupIDLCallbackInterfaceTemplate.
+        self->to_obj = 0;
+        templ->RemovePrototype();
+        templ->SetClassName(v8_name);
     }
     else
     {
@@ -569,13 +580,103 @@ add_to_template(PyObject *cls, context_c* py_ctx, PyObject *member_name, PyObjec
 }
 
 
-Local<Function> 
+// A namespace (``CSS``) is an object in Blink, not a function: ``GetV8ClassTemplate`` answers a
+// ``v8::ObjectTemplate`` for it and ``GetExposedNamespaceObject`` news an instance of that
+// (platform/bindings/wrapper_type_info.cc, v8_set_return_value.cc).  This binding stamps an
+// interface's members onto a FunctionTemplate, so the object is built here from that function's
+// own properties -- the constants and the methods, with the attributes they were given -- plus
+// the tag ``SetupIDLNamespaceTemplate`` puts on the template itself.  Nothing else of the
+// function comes along: Chrome's namespace has no ``length``, ``name`` or ``prototype``.
+static Local<Value>
+py_class_namespace_object(Local<Context> context, py_class* self, Local<Function> interface_object)
+{
+    Isolate* isolate = v8_compat::context_isolate(context);
+    Local<Array> names;
+    if (!interface_object->GetOwnPropertyNames(context).ToLocal(&names)) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to read a namespace's own names");
+        return Local<Value>();
+    }
+    Local<Object> object = Object::New(isolate);
+    for (uint32_t index = 0; index < names->Length(); ++index) {
+        Local<Value> name_value;
+        if (!names->Get(context, index).ToLocal(&name_value) || !name_value->IsString()) {
+            continue;
+        }
+        Local<String> name = name_value.As<String>();
+        if (name->Equals(context, V8String(isolate, "length")).FromMaybe(false)
+                || name->Equals(context, V8String(isolate, "name")).FromMaybe(false)
+                || name->Equals(context, V8String(isolate, "prototype")).FromMaybe(false)) {
+            continue;
+        }
+        Local<Value> described;
+        if (!interface_object->GetOwnPropertyDescriptor(context, name).ToLocal(&described)
+                || !described->IsObject()) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to read a namespace member");
+            return Local<Value>();
+        }
+        Local<Object> descriptor = described.As<Object>();
+        Local<Value> getter, setter, value, writable, flag;
+        bool accessor = descriptor->Get(context, V8String(isolate, "get")).ToLocal(&getter)
+                        && descriptor->Get(context, V8String(isolate, "set")).ToLocal(&setter)
+                        && (!getter->IsUndefined() || !setter->IsUndefined());
+        if (!accessor
+                && (!descriptor->Get(context, V8String(isolate, "value")).ToLocal(&value)
+                    || !descriptor->Get(context, V8String(isolate, "writable")).ToLocal(&writable))) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to read a namespace member");
+            return Local<Value>();
+        }
+        if (!descriptor->Get(context, V8String(isolate, "enumerable")).ToLocal(&flag)) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to read a namespace member");
+            return Local<Value>();
+        }
+        bool enumerable = flag->BooleanValue(isolate);
+        if (!descriptor->Get(context, V8String(isolate, "configurable")).ToLocal(&flag)) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to read a namespace member");
+            return Local<Value>();
+        }
+        bool configurable = flag->BooleanValue(isolate);
+        bool defined = false;
+        if (accessor) {
+            PropertyDescriptor property(getter, setter);
+            property.set_enumerable(enumerable);
+            property.set_configurable(configurable);
+            object->DefineProperty(context, name, property).To(&defined);
+        }
+        else {
+            PropertyDescriptor property(value, writable->BooleanValue(isolate));
+            property.set_enumerable(enumerable);
+            property.set_configurable(configurable);
+            object->DefineProperty(context, name, property).To(&defined);
+        }
+        if (!defined) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to define a namespace member");
+            return Local<Value>();
+        }
+    }
+    const char* world = PyUnicode_AsUTF8_abi3(self->cls_name);
+    if (world == NULL) {
+        return Local<Value>();
+    }
+    // Blink's SetupIDLNamespaceTemplate: read-only and not enumerated, as ``ReadOnly | DontEnum``.
+    PropertyDescriptor tag(V8String(isolate, world), false);
+    tag.set_enumerable(false);
+    tag.set_configurable(true);
+    bool tagged = false;
+    object->DefineProperty(context, Symbol::GetToStringTag(isolate), tag).To(&tagged);
+    if (!tagged) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to tag a namespace object");
+        return Local<Value>();
+    }
+    return object;
+}
+
+Local<Value>
 py_class_get_constructor(Local<Context> context, py_class* self, py_class* parent)
 {
     Isolate* isolate = v8_compat::context_isolate(context);
     if (self->isolate_state == nullptr || self->isolate_state->isolate() != isolate) {
         PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate; use pyv8.transfer() to copy it");
-        return Local<Function>();
+        return Local<Value>();
     }
     Context::Scope cs(context);
     delete_constructor(self, context);
@@ -586,27 +687,34 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
             parent = (py_class *)parent->parent;
 
         if (parent != NULL) {
-            js_parent = py_class_get_constructor(context, parent, (py_class*)parent->parent);
-            if (js_parent.IsEmpty()) {
-                return Local<Function>();
+            Local<Value> parent_value = py_class_get_constructor(context, parent, (py_class*)parent->parent);
+            if (parent_value.IsEmpty()) {
+                return Local<Value>();
+            }
+            // Nothing inherits from a namespace, so its object is not a prototype to set.
+            if (parent_value->IsFunction()) {
+                js_parent = parent_value.As<Function>();
             }
         }
     }
     Local<Function> function;
     if (!without_gil([&] { return self->templ.Get(isolate)->GetFunction(context).ToLocal(&function); })) {
         PyErr_SetString(PyExc_RuntimeError, "failed to instantiate JavaScript class template");
-        return Local<Function>();
+        return Local<Value>();
+    }
+    if (self->to_obj) {
+        return py_class_namespace_object(context, self, function);
     }
     if (!js_parent.IsEmpty()) {
         bool set_worked;
         if (!function->SetPrototype(context, js_parent).To(&set_worked)) {
             PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript class prototype");
-            return Local<Function>();
+            return Local<Value>();
         }
     }
     Local<Value> class_name = js_from_py(self->cls_name, context);
     if (PyErr_Occurred()) {
-        return Local<Function>();
+        return Local<Value>();
     }
     if (!class_name.IsEmpty() && class_name->IsString()) {
         function->SetName(class_name.As<String>());

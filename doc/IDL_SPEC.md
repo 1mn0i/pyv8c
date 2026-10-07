@@ -53,16 +53,21 @@ change an installed explicit binding. Callback function objects are not modified
 `length` is 0..2147483647; `immutable` uses bits 0..1;
 `has_constructor` is 0 or 1; `constructor_behavior` uses bits 0..1.
 
-`array` is what an interface borrows from `Array.prototype`, and it is spelled with words:
-`"iterator"` installs `Array.prototype.values` behind `@@iterator` and nothing else, which is
-what `HTMLCollection`, the plugin collections and `CSSStyleDeclaration` answer; `"iterable"`
-installs that iterator together with `entries`, `keys`, `values` and `forEach`, which is what a
-`NodeList`, a `Headers`, a `FormData` or a Maplike answers. Both shapes were measured against
-Chrome (2026-10-07) and no interface was found that wanted a third; `None` borrows nothing.
-`pyv8.ArrayProto` spells the two words, and reading the field back gives the word it was set
-with. The intrinsics behind them are the binding's own business.
-`global_this, undetectable, as_object, unconstructable, hidden, skip_inherit, code_like`
-are booleans. `undetectable=True` requires an explicit `call` callback.
+`array` is what an interface borrows from `Array.prototype`, as the bits the binding installs:
+`pyv8.ArrayProto.iterator` (1) installs `Array.prototype.values` behind `@@iterator` and nothing
+else, which is what `HTMLCollection`, the plugin collections and `CSSStyleDeclaration` answer;
+`pyv8.ArrayProto.iterable` (31) installs that iterator together with `entries`, `keys`, `values`
+and `forEach`, which is what a `NodeList`, a `Headers`, a `FormData` or a Maplike answers. Both
+shapes were measured against Chrome (2026-10-07) and no interface was found that wanted a third;
+0, which is also what an unset field holds, borrows nothing. The intrinsics behind the bits are
+the binding's own business.
+`global_this, undetectable, unconstructable, hidden, skip_inherit, code_like` are booleans.
+`undetectable=True` requires an explicit `call` callback.
+`definition_kind` is the other numeric field: `pyv8.DefinitionKind.kInterface` (0, the default: a
+function with a prototype), `kIdlNamespace` (1: a plain object, what Blink builds from an
+`ObjectTemplate`) or `kWrapperTypeNoPrototype` (2: a function whose `prototype` Blink never
+makes). Those are the shapes Blink's `WrapperTypeInfo` decides between, and the three are
+exclusive, so a definition cannot be a namespace and a callback interface at once.
 `code_like=True` marks the instance template code-like: `eval` and the `Function`
 constructor stringify such a value instead of handing it back unchanged, which is what
 lets a class like Blink's `TrustedScript` carry executable source. Every other object
@@ -103,12 +108,12 @@ A realm's class templates are keyed by the class's own name, so one IDL name hol
 template and a second class claiming that name is refused.
 
 pyv8c's interface decorator records only identity, parent and exposure. A single
-Universe compiler combines baseline metadata, own declarations and implementation
+binder combines baseline metadata, own declarations and implementation
 mixins, resolves signatures/callbacks and caches the immutable result. JS parent
 members stay on the prototype chain. Realm-independent wrappers are shared;
 only callbacks requiring a realm are rebound. BindingSession stages all ancestors
 before native registration and publishes its state only on success.
-`strict_validation` performs this compilation audit once per Universe.
+`strict_validation` performs this compilation audit once per `Bindings`.
 
 ## Breaking migration
 
