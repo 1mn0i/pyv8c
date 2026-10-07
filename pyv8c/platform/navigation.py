@@ -6,7 +6,7 @@ from ..foundation.errors import InvalidStateError, TimeoutError
 from ..foundation.tasks import TaskSource
 from ..foundation.urls import absolute_url
 from ..network.redirects import reportable_hops
-from ..web.bom.utils import is_secure_context
+from ..web.bom.utils import page_secure_context
 from ..web.dom.document import Document, HTMLDocument
 from ..web.dom.motion import INSECURE_ORIGIN_INTERFACES
 from ..web.dom.parser import IncrementalDOMParser
@@ -54,9 +54,12 @@ class NavigationController:
         self.page.resources.reset()
         self.page.scripts.reset()
         if renew_realm:
+            # The replaced document's timers go with it; the queue belongs to the page
+            # and outlives the document.
+            self.page.tasks.cancel_timers()
             self.page._renew_document_realm(str(url))
         self.page._update_origin(url)
-        if not is_secure_context(str(url)):
+        if not page_secure_context(self.page, url):
             # Chrome exposes these only on a secure origin; a frame commits while its
             # parent's realm runs, so the names leave on a task of their own.
             page = self.page

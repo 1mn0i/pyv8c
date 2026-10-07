@@ -1,10 +1,10 @@
 {
-  "schema": 1,
+  "schema": 3,
   "source": {
     "browser": "Chrome/154.0.8037.95",
     "executable": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "platform": "win32",
-    "collected": "2026-10-04T06:58:39+00:00",
+    "collected": "2026-10-07T04:49:10+00:00",
     "arguments": [
       "--remote-debugging-port=0",
       "--remote-allow-origins=*",
@@ -35,20 +35,22 @@
   "viewport.width": 1904,
   "viewport.height": 929,
   "viewport.device_scale_factor": 1.0,
+  "viewport.outer_inset_width": 16,
+  "viewport.outer_inset_height": 151,
   "screen.width": 1920,
   "screen.height": 1080,
   "screen.avail_width": 1920,
   "screen.avail_height": 1032,
   "screen.color_depth": 24,
   "screen.pixel_depth": 24,
-  "connection.effective_type": "4g",
-  "connection.rtt": 100,
-  "connection.downlink": 1.6,
+  "connection.effective_type": "3g",
+  "connection.rtt": 350,
+  "connection.downlink": 1.25,
   "connection.save_data": false,
   "battery.charging": true,
-  "battery.charging_time": "Infinity",
+  "battery.charging_time": 0.0,
   "battery.discharging_time": "Infinity",
-  "battery.level": 0.99,
+  "battery.level": 1.0,
   "storage.temporary.usage": 0,
   "storage.temporary.quota": 10737418240,
   "client_hints.brands": [
@@ -178,6 +180,377 @@
   ],
   "webgl.vendor": "Google Inc. (AMD)",
   "webgl.renderer": "ANGLE (AMD, AMD Radeon(TM) Vega 8 Graphics (0x000015D8) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "keyboard.layout": {
+    "KeyK": "k",
+    "KeyG": "g",
+    "Digit2": "2",
+    "Digit0": "0",
+    "KeyV": "v",
+    "KeyA": "a",
+    "Backquote": "`",
+    "KeyL": "l",
+    "IntlBackslash": "\\",
+    "Quote": "'",
+    "KeyW": "w",
+    "Digit8": "8",
+    "KeyM": "m",
+    "KeyH": "h",
+    "Period": ".",
+    "Digit7": "7",
+    "Digit1": "1",
+    "KeyP": "p",
+    "KeyD": "d",
+    "KeyF": "f",
+    "KeyO": "o",
+    "KeyQ": "q",
+    "KeyC": "c",
+    "KeyN": "n",
+    "BracketLeft": "[",
+    "KeyZ": "z",
+    "KeyY": "y",
+    "Digit3": "3",
+    "Digit6": "6",
+    "Digit5": "5",
+    "KeyX": "x",
+    "Slash": "/",
+    "Backslash": "\\",
+    "Comma": ",",
+    "Minus": "-",
+    "Digit4": "4",
+    "KeyB": "b",
+    "KeyT": "t",
+    "Digit9": "9",
+    "KeyS": "s",
+    "KeyI": "i",
+    "KeyU": "u",
+    "Equal": "=",
+    "KeyJ": "j",
+    "Semicolon": ";",
+    "KeyR": "r",
+    "BracketRight": "]",
+    "KeyE": "e"
+  },
+  "media.containers": {
+    "audio/mp4": [
+      "mp4a",
+      "opus",
+      "flac"
+    ],
+    "audio/webm": [
+      "opus",
+      "vorbis"
+    ],
+    "video/mp4": [
+      "avc1",
+      "avc3",
+      "hvc1",
+      "hev1",
+      "vp09",
+      "av01",
+      "mp4a",
+      "opus",
+      "flac"
+    ],
+    "video/webm": [
+      "vp09",
+      "av01",
+      "vp8",
+      "vp9",
+      "opus",
+      "vorbis"
+    ],
+    "audio/mpeg": [],
+    "audio/mp3": [],
+    "audio/aac": [],
+    "audio/flac": [],
+    "audio/ogg": [],
+    "audio/wav": [],
+    "audio/x-wav": [],
+    "video/ogg": [],
+    "application/ogg": []
+  },
+  "media.self_contained": [
+    "audio/mpeg",
+    "audio/aac"
+  ],
+  "media.hardware_decode": [
+    "mp4a",
+    "opus",
+    "flac",
+    "vorbis",
+    "avc1",
+    "avc3",
+    "hvc1",
+    "hev1",
+    "vp09"
+  ],
+  "media.webrtc": {
+    "decode": [
+      "video/VP8",
+      "video/VP9",
+      "video/AV1",
+      "video/H264",
+      "video/H265",
+      "audio/opus",
+      "audio/G722",
+      "audio/PCMU",
+      "audio/PCMA"
+    ],
+    "encode": [
+      "video/VP8",
+      "video/VP9",
+      "video/AV1",
+      "video/H264",
+      "video/H265",
+      "audio/opus",
+      "audio/G722",
+      "audio/PCMU",
+      "audio/PCMA"
+    ]
+  },
+  "media.hardware_encode": [
+    "hvc1"
+  ],
+  "media.devices": [
+    "audioinput",
+    "audiooutput"
+  ],
+  "media.constraints": [
+    "aspectRatio",
+    "autoGainControl",
+    "brightness",
+    "channelCount",
+    "colorTemperature",
+    "contrast",
+    "deviceId",
+    "displaySurface",
+    "echoCancellation",
+    "exposureCompensation",
+    "exposureMode",
+    "exposureTime",
+    "facingMode",
+    "focusDistance",
+    "focusMode",
+    "frameRate",
+    "groupId",
+    "height",
+    "iso",
+    "latency",
+    "noiseSuppression",
+    "pan",
+    "pointsOfInterest",
+    "resizeMode",
+    "restrictOwnAudio",
+    "sampleRate",
+    "sampleSize",
+    "saturation",
+    "sharpness",
+    "suppressLocalAudioPlayback",
+    "tilt",
+    "torch",
+    "voiceIsolation",
+    "whiteBalanceMode",
+    "width",
+    "zoom"
+  ],
+  "speech.voices": [
+    {
+      "name": "Google Deutsch",
+      "lang": "de-DE",
+      "local_service": false,
+      "default": true
+    },
+    {
+      "name": "Google US English",
+      "lang": "en-US",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google UK English Female",
+      "lang": "en-GB",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google UK English Male",
+      "lang": "en-GB",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google espa\u00f1ol",
+      "lang": "es-ES",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google espa\u00f1ol de Estados Unidos",
+      "lang": "es-US",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google fran\u00e7ais",
+      "lang": "fr-FR",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google \u0939\u093f\u0928\u094d\u0926\u0940",
+      "lang": "hi-IN",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google Bahasa Indonesia",
+      "lang": "id-ID",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google italiano",
+      "lang": "it-IT",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google \u65e5\u672c\u8a9e",
+      "lang": "ja-JP",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google \ud55c\uad6d\uc758",
+      "lang": "ko-KR",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google Nederlands",
+      "lang": "nl-NL",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google polski",
+      "lang": "pl-PL",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google portugu\u00eas do Brasil",
+      "lang": "pt-BR",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google \u0440\u0443\u0441\u0441\u043a\u0438\u0439",
+      "lang": "ru-RU",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google\u00a0\u666e\u901a\u8bdd\uff08\u4e2d\u56fd\u5927\u9646\uff09",
+      "lang": "zh-CN",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google\u00a0\u7ca4\u8a9e\uff08\u9999\u6e2f\uff09",
+      "lang": "zh-HK",
+      "local_service": false,
+      "default": false
+    },
+    {
+      "name": "Google \u570b\u8a9e\uff08\u81fa\u7063\uff09",
+      "lang": "zh-TW",
+      "local_service": false,
+      "default": false
+    }
+  ],
+  "permissions.names": [
+    "accelerometer",
+    "background-fetch",
+    "background-sync",
+    "camera",
+    "captured-surface-control",
+    "clipboard-read",
+    "clipboard-write",
+    "display-capture",
+    "geolocation",
+    "gyroscope",
+    "idle-detection",
+    "keyboard-lock",
+    "local-fonts",
+    "magnetometer",
+    "microphone",
+    "midi",
+    "notifications",
+    "payment-handler",
+    "periodic-background-sync",
+    "persistent-storage",
+    "pointer-lock",
+    "push",
+    "screen-wake-lock",
+    "storage-access",
+    "window-management"
+  ],
+  "permissions.granted": [
+    "accelerometer",
+    "background-fetch",
+    "background-sync",
+    "clipboard-write",
+    "gyroscope",
+    "keyboard-lock",
+    "magnetometer",
+    "payment-handler",
+    "pointer-lock",
+    "screen-wake-lock",
+    "storage-access"
+  ],
+  "permissions.spec_names": {
+    "accelerometer": "sensors",
+    "background-fetch": "background_fetch",
+    "background-sync": "background_sync",
+    "camera": "video_capture",
+    "captured-surface-control": "captured-surface-control",
+    "clipboard-read": "clipboard_read",
+    "clipboard-write": "clipboard_write",
+    "display-capture": "display_capture",
+    "geolocation": "geolocation",
+    "gyroscope": "sensors",
+    "idle-detection": "idle_detection",
+    "keyboard-lock": "keyboard-lock",
+    "local-fonts": "local_fonts",
+    "magnetometer": "sensors",
+    "microphone": "audio_capture",
+    "midi": "midi",
+    "notifications": "notifications",
+    "payment-handler": "payment_handler",
+    "periodic-background-sync": "periodic_background_sync",
+    "persistent-storage": "durable_storage",
+    "pointer-lock": "pointer-lock",
+    "push": "notifications",
+    "screen-wake-lock": "screen_wake_lock",
+    "storage-access": "storage-access",
+    "window-management": "window-management"
+  },
+  "gpu.wgsl_features": [
+    "packed_4x8_integer_dot_product",
+    "subgroup_uniformity",
+    "immediate_address_space",
+    "linear_indexing",
+    "subgroup_id",
+    "readonly_and_readwrite_storage_textures",
+    "swizzle_assignment",
+    "unrestricted_pointer_parameters",
+    "buffer_view",
+    "pointer_composite_access",
+    "texture_and_sampler_let",
+    "texture_formats_tier1",
+    "uniform_buffer_standard_layout"
+  ],
   "window_surface": {
     "keys": [
       "alert",
@@ -1655,43 +2028,115 @@
       "window"
     ],
     "prototype_gaps": {
-      "AbstractRange": [
-        "endContainer",
-        "startContainer"
+      "WebGLRenderingContext": [
+        "texElementImage2D",
+        "texElementSubImage2D"
       ],
-      "AnimationTimeline": [
-        "getCurrentTime"
+      "WebGL2RenderingContext": [
+        "texElementImage2D",
+        "texElementSubImage2D"
       ],
-      "AudioWorklet": [
-        "port"
+      "VTTCue": [
+        "lineAlign",
+        "positionAlign",
+        "region"
       ],
-      "Bluetooth": [
-        "getDevices",
-        "onadvertisementreceived",
-        "requestLEScan"
+      "URLPattern": [
+        "generate"
       ],
-      "BluetoothDevice": [
-        "forget",
-        "onadvertisementreceived",
-        "watchAdvertisements",
-        "watchingAdvertisements"
+      "TrustedTypePolicy": [
+        "createParserOptions"
       ],
-      "CSPViolationReportBody": [
-        "evalHash",
-        "urlHash"
+      "TextMetrics": [
+        "emHeightAscent",
+        "emHeightDescent",
+        "getActualBoundingBox",
+        "getIndexFromOffset",
+        "getSelectionRects",
+        "getTextClusters"
       ],
-      "CSSPseudoElement": [
+      "Text": [
         "convertPointFromNode",
         "convertQuadFromNode",
         "convertRectFromNode",
         "getBoxQuads"
       ],
-      "CanvasGradient": [
-        "colorInterpolationMethod",
-        "hueInterpolationMethod",
-        "premultipliedAlpha"
+      "SubmitEvent": [
+        "agentInvoked",
+        "respondWith"
       ],
-      "CanvasRenderingContext2D": [
+      "SourceBuffer": [
+        "appendEncodedChunks",
+        "audioTracks",
+        "trackDefaults",
+        "videoTracks"
+      ],
+      "ShadowRoot": [
+        "appendHTML",
+        "appendHTMLUnsafe",
+        "prependHTML",
+        "prependHTMLUnsafe",
+        "streamAppendHTML",
+        "streamAppendHTMLUnsafe",
+        "streamHTML",
+        "streamHTMLUnsafe",
+        "streamPrependHTML",
+        "streamPrependHTMLUnsafe"
+      ],
+      "SecurityPolicyViolationEvent": [
+        "evalHash",
+        "urlHash"
+      ],
+      "Scheduler": [
+        "asyncData"
+      ],
+      "SVGTextPathElement": [
+        "side"
+      ],
+      "SVGPathElement": [
+        "getPathData",
+        "setPathData"
+      ],
+      "SVGElement": [
+        "onbeforefilter",
+        "oncomplete",
+        "onoverscrollcancel",
+        "onoverscrollchanging",
+        "onoverscrollend",
+        "onoverscrollstart",
+        "ontouchcancel",
+        "ontouchend",
+        "ontouchmove",
+        "ontouchstart"
+      ],
+      "Request": [
+        "getRetryOptions"
+      ],
+      "RTCEncodedVideoFrame": [
+        "setMetadata"
+      ],
+      "RTCEncodedAudioFrame": [
+        "setMetadata"
+      ],
+      "Permissions": [
+        "request",
+        "requestAll",
+        "revoke"
+      ],
+      "PerformanceResourceTiming": [
+        "initiatorUrl"
+      ],
+      "PerformanceEventTiming": [
+        "targetSelector"
+      ],
+      "Performance": [
+        "bind",
+        "getSpeculations",
+        "markConditional",
+        "measureConditional",
+        "measureUserAgentSpecificMemory"
+      ],
+      "OffscreenCanvasRenderingContext2D": [
         "beginLayer",
         "createMesh2DIndexBuffer",
         "createMesh2DUVBuffer",
@@ -1703,30 +2148,107 @@
         "globalHDRHeadroom",
         "strokeTextCluster"
       ],
-      "CaptureController": [
-        "oncapturedmousechange"
+      "OffscreenCanvas": [
+        "clearElementGeometry",
+        "getElementTransform",
+        "updateElementGeometry"
       ],
-      "CharacterData": [
-        "afterHTML",
-        "afterHTMLUnsafe",
-        "beforeHTML",
-        "beforeHTMLUnsafe",
-        "replaceWithHTML",
-        "replaceWithHTMLUnsafe",
-        "streamAfterHTML",
-        "streamAfterHTMLUnsafe",
-        "streamBeforeHTML",
-        "streamBeforeHTMLUnsafe",
-        "streamReplaceWithHTML",
-        "streamReplaceWithHTMLUnsafe"
+      "NetworkInformation": [
+        "downlinkMax",
+        "ontypechange",
+        "type"
       ],
-      "Document": [
-        "convertPointFromNode",
-        "convertQuadFromNode",
-        "convertRectFromNode",
-        "getBoxQuads",
-        "modelContext",
-        "onautofill",
+      "Navigator": [
+        "contacts",
+        "createAdRequest",
+        "createHandwritingRecognizer",
+        "finalizeAd",
+        "globalPrivacyControl",
+        "install",
+        "lockedMode",
+        "ml",
+        "playHaptics",
+        "preferences",
+        "queryHandwritingRecognizer",
+        "rtc",
+        "smartCard"
+      ],
+      "NavigateEvent": [
+        "deferPageSwap"
+      ],
+      "MessagePort": [
+        "onclose"
+      ],
+      "MediaStreamTrack": [
+        "onconfigurationchange"
+      ],
+      "MediaSource": [
+        "handle"
+      ],
+      "MathMLElement": [
+        "onbeforefilter",
+        "oncomplete",
+        "onoverscrollcancel",
+        "onoverscrollchanging",
+        "onoverscrollend",
+        "onoverscrollstart",
+        "ontouchcancel",
+        "ontouchend",
+        "ontouchmove",
+        "ontouchstart"
+      ],
+      "KeyframeEffect": [
+        "iterationComposite"
+      ],
+      "HTMLTemplateElement": [
+        "buffer",
+        "crossOrigin",
+        "integrity",
+        "referrerPolicy",
+        "sanitize",
+        "shadowRootAdoptedStyleSheets",
+        "src"
+      ],
+      "HTMLSelectElement": [
+        "selectedContentElement"
+      ],
+      "HTMLScriptElement": [
+        "cacheHint",
+        "signature"
+      ],
+      "HTMLMediaElement": [
+        "audioTracks",
+        "latencyHint",
+        "videoTracks"
+      ],
+      "HTMLInputElement": [
+        "alpha",
+        "capture",
+        "colorSpace",
+        "switch"
+      ],
+      "HTMLImageElement": [
+        "onuareplaceend",
+        "onuareplacestart",
+        "replacedByUserAgent"
+      ],
+      "HTMLIFrameElement": [
+        "connectionAllowlist",
+        "permissionsPolicy",
+        "policy"
+      ],
+      "HTMLFrameSetElement": [
+        "ongamepadrawinputchanged",
+        "onmove",
+        "onorientationchange",
+        "ontimezonechange"
+      ],
+      "HTMLFieldSetElement": [
+        "checkable"
+      ],
+      "HTMLElement": [
+        "accessKeyLabel",
+        "hideUnboundedElement",
         "onbeforefilter",
         "oncomplete",
         "onoverscrollcancel",
@@ -1737,24 +2259,42 @@
         "ontouchend",
         "ontouchmove",
         "ontouchstart",
-        "permissionsPolicy",
-        "requestStorageAccessFor",
-        "setSequentialFocusStartingPoint",
-        "spellCheckCustomDictionary"
+        "overscrollarea",
+        "overscrollcontainer",
+        "scrollParent",
+        "showUnboundedElement",
+        "unbounded"
       ],
-      "DocumentType": [
-        "afterHTML",
-        "afterHTMLUnsafe",
-        "beforeHTML",
-        "beforeHTMLUnsafe",
-        "replaceWithHTML",
-        "replaceWithHTMLUnsafe",
-        "streamAfterHTML",
-        "streamAfterHTMLUnsafe",
-        "streamBeforeHTML",
-        "streamBeforeHTMLUnsafe",
-        "streamReplaceWithHTML",
-        "streamReplaceWithHTMLUnsafe"
+      "HTMLCanvasElement": [
+        "captureElementImage",
+        "clearElementGeometry",
+        "configureHighDynamicRange",
+        "getElementTransform",
+        "layoutSubtree",
+        "onpaint",
+        "requestPaint",
+        "updateElementGeometry"
+      ],
+      "HTMLBodyElement": [
+        "ongamepadrawinputchanged",
+        "onmove",
+        "onorientationchange",
+        "ontimezonechange"
+      ],
+      "HTMLAreaElement": [
+        "hreflang",
+        "type"
+      ],
+      "GamepadButton": [
+        "type"
+      ],
+      "Gamepad": [
+        "touchEvents"
+      ],
+      "ElementInternals": [
+        "ariaOwnsElements",
+        "behaviors",
+        "setToolParamSchema"
       ],
       "Element": [
         "afterHTML",
@@ -1794,28 +2334,86 @@
         "streamReplaceWithHTML",
         "streamReplaceWithHTMLUnsafe"
       ],
-      "ElementInternals": [
-        "ariaOwnsElements",
-        "behaviors",
-        "setToolParamSchema"
+      "DocumentType": [
+        "afterHTML",
+        "afterHTMLUnsafe",
+        "beforeHTML",
+        "beforeHTMLUnsafe",
+        "replaceWithHTML",
+        "replaceWithHTMLUnsafe",
+        "streamAfterHTML",
+        "streamAfterHTMLUnsafe",
+        "streamBeforeHTML",
+        "streamBeforeHTMLUnsafe",
+        "streamReplaceWithHTML",
+        "streamReplaceWithHTMLUnsafe"
       ],
-      "FencedFrameConfig": [
-        "setSharedStorageContext"
+      "Document": [
+        "convertPointFromNode",
+        "convertQuadFromNode",
+        "convertRectFromNode",
+        "getBoxQuads",
+        "modelContext",
+        "onautofill",
+        "onbeforefilter",
+        "oncomplete",
+        "onoverscrollcancel",
+        "onoverscrollchanging",
+        "onoverscrollend",
+        "onoverscrollstart",
+        "ontouchcancel",
+        "ontouchend",
+        "ontouchmove",
+        "ontouchstart",
+        "permissionsPolicy",
+        "requestStorageAccessFor",
+        "setSequentialFocusStartingPoint",
+        "spellCheckCustomDictionary"
       ],
-      "FileSystemFileHandle": [
-        "createSyncAccessHandle"
+      "CharacterData": [
+        "afterHTML",
+        "afterHTMLUnsafe",
+        "beforeHTML",
+        "beforeHTMLUnsafe",
+        "replaceWithHTML",
+        "replaceWithHTMLUnsafe",
+        "streamAfterHTML",
+        "streamAfterHTMLUnsafe",
+        "streamBeforeHTML",
+        "streamBeforeHTMLUnsafe",
+        "streamReplaceWithHTML",
+        "streamReplaceWithHTMLUnsafe"
       ],
-      "FileSystemHandle": [
-        "getCloudIdentifiers",
-        "getUniqueId",
-        "move"
+      "CanvasRenderingContext2D": [
+        "beginLayer",
+        "createMesh2DIndexBuffer",
+        "createMesh2DUVBuffer",
+        "createMesh2DVertexBuffer",
+        "drawElementImage",
+        "drawMesh",
+        "endLayer",
+        "fillTextCluster",
+        "globalHDRHeadroom",
+        "strokeTextCluster"
       ],
-      "FileSystemObserver": [
-        "unobserve"
+      "CanvasGradient": [
+        "colorInterpolationMethod",
+        "hueInterpolationMethod",
+        "premultipliedAlpha"
       ],
-      "FragmentDirective": [
-        "createSelectorDirective",
-        "items"
+      "CSPViolationReportBody": [
+        "evalHash",
+        "urlHash"
+      ],
+      "AnimationTimeline": [
+        "getCurrentTime"
+      ],
+      "AbstractRange": [
+        "endContainer",
+        "startContainer"
+      ],
+      "AudioWorklet": [
+        "port"
       ],
       "GPUAdapterInfo": [
         "backend",
@@ -1850,162 +2448,10 @@
         "multiDrawIndexedIndirect",
         "multiDrawIndirect"
       ],
-      "Gamepad": [
-        "touchEvents"
-      ],
-      "GamepadButton": [
-        "type"
-      ],
-      "HTMLAreaElement": [
-        "hreflang",
-        "type"
-      ],
-      "HTMLBodyElement": [
-        "ongamepadrawinputchanged",
-        "onmove",
-        "onorientationchange",
-        "ontimezonechange"
-      ],
-      "HTMLCanvasElement": [
-        "captureElementImage",
-        "clearElementGeometry",
-        "configureHighDynamicRange",
-        "getElementTransform",
-        "layoutSubtree",
-        "onpaint",
-        "requestPaint",
-        "updateElementGeometry"
-      ],
-      "HTMLElement": [
-        "accessKeyLabel",
-        "hideUnboundedElement",
-        "onbeforefilter",
-        "oncomplete",
-        "onoverscrollcancel",
-        "onoverscrollchanging",
-        "onoverscrollend",
-        "onoverscrollstart",
-        "ontouchcancel",
-        "ontouchend",
-        "ontouchmove",
-        "ontouchstart",
-        "overscrollarea",
-        "overscrollcontainer",
-        "scrollParent",
-        "showUnboundedElement",
-        "unbounded"
-      ],
-      "HTMLFieldSetElement": [
-        "checkable"
-      ],
-      "HTMLFrameSetElement": [
-        "ongamepadrawinputchanged",
-        "onmove",
-        "onorientationchange",
-        "ontimezonechange"
-      ],
-      "HTMLIFrameElement": [
-        "connectionAllowlist",
-        "permissionsPolicy",
-        "policy"
-      ],
-      "HTMLImageElement": [
-        "onuareplaceend",
-        "onuareplacestart",
-        "replacedByUserAgent"
-      ],
-      "HTMLInputElement": [
-        "alpha",
-        "capture",
-        "colorSpace",
-        "switch"
-      ],
-      "HTMLMediaElement": [
-        "audioTracks",
-        "latencyHint",
-        "videoTracks"
-      ],
-      "HTMLScriptElement": [
-        "cacheHint",
-        "signature"
-      ],
-      "HTMLSelectElement": [
-        "selectedContentElement"
-      ],
-      "HTMLTemplateElement": [
-        "buffer",
-        "crossOrigin",
-        "integrity",
-        "referrerPolicy",
-        "sanitize",
-        "shadowRootAdoptedStyleSheets",
-        "src"
-      ],
-      "HTMLUserMediaElement": [
-        "initialPermissionStatus",
-        "invalidReason",
-        "isValid",
-        "onpromptaction",
-        "onpromptdismiss",
-        "onvalidationstatuschange",
-        "permissionStatus",
-        "type"
-      ],
-      "KeyframeEffect": [
-        "iterationComposite"
-      ],
-      "LanguageModel": [
-        "inputQuota",
-        "inputUsage",
-        "measureInputUsage",
-        "onquotaoverflow",
-        "samplingMode",
-        "temperature",
-        "topK"
-      ],
-      "MathMLElement": [
-        "onbeforefilter",
-        "oncomplete",
-        "onoverscrollcancel",
-        "onoverscrollchanging",
-        "onoverscrollend",
-        "onoverscrollstart",
-        "ontouchcancel",
-        "ontouchend",
-        "ontouchmove",
-        "ontouchstart"
-      ],
       "MediaDevices": [
         "getAllScreensMedia",
         "selectAudioOutput",
         "setPreferredSinkId"
-      ],
-      "MediaSource": [
-        "handle"
-      ],
-      "MediaStreamTrack": [
-        "onconfigurationchange"
-      ],
-      "MessagePort": [
-        "onclose"
-      ],
-      "NavigateEvent": [
-        "deferPageSwap"
-      ],
-      "Navigator": [
-        "contacts",
-        "createAdRequest",
-        "createHandwritingRecognizer",
-        "finalizeAd",
-        "globalPrivacyControl",
-        "install",
-        "lockedMode",
-        "ml",
-        "playHaptics",
-        "preferences",
-        "queryHandwritingRecognizer",
-        "rtc",
-        "smartCard"
       ],
       "NavigatorManagedData": [
         "getAnnotatedAssetId",
@@ -2013,96 +2459,6 @@
         "getDirectoryId",
         "getHostname",
         "getSerialNumber"
-      ],
-      "NetworkInformation": [
-        "downlinkMax",
-        "ontypechange",
-        "type"
-      ],
-      "Notification": [
-        "scenario",
-        "showTrigger"
-      ],
-      "OffscreenCanvas": [
-        "clearElementGeometry",
-        "getElementTransform",
-        "updateElementGeometry"
-      ],
-      "OffscreenCanvasRenderingContext2D": [
-        "beginLayer",
-        "createMesh2DIndexBuffer",
-        "createMesh2DUVBuffer",
-        "createMesh2DVertexBuffer",
-        "drawElementImage",
-        "drawMesh",
-        "endLayer",
-        "fillTextCluster",
-        "globalHDRHeadroom",
-        "strokeTextCluster"
-      ],
-      "Performance": [
-        "bind",
-        "getSpeculations",
-        "markConditional",
-        "measureConditional",
-        "measureUserAgentSpecificMemory"
-      ],
-      "PerformanceEventTiming": [
-        "targetSelector"
-      ],
-      "PerformanceLongAnimationFrameTiming": [
-        "layoutDuration",
-        "scriptCount",
-        "styleDuration",
-        "userTimingEntries"
-      ],
-      "PerformanceResourceTiming": [
-        "initiatorUrl"
-      ],
-      "PerformanceScriptTiming": [
-        "forcedLayoutDuration",
-        "forcedStyleDuration",
-        "sourceColumn",
-        "sourceLine"
-      ],
-      "Permissions": [
-        "request",
-        "requestAll",
-        "revoke"
-      ],
-      "RTCDataChannel": [
-        "priority"
-      ],
-      "RTCEncodedAudioFrame": [
-        "setMetadata"
-      ],
-      "RTCEncodedVideoFrame": [
-        "setMetadata"
-      ],
-      "Request": [
-        "getRetryOptions"
-      ],
-      "SVGElement": [
-        "onbeforefilter",
-        "oncomplete",
-        "onoverscrollcancel",
-        "onoverscrollchanging",
-        "onoverscrollend",
-        "onoverscrollstart",
-        "ontouchcancel",
-        "ontouchend",
-        "ontouchmove",
-        "ontouchstart"
-      ],
-      "SVGPathElement": [
-        "getPathData",
-        "setPathData"
-      ],
-      "SVGTextPathElement": [
-        "side"
-      ],
-      "Scheduler": [
-        "asyncData"
       ],
       "ScreenDetailed": [
         "bluePrimaryX",
@@ -2117,38 +2473,8 @@
         "whitePointX",
         "whitePointY"
       ],
-      "SecurityPolicyViolationEvent": [
-        "evalHash",
-        "urlHash"
-      ],
       "ServiceWorkerRegistration": [
         "index"
-      ],
-      "ShadowRoot": [
-        "appendHTML",
-        "appendHTMLUnsafe",
-        "prependHTML",
-        "prependHTMLUnsafe",
-        "streamAppendHTML",
-        "streamAppendHTMLUnsafe",
-        "streamHTML",
-        "streamHTMLUnsafe",
-        "streamPrependHTML",
-        "streamPrependHTMLUnsafe"
-      ],
-      "SourceBuffer": [
-        "appendEncodedChunks",
-        "audioTracks",
-        "trackDefaults",
-        "videoTracks"
-      ],
-      "StorageBucket": [
-        "durability",
-        "locks"
-      ],
-      "SubmitEvent": [
-        "agentInvoked",
-        "respondWith"
       ],
       "SubtleCrypto": [
         "decapsulateBits",
@@ -2157,41 +2483,8 @@
         "encapsulateKey",
         "getPublicKey"
       ],
-      "Text": [
-        "convertPointFromNode",
-        "convertQuadFromNode",
-        "convertRectFromNode",
-        "getBoxQuads"
-      ],
-      "TextMetrics": [
-        "emHeightAscent",
-        "emHeightDescent",
-        "getActualBoundingBox",
-        "getIndexFromOffset",
-        "getSelectionRects",
-        "getTextClusters"
-      ],
-      "TrustedTypePolicy": [
-        "createParserOptions"
-      ],
-      "URLPattern": [
-        "generate"
-      ],
-      "VTTCue": [
-        "lineAlign",
-        "positionAlign",
-        "region"
-      ],
       "VideoEncoder": [
         "getAllFrameBuffers"
-      ],
-      "WebGL2RenderingContext": [
-        "texElementImage2D",
-        "texElementSubImage2D"
-      ],
-      "WebGLRenderingContext": [
-        "texElementImage2D",
-        "texElementSubImage2D"
       ],
       "WebTransport": [
         "anticipatedConcurrentIncomingBidirectionalStreams",
@@ -2201,6 +2494,48 @@
         "draining",
         "getStats",
         "responseHeaders"
+      ],
+      "Bluetooth": [
+        "getDevices",
+        "onadvertisementreceived",
+        "requestLEScan"
+      ],
+      "BluetoothDevice": [
+        "forget",
+        "onadvertisementreceived",
+        "watchAdvertisements",
+        "watchingAdvertisements"
+      ],
+      "CaptureController": [
+        "oncapturedmousechange"
+      ],
+      "FileSystemFileHandle": [
+        "createSyncAccessHandle"
+      ],
+      "FileSystemHandle": [
+        "getCloudIdentifiers",
+        "getUniqueId",
+        "move"
+      ],
+      "FileSystemObserver": [
+        "unobserve"
+      ],
+      "FragmentDirective": [
+        "createSelectorDirective",
+        "items"
+      ],
+      "LanguageModel": [
+        "inputQuota",
+        "inputUsage",
+        "measureInputUsage",
+        "onquotaoverflow",
+        "samplingMode",
+        "temperature",
+        "topK"
+      ],
+      "StorageBucket": [
+        "durability",
+        "locks"
       ],
       "XRFrame": [
         "detectedMeshes",
@@ -2217,8 +2552,141 @@
         "onframeratechange",
         "supportedFrameRates",
         "updateTargetFrameRate"
+      ],
+      "CSSPseudoElement": [
+        "convertPointFromNode",
+        "convertQuadFromNode",
+        "convertRectFromNode",
+        "getBoxQuads"
+      ],
+      "FencedFrameConfig": [
+        "setSharedStorageContext"
+      ],
+      "HTMLUserMediaElement": [
+        "initialPermissionStatus",
+        "invalidReason",
+        "isValid",
+        "onpromptaction",
+        "onpromptdismiss",
+        "onvalidationstatuschange",
+        "permissionStatus",
+        "type"
+      ],
+      "Notification": [
+        "scenario",
+        "showTrigger"
+      ],
+      "PerformanceLongAnimationFrameTiming": [
+        "layoutDuration",
+        "scriptCount",
+        "styleDuration",
+        "userTimingEntries"
+      ],
+      "PerformanceScriptTiming": [
+        "forcedLayoutDuration",
+        "forcedStyleDuration",
+        "sourceColumn",
+        "sourceLine"
+      ],
+      "RTCDataChannel": [
+        "priority"
       ]
     },
-    "baseline_digest": "22537692620b4783d61a0c960efc5ffd9cfa4a6cd60cce2df73dd53c3eb72aca"
+    "interface_gaps": {
+      "URLPattern": [
+        "compareComponent"
+      ],
+      "TrustedScriptURL": [
+        "fromLiteral"
+      ],
+      "TrustedScript": [
+        "fromLiteral"
+      ],
+      "TrustedHTML": [
+        "fromLiteral"
+      ],
+      "CSS": [
+        "animationWorklet",
+        "layoutWorklet"
+      ],
+      "SubtleCrypto": [
+        "supports"
+      ],
+      "IdentityProvider": [
+        "register",
+        "unregister"
+      ],
+      "LanguageModel": [
+        "params"
+      ],
+      "HTMLUserMediaElement": [
+        "isTypeSupported"
+      ]
+    },
+    "array_words": {
+      "ViewTransitionTypeSet": "iterable",
+      "URLSearchParams": "iterable",
+      "TouchList": "iterator",
+      "TextTrackList": "iterator",
+      "TextTrackCueList": "iterator",
+      "StyleSheetList": "iterator",
+      "StylePropertyMapReadOnly": "iterable",
+      "StylePropertyMap": "iterable",
+      "SourceBufferList": "iterator",
+      "SVGTransformList": "iterator",
+      "SVGStringList": "iterator",
+      "SVGPointList": "iterator",
+      "SVGNumberList": "iterator",
+      "SVGLengthList": "iterator",
+      "RadioNodeList": "iterable",
+      "RTCStatsReport": "iterable",
+      "PluginArray": "iterator",
+      "Plugin": "iterator",
+      "NodeList": "iterable",
+      "NamedNodeMap": "iterator",
+      "MimeTypeArray": "iterator",
+      "MediaList": "iterator",
+      "HighlightRegistry": "iterable",
+      "Highlight": "iterable",
+      "Headers": "iterable",
+      "HTMLSelectElement": "iterator",
+      "HTMLOptionsCollection": "iterator",
+      "HTMLFormElement": "iterator",
+      "HTMLFormControlsCollection": "iterator",
+      "HTMLCollection": "iterator",
+      "HTMLAllCollection": "iterator",
+      "FormData": "iterable",
+      "FontFaceSet": "iterable",
+      "FileList": "iterator",
+      "EventCounts": "iterable",
+      "DataTransferItemList": "iterator",
+      "DOMTokenList": "iterable",
+      "DOMStringList": "iterator",
+      "DOMRectList": "iterator",
+      "CustomStateSet": "iterable",
+      "CSSUnparsedValue": "iterable",
+      "CSSTransformValue": "iterable",
+      "CSSStyleDeclaration": "iterator",
+      "CSSRuleList": "iterator",
+      "CSSPositionTryDescriptors": "iterator",
+      "CSSNumericArray": "iterable",
+      "CSSKeyframesRule": "iterator",
+      "AudioParamMap": "iterable",
+      "GPUSupportedFeatures": "iterable",
+      "ImageTrackList": "iterator",
+      "KeyboardLayoutMap": "iterable",
+      "MIDIInputMap": "iterable",
+      "MIDIOutputMap": "iterable",
+      "MediaKeyStatusMap": "iterable",
+      "WGSLLanguageFeatures": "iterable",
+      "XRAnchorSet": "iterable",
+      "XRHand": "iterable",
+      "XRInputSourceArray": "iterable",
+      "XRPlaneSet": "iterable",
+      "CSSFunctionDescriptors": "iterator",
+      "SpeechGrammarList": "iterator",
+      "TimelineTriggerRangeList": "iterable"
+    },
+    "baseline_digest": "da7cbf3cdd438f60db29a3ffae19155db5109cd94a9fc517fc4551d2bd4e27ed"
   }
 }

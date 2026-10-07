@@ -24,7 +24,8 @@ class RadioNodeList(NodeList):
         attributes=(AttributeSpec(name="value", getter="get_value", setter="set_value"),),
         to_string_tag="RadioNodeList",
         has_constructor=0,
-        array=True,
+        #: A ``NodeList``, so it publishes what one does; stated rather than inherited.
+        array="iterable",
     )
 
     def get_value(self):

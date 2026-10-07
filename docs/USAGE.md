@@ -184,7 +184,7 @@ finally:
 | environment | None | 扁平点号键字典或不可变 BrowserEnvironment |
 | trace / traceable | False / False | 初始观察状态 / 是否允许后续开启 |
 | trace_callback | None | 共享事件回调；未提供时使用 Loguru 输出 |
-| interface_baseline_path | None | 默认随包 ZIP，可指定 compact schema 5 JSON/ZIP |
+| interface_baseline_path | None | 默认随包 ZIP，可指定 compact schema 6 JSON/ZIP |
 | baseline_mismatch | warn | warn（默认）对实现与所选 baseline 的成员/接口差异记一次警告并跳过；error 改为当场失败，用来盯住自己的实现写错 |
 | expose_unimplemented | True | exposure 计划是否包含没有手写实现的 baseline 接口 |
 | stub_logging | off | 未实现成员日志：off 关闭（默认）、on 每个未实现成员报一次、verbose 额外报告占位 handler |

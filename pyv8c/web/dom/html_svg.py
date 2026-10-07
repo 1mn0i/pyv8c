@@ -13,6 +13,8 @@ from pyv8 import AttributeSpec, IdlSpec
 from ...engine.features import interface
 from ...foundation.arguments import dom_string, number
 from ...foundation.errors import NotSupportedError
+from .css import CSSStyleDeclaration
+from .css_typed import StylePropertyMap
 from .html_elements import Element
 
 __all__ = ["SVGAnimatedLength", "SVGElement", "SVGGeometryElement", "SVGGraphicsElement",
@@ -69,7 +71,30 @@ def _suffix(unit_type):
 
 @interface('SVGElement', 'Element')
 class SVGElement(Element):
-    pass
+    """An SVG element carries an inline style like an HTML one does."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="style", getter="get_style", side_effect=1),
+            AttributeSpec(name="attributeStyleMap", getter="get_attributeStyleMap",
+                          side_effect=1),
+        ),
+        constructor_behavior=0,
+        has_constructor=1,
+    )
+
+    def get_style(self):
+        """The same inline style object an HTML element hands out."""
+        value = getattr(self, "_style_declaration", None)
+        if value is None:
+            value = self._style_declaration = CSSStyleDeclaration(element=self)
+        return value
+
+    def get_attributeStyleMap(self):
+        value = getattr(self, "_attribute_style_map", None)
+        if value is None:
+            value = self._attribute_style_map = StylePropertyMap(element=self)
+        return value
 
 
 @interface('SVGGraphicsElement', 'SVGElement')

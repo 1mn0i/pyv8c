@@ -25,6 +25,7 @@ from ...foundation.arguments import (
 )
 from ...foundation.errors import V8TypeError
 from ...foundation.logging import logger
+from .collections import ReadOnlyIndexedPropertyMixin
 
 _DOCUMENT_NODE = 9  # DOM standard nodeType of Document; hardcoded to avoid a dom.nodes import cycle.
 
@@ -82,7 +83,8 @@ class Event:
             AttributeSpec(name="isTrusted", getter="get_isTrusted", side_effect=1),
             AttributeSpec(name="composed", getter="get_composed", side_effect=1),
             AttributeSpec(name="returnValue", getter="get_returnValue", setter="set_returnValue"),
-            AttributeSpec(name="persisted", getter="get_persisted", side_effect=1),
+            #: ``persisted`` belongs to ``PageTransitionEvent``; as an ``Event`` accessor it made
+            #: ``'persisted' in new Event('x')`` answer ``true`` where Chrome says ``false``.
         ),
         methods=(
             MethodSpec(name="preventDefault", callback="fn_preventDefault"),
@@ -827,6 +829,145 @@ class BeforeUnloadEvent(Event):
         self._return_value = value
         if value:
             self.defaultPrevented = True
+
+
+@interface('Touch', None)
+class Touch:
+    """One contact point, as a ``TouchEvent`` carries it."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="identifier", getter="get_identifier", side_effect=1),
+            AttributeSpec(name="target", getter="get_target", side_effect=1),
+            AttributeSpec(name="screenX", getter="get_screenX", side_effect=1),
+            AttributeSpec(name="screenY", getter="get_screenY", side_effect=1),
+            AttributeSpec(name="clientX", getter="get_clientX", side_effect=1),
+            AttributeSpec(name="clientY", getter="get_clientY", side_effect=1),
+            AttributeSpec(name="pageX", getter="get_pageX", side_effect=1),
+            AttributeSpec(name="pageY", getter="get_pageY", side_effect=1),
+            AttributeSpec(name="radiusX", getter="get_radiusX", side_effect=1),
+            AttributeSpec(name="radiusY", getter="get_radiusY", side_effect=1),
+            AttributeSpec(name="rotationAngle", getter="get_rotationAngle", side_effect=1),
+            AttributeSpec(name="force", getter="get_force", side_effect=1),
+        ),
+        constructor_behavior=1,
+        length=1,
+        to_string_tag="Touch",
+        has_constructor=1,
+    )
+
+    def __init__(self, init=MISSING, *_extra, **_):
+        if init is MISSING:
+            raise missing_error('Touch', 'Touch', 1, 0, constructor=True)
+        options = dictionary(init, name="TouchInit")
+        self._identifier = integer(options.get("identifier", 0), signed=True)
+        self._target = options.get("target", pyv8.Null)
+        self._screen_x = number(options.get("screenX", 0))
+        self._screen_y = number(options.get("screenY", 0))
+        self._client_x = number(options.get("clientX", 0))
+        self._client_y = number(options.get("clientY", 0))
+        #: No scrolling, so page and client coordinates coincide; ``web`` stays out of the host page.
+        self._document_x = number(options.get("pageX", self._client_x))
+        self._document_y = number(options.get("pageY", self._client_y))
+        self._radius_x = number(options.get("radiusX", 0))
+        self._radius_y = number(options.get("radiusY", 0))
+        self._rotation = number(options.get("rotationAngle", 0))
+        self._force = number(options.get("force", 0))
+
+    def get_identifier(self): return self._identifier
+    def get_target(self): return self._target
+    def get_screenX(self): return self._screen_x
+    def get_screenY(self): return self._screen_y
+    def get_clientX(self): return self._client_x
+    def get_clientY(self): return self._client_y
+    def get_pageX(self): return self._document_x
+    def get_pageY(self): return self._document_y
+    def get_radiusX(self): return self._radius_x
+    def get_radiusY(self): return self._radius_y
+    def get_rotationAngle(self): return self._rotation
+    def get_force(self): return self._force
+
+
+@interface('TouchList', None)
+class TouchList(ReadOnlyIndexedPropertyMixin):
+    """The contacts one ``touches``/``targetTouches``/``changedTouches`` reports."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
+        methods=(MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),),
+        constructor_behavior=0,
+        to_string_tag="TouchList",
+        has_constructor=1,
+    )
+
+    def __init__(self, touches=(), **_):
+        self._touches = tuple(touches)
+
+    def _indexed_items(self): return self._touches
+    def get_length(self): return len(self._touches)
+    def fn_item(self, *args):
+        index = int(args[0]) if args and not is_nullish(args[0]) else 0
+        return self._touches[index] if 0 <= index < len(self._touches) else pyv8.Null
+
+
+def _touch_list(value):
+    """A ``TouchList`` from whatever a caller passed: a list, or one already built."""
+    if isinstance(value, TouchList):
+        return value
+    if value is None or value is pyv8.Undefined or value is pyv8.Null:
+        return TouchList()
+    try:
+        items = [item for item in value]
+    except TypeError:
+        return TouchList()
+    return TouchList(items)
+
+
+@interface('TouchEvent', 'UIEvent')
+class TouchEvent(UIEvent):
+    """Touch input: the three touch lists, and the modifier keys a touch carries.
+
+    Chrome 154's interface baseline carries no ``initTouchEvent``, so none is declared: a page
+    that calls it gets the same ``TypeError`` there as here.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="touches", getter="get_touches", side_effect=1),
+            AttributeSpec(name="targetTouches", getter="get_targetTouches", side_effect=1),
+            AttributeSpec(name="changedTouches", getter="get_changedTouches", side_effect=1),
+            AttributeSpec(name="altKey", getter="get_altKey", side_effect=1),
+            AttributeSpec(name="metaKey", getter="get_metaKey", side_effect=1),
+            AttributeSpec(name="ctrlKey", getter="get_ctrlKey", side_effect=1),
+            AttributeSpec(name="shiftKey", getter="get_shiftKey", side_effect=1),
+        ),
+        #: No ``initTouchEvent``: Chrome 154's baseline does not carry it, so it would be a
+        #: difference rather than a repair.
+        constructor_behavior=1,
+        length=1,
+        to_string_tag="TouchEvent",
+        has_constructor=1,
+    )
+
+    def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
+        event_type, options = event_constructor_arguments('TouchEvent', event_type, options)
+        super().__init__(event_type, options, **kw)
+        init = event_init(options)
+        self._touches = _touch_list(init.get("touches"))
+        self._target_touches = _touch_list(init.get("targetTouches"))
+        self._changed_touches = _touch_list(init.get("changedTouches"))
+        self._alt_key = boolean(init.get("altKey", False))
+        self._meta_key = boolean(init.get("metaKey", False))
+        self._ctrl_key = boolean(init.get("ctrlKey", False))
+        self._shift_key = boolean(init.get("shiftKey", False))
+
+    def get_touches(self): return self._touches
+    def get_targetTouches(self): return self._target_touches
+    def get_changedTouches(self): return self._changed_touches
+    def get_altKey(self): return self._alt_key
+    def get_metaKey(self): return self._meta_key
+    def get_ctrlKey(self): return self._ctrl_key
+    def get_shiftKey(self): return self._shift_key
 
 
 @interface('EventTarget', None)

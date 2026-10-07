@@ -62,7 +62,10 @@ def active_element(document):
 
 
 def _fire(target, event_type, *, bubbles, related):
-    event = FocusEvent(event_type, {"bubbles": bubbles, "cancelable": False})
+    #: Focus events cross shadow boundaries in Chrome, which the two-sided probe measured
+    #: (``composed`` true for ``focusin``, and for ``focus``/``blur`` too).
+    event = FocusEvent(event_type, {"bubbles": bubbles, "cancelable": False,
+                                    "composed": True})
     if related is not None and related is not pyv8.Null:
         event.relatedTarget = related
     event._trusted = True

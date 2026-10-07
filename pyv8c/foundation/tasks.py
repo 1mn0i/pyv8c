@@ -201,6 +201,18 @@ class TaskQueue:
     def cancel(self, ident):
         self.cancelled.add(int(ident))
 
+    def cancel_timers(self):
+        """Drop every pending timer.
+
+        A timer belongs to the document that set it, and this queue belongs to the page,
+        so a document being replaced has to clear its own: otherwise the callbacks run
+        into a realm that is gone. Posted tasks are left alone -- the engine's own
+        plumbing travels that way and is still wanted.
+        """
+        with self._lock:
+            self.timers.clear()
+            self.cancelled.clear()
+
     def pending(self):
         """Whether a task is already queued to run."""
         return bool(self._parser or self.posted)

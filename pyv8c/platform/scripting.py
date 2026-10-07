@@ -24,8 +24,9 @@ class ScriptController:
         self.module_cache = {}
         # (source, filename) -> pyv8.Script, most recently used last.
         self._compiled = {}
-        # The realm's compiled JS helpers, created with the V8 context and dropped with it.
-        self._realm_scripts = None
+        # The realm this controller settles promises in; pinned so that a call in flight
+        # keeps belonging to the document that made it, and dropped with that document.
+        self._realm_owner = None
 
     def reset(self):
         self.dom_blocking_scripts = 0
@@ -36,32 +37,34 @@ class ScriptController:
         self._compiled.clear()
 
     def clear_js_helpers(self):
-        self._realm_scripts = None
+        self._realm_owner = None
 
     @property
-    def _scripts(self):
-        """The realm's compiled JavaScript helpers, borrowed rather than rebuilt.
+    def _realm(self):
+        """The realm this controller borrows its promises from.
 
-        The realm installs the isolate's error hooks on this same instance.
+        The realm owns the context, so it is also what answers once that context is gone: a
+        promise, a microtask or a rejection reason built by the replaced document reaches the
+        realm it was made in, not whichever realm the page has by then.
         """
-        scripts = self._realm_scripts
-        if scripts is None:
-            scripts = self._realm_scripts = self.page.realm.scripts
-        return scripts
+        realm = self._realm_owner
+        if realm is None:
+            realm = self._realm_owner = self.page.realm
+        return realm
 
     def make_promise(self):
-        return self._scripts.make_promise()
+        return self._realm.make_promise()
 
     def js_error_value(self, exc):
-        """Materialize a rejected Promise reason as a native JS error object."""
-        return self._scripts.js_error_value(exc)
+        """What a rejection should carry for *exc*."""
+        return self._realm.js_error_value(exc)
 
     def promise_resolve(self, value):
-        return self._scripts.promise_resolve(value)
+        return self._realm.promise_resolve(value)
 
     def enqueue_microtask(self, callback):
         """Queue *callback* as a microtask, in FIFO with promise reactions."""
-        return self._scripts.enqueue_microtask(callback)
+        return self._realm.enqueue_microtask(callback)
 
     def evaluate(self, script, filename=None):
         if self.page.closed or self.page.context_owner.closed:

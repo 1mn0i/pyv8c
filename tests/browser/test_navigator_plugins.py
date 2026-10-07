@@ -258,7 +258,10 @@ def test_navigator_environment_records_validate_defaults():
     environment = BrowserEnvironment()
     assert environment.app_version == environment.user_agent.removeprefix("Mozilla/")
     assert environment.webdriver is False
-    assert environment.connection.effective_type == "4g"
+    # The shipped profile is the default source, so compare with it (like ``battery.level``
+    # below) rather than pinning the reading one collection happened to make.
+    assert environment.connection.effective_type == profile["connection.effective_type"]
+    assert environment.connection.effective_type in ("slow-2g", "2g", "3g", "4g")
     assert environment.connection.downlink_max == float("inf")
     assert environment.battery.level == profile["battery.level"]
     assert environment.storage.persistent.usage == 0

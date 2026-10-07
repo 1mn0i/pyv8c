@@ -310,7 +310,9 @@ class CSSStyleDeclaration:
                  MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
                  MethodSpec(name="removeProperty", callback="fn_removeProperty", length=1),
                  MethodSpec(name="setProperty", callback="fn_setProperty", length=2)),
-        constructor_behavior=0, has_constructor=1, to_string_tag="CSSStyleDeclaration", array=True,
+        constructor_behavior=0, has_constructor=1, to_string_tag="CSSStyleDeclaration",
+        #: Iterable without the four named methods; the spec is stated rather than a bare "1".
+        array="iterator",
         name_get="__v8_name_get__", name_set="__v8_name_set__", name_query="__v8_name_query__",
         name_del="__v8_name_del__", name_enum="__v8_name_enum__",
         index_get="__v8_index_get__", index_set="__v8_index_set__", index_query="__v8_index_query__",

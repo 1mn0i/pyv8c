@@ -26,7 +26,7 @@ def test_environment_defaults_and_mapping_overlay_are_immutable():
 
 
 def test_environment_drives_navigator_viewport_and_screen():
-    browser = Browser(environment={
+    environment = BrowserEnvironment({
         "user_agent": "Example UA",
         "platform": "Linux x86_64",
         "languages": ["zh-CN", "en"],
@@ -41,11 +41,16 @@ def test_environment_drives_navigator_viewport_and_screen():
         "screen.avail_width": 1080,
         "screen.avail_height": 2300,
     })
+    browser = Browser(environment=environment)
     try:
         page = browser.new_context().new_page()
+        # The insets are whatever the profile collected: outer is inner plus those.
         assert page.evaluate("[navigator.userAgent, navigator.platform, navigator.language, navigator.languages, navigator.hardwareConcurrency, navigator.deviceMemory, navigator.maxTouchPoints, innerWidth, innerHeight, outerWidth, outerHeight, devicePixelRatio, screen.width, screen.availHeight]") == [
             "Example UA", "Linux x86_64", "zh-CN", ["zh-CN", "en"], 12, 4, 5,
-            390, 844, 390, 844, 3, 1080, 2300,
+            390, 844,
+            390 + environment.viewport.outer_inset_width,
+            844 + environment.viewport.outer_inset_height,
+            3, 1080, 2300,
         ]
     finally:
         browser.close()

@@ -28,6 +28,38 @@ def test_a_window_reading_narrows_window_members(baseline):
     assert table.member("Window", "sharedStorage", "attribute") is None
 
 
+def test_a_measured_word_overrides_the_baselines(baseline):
+    """The baseline carries every platform state; the profile says what this release installs.
+
+    ``NodeList`` borrows the iterator with the four named methods and ``HTMLCollection`` the
+    iterator alone, both measured against Chrome 154 on 2026-10-07.  A release that published no
+    iterator for one of them records nothing, which is how the word in force becomes *narrower*
+    than the baseline's rather than wider.
+    """
+    assert InterfaceTable(baseline).interface("NodeList").array == "iterable"
+    assert InterfaceTable(baseline).interface("HTMLCollection").array == "iterator"
+
+    surface = WindowSurface(chrome="test", own_names=frozenset(),
+                            array_words={"NodeList": "iterator", "Unknown": "iterable"})
+    table = InterfaceTable(baseline, surface=surface)
+
+    assert table.interface("NodeList").array == "iterator"
+    # An interface the profile says nothing about keeps the baseline's word…
+    assert table.interface("HTMLCollection").array == "iterator"
+    # …and a name the baseline never declared has no interface to give a word to.
+    assert "Unknown" not in table.names()
+
+
+def test_a_profile_of_another_release_does_not_apply_its_words(baseline):
+    """A word describes one release, so a digest that does not match says nothing."""
+    surface = WindowSurface(chrome="test", own_names=frozenset(),
+                            array_words={"NodeList": "iterator"},
+                            baseline_digest="another-release")
+    table = InterfaceTable(baseline, surface=surface)
+
+    assert table.interface("NodeList").array == "iterable"
+
+
 def test_a_surface_without_prototype_readings_leaves_other_interfaces_whole(baseline):
     """A profile written before the prototype section existed must not lose any member."""
     surface = WindowSurface(chrome="test", own_names=frozenset({"onclick"}))
@@ -169,6 +201,11 @@ def test_the_surface_is_a_section_of_the_profile_the_environment_reads():
     assert surface.own_names == frozenset(section["own_names"])
     assert surface.prototype_gaps == {name: frozenset(names)
                                       for name, names in (section.get("prototype_gaps") or {}).items()}
+    assert surface.interface_gaps == {name: frozenset(names)
+                                      for name, names in (section.get("interface_gaps") or {}).items()}
+    assert surface.array_words == {name: word
+                                   for name, word in (section.get("array_words") or {}).items()
+                                   if word in ("iterator", "iterable")}
     assert surface.baseline_digest == section.get("baseline_digest", "")
 
 
@@ -196,6 +233,29 @@ def test_a_section_without_gaps_reads_as_no_measurements(tmp_path):
     assert surface is not None
     assert surface.prototype_gaps == {}
     assert surface.baseline_digest == ""
+
+
+def test_an_interface_gap_narrows_the_interface_object_only(baseline):
+    """``CSS`` carries ``animationWorklet`` on itself, not on a prototype, and Chrome leaves it
+    out -- measured against Chrome 154 on 2026-10-07 with ``examples/5s/script/surface_diff.py``
+    (which is how the two extra getters were found at all)."""
+    raw = InterfaceTable(baseline).own_members("CSS")
+    on_object = {member.name for location, member in raw if location == "interface"}
+    on_prototype = {member.name for location, member in raw if location == "prototype"}
+    assert "animationWorklet" in on_object, "this test needs the baseline as it is"
+    assert on_object & {"supports", "escape"}, "and the members Chrome does install"
+
+    surface = WindowSurface(chrome="test", own_names=frozenset({"CSS"}),
+                            interface_gaps={"CSS": frozenset({"animationWorklet"})})
+    table = InterfaceTable(baseline, surface=surface)
+
+    kept = {member.name for _location, member in table.own_members("CSS")}
+    assert "animationWorklet" not in kept
+    assert {"supports", "escape"} <= kept
+    # A prototype name is not evidence about the interface object, so it stays where it was.
+    assert table.member("CSS", "animationWorklet", "operation") is None
+    assert on_prototype == {member.name for location, member in table.own_members("CSS")
+                            if location == "prototype"}
 
 
 def test_a_wrongly_shaped_gap_entry_is_not_trusted(tmp_path):

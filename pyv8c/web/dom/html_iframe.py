@@ -33,7 +33,8 @@ class HTMLIFrameElement(HTMLElement):
             _url_attr("src", "get_src", "set_src"),
             _attribute("srcdoc", "get_srcdoc", "set_srcdoc"),
             _attribute("name", "get_name", "set_name"),
-            AttributeSpec(name="sandbox", getter="get_sandbox", side_effect=1),
+            AttributeSpec(name="sandbox", getter="get_sandbox", setter="set_sandbox",
+                          side_effect=1),
             _attribute("allow", "get_allow", "set_allow"),
             _attribute("allowFullscreen", "get_allowFullscreen", "set_allowFullscreen"),
             _attribute("width", "get_width", "set_width"),
@@ -68,13 +69,10 @@ class HTMLIFrameElement(HTMLElement):
 
     def _is_connected(self):
         """Whether this element is attached to a Document.  Chromium does not start an
-        iframe navigation while detached; the adoption hook creates the context instead."""
-        node = self
-        while node is not None:
-            if getattr(node, "nodeType", None) == 9:  # Document
-                return True
-            node = getattr(node, "parentNode", None)
-        return False
+        iframe navigation while detached; the adoption hook creates the context instead.
+        ``isConnected`` follows a shadow root to its host, which is how the challenge's
+        own widget frame is attached."""
+        return bool(self.isConnected)
 
     def _on_removed_from_document(self):
         if self._child_services is not None:
@@ -101,21 +99,6 @@ class HTMLIFrameElement(HTMLElement):
         self._services.realm_services.post_task(lambda: resources.load_iframe(self)
                                                 if self._is_connected() else None)
 
-    def fn_setAttributeNS(self, namespace=MISSING, name=MISSING, value=MISSING, *_extra):
-        old = self.attributes.get(str(name).lower()) if name is not MISSING else None
-        result = super().fn_setAttributeNS(namespace, name, value, *_extra)
-        if name is not MISSING:
-            self._attribute_changed(str(name).lower(), old,
-                                    self.attributes.get(str(name).lower()))
-        return result
-
-    def fn_removeAttribute(self, name=MISSING, *_extra):
-        old_name = None if name is MISSING else str(dom_string(name)).lower()
-        old = self.attributes.get(old_name) if old_name is not None else None
-        result = super().fn_removeAttribute(name, *_extra)
-        if old_name is not None:
-            self._attribute_changed(old_name, old, self.attributes.get(old_name))
-        return result
     def get_src(self): return _url_value(self, "src")
     def set_src(self, value):
         _set_url_value(self, "src", value)
@@ -143,6 +126,10 @@ class HTMLIFrameElement(HTMLElement):
         tokens = getattr(self, "_sandbox_tokens", None)
         if tokens is None: tokens = self._sandbox_tokens = DOMTokenList(self, "sandbox", _SANDBOX_TOKENS)
         return tokens
+    def set_sandbox(self, value):
+        """Chrome declares ``sandbox`` with ``PutForwards=value``, so assigning to the
+        property writes the content attribute through the token list."""
+        self.get_sandbox().set_value(value)
     def get_allow(self): return self.attributes.get("allow", "")
     def set_allow(self, value): self.attributes["allow"] = str(dom_string(value))
     def get_allowFullscreen(self): return "allowfullscreen" in self.attributes

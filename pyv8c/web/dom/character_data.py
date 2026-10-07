@@ -10,6 +10,11 @@ from ...foundation.arguments import MISSING, dom_string, integer, missing_error
 from .mixins import _ChildNodeMixin, _NonDocumentTypeChildNodeMixin
 from .nodes import Node, _bump_style_version
 
+#: Elements whose text serializes literally rather than escaped: ``noscript`` (scripting is
+#: always on), but not ``textarea``/``title``, which Chrome escapes on the way out.
+_LITERAL_TEXT_TAGS = frozenset({"script", "style", "noscript", "xmp", "iframe",
+                                "noembed", "noframes", "plaintext"})
+
 
 @interface('CharacterData', 'Node')
 class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
@@ -94,7 +99,11 @@ class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
         return type(self)(self.nodeValue or "", services=self._services)
     def get_textContent(self): return self.nodeValue or ""
     def set_textContent(self, value): self.set_data(value)
-    def outer_html(self): return escape(self.nodeValue or "")
+    def outer_html(self):
+        parent = getattr(self, "parentNode", None)
+        if str(getattr(parent, "localName", "") or "").lower() in _LITERAL_TEXT_TAGS:
+            return self.nodeValue or ""
+        return escape(self.nodeValue or "")
 
 
 @interface('Text', 'CharacterData')

@@ -25,20 +25,34 @@ DEFAULT_BASELINE_PATH = PACKAGE_ROOT / "baselines" / "interface-baseline.zip"
 #: The profile a collection run writes; the surface is a section of it.
 PROFILE_PATH = PACKAGE_ROOT / "data" / "chrome-environment.json"
 
+#: The two words ``array`` states, shared by the baseline and ``IdlSpec``; a missing key borrows
+#: nothing from ``Array.prototype``.
+ARRAY_WORDS = ("iterator", "iterable")
+
+#: The runtime baseline this build reads and writes; another schema is refused by name rather than
+#: read half-way.  Schema 6 states ``template.array`` as a word where schema 5 had a boolean.
+BASELINE_SCHEMA = 6
+
+
+#: The exposure labels the baseline words worker realms with.
+_WORKER_LABELS = ("Worker", "DedicatedWorker", "SharedWorker")
+
 
 @dataclass(frozen=True)
 class WindowSurface:
-    """What a reference browser leaves out: its ``window`` names, and its prototype gaps.
+    """What a reference browser leaves out of a baseline that carries every platform state.
 
-    The baseline carries every platform and flag state Chromium compiles in, and
-    ``tools/collect_environment.py`` reads which of those a running Chrome omits, so the
-    difference stays data instead of a hand-written list.
+    Gaps are per location, and a section a profile does not carry leaves those members whole.
     """
 
     chrome: str
     own_names: frozenset
     #: ``interface -> prototype members the baseline declares and the browser omits``.
     prototype_gaps: Mapping[str, frozenset] = MappingProxyType({})
+    #: The same, for members the baseline puts on the interface object itself.
+    interface_gaps: Mapping[str, frozenset] = MappingProxyType({})
+    #: ``interface -> the array word this release publishes``; nothing recorded borrows nothing.
+    array_words: Mapping[str, str] = MappingProxyType({})
     #: The baseline those gaps were measured against; empty when the writer did not say.
     baseline_digest: str = ""
 
@@ -47,12 +61,21 @@ class WindowSurface:
         return name in self.own_names
 
 
-def _prototype_gaps(section) -> Mapping:
-    """``interface -> omitted prototype names``; a malformed entry leaves that interface whole."""
+def _location_gaps(section, key) -> Mapping:
+    """``interface -> omitted names`` for one section; a malformed entry keeps it whole."""
     found = {}
-    for name, names in ((section or {}).get("prototype_gaps") or {}).items():
+    for name, names in ((section or {}).get(key) or {}).items():
         if isinstance(names, list) and names:
             found[str(name)] = frozenset(str(entry) for entry in names)
+    return MappingProxyType(found)
+
+
+def _array_words(section) -> Mapping:
+    """``interface -> word`` from the profile; only the two the field states are kept."""
+    found = {}
+    for name, word in ((section or {}).get("array_words") or {}).items():
+        if word in ARRAY_WORDS:
+            found[str(name)] = str(word)
     return MappingProxyType(found)
 
 
@@ -73,7 +96,9 @@ def load_window_surface(path=None) -> WindowSurface | None:
     return WindowSurface(
         chrome=str((payload.get("source") or {}).get("browser") or ""),
         own_names=frozenset(str(name) for name in names),
-        prototype_gaps=_prototype_gaps(section),
+        prototype_gaps=_location_gaps(section, "prototype_gaps"),
+        interface_gaps=_location_gaps(section, "interface_gaps"),
+        array_words=_array_words(section),
         baseline_digest=str((section or {}).get("baseline_digest") or ""),
     )
 
@@ -85,7 +110,7 @@ def _measured_against(surface, baseline) -> bool:
 
 
 def write_baseline(output_path: Path, document: dict, *, compress: bool = False) -> Path:
-    """Write a compact schema 5 baseline as JSON or a single-member ZIP."""
+    """Write a compact :data:`BASELINE_SCHEMA` baseline as JSON or a single-member ZIP."""
     payload = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     output_path = Path(output_path)
     if not (compress or output_path.suffix.lower() == ".zip"):
@@ -142,7 +167,7 @@ class BaselineRepository:
                 header = pickle.load(handle)
                 if not isinstance(header, dict) or header.get("digest") != digest:
                     return None
-                if header.get("schema") != 5:
+                if header.get("schema") != BASELINE_SCHEMA:
                     return None
                 payload = pickle.load(handle)
         except Exception:  # a corrupt cache simply reads as "not cached"
@@ -160,7 +185,7 @@ class BaselineRepository:
         try:
             with open(path, "wb") as handle:
                 handle.write(_BINARY_CACHE_MAGIC)
-                pickle.dump({"digest": digest, "schema": 5}, handle,
+                pickle.dump({"digest": digest, "schema": BASELINE_SCHEMA}, handle,
                             protocol=pickle.HIGHEST_PROTOCOL)
                 pickle.dump((metadata, interfaces), handle,
                             protocol=pickle.HIGHEST_PROTOCOL)
@@ -249,14 +274,15 @@ class BaselineRepository:
             schema = metadata.get("schema") if isinstance(metadata, dict) else None
             if not isinstance(metadata, dict):
                 raise ValueError("Chromium interface baseline must contain _webidl metadata")
-            if schema != 5:
-                raise ValueError(f"unsupported Chromium interface baseline schema {schema!r}; expected 5")
+            if schema != BASELINE_SCHEMA:
+                raise ValueError(
+                    f"unsupported Chromium interface baseline schema {schema!r};"
+                    f" expected {BASELINE_SCHEMA}")
             compact = metadata.get("compact")
             if compact is not True:
                 raise ValueError(
-                    "Chromium interface baseline is not a compact schema 5 runtime baseline; "
-                    "regenerate without --audit"
-                )
+                    f"Chromium interface baseline is not a compact schema {BASELINE_SCHEMA}"
+                    " runtime baseline; regenerate without --audit")
             interfaces = {name: value for name, value in document.items() if not name.startswith("_")}
             if not interfaces:
                 raise ValueError("Chromium interface baseline must contain interfaces")
@@ -266,6 +292,14 @@ class BaselineRepository:
                 parent = spec.get("parent")
                 if parent is not None and (not isinstance(parent, str) or parent not in interfaces):
                     raise ValueError(f"interface {name!r} refers to unknown parent {parent!r}")
+                array = (spec.get("template") or {}).get("array")
+                if array is not None and array not in ARRAY_WORDS:
+                    #: No compatibility branch: a schema 5 boolean is told how to migrate.
+                    raise ValueError(
+                        f"interface {name!r} states array={array!r}; schema {BASELINE_SCHEMA} states"
+                        f" one of {ARRAY_WORDS} or nothing -- regenerate the baseline"
+                        " (tools/extract_interfaces.py) or migrate it"
+                        " (tools/migrate_baseline_array.py)")
             visiting, visited = set(), set()
 
             def visit(name):
@@ -376,6 +410,8 @@ class Interface:
     constructor_new: bool
     constructor_call: bool
     constructor_stated: bool
+    #: The word in force: this release's measured one, else the baseline's.  ``None``: nothing.
+    array: str | None
     raw: Mapping
 
     def own_members(self, location) -> tuple:
@@ -388,10 +424,12 @@ class InterfaceTable:
     def __init__(self, baseline, *, surface=None):
         self.baseline = baseline
         self.surface = surface
-        # Gaps describe one release, so this baseline decides whether they apply.
-        self._gaps = (surface.prototype_gaps
-                      if surface is not None and _measured_against(surface, baseline)
-                      else MappingProxyType({}))
+        # Gaps describe one release, and are kept per location.
+        measured = surface if surface is not None and _measured_against(surface, baseline) else None
+        self._prototype_gaps = measured.prototype_gaps if measured is not None else MappingProxyType({})
+        self._interface_gaps = measured.interface_gaps if measured is not None else MappingProxyType({})
+        # The measured word for a release, which the baseline's own gives way to.
+        self._array_words = measured.array_words if measured is not None else MappingProxyType({})
         self._interfaces: dict[str, Interface] = {}
         self._positions: dict[str, int] | None = None
         self._children: dict[str, tuple] | None = None
@@ -416,8 +454,18 @@ class InterfaceTable:
             self._interfaces[name] = cached
         return cached
 
-    @staticmethod
-    def _build(name, entry) -> Interface:
+    def _array_word(self, name, entry):
+        """The word in force: the measured release first, then the baseline's.
+
+        The profile applies only when it was taken against this baseline, as the gaps do.
+        """
+        measured = self._array_words.get(name)
+        if measured:
+            return measured
+        word = (entry.get("template") or {}).get("array")
+        return word if word in ARRAY_WORDS else None
+
+    def _build(self, name, entry) -> Interface:
         members = entry.get("members") or {}
         constructor = entry.get("constructor") or {}
         length = constructor.get("length")
@@ -437,6 +485,7 @@ class InterfaceTable:
             constructor_new=bool(constructor.get("allow_new")),
             constructor_call=bool(constructor.get("allow_call")),
             constructor_stated=("allow_new" in constructor or "allow_call" in constructor),
+            array=self._array_word(name, entry),
             raw=entry,
         )
 
@@ -497,12 +546,14 @@ class InterfaceTable:
         if name == "Window":
             # The window's own names cover every location it carries.
             return tuple(pair for pair in members if self.surface.has(pair[1].name))
-        omitted = self._gaps.get(name)
-        if not omitted:
+        prototype_gaps = self._prototype_gaps.get(name)
+        interface_gaps = self._interface_gaps.get(name)
+        if not prototype_gaps and not interface_gaps:
             return members
-        # Only the prototype was measured, not instance or interface-object members.
+        # Per location: a missing prototype name says nothing about the interface object.
         return tuple(pair for pair in members
-                     if pair[0] != "prototype" or pair[1].name not in omitted)
+                     if not (pair[0] == "prototype" and pair[1].name in (prototype_gaps or ()))
+                     and not (pair[0] == "interface" and pair[1].name in (interface_gaps or ())))
 
     def member(self, name, public_name, kind) -> Member | None:
         """The member an interface answers for a public name, inherited or not."""
@@ -515,7 +566,9 @@ class InterfaceTable:
             if match is not None:
                 found = match
                 break
-        if found is None and public_name not in self._gaps.get(name, ()):
+        omitted = ((self._prototype_gaps.get(name) or frozenset())
+                   | (self._interface_gaps.get(name) or frozenset()))
+        if found is None and public_name not in omitted:
             # A descendant can carry a WorkerGlobalScope member, not one this browser omits.
             for candidate in self.descendants(name):
                 found = self._own_member(candidate, public_name, kind)
@@ -569,9 +622,12 @@ class InterfaceTable:
         """Names the baseline exposes for *context_type*, in baseline order."""
         cached = self._exposed.get(context_type)
         if cached is None:
+            # One realm type serves every worker kind, so it answers to all the labels;
+            # otherwise a worker misses what only ever says ``DedicatedWorker``.
+            labels = _WORKER_LABELS if context_type == "Worker" else (context_type,)
             cached = tuple(
                 name for name, entry in self.baseline.interfaces.items()
-                if context_type in (entry.get("exposed_in") or ())
+                if any(label in (entry.get("exposed_in") or ()) for label in labels)
                 and self.installs(context_type, name)
             )
             self._exposed[context_type] = cached

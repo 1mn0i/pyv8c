@@ -55,7 +55,7 @@ class WorkerRuntime:
             self.executor.attach_deadline_source(self._context)
             # A worker global schedules its own work, so the failures V8 raises
             # on its own are reported from this realm, not the page's.
-            self._realm.scripts.install_error_hooks(
+            self._realm.context.set_error_hooks(
                 self._report_uncaught, self.rejections.record,
             )
             devtools = config.devtools
@@ -90,9 +90,9 @@ class WorkerRuntime:
         if self._stop.is_set() or self._scope is None:
             return
         try:
+            #: A message delivered to a worker carries no origin and is a real event.
             self._scope.fn_dispatchEvent(MessageEvent("message", {
-                "data": value, "origin": self.services.realm_services.url,
-                "ports": ports,
+                "data": value, "origin": "", "ports": ports, "isTrusted": True,
             }))
         except BaseException as exc:  # a message error is reported, not raised
             self._report_error(exc)
@@ -133,7 +133,7 @@ class WorkerRuntime:
         scope = self._scope
         if scope is not None:
             try:
-                scope.fn_dispatchEvent(ErrorEvent("error", {
+                scope.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, 
                     "message": message,
                     "filename": filename,
                     "lineno": line,
@@ -214,7 +214,7 @@ class SharedWorkerRuntime(WorkerRuntime):
         port._services = self._realm.services
         port._entangle(self.owner._port)
         self.owner._port._entangle(port)
-        self._scope.fn_dispatchEvent(MessageEvent("connect", {"ports": [port]}))
+        self._scope.fn_dispatchEvent(MessageEvent("connect", {"isTrusted": True, "ports": [port]}))
 
 
 __all__ = ["WorkerRuntime", "SharedWorkerRuntime"]

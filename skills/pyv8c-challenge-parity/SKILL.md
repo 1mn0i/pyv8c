@@ -1,106 +1,170 @@
 ---
 name: pyv8c-challenge-parity
-description: This skill should be used when pyv8c has to behave like a real browser on a live site — picking a site that probes browser details (bot walls, captcha gates, fingerprint checks, JS-heavy apps), running it in pyv8c next to a real headed Chrome, and turning every difference into either a fixed engine defect or a recorded, re-probeable fact. It covers choosing targets, the two-engine harness shipped here, the probe library, how to tell a pyv8c gap from the page's own behaviour, and where in the engine to fix what. Triggers include "pyv8c 跑某个站点结果不对", "pyv8c 和 Chrome 不一样", "挑战/验证码被拦", "对照 Chrome 找差异", "用真站来完善 pyv8c", "challenge page parity", "为什么 pyv8c 拿不到那个值", and any task that drives a real site with pyv8c and expects a browser's behaviour.
+description: Use when pyv8c has to behave like a real browser on a live challenge (bot walls, Turnstile/managed challenges, fingerprint doors, heavy front-ends). The loop is trace-first — read the engine's own trace of what the page asked and what it answered, turn every "answered undefined" / "threw" / "never fetched" into a two-sided local reproduction, fix the engine, guard it with a test, and repeat until the challenge passes.
 ---
 
-# 用真站挑战 pyv8c
+# 挑战 parity：用 trace 找差异，修到通过
 
-## 这个 skill 做什么
+## 目标（一句话）
 
-pyv8c 是运行在原生 `pyv8` 扩展之上的、可控可测的 Chromium-like 页面环境（V8 执行 JS，
-Python 实现页面、DOM/BOM、资源、事件循环等）。它**不承诺完整 Chrome 兼容**，所以最好的改进
-方式不是读规范，而是**拿会挑刺的真站当靶子**：那些专门探测浏览器细节的站点（bot wall、
-验证码门、指纹检测、重度前端应用）会把 pyv8c 与真 Chrome 的差异直接放大成可观测的现象。
+**让 pyv8c 在真实挑战里表现得像真 Chrome** —— 做法不是读规范猜实现 ✗，而是
+**读 trace 日志 → 找出与真浏览器的差异 → 两侧复现 → 修引擎 → 留回归 → 再跑，直到挑战通过** ✓。
 
-做法固定：**同一站点、同一条件、两侧跑同一件事 → 用数字对齐 → 把差异压成最小复现 →
-定性（页面还是 pyv8c）→ 处置（修 / 绕 / 记）→ 把探针留下当回归**。
+差异的来源只有三类，都会**自己出现在日志里** ✓：
 
-这个 skill 自带工具，站点无关：
-`scripts/harness.py`（两引擎并排跑任意页面 + 任意探针）、`scripts/probes.py`（探针库）。
-一轮下来，被验证过的行为就变成了以后可以离线复查的探针。
+| 类别 | 在 trace/日志里的样子 | 典型处置 |
+| --- | --- | --- |
+| 页面读到的值是 `undefined` | `[FRAME] getter: Navigator.userActivation -> undefined` | 补实现 / 修守卫条件（**成片出现时先找共同守卫** ✓） |
+| 调用抛了 | `[FRAME] method: HTMLDocument.createEvent('TouchEvent') -> undefined, error: <DOMException>` | 补该 API 的既有语义 |
+| 该发的请求没发 | 请求清单里**少一条**（`GET …/ci/<ray>`）、或**从不出现在日志里** | 资源发现路径缺失（如 `<link rel=preload>`、`data:` 解码 ✓） |
 
-## 先决条件
+> 关键判据：**先把"我们这边发生了什么"读出来，再问"Chrome 那边是什么样"** ✓。
+> 不要凭现象猜机制 ✗ —— 本 skill 的每一条教训都来自"猜错后被日志纠正" ✓。
 
-- **pyv8c**：按仓库 `README.md` 装好（`pip install -e .`）时直接 `import pyv8c`；在开发树里跑
-  则要把 `pyv8c` 源码目录**与相邻的原生扩展 `_pyv8` 目录**都放进 `PYTHONPATH`
-  （仓库布局是 `<parent>/pyv8c` 与 `<parent>/_pyv8`）。
-- **参照浏览器**：一律**正常模式（headed）Chrome**。无头 Chrome 是另一个页面（UA 带
-  `HeadlessChrome`，可见性与若干指纹项都不同），拿它对照会得出错误结论。
-  `harness.py` 会自动找本机 Chrome（`CHROME_PATH` 优先），找不到会退到 Playwright 自带的
-  chromium 并**明确警告**——那时结论要打折。
-- **Playwright**（对照时用）：`pip install playwright`，用它驱动 Chrome 即可，不必 `playwright install`。
+## 循环（每一轮都走完这五步）
+
+```
+① 抓 trace  →  ② 归类差异  →  ③ 两侧最小复现  →  ④ 修 + 留回归  →  ⑤ 重跑比对
+```
+
+### ① 抓 trace（有界运行，日志 = 证据）
+
+```powershell
+cd D:\code\pyv8env\pyv8c\examples\5s
+$env:PYTHONPATH="D:\code\pyv8env\pyv8c;D:\code\pyv8env\_pyv8"
+python 5s.py --trace --seconds 30 --timeout 150      # 建议先删旧 5s.log：mode="w" 会截断，但残留会混淆
+```
+
+- **一切运行都要有界** ✓：`--seconds`（页面拿到的时间）+ `--timeout`（子进程被杀的上限）✓；
+  探针里一律 **守护线程 + 十秒上限** 包住 `browser.close()` ✓。
+- trace 只在 **pyv8c 侧**存在 ✓（Chrome 没有这份日志 ✓）；Chrome 侧的对照靠**探针读数** ✓。
+
+### ② 归类差异（一行命令，别肉眼翻 20 MB ✗）
+
+```powershell
+python script\trace_analyze.py 5s.log          # 本 skill 的 scripts/trace_analyze.py
+```
+
+它按 `[REALM] kind: NAME -> VALUE` 归类 ✓，输出：
+
+- **读到 `undefined` 的 getter**（按属性名聚合 ✓）——最尖锐的差异信号 ✓；
+- **返回 `undefined` 的方法调用**（已排除 void 类 ✓）；
+- **带 `, error:` 的行** ✓ —— 我们抛了、真浏览器不抛的地方 ✓（信号最强，通常只有个位数 ✓）。
+
+同一条差异要问三件事：**哪个 realm**（`[TOP]`/`[FRAME]`/`[WORKER]` ✓）、**谁在读**（页面代码位置 ✓）、
+**共同守卫是什么**（一群属性同时 `undefined` ⇒ 一定是同一个 `if` ✓）。
+
+### ③ 两侧最小复现（把它压到"零第三方流量" ✓）
+
+**用本地页面复现，不要反复打真实站点** ✓（既低风险，也更快、更稳）：
+
+```python
+from harness import _ask_page
+left, right = _ask_page("https://probe.test/x.html", SCRIPT, 2.5)   # 同一份脚本跑两侧
+```
+
+- 复现的要求：**单变量** ✓（一次只改一个因素 ✓）、**两个见证通道** ✓
+  （例如 `onload` + 帧内 `postMessage` ✓；只有一个通道时，"没跑"和"跑了没回"看起来一样 ✗）。
+- 拿不准就问"**是它吗**"：把差异的**前提**逐个删掉 ✓（本 skill 反复靠这一步把假象推翻 ✓）。
+- 需要真站时：**低频、有界** ✓，并且只用于"这条差异在真实页面确实发生"的确认 ✓。
+
+### ④ 修 + 留回归 + 更新案例文档
+
+- 改动**尽量小且落在既有语义上** ✓（先找"代码自己写的意图" ✓——本轮 `data:` / preload / iframe 三处都是"注释写了该怎么做、代码里没做" ✗）；
+- 立刻加守护测试 ✓（`tests/browser/` 或 `tests/unit/` ✓，小、快、**有界** ✓）；
+- **更新被分析目录的案例文档** ✓（`examples/<case>/README.md` ✓，写这一条的症因/两侧证据/改法/判据 ✓，就地改而不是追加 ✗，见"记录"一节 ✓）；
+- 跑**全量** `pytest tests -q --ignore=tests/repros -p no:randomly` ✓（核心加载/导航路径的改动必须全跑 ✓）。
+
+### ⑤ 重跑比对（判据要事先写下来 ✓）
+
+修完**重跑 ①** ✓，用同一套命令看那几条差异**是否消失** ✓（例：`enumerate` 里 27 个名字应从
+"answered undefined" 列表退出 ✓；`error:` 行数应归零 ✓）。**不要用"看起来更好了"** 当判据 ✗。
 
 ## 硬性规则
 
-1. **参照必须是 headed Chrome，两侧条件必须一致。** `harness.py` 已经处理了最要紧的一条：
-   先跑 pyv8c，读它报的 `innerWidth/innerHeight`，再用同一个视口开 Chrome。
-   视口不一致会让所有布局读数错位。
-2. **先压成最小复现，再谈结论。** 真站上的现象要能在几十行页面里重现，才算真的定位了；
-   把探针写进 `probes.py` 就顺带完成了这件事。
-3. **结论必须有数字。** 记"哪条命令、两侧各是多少"，不要记"感觉不一样"。
-4. **两侧都要观测，再判断是谁的问题。** 站点会主动反探测：把节点换成"读什么都 `undefined`"
-   的包装、隐藏自己的 iframe、对同一接口给不同答案。同一现象在 Chrome 里也出现，就不是 pyv8c 的
-   缺陷，而是页面行为——照第 6 节处理。
-5. **改引擎才需要跑回归**：`pytest tests -q --ignore=tests/repros`，再 `pytest tests/repros -q`。
-   `tests/repros/test_navigator_members_vs_chrome.py` 的 `mediaDevices` 是**已知**差异；
-   devtools 与个别 frame 用例会抖，隔离跑一遍再判断是不是自己引入的。
-6. **不要只看父文档。** 子框架/跨源/影子树里的内容父文档看不到；判断"页面到底渲染了什么"要看
-   浏览器自己的 frame 列表，或从 pyv8c 引擎侧读子文档。
+1. **参照必须是 headed Chrome，且不带自动化标记** ✓（`harness.py` 已处理：`ignore_default_args=["--enable-automation"]` + `--disable-blink-features=AutomationControlled` ✓；无头 Chrome 的 UA/可见性不同 ⇒ 结论要打折 ✓）。
+2. **两侧条件必须一致** ✓（`harness.py` 先跑 pyv8c 读 `innerWidth/innerHeight`，再用同一视口开 Chrome ✓）。
+3. **一次只改一个变量** ✓；**每个结论都要有两侧实测** ✓ 或**两侧都缺的说明** ✓。
+4. **报"某功能挂住"之前必须单变量二分** ✗⇒✓，因为**探针自己**也能挂（见"已知的坑" ✓）。
+5. **有界** ✓：所有运行都有秒数上限；探针的 `close()` 走守护线程 + 10 秒 ✓。
+6. **记录分两处，都别记流水账** ✓：
+   - **代码里** ✓：改动注释写"为什么这样修" ✓、守护测试 docstring 写"这条守卫哪个真实差异" ✓；
+   - **被分析目录里** ✓：关键发现写进该案子的案例文档 ✓（`examples/<case>/README.md` ✓ 或 `examples/<case>/<case>.md` ✓，见下一节 ✓）；
+   - 被推翻的结论要**显式撤回** ✓（写明"为什么错" ✓——本 skill 的坑表里就有 3 条被撤回的假象 ✓）。
 
-## 流程
+## 记录：写进被分析目录的案例文档
 
-1. **选靶**：按 `references/targets.md` 挑一个会探测浏览器细节的站点，并定好"它看起来正常"
-   的判据（页面出现什么、跳到哪里、拿到什么值）。
-2. **跑起来**：`python scripts/harness.py --url <url> --probe all --seconds 20`。
-   探针里凡是有 fixture 的先跑一遍，确认工具链是通的：`--probe ua --probe rect --probe style`。
-3. **找差异**：同一个 URL 上跑 `layout`、`style`、`globals` 这些"需要 --url"的探针；
-   `harness.py` 逐字段列出不一致。需要盯某个具体节点/时序时，照
-   `references/probe-cookbook.md` 写一个临时探针。
-4. **压成最小复现**：把现象写成一个页面 + 一个探针，加进 `scripts/probes.py` 的 `PROBES`
-   （带 `fixture`），从此不再依赖那个站点。
-5. **定性**：是 pyv8c 缺实现 / 语义不同，还是页面行为 / 你的用法？
-   缺实现的特征是 `--trace` 日志里出现 `待实现`，或该方法返回 `undefined`。
-6. **处置**：
-   - **页面行为** → 记进 `references/findings.md`（"已排除"那一节），改自己的代码或绕开；
-   - **pyv8c 的差异，而你在改引擎** → 按下表定位、改掉、用同一个探针验证两侧对齐、跑回归；
-   - **pyv8c 的差异，而你只是使用者** → 留下最小复现 + 数字，反馈给 pyv8c。
-7. **记录**：症状、根因、修法/绕法、证据数字、涉及文件。仓库里的完整案例见
-   `references/worked-example-px3.md`，新结论照它的格式追加。
+**规则**：分析过程中每有一个**结论级**发现 ✓，就更新**被分析目录**下那份案例文档 ✓
+（该目录已有的：`examples/5s/README.md` ✓、`examples/px3/px3.md` ✓；没有就新建 `README.md` ✓）。
+**不要**另起一份 repo 级台账 ✗，**更不要**按时间顺序流水记账 ✗。
 
-## 症状 → 代码位置（改引擎时）
+**写什么 / 不写什么** ✓：
 
-| 症状 | 先看 |
+| 写 ✓ | 不写 ✗ |
 | --- | --- |
-| 盒子尺寸/位置不对、替换元素没有 300×150、行内元素基线怪、UA 默认值缺失 | `pyv8c/web/dom/layout.py`（`_place`、`_parse_style_elements`）、`pyv8c/web/dom/css.py`（`TAG_DISPLAY`、`TAG_BOX_INITIALS`、`initial_values_for`） |
-| 级联/样式表不生效、`cssRules` 为空、`getComputedStyle` 给出空串 | `pyv8c/web/dom/css.py`、`pyv8c/web/dom/layout.py`（`document_rules`） |
-| 资源没被取、取了却没用上（`<link>`、`<img>`、`<script>`） | `pyv8c/platform/resource_loading.py`（登记资源时的 `kind` 与消费处认的 `kind` 必须一致） |
-| 接口成员读不到、原型/`instanceof` 不对、返回类型不对（如 `DOMRect`） | `pyv8c/web/dom/` 对应模块 + `pyv8c/web/features/{catalog,core}.py` 注册 + `pyv8c/platform/sessions.py` |
-| 时间戳粒度、单调性、`Date` 与 `performance` 的关系 | `pyv8c/foundation/clock.py` |
-| 定时器/rAF 节奏、任务顺序 | `pyv8c/web/bom/scheduling.py`、`pyv8c/foundation/` |
-| 事件监听顺序、`once`/`capture`/`preventDefault` 语义 | `pyv8c/web/dom/events.py` |
-| 页面报错、或日志里出现 `待实现` | 先看日志里的命中，再决定实现谁 |
+| 关键突破（"那句 `reading 'call'` = `eval(TrustedScript)` 从未执行" ✓） | 每一条命令、每一次运行的输出 ✗ |
+| 已修差异：症状 + **两侧证据** ✓ + 根因 + 改法 + **判据** ✓ | "今天先跑了 X，又试了 Y，然后…" ✗ |
+| 未解决差异 / 已知差异（**带判据** ✓，方便下一轮直接接手 ✓） | 没有结论的猜测清单 ✗ |
+| 被推翻的结论 + 为什么错 ✓（防止重复踩 ✗） | 复制粘贴的大段日志/载荷 ✗（放文件路径即可 ✓） |
+| 可复用的方法与坑 ✓ | 与本案无关的通用规范 ✗（那属于本 skill ✓） |
 
-## pyv8c 用法要点（都被踩过）
+**一条发现的样子**（同一件事写一遍 ✓，按"发现"分组，不按时间 ✓）：
 
-- `Browser(stub_logging="off", threaded_loaders=True)` 走真实网络；离线对照用
-  `real_network=False` + `resource_loader=lambda url, request: {"body": …, "headers": …}`。
-- **页面忙时不要用阻塞等待**：长任务/挑战跑起来后页面不会空闲，
-  `run_until_idle(timeout=N)` 会抛 `RealmBusyError`。用非阻塞泵 + 截止时间
-  （`harness.py` 的 `pump()`）：
-  `while 未超时: try: page.run_until_idle(timeout=0) except: pass; sleep(0.2)`。
-- `page.evaluate()` 只接受**表达式**：`(function () { … return x; })()`；两条语句会报错。
-- pyv8c 把 JS 的 `null` 交回成 `pyv8` 的 `Null`、`undefined` 交回成 `Undefined`，
-  直接 `json.dumps` 会抛 `Object of type NullType is not JSON serializable`——探针里先 `String()`。
-- 探针要容错：被页面藏起来的节点上 `getBoundingClientRect()` / `attributes` / `children`
-  可能不是对象（两个引擎都一样）。
-- pyv8c 是 Python，可以直接包住它的内部方法观察（资源加载、iframe 上下文、接口物化），
-  这是它比"只有浏览器"更好用的地方；观察点见 `references/workflow.md`。
+```markdown
+### <一句话结论：谁在哪个 realm 上，我们怎样、Chrome 怎样>
+
+- 症状：<trace 行原文 / 页面现象>
+- 两侧证据：pyv8c `<读数>` ✓ / Chrome `<读数>` ✓（命令：`…`）
+- 根因：<哪一行代码的哪个条件>
+- 改法：<最小改动，或"未修 ✗">
+- 判据：重跑后 <该名字从 undefined 列表消失 / error 归零 / 请求出现>
+```
+
+维护方式：**就地更新**已有条目 ✓（新证据补进去、结论变了直接改并注明撤回 ✓），
+**不要**在文末不断追加"第 N 轮"✗ —— 案例文档读起来应该是**结论的集合**，不是日记 ✓。
+
+## JS 逆向：直接读页面逻辑（可选但很值）
+
+当 trace 只说"页面读了这个名字"，而你想知道**它为什么读、读了会怎样** ✓ 时，就去读**挑战自己的代码** ✓：
+
+- `script/cf_frame/*.js` 是历次运行**落盘**的页面/worker 脚本 ✓（含 `payload-*.js` ✓ 这些是**明文** ✓）；
+- 混淆包用**查表**取属性名（`lm(p2.X)` ✓）⇒ 不必做完整 AST ✗，
+  用 `scripts/js_reverse.py` 的**字符串表 + 让真引擎跑解码器**两招就够了 ✓；
+- 详见 `references/js-reverse.md` ✓（含"没有 JS 解析器时怎么办" ✓）。
+
+## 工具
+
+| 文件 | 用途 |
+| --- | --- |
+| `scripts/trace_analyze.py` | 把 trace 归成"答 undefined 的读取/调用 + 抛错行" ✓ |
+| `scripts/js_reverse.py` | 逆向 JS（**无需解析器**）：`pool` 拆打包的表 ✓、`calls` 找查表/下标映射 ✓、`strings` 抽常量 ✓、`diff` 两包对比 ✓、`run` 用 V8 算名字映射 ✓ |
+| `scripts/harness.py` | 两侧运行器（`run_here` / `run_chrome` / `_ask_page` / `pump` / `_bounded` ✓） |
+| `scripts/probes.py` | 探针库（可直接跑或抄 ✓） |
+
+案例里的站点专用工具（`examples/5s/script/`）：`turnstile_realms.py`（hook 各 realm 并读回 ✓）、
+`payload_diff.py`（两侧请求/载荷长度对照 ✓）、`5s.py`（真站跑 + verdict ✓）。
+
+## 已知的坑（都被踩过，别再踩 ✗）
+
+| 坑 | 现象 | 正确做法 |
+| --- | --- | --- |
+| 测量工具自己干扰被测对象 | 主线程 `run_until_idle` 会**等正在被测量的那一轮** ✗ ⇒ 转储变成"恢复之后"的状态 ✗ | 测量时**完全不碰 executor** ✓：主线程只 `sleep` + 读属性 ✓；收尾用 `os._exit(0)` ✓ |
+| 探针的 loader 太万能 | loader 对**任何 URL** 都回页面 HTML ⇒ `data:` 帧拿到同一个页面 ⇒ 无限递归 ⇒ 看起来像"引擎卡死" ✗ | loader **只对 `http(s)`** 回页面 ✓，其余 `return None` 交给引擎 ✓ |
+| HTML 层提前闭合脚本 | 探针内联 `</script>` 把页面自己的脚本标签闭合 ✗ ⇒ 整页脚本不执行（五种帧全 `{}` ✓） | `json.dumps(...).replace("</", "<\\/")` ✓ |
+| 用了不存在的 API | `page.wait_for_timeout` 在 pyv8c 的 `Page` 上**不存在** ✗ | 既有惯例：`page.run_until_idle(timeout=0)` 循环 ✓ |
+| 探针读一个通道就下结论 | 只有 `onload` 时无法区分"没跑到" 与 "跑了没回报" ✗ | **两个见证** ✓ |
+| PowerShell 管道吃掉证据 | `Substring`/`TrimEnd` 作用在 `MatchInfo` 上会抛错，整行证据消失 ✗ | 打印**原始行**（`"$_"` ✓），裁剪放到 Python 里 ✓；大输出写文件再读 ✓ |
+| 用 PowerShell 重写源文件 | `-Raw` + `Set-Content -Encoding UTF8` 会加 **BOM** ✗ ⇒ `SyntaxError: U+FEFF` | 改代码用编辑工具 ✓；确需脚本改文件就用 Python 以 `utf-8-sig` 读、`utf-8` 写 ✓ |
 
 ## 参考
 
-- `references/targets.md`：怎么挑靶子、每个引擎领域拿什么站点/接口压它、检查清单。
-- `references/workflow.md`：完整方法——两侧运行器、探针写法、引擎内打点、注入钩子、
-  读 `--trace` 日志、真站抓包与载荷对照、回归与验证。
-- `references/probe-cookbook.md`：可直接照抄的骨架 + 结论模板 + 已知坑。
-- `references/findings.md`：已修的与**已排除的**差异清单——动手前先读，别把排除过的假设重走一遍。
-- `references/worked-example-px3.md`：一个完整的实战案例（PX 验证码），含它抓到并修掉的缺陷。
+- `references/workflow.md` —— 两侧运行器、注入钩子、打点的完整用法 ✓
+- `references/probe-cookbook.md` —— 加探针、结论模板、症状短语 ✓
+- `references/trace-parity.md` —— **trace 为主的差异分析**（日志格式、判据、分类学 ✓）
+- `references/js-reverse.md` —— **不做完整 AST 的 JS 逆向**（字符串表 / 解码器复算 / 调用点 ✓）
+- `references/targets.md` —— 怎么挑靶子、差异三分法 ✓
+
+> **记录落在两处** ✓：跨案子通用的东西（本 skill 的这些页 ✓）与
+> **案子自己的关键发现**（`examples/<case>/` 下的案例文档 ✓，例 `examples/5s/README.md` ✓）
+> 分开写 ✓；代码里另留"为什么这样修"与"守卫哪个差异"的注释 ✓
+> （例：`tests/browser/test_frame_documents.py` 的 docstring ✓）。

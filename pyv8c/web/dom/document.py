@@ -1,5 +1,6 @@
 """The ``Document`` interface: collection accessors, factories and parsing hooks."""
 
+import time
 from urllib.parse import urlsplit
 
 import pyv8
@@ -8,6 +9,7 @@ from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error, number
 from ...foundation.errors import InvalidCharacterError, SecurityError, V8TypeError, dom_exception
+from .animation import DocumentTimeline
 from .character_data import Comment, DocumentType, Text
 from .collections import HTMLAllCollection, HTMLCollection, NodeList, tag_name_ns_collection
 from .css import StyleSheetList
@@ -18,6 +20,27 @@ from .mixins import _ParentNodeMixin
 from .nodes import Attr, DocumentFragment, Node
 from .permissions_policy import PermissionsPolicy
 from .utils import MATHML_NAMESPACE, SVG_NAMESPACE, XHTML_NAMESPACE, _VALID_NAME_RE, name_fault
+
+
+@interface('FragmentDirective', None)
+class FragmentDirective:
+    """The object ``document.fragmentDirective`` returns: a marker, with no members of use."""
+
+    __v8_idl_spec__ = IdlSpec(
+        constructor_behavior=0,
+        to_string_tag="FragmentDirective",
+        has_constructor=1,
+    )
+
+    def __init__(self, **_):
+        pass
+
+
+#: Handler attributes read ``null`` until a page stores something, as in Chrome.
+_HANDLER_ATTRIBUTES = ("onfullscreenchange", "onfullscreenerror", "onbeforecopy",
+                       "onbeforecut", "onbeforepaste", "onpointerlockchange",
+                       "onpointerlockerror", "onprerenderingchange",
+                       "onwebkitfullscreenchange", "onwebkitfullscreenerror")
 
 
 @interface('Document', 'Node')
@@ -68,6 +91,48 @@ class Document(_ParentNodeMixin, Node):
             AttributeSpec(name="currentScript", getter="get_currentScript", side_effect=1),
             AttributeSpec(name="activeElement", getter="get_activeElement", side_effect=1),
             AttributeSpec(name="fonts", getter="get_fonts", side_effect=1),
+            # Measured in Chrome: examples/5s, script/parity_jsapi.py members.
+            AttributeSpec(name="children", getter="get_children", side_effect=1),
+            AttributeSpec(name="customElementRegistry", getter="get_customElementRegistry",
+                          side_effect=1),
+            AttributeSpec(name="timeline", getter="get_timeline", side_effect=1),
+            AttributeSpec(name="fragmentDirective", getter="get_fragmentDirective",
+                          side_effect=1),
+            AttributeSpec(name="rootElement", getter="get_rootElement", side_effect=1),
+            AttributeSpec(name="applets", getter="get_applets", side_effect=1),
+            AttributeSpec(name="adoptedStyleSheets", getter="get_adoptedStyleSheets",
+                          setter="set_adoptedStyleSheets"),
+            AttributeSpec(name="lastModified", getter="get_lastModified", side_effect=1),
+            AttributeSpec(name="bgColor", getter="get_bgColor", setter="set_bgColor"),
+            AttributeSpec(name="fgColor", getter="get_fgColor", setter="set_fgColor"),
+            AttributeSpec(name="alinkColor", getter="get_alinkColor", setter="set_alinkColor"),
+            AttributeSpec(name="vlinkColor", getter="get_vlinkColor", setter="set_vlinkColor"),
+            AttributeSpec(name="linkColor", getter="get_linkColor", setter="set_linkColor"),
+            AttributeSpec(name="xmlStandalone", getter="get_xmlStandalone", side_effect=1),
+            AttributeSpec(name="xmlVersion", getter="get_xmlVersion", side_effect=1),
+            AttributeSpec(name="xmlEncoding", getter="get_xmlEncoding", side_effect=1),
+            AttributeSpec(name="inputEncoding", getter="get_inputEncoding", side_effect=1),
+            AttributeSpec(name="wasDiscarded", getter="get_wasDiscarded", side_effect=1),
+            AttributeSpec(name="fullscreenEnabled", getter="get_fullscreenEnabled", side_effect=1),
+            AttributeSpec(name="fullscreen", getter="get_fullscreen", side_effect=1),
+            AttributeSpec(name="fullscreenElement", getter="get_fullscreenElement", side_effect=1),
+            AttributeSpec(name="pictureInPictureEnabled", getter="get_pictureInPictureEnabled",
+                          side_effect=1),
+            AttributeSpec(name="pictureInPictureElement", getter="get_pictureInPictureElement",
+                          side_effect=1),
+            AttributeSpec(name="pointerLockElement", getter="get_pointerLockElement",
+                          side_effect=1),
+            AttributeSpec(name="activeViewTransition", getter="get_activeViewTransition",
+                          side_effect=1),
+            AttributeSpec(name="webkitHidden", getter="get_webkitHidden", side_effect=1),
+            AttributeSpec(name="webkitVisibilityState", getter="get_webkitVisibilityState",
+                          side_effect=1),
+            AttributeSpec(name="webkitFullscreenEnabled", getter="get_webkitFullscreenEnabled",
+                          side_effect=1),
+            AttributeSpec(name="webkitCurrentFullScreenElement",
+                          getter="get_webkitCurrentFullScreenElement", side_effect=1),
+            *[AttributeSpec(name=name, getter="get_" + name, setter="set_" + name)
+              for name in _HANDLER_ATTRIBUTES],
         ),
         methods=(
             MethodSpec(name="createElement", callback="fn_createElement", length=1),
@@ -78,6 +143,8 @@ class Document(_ParentNodeMixin, Node):
             MethodSpec(name="createAttribute", callback="fn_createAttribute", length=1),
             MethodSpec(name="createEvent", callback="fn_createEvent", length=1),
             MethodSpec(name="createExpression", callback="fn_createExpression", length=1),
+            MethodSpec(name="createNodeIterator", callback="fn_createNodeIterator", length=1),
+            MethodSpec(name="createTreeWalker", callback="fn_createTreeWalker", length=1),
             MethodSpec(name="evaluate", callback="fn_evaluate", length=2, side_effect=1),
             MethodSpec(name="getElementById", callback="fn_getElementById", length=1, side_effect=1),
             MethodSpec(name="getElementsByName", callback="fn_getElementsByName", length=1, side_effect=1),
@@ -99,6 +166,9 @@ class Document(_ParentNodeMixin, Node):
                  content_type="text/html", **kw):
         super().__init__(services=services, node_type=Node.DOCUMENT_NODE, node_name="#document", **kw)
         self.url = url; self._parser = None; self.ready_state = str(ready_state); self.hidden = False
+        #: Chrome uses the response's Last-Modified; a client-side render has only now.
+        self._last_modified = time.strftime("%m/%d/%Y %H:%M:%S")
+        self._adopted_sheets = None
         self.content_type = str(content_type)
         #: "off" until a page turns it on. Chrome ignores a value it does not know
         #: rather than reporting it, so the stored one is always one of the two.
@@ -227,6 +297,9 @@ class Document(_ParentNodeMixin, Node):
         """An uninitialised event of the legacy interface name asked for."""
         if type is MISSING:
             raise missing_error('Document', 'createEvent', 1, 0, constructor=False)
+        #: The legacy names the standard's ``createEvent`` accepts -- and only those: Chrome
+        #: answers ``NotSupportedError`` for ``TouchEvent`` here, as the widget found out
+        #: (measured 2026-10-06 with ``examples/5s/script/encoding_and_touch.py``).
         from .events import CustomEvent, Event, KeyboardEvent, MouseEvent, UIEvent
         kinds = {
             "event": Event, "events": Event, "htmlevents": Event, "uievents": UIEvent,
@@ -322,6 +395,90 @@ class Document(_ParentNodeMixin, Node):
     def get_charset(self): return 'UTF-8'
     def get_visibilityState(self): return "hidden" if self.hidden else "visible"
     def get_prerendering(self): return False
+    def get_children(self):
+        return HTMLCollection(owner=self, getter=lambda: [
+            node for node in self._children if isinstance(node, Element)])
+    def get_customElementRegistry(self):
+        """The window's registry: the two reads are the same object in Chrome."""
+        from ..bom.window import Window
+        view = self.get_defaultView()
+        if not isinstance(view, Window):
+            return pyv8.Null
+        return view._window_value("customElements")
+    def get_timeline(self):
+        value = getattr(self, "_timeline", None)
+        if value is None:
+            value = self._timeline = DocumentTimeline()
+        return value
+    def get_fragmentDirective(self):
+        value = getattr(self, "_fragment_directive", None)
+        if value is None:
+            value = self._fragment_directive = FragmentDirective()
+        return value
+    def get_rootElement(self):
+        """Null for HTML; the XML root element is not modelled."""
+        return pyv8.Null
+    def get_applets(self): return HTMLCollection(owner=self, getter=lambda: [])
+    def get_adoptedStyleSheets(self):
+        value = getattr(self, "_adopted_sheets", None)
+        return [] if value is None else value
+    def set_adoptedStyleSheets(self, value):
+        self._adopted_sheets = [] if is_nullish(value) else value
+    def get_lastModified(self): return str(self._last_modified)
+    def get_bgColor(self): return str(getattr(self, "_bg_color", "") or "")
+    def set_bgColor(self, value): self._bg_color = "" if is_nullish(value) else dom_string(value)
+    def get_fgColor(self): return str(getattr(self, "_fg_color", "") or "")
+    def set_fgColor(self, value): self._fg_color = "" if is_nullish(value) else dom_string(value)
+    def get_alinkColor(self): return str(getattr(self, "_alink_color", "") or "")
+    def set_alinkColor(self, value):
+        self._alink_color = "" if is_nullish(value) else dom_string(value)
+    def get_vlinkColor(self): return str(getattr(self, "_vlink_color", "") or "")
+    def set_vlinkColor(self, value):
+        self._vlink_color = "" if is_nullish(value) else dom_string(value)
+    def get_linkColor(self): return str(getattr(self, "_link_color", "") or "")
+    def set_linkColor(self, value):
+        self._link_color = "" if is_nullish(value) else dom_string(value)
+    def get_xmlStandalone(self): return False
+    def get_xmlVersion(self): return pyv8.Null
+    def get_xmlEncoding(self): return pyv8.Null
+    def get_inputEncoding(self): return self.get_characterSet()
+    def get_wasDiscarded(self): return False
+    def get_fullscreenEnabled(self): return True
+    def get_fullscreen(self): return False
+    def get_fullscreenElement(self): return pyv8.Null
+    def get_pictureInPictureEnabled(self): return True
+    def get_pictureInPictureElement(self): return pyv8.Null
+    def get_pointerLockElement(self): return pyv8.Null
+    def get_activeViewTransition(self): return pyv8.Null
+    def get_webkitHidden(self): return self.hidden
+    def get_webkitVisibilityState(self): return self.get_visibilityState()
+    def get_webkitFullscreenEnabled(self): return True
+    def get_webkitCurrentFullScreenElement(self): return pyv8.Null
+    #: Handler attributes: an unset one reads ``null``, exactly as Chrome does.
+    def get_onfullscreenchange(self): return self._get_handler("onfullscreenchange")
+    def set_onfullscreenchange(self, value):
+        self._set_handler("onfullscreenchange", value)
+    def get_onfullscreenerror(self): return self._get_handler("onfullscreenerror")
+    def set_onfullscreenerror(self, value): self._set_handler("onfullscreenerror", value)
+    def get_onbeforecopy(self): return self._get_handler("onbeforecopy")
+    def set_onbeforecopy(self, value): self._set_handler("onbeforecopy", value)
+    def get_onbeforecut(self): return self._get_handler("onbeforecut")
+    def set_onbeforecut(self, value): self._set_handler("onbeforecut", value)
+    def get_onbeforepaste(self): return self._get_handler("onbeforepaste")
+    def set_onbeforepaste(self, value): self._set_handler("onbeforepaste", value)
+    def get_onpointerlockchange(self): return self._get_handler("onpointerlockchange")
+    def set_onpointerlockchange(self, value): self._set_handler("onpointerlockchange", value)
+    def get_onpointerlockerror(self): return self._get_handler("onpointerlockerror")
+    def set_onpointerlockerror(self, value): self._set_handler("onpointerlockerror", value)
+    def get_onprerenderingchange(self): return self._get_handler("onprerenderingchange")
+    def set_onprerenderingchange(self, value):
+        self._set_handler("onprerenderingchange", value)
+    def get_onwebkitfullscreenchange(self): return self._get_handler("onwebkitfullscreenchange")
+    def set_onwebkitfullscreenchange(self, value):
+        self._set_handler("onwebkitfullscreenchange", value)
+    def get_onwebkitfullscreenerror(self): return self._get_handler("onwebkitfullscreenerror")
+    def set_onwebkitfullscreenerror(self, value):
+        self._set_handler("onwebkitfullscreenerror", value)
     def _collect(self, names):
         """A live HTMLCollection over the elements matching one of ``names``."""
         return HTMLCollection(owner=self, getter=lambda: [
@@ -396,6 +553,17 @@ class Document(_ParentNodeMixin, Node):
         return Comment(str(value), services=self._services)
     def fn_createDocumentFragment(self, *_extra):
         return DocumentFragment(services=self._services)
+    def fn_createNodeIterator(self, root=MISSING, what_to_show=None, filter=None, *_extra):
+        """What the run walks: optional mask and filter, both defaulting to everything."""
+        from .traversal import create_node_iterator
+        if root is MISSING:
+            raise missing_error('Document', 'createNodeIterator', 1, 0, constructor=False)
+        return create_node_iterator(self, root, what_to_show, filter)
+    def fn_createTreeWalker(self, root=MISSING, what_to_show=None, filter=None, *_extra):
+        from .traversal import create_tree_walker
+        if root is MISSING:
+            raise missing_error('Document', 'createTreeWalker', 1, 0, constructor=False)
+        return create_tree_walker(self, root, what_to_show, filter)
     def fn_createAttribute(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('Document', 'createAttribute', 1, 0, constructor=False)

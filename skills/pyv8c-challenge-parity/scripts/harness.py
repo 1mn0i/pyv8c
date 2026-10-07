@@ -16,8 +16,10 @@ regression case that needs no access to that site.
 """
 import argparse
 import json
+import logging
 import os
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -91,10 +93,28 @@ def run_here(url, page_html, probe, settle, wait_for):
     """pyv8c's answer, with the viewport it reported (Chrome is matched to that)."""
     from pyv8c import Browser
 
+    #: A probe measures answers, not noise.  The engine logs through loguru, so ``disable`` is
+    #: what silences it -- ``logging.getLogger`` does nothing here.
+    try:
+        from loguru import logger as _loguru
+
+        _loguru.disable("pyv8c")
+    except ImportError:  # a browser that never logs does not need loguru
+        logging.getLogger("pyv8c").setLevel(logging.WARNING)
     options = {"stub_logging": "off", "threaded_loaders": True}
     if page_html is not None:
-        options.update(real_network=False, resource_loader=lambda u, r: {
-            "body": page_html, "headers": {"content-type": "text/html"}})
+        def load(url, request):
+            """Serve the probe page, and only for a fetchable scheme.
+
+            Answering ``data:`` (or any other non-http URL) with the page itself would feed a
+            frame the page that created it, so the probe would recurse: that looked exactly
+            like a wedge caused by the engine until it was bisected (2026-10-06).
+            """
+            if not str(url).startswith(("http://", "https://")):
+                return None
+            return {"body": page_html, "headers": {"content-type": "text/html"}}
+
+        options.update(real_network=False, resource_loader=load)
     browser = Browser(**options)
     try:
         page = browser.new_context().new_page()
@@ -111,13 +131,51 @@ def run_here(url, page_html, probe, settle, wait_for):
         browser.close()
 
 
+#: Wait this long for a close handshake, then leave that Chrome to the OS and carry on.
+CLOSE_SECONDS = 10.0
+
+
+def _bounded(action, what, seconds=CLOSE_SECONDS):
+    """Run *action* on a daemon thread, giving up when it does not finish in time."""
+    done = threading.Event()
+
+    def run():
+        try:
+            action()
+        except BaseException:  # noqa: BLE001 - a browser already gone is not a failure
+            pass
+        finally:
+            done.set()
+
+    threading.Thread(target=run, daemon=True).start()
+    if not done.wait(seconds):
+        print(f"! {what} did not finish in {seconds:g}s; leaving that Chrome to the OS",
+              file=sys.stderr)
+
+
+def _ask_page(url, page_html, probe="window.__out", seconds=3.0, wait_for=None):
+    """Both answers for one page in one call: ``(pyv8c, Chrome)``.
+
+    The smallest thing that can support a conclusion: the same bytes asked the same question
+    on both sides, with no third-party traffic in the way.
+    """
+    mine, viewport = run_here(url, page_html, probe, seconds, wait_for)
+    theirs = run_chrome(url, page_html, probe, seconds, wait_for, viewport)
+    return mine, theirs
+
+
 def run_chrome(url, page_html, probe, settle, wait_for, viewport):
     """Chrome's answer, on the viewport pyv8c reported when there is one."""
     from playwright.sync_api import sync_playwright
 
-    with sync_playwright() as playwright:
+    playwright = sync_playwright().start()
+    try:
         path = chrome_path()
-        options = {"headless": False}
+        #: With ``--enable-automation`` on, Cloudflare refuses SteamDB in real Chrome too,
+        #: which makes it useless as a reference.
+        options = {"headless": False,
+                   "ignore_default_args": ["--enable-automation"],
+                   "args": ["--disable-blink-features=AutomationControlled"]}
         if path:
             options["executable_path"] = path
         else:
@@ -143,7 +201,9 @@ def run_chrome(url, page_html, probe, settle, wait_for, viewport):
                 page.wait_for_timeout(settle * 1000)
             return snapshot(page, probe)
         finally:
-            browser.close()
+            _bounded(browser.close, "browser.close()")
+    finally:
+        _bounded(playwright.stop, "playwright.stop()")
 
 
 def diff(mine, theirs):

@@ -60,6 +60,7 @@ class Screen(EventTarget):
                     "availTop",
                     "colorDepth",
                     "pixelDepth",
+                    "isExtended",
                     "orientation",
                 )
 
@@ -83,4 +84,7 @@ class Screen(EventTarget):
     def get_availTop(self): return 0
     def get_colorDepth(self): return self.colorDepth
     def get_pixelDepth(self): return self.pixelDepth
+    def get_isExtended(self):
+        """One display, so never part of an extended desktop."""
+        return False
     def get_orientation(self): return self._values.value("orientation")

@@ -31,6 +31,8 @@ from pathlib import Path
 
 from ..engine.baseline import BaselineRepository, InterfaceTable
 from ..foundation.environment import COLLECTED_KEYS, SCHEMA_VERSION, BrowserEnvironment, json_value
+from ..web.bom.navigator import PERMISSION_NAMES
+from ..web.dom.media_source import WEBRTC_CONTENT_TYPES, WEBRTC_VIDEO_FAMILIES, probe_candidates
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 #: Where a run writes unless told otherwise.
@@ -49,7 +51,7 @@ CHROME_PATHS = (
 )
 
 #: One expression, so every value comes from the same turn of the same document.
-COLLECT_SCRIPT = """
+_COLLECT_TEMPLATE = """
 (async () => {
     const finite = value => Number.isFinite(value) ? value : String(value);
     const hints = navigator.userAgentData;
@@ -59,6 +61,106 @@ COLLECT_SCRIPT = """
     const battery = await navigator.getBattery();
     const estimate = await navigator.storage.estimate();
     const connection = navigator.connection;
+    const layout = await navigator.keyboard.getLayoutMap();
+    const layoutEntries = {};
+    layout.forEach((value, key) => { layoutEntries[key] = value; });
+    // Two bounded facts about media: which codecs this browser decodes, and which in hardware.
+    const CANDIDATES = __MEDIA_CANDIDATES__;
+    const WEBRTC_TYPES = __MEDIA_WEBRTC_TYPES__;
+    const WEBRTC_FAMILIES = __MEDIA_WEBRTC_FAMILIES__;
+    const mediaContainers = {};
+    const mediaSelfContained = [];
+    const mediaHardware = [];
+    for (const container of Object.keys(CANDIDATES)) {
+        const prefixes = [];
+        for (const probe of CANDIDATES[container]) {
+            const supported = MediaSource.isTypeSupported(probe);
+            const at = probe.indexOf('codecs="');
+            if (at < 0) {
+                if (supported && mediaSelfContained.indexOf(container) < 0) {
+                    mediaSelfContained.push(container);
+                }
+                continue;
+            }
+            if (!supported) continue;
+            const codec = probe.slice(at + 8).replace(/".*$/, '').toLowerCase();
+            const prefix = codec.split('.')[0];
+            if (!prefix) continue;
+            if (prefixes.indexOf(prefix) < 0) prefixes.push(prefix);
+            const video = probe.indexOf('video/') === 0;
+            const config = {type: 'file'};
+            config[video ? 'video' : 'audio'] = video
+                ? {contentType: probe, width: 640, height: 360, bitrate: 300000, framerate: 30}
+                : {contentType: probe, channels: 2, samplerate: 48000, bitrate: 128000};
+            const info = await navigator.mediaCapabilities.decodingInfo(config);
+            if (info.powerEfficient && mediaHardware.indexOf(prefix) < 0) {
+                mediaHardware.push(prefix);
+            }
+        }
+        mediaContainers[container] = prefixes;
+    }
+    // The WebRTC path takes its own content types (``video/VP8``); both directions answer.
+    const mediaWebrtc = {decode: [], encode: []};
+    const mediaEncodeHardware = [];
+    for (const type of WEBRTC_TYPES) {
+        const video = type.indexOf('video/') === 0;
+        for (const [method, direction, hardware] of
+             [['decodingInfo', 'decode', null], ['encodingInfo', 'encode', mediaEncodeHardware]]) {
+            const config = {type: 'webrtc'};
+            config[video ? 'video' : 'audio'] = video
+                ? {contentType: type, width: 640, height: 360, bitrate: 300000, framerate: 30}
+                : {contentType: type, channels: 2, samplerate: 48000, bitrate: 128000};
+            let info;
+            try { info = await navigator.mediaCapabilities[method](config); }
+            catch (error) { continue; }
+            if (!info.supported) continue;
+            mediaWebrtc[direction].push(type);
+            const family = WEBRTC_FAMILIES[type.split('/')[1]];
+            if (hardware !== null && info.powerEfficient && family && hardware.indexOf(family) < 0) {
+                hardware.push(family);
+            }
+        }
+    }
+    // Capture devices by kind: ids and labels stay empty until a page is granted one.
+    const mediaDevices = (await navigator.mediaDevices.enumerateDevices())
+        .map(device => device.kind);
+    const supportedConstraints = typeof navigator.mediaDevices.getSupportedConstraints === 'function'
+        ? Object.keys(navigator.mediaDevices.getSupportedConstraints()) : [];
+    // A name is one this build answers for: an unknown one makes query() reject.
+    const permissionNames = [];
+    const permissionGranted = [];
+    const permissionSpecNames = {};
+    for (const name of __PERMISSION_NAMES__) {
+        try {
+            const descriptor = name === 'push' ? {name, userVisibleOnly: true} : {name};
+            const status = await navigator.permissions.query(descriptor);
+            permissionNames.push(name);
+            if (status.state === 'granted') permissionGranted.push(name);
+            permissionSpecNames[name] = status.name;
+        } catch (error) {}
+    }
+    // The voice list is empty until the synthesiser service answers, which is where
+    // ``voiceschanged`` fires; a page reads the same list after that event.
+    const speechVoices = await (async () => {
+        if (typeof speechSynthesis === 'undefined') return [];
+        const read = () => speechSynthesis.getVoices().map(voice => ({
+            name: voice.name, lang: voice.lang,
+            local_service: voice.localService, default: voice.default}));
+        const first = read();
+        if (first.length) return first;
+        await new Promise(done => {
+            const finish = () => {
+                clearTimeout(timer);
+                speechSynthesis.removeEventListener('voiceschanged', finish);
+                done();
+            };
+            const timer = setTimeout(finish, 1500);
+            speechSynthesis.addEventListener('voiceschanged', finish);
+        });
+        return read();
+    })();
+    const wgslFeatures = navigator.gpu && navigator.gpu.wgslLanguageFeatures
+        ? Array.from(navigator.gpu.wgslLanguageFeatures) : [];
     const brands = list => list.map(entry => ({brand: entry.brand, version: entry.version}));
     const gl = document.createElement('canvas').getContext('webgl');
     const rendererInfo = gl === null ? null : gl.getExtension('WEBGL_debug_renderer_info');
@@ -78,6 +180,8 @@ COLLECT_SCRIPT = """
         'viewport.width': innerWidth,
         'viewport.height': innerHeight,
         'viewport.device_scale_factor': devicePixelRatio,
+        'viewport.outer_inset_width': outerWidth - innerWidth,
+        'viewport.outer_inset_height': outerHeight - innerHeight,
         'screen.width': screen.width,
         'screen.height': screen.height,
         'screen.avail_width': screen.availWidth,
@@ -106,6 +210,19 @@ COLLECT_SCRIPT = """
         'client_hints.form_factors': Array.from(high.formFactors),
         'webgl.vendor': rendererInfo ? gl.getParameter(rendererInfo.UNMASKED_VENDOR_WEBGL) : '',
         'webgl.renderer': rendererInfo ? gl.getParameter(rendererInfo.UNMASKED_RENDERER_WEBGL) : '',
+        'keyboard.layout': layoutEntries,
+        'media.containers': mediaContainers,
+        'media.self_contained': mediaSelfContained,
+        'media.hardware_decode': mediaHardware,
+        'media.webrtc': mediaWebrtc,
+        'media.hardware_encode': mediaEncodeHardware,
+        'media.devices': mediaDevices,
+        'media.constraints': supportedConstraints,
+        'speech.voices': speechVoices,
+        'permissions.names': permissionNames,
+        'permissions.granted': permissionGranted,
+        'permissions.spec_names': permissionSpecNames,
+        'gpu.wgsl_features': wgslFeatures,
         'plugins': Array.from(navigator.plugins).map(plugin => ({
             'name': plugin.name,
             'filename': plugin.filename,
@@ -120,21 +237,61 @@ COLLECT_SCRIPT = """
 })()
 """
 
+#: The script the browser runs: the media probes are the parser's own vocabulary.
+COLLECT_SCRIPT = (_COLLECT_TEMPLATE
+                  .replace("__MEDIA_CANDIDATES__", json.dumps(probe_candidates()))
+                  .replace("__MEDIA_WEBRTC_TYPES__", json.dumps(list(WEBRTC_CONTENT_TYPES)))
+                  .replace("__MEDIA_WEBRTC_FAMILIES__", json.dumps(WEBRTC_VIDEO_FAMILIES))
+                  .replace("__PERMISSION_NAMES__", json.dumps(sorted(PERMISSION_NAMES))))
 
-#: What a page enumerates: the window's own names, and each interface's prototype names.
-#: The window alone cannot answer whether ``Element.prototype`` carries ``computedRole``.
+
+#: What a page enumerates: the window's names, each prototype's members, each interface object's
+#: own members (where ``CSS.animationWorklet`` lives), and the iterator machinery per prototype.
 SURFACE_SCRIPT = """
 (() => {
     const prototypes = {};
+    const objects = {};
+    const iterators = {};
     const read = (name, prototype) => {
         if (!name || !prototype || typeof prototype !== 'object' || name in prototypes) return;
         try { prototypes[name] = Object.getOwnPropertyNames(prototype).sort(); } catch (error) {}
+    };
+    const readObject = (name, value) => {
+        if (!name || !value || name in objects) return;
+        try { objects[name] = Object.getOwnPropertyNames(value).sort(); } catch (error) {}
+    };
+    // The iterator machinery (``template.array`` states which).  Descriptors up the chain only:
+    // a plain read would run ``CSSMathMax.prototype.values``, a getter that is not an iterator.
+    const find = (start, key) => {
+        let walk = start;
+        while (walk) {
+            let descriptor = null;
+            try { descriptor = Object.getOwnPropertyDescriptor(walk, key); } catch (error) {}
+            if (descriptor) return descriptor;
+            try { walk = Object.getPrototypeOf(walk); } catch (error) { walk = null; }
+        }
+        return null;
+    };
+    const isFunction = (descriptor) => !!descriptor && typeof descriptor.value === 'function';
+    const readIterator = (name, prototype) => {
+        if (!name || !prototype || name in iterators) return;
+        try {
+            const four = ['entries', 'keys', 'values', 'forEach'].filter(
+                (member) => isFunction(find(prototype, member)));
+            iterators[name] = {iterator: isFunction(find(prototype, Symbol.iterator)) ? 1 : 0,
+                               four: four.length};
+        } catch (error) {}
     };
     for (const name of Object.getOwnPropertyNames(window)) {
         let value = null;
         try { value = window[name]; } catch (error) { value = null; }
         if (typeof value === 'function') {
             try { read(name, value.prototype); } catch (error) {}
+            try { readIterator(name, value.prototype); } catch (error) {}
+            readObject(name, value);
+        } else if (value && typeof value === 'object') {
+            // A namespace is an object, not a function, and has no ``.prototype`` to read.
+            readObject(name, value);
         }
     }
     // Interfaces without a global constructor are read off the objects that carry one.
@@ -147,12 +304,15 @@ SURFACE_SCRIPT = """
         try {
             const prototype = Object.getPrototypeOf(make());
             read(prototype.constructor.name, prototype);
+            readIterator(prototype.constructor.name, prototype);
         } catch (error) {}
     }
     return JSON.stringify({
         keys: Object.keys(window).sort(),
         own: Object.getOwnPropertyNames(window).sort(),
-        prototypes});
+        prototypes,
+        objects,
+        iterators});
 })()"""
 
 
@@ -377,15 +537,26 @@ def read_pages(chrome, scripts, *, headed=False, accept_lang=None, window_size=N
             server.server_close()
 
 
+#: The locations a browser can be asked about: a prototype object, and an interface object.
+#: ``instance`` members live on instances the page does not hand out per interface.
+MEASURED_LOCATIONS = ("prototype", "interface")
+
+
 def baseline_view(snapshot=None):
-    """``(declared prototype members, digest)`` of the baseline a run measures against.
+    """``(declared members by location, digest)`` of the baseline a run measures against.
+
+    ``declared`` is ``{interface: {location: {names}}}``: what the baseline says the interface
+    should carry at each location a browser can answer for.
 
     Reading it needs no native extension, so a collection runs without pyv8.
     """
     snapshot = snapshot if snapshot is not None else BaselineRepository.load()
     table = InterfaceTable(snapshot)
-    declared = {name: {member.name for member in table.interface(name).own_members("prototype")}
-                for name in table.names()}
+    declared = {
+        name: {location: {member.name for member in table.interface(name).own_members(location)}
+               for location in MEASURED_LOCATIONS}
+        for name in table.names()
+    }
     return declared, str(getattr(snapshot, "digest", "") or "")
 
 
@@ -407,25 +578,75 @@ def build_environment(payload):
     return BrowserEnvironment(payload)
 
 
-def build_surface(payload, declared=None, baseline_digest=""):
-    """What the browser does not install, as the profile's surface section.
+def _gaps_for(readings, declared, location):
+    """``{interface: names the browser does not have}`` at one location.
 
-    The window names cover the globals; the prototype gaps are measured against
-    ``declared`` (``{interface: {prototype names}}``), and ``baseline_digest`` records
-    which baseline those names came from.
+    Only names the baseline declares can be a gap: what it never declared is not a difference.
     """
-    declared = declared or {}
     gaps = {}
-    for name, names in (payload.get("prototypes") or {}).items():
-        known = declared.get(str(name))
+    for name, names in (readings or {}).items():
+        known = (declared.get(str(name)) or {}).get(location)
         if not known or not isinstance(names, list):
             continue
         missing = sorted(known - {str(entry) for entry in names})
         if missing:
             gaps[str(name)] = missing
-    return {"keys": list(payload["keys"]), "own_names": list(payload["own"]),
-            "prototype_gaps": {name: gaps[name] for name in sorted(gaps)},
-            "baseline_digest": str(baseline_digest or "")}
+    return gaps
+
+
+#: The four named methods ``"iterable"`` borrows on top of ``@@iterator``.
+ITERATOR_MEMBERS = ("entries", "keys", "values", "forEach")
+
+
+def _array_words(readings, known):
+    """``{interface: "iterator" | "iterable"}`` for the interfaces the baseline declares.
+
+    ``@@iterator`` alone is ``"iterator"``; with all four named methods it is ``"iterable"``; an
+    interface answering no ``@@iterator`` records nothing, the field's third value (as ``Cache``,
+    whose ``keys`` is an async method, and ``CSSMathMax``, whose ``values`` is a length, measure).
+
+    The iterator with only *some* of the four is a shape no word carries, so the run stops rather
+    than pick one: measured against Chrome 154, no declared interface is in that position.
+    """
+    words = {}
+    for name, reading in (readings or {}).items():
+        name = str(name)
+        if name not in known or not isinstance(reading, dict) or not reading.get("iterator"):
+            continue
+        count = reading.get("four")
+        if count == 4:
+            words[name] = "iterable"
+        elif count == 0:
+            words[name] = "iterator"
+        else:
+            raise CollectionError(
+                f"{name} answers @@iterator together with {count} of"
+                f" {', '.join(ITERATOR_MEMBERS)}: array states either the iterator alone or that"
+                " iterator with all four, and no word carries this")
+    return words
+
+
+def build_surface(payload, declared=None, baseline_digest=""):
+    """What the browser does not install, as the profile's surface section.
+
+    The window names cover the globals; the gaps are measured against ``declared``
+    (``{interface: {location: {names}}}``), and ``baseline_digest`` records which baseline
+    those names came from.  ``prototype`` members are read from each prototype object and
+    ``interface`` members from each interface object, which is where a namespace keeps its own.
+
+    ``array_words`` states, in the vocabulary ``template.array`` and ``IdlSpec.array`` share, what
+    each interface borrows from ``Array.prototype`` in this release -- measured rather than
+    assumed, so a baseline that is wider than the release stays narrow here.
+    """
+    declared = declared or {}
+    return {
+        "keys": list(payload["keys"]),
+        "own_names": list(payload["own"]),
+        "prototype_gaps": _gaps_for(payload.get("prototypes"), declared, "prototype"),
+        "interface_gaps": _gaps_for(payload.get("objects"), declared, "interface"),
+        "array_words": _array_words(payload.get("iterators"), set(declared)),
+        "baseline_digest": str(baseline_digest or ""),
+    }
 
 
 def build_profile(payload, surface, source):
@@ -476,6 +697,8 @@ def main(argv=None):
     print(
         f"wrote {arguments.out}: {len(surface['own_names'])} own names,"
         f" {len(surface['prototype_gaps'])} interfaces with prototype gaps,"
+        f" {len(surface['interface_gaps'])} with interface-object gaps,"
+        f" {len(surface['array_words'])} with an array word,"
         f" {len(surface['keys'])} keys, from {source.get('browser', 'unknown')}",
         file=sys.stderr,
     )
@@ -483,9 +706,10 @@ def main(argv=None):
 
 
 __all__ = [
-    "CHROME_ENV", "CHROME_PATHS", "COLLECT_SCRIPT", "DEFAULT_OUTPUT", "SURFACE_SCRIPT",
-    "CdpSession", "CollectionError", "baseline_view", "build_environment", "build_profile",
-    "build_surface", "find_chrome", "main", "read_devtools_port", "read_pages", "read_profile",
+    "CHROME_ENV", "CHROME_PATHS", "COLLECT_SCRIPT", "DEFAULT_OUTPUT", "ITERATOR_MEMBERS",
+    "SURFACE_SCRIPT", "CdpSession", "CollectionError", "baseline_view", "build_environment",
+    "build_profile", "build_surface", "find_chrome", "main", "read_devtools_port", "read_pages",
+    "read_profile",
 ]
 
 

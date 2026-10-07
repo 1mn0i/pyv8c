@@ -15,10 +15,11 @@ from ...foundation.arguments import (
     sequence,
 )
 from ...foundation.errors import V8TypeError
+from ..dom.mixins import ReadOnlyIndexedPropertyMixin
 
 
 @interface('Headers', None)
-class Headers:
+class Headers(ReadOnlyIndexedPropertyMixin):
     __v8_idl_spec__ = IdlSpec(
         methods=(
             MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
@@ -30,7 +31,13 @@ class Headers:
             MethodSpec(name="values", callback="fn_values", side_effect=1),
             MethodSpec(name="entries", callback="fn_entries", side_effect=1),
         ), constructor_behavior=1, length=1, has_constructor=1,
+        #: A header collection is iterable: its entries are ``[name, value]`` pairs, and
+        #: ``Symbol.iterator`` is what a ``for..of`` reaches for.
+        array="iterable",
     )
+
+    def _indexed_items(self):
+        return [(name, self._data[name]) for name in self._sorted_names()]
 
     def _sorted_names(self):
         """Header names in the order Chromium iterates them: sorted by name."""

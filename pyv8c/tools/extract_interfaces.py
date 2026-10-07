@@ -8,7 +8,7 @@ import os
 import re
 from pathlib import Path
 
-from ..engine.baseline import write_baseline
+from ..engine.baseline import BASELINE_SCHEMA, write_baseline
 
 INTERFACE_DECL = re.compile(r"const\s+WrapperTypeInfo\s+V8(?P<binding>[A-Za-z0-9_]+)::wrapper_type_info_\s*\{")
 FUNCTION_DECL = re.compile(r"(?:void|v8::Local\s*<\s*v8::Value\s*>)\s+(?P<name>[A-Za-z0-9_]+Callback)\s*\([^)]*\)\s*\{")
@@ -417,7 +417,9 @@ def extract_template(text):
         "global_this": bool(re.search(r"SetAccessCheckCallback[^;]*(?:global_this|GlobalThis)", text, re.I)),
         "as_object": bool(re.search(r"SetPrototype\s*\([^;]*ObjectPrototype", text)),
         "unconstructable": bool(re.search(r"(?:Set(?:Call|Construct)Handler|Unconstructable)[^;]*kDontAll", text)),
-        "array": bool(re.search(r"SetIntrinsicDataProperty[^;]*Array|ArrayPrototype", text)),
+        #: The generated tables install the iterator; the four named methods come from the IDL
+        #: (``iterable<>``/``maplike<>``/``setlike<>``) or from members the tables declare.
+        "array": "iterator" if re.search(r"SetIntrinsicDataProperty[^;]*Array|ArrayPrototype", text) else None,
         "call_handler": None,
         "access_check": None,
     }
@@ -474,6 +476,12 @@ def _merge_template(current, incoming):
     """Merge template evidence from split generated binding fragments."""
     result = dict(current or {})
     for key, value in (incoming or {}).items():
+        if key == "array":
+            #: Fragments may disagree; the stronger word wins -- a fact about the interface.
+            strength = {"iterable": 2, "iterator": 1}
+            if strength.get(value, 0) > strength.get(result.get(key), 0):
+                result[key] = value
+            continue
         if key == "handlers":
             handlers = result.setdefault("handlers", {})
             for group, entries in (value or {}).items():
@@ -503,6 +511,27 @@ def _exposure(text):
     if re.search(r"IsWindow\(\)", text): result.append("Window")
     if re.search(r"Is(?:Dedicated|Shared)?WorkerGlobalScope\(\)", text): result.append("Worker")
     return result
+
+
+#: The IDL declarations that publish the iterator **and** the four named methods.  ``async
+#: iterable<T>`` publishes ``@@asyncIterator`` alone, which no word here states.
+_IDL_ITERABLE = re.compile(r"\b(?:iterable|maplike|setlike)\s*<")
+
+
+def _idl_array_shape(body):
+    """``"iterable"`` when the interface's IDL publishes the four named methods, else ``None``.
+
+    This is the reading the generated tables cannot give: ``NodeList``'s binding installs the
+    iterator intrinsic but never lists ``entries``/``keys``/``values``/``forEach``, so without
+    the IDL it reads as the iterator alone.  Measured against Chrome on 2026-10-07, 12 of the
+    908 interfaces a window exposes were misread that way.
+    """
+    for match in _IDL_ITERABLE.finditer(body):
+        before = body[:match.start()].rstrip().split()[-1:]
+        if before == ["async"]:
+            continue
+        return "iterable"
+    return None
 
 
 def _idl_metadata(root):
@@ -550,6 +579,7 @@ def _idl_metadata(root):
                 "allow_call": bool(re.search(r"\bLegacyCallAsFunction\b", attrs)),
                 "constants": constants,
                 "aliases": re.findall(r"\bLegacyWindowAlias\s*=\s*([A-Za-z_][A-Za-z0-9_]*)", attrs),
+                "array": _idl_array_shape(body),
             }
     return metadata
 
@@ -610,6 +640,34 @@ def _apply_idl_metadata(extracted, metadata):
             for member in item.get("members", {}).get("interface", ()):
                 if member.get("kind") == "constant" and member.get("name") in info["constants"]:
                     member.update(info["constants"][member["name"]])
+
+
+def _publishes_the_four(item):
+    """Whether the generated tables declare the four named iterator methods as operations."""
+    names = {member.get("name")
+             for member in (item.get("members") or {}).get("prototype") or []
+             if member.get("kind") == "operation"}
+    return {"entries", "keys", "values", "forEach"} <= names
+
+
+def _apply_array_shape(extracted, metadata):
+    """State what each interface borrows from ``Array.prototype`` as the word ``array`` carries.
+
+    Three readings, strongest first: the interface's IDL (``iterable<>``, ``maplike<>`` or
+    ``setlike<>`` publishes the four named methods as well as the iterator), the four operations
+    the generated tables declare, and the intrinsic those tables install (the iterator alone).
+    A run without ``--idl-root`` still has the last two, and an interface that borrows nothing
+    carries no key at all rather than a false one.
+    """
+    for name, item in extracted.items():
+        if name.startswith("_") or not isinstance(item, dict):
+            continue
+        template = item.setdefault("template", {})
+        info = metadata.get(name) or {}
+        if info.get("array") == "iterable" or _publishes_the_four(item):
+            template["array"] = "iterable"
+        elif not template.get("array"):
+            template.pop("array", None)
 
 
 def _filename_interface(path, text):
@@ -683,11 +741,14 @@ def extract(root, idl_root=None):
             if current is None or (not current.get("resolved") and entry.get("resolved")):
                 extracted_constants[name] = entry
         item["constants"] = list(extracted_constants.values())
+    metadata = {}
     findings = []
     if idl_root is not None:
         metadata = _idl_metadata(Path(idl_root))
         _apply_idl_metadata(result, metadata)
         findings = _idl_handler_findings(result, metadata)
+    #: The IDL raises the reading to ``"iterable"`` where the tables never list the four.
+    _apply_array_shape(result, metadata)
     result["_report"] = _report(result, duplicate_sources, parse_failures, findings)
     return result
 
@@ -762,11 +823,13 @@ def _compact_member_callback_metadata(member, *, include_audit):
         member.pop("flags", None)
 
 
-def schema5_baseline(extracted, *, include_audit=False):
-    """Build the schema 5 runtime snapshot.
+def schema6_baseline(extracted, *, include_audit=False):
+    """Build the schema 6 runtime snapshot.
 
     The default output omits callback symbols, default world values and source
-    provenance; ``include_audit`` retains them.
+    provenance; ``include_audit`` retains them.  Schema 6 is schema 5 with ``array``
+    stated as the word the interface borrows (``"iterator"`` or ``"iterable"``, absent when
+    it borrows nothing) instead of a boolean.
     """
     output = {}
     for name, source in extracted.items():
@@ -862,10 +925,10 @@ def main():
         parser.error(f"generated Blink bindings not found under {renderer}; run fetch_chromium.py first")
     extracted = extract(renderer, args.chromium_root / "src" / "third_party" / "blink" / "renderer")
     report = extracted.pop("_report")
-    output = {"_webidl": {"schema": 5, "source": "tools/extract_interfaces.py",
+    output = {"_webidl": {"schema": BASELINE_SCHEMA, "source": "tools/extract_interfaces.py",
         "renderer_snapshot": str(renderer), "report": report,
         "compact": not args.audit},
-        **schema5_baseline(extracted, include_audit=args.audit)}
+        **schema6_baseline(extracted, include_audit=args.audit)}
     # Machine-consumed snapshot: compact serialization avoids indentation overhead.
     write_baseline(output_path, output, compress=args.zip)
     if args.report: print(json.dumps(report, indent=2, sort_keys=True))

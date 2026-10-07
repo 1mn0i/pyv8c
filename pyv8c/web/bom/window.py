@@ -4,6 +4,7 @@ Cross-origin access goes through :mod:`dom.window_proxy`, imported by
 :meth:`Window._view` on first use.
 """
 import pyv8
+
 from pyv8 import AttributeSpec, IdlSpec
 
 from ...engine.features import LazyValueStore, interface
@@ -22,7 +23,9 @@ from ...foundation.errors import InvalidCharacterError, LegacyPropertyError, Sec
 from ...foundation.urls import origin_tuple, serialize_origin
 from ..dom.custom_elements import CustomElementRegistry
 from ..dom.events import EventTarget
+from ..fetch.cache import CacheStorage
 from ..fetch.request import Request
+from ..fetch.response import Response
 from .accessories import (
     CrashReportContext,
     External,
@@ -40,7 +43,8 @@ from .trusted_types import TrustedTypePolicyFactory
 from .visual_viewport import VisualViewport
 from .performance import Performance
 from .scheduling import _SchedulingMixin
-from .utils import deny_cross_origin, is_secure_context, window_attribute, window_method
+from .utils import (deny_cross_origin, is_secure_context, window_attribute, window_method,
+                    window_secure_context)
 
 __all__ = ["BarProp", "Window", "WindowProperties"]
 
@@ -167,7 +171,9 @@ def _singleton_values(window):
 
     return LazyValueStore({
         "performance": lambda: Performance(services=window._services),
-        "crypto": lambda: Crypto(is_secure_context(window.location.get_href())),
+        "crypto": lambda: Crypto(window_secure_context(window),
+                                 services=window._services),
+        "caches": lambda: CacheStorage(services=window._services),
         "customElements": lambda: CustomElementRegistry(services=window._services),
         "visualViewport": lambda: VisualViewport(window=window),
         "viewport": Viewport,
@@ -182,6 +188,74 @@ def _singleton_values(window):
         "trustedTypes": TrustedTypePolicyFactory,
         **{name: bar(name) for name in BAR_NAMES},
     })
+
+
+def fetch_like(services, interface_name, request, options, resources=None, initiator_url=None):
+    """``fetch`` as a window and a worker global both run it: a promise either way.
+
+    The two globals differ only in the interface they name in an argument error, so the steps
+    live here rather than in either of them -- a worker whose ``fetch`` were missing entirely
+    is a realm the page cannot be told about, which is what it used to be.
+
+    *resources* is where the load is handed to: a worker's realm services carry no resource
+    capability (the worker fetches through the page that owns it, as every other load does).
+    *initiator_url* is that worker's own URL, so the request the load builds is attributed to
+    the realm that asked rather than to the page that owns it.
+    """
+    realm = services.realm_services
+    loader = (resources or services).resource_services
+    promise, resolve, reject = realm.make_promise()
+    try:
+        if request is MISSING:
+            raise missing_error(interface_name, "fetch", 1, 0)
+        if not isinstance(request, Request):
+            request = usv_string(request)
+        options = dictionary(
+            options, name="RequestInit",
+            prefix=f"Failed to execute 'fetch' on '{interface_name}': ")
+        req = Request(request, options, services=services)
+    except BaseException as exc:
+        realm.post_task(lambda exc=exc: reject(realm.js_error_value(exc)))
+        return promise
+    def deliver(response, error):
+        """Hand the answer to the realm that asked, which is not always the one that built it.
+
+        A response carries the realm services of whoever built it, and a worker reads its own
+        isolate: a value built there comes back as "belongs to another isolate".  The body
+        crosses as bytes, and the object is rebuilt where it is read.
+        """
+        if error is not None:
+            reject(realm.js_error_value(error))
+            return
+        if services is not getattr(response, "_services", None):
+            try:
+                response = Response(response.body, {
+                    "headers": response.headers, "status": response.status,
+                    "statusText": response.status_text, "url": response.url,
+                    "redirected": response.redirected, "type": response.type,
+                }, services=services)
+            except BaseException as exc:  # a rebuild that fails must be seen, not swallowed
+                reject(realm.js_error_value(exc))
+                return
+        resolve(response)
+
+    handle = loader.load_resource_async(req.get_url(), {
+        "method": req.get_method(), "headers": req.get_headers(), "body": req._body,
+        "timeout": req._timeout, "credentials": req._credentials, "mode": req._mode,
+        "redirect": req._redirect, "resource_type": "fetch",
+        "initiator_url": initiator_url,
+    }, deliver)
+    #: A fetch the caller aborted: drop the load and reject with the reason.
+    def abort():
+        handle.cancel()
+        reason = req._signal._reason
+        if isinstance(reason, BaseException):
+            reason = realm.js_error_value(reason)
+        realm.post_task(lambda reason=reason: reject(reason))
+
+    if req._signal is not None:
+        req._signal._subscribe(abort)
+    return promise
 
 
 @interface('Window', 'WindowProperties')
@@ -212,6 +286,7 @@ class Window(_SchedulingMixin, WindowProperties):
             window_attribute("outerWidth", "get_outerWidth", cross_origin=True),
             window_attribute("outerHeight", "get_outerHeight", cross_origin=True),
             window_attribute("devicePixelRatio", "get_devicePixelRatio", cross_origin=True),
+            window_attribute("offscreenBuffering", "get_offscreenBuffering"),
             window_attribute("name", "get_name", "set_name", cross_origin=True),
             window_attribute("origin", "get_origin", cross_origin=True),
             window_attribute("scrollX", "get_scrollX", cross_origin=True),
@@ -309,7 +384,11 @@ class Window(_SchedulingMixin, WindowProperties):
         self._window_values = _singleton_values(self)
         self.location = self._features.value("location")
         self.innerWidth, self.innerHeight = viewport.width, viewport.height
-        self.outerWidth, self.outerHeight = viewport.width, viewport.height
+        #: A mobile viewport has no window decorations around it.
+        inset = (0, 0) if viewport.mobile else (viewport.outer_inset_width,
+                                                viewport.outer_inset_height)
+        self.outerWidth = viewport.width + inset[0]
+        self.outerHeight = viewport.height + inset[1]
         self.devicePixelRatio = viewport.device_scale_factor
 
     @property
@@ -483,6 +562,9 @@ class Window(_SchedulingMixin, WindowProperties):
     def get_outerWidth(self): self._require_same_origin(); return self.outerWidth
     def get_outerHeight(self): self._require_same_origin(); return self.outerHeight
     def get_devicePixelRatio(self): self._require_same_origin(); return self.devicePixelRatio
+    def get_offscreenBuffering(self):
+        """Legacy; a browser answers true."""
+        return True
     def get_name(self):
         """The name a page gave this window; empty until it sets one."""
         return str(getattr(self, "_window_name", "") or "")
@@ -519,9 +601,15 @@ class Window(_SchedulingMixin, WindowProperties):
     def get_screenTop(self): return self.get_screenY()
 
     def get_isSecureContext(self):
-        """Whether the document's origin is one a browser treats as trustworthy."""
+        """Whether the document is in a secure context, the one that created it included.
+
+        An ``about:blank`` or ``about:srcdoc`` document carries no scheme of its own, so a
+        browser inherits the answer from its creator: an inline frame inside an ``https`` page
+        is a secure context, and Chrome exposes ``navigator.userActivation`` and its thirty
+        relatives there.  Judged by its own URL alone the frame would answer ``false``.
+        """
         self._require_same_origin()
-        return is_secure_context(self.location.get_href())
+        return window_secure_context(self)
 
     def get_crossOriginIsolated(self):
         """Whether the document is cross-origin isolated: no COOP/COEP is set."""
@@ -558,6 +646,7 @@ class Window(_SchedulingMixin, WindowProperties):
     def get_crypto(self):
         self._require_same_origin()
         return self._window_value("crypto")
+
 
     def get_customElements(self):
         self._require_same_origin()
@@ -597,10 +686,15 @@ class Window(_SchedulingMixin, WindowProperties):
     #: Chrome knows these names and answers undefined -- they gate on a secure
     #: context, or are gone -- so the value is the same and the log is quiet.
     def get_event(self): self._require_same_origin(); return pyv8.Undefined
-    def get_caches(self): self._require_same_origin(); return pyv8.Undefined
+    def get_caches(self):
+        """Cache Storage is secure-context only, so an insecure page has none."""
+        self._require_same_origin()
+        if not window_secure_context(self):
+            return pyv8.Undefined
+        return self._window_value("caches")
     def get_cookieStore(self):
         self._require_same_origin()
-        if not is_secure_context(self.location.get_href()):
+        if not window_secure_context(self):
             return pyv8.Undefined
         return self._window_value("cookieStore")
     def get_documentPictureInPicture(self): self._require_same_origin(); return pyv8.Undefined
@@ -619,43 +713,8 @@ class Window(_SchedulingMixin, WindowProperties):
         self._require_same_origin()
         return MediaQueryList(dom_string(query), self.innerWidth, self.innerHeight)
     def fn_fetch(self, request=MISSING, options=None, *_extra):
-        promise, resolve, reject = self._services.realm_services.make_promise()
-        try:
-            if request is MISSING:
-                raise missing_error('Window', 'fetch', 1, 0)
-            if not isinstance(request, Request):
-                request = usv_string(request)
-            options = dictionary(options, name="RequestInit", prefix="Failed to execute 'fetch' on 'Window': ")
-            req = Request(request, options, services=self._services)
-        except BaseException as exc:
-            self._services.realm_services.post_task(lambda exc=exc: reject(self._services.realm_services.js_error_value(exc)))
-            return promise
-        handle = self._services.resource_services.load_resource_async(req.get_url(), {
-            "method": req.get_method(), "headers": req.get_headers(), "body": req._body,
-            "timeout": req._timeout, "credentials": req._credentials, "mode": req._mode, "redirect": req._redirect,
-            "resource_type": "fetch",
-        }, lambda response, error: reject(self._services.realm_services.js_error_value(error)) if error else resolve(response))
-        self._abort_fetch(handle, req._signal, reject)
-        return promise
+        return fetch_like(self._services, "Window", request, options)
 
-    def _abort_fetch(self, handle, signal, reject):
-        """A fetch the page aborted: drop the load and reject with the reason.
-
-        Cancelling rather than waiting is what makes it an abort -- a response
-        already on its way is never delivered.  The rejection is the signal's reason
-        itself, so a page that aborted with its own value gets that value back.
-        """
-        realm = self._services.realm_services
-
-        def abort():
-            handle.cancel()
-            reason = signal._reason
-            if isinstance(reason, BaseException):
-                reason = realm.js_error_value(reason)
-            realm.post_task(lambda reason=reason: reject(reason))
-
-        signal._subscribe(abort)
-    
     def fn_atob(self, data=MISSING, *_extra):
         if data is MISSING:
             raise missing_error("Window", "atob", 1, 0, constructor=False)

@@ -177,3 +177,48 @@ for attribute in ("materialize", "_stage"):
 5. **`evaluate` 只接受表达式**；**`Null` 不能直接 JSON 序列化**。
 6. **资源 kind 要对齐**：登记资源用的 `kind` 与消费处认的 `kind` 必须一致
    （`<link rel=stylesheet>` 的 CSS 曾因两边不一致而从未被保存）。
+7. **读 blob 源码**：`page.services.context_services.resolve_blob_url(url)` 返回
+   `(源码字节, content-type)`；它**只在它自己的 context 里**认识 blob（`create_blob_url(blob, realm=…)`
+   按 realm 登记），所以别的 realm 造的 blob 要么找该 realm 的 context services，要么进不了。
+   用 `page.context`/`realm.context` 这类**原生 context** 调不到它（没有该方法）。
+8. **进 worker realm**：`worker._runtime._realm.evaluate_script(...)`（`worker` 取 `page._owned.workers` 的成员）。
+   `worker.services.realm_services.evaluate_script` 会答出**页面的**数据，是错误的一层；`worker._realm` 不存在。
+   worker 里没有同步 `XMLHttpRequest`（Chrome 的 worker 有），所以别指望在 worker 里同步取自己的 blob。
+9. **trace 要显式开、且走日志**：`Browser(trace=True, traceable=True)` 之外还要
+   `context.trace = True`（`traceable` 是为"稍后再开"准备的）；`trace_callback=` 收不到事件，
+   用 `logger.add(...)` 读 `pyv8c.engine.trace:log_trace` 的行。事件**带 realm 标签**
+   （`[TOP]`/`[FRAME]`），成员名、参数和返回值都在里面——定位"哪一行/哪个成员"最快的就是它。
+   拿它和钩子里记的 `Date.now()` 对齐，就能只读报错前那一小段。
+10. **别包装 `window.Function` / `window.eval`**：在 pyv8c 的页面里包装 `Function` 会让
+   `page.goto` 卡住（`RealmBusyError: realm executor did not complete 'goto' within 30s`）；
+   包装 `eval` 会改变失败形态（异常从"`Cannot read properties of undefined`"变成页面侧的
+   `ErrorEvent.message -> 'Error'`），也就是钩子干扰了被测对象。
+11. **包 pyv8c 的内部方法比包 JS 稳**：想在"页面造东西"时记录，直接包它的 Python 回调
+   （例如 `TrustedTypePolicy.fn_createScript/fn_createScriptURL/fn_createHTML`）——不改 JS 行为、
+   任何 realm 的策略都看得见；包 `window.eval`/`Function` 则会干扰被测对象（见第 10 条）。
+12. **blob 要"它自己的 realm"才读得到，而且层级会往下掉**：`resolve_blob_url` 只在对应 context
+   里认识 blob；页面造的 blob 页面能读，**frame 的 worker、worker 里的 worker 造的**就只能由那一层读
+   （主文档 / frame / 两者的 worker 都不行，会 `DOMException` 或返回错的东西）。
+   枚举层级：主文档 `services.context_services` → `page._owned.frames`（是子 `Page`）→
+   `page._owned.workers` 与 `frame._owned.workers`（取 `worker._runtime._realm`）。再深就只能靠钩子。
+13. **想读混淆代码时，有 AST 可用**：Node 24 自带，`acorn` 装到仓库外
+   （`%TEMP%\<dir>` + `NODE_PATH` 指过去）即可，不必往仓库塞 `node_modules`。
+   挑战脚本的混淆形状是"**数字键表 + 运行时绑定的解码器**"（`X[dec(table.key)]`），
+   解码器常在形参上再赋一次（`dd = Q2`）并带自解码启动代码，**静态推不出来**；
+   可行的办法是：用 AST 找到"表赋值"与"解码器绑定"的**精确范围**，各包一层"捕获后原样返回"，
+   在 `vm` 里配吞掉一切的 DOM 假对象跑一遍，再用抓到的解码器逐键求值。
+   两个坑：假 Proxy 对不存在的键会返回它自己（捕获要写进**沙箱里的真实对象**）；
+   表与解码器要用**同一个标签**配对。
+14. **反爬站点每次给的页面可能不是同一份**：Cloudflare 会换 ray id / widget id，
+   偶尔连挑战样式都换（同一 URL 实测过 `45 对 29` 个元素）。比结构前先确认两侧元素数一致，
+   否则比的是两份不同页面；要重复复现就抓一份标记做夹具，两侧喂同一份字节
+   （`examples/5s/script/parity_dom.py fixture_diff`），这样差异只剩解析器。
+8. **`待实现` 清单是一把梯子**：修掉一项，页面的脚本往往就往下走一步，清单里换成下一项
+   （5s 案例：5 → 2 → 1 → 0，最后一项从 `createOffer()` 变成 `setLocalDescription()` 再清零）。
+   所以"清单没清零"不等于没进展，要看**脚本走到哪一步**；反过来，清零也不等于通过。
+9. **参照浏览器不能带自动化标记**：Playwright 默认传 `--enable-automation`，真 Chrome 也会被
+   Cloudflare 拦住；去掉后同一台机器就能过关。任何"两边都过不去"的结论，先确认参照不是被自己的
+   驱动标记拖住的（见 SKILL.md 的先决条件）。
+10. **"看起来没反应"先看连接性判断**：ShadowRoot 的 `parentNode` 是 null，任何沿 `parentNode`
+    上溯到 Document 的"是否已插入文档"判断，都会把影子树里的节点判成未连接——iframe 于是不导航。
+    这类判断要用含影子树的根（`isConnected`），不要去数父链。

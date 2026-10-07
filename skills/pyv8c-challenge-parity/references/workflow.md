@@ -96,12 +96,17 @@ ResourceController.complete_document_resource = traced
 
 ## 5. 读 `--trace` 日志
 
+**这一节是主路径** —— 详细方法见 `trace-parity.md` ✓，归类工具是
+`scripts/trace_analyze.py` ✓（把"答 undefined 的读取/调用"与"抛错行"直接列出来 ✓）。
+
 开 trace 后每个 IDL 调用都会记进日志：
-`[TOP] <getter|setter|method|descriptor|has>: Interface.member(args) -> value`。
+`[REALM] <getter|setter|method|descriptor|has>: Interface.member(args) -> value`，
+`REALM` 是 `TOP` / `FRAME` / `WORKER` ✓（**成片差异往往只在一个 realm** ✓）。
 
 - `待实现` 命中 = 页面撞到未实现的成员（最直接的"缺实现"证据）；
 - `has:` 是特性探测（`'x' in y`），**不是调用**；
-- 用"某成员最后一次成功调用前后 N 行"定位"何时开始出错"，比通读日志有效得多。
+- **只有带 `->` 的行才答了值** ✓ —— `setter:` 行没有 `->` ✗（把它当 `undefined` 会凭空造出几百条假差异 ✓）；
+- 三条最值钱的筛法：**答了 `undefined` 的 getter** ✓、**带 `, error:` 的行** ✓、**本该出现却 0 次的 URL** ✓。
 
 ## 6. 网络与载荷对照
 

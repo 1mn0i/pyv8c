@@ -281,6 +281,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         previous = self.attributes.pop(lowered, None)
         if previous is not None:
             record_mutation(self, "attributes", attribute_name=lowered, old_value=previous)
+            self._attribute_changed_here(lowered, previous, None)
     def fn_hasAttribute(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('Element', 'hasAttribute', 1, 0, constructor=False)
@@ -327,14 +328,27 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         self._set_attribute(dom_string(name), dom_string(value))
 
     def _set_attribute(self, name, value):
-        """Write one attribute; both spellings convert their arguments first."""
+        """Write one attribute; both spellings convert their arguments first.
+
+        The notification lives here rather than in the two spellings, because the
+        native dispatch resolves a member on the class that declared it: a subclass
+        override of ``fn_setAttribute`` is never reached.
+        """
         if not _VALID_NAME_RE.match(name):
             raise InvalidCharacterError("The attribute name provided is invalid.")
         lowered = name.lower()
         previous = self.attributes.get(lowered)
-        self.attributes[lowered] = str(value)
+        written = str(value)
+        self.attributes[lowered] = written
         record_mutation(self, "attributes", attribute_name=lowered,
                         old_value=previous)
+        self._attribute_changed_here(lowered, previous, written)
+
+    def _attribute_changed_here(self, name, old, new):
+        """Tell an element that reflects the attribute, when it wants to know."""
+        changed = getattr(self, "_attribute_changed", None)
+        if changed is not None and old != new:
+            changed(name, old, new)
     def fn_removeAttributeNS(self, namespace=MISSING, local_name=MISSING, *_extra):
         if namespace is MISSING:
             raise missing_error('Element', 'removeAttributeNS', 2, 0, constructor=False)
@@ -566,6 +580,24 @@ Element.__v8_idl_spec__ = Element.__v8_idl_spec__.replace(
                                           "onwebkitfullscreenerror"))
     + aria.install(Element))
 
+def _unrendered(node):
+    """Whether a descendant is laid out away, taking its subtree out of innerText.
+
+    Reading ``innerText`` on such an element itself still reports its text, the way
+    Chrome falls back to the text content for something it does not render.
+    """
+    from .layout import computed_style
+
+    if not isinstance(node, Element):
+        return False
+    name = str(getattr(node, "localName", "") or "").lower()
+    if name in ("script", "style", "link", "meta", "head", "template", "title", "noscript"):
+        return True
+    if node.attributes.get("hidden") is not None:
+        return True
+    return str(computed_style(node).get("display", "")) == "none"
+
+
 @interface('HTMLElement', 'Element')
 class HTMLElement(Element):
     __v8_idl_spec__ = IdlSpec(
@@ -675,8 +707,9 @@ class HTMLElement(Element):
         only becomes a newline once the element is in a document: a tree nobody
         attached reads as one run of text, which is what a detached element's
         innerText does in Chrome too. Whitespace collapses unless the element keeps
-        it, as ``pre`` and ``textarea`` do. A ``script`` or ``style`` element
-        contributes its source, which is what Chrome reports for one.
+        it, as ``pre`` and ``textarea`` do. What the page lays out away -- a script
+        or style element, a hidden one, anything ``display: none`` reaches -- takes
+        its whole subtree out of the result.
         """
         if isinstance(node, Text):
             return node.get_data()
@@ -684,7 +717,8 @@ class HTMLElement(Element):
         if name == "br":
             return "\n" if laid_out else ""
         joined = "".join(self._rendered_text(child, laid_out)
-                         for child in getattr(node, "_children", ()))
+                         for child in getattr(node, "_children", ())
+                         if not (laid_out and _unrendered(child)))
         if laid_out and name in self._BLOCK_LEVEL:
             joined = "\n" + joined + "\n"
         if name in ("pre", "textarea"):
@@ -1075,6 +1109,8 @@ class HTMLImageElement(HTMLElement):
             AttributeSpec(name="width", getter="get_width", setter="set_width"),
             AttributeSpec(name="height", getter="get_height", setter="set_height"),
             AttributeSpec(name="complete", getter="get_complete", side_effect=1),
+            AttributeSpec(name="naturalWidth", getter="get_naturalWidth", side_effect=1),
+            AttributeSpec(name="naturalHeight", getter="get_naturalHeight", side_effect=1),
         ),
         constructor_behavior=0,
         has_constructor=1,
@@ -1112,6 +1148,28 @@ class HTMLImageElement(HTMLElement):
         if not getattr(self, "_resource_started", False):
             return True
         return bool(getattr(self, "_image_complete", False))
+
+    def _natural_size(self):
+        """The size the loaded file declares, read once and kept.
+
+        Chromium answers ``0`` until the image has settled, and the file's own header is what
+        it answers with after: no decoded bitmap is needed for the question a page asks.
+        """
+        cached = getattr(self, "_natural_cache", None)
+        if cached is not None:
+            return cached
+        data = getattr(self, "_image_bytes", None)
+        if not isinstance(data, (bytes, bytearray)):
+            return (0, 0)
+        from .images import image_size
+
+        size = image_size(data, getattr(self, "_image_type", ""))
+        if size != (0, 0):
+            self._natural_cache = size
+        return size
+
+    def get_naturalWidth(self): return self._natural_size()[0]
+    def get_naturalHeight(self): return self._natural_size()[1]
 
 
 @interface('HTMLScriptElement', 'HTMLElement')
@@ -1212,6 +1270,7 @@ class HTMLAnchorElement(HTMLElement):
             _attribute("search", "get_search", "set_search"),
             _attribute("hash", "get_hash", "set_hash"),
             _attribute("rel", "get_rel", "set_rel"),
+            _attribute("target", "get_target", "set_target"),
             AttributeSpec(name="relList", getter="get_relList", side_effect=1),
         ),
         methods=(MethodSpec(name="toString", callback="fn_toString"),),
@@ -1274,6 +1333,8 @@ class HTMLAnchorElement(HTMLElement):
     def set_hash(self, value): self._set_component(fragment=str(dom_string(value)).lstrip("#"))
     def get_rel(self): return self.attributes.get("rel", "")
     def set_rel(self, value): self.attributes["rel"] = str(dom_string(value))
+    def get_target(self): return self.attributes.get("target", "")
+    def set_target(self, value): self.attributes["target"] = str(dom_string(value))
     def get_relList(self):
         value = getattr(self, "_rel_list", None)
         if value is None:

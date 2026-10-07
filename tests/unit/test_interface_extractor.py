@@ -86,9 +86,9 @@ def test_constant_expression_is_audit_only():
             "constants": [{"name": "COPY_SRC", "expression": "1 << 2", "resolved": True, "value": 4}],
         },
     }
-    compact = extract_interfaces.schema5_baseline(extracted)["Fixture"]
+    compact = extract_interfaces.schema6_baseline(extracted)["Fixture"]
     assert compact["constants"] == [{"name": "COPY_SRC", "resolved": True, "value": 4, "location": "interface"}]
-    audit = extract_interfaces.schema5_baseline(extracted, include_audit=True)["Fixture"]
+    audit = extract_interfaces.schema6_baseline(extracted, include_audit=True)["Fixture"]
     assert audit["constants"][0]["expression"] == "1 << 2"
 
 
@@ -238,7 +238,7 @@ def test_real_renderer_snapshot_has_members_for_core_interfaces():
 
 def test_generated_baseline_keeps_full_runtime_snapshot_and_report():
     baseline = _bundled_baseline_document()
-    assert baseline["_webidl"]["schema"] == 5
+    assert baseline["_webidl"]["schema"] == extract_interfaces.BASELINE_SCHEMA
     assert baseline["_webidl"]["compact"] is True
     assert baseline["_webidl"]["report"]["interfaces"] > 1000
     assert baseline["_webidl"]["report"]["unresolved_signatures"] > 0
@@ -272,7 +272,7 @@ def test_baseline_zip_is_optional_and_has_a_stable_json_member(tmp_path):
         assert json.loads(archive.read("baseline.json")) == document
 
 
-def test_schema5_audit_metadata_is_opt_in():
+def test_schema6_audit_metadata_is_opt_in():
     extracted = {
         "Fixture": {
             "parent": None,
@@ -284,14 +284,14 @@ def test_schema5_audit_metadata_is_opt_in():
             "constants": [],
         },
     }
-    assert "provenance" not in extract_interfaces.schema5_baseline(extracted)["Fixture"]
-    assert extract_interfaces.schema5_baseline(extracted, include_audit=True)["Fixture"]["provenance"] == {
+    assert "provenance" not in extract_interfaces.schema6_baseline(extracted)["Fixture"]
+    assert extract_interfaces.schema6_baseline(extracted, include_audit=True)["Fixture"]["provenance"] == {
         "snapshot": "chromium-generated-bindings",
         "sources": ["renderer/core/v8_fixture.cc"],
     }
 
 
-def test_schema5_audit_switch_controls_callback_and_world_fields():
+def test_schema6_audit_switch_controls_callback_and_world_fields():
     extracted = {
         "Fixture": {
             "parent": None,
@@ -313,7 +313,7 @@ def test_schema5_audit_switch_controls_callback_and_world_fields():
             "constants": [],
         },
     }
-    compact = extract_interfaces.schema5_baseline(extracted)["Fixture"]
+    compact = extract_interfaces.schema6_baseline(extracted)["Fixture"]
     assert "callback" not in compact["constructor"]
     assert compact["template"]["call_handler"] == 1
     assert compact["template"]["access_check"] == {"with_handler": True, "enabled": 1}
@@ -325,7 +325,7 @@ def test_schema5_audit_switch_controls_callback_and_world_fields():
     assert "getter" not in attribute and "readonly" not in attribute and attribute["setter"] == 1
     assert "signature" not in compact["constructor"]
 
-    audit = extract_interfaces.schema5_baseline(extracted, include_audit=True)["Fixture"]
+    audit = extract_interfaces.schema6_baseline(extracted, include_audit=True)["Fixture"]
     assert audit["constructor"]["callback"] == "ConstructorCallback"
     assert audit["template"]["handlers"]["named"]["get"] == "NamedGetterCallback"
     assert audit["members"]["prototype"][0]["callback"] == "RunCallback"
@@ -337,7 +337,7 @@ def test_a_member_of_another_world_states_its_bit_as_false():
     extracted = {"Fixture": {"members": {"prototype": [
         {"name": "run", "kind": "operation", "world": "IsolatedWorld", "length": 0},
     ]}}}
-    compact = extract_interfaces.schema5_baseline(extracted)["Fixture"]
+    compact = extract_interfaces.schema6_baseline(extracted)["Fixture"]
     assert compact["members"]["prototype"][0]["main_world"] is False
 
 

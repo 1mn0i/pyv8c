@@ -20,18 +20,33 @@ from ...foundation.arguments import (
     sequence,
     usv_string,
 )
-from ...foundation.environment import BrowserEnvironment, MimeTypeView
+from ...foundation.environment import BrowserEnvironment, MimeTypeView, environment_of
 from ...foundation.errors import V8TypeError, dom_exception
 from ...foundation.realm import post_or_call
 from ...foundation.urls import origin_string
 from ..fetch.blob import Blob
 from ..dom.events import EventTarget
+from ..dom.media_source import device_kinds, media_facts
 from ..dom.mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
-from .accessories import Scheduling
-from .locks import LockManager
+from .accessories import (DevicePosture, Ink, MediaCapabilities, NavigatorLogin,
+                          NavigatorManagedData, Presentation, ProtectedAudience, Scheduling,
+                          UserActivation, VirtualKeyboard, WindowControlsOverlay)
+from .clipboard import Clipboard
+from .devices import HID, USB, XRSystem
+from .keyboard import Keyboard
+from .locks import LockManager, WakeLock
+from .storage import StorageBucketManager
+
+#: The WGSL extensions Chrome reports, which the feature list is measured from.
+_WGSL_LANGUAGE_FEATURES = (
+    "buffer_view", "immediate_address_space", "linear_indexing",
+    "packed_4x8_integer_dot_product", "pointer_composite_access",
+    "readonly_and_readwrite_storage_textures", "subgroup_id", "subgroup_uniformity",
+    "swizzle_assignment", "texture_and_sampler_let", "texture_formats_tier1",
+    "uniform_buffer_standard_layout", "unrestricted_pointer_parameters",
+)
 from .url import URLSearchParams
-from .utils import is_secure_context
-from ..dom.utils import ITERABLE_FLAGS
+from .utils import is_secure_context, window_secure_context
 
 
 class _LegacyNamedCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
@@ -108,7 +123,7 @@ class Plugin(_LegacyNamedCollection):
         constructor_behavior=0,
         to_string_tag="Plugin",
         has_constructor=1,
-        array=ITERABLE_FLAGS,
+        array="iterator",
     )
 
     def __init__(self, config, **_):
@@ -137,7 +152,7 @@ class PluginArray(_LegacyNamedCollection):
         constructor_behavior=0,
         to_string_tag="PluginArray",
         has_constructor=1,
-        array=ITERABLE_FLAGS,
+        array="iterator",
     )
 
     def __init__(self, configs=(), **_):
@@ -166,7 +181,7 @@ class MimeTypeArray(_LegacyNamedCollection):
         constructor_behavior=0,
         to_string_tag="MimeTypeArray",
         has_constructor=1,
-        array=ITERABLE_FLAGS,
+        array="iterator",
     )
 
     def __init__(self, plugins=(), **_):
@@ -495,8 +510,8 @@ _CONSTRAINTS = (
     "width", "zoom",
 )
 
-#: The permission names Chrome 153 answers, and the ones it starts as granted.
-_PERMISSION_NAMES = frozenset((
+#: What the shipped profile last answered for; ``permissions.*`` replaces them when collected.
+PERMISSION_NAMES = frozenset((
     "accelerometer", "background-fetch", "background-sync", "camera",
     "captured-surface-control", "clipboard-read", "clipboard-write", "display-capture",
     "geolocation", "gyroscope", "idle-detection", "keyboard-lock", "local-fonts",
@@ -583,6 +598,29 @@ class MediaDeviceInfo:
                 "label": self._label, "groupId": self._group_id}
 
 
+@interface('InputDeviceInfo', 'MediaDeviceInfo')
+class InputDeviceInfo(MediaDeviceInfo):
+    """An input device: ``enumerateDevices`` makes these for the microphones and cameras.
+
+    ``getCapabilities()`` answers ``{}`` without permission, which is what Chrome reports
+    before a page has been granted the device.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        methods=(MethodSpec(name="getCapabilities", callback="fn_getCapabilities",
+                            side_effect=1),),
+        constructor_behavior=0,
+        to_string_tag="InputDeviceInfo",
+        has_constructor=1,
+    )
+
+    def fn_getCapabilities(self, *_extra): return {}
+
+
+#: The kinds ``enumerateDevices`` answers with an ``InputDeviceInfo``.
+_INPUT_KINDS = ("audioinput", "videoinput")
+
+
 @interface('MediaDevices', 'EventTarget')
 class MediaDevices(EventTarget):
     __v8_idl_spec__ = IdlSpec(
@@ -610,19 +648,34 @@ class MediaDevices(EventTarget):
         self._set_handler("ondevicechange", event_handler(value))
 
     def fn_enumerateDevices(self, *_extra):
-        # Nothing is ever picked here, which is the one device Chrome lists without one.
-        return _settled(self._services, value=[MediaDeviceInfo()])
+        """The devices the machine lists, which a profile collected: nothing without one."""
+        devices = []
+        for kind in device_kinds(self._services):
+            info = InputDeviceInfo(kind=kind) if kind in _INPUT_KINDS else MediaDeviceInfo(kind=kind)
+            devices.append(info)
+        return _settled(self._services, value=devices)
 
     def fn_getSupportedConstraints(self, *_extra):
-        return {name: True for name in _CONSTRAINTS}
+        facts = media_facts(self._services)
+        names = facts.constraints if facts is not None and facts.constraints else _CONSTRAINTS
+        return {name: True for name in names}
 
     def fn_getUserMedia(self, constraints=None, *_extra):
-        options = {} if is_nullish(constraints) else dictionary(constraints)
-        if not options.get("audio") and not options.get("video"):
-            raise V8TypeError("Failed to execute 'getUserMedia' on 'MediaDevices': "
-                              "At least one of audio and video must be requested")
+        """No device is ever opened here, so the answer is the permission a prompt would give.
+
+        Chrome rejects this promise (rather than throwing) and leaves it unsettled while a
+        permission prompt is up; a page that cannot be prompted sees the same ``NotAllowedError``
+        a denied prompt produces.
+        """
+        try:
+            options = {} if is_nullish(constraints) else dictionary(constraints)
+            if not options.get("audio") and not options.get("video"):
+                raise V8TypeError("Failed to execute 'getUserMedia' on 'MediaDevices': "
+                                  "At least one of audio and video must be requested")
+        except V8TypeError as refused:
+            return _settled(self._services, error=refused)
         return _settled(self._services,
-                        error=dom_exception("NotFoundError", "Requested device not found"))
+                        error=dom_exception("NotAllowedError", "Permission denied"))
 
     def fn_getDisplayMedia(self, options=None, *_extra):
         return _settled(self._services,
@@ -674,7 +727,8 @@ class Permissions:
         if descriptor is MISSING:
             raise missing_error('Permissions', 'query', 1, 0, constructor=False)
         name = dictionary(descriptor).get("name")
-        if name not in _PERMISSION_NAMES:
+        names = self._environment.permissions.names or PERMISSION_NAMES
+        if name not in names:
             # The enum check rejects the promise rather than throwing at the call.
             return _settled(self._services, error=V8TypeError(
                 "Failed to execute 'query' on 'Permissions': Failed to read the 'name' property "
@@ -685,14 +739,15 @@ class Permissions:
                 "NotSupportedError",
                 "Failed to execute 'query' on 'Permissions': Push Permission without "
                 "userVisibleOnly:true isn't supported yet."))
+        spec_names = self._environment.permissions.spec_names or _PERMISSION_SPEC_NAMES
         return _settled(self._services, value=PermissionStatus(
-            _PERMISSION_SPEC_NAMES.get(name, name), self._state(name), services=self._services))
+            spec_names.get(name, name), self._state(name), services=self._services))
 
     def _state(self, name):
         if name == "geolocation":
             granted = self._environment.geolocation.permission == "granted"
             return "granted" if granted else "prompt"
-        if name in _PERMISSION_GRANTED:
+        if name in (self._environment.permissions.granted or _PERMISSION_GRANTED):
             return "granted"
         return "denied" if name == "periodic-background-sync" else "prompt"
 
@@ -1085,6 +1140,7 @@ def _navigator_values(navigator):
         "connection": lambda: NetworkInformation(environment.connection, services=services),
         "scheduling": lambda: Scheduling(),
         "locks": lambda: LockManager(services=services),
+        "gpu": lambda: GPU(services=services),
         "battery": lambda: BatteryManager(environment.battery, services=services),
         "geolocation": lambda: Geolocation(services=services, environment=environment),
         "webkitTemporaryStorage": lambda: DeprecatedStorageQuota(
@@ -1101,6 +1157,23 @@ def _navigator_values(navigator):
         "bluetooth": lambda: Bluetooth(services=services, environment=environment),
         "storage": lambda: StorageManager(services=services, environment=environment),
         "serial": lambda: Serial(services=services),
+        "userActivation": lambda: UserActivation(),
+        "devicePosture": lambda: DevicePosture(services=services),
+        "protectedAudience": lambda: ProtectedAudience(),
+        "presentation": lambda: Presentation(),
+        "virtualKeyboard": lambda: VirtualKeyboard(services=services),
+        "windowControlsOverlay": lambda: WindowControlsOverlay(services=services),
+        "clipboard": lambda: Clipboard(services=services),
+        "keyboard": lambda: Keyboard(services=services, environment=environment),
+        "wakeLock": lambda: WakeLock(services=services),
+        "mediaCapabilities": lambda: MediaCapabilities(services=services),
+        "storageBuckets": lambda: StorageBucketManager(services=services),
+        "usb": lambda: USB(services=services),
+        "hid": lambda: HID(services=services),
+        "xr": lambda: XRSystem(services=services),
+        "ink": lambda: Ink(services=services),
+        "login": lambda: NavigatorLogin(services=services),
+        "managed": lambda: NavigatorManagedData(services=services),
     })
     return values
 
@@ -1186,6 +1259,28 @@ class Navigator:
             AttributeSpec(name="bluetooth", getter="get_bluetooth", side_effect=1),
             AttributeSpec(name="storage", getter="get_storage", side_effect=1),
             AttributeSpec(name="serial", getter="get_serial", side_effect=1),
+            AttributeSpec(name="gpu", getter="get_gpu", side_effect=1),
+            AttributeSpec(name="userActivation", getter="get_userActivation", side_effect=1),
+            AttributeSpec(name="devicePosture", getter="get_devicePosture", side_effect=1),
+            AttributeSpec(name="protectedAudience", getter="get_protectedAudience",
+                          side_effect=1),
+            AttributeSpec(name="presentation", getter="get_presentation", side_effect=1),
+            AttributeSpec(name="virtualKeyboard", getter="get_virtualKeyboard", side_effect=1),
+            AttributeSpec(name="windowControlsOverlay", getter="get_windowControlsOverlay",
+                          side_effect=1),
+            AttributeSpec(name="deprecatedRunAdAuctionEnforcesKAnonymity",
+                          getter="get_deprecatedRunAdAuctionEnforcesKAnonymity", side_effect=1),
+            AttributeSpec(name="clipboard", getter="get_clipboard", side_effect=1),
+            AttributeSpec(name="keyboard", getter="get_keyboard", side_effect=1),
+            AttributeSpec(name="wakeLock", getter="get_wakeLock", side_effect=1),
+            AttributeSpec(name="mediaCapabilities", getter="get_mediaCapabilities", side_effect=1),
+            AttributeSpec(name="storageBuckets", getter="get_storageBuckets", side_effect=1),
+            AttributeSpec(name="usb", getter="get_usb", side_effect=1),
+            AttributeSpec(name="hid", getter="get_hid", side_effect=1),
+            AttributeSpec(name="xr", getter="get_xr", side_effect=1),
+            AttributeSpec(name="ink", getter="get_ink", side_effect=1),
+            AttributeSpec(name="login", getter="get_login", side_effect=1),
+            AttributeSpec(name="managed", getter="get_managed", side_effect=1),
         ),
         methods=(
             MethodSpec(name="getBattery", callback="fn_getBattery"),
@@ -1206,9 +1301,14 @@ class Navigator:
 
     def get_userAgent(self): return self._environment.user_agent
     def get_userAgentData(self):
-        """A fresh UA-CH object per read, and only in a secure context."""
+        """A fresh UA-CH object per read, and only in a secure context.
+
+        ``worker=True``: this one belongs to a worker realm as well, where the question is the
+        script's own URL rather than any page's -- passing it asked the worker-only rule and
+        left the worker without the object.
+        """
         services = self._services
-        if services is None or not is_secure_context(services.realm_services.url):
+        if services is None or not self._secure(worker=True, services=services):
             return pyv8.Undefined
         return NavigatorUAData(environment=self._environment, services=services)
     # Frozen compatibility values, as Chrome reports them.
@@ -1275,11 +1375,24 @@ class Navigator:
     def _realm_url(self):
         realm = getattr(self._services, "realm_services", None)
         return str(getattr(realm, "url", "") or "")
-    def _secure(self, *, worker=False):
-        """Whether Chrome exposes a secure-context member here."""
-        if self._services is None or (self._worker and not worker):
+    def _secure(self, *, worker=False, services=None):
+        """Whether Chrome exposes a secure-context member here.
+
+        The document's own URL answers for an ordinary ``https`` page; a frame whose address
+        carries no scheme of its own (``about:blank``, ``about:srcdoc``) inherits the answer
+        from the page that created it, exactly as ``isSecureContext`` does -- Cloudflare's
+        widget reads thirty of these members and gets ``undefined`` when this says no.
+        """
+        services = self._services if services is None else services
+        if services is None or (self._worker and not worker):
             return False
-        return is_secure_context(self._realm_url())
+        window = getattr(services, "window", None)
+        if window is None:
+            return is_secure_context(self._realm_url())
+        return window_secure_context(window, self._realm_url())
+    def get_gpu(self):
+        """Chrome exposes WebGPU in a secure context, in a worker as well as a page."""
+        return self._features.value("gpu") if self._secure(worker=True) else pyv8.Undefined
     def get_mediaDevices(self):
         return self._features.value("mediaDevices") if self._secure() else pyv8.Undefined
     def get_mediaSession(self):
@@ -1296,6 +1409,43 @@ class Navigator:
         if self._services is None:
             return pyv8.Undefined
         return self._features.value("permissions")
+    #: The members below are secure-context only, and each reports the idle state.
+    def get_userActivation(self):
+        return self._features.value("userActivation") if self._secure() else pyv8.Undefined
+    def get_devicePosture(self):
+        return self._features.value("devicePosture") if self._secure() else pyv8.Undefined
+    def get_protectedAudience(self):
+        return self._features.value("protectedAudience") if self._secure() else pyv8.Undefined
+    def get_presentation(self):
+        return self._features.value("presentation") if self._secure() else pyv8.Undefined
+    def get_virtualKeyboard(self):
+        return self._features.value("virtualKeyboard") if self._secure() else pyv8.Undefined
+    def get_windowControlsOverlay(self):
+        return self._features.value("windowControlsOverlay") if self._secure() else pyv8.Undefined
+    def get_deprecatedRunAdAuctionEnforcesKAnonymity(self):
+        return False if self._secure() else pyv8.Undefined
+    def get_clipboard(self):
+        return self._features.value("clipboard") if self._secure() else pyv8.Undefined
+    def get_keyboard(self):
+        return self._features.value("keyboard") if self._secure() else pyv8.Undefined
+    def get_wakeLock(self):
+        return self._features.value("wakeLock") if self._secure() else pyv8.Undefined
+    def get_mediaCapabilities(self):
+        return self._features.value("mediaCapabilities") if self._secure() else pyv8.Undefined
+    def get_storageBuckets(self):
+        return self._features.value("storageBuckets") if self._secure() else pyv8.Undefined
+    def get_usb(self):
+        return self._features.value("usb") if self._secure() else pyv8.Undefined
+    def get_hid(self):
+        return self._features.value("hid") if self._secure() else pyv8.Undefined
+    def get_xr(self):
+        return self._features.value("xr") if self._secure() else pyv8.Undefined
+    def get_ink(self):
+        return self._features.value("ink") if self._secure() else pyv8.Undefined
+    def get_login(self):
+        return self._features.value("login") if self._secure() else pyv8.Undefined
+    def get_managed(self):
+        return self._features.value("managed") if self._secure() else pyv8.Undefined
     def fn_javaEnabled(self, *_extra):
         return pyv8.Undefined if self._worker else False
     def fn_getBattery(self, *_extra):
@@ -1304,12 +1454,88 @@ class Navigator:
         return realm.promise_resolve(battery) if realm is not None else battery
 
 
+@interface('WGSLLanguageFeatures', None)
+class WGSLLanguageFeatures(ReadOnlyIndexedPropertyMixin):
+    """The WGSL extensions this build understands, measured from Chrome.
+
+    The iterable methods come from the indexed interceptor, which is how pyv8c serves
+    every ``array=`` collection: ``values`` hands out the names, ``keys`` hands out
+    positions where Chrome's setlike hands out the names again.
+    """
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="size", getter="get_size", side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="WGSLLanguageFeatures",
+        has_constructor=1,
+        array="iterable",
+    )
+
+    def __init__(self, names=_WGSL_LANGUAGE_FEATURES, **_):
+        self._names = tuple(str(name) for name in names)
+
+    def get_size(self): return len(self._names)
+
+    def fn_has(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('WGSLLanguageFeatures', 'has', 1, 0, constructor=False)
+        return str(dom_string(name)) in self._names
+
+    def _indexed_items(self): return list(self._names)
+
+
+@interface('GPU', None)
+class GPU:
+    """The entry point to WebGPU, as a browser without a backend reports it."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="wgslLanguageFeatures", getter="get_wgslLanguageFeatures",
+                          side_effect=1),
+        ),
+        methods=(
+            MethodSpec(name="requestAdapter", callback="fn_requestAdapter"),
+            MethodSpec(name="getPreferredCanvasFormat",
+                       callback="fn_getPreferredCanvasFormat", side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="GPU",
+        has_constructor=1,
+    )
+
+    def __init__(self, services=None, **_):
+        self._services = services
+        self._features = None
+
+    def get_wgslLanguageFeatures(self):
+        if self._features is None:
+            environment = environment_of(self._services)
+            gpu = getattr(environment, "gpu", None) if environment is not None else None
+            names = gpu.wgsl_features if gpu is not None and gpu.wgsl_features else None
+            self._features = WGSLLanguageFeatures(names=names or _WGSL_LANGUAGE_FEATURES)
+        return self._features
+
+    def fn_getPreferredCanvasFormat(self, *_extra):
+        """The spec's default, and what Chrome reports on this platform."""
+        return "bgra8unorm"
+
+    def fn_requestAdapter(self, *_extra):
+        """A browser with no backend has no adapter, which the API allows for."""
+        realm = getattr(self._services, "realm_services", None)
+        return realm.promise_resolve(pyv8.Null) if realm is not None else pyv8.Null
+
+
 __all__ = [
     "Navigator", "NavigatorUAData", "Geolocation", "Plugin", "PluginArray", "MimeType",
     "MimeTypeArray", "NetworkInformation", "BatteryManager", "DeprecatedStorageQuota",
     "MediaDeviceInfo", "MediaDevices", "Permissions", "PermissionStatus", "MediaMetadata",
     "MediaSession", "ServiceWorkerContainer", "CredentialsContainer", "Bluetooth",
-    "StorageManager",
+    "StorageManager", "GPU", "WGSLLanguageFeatures",
 ]
 
 
@@ -1324,8 +1550,11 @@ FEATURE = FeatureImplementation(
         "BatteryManager": BatteryManager,
         "DeprecatedStorageQuota": DeprecatedStorageQuota,
         "Navigator": Navigator,
+        "GPU": GPU,
+        "WGSLLanguageFeatures": WGSLLanguageFeatures,
         "NavigatorUAData": NavigatorUAData,
         "MediaDeviceInfo": MediaDeviceInfo,
+        "InputDeviceInfo": InputDeviceInfo,
         "MediaDevices": MediaDevices,
         "Permissions": Permissions,
         "PermissionStatus": PermissionStatus,

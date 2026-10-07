@@ -136,13 +136,13 @@ def cross_origin_check(member) -> int:
 
 
 def apply_template_flags(config, template):
-    """The interface-wide flags one baseline template states."""
+    """The interface-wide flags one baseline template states.
+
+    ``array`` is not one of them: it is a word, and ``InterfaceTable`` decides which.
+    """
     for source, target in TEMPLATE_FLAGS:
         if template.get(source):
             config[target] = 1 if target == "immutable" else True
-    # ``array`` marks a Web IDL indexed collection; the bridge shares FlagArrayProto's bit layout.
-    if template.get("array") and not config.get("array"):
-        config["array"] = 1
     return config
 
 
@@ -475,9 +475,9 @@ class InterfaceCompiler:
             elif callback_name in enabled and self._fills_stub(callback_name, registration):
                 options[key] = self.stubs.handler(name, callback_name)
         constants = {entry.name: entry for entry in source.constants_value}
-        for field, value in cls.__dict__.items():
-            if not field.startswith("_") and isinstance(value, int):
-                constants.setdefault(field, ConstantSpec(name=field, value=value))
+        #: Constants come from the baseline alone: harvesting plain ``int`` class attributes put
+        #: implementation state (``AudioNode.inputs``, ``ScriptProcessorNode.channel_count``) on
+        #: 46 interface objects, where Chrome lets a subclass inherit ``Node.ELEMENT_NODE``.
         for constant in interface.constants:
             if constant.get("resolved") and isinstance(constant.get("value"), int):
                 constants[constant["name"]] = ConstantSpec(name=constant["name"], value=constant["value"])
@@ -489,10 +489,10 @@ class InterfaceCompiler:
             attributes=tuple(attributes),
             constants_value=tuple(constants.values()),
             to_string_tag=interface.tag or source.to_string_tag or name,
-            has_constructor=(
-                source.has_constructor if "__v8_idl_spec__" in cls.__dict__
-                else (1 if interface.has_interface_object else 0)
-            ),
+            #: Exposure belongs to the baseline, as ``FeatureImplementation`` says: a class that
+            #: stated ``has_constructor=0`` used to lose ``X.prototype.constructor``, so the page
+            #: read ``Object`` there and the constructor arity with it.
+            has_constructor=1 if interface.has_interface_object else 0,
         )
         if parent_name is not None:
             # A parent that is not an interface has no template: the binding reads the Python base.
@@ -504,9 +504,20 @@ class InterfaceCompiler:
         elif template.get("call_handler"):
             options["call"] = self.stubs.call_handler(name)
         apply_template_flags(options, template)
+        #: A namespace (``CSS``) is an object in Chrome, a function here: the interface object on
+        #: the global is the binding's, and neither ``as_object`` nor ``has_constructor=0`` turns
+        #: it into one -- this needs the native layer or a JS bootstrap (see examples/5s/README).
+
         if source.array:
             options["array"] = source.array
-        if interface.constructor_length is not None:
+        elif interface.array:
+            options["array"] = interface.array
+        if interface.constructor_stated and not interface.constructor_new:
+            #: An interface object with no constructor has length 0, whatever a stated arity
+            #: says: 548 of 548 in the reference reading, which is where SnapEvent and
+            #: FencedFrameConfig were the last two arity differences.
+            options["length"] = 0
+        elif interface.constructor_length is not None:
             options["length"] = interface.constructor_length
         if interface.constructor_stated:
             options["constructor_behavior"] = (1 if interface.constructor_new else 0) | (

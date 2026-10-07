@@ -8,61 +8,10 @@ from ...foundation.arguments import MISSING, boolean, dom_string, missing_error,
 from ...foundation.errors import dom_exception
 from .events import EventTarget
 from .html_elements import HTMLElement, _set_url_value, _url_value
+from .media_source import can_play_type, media_facts
 
-#: Chrome's answers, measured: what a bare type answers, and the codec families it plays
-#: in that container.  A container missing here is one it cannot play at all.
-_CONTAINERS = {
-    "audio/mpeg": ("probably", ("mp3",)),
-    "audio/mp3": ("probably", ("mp3",)),
-    "audio/aac": ("probably", ()),
-    "audio/flac": ("probably", ()),
-    "audio/mp4": ("maybe", ("mp4a", "opus", "flac")),
-    "audio/ogg": ("maybe", ("vorbis", "opus", "flac")),
-    "audio/wav": ("maybe", ("1",)),
-    "audio/x-wav": ("maybe", ("1",)),
-    "audio/webm": ("maybe", ("vorbis", "opus")),
-    "video/mp4": ("maybe", ("avc1", "avc3", "hvc1", "hev1", "vp09", "av01", "mp4a", "opus",
-                            "flac")),
-    "video/webm": ("maybe", ("vp8", "vp9", "vp09", "av01", "opus", "vorbis")),
-    "video/ogg": ("maybe", ("opus", "vorbis", "vp8")),
-    "application/ogg": ("maybe", ("vorbis", "opus", "flac")),
-}
-
-#: Families Chrome is only sure of once a profile follows the name.
-_PROFILE_NEEDED = frozenset({"avc1", "avc3"})
-
-
-def _media_type(text):
-    """Split ``type/subtype; codecs="a, b"`` the way Chrome reads it.
-
-    The container is trimmed and lowered; a codec string is neither, which is why
-    ``codecs="MP3"`` is not a codec it plays.
-    """
-    container, _, parameters = text.partition(";")
-    for parameter in parameters.split(";"):
-        name, _, value = parameter.partition("=")
-        if name.strip().lower() == "codecs":
-            return container.strip().lower(), tuple(
-                part.strip().strip('"') for part in value.split(",") if part.strip()
-            )
-    return container.strip().lower(), ()
-
-
-def _plays(container, codecs):
-    answer = _CONTAINERS.get(container)
-    if answer is None:
-        return ""
-    bare, families = answer
-    if not codecs:
-        return bare
-    result = "probably"
-    for codec in codecs:
-        if not any(codec == family or codec.startswith(family + ".")
-                   for family in families):
-            return ""
-        if codec in _PROFILE_NEEDED:
-            result = "maybe"
-    return result
+#: The loose table and the codec parser live with the strict one, so the two questions cannot
+#: drift apart; see :mod:`media_source`.
 
 
 @interface('TimeRanges', None)
@@ -207,8 +156,7 @@ class HTMLMediaElement(HTMLElement):
     def fn_canPlayType(self, type=MISSING, *_extra):
         if type is MISSING:
             raise missing_error('HTMLMediaElement', 'canPlayType', 1, 0, constructor=False)
-        container, codecs = _media_type(str(dom_string(type)))
-        return _plays(container, codecs)
+        return can_play_type(dom_string(type), media_facts(self._services))
 
     def fn_play(self, *_extra):
         realm = getattr(self._services, "realm_services", None)

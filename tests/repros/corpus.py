@@ -3642,15 +3642,14 @@ CASES = (
         name="an_svg_element_leaves_its_interface_members_to_the_baseline",
         note="What an SVG element can do is its interface's business, and those "
              "interfaces are the baseline's placeholders: the element is real, its "
-             "members are not implemented here.",
+             "members are not implemented here -- but ``style`` is, which is where this "
+             "case used to answer with the placeholder value.",
         script="""(() => {
             const SVG = 'http://www.w3.org/2000/svg';
             const element = document.createElementNS(SVG, 'svg');
             return [typeof element.getBBox, String(element.style)];
         })()""",
-        expected=["function", "undefined"],
-        known_divergence=("the SVG element interfaces are baseline stubs, so their own "
-                          "members answer with the placeholder value instead of Chrome's"),
+        expected=["function", "[object CSSStyleDeclaration]"],
     ),
     Repro(
         name="create_element_ns_refuses_a_prefix_without_a_namespace",
@@ -4873,24 +4872,19 @@ CASES = (
                      " This element does not support attachShadow"]],
     ),
     Repro(
-        name="a_non_constructible_interface_has_no_constructor_property",
-        note="AbortSignal cannot be constructed, and this tree gives the prototype of such "
-             "an interface no constructor of its own, so the name read back is the "
-             "parent's; the interface object itself is still the right one.",
+        name="a_non_constructible_interface_object_is_its_prototypes_constructor",
+        note="AbortSignal cannot be constructed, and its prototype still answers with the "
+             "interface object itself: exposure belongs to the baseline, the arity does not.",
         script="""(() => {
             const describe = (entry, parent) => [entry.name,
                 Object.getOwnPropertyDescriptor(entry.prototype, 'constructor') ? 'own'
                                                                               : 'absent',
+                entry.prototype.constructor === entry,
                 Object.getPrototypeOf(entry.prototype) === parent.prototype];
             return [describe(AbortSignal, EventTarget), describe(BeforeUnloadEvent, Event),
-                    typeof BeforeUnloadEvent];
+                    BeforeUnloadEvent.length, typeof BeforeUnloadEvent];
         })()""",
-        expected=[["AbortSignal", "absent", True], ["BeforeUnloadEvent", "absent", True],
-                  "function"],
-        known_divergence="the prototype of an interface the baseline marks allow_new=false"
-                         " carries no constructor property here, so the name read through it"
-                         " is the parent's; Chrome's own property answers 'AbortSignal'."
-                         " BeforeUnloadEvent shows the same gap, so it is a property of this"
-                         " tree's interface objects rather than of AbortSignal.",
+        expected=[["AbortSignal", "own", True, True], ["BeforeUnloadEvent", "own", True, True],
+                  0, "function"],
     ),
 )

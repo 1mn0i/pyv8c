@@ -41,7 +41,9 @@ class TrustedHTML(_TrustedValue):
 
 @interface('TrustedScript', None)
 class TrustedScript(_TrustedValue):
-    __v8_idl_spec__ = _SPEC.replace(to_string_tag="TrustedScript")
+    #: Code-like: ``eval`` and the Function constructor stringify this value instead of
+    #: handing it straight back, which is what lets a page run its own policy's source.
+    __v8_idl_spec__ = _SPEC.replace(to_string_tag="TrustedScript", code_like=True)
 
 
 @interface('TrustedScriptURL', None)

@@ -49,6 +49,46 @@ def test_the_defaults_are_the_shipped_profile():
         plugin["name"] for plugin in profile["plugins"]]
 
 
+def test_the_measured_facts_read_back_as_views():
+    """One key per fact, and a profile without them leaves the page its own fallback."""
+    environment = BrowserEnvironment({
+        "viewport.outer_inset_width": 4,
+        "viewport.outer_inset_height": 30,
+        "media.constraints": ["width", "height"],
+        "speech.voices": [{"name": "Voice", "lang": "en-GB", "local_service": True}],
+        "permissions.names": ["camera"],
+        "permissions.granted": ["camera"],
+        "permissions.spec_names": {"camera": "video_capture"},
+        "gpu.wgsl_features": ["subgroup_id"],
+    })
+
+    assert (environment.viewport.outer_inset_width,
+            environment.viewport.outer_inset_height) == (4, 30)
+    assert environment.media.constraints == ("width", "height")
+    assert environment.speech.voices == ({"name": "Voice", "lang": "en-GB",
+                                          "local_service": True, "default": False},)
+    assert environment.permissions.names == ("camera",)
+    assert environment.permissions.granted == ("camera",)
+    assert dict(environment.permissions.spec_names) == {"camera": "video_capture"}
+    assert environment.gpu.wgsl_features == ("subgroup_id",)
+
+    # An empty list is an answer: a profile reporting no voices leaves the page its fallback.
+    empty = BrowserEnvironment({"speech.voices": [], "media.constraints": []})
+    assert empty.speech.voices == ()
+    assert empty.media.constraints == ()
+
+
+@pytest.mark.parametrize("key, value", (
+    ("speech.voices", [{"lang": "en-US"}]),               # a voice needs a name
+    ("speech.voices", [{"name": "a"}, {"name": "a"}]),    # and names do not repeat
+    ("permissions.spec_names", ["camera"]),               # a table, not a list
+    ("viewport.outer_inset_width", True),                 # an inset is a number
+))
+def test_a_measured_fact_of_the_wrong_shape_is_refused(key, value):
+    with pytest.raises((TypeError, ValueError)):
+        BrowserEnvironment({key: value})
+
+
 def test_resolved_fills_every_key_and_to_dict_holds_only_what_was_given():
     environment = BrowserEnvironment({"screen.width": 800})
     assert environment.to_dict() == {"screen.width": 800}
@@ -143,8 +183,9 @@ def test_a_saved_profile_is_json_a_strict_parser_accepts():
 def test_a_document_of_another_version_is_refused():
     with pytest.raises(ValueError):
         BrowserEnvironment.loads('{"schema": 99}')
-    with pytest.raises(ValueError):
-        BrowserEnvironment({"schema": 2})
+    for other in (SCHEMA_VERSION - 1, SCHEMA_VERSION + 1):
+        with pytest.raises(ValueError):
+            BrowserEnvironment({"schema": other})
 
 
 def test_unknown_keys_and_bad_values_name_the_key():

@@ -7,6 +7,7 @@ import pytest
 import pyv8
 
 from pyv8c import Browser
+from pyv8c.engine.baseline import BASELINE_SCHEMA
 
 BASELINE = Path(__file__).resolve().parents[2] / "pyv8c" / "baselines" / "interface-baseline.zip"
 
@@ -38,7 +39,7 @@ def test_default_baseline_is_bundled_and_describes_snapshot():
         info = browser.interface_baseline_info
         assert info["interface_count"] > 1000
         assert len(info["sha256"]) == 64
-        assert info["schema"] == 5
+        assert info["schema"] == BASELINE_SCHEMA
     finally:
         browser.close()
 
@@ -72,7 +73,8 @@ def test_custom_baseline_path_is_absolute_and_snapshot_is_frozen(tmp_path, monke
     [
         ("[]", "root must be an object"),
         ("{}", "must contain _webidl metadata"),
-        ('{"_webidl": {"schema": 5}, "Broken": {"parent": null}}', "not a compact schema 5"),
+        ('{"_webidl": {"schema": %d}, "Broken": {"parent": null}}' % BASELINE_SCHEMA,
+         "not a compact schema"),
     ],
 )
 def test_invalid_baseline_is_rejected_when_browser_is_created(tmp_path, content, error):
@@ -92,7 +94,7 @@ def test_old_baseline_schema_is_rejected_explicitly(tmp_path):
     document["_webidl"]["schema"] = 2
     path = tmp_path / "schema-2.json"
     path.write_text(json.dumps(document), encoding="utf-8")
-    with pytest.raises(ValueError, match="expected 5"):
+    with pytest.raises(ValueError, match=f"expected {BASELINE_SCHEMA}"):
         Browser(interface_baseline_path=path)
 
 
@@ -101,7 +103,7 @@ def test_non_compact_baseline_is_rejected_explicitly(tmp_path):
     document["_webidl"]["compact"] = False
     path = tmp_path / "audit.json"
     path.write_text(json.dumps(document), encoding="utf-8")
-    with pytest.raises(ValueError, match="not a compact schema 5"):
+    with pytest.raises(ValueError, match="not a compact schema"):
         Browser(interface_baseline_path=path)
 
 
@@ -112,7 +114,7 @@ def test_baseline_parent_cycle_is_rejected_when_browser_is_created(tmp_path):
     }
     path = tmp_path / "cycle.json"
     path.write_text(json.dumps({
-        "_webidl": {"schema": 5, "compact": True}, "First": entry("Second", "First"),
+        "_webidl": {"schema": BASELINE_SCHEMA, "compact": True}, "First": entry("Second", "First"),
         "Second": entry("First", "Second"),
     }), encoding="utf-8")
     with pytest.raises(ValueError, match="parent cycle"):

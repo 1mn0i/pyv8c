@@ -158,8 +158,16 @@ def site_relation(url, current_url) -> str:
 
 
 def referer_for(url, current_url) -> str:
-    """``Referer`` under ``strict-origin-when-cross-origin``: full URL, else origin."""
+    """``Referer`` under ``strict-origin-when-cross-origin``: full URL, else origin.
+
+    Only an http(s) URL can be a referrer: a worker started from a ``blob:`` script reports that
+    blob as its URL, and a blob is never put on the wire as a referrer -- Chrome sends no
+    ``Referer`` at all for such a request (measured against Chrome 154, 2026-10-07, on the
+    challenge's own worker fetch of ``/pat/…``; the engine used to send the owner page's URL).
+    """
     if not url or not current_url:
+        return ""
+    if urlsplit(str(current_url)).scheme.lower() not in ("http", "https"):
         return ""
     if origin_string(url) == origin_string(current_url):
         return str(current_url)

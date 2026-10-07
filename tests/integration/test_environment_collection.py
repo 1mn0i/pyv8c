@@ -39,6 +39,18 @@ def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, c
     assert len(gaps) > 20
     assert "computedRole" in gaps["Element"]
     assert "slot" not in gaps["Element"]
+    # The interface objects are read too: ``CSS.animationWorklet`` lives there, not on a
+    # prototype, and this reference browser does not install it.
+    objects = surface["interface_gaps"]
+    assert objects, "no interface object was measured"
+    assert "animationWorklet" in objects["CSS"]
+    assert "supports" not in objects["CSS"]
+    # …and the array word each interface is measured to have in this release.
+    words = surface["array_words"]
+    assert words, "no array word was measured"
+    assert words["NodeList"] == "iterable"
+    assert words["HTMLCollection"] == "iterator"
+    assert "Cache" not in words, "Cache.keys is an async method, not an iterator member"
     assert surface["baseline_digest"] == BaselineRepository.load().digest
 
     profile = BrowserEnvironment.from_file(path)

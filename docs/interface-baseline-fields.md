@@ -79,6 +79,18 @@ AMD 集显）。这份 profile 已取代 2026-09-23 那份成为运行时默认�
 换参照浏览器时重跑 `python tools/collect_environment.py --headed --window-size 1920,1080`（不需要原生
 pyv8）即可。
 
+媒体那五条事实的**探针清单由解析器词汇生成**（`web/dom/media_source.py` 的 `probe_candidates()` 与
+`WEBRTC_CONTENT_TYPES`）：往 `CONTAINER_CODECS`/`PLAY_CONTAINERS`/`SELF_CONTAINED`/`_SIMPLE_CODECS`/
+`WEBRTC_VIDEO_FAMILIES`/`WEBRTC_AUDIO_CODECS` 里加了容器或 codec 族之后**要重跑一次采集**——profile 的
+`media.containers` 是**按容器整体覆盖**内置表的，旧档案会把新加的族答成 `false`。守护见
+`tests/unit/test_collect_environment.py`。
+
+**schema 2–3** 起媒体事实是六条：`media.containers`/`media.self_contained`/`media.hardware_decode`（解容器与
+硬解）、`media.webrtc`（`{decode, encode}` 各自携带的 `video/VP8` 式名字）、`media.hardware_encode`（**编码侧**
+硬件族，与解码侧不同：本机解 H.264 用硬件、编 H.264 用软件）与 `media.devices`（机器列出的采集设备，按 kind、
+按机器自己的顺序——`enumerateDevices()` 除数量与 kind 外没有可移植的事实：id 与 label 在授权前是空的）。
+旧档案会被拒载，理由是缺这些事实时 `encodingInfo` 与 `enumerateDevices()` 无法作答。
+
 metadata.report 仍包含 unresolved 签名；接口数量、成员数量和提取成功都不能当作功能兼容率。
 
 CHROMIUM_VERSION 当前为 154.0.8030.0，它是源码获取工具的默认目标。
@@ -106,7 +118,8 @@ ZIP 的 renderer_snapshot 是生成目录来源信息，不含足以独立证明
 ```
 
 接口名就是顶层键，不另设 identity 对象。成员分组是列表，成员自身通过 kind 区分 attribute/operation。
-所有父接口必须存在，继承不能成环；运行时拒绝非 schema 5 或 compact 不为 true 的输入。
+所有父接口必须存在，继承不能成环；运行时拒绝非 schema 6 或 compact 不为 true 的输入，也拒绝
+`template.array` 不是 `"iterator"`/`"iterable"`/缺席的输入（schema 5 的布尔会被点名，并给出重生成或迁移的做法）。
 
 ## 字段职责
 
@@ -115,7 +128,8 @@ ZIP 的 renderer_snapshot 是生成目录来源信息，不含足以独立证明
 | parent / tag / exposed_in | 父接口、toString tag、允许的 realm 类别 |
 | constructor.exposed | 是否允许暴露接口对象，与是否能 new 不相同 |
 | constructor.allow_new / allow_call / length | 构造/普通调用许可与 JS Function.length |
-| template | immutable_proto、undetectable、global_this、as_object、unconstructable、array 等模板信息 |
+| template | immutable_proto、undetectable、global_this、as_object、unconstructable 等模板信息 |
+| template.array | 该接口从 `Array.prototype` 借了什么：`"iterator"`（只借 `@@iterator`）、`"iterable"`（再加 `entries`/`keys`/`values`/`forEach`）或缺席；抽取器从生成的绑定与 IDL 算出（`iterable<>`/`maplike<>`/`setlike<>`，或那四个是 operation），`IdlSpec.array` 收同一套词 |
 | template.call_handler / access_check | 可调用对象与访问检查元数据 |
 | template.handlers | named、indexed、cross_origin.named/indexed 的角色声明 |
 | members.instance / prototype / interface | 安装在实例、原型、接口对象上的成员 |
@@ -162,11 +176,26 @@ baseline 列出的是 Chromium 能装的全部成员与接口，而参照浏览�
 - `prototype_gaps`：只看差集——baseline 在每个接口原型上声明的成员里，参照浏览器没装的那些；没有
   全局构造器的接口（`HTMLDocument`、`DocumentType`、`Text`、`Comment` 等）用 `document`、
   `createElement(...)` 一类实例的 `Object.getPrototypeOf(x).constructor.name` 补上测量；
+- `interface_gaps`：同样只看差集，但针对 **接口对象自身**（`Object.getOwnPropertyNames(window[X])`）。
+  命名空间把成员放在这里而不是原型上——baseline 声明 `CSS.animationWorklet`、`SubtleCrypto.supports`、
+  `TrustedHTML.fromLiteral` 等，参照浏览器并不装；2026-10-07 加这一节之前，`CSS.animationWorklet`
+  会被装出来，而它是页面读得到的多余表面（判据见 `examples/5s/README.md`）。命名空间不是函数，
+  所以采集脚本对 `typeof window[X] === 'object'` 的名字同样读一次；
+- `array_words`：`{接口: 词}`，词就是 `template.array` 那套——`"iterator"`（参照浏览器在这个接口上只发布
+  `@@iterator`）、`"iterable"`（还发布 `entries`/`keys`/`values`/`forEach`）。测量沿原型链找**自有 descriptor**
+  （`Object.getOwnPropertyDescriptor` 逐层上溯），**不读值**：`CSSMathMax.prototype.values` 是 getter（长度）、
+  `Cache.prototype.keys` 是异步方法，按名字读值既会答错问题也会跑页面代码，只有 `typeof d.value === 'function'`
+  才算迭代器成员。只对 baseline 声明过的接口记录（与缺口同一条规则）；没有 `@@iterator` 的接口**不记录**——
+  那正是该字段的第三种取值。若某接口有 `@@iterator` 却只有部分具名方法，采集器**直接报错**而不是二选一
+  （2026-10-07 实测：baseline 接口里没有这种形状；`Iterator.prototype` 是 `@@iterator` + 仅 `forEach`，但它是
+  V8 内建、baseline 并不声明）。`InterfaceTable` 取词时**实测优先**，其次才用 baseline 自己的；
 - `baseline_digest`：这些缺口是相对哪份 baseline 测出来的（`BaselineSnapshot.digest`）。
 
 `engine/baseline.py` 读这一段，`InterfaceTable` 用它收窄：`Window` 用窗口面（覆盖它承载的全部位置），
-其他接口把缺口里的 `prototype` 成员去掉——`instance` 与 `interface` 位置的成员不是
-`Interface.prototype` 的自有属性，本来就不在测量范围内。缺口里没有的接口整份保留，段缺席（旧 profile）
+其他接口把缺口里的成员按**位置**去掉——`prototype_gaps` 只作用于 `location == "prototype"`，
+`interface_gaps` 只作用于 `location == "interface"`（原型上有没有某个名字，不能说明接口对象上有没有），
+`instance` 位置的成员仍不在测量范围内：它们不在页面对每个接口都拿得到的那种对象上。`array_words` 不删成员，
+只改该接口的 `array` 取词（`Interface.array`），装配层据此决定向 `Array.prototype` 借哪几个内建。缺口里没有的接口整份保留，段缺席（旧 profile）
 或形状不对时按"没测过"处理，行为与不传面时相同；`baseline_digest` 与当前 baseline 不符时缺口整体不启用
 （拿 145 副本做版本测试会安全回退到旧行为）。`member()` 在祖先链上找不到某名字、而它又在本接口缺口里时，
 也不再往子接口里找：参照浏览器没有的名字不该被后代捞回来装上。

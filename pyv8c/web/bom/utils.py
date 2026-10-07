@@ -35,6 +35,64 @@ def is_secure_context(url):
     return False
 
 
+#: How many creator hops to follow before calling it unknown.
+CREATOR_HOPS = 8
+
+
+def page_secure_context(page, url=None):
+    """Whether a ``Page``'s document is in a secure context, its creator included.
+
+    ``about:blank`` and ``about:srcdoc`` carry no scheme of their own, so a browser inherits the
+    context from the document that created them: an inline frame inside an ``https`` page is a
+    secure context, and Chrome exposes ``navigator.userActivation`` and its thirty relatives
+    there.  ``Page.origin`` already inherits along this same ``parent_page`` link
+    (``origin_tuple(..., inherited=...)``); the secure context has to follow it too, or the two
+    disagree about the frame -- which is exactly the probe Cloudflare's widget makes (measured
+    against Chrome 2026-10-06, see ``examples/5s/script/secure_frame.py``).
+
+    ``url`` is for a commit still in flight, where the page has not taken the new address yet.
+    """
+    for _hop in range(CREATOR_HOPS):
+        if page is None:
+            return False
+        text = str(url if url is not None else getattr(page, "url", "") or "")
+        if urlsplit(text).scheme.lower() not in ("", "about"):
+            return is_secure_context(text)
+        url = None
+        page = getattr(page, "parent_page", None)
+    return False
+
+
+def window_secure_context(window, url=None):
+    """``window``'s secure context, found through the realm's page rather than its parent.
+
+    ``window.parent`` is an API-level accessor and a sandboxed frame has none to give: the
+    creator is an *internal* link, and ``PageServices._page_realm.page`` is where
+    ``ancestor_origins()`` already reads it from.
+    """
+    text = url
+    if text is None:
+        try:
+            text = window.location.get_href()
+        except BaseException:  # noqa: BLE001 - a window on its way out is not this question
+            return False
+    services = getattr(window, "_services", None)
+    page = getattr(getattr(services, "_page_realm", None), "page", None)
+    if page is None:
+        return is_secure_context(text)
+    return page_secure_context(page, text)
+
+
+def settled(services, *, value=None, error=None):
+    """A promise in this realm, already settled either way."""
+    promise, resolve, reject = services.realm_services.make_promise()
+    if error is None:
+        resolve(value)
+    else:
+        reject(services.realm_services.js_error_value(error))
+    return promise
+
+
 def window_attribute(name, getter, setter=None, *, cross_origin=False, flags=0, side_effect=SideEffectType.kHasSideEffect):
     check = FlagCrossOriginCheck.kCheck if cross_origin else FlagCrossOriginCheck.kDoNotCheck
     return AttributeSpec(name=name, getter=getter, setter=setter, location=FlagLocation.kInstance, property_flags=flags, cross_origin_get_check=check, cross_origin_set_check=check, side_effect=side_effect)

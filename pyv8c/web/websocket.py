@@ -169,17 +169,17 @@ class WebSocket(EventTarget):
             value = Blob([bytes_from_value(data) or b""])
         else:
             value = bytes_from_value(data) or b""
-        self.fn_dispatchEvent(MessageEvent("message", {
+        self.fn_dispatchEvent(MessageEvent("message", {"isTrusted": True, 
             "data": value, "origin": self._services.realm_services.url,
             "source": self._services.document_services.window,
         }))
 
     def _on_error(self, ws, error, net_error=None):
-        self.fn_dispatchEvent(ErrorEvent("error", {"message": str(error)}))
+        self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, "message": str(error)}))
 
     def _on_close(self, ws, code, reason, was_clean=True):
         self._state_value = self.CLOSED
-        self.fn_dispatchEvent(CloseEvent("close", {
+        self.fn_dispatchEvent(CloseEvent("close", {"isTrusted": True, 
             "code": code, "reason": reason, "wasClean": was_clean,
         }))
         self._services.context_services.discard_websocket(ws)

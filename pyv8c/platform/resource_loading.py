@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote_to_bytes, urljoin, urlsplit
 
 import pyv8
 from ..foundation.logging import logger
@@ -23,6 +23,40 @@ from ..web.fetch.response import Response
 from ..network.models import NetworkRequest
 from ..network.redirects import Deliver, RedirectFailure, next_hop
 from .request_headers import browser_headers, fetch_mode
+
+
+#: What ``<link rel=preload as=...>`` stands for: the fetch type, the request destination, and
+#: how the load completes (an image completes as one so its element answers for the size).
+PRELOAD_KINDS = {
+    "image": ("image", "image", "img"),
+    "font": ("font", "font", "preload"),
+    "script": ("script", "script", "preload"),
+    "style": ("style", "style", "preload"),
+    "fetch": ("fetch", "fetch", "preload"),
+    "track": ("track", "track", "preload"),
+}
+
+
+def data_url_response(url, services):
+    """The response a ``data:`` URL carries, decoded in place.
+
+    A ``data:`` URL *is* its payload: Chromium fetches nothing for it, and a frame whose
+    ``src`` is one gets its document without waiting on an answer no network would give.
+    """
+    header, comma, payload = str(url)[len("data:"):].partition(",")
+    if not comma:
+        raise NetworkError("data: URL carries no payload")
+    if header.endswith(";base64"):
+        header = header[: -len(";base64")]
+        try:
+            body = base64.b64decode(payload + "=" * (-len(payload) % 4), validate=False)
+        except ValueError as exc:  # binascii.Error is one
+            raise NetworkError(f"data: URL payload is not base64: {exc}") from None
+    else:
+        body = unquote_to_bytes(payload)
+    content_type = header or "text/plain;charset=US-ASCII"
+    return Response(body, {"url": str(url), "headers": {"content-type": content_type}},
+                    services=services)
 
 
 class RequestHandle:
@@ -322,13 +356,15 @@ class ResourceController:
         destination = ResourceController._destination(request)
         # An https URL negotiates h2, where Chrome sends no Connection header.
         http_version = 2 if urlsplit(str(target)).scheme == "https" else 1
+        #: A worker's request reports the worker's own (often ``blob:``) URL in
+        #: ``Referer``/``Sec-Fetch-Site``/``Origin``, not the owner document's.
         request["headers"] = browser_headers(
             page.environment,
             destination=destination,
             mode=fetch_mode(destination, request.get("mode")),
             method=str(request.get("method", "GET")).upper(),
             url=target,
-            current_url=page.url,
+            current_url=request.get("initiator_url") or page.url,
             browser_initiated=bool(request.get("browser_initiated")),
             user_activated=bool(request.get("user_activated")),
             content_type=request.get("content_type"),
@@ -678,6 +714,13 @@ class ResourceController:
                     response, error = None, exc
                 page.tasks.post(lambda: deliver(response, error))
                 return
+            if target[:5].lower() == "data:":
+                try:
+                    response, error = data_url_response(target, page.services), None
+                except BaseException as exc:
+                    response, error = None, exc
+                page.tasks.post(lambda: deliver(response, error))
+                return
             if page.resource_loader:
                 self.follow_async(target, given, self.loader_send_async(page, handle), landed,
                                   finalize=self.apply_response_policy)
@@ -740,8 +783,17 @@ class ResourceController:
                 page.scripts.queue.append(node)
             self.track_document_resource(node, src, {"method": "GET", "mode": "same-origin", "resource_type": "script"}, "script")
             return
-        if tag == "link" and "stylesheet" not in str(node.attributes.get("rel", "")).lower().split():
-            return
+        preload = None
+        if tag == "link":
+            rel = str(node.attributes.get("rel", "")).lower().split()
+            if "stylesheet" not in rel:
+                # A preload link asks for a resource no element uses yet; ``as`` says the kind.
+                if "preload" not in rel and "modulepreload" not in rel:
+                    return
+                preload = PRELOAD_KINDS.get(
+                    str(node.attributes.get("as", "fetch")).lower())
+                if preload is None:
+                    return
         if tag == "link":
             src = node.attributes.get("href", "")
         elif tag in ("img", "audio", "video", "source"):
@@ -764,10 +816,14 @@ class ResourceController:
         # ``media`` lumps three elements that the browser reports apart.
         destination = {"link": "style", "img": "image", "audio": "audio",
                        "video": "video", "source": "video"}.get(tag, tag)
+        kind = tag
+        if preload is not None:
+            #: A preload reports the kind it asked for, in both fields a request carries.
+            resource_type, destination, kind = preload
         request = {"method": "GET", "resource_type": resource_type, "destination": destination}
         if tag == "iframe":
             request["mode"] = "navigate"
-        self.track_document_resource(node, src, request, tag)
+        self.track_document_resource(node, src, request, kind)
 
     def track_document_resource(self, node, url, request, kind):
         page = self.page
@@ -861,8 +917,14 @@ class ResourceController:
             page.lifecycle.maybe_fire_document_load()
             return
         if kind == "img":
-            # ``complete`` turns true the moment a load settles, either way.
+            # ``complete`` turns true when a load settles, and the bytes are kept: the declared
+            # size is what ``naturalWidth``/``naturalHeight`` answer with.
             node._image_complete = True
+            if not error and response is not None:
+                body = getattr(response, "body", None)
+                #: A loader may answer with text, and a header parser reads bytes.
+                node._image_bytes = body.encode("utf-8") if isinstance(body, str) else body
+                node._image_type = str(response.headers.fn_get("content-type") or "")
         if error:
             if kind == "script":
                 page.lifecycle.dispatch_script_error(node, error)

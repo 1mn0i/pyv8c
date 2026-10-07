@@ -4,7 +4,7 @@ import pyv8
 
 
 from ..foundation.errors import NotFoundError
-from ..web.bom.utils import is_secure_context
+from ..web.bom.utils import page_secure_context
 from ..web.dom.events import Event, MOTION_EVENT_TYPES
 
 #: What Chrome reports for the interval of a reading with no sensor behind it.
@@ -291,7 +291,7 @@ class DocumentLifecycle:
         """
         page = self.page
         window = page.window
-        if not is_secure_context(page.url):
+        if not page_secure_context(page):
             return
         for name in MOTION_EVENT_TYPES if event_type is None else (event_type,):
             if not window._listeners.get(name):

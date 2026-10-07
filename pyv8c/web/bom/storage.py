@@ -10,8 +10,62 @@ from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from ...engine.features import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
 from ..dom.utils import OBJECT_PROTOTYPE_NAMES
+from .utils import settled
 
-__all__ = ["Storage"]
+@interface('StorageBucket', None)
+class StorageBucket:
+    """A bucket that holds nothing: a render keeps no storage between loads."""
+
+    __v8_idl_spec__ = IdlSpec(
+        methods=(
+            MethodSpec(name="persist", callback="fn_persist", length=0, side_effect=1),
+            MethodSpec(name="persisted", callback="fn_persisted", length=0, side_effect=1),
+            MethodSpec(name="estimate", callback="fn_estimate", length=0, side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="StorageBucket",
+        has_constructor=1,
+    )
+
+    def __init__(self, name="", services=None, **_):
+        self._name = str(name)
+        self._services = services
+
+    def fn_persist(self, *_extra): return settled(self._services, value=False)
+    def fn_persisted(self, *_extra): return settled(self._services, value=False)
+    def fn_estimate(self, *_extra):
+        return settled(self._services, value={"usage": 0, "quota": 0})
+
+
+@interface('StorageBucketManager', None)
+class StorageBucketManager:
+    __v8_idl_spec__ = IdlSpec(
+        methods=(
+            MethodSpec(name="keys", callback="fn_keys", length=0, side_effect=1),
+            MethodSpec(name="open", callback="fn_open", length=2, side_effect=1),
+            MethodSpec(name="delete", callback="fn_delete", length=1, side_effect=1),
+        ),
+        constructor_behavior=0,
+        to_string_tag="StorageBucketManager",
+        has_constructor=1,
+    )
+
+    def __init__(self, services=None, **_):
+        self._services = services
+
+    def fn_keys(self, *_extra): return settled(self._services, value=[])
+    def fn_open(self, name=MISSING, options=pyv8.Undefined, *_extra):
+        if name is MISSING:
+            raise missing_error('StorageBucketManager', 'open', 1, 0, constructor=False)
+        return settled(self._services, value=StorageBucket(name=dom_string(name),
+                                                           services=self._services))
+    def fn_delete(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('StorageBucketManager', 'delete', 1, 0, constructor=False)
+        return settled(self._services, value=None)
+
+
+__all__ = ["Storage", "StorageBucket", "StorageBucketManager"]
 
 
 @interface('Storage', None)

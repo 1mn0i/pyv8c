@@ -381,6 +381,163 @@ PROBES = {
                       showOpenFilePicker: typeof window.showOpenFilePicker } };
 })()""",
     },
+    "surface": {
+        "note": "every member of the main DOM/BOM objects by kind (accessor, value, function arity)",
+        "fixture": (RECT_PAGE, 0.6),
+        "probe": """(function () {
+  //: Enumerated, never hand-listed: a list only confirms what someone already thought of.
+  //: Descriptors only, so no getter runs and the page is undisturbed.
+  var describe = function (target) {
+    var out = {}, walk = target, depth = 0;
+    try {
+      while (walk && depth < 8) {
+        var names = Object.getOwnPropertyNames(walk);
+        for (var i = 0; i < names.length; i++) {
+          var name = names[i];
+          if (Object.prototype.hasOwnProperty.call(out, name)) continue;
+          var d = Object.getOwnPropertyDescriptor(walk, name);
+          if (!d) continue;
+          var kind;
+          if (d.get || d.set) kind = (d.get ? 'get' : '') + (d.set ? '/set' : '');
+          else if (typeof d.value === 'function') kind = 'fn:' + d.value.length;
+          else kind = 'value:' + (d.value === null ? 'null' : typeof d.value);
+          out[name] = kind + (d.enumerable ? '' : ' !enum');
+        }
+        //: The four labelled symbols: string names alone leave them uncompared.
+        var symbols = Object.getOwnPropertySymbols(walk);
+        for (var j = 0; j < symbols.length; j++) {
+          var symbol = symbols[j];
+          var label = symbol === Symbol.iterator ? '@@iterator'
+            : symbol === Symbol.asyncIterator ? '@@asyncIterator'
+            : symbol === Symbol.toStringTag ? '@@toStringTag'
+            : symbol === Symbol.toPrimitive ? '@@toPrimitive' : null;
+          if (!label || Object.prototype.hasOwnProperty.call(out, label)) continue;
+          var sd = Object.getOwnPropertyDescriptor(walk, symbol);
+          if (!sd) continue;
+          out[label] = (sd.value === undefined ? 'accessor'
+            : typeof sd.value === 'function' ? 'fn:' + sd.value.length
+            : 'value:' + (sd.value === null ? 'null' : typeof sd.value))
+            + (sd.enumerable ? '' : ' !enum');
+        }
+        walk = Object.getPrototypeOf(walk);
+        depth++;
+      }
+    } catch (e) { out['__walkError'] = String(e).slice(0, 80); }
+    return out;
+  };
+  var holders = {};
+  var add = function (label, target) {
+    try { holders[label] = target ? describe(target) : { __missing: 'no such object' }; }
+    catch (e) { holders[label] = { __error: String(e).slice(0, 80) }; }
+  };
+  add('window', window);
+  add('document', document);
+  add('document.body', document.body);
+  add('navigator', navigator);
+  add('screen', screen);
+  add('location', location);
+  add('history', history);
+  add('performance', performance);
+  add('crypto', crypto);
+  add('localStorage', localStorage);
+  add('sessionStorage', sessionStorage);
+  add('indexedDB', indexedDB);
+  var canvas = document.createElement('canvas');
+  add('canvas', canvas);
+  add('canvas.2d', canvas.getContext('2d'));
+  add('event', new Event('x'));
+  add('xhr', new XMLHttpRequest());
+  var iframe = document.createElement('iframe');
+  add('iframe', iframe);
+  add('iframe.contentWindow', iframe.contentWindow);
+  var constructors = ['Node','Element','HTMLElement','HTMLDocument','Document','Window',
+    'Navigator','XMLHttpRequest','Worker','WebSocket','EventSource','Response','Request','Headers',
+    'Blob','File','FormData','URLSearchParams','URL','Promise','TextEncoder','TextDecoder','Event',
+    'CustomEvent','DOMException','MutationObserver','ResizeObserver','IntersectionObserver',
+    'MessageChannel','MessagePort','BroadcastChannel','AbortController','PerformanceObserver',
+    'WorkerNavigator',
+    //: Namespaces: Chrome reports these as plain objects, and describing them shows a shape
+    //: difference (``length``/``name``/``prototype`` exist only on a function).
+    'CSS','GPUBufferUsage','GPUColorWrite','GPUMapMode','GPUShaderStage','GPUTextureUsage'];
+  for (var i = 0; i < constructors.length; i++) {
+    var ctor = window[constructors[i]];
+    add(constructors[i], ctor);
+    add(constructors[i] + '.prototype', ctor && ctor.prototype);
+  }
+  return holders;
+})()""",
+    },
+    "surface_wide": {
+        "note": "every member of every interface the window exposes, by kind (the whole surface)",
+        "fixture": (RECT_PAGE, 0.6),
+        "probe": """(function () {
+  //: The whole surface, not a curated list: every name the window exposes that is a function or
+  //: an object, with its ``prototype``.  Descriptors only, so the page is undisturbed.
+  var describe = function (target) {
+    var out = {}, walk = target, depth = 0;
+    try {
+      while (walk && depth < 8) {
+        var names = Object.getOwnPropertyNames(walk);
+        for (var i = 0; i < names.length; i++) {
+          var name = names[i];
+          if (Object.prototype.hasOwnProperty.call(out, name)) continue;
+          var d = Object.getOwnPropertyDescriptor(walk, name);
+          if (!d) continue;
+          var kind;
+          if (d.get || d.set) kind = (d.get ? 'get' : '') + (d.set ? '/set' : '');
+          else if (typeof d.value === 'function') kind = 'fn:' + d.value.length;
+          else kind = 'value:' + (d.value === null ? 'null' : typeof d.value);
+          out[name] = kind + (d.enumerable ? '' : ' !enum');
+        }
+        //: Symbols under a stable ASCII label: ``getOwnPropertyNames`` never lists them.  Only
+        //: the ones worth comparing are labelled -- an unlabelled symbol reads as a difference
+        //: between the engines when it is only two names for itself.
+        var symbols = Object.getOwnPropertySymbols(walk);
+        for (var j = 0; j < symbols.length; j++) {
+          var symbol = symbols[j];
+          var label = symbol === Symbol.iterator ? '@@iterator'
+            : symbol === Symbol.asyncIterator ? '@@asyncIterator'
+            : symbol === Symbol.toStringTag ? '@@toStringTag'
+            : symbol === Symbol.toPrimitive ? '@@toPrimitive' : null;
+          if (!label || Object.prototype.hasOwnProperty.call(out, label)) continue;
+          var sd = Object.getOwnPropertyDescriptor(walk, symbol);
+          if (!sd) continue;
+          out[label] = (sd.value === undefined ? 'accessor'
+            : typeof sd.value === 'function' ? 'fn:' + sd.value.length
+            : 'value:' + (sd.value === null ? 'null' : typeof sd.value))
+            + (sd.enumerable ? '' : ' !enum');
+        }
+        walk = Object.getPrototypeOf(walk);
+        depth++;
+      }
+    } catch (e) { out['__walkError'] = String(e).slice(0, 80); }
+    return out;
+  };
+  //: The window under its self-referencing names: describing it once is enough.
+  var SELF = {window: 1, self: 1, top: 1, parent: 1, frames: 1, globalThis: 1};
+  var holders = {};
+  var add = function (label, target) {
+    try { if (label in holders) return; holders[label] = target ? describe(target) : { __missing: 'no such object' }; }
+    catch (e) { holders[label] = { __error: String(e).slice(0, 80) }; }
+  };
+  var names = Object.getOwnPropertyNames(window).sort();
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    if (SELF[name]) continue;
+    var value = null;
+    try { value = window[name]; } catch (e) { continue; }
+    if (typeof value === 'function') {
+      add(name, value);
+      var prototype = null;
+      try { prototype = value.prototype; } catch (e) { prototype = null; }
+      if (prototype) add(name + '.prototype', prototype);
+    } else if (value && typeof value === 'object') {
+      add(name, value);
+    }
+  }
+  return holders;
+})()""",
+    },
     "events": {
         "note": "listener mechanics: order, once, capture, removal, dispatch return",
         "fixture": (RECT_PAGE, 0.6),

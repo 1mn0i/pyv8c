@@ -83,6 +83,25 @@ class _ChildList(list):
     def __delitem__(self, index): _bump_tree_version(); super().__delitem__(index)
 
 
+def _subtree_nodes(node):
+    """Every shadow-including descendant of *node*, depth first.
+
+    A shadow tree hangs off its host without being among its children, yet the insertion
+    steps reach it all the same: that is where an embedded widget keeps its own frame.
+    """
+    stack = list(getattr(node, "_children", ()) or ())
+    own_shadow = getattr(node, "_shadow_root", None)
+    if own_shadow is not None:
+        stack.append(own_shadow)
+    while stack:
+        child = stack.pop()
+        yield child
+        stack.extend(getattr(child, "_children", ()) or ())
+        shadow = getattr(child, "_shadow_root", None)
+        if shadow is not None:
+            stack.append(shadow)
+
+
 def _record_mutation(target, kind, **details):
     """Report one change to the document's mutation observers."""
     from .mutation import record_mutation
@@ -180,9 +199,21 @@ class Node(EventTarget):
 
     @property
     def isConnected(self):
+        """Whether the shadow-including root is a Document: a tree inside a shadow root
+        is connected through its host, even though its own root is that shadow root."""
         from .document import Document
 
-        return isinstance(self.root_node(), Document)
+        node = self
+        while node is not None:
+            root = node.root_node()
+            if isinstance(root, Document):
+                return True
+            # ``host`` is the shadow root's IDL attribute; the real link is the private one.
+            host = getattr(root, "_host", None)
+            if host is None:
+                return False
+            node = host
+        return False
 
     @property
     def baseURI(self):
@@ -352,6 +383,11 @@ class Node(EventTarget):
             if callback is not None and (not document_services.parsing or framed
                                          or not parser_built):
                 callback(node)
+                # A subtree can arrive in one insertion, so its detached frames and scripts
+                # said nothing: the steps run per shadow-including descendant.
+                if node.isConnected:
+                    for descendant in _subtree_nodes(node):
+                        callback(descendant)
         return node
 
     def _replace_children(self, nodes):
@@ -413,7 +449,10 @@ class Node(EventTarget):
         old = interface_value(old, 'Node', 'Node', 'replaceChild', 2, nullable=False)
         if not isinstance(new, Node) or not isinstance(old, Node):
             raise V8TypeError("Failed to execute 'replaceChild' on 'Node': parameter is not of type 'Node'.")
-        if old not in self._children: raise NotFoundError("The node to be replaced is not a child.")
+        if old not in self._children:
+            #: Chrome's message, prefix and wording (measured side by side 2026-10-06).
+            raise NotFoundError("Failed to execute 'replaceChild' on 'Node': "
+                                "The node to be replaced is not a child of this node.")
         i = self._children.index(old)
         self.fn_removeChild(old)
         if isinstance(new, DocumentFragment):

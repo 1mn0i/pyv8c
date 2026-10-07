@@ -122,3 +122,52 @@ def test_abort_drops_a_request_that_is_still_running():
         released.set()
         browser.close()
 
+
+def test_send_gives_a_string_body_the_content_type_chrome_gives_it():
+    """A string body is ``text/plain;charset=UTF-8`` unless the author said otherwise.
+
+    Chrome 154 sends exactly that on the Cloudflare challenge's own submit POST, and the answer
+    that lets its widget take the last step -- ``cf-chl-out`` -- comes back only when it does;
+    the engine sent no ``Content-Type`` at all, so the widget stopped one step short of
+    ``cf_clearance`` (measured 2026-10-07).  A Blob brings its own type, and no body carries
+    none -- the same rule ``sendBeacon`` already followed.
+    """
+    seen = []
+
+    def loader(url, request):
+        seen.append((str(url), dict(request or {})))
+        return {"status": 200, "url": str(url), "body": "ok", "headers": {}}
+
+    browser, page = _page(loader)
+    try:
+        page.evaluate("""(() => {
+            const plain = new XMLHttpRequest();
+            plain.open('POST', '/plain');
+            plain.send('a=1');
+            const typed = new XMLHttpRequest();
+            typed.open('POST', '/typed');
+            typed.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            typed.send('a=1');
+            const blob = new XMLHttpRequest();
+            blob.open('POST', '/blob');
+            blob.send(new Blob(['x'], {type: 'text/csv'}));
+            const empty = new XMLHttpRequest();
+            empty.open('GET', '/empty');
+            empty.send();
+            return 'asked';
+        })()""")
+        page.run_until_idle(timeout=5)
+    finally:
+        browser.close()
+
+    def sent_type(name):
+        for url, request in seen:
+            if url.endswith(name):
+                return request.get("content_type")
+        raise AssertionError(f"no request to {name}; saw {[url for url, _ in seen]}")
+
+    assert sent_type("/plain") == "text/plain;charset=UTF-8"
+    assert sent_type("/typed") is None, "the author's own Content-Type must stand"
+    assert sent_type("/blob") == "text/csv"
+    assert sent_type("/empty") is None, "no body, no type"
+

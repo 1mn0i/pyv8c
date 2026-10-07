@@ -7,8 +7,8 @@ import pyv8
 from pyv8.flag import V8Attribute
 
 from ..engine.trace import log_trace
+from ..foundation import promises
 from ..foundation.executor import RealmExecutor
-from ..foundation.scripts import RealmScripts
 from ..foundation.tasks import TaskQueue
 from ..web.bom.chrome import install_window_chrome
 from ..web.bom.legacy_factories import install_legacy_factories
@@ -56,6 +56,11 @@ def _publish_window_name(context, page):
             context.trace = True
 
 
+#: Names Chrome hides in a realm that is not cross-origin isolated: the engine hands
+#: ``SharedArrayBuffer`` to every context, so such a realm takes it back.
+_NON_ISOLATED_HIDDEN = ("SharedArrayBuffer",)
+
+
 def _declare_realm_interfaces(context, *, context_type, universe):
     """Declare the realm's plan; the realm answers each name itself."""
     plan = universe.plan(context_type)
@@ -65,6 +70,8 @@ def _declare_realm_interfaces(context, *, context_type, universe):
             if target in plan.declared:
                 context.define_global(alias, context.glob[target],
                                       attributes=V8Attribute.DontEnum)
+    for name in _NON_ISOLATED_HIDDEN:
+        context.hide_global(name)
     return declared
 
 
@@ -104,26 +111,26 @@ class WorkerRealm:
             context_type="Worker",
             universe=config.universe,
         )
-        self.scripts = RealmScripts(self.context)
         return self.context
 
     # The worker's global scope reaches these through WorkerRealmServices, as a
-    # page reaches its own through PageServices.
+    # page reaches its own through PageServices.  The realm owns the context, so
+    # it is also what decides how a promise behaves once that context is gone.
 
     def evaluate_script(self, source):
         return self.context.exec_js(source)
 
     def enqueue_microtask(self, callback):
-        return self.scripts.enqueue_microtask(callback)
+        return promises.enqueue_microtask(self.context, callback)
 
     def make_promise(self):
-        return self.scripts.make_promise()
+        return promises.make_promise(self.context)
 
     def js_error_value(self, exc):
-        return self.scripts.js_error_value(exc)
+        return promises.js_error_value(exc)
 
     def promise_resolve(self, value):
-        return self.scripts.promise_resolve(value)
+        return promises.promise_resolve(self.context, value)
 
     def close(self):
         first_error = None
@@ -141,8 +148,6 @@ class WorkerRealm:
         attempt(self.tasks.close)
         if self.context is not None and attempt(self.context.close):
             self.context = None
-        if self.scripts is not None and attempt(self.scripts.close):
-            self.scripts = None
         attempt(self.config.session.detach)
         if self.context is None:
             self.scope = None
@@ -161,8 +166,6 @@ class PageRealm:
         self.executor = executor if executor is not None else RealmExecutor(name="pyv8c-page")
         #: False when the page owns the thread and hands it across navigations.
         self._owns_executor = executor is None
-        #: Compiled JavaScript helpers, created with the context in _initialize.
-        self.scripts = None
         browser = page.context_owner.browser
         # Web objects built through this session receive PageServices, not the
         # platform Page.
@@ -211,11 +214,10 @@ class PageRealm:
             table=browser.interface_universe.table, document=page.document,
         )
         chrome_installed_at = time.perf_counter_ns()
-        # The realm owns the compiled helpers and the page's script controller
-        # borrows them, so the isolate's error hooks and every Web API helper
-        # share one set; the hooks route exceptions V8 raises on its own.
-        self.scripts = RealmScripts(self.context)
-        self.scripts.install_error_hooks(
+        # The realm owns the context and the page's script controller borrows it,
+        # so the isolate's error hooks and every Web API promise share one realm;
+        # the hooks route exceptions V8 raises on its own.
+        self.context.set_error_hooks(
             page.report_uncaught_message, page.rejections.record,
         )
         plan = self.binding_session.universe.plan("Window")
@@ -243,8 +245,24 @@ class PageRealm:
         if self._owns_executor:
             self.executor.close()
 
+    def enqueue_microtask(self, callback):
+        return promises.enqueue_microtask(self.context, callback)
+
+    def make_promise(self):
+        return promises.make_promise(self.context)
+
+    def js_error_value(self, exc):
+        return promises.js_error_value(exc)
+
+    def promise_resolve(self, value):
+        return promises.promise_resolve(self.context, value)
+
     def close_context(self):
-        """Close the document-scoped parts: the context, session and scripts."""
+        """Close the document-scoped parts: the context and the binding session.
+
+        ``self.context`` going to ``None`` is what tells a late caller -- a promise of the
+        replaced document, a microtask of the old realm -- that there is nothing to settle.
+        """
         if self.executor.closed:
             return
 
@@ -255,9 +273,6 @@ class PageRealm:
                 close()
             self.context = None
             self.binding_session.detach()
-            if self.scripts is not None:
-                self.scripts.close()
-                self.scripts = None
 
         self.executor.call(close_context)
 

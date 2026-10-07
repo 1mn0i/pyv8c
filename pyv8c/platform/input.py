@@ -224,6 +224,9 @@ class MouseInput:
         if target is None:
             return None
         options = {
+            #: A pointer or mouse event from real input crosses shadow boundaries in Chrome,
+            #: which a driven-input probe measured (``composed`` true for every one of them).
+            "composed": True,
             "bubbles": bubbles, "cancelable": cancelable, "detail": detail,
             "button": button, "buttons": self._bits,
             "clientX": self._x, "clientY": self._y,

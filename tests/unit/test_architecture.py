@@ -150,8 +150,9 @@ def test_the_baseline_and_the_compiler_each_have_one_home():
         assert not (ROOT / "engine" / f"{gone}.py").exists(), gone
     assert "InterfaceTable" in universe_source
     assert "class InterfaceCompiler" not in universe_source
-    # The offline extractor writes baselines, so the writer has to stay reachable there.
-    assert "from ..engine.baseline import write_baseline" in extractor_source
+    # The offline extractor writes baselines, so the writer and the schema it writes have to
+    # stay reachable there -- one statement, so the version they agree on changes in one place.
+    assert "from ..engine.baseline import BASELINE_SCHEMA, write_baseline" in extractor_source
 
 
 def test_universe_stays_a_composition_root():

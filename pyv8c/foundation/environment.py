@@ -16,7 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
+
+
+def environment_of(services):
+    """The environment a realm's services carry, or ``None`` outside one."""
+    realm = getattr(services, "realm_services", None)
+    return getattr(realm, "environment", None) if realm is not None else None
 #: Keys of a profile that are not settings: the envelope, and what another layer reads.
 ENVELOPE_KEYS = ("schema", "source", "window_surface")
 PROFILE = Path(__file__).parents[1] / "data" / "chrome-environment.json"
@@ -55,9 +61,34 @@ def _optional_number(value):
 
 
 def _tokens(value):
+    if value is None:
+        return None
     if isinstance(value, str):
         value = (value,)
     return tuple(str(item) for item in value)
+
+
+def _keyboard_layout(value):
+    """A ``key code -> character`` table: what the machine's layout prints."""
+    if not isinstance(value, Mapping):
+        raise TypeError("must be a mapping of key codes to characters")
+    return MappingProxyType({str(key): str(item) for key, item in value.items()})
+
+
+def _media_containers(value):
+    """``container -> codec prefixes``: what the reference browser decodes, per container."""
+    if not isinstance(value, Mapping):
+        raise TypeError("must be a mapping of containers to codec prefixes")
+    return MappingProxyType({str(name): _tokens(prefixes) for name, prefixes in value.items()})
+
+
+def _named_tokens(value):
+    """``name -> tokens``: the same shape as ``media.containers``, for other fact tables."""
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise TypeError("must be a mapping of names to token lists")
+    return MappingProxyType({str(name): _tokens(tokens) for name, tokens in value.items()})
 
 
 def _enum(*allowed):
@@ -115,6 +146,36 @@ def _mime_type(entry):
     }
 
 
+def _voices(value):
+    """The synthesiser's voices, in the order the browser lists them."""
+    if value is None:
+        return None
+    voices = tuple(_voice(entry) for entry in value)
+    if len({voice["name"] for voice in voices}) != len(voices):
+        raise ValueError("must not repeat a voice name")
+    return voices
+
+
+def _voice(entry):
+    if not isinstance(entry, Mapping):
+        raise TypeError("entries must be mappings")
+    return {
+        "name": _text(entry.get("name")),
+        "lang": str(entry.get("lang", "")),
+        "local_service": bool(entry.get("local_service", False)),
+        "default": bool(entry.get("default", False)),
+    }
+
+
+def _text_mapping(value):
+    """``name -> text``: a table a browser reports, such as the permission spec names."""
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise TypeError("must be a mapping of names to text")
+    return MappingProxyType({str(key): str(item) for key, item in value.items()})
+
+
 @dataclass(frozen=True)
 class Field:
     """One setting: its dotted key, how a given value is checked, whether a browser reports it."""
@@ -144,6 +205,10 @@ FIELDS: tuple[Field, ...] = (
     Field("viewport.device_scale_factor", _number, True),
     Field("viewport.mobile", bool, default=False),
     Field("viewport.touch", bool, default=False),
+    #: ``outerWidth - innerWidth`` and its vertical counterpart: window decorations, so the
+    #: defaults below are what the shipped profile reported before these keys existed.
+    Field("viewport.outer_inset_width", _integer, True, default=16),
+    Field("viewport.outer_inset_height", _integer, True, default=95),
     Field("screen.width", _integer, True),
     Field("screen.height", _integer, True),
     Field("screen.avail_width", _integer, True),
@@ -183,6 +248,22 @@ FIELDS: tuple[Field, ...] = (
     Field("plugins", _plugins, True),
     Field("webgl.vendor", _text, True),
     Field("webgl.renderer", _text, True),
+    Field("keyboard.layout", _keyboard_layout, True),
+    Field("media.containers", _media_containers, True),
+    Field("media.self_contained", _tokens, True),
+    Field("media.hardware_decode", _tokens, True),
+    Field("media.webrtc", _named_tokens, True),
+    Field("media.hardware_encode", _tokens, True),
+    Field("media.devices", _tokens, True),
+    #: ``getSupportedConstraints()``: which constraint names this build answers for.
+    Field("media.constraints", _tokens, True),
+    #: The voices ``speechSynthesis.getVoices()`` lists: installed on the machine, not built in.
+    Field("speech.voices", _voices, True),
+    Field("permissions.names", _tokens, True),
+    Field("permissions.granted", _tokens, True),
+    #: The name ``PermissionStatus.name`` reports, which is not the one queried.
+    Field("permissions.spec_names", _text_mapping, True),
+    Field("gpu.wgsl_features", _tokens, True),
 )
 
 _BY_NAME = {field.name: field for field in FIELDS}
@@ -207,6 +288,9 @@ class ViewportView:
     device_scale_factor: float
     mobile: bool
     touch: bool
+    #: The window's own decorations around the viewport, in CSS pixels.
+    outer_inset_width: int
+    outer_inset_height: int
 
 
 @dataclass(frozen=True)
@@ -305,6 +389,57 @@ class WebGLView:
     renderer: str
 
 
+@dataclass(frozen=True)
+class KeyboardView:
+    """``navigator.keyboard.getLayoutMap()``: the machine's own layout, empty when
+    a profile has not collected one."""
+
+    layout: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class MediaView:
+    """What the reference browser decodes, and which of it in hardware.
+
+    The answers ``isTypeSupported``/``decodingInfo``/``canPlayType`` give are computed from
+    these two facts, so they cannot disagree with each other.
+    """
+
+    containers: Mapping[str, tuple[str, ...]]
+    self_contained: tuple[str, ...]
+    hardware_decode: tuple[str, ...]
+    #: ``video/VP8`` style content types the WebRTC path carries, per direction.
+    webrtc: Mapping[str, tuple[str, ...]]
+    hardware_encode: tuple[str, ...]
+    #: The capture devices the machine lists, by kind, in the order it lists them.
+    devices: tuple[str, ...]
+    #: The constraint names ``getSupportedConstraints()`` answers for.
+    constraints: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SpeechView:
+    """The synthesiser's voices: installed on the machine, so a profile is the only source."""
+
+    voices: tuple
+
+
+@dataclass(frozen=True)
+class PermissionsView:
+    """What ``navigator.permissions`` answers for, and which of those start granted."""
+
+    names: tuple
+    granted: tuple
+    spec_names: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class GpuView:
+    """``navigator.gpu.wgslLanguageFeatures`` as the reference browser reports it."""
+
+    wgsl_features: tuple
+
+
 def _platform_name(user_agent, fallback):
     for token, name in (
         ("Windows", "Windows"), ("Android", "Android"), ("iPhone", "iOS"),
@@ -387,7 +522,8 @@ class BrowserEnvironment:
     __slots__ = (
         "_explicit", "_resolved",
         "viewport", "screen", "geolocation", "connection", "battery", "storage",
-        "bluetooth", "client_hints", "plugins", "webgl",
+        "bluetooth", "client_hints", "plugins", "webgl", "keyboard", "media",
+        "speech", "permissions", "gpu",
     )
 
     def __init__(self, data=None, *, base=None):
@@ -405,7 +541,8 @@ class BrowserEnvironment:
         object.__setattr__(self, "viewport", ViewportView(
             values["viewport.width"], values["viewport.height"],
             values["viewport.device_scale_factor"], values["viewport.mobile"],
-            values["viewport.touch"],
+            values["viewport.touch"], values["viewport.outer_inset_width"],
+            values["viewport.outer_inset_height"],
         ))
         object.__setattr__(self, "screen", ScreenView(
             values["screen.width"], values["screen.height"],
@@ -446,6 +583,30 @@ class BrowserEnvironment:
         object.__setattr__(self, "webgl", WebGLView(
             values["webgl.vendor"], values["webgl.renderer"],
         ))
+        layout = values["keyboard.layout"]
+        object.__setattr__(self, "keyboard", KeyboardView(
+            MappingProxyType({}) if layout is None else layout))
+        containers = values["media.containers"]
+        webrtc = values["media.webrtc"]
+        object.__setattr__(self, "media", MediaView(
+            MappingProxyType({}) if containers is None else containers,
+            tuple(values["media.self_contained"] or ()),
+            tuple(values["media.hardware_decode"] or ()),
+            MappingProxyType({}) if webrtc is None else webrtc,
+            tuple(values["media.hardware_encode"] or ()),
+            tuple(values["media.devices"] or ()),
+            tuple(values["media.constraints"] or ()),
+        ))
+        object.__setattr__(self, "speech", SpeechView(
+            tuple(values["speech.voices"] or ())))
+        object.__setattr__(self, "permissions", PermissionsView(
+            tuple(values["permissions.names"] or ()),
+            tuple(values["permissions.granted"] or ()),
+            MappingProxyType({}) if values["permissions.spec_names"] is None
+            else values["permissions.spec_names"],
+        ))
+        object.__setattr__(self, "gpu", GpuView(
+            tuple(values["gpu.wgsl_features"] or ())))
 
     def __setattr__(self, name, value):
         raise AttributeError("BrowserEnvironment is immutable")
@@ -509,5 +670,6 @@ __all__ = [
     "BrowserEnvironment", "Field", "FIELDS", "SCHEMA_VERSION", "COLLECTED_KEYS", "PROFILE",
     "ViewportView", "ScreenView", "GeolocationView", "ConnectionView", "BatteryView",
     "StorageView", "QuotaView", "BluetoothView", "ClientHintsView", "Brand", "PluginView",
-    "MimeTypeView", "json_value",
+    "MimeTypeView", "WebGLView", "KeyboardView", "MediaView", "SpeechView", "PermissionsView",
+    "GpuView", "environment_of", "json_value",
 ]

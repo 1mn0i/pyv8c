@@ -1,5 +1,5 @@
 """Worker Web API and global scope types."""
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagLocation
@@ -16,7 +16,9 @@ from ...foundation.arguments import (
     usv_string,
 )
 from ...foundation.errors import InvalidStateError
+from ...foundation.urls import origin_string
 from ..bom.scheduling import _SchedulingMixin
+from ..bom.utils import is_secure_context
 from ..dom.events import EventTarget
 from ..fetch.clone import message_transfer
 from ..fetch.events import ErrorEvent, MessageEvent
@@ -25,14 +27,67 @@ from ..fetch.events import ErrorEvent, MessageEvent
 def _worker_values(scope):
     """The worker global's own objects, built on first read.
 
-    Navigator belongs to the navigator Feature, so it is asked of the realm
-    rather than imported.
+    Navigator, crypto and trustedTypes are siblings in the feature runtime, so the
+    realm is asked for them rather than importing them. The security of the worker's
+    own URL decides whether its crypto carries randomUUID, and a blob URL is as
+    trustworthy as the origin it carries.
     """
-    def navigator():
-        cls = scope._services.realm_services.materialize_interface("Navigator")
-        return cls(environment=scope._environment, worker=True, services=scope._services)
+    def interface(name):
+        return scope._services.realm_services.materialize_interface(name)
 
-    return LazyValueStore({"navigator": navigator})
+    def navigator():
+        return interface("Navigator")(environment=scope._environment, worker=True,
+                                      services=scope._services)
+
+    return LazyValueStore({
+        "navigator": navigator,
+        "crypto": lambda: interface("Crypto")(
+            secure=is_secure_context(scope.script_url()), services=scope._services),
+        "trustedTypes": lambda: interface("TrustedTypePolicyFactory")(),
+        "performance": lambda: interface("Performance")(services=scope._services),
+        "indexedDB": lambda: interface("IDBFactory")(services=scope._services),
+        "location": lambda: interface("WorkerLocation")(url=scope.script_url()),
+        "caches": lambda: interface("CacheStorage")(services=scope._services),
+    })
+
+
+@interface('WorkerLocation', None)
+class WorkerLocation:
+    """Where the worker's script came from, as the worker itself sees it."""
+
+    __v8_idl_spec__ = IdlSpec(
+        attributes=(
+            AttributeSpec(name="href", getter="get_href", side_effect=1),
+            AttributeSpec(name="origin", getter="get_origin", side_effect=1),
+            AttributeSpec(name="protocol", getter="get_protocol", side_effect=1),
+            AttributeSpec(name="host", getter="get_host", side_effect=1),
+            AttributeSpec(name="hostname", getter="get_hostname", side_effect=1),
+            AttributeSpec(name="port", getter="get_port", side_effect=1),
+            AttributeSpec(name="pathname", getter="get_pathname", side_effect=1),
+            AttributeSpec(name="search", getter="get_search", side_effect=1),
+            AttributeSpec(name="hash", getter="get_hash", side_effect=1),
+        ),
+        methods=(MethodSpec(name="toString", callback="fn_toString"),),
+        constructor_behavior=0,
+        to_string_tag="WorkerLocation",
+        has_constructor=1,
+    )
+
+    def __init__(self, url="", **_):
+        self._url = str(url or "")
+
+    def _parts(self): return urlsplit(self._url)
+
+    def get_href(self): return self._url
+    def get_origin(self): return origin_string(self._url)
+    def get_protocol(self): return self._parts().scheme + ":"
+    def get_host(self): return self._parts().netloc
+    def get_hostname(self): return self._parts().hostname or ""
+    def get_port(self): return str(self._parts().port or "")
+    def get_pathname(self): return self._parts().path
+    def get_search(self): return ("?" + self._parts().query) if self._parts().query else ""
+    def get_hash(self): return ("#" + self._parts().fragment) if self._parts().fragment else ""
+    def fn_toString(self, *_extra): return self._url
 
 
 @interface('WorkerGlobalScope', 'EventTarget')
@@ -42,12 +97,23 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
         attributes=(
             AttributeSpec(name="self", getter="get_self", side_effect=1),
             AttributeSpec(name="navigator", getter="get_navigator", side_effect=1),
+            AttributeSpec(name="crypto", getter="get_crypto", side_effect=1),
+            AttributeSpec(name="trustedTypes", getter="get_trustedTypes", side_effect=1),
+            AttributeSpec(name="origin", getter="get_origin", side_effect=1),
+            AttributeSpec(name="crossOriginIsolated", getter="get_crossOriginIsolated",
+                          side_effect=1),
+            AttributeSpec(name="performance", getter="get_performance", side_effect=1),
+            AttributeSpec(name="indexedDB", getter="get_indexedDB", side_effect=1),
+            AttributeSpec(name="location", getter="get_location", side_effect=1),
+            AttributeSpec(name="caches", getter="get_caches", side_effect=1),
             AttributeSpec(name="onmessage", getter="get_onmessage", setter="set_onmessage"),
             AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
         ),
         methods=(
             MethodSpec(name="postMessage", callback="fn_postMessage", length=1),
             MethodSpec(name="close", callback="fn_close"),
+            # A worker fetches for itself; the steps are the window's, named after this global.
+            MethodSpec(name="fetch", callback="fn_fetch", length=1),
             # A worker global schedules like a window, on its own task queue.
             MethodSpec(name="setTimeout", callback="fn_setTimeout", length=1),
             MethodSpec(name="clearTimeout", callback="fn_clearTimeout", length=0),
@@ -68,8 +134,38 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
         self._environment = environment
         self._values = _worker_values(self)
 
+    def fn_fetch(self, request=MISSING, options=None, *_extra):
+        """``fetch`` for a worker global: the same steps a window runs.
+
+        A worker's own realm services carry no resource capability, so the load goes through
+        the services of the page that owns it -- which is where every other worker load goes.
+        ``initiator_url`` is this worker's own script URL, so the request is attributed to the
+        worker: a worker started from a ``blob:`` sends no ``Referer`` and says
+        ``Sec-Fetch-Site: same-origin``, where the owner page's URL said otherwise.
+        """
+        from ..bom.window import fetch_like
+
+        return fetch_like(self._services, "WorkerGlobalScope", request, options,
+                          resources=getattr(self._runtime, "services", None),
+                          initiator_url=self.script_url())
+
     def get_self(self): return self
     def get_navigator(self): return self._values.value("navigator")
+    def get_crypto(self): return self._values.value("crypto")
+    def get_trustedTypes(self): return self._values.value("trustedTypes")
+    def get_performance(self): return self._values.value("performance")
+    def get_indexedDB(self): return self._values.value("indexedDB")
+    def get_location(self): return self._values.value("location")
+    def get_caches(self): return self._values.value("caches")
+    def get_origin(self):
+        """The origin the worker was started from, which a blob URL carries."""
+        return origin_string(self.script_url())
+    def get_crossOriginIsolated(self):
+        """A worker inherits its owner's isolation, and no document here is isolated."""
+        return False
+    def script_url(self):
+        """The URL the worker was started from, which decides its security."""
+        return str(getattr(self._runtime, "script_url", "") or "")
     def get_onmessage(self): return self._get_handler("onmessage")
     def set_onmessage(self, value):
         if not is_nullish(value):
@@ -159,13 +255,13 @@ class Worker(EventTarget):
 
     def _receive_message(self, value, ports=()):
         if not self._terminated:
+            #: A message from a worker carries no origin, and it is a real event (as in Chrome).
             self.fn_dispatchEvent(MessageEvent("message", {
-                "data": value, "origin": self._services.realm_services.url,
-                "ports": ports}))
+                "data": value, "origin": "", "ports": ports, "isTrusted": True}))
 
     def _receive_error(self, error):
         if not self._terminated:
-            self.fn_dispatchEvent(ErrorEvent("error", {"message": str(error), "error": error}))
+            self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, "message": str(error), "error": error}))
 
     def _receive_uncaught(self, message, filename, line, column):
         """Report an exception V8 raised inside the worker's own realm.
@@ -174,7 +270,7 @@ class Worker(EventTarget):
         text and position V8 captured.
         """
         if not self._terminated:
-            self.fn_dispatchEvent(ErrorEvent("error", {
+            self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, 
                 "message": message,
                 "filename": filename,
                 "lineno": line,
@@ -269,11 +365,11 @@ class SharedWorker(EventTarget):
 
     def _receive_error(self, error):
         if not self._terminated:
-            self.fn_dispatchEvent(ErrorEvent("error", {"message": str(error), "error": error}))
+            self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, "message": str(error), "error": error}))
 
     def _receive_uncaught(self, message, filename, line, column):
         if not self._terminated:
-            self.fn_dispatchEvent(ErrorEvent("error", {
+            self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, 
                 "message": message, "filename": filename, "lineno": line, "colno": column,
             }))
 
@@ -294,7 +390,7 @@ class SharedWorker(EventTarget):
 
 
 __all__ = ["Worker", "WorkerGlobalScope", "DedicatedWorkerGlobalScope",
-           "SharedWorker", "SharedWorkerGlobalScope"]
+           "SharedWorker", "SharedWorkerGlobalScope", "WorkerLocation"]
 
 
 FEATURE = FeatureImplementation(
@@ -304,5 +400,6 @@ FEATURE = FeatureImplementation(
         "SharedWorkerGlobalScope": SharedWorkerGlobalScope,
         "Worker": Worker,
         "SharedWorker": SharedWorker,
+        "WorkerLocation": WorkerLocation,
     },
 )

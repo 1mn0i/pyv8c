@@ -3,7 +3,7 @@
 import re
 from urllib.parse import urlsplit, urlunsplit
 
-from pyv8.flag import FlagArrayProto, V8Attribute
+from pyv8.flag import V8Attribute
 
 from ...foundation.arguments import dom_string
 from ...foundation.urls import form_urlencoded
@@ -37,11 +37,8 @@ def name_fault(value):
                    None)
     return None if invalid is None else ("character", invalid)
 
-#: Iterator bits published through ``IdlSpec(array=...)`` by iterable collections.
-ITERABLE_FLAGS = (
-    FlagArrayProto.iterator | FlagArrayProto.entries | FlagArrayProto.keys
-    | FlagArrayProto.values | FlagArrayProto.forEach
-)
+#: What a collection borrows from ``Array.prototype``: ``IdlSpec.array`` and the baseline's
+#: ``template.array`` both take ``"iterator"`` or ``"iterable"``; the bits are the binding's.
 
 #: ``Object.prototype`` string keys (plus ``__proto__``) that named properties never shadow.
 OBJECT_PROTOTYPE_NAMES = frozenset((

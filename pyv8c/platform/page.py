@@ -333,6 +333,11 @@ class Page:
         :returns: this page.
         :raises InvalidStateError: the page or its context is closed.
         """
+        if pyv8.current_context() is not None:
+            #: Asked for from inside a running script, so waiting on this page's thread would
+            #: deadlock: the caller holds the isolate the commit's own parse needs.
+            #: ``PageRealm`` answers the same way for a realm created inside a script.
+            return self.navigation.set_content(html, url)
         return self.realm.executor.call(self.navigation.set_content, html, url)
 
     def goto(self,

@@ -17,6 +17,10 @@ import dataclasses
 import json
 import os
 import re
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -111,13 +115,25 @@ def chrome_executable():
     )
 
 
+#: One engine for the whole run: a context per case isolates it just as well, and building the
+#: engine per case costs more than the cases themselves.
+_ENGINE = None
+
+
+def _engine():
+    global _ENGINE
+    if _ENGINE is None:
+        from pyv8c import Browser
+
+        _ENGINE = Browser(stub_logging="off")
+    return _ENGINE
+
+
 def observe_here(case: Repro) -> Observation:
     """What this environment observes for a case."""
-    from pyv8c import Browser
-
-    browser = Browser(stub_logging="off")
+    context = _engine().new_context()
     try:
-        page = browser.new_context().new_page()
+        page = context.new_page()
         page.set_content(case.html, url=case.url)
         page.run_until_idle(timeout=1)
         try:
@@ -127,7 +143,7 @@ def observe_here(case: Repro) -> Observation:
                 error=error_name(str(error), error) or type(error).__name__, detail=str(error)
             )
     finally:
-        browser.close()
+        context.close()
 
 
 class ChromeReference:
@@ -167,6 +183,35 @@ class ChromeReference:
             page.close()
 
 
+def _headless_chrome_pids():
+    """The headless Chrome processes running now.
+
+    Windows keeps them when a driver dies without saying goodbye, and a machine that keeps
+    collecting them gets slower every run, so a run takes down the ones it started.
+    """
+    if os.name != "nt":
+        return frozenset()
+    script = ("Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+              "Where-Object { $_.CommandLine -match '--headless' } | "
+              "Select-Object -ExpandProperty ProcessId")
+    try:
+        found = subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                               capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return frozenset()
+    return frozenset(int(line) for line in found.stdout.split() if line.isdigit())
+
+
+def _take_down(pids):
+    """End the browsers *pids* names, with the children each one started."""
+    for pid in pids:
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                           capture_output=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            continue
+
+
 @contextlib.contextmanager
 def chrome_reference():
     """The locally installed Chrome, or :class:`ReferenceUnavailable` saying why not."""
@@ -180,15 +225,20 @@ def chrome_reference():
             f"playwright is not installed ({error}); pip install playwright"
         ) from error
 
-    with sync_playwright() as playwright:
-        try:
-            browser = playwright.chromium.launch(headless=True, executable_path=str(executable))
-        except Exception as error:
-            raise ReferenceUnavailable(f"cannot start {executable}: {error}") from error
-        try:
-            yield ChromeReference(browser, executable, browser.version)
-        finally:
-            browser.close()
+    playwright = sync_playwright().start()
+    running = _headless_chrome_pids()
+    try:
+        browser = playwright.chromium.launch(headless=True, executable_path=str(executable))
+    except Exception as error:
+        playwright.stop()
+        raise ReferenceUnavailable(f"cannot start {executable}: {error}") from error
+    try:
+        yield ChromeReference(browser, executable, browser.version)
+    finally:
+        # ``browser.close()`` waits on Chrome's goodbye handshake -- up to forever on Windows --
+        # so the run stops on a background thread and takes its own browsers down directly.
+        threading.Thread(target=playwright.stop, daemon=True).start()
+        _take_down(_headless_chrome_pids() - running)
 
 
 def divergence(here: Observation, there: Observation, browser: str = "") -> str:

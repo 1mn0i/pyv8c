@@ -60,7 +60,9 @@ def click_element(element):
     if not accepts_mouse_events(element):
         return False
     from .events import MouseEvent
-    event = MouseEvent("click", {
+    #: A click a script makes is not a user's, so Chrome reports ``isTrusted`` false here --
+    #: the one event the engine raises that stays untrusted.
+    event = MouseEvent("click", {"composed": True,
         "bubbles": True, "cancelable": True, "detail": 0,
         "button": 0, "buttons": 0, "clientX": 0, "clientY": 0,
     })
@@ -74,7 +76,8 @@ def repeat_click(element, source):
     """Run a click on *element* that repeats *source* -- same coordinates, click
     count and trust -- as a label forwards its press to the control."""
     from .events import MouseEvent
-    repeated = MouseEvent("click", {
+    repeated = MouseEvent("click", {"composed": True,
+        "isTrusted": getattr(source, "isTrusted", False),
         "bubbles": True, "cancelable": True,
         "detail": getattr(source, "detail", 0),
         "button": getattr(source, "button", 0),

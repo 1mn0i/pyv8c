@@ -232,7 +232,7 @@ class PerformanceEntry:
     def _defaults(self):
         return {}
 
-    def fn_toJSON(self):
+    def fn_toJSON(self, *_extra):
         reported = {"name": self._name, "entryType": self._entry_type,
                     "startTime": self._start_time, "duration": self._duration,
                     "navigationId": self._navigation_id}
@@ -424,8 +424,9 @@ class Performance(EventTarget):
         has_constructor=1,
     )
 
-    #: The navigation id every entry of this document reports.
-    navigation_id = 1
+    #: The navigation id every entry reports.  Private: a bare class attribute becomes page
+    #: surface, and Chrome's ``performance`` has no ``navigation_id``.
+    _navigation_id = 1
 
     def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **_):
         self._services = None if services is pyv8.Undefined else (services or _realm)
@@ -512,7 +513,7 @@ class Performance(EventTarget):
             "renderBlockingStatus": "blocking" if initiator in ("script", "style") else "non-blocking",
         }
         return PerformanceResourceTiming(record.get("name", ""), "resource", start,
-                                        end - start, self.navigation_id, values)
+                                        end - start, self._navigation_id, values)
 
     def _navigation_entry(self, record):
         start = float(record.get("start", 0.0))
@@ -527,7 +528,7 @@ class Performance(EventTarget):
         # The document is its own resource, and says so.
         values.setdefault("initiatorType", "navigation")
         return PerformanceNavigationTiming(record.get("name", ""), "navigation", start,
-                                           max(ended - start, 0.0), self.navigation_id, values)
+                                           max(ended - start, 0.0), self._navigation_id, values)
 
     def _all_entries(self):
         """Every entry of this document: what the page measured, then what the realm did."""
@@ -554,7 +555,7 @@ class Performance(EventTarget):
     def fn_mark(self, name=MISSING, options=pyv8.Undefined, *_extra):
         if name is MISSING:
             raise missing_error('Performance', 'mark', 1, 0, constructor=False)
-        entry = self._stamp(PerformanceMark(name, options, navigation_id=self.navigation_id))
+        entry = self._stamp(PerformanceMark(name, options, navigation_id=self._navigation_id))
         self._entries.append(entry)
         self._offer((entry,))
         # Chrome hands the entry back, where the specification says undefined.
@@ -588,7 +589,7 @@ class Performance(EventTarget):
         else:
             finished = self._measure_instant(end_option, message, _now(self._services))
         entry = self._stamp(PerformanceMeasure(name, started, max(finished - started, 0.0),
-                                              detail, self.navigation_id))
+                                              detail, self._navigation_id))
         self._entries.append(entry)
         self._offer((entry,))
         # Chrome hands the entry back, where the specification says undefined.

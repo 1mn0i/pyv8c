@@ -29,6 +29,8 @@ class Response:
             MethodSpec(name="json", callback="fn_json", side_effect=1),
             MethodSpec(name="arrayBuffer", callback="fn_arrayBuffer", side_effect=1),
             MethodSpec(name="clone", callback="fn_clone", side_effect=1),
+            #: Chrome's static ``Response.json`` is not declared here: the member table is keyed
+            #: by name, so the duplicate would be rejected ("declares duplicate methods: json").
         ),
         constructor_behavior=1,
         length=1,

@@ -71,6 +71,9 @@ def _origin_string(url):
     """The origin of one URL string, parsing it once per distinct URL."""
     try:
         parts = urlsplit(str(url))
+        if parts.scheme in ("blob", "filesystem"):
+            # A blob (or filesystem) URL carries the origin it was created in.
+            return _origin_string(str(url).split(":", 1)[1])
         if parts.scheme not in SPECIAL_SCHEMES or not parts.hostname:
             return "null"
         host = parts.hostname.lower()

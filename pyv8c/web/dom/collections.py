@@ -14,7 +14,7 @@ from ...foundation.errors import (
     dom_exception,
 )
 from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
-from .utils import ITERABLE_FLAGS, OBJECT_PROTOTYPE_NAMES, XHTML_NAMESPACE, camel_name, dash_name
+from .utils import OBJECT_PROTOTYPE_NAMES, XHTML_NAMESPACE, camel_name, dash_name
 
 #: The link types Blink implements, from ``rel_list.cc``: what ``relList.supports`` answers.
 LINK_REL_TOKENS = frozenset((
@@ -46,17 +46,19 @@ def tag_name_ns_collection(target, interface, namespace, local_name):
     return target.fn_getElementsByTagName(local_name)
 
 
-@interface('NodeList', None)
-class NodeList(ReadOnlyIndexedPropertyMixin):
-    """A live list view. The owner remains the source of truth."""
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="NodeList",
-        has_constructor=1,
-        array=ITERABLE_FLAGS,
-    )
+class _ListItems:
+    """The body of a live list: an owner-backed ``item(i)`` and its indexed access.
+
+    It is a mixin rather than a base an interface inherits, because the *interface* graph is not
+    the implementation graph: ``HTMLCollection`` and ``NamedNodeMap`` are **not** ``NodeList``
+    subclasses (their baseline parent is ``None``, measured against Chrome 154 on 2026-10-07),
+    and what an interface publishes through ``IdlSpec(array=...)`` is per interface.  Inheriting
+    ``NodeList`` carried its iterator flags into both, so their prototypes answered
+    ``entries``/``keys``/``values``/``forEach`` like a ``NodeList`` when Chrome publishes only
+    ``Symbol.iterator`` there (``examples/5s/script/iterable_probe.py``).  ``RadioNodeList``
+    really is a ``NodeList``, so it keeps that parent.
+    """
+
     def __init__(self, owner=None, getter=None, values=None, **_):
         self._owner, self._getter, self._values = owner, getter, values
     def _items(self):
@@ -66,7 +68,8 @@ class NodeList(ReadOnlyIndexedPropertyMixin):
     def get_length(self): return len(self._items())
     def fn_item(self, index=MISSING, *_extra):
         if index is MISSING:
-            raise missing_error('NodeList', 'item', 1, 0, constructor=False)
+            #: The receiver names itself: Chrome says ``HTMLCollection.item``, not ``NodeList``.
+            raise missing_error(type(self).__name__, 'item', 1, 0, constructor=False)
         index = integer(index)
         return self._item_at(index)
     def __iter__(self): return iter(self._items())
@@ -74,10 +77,28 @@ class NodeList(ReadOnlyIndexedPropertyMixin):
     def __len__(self): return len(self._items())
 
 
-@interface('NamedNodeMap', None)
-class NamedNodeMap(NodeList):
-    """Live attribute collection owned by an Element."""
+@interface('NodeList', None)
+class NodeList(_ListItems, ReadOnlyIndexedPropertyMixin):
+    """A live list view. The owner remains the source of truth."""
     __v8_idl_spec__ = IdlSpec(
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
+        methods=(MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),),
+        constructor_behavior=0,
+        to_string_tag="NodeList",
+        has_constructor=1,
+        array="iterable",
+    )
+
+
+@interface('NamedNodeMap', None)
+class NamedNodeMap(_ListItems, ReadOnlyIndexedPropertyMixin):
+    """Live attribute collection owned by an Element.
+
+    A sibling of ``NodeList``, not a subclass: see :class:`_ListItems`.
+    """
+    __v8_idl_spec__ = IdlSpec(
+        #: Declared here because it used to arrive with ``NodeList``, whose body this shares.
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
         methods=(
             MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
             MethodSpec(name="getNamedItem", callback="fn_getNamedItem", length=1, side_effect=1),
@@ -87,6 +108,9 @@ class NamedNodeMap(NodeList):
         constructor_behavior=0,
         to_string_tag="NamedNodeMap",
         has_constructor=1,
+        #: Iterable without the four named methods: Chrome's map has the one and not the others,
+        #: and it does not inherit ``NodeList`` (see ``_ListItems``).
+        array="iterator",
         name_get="__v8_name_get__",
         name_query="__v8_name_query__",
     )
@@ -163,8 +187,15 @@ def _supported_names(items, name_getter):
 
 
 @interface('HTMLCollection', None)
-class HTMLCollection(LegacyNamedPropertyMixin, NodeList):
+class HTMLCollection(_ListItems, LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
+    """``document.forms`` and friends: a live list that also answers by name.
+
+    A sibling of ``NodeList``, not a subclass: see :class:`_ListItems`.  What it publishes
+    through ``array`` is the iterator alone, so its two subclasses inherit that too.
+    """
     __v8_idl_spec__ = IdlSpec(
+        #: Declared here because it used to arrive with ``NodeList``, whose body this shares.
+        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
         methods=(
             MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
             MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
@@ -172,6 +203,9 @@ class HTMLCollection(LegacyNamedPropertyMixin, NodeList):
         constructor_behavior=0,
         to_string_tag="HTMLCollection",
         has_constructor=1,
+        #: Same as ``NamedNodeMap``: iterable in Chrome, and without the four named methods,
+        #: which ``NodeList`` has and this collection does not.
+        array="iterator",
         name_get="__v8_name_get__",
         name_set="__v8_name_set__",
         name_query="__v8_name_query__",
@@ -314,7 +348,7 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
         constructor_behavior=0,
         to_string_tag="DOMTokenList",
         has_constructor=1,
-        array=ITERABLE_FLAGS,
+        array="iterable",
     )
     _ASCII_WHITESPACE = " \t\n\f\r"
 

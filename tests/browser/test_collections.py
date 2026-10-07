@@ -344,6 +344,28 @@ def test_document_all_python_type_is_the_implementation_class(document_page):
     assert isinstance(document_page.evaluate("document.all.dup"), HTMLCollection)
 
 
+def test_a_non_constructible_interface_object_is_its_prototypes_constructor(document_page):
+    """Exposure comes from the baseline: the prototype must answer with the interface object.
+
+    A class stating ``has_constructor=0`` used to lose that link, so the page read the chain
+    through to ``Object.prototype.constructor`` and saw ``Object`` (arity 1) where Chrome has
+    the interface object itself, with length 0 for every interface it does not construct.
+    """
+    answer = document_page.evaluate("""(() => {
+        const names = ['CSSStyleSheet', 'CSSStyleRule', 'CSSRule', 'CSSGroupingRule', 'StyleSheet',
+                       'BeforeUnloadEvent', 'RTCRtpReceiver', 'CanvasRenderingContext2D', 'Window'];
+        return names.map(name => {
+            const ctor = window[name];
+            const descriptor = Object.getOwnPropertyDescriptor(ctor.prototype, 'constructor');
+            return [name, typeof ctor, !!descriptor && descriptor.value === ctor, ctor.length];
+        });
+    })()""")
+
+    assert answer == [[name, "function", True, 0] for name in (
+        "CSSStyleSheet", "CSSStyleRule", "CSSRule", "CSSGroupingRule", "StyleSheet",
+        "BeforeUnloadEvent", "RTCRtpReceiver", "CanvasRenderingContext2D", "Window")], answer
+
+
 def test_document_all_interface_constructor_is_exposed_but_not_constructible(document_page):
     assert document_page.evaluate("typeof HTMLAllCollection") == "function"
     assert document_page.evaluate("HTMLAllCollection.name") == "HTMLAllCollection"

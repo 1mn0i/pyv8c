@@ -6,9 +6,12 @@ import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...engine.features import interface
-from ...foundation.arguments import MISSING, boolean, byte_string, dom_string, integer, missing_error, usv_string
+from ...foundation.arguments import (
+    MISSING, boolean, byte_string, dom_string, integer, is_nullish, missing_error, usv_string,
+)
 from ...foundation.errors import InvalidStateError, NotSupportedError, SecurityError, V8SyntaxError
 from ..dom.events import Event, EventTarget
+from .blob import Blob
 from .events import ErrorEvent
 from .headers import Headers
 
@@ -134,6 +137,26 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             return pyv8.Null
         return self._response.headers.fn_get(name)
 
+    def _default_content_type(self, body):
+        """What ``send`` puts in ``Content-Type`` when the author set none.
+
+        The standard's rule, and the one ``sendBeacon`` already follows: a Blob brings its own
+        type, nothing has no type, and everything else travels as text.  Chrome 154 sends
+        ``text/plain;charset=UTF-8`` on the Cloudflare challenge's own submit POST -- the answer
+        to *that* request is the one carrying ``cf-chl-out``, and a submit arriving without the
+        header is answered without it, which is where the widget stopped one step short of
+        ``cf_clearance`` (measured against Chrome 154, 2026-10-07).
+        """
+        if is_nullish(body):
+            return None
+        #: ``fn_get`` answers ``Null`` for a header it does not hold, not ``None``: testing
+        #: against ``None`` made this always true, and every body came back untyped.
+        if not is_nullish(self._request_headers.fn_get("content-type")):
+            return None
+        if isinstance(body, Blob):
+            return body.get_type() or None
+        return "text/plain;charset=UTF-8"
+
     def fn_send(self, body=None, *_extra):
         if body is pyv8.Undefined:
             body = None
@@ -144,6 +167,9 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             "timeout": self.timeout / 1000 if self.timeout else None,
             "resource_type": "xhr",
         }
+        content_type = self._default_content_type(body)
+        if content_type is not None:
+            request["content_type"] = content_type
         if self._services:
             self._handle = self._services.resource_services.load_resource_async(
                 self._url, request, self._finish)
@@ -158,7 +184,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         if error:
             self.status = 0
             self._state(self.DONE)
-            self.fn_dispatchEvent(ErrorEvent("error", {"message": str(error)}))
+            self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, "message": str(error)}))
             self.fn_dispatchEvent(Event("loadend"))
             return
         self._response = response

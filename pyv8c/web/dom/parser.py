@@ -17,9 +17,20 @@ class _TreeBuilderMixin:
     """
 
     void = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
-    auto_close = {"li": {"li"}, "dt": {"dt", "dd"}, "dd": {"dt", "dd"}, "p": {"p", "div", "section", "article", "ul", "ol"}}
+    #: A start tag closes the open elements named in its set, which is what lets the end tags
+    #: browsers tolerate be left out.
+    auto_close = {
+        "li": {"li", "p"}, "dt": {"dt", "dd", "p"}, "dd": {"dt", "dd", "p"},
+        **{tag: {"p"} for tag in (
+            "address", "article", "aside", "blockquote", "details", "div", "dl",
+            "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3",
+            "h4", "h5", "h6", "header", "hgroup", "hr", "main", "menu", "nav", "ol",
+            "p", "pre", "section", "table", "ul")},
+    }
     #: Tags whose character data is raw text: the rest of the content is taken verbatim.
-    raw_text_tags = {"script", "style", "textarea", "title"}
+    #: ``noscript`` is in here because scripting is always on, and with scripting on a
+    #: browser keeps its content as one text node instead of parsing it.
+    raw_text_tags = {"script", "style", "textarea", "title", "noscript"}
 
     #: Tags a browser puts in the head while it is still building one.
     head_tags = frozenset({
@@ -43,11 +54,14 @@ class _TreeBuilderMixin:
         return getattr(node, "localName", "") in cls.raw_text_tags
 
     def _pop_auto_closing(self, tag):
+        closers = self.auto_close.get(tag)
+        if closers is None:
+            return
         # The parsing-context root (stack[0]) is never auto-closed: for a fragment it
         # is the innerHTML/outerHTML context element, already closed outside the fragment.
-        if (len(self.stack) > 1 and tag in self.auto_close
-                and isinstance(self.current, Element)
-                and self.current.localName in self.auto_close[tag]):
+        # A list item can sit inside a p, so one start tag may close more than one.
+        while (len(self.stack) > 1 and isinstance(self.current, Element)
+               and self.current.localName in closers):
             self.stack.pop()
 
     def _create_element(self, tag, attrs):

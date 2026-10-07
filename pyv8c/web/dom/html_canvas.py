@@ -121,6 +121,10 @@ class ImageData:
 
 @interface('CanvasRenderingContext2D', None)
 class CanvasRenderingContext2D:
+    #: Chrome's ``2d`` context also carries ``lineWidth``, ``globalAlpha``, ``miterLimit``,
+    #: ``lineDashOffset``, ``imageSmoothingEnabled`` and the three ``shadow*``; the baseline is
+    #: missing that mixin, and the engine rejects a declaration that contradicts it, so the fix
+    #: is a regenerated baseline (``tools/extract_interfaces.py``, needs ``CHROMIUM_ROOT``).
     __v8_idl_spec__ = IdlSpec(
         attributes=(AttributeSpec(name="canvas", getter="get_canvas", side_effect=1),
                     AttributeSpec(name="fillStyle", getter="get_fillStyle", setter="set_fillStyle"),
