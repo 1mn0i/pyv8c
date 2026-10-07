@@ -347,11 +347,7 @@ class TestChromiumContracts(unittest.TestCase):
             __v8_idl_spec__ = IdlSpec(
                 name_get="__v8_name_get__",
                 index_get="__v8_index_get__",
-                array=pyv8.FlagArrayProto.iterator
-                | pyv8.FlagArrayProto.entries
-                | pyv8.FlagArrayProto.keys
-                | pyv8.FlagArrayProto.values
-                | pyv8.FlagArrayProto.forEach,
+                array=pyv8.ArrayProto.iterable,
             )
 
             def __init__(self):
@@ -385,6 +381,54 @@ class TestChromiumContracts(unittest.TestCase):
             [
                 [0, 1], ["a", "b"], [[0, "a"], [1, "b"]],
                 [["a", 0, True], ["b", 1, True]],
+            ],
+        )
+
+    def test_the_two_array_words_are_the_two_shapes_chrome_has(self):
+        """``array="iterator"`` borrows the iterator alone; ``array="iterable"`` borrows five.
+
+        Measured against Chrome (2026-10-07): an interface publishes one of these two shapes and
+        never a mix -- ``HTMLCollection`` has the iterator without the named methods, a
+        ``NodeList`` has both -- which is why the field takes the name of the shape.
+        """
+
+        class Collection:
+            def __init__(self):
+                self.values = ["a", "b"]
+
+            def __v8_name_get__(self, name):
+                return len(self.values) if name == "length" else None
+
+            def __v8_index_get__(self, index):
+                return self.values[index] if index < len(self.values) else None
+
+        class IteratorOnly(Collection):
+            __v8_idl_spec__ = IdlSpec(name_get="__v8_name_get__", index_get="__v8_index_get__",
+                                      array="iterator")
+
+        class FullIterable(Collection):
+            __v8_idl_spec__ = IdlSpec(name_get="__v8_name_get__", index_get="__v8_index_get__",
+                                      array="iterable")
+
+        self.context.expose(one=IteratorOnly(), all=FullIterable())
+        result = snapshot(self.context.exec_js(
+            """
+            (() => {
+                const shape = (object) => [
+                    typeof object[Symbol.iterator],
+                    typeof object.entries,
+                    typeof object.forEach,
+                    Array.from(object).join(','),
+                ];
+                return [shape(one), shape(all)];
+            })()
+            """
+        ))
+        self.assertEqual(
+            result,
+            [
+                ["function", "undefined", "undefined", "a,b"],
+                ["function", "function", "function", "a,b"],
             ],
         )
 

@@ -406,6 +406,11 @@ pyv8_module_exec(PyObject* module)
     if (PyModule_AddObject(module, "JSPromise", (PyObject *)js_promise_type) < 0)
         return -1;
 
+    if (js_promise_resolver_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "PromiseResolver", (PyObject *)js_promise_resolver_type) < 0)
+        return -1;
+
     if (js_typedarray_type_init() < 0)
         return -1;
     if (PyModule_AddObject(module, "JSTypeArray", (PyObject *)js_typedarray_type) < 0)

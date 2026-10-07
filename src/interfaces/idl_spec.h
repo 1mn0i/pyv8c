@@ -7,7 +7,8 @@
 struct IdlSpec
 {
     PyObject_HEAD
-    bool callbacks_resolved = true; int64_t length = 0;
+    bool callbacks_resolved = true;
+    int64_t length = 0;
     int64_t array = 0;
     int64_t immutable = 0;
     int64_t has_constructor = 0;
@@ -18,12 +19,8 @@ struct IdlSpec
     bool unconstructable = false;
     bool hidden = false;
     bool skip_inherit = false;
-    // An object that owns a name table of its own: its prototype template gets the
-    // property-name handlers, and its instance template gets no ordinary named or
-    // indexed interceptor, so a lookup is answered by the receiver itself instead
-    // of by an interface declaration.  This names the responsibility, not the one
-    // interface that happens to take it today.
     bool named_properties_object = false;
+    bool code_like = false;
     PyObject *attributes = nullptr;
     PyObject *methods = nullptr;
     PyObject *constants_value = nullptr;

@@ -46,16 +46,25 @@ class SideEffectType:
     kHasSideEffectToReceiver = 2
 
 
-class FlagArrayProto:
-    iterator = 1 << 0
-    entries = 1 << 1
-    keys = 1 << 2
-    values = 1 << 3
-    forEach = 1 << 4
+class ArrayProto:
+    """What an interface borrows from ``Array.prototype``, for ``IdlSpec.array``.
+
+    Two shapes cover every interface Chrome was measured to have (2026-10-07): ``iterator``
+    installs ``Array.prototype.values`` behind ``@@iterator`` and nothing else -- what
+    ``HTMLCollection``, the plugin collections and ``CSSStyleDeclaration`` answer -- while
+    ``iterable`` installs that iterator together with ``entries``/``keys``/``values``/``forEach``,
+    which is what a ``NodeList``, ``Headers``, ``FormData`` or a Maplike answers.
+
+    The intrinsics behind the two are the binding's business, not a caller's: this class is the
+    whole vocabulary the field takes, so a caller cannot spell a shape the engine cannot install.
+    """
+
+    iterator = "iterator"
+    iterable = "iterable"
 
 
 __all__ = [
     "FlagImmutable", "V8Attribute", "FlagLocation",
     "FlagReceiverCheck", "FlagCrossOriginCheck", "FlagExposed",
-    "FlagConstructor", "SideEffectType", "FlagArrayProto",
+    "FlagConstructor", "SideEffectType", "ArrayProto",
 ]

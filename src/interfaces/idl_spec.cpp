@@ -11,6 +11,8 @@ PyTypeObject *constant_spec_type = nullptr;
 enum class Kind
 {
     Int,
+    // An int that also takes the name of the shape a caller means: see IdlSpec.array.
+    ArrayProto,
     Signed,
     Bool,
     String,
@@ -32,7 +34,7 @@ struct Field
 };
 static Field IdlSpec_fields[] = {
     {"length", Kind::Int, offsetof(IdlSpec, length), 0, 2147483647},
-    {"array", Kind::Int, offsetof(IdlSpec, array), 0, 31},
+    {"array", Kind::ArrayProto, offsetof(IdlSpec, array), 0, 31},
     {"immutable", Kind::Int, offsetof(IdlSpec, immutable), 0, 3},
     {"has_constructor", Kind::Int, offsetof(IdlSpec, has_constructor), 0, 1},
     {"constructor_behavior", Kind::Int, offsetof(IdlSpec, constructor_behavior), 0, 3},
@@ -43,6 +45,7 @@ static Field IdlSpec_fields[] = {
     {"hidden", Kind::Bool, offsetof(IdlSpec, hidden), 0, 1},
     {"skip_inherit", Kind::Bool, offsetof(IdlSpec, skip_inherit), 0, 1},
     {"named_properties_object", Kind::Bool, offsetof(IdlSpec, named_properties_object), 0, 1},
+    {"code_like", Kind::Bool, offsetof(IdlSpec, code_like), 0, 1},
     {"attributes", Kind::Attributes, offsetof(IdlSpec, attributes), 0, 0},
     {"methods", Kind::Methods, offsetof(IdlSpec, methods), 0, 0},
     {"constants_value", Kind::Constants, offsetof(IdlSpec, constants_value), 0, 0},
@@ -129,17 +132,41 @@ static Definition &definition(PyTypeObject *type)
 }
 static bool object_field(const Field &field)
 {
-    return field.kind != Kind::Int && field.kind != Kind::Signed && field.kind != Kind::Bool;
+    return field.kind != Kind::Int && field.kind != Kind::ArrayProto
+        && field.kind != Kind::Signed && field.kind != Kind::Bool;
 }
 static void *address(PyObject *self, const Field &field)
 {
     return (char *)self + field.offset;
+}
+//: The two shapes ``IdlSpec.array`` names, and what each borrows from Array.prototype.  The bits
+//: stay inside the binding; ``pyclass.cpp`` installs from them.
+static const struct { const char *word; int64_t bits; } ARRAY_PROTO_WORDS[] = {
+    {"iterator", 1},
+    {"iterable", 31},
+};
+static void array_proto_error(PyObject *self, const Field &field, PyObject *value)
+{
+    PyErr_Format(PyExc_ValueError, "%s.%s takes \"iterator\", \"iterable\" or None, not %R",
+                 definition(Py_TYPE(self)).name, field.name, value);
+}
+static PyObject *array_proto_value(int64_t bits)
+{
+    if (bits == 0)
+        Py_RETURN_NONE;
+    for (const auto &word : ARRAY_PROTO_WORDS)
+        if (word.bits == bits)
+            return PyUnicode_FromString(word.word);
+    //: Only assign_field writes these bits, and it writes one of the two named shapes.
+    Py_RETURN_NONE;
 }
 static PyObject *field_get(PyObject *self, void *closure)
 {
     const Field &field = *(Field *)closure;
     if (field.kind == Kind::Bool)
         return PyBool_FromLong(*(bool *)address(self, field));
+    if (field.kind == Kind::ArrayProto)
+        return array_proto_value(*(int64_t *)address(self, field));
     if (!object_field(field))
         return PyLong_FromLongLong(*(int64_t *)address(self, field));
     PyObject *value = *(PyObject **)address(self, field);
@@ -154,6 +181,29 @@ static PyObject *field_get(PyObject *self, void *closure)
 }
 static int assign_field(PyObject *self, const Field &field, PyObject *value)
 {
+    if (field.kind == Kind::ArrayProto)
+    {
+        if (value == Py_None)
+        {
+            *(int64_t *)address(self, field) = 0;
+            return 0;
+        }
+        int64_t number = -1;
+        if (PyUnicode_Check(value))
+            for (const auto &word : ARRAY_PROTO_WORDS)
+                if (PyUnicode_CompareWithASCIIString(value, word.word) == 0)
+                {
+                    number = word.bits;
+                    break;
+                }
+        if (number < 0)
+        {
+            array_proto_error((PyObject*)self, field, value);
+            return -1;
+        }
+        *(int64_t *)address(self, field) = number;
+        return 0;
+    }
     if (field.kind == Kind::Bool)
     {
         if (!PyBool_Check(value))

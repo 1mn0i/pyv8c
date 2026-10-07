@@ -618,8 +618,9 @@ Python 构造器会额外收到 `win=<当前 Context 的 Python global_this>` �
 | `IdlSpec.global_this` | 标记全局 Window-like 类（决定哪个 Python 对象是 JavaScript 全局对象） |
 | `IdlSpec.skip_inherit` | 子类建立原型链时跳过该中间基类 |
 | `IdlSpec.undetectable` | 使用 V8 undetectable object 行为 |
+| `IdlSpec.code_like` | `eval`/`Function` 会把该类的实例字符串化后编译（Blink 的 `TrustedScript` 用这个），其他对象仍原样返回 |
 | `IdlSpec.unconstructable` | 构造时抛出“不是构造器”错误 |
-| `IdlSpec.array` | 安装 Array 原型相关 intrinsic 方法 |
+| `IdlSpec.array` | 向 `Array.prototype` 借哪些 intrinsic：`"iterator"`（只装 `@@iterator`）、`"iterable"`（再加 `entries`/`keys`/`values`/`forEach`）或 `None`；取值见 `pyv8.ArrayProto` |
 | `IdlSpec.immutable` | 将实例或 prototype 的原型标记为 immutable |
 | `IdlSpec.call` | 让实例在 JavaScript 中可以作为函数调用 |
 

@@ -3,7 +3,9 @@ from typing import ClassVar, Iterator, Mapping, Any, Callable, Dict, Iterable, L
 class IdlSpec:
     def __init__(self, *,
         length: int = ...,
-        array: int = ...,
+        # What this interface borrows from Array.prototype: "iterator" (@@iterator alone),
+        # "iterable" (adding entries/keys/values/forEach), or None.  pyv8.ArrayProto spells them.
+        array: str | None = ...,
         immutable: int = ...,
         has_constructor: int = ...,
         constructor_behavior: int = ...,
@@ -14,6 +16,7 @@ class IdlSpec:
         hidden: bool = ...,
         skip_inherit: bool = ...,
         named_properties_object: bool = ...,
+        code_like: bool = ...,
         attributes: tuple[AttributeSpec, ...] = ...,
         methods: tuple[MethodSpec, ...] = ...,
         constants_value: tuple[ConstantSpec, ...] = ...,
@@ -47,7 +50,7 @@ class IdlSpec:
     @property
     def length(self) -> int: ...
     @property
-    def array(self) -> int: ...
+    def array(self) -> Optional[str]: ...
     @property
     def immutable(self) -> int: ...
     @property
@@ -68,6 +71,7 @@ class IdlSpec:
     def skip_inherit(self) -> bool: ...
     @property
     def named_properties_object(self) -> bool: ...
+    def code_like(self) -> bool: ...
     @property
     def attributes(self) -> tuple[AttributeSpec, ...]: ...
     @property
@@ -351,6 +355,22 @@ class JSFunction(JSObject):
 class JSPromise(JSObject):
     """JavaScript Promise的Python封装"""
     def __init__(self, resolve: Optional[Any] = None, reject: Optional[Any] = None) -> None: ...
+    def __repr__(self) -> str: ...
+
+
+class PromiseResolver:
+    """A promise's resolver, held from Python: create the promise now, settle it later.
+
+    ``JSPromise`` covers the settled case.  This covers the other half -- a fetch, a timer, a
+    worker reply -- where the engine has to keep the resolver and settle it when the work
+    finishes.  It enters the realm named by *context* itself, so it does not require an active
+    V8 context on the calling thread, and it keeps that context alive for as long as it is
+    held.  Once the realm is closed every method raises ``RuntimeError``.
+    """
+    def __init__(self, context: Context) -> None: ...
+    def promise(self) -> JSPromise: ...
+    def resolve(self, value: Any = None) -> None: ...
+    def reject(self, reason: Any = None) -> None: ...
     def __repr__(self) -> str: ...
 
 class JSTypeArray(JSObject):

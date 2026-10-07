@@ -48,6 +48,33 @@ class TestIdlSpec(unittest.TestCase):
         with self.assertRaises(TypeError):
             ConstantSpec(name="x\0hidden", value=1)
 
+    def test_array_takes_the_name_of_the_shape_a_caller_means(self):
+        """``array`` is what an interface borrows from ``Array.prototype``, spelled in words.
+
+        ``"iterator"`` is the iterator alone (``HTMLCollection``) and ``"iterable"`` is that
+        iterator with ``entries``/``keys``/``values``/``forEach`` (``NodeList``, a Maplike); both
+        shapes were measured against Chrome.  The field reads back the word it was set with: the
+        intrinsics behind it belong to the binding, and a caller never spells them.
+        """
+        self.assertEqual(IdlSpec(array=pyv8.ArrayProto.iterator).array, "iterator")
+        self.assertEqual(IdlSpec(array=pyv8.ArrayProto.iterable).array, "iterable")
+        self.assertIsNone(IdlSpec(array=None).array)
+        self.assertIsNone(IdlSpec().array)
+        self.assertEqual(IdlSpec(array="iterable").replace(length=3).array, "iterable")
+
+    def test_an_array_value_that_is_not_a_shape_is_told_the_two(self):
+        """One vocabulary, so one answer: name the shapes rather than explain a bitmask.
+
+        An int no longer reaches the field at all -- neither the bits of a shape nor a plain
+        ``0`` -- and ``True`` is answered the same way instead of arriving as CPython's ``1``.
+        """
+        for value in ("nope", "Iterable", "", 7, 0, 31, True, False, b"iterable", 1.5, 2 ** 32):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError) as caught:
+                    IdlSpec(array=value)
+                self.assertIn("iterator", str(caught.exception))
+                self.assertIn("iterable", str(caught.exception))
+
     def test_disabled_handler_is_not_called(self):
         class Window:
             __v8_idl_spec__ = IdlSpec(name_get=None)

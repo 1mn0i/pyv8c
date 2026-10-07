@@ -333,6 +333,12 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     {
         templ->InstanceTemplate()->MarkAsUndetectable();
     }
+
+    // Code-like: eval and the Function constructor stringify such a value.
+    if (config.code_like)
+    {
+        templ->InstanceTemplate()->SetCodeLike();
+    }
         
     if (config.array != 0)
     {

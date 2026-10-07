@@ -50,10 +50,23 @@ change an installed explicit binding. Callback function objects are not modified
 
 ## Template fields
 
-`length` is 0..2147483647; `array` uses bits 0..4; `immutable` uses bits 0..1;
+`length` is 0..2147483647; `immutable` uses bits 0..1;
 `has_constructor` is 0 or 1; `constructor_behavior` uses bits 0..1.
-`global_this, undetectable, as_object, unconstructable, hidden, skip_inherit`
+
+`array` is what an interface borrows from `Array.prototype`, and it is spelled with words:
+`"iterator"` installs `Array.prototype.values` behind `@@iterator` and nothing else, which is
+what `HTMLCollection`, the plugin collections and `CSSStyleDeclaration` answer; `"iterable"`
+installs that iterator together with `entries`, `keys`, `values` and `forEach`, which is what a
+`NodeList`, a `Headers`, a `FormData` or a Maplike answers. Both shapes were measured against
+Chrome (2026-10-07) and no interface was found that wanted a third; `None` borrows nothing.
+`pyv8.ArrayProto` spells the two words, and reading the field back gives the word it was set
+with. The intrinsics behind them are the binding's own business.
+`global_this, undetectable, as_object, unconstructable, hidden, skip_inherit, code_like`
 are booleans. `undetectable=True` requires an explicit `call` callback.
+`code_like=True` marks the instance template code-like: `eval` and the `Function`
+constructor stringify such a value instead of handing it back unchanged, which is what
+lets a class like Blink's `TrustedScript` carry executable source. Every other object
+still comes back untouched, as the specification says.
 `parent_class` is a type or None; `name` and `to_string_tag` are strings or None.
 `call` and `constructor_adapter` are callback references.
 

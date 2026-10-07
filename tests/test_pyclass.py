@@ -305,6 +305,38 @@ class TestPyClass(unittest.TestCase):
         self.context.exec_js("new Test3")
         self.context.exec_js("Test3()")
 
+    def test_class_code_like_is_stringified_by_eval(self):
+        """测试 code_like 类被 eval 当作源码
+
+        V8 只在"对象的 map 由 API 函数构成、且其实例模板标了 code_like"时才把对象字符串化后
+        编译，其余对象按规范原样返回——Blink 正是用它让 TrustedScript 能被 eval。
+        """
+
+        class TrustedScript:
+            __v8_idl_spec__ = IdlSpec(
+                to_string_tag="TrustedScript",
+                code_like=True,
+                methods=(
+                    MethodSpec(name="toString", callback="fn_toString"),
+                ),
+            )
+
+            def __init__(self, value=""):
+                self._value = str(value)
+
+            def fn_toString(self, *_extra):
+                return self._value
+
+        class Plain:
+            pass
+
+        self.context.expose(script=TrustedScript("1 + 1"), other=Plain())
+
+        self.assertEqual(self.context.exec_js("eval(script)"), 2)
+        # 字符串化只发生在 code_like 上，普通对象仍是原样返回。
+        self.assertTrue(self.context.exec_js("eval(other) === other"))
+        self.assertEqual(self.context.exec_js("'' + script"), "1 + 1")
+
     def test_class_undetectable_and_call(self):
         """测试类的不可检查性 和 __call__"""
 
