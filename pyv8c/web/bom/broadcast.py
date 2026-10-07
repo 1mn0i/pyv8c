@@ -11,9 +11,8 @@ running a handler.  The registry is per origin and lives in the process, like ca
 from __future__ import annotations
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
 from ...foundation.errors import InvalidStateError
 from ...foundation.urls import origin_string
@@ -21,6 +20,7 @@ from ..dom.events import EventTarget
 from ..fetch.events import MessageEvent
 
 __all__ = ["BroadcastChannel"]
+
 
 #: origin -> channel name -> the live channels of that origin, in creation order.
 _CHANNELS = {}
@@ -38,22 +38,6 @@ def _channels_of(services):
 
 @interface('BroadcastChannel', 'EventTarget')
 class BroadcastChannel(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="name", getter="get_name", side_effect=1),
-            AttributeSpec(name="onmessage", getter="get_onmessage", setter="set_onmessage"),
-            AttributeSpec(name="onmessageerror", getter="get_onmessageerror",
-                          setter="set_onmessageerror"),
-        ),
-        methods=(
-            MethodSpec(name="postMessage", callback="fn_postMessage", length=1),
-            MethodSpec(name="close", callback="fn_close"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="BroadcastChannel",
-        has_constructor=1,
-    )
-
     def __init__(self, name=MISSING, *_extra, services=pyv8.Undefined, _realm=None, **_):
         if name is MISSING:
             raise missing_error('BroadcastChannel', 'BroadcastChannel', 1, 0, constructor=True)

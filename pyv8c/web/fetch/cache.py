@@ -10,17 +10,18 @@ wrote it, and a value built in one isolate does not belong to another.
 """
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, missing_error
 from ...foundation.errors import V8TypeError
 from ...foundation.urls import origin_string
 from .request import Request
 from .response import Response
 
+
 #: ``origin -> cache name -> entries``: the caches each origin has opened.
 _STORES = {}
+
 
 #: The methods a cache can hold: everything else refuses to be stored.
 _STORABLE_METHODS = ("GET",)
@@ -130,21 +131,6 @@ def _as_request(value, services):
 @interface('Cache', None)
 class Cache:
     """One named cache: its entries, and the lookups over them."""
-
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="add", callback="fn_add", length=1),
-            MethodSpec(name="addAll", callback="fn_addAll", length=1),
-            MethodSpec(name="delete", callback="fn_delete", length=1),
-            MethodSpec(name="keys", callback="fn_keys", length=0),
-            MethodSpec(name="match", callback="fn_match", length=1),
-            MethodSpec(name="matchAll", callback="fn_matchAll", length=0),
-            MethodSpec(name="put", callback="fn_put", length=2),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Cache",
-        has_constructor=1,
-    )
 
     def __init__(self, entries=None, services=None, **_):
         self._entries = entries if entries is not None else []
@@ -268,19 +254,6 @@ class Cache:
 class CacheStorage:
     """The named caches of the realm's origin."""
 
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="delete", callback="fn_delete", length=1),
-            MethodSpec(name="has", callback="fn_has", length=1),
-            MethodSpec(name="keys", callback="fn_keys", length=0),
-            MethodSpec(name="match", callback="fn_match", length=1),
-            MethodSpec(name="open", callback="fn_open", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CacheStorage",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         self._services = services
 
@@ -321,6 +294,5 @@ class CacheStorage:
             if found:
                 return _settle(self._services, _response_from(found[0], self._services))
         return _settle(self._services, pyv8.Undefined)
-
 
 __all__ = ["Cache", "CacheStorage"]

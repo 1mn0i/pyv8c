@@ -6,9 +6,8 @@ and ``FontFaceSet.check`` answers true.  No font is ever fetched.
 from __future__ import annotations
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error
 from ...foundation.errors import V8TypeError
 from .events import EventTarget
@@ -23,31 +22,6 @@ def _descriptor(options, name, default):
 
 @interface('FontFace', None)
 class FontFace:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="family", getter="get_family", side_effect=1),
-            AttributeSpec(name="style", getter="get_style", setter="set_style"),
-            AttributeSpec(name="weight", getter="get_weight", setter="set_weight"),
-            AttributeSpec(name="stretch", getter="get_stretch", setter="set_stretch"),
-            AttributeSpec(name="ascentOverride", getter="get_ascentOverride",
-                          setter="set_ascentOverride"),
-            AttributeSpec(name="unicodeRange", getter="get_unicodeRange",
-                          setter="set_unicodeRange"),
-            AttributeSpec(name="featureSettings", getter="get_featureSettings",
-                          setter="set_featureSettings"),
-            AttributeSpec(name="variationSettings", getter="get_variationSettings",
-                          setter="set_variationSettings"),
-            AttributeSpec(name="display", getter="get_display", setter="set_display"),
-            AttributeSpec(name="status", getter="get_status", side_effect=1),
-            AttributeSpec(name="loaded", getter="get_loaded", side_effect=1),
-        ),
-        methods=(MethodSpec(name="load", callback="fn_load"),),
-        constructor_behavior=1,
-        length=2,
-        to_string_tag="FontFace",
-        has_constructor=1,
-    )
-
     def __init__(self, family=MISSING, source=MISSING, descriptors=None, *_extra,
                  services=pyv8.Undefined, _realm=None, **_):
         self._services = services if services is not pyv8.Undefined else _realm
@@ -103,32 +77,13 @@ class FontFace:
 
 @interface('FontFaceSet', 'EventTarget')
 class FontFaceSet(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="status", getter="get_status", side_effect=1),
-            AttributeSpec(name="size", getter="get_size", side_effect=1),
-            AttributeSpec(name="ready", getter="get_ready", side_effect=1),
-            AttributeSpec(name="onloading", getter="get_onloading", setter="set_onloading"),
-            AttributeSpec(name="onloadingdone", getter="get_onloadingdone",
-                          setter="set_onloadingdone"),
-            AttributeSpec(name="onloadingerror", getter="get_onloadingerror",
-                          setter="set_onloadingerror"),
-        ),
-        methods=(
-            MethodSpec(name="add", callback="fn_add", length=1),
-            MethodSpec(name="delete", callback="fn_delete", length=1),
-            MethodSpec(name="clear", callback="fn_clear"),
-            MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
-            MethodSpec(name="check", callback="fn_check", length=1, side_effect=1),
-            MethodSpec(name="load", callback="fn_load", length=1, side_effect=1),
-            MethodSpec(name="forEach", callback="fn_forEach", length=1, side_effect=1),
-        ),
-        # keys/values/entries/@iterator come from the iteration source; a set is pairs.
-        iterate="__v8_iterate__",
-        constructor_behavior=0,
-        to_string_tag="FontFaceSet",
-        has_constructor=1,
-    )
+    #: ``keys``/``values``/``entries`` and ``Symbol.iterator`` hand out pairs from here.
+    __idl_overrides__ = {
+        "interface": {
+            "iterate": "__v8_iterate__",
+            "length": 0,
+        }
+    }
 
     def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **kw):
         if services is pyv8.Undefined:

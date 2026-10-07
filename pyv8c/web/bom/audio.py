@@ -9,9 +9,10 @@ import math
 import sys
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8 import AttributeSpec
 
-from ...engine.features import FeatureImplementation, interface
+from ...engine.features import FeatureImplementation
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     boolean,
@@ -26,11 +27,14 @@ from ...foundation.clock import clock_of
 from ...foundation.errors import V8TypeError, dom_exception
 from ..dom.events import Event, EventTarget
 
+
 #: What a desktop context reports for its sample rate.
 SAMPLE_RATE = 48000
 
+
 #: The quantum a context renders in, which Chrome reports as a member.
 RENDER_QUANTUM = 128
+
 
 #: ``AudioParam`` bounds: the largest finite float, what Chrome reports for a gain.
 _PARAM_MAX = 3.4028234663852886e38
@@ -54,24 +58,7 @@ def _double(value, what):
 class AudioParam:
     """One automatable number, and the points scheduled on it."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("value", "get_value", "set_value"),
-            _attribute("automationRate", "get_automationRate", "set_automationRate"),
-            _attribute("defaultValue", "get_defaultValue"),
-            _attribute("minValue", "get_minValue"),
-            _attribute("maxValue", "get_maxValue"),
-        ),
-        methods=tuple(
-            MethodSpec(name=name, callback="fn_" + name)
-            for name in ("cancelAndHoldAtTime", "cancelScheduledValues",
-                         "exponentialRampToValueAtTime", "linearRampToValueAtTime",
-                         "setTargetAtTime", "setValueAtTime", "setValueCurveAtTime")
-        ),
-        constructor_behavior=0,
-        to_string_tag="AudioParam",
-        has_constructor=1,
-    )
+        # Absent: ``fn_<name>`` binds them, and the bodies below answer.
 
     def __init__(self, value=1.0, default=None, minimum=-_PARAM_MAX, maximum=_PARAM_MAX, **_):
         self._value = float(value)
@@ -192,6 +179,7 @@ def _target(event, start, seconds):
 #: How many points one period of a waveform is sampled into.
 _WAVE_POINTS = 4096
 
+
 #: The tables built so far, keyed by the waveform and the harmonics it may carry.
 _WAVE_TABLES = {}
 
@@ -277,25 +265,6 @@ class AudioNode(EventTarget):
     #: How many inputs and outputs a node of this kind has.
     inputs, outputs = 1, 1
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("context", "get_context"),
-            _attribute("numberOfInputs", "get_numberOfInputs"),
-            _attribute("numberOfOutputs", "get_numberOfOutputs"),
-            _attribute("channelCount", "get_channelCount", "set_channelCount"),
-            _attribute("channelCountMode", "get_channelCountMode", "set_channelCountMode"),
-            _attribute("channelInterpretation", "get_channelInterpretation",
-                       "set_channelInterpretation"),
-        ),
-        methods=(
-            MethodSpec(name="connect", callback="fn_connect", length=1),
-            MethodSpec(name="disconnect", callback="fn_disconnect"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="AudioNode",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, context=None, **_):
         super().__init__(*_extra, **_)
         self._context = context
@@ -356,17 +325,6 @@ class AudioNode(EventTarget):
 class AudioScheduledSourceNode(AudioNode):
     """A source that runs between ``start`` and ``stop``."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("onended", "get_onended", "set_onended"),),
-        methods=(
-            MethodSpec(name="start", callback="fn_start"),
-            MethodSpec(name="stop", callback="fn_stop"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="AudioScheduledSourceNode",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
         self._start = None
@@ -401,19 +359,6 @@ class AudioScheduledSourceNode(AudioNode):
 @interface('OscillatorNode', 'AudioScheduledSourceNode')
 class OscillatorNode(AudioScheduledSourceNode):
     """A tone: the type a page sets and the frequency it automates."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("type", "get_type", "set_type"),
-            _attribute("frequency", "get_frequency"),
-            _attribute("detune", "get_detune"),
-        ),
-        methods=(MethodSpec(name="setPeriodicWave", callback="fn_setPeriodicWave", length=1),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="OscillatorNode",
-        has_constructor=1,
-    )
 
     #: What ``type`` accepts, in Chrome's spelling.
     TYPES = ("sine", "square", "sawtooth", "triangle", "custom")
@@ -464,27 +409,6 @@ class OscillatorNode(AudioScheduledSourceNode):
 @interface('AnalyserNode', 'AudioNode')
 class AnalyserNode(AudioNode):
     """What a page reads the spectrum through."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("fftSize", "get_fftSize", "set_fftSize"),
-            _attribute("frequencyBinCount", "get_frequencyBinCount"),
-            _attribute("minDecibels", "get_minDecibels", "set_minDecibels"),
-            _attribute("maxDecibels", "get_maxDecibels", "set_maxDecibels"),
-            _attribute("smoothingTimeConstant", "get_smoothingTimeConstant",
-                       "set_smoothingTimeConstant"),
-        ),
-        methods=(
-            MethodSpec(name="getFloatFrequencyData", callback="fn_getFloatFrequencyData",
-                       length=1),
-            MethodSpec(name="getFloatTimeDomainData", callback="fn_getFloatTimeDomainData",
-                       length=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="AnalyserNode",
-        has_constructor=1,
-    )
 
     def __init__(self, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -569,14 +493,6 @@ class AnalyserNode(AudioNode):
 class GainNode(AudioNode):
     """A volume: the one parameter a page ramps."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("gain", "get_gain"),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="GainNode",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
         self._gain = AudioParam(1.0, minimum=-_PARAM_MAX)
@@ -593,37 +509,12 @@ class AudioDestinationNode(AudioNode):
 
     inputs, outputs = 1, 0
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("maxChannelCount", "get_maxChannelCount"),),
-        constructor_behavior=0,
-        to_string_tag="AudioDestinationNode",
-        has_constructor=1,
-    )
-
     def get_maxChannelCount(self): return 2
 
 
 @interface('AudioBuffer', None)
 class AudioBuffer:
     """A block of samples a graph reads from and writes into."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("length", "get_length"),
-            _attribute("duration", "get_duration"),
-            _attribute("sampleRate", "get_sampleRate"),
-            _attribute("numberOfChannels", "get_numberOfChannels"),
-        ),
-        methods=(
-            MethodSpec(name="getChannelData", callback="fn_getChannelData", length=1),
-            MethodSpec(name="copyFromChannel", callback="fn_copyFromChannel", length=2),
-            MethodSpec(name="copyToChannel", callback="fn_copyToChannel", length=2),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="AudioBuffer",
-        has_constructor=1,
-    )
 
     def __init__(self, options=None, *, length=0, sample_rate=SAMPLE_RATE, channels=1,
                  samples=None, **_):
@@ -712,42 +603,6 @@ class AudioBuffer:
 @interface('BaseAudioContext', 'EventTarget')
 class BaseAudioContext(EventTarget):
     """A graph's context: its clock, its state and the factories that fill it."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("destination", "get_destination"),
-            _attribute("listener", "get_listener"),
-            _attribute("sampleRate", "get_sampleRate"),
-            _attribute("currentTime", "get_currentTime"),
-            _attribute("state", "get_state"),
-            _attribute("onstatechange", "get_onstatechange", "set_onstatechange"),
-            _attribute("renderQuantumSize", "get_renderQuantumSize"),
-        ),
-        methods=(
-            MethodSpec(name="createAnalyser", callback="fn_createAnalyser"),
-            MethodSpec(name="createBiquadFilter", callback="fn_createBiquadFilter"),
-            MethodSpec(name="createBuffer", callback="fn_createBuffer", length=3),
-            MethodSpec(name="createBufferSource", callback="fn_createBufferSource"),
-            MethodSpec(name="createChannelMerger", callback="fn_createChannelMerger"),
-            MethodSpec(name="createChannelSplitter", callback="fn_createChannelSplitter"),
-            MethodSpec(name="createConstantSource", callback="fn_createConstantSource"),
-            MethodSpec(name="createConvolver", callback="fn_createConvolver"),
-            MethodSpec(name="createDelay", callback="fn_createDelay"),
-            MethodSpec(name="createDynamicsCompressor", callback="fn_createDynamicsCompressor"),
-            MethodSpec(name="createGain", callback="fn_createGain"),
-            MethodSpec(name="createIIRFilter", callback="fn_createIIRFilter", length=2),
-            MethodSpec(name="createOscillator", callback="fn_createOscillator"),
-            MethodSpec(name="createPanner", callback="fn_createPanner"),
-            MethodSpec(name="createPeriodicWave", callback="fn_createPeriodicWave", length=2),
-            MethodSpec(name="createScriptProcessor", callback="fn_createScriptProcessor"),
-            MethodSpec(name="createStereoPanner", callback="fn_createStereoPanner"),
-            MethodSpec(name="createWaveShaper", callback="fn_createWaveShaper"),
-            MethodSpec(name="decodeAudioData", callback="fn_decodeAudioData", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="BaseAudioContext",
-        has_constructor=1,
-    )
 
     def __init__(self, *_extra, state="running", sample_rate=None, services=pyv8.Undefined,
                  _realm=None, **_):
@@ -874,23 +729,6 @@ class BaseAudioContext(EventTarget):
 class AudioContext(BaseAudioContext):
     """A live context: its clock runs and its state can be moved."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("baseLatency", "get_baseLatency"),
-            _attribute("outputLatency", "get_outputLatency"),
-            _attribute("onerror", "get_onerror", "set_onerror"),
-        ),
-        methods=(
-            MethodSpec(name="close", callback="fn_close"),
-            MethodSpec(name="resume", callback="fn_resume"),
-            MethodSpec(name="suspend", callback="fn_suspend"),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="AudioContext",
-        has_constructor=1,
-    )
-
     def __init__(self, options=None, *, _realm=None, **kwargs):
         sample_rate = None
         if not is_nullish(options) and options is not None:
@@ -922,22 +760,6 @@ class AudioContext(BaseAudioContext):
 @interface('OfflineAudioContext', 'BaseAudioContext')
 class OfflineAudioContext(BaseAudioContext):
     """A context that renders ahead: it knows how long its output is."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("oncomplete", "get_oncomplete", "set_oncomplete"),
-            _attribute("length", "get_length"),
-        ),
-        methods=(
-            MethodSpec(name="startRendering", callback="fn_startRendering"),
-            MethodSpec(name="resume", callback="fn_resume"),
-            MethodSpec(name="suspend", callback="fn_suspend"),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="OfflineAudioContext",
-        has_constructor=1,
-    )
 
     def __init__(self, channels_or_options=MISSING, length=0, sample_rate=None, *,
                  _realm=None, **kwargs):
@@ -1028,20 +850,6 @@ def _compression_db(level, threshold, knee, ratio):
 class DynamicsCompressorNode(AudioNode):
     """A compressor: the level it takes off the signal, which ``reduction`` reports."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("threshold", "get_threshold"),
-            _attribute("knee", "get_knee"),
-            _attribute("ratio", "get_ratio"),
-            _attribute("reduction", "get_reduction"),
-            _attribute("attack", "get_attack"),
-            _attribute("release", "get_release"),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="DynamicsCompressorNode",
-        has_constructor=1,
-    )
 
     def __init__(self, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -1079,22 +887,6 @@ class DynamicsCompressorNode(AudioNode):
 @interface('AudioBufferSourceNode', 'AudioScheduledSourceNode')
 class AudioBufferSourceNode(AudioScheduledSourceNode):
     """A buffer played back: its samples, read at the rate and position it was given."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("buffer", "get_buffer", "set_buffer"),
-            _attribute("playbackRate", "get_playbackRate"),
-            _attribute("detune", "get_detune"),
-            _attribute("loop", "get_loop", "set_loop"),
-            _attribute("loopStart", "get_loopStart", "set_loopStart"),
-            _attribute("loopEnd", "get_loopEnd", "set_loopEnd"),
-        ),
-        methods=(MethodSpec(name="start", callback="fn_start", length=3),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="AudioBufferSourceNode",
-        has_constructor=1,
-    )
 
     def __init__(self, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -1306,8 +1098,10 @@ def _fft(values):
 #: times this, measured at four rates.
 _CONVOLVER_CALIBRATION = 55.5186
 
+
 #: What a ``BiquadFilterNode`` gain may reach, as Chrome reports it.
 _BIQUAD_GAIN_MAX = 1541.273681640625
+
 
 #: The buffer sizes ``ScriptProcessorNode`` accepts, and the one it picks by itself.
 _SCRIPT_BUFFER_SIZES = (256, 512, 1024, 2048, 4096, 8192, 16384)
@@ -1347,12 +1141,6 @@ def _view_length(view, what):
 class PeriodicWave:
     """The harmonics an oscillator plays in place of a built-in waveform."""
 
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=1,
-        length=2,
-        to_string_tag="PeriodicWave",
-        has_constructor=1,
-    )
 
     def __init__(self, context=None, options=None, *, _realm=None, **_):
         if is_nullish(options):
@@ -1422,27 +1210,6 @@ class PeriodicWave:
 class AudioListener:
     """Where the ears are: the position and orientation a panner reads."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("positionX", "get_positionX"),
-            _attribute("positionY", "get_positionY"),
-            _attribute("positionZ", "get_positionZ"),
-            _attribute("forwardX", "get_forwardX"),
-            _attribute("forwardY", "get_forwardY"),
-            _attribute("forwardZ", "get_forwardZ"),
-            _attribute("upX", "get_upX"),
-            _attribute("upY", "get_upY"),
-            _attribute("upZ", "get_upZ"),
-        ),
-        methods=(
-            MethodSpec(name="setPosition", callback="fn_setPosition", length=3),
-            MethodSpec(name="setOrientation", callback="fn_setOrientation", length=6),
-        ),
-        constructor_behavior=0,
-        to_string_tag="AudioListener",
-        has_constructor=1,
-    )
-
     def __init__(self, **_):
         self._positionX = AudioParam(0.0, minimum=-_PARAM_MAX)
         self._positionY = AudioParam(0.0, minimum=-_PARAM_MAX)
@@ -1494,14 +1261,6 @@ class ConstantSourceNode(AudioScheduledSourceNode):
 
     inputs, outputs = 0, 1
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("offset", "get_offset"),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="ConstantSourceNode",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
         self._offset = AudioParam(1.0, minimum=-_PARAM_MAX)
@@ -1520,14 +1279,6 @@ class ConstantSourceNode(AudioScheduledSourceNode):
 @interface('DelayNode', 'AudioNode')
 class DelayNode(AudioNode):
     """A delay line: the input, later by the time the parameter names."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("delayTime", "get_delayTime"),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="DelayNode",
-        has_constructor=1,
-    )
 
     def __init__(self, max_delay_time=1.0, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -1562,16 +1313,6 @@ class DelayNode(AudioNode):
 class ConvolverNode(AudioNode):
     """Reverb: the input convolved with an impulse, scaled as Chrome scales it."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("buffer", "get_buffer", "set_buffer"),
-            _attribute("normalize", "get_normalize", "set_normalize"),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="ConvolverNode",
-        has_constructor=1,
-    )
 
     def __init__(self, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -1635,15 +1376,6 @@ class IIRFilterNode(AudioNode):
 
     #: The most coefficients each list may hold.
     MAX_COEFFICIENTS = 20
-
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="getFrequencyResponse", callback="fn_getFrequencyResponse",
-                            length=3),),
-        constructor_behavior=1,
-        length=2,
-        to_string_tag="IIRFilterNode",
-        has_constructor=1,
-    )
 
     def __init__(self, feedforward=MISSING, feedback=MISSING, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -1720,21 +1452,6 @@ class BiquadFilterNode(AudioNode):
     TYPES = ("lowpass", "highpass", "bandpass", "lowshelf", "highshelf", "peaking",
              "notch", "allpass")
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("type", "get_type", "set_type"),
-            _attribute("frequency", "get_frequency"),
-            _attribute("detune", "get_detune"),
-            _attribute("Q", "get_Q"),
-            _attribute("gain", "get_gain"),
-        ),
-        methods=(MethodSpec(name="getFrequencyResponse", callback="fn_getFrequencyResponse",
-                            length=3),),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="BiquadFilterNode",
-        has_constructor=1,
-    )
 
     def __init__(self, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -1855,16 +1572,6 @@ class BiquadFilterNode(AudioNode):
 class WaveShaperNode(AudioNode):
     """A shape applied to every sample, from the curve a page hands over."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("curve", "get_curve", "set_curve"),
-            _attribute("oversample", "get_oversample", "set_oversample"),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="WaveShaperNode",
-        has_constructor=1,
-    )
 
     OVERSAMPLE = ("none", "2x", "4x")
 
@@ -1911,13 +1618,6 @@ class WaveShaperNode(AudioNode):
 class StereoPannerNode(AudioNode):
     """A source placed across the two channels; a mono graph hears the sum."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("pan", "get_pan"),),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="StereoPannerNode",
-        has_constructor=1,
-    )
 
     def __init__(self, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -1937,32 +1637,6 @@ class StereoPannerNode(AudioNode):
 class PannerNode(AudioNode):
     """A source in space: where it is, how far, and which way it points."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("panningModel", "get_panningModel", "set_panningModel"),
-            _attribute("positionX", "get_positionX"),
-            _attribute("positionY", "get_positionY"),
-            _attribute("positionZ", "get_positionZ"),
-            _attribute("orientationX", "get_orientationX"),
-            _attribute("orientationY", "get_orientationY"),
-            _attribute("orientationZ", "get_orientationZ"),
-            _attribute("distanceModel", "get_distanceModel", "set_distanceModel"),
-            _attribute("refDistance", "get_refDistance", "set_refDistance"),
-            _attribute("maxDistance", "get_maxDistance", "set_maxDistance"),
-            _attribute("rolloffFactor", "get_rolloffFactor", "set_rolloffFactor"),
-            _attribute("coneInnerAngle", "get_coneInnerAngle", "set_coneInnerAngle"),
-            _attribute("coneOuterAngle", "get_coneOuterAngle", "set_coneOuterAngle"),
-            _attribute("coneOuterGain", "get_coneOuterGain", "set_coneOuterGain"),
-        ),
-        methods=(
-            MethodSpec(name="setPosition", callback="fn_setPosition", length=3),
-            MethodSpec(name="setOrientation", callback="fn_setOrientation", length=6),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="PannerNode",
-        has_constructor=1,
-    )
 
     PANNING_MODELS = ("equalpower", "HRTF")
     DISTANCE_MODELS = ("linear", "inverse", "exponential")
@@ -2099,12 +1773,6 @@ class ChannelMergerNode(AudioNode):
     channel_count = 1
     channel_count_mode = "explicit"
 
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="ChannelMergerNode",
-        has_constructor=1,
-    )
 
     def __init__(self, number_of_inputs=6, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -2130,12 +1798,6 @@ class ChannelSplitterNode(AudioNode):
     channel_count_mode = "explicit"
     channel_interpretation = "discrete"
 
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="ChannelSplitterNode",
-        has_constructor=1,
-    )
 
     def __init__(self, number_of_outputs=6, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -2157,16 +1819,6 @@ class ScriptProcessorNode(AudioNode):
 
     channel_count = 2
     channel_count_mode = "explicit"
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("bufferSize", "get_bufferSize"),
-            _attribute("onaudioprocess", "get_onaudioprocess", "set_onaudioprocess"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="ScriptProcessorNode",
-        has_constructor=1,
-    )
 
     def __init__(self, buffer_size=0, input_channels=2, output_channels=2, *_extra, **kwargs):
         super().__init__(*_extra, **kwargs)
@@ -2215,18 +1867,6 @@ class ScriptProcessorNode(AudioNode):
 class AudioProcessingEvent(Event):
     """What a script processor hands its callback each block."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("playbackTime", "get_playbackTime"),
-            _attribute("inputBuffer", "get_inputBuffer"),
-            _attribute("outputBuffer", "get_outputBuffer"),
-        ),
-        constructor_behavior=1,
-        length=2,
-        to_string_tag="AudioProcessingEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, type=MISSING, init=None, **_):
         init = {} if is_nullish(init) else dict(init)
         self._playback_time = float(init.pop("playbackTime", 0.0))
@@ -2257,7 +1897,6 @@ def _script_buffer_size(value):
         raise dom_exception("IndexSizeError", "The buffer size provided ({0}) must be one of"
                             " 256, 512, 1024, 2048, 4096, 8192, 16384.".format(size))
     return size
-
 
 FEATURE = FeatureImplementation({
     "AudioBuffer": AudioBuffer,

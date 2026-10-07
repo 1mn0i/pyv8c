@@ -1,9 +1,8 @@
 """Fetch header collection; conversion precedes validation and mutation."""
 
 import pyv8
-from pyv8 import IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     byte_string,
@@ -20,21 +19,6 @@ from ..dom.mixins import ReadOnlyIndexedPropertyMixin
 
 @interface('Headers', None)
 class Headers(ReadOnlyIndexedPropertyMixin):
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
-            MethodSpec(name="set", callback="fn_set", length=2),
-            MethodSpec(name="append", callback="fn_append", length=2),
-            MethodSpec(name="delete", callback="fn_delete", length=1),
-            MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
-            MethodSpec(name="keys", callback="fn_keys", side_effect=1),
-            MethodSpec(name="values", callback="fn_values", side_effect=1),
-            MethodSpec(name="entries", callback="fn_entries", side_effect=1),
-        ), constructor_behavior=1, length=1, has_constructor=1,
-        #: A header collection is iterable: its entries are ``[name, value]`` pairs, and
-        #: ``Symbol.iterator`` is what a ``for..of`` reaches for.
-        array="iterable",
-    )
 
     def _indexed_items(self):
         return [(name, self._data[name]) for name in self._sorted_names()]
@@ -120,6 +104,5 @@ class Headers(ReadOnlyIndexedPropertyMixin):
             raise missing_error('Headers', 'has', 1, 0)
         key = byte_string(key, prefix="Failed to execute 'has' on 'Headers': ")
         return header_name(key) in self._data
-
 
 __all__ = ["Headers"]

@@ -5,9 +5,9 @@ from html import escape
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8 import AttributeSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dictionary, dom_string, integer, interface_value, is_nullish, missing_error
 from ...foundation.errors import (InvalidCharacterError, NotFoundError,
                                 NotSupportedError, V8SyntaxError, V8TypeError,
@@ -33,8 +33,10 @@ from .mutation import record_mutation
 from .nodes import Attr, DocumentFragment, Node, ShadowRoot
 from .utils import _VALID_NAME_RE, XHTML_NAMESPACE
 
+
 #: ``insertAdjacent*`` positions, in the order Chromium validates them.
 _ADJACENT_POSITIONS = ("beforebegin", "afterbegin", "beforeend", "afterend")
+
 
 # HTML void elements serialize without children or an end tag, programmatic nodes too.
 _VOID_ELEMENTS = frozenset({
@@ -46,75 +48,6 @@ _VOID_ELEMENTS = frozenset({
 @interface('Element', 'Node')
 class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
     """Base implementation for HTML and XML elements."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="namespaceURI", getter="get_namespaceURI", side_effect=1),
-            AttributeSpec(name="prefix", getter="get_prefix", side_effect=1),
-            AttributeSpec(name="localName", getter="get_localName", side_effect=1),
-            AttributeSpec(name="tagName", getter="get_tagName", side_effect=1),
-            AttributeSpec(name="id", getter="get_id", setter="set_id"),
-            AttributeSpec(name="className", getter="get_className", setter="set_className"),
-            AttributeSpec(name="innerHTML", getter="get_innerHTML", setter="set_innerHTML"),
-            AttributeSpec(name="outerHTML", getter="get_outerHTML", setter="set_outerHTML"),
-            AttributeSpec(name="children", getter="get_children", side_effect=1),
-            AttributeSpec(name="classList", getter="get_classList", side_effect=1),
-            AttributeSpec(name="attributes", getter="get_attributes", side_effect=1),
-            AttributeSpec(name="clientWidth", getter="get_clientWidth", side_effect=1),
-            AttributeSpec(name="clientHeight", getter="get_clientHeight", side_effect=1),
-            AttributeSpec(name="scrollWidth", getter="get_scrollWidth", side_effect=1),
-            AttributeSpec(name="scrollHeight", getter="get_scrollHeight", side_effect=1),
-            AttributeSpec(name="role", getter="get_role", setter="set_role"),
-            AttributeSpec(name="shadowRoot", getter="get_shadowRoot", side_effect=1),
-            AttributeSpec(name="slot", getter="get_slot", setter="set_slot"),
-            AttributeSpec(name="part", getter="get_part", setter="set_part",
-                          side_effect=1),
-            AttributeSpec(name="assignedSlot", getter="get_assignedSlot", side_effect=1),
-            AttributeSpec(name="scrollTop", getter="get_scrollTop", setter="set_scrollTop"),
-            AttributeSpec(name="scrollLeft", getter="get_scrollLeft",
-                          setter="set_scrollLeft"),
-            AttributeSpec(name="clientTop", getter="get_clientTop", side_effect=1),
-            AttributeSpec(name="clientLeft", getter="get_clientLeft", side_effect=1),
-            AttributeSpec(name="elementTiming", getter="get_elementTiming",
-                          setter="set_elementTiming"),
-            AttributeSpec(name="currentCSSZoom", getter="get_currentCSSZoom",
-                          side_effect=1),
-            AttributeSpec(name="customElementRegistry", getter="get_customElementRegistry",
-                          side_effect=1),
-            AttributeSpec(name="activeViewTransition", getter="get_activeViewTransition",
-                          side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="getAttribute", callback="fn_getAttribute", length=1, side_effect=1),
-            MethodSpec(name="setAttribute", callback="fn_setAttribute", length=2),
-            MethodSpec(name="removeAttribute", callback="fn_removeAttribute", length=1),
-            MethodSpec(name="hasAttribute", callback="fn_hasAttribute", length=1, side_effect=1),
-            MethodSpec(name="getAttributeNames", callback="fn_getAttributeNames"),
-            MethodSpec(name="hasAttributes", callback="fn_hasAttributes", side_effect=1),
-            MethodSpec(name="toggleAttribute", callback="fn_toggleAttribute", length=1),
-            MethodSpec(name="getAttributeNS", callback="fn_getAttributeNS", length=2, side_effect=1),
-            MethodSpec(name="removeAttributeNS", callback="fn_removeAttributeNS", length=2),
-            MethodSpec(name="hasAttributeNS", callback="fn_hasAttributeNS", length=2, side_effect=1),
-            MethodSpec(name="getAttributeNode", callback="fn_getAttributeNode", length=1, side_effect=1),
-            MethodSpec(name="setAttributeNode", callback="fn_setAttributeNode", length=1),
-            MethodSpec(name="removeAttributeNode", callback="fn_removeAttributeNode", length=1),
-            MethodSpec(name="getElementsByTagName", callback="fn_getElementsByTagName", length=1, side_effect=1),
-            MethodSpec(name="getElementsByTagNameNS", callback="fn_getElementsByTagNameNS", length=2, side_effect=1),
-            MethodSpec(name="getElementsByClassName", callback="fn_getElementsByClassName", length=1, side_effect=1),
-            MethodSpec(name="insertAdjacentElement", callback="fn_insertAdjacentElement", length=2),
-            MethodSpec(name="insertAdjacentHTML", callback="fn_insertAdjacentHTML", length=2),
-            MethodSpec(name="insertAdjacentText", callback="fn_insertAdjacentText", length=2),
-            MethodSpec(name="querySelector", callback="fn_querySelector", length=1, side_effect=1),
-            MethodSpec(name="querySelectorAll", callback="fn_querySelectorAll", length=1, side_effect=1),
-            MethodSpec(name="matches", callback="fn_matches", length=1, side_effect=1),
-            MethodSpec(name="webkitMatchesSelector", callback="fn_webkitMatchesSelector", length=1, side_effect=1),
-            MethodSpec(name="closest", callback="fn_closest", length=1, side_effect=1),
-            MethodSpec(name="getBoundingClientRect", callback="fn_getBoundingClientRect", side_effect=1),
-            MethodSpec(name="attachShadow", callback="fn_attachShadow", length=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
 
     # Chrome reads ``role`` back as the attribute or null, and never validates it.
     def get_role(self):
@@ -554,7 +487,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if self.localName in _VOID_ELEMENTS:
             return f"<{self.localName}{attrs}>"
         return f"<{self.localName}{attrs}>{self.get_innerHTML()}</{self.localName}>"
-    def _clone_shallow(self): return type(self)(self.localName, services=self._services, attributes=self.attributes.copy())
+    def _clone_shallow(self): return type(self)(self.localName, services=self._services, attributes=self.attributes.copy(),)
 
     # A click runs the behavior of the nearest ancestor that has one (see
     # dom.activation); most elements have none, hence the default pair below.
@@ -572,13 +505,12 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
 #: do too, so both are installed on Element rather than in the table every target
 #: shares. The ARIA table is data measured from Chrome, which is why it lives in its
 #: own module.
-Element.__v8_idl_spec__ = Element.__v8_idl_spec__.replace(
-    attributes=Element.__v8_idl_spec__.attributes
-    + _install_handler_slots(Element, ("onbeforecopy", "onbeforecut", "onbeforepaste",
-                                          "onfullscreenchange", "onfullscreenerror",
-                                          "onwebkitfullscreenchange",
-                                          "onwebkitfullscreenerror"))
-    + aria.install(Element))
+#: Accessors only: the baseline says which of these Element publishes.
+_install_handler_slots(Element, ("onbeforecopy", "onbeforecut", "onbeforepaste",
+                                 "onfullscreenchange", "onfullscreenerror",
+                                 "onwebkitfullscreenchange", "onwebkitfullscreenerror"))
+aria.install(Element)
+
 
 def _unrendered(node):
     """Whether a descendant is laid out away, taking its subtree out of innerText.
@@ -600,36 +532,15 @@ def _unrendered(node):
 
 @interface('HTMLElement', 'Element')
 class HTMLElement(Element):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="innerText", getter="get_innerText",
-                          setter="set_innerText"),
-            AttributeSpec(name="contentEditable", getter="get_contentEditable",
-                          setter="set_contentEditable"),
-            AttributeSpec(name="isContentEditable", getter="get_isContentEditable",
-                          side_effect=1),
+    #: The attributes this interface reflects in a shape of its own, from a table measured on
+    #: Chrome; see web.dom.html_props for what each shape does.  Reading them changes nothing.
+    __idl_overrides__ = {name: {"side_effect": 1} for name in (
+        "accessKey", "autocapitalize", "autocorrect", "autofocus", "dir", "draggable",
+        "editContext", "enterKeyHint", "focusGroup", "focusGroupStart", "inert", "inputMode",
+        "lang", "outerText", "popover", "spellcheck", "translate", "virtualKeyboardPolicy",
+        "writingSuggestions",
+    )}
 
-            AttributeSpec(name="title", getter="get_title", setter="set_title"),
-            AttributeSpec(name="hidden", getter="get_hidden", setter="set_hidden"),
-            AttributeSpec(name="style", getter="get_style", side_effect=1),
-            AttributeSpec(name="attributeStyleMap", getter="get_attributeStyleMap", side_effect=1),
-            AttributeSpec(name="dataset", getter="get_dataset", side_effect=1),
-            AttributeSpec(name="offsetParent", getter="get_offsetParent", side_effect=1),
-            AttributeSpec(name="offsetTop", getter="get_offsetTop", side_effect=1),
-            AttributeSpec(name="offsetLeft", getter="get_offsetLeft", side_effect=1),
-            AttributeSpec(name="offsetWidth", getter="get_offsetWidth", side_effect=1),
-            AttributeSpec(name="offsetHeight", getter="get_offsetHeight", side_effect=1),
-            AttributeSpec(name="tabIndex", getter="get_tabIndex", setter="set_tabIndex"),
-            AttributeSpec(name="nonce", getter="get_nonce", setter="set_nonce"),
-        ),
-        methods=(
-            MethodSpec(name="click", callback="fn_click"),
-            MethodSpec(name="focus", callback="fn_focus"),
-            MethodSpec(name="blur", callback="fn_blur"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     #: The tags whose boundaries innerText turns into newlines. Chrome decides this
     #: from the rendered display, which this tree does not have, so the block-level
     #: HTML elements stand in for it.
@@ -838,10 +749,12 @@ class HTMLElement(Element):
         click_element(self)
 
 
-#: The attributes HTMLElement reflects in a shape of its own, from a table measured
-#: on Chrome; see web.dom.html_props for what each shape does.
-HTMLElement.__v8_idl_spec__ = HTMLElement.__v8_idl_spec__.replace(
-    attributes=HTMLElement.__v8_idl_spec__.attributes + html_props.install(HTMLElement))
+
+
+
+#: The accessors for the reflected attributes above; ``html_props`` gives the class one
+#: getter/setter pair per member, and the convention binds them to the members it states.
+html_props.install(HTMLElement)
 
 
 @interface('HTMLUnknownElement', 'HTMLElement')
@@ -850,12 +763,6 @@ class HTMLUnknownElement(HTMLElement):
     tags, custom element names and anything else unmodelled.  ``allow_new=false``,
     so the constructor throws; the host still builds instances through ``__init__``.
     """
-
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0,
-        has_constructor=1,
-        to_string_tag="HTMLUnknownElement",
-    )
 
 
 #: The states ``button.type`` reports; a missing or unknown value is ``submit``.
@@ -866,16 +773,6 @@ _BUTTON_TYPES = frozenset(("submit", "reset", "button"))
 class HTMLButtonElement(HTMLElement):
     """``<button>``: its name and value, and the state ``type`` reports."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="name", getter="get_name", setter="set_name"),
-            AttributeSpec(name="value", getter="get_value", setter="set_value"),
-            AttributeSpec(name="type", getter="get_type", setter="set_type"),
-            AttributeSpec(name="form", getter="get_form", side_effect=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def get_name(self): return self._attr("name")
     def set_name(self, value): self._set_string("name", value)
     def get_value(self): return self._attr("value")
@@ -931,12 +828,6 @@ class HTMLTableElement(HTMLElement):
     """``<table>``: the rows it owns -- those in its sections, in document order --
     but not the rows of a table nested inside it, which belong to that table."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="rows", getter="get_rows", side_effect=1),),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
-
     def get_rows(self):
         view = getattr(self, "_rows_view", None)
         if view is None:
@@ -951,15 +842,6 @@ class HTMLTableElement(HTMLElement):
 @interface('HTMLTableRowElement', 'HTMLElement')
 class HTMLTableRowElement(HTMLElement):
     """``<tr>``: the cells it holds and where the row sits in its table."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="cells", getter="get_cells", side_effect=1),
-            AttributeSpec(name="rowIndex", getter="get_rowIndex"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
 
     def get_cells(self):
         view = getattr(self, "_cells_view", None)
@@ -982,12 +864,6 @@ class HTMLTableRowElement(HTMLElement):
 @interface('HTMLTableCellElement', 'HTMLElement')
 class HTMLTableCellElement(HTMLElement):
     """``<td>`` and ``<th>``: where the cell sits in its row."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="cellIndex", getter="get_cellIndex"),),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
 
     def get_cellIndex(self):
         """The cell's position in its row's ``cells``, or -1 when no row holds it."""
@@ -1044,15 +920,6 @@ class HTMLLabelElement(HTMLElement):
     """``<label>``: the control it labels (by ``for`` id, or its first labelable
     descendant) and the click it forwards to it -- a focus, then a click event."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("htmlFor", "get_htmlFor", "set_htmlFor"),
-            AttributeSpec(name="control", getter="get_control", side_effect=1),
-            AttributeSpec(name="form", getter="get_form", side_effect=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def get_htmlFor(self): return self._attr("for")
     def set_htmlFor(self, value): self._set_string("for", value)
     def get_control(self):
@@ -1102,19 +969,6 @@ class HTMLLabelElement(HTMLElement):
 
 @interface('HTMLImageElement', 'HTMLElement')
 class HTMLImageElement(HTMLElement):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _url_attr("src", "get_src", "set_src"),
-            _attribute("alt", "get_alt", "set_alt"),
-            AttributeSpec(name="width", getter="get_width", setter="set_width"),
-            AttributeSpec(name="height", getter="get_height", setter="set_height"),
-            AttributeSpec(name="complete", getter="get_complete", side_effect=1),
-            AttributeSpec(name="naturalWidth", getter="get_naturalWidth", side_effect=1),
-            AttributeSpec(name="naturalHeight", getter="get_naturalHeight", side_effect=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def get_src(self): return _url_value(self, "src")
     def set_src(self, value):
         _set_url_value(self, "src", value)
@@ -1174,18 +1028,12 @@ class HTMLImageElement(HTMLElement):
 
 @interface('HTMLScriptElement', 'HTMLElement')
 class HTMLScriptElement(HTMLElement):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _url_attr("src", "get_src", "set_src"),
-            _attribute("type", "get_type", "set_type"),
-            _attribute("async", "get_async", "set_async"),
-            _attribute("defer", "get_defer", "set_defer"),
-            _attribute("charset", "get_charset", "set_charset"),
-            AttributeSpec(name="text", getter="get_textContent", setter="set_textContent"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
+    __idl_overrides__ = {
+        "text": {
+            "getter": "get_textContent",
+            "setter": "set_textContent"
+        }
+    }
     def get_src(self): return _url_value(self, "src")
     def set_src(self, value): _set_url_value(self, "src", value)
     def get_type(self): return self.attributes.get("type", "")
@@ -1217,17 +1065,6 @@ LINK_AS_VALUES = frozenset({
 
 @interface('HTMLLinkElement', 'HTMLElement')
 class HTMLLinkElement(HTMLElement):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _url_attr("href", "get_href", "set_href"),
-            _attribute("rel", "get_rel", "set_rel"),
-            _attribute("media", "get_media", "set_media"),
-            _attribute("as", "get_as", "set_as"),
-            AttributeSpec(name="relList", getter="get_relList", side_effect=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def get_relList(self):
         value = getattr(self, "_rel_list", None)
         if value is None:
@@ -1255,28 +1092,6 @@ class HTMLLinkElement(HTMLElement):
 class HTMLAnchorElement(HTMLElement):
     """``<a>``: the URL decomposition members ``href`` carries.  Assigning one parses
     the current href, replaces that component and writes the result back, per URLUtils."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _url_attr("href", "get_href", "set_href"),
-            _attribute("origin", "get_origin"),
-            _attribute("protocol", "get_protocol", "set_protocol"),
-            _attribute("username", "get_username", "set_username"),
-            _attribute("password", "get_password", "set_password"),
-            _attribute("host", "get_host", "set_host"),
-            _attribute("hostname", "get_hostname", "set_hostname"),
-            _attribute("port", "get_port", "set_port"),
-            _attribute("pathname", "get_pathname", "set_pathname"),
-            _attribute("search", "get_search", "set_search"),
-            _attribute("hash", "get_hash", "set_hash"),
-            _attribute("rel", "get_rel", "set_rel"),
-            _attribute("target", "get_target", "set_target"),
-            AttributeSpec(name="relList", getter="get_relList", side_effect=1),
-        ),
-        methods=(MethodSpec(name="toString", callback="fn_toString"),),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
 
     def _href(self):
         """The href every URL member below is derived from."""
@@ -1360,13 +1175,6 @@ class HTMLAnchorElement(HTMLElement):
 
 @interface('HTMLStyleElement', 'HTMLElement')
 class HTMLStyleElement(HTMLElement):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("media", "get_media", "set_media"),
-                    _attribute("type", "get_type", "set_type"),
-                    AttributeSpec(name="sheet", getter="get_sheet", side_effect=1)),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def get_sheet(self):
         """The sheet this element owns, which is the one its document's list holds for
         it, and null while it is in no document: the list is what owns a sheet."""
@@ -1393,18 +1201,6 @@ class HTMLStyleElement(HTMLElement):
 class HTMLMetaElement(HTMLElement):
     """The HTML ``meta`` element's reflected string attributes."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _attribute("name", "get_name", "set_name"),
-            _attribute("httpEquiv", "get_httpEquiv", "set_httpEquiv"),
-            _attribute("content", "get_content", "set_content"),
-            _attribute("media", "get_media", "set_media"),
-            _attribute("scheme", "get_scheme", "set_scheme"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
-
     def get_name(self): return self.attributes.get("name", "")
     def set_name(self, value):
         value = dom_string(value)
@@ -1429,18 +1225,10 @@ class HTMLMetaElement(HTMLElement):
 
 @interface('HTMLTemplateElement', 'HTMLElement')
 class HTMLTemplateElement(HTMLElement):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="content", getter="get_content", side_effect=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def __init__(self, tag_name="template", services=None, **kw):
         super().__init__(tag_name, services=services, **kw)
         self.content = DocumentFragment(services=services)
     def get_content(self): return self.content
-
 
 __all__ = [
     "Element", "HTMLElement", "HTMLUnknownElement", "HTMLImageElement", "HTMLScriptElement",

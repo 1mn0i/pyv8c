@@ -1,10 +1,8 @@
 """Worker Web API and global scope types."""
 from urllib.parse import urljoin, urlsplit
 
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagLocation
-
-from ...engine.features import FeatureImplementation, LazyValueStore, interface
+from ...engine.features import FeatureImplementation, LazyValueStore
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     dictionary,
@@ -55,24 +53,6 @@ def _worker_values(scope):
 class WorkerLocation:
     """Where the worker's script came from, as the worker itself sees it."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="href", getter="get_href", side_effect=1),
-            AttributeSpec(name="origin", getter="get_origin", side_effect=1),
-            AttributeSpec(name="protocol", getter="get_protocol", side_effect=1),
-            AttributeSpec(name="host", getter="get_host", side_effect=1),
-            AttributeSpec(name="hostname", getter="get_hostname", side_effect=1),
-            AttributeSpec(name="port", getter="get_port", side_effect=1),
-            AttributeSpec(name="pathname", getter="get_pathname", side_effect=1),
-            AttributeSpec(name="search", getter="get_search", side_effect=1),
-            AttributeSpec(name="hash", getter="get_hash", side_effect=1),
-        ),
-        methods=(MethodSpec(name="toString", callback="fn_toString"),),
-        constructor_behavior=0,
-        to_string_tag="WorkerLocation",
-        has_constructor=1,
-    )
-
     def __init__(self, url="", **_):
         self._url = str(url or "")
 
@@ -92,40 +72,22 @@ class WorkerLocation:
 
 @interface('WorkerGlobalScope', 'EventTarget')
 class WorkerGlobalScope(_SchedulingMixin, EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        global_this=True,
-        attributes=(
-            AttributeSpec(name="self", getter="get_self", side_effect=1),
-            AttributeSpec(name="navigator", getter="get_navigator", side_effect=1),
-            AttributeSpec(name="crypto", getter="get_crypto", side_effect=1),
-            AttributeSpec(name="trustedTypes", getter="get_trustedTypes", side_effect=1),
-            AttributeSpec(name="origin", getter="get_origin", side_effect=1),
-            AttributeSpec(name="crossOriginIsolated", getter="get_crossOriginIsolated",
-                          side_effect=1),
-            AttributeSpec(name="performance", getter="get_performance", side_effect=1),
-            AttributeSpec(name="indexedDB", getter="get_indexedDB", side_effect=1),
-            AttributeSpec(name="location", getter="get_location", side_effect=1),
-            AttributeSpec(name="caches", getter="get_caches", side_effect=1),
-            AttributeSpec(name="onmessage", getter="get_onmessage", setter="set_onmessage"),
-            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
-        ),
-        methods=(
-            MethodSpec(name="postMessage", callback="fn_postMessage", length=1),
-            MethodSpec(name="close", callback="fn_close"),
-            # A worker fetches for itself; the steps are the window's, named after this global.
-            MethodSpec(name="fetch", callback="fn_fetch", length=1),
-            # A worker global schedules like a window, on its own task queue.
-            MethodSpec(name="setTimeout", callback="fn_setTimeout", length=1),
-            MethodSpec(name="clearTimeout", callback="fn_clearTimeout", length=0),
-            MethodSpec(name="setInterval", callback="fn_setInterval", length=1),
-            MethodSpec(name="clearInterval", callback="fn_clearInterval", length=0),
-            MethodSpec(name="queueMicrotask", callback="fn_queueMicrotask", length=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
+    #: These are this global's own members in Chromium; the document answers them through the
+    #: objects that carry them, so the class that installs them is the one that says so.
+    __idl_overrides__ = {
+        "members": {
+            "postMessage": {},
+            "close": {},
+            "onmessage": {},
+        },
+        "interface": {
+            #: A worker global is the global object itself, which its own ``self`` reads back.
+            "global_this": True,
+            "length": 0,
+        }
+    }
 
-    #: Interface name the scheduling methods report in argument errors.
+    #: IdlInterface name the scheduling methods report in argument errors.
     _scheduling_interface = "WorkerGlobalScope"
 
     def __init__(self, runtime=None, environment=None, services=None, **kw):
@@ -187,33 +149,15 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
 
 @interface('DedicatedWorkerGlobalScope', 'WorkerGlobalScope')
 class DedicatedWorkerGlobalScope(WorkerGlobalScope):
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            # Frame requests live on the dedicated scope, as the baseline declares.
-            MethodSpec(name="requestAnimationFrame", callback="fn_requestAnimationFrame", length=1, location=FlagLocation.kInstance),
-            MethodSpec(name="cancelAnimationFrame", callback="fn_cancelAnimationFrame", length=1, location=FlagLocation.kInstance),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0
+        }
+    }
 
 
 @interface('Worker', 'EventTarget')
 class Worker(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="onmessage", getter="get_onmessage", setter="set_onmessage"),
-            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
-        ),
-        methods=(
-            MethodSpec(name="postMessage", callback="fn_postMessage", length=1),
-            MethodSpec(name="terminate", callback="fn_terminate"),
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
-
     def __init__(self, script_url=MISSING, options=None, *_extra, _realm=None, **kw):
         if script_url is MISSING:
             raise missing_error('Worker', 'constructor', 1, 0, constructor=True)
@@ -294,17 +238,6 @@ class Worker(EventTarget):
 class SharedWorkerGlobalScope(WorkerGlobalScope):
     """A shared worker's global: the port it serves arrives as a ``connect`` event."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="name", getter="get_name", side_effect=1,
-                          location=FlagLocation.kInstance),
-            AttributeSpec(name="onconnect", getter="get_onconnect", setter="set_onconnect",
-                          location=FlagLocation.kInstance),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
-
     def get_name(self):
         return getattr(getattr(self._runtime, "owner", None), "_worker_name", "")
     def get_onconnect(self): return self._get_handler("onconnect")
@@ -317,16 +250,6 @@ class SharedWorkerGlobalScope(WorkerGlobalScope):
 @interface('SharedWorker', 'EventTarget')
 class SharedWorker(EventTarget):
     """A worker an origin shares, reached through the port it hands out."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="port", getter="get_port", side_effect=1),
-            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
 
     def __init__(self, script_url=MISSING, options=None, *_extra, _realm=None, **kw):
         if script_url is MISSING:
@@ -388,10 +311,8 @@ class SharedWorker(EventTarget):
             self._runtime.stop()
             self._finish_lifecycle()
 
-
 __all__ = ["Worker", "WorkerGlobalScope", "DedicatedWorkerGlobalScope",
            "SharedWorker", "SharedWorkerGlobalScope", "WorkerLocation"]
-
 
 FEATURE = FeatureImplementation(
     {

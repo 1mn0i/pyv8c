@@ -59,6 +59,7 @@ ATTRIBUTES = (
     ("ariaValueText", "aria-valuetext"),
 )
 
+
 #: The nine members that answer with elements rather than a string. Eight
 #: of them are readonly; ariaOwnsElements takes a setter and ignores
 #: every value, which is what Chrome does with it.
@@ -75,13 +76,16 @@ IDREF = (
 )
 
 
+#: Implemented but not declared: the convention answers them where a profile carries them.
+UNDECLARED = frozenset({"ariaOwnsElements"})
+
+
 def install(cls):
     """Give *cls* the ARIA members, and return the specs to declare them with."""
     from ...foundation.arguments import dom_string, is_nullish
 
     specs = []
     for name, attribute in ATTRIBUTES:
-
         def getter(self, _attribute=attribute):
             value = self.attributes.get(_attribute)
             return pyv8.Null if value is None else str(value)
@@ -101,6 +105,8 @@ def install(cls):
 
     for name, attribute, writable in IDREF:
         is_list = name.endswith("Elements")
+        if name in UNDECLARED:
+            continue
 
         def getter(self, _attribute=attribute, _is_list=is_list):
             # Absent is null rather than an empty list, and a tree outside a document

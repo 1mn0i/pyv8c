@@ -4,9 +4,8 @@ They read through owner-supplied getters rather than the node model, which keeps
 them importable by :mod:`dom.nodes` without a cycle.
 """
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, is_nullish, missing_error
 from ...foundation.errors import (
     InvalidCharacterError,
@@ -16,6 +15,7 @@ from ...foundation.errors import (
 from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
 from .utils import OBJECT_PROTOTYPE_NAMES, XHTML_NAMESPACE, camel_name, dash_name
 
+
 #: The link types Blink implements, from ``rel_list.cc``: what ``relList.supports`` answers.
 LINK_REL_TOKENS = frozenset((
     "preload", "preconnect", "dns-prefetch", "stylesheet", "icon", "alternate",
@@ -23,6 +23,7 @@ LINK_REL_TOKENS = frozenset((
     "apple-touch-icon-precomposed", "canonical", "modulepreload", "allowed-alt-sxg",
     "compression-dictionary",
 ))
+
 
 #: The same for ``<a>``, ``<area>``, ``<form>`` and the SVG anchor.
 HYPERLINK_REL_TOKENS = frozenset(("noreferrer", "noopener", "opener"))
@@ -80,14 +81,6 @@ class _ListItems:
 @interface('NodeList', None)
 class NodeList(_ListItems, ReadOnlyIndexedPropertyMixin):
     """A live list view. The owner remains the source of truth."""
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="NodeList",
-        has_constructor=1,
-        array="iterable",
-    )
 
 
 @interface('NamedNodeMap', None)
@@ -96,24 +89,13 @@ class NamedNodeMap(_ListItems, ReadOnlyIndexedPropertyMixin):
 
     A sibling of ``NodeList``, not a subclass: see :class:`_ListItems`.
     """
-    __v8_idl_spec__ = IdlSpec(
-        #: Declared here because it used to arrive with ``NodeList``, whose body this shares.
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(
-            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(name="getNamedItem", callback="fn_getNamedItem", length=1, side_effect=1),
-            MethodSpec(name="setNamedItem", callback="fn_setNamedItem", length=1),
-            MethodSpec(name="removeNamedItem", callback="fn_removeNamedItem", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="NamedNodeMap",
-        has_constructor=1,
-        #: Iterable without the four named methods: Chrome's map has the one and not the others,
-        #: and it does not inherit ``NodeList`` (see ``_ListItems``).
-        array="iterator",
-        name_get="__v8_name_get__",
-        name_query="__v8_name_query__",
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0,
+            "name_get": "__v8_name_get__",
+            "name_query": "__v8_name_query__"
+        }
+    }
     def __init__(self, element=None, **_):
         self._element = element
         super().__init__(getter=self._attribute_items)
@@ -193,25 +175,16 @@ class HTMLCollection(_ListItems, LegacyNamedPropertyMixin, ReadOnlyIndexedProper
     A sibling of ``NodeList``, not a subclass: see :class:`_ListItems`.  What it publishes
     through ``array`` is the iterator alone, so its two subclasses inherit that too.
     """
-    __v8_idl_spec__ = IdlSpec(
-        #: Declared here because it used to arrive with ``NodeList``, whose body this shares.
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(
-            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="HTMLCollection",
-        has_constructor=1,
-        #: Same as ``NamedNodeMap``: iterable in Chrome, and without the four named methods,
-        #: which ``NodeList`` has and this collection does not.
-        array="iterator",
-        name_get="__v8_name_get__",
-        name_set="__v8_name_set__",
-        name_query="__v8_name_query__",
-        name_del="__v8_name_del__",
-        name_enum="__v8_name_enum__",
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0,
+            "name_del": "__v8_name_del__",
+            "name_enum": "__v8_name_enum__",
+            "name_get": "__v8_name_get__",
+            "name_query": "__v8_name_query__",
+            "name_set": "__v8_name_set__"
+        }
+    }
     def fn_namedItem(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('HTMLCollection', 'namedItem', 1, 0, constructor=False)
@@ -250,21 +223,16 @@ class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
     carries the full named/indexed interceptor set rather than extending
     :class:`HTMLCollection`.
     """
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(
-            MethodSpec(name="item", callback="fn_item", side_effect=1),
-            MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="HTMLAllCollection",
-        has_constructor=1,
-        name_get="__v8_name_get__",
-        name_set="__v8_name_set__",
-        name_query="__v8_name_query__",
-        name_del="__v8_name_del__",
-        name_enum="__v8_name_enum__",
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0,
+            "name_del": "__v8_name_del__",
+            "name_enum": "__v8_name_enum__",
+            "name_get": "__v8_name_get__",
+            "name_query": "__v8_name_query__",
+            "name_set": "__v8_name_set__"
+        }
+    }
     def __init__(self, owner=None, getter=None, **_):
         self._owner, self._getter = owner, getter
 
@@ -330,26 +298,6 @@ class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
 
 @interface('DOMTokenList', None)
 class DOMTokenList(ReadOnlyIndexedPropertyMixin):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="length", getter="get_length", side_effect=1),
-            AttributeSpec(name="value", getter="get_value", setter="set_value"),
-        ),
-        methods=(
-            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(name="contains", callback="fn_contains", length=1, side_effect=1),
-            MethodSpec(name="add", callback="fn_add"),
-            MethodSpec(name="remove", callback="fn_remove"),
-            MethodSpec(name="toggle", callback="fn_toggle", length=1),
-            MethodSpec(name="replace", callback="fn_replace", length=2),
-            MethodSpec(name="supports", callback="fn_supports", length=1),
-            MethodSpec(name="toString", callback="fn_toString", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="DOMTokenList",
-        has_constructor=1,
-        array="iterable",
-    )
     _ASCII_WHITESPACE = " \t\n\f\r"
 
     def __init__(self, element=None, attr="class", supported_tokens=None, **_):
@@ -502,16 +450,16 @@ class DOMStringMap:
     looking readable.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0,
-        to_string_tag="DOMStringMap",
-        has_constructor=1,
-        name_get="__v8_name_get__",
-        name_set="__v8_name_set__",
-        name_query="__v8_name_query__",
-        name_del="__v8_name_del__",
-        name_enum="__v8_name_enum__",
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0,
+            "name_del": "__v8_name_del__",
+            "name_enum": "__v8_name_enum__",
+            "name_get": "__v8_name_get__",
+            "name_query": "__v8_name_query__",
+            "name_set": "__v8_name_set__"
+        }
+    }
 
     def __init__(self, element=None, **_):
         self._element = element
@@ -572,17 +520,6 @@ class DOMStringList(ReadOnlyIndexedPropertyMixin):
     ``Location.ancestorOrigins`` reports, both hand one of these out.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(
-            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(name="contains", callback="fn_contains", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="DOMStringList",
-        has_constructor=1,
-    )
-
     def __init__(self, names=(), **_):
         self._names = tuple(str(name) for name in names)
 
@@ -605,15 +542,6 @@ class HTMLOptionsCollection(HTMLCollection):
     """``select.options``: the select's options as a live list.  It adds only the
     selected index, which is answered by the select itself."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="selectedIndex", getter="get_selectedIndex", setter="set_selectedIndex"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="HTMLOptionsCollection",
-        has_constructor=1,
-    )
-
     def get_selectedIndex(self):
         owner = self._owner
         return owner.get_selectedIndex() if owner is not None else -1
@@ -628,9 +556,3 @@ class HTMLOptionsCollection(HTMLCollection):
 class HTMLFormControlsCollection(HTMLCollection):
     """``form.elements``: the form's listed elements as a live list.  Which elements
     belong is the form's rule, so the form supplies the getter."""
-
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0,
-        to_string_tag="HTMLFormControlsCollection",
-        has_constructor=1,
-    )

@@ -35,7 +35,7 @@ if "__main__" == __name__:
             return False
         print(request.get("resource_type") , url)
         return None
-        
+
     browser = Browser(
         stub_logging="verbose",
         # trace=True, traceable=True,
@@ -51,10 +51,14 @@ if "__main__" == __name__:
     # import json
     # print(json.dumps(page.evaluate("Object.keys(window)")))
     # print(page.evaluate("Object.keys(window).length"))
+    # print(page.evaluate("Object.getOwnPropertyNames(window).length"))
+    # print(page.evaluate("Object.getOwnPropertyNames(AbortSignal.prototype)"))
     # print(page.evaluate("Image.toString()"))
     # print(page.evaluate("HTMLImageElement.prototype"))
     # print(page.evaluate("navigation.entries()"))
     # page.evaluate("navigator.mimeTypes")
+    print(page.evaluate("NodeFilter.prototype"))
+    print(page.evaluate("NodeFilter.FILTER_ACCEPT"))
     # page.evaluate("navigator.plugins.refresh = '865'")
     # print(page.evaluate("new URL('https://www.koreanair.com/')"))
     # # print(page.evaluate("URL('https://www.koreanair.com/')"))

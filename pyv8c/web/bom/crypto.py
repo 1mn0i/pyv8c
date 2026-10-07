@@ -12,12 +12,12 @@ import os
 import uuid
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (MISSING, dictionary, integer, missing_error,
                                      sequence)
 from ...foundation.errors import V8TypeError, dom_exception
+
 
 #: The digest names the standard library backs, and the HMAC hash names as well.
 _HASHES = {"SHA-1": "sha1", "SHA-256": "sha256", "SHA-384": "sha384", "SHA-512": "sha512"}
@@ -106,18 +106,6 @@ def _hmac_algorithm(options):
 class CryptoKey:
     """One key, with the algorithm it was made for and what it may be used for."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="extractable", getter="get_extractable", side_effect=1),
-            AttributeSpec(name="algorithm", getter="get_algorithm", side_effect=1),
-            AttributeSpec(name="usages", getter="get_usages", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CryptoKey",
-        has_constructor=1,
-    )
-
     def __init__(self, key_type="secret", extractable=True, algorithm=None, usages=(),
                  material=b"", **_):
         self._type = str(key_type)
@@ -136,31 +124,11 @@ class CryptoKey:
 class SubtleCrypto:
     """The cryptographic operations this build really performs."""
 
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="digest", callback="fn_digest", length=2),
-            MethodSpec(name="generateKey", callback="fn_generateKey", length=3),
-            MethodSpec(name="importKey", callback="fn_importKey", length=5),
-            MethodSpec(name="exportKey", callback="fn_exportKey", length=2),
-            MethodSpec(name="sign", callback="fn_sign", length=3),
-            MethodSpec(name="verify", callback="fn_verify", length=4),
-            MethodSpec(name="encrypt", callback="fn_encrypt", length=3),
-            MethodSpec(name="decrypt", callback="fn_decrypt", length=3),
-            MethodSpec(name="deriveBits", callback="fn_deriveBits", length=3),
-            MethodSpec(name="deriveKey", callback="fn_deriveKey", length=5),
-            MethodSpec(name="wrapKey", callback="fn_wrapKey", length=4),
-            MethodSpec(name="unwrapKey", callback="fn_unwrapKey", length=7),
-            MethodSpec(name="getPublicKey", callback="fn_getPublicKey", length=2),
-            MethodSpec(name="supports", callback="fn_supports", length=1),
-            MethodSpec(name="encapsulateBits", callback="fn_encapsulateBits", length=2),
-            MethodSpec(name="decapsulateBits", callback="fn_decapsulateBits", length=4),
-            MethodSpec(name="encapsulateKey", callback="fn_encapsulateKey", length=4),
-            MethodSpec(name="decapsulateKey", callback="fn_decapsulateKey", length=6),
-        ),
-        constructor_behavior=0,
-        to_string_tag="SubtleCrypto",
-        has_constructor=1,
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0
+        }
+    }
 
     def __init__(self, services=None, **_):
         self._services = services
@@ -406,19 +374,6 @@ class SubtleCrypto:
 
 @interface('Crypto', None)
 class Crypto:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="subtle", getter="get_subtle", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="getRandomValues", callback="fn_getRandomValues", length=1),
-            MethodSpec(name="randomUUID", callback="fn_randomUUID", length=0, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Crypto",
-        has_constructor=1,
-    )
-
     def __init__(self, secure=False, services=None, **_):
         self._secure = bool(secure)
         self._services = services
@@ -442,6 +397,5 @@ class Crypto:
         for index, byte in enumerate(os.urandom(length)):
             array[index] = byte
         return array
-
 
 __all__ = ["Crypto", "CryptoKey", "SubtleCrypto"]

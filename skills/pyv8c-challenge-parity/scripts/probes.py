@@ -533,6 +533,11 @@ PROBES = {
       if (prototype) add(name + '.prototype', prototype);
     } else if (value && typeof value === 'object') {
       add(name, value);
+      //: A frame's window answers nothing of its own to this page: what it is reached through
+      //: is a facade, so its member list is not the other window's surface to compare.
+      if (/^(0|[1-9][0-9]*)$/.test(name) && value.window === value) {
+        holders[name]['__frameWindow'] = 'reached through a frame slot';
+      }
     }
   }
   return holders;

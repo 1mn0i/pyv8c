@@ -14,28 +14,6 @@ from types import MappingProxyType
 
 
 @dataclass(frozen=True)
-class InterfaceSpec:
-    """What a Feature implementation class declares about its interface.
-
-    Realm exposure is deliberately not declared here: the Chromium baseline owns that
-    field, so a second copy could only drift out of step with it.
-    """
-
-    name: str
-    parent: str | None
-
-
-def interface(name, parent):
-    declaration = InterfaceSpec(name, parent)
-
-    def decorate(cls):
-        cls.__idl_spec__ = declaration
-        return cls
-
-    return decorate
-
-
-@dataclass(frozen=True)
 class FeatureSpec:
     name: str
     module: str
@@ -160,7 +138,7 @@ class LazyValueStore:
 
 
 class FeatureRuntime:
-    """Loads feature modules once and exposes their classes to one Universe."""
+    """Loads feature modules once and exposes their classes to one Bindings."""
 
     def __init__(self, catalog, *, importer=import_module):
         self.catalog = catalog

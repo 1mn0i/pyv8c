@@ -125,6 +125,32 @@ def case_startup():
             "detail": f"{modules} modules imported"}
 
 
+def case_cold_compile():
+    """Compiling every interface with every process cache cleared: what a first page pays."""
+    from pyv8c.engine import binder
+    from pyv8c.engine import idl as idl_module
+    from pyv8c.engine import bindings as bindings_module
+    from pyv8c.engine.idl import Idl
+    from pyv8c.engine.bindings import Bindings
+    from pyv8c.platform.bootstrap import bootstrap_runtime
+
+    # Every one of these answers a later page in milliseconds, so a warm compile measures the
+    # cache rather than the work; clearing them is what a fresh process does anyway.
+    binder._COMPILED.clear()
+    binder._PARAMETERS.clear()
+    bindings_module._GENERATED.clear()
+    idl_module._DOCUMENTS.clear()
+    idl_module._VIEWS.clear()
+    bindings = Bindings(Idl.load(), runtime=bootstrap_runtime(),
+                                 stub_logging="off")
+    names = bindings.idl.names()
+    started = time.perf_counter()
+    for name in names:
+        bindings.class_config_for(name)
+    return _sample((time.perf_counter() - started) * 1000, "ms",
+                   f"{len(names)} interfaces compiled cold")
+
+
 def case_page_cycle():
     """Opening and closing a page: realm assembly and teardown."""
     browser = _browser()
@@ -298,6 +324,7 @@ def case_resident_pages():
 
 CASES = (
     ("startup", case_startup),
+    ("cold_compile", case_cold_compile),
     ("page_cycle", case_page_cycle),
     ("evaluate", case_evaluate),
     ("host_call", case_host_call),

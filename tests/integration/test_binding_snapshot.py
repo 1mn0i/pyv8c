@@ -50,7 +50,7 @@ def test_concurrent_first_access_yields_one_class_object(browser):
         assert not any(t.is_alive() for t in threads), "materialization wedged"
         assert errors == []
 
-        expected = browser.interface_universe.class_for(LAZY_NAME)
+        expected = browser.bindings.class_for(LAZY_NAME)
         assert expected is not None
         for page in pages:
             assert LAZY_NAME in page.binding_session.materialized_interfaces
@@ -65,7 +65,7 @@ def test_realm_configs_stay_isolated_across_commits(browser):
     second = _fresh_page(browser)
     try:
         first.evaluate("typeof " + LAZY_NAME)
-        first_cls = browser.interface_universe.class_for(LAZY_NAME)
+        first_cls = browser.bindings.class_for(LAZY_NAME)
         first_configs = dict(first.binding_session.configs)
         assert first_cls in first_configs
         # The untouched realm has neither built nor staged anything for it.
@@ -73,7 +73,7 @@ def test_realm_configs_stay_isolated_across_commits(browser):
 
         # A commit in the second realm must not mutate the first realm's view.
         second.evaluate("typeof " + SECOND_LAZY)
-        second_cls = browser.interface_universe.class_for(SECOND_LAZY)
+        second_cls = browser.bindings.class_for(SECOND_LAZY)
         assert second_cls in dict(second.binding_session.configs)
         assert dict(first.binding_session.configs) == first_configs
         assert second_cls not in dict(first.binding_session.configs)
@@ -105,7 +105,7 @@ def test_configs_view_is_read_only(browser):
     try:
         page.evaluate("typeof " + LAZY_NAME)
         view = page.binding_session.configs
-        key = browser.interface_universe.class_for(LAZY_NAME)
+        key = browser.bindings.class_for(LAZY_NAME)
         with pytest.raises(TypeError):
             view[key] = {}
     finally:

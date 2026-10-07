@@ -2,9 +2,8 @@
 import json
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import byte_string, dictionary, integer, is_nullish, usv_string
 from ...foundation.errors import V8RangeError, V8SyntaxError, V8TypeError
 from .blob import Blob
@@ -13,29 +12,6 @@ from .headers import Headers
 
 @interface('Response', None)
 class Response:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="status", getter="get_status", side_effect=1),
-            AttributeSpec(name="statusText", getter="get_statusText", side_effect=1),
-            AttributeSpec(name="ok", getter="get_ok", side_effect=1),
-            AttributeSpec(name="url", getter="get_url", side_effect=1),
-            AttributeSpec(name="redirected", getter="get_redirected", side_effect=1),
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="headers", getter="get_headers", side_effect=1),
-            AttributeSpec(name="bodyUsed", getter="get_bodyUsed", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="text", callback="fn_text", side_effect=1),
-            MethodSpec(name="json", callback="fn_json", side_effect=1),
-            MethodSpec(name="arrayBuffer", callback="fn_arrayBuffer", side_effect=1),
-            MethodSpec(name="clone", callback="fn_clone", side_effect=1),
-            #: Chrome's static ``Response.json`` is not declared here: the member table is keyed
-            #: by name, so the duplicate would be rejected ("declares duplicate methods: json").
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
 
     def __init__(self, body=None, options=None, *_extra, services=None, _realm=None, **_):
         if body is pyv8.Undefined:
@@ -136,6 +112,5 @@ class Response:
         except (V8TypeError, pyv8.JSException, UnicodeError) as exc:
             reject(self._services.realm_services.js_error_value(exc))
         return promise
-
 
 __all__ = ["Response"]

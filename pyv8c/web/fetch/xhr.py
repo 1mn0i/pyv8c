@@ -3,9 +3,8 @@ import re
 from urllib.parse import urljoin, urlsplit
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING, boolean, byte_string, dom_string, integer, is_nullish, missing_error, usv_string,
 )
@@ -18,36 +17,12 @@ from .headers import Headers
 
 @interface('XMLHttpRequestEventTarget', 'EventTarget')
 class XMLHttpRequestEventTarget(EventTarget):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
     pass
 
 
 @interface('XMLHttpRequest', 'XMLHttpRequestEventTarget')
 class XMLHttpRequest(XMLHttpRequestEventTarget):
     UNSENT, OPENED, HEADERS_RECEIVED, LOADING, DONE = 0, 1, 2, 3, 4
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
-            AttributeSpec(name="status", getter="get_status", side_effect=1),
-            AttributeSpec(name="statusText", getter="get_statusText", side_effect=1),
-            AttributeSpec(name="responseURL", getter="get_responseURL", side_effect=1),
-            AttributeSpec(name="responseText", getter="get_responseText", side_effect=1),
-            AttributeSpec(name="response", getter="get_response", side_effect=1),
-            AttributeSpec(name="withCredentials", getter="get_withCredentials",
-                          setter="set_withCredentials"),
-            AttributeSpec(name="timeout", getter="get_timeout", setter="set_timeout"),
-        ),
-        methods=(
-            MethodSpec(name="open", callback="fn_open", length=2),
-            MethodSpec(name="send", callback="fn_send"),
-            MethodSpec(name="setRequestHeader", callback="fn_setRequestHeader", length=2),
-            MethodSpec(name="getResponseHeader", callback="fn_getResponseHeader", length=1, side_effect=1),
-            MethodSpec(name="getAllResponseHeaders", callback="fn_getAllResponseHeaders"),
-            MethodSpec(name="abort", callback="fn_abort"),
-        ),
-        constructor_behavior=1,
-        has_constructor=1,
-    )
 
     def __init__(self, *_extra, services=None, _realm=None, **kw):
         if services is pyv8.Undefined:
@@ -246,6 +221,5 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self.status = 0
         self._state(self.DONE)
         self.fn_dispatchEvent(Event("loadend"))
-
 
 __all__ = ["XMLHttpRequestEventTarget", "XMLHttpRequest"]

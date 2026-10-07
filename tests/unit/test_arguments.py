@@ -64,14 +64,14 @@ def test_ordinary_callbacks_are_bound_without_validation_wrapper():
 
     browser = Browser(stub_logging="off")
     try:
-        universe = browser.interface_universe
-        config = universe.class_config_for("Element")
+        bindings = browser.bindings
+        config = bindings.class_config_for("Element")
         callback = next(method.callback for method in config.methods if method.name == "setAttribute")
         assert callback is Element.fn_setAttribute
         setter = next(attribute.setter for attribute in config.attributes if attribute.name == "id")
         assert setter is Element.set_id
         # Exposure is one plan per context type, not a per-reader derivation.
-        assert universe.plan("Window") is universe.plan("Window")
+        assert bindings.plan("Window") is bindings.plan("Window")
     finally:
         browser.close()
 

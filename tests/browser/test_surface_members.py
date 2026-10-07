@@ -14,6 +14,10 @@ page, the same probe, both engines, comparing every member of ~86 DOM/BOM object
 The third class -- members the baseline itself has nowhere to put, such as the eight ``2d``
 context attributes -- is a data gap with no honest assertion available until the baseline is
 regenerated; it is written down in ``examples/5s/README.md`` and in ``html_canvas.py``.
+
+A fourth is not about members but about the object holding them: a callback interface has no
+``prototype``, which Blink states in ``SetupIDLCallbackInterfaceTemplate`` and this engine had
+to learn (see the ``NodeFilter`` case below).
 """
 import json
 import threading
@@ -238,3 +242,81 @@ def test_the_dom_bom_surface_matches_what_chrome_reports():
     #: The instance ``Response.json``: the static of the same name cannot be declared yet, and
     #: this guard is what keeps the next attempt at it from quietly taking the instance's place.
     assert out["instanceBody"] == {"b": 2}, out
+
+
+def test_a_callback_interface_is_a_function_without_a_prototype():
+    """``NodeFilter`` is a callback interface, and Chrome's shape says so.
+
+    Blink gives the three shapes in ``SetupIDLCallbackInterfaceTemplate`` and its neighbours
+    (``third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc``): an ordinary
+    interface calls ``ReadOnlyPrototype()``, ``SetClassName()`` and tags its **prototype**; a
+    namespace is an ``ObjectTemplate`` tagged on itself; a callback interface calls
+    ``RemovePrototype()`` and ``SetClassName()``, and tags nothing.  ``NodeFilter`` is the
+    third, so its ``prototype`` is ``undefined`` while ``typeof`` is still ``function`` --
+    measured with ``surface_diff.py --probe surface_wide``, where Chrome's holder has the
+    sixteen constants plus the function's non-enumerable ``name``/``length`` and ours had a
+    twenty-eight member ``prototype`` too.
+    """
+    browser = Browser(stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content(PAGE, url="https://surface.test/")
+        answer = page.evaluate("""(() => {
+          const flags = (name) => {
+            const d = Object.getOwnPropertyDescriptor(NodeFilter, name);
+            return d ? [d.writable, d.enumerable, d.configurable] : null;
+          };
+          let constructed;
+          try { new NodeFilter(); constructed = 'no throw'; } catch (e) { constructed = e.name; }
+          return {
+            kind: typeof NodeFilter,
+            prototype: [typeof NodeFilter.prototype, 'prototype' in NodeFilter],
+            tag: Object.prototype.toString.call(NodeFilter),
+            name: [NodeFilter.name, flags('name')],
+            length: [NodeFilter.length, flags('length')],
+            constants: [NodeFilter.SHOW_ALL, NodeFilter.FILTER_ACCEPT, flags('SHOW_ALL')],
+            constructed: constructed,
+          };
+        })()""")
+    finally:
+        browser.close()
+
+    assert answer["kind"] == "function", answer
+    assert answer["prototype"] == ["undefined", False], answer
+    assert answer["tag"] == "[object Function]", answer
+    #: A function's own ``name``/``length``, non-enumerable and settable, as V8 makes them.
+    assert answer["name"] == ["NodeFilter", [False, False, True]], answer
+    assert answer["length"] == [0, [False, False, True]], answer
+    #: The constants stay readable and enumerable, and a page still cannot build one.
+    assert answer["constants"] == [4294967295, 1, [False, True, False]], answer
+    assert answer["constructed"] == "TypeError", answer
+
+
+def test_a_namespace_is_an_object_without_a_prototype():
+    """``CSS`` is a namespace, so Chrome's shape for it is a plain tagged object.
+
+    ``SetupIDLNamespaceTemplate`` tags the object itself and gives it no ``prototype``, ``name``
+    or ``length``, which is what the six ``GPU*`` namespaces answer too.  The kind comes from
+    ``WrapperTypeInfo::kIdlNamespace`` in the document, so no class declares it -- and one word
+    rather than two flags is what keeps this shape apart from a callback interface, which has no
+    prototype either (a namespace that read as both would install neither correctly).
+    """
+    browser = Browser(stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content(PAGE, url="https://surface.test/")
+        answer = page.evaluate("""(() => ({
+          kind: typeof CSS,
+          prototype: 'prototype' in CSS,
+          tag: Object.prototype.toString.call(CSS),
+          own: [typeof CSS.name, typeof CSS.length],
+          member: typeof CSS.supports,
+        }))()""")
+    finally:
+        browser.close()
+
+    assert answer["kind"] == "object", answer
+    assert answer["prototype"] is False, answer
+    assert answer["tag"] == "[object CSS]", answer
+    assert answer["own"] == ["undefined", "undefined"], answer
+    assert answer["member"] == "function", answer

@@ -29,7 +29,7 @@ def tool():
 
 def test_a_change_falls_into_the_bucket_that_decides_its_rule(tool):
     assert tool.classify("pyv8c/web/dom/document.py") == "implementation"
-    assert tool.classify("pyv8c/baselines/interfaces.zip") == "data"
+    assert tool.classify("pyv8c/idl/interfaces.zip") == "data"
     assert tool.classify("tests/unit/test_check_policy.py") == "test"
     assert tool.classify("docs/ARCHITECTURE.md") == "docs"
     assert tool.classify("README.md") == "docs"
@@ -50,7 +50,7 @@ def test_a_test_alongside_silences_the_rule(tool):
 
 
 def test_data_and_documentation_changes_need_no_companion(tool):
-    assert tool.companion_findings(["pyv8c/baselines/interfaces.zip"]) == []
+    assert tool.companion_findings(["pyv8c/idl/interfaces.zip"]) == []
     assert tool.companion_findings(["docs/ARCHITECTURE.md", "README.md"]) == []
     assert tool.companion_findings([]) == []
 

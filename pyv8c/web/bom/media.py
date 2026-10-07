@@ -6,14 +6,15 @@ defaults.  A viewport that never resizes never fires a change.
 
 import re
 
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, missing_error
 from ..dom.events import EventTarget
 
+
 #: ``(min-width: 40em)``: one feature per match.
 _FEATURE_RE = re.compile(r"\(\s*([a-z-]+)\s*:\s*([^)]*)\)", re.I)
+
 
 #: What a desktop browser reports for the features this one does not model.
 _DEFAULT_FEATURES = {
@@ -89,21 +90,6 @@ def evaluate(query, width, height):
 class MediaQueryList(EventTarget):
     """``matchMedia``'s answer: the query and whether it holds right now."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="media", getter="get_media", side_effect=1),
-            AttributeSpec(name="matches", getter="get_matches", side_effect=1),
-            AttributeSpec(name="onchange", getter="get_onchange", setter="set_onchange"),
-        ),
-        methods=(
-            MethodSpec(name="addListener", callback="fn_addListener", length=1),
-            MethodSpec(name="removeListener", callback="fn_removeListener", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="MediaQueryList",
-        has_constructor=1,
-    )
-
     def __init__(self, query="", width=0, height=0, **_):
         self._query = str(query)
         self._matches = evaluate(self._query, width, height)
@@ -122,6 +108,5 @@ class MediaQueryList(EventTarget):
         if callback is MISSING:
             raise missing_error('MediaQueryList', 'removeListener', 1, 0, constructor=False)
         return self.fn_removeEventListener("change", callback)
-
 
 __all__ = ["MediaQueryList", "evaluate"]

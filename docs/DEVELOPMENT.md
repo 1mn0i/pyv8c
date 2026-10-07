@@ -29,7 +29,7 @@ python -m pytest -q
 python -m pytest tests/unit/test_lazy_interface_modules.py tests/integration/test_lazy_interfaces.py -q
 python -m pytest tests/integration/test_indexeddb.py -q
 python -m pytest tests/browser/test_devtools.py -q
-python -m pytest tests/unit/test_interface_extractor.py tests/unit/test_idl_compilation.py -q
+python -m pytest tests/unit/test_idl_extractor.py tests/unit/test_idl_compilation.py -q
 git diff --check
 ```
 
@@ -57,7 +57,7 @@ python tools/check_policy.py --record-startup # 接受当前启动时延作为�
   进程里 `Browser() -> new_context() -> new_page() -> set_content()` 的耗时与导入模块数；换
   机器、或有意改变启动开销后需要重新记录。
 - `offline`：把 `_pyv8` 从 `PYTHONPATH` 上拿掉后跑 `tests/unit`，确保它不依赖原生扩展——离线
-  抽取器 `pyv8c/tools/extract_interfaces.py` 就是在这种环境里用的。需要扩展的用例统一
+  抽取器 `pyv8c/tools/extract_idl.py` 就是在这种环境里用的。需要扩展的用例统一
   `pytest.importorskip("pyv8")` 并打 `@pytest.mark.native`。
 - `duplicates`：脚本相似度（阈值 0.80）提示"`tests/repros/` 之外的测试在重复语料用例"。语料用例
   同时与真实 Chrome 对照，所以重复的那份该删；因为相似度只是启发式，默认只告警，`--strict` 才失败。
@@ -84,7 +84,7 @@ python -m pytest tests/repros -q -rs     # -rs 显示被排除的用例及原因
 
 ## Baseline 更新
 
-运行 `tools/fetch_chromium.py` 和 `tools/extract_interfaces.py` 前确认 Chromium 版本、生成目录和输出 ZIP。baseline 不应依赖人工 review JSON；抽取器只使用 Chromium 生成元数据。更新后运行抽取器、baseline、IDL 编译和完整浏览器测试。
+运行 `tools/fetch_chromium.py` 和 `tools/extract_idl.py` 前确认 Chromium 版本、生成目录和输出路径。baseline 不应依赖人工 review JSON；抽取器只使用 Chromium 生成元数据。更新后运行抽取器、baseline、IDL 编译和完整浏览器测试。
 
 生成 Blink bindings 只需生成、不必编译整棵树：`gn gen out/X` 加
 `ninja -C out/X third_party/blink/renderer/bindings:generate_bindings_all`。Windows 上 VS 或 Windows SDK

@@ -1,8 +1,7 @@
 """Blob data type and byte conversion helpers."""
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import dictionary, dom_string, enum_value, integer, is_nullish, sequence, usv_string
 from ...foundation.errors import V8TypeError
 
@@ -28,20 +27,6 @@ def bytes_from_value(value):
 
 @interface('Blob', None)
 class Blob:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="size", getter="get_size", side_effect=1),
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="slice", callback="fn_slice", length=3, side_effect=1),
-            MethodSpec(name="text", callback="fn_text", side_effect=1),
-            MethodSpec(name="arrayBuffer", callback="fn_arrayBuffer", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
 
     def __init__(self, parts=pyv8.Undefined, options=None, *_extra, _realm=None, **_):
         if parts is pyv8.Undefined:
@@ -102,6 +87,5 @@ class Blob:
 
     def fn_arrayBuffer(self, *_extra):
         return self._realm.realm_services.promise_resolve(self._data) if self._realm else self._data
-
 
 __all__ = ["Blob", "bytes_from_value"]

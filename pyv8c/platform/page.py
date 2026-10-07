@@ -128,7 +128,7 @@ class Page:
         self.network_backend = context.network_backend
         self.window = Window(
             services=self.services,
-            feature_runtime=context.browser.interface_universe.runtime,
+            feature_runtime=context.browser.bindings.runtime,
         )
         self.services.window = self.window
         self.services.document = self.document
@@ -279,7 +279,7 @@ class Page:
         previous_window, previous_realm = self.window, self.realm
         window = Window(
             services=self.services,
-            feature_runtime=self.context_owner.browser.interface_universe.runtime,
+            feature_runtime=self.context_owner.browser.bindings.runtime,
         )
         window._frame_element = previous_window._frame_element
         window._window_name = self._window_name_of(previous_window, previous_realm)

@@ -4,9 +4,8 @@ import time
 from urllib.parse import urlsplit
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error, number
 from ...foundation.errors import InvalidCharacterError, SecurityError, V8TypeError, dom_exception
 from .animation import DocumentTimeline
@@ -26,142 +25,26 @@ from .utils import MATHML_NAMESPACE, SVG_NAMESPACE, XHTML_NAMESPACE, _VALID_NAME
 class FragmentDirective:
     """The object ``document.fragmentDirective`` returns: a marker, with no members of use."""
 
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0,
-        to_string_tag="FragmentDirective",
-        has_constructor=1,
-    )
-
     def __init__(self, **_):
         pass
 
 
-#: Handler attributes read ``null`` until a page stores something, as in Chrome.
-_HANDLER_ATTRIBUTES = ("onfullscreenchange", "onfullscreenerror", "onbeforecopy",
-                       "onbeforecut", "onbeforepaste", "onpointerlockchange",
-                       "onpointerlockerror", "onprerenderingchange",
-                       "onwebkitfullscreenchange", "onwebkitfullscreenerror")
-
-
 @interface('Document', 'Node')
 class Document(_ParentNodeMixin, Node):
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0, has_constructor=1,
-        attributes=(
-            AttributeSpec(name="URL", getter="get_URL", side_effect=1),
-            AttributeSpec(name="documentURI", getter="get_URL", side_effect=1),
-            AttributeSpec(name="referrer", getter="get_referrer", side_effect=1),
-            AttributeSpec(name="compatMode", getter="get_compatMode", side_effect=1),
-            AttributeSpec(name="doctype", getter="get_doctype", side_effect=1),
-            AttributeSpec(name="contentType", getter="get_contentType", side_effect=1),
-            AttributeSpec(name="domain", getter="get_domain", setter="set_domain"),
-            AttributeSpec(name="dir", getter="get_dir", setter="set_dir"),
-            AttributeSpec(name="designMode", getter="get_designMode",
-                          setter="set_designMode"),
-            AttributeSpec(name="styleSheets", getter="get_styleSheets", side_effect=1),
-            AttributeSpec(name="featurePolicy", getter="get_featurePolicy", side_effect=1),
-            AttributeSpec(name="webkitFullscreenElement",
-                          getter="get_webkitFullscreenElement", side_effect=1),
-            AttributeSpec(name="webkitIsFullScreen", getter="get_webkitIsFullScreen",
-                          side_effect=1),
-            AttributeSpec(name="documentElement", getter="get_documentElement", side_effect=1),
-            AttributeSpec(name="scrollingElement", getter="get_scrollingElement", side_effect=1),
-            AttributeSpec(name="body", getter="get_body", side_effect=1),
-            AttributeSpec(name="head", getter="get_head", side_effect=1),
-            AttributeSpec(name="images", getter="get_images", side_effect=1),
-            AttributeSpec(name="embeds", getter="get_embeds", side_effect=1),
-            AttributeSpec(name="plugins", getter="get_plugins", side_effect=1),
-            AttributeSpec(name="links", getter="get_links", side_effect=1),
-            AttributeSpec(name="forms", getter="get_forms", side_effect=1),
-            AttributeSpec(name="scripts", getter="get_scripts", side_effect=1),
-            AttributeSpec(name="defaultView", getter="get_defaultView", side_effect=1),
-            AttributeSpec(name="location", getter="get_location", setter="set_location", side_effect=1),
-            AttributeSpec(name="childNodes", getter="get_childNodes", side_effect=1),
-            AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
-            AttributeSpec(name="hidden", getter="get_hidden", side_effect=1),
-            AttributeSpec(name="visibilityState", getter="get_visibilityState", side_effect=1),
-            AttributeSpec(name="prerendering", getter="get_prerendering", side_effect=1),
-            AttributeSpec(name="cookie", getter="get_cookie", setter="set_cookie"),
-            AttributeSpec(name="anchors", getter="get_anchors", side_effect=1),
-            AttributeSpec(name="all", getter="get_all", side_effect=1),
-            AttributeSpec(name="characterSet", getter="get_characterSet", side_effect=1),
-            AttributeSpec(name="charset", getter="get_charset", side_effect=1),
-            AttributeSpec(name="title", getter="get_title", setter="set_title"),
-            AttributeSpec(name="implementation", getter="get_implementation", side_effect=1),
-            AttributeSpec(name="currentScript", getter="get_currentScript", side_effect=1),
-            AttributeSpec(name="activeElement", getter="get_activeElement", side_effect=1),
-            AttributeSpec(name="fonts", getter="get_fonts", side_effect=1),
-            # Measured in Chrome: examples/5s, script/parity_jsapi.py members.
-            AttributeSpec(name="children", getter="get_children", side_effect=1),
-            AttributeSpec(name="customElementRegistry", getter="get_customElementRegistry",
-                          side_effect=1),
-            AttributeSpec(name="timeline", getter="get_timeline", side_effect=1),
-            AttributeSpec(name="fragmentDirective", getter="get_fragmentDirective",
-                          side_effect=1),
-            AttributeSpec(name="rootElement", getter="get_rootElement", side_effect=1),
-            AttributeSpec(name="applets", getter="get_applets", side_effect=1),
-            AttributeSpec(name="adoptedStyleSheets", getter="get_adoptedStyleSheets",
-                          setter="set_adoptedStyleSheets"),
-            AttributeSpec(name="lastModified", getter="get_lastModified", side_effect=1),
-            AttributeSpec(name="bgColor", getter="get_bgColor", setter="set_bgColor"),
-            AttributeSpec(name="fgColor", getter="get_fgColor", setter="set_fgColor"),
-            AttributeSpec(name="alinkColor", getter="get_alinkColor", setter="set_alinkColor"),
-            AttributeSpec(name="vlinkColor", getter="get_vlinkColor", setter="set_vlinkColor"),
-            AttributeSpec(name="linkColor", getter="get_linkColor", setter="set_linkColor"),
-            AttributeSpec(name="xmlStandalone", getter="get_xmlStandalone", side_effect=1),
-            AttributeSpec(name="xmlVersion", getter="get_xmlVersion", side_effect=1),
-            AttributeSpec(name="xmlEncoding", getter="get_xmlEncoding", side_effect=1),
-            AttributeSpec(name="inputEncoding", getter="get_inputEncoding", side_effect=1),
-            AttributeSpec(name="wasDiscarded", getter="get_wasDiscarded", side_effect=1),
-            AttributeSpec(name="fullscreenEnabled", getter="get_fullscreenEnabled", side_effect=1),
-            AttributeSpec(name="fullscreen", getter="get_fullscreen", side_effect=1),
-            AttributeSpec(name="fullscreenElement", getter="get_fullscreenElement", side_effect=1),
-            AttributeSpec(name="pictureInPictureEnabled", getter="get_pictureInPictureEnabled",
-                          side_effect=1),
-            AttributeSpec(name="pictureInPictureElement", getter="get_pictureInPictureElement",
-                          side_effect=1),
-            AttributeSpec(name="pointerLockElement", getter="get_pointerLockElement",
-                          side_effect=1),
-            AttributeSpec(name="activeViewTransition", getter="get_activeViewTransition",
-                          side_effect=1),
-            AttributeSpec(name="webkitHidden", getter="get_webkitHidden", side_effect=1),
-            AttributeSpec(name="webkitVisibilityState", getter="get_webkitVisibilityState",
-                          side_effect=1),
-            AttributeSpec(name="webkitFullscreenEnabled", getter="get_webkitFullscreenEnabled",
-                          side_effect=1),
-            AttributeSpec(name="webkitCurrentFullScreenElement",
-                          getter="get_webkitCurrentFullScreenElement", side_effect=1),
-            *[AttributeSpec(name=name, getter="get_" + name, setter="set_" + name)
-              for name in _HANDLER_ATTRIBUTES],
-        ),
-        methods=(
-            MethodSpec(name="createElement", callback="fn_createElement", length=1),
-            MethodSpec(name="createElementNS", callback="fn_createElementNS", length=2, side_effect=1),
-            MethodSpec(name="createTextNode", callback="fn_createTextNode", length=1),
-            MethodSpec(name="createComment", callback="fn_createComment", length=1),
-            MethodSpec(name="createDocumentFragment", callback="fn_createDocumentFragment"),
-            MethodSpec(name="createAttribute", callback="fn_createAttribute", length=1),
-            MethodSpec(name="createEvent", callback="fn_createEvent", length=1),
-            MethodSpec(name="createExpression", callback="fn_createExpression", length=1),
-            MethodSpec(name="createNodeIterator", callback="fn_createNodeIterator", length=1),
-            MethodSpec(name="createTreeWalker", callback="fn_createTreeWalker", length=1),
-            MethodSpec(name="evaluate", callback="fn_evaluate", length=2, side_effect=1),
-            MethodSpec(name="getElementById", callback="fn_getElementById", length=1, side_effect=1),
-            MethodSpec(name="getElementsByName", callback="fn_getElementsByName", length=1, side_effect=1),
-            MethodSpec(name="getElementsByTagName", callback="fn_getElementsByTagName", length=1, side_effect=1),
-            MethodSpec(name="getElementsByClassName", callback="fn_getElementsByClassName", length=1, side_effect=1),
-            MethodSpec(name="getElementsByTagNameNS", callback="fn_getElementsByTagNameNS", length=2, side_effect=1),
-            MethodSpec(name="querySelector", callback="fn_querySelector", length=1, side_effect=1),
-            MethodSpec(name="querySelectorAll", callback="fn_querySelectorAll", length=1, side_effect=1),
-            MethodSpec(name="write", callback="fn_write"),
-            MethodSpec(name="writeln", callback="fn_writeln"),
-            MethodSpec(name="open", callback="fn_open", length=0),
-            MethodSpec(name="close", callback="fn_close", length=0),
-            MethodSpec(name="hasFocus", callback="fn_hasFocus"),
-            MethodSpec(name="elementFromPoint", callback="fn_elementFromPoint", length=2, side_effect=1),
-            MethodSpec(name="elementsFromPoint", callback="fn_elementsFromPoint", length=2, side_effect=1),
-        ),
-    )
+    __idl_overrides__ = {
+        "members": {
+            "childNodes": {
+                "side_effect": 1
+            },
+            "documentURI": {
+                "getter": "get_URL",
+                "side_effect": 1
+            }
+        },
+        "interface": {
+            "length": 0
+        }
+    }
     def __init__(self, services=None, url="about:blank", ready_state="complete",
                  content_type="text/html", **kw):
         super().__init__(services=services, node_type=Node.DOCUMENT_NODE, node_name="#document", **kw)
@@ -784,16 +667,10 @@ def detached_services(services, document):
 class HTMLDocument(Document):
     """The document a page has: HTML, not XML, which is what its tag reports."""
 
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1,
-                             to_string_tag="HTMLDocument")
-
 
 @interface('XMLDocument', 'Document')
 class XMLDocument(Document):
     """The document ``DOMParser`` and ``createDocument`` build from XML."""
-
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1,
-                             to_string_tag="XMLDocument")
 
 
 @interface('DOMImplementation', None)
@@ -801,18 +678,6 @@ class DOMImplementation:
     """``document.implementation``: the document factories.  ``createHTMLDocument``
     builds the skeleton Chromium builds -- ``html`` with ``head``/``body`` and an
     optional ``title``; the others return a document holding the requested root."""
-
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="createDocument", callback="fn_createDocument", length=2),
-            MethodSpec(name="createDocumentType", callback="fn_createDocumentType", length=3),
-            MethodSpec(name="createHTMLDocument", callback="fn_createHTMLDocument"),
-            MethodSpec(name="hasFeature", callback="fn_hasFeature"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-        to_string_tag="DOMImplementation",
-    )
 
     def __init__(self, services=None, **_):
         self._services = services

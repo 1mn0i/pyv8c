@@ -9,13 +9,13 @@ standard's own: the canonical name ``encoding`` reports, and the labels that ali
 from __future__ import annotations
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, is_nullish, missing_error, usv_string
 from ...foundation.errors import V8TypeError, dom_exception
 
 __all__ = ["TextDecoder", "TextEncoder"]
+
 
 #: The encoding standard's table: canonical name -> (python codec, aliasing labels).  ``None``
 #: marks the two codecs the standard defines without one.
@@ -87,6 +87,7 @@ _ENCODINGS = {
     "x-user-defined": (None, ("x-user-defined",)),
 }
 
+
 #: label -> canonical name, built once from the table above.
 _LABELS = {}
 for _name, (_codec, _aliases) in _ENCODINGS.items():
@@ -118,17 +119,6 @@ def _code_units(character):
 
 @interface('TextEncoder', None)
 class TextEncoder:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="encoding", getter="get_encoding", side_effect=1),),
-        methods=(
-            MethodSpec(name="encode", callback="fn_encode"),
-            MethodSpec(name="encodeInto", callback="fn_encodeInto", length=2),
-        ),
-        constructor_behavior=1,
-        to_string_tag="TextEncoder",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, **_):
         # Chrome's constructor takes no arguments; the binding still passes the realm.
         pass
@@ -165,18 +155,6 @@ class TextEncoder:
 
 @interface('TextDecoder', None)
 class TextDecoder:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="encoding", getter="get_encoding", side_effect=1),
-            AttributeSpec(name="fatal", getter="get_fatal", side_effect=1),
-            AttributeSpec(name="ignoreBOM", getter="get_ignoreBOM", side_effect=1),
-        ),
-        methods=(MethodSpec(name="decode", callback="fn_decode"),),
-        constructor_behavior=1,
-        to_string_tag="TextDecoder",
-        has_constructor=1,
-    )
-
     def __init__(self, label="utf-8", options=None, *_extra, **_):
         text = "utf-8" if is_nullish(label) else str(label).strip().lower()
         #: The standard matches a label with its ASCII whitespace removed.

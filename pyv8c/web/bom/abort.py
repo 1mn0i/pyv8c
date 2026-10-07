@@ -7,20 +7,19 @@ the call that started it.
 import math
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, abort_signal, is_nullish, missing_error, number, sequence
 from ...foundation.errors import V8TypeError, as_js_error, dom_exception
 from ..dom.events import Event, EventTarget, _install_handler_slots
 
 __all__ = ["AbortController", "AbortSignal"]
 
+
 #: Blink's wording for the reason a signal carries when the page named none.
 ABORT_MESSAGE = "signal is aborted without reason"
 #: And for the one a deadline carries.
 TIMEOUT_MESSAGE = "signal timed out"
+
 
 #: ``[EnforceRange] unsigned long long`` goes through a double, so Blink's range is
 #: the one a double holds exactly rather than the type's own.
@@ -41,30 +40,22 @@ def _milliseconds(value):
 class AbortSignal(EventTarget):
     """The token itself: aborted or not, the reason it was, and who listens."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="aborted", getter="get_aborted", side_effect=1),
-            AttributeSpec(name="reason", getter="get_reason", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="throwIfAborted", callback="fn_throwIfAborted"),
-            MethodSpec(name="abort", callback="fn_static_abort", length=0,
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-            MethodSpec(name="any", callback="fn_static_any", length=1,
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-            MethodSpec(name="timeout", callback="fn_static_timeout", length=1,
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-        ),
-        constructor_behavior=0,
-        has_constructor=0,
-        to_string_tag="AbortSignal",
-    )
+    __idl_overrides__ = {
+        "members": {
+            "abort": {
+                "callback": "fn_static_abort"
+            },
+            "any": {
+                "callback": "fn_static_any"
+            },
+            "timeout": {
+                "callback": "fn_static_timeout"
+            }
+        },
+        "interface": {
+            "length": 0
+        }
+    }
 
     def __init__(self, services=None, **_):
         super().__init__(services=services)
@@ -152,27 +143,13 @@ def _aborted_signal(services, reason):
     return signal
 
 
-AbortSignal.__v8_idl_spec__ = AbortSignal.__v8_idl_spec__.replace(
-    attributes=AbortSignal.__v8_idl_spec__.attributes
-    + _install_handler_slots(AbortSignal, ("onabort",)))
+#: The accessor only; the baseline decides whether this release publishes ``onabort``.
+_install_handler_slots(AbortSignal, ("onabort",))
 
 
 @interface('AbortController', None)
 class AbortController:
     """The page's handle on one signal: ``abort`` is the only way to fire it."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="signal", getter="get_signal", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="abort", callback="fn_abort"),
-        ),
-        constructor_behavior=0,
-        length=0,
-        has_constructor=1,
-        to_string_tag="AbortController",
-    )
 
     def __init__(self, services=None, **_):
         self._services = services

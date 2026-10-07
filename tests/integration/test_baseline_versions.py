@@ -1,28 +1,32 @@
 import copy
 import json
-import zipfile
 from pathlib import Path
 
 import pytest
 import pyv8
 
 from pyv8c import Browser
-from pyv8c.engine.baseline import BASELINE_SCHEMA
+from pyv8c.engine.idl import IDL_VERSION, Idl
 
-BASELINE = Path(__file__).resolve().parents[2] / "pyv8c" / "baselines" / "interface-baseline.zip"
+
+def _document():
+    """The bundled document as plain data, whole: these tests mutate it and write it back."""
+    idl = Idl.load(profile=None)
+    return {"idl": dict(idl.metadata), "interfaces": copy.deepcopy(dict(idl.interfaces))}
 
 
 def _baseline_document():
-    with zipfile.ZipFile(BASELINE) as archive:
-        return json.loads(archive.read("interface-baseline.json"))
+    """The interfaces of the bundled document: what most of these tests mutate."""
+    return _document()["interfaces"]
 
 
 def _custom_baseline(path):
-    document = _baseline_document()
-    document["ReadableStream"]["parent"] = "EventTarget"
-    document["ReadableStream"]["tag"] = "VersionedReadableStream"
-    document["ReadableStream"]["constructor"]["length"] = 2
-    members = document["ReadableStream"]["members"]["prototype"]
+    document = _document()
+    interfaces = document["interfaces"]
+    interfaces["ReadableStream"]["parent"] = "EventTarget"
+    interfaces["ReadableStream"]["tag"] = "VersionedReadableStream"
+    interfaces["ReadableStream"]["constructor"]["length"] = 2
+    members = interfaces["ReadableStream"]["members"]["prototype"]
     reader = next(member for member in members if member["name"] == "getReader")
     members.remove(reader)
     replacement = copy.deepcopy(reader)
@@ -35,11 +39,11 @@ def _custom_baseline(path):
 def test_default_baseline_is_bundled_and_describes_snapshot():
     browser = Browser(stub_logging="off")
     try:
-        assert browser.interface_baseline_path == "pyv8c:baselines/interface-baseline.zip"
-        info = browser.interface_baseline_info
+        assert browser.idl_path == "pyv8c:idl/idl.zip"
+        info = browser.idl_info
         assert info["interface_count"] > 1000
         assert len(info["sha256"]) == 64
-        assert info["schema"] == BASELINE_SCHEMA
+        assert info["idl"]["version"] == IDL_VERSION
     finally:
         browser.close()
 
@@ -48,20 +52,20 @@ def test_custom_baseline_path_is_absolute_and_snapshot_is_frozen(tmp_path, monke
     baseline = tmp_path / "custom.json"
     document = _custom_baseline(baseline)
     monkeypatch.chdir(tmp_path)
-    browser = Browser(interface_baseline_path="custom.json", stub_logging="off")
-    original_hash = browser.interface_baseline_info["sha256"]
+    browser = Browser(idl_path="custom.json", stub_logging="off")
+    original_hash = browser.idl_info["sha256"]
     try:
-        assert browser.interface_baseline_path == str(baseline.resolve())
-        document["_webidl"]["snapshot"] = "changed-after-browser-creation"
+        assert browser.idl_path == str(baseline.resolve())
+        document["idl"]["note"] = "changed-after-browser-creation"
         baseline.write_text(json.dumps(document), encoding="utf-8")
-        assert browser.interface_baseline_info["sha256"] == original_hash
+        assert browser.idl_info["sha256"] == original_hash
         assert "alternateGetReader" in {
             member["name"]
-            for member in browser.interface_universe.baseline.interfaces["ReadableStream"]["members"]["prototype"]
+            for member in browser.bindings.idl.interfaces["ReadableStream"]["members"]["prototype"]
         }
-        newer = Browser(interface_baseline_path=baseline, stub_logging="off")
+        newer = Browser(idl_path=baseline, stub_logging="off")
         try:
-            assert newer.interface_baseline_info["sha256"] != original_hash
+            assert newer.idl_info["sha256"] != original_hash
         finally:
             newer.close()
     finally:
@@ -72,39 +76,30 @@ def test_custom_baseline_path_is_absolute_and_snapshot_is_frozen(tmp_path, monke
     ("content", "error"),
     [
         ("[]", "root must be an object"),
-        ("{}", "must contain _webidl metadata"),
-        ('{"_webidl": {"schema": %d}, "Broken": {"parent": null}}' % BASELINE_SCHEMA,
-         "not a compact schema"),
+        ("{}", "must state an 'idl' object and an 'interfaces' object"),
+        ('{"idl": {"version": %d}, "interfaces": {}}' % IDL_VERSION,
+         "must contain interfaces"),
     ],
 )
 def test_invalid_baseline_is_rejected_when_browser_is_created(tmp_path, content, error):
     path = tmp_path / "invalid.json"
     path.write_text(content, encoding="utf-8")
     with pytest.raises(ValueError, match=error):
-        Browser(interface_baseline_path=path)
+        Browser(idl_path=path)
 
 
 def test_missing_baseline_is_rejected_when_browser_is_created(tmp_path):
     with pytest.raises(FileNotFoundError, match="does not exist"):
-        Browser(interface_baseline_path=tmp_path / "missing.json")
+        Browser(idl_path=tmp_path / "missing.json")
 
 
-def test_old_baseline_schema_is_rejected_explicitly(tmp_path):
-    document = _baseline_document()
-    document["_webidl"]["schema"] = 2
-    path = tmp_path / "schema-2.json"
+def test_a_document_of_another_version_is_refused(tmp_path):
+    document = _document()
+    document["idl"]["version"] = 2
+    path = tmp_path / "version-2.json"
     path.write_text(json.dumps(document), encoding="utf-8")
-    with pytest.raises(ValueError, match=f"expected {BASELINE_SCHEMA}"):
-        Browser(interface_baseline_path=path)
-
-
-def test_non_compact_baseline_is_rejected_explicitly(tmp_path):
-    document = _baseline_document()
-    document["_webidl"]["compact"] = False
-    path = tmp_path / "audit.json"
-    path.write_text(json.dumps(document), encoding="utf-8")
-    with pytest.raises(ValueError, match="not a compact schema"):
-        Browser(interface_baseline_path=path)
+    with pytest.raises(ValueError, match=f"expected {IDL_VERSION}"):
+        Browser(idl_path=path)
 
 
 def test_baseline_parent_cycle_is_rejected_when_browser_is_created(tmp_path):
@@ -114,20 +109,20 @@ def test_baseline_parent_cycle_is_rejected_when_browser_is_created(tmp_path):
     }
     path = tmp_path / "cycle.json"
     path.write_text(json.dumps({
-        "_webidl": {"schema": BASELINE_SCHEMA, "compact": True}, "First": entry("Second", "First"),
-        "Second": entry("First", "Second"),
+        "idl": {"version": IDL_VERSION},
+        "interfaces": {"First": entry("Second", "First"), "Second": entry("First", "Second")},
     }), encoding="utf-8")
     with pytest.raises(ValueError, match="parent cycle"):
-        Browser(interface_baseline_path=path)
+        Browser(idl_path=path)
 
 
 def test_two_browsers_keep_generated_classes_and_templates_isolated(tmp_path):
     custom = tmp_path / "custom.json"
     _custom_baseline(custom)
     default_browser = Browser(stub_logging="off")
-    custom_browser = Browser(interface_baseline_path=custom, stub_logging="off")
+    custom_browser = Browser(idl_path=custom, stub_logging="off")
     try:
-        assert default_browser.interface_universe.class_for("ReadableStream") is not custom_browser.interface_universe.class_for("ReadableStream")
+        assert default_browser.bindings.class_for("ReadableStream") is not custom_browser.bindings.class_for("ReadableStream")
         default_page = default_browser.new_context().new_page()
         custom_page = custom_browser.new_context().new_page()
         assert default_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["function", "undefined"]
@@ -149,9 +144,9 @@ def test_two_browsers_keep_generated_classes_and_templates_isolated(tmp_path):
 
 
 def test_baseline_signatures_do_not_control_implementation_arguments(tmp_path):
-    document = _baseline_document()
+    document = _document()
     contains = next(
-        member for member in document["DOMTokenList"]["members"]["prototype"]
+        member for member in document["interfaces"]["DOMTokenList"]["members"]["prototype"]
         if member["name"] == "contains"
     )
     contains.setdefault("signature", {})["required"] = 2
@@ -159,7 +154,7 @@ def test_baseline_signatures_do_not_control_implementation_arguments(tmp_path):
     path.write_text(json.dumps(document), encoding="utf-8")
 
     default_browser = Browser(stub_logging="off")
-    strict_browser = Browser(interface_baseline_path=path, stub_logging="off")
+    strict_browser = Browser(idl_path=path, stub_logging="off")
     try:
         default_page = default_browser.new_context().new_page()
         strict_page = strict_browser.new_context().new_page()
@@ -174,30 +169,30 @@ def test_baseline_signatures_do_not_control_implementation_arguments(tmp_path):
 
 
 def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_path):
-    document = _baseline_document()
+    document = _document()
     contains = next(
-        member for member in document["DOMTokenList"]["members"]["prototype"]
+        member for member in document["interfaces"]["DOMTokenList"]["members"]["prototype"]
         if member["name"] == "contains"
     )
     contains.setdefault("signature", {})["status"] = "unresolved"
     path = tmp_path / "unresolved-real.json"
     path.write_text(json.dumps(document), encoding="utf-8")
-    browser = Browser(interface_baseline_path=path, stub_logging="off")
+    browser = Browser(idl_path=path, stub_logging="off")
     try:
         page = browser.new_context().new_page()
         assert page.evaluate("document.createElement('div').classList.contains('x')") is False
     finally:
         browser.close()
 
-    document = _baseline_document()
+    document = _document()
     parse = next(
-        member for member in document["ReadableStream"]["members"]["prototype"]
+        member for member in document["interfaces"]["ReadableStream"]["members"]["prototype"]
         if member["name"] == "getReader"
     )
     parse.setdefault("signature", {})["status"] = "unresolved"
     path = tmp_path / "unresolved-stub.json"
     path.write_text(json.dumps(document), encoding="utf-8")
-    browser = Browser(interface_baseline_path=path, stub_logging="off")
+    browser = Browser(idl_path=path, stub_logging="off")
     try:
         page = browser.new_context().new_page()
         assert page.evaluate("new ReadableStream().getReader(1, 2, 3)") is pyv8.Undefined
@@ -205,11 +200,11 @@ def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_pa
         browser.close()
 
 
-def test_worker_and_iframe_reuse_their_browser_universe(tmp_path):
+def test_worker_and_iframe_reuse_their_browser_bindings(tmp_path):
     custom = tmp_path / "custom.json"
     _custom_baseline(custom)
     browser = Browser(
-        interface_baseline_path=custom,
+        idl_path=custom,
         resource_loader=lambda _url, _request: {
             "body": "", "headers": {"access-control-allow-origin": "*"},
         },
@@ -220,7 +215,7 @@ def test_worker_and_iframe_reuse_their_browser_universe(tmp_path):
         page.set_content("<iframe src='about:blank'></iframe>", url="http://example.test/")
         page.run_until_idle(timeout=1)
         frame_page = next(iter(page._owned.frames))
-        assert frame_page.context_owner.browser.interface_universe is browser.interface_universe
+        assert frame_page.context_owner.browser.bindings is browser.bindings
         assert frame_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["undefined", "function"]
 
         page.evaluate("""(() => {

@@ -5,15 +5,14 @@ Chrome was built with, so the table is the reference build's codec list.
 """
 import re
 
-from pyv8 import IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
 from .events import EventTarget
 
+
 #: ``audio/*`` or ``video/*`` with the type's own characters: Chrome refuses anything else.
 _TYPE = re.compile(r"^(?:audio|video)/[a-z0-9][a-z0-9!#$&^_.+-]*$")
+
 
 #: The codec families Chrome answers true for, by container; a family matches by equality.
 CONTAINER_CODECS = {
@@ -23,8 +22,10 @@ CONTAINER_CODECS = {
     "video/webm": ("vp8", "vp9", "vp09", "av01", "opus", "vorbis"),
 }
 
+
 #: Types that are complete on their own, so a media source carries them with no codecs.
 SELF_CONTAINED = ("audio/mpeg",)
+
 
 #: What ``canPlayType`` answers per container: the bare answer and the families it plays there.
 #: A looser table than ``isTypeSupported`` reads, which is why ``audio/wav; codecs="1"`` is
@@ -69,8 +70,10 @@ _STRUCTURED_CODECS = {
     "mp4a": _components,
 }
 
+
 #: Codecs that are a whole answer on their own; the name is case sensitive, as in Chromium.
 _SIMPLE_CODECS = ("vp8", "vp9", "opus", "vorbis", "flac", "mp3", "1")
+
 
 #: Names Chromium calls *ambiguous*: "maybe" for ``canPlayType``, refused by ``isTypeSupported``.
 _AMBIGUOUS_CODECS = {"avc1": "avc1", "avc3": "avc3", "mp4a.40": "mp4a"}
@@ -80,6 +83,7 @@ _AMBIGUOUS_CODECS = {"avc1": "avc1", "avc3": "avc3", "mp4a.40": "mp4a"}
 #: Chromium matches the name exactly.
 WEBRTC_VIDEO_FAMILIES = {"VP8": "vp8", "VP9": "vp09", "AV1": "av01", "H264": "avc1",
                          "H265": "hvc1"}
+
 
 #: The audio side of that registry, with no family: Chromium calls them all power efficient.
 WEBRTC_AUDIO_CODECS = ("opus", "G722", "PCMU", "PCMA")
@@ -286,25 +290,11 @@ def can_play_type(text, facts=None):
 
 @interface('MediaSource', 'EventTarget')
 class MediaSource(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="isTypeSupported", callback="fn_isTypeSupported", length=1,
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="MediaSource",
-        has_constructor=1,
-    )
-
     @staticmethod
     def fn_isTypeSupported(_realm, type=MISSING, *_extra):
         if type is MISSING:
             raise missing_error('MediaSource', 'isTypeSupported', 1, 0, constructor=False)
         return is_type_supported(dom_string(type), media_facts(_realm))
-
 
 __all__ = ["MediaSource", "WEBRTC_CONTENT_TYPES", "can_play_type", "codec_family", "device_kinds",
            "families_in", "hardware_codecs", "hardware_encoders", "is_type_supported",

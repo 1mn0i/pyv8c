@@ -3,9 +3,8 @@ microtask.  Attribute records come from ``setAttribute``/``removeAttribute``; a
 reflected property that writes the attribute table directly is not observed."""
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     boolean,
@@ -17,23 +16,6 @@ from ...foundation.arguments import (
 
 @interface('MutationRecord', None)
 class MutationRecord:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="target", getter="get_target", side_effect=1),
-            AttributeSpec(name="addedNodes", getter="get_addedNodes", side_effect=1),
-            AttributeSpec(name="removedNodes", getter="get_removedNodes", side_effect=1),
-            AttributeSpec(name="previousSibling", getter="get_previousSibling", side_effect=1),
-            AttributeSpec(name="nextSibling", getter="get_nextSibling", side_effect=1),
-            AttributeSpec(name="attributeName", getter="get_attributeName", side_effect=1),
-            AttributeSpec(name="attributeNamespace", getter="get_attributeNamespace", side_effect=1),
-            AttributeSpec(name="oldValue", getter="get_oldValue", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="MutationRecord",
-        has_constructor=1,
-    )
-
     def __init__(self, kind="", target=None, added=(), removed=(), previous=None,
                  next_=None, attribute_name=None, old_value=None, **_):
         from .collections import NodeList
@@ -65,18 +47,6 @@ class MutationRecord:
 
 @interface('MutationObserver', None)
 class MutationObserver:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="observe", callback="fn_observe", length=1),
-            MethodSpec(name="disconnect", callback="fn_disconnect"),
-            MethodSpec(name="takeRecords", callback="fn_takeRecords", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="MutationObserver",
-        has_constructor=1,
-    )
-
     def __init__(self, callback=MISSING, *_extra, **_):
         if callback is MISSING:
             raise missing_error('MutationObserver', 'MutationObserver', 1, 0)
@@ -151,6 +121,5 @@ def record_mutation(target, kind, **details):
             if observer._wants(target, kind, options):
                 observer._record(kind, target, **details)
             break
-
 
 __all__ = ["MutationObserver", "MutationRecord", "observe_document", "record_mutation"]

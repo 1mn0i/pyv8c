@@ -5,10 +5,12 @@ from functools import lru_cache
 from ...foundation.errors import V8SyntaxError
 from .html_elements import Element
 
+
 # Selector parser failures cross the Python/V8 binding boundary; raising the
 # project's marked error type lets V8 materialize a native SyntaxError a page can
 # catch, rather than a Python traceback.
 SyntaxError = V8SyntaxError
+
 
 @dataclass
 class Simple:
@@ -17,6 +19,7 @@ class Simple:
     classes: tuple = ()
     attrs: tuple = ()
     pseudos: tuple = ()
+
 
 def _balanced(text, start, opening="(", closing=")"):
     depth = 0; quote = None
@@ -30,6 +33,7 @@ def _balanced(text, start, opening="(", closing=")"):
             depth -= 1
             if depth == 0: return text[start + 1:i], i + 1
     raise SyntaxError("Invalid selector")
+
 
 def _groups(text):
     result, start, depth, quote = [], 0, 0, None
@@ -45,6 +49,7 @@ def _groups(text):
         if depth < 0: raise SyntaxError("Unbalanced selector")
     if quote or depth or not text[start:].strip(): raise SyntaxError("Invalid selector")
     result.append(text[start:].strip()); return result
+
 
 def _simple(text):
     if not text: raise SyntaxError("Expected compound selector")
@@ -75,6 +80,7 @@ def _simple(text):
         raise SyntaxError("Invalid selector token")
     return Simple(tag, tuple(ids), tuple(classes), tuple(attrs), tuple(pseudos))
 
+
 def _parse_group(text):
     compounds, relations, buf, depth, quote, pending_space = [], [], "", 0, None, False
     for ch in text:
@@ -98,15 +104,18 @@ def _parse_group(text):
     if not compounds or len(relations) != len(compounds) - 1: raise SyntaxError("Invalid combinator")
     return compounds, relations
 
+
 @lru_cache(maxsize=512)
 def _parse_cached(selector):
     if not isinstance(selector, str) or not selector.strip(): raise SyntaxError("Invalid selector")
     return tuple(_parse_group(group) for group in _groups(selector))
 
+
 def parse(selector):
     if not isinstance(selector, str):
         raise SyntaxError("Invalid selector")
     return _parse_cached(selector)
+
 
 def _sibling_position(node, of_type=False):
     parent = node.parentNode
@@ -121,6 +130,7 @@ def _sibling_position(node, of_type=False):
             position = count
     return position, count
 
+
 def _previous_element(node, predicate=None):
     parent = node.parentNode
     if parent is None:
@@ -132,6 +142,7 @@ def _previous_element(node, predicate=None):
         if isinstance(sibling, Element) and (predicate is None or predicate(sibling)):
             previous = sibling
     return None
+
 
 def _nth(pos, expr):
     expr = (expr or "").strip().lower().replace(" ", "")
@@ -146,6 +157,7 @@ def _nth(pos, expr):
 
 _FORM_CONTROL_TAGS = {"button", "input", "select", "textarea", "option", "optgroup", "fieldset"}
 
+
 def _is_disabled(node):
     if node.localName not in _FORM_CONTROL_TAGS:
         return False
@@ -158,6 +170,7 @@ def _is_disabled(node):
         parent = parent.parentNode
     return False
 
+
 def _is_checked(node):
     if node.localName == "option":
         return "selected" in getattr(node, "attributes", {})
@@ -165,6 +178,7 @@ def _is_checked(node):
         return False
     input_type = str(getattr(node, "attributes", {}).get("type", "text")).lower()
     return input_type in {"checkbox", "radio"} and "checked" in node.attributes
+
 
 def _matches_attribute(actual, op, wanted):
     """Whether *actual* satisfies ``[name<op>wanted]``."""
@@ -223,6 +237,7 @@ def _simple_match(node, simple):
             if (name == "not" and result) or (name != "not" and not result): return False
     return True
 
+
 def _matches_ast(node, ast):
     compounds, relations = ast; current = node
     if not _simple_match(current, compounds[-1]): return False
@@ -242,7 +257,9 @@ def _matches_ast(node, ast):
         if current is None or not _simple_match(current, compounds[index]): return False
     return True
 
+
 def matches(node, selector): return any(_matches_ast(node, group) for group in parse(selector))
+
 
 def select(root, selector):
     ast = parse(selector); nodes = []

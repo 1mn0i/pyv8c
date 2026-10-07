@@ -635,7 +635,7 @@ def test_document_all_materialises_through_the_feature_runtime():
 def test_document_all_accepts_the_interface_after_catalog_validation():
     browser = Browser(stub_logging="off")
     try:
-        browser.interface_universe.validate()
+        browser.bindings.validate()
         page = browser.new_context().new_page()
         page.set_content(DOCUMENT)
         page.run_until_idle()

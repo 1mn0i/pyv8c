@@ -11,8 +11,10 @@ import pyv8
 
 from .events import FocusEvent
 
+
 #: Local names that take focus without needing a ``tabindex``.
 _FOCUSABLE_TAGS = frozenset(("button", "iframe", "select", "textarea"))
+
 
 #: Local names whose ``href`` makes them focusable.
 _LINK_TAGS = frozenset(("a", "area"))
@@ -119,6 +121,5 @@ def focus_on_mousedown(node):
             return _move_focus(document, candidate)
         candidate = getattr(candidate, "parentElement", None)
     return _move_focus(document, None)
-
 
 __all__ = ["active_element", "blur", "focus", "focus_on_mousedown", "focusable"]

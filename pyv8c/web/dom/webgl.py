@@ -10,10 +10,10 @@ The pname tables and the extension lists were measured on Chrome 153.
 from __future__ import annotations
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error
+
 
 #: ``(name, constant, value)`` for every pname Chrome answers with a scalar; ``None``
 #: stands for Chrome's ``null``.
@@ -89,6 +89,7 @@ _PARAMETERS = (
     ("UNPACK_COLORSPACE_CONVERSION_WEBGL", 37443, 37444),
 )
 
+
 #: ``(name, constant, typed-array kind, value)`` for the pnames answered with an array.
 _ARRAY_PARAMETERS = (
     ("BLEND_COLOR", 32773, pyv8.ArrayType.Float32Array, (0, 0, 0, 0)),
@@ -102,6 +103,7 @@ _ARRAY_PARAMETERS = (
     ("COMPRESSED_TEXTURE_FORMATS", 34467, pyv8.ArrayType.Uint32Array, ()),
 )
 
+
 #: ``(name, constant, text)`` for the pnames Chrome answers with a string.
 _STRINGS = (
     ("VERSION", 7938, "WebGL 1.0 (OpenGL ES 2.0 Chromium)"),
@@ -109,6 +111,7 @@ _STRINGS = (
     ("RENDERER", 7937, "WebKit WebGL"),
     ("SHADING_LANGUAGE_VERSION", 35724, "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)"),
 )
+
 
 #: The same, for the pnames a WebGL 2 context answers with its own text.
 _WEBGL2_STRINGS = (
@@ -118,6 +121,7 @@ _WEBGL2_STRINGS = (
     ("SHADING_LANGUAGE_VERSION", 35724,
      "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"),
 )
+
 
 #: ``(name, constant, value)`` for the pnames a WebGL 2 context answers differently.
 #: ``None`` is a valid pname Chrome answers with ``null``, and no error.
@@ -186,6 +190,7 @@ _WEBGL2_PARAMETERS = (
     ("VERTEX_ARRAY_BINDING", 34229, None),
 )
 
+
 #: ``(GL name, interface)`` for every extension a WebGL 1 context lists, in the order
 #: Chrome 153 answers ``getSupportedExtensions`` with.  Each name is obtainable.
 _WEBGL1_EXTENSIONS = (
@@ -226,6 +231,7 @@ _WEBGL1_EXTENSIONS = (
     ("WEBGL_polygon_mode", "WebGLPolygonMode"),
 )
 
+
 #: The same for a WebGL 2 context: what it adds, minus what WebGL 2 makes core.
 _WEBGL2_EXTENSIONS = (
     ("EXT_clip_control", "EXTClipControl"),
@@ -265,10 +271,12 @@ _WEBGL2_EXTENSIONS = (
 _WEBGL1_EXTENSION_MAP = dict(_WEBGL1_EXTENSIONS)
 _WEBGL2_EXTENSION_MAP = dict(_WEBGL2_EXTENSIONS)
 
+
 #: The two pnames ``WEBGL_debug_renderer_info`` answers with, taken from the profile:
 #: a machine's GL identity is a collected fact, the way its screen or plugins are.
 _UNMASKED_VENDOR_WEBGL = 37445
 _UNMASKED_RENDERER_WEBGL = 37446
+
 
 #: Members whose result is undefined, with the argument count Chrome requires.
 _VOID_MEMBERS = (
@@ -285,7 +293,8 @@ _VOID_MEMBERS = (
     ("pixelStorei", 2), ("polygonOffset", 2), ("renderbufferStorage", 4), ("sampleCoverage", 2),
     ("stencilFunc", 3), ("stencilFuncSeparate", 4), ("stencilMask", 1),
     ("stencilMaskSeparate", 2), ("stencilOp", 3),     ("stencilOpSeparate", 4),
-    ("texElementImage2D", 3), ("texElementSubImage2D", 5), ("texImage2D", 6),
+    # Absent: this release installs neither; ``fn_<name>`` binds them if one does.
+    ("texImage2D", 6),
     ("texParameterf", 3), ("texParameteri", 3), ("texSubImage2D", 7),
     ("uniform1f", 2), ("uniform1fv", 2), ("uniform1i", 2), ("uniform1iv", 2),
     ("uniform2f", 3), ("uniform2fv", 2), ("uniform2i", 3), ("uniform2iv", 2),
@@ -297,6 +306,7 @@ _VOID_MEMBERS = (
     ("vertexAttrib3fv", 2), ("vertexAttrib4f", 5), ("vertexAttrib4fv", 2),
     ("vertexAttribPointer", 6),
 )
+
 
 #: Members answered from the context' own state, with the argument count Chrome requires.
 _STATE_MEMBERS = (
@@ -319,6 +329,7 @@ _STATE_MEMBERS = (
     ("readPixels", 7), ("scissor", 4), ("shaderSource", 2), ("useProgram", 1), ("viewport", 4),
 )
 
+
 #: The pnames answered from what the context has bound: pname to bind target.
 _BOUND_PARAMETERS = {
     34964: 34962,   # ARRAY_BUFFER_BINDING
@@ -330,6 +341,7 @@ _BOUND_PARAMETERS = {
     35725: 35725,   # CURRENT_PROGRAM
 }
 
+
 #: The enums the code below compares against, named as the page names them.
 _ENUMS = (
     ("INVALID_ENUM", 1280), ("NO_ERROR", 0), ("COMPILE_STATUS", 35713),
@@ -339,6 +351,7 @@ _ENUMS = (
     ("FRAMEBUFFER_COMPLETE", 36053), ("FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT", 36055),
     ("COLOR_WRITEMASK", 3107),
 )
+
 
 #: The mask and formats ``clear`` and ``readPixels`` read.
 _COLOR_BUFFER_BIT = 0x4000
@@ -359,17 +372,12 @@ def _clamped(value):
 class WebGLObject:
     """What a context hands out for everything a page cannot query."""
 
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, to_string_tag="WebGLObject",
-                             has_constructor=1)
-
     def __init__(self, context=None, **_):
         self._context = context
 
 
 @interface('WebGLBuffer', 'WebGLObject')
 class WebGLBuffer(WebGLObject):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-
     def __init__(self, context=None, **_):
         super().__init__(context=context)
         self.size = 0
@@ -378,8 +386,6 @@ class WebGLBuffer(WebGLObject):
 
 @interface('WebGLFramebuffer', 'WebGLObject')
 class WebGLFramebuffer(WebGLObject):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-
     def __init__(self, context=None, **_):
         super().__init__(context=context)
         self.attachments = {}
@@ -387,8 +393,6 @@ class WebGLFramebuffer(WebGLObject):
 
 @interface('WebGLRenderbuffer', 'WebGLObject')
 class WebGLRenderbuffer(WebGLObject):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-
     def __init__(self, context=None, **_):
         super().__init__(context=context)
         self.width = 0
@@ -398,8 +402,6 @@ class WebGLRenderbuffer(WebGLObject):
 
 @interface('WebGLTexture', 'WebGLObject')
 class WebGLTexture(WebGLObject):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-
     def __init__(self, context=None, **_):
         super().__init__(context=context)
         self.has_image = False
@@ -407,8 +409,6 @@ class WebGLTexture(WebGLObject):
 
 @interface('WebGLShader', 'WebGLObject')
 class WebGLShader(WebGLObject):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-
     def __init__(self, context=None, shader_type=35633, **_):
         super().__init__(context=context)
         self.shader_type = shader_type
@@ -417,8 +417,6 @@ class WebGLShader(WebGLObject):
 
 @interface('WebGLProgram', 'WebGLObject')
 class WebGLProgram(WebGLObject):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-
     def __init__(self, context=None, **_):
         super().__init__(context=context)
         self.linked = False
@@ -432,8 +430,6 @@ class WebGLVertexArrayObject(WebGLObject):
         # Binding is what brings a vertex array into being, as ``isVertexArray`` reports.
         self.created = False
 
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-
 
 @interface('WebGLVertexArrayObjectOES', 'WebGLObject')
 class WebGLVertexArrayObjectOES(WebGLObject):
@@ -443,52 +439,39 @@ class WebGLVertexArrayObjectOES(WebGLObject):
         super().__init__(context=context)
         self.created = False
 
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-
 
 @interface('WebGLQuery', 'WebGLObject')
 class WebGLQuery(WebGLObject):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
+    pass
 
 
 @interface('WebGLTimerQueryEXT', 'WebGLObject')
 class WebGLTimerQueryEXT(WebGLObject):
     """What a WebGL 1 context hands out through ``EXT_disjoint_timer_query``."""
 
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-
 
 @interface('WebGLSampler', 'WebGLObject')
 class WebGLSampler(WebGLObject):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
+    pass
 
 
 @interface('WebGLTransformFeedback', 'WebGLObject')
 class WebGLTransformFeedback(WebGLObject):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
+    pass
 
 
 @interface('WebGLSync', 'WebGLObject')
 class WebGLSync(WebGLObject):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
+    pass
 
 
 @interface('WebGLUniformLocation', None)
 class WebGLUniformLocation:
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
+    pass
 
 
 @interface('WebGLActiveInfo', None)
 class WebGLActiveInfo:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="size", getter="get_size", side_effect=1),
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="name", getter="get_name", side_effect=1),
-        ),
-        constructor_behavior=0, to_string_tag="WebGLActiveInfo", has_constructor=1,
-    )
-
     def __init__(self, name="", size=0, value_type=0, **_):
         self._name, self._size, self._type = name, size, value_type
 
@@ -499,15 +482,6 @@ class WebGLActiveInfo:
 
 @interface('WebGLShaderPrecisionFormat', None)
 class WebGLShaderPrecisionFormat:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="rangeMin", getter="get_rangeMin", side_effect=1),
-            AttributeSpec(name="rangeMax", getter="get_rangeMax", side_effect=1),
-            AttributeSpec(name="precision", getter="get_precision", side_effect=1),
-        ),
-        constructor_behavior=0, to_string_tag="WebGLShaderPrecisionFormat", has_constructor=1,
-    )
-
     def __init__(self, range_min=0, range_max=0, precision=0, **_):
         self._range = (range_min, range_max, precision)
 
@@ -527,19 +501,9 @@ class _Extension:
 class WebGLDebugRendererInfo(_Extension):
     """The extension whose two pnames name the machine's GL implementation."""
 
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=0, has_constructor=1)
-
 
 @interface('OESVertexArrayObject', None)
 class OESVertexArrayObject(_Extension):
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="createVertexArrayOES", callback="fn_createVertexArrayOES"),
-                 MethodSpec(name="bindVertexArrayOES", callback="fn_bindVertexArrayOES"),
-                 MethodSpec(name="deleteVertexArrayOES", callback="fn_deleteVertexArrayOES"),
-                 MethodSpec(name="isVertexArrayOES", callback="fn_isVertexArrayOES")),
-        constructor_behavior=0, has_constructor=1,
-    )
-
     def fn_createVertexArrayOES(self, *_):
         return self._context._remember(WebGLVertexArrayObjectOES(context=self._context))
 
@@ -557,12 +521,6 @@ class OESVertexArrayObject(_Extension):
 
 @interface('EXTDisjointTimerQuery', None)
 class EXTDisjointTimerQuery(_Extension):
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="createQueryEXT", callback="fn_createQueryEXT"),
-                 MethodSpec(name="isQueryEXT", callback="fn_isQueryEXT")),
-        constructor_behavior=0, has_constructor=1,
-    )
-
     def fn_createQueryEXT(self, *_):
         return self._context._remember(WebGLTimerQueryEXT(context=self._context))
 
@@ -573,12 +531,6 @@ class EXTDisjointTimerQuery(_Extension):
 @interface('WebGLLoseContext', None)
 class WebGLLoseContext(_Extension):
     """The extension a page uses to lose and restore its context on purpose."""
-
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="loseContext", callback="fn_loseContext"),
-                 MethodSpec(name="restoreContext", callback="fn_restoreContext")),
-        constructor_behavior=0, has_constructor=1,
-    )
 
     def fn_loseContext(self, *_):
         self._context._context_lost = True
@@ -593,7 +545,6 @@ def _shape_only_extension(interface_name):
     return interface(interface_name, None)(type(interface_name, (_Extension,), {
         "__doc__": f"The ``{interface_name}`` extension object.",
         "__module__": __name__,
-        "__v8_idl_spec__": IdlSpec(constructor_behavior=0, has_constructor=1),
     }))
 
 
@@ -611,36 +562,14 @@ def _extension_interfaces():
 #: The extension objects a context hands out, by the interface behind each GL name.
 EXTENSION_INTERFACES = _extension_interfaces()
 
+
 #: What ``drawingBufferFormat`` answers on either context: ``RGBA8``.
 _DRAWING_BUFFER_FORMAT = 32856
 
 
 @interface('WebGLRenderingContext', None)
 class WebGLRenderingContext:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="canvas", getter="get_canvas", side_effect=1),
-            AttributeSpec(name="drawingBufferWidth", getter="get_drawingBufferWidth",
-                          side_effect=1),
-            AttributeSpec(name="drawingBufferHeight", getter="get_drawingBufferHeight",
-                          side_effect=1),
-            AttributeSpec(name="drawingBufferFormat", getter="get_drawingBufferFormat",
-                          side_effect=1),
-            AttributeSpec(name="drawingBufferColorSpace", getter="get_drawingBufferColorSpace",
-                          setter="set_drawingBufferColorSpace"),
-            AttributeSpec(name="unpackColorSpace", getter="get_unpackColorSpace",
-                          setter="set_unpackColorSpace"),
-        ),
-        methods=tuple(
-            [MethodSpec(name=name, callback="fn_" + name, length=length)
-             for name, length in _VOID_MEMBERS]
-            + [MethodSpec(name=name, callback="fn_" + name, length=length)
-               for name, length in _STATE_MEMBERS]
-        ),
-        constructor_behavior=0,
-        to_string_tag="WebGLRenderingContext",
-        has_constructor=1,
-    )
+        # Absent: ``fn_<member>`` binds them, and ``_VOID_MEMBERS``/``_STATE_MEMBERS`` are the bodies.
 
     _INTERFACE_NAME = "WebGLRenderingContext"
 
@@ -1062,26 +991,6 @@ def _void_member(name, required):
 class WebGL2RenderingContext(WebGLRenderingContext):
     """What a ``webgl2`` canvas hands out: the WebGL 1 answers, plus WebGL 2's."""
 
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="createVertexArray", callback="fn_createVertexArray"),
-            MethodSpec(name="bindVertexArray", callback="fn_bindVertexArray"),
-            MethodSpec(name="deleteVertexArray", callback="fn_deleteVertexArray"),
-            MethodSpec(name="isVertexArray", callback="fn_isVertexArray"),
-            MethodSpec(name="createQuery", callback="fn_createQuery"),
-            MethodSpec(name="isQuery", callback="fn_isQuery"),
-            MethodSpec(name="createSampler", callback="fn_createSampler"),
-            MethodSpec(name="isSampler", callback="fn_isSampler"),
-            MethodSpec(name="createTransformFeedback", callback="fn_createTransformFeedback"),
-            MethodSpec(name="isTransformFeedback", callback="fn_isTransformFeedback"),
-            MethodSpec(name="fenceSync", callback="fn_fenceSync", length=2),
-            MethodSpec(name="isSync", callback="fn_isSync"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="WebGL2RenderingContext",
-        has_constructor=1,
-    )
-
     _INTERFACE_NAME = "WebGL2RenderingContext"
     _STRING_PARAMETERS = _WEBGL2_STRINGS
     # The WebGL 2 entries come first: the ones whose limit moved outrank WebGL 1's.
@@ -1128,7 +1037,6 @@ class WebGL2RenderingContext(WebGLRenderingContext):
 
     def fn_isSync(self, value=None, *_):
         return isinstance(value, WebGLSync) and value in self._objects
-
 
 for _name, _required in _VOID_MEMBERS:
     setattr(WebGLRenderingContext, "fn_" + _name, _void_member(_name, _required))

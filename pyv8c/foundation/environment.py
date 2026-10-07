@@ -3,8 +3,8 @@
 The defaults are a profile collected from a real Chrome
 (``data/chrome-environment.json``), so an unconfigured browser presents what that
 browser reported; a caller overrides any key by name, and the keys that follow
-``user_agent`` move with it.  The profile's ``window_surface`` section belongs to the
-baseline layer, so this module skips it like the other envelope keys.
+``user_agent`` move with it.  The profile's ``bindings`` section belongs to the engine, so this
+module skips it like the other envelope keys.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def environment_of(services):
     realm = getattr(services, "realm_services", None)
     return getattr(realm, "environment", None) if realm is not None else None
 #: Keys of a profile that are not settings: the envelope, and what another layer reads.
-ENVELOPE_KEYS = ("schema", "source", "window_surface")
+ENVELOPE_KEYS = ("schema", "source", "bindings")
 PROFILE = Path(__file__).parents[1] / "data" / "chrome-environment.json"
 
 #: The version Chrome's frozen "Not A(Brand" entry carries.

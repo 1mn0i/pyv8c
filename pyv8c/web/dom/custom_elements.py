@@ -2,29 +2,14 @@
 upgrades an element -- this DOM has no reaction stack."""
 
 import pyv8
-from pyv8 import IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
 from ...foundation.errors import dom_exception
 
 
 @interface('CustomElementRegistry', None)
 class CustomElementRegistry:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="define", callback="fn_define", length=2),
-            MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
-            MethodSpec(name="getName", callback="fn_getName", length=1, side_effect=1),
-            MethodSpec(name="whenDefined", callback="fn_whenDefined", length=1),
-            MethodSpec(name="upgrade", callback="fn_upgrade", length=1),
-            MethodSpec(name="initialize", callback="fn_initialize", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CustomElementRegistry",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         self._services = services
         self._definitions = {}
@@ -78,6 +63,5 @@ class CustomElementRegistry:
 
     def fn_initialize(self, *_extra):
         return None
-
 
 __all__ = ["CustomElementRegistry"]

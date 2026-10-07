@@ -7,6 +7,7 @@ measured against Chrome 153.
 
 import pyv8
 
+
 #: Local names that a ``disabled`` attribute makes inert.
 _FORM_CONTROLS = frozenset((
     "button", "fieldset", "input", "optgroup", "option", "select", "textarea",
@@ -90,7 +91,6 @@ def repeat_click(element, source):
     if not repeated.defaultPrevented:
         run_activation(element, repeated)
     return True
-
 
 __all__ = [
     "accepts_mouse_events", "activation_target", "click_element",

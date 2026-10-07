@@ -1,14 +1,14 @@
 """``<audio>`` and ``<video>``, with the lists their playback state exposes.
 Nothing decodes here, so the classes report what a fresh element reports."""
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, missing_error, number
 from ...foundation.errors import dom_exception
 from .events import EventTarget
 from .html_elements import HTMLElement, _set_url_value, _url_value
 from .media_source import can_play_type, media_facts
+
 
 #: The loose table and the codec parser live with the strict one, so the two questions cannot
 #: drift apart; see :mod:`media_source`.
@@ -17,17 +17,6 @@ from .media_source import can_play_type, media_facts
 @interface('TimeRanges', None)
 class TimeRanges:
     """A media element's ranges: nothing has loaded, so there are none."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(
-            MethodSpec(name="start", callback="fn_start", length=1),
-            MethodSpec(name="end", callback="fn_end", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="TimeRanges",
-        has_constructor=1,
-    )
 
     def get_length(self): return 0
     def fn_start(self, index=MISSING, *_extra): return self._refuse('start', index)
@@ -46,13 +35,6 @@ class TimeRanges:
 class TextTrackList(EventTarget):
     """A media element's text tracks: with nothing loaded there are none."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="TextTrackList",
-        has_constructor=1,
-    )
-
     def get_length(self): return 0
 
 
@@ -60,43 +42,6 @@ class TextTrackList(EventTarget):
 class HTMLMediaElement(HTMLElement):
     """``<audio>`` and ``<video>``: the playback state a page reads.  Nothing decodes,
     so it is what a fresh element reports; ``canPlayType`` matches Chrome's answers."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="src", getter="get_src", setter="set_src"),
-            AttributeSpec(name="currentSrc", getter="get_currentSrc", side_effect=1),
-            AttributeSpec(name="crossOrigin", getter="get_crossOrigin", side_effect=1),
-            AttributeSpec(name="paused", getter="get_paused", side_effect=1),
-            AttributeSpec(name="ended", getter="get_ended", side_effect=1),
-            AttributeSpec(name="currentTime", getter="get_currentTime", setter="set_currentTime"),
-            AttributeSpec(name="duration", getter="get_duration", side_effect=1),
-            AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
-            AttributeSpec(name="networkState", getter="get_networkState", side_effect=1),
-            AttributeSpec(name="volume", getter="get_volume", setter="set_volume"),
-            AttributeSpec(name="muted", getter="get_muted", setter="set_muted"),
-            AttributeSpec(name="loop", getter="get_loop", setter="set_loop"),
-            AttributeSpec(name="autoplay", getter="get_autoplay", setter="set_autoplay"),
-            AttributeSpec(name="controls", getter="get_controls", setter="set_controls"),
-            AttributeSpec(name="defaultPlaybackRate", getter="get_defaultPlaybackRate", side_effect=1),
-            AttributeSpec(name="playbackRate", getter="get_playbackRate", setter="set_playbackRate"),
-            AttributeSpec(name="seeking", getter="get_seeking", side_effect=1),
-            AttributeSpec(name="error", getter="get_error", side_effect=1),
-            AttributeSpec(name="preload", getter="get_preload", side_effect=1),
-            AttributeSpec(name="textTracks", getter="get_textTracks", side_effect=1),
-            AttributeSpec(name="buffered", getter="get_buffered", side_effect=1),
-            AttributeSpec(name="played", getter="get_played", side_effect=1),
-            AttributeSpec(name="seekable", getter="get_seekable", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="canPlayType", callback="fn_canPlayType", length=1, side_effect=1),
-            MethodSpec(name="play", callback="fn_play", length=0, side_effect=1),
-            MethodSpec(name="pause", callback="fn_pause", length=0),
-            MethodSpec(name="load", callback="fn_load", length=0),
-        ),
-        constructor_behavior=0,
-        to_string_tag="HTMLMediaElement",
-        has_constructor=1,
-    )
 
     def _media(self, name, default):
         values = getattr(self, "_media_values", None)
@@ -167,16 +112,11 @@ class HTMLMediaElement(HTMLElement):
 
 @interface('HTMLAudioElement', 'HTMLMediaElement')
 class HTMLAudioElement(HTMLMediaElement):
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0, to_string_tag="HTMLAudioElement", has_constructor=1,
-    )
+    pass
 
 
 @interface('HTMLVideoElement', 'HTMLMediaElement')
 class HTMLVideoElement(HTMLMediaElement):
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0, to_string_tag="HTMLVideoElement", has_constructor=1,
-    )
-
+    pass
 
 __all__ = ["TimeRanges", "TextTrackList", "HTMLMediaElement", "HTMLAudioElement", "HTMLVideoElement"]

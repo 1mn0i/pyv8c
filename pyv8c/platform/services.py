@@ -21,7 +21,7 @@ class WorkerContext:
 
     browser: Any
     session: Any
-    universe: Any
+    bindings: Any
     environment: Any
     trace: bool
     expose_unimplemented: bool
@@ -183,7 +183,7 @@ class _RealmCapability(_TaskSource):
         the SVG and MathML interface modules need not exist to answer ``instanceof``.
         """
         session = self._owner._page_realm.binding_session
-        if name not in session.universe.baseline.interfaces:
+        if name not in session.bindings.idl.interfaces:
             return None
         return session.materialize(name)
 
@@ -453,11 +453,11 @@ class _WorkerCapability:
 
     def worker_configuration(self):
         browser = self._owner._context.browser
-        session = BindingSession(browser.interface_universe, self._owner)
+        session = BindingSession(browser.bindings, self._owner)
         return WorkerContext(
             browser=browser,
             session=session,
-            universe=browser.interface_universe,
+            bindings=browser.bindings,
             environment=self._owner.environment,
             trace=bool(self._owner.trace),
             expose_unimplemented=browser.expose_unimplemented,

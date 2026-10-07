@@ -1,6 +1,6 @@
 """Fetch Chromium and generate Blink V8 binding sources.
 
-The resulting workspace is compatible with ``tools/extract_interfaces.py``.
+The resulting workspace is compatible with ``tools/extract_idl.py``.
 Generated files are written below ``<root>/src/out/Cronet145``.
 """
 

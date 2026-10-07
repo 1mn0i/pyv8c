@@ -6,15 +6,13 @@ identity stable while exposing only the safe cross-origin surface.
 """
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 from ...foundation.arguments import MISSING, dom_string, missing_error, usv_string
+from ...idl import standalone
 from .utils import deny_cross_origin
 from .window import _PROXY_SAFE_NAMES, Window
 
 __all__ = ["WindowProxy"]
-
-
 
 
 class _CrossOriginLocation:
@@ -22,23 +20,27 @@ class _CrossOriginLocation:
     ``location`` works, reading the target URL does not.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        name_get="__v8_name_get__",
-        name_set="__v8_name_set__",
-        name_del="__v8_name_del__",
-        attributes=(
-            AttributeSpec(name="href", getter="get_href", setter="set_href"),
-            AttributeSpec(name="origin", getter="get_origin"),
-            AttributeSpec(name="protocol", getter="get_protocol"),
-            AttributeSpec(name="host", getter="get_host"),
-            AttributeSpec(name="hostname", getter="get_hostname"),
-            AttributeSpec(name="port", getter="get_port"),
-            AttributeSpec(name="pathname", getter="get_pathname"),
-            AttributeSpec(name="search", getter="get_search"),
-            AttributeSpec(name="hash", getter="get_hash"),
-        ),
-        methods=(MethodSpec(name="replace", callback="fn_replace", length=1),),
-    )
+    #: Nothing in the document describes this facade, so it states every member it has: the
+    #: interceptor is what denies a read, and each attribute below answers by denying.
+    __idl_overrides__ = {
+        "members": {
+            "href": {"setter": "set_href"},
+            "origin": {},
+            "protocol": {},
+            "host": {},
+            "hostname": {},
+            "port": {},
+            "pathname": {},
+            "search": {},
+            "hash": {},
+            "replace": {"length": 1},
+        },
+        "interface": {
+            "name_get": "__v8_name_get__",
+            "name_set": "__v8_name_set__",
+            "name_del": "__v8_name_del__",
+        },
+    }
 
     def __init__(self, proxy):
         self._proxy = proxy
@@ -79,33 +81,35 @@ class _CrossOriginLocation:
 class WindowProxy:
     """Stable parent-realm facade for a cross-origin iframe Window."""
 
-    __v8_idl_spec__ = IdlSpec(
-        name_get="__v8_name_get__",
-        name_set="__v8_name_set__",
-        name_query="__v8_name_query__",
-        name_del="__v8_name_del__",
-        name_enum="__v8_name_enum__",
-        index_get="__v8_index_get__",
-        index_set="__v8_index_set__",
-        index_del="__v8_index_del__",
-        attributes=(
-            AttributeSpec(name="window", getter="get_window", side_effect=1),
-            AttributeSpec(name="self", getter="get_self", side_effect=1),
-            AttributeSpec(name="top", getter="get_top", side_effect=1),
-            AttributeSpec(name="parent", getter="get_parent", side_effect=1),
-            AttributeSpec(name="opener", getter="get_opener", side_effect=1),
-            AttributeSpec(name="frames", getter="get_frames", side_effect=1),
-            AttributeSpec(name="length", getter="get_length", side_effect=1),
-            AttributeSpec(name="closed", getter="get_closed", side_effect=1),
-            AttributeSpec(name="location", getter="get_location", setter="set_location"),
-        ),
-        methods=(
-            MethodSpec(name="close", callback="fn_close"),
-            MethodSpec(name="focus", callback="fn_focus"),
-            MethodSpec(name="blur", callback="fn_blur"),
-            MethodSpec(name="postMessage", callback="fn_postMessage", length=2),
-        ),
-    )
+    #: As with the restricted location, the document carries nothing of this facade, so the
+    #: class states its whole surface: the safe names, the frame slots, and their controls.
+    __idl_overrides__ = {
+        "members": {
+            "window": {"side_effect": 1},
+            "self": {"side_effect": 1},
+            "top": {"side_effect": 1},
+            "parent": {"side_effect": 1},
+            "opener": {"side_effect": 1},
+            "frames": {"side_effect": 1},
+            "length": {"side_effect": 1},
+            "closed": {"side_effect": 1},
+            "location": {"setter": "set_location"},
+            "close": {},
+            "focus": {},
+            "blur": {},
+            "postMessage": {"length": 2},
+        },
+        "interface": {
+            "name_get": "__v8_name_get__",
+            "name_set": "__v8_name_set__",
+            "name_query": "__v8_name_query__",
+            "name_del": "__v8_name_del__",
+            "name_enum": "__v8_name_enum__",
+            "index_get": "__v8_index_get__",
+            "index_set": "__v8_index_set__",
+            "index_del": "__v8_index_del__",
+        },
+    }
 
     def __init__(self, parent_window, child_window):
         self._parent_window = parent_window
@@ -211,3 +215,8 @@ class WindowProxy:
         else:
             transfer = ()
         return self._child_window._post_message(self._accessor(), message, target_origin, transfer)
+
+
+# Neither facade is an interface the document carries, so each states its own description.
+standalone(_CrossOriginLocation)
+standalone(WindowProxy)

@@ -7,30 +7,32 @@ import pytest
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.native
 
-from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse  # noqa: E402
+from pyv8 import IdlSpec, MethodSpec  # noqa: E402
+from pyv8c.engine.bindings import Idl, Bindings  # noqa: E402
 from pyv8c.platform.bootstrap import bootstrap_runtime  # noqa: E402
+from pyv8c.engine import binder as binder_module  # noqa: E402
 from pyv8c.platform.sessions import BindingSession  # noqa: E402
 
 
 @pytest.fixture
-def universe():
-    return InterfaceUniverse(BaselineRepository.load(), runtime=bootstrap_runtime(), stub_logging="off")
+def bindings():
+    return Bindings(Idl.load(), runtime=bootstrap_runtime(), stub_logging="off")
 
 
-def test_an_unconfigured_universe_keeps_no_override_table(universe):
-    """Unconfigured hooks cost nothing per member: the compiler holds no table at all."""
-    assert not universe.overrides
-    assert universe._assembly.overrides is None
+def test_an_unconfigured_bindings_keeps_no_override_table(bindings):
+    """Unconfigured hooks cost nothing per member: the binder holds no table at all."""
+    assert not bindings.overrides
+    assert bindings._binder.overrides is None
 
-    hooked = InterfaceUniverse(BaselineRepository.load(), runtime=bootstrap_runtime(),
+    hooked = Bindings(Idl.load(), runtime=bootstrap_runtime(),
                                stub_logging="off",
                                interface_overrides={"Navigator": {"userAgent": lambda *_: "hooked"}})
     assert hooked.overrides
-    assert hooked._assembly.overrides is not None
+    assert hooked._binder.overrides is not None
 
 
-def test_compilation_and_signature_analysis_are_not_repeated(universe, monkeypatch):
-    compiler = universe._assembly
+def test_compilation_and_signature_analysis_are_not_repeated(bindings, monkeypatch):
+    compiler = bindings._binder
     calls = Counter()
     original = compiler._compile
 
@@ -39,16 +41,16 @@ def test_compilation_and_signature_analysis_are_not_repeated(universe, monkeypat
         return original(name)
 
     monkeypatch.setattr(compiler, "_compile", compile_once)
-    first = BindingSession(universe, object()).class_config_for("Element")
-    parameters = dict(compiler.wrappers._parameter_cache._values)
+    first = BindingSession(bindings, object()).class_config_for("Element")
+    parameters = dict(binder_module._PARAMETERS)
     for _ in range(4):
-        assert BindingSession(universe, object()).class_config_for("Element") is first
+        assert BindingSession(bindings, object()).class_config_for("Element") is first
     assert all(count == 1 for count in calls.values())
-    assert compiler.wrappers._parameter_cache._values == parameters
+    assert binder_module._PARAMETERS == parameters
 
 
-def test_descendant_lookup_is_computed_once(universe):
-    table = universe.table
+def test_descendant_lookup_is_computed_once(bindings):
+    table = bindings.idl
     first = table.descendants("EventTarget")
     assert isinstance(first, tuple)
     # The same answer object, not an equal rebuild: one member lookup walks
@@ -57,11 +59,11 @@ def test_descendant_lookup_is_computed_once(universe):
     assert "Element" in first
 
 
-def test_a_failed_batch_stages_nothing_and_can_be_retried(universe, monkeypatch):
-    session = BindingSession(universe)
+def test_a_failed_batch_stages_nothing_and_can_be_retried(bindings, monkeypatch):
+    session = BindingSession(bindings)
     calls = []
     state = {"failing": True}
-    original = universe.class_config_for
+    original = bindings.class_config_for
 
     def bind(name, realm=None):
         calls.append(name)
@@ -69,7 +71,7 @@ def test_a_failed_batch_stages_nothing_and_can_be_retried(universe, monkeypatch)
             raise RuntimeError("binding failed")
         return original(name, realm)
 
-    monkeypatch.setattr(universe, "class_config_for", bind)
+    monkeypatch.setattr(bindings, "class_config_for", bind)
     with pytest.raises(RuntimeError, match="binding failed"):
         session.materialize("Element")
     assert not session.configs
@@ -78,7 +80,7 @@ def test_a_failed_batch_stages_nothing_and_can_be_retried(universe, monkeypatch)
     state["failing"] = False
     session.materialize("Element")
     assert set(session.materialized_interfaces) == {"EventTarget", "Node", "Element"}
-    assert set(session.configs) == {universe.class_for(name) for name in session.materialized_interfaces}
+    assert set(session.configs) == {bindings.class_for(name) for name in session.materialized_interfaces}
 
     # Nothing is rebuilt for a chain the realm already staged.
     before = len(calls)
@@ -86,36 +88,38 @@ def test_a_failed_batch_stages_nothing_and_can_be_retried(universe, monkeypatch)
     assert len(calls) == before
 
 
-def test_event_handler_slots_follow_the_baseline_member_table(universe):
-    """Each interface compiles exactly the ``on*`` slots its baseline declares."""
-    event_target = universe.class_for("EventTarget")
-    names = [item.name for item in event_target.__v8_idl_spec__.attributes]
-    assert len(names) == len(set(names))
-    assert {"onload", "onerror", "onclick", "onkeydown", "onhashchange"} <= set(names)
+def test_event_handler_slots_follow_the_baseline_member_table(bindings):
+    """An event target states its ``on*`` slots, and the document says which members it has."""
+    event_target = bindings.class_for("EventTarget")
+    overrides = event_target.__dict__["__idl_overrides__"]["members"]
+    assert len(overrides) == len(set(overrides))
+    assert {"onload", "onerror", "onclick", "onkeydown", "onhashchange"} <= set(overrides)
+    # They are instance members: the document answers them through the objects that carry them.
+    assert all(fields == {"location": "instance"} for fields in overrides.values())
     for slot in ("onclick", "onkeydown"):
         assert event_target.__dict__["get_" + slot].__name__ == "get_" + slot
         assert event_target.__dict__["set_" + slot].__name__ == "set_" + slot
 
-    window = {item.name: item for item in universe.class_config_for("Window").attributes}
+    window = {item.name: item for item in bindings.class_config_for("Window").attributes}
     assert {"onclick", "onkeydown", "onwheel", "onhashchange", "onpopstate", "onstorage"} <= set(window)
     assert window["onclick"].getter.__name__ == "get_onclick"
 
-    document = {item.name for item in universe.class_config_for("Document").attributes}
+    document = {item.name for item in bindings.class_config_for("Document").attributes}
     assert {"onclick", "onvisibilitychange", "onfreeze", "onresume"} <= document
 
     # Interfaces whose baseline member table has no such slot never grow one.
-    node = {item.name for item in universe.class_config_for("Node").attributes}
+    node = {item.name for item in bindings.class_config_for("Node").attributes}
     assert not ({"onclick", "onkeydown", "onhashchange", "onvisibilitychange"} & node)
 
 
-def test_realm_dependent_callbacks_are_isolated_and_released(universe):
+def test_realm_dependent_callbacks_are_isolated_and_released(bindings):
     class Realm:
         pass
 
     first_realm, second_realm = Realm(), Realm()
     reference = weakref.ref(first_realm)
-    first = BindingSession(universe, first_realm)
-    second = BindingSession(universe, second_realm)
+    first = BindingSession(bindings, first_realm)
+    second = BindingSession(bindings, second_realm)
     first_spec = first.class_config_for("URL")
     second_spec = second.class_config_for("URL")
     assert first_spec is not second_spec
@@ -128,27 +132,114 @@ def test_realm_dependent_callbacks_are_isolated_and_released(universe):
     assert reference() is None
 
 
-def test_strict_validation_is_a_single_cached_audit(universe, monkeypatch):
-    universe.validate()
-    before = dict(universe._assembly._compiled)
+def test_strict_validation_is_a_single_cached_audit(bindings, monkeypatch):
+    bindings.validate()
+    before = dict(bindings._binder._compiled)
 
     def unexpected(name):
         raise AssertionError(name)
 
-    monkeypatch.setattr(universe._assembly, "_compile", unexpected)
-    universe.validate()
-    BindingSession(universe).materialize("Element")
-    assert universe._assembly._compiled == before
+    monkeypatch.setattr(bindings._binder, "_compile", unexpected)
+    bindings.validate()
+    BindingSession(bindings).materialize("Element")
+    assert bindings._binder._compiled == before
 
 
-def test_duplicate_declarations_fail_before_the_session_stages_anything(universe, monkeypatch):
-    cls = universe.class_for("Node")
-    declaration = cls.__v8_idl_spec__
-    duplicate = declaration.methods[0]
-    monkeypatch.setattr(cls, "__v8_idl_spec__", declaration.replace(methods=(duplicate, duplicate)))
-    session = BindingSession(universe)
-    with pytest.raises(TypeError, match="duplicate methods"):
-        session.materialize("Node")
-    assert not session.configs
+def test_a_member_the_convention_names_binds_without_a_declaration(bindings):
+    """``fn_<member>`` is the class saying what the IDL cannot: it writes this one.
+
+    ``Element.setAttributeNS`` sits next to its namespace siblings with a body and an arity
+    check of its own, and is never declared -- so the convention is what binds it.
+    """
+    cls = bindings.class_for("Element")
+    compiled = bindings._binder.compile("Element")
+    methods = {member.name: member.callback for member in compiled.spec.methods}
+
+    assert "setAttributeNS" not in (cls.__dict__.get("__idl_overrides__") or {}), \
+        "the convention is what binds it"
+    assert methods["setAttributeNS"].__name__ == "fn_setAttributeNS"
+    assert not getattr(methods["setAttributeNS"], "__v8_idl_stub__", False)
 
 
+def test_no_declaration_at_all_still_answers_the_bodies_the_class_writes(bindings, monkeypatch):
+    """The end state: nothing stated, and the bodies answer."""
+    cls = bindings.class_for("Element")
+    monkeypatch.setattr(cls, "__idl_overrides__", {})
+    compiled = bindings._binder.compile("Element")
+    methods = {member.name: member.callback for member in compiled.spec.methods}
+    attributes = {member.name: member for member in compiled.spec.attributes}
+
+    assert methods["setAttribute"].__name__ == "fn_setAttribute"
+    assert methods["setAttributeNS"].__name__ == "fn_setAttributeNS"
+    # A getter and a writer, both named by the convention and both real callbacks.
+    assert attributes["id"].getter.__name__ == "get_id"
+    assert attributes["id"].setter.__name__ == "set_id"
+    assert attributes["tagName"].getter.__name__ == "get_tagName"
+    # A member with no body still keeps its shell.
+    assert any(getattr(callback, "__v8_idl_stub__", False) for callback in methods.values())
+
+
+def test_an_override_wins_over_the_convention(bindings, monkeypatch):
+    """An override still decides, which is what the five renamed callbacks rely on."""
+    cls = bindings.class_for("Element")
+    monkeypatch.setattr(cls, "__idl_overrides__",
+                        {"setAttributeNS": {"callback": "fn_setAttribute", "length": 3}})
+    compiled = bindings._binder.compile("Element")
+    methods = {member.name: member.callback for member in compiled.spec.methods}
+
+    assert methods["setAttributeNS"].__name__ == "fn_setAttribute"
+
+
+def test_a_static_member_keeps_its_realm_injection_without_a_declaration(bindings, monkeypatch):
+    """``_realm`` injection follows the signature, so the convention keeps it too."""
+    cls = bindings.class_for("URL")
+    monkeypatch.setattr(cls, "__idl_overrides__", {})
+    assert bindings._binder.compile("URL").realm_methods, "createObjectURL is a static realm method"
+
+    here = {member.name: member.callback
+            for member in BindingSession(bindings, object()).class_config_for("URL").methods}
+    plain = {member.name: member.callback for member in bindings.class_config_for("URL").methods}
+
+    assert here["createObjectURL"] is not plain["createObjectURL"]
+
+
+def test_parameter_names_read_off_the_code_agree_with_a_signature():
+    """The wrapper reads ``__code__`` instead of ``inspect.signature``, once per member of every
+    interface.  Anything with its own idea of a signature keeps the general answer, so the two
+    have to agree on every shape of callable a binding sees."""
+    import functools
+    import inspect
+
+    from pyv8c.engine.binder import _parameter_names
+
+    def plain(a, b=1, *, c):
+        return (a, b, c)
+
+    def wrapped(a):
+        return a
+
+    wrapped.__wrapped__ = lambda *args: None
+
+    class Holder:
+        def method(self, a, b):
+            return (a, b)
+
+        @staticmethod
+        def static(a, b):
+            return (a, b)
+
+        @classmethod
+        def klass(cls, a):
+            return a
+
+    stated = lambda *args: None
+    stated.__signature__ = inspect.Signature(parameters=[])
+
+    class Callable:
+        def __call__(self, a, b):
+            return (a, b)
+
+    shapes = (plain, wrapped, Holder.method, Holder().method, Holder.static, Holder.klass,
+              functools.partial(plain, 1), Callable(), len, stated)
+    for shape in shapes:
+        assert _parameter_names(shape) == tuple(inspect.signature(shape).parameters)

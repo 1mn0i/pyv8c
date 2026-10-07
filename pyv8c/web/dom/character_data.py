@@ -3,12 +3,12 @@
 from html import escape
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
 from .mixins import _ChildNodeMixin, _NonDocumentTypeChildNodeMixin
 from .nodes import Node, _bump_style_version
+
 
 #: Elements whose text serializes literally rather than escaped: ``noscript`` (scripting is
 #: always on), but not ``textarea``/``title``, which Chrome escapes on the way out.
@@ -18,21 +18,6 @@ _LITERAL_TEXT_TAGS = frozenset({"script", "style", "noscript", "xmp", "iframe",
 
 @interface('CharacterData', 'Node')
 class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="data", getter="get_data", side_effect=1),
-            AttributeSpec(name="length", getter="get_length", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="substringData", callback="fn_substringData", length=2),
-            MethodSpec(name="appendData", callback="fn_appendData", length=1),
-            MethodSpec(name="insertData", callback="fn_insertData", length=2),
-            MethodSpec(name="deleteData", callback="fn_deleteData", length=2),
-            MethodSpec(name="replaceData", callback="fn_replaceData", length=3),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def __init__(self, data='', *_extra, services=None, **kw):
         if data is pyv8.Undefined:
             data = ''
@@ -108,13 +93,11 @@ class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
 
 @interface('Text', 'CharacterData')
 class Text(CharacterData):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=1, has_constructor=1)
     pass
 
 
 @interface('Comment', 'CharacterData')
 class Comment(CharacterData):
-    __v8_idl_spec__ = IdlSpec(constructor_behavior=1, has_constructor=1)
     def __init__(self, data='', *_extra, services=None, **kw):
         if data is pyv8.Undefined:
             data = ''
@@ -129,15 +112,6 @@ class Comment(CharacterData):
 
 @interface('DocumentType', 'Node')
 class DocumentType(_ChildNodeMixin, Node):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="name", getter="get_name", side_effect=1),
-            AttributeSpec(name="publicId", getter="get_publicId", side_effect=1),
-            AttributeSpec(name="systemId", getter="get_systemId", side_effect=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def __init__(self, name="html", public_id="", system_id="", services=None, **kw):
         super().__init__(services=services, node_type=Node.DOCUMENT_TYPE_NODE, node_name=name, value=None, **kw)
         self._public_id, self._system_id = str(public_id), str(system_id)

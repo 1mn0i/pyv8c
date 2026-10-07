@@ -4,9 +4,9 @@ import time
 from urllib.parse import urljoin, urlsplit
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import FeatureImplementation, LazyValueStore, interface
+from ...engine.features import FeatureImplementation, LazyValueStore
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     boolean,
@@ -37,6 +37,7 @@ from .keyboard import Keyboard
 from .locks import LockManager, WakeLock
 from .storage import StorageBucketManager
 
+
 #: The WGSL extensions Chrome reports, which the feature list is measured from.
 _WGSL_LANGUAGE_FEATURES = (
     "buffer_view", "immediate_address_space", "linear_indexing",
@@ -52,13 +53,16 @@ from .utils import is_secure_context, window_secure_context
 class _LegacyNamedCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
     """Readonly indexed and named properties shared by plugin collections."""
 
-    __v8_idl_spec__ = IdlSpec(
-        name_get="__v8_name_get__",
-        name_set="__v8_name_set__",
-        name_query="__v8_name_query__",
-        name_del="__v8_name_del__",
-        name_enum="__v8_name_enum__",
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0,
+            "name_del": "__v8_name_del__",
+            "name_enum": "__v8_name_enum__",
+            "name_get": "__v8_name_get__",
+            "name_query": "__v8_name_query__",
+            "name_set": "__v8_name_set__"
+        }
+    }
 
     def _item_argument(self, args, api_name):
         if not args:
@@ -85,18 +89,6 @@ class _LegacyNamedCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMi
 
 @interface('MimeType', None)
 class MimeType:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="suffixes", getter="get_suffixes", side_effect=1),
-            AttributeSpec(name="description", getter="get_description", side_effect=1),
-            AttributeSpec(name="enabledPlugin", getter="get_enabledPlugin", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="MimeType",
-        has_constructor=1,
-    )
-
     def __init__(self, config=None, enabled_plugin=None, **_):
         self._config = config or MimeTypeView("application/pdf", "", "")
         self._enabled_plugin = enabled_plugin
@@ -109,23 +101,6 @@ class MimeType:
 
 @interface('Plugin', None)
 class Plugin(_LegacyNamedCollection):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="name", getter="get_name", side_effect=1),
-            AttributeSpec(name="filename", getter="get_filename", side_effect=1),
-            AttributeSpec(name="description", getter="get_description", side_effect=1),
-            AttributeSpec(name="length", getter="get_length", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Plugin",
-        has_constructor=1,
-        array="iterator",
-    )
-
     def __init__(self, config, **_):
         self._config = config
         self._mime_types = tuple(MimeType(mime, enabled_plugin=self) for mime in config.mime_types)
@@ -142,18 +117,6 @@ class Plugin(_LegacyNamedCollection):
 @interface('PluginArray', None)
 class PluginArray(_LegacyNamedCollection):
     _prototype_names = _LegacyNamedCollection._prototype_names | {"refresh"}
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(
-            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
-            MethodSpec(name="refresh", callback="fn_refresh"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="PluginArray",
-        has_constructor=1,
-        array="iterator",
-    )
 
     def __init__(self, configs=(), **_):
         self._plugins = tuple(Plugin(config) for config in configs)
@@ -172,18 +135,6 @@ class PluginArray(_LegacyNamedCollection):
 
 @interface('MimeTypeArray', None)
 class MimeTypeArray(_LegacyNamedCollection):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(
-            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-            MethodSpec(name="namedItem", callback="fn_namedItem", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="MimeTypeArray",
-        has_constructor=1,
-        array="iterator",
-    )
-
     def __init__(self, plugins=(), **_):
         items, seen = [], set()
         for plugin in plugins:
@@ -209,16 +160,6 @@ def create_plugin_collections(environment):
 
 @interface('Geolocation', None)
 class Geolocation:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="getCurrentPosition", callback="fn_getCurrentPosition", length=3),
-            MethodSpec(name="watchPosition", callback="fn_watchPosition", length=3),
-            MethodSpec(name="clearWatch", callback="fn_clearWatch", length=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, environment=None, **_):
         self._services = services
         self._environment = BrowserEnvironment.from_dict(environment)
@@ -310,21 +251,11 @@ class Geolocation:
 
 @interface('NetworkInformation', 'EventTarget')
 class NetworkInformation(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="onchange", getter="get_onchange", setter="set_onchange"),
-            AttributeSpec(name="effectiveType", getter="get_effectiveType", side_effect=1),
-            AttributeSpec(name="rtt", getter="get_rtt", side_effect=1),
-            AttributeSpec(name="downlink", getter="get_downlink", side_effect=1),
-            AttributeSpec(name="saveData", getter="get_saveData", side_effect=1),
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="downlinkMax", getter="get_downlinkMax", side_effect=1),
-            AttributeSpec(name="ontypechange", getter="get_ontypechange", setter="set_ontypechange"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="NetworkInformation",
-        has_constructor=1,
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0
+        }
+    }
 
     def __init__(self, config, services=None, **_):
         super().__init__(services=services)
@@ -344,22 +275,6 @@ class NetworkInformation(EventTarget):
 
 @interface('BatteryManager', 'EventTarget')
 class BatteryManager(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="charging", getter="get_charging", side_effect=1),
-            AttributeSpec(name="chargingTime", getter="get_chargingTime", side_effect=1),
-            AttributeSpec(name="dischargingTime", getter="get_dischargingTime", side_effect=1),
-            AttributeSpec(name="level", getter="get_level", side_effect=1),
-            AttributeSpec(name="onchargingchange", getter="get_onchargingchange", setter="set_onchargingchange"),
-            AttributeSpec(name="onchargingtimechange", getter="get_onchargingtimechange", setter="set_onchargingtimechange"),
-            AttributeSpec(name="ondischargingtimechange", getter="get_ondischargingtimechange", setter="set_ondischargingtimechange"),
-            AttributeSpec(name="onlevelchange", getter="get_onlevelchange", setter="set_onlevelchange"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="BatteryManager",
-        has_constructor=1,
-    )
-
     def __init__(self, config, services=None, **_):
         super().__init__(services=services)
         self._config = config
@@ -380,16 +295,6 @@ class BatteryManager(EventTarget):
 
 @interface('DeprecatedStorageQuota', None)
 class DeprecatedStorageQuota:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="queryUsageAndQuota", callback="fn_queryUsageAndQuota", length=1),
-            MethodSpec(name="requestQuota", callback="fn_requestQuota", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="DeprecatedStorageQuota",
-        has_constructor=1,
-    )
-
     def __init__(self, config, services=None, **_):
         self._config = config
         self._services = services
@@ -425,21 +330,6 @@ class NavigatorUAData:
     """``navigator.userAgentData``; not ``[SameObject]``, so every read hands
     out a new one.
     """
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="brands", getter="get_brands", side_effect=1),
-            AttributeSpec(name="mobile", getter="get_mobile", side_effect=1),
-            AttributeSpec(name="platform", getter="get_platform", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="getHighEntropyValues", callback="fn_getHighEntropyValues", length=1),
-            MethodSpec(name="toJSON", callback="fn_toJSON"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-        to_string_tag="NavigatorUAData",
-    )
 
     def __init__(self, environment=None, services=None, **_):
         self._services = services
@@ -510,6 +400,7 @@ _CONSTRAINTS = (
     "width", "zoom",
 )
 
+
 #: What the shipped profile last answered for; ``permissions.*`` replaces them when collected.
 PERMISSION_NAMES = frozenset((
     "accelerometer", "background-fetch", "background-sync", "camera",
@@ -525,6 +416,7 @@ _PERMISSION_GRANTED = frozenset((
     "storage-access",
 ))
 
+
 #: The name ``PermissionStatus.name`` reports, which is not always the one queried.
 _PERMISSION_SPEC_NAMES = {
     "accelerometer": "sensors", "background-fetch": "background_fetch",
@@ -536,6 +428,7 @@ _PERMISSION_SPEC_NAMES = {
     "payment-handler": "payment_handler", "periodic-background-sync": "periodic_background_sync",
     "persistent-storage": "durable_storage", "screen-wake-lock": "screen_wake_lock",
 }
+
 
 #: The ``MediaSessionAction`` values Chrome 153 accepts.
 _SESSION_ACTIONS = frozenset((
@@ -572,19 +465,6 @@ def _number_or_none(value):
 
 @interface('MediaDeviceInfo', None)
 class MediaDeviceInfo:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="deviceId", getter="get_deviceId", side_effect=1),
-            AttributeSpec(name="kind", getter="get_kind", side_effect=1),
-            AttributeSpec(name="label", getter="get_label", side_effect=1),
-            AttributeSpec(name="groupId", getter="get_groupId", side_effect=1),
-        ),
-        methods=(MethodSpec(name="toJSON", callback="fn_toJSON", side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="MediaDeviceInfo",
-        has_constructor=1,
-    )
-
     def __init__(self, kind="audiooutput", *, device_id="", label="", group_id="", **_):
         self._kind, self._device_id = kind, device_id
         self._label, self._group_id = label, group_id
@@ -606,14 +486,6 @@ class InputDeviceInfo(MediaDeviceInfo):
     before a page has been granted the device.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="getCapabilities", callback="fn_getCapabilities",
-                            side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="InputDeviceInfo",
-        has_constructor=1,
-    )
-
     def fn_getCapabilities(self, *_extra): return {}
 
 
@@ -623,22 +495,6 @@ _INPUT_KINDS = ("audioinput", "videoinput")
 
 @interface('MediaDevices', 'EventTarget')
 class MediaDevices(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="ondevicechange", getter="get_ondevicechange",
-                                 setter="set_ondevicechange"),),
-        methods=(
-            MethodSpec(name="enumerateDevices", callback="fn_enumerateDevices"),
-            MethodSpec(name="getSupportedConstraints", callback="fn_getSupportedConstraints",
-                       side_effect=1),
-            MethodSpec(name="getUserMedia", callback="fn_getUserMedia"),
-            MethodSpec(name="getDisplayMedia", callback="fn_getDisplayMedia"),
-            MethodSpec(name="setCaptureHandleConfig", callback="fn_setCaptureHandleConfig"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="MediaDevices",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         super().__init__(services=services)
         self._services = services
@@ -689,17 +545,6 @@ class MediaDevices(EventTarget):
 
 @interface('PermissionStatus', 'EventTarget')
 class PermissionStatus(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="name", getter="get_name", side_effect=1),
-            AttributeSpec(name="state", getter="get_state", side_effect=1),
-            AttributeSpec(name="onchange", getter="get_onchange", setter="set_onchange"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="PermissionStatus",
-        has_constructor=1,
-    )
-
     def __init__(self, name="", state="prompt", services=None, **_):
         super().__init__(services=services)
         self._name, self._state = name, state
@@ -712,13 +557,6 @@ class PermissionStatus(EventTarget):
 
 @interface('Permissions', None)
 class Permissions:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="query", callback="fn_query", length=1),),
-        constructor_behavior=0,
-        to_string_tag="Permissions",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, environment=None, **_):
         self._services = services
         self._environment = BrowserEnvironment.from_dict(environment)
@@ -754,19 +592,6 @@ class Permissions:
 
 @interface('MediaMetadata', None)
 class MediaMetadata:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="title", getter="get_title", setter="set_title"),
-            AttributeSpec(name="artist", getter="get_artist", setter="set_artist"),
-            AttributeSpec(name="album", getter="get_album", setter="set_album"),
-            AttributeSpec(name="artwork", getter="get_artwork", setter="set_artwork"),
-            AttributeSpec(name="chapterInfo", getter="get_chapterInfo", side_effect=1),
-        ),
-        constructor_behavior=1,
-        to_string_tag="MediaMetadata",
-        has_constructor=1,
-    )
-
     def __init__(self, init=None, *, _realm=None, **_):
         self._services = _realm
         self._title = self._artist = self._album = ""
@@ -810,23 +635,6 @@ class MediaMetadata:
 
 @interface('MediaSession', None)
 class MediaSession:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="metadata", getter="get_metadata", setter="set_metadata"),
-            AttributeSpec(name="playbackState", getter="get_playbackState",
-                          setter="set_playbackState"),
-        ),
-        methods=(
-            MethodSpec(name="setActionHandler", callback="fn_setActionHandler", length=2),
-            MethodSpec(name="setCameraActive", callback="fn_setCameraActive", length=1),
-            MethodSpec(name="setMicrophoneActive", callback="fn_setMicrophoneActive", length=1),
-            MethodSpec(name="setPositionState", callback="fn_setPositionState"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="MediaSession",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         self._services = services
         self._metadata = None
@@ -904,27 +712,6 @@ class MediaSession:
 
 @interface('ServiceWorkerContainer', 'EventTarget')
 class ServiceWorkerContainer(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="controller", getter="get_controller", side_effect=1),
-            AttributeSpec(name="ready", getter="get_ready", side_effect=1),
-            AttributeSpec(name="oncontrollerchange", getter="get_oncontrollerchange",
-                          setter="set_oncontrollerchange"),
-            AttributeSpec(name="onmessage", getter="get_onmessage", setter="set_onmessage"),
-            AttributeSpec(name="onmessageerror", getter="get_onmessageerror",
-                          setter="set_onmessageerror"),
-        ),
-        methods=(
-            MethodSpec(name="getRegistration", callback="fn_getRegistration"),
-            MethodSpec(name="getRegistrations", callback="fn_getRegistrations"),
-            MethodSpec(name="register", callback="fn_register", length=1),
-            MethodSpec(name="startMessages", callback="fn_startMessages"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="ServiceWorkerContainer",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         super().__init__(services=services)
         self._services = services
@@ -999,18 +786,6 @@ class ServiceWorkerContainer(EventTarget):
 
 @interface('CredentialsContainer', None)
 class CredentialsContainer:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="create", callback="fn_create"),
-            MethodSpec(name="get", callback="fn_get"),
-            MethodSpec(name="preventSilentAccess", callback="fn_preventSilentAccess"),
-            MethodSpec(name="store", callback="fn_store", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CredentialsContainer",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         self._services = services
 
@@ -1058,16 +833,6 @@ class CredentialsContainer:
 
 @interface('Bluetooth', 'EventTarget')
 class Bluetooth(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="getAvailability", callback="fn_getAvailability"),
-            MethodSpec(name="requestDevice", callback="fn_requestDevice"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Bluetooth",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, environment=None, **_):
         super().__init__(services=services)
         self._services = services
@@ -1086,18 +851,6 @@ class Bluetooth(EventTarget):
 
 @interface('StorageManager', None)
 class StorageManager:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="estimate", callback="fn_estimate"),
-            MethodSpec(name="persisted", callback="fn_persisted"),
-            MethodSpec(name="getDirectory", callback="fn_getDirectory"),
-            MethodSpec(name="persist", callback="fn_persist"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="StorageManager",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, environment=None, **_):
         self._services = services
         self._environment = BrowserEnvironment.from_dict(environment)
@@ -1203,16 +956,6 @@ def _beacon_body(data):
 class Serial(EventTarget):
     """The Web Serial entry point; the ports behind it are the baseline's business."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="onconnect", getter="get_onconnect", setter="set_onconnect"),
-            AttributeSpec(name="ondisconnect", getter="get_ondisconnect",
-                          setter="set_ondisconnect"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
-
     def get_onconnect(self): return self._get_handler("onconnect")
     def set_onconnect(self, value): self._set_handler("onconnect", value)
     def get_ondisconnect(self): return self._get_handler("ondisconnect")
@@ -1221,76 +964,6 @@ class Serial(EventTarget):
 
 @interface('Navigator', None)
 class Navigator:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="userAgent", getter="get_userAgent", side_effect=1),
-            AttributeSpec(name="userAgentData", getter="get_userAgentData", side_effect=1),
-            AttributeSpec(name="appName", getter="get_appName", side_effect=1),
-            AttributeSpec(name="appCodeName", getter="get_appCodeName", side_effect=1),
-            AttributeSpec(name="appVersion", getter="get_appVersion", side_effect=1),
-            AttributeSpec(name="product", getter="get_product", side_effect=1),
-            AttributeSpec(name="productSub", getter="get_productSub", side_effect=1),
-            AttributeSpec(name="platform", getter="get_platform", side_effect=1),
-            AttributeSpec(name="language", getter="get_language", side_effect=1),
-            AttributeSpec(name="languages", getter="get_languages", side_effect=1),
-            AttributeSpec(name="onLine", getter="get_onLine", side_effect=1),
-            AttributeSpec(name="hardwareConcurrency", getter="get_hardwareConcurrency", side_effect=1),
-            AttributeSpec(name="deviceMemory", getter="get_deviceMemory", side_effect=1),
-            AttributeSpec(name="maxTouchPoints", getter="get_maxTouchPoints", side_effect=1),
-            AttributeSpec(name="vendor", getter="get_vendor", side_effect=1),
-            AttributeSpec(name="vendorSub", getter="get_vendorSub", side_effect=1),
-            AttributeSpec(name="locks", getter="get_locks", side_effect=1),
-            AttributeSpec(name="cookieEnabled", getter="get_cookieEnabled", side_effect=1),
-            AttributeSpec(name="pdfViewerEnabled", getter="get_pdfViewerEnabled", side_effect=1),
-            AttributeSpec(name="doNotTrack", getter="get_doNotTrack", side_effect=1),
-            AttributeSpec(name="webdriver", getter="get_webdriver", side_effect=1),
-            AttributeSpec(name="connection", getter="get_connection", side_effect=1),
-            AttributeSpec(name="scheduling", getter="get_scheduling", side_effect=1),
-            AttributeSpec(name="webkitTemporaryStorage", getter="get_webkitTemporaryStorage", side_effect=1),
-            AttributeSpec(name="webkitPersistentStorage", getter="get_webkitPersistentStorage", side_effect=1),
-            AttributeSpec(name="geolocation", getter="get_geolocation", side_effect=1),
-            AttributeSpec(name="plugins", getter="get_plugins", side_effect=1),
-            AttributeSpec(name="mimeTypes", getter="get_mimeTypes", side_effect=1),
-            AttributeSpec(name="mediaDevices", getter="get_mediaDevices", side_effect=1),
-            AttributeSpec(name="permissions", getter="get_permissions", side_effect=1),
-            AttributeSpec(name="mediaSession", getter="get_mediaSession", side_effect=1),
-            AttributeSpec(name="serviceWorker", getter="get_serviceWorker", side_effect=1),
-            AttributeSpec(name="credentials", getter="get_credentials", side_effect=1),
-            AttributeSpec(name="bluetooth", getter="get_bluetooth", side_effect=1),
-            AttributeSpec(name="storage", getter="get_storage", side_effect=1),
-            AttributeSpec(name="serial", getter="get_serial", side_effect=1),
-            AttributeSpec(name="gpu", getter="get_gpu", side_effect=1),
-            AttributeSpec(name="userActivation", getter="get_userActivation", side_effect=1),
-            AttributeSpec(name="devicePosture", getter="get_devicePosture", side_effect=1),
-            AttributeSpec(name="protectedAudience", getter="get_protectedAudience",
-                          side_effect=1),
-            AttributeSpec(name="presentation", getter="get_presentation", side_effect=1),
-            AttributeSpec(name="virtualKeyboard", getter="get_virtualKeyboard", side_effect=1),
-            AttributeSpec(name="windowControlsOverlay", getter="get_windowControlsOverlay",
-                          side_effect=1),
-            AttributeSpec(name="deprecatedRunAdAuctionEnforcesKAnonymity",
-                          getter="get_deprecatedRunAdAuctionEnforcesKAnonymity", side_effect=1),
-            AttributeSpec(name="clipboard", getter="get_clipboard", side_effect=1),
-            AttributeSpec(name="keyboard", getter="get_keyboard", side_effect=1),
-            AttributeSpec(name="wakeLock", getter="get_wakeLock", side_effect=1),
-            AttributeSpec(name="mediaCapabilities", getter="get_mediaCapabilities", side_effect=1),
-            AttributeSpec(name="storageBuckets", getter="get_storageBuckets", side_effect=1),
-            AttributeSpec(name="usb", getter="get_usb", side_effect=1),
-            AttributeSpec(name="hid", getter="get_hid", side_effect=1),
-            AttributeSpec(name="xr", getter="get_xr", side_effect=1),
-            AttributeSpec(name="ink", getter="get_ink", side_effect=1),
-            AttributeSpec(name="login", getter="get_login", side_effect=1),
-            AttributeSpec(name="managed", getter="get_managed", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="getBattery", callback="fn_getBattery"),
-            MethodSpec(name="javaEnabled", callback="fn_javaEnabled"),
-            MethodSpec(name="sendBeacon", callback="fn_sendBeacon", length=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
-
     def __init__(self, user_agent=None, services=None, environment=None, worker=False, **_):
         self._services = services
         self._environment = BrowserEnvironment.from_dict(environment)
@@ -1463,19 +1136,6 @@ class WGSLLanguageFeatures(ReadOnlyIndexedPropertyMixin):
     positions where Chrome's setlike hands out the names again.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="size", getter="get_size", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="WGSLLanguageFeatures",
-        has_constructor=1,
-        array="iterable",
-    )
-
     def __init__(self, names=_WGSL_LANGUAGE_FEATURES, **_):
         self._names = tuple(str(name) for name in names)
 
@@ -1492,21 +1152,6 @@ class WGSLLanguageFeatures(ReadOnlyIndexedPropertyMixin):
 @interface('GPU', None)
 class GPU:
     """The entry point to WebGPU, as a browser without a backend reports it."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="wgslLanguageFeatures", getter="get_wgslLanguageFeatures",
-                          side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="requestAdapter", callback="fn_requestAdapter"),
-            MethodSpec(name="getPreferredCanvasFormat",
-                       callback="fn_getPreferredCanvasFormat", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="GPU",
-        has_constructor=1,
-    )
 
     def __init__(self, services=None, **_):
         self._services = services
@@ -1528,7 +1173,6 @@ class GPU:
         """A browser with no backend has no adapter, which the API allows for."""
         realm = getattr(self._services, "realm_services", None)
         return realm.promise_resolve(pyv8.Null) if realm is not None else pyv8.Null
-
 
 __all__ = [
     "Navigator", "NavigatorUAData", "Geolocation", "Plugin", "PluginArray", "MimeType",

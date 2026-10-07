@@ -223,8 +223,28 @@ finally:
 - 严格校验：接口名不在 baseline、成员名不属于该接口、槽位与该成员类型不符、给 baseline 标为只读的属性配 `set`、
   传入 bound method（会丢掉 receiver）或不可调用的值，都在创建 Browser 时抛 `TypeError`。
 - 不覆盖：构造函数（`new` 仍走真实实现）、接口常量、`named`/`indexed` 拦截器。
-- 代价口径：钩子是替换 callable，调用期没有可测的额外开销（与同一成员未 hook 时在噪声带内一致）；编译期只在编译一个成员时查一次表，未配置钩子时那张表根本不存在，`InterfaceUniverse.validate()` 全量编译与未引入该功能时同档。只有钩子每次返回一个新对象（如 dict）才产生与真实实现同源的开销。
+- 代价口径：钩子是替换 callable，调用期没有可测的额外开销（与同一成员未 hook 时在噪声带内一致）；编译期只在编译一个成员时查一次表，未配置钩子时那张表根本不存在，`Bindings.validate()` 全量编译与未引入该功能时同档。只有钩子每次返回一个新对象（如 dict）才产生与真实实现同源的开销。
 - 覆盖在首次建模板前定型：同一 Browser 的所有 context/realm（含 worker 与 iframe）看到同一套钩子，与 baseline 一样不是热更新配置。
+
+## 实现一个接口成员
+
+实现类只写函数体，名字按约定：operation 用 `fn_<成员名>`，attribute 用 `get_<成员名>` 与 `set_<成员名>`。
+基线的成员表决定装什么、装在哪儿、arity 与标志，`__idl_overrides__` 只在"要与基线不同"时才需要：
+
+```python
+@interface("Example", "EventTarget")
+class Example(EventTarget):
+    def fn_doThing(self, value=MISSING, *_extra):   # -> Example.prototype.doThing
+        ...
+    def get_state(self):                            # -> readonly attribute
+        return self._state
+    def set_state(self, value):                     # -> writable attribute
+        self._state = str(value)
+```
+
+需要声明的情形只有四种：回调换了名字（`__idl_overrides__ = {"abort": {"callback": "fn_static_abort"}}`）、成员基线里
+没有、要覆盖基线沉默的 `setter`/`length`/`replaceable`，以及常量与拦截器。别的一样都不写 —— 写了也不生效，
+`python -m pyv8c.tools.idl_audit` 会指出当前哪些行在重述基线。
 
 ## 环境配置
 
@@ -283,8 +303,8 @@ python tools/collect_environment.py --headed --window-size 1920,1080 --accept-la
   `viewport.touch`、`connection.type`、`connection.downlink_max`、`storage.persistent.*`。
 - 产物带 `schema` 与 `source`（浏览器版本、可执行文件、平台、采集时间、启动参数），
   `BrowserEnvironment.from_file(path)` 可直接载入。
-- 产物还带 `window_surface` 段（`keys` 与 `own_names`）：参照浏览器实际装到多少，接口装配用它收窄 baseline，
-  不手写名单。它不属于环境键，`BrowserEnvironment` 读 profile 时跳过，`engine/baseline.py` 单独读这一段。
+- 产物还带 `bindings` 段（`keys` 与 `exposed`）：参照浏览器实际装到多少，接口装配用它收窄 baseline，
+  不手写名单。它不属于环境键，`BrowserEnvironment` 读 profile 时跳过，`engine/idl.py` 单独读这一段。
   一次运行同时给出两份事实，所以两者不可能来自不同浏览器。
 - 默认无头启动，UA 因而会是 `HeadlessChrome/…`；要正常 UA 加 `--headed`。
 - 调试端口本身会让 `navigator.webdriver` 为真；采集器用 `--disable-blink-features=AutomationControlled`

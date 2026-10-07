@@ -8,7 +8,6 @@ profile is whole.  Headless runs report ``HeadlessChrome`` in the user agent; us
 ``headed=True`` for the profile a normal visit presents.
 
 Usage::
-
     python tools/collect_environment.py                     # writes the packaged profile
     python tools/collect_environment.py --out -             # to standard output
     python tools/collect_environment.py --headed --window-size 1920,1080
@@ -29,7 +28,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from ..engine.baseline import BaselineRepository, InterfaceTable
+from ..engine.idl import ArrayProto, Idl
 from ..foundation.environment import COLLECTED_KEYS, SCHEMA_VERSION, BrowserEnvironment, json_value
 from ..web.bom.navigator import PERMISSION_NAMES
 from ..web.dom.media_source import WEBRTC_CONTENT_TYPES, WEBRTC_VIDEO_FAMILIES, probe_candidates
@@ -37,6 +36,7 @@ from ..web.dom.media_source import WEBRTC_CONTENT_TYPES, WEBRTC_VIDEO_FAMILIES, 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 #: Where a run writes unless told otherwise.
 DEFAULT_OUTPUT = PACKAGE_ROOT / "data" / "chrome-environment.json"
+
 
 #: The same variable the reference corpus reads, so one setting points both at Chrome.
 CHROME_ENV = "PYV8C_CHROME"
@@ -49,6 +49,7 @@ CHROME_PATHS = (
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
 )
+
 
 #: One expression, so every value comes from the same turn of the same document.
 _COLLECT_TEMPLATE = """
@@ -236,6 +237,7 @@ _COLLECT_TEMPLATE = """
     });
 })()
 """
+
 
 #: The script the browser runs: the media probes are the parser's own vocabulary.
 COLLECT_SCRIPT = (_COLLECT_TEMPLATE
@@ -482,7 +484,10 @@ def read_pages(chrome, scripts, *, headed=False, accept_lang=None, window_size=N
 
     Every answer comes from the same page, so facts read together describe one browser.
     """
-    with tempfile.TemporaryDirectory(prefix="pyv8c-chrome-") as profile:
+    #: Chrome can still hold a file in its profile directory when it exits: a cache the operating
+    #: system has not released yet must not turn a whole reading into a failed run.
+    with tempfile.TemporaryDirectory(prefix="pyv8c-chrome-",
+                                     ignore_cleanup_errors=True) as profile:
         server, origin = _local_origin()
         arguments = [
             str(chrome),
@@ -542,27 +547,27 @@ def read_pages(chrome, scripts, *, headed=False, accept_lang=None, window_size=N
 MEASURED_LOCATIONS = ("prototype", "interface")
 
 
-def baseline_view(snapshot=None):
-    """``(declared members by location, digest)`` of the baseline a run measures against.
+def idl_view(idl=None):
+    """``(declared members by location, digest)`` of the document a run measures against.
 
-    ``declared`` is ``{interface: {location: {names}}}``: what the baseline says the interface
-    should carry at each location a browser can answer for.
+    ``declared`` is ``{interface: {location: {names}}}``: what the document says the interface
+    should carry at each location a browser can answer for.  No profile narrows it, because a
+    run is measuring what this browser installs against the whole document.
 
     Reading it needs no native extension, so a collection runs without pyv8.
     """
-    snapshot = snapshot if snapshot is not None else BaselineRepository.load()
-    table = InterfaceTable(snapshot)
+    idl = idl if idl is not None else Idl.load(profile=None)
     declared = {
-        name: {location: {member.name for member in table.interface(name).own_members(location)}
+        name: {location: {member.name for member in idl.interface(name).own_members(location)}
                for location in MEASURED_LOCATIONS}
-        for name in table.names()
+        for name in idl.names()
     }
-    return declared, str(getattr(snapshot, "digest", "") or "")
+    return declared, idl.digest
 
 
 def read_profile(chrome, view=None, **options):
     """``(payload, surface, source)``: both readings a run makes, from one session."""
-    declared, digest = view if view is not None else baseline_view()
+    declared, digest = view if view is not None else idl_view()
     values, source = read_pages(chrome, (COLLECT_SCRIPT, SURFACE_SCRIPT), **options)
     return json.loads(values[0]), build_surface(json.loads(values[1]), declared, digest), source
 
@@ -594,69 +599,72 @@ def _gaps_for(readings, declared, location):
     return gaps
 
 
-#: The four named methods ``"iterable"`` borrows on top of ``@@iterator``.
+#: The four named methods ``ArrayProto.iterable`` borrows on top of ``@@iterator``.
 ITERATOR_MEMBERS = ("entries", "keys", "values", "forEach")
 
 
-def _array_words(readings, known):
-    """``{interface: "iterator" | "iterable"}`` for the interfaces the baseline declares.
+def _array_protos(readings, known):
+    """``{interface: bits}`` for the interfaces the baseline declares.
 
-    ``@@iterator`` alone is ``"iterator"``; with all four named methods it is ``"iterable"``; an
-    interface answering no ``@@iterator`` records nothing, the field's third value (as ``Cache``,
-    whose ``keys`` is an async method, and ``CSSMathMax``, whose ``values`` is a length, measure).
+    ``@@iterator`` alone is ``ArrayProto.iterator``; with all four named methods it is
+    ``ArrayProto.iterable``; an interface answering no ``@@iterator`` records nothing, the field's
+    third value (as ``Cache``, whose ``keys`` is an async method, and ``CSSMathMax``, whose
+    ``values`` is a length, measure).
 
-    The iterator with only *some* of the four is a shape no word carries, so the run stops rather
-    than pick one: measured against Chrome 154, no declared interface is in that position.
+    The iterator with only *some* of the four is a shape the field cannot state, so the run stops
+    rather than pick one: measured against Chrome 154, no declared interface is in that position.
     """
-    words = {}
+    protos = {}
     for name, reading in (readings or {}).items():
         name = str(name)
         if name not in known or not isinstance(reading, dict) or not reading.get("iterator"):
             continue
         count = reading.get("four")
         if count == 4:
-            words[name] = "iterable"
+            protos[name] = ArrayProto.iterable
         elif count == 0:
-            words[name] = "iterator"
+            protos[name] = ArrayProto.iterator
         else:
             raise CollectionError(
                 f"{name} answers @@iterator together with {count} of"
                 f" {', '.join(ITERATOR_MEMBERS)}: array states either the iterator alone or that"
-                " iterator with all four, and no word carries this")
-    return words
+                " iterator with all four, and no value carries this")
+    return protos
 
 
-def build_surface(payload, declared=None, baseline_digest=""):
-    """What the browser does not install, as the profile's surface section.
+def build_surface(payload, declared=None, against=""):
+    """What the browser does not install, as the profile's ``bindings`` section.
 
-    The window names cover the globals; the gaps are measured against ``declared``
-    (``{interface: {location: {names}}}``), and ``baseline_digest`` records which baseline
-    those names came from.  ``prototype`` members are read from each prototype object and
-    ``interface`` members from each interface object, which is where a namespace keeps its own.
+    ``exposed`` covers the globals; ``omits`` is measured against ``declared``
+    (``{interface: {location: {names}}}``), and ``against`` records which IDL document those names
+    came from.  ``prototype`` members are read from each prototype object and ``interface`` members
+    from each interface object, which is where a namespace keeps its own.
 
-    ``array_words`` states, in the vocabulary ``template.array`` and ``IdlSpec.array`` share, what
-    each interface borrows from ``Array.prototype`` in this release -- measured rather than
-    assumed, so a baseline that is wider than the release stays narrow here.
+    ``array_protos`` states, in the vocabulary ``template.array`` and ``IdlSpec.array`` share,
+    what each interface borrows from ``Array.prototype`` in this release -- measured rather than
+    assumed, so a document that is wider than the release stays narrow here.
     """
     declared = declared or {}
     return {
         "keys": list(payload["keys"]),
-        "own_names": list(payload["own"]),
-        "prototype_gaps": _gaps_for(payload.get("prototypes"), declared, "prototype"),
-        "interface_gaps": _gaps_for(payload.get("objects"), declared, "interface"),
-        "array_words": _array_words(payload.get("iterators"), set(declared)),
-        "baseline_digest": str(baseline_digest or ""),
+        "exposed": list(payload["own"]),
+        "omits": {
+            "prototype": _gaps_for(payload.get("prototypes"), declared, "prototype"),
+            "interface": _gaps_for(payload.get("objects"), declared, "interface"),
+        },
+        "array_protos": _array_protos(payload.get("iterators"), set(declared)),
+        "against": str(against or ""),
     }
 
 
 def build_profile(payload, surface, source):
-    """The document a run writes: the environment keys, and the surface they came with.
+    """The document a run writes: the environment keys, and what the browser installs of the IDL.
 
     A non-finite number travels as its name, so a strict JSON parser accepts the file.
     """
     document = {"schema": SCHEMA_VERSION, "source": dict(source)}
     document.update(build_environment(payload).to_dict())
-    document["window_surface"] = surface
+    document["bindings"] = surface
     return json_value(document)
 
 
@@ -695,19 +703,18 @@ def main(argv=None):
     arguments.out.parent.mkdir(parents=True, exist_ok=True)
     arguments.out.write_text(text, encoding="utf-8")
     print(
-        f"wrote {arguments.out}: {len(surface['own_names'])} own names,"
-        f" {len(surface['prototype_gaps'])} interfaces with prototype gaps,"
-        f" {len(surface['interface_gaps'])} with interface-object gaps,"
-        f" {len(surface['array_words'])} with an array word,"
+        f"wrote {arguments.out}: {len(surface['exposed'])} exposed names,"
+        f" {len(surface['omits']['prototype'])} interfaces with prototype gaps,"
+        f" {len(surface['omits']['interface'])} with interface-object gaps,"
+        f" {len(surface['array_protos'])} with an array value,"
         f" {len(surface['keys'])} keys, from {source.get('browser', 'unknown')}",
         file=sys.stderr,
     )
     return 0
 
-
 __all__ = [
     "CHROME_ENV", "CHROME_PATHS", "COLLECT_SCRIPT", "DEFAULT_OUTPUT", "ITERATOR_MEMBERS",
-    "SURFACE_SCRIPT", "CdpSession", "CollectionError", "baseline_view", "build_environment",
+    "SURFACE_SCRIPT", "CdpSession", "CollectionError", "idl_view", "build_environment",
     "build_profile", "build_surface", "find_chrome", "main", "read_devtools_port", "read_pages",
     "read_profile",
 ]

@@ -7,9 +7,8 @@ build does not implement yet, so the blob is stored as it is.
 """
 
 import pyv8
-from pyv8 import IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (MISSING, callback_value, dom_string, missing_error,
                                      usv_string)
 from ..dom.mixins import ReadOnlyIndexedPropertyMixin
@@ -24,26 +23,6 @@ def _js_call(fn, this, *args):
 
 @interface('FormData', None)
 class FormData(ReadOnlyIndexedPropertyMixin):
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="append", callback="fn_append", length=2),
-            MethodSpec(name="delete", callback="fn_delete", length=1),
-            MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
-            MethodSpec(name="getAll", callback="fn_getAll", length=1, side_effect=1),
-            MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
-            MethodSpec(name="set", callback="fn_set", length=2),
-            MethodSpec(name="entries", callback="fn_entries", side_effect=1),
-            MethodSpec(name="forEach", callback="fn_forEach", length=1, side_effect=1),
-            MethodSpec(name="keys", callback="fn_keys", side_effect=1),
-            MethodSpec(name="values", callback="fn_values", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=0,
-        has_constructor=1,
-        to_string_tag="FormData",
-        array="iterable",
-    )
-
     def __init__(self, *_extra, **_):
         self._items = []
 
@@ -129,6 +108,5 @@ class FormData(ReadOnlyIndexedPropertyMixin):
             _js_call(callback, this_arg, value, name, self)
             index += 1
         return pyv8.Undefined
-
 
 __all__ = ["FormData"]

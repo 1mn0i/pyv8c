@@ -21,7 +21,7 @@ if "__main__" == __name__:
         # http_engine="cronet",
         # trace=True, traceable=True,
         resource_interceptor=intercept,
-        # interface_baseline_path=r'D:\src\pyv8env\pyv8c\baselines\145.0.7632.162.zip',
+        # idl_path=r'D:\src\other-build\154.0.8030.0.zip',   # 换一份 IDL 文档；默认读包内 idl/idl.zip
         proxy="http://127.0.0.1:7890",
         threaded_loaders=True,
     )

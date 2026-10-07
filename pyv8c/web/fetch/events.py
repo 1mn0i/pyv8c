@@ -1,8 +1,7 @@
 """Events shared by Fetch, WebSocket, XHR, and Worker APIs."""
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     boolean,
@@ -18,19 +17,6 @@ from ..dom.events import Event
 
 @interface('MessageEvent', 'Event')
 class MessageEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="data", getter="get_data", side_effect=1),
-            AttributeSpec(name="origin", getter="get_origin", side_effect=1),
-            AttributeSpec(name="lastEventId", getter="get_lastEventId", side_effect=1),
-            AttributeSpec(name="source", getter="get_source", side_effect=1),
-            AttributeSpec(name="ports", getter="get_ports", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, init = event_constructor_arguments('MessageEvent', event_type, options)
         super().__init__(event_type, init, **kw)
@@ -50,17 +36,6 @@ class MessageEvent(Event):
 
 @interface('CloseEvent', 'Event')
 class CloseEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="code", getter="get_code", side_effect=1),
-            AttributeSpec(name="reason", getter="get_reason", side_effect=1),
-            AttributeSpec(name="wasClean", getter="get_wasClean", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, init = event_constructor_arguments('CloseEvent', event_type, options)
         super().__init__(event_type, init, **kw)
@@ -75,19 +50,6 @@ class CloseEvent(Event):
 
 @interface('ErrorEvent', 'Event')
 class ErrorEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="message", getter="get_message", side_effect=1),
-            AttributeSpec(name="filename", getter="get_filename", side_effect=1),
-            AttributeSpec(name="lineno", getter="get_lineno", side_effect=1),
-            AttributeSpec(name="colno", getter="get_colno", side_effect=1),
-            AttributeSpec(name="error", getter="get_error", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, init = event_constructor_arguments('ErrorEvent', event_type, options)
         super().__init__(event_type, init, **kw)
@@ -106,17 +68,6 @@ class ErrorEvent(Event):
 
 @interface('ProgressEvent', 'Event')
 class ProgressEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="lengthComputable", getter="get_lengthComputable", side_effect=1),
-            AttributeSpec(name="loaded", getter="get_loaded", side_effect=1),
-            AttributeSpec(name="total", getter="get_total", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, init = event_constructor_arguments('ProgressEvent', event_type, options)
         super().__init__(event_type, init, **kw)
@@ -127,6 +78,5 @@ class ProgressEvent(Event):
     def get_lengthComputable(self): return self.length_computable
     def get_loaded(self): return self.loaded
     def get_total(self): return self.total
-
 
 __all__ = ["MessageEvent", "CloseEvent", "ErrorEvent", "ProgressEvent"]

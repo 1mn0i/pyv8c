@@ -357,7 +357,7 @@ def test_a_worker_navigator_comes_from_its_feature():
         })()""")
         page.run_until_idle(timeout=2)
         assert page.evaluate("__workerNavigator") == [True, True]
-        assert "navigator" in browser.interface_universe.runtime.loaded_features
+        assert "navigator" in browser.bindings.runtime.loaded_features
     finally:
         browser.close()
 

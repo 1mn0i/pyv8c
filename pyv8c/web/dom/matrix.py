@@ -7,14 +7,12 @@ import math
 import struct
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, is_nullish, missing_error, sequence
 from ...foundation.errors import V8Error
 from ...foundation.errors import InvalidStateError, V8SyntaxError, V8TypeError
 from .point import DOMPoint, double, point_init
+
 
 #: ``name -> index`` for every member a matrix exposes, ``a..f`` included.
 SLOTS = {
@@ -234,48 +232,6 @@ def _parse(text):
 
 @interface('DOMMatrixReadOnly', None)
 class DOMMatrixReadOnly:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=name, getter=f"get_{name}", side_effect=1)
-            for name in (*WRITABLE, "is2D", "isIdentity")),
-        methods=(
-            MethodSpec(name="flipX", callback="fn_flipX", side_effect=1),
-            MethodSpec(name="flipY", callback="fn_flipY", side_effect=1),
-            MethodSpec(name="inverse", callback="fn_inverse", side_effect=1),
-            MethodSpec(name="multiply", callback="fn_multiply", side_effect=1),
-            MethodSpec(name="rotate", callback="fn_rotate", side_effect=1),
-            MethodSpec(name="rotateAxisAngle", callback="fn_rotateAxisAngle", side_effect=1),
-            MethodSpec(name="rotateFromVector", callback="fn_rotateFromVector", side_effect=1),
-            MethodSpec(name="scale", callback="fn_scale", side_effect=1),
-            MethodSpec(name="scale3d", callback="fn_scale3d", side_effect=1),
-            MethodSpec(name="scaleNonUniform", callback="fn_scaleNonUniform", side_effect=1),
-            MethodSpec(name="skewX", callback="fn_skewX", side_effect=1),
-            MethodSpec(name="skewY", callback="fn_skewY", side_effect=1),
-            MethodSpec(name="toFloat32Array", callback="fn_toFloat32Array", side_effect=1),
-            MethodSpec(name="toFloat64Array", callback="fn_toFloat64Array", side_effect=1),
-            MethodSpec(name="toJSON", callback="fn_toJSON", side_effect=1),
-            MethodSpec(name="transformPoint", callback="fn_transformPoint", side_effect=1),
-            MethodSpec(name="translate", callback="fn_translate", side_effect=1),
-            MethodSpec(name="toString", callback="fn_toString", side_effect=1),
-            MethodSpec(name="fromFloat32Array", callback="fn_fromFloat32Array", length=1,
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-            MethodSpec(name="fromFloat64Array", callback="fn_fromFloat64Array", length=1,
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-            MethodSpec(name="fromMatrix", callback="fn_fromMatrix",
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="DOMMatrixReadOnly",
-        has_constructor=1,
-    )
-
     def __init__(self, init=MISSING, *_extra, **_):
         if init is MISSING or init is pyv8.Undefined:
             self._matrix, self._is_2d = identity(), True
@@ -460,7 +416,6 @@ def _getter(index):
         return self._matrix[index]
     return read
 
-
 for _name, _index in SLOTS.items():
     setattr(DOMMatrixReadOnly, f"get_{_name}", _getter(_index))
 del _name, _index
@@ -468,29 +423,7 @@ del _name, _index
 
 @interface('DOMMatrix', 'DOMMatrixReadOnly')
 class DOMMatrix(DOMMatrixReadOnly):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=name, getter=f"get_{name}", setter=f"set_{name}")
-            for name in WRITABLE),
-        methods=(
-            MethodSpec(name="invertSelf", callback="fn_invertSelf"),
-            MethodSpec(name="multiplySelf", callback="fn_multiplySelf"),
-            MethodSpec(name="preMultiplySelf", callback="fn_preMultiplySelf"),
-            MethodSpec(name="rotateAxisAngleSelf", callback="fn_rotateAxisAngleSelf"),
-            MethodSpec(name="rotateFromVectorSelf", callback="fn_rotateFromVectorSelf"),
-            MethodSpec(name="rotateSelf", callback="fn_rotateSelf"),
-            MethodSpec(name="scale3dSelf", callback="fn_scale3dSelf"),
-            MethodSpec(name="scaleSelf", callback="fn_scaleSelf"),
-            MethodSpec(name="skewXSelf", callback="fn_skewXSelf"),
-            MethodSpec(name="skewYSelf", callback="fn_skewYSelf"),
-            MethodSpec(name="translateSelf", callback="fn_translateSelf"),
-            MethodSpec(name="setMatrixValue", callback="fn_setMatrixValue", length=1),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="DOMMatrix",
-        has_constructor=1,
-    )
+    # Declared: the baseline does not say they are writable, so ``set_<name>`` makes them so.
 
     def fn_translateSelf(self, tx=MISSING, ty=MISSING, tz=MISSING, *_extra):
         z = _number(tz)
@@ -570,7 +503,6 @@ def _setter(index):
         self._matrix[index] = _number(value)
         self._store(self._matrix, self._is_2d)
     return write
-
 
 for _name, _index in SLOTS.items():
     setattr(DOMMatrix, f"set_{_name}", _setter(_index))

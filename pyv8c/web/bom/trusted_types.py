@@ -6,9 +6,8 @@ modelled.
 """
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error
 from ...foundation.errors import V8TypeError
 
@@ -24,31 +23,37 @@ class _TrustedValue:
     def __str__(self): return self._value
 
 
-_SPEC = IdlSpec(
-    methods=(
-        MethodSpec(name="toString", callback="fn_toString", length=0, side_effect=1),
-        MethodSpec(name="toJSON", callback="fn_toJSON", length=0, side_effect=1),
-    ),
-    constructor_behavior=0,
-    has_constructor=1,
-)
+#: No members declared: ``fn_toString``/``fn_toJSON`` are what the convention binds.
 
 
 @interface('TrustedHTML', None)
 class TrustedHTML(_TrustedValue):
-    __v8_idl_spec__ = _SPEC.replace(to_string_tag="TrustedHTML")
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0
+        }
+    }
 
 
 @interface('TrustedScript', None)
 class TrustedScript(_TrustedValue):
-    #: Code-like: ``eval`` and the Function constructor stringify this value instead of
-    #: handing it straight back, which is what lets a page run its own policy's source.
-    __v8_idl_spec__ = _SPEC.replace(to_string_tag="TrustedScript", code_like=True)
+    __idl_overrides__ = {
+        "interface": {
+            #: Code-like: ``eval`` and the Function constructor stringify this value instead of
+            #: handing it straight back, which is what lets a page run its own policy's source.
+            "code_like": True,
+            "length": 0,
+        }
+    }
 
 
 @interface('TrustedScriptURL', None)
 class TrustedScriptURL(_TrustedValue):
-    __v8_idl_spec__ = _SPEC.replace(to_string_tag="TrustedScriptURL")
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0
+        }
+    }
 
 
 #: Which wrapper each policy operation produces.
@@ -58,18 +63,6 @@ _WRAPPERS = {"createHTML": TrustedHTML, "createScript": TrustedScript,
 
 @interface('TrustedTypePolicy', None)
 class TrustedTypePolicy:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="name", getter="get_name", side_effect=1),),
-        methods=(
-            MethodSpec(name="createHTML", callback="fn_createHTML", length=1),
-            MethodSpec(name="createScript", callback="fn_createScript", length=1),
-            MethodSpec(name="createScriptURL", callback="fn_createScriptURL", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="TrustedTypePolicy",
-        has_constructor=1,
-    )
-
     def __init__(self, name="", rules=None, **_):
         self._name = str(name)
         self._rules = dict(rules or {})
@@ -93,29 +86,6 @@ class TrustedTypePolicy:
 
 @interface('TrustedTypePolicyFactory', None)
 class TrustedTypePolicyFactory:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="emptyHTML", getter="get_emptyHTML", side_effect=1),
-            AttributeSpec(name="emptyScript", getter="get_emptyScript", side_effect=1),
-            AttributeSpec(name="defaultPolicy", getter="get_defaultPolicy", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="createPolicy", callback="fn_createPolicy", length=2),
-            MethodSpec(name="isHTML", callback="fn_isHTML", length=1, side_effect=1),
-            MethodSpec(name="isScript", callback="fn_isScript", length=1, side_effect=1),
-            MethodSpec(name="isScriptURL", callback="fn_isScriptURL", length=1, side_effect=1),
-            MethodSpec(name="getAttributeType", callback="fn_getAttributeType", length=3,
-                       side_effect=1),
-            MethodSpec(name="getPropertyType", callback="fn_getPropertyType", length=3,
-                       side_effect=1),
-            MethodSpec(name="getTypeMapping", callback="fn_getTypeMapping", length=0,
-                       side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="TrustedTypePolicyFactory",
-        has_constructor=1,
-    )
-
     def __init__(self, **_):
         self._policies = {}
 
@@ -157,7 +127,6 @@ class TrustedTypePolicyFactory:
     def fn_getAttributeType(self, *_extra): return ""
     def fn_getPropertyType(self, *_extra): return pyv8.Null
     def fn_getTypeMapping(self, *_extra): return pyv8.Undefined
-
 
 __all__ = [
     "TrustedHTML", "TrustedScript", "TrustedScriptURL", "TrustedTypePolicy",

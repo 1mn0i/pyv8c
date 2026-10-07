@@ -1,9 +1,6 @@
 """``DOMRect``: the box ``getBoundingClientRect`` reports, and the edges read off it."""
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, is_nullish
 from .point import double
 
@@ -21,23 +18,6 @@ def rect_values(value):
 
 @interface('DOMRectReadOnly', None)
 class DOMRectReadOnly:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=name, getter=f"get_{name}", side_effect=1)
-            for name in ("x", "y", "width", "height", "top", "right", "bottom", "left")),
-        methods=(
-            MethodSpec(name="toJSON", callback="fn_toJSON", side_effect=1),
-            MethodSpec(name="fromRect", callback="fn_fromRect",
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="DOMRectReadOnly",
-        has_constructor=1,
-    )
-
     def __init__(self, x=MISSING, y=MISSING, width=MISSING, height=MISSING, *_extra, **_):
         self._x = double(x)
         self._y = double(y)
@@ -67,19 +47,7 @@ class DOMRectReadOnly:
 
 @interface('DOMRect', 'DOMRectReadOnly')
 class DOMRect(DOMRectReadOnly):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=name, getter=f"get_{name}", setter=f"set_{name}")
-            for name in ("x", "y", "width", "height")),
-        methods=(MethodSpec(name="fromRect", callback="fn_fromRect",
-                            location=FlagLocation.kInterface,
-                            receiver_check=FlagReceiverCheck.kDoNotCheck,
-                            cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="DOMRect",
-        has_constructor=1,
-    )
+    # Declared: the baseline does not say they are writable, so ``set_<name>`` makes them so.
 
     @staticmethod
     def fn_fromRect(_realm, init=None, *_extra):
@@ -89,6 +57,5 @@ class DOMRect(DOMRectReadOnly):
     def set_y(self, value): self._y = double(value)
     def set_width(self, value): self._width = double(value)
     def set_height(self, value): self._height = double(value)
-
 
 __all__ = ["DOMRect", "DOMRectReadOnly", "rect_values"]

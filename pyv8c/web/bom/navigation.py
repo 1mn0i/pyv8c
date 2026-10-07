@@ -8,9 +8,9 @@ committed without rebuilding the document, firing ``hashchange`` and no load eve
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import LazyValueStore, interface
+from ...engine.features import LazyValueStore
+from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, integer, is_nullish, missing_error, usv_string
 from ...foundation.errors import SecurityError
 from ..dom.collections import DOMStringList
@@ -115,51 +115,10 @@ class Location:
                 () if realm is None else realm.ancestor_origins())
         return origins
     def fn_toString(self, *_extra): return self.get_href()
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-                AttributeSpec(name=n, getter="get_" + n, setter=_LOCATION_SETTERS.get(n))
-                for n in (
-                    "href",
-                    "origin",
-                    "ancestorOrigins",
-                    "protocol",
-                    "host",
-                    "hostname",
-                    "port",
-                    "pathname",
-                    "search",
-                    "hash",
-                )
-
-        ),
-        methods=(
-            MethodSpec(name="assign", callback="fn_assign", length=1),
-            MethodSpec(name="replace", callback="fn_replace", length=1),
-            MethodSpec(name="reload", callback="fn_reload"),
-            MethodSpec(name="toString", callback="fn_toString"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
 
 
 @interface('History', None)
 class History:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="length", getter="get_length", side_effect=1),
-            AttributeSpec(name="state", getter="get_state", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="pushState", callback="fn_pushState", length=3),
-            MethodSpec(name="replaceState", callback="fn_replaceState", length=3),
-            MethodSpec(name="back", callback="fn_back"),
-            MethodSpec(name="forward", callback="fn_forward"),
-            MethodSpec(name="go", callback="fn_go", length=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def __init__(self, services=None, initial_url=None, **_):
         self._services = services
         self._entries = [(initial_url if initial_url is not None else getattr(getattr(services, "realm_services", None), "url", "about:blank"), None)]
@@ -247,21 +206,6 @@ def _navigation_values(navigation):
 
 @interface('NavigationHistoryEntry', 'EventTarget')
 class NavigationHistoryEntry(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="url", getter="get_url", side_effect=1),
-            AttributeSpec(name="key", getter="get_key", side_effect=1),
-            AttributeSpec(name="id", getter="get_id", side_effect=1),
-            AttributeSpec(name="index", getter="get_index", side_effect=1),
-            AttributeSpec(name="sameDocument", getter="get_sameDocument", side_effect=1),
-            AttributeSpec(name="ondispose", getter="get_ondispose", setter="set_ondispose"),
-        ),
-        methods=(MethodSpec(name="getState", callback="fn_getState", side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="NavigationHistoryEntry",
-        has_constructor=1,
-    )
-
     def __init__(self, url="", index=0, state=None, **_):
         super().__init__(**_)
         self._url, self._index, self._state = str(url), int(index), state
@@ -286,17 +230,6 @@ class NavigationHistoryEntry(EventTarget):
 class NavigationActivation:
     """What the last activation says, from the entry the page is on."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="entry", getter="get_entry", side_effect=1),
-            AttributeSpec(name="from", getter="get_from", side_effect=1),
-            AttributeSpec(name="navigationType", getter="get_navigationType", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="NavigationActivation",
-        has_constructor=1,
-    )
-
     def __init__(self, entry=None, **_):
         self._entry = entry
 
@@ -309,28 +242,6 @@ class NavigationActivation:
 
 @interface('Navigation', 'EventTarget')
 class Navigation(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="currentEntry", getter="get_currentEntry", side_effect=1),
-            AttributeSpec(name="canGoBack", getter="get_canGoBack", side_effect=1),
-            AttributeSpec(name="canGoForward", getter="get_canGoForward", side_effect=1),
-            AttributeSpec(name="transition", getter="get_transition", side_effect=1),
-            AttributeSpec(name="activation", getter="get_activation", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="entries", callback="fn_entries", length=0),
-            MethodSpec(name="navigate", callback="fn_navigate", length=1),
-            MethodSpec(name="reload", callback="fn_reload", length=0),
-            MethodSpec(name="back", callback="fn_back", length=0),
-            MethodSpec(name="forward", callback="fn_forward", length=0),
-            MethodSpec(name="traverseTo", callback="fn_traverseTo", length=1),
-            MethodSpec(name="updateCurrentEntry", callback="fn_updateCurrentEntry", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Navigation",
-        has_constructor=1,
-    )
-
     def __init__(self, window=None, **_):
         super().__init__(**_)
         self._window = window
@@ -381,6 +292,5 @@ class Navigation(EventTarget):
         self._current().set_state(self._state)
 
 
-Navigation.__v8_idl_spec__ = Navigation.__v8_idl_spec__.replace(
-    attributes=Navigation.__v8_idl_spec__.attributes + _install_handler_slots(Navigation, HANDLERS)
-)
+#: Accessors only: the four handlers the baseline publishes are bound by the convention.
+_install_handler_slots(Navigation, HANDLERS)

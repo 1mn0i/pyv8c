@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("pyv8")
 
 from pyv8c import Browser, BrowserEnvironment  # noqa: E402
-from pyv8c.engine.baseline import BaselineRepository  # noqa: E402
+from pyv8c.engine.idl import ArrayProto, Idl  # noqa: E402
 from pyv8c.foundation.environment import COLLECTED_KEYS  # noqa: E402
 from pyv8c.tools import collect_environment as collector  # noqa: E402
 
@@ -29,29 +29,29 @@ def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, c
 
     document = json.loads(path.read_text(encoding="utf-8"))
     assert document["source"]["browser"].startswith(("Chrome", "Chromium", "HeadlessChrome"))
-    assert set(document) == {"schema", "source", "window_surface", *COLLECTED_KEYS}
+    assert set(document) == {"schema", "source", "bindings", *COLLECTED_KEYS}
     # The same session that answered the keys named what it installs on ``window``.
-    assert "Object" in document["window_surface"]["own_names"]
-    assert "innerWidth" in document["window_surface"]["keys"]
-    # …and which of the members the baseline declares it leaves out.
-    surface = document["window_surface"]
-    gaps = surface["prototype_gaps"]
+    assert "Object" in document["bindings"]["exposed"]
+    assert "innerWidth" in document["bindings"]["keys"]
+    # 鈥nd which of the members the baseline declares it leaves out.
+    surface = document["bindings"]
+    gaps = surface["omits"]["prototype"]
     assert len(gaps) > 20
     assert "computedRole" in gaps["Element"]
     assert "slot" not in gaps["Element"]
     # The interface objects are read too: ``CSS.animationWorklet`` lives there, not on a
     # prototype, and this reference browser does not install it.
-    objects = surface["interface_gaps"]
+    objects = surface["omits"]["interface"]
     assert objects, "no interface object was measured"
     assert "animationWorklet" in objects["CSS"]
     assert "supports" not in objects["CSS"]
-    # …and the array word each interface is measured to have in this release.
-    words = surface["array_words"]
-    assert words, "no array word was measured"
-    assert words["NodeList"] == "iterable"
-    assert words["HTMLCollection"] == "iterator"
-    assert "Cache" not in words, "Cache.keys is an async method, not an iterator member"
-    assert surface["baseline_digest"] == BaselineRepository.load().digest
+    # 鈥nd the array word each interface is measured to have in this release.
+    protos = surface["array_protos"]
+    assert protos, "no array value was measured"
+    assert protos["NodeList"] == ArrayProto.iterable
+    assert protos["HTMLCollection"] == ArrayProto.iterator
+    assert "Cache" not in protos, "Cache.keys is an async method, not an iterator member"
+    assert surface["against"] == Idl.load().digest
 
     profile = BrowserEnvironment.from_file(path)
     collected = profile.resolved()

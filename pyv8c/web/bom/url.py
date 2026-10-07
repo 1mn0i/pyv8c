@@ -7,10 +7,8 @@ mutation back with ``_set_search_from_params``.
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
-
-from ...engine.features import LazyValueStore, interface
+from ...engine.features import LazyValueStore
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     callback_value,
@@ -27,6 +25,7 @@ from ...foundation.urls import SPECIAL_SCHEMES, credentials_netloc, form_urlenco
 from ..fetch.blob import Blob
 
 __all__ = ["URL", "URLSearchParams"]
+
 
 #: C0 controls and spaces the parser strips; tabs/newlines drop anywhere.
 _URL_TRIM = "".join(chr(code) for code in range(0x21))
@@ -48,25 +47,9 @@ def _js_call(fn, this, *args):
 
 @interface('URLSearchParams', None)
 class URLSearchParams:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="size", getter="get_size", side_effect=1),),
-        methods=(
-            MethodSpec(name="append", callback="fn_append", length=2),
-            MethodSpec(name="delete", callback="fn_delete", length=1),
-            MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
-            MethodSpec(name="getAll", callback="fn_getAll", length=1, side_effect=1),
-            MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
-            MethodSpec(name="set", callback="fn_set", length=2),
-            MethodSpec(name="sort", callback="fn_sort"),
-            MethodSpec(name="toString", callback="fn_toString", side_effect=1),
-            MethodSpec(name="forEach", callback="fn_forEach", length=1, side_effect=1),
-        ),
-        # keys/values/entries/@iterator come from the iteration source.
-        iterate="__v8_iterate__",
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
+
+    #: ``keys``/``values``/``entries`` and ``Symbol.iterator`` hand out pairs from here.
+    __idl_overrides__ = {"interface": {"iterate": "__v8_iterate__"}}
 
     def __init__(self, init='', *_extra, _url=None, **_):
         if init is pyv8.Undefined:
@@ -369,30 +352,8 @@ class URL:
         if services is None or services.realm_services.closed: raise InvalidStateError("The execution context is no longer active")
         services.context_services.revoke_blob_url(str(url))
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="href", getter="get_href", setter="set_href"),
-            AttributeSpec(name="origin", getter="get_origin", side_effect=1),
-            AttributeSpec(name="protocol", getter="get_protocol", setter="set_protocol"),
-            AttributeSpec(name="username", getter="get_username", setter="set_username"),
-            AttributeSpec(name="password", getter="get_password", setter="set_password"),
-            AttributeSpec(name="host", getter="get_host", setter="set_host"),
-            AttributeSpec(name="hostname", getter="get_hostname", setter="set_hostname"),
-            AttributeSpec(name="port", getter="get_port", setter="set_port"),
-            AttributeSpec(name="pathname", getter="get_pathname", setter="set_pathname"),
-            AttributeSpec(name="search", getter="get_search", setter="set_search"),
-            AttributeSpec(name="searchParams", getter="get_searchParams", side_effect=1),
-            AttributeSpec(name="hash", getter="get_hash", setter="set_hash"),
-        ),
-        methods=(
-            MethodSpec(name="toString", callback="fn_toString", side_effect=1),
-            MethodSpec(name="toJSON", callback="fn_toJSON", side_effect=1),
-            MethodSpec(name="canParse", callback="fn_canParse", length=1, side_effect=1, location=FlagLocation.kInterface, receiver_check=FlagReceiverCheck.kDoNotCheck, cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-            MethodSpec(name="parse", callback="fn_parse", length=1, side_effect=1, location=FlagLocation.kInterface, receiver_check=FlagReceiverCheck.kDoNotCheck, cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-            MethodSpec(name="createObjectURL", callback="fn_createObjectURL", length=1, location=FlagLocation.kInterface, receiver_check=FlagReceiverCheck.kDoNotCheck, cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-            MethodSpec(name="revokeObjectURL", callback="fn_revokeObjectURL", length=1, location=FlagLocation.kInterface, receiver_check=FlagReceiverCheck.kDoNotCheck, cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 1
+        }
+    }

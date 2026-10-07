@@ -5,7 +5,6 @@ model and every legacy collection are composed from them.
 """
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import V8Attribute
 
 from ...foundation.errors import LegacyPropertyError
@@ -16,12 +15,19 @@ class _NonDocumentTypeChildNodeMixin:
     """``previousElementSibling`` / ``nextElementSibling``, excluding document
     type nodes (as the ``NonDocumentTypeChildNode`` mixin does)."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="previousElementSibling", getter="get_previousElementSibling", side_effect=1),
-            AttributeSpec(name="nextElementSibling", getter="get_nextElementSibling", side_effect=1),
-        ),
-    )
+    __idl_overrides__ = {
+        "members": {
+            "nextElementSibling": {
+                "side_effect": 1
+            },
+            "previousElementSibling": {
+                "side_effect": 1
+            }
+        },
+        "interface": {
+            "length": 0
+        }
+    }
 
     def _element_sibling(self, step):
         parent = self.parentNode
@@ -47,18 +53,22 @@ class _ParentNodeMixin:
     :class:`Document` deliberately leaves out the ``ChildNode`` operations, which
     it does not have in Chromium."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="firstElementChild", getter="get_firstElementChild", side_effect=1),
-            AttributeSpec(name="lastElementChild", getter="get_lastElementChild", side_effect=1),
-            AttributeSpec(name="childElementCount", getter="get_childElementCount", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="append", callback="fn_append"),
-            MethodSpec(name="prepend", callback="fn_prepend"),
-            MethodSpec(name="replaceChildren", callback="fn_replaceChildren"),
-        ),
-    )
+    __idl_overrides__ = {
+        "members": {
+            "childElementCount": {
+                "side_effect": 1
+            },
+            "firstElementChild": {
+                "side_effect": 1
+            },
+            "lastElementChild": {
+                "side_effect": 1
+            }
+        },
+        "interface": {
+            "length": 0
+        }
+    }
 
     def _element_children(self):
         return [child for child in self._children if is_element(child)]
@@ -87,14 +97,11 @@ class _ParentNodeMixin:
 class _ChildNodeMixin:
     """``before`` / ``after`` / ``replaceWith`` / ``remove``."""
 
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="before", callback="fn_before"),
-            MethodSpec(name="after", callback="fn_after"),
-            MethodSpec(name="replaceWith", callback="fn_replaceWith"),
-            MethodSpec(name="remove", callback="fn_remove"),
-        ),
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0
+        }
+    }
 
     def fn_before(self, *values):
         nodes = as_nodes(values, self)
@@ -132,13 +139,16 @@ class ReadOnlyIndexedPropertyMixin:
     """V8's readonly indexed-property interceptor; subclasses provide
     :meth:`_indexed_items`."""
 
-    __v8_idl_spec__ = pyv8.IdlSpec(
-        index_get="__v8_index_get__",
-        index_set="__v8_index_set__",
-        index_query="__v8_index_query__",
-        index_del="__v8_index_del__",
-        index_enum="__v8_index_enum__",
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "index_del": "__v8_index_del__",
+            "index_enum": "__v8_index_enum__",
+            "index_get": "__v8_index_get__",
+            "index_query": "__v8_index_query__",
+            "index_set": "__v8_index_set__",
+            "length": 0
+        }
+    }
 
     def _indexed_items(self):
         raise NotImplementedError
@@ -192,13 +202,16 @@ class LegacyNamedPropertyMixin:
     :class:`LegacyPropertyError`, which V8 swallows outside strict mode.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        name_get="__v8_name_get__",
-        name_set="__v8_name_set__",
-        name_query="__v8_name_query__",
-        name_del="__v8_name_del__",
-        name_enum="__v8_name_enum__",
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0,
+            "name_del": "__v8_name_del__",
+            "name_enum": "__v8_name_enum__",
+            "name_get": "__v8_name_get__",
+            "name_query": "__v8_name_query__",
+            "name_set": "__v8_name_set__"
+        }
+    }
 
     #: Named properties never shadow these prototype members.
     _prototype_names = OBJECT_PROTOTYPE_NAMES | {"length", "item", "namedItem"}

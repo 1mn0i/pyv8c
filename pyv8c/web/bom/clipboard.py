@@ -4,9 +4,8 @@ Chrome waits for a permission prompt here; without one a page's call ends in
 ``NotAllowedError``, which is what this reports rather than hanging.
 """
 
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, missing_error
 from ...foundation.errors import dom_exception
 from ..dom.events import EventTarget
@@ -17,20 +16,6 @@ __all__ = ["Clipboard"]
 
 @interface('Clipboard', 'EventTarget')
 class Clipboard(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="onclipboardchange", getter="get_onclipboardchange",
-                                  setter="set_onclipboardchange"),),
-        methods=(
-            MethodSpec(name="read", callback="fn_read", length=0, side_effect=1),
-            MethodSpec(name="readText", callback="fn_readText", length=0, side_effect=1),
-            MethodSpec(name="write", callback="fn_write", length=1),
-            MethodSpec(name="writeText", callback="fn_writeText", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Clipboard",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         super().__init__(services=services)
 

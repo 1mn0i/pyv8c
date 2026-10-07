@@ -2,10 +2,7 @@
 import time
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagLocation
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     abort_signal,
@@ -69,35 +66,6 @@ def _nullable_string(value):
 
 @interface('Event', None)
 class Event:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="target", getter="get_target", side_effect=1),
-            AttributeSpec(name="currentTarget", getter="get_currentTarget", side_effect=1),
-            AttributeSpec(name="bubbles", getter="get_bubbles", side_effect=1),
-            AttributeSpec(name="cancelable", getter="get_cancelable", side_effect=1),
-            AttributeSpec(name="defaultPrevented", getter="get_defaultPrevented", side_effect=1),
-            AttributeSpec(name="eventPhase", getter="get_eventPhase", side_effect=1),
-            AttributeSpec(name="cancelBubble", getter="get_cancelBubble", setter="set_cancelBubble"),
-            AttributeSpec(name="timeStamp", getter="get_timeStamp", side_effect=1),
-            AttributeSpec(name="isTrusted", getter="get_isTrusted", side_effect=1),
-            AttributeSpec(name="composed", getter="get_composed", side_effect=1),
-            AttributeSpec(name="returnValue", getter="get_returnValue", setter="set_returnValue"),
-            #: ``persisted`` belongs to ``PageTransitionEvent``; as an ``Event`` accessor it made
-            #: ``'persisted' in new Event('x')`` answer ``true`` where Chrome says ``false``.
-        ),
-        methods=(
-            MethodSpec(name="preventDefault", callback="fn_preventDefault"),
-            MethodSpec(name="stopPropagation", callback="fn_stopPropagation"),
-            MethodSpec(name="stopImmediatePropagation", callback="fn_stopImmediatePropagation"),
-            MethodSpec(name="composedPath", callback="fn_composedPath", side_effect=1),
-            MethodSpec(name="initEvent", callback="fn_initEvent", length=3),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="Event",
-        has_constructor=1,
-    )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **_):
         event_type, options = event_constructor_arguments('Event', event_type, options)
@@ -156,18 +124,6 @@ class Event:
 
 @interface('UIEvent', 'Event')
 class UIEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="view", getter="get_view", side_effect=1),
-            AttributeSpec(name="detail", getter="get_detail", side_effect=1),
-            AttributeSpec(name="which", getter="get_which", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="UIEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('UIEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -181,39 +137,11 @@ class UIEvent(Event):
 
 @interface('MouseEvent', 'UIEvent')
 class MouseEvent(UIEvent):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="screenX", getter="get_screenX", side_effect=1),
-            AttributeSpec(name="screenY", getter="get_screenY", side_effect=1),
-            AttributeSpec(name="clientX", getter="get_clientX", side_effect=1),
-            AttributeSpec(name="clientY", getter="get_clientY", side_effect=1),
-            AttributeSpec(name="pageX", getter="get_pageX", side_effect=1),
-            AttributeSpec(name="pageY", getter="get_pageY", side_effect=1),
-            AttributeSpec(name="x", getter="get_x", side_effect=1),
-            AttributeSpec(name="y", getter="get_y", side_effect=1),
-            AttributeSpec(name="offsetX", getter="get_offsetX", side_effect=1),
-            AttributeSpec(name="offsetY", getter="get_offsetY", side_effect=1),
-            AttributeSpec(name="movementX", getter="get_movementX", side_effect=1),
-            AttributeSpec(name="movementY", getter="get_movementY", side_effect=1),
-            AttributeSpec(name="ctrlKey", getter="get_ctrlKey", side_effect=1),
-            AttributeSpec(name="shiftKey", getter="get_shiftKey", side_effect=1),
-            AttributeSpec(name="altKey", getter="get_altKey", side_effect=1),
-            AttributeSpec(name="metaKey", getter="get_metaKey", side_effect=1),
-            AttributeSpec(name="button", getter="get_button", side_effect=1),
-            AttributeSpec(name="buttons", getter="get_buttons", side_effect=1),
-            AttributeSpec(name="relatedTarget", getter="get_relatedTarget", side_effect=1),
-            AttributeSpec(name="fromElement", getter="get_fromElement", side_effect=1),
-            AttributeSpec(name="toElement", getter="get_toElement", side_effect=1),
-            AttributeSpec(name="which", getter="get_which", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="getModifierState", callback="fn_getModifierState", length=1, side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="MouseEvent",
-        has_constructor=1,
-    )
+    __idl_overrides__ = {
+        "which": {
+            "side_effect": 1
+        }
+    }
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('MouseEvent', event_type, options)
@@ -272,29 +200,11 @@ class MouseEvent(UIEvent):
 
 @interface('KeyboardEvent', 'UIEvent')
 class KeyboardEvent(UIEvent):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="key", getter="get_key", side_effect=1),
-            AttributeSpec(name="code", getter="get_code", side_effect=1),
-            AttributeSpec(name="location", getter="get_location", side_effect=1),
-            AttributeSpec(name="ctrlKey", getter="get_ctrlKey", side_effect=1),
-            AttributeSpec(name="shiftKey", getter="get_shiftKey", side_effect=1),
-            AttributeSpec(name="altKey", getter="get_altKey", side_effect=1),
-            AttributeSpec(name="metaKey", getter="get_metaKey", side_effect=1),
-            AttributeSpec(name="repeat", getter="get_repeat", side_effect=1),
-            AttributeSpec(name="isComposing", getter="get_isComposing", side_effect=1),
-            AttributeSpec(name="charCode", getter="get_charCode", side_effect=1),
-            AttributeSpec(name="keyCode", getter="get_keyCode", side_effect=1),
-            AttributeSpec(name="which", getter="get_which", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="getModifierState", callback="fn_getModifierState", length=1, side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="KeyboardEvent",
-        has_constructor=1,
-    )
+    __idl_overrides__ = {
+        "which": {
+            "side_effect": 1
+        }
+    }
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('KeyboardEvent', event_type, options)
@@ -333,17 +243,6 @@ class KeyboardEvent(UIEvent):
 
 @interface('CustomEvent', 'Event')
 class CustomEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="detail", getter="get_detail", side_effect=1),),
-        methods=(
-            MethodSpec(name="initCustomEvent", callback="fn_initCustomEvent", length=4),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="CustomEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('CustomEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -364,16 +263,6 @@ class CustomEvent(Event):
 
 @interface('FocusEvent', 'UIEvent')
 class FocusEvent(UIEvent):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="relatedTarget", getter="get_relatedTarget", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="FocusEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('FocusEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -384,22 +273,6 @@ class FocusEvent(UIEvent):
 
 @interface('InputEvent', 'UIEvent')
 class InputEvent(UIEvent):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="data", getter="get_data", side_effect=1),
-            AttributeSpec(name="isComposing", getter="get_isComposing", side_effect=1),
-            AttributeSpec(name="inputType", getter="get_inputType", side_effect=1),
-            AttributeSpec(name="dataTransfer", getter="get_dataTransfer", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="getTargetRanges", callback="fn_getTargetRanges", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="InputEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('InputEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -419,14 +292,6 @@ class InputEvent(UIEvent):
 
 @interface('CompositionEvent', 'UIEvent')
 class CompositionEvent(UIEvent):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="data", getter="get_data", side_effect=1),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="CompositionEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('CompositionEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -437,32 +302,6 @@ class CompositionEvent(UIEvent):
 
 @interface('PointerEvent', 'MouseEvent')
 class PointerEvent(MouseEvent):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="pointerId", getter="get_pointerId", side_effect=1),
-            AttributeSpec(name="width", getter="get_width", side_effect=1),
-            AttributeSpec(name="height", getter="get_height", side_effect=1),
-            AttributeSpec(name="pressure", getter="get_pressure", side_effect=1),
-            AttributeSpec(name="tiltX", getter="get_tiltX", side_effect=1),
-            AttributeSpec(name="tiltY", getter="get_tiltY", side_effect=1),
-            AttributeSpec(name="azimuthAngle", getter="get_azimuthAngle", side_effect=1),
-            AttributeSpec(name="altitudeAngle", getter="get_altitudeAngle", side_effect=1),
-            AttributeSpec(name="tangentialPressure", getter="get_tangentialPressure", side_effect=1),
-            AttributeSpec(name="twist", getter="get_twist", side_effect=1),
-            AttributeSpec(name="pointerType", getter="get_pointerType", side_effect=1),
-            AttributeSpec(name="isPrimary", getter="get_isPrimary", side_effect=1),
-            AttributeSpec(name="persistentDeviceId", getter="get_persistentDeviceId", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="getCoalescedEvents", callback="fn_getCoalescedEvents", side_effect=1),
-            MethodSpec(name="getPredictedEvents", callback="fn_getPredictedEvents", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="PointerEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('PointerEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -501,23 +340,6 @@ class PointerEvent(MouseEvent):
 
 @interface('WheelEvent', 'MouseEvent')
 class WheelEvent(MouseEvent):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="deltaX", getter="get_deltaX", side_effect=1),
-            AttributeSpec(name="deltaY", getter="get_deltaY", side_effect=1),
-            AttributeSpec(name="deltaZ", getter="get_deltaZ", side_effect=1),
-            AttributeSpec(name="deltaMode", getter="get_deltaMode", side_effect=1),
-            AttributeSpec(name="wheelDeltaX", getter="get_wheelDeltaX", side_effect=1),
-            AttributeSpec(name="wheelDeltaY", getter="get_wheelDeltaY", side_effect=1),
-            AttributeSpec(name="wheelDelta", getter="get_wheelDelta", side_effect=1),
-            AttributeSpec(name="momentum", getter="get_momentum", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="WheelEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('WheelEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -544,17 +366,6 @@ class WheelEvent(MouseEvent):
 
 @interface('PopStateEvent', 'Event')
 class PopStateEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="state", getter="get_state", side_effect=1),
-            AttributeSpec(name="hasUAVisualTransition", getter="get_hasUAVisualTransition", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="PopStateEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('PopStateEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -570,17 +381,6 @@ class PopStateEvent(Event):
 
 @interface('HashChangeEvent', 'Event')
 class HashChangeEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="oldURL", getter="get_oldURL", side_effect=1),
-            AttributeSpec(name="newURL", getter="get_newURL", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="HashChangeEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('HashChangeEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -594,20 +394,6 @@ class HashChangeEvent(Event):
 
 @interface('StorageEvent', 'Event')
 class StorageEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="key", getter="get_key", side_effect=1),
-            AttributeSpec(name="oldValue", getter="get_oldValue", side_effect=1),
-            AttributeSpec(name="newValue", getter="get_newValue", side_effect=1),
-            AttributeSpec(name="url", getter="get_url", side_effect=1),
-            AttributeSpec(name="storageArea", getter="get_storageArea", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="StorageEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('StorageEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -629,15 +415,6 @@ class StorageEvent(Event):
 class WebGLContextEvent(Event):
     """``webglcontextlost`` and its siblings: what a lost context reports."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="statusMessage", getter="get_statusMessage",
-                                  side_effect=1),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="WebGLContextEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('WebGLContextEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -648,20 +425,6 @@ class WebGLContextEvent(Event):
 
 @interface('AnimationEvent', 'Event')
 class AnimationEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="animationName", getter="get_animationName", side_effect=1),
-            AttributeSpec(name="elapsedTime", getter="get_elapsedTime", side_effect=1),
-            AttributeSpec(name="pseudoElement", getter="get_pseudoElement", side_effect=1),
-            AttributeSpec(name="animation", getter="get_animation", side_effect=1),
-            AttributeSpec(name="pseudoTarget", getter="get_pseudoTarget", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="AnimationEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('AnimationEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -681,20 +444,6 @@ class AnimationEvent(Event):
 
 @interface('TransitionEvent', 'Event')
 class TransitionEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="propertyName", getter="get_propertyName", side_effect=1),
-            AttributeSpec(name="elapsedTime", getter="get_elapsedTime", side_effect=1),
-            AttributeSpec(name="pseudoElement", getter="get_pseudoElement", side_effect=1),
-            AttributeSpec(name="animation", getter="get_animation", side_effect=1),
-            AttributeSpec(name="pseudoTarget", getter="get_pseudoTarget", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="TransitionEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('TransitionEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -714,16 +463,6 @@ class TransitionEvent(Event):
 
 @interface('PromiseRejectionEvent', 'Event')
 class PromiseRejectionEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="promise", getter="get_promise", side_effect=1),
-            AttributeSpec(name="reason", getter="get_reason", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="PromiseRejectionEvent",
-        has_constructor=1,
-    )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('PromiseRejectionEvent', event_type, options)
@@ -738,14 +477,6 @@ class PromiseRejectionEvent(Event):
 
 @interface('PageTransitionEvent', 'Event')
 class PageTransitionEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="persisted", getter="get_persisted", side_effect=1),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="PageTransitionEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('PageTransitionEvent', event_type, options)
         super().__init__(event_type, options, **kw)
@@ -757,15 +488,6 @@ class PageTransitionEvent(Event):
 @interface('PageRevealEvent', 'Event')
 class PageRevealEvent(Event):
     """``pagereveal``: fired once when the page is first presented."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="viewTransition", getter="get_viewTransition",
-                                  side_effect=1),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="PageRevealEvent",
-        has_constructor=1,
-    )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('PageRevealEvent', event_type, options)
@@ -780,17 +502,6 @@ class PageRevealEvent(Event):
 @interface('PageSwapEvent', 'Event')
 class PageSwapEvent(Event):
     """``pageswap``: the last event before a document is replaced."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="viewTransition", getter="get_viewTransition", side_effect=1),
-            AttributeSpec(name="activation", getter="get_activation", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="PageSwapEvent",
-        has_constructor=1,
-    )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('PageSwapEvent', event_type, options)
@@ -807,16 +518,8 @@ class PageSwapEvent(Event):
 
 @interface('BeforeUnloadEvent', 'Event')
 class BeforeUnloadEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="returnValue", getter="get_returnValue", setter="set_returnValue"),
-        ),
         # ``allow_new=false`` in the baseline: non-constructible, but the host
         # still builds one through ``__init__``.
-        constructor_behavior=0,
-        to_string_tag="BeforeUnloadEvent",
-        has_constructor=0,
-    )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('BeforeUnloadEvent', event_type, options)
@@ -834,27 +537,6 @@ class BeforeUnloadEvent(Event):
 @interface('Touch', None)
 class Touch:
     """One contact point, as a ``TouchEvent`` carries it."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="identifier", getter="get_identifier", side_effect=1),
-            AttributeSpec(name="target", getter="get_target", side_effect=1),
-            AttributeSpec(name="screenX", getter="get_screenX", side_effect=1),
-            AttributeSpec(name="screenY", getter="get_screenY", side_effect=1),
-            AttributeSpec(name="clientX", getter="get_clientX", side_effect=1),
-            AttributeSpec(name="clientY", getter="get_clientY", side_effect=1),
-            AttributeSpec(name="pageX", getter="get_pageX", side_effect=1),
-            AttributeSpec(name="pageY", getter="get_pageY", side_effect=1),
-            AttributeSpec(name="radiusX", getter="get_radiusX", side_effect=1),
-            AttributeSpec(name="radiusY", getter="get_radiusY", side_effect=1),
-            AttributeSpec(name="rotationAngle", getter="get_rotationAngle", side_effect=1),
-            AttributeSpec(name="force", getter="get_force", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="Touch",
-        has_constructor=1,
-    )
 
     def __init__(self, init=MISSING, *_extra, **_):
         if init is MISSING:
@@ -892,14 +574,6 @@ class Touch:
 class TouchList(ReadOnlyIndexedPropertyMixin):
     """The contacts one ``touches``/``targetTouches``/``changedTouches`` reports."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="TouchList",
-        has_constructor=1,
-    )
-
     def __init__(self, touches=(), **_):
         self._touches = tuple(touches)
 
@@ -931,23 +605,8 @@ class TouchEvent(UIEvent):
     that calls it gets the same ``TypeError`` there as here.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="touches", getter="get_touches", side_effect=1),
-            AttributeSpec(name="targetTouches", getter="get_targetTouches", side_effect=1),
-            AttributeSpec(name="changedTouches", getter="get_changedTouches", side_effect=1),
-            AttributeSpec(name="altKey", getter="get_altKey", side_effect=1),
-            AttributeSpec(name="metaKey", getter="get_metaKey", side_effect=1),
-            AttributeSpec(name="ctrlKey", getter="get_ctrlKey", side_effect=1),
-            AttributeSpec(name="shiftKey", getter="get_shiftKey", side_effect=1),
-        ),
         #: No ``initTouchEvent``: Chrome 154's baseline does not carry it, so it would be a
         #: difference rather than a repair.
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="TouchEvent",
-        has_constructor=1,
-    )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('TouchEvent', event_type, options)
@@ -973,16 +632,6 @@ class TouchEvent(UIEvent):
 @interface('EventTarget', None)
 class EventTarget:
     # Every ``on*`` slot is generated from ``_HANDLER_SLOTS`` at module bottom.
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(),
-        methods=(
-            MethodSpec(name="addEventListener", callback="fn_addEventListener", length=2),
-            MethodSpec(name="removeEventListener", callback="fn_removeEventListener", length=2),
-            MethodSpec(name="dispatchEvent", callback="fn_dispatchEvent", length=1),
-        ),
-        constructor_behavior=1,
-        has_constructor=1,
-    )
 
     def __init__(self, *_extra, services=None, **_):
         if services is pyv8.Undefined:
@@ -1172,10 +821,9 @@ class EventTarget:
 MOTION_EVENT_TYPES = ("devicemotion", "deviceorientation", "deviceorientationabsolute")
 
 
-# Event-handler attributes shared by every EventTarget subclass.  Only names the
-# Chromium baseline declares are listed, and composition slots are absent (the
-# baseline declares them only on ``EditContext``).  Installed with
-# ``FlagLocation.kInstance``, keeping them off ``EventTarget.prototype``.
+# Event-handler attributes shared by every EventTarget subclass.  Only names this release's
+# IDL declares are listed, so nothing here can be a declaration that never installs;
+# composition slots are absent (the IDL declares those only on ``EditContext``).
 _HANDLER_SLOTS = (
     "onload", "onerror", "onreadystatechange", "onpageshow", "onpagehide",
     "onunload", "onbeforeunload",
@@ -1188,7 +836,6 @@ _HANDLER_SLOTS = (
     "onpointerdown", "onpointerup", "onpointermove", "onpointerover", "onpointerout",
     "onpointerenter", "onpointerleave", "onpointercancel",
     "ongotpointercapture", "onlostpointercapture", "onwheel", "onscroll",
-    "ontouchstart", "ontouchend", "ontouchmove", "ontouchcancel",
     "onhashchange", "onpopstate", "onstorage", "onmessageerror",
     "onvisibilitychange", "onfreeze", "onresume",
     "onloadstart", "onloadend", "onprogress", "onabort", "ontimeout",
@@ -1203,13 +850,12 @@ _HANDLER_SLOTS = (
     "ondrag", "ondragend", "ondragenter", "ondragleave", "ondragover", "ondragstart",
     "ondrop",
     "ondevicemotion", "ondeviceorientation", "ondeviceorientationabsolute",
-    "ononline", "onoffline", "onlanguagechange", "onorientationchange",
-    "onafterprint", "onbeforeprint", "onbeforetoggle", "onbeforematch", "onbeforefilter",
+    "ononline", "onoffline", "onlanguagechange",
+    "onafterprint", "onbeforeprint", "onbeforetoggle", "onbeforematch",
     "onbeforeinstallprompt", "onappinstalled", "onpageswap", "onpagereveal",
     "oncommand", "oncomplete",
-    "onmove", "onresize", "onscrollend", "onscrollsnapchange", "onscrollsnapchanging",
-    "onoverscrollstart", "onoverscrollchanging", "onoverscrollend", "onoverscrollcancel",
-    "ongamepadconnected", "ongamepaddisconnected", "ongamepadrawinputchanged",
+    "onresize", "onscrollend", "onscrollsnapchange", "onscrollsnapchanging",
+    "ongamepadconnected", "ongamepaddisconnected",
     "oncontextlost", "oncontextrestored",
     "oncancel", "onclose", "oncuechange", "onformdata", "onmousewheel",
     "onpointerrawupdate", "onsearch", "onsecuritypolicyviolation", "onslotchange",
@@ -1225,9 +871,8 @@ def _install_handler_slots(cls, names):
 
     ``_raw_callback`` resolves a callback by *name* from the class ``__mro__``, so
     one generic accessor cannot serve several attribute names; generated per slot
-    once at import time.
+    once at import time.  The convention binds them, so nothing is declared here.
     """
-    attributes = []
     for name in names:
         def getter(self, _name=name):
             return self._handlers.get(_name, pyv8.Null)
@@ -1239,12 +884,14 @@ def _install_handler_slots(cls, names):
         setter.__name__ = "set_" + name
         setattr(cls, getter.__name__, getter)
         setattr(cls, setter.__name__, setter)
-        attributes.append(AttributeSpec(name=name, getter=getter.__name__, setter=setter.__name__,
-                                        location=FlagLocation.kInstance))
-    return tuple(attributes)
 
 
-EventTarget.__v8_idl_spec__ = EventTarget.__v8_idl_spec__.replace(
-    attributes=EventTarget.__v8_idl_spec__.attributes
-    + _install_handler_slots(EventTarget, _HANDLER_SLOTS)
-)
+#: The slots an event target answers are instance members here: they belong to each object, not
+#: to ``EventTarget.prototype``.  No interface in the document states them on ``EventTarget`` --
+#: it answers them through the objects that carry them -- so the class that installs them is the
+#: one that says where they live.
+_install_handler_slots(EventTarget, _HANDLER_SLOTS)
+EventTarget.__idl_overrides__ = {
+    "members": {name: {"location": "instance"} for name in _HANDLER_SLOTS},
+    "interface": {"length": 0},
+}

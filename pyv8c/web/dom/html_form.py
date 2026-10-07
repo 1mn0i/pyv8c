@@ -6,9 +6,8 @@ legacy object in Chromium, so their handlers and ``RadioNodeList`` live here.
 from typing import NamedTuple
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import boolean, dom_string
 from ...foundation.errors import LegacyPropertyError, V8TypeError
 from .collections import DOMTokenList, HTMLFormControlsCollection, HYPERLINK_REL_TOKENS, NodeList
@@ -20,13 +19,7 @@ from .utils import crlf, encode_entries, replace_query, urlencoded
 class RadioNodeList(NodeList):
     """The live collection returned for duplicate form names."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="value", getter="get_value", setter="set_value"),),
-        to_string_tag="RadioNodeList",
-        has_constructor=0,
         #: A ``NodeList``, so it publishes what one does; stated rather than inherited.
-        array="iterable",
-    )
 
     def get_value(self):
         for item in self._items():
@@ -145,40 +138,18 @@ class HTMLFormElement(HTMLElement):
     the owner is the form named by the attribute, else the nearest ancestor form.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="elements", getter="get_elements", side_effect=1),
-            AttributeSpec(name="length", getter="get_length", side_effect=1),
-            AttributeSpec(name="action", getter="get_action", setter="set_action"),
-            AttributeSpec(name="acceptCharset", getter="get_acceptCharset", setter="set_acceptCharset"),
-            AttributeSpec(name="autocomplete", getter="get_autocomplete", setter="set_autocomplete"),
-            AttributeSpec(name="enctype", getter="get_enctype", setter="set_enctype"),
-            AttributeSpec(name="encoding", getter="get_encoding", setter="set_encoding"),
-            AttributeSpec(name="method", getter="get_method", setter="set_method"),
-            AttributeSpec(name="name", getter="get_name", setter="set_name"),
-            AttributeSpec(name="noValidate", getter="get_noValidate", setter="set_noValidate"),
-            AttributeSpec(name="rel", getter="get_rel", setter="set_rel"),
-            AttributeSpec(name="relList", getter="get_relList", side_effect=1),
-            AttributeSpec(name="target", getter="get_target", setter="set_target"),
-        ),
-        methods=(
-            MethodSpec(name="checkValidity", callback="fn_checkValidity"),
-            MethodSpec(name="reportValidity", callback="fn_reportValidity"),
-            MethodSpec(name="requestSubmit", callback="fn_requestSubmit", length=1),
-            MethodSpec(name="reset", callback="fn_reset"),
-            MethodSpec(name="submit", callback="fn_submit"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-        name_get="__v8_name_get__",
-        name_set="__v8_name_set__",
-        name_del="__v8_name_del__",
-        name_enum="__v8_name_enum__",
-        index_get="__v8_index_get__",
-        index_set="__v8_index_set__",
-        index_del="__v8_index_del__",
-        index_enum="__v8_index_enum__",
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "index_del": "__v8_index_del__",
+            "index_enum": "__v8_index_enum__",
+            "index_get": "__v8_index_get__",
+            "index_set": "__v8_index_set__",
+            "name_del": "__v8_name_del__",
+            "name_enum": "__v8_name_enum__",
+            "name_get": "__v8_name_get__",
+            "name_set": "__v8_name_set__"
+        }
+    }
     def get_action(self):
         """The submission URL: the document's own URL, without its fragment, when
         the attribute is absent."""
@@ -392,6 +363,5 @@ class HTMLFormElement(HTMLElement):
             elif isinstance(control, HTMLSelectElement):
                 control.set_selectedIndex(control.get_selectedIndex())
         return pyv8.Undefined
-
 
 __all__ = ["HTMLFormElement", "RadioNodeList"]

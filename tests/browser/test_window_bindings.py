@@ -20,8 +20,8 @@ def page():
 def test_window_declares_no_named_handler_of_its_own():
     browser = Browser(cache=False, stub_logging="off")
     try:
-        universe = browser.interface_universe
-        config = universe.class_config_for("Window")
+        bindings = browser.bindings
+        config = bindings.class_config_for("Window")
         # Stub filling is covered by test_interface_stubs; here the class declares none.
         for suffix in ("get", "set", "query", "del", "enum"):
             name = "__v8_name_" + suffix + "__"
@@ -29,9 +29,10 @@ def test_window_declares_no_named_handler_of_its_own():
         assert config.index_get
         assert config.cross_origin_check
         assert config.cross_origin_name_get
-        assert not hasattr(universe, 'binding_plan')
-        assert "postMessage" in {item.name for item in Window.__v8_idl_spec__.methods}
-        assert "onmessage" in {item.name for item in Window.__v8_idl_spec__.attributes}
+        assert not hasattr(bindings, 'binding_plan')
+        # What the page gets: the convention binds ``fn_postMessage``/``get_onmessage``.
+        assert "postMessage" in {item.name for item in config.methods}
+        assert "onmessage" in {item.name for item in config.attributes}
     finally:
         browser.close()
 

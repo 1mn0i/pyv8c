@@ -42,13 +42,13 @@ def _px(value, reference=0.0):
     if value in ("0", "0px"): return 0.0
     return _number(value, 0.0)
 
-
 _FONT_ROOTS = (
     os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"),
     "/usr/share/fonts/truetype/dejavu",
     "/usr/share/fonts/truetype/liberation2",
 )
 _FONT_FALLBACKS = ("arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf")
+
 
 #: A page measures text far more often than a font directory changes, so the listing,
 #: the resolved paths and the loaded handles are each read once per process.
@@ -117,12 +117,14 @@ def text_width(text, style):
 def _inline_declarations(element):
     return {name: value for name, value, _ in CSSStyleDeclaration(element=element)._declarations()}
 
+
 def _selector_matches(element, selector):
     """Match one stylesheet selector; unsupported syntax simply never matches."""
     try:
         return matches(element, selector)
     except V8SyntaxError:
         return False
+
 
 def document_rules(document):
     """The document's ``<style>`` rules as ``(selectors, declarations)`` pairs.
@@ -206,8 +208,10 @@ class Box:
 #: The four sides a shorthand covers, clockwise from the top.
 _SIDES = ("top", "right", "bottom", "left")
 
+
 #: What an inline-level box takes part in without leaving the line it is on.
 _INLINE = ("inline", "inline-block", "inline-flex", "inline-grid", "inline-table", "ruby")
+
 
 #: The default object size a replaced element falls back to when its content has no
 #: intrinsic size of its own, which is what an empty iframe, canvas or video measures.
@@ -589,17 +593,10 @@ def offset_parent(element):
     return None
 
 
-class ComputedStyle(CSSStyleDeclaration):
-    def __init__(self, element, values):
-        super().__init__(element=element); self._computed_values = values
-    def _declarations(self):
-        return [(name, value, "") for name, value in self._computed_values.items() if value not in ("", None)]
-    def _write(self, declarations): return None
-
-
 def computed_style_object(element, *, rendered=True):
-    return ComputedStyle(element, computed_style(element) if rendered else {})
-
+    """The cascade as a declaration block: the same interface, and nothing may write it back."""
+    return CSSStyleDeclaration(element=element,
+                               computed=computed_style(element) if rendered else {})
 
 __all__ = [
     "Box", "computed_style", "computed_style_object", "document_rules", "layout",

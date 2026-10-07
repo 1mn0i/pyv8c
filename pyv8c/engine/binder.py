@@ -22,6 +22,7 @@ from pyv8.flag import (
 )
 
 from ..foundation.logging import logger
+from ..idl import idl_spec, members_of, stated_fields, stated_key, unresolved_members
 
 
 # (baseline handler key, __v8_*__ method name) per interceptor family.
@@ -70,6 +71,7 @@ CROSS_ORIGIN_FAMILIES = (
     ),
 )
 
+
 #: Every named/indexed callback, plain and cross-origin, that may be stubbed when the baseline declares it.
 HANDLER_CALLBACKS = frozenset(
     callback for _family, mapping in HANDLER_FAMILIES + CROSS_ORIGIN_FAMILIES
@@ -82,7 +84,6 @@ TEMPLATE_FLAGS = (
     ("immutable_proto", "immutable"),
     ("undetectable", "undetectable"),
     ("global_this", "global_this"),
-    ("as_object", "as_object"),
     ("unconstructable", "unconstructable"),
 )
 
@@ -118,31 +119,58 @@ def property_flags(member) -> int:
     return result
 
 
+#: Those flags are a pure function of a member's shorthand, and ten thousand members reuse a
+#: handful of combinations.  Callers splat the dictionary into a spec, so a shared one is never
+#: written to; a caller that starts mutating it would have to copy it here.
+_FLAGS_CACHE: dict = {}
+_CROSS_ORIGIN_CACHE: dict = {}
+
+
 def member_flags(member) -> dict:
     """The flags every member spec carries, decoded from the member's shorthand."""
-    return dict(
-        location=_LOCATION_FLAGS.get(member.location, FlagLocation.kPrototype),
-        property_flags=property_flags(member),
-        receiver_check=(FlagReceiverCheck.kDoNotCheck if member.receiver == "DoNotCheck"
-                        else FlagReceiverCheck.kCheck),
-        side_effect=_SIDE_EFFECTS.get(member.side_effect, SideEffectType.kHasSideEffect),
-    )
+    key = (member.location, member.flags, member.property_flags, member.receiver,
+           member.side_effect)
+    found = _FLAGS_CACHE.get(key)
+    if found is None:
+        found = _FLAGS_CACHE[key] = dict(
+            location=_LOCATION_FLAGS.get(member.location, FlagLocation.kPrototype),
+            property_flags=property_flags(member),
+            receiver_check=(FlagReceiverCheck.kDoNotCheck if member.receiver == "DoNotCheck"
+                            else FlagReceiverCheck.kCheck),
+            side_effect=_SIDE_EFFECTS.get(member.side_effect, SideEffectType.kHasSideEffect),
+        )
+    return found
 
 
 def cross_origin_check(member) -> int:
     """Whether one member is guarded by the cross-origin access check."""
-    return (FlagCrossOriginCheck.kDoNotCheck if member.cross_origin == "DoNotCheck"
+    key = member.cross_origin
+    found = _CROSS_ORIGIN_CACHE.get(key)
+    if found is None:
+        found = _CROSS_ORIGIN_CACHE[key] = (
+            FlagCrossOriginCheck.kDoNotCheck if key == "DoNotCheck"
             else FlagCrossOriginCheck.kCheck)
+    return found
+
+
+#: ``fn_<member>``/``get_<member>`` (+``set_``): how a class answers a baseline member
+#: without declaring it.  Existence, place, arity and flags stay the baseline's.
+CONVENTION = {"operation": ("fn", None), "attribute": ("get", "set")}
 
 
 def apply_template_flags(config, template):
-    """The interface-wide flags one baseline template states.
+    """The interface-wide facts one baseline template states.
 
-    ``array`` is not one of them: it is a word, and ``InterfaceTable`` decides which.
+    ``array`` is not one of them: it decides which members exist, so the compiler reads it where
+    it installs the iterator.  ``definition_kind`` is a number the binding's own field takes, so
+    it travels as it stands.
     """
     for source, target in TEMPLATE_FLAGS:
         if template.get(source):
             config[target] = 1 if target == "immutable" else True
+    kind = template.get("definition_kind")
+    if kind is not None:
+        config["definition_kind"] = kind
     return config
 
 
@@ -152,7 +180,7 @@ def mark_stub(callback):
     return callback
 
 
-class StubFactory:
+class _Stubs:
     """Build the safe, logging shells used for unimplemented members."""
 
     #: The level that reports placeholder handlers, which run on ordinary property probes.
@@ -215,33 +243,43 @@ class StubFactory:
         return mark_stub(handler)
 
 
-class SignatureCache:
-    """Cache Python callback parameter names for one interface universe."""
+def _parameter_names(callback) -> tuple:
+    """The parameter names of one callback, read off ``__code__`` where that is the answer.
 
-    def __init__(self):
-        self._values = {}
+    Only the wrapper asks, and only for the first name, but it asks once per member of every
+    interface.  ``__code__`` is exactly what a signature says unless something has redefined
+    the signature -- a binding, a ``__wrapped__`` chain, a stated ``__signature__`` -- and
+    those keep the general answer.
+    """
+    code = getattr(callback, "__code__", None)
+    if code is None or hasattr(callback, "__signature__") or hasattr(callback, "__wrapped__"):
+        return tuple(inspect.signature(callback).parameters)
+    names = code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
+    # A bound method's ``self`` is already bound away, as a signature reports it.
+    return names[1:] if inspect.ismethod(callback) else names
 
-    def names(self, callback):
-        names = self._values.get(callback)
-        if names is None:
-            names = tuple(inspect.signature(callback).parameters)
-            self._values[callback] = names
-        return names
+
+#: Parameter names are a pure function of a callback, and the same callbacks answer every
+#: interface, so one table answers them all -- the wrapper asks once per member otherwise.
+_PARAMETERS: dict = {}
 
 
-class BindingWrapperFactory:
+def _parameters_for(callback):
+    names = _PARAMETERS.get(callback)
+    if names is None:
+        names = _PARAMETERS[callback] = _parameter_names(callback)
+    return names
+
+
+class _Callbacks:
     """Bind implementation callbacks directly, injecting a realm only when requested."""
 
-    def __init__(self, universe):
-        self.universe = universe
-        self._parameter_cache = SignatureCache()
-
-    def _parameters_for(self, callback):
-        return self._parameter_cache.names(callback)
+    def __init__(self, bindings):
+        self.bindings = bindings
 
     def method(self, cls, interface_name, public_name, callback_name, *, static, realm=None):
         raw = self._raw_callback(cls, callback_name)
-        parameters = self._parameters_for(raw)
+        parameters = _parameters_for(raw)
         inject_realm = static and realm is not None and parameters[:1] == ("_realm",)
 
         if not inject_realm:
@@ -257,8 +295,8 @@ class BindingWrapperFactory:
         return self._raw_callback(cls, callback_name)
 
     def constructor_adapter(self, interface_name, stub, realm=None):
-        implementation = self.universe.class_for(interface_name)
-        inject_realm = "_realm" in self._parameters_for(implementation)
+        implementation = self.bindings.class_for(interface_name)
+        inject_realm = "_realm" in _parameters_for(implementation)
 
         def construct(cls, args, kwargs):
             options = dict(kwargs)
@@ -270,6 +308,22 @@ class BindingWrapperFactory:
         if stub:
             construct.__v8_idl_stub__ = True
         return construct
+
+    @staticmethod
+    def find_callback(owner, name):
+        """The callable a name resolves to along the MRO, or ``None``.
+
+        What the convention asks: a name nothing defines -- or that a class shadows with
+        something that is not callable -- means this class does not implement that member,
+        which is what the stub is for.
+        """
+        for base in owner.__mro__:
+            if name in base.__dict__:
+                raw = base.__dict__[name]
+                raw = raw.__func__ if isinstance(raw, (staticmethod, classmethod)) else raw
+                if callable(raw):
+                    return raw
+        return None
 
     @staticmethod
     def _raw_callback(cls, name):
@@ -289,17 +343,39 @@ class CompiledInterface:
     realm_constructor: bool
 
 
-class InterfaceCompiler:
-    """Compile one interface universe's classes, once each."""
+#: Compiled interfaces, shared by interchangeable bindings (same baseline, profile and
+#: classes, no hooks, quiet stubs): the first page builds 10361 member specs, the next one
+#: in the process builds none.  A compile that reported a mismatch is not stored, so warn
+#: mode still warns once per bindings.
+_COMPILED: dict = {}
+_COMPILED_LIMIT = 20000
 
-    def __init__(self, universe, *, stub_logging="off", lock=None):
-        self.universe = universe
-        self.stubs = StubFactory(stub_logging)
-        self.wrappers = BindingWrapperFactory(universe)
+
+def compile_key(bindings, name, cls):
+    """What a compiled interface depends on: the baseline, the profile, the name and the class.
+
+    The profile's part of the key is its content: an ``id()`` would silently depend on the
+    surface object outliving the cache, and read as a hit once that address is reused.
+    """
+    return (getattr(bindings.idl, "digest", ""), bindings.idl.surface_key, name, cls,
+            stated_key(cls))
+
+
+class Binder:
+    """Compile one interface bindings's classes, once each."""
+
+    def __init__(self, bindings, *, stub_logging="off", lock=None):
+        self.bindings = bindings
+        self.stubs = _Stubs(stub_logging)
+        self.wrappers = _Callbacks(bindings)
         # ``None`` when nothing is hooked, so the member loop pays a check, not a lookup.
-        self.overrides = getattr(universe, "overrides", None) or None
+        self.overrides = getattr(bindings, "overrides", None) or None
         self._compiled = {}
-        # The universe shares its lock: a compile reaches back into it for classes.
+        #: How many interfaces this bindings built itself, the rest coming from ``_COMPILED``.
+        self.compiled_misses = 0
+        #: Members answered by the convention rather than by a declaration, for reporting.
+        self.convention_hits = 0
+        # The bindings shares its lock: a compile reaches back into it for classes.
         self._lock = lock or threading.RLock()
 
     def _fills_stub(self, callback_name, registration):
@@ -311,53 +387,101 @@ class InterfaceCompiler:
         """
         return callback_name in HANDLER_CALLBACKS or registration is None
 
-    def _members(self, cls, parent, field, public_names):
+    def _members(self, cls, name, parent, field, public_names):
+        """What the class and its bases state for one kind of member, nearest base winning."""
         members = {}
         inherited = False
         for base in cls.__mro__:
             inherited = inherited or base is parent
-            declaration = base.__dict__.get("__v8_idl_spec__")
-            if declaration is None:
+            stated = members_of(base, self.bindings.idl, name)[0 if field == "methods" else 1]
+            if not stated:
                 continue
-            own_names = set()
-            for member in getattr(declaration, field):
-                if member.name in own_names:
-                    raise TypeError(f"{base.__name__} declares duplicate {field}: {member.name}")
-                own_names.add(member.name)
+            for member in stated:
                 if not inherited or member.name in public_names:
                     members.setdefault(member.name, member)
         return members
 
+    def _writer(self, cls, interface_name, public_name, declared, member, setter_prefix):
+        """The callback that answers a write, or ``None`` for a member nothing answers.
+
+        The baseline decides whether a member can be written at all.  Where it does not say, a
+        declared setter or a convention ``set_<member>`` is what makes it writable; a member that
+        answers no write keeps the shell the read-only path always had, so a class that writes
+        nothing is not silently made writable.
+        """
+        if declared is not None:
+            writable = member.setter_state
+            if writable is None:
+                writable = declared.setter is not None
+            if not writable:
+                return None
+            if declared.setter is not None:
+                return self.wrappers.setter(cls, interface_name, public_name, declared.setter)
+            # A declaration that names no setter still leaves the write to the convention, the
+            # same way a member nothing declares does.
+            name = f"{setter_prefix}_{public_name}"
+            if self.wrappers.find_callback(cls, name) is not None:
+                return self.wrappers.setter(cls, interface_name, public_name, name)
+            return self.stubs.setter(interface_name, public_name)
+        name = f"{setter_prefix}_{public_name}"
+        if member.setter_state is not False and self.wrappers.find_callback(cls, name) is not None:
+            return self.wrappers.setter(cls, interface_name, public_name, name)
+        if member.setter_state:
+            return self.stubs.setter(interface_name, public_name)
+        return None
+
     def compile(self, name):
         with self._lock:
-            if name not in self._compiled:
-                self._compiled[name] = self._compile(name)
-            return self._compiled[name]
+            cached = self._compiled.get(name)
+            if cached is not None:
+                return cached
+            # A hook answers members itself and stub logging keeps its own set: both stay uncached.
+            sharing = self.overrides is None and self.bindings.stub_logging == "off"
+            key = compile_key(self.bindings, name, self.bindings.class_for(name)) if sharing else None
+            compiled = _COMPILED.get(key) if key is not None else None
+            if compiled is None:
+                before = len(self.bindings.discrepancies)
+                compiled = self._compile(name)
+                if key is not None and len(self.bindings.discrepancies) == before:
+                    if len(_COMPILED) >= _COMPILED_LIMIT:
+                        # Oldest first: a dict keeps its insertion order, and clearing every
+                        # entry would make the next page recompile all of them.
+                        for stale in list(_COMPILED)[:len(_COMPILED) // 2]:
+                            del _COMPILED[stale]
+                    _COMPILED[key] = compiled
+                    self.compiled_misses += 1
+            self._compiled[name] = compiled
+            return compiled
 
     def _compile(self, name):
-        universe = self.universe
-        cls = universe.class_for(name)
-        interface = universe.table.interface(name)
+        bindings = self.bindings
+        cls = bindings.class_for(name)
+        interface = bindings.idl.interface(name)
         parent_name = interface.parent
-        parent = universe.class_for(parent_name) if parent_name else object
-        implementation = universe.runtime.interface(name)
+        parent = bindings.class_for(parent_name) if parent_name else object
+        implementation = bindings.runtime.interface(name)
         registration = getattr(implementation, "__idl_spec__", None)
         if registration is not None:
-            if registration.parent and registration.parent not in universe.runtime.catalog.interfaces:
+            if registration.parent and registration.parent not in bindings.runtime.catalog.interfaces:
                 raise TypeError(f"{name} refers to unknown parent {registration.parent}")
             if parent_name is not None and registration.parent != parent_name:
-                if not universe.report_mismatch(
+                if not bindings.report_mismatch(
                         f"{name} parent {registration.parent!r} is not {parent_name!r} in the interface baseline"):
                     raise TypeError(f"{name} parent does not match baseline")
-            if registration.parent and universe.class_for(registration.parent) not in cls.__mro__[1:]:
-                if not universe.report_mismatch(f"{name} must explicitly inherit {registration.parent}"):
+            if registration.parent and bindings.class_for(registration.parent) not in cls.__mro__[1:]:
+                if not bindings.report_mismatch(f"{name} must explicitly inherit {registration.parent}"):
                     raise TypeError(f"{name} must explicitly inherit {registration.parent}")
-        source = cls.__dict__.get("__v8_idl_spec__", IdlSpec())
-        entries = universe.table.own_members(name)
+        for owner, member_name in unresolved_members(cls, bindings.idl, name):
+            # A declared member the document does not carry: an older document or a mistake.
+            message = f"{owner}.{member_name} is not present in the interface baseline"
+            if not bindings.report_mismatch(message):
+                raise TypeError(f"{owner}.{member_name} is not present in Chromium interface baseline")
+        source = idl_spec(cls, bindings.idl, name)
+        entries = bindings.idl.own_members(name)
         public_methods = {member.name for _, member in entries if member.kind == "operation"}
         public_attributes = {member.name for _, member in entries if member.kind == "attribute"}
-        declared_methods = self._members(cls, parent, "methods", public_methods)
-        declared_attributes = self._members(cls, parent, "attributes", public_attributes)
+        declared_methods = self._members(cls, name, parent, "methods", public_methods)
+        declared_attributes = self._members(cls, name, parent, "attributes", public_attributes)
         methods = []
         attributes = []
         realm_methods = []
@@ -370,6 +494,7 @@ class InterfaceCompiler:
                 continue
             seen.add((kind, public_name))
             common = member_flags(member)
+            prefix, setter_prefix = CONVENTION[kind]
             override = overrides.for_member(name, public_name) if overrides is not None else None
             if override is not None:
                 logger.debug("interface override: {}.{} is answered by the host", name, public_name)
@@ -381,10 +506,18 @@ class InterfaceCompiler:
                 elif declared is not None:
                     raw = self.wrappers._raw_callback(cls, declared.callback)
                     callback = self.wrappers.method(cls, name, public_name, raw, static=static)
-                    if static and self.wrappers._parameters_for(raw)[:1] == ("_realm",):
+                    if static and _parameters_for(raw)[:1] == ("_realm",):
                         realm_methods.append((len(methods), raw))
                 else:
-                    callback = self.stubs.method(name, public_name, static=static)
+                    # ``fn_<member>``: the class implements it, and finding nothing leaves the stub.
+                    raw = self.wrappers.find_callback(cls, f"{prefix}_{public_name}")
+                    if raw is None:
+                        callback = self.stubs.method(name, public_name, static=static)
+                    else:
+                        self.convention_hits += 1
+                        callback = self.wrappers.method(cls, name, public_name, raw, static=static)
+                        if static and _parameters_for(raw)[:1] == ("_realm",):
+                            realm_methods.append((len(methods), raw))
                 length = member.length if member.length is not None else (declared.length if declared else 0)
                 methods.append(
                     MethodSpec(name=public_name, callback=callback, length=int(length),
@@ -394,51 +527,46 @@ class InterfaceCompiler:
                 declared = declared_attributes.pop(public_name, None)
                 if override is not None and override.get is not None:
                     getter = override.get
+                elif declared is not None:
+                    getter = self.wrappers._raw_callback(cls, declared.getter)
                 else:
-                    getter = (
-                        self.wrappers._raw_callback(cls, declared.getter)
-                        if declared
-                        else self.stubs.getter(name, public_name)
-                    )
+                    # One member at a time, as with operations: ``get_<member>`` or the stub.
+                    getter = self.wrappers.find_callback(cls, f"{prefix}_{public_name}")
+                    if getter is None:
+                        getter = self.stubs.getter(name, public_name)
+                    else:
+                        self.convention_hits += 1
                 setter = None
                 if override is not None and override.set is not None:
                     # A hook that answers the write is what makes the member writable.
                     setter = override.set
                 else:
-                    writable = member.setter_state
-                    if writable is None:
-                        writable = declared is not None and declared.setter is not None
-                    if writable:
-                        setter = (
-                            self.wrappers.setter(cls, name, public_name, declared.setter)
-                            if declared is not None and declared.setter is not None
-                            else self.stubs.setter(name, public_name)
-                        )
+                    setter = self._writer(cls, name, public_name, declared, member, setter_prefix)
                 crossing = cross_origin_check(member)
                 attributes.append(
                     AttributeSpec(name=public_name, getter=getter, setter=setter, replaceable=bool(declared and declared.replaceable), cross_origin_get_check=crossing, cross_origin_set_check=crossing, **common)
                 )
         for public_name, declared in declared_methods.items():
-            if universe.table.member(name, public_name, "operation") is None:
-                if universe.table.declares(name, public_name, "operation"):
+            if bindings.idl.member(name, public_name, "operation") is None:
+                if bindings.idl.declares(name, public_name, "operation"):
                     # The baseline has it, the browser does not install it.
                     continue
-                if not universe.report_mismatch(
+                if not bindings.report_mismatch(
                         f"{name}.{public_name} is not present in the interface baseline"):
                     raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
                 continue
             raw = self.wrappers._raw_callback(cls, declared.callback)
             static = declared.location == FlagLocation.kInterface
             callback = self.wrappers.method(cls, name, public_name, raw, static=static)
-            if static and self.wrappers._parameters_for(raw)[:1] == ("_realm",):
+            if static and _parameters_for(raw)[:1] == ("_realm",):
                 realm_methods.append((len(methods), raw))
             methods.append(declared.replace(callback=callback))
         for public_name, declared in declared_attributes.items():
-            if universe.table.member(name, public_name, "attribute") is None:
-                if universe.table.declares(name, public_name, "attribute"):
+            if bindings.idl.member(name, public_name, "attribute") is None:
+                if bindings.idl.declares(name, public_name, "attribute"):
                     # Same as operations.
                     continue
-                if not universe.report_mismatch(
+                if not bindings.report_mismatch(
                         f"{name}.{public_name} is not present in the interface baseline"):
                     raise TypeError(f"{name}.{public_name} is not present in Chromium interface baseline")
                 continue
@@ -461,15 +589,11 @@ class InterfaceCompiler:
             callback for _, mapping in HANDLER_FAMILIES + CROSS_ORIGIN_FAMILIES for _, callback in mapping
         ] + ["__v8_cross_origin_check__"]
         options = {}
-        declarations = tuple(
-            base.__dict__["__v8_idl_spec__"] for base in cls.__mro__ if "__v8_idl_spec__" in base.__dict__
-        )
+        declarations = tuple(stated_fields(base) for base in cls.__mro__)
         for callback_name in handler_names:
             key = callback_name[5:-2]
             reference = next(
-                (getattr(declaration, key) for declaration in declarations if getattr(declaration, key) is not None),
-                None,
-            )
+                (fields[key] for fields in declarations if fields.get(key)), None)
             if reference is not None:
                 options[key] = self.wrappers._raw_callback(cls, reference)
             elif callback_name in enabled and self._fills_stub(callback_name, registration):
@@ -504,9 +628,9 @@ class InterfaceCompiler:
         elif template.get("call_handler"):
             options["call"] = self.stubs.call_handler(name)
         apply_template_flags(options, template)
-        #: A namespace (``CSS``) is an object in Chrome, a function here: the interface object on
-        #: the global is the binding's, and neither ``as_object`` nor ``has_constructor=0`` turns
-        #: it into one -- this needs the native layer or a JS bootstrap (see examples/5s/README).
+        #: ``definition_kind`` is the document's word for which interface object this is: Blink
+        #: builds a namespace from an ``ObjectTemplate`` (``SetupIDLNamespaceTemplate``) and gives
+        #: a callback interface no prototype (``SetupIDLCallbackInterfaceTemplate``).
 
         if source.array:
             options["array"] = source.array
@@ -526,14 +650,14 @@ class InterfaceCompiler:
         realm_constructor = False
         if options.get("constructor_behavior", source.constructor_behavior):
             options["constructor_adapter"] = self.wrappers.constructor_adapter(name, registration is None)
-            realm_constructor = "_realm" in self.wrappers._parameters_for(cls)
+            realm_constructor = "_realm" in _parameters_for(cls)
         return CompiledInterface(source.replace(**options), tuple(realm_methods), realm_constructor)
 
     def bind(self, name, realm=None):
         compiled = self.compile(name)
         if realm is None or not (compiled.realm_methods or compiled.realm_constructor):
             return compiled.spec
-        cls = self.universe.class_for(name)
+        cls = self.bindings.class_for(name)
         changes = {}
         if compiled.realm_methods:
             methods = list(compiled.spec.methods)
@@ -544,6 +668,6 @@ class InterfaceCompiler:
             changes["methods"] = tuple(methods)
         if compiled.realm_constructor:
             changes["constructor_adapter"] = self.wrappers.constructor_adapter(
-                name, self.universe.runtime.interface(name) is None, realm
+                name, self.bindings.runtime.interface(name) is None, realm
             )
         return compiled.spec.replace(**changes)

@@ -127,8 +127,16 @@ def main(argv):
           f"{'kind':>5}")
     rows = {}
     missing_holder = {}
+    frame_window = {}
     for holder in holders:
         raw_left, raw_right = mine.get(holder) or {}, theirs.get(holder) or {}
+        #: A holder reached through a frame slot is another browsing context seen from outside:
+        #: both sides answer with a facade there, so its own names are not that window's surface.
+        if any("__frameWindow" in raw for raw in (raw_left, raw_right)):
+            frame_window[holder] = True
+            rows[holder] = ([], [], [])
+            print(f"{holder:28} {'-':>6} {'-':>7}  frame window, not comparable")
+            continue
         absent = [label for label, raw in (("pyv8c", raw_left), ("chrome", raw_right))
                   if "__missing" in raw]
         if absent:
@@ -150,6 +158,13 @@ def main(argv):
 
     print(f"\ntotals: only-chrome {totals['only_chrome']}  only-here {totals['only_here']}  "
           f"kind {totals['kind']}")
+    if frame_window:
+        #: Counted apart, not held against the engines: the holders are listed so a reading can
+        #: never lose one silently.
+        print(f"not counted: {len(frame_window)} frame window(s) "
+              f"({', '.join(sorted(frame_window))})")
+    if missing_holder:
+        print(f"not counted: {len(missing_holder)} holder(s) absent on one side")
 
     #: ASCII labels on purpose: this runs into a GBK console, and a report that dies on its own
     #: section header reports nothing (the JSON beside it keeps every name either way).

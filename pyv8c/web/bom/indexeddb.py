@@ -13,10 +13,10 @@ from bisect import bisect_left, bisect_right
 from datetime import datetime
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
 
-from ...engine.features import FeatureImplementation, interface
+from ...engine.features import FeatureImplementation
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     boolean,
@@ -86,7 +86,6 @@ def _syntax_error(message="The keyPath argument contains an invalid key path."):
 
 def _abort_error():
     return _fail("AbortError", "The transaction was aborted.")
-
 
 _NUMBER, _DATE, _STRING, _BINARY, _ARRAY = 0, 1, 2, 3, 4
 _TYPE_ORDER = {_NUMBER: 0, _DATE: 1, _STRING: 2, _BINARY: 3, _ARRAY: 4}
@@ -167,7 +166,6 @@ def _key_sort_key(key):
             return (_TYPE_ORDER[kind], tuple(encode(part) for part in value))
         return (_TYPE_ORDER[kind], value)
     return encode(key)
-
 
 _MISSING = object()
 
@@ -480,7 +478,6 @@ class _DatabaseModel:
         self.stores = {}
         self.connections = []
 
-
 _LOCK = threading.RLock()
 _BLOCKED_WAIT_SECONDS = 5.0
 _BLOCKED_POLL_SECONDS = 0.05
@@ -523,17 +520,6 @@ def _limit(values, count):
 
 @interface('IDBRecord', None)
 class IDBRecord:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="key", getter="get_key", side_effect=1),
-            AttributeSpec(name="primaryKey", getter="get_primaryKey", side_effect=1),
-            AttributeSpec(name="value", getter="get_value", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="IDBRecord",
-        has_constructor=1,
-    )
-
     def __init__(self, key=None, primary_key=None, value=None, **_):
         self._key = key
         self._primary_key = primary_key
@@ -555,17 +541,6 @@ class IDBRecord:
 
 @interface('IDBVersionChangeEvent', 'Event')
 class IDBVersionChangeEvent(Event):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="oldVersion", getter="get_oldVersion", side_effect=1),
-            AttributeSpec(name="newVersion", getter="get_newVersion", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="IDBVersionChangeEvent",
-        has_constructor=1,
-    )
-
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         if event_type is MISSING:
             raise missing_error('IDBVersionChangeEvent', 'constructor', 1, 0, constructor=True)
@@ -643,21 +618,6 @@ class _RequestMixin:
 
 @interface('IDBRequest', 'EventTarget')
 class IDBRequest(EventTarget, _RequestMixin):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="result", getter="get_result", side_effect=1),
-            AttributeSpec(name="error", getter="get_error", side_effect=1),
-            AttributeSpec(name="source", getter="get_source", side_effect=1),
-            AttributeSpec(name="transaction", getter="get_transaction", side_effect=1),
-            AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
-            AttributeSpec(name="onsuccess", getter="get_onsuccess", setter="set_onsuccess"),
-            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="IDBRequest",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, source=None, transaction=None, **kw):
         super().__init__(services=services, **kw)
         self._init_request(source=source, transaction=transaction)
@@ -699,16 +659,6 @@ class IDBRequest(EventTarget, _RequestMixin):
 
 @interface('IDBOpenDBRequest', 'IDBRequest')
 class IDBOpenDBRequest(IDBRequest):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="onblocked", getter="get_onblocked", setter="set_onblocked"),
-            AttributeSpec(name="onupgradeneeded", getter="get_onupgradeneeded", setter="set_onupgradeneeded"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="IDBOpenDBRequest",
-        has_constructor=1,
-    )
-
     def get_onblocked(self):
         return self._get_handler("onblocked")
 
@@ -723,7 +673,6 @@ class IDBOpenDBRequest(IDBRequest):
         value = event_handler(value)
         self._set_handler("onupgradeneeded", value)
 
-
 _STATIC = dict(
     location=FlagLocation.kInterface,
     receiver_check=FlagReceiverCheck.kDoNotCheck,
@@ -733,25 +682,6 @@ _STATIC = dict(
 
 @interface('IDBKeyRange', None)
 class IDBKeyRange:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="lower", getter="get_lower", side_effect=1),
-            AttributeSpec(name="upper", getter="get_upper", side_effect=1),
-            AttributeSpec(name="lowerOpen", getter="get_lowerOpen", side_effect=1),
-            AttributeSpec(name="upperOpen", getter="get_upperOpen", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="includes", callback="fn_includes", length=1, side_effect=1),
-            MethodSpec(name="only", callback="fn_only", length=1, side_effect=1, **_STATIC),
-            MethodSpec(name="lowerBound", callback="fn_lowerBound", length=1, side_effect=1, **_STATIC),
-            MethodSpec(name="upperBound", callback="fn_upperBound", length=1, side_effect=1, **_STATIC),
-            MethodSpec(name="bound", callback="fn_bound", length=2, side_effect=1, **_STATIC),
-        ),
-        constructor_behavior=0,
-        to_string_tag="IDBKeyRange",
-        has_constructor=1,
-    )
-
     def __init__(self, range=None, **_):
         self._range = range if range is not None else _KeyRange()
 
@@ -818,7 +748,6 @@ class IDBKeyRange:
         if value is MISSING:
             raise missing_error('IDBKeyRange', 'includes', 1, 0, constructor=False)
         return self._range.contains(_to_key(value))
-
 
 _DIRECTIONS = ("next", "nextunique", "prev", "prevunique")
 
@@ -978,66 +907,18 @@ class _CursorBody:
 
 @interface('IDBCursor', None)
 class IDBCursor(_CursorBody):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="source", getter="get_source", side_effect=1),
-            AttributeSpec(name="direction", getter="get_direction", side_effect=1),
-            AttributeSpec(name="key", getter="get_key", side_effect=1),
-            AttributeSpec(name="primaryKey", getter="get_primaryKey", side_effect=1),
-            AttributeSpec(name="request", getter="get_request", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="advance", callback="fn_advance", length=1),
-            MethodSpec(name="continue", callback="fn_continue", length=0),
-            MethodSpec(name="continuePrimaryKey", callback="fn_continuePrimaryKey", length=2),
-            MethodSpec(name="delete", callback="fn_delete"),
-            MethodSpec(name="update", callback="fn_update", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="IDBCursor",
-        has_constructor=1,
-    )
-
     def __init__(self, source=None, key_range=None, direction="next", key_only=True, request=None, **_):
         self._init_cursor(source, key_range, direction, key_only, request)
 
 
 @interface('IDBCursorWithValue', 'IDBCursor')
 class IDBCursorWithValue(IDBCursor):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="value", getter="get_value", side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="IDBCursorWithValue",
-        has_constructor=1,
-    )
-
     def get_value(self):
         return self._value if self._value is not None else pyv8.Undefined
 
 
 @interface('IDBTransaction', 'EventTarget')
 class IDBTransaction(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="objectStoreNames", getter="get_objectStoreNames", side_effect=1),
-            AttributeSpec(name="mode", getter="get_mode", side_effect=1),
-            AttributeSpec(name="durability", getter="get_durability", side_effect=1),
-            AttributeSpec(name="db", getter="get_db", side_effect=1),
-            AttributeSpec(name="error", getter="get_error", side_effect=1),
-            AttributeSpec(name="onabort", getter="get_onabort", setter="set_onabort"),
-            AttributeSpec(name="oncomplete", getter="get_oncomplete", setter="set_oncomplete"),
-            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
-        ),
-        methods=(
-            MethodSpec(name="abort", callback="fn_abort"),
-            MethodSpec(name="commit", callback="fn_commit"),
-            MethodSpec(name="objectStore", callback="fn_objectStore", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="IDBTransaction",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, database=None, stores=(), mode="readonly",
                  durability="default", on_finish=None, **kw):
         super().__init__(services=services, **kw)
@@ -1309,36 +1190,6 @@ def _require_writable(handle):
 
 @interface('IDBObjectStore', None)
 class IDBObjectStore:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="name", getter="get_name", setter="set_name"),
-            AttributeSpec(name="keyPath", getter="get_keyPath", side_effect=1),
-            AttributeSpec(name="indexNames", getter="get_indexNames", side_effect=1),
-            AttributeSpec(name="transaction", getter="get_transaction", side_effect=1),
-            AttributeSpec(name="autoIncrement", getter="get_autoIncrement", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="add", callback="fn_add", length=1, side_effect=1),
-            MethodSpec(name="put", callback="fn_put", length=1, side_effect=1),
-            MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
-            MethodSpec(name="getKey", callback="fn_getKey", length=1, side_effect=1),
-            MethodSpec(name="getAll", callback="fn_getAll", length=0, side_effect=1),
-            MethodSpec(name="getAllKeys", callback="fn_getAllKeys", length=0, side_effect=1),
-            MethodSpec(name="getAllRecords", callback="fn_getAllRecords", length=0, side_effect=1),
-            MethodSpec(name="count", callback="fn_count", length=0, side_effect=1),
-            MethodSpec(name="delete", callback="fn_delete", length=1),
-            MethodSpec(name="clear", callback="fn_clear"),
-            MethodSpec(name="openCursor", callback="fn_openCursor", length=0, side_effect=1),
-            MethodSpec(name="openKeyCursor", callback="fn_openKeyCursor", length=0, side_effect=1),
-            MethodSpec(name="index", callback="fn_index", length=1, side_effect=1),
-            MethodSpec(name="createIndex", callback="fn_createIndex", length=2, side_effect=1),
-            MethodSpec(name="deleteIndex", callback="fn_deleteIndex", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="IDBObjectStore",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, transaction=None, store=None, **_):
         self._services = services
         self._transaction = transaction
@@ -1670,29 +1521,6 @@ class IDBObjectStore:
 
 @interface('IDBIndex', None)
 class IDBIndex:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="name", getter="get_name", side_effect=1),
-            AttributeSpec(name="objectStore", getter="get_objectStore", side_effect=1),
-            AttributeSpec(name="keyPath", getter="get_keyPath", side_effect=1),
-            AttributeSpec(name="multiEntry", getter="get_multiEntry", side_effect=1),
-            AttributeSpec(name="unique", getter="get_unique", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
-            MethodSpec(name="getKey", callback="fn_getKey", length=1, side_effect=1),
-            MethodSpec(name="getAll", callback="fn_getAll", length=0, side_effect=1),
-            MethodSpec(name="getAllKeys", callback="fn_getAllKeys", length=0, side_effect=1),
-            MethodSpec(name="getAllRecords", callback="fn_getAllRecords", length=0, side_effect=1),
-            MethodSpec(name="count", callback="fn_count", length=0, side_effect=1),
-            MethodSpec(name="openCursor", callback="fn_openCursor", length=0, side_effect=1),
-            MethodSpec(name="openKeyCursor", callback="fn_openKeyCursor", length=0, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="IDBIndex",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, store_handle=None, index=None, **_):
         self._services = services
         self._store_handle = store_handle
@@ -1830,27 +1658,6 @@ class IDBIndex:
 
 @interface('IDBDatabase', 'EventTarget')
 class IDBDatabase(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="name", getter="get_name", side_effect=1),
-            AttributeSpec(name="version", getter="get_version", side_effect=1),
-            AttributeSpec(name="objectStoreNames", getter="get_objectStoreNames", side_effect=1),
-            AttributeSpec(name="onabort", getter="get_onabort", setter="set_onabort"),
-            AttributeSpec(name="onclose", getter="get_onclose", setter="set_onclose"),
-            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
-            AttributeSpec(name="onversionchange", getter="get_onversionchange", setter="set_onversionchange"),
-        ),
-        methods=(
-            MethodSpec(name="close", callback="fn_close"),
-            MethodSpec(name="createObjectStore", callback="fn_createObjectStore", length=1, side_effect=1),
-            MethodSpec(name="deleteObjectStore", callback="fn_deleteObjectStore", length=1),
-            MethodSpec(name="transaction", callback="fn_transaction", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="IDBDatabase",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, model=None, version=0, factory=None, **kw):
         super().__init__(services=services, **kw)
         self._model = model
@@ -2004,18 +1811,6 @@ class IDBDatabase(EventTarget):
 
 @interface('IDBFactory', None)
 class IDBFactory:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="open", callback="fn_open", length=1, side_effect=1),
-            MethodSpec(name="deleteDatabase", callback="fn_deleteDatabase", length=1, side_effect=1),
-            MethodSpec(name="databases", callback="fn_databases", side_effect=1),
-            MethodSpec(name="cmp", callback="fn_cmp", length=2, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="IDBFactory",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         self._services = services
 
@@ -2181,7 +1976,6 @@ class IDBFactory:
         if second is MISSING:
             raise missing_error('IDBFactory', 'cmp', 2, 1, constructor=False)
         return _cmp(_to_key(first), _to_key(second))
-
 
 FEATURE = FeatureImplementation(
     {

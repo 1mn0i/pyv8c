@@ -1,25 +1,25 @@
+import copy
 import json
-import zipfile
 from pathlib import Path
 
 import pytest
 
-from pyv8c.tools import extract_interfaces
-from pyv8c.tools.extract_interfaces import (
+from pyv8c.engine.idl import DefinitionKind, Idl
+from pyv8c.tools import extract_idl
+from pyv8c.tools.extract_idl import (
     _constant_definitions,
     _idl_handler_findings,
     _idl_property_families,
     _property_mask,
     extract_constants,
     extract_template,
-    write_baseline,
+    write_idl,
 )
 
 
 def _bundled_baseline_document():
-    path = Path(__file__).resolve().parents[2] / "pyv8c" / "baselines" / "interface-baseline.zip"
-    with zipfile.ZipFile(path) as archive:
-        return json.loads(archive.read("interface-baseline.json"))
+    idl = Idl.load(profile=None)
+    return {"idl": dict(idl.metadata), "interfaces": copy.deepcopy(dict(idl.interfaces))}
 
 
 def test_balanced_binding_tables_extract_all_locations_and_descriptors():
@@ -48,7 +48,7 @@ static const IDLMemberInstaller::ConstantValueConfig kConstantValueTable[] = {
   {"ANSWER", Fixture::Constant::kAnswer},
 };
 '''
-    members = extract_interfaces.extract_members(text)
+    members = extract_idl.extract_members(text)
     assert [item["name"] for item in members["prototype"]] == ["readonly"]
     assert members["instance"][0]["setter"] == "SetterCallback"
     assert members["instance"][0]["setter_signature"]["parameters"][0]["idl_type"] == "IDLBoolean"
@@ -76,7 +76,7 @@ def test_generated_constant_expression_resolves_from_header(tmp_path):
     assert constants[0]["value"] == 4
 
 
-def test_constant_expression_is_audit_only():
+def test_a_constant_keeps_its_value_and_not_its_expression():
     extracted = {
         "Fixture": {
             "sources": [], "constructor": {}, "template": {},
@@ -86,10 +86,8 @@ def test_constant_expression_is_audit_only():
             "constants": [{"name": "COPY_SRC", "expression": "1 << 2", "resolved": True, "value": 4}],
         },
     }
-    compact = extract_interfaces.schema6_baseline(extracted)["Fixture"]
+    compact = extract_idl.idl_interfaces(extracted)["Fixture"]
     assert compact["constants"] == [{"name": "COPY_SRC", "resolved": True, "value": 4, "location": "interface"}]
-    audit = extract_interfaces.schema6_baseline(extracted, include_audit=True)["Fixture"]
-    assert audit["constants"][0]["expression"] == "1 << 2"
 
 
 def test_idl_metadata_reads_star_exposure_and_callback_interfaces(tmp_path):
@@ -100,10 +98,26 @@ def test_idl_metadata_reads_star_exposure_and_callback_interfaces(tmp_path):
     (tmp_path / "url.idl").write_text(
         "[\n    Exposed=Window,\n    LegacyWindowAlias=webkitURL\n] interface URL {\n};\n",
         encoding="utf-8")
-    metadata = extract_interfaces._idl_metadata(tmp_path)
+    metadata = extract_idl._idl_metadata(tmp_path)
     assert metadata["ReadableStream"]["exposed_in"] == ["Window", "Worker"]
     assert metadata["NodeFilter"]["exposed_in"] == ["Window"]
     assert metadata["URL"]["aliases"] == ["webkitURL"]
+
+
+def test_the_definition_kind_decides_the_interface_object():
+    """One word, three kinds: a namespace has no prototype either, as ``CSS`` shows."""
+    namespace = extract_idl.extract_template(
+        "WrapperTypeInfo::kWrapperTypeNoPrototype,\nWrapperTypeInfo::kIdlNamespace,\n")
+    callback = extract_idl.extract_template(
+        "WrapperTypeInfo::kWrapperTypeNoPrototype,\nWrapperTypeInfo::kIdlInterface,\n")
+    ordinary = extract_idl.extract_template("WrapperTypeInfo::kIdlInterface,\n")
+
+    assert namespace["definition_kind"] == DefinitionKind.kIdlNamespace
+    assert callback["definition_kind"] == DefinitionKind.kWrapperTypeNoPrototype
+    #: An ordinary interface states nothing: the fragment of a split binding that carries no
+    #: ``WrapperTypeInfo`` (``CSS`` is declared in one file and implemented in another) then
+    #: cannot erase the kind the other fragment declares.
+    assert ordinary["definition_kind"] is None
 
 
 def test_template_handler_comments_are_not_callback_names():
@@ -223,11 +237,32 @@ def test_a_named_handler_needs_a_named_getter_in_the_idl():
     }]
 
 
-def test_real_renderer_snapshot_has_members_for_core_interfaces():
+def test_the_document_states_the_chromium_release_it_was_read_from():
+    """The release comes from the checkout, not from the GN output directory or the fetch target."""
+    metadata = _bundled_baseline_document()["idl"]
+
+    assert "renderer_snapshot" not in metadata
+    assert extract_idl.VERSION_PATTERN.fullmatch(metadata["chromium_version"])
+
+
+def test_the_chromium_version_is_read_from_the_checkout(tmp_path):
+    version_file = tmp_path / "src" / "chrome" / "VERSION"
+    version_file.parent.mkdir(parents=True)
+    version_file.write_text("MAJOR=154\nMINOR=0\nBUILD=8030\nPATCH=0\n", encoding="ascii")
+
+    assert extract_idl.read_chromium_version(tmp_path) == "154.0.8030.0"
+
+
+def test_a_checkout_that_states_no_version_is_refused_by_name(tmp_path):
+    with pytest.raises(ValueError, match="VERSION"):
+        extract_idl.read_chromium_version(tmp_path)
+
+
+def test_real_renderer_sources_have_members_for_core_interfaces():
     root = Path(__file__).resolve().parents[3] / "_pyv8env" / "renderer"
     if not root.is_dir():
         pytest.skip(f"no generated Chromium sources at {root}")
-    snapshot = extract_interfaces.extract(root)
+    snapshot = extract_idl.extract(root)
     for name in ("Event", "EventTarget", "Node", "Document", "Element", "Window", "Headers", "Blob", "Request", "Response", "URL"):
         entry = snapshot[name]
         assert any(entry["members"].values()), name
@@ -238,60 +273,36 @@ def test_real_renderer_snapshot_has_members_for_core_interfaces():
 
 def test_generated_baseline_keeps_full_runtime_snapshot_and_report():
     baseline = _bundled_baseline_document()
-    assert baseline["_webidl"]["schema"] == extract_interfaces.BASELINE_SCHEMA
-    assert baseline["_webidl"]["compact"] is True
-    assert baseline["_webidl"]["report"]["interfaces"] > 1000
-    assert baseline["_webidl"]["report"]["unresolved_signatures"] > 0
-    assert all("callbacks" not in value for key, value in baseline.items() if not key.startswith("_"))
-    assert len(baseline["Event"]["members"]["prototype"]) >= 5
-    assert len(baseline["Node"]["members"]["prototype"]) > 10
-    assert len(baseline["URL"]["members"]["interface"]) >= 2
-    assert baseline["HTMLAllCollection"]["template"]["undetectable"] is True
-    handlers = baseline["WindowProperties"]["template"]["handlers"]
+    metadata = baseline["idl"]
+    assert metadata["version"] == extract_idl.IDL_VERSION
+    assert metadata["report"]["interfaces"] > 1000
+    assert metadata["report"]["unresolved_signatures"] > 0
+    interfaces = baseline["interfaces"]
+    assert all("callbacks" not in value for value in interfaces.values())
+    assert len(interfaces["Event"]["members"]["prototype"]) >= 5
+    assert len(interfaces["Node"]["members"]["prototype"]) > 10
+    assert len(interfaces["URL"]["members"]["interface"]) >= 2
+    assert interfaces["HTMLAllCollection"]["template"]["undetectable"] is True
+    handlers = interfaces["WindowProperties"]["template"]["handlers"]
     assert handlers["named"]["del"] == 1
     assert handlers["named"]["definer"] == 1
     assert handlers["indexed"]["del"] == 1
     assert handlers["indexed"]["definer"] == 1
-    entry = baseline["URL"]
+    entry = interfaces["URL"]
     assert set(entry) == {"aliases", "constants", "constructor", "exposed_in", "members", "parent", "tag", "template"}
     assert "provenance" not in entry
     assert "handlers" in entry["template"]
     assert all(member["kind"] != "constant" for values in entry["members"].values() for member in values)
 
 
-def test_baseline_zip_is_optional_and_has_a_stable_json_member(tmp_path):
-    document = {"_webidl": {"schema": 5, "compact": True}, "Fixture": {"parent": None}}
-    json_path = write_baseline(tmp_path / "baseline.json", document)
-    assert json_path.name == "baseline.json"
-    assert json.loads(json_path.read_text(encoding="utf-8")) == document
-
-    zip_path = write_baseline(tmp_path / "baseline.json", document, compress=True)
-    assert zip_path.name == "baseline.zip"
-    with zipfile.ZipFile(zip_path) as archive:
-        assert archive.namelist() == ["baseline.json"]
-        assert json.loads(archive.read("baseline.json")) == document
+def test_write_idl_writes_one_json_file(tmp_path):
+    document = {"idl": {"version": 7}, "interfaces": {"Fixture": {"parent": None}}}
+    written = write_idl(tmp_path / "idl.json", document)
+    assert written.name == "idl.json"
+    assert json.loads(written.read_text(encoding="utf-8")) == document
 
 
-def test_schema6_audit_metadata_is_opt_in():
-    extracted = {
-        "Fixture": {
-            "parent": None,
-            "tag": "Fixture",
-            "sources": ["renderer/core/v8_fixture.cc"],
-            "constructor": {},
-            "template": {},
-            "members": {"instance": [], "prototype": [], "interface": []},
-            "constants": [],
-        },
-    }
-    assert "provenance" not in extract_interfaces.schema6_baseline(extracted)["Fixture"]
-    assert extract_interfaces.schema6_baseline(extracted, include_audit=True)["Fixture"]["provenance"] == {
-        "snapshot": "chromium-generated-bindings",
-        "sources": ["renderer/core/v8_fixture.cc"],
-    }
-
-
-def test_schema6_audit_switch_controls_callback_and_world_fields():
+def test_a_document_states_only_what_a_binding_reads():
     extracted = {
         "Fixture": {
             "parent": None,
@@ -313,7 +324,7 @@ def test_schema6_audit_switch_controls_callback_and_world_fields():
             "constants": [],
         },
     }
-    compact = extract_interfaces.schema6_baseline(extracted)["Fixture"]
+    compact = extract_idl.idl_interfaces(extracted)["Fixture"]
     assert "callback" not in compact["constructor"]
     assert compact["template"]["call_handler"] == 1
     assert compact["template"]["access_check"] == {"with_handler": True, "enabled": 1}
@@ -325,19 +336,13 @@ def test_schema6_audit_switch_controls_callback_and_world_fields():
     assert "getter" not in attribute and "readonly" not in attribute and attribute["setter"] == 1
     assert "signature" not in compact["constructor"]
 
-    audit = extract_interfaces.schema6_baseline(extracted, include_audit=True)["Fixture"]
-    assert audit["constructor"]["callback"] == "ConstructorCallback"
-    assert audit["template"]["handlers"]["named"]["get"] == "NamedGetterCallback"
-    assert audit["members"]["prototype"][0]["callback"] == "RunCallback"
-    assert audit["members"]["prototype"][0]["world"] == "AllWorlds"
-
 
 def test_a_member_of_another_world_states_its_bit_as_false():
     """A runtime baseline says which world a member belongs to, not the world's name."""
     extracted = {"Fixture": {"members": {"prototype": [
         {"name": "run", "kind": "operation", "world": "IsolatedWorld", "length": 0},
     ]}}}
-    compact = extract_interfaces.schema6_baseline(extracted)["Fixture"]
+    compact = extract_idl.idl_interfaces(extracted)["Fixture"]
     assert compact["members"]["prototype"][0]["main_world"] is False
 
 
@@ -354,7 +359,7 @@ void BindBufferOperationCallback(const v8::FunctionCallbackInfo<v8::Value>& info
   auto&& target = NativeValueTraits<IDLUnsignedLong>::ArgumentValue(isolate, 0, info[0], exception_state);
 }
 '''
-    members = extract_interfaces.extract_members(text)
+    members = extract_idl.extract_members(text)
     assert [item["name"] for item in members["prototype"]] == ["bindBuffer", "viewport"]
     assert members["prototype"][0]["kind"] == "operation"
     assert members["prototype"][0]["length"] == 2

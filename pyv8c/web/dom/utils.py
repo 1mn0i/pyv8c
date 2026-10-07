@@ -8,14 +8,17 @@ from pyv8.flag import V8Attribute
 from ...foundation.arguments import dom_string
 from ...foundation.urls import form_urlencoded
 
+
 #: XML-compatible qualified name, shared by the element/attribute-creating APIs.
 _VALID_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._:-]*$")
+
 
 #: The namespace HTML documents use, and the two foreign ones ``createElementNS`` maps
 #: to interfaces of their own.
 XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml"
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 MATHML_NAMESPACE = "http://www.w3.org/1998/Math/MathML"
+
 
 #: A name starts with a letter, an underscore or anything above ASCII, and holds none of
 #: these anywhere: Chromium's rule, which takes ``a=b`` and ``äx`` as names and ``a b``
@@ -37,8 +40,10 @@ def name_fault(value):
                    None)
     return None if invalid is None else ("character", invalid)
 
+
 #: What a collection borrows from ``Array.prototype``: ``IdlSpec.array`` and the baseline's
 #: ``template.array`` both take ``"iterator"`` or ``"iterable"``; the bits are the binding's.
+
 
 #: ``Object.prototype`` string keys (plus ``__proto__``) that named properties never shadow.
 OBJECT_PROTOTYPE_NAMES = frozenset((
@@ -47,6 +52,7 @@ OBJECT_PROTOTYPE_NAMES = frozenset((
     "propertyIsEnumerable", "toString", "valueOf", "__proto__",
     "toLocaleString",
 ))
+
 
 #: Descriptor flags shared by every legacy named property.
 NAMED_PROPERTY_ATTRIBUTES = V8Attribute.ReadOnly | V8Attribute.DontEnum
@@ -85,7 +91,6 @@ def as_nodes(values, parent):
         for value in values
     ]
 
-
 _element_type = None
 
 
@@ -104,6 +109,7 @@ def is_element(node):
 URLENCODED = "application/x-www-form-urlencoded"
 MULTIPART = "multipart/form-data"
 TEXT_PLAIN = "text/plain"
+
 
 #: Chromium's multipart boundary prefix, followed by sixteen random characters.
 _BOUNDARY_PREFIX = "----WebKitFormBoundary"

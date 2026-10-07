@@ -11,17 +11,18 @@ indented two spaces deeper -- because a page that reads cssText back compares it
 import re
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
 from ...foundation.errors import IndexSizeError, dom_exception
 from .css import CSSStyleDeclaration
 from .mixins import ReadOnlyIndexedPropertyMixin
 
+
 #: Blink's wording when the text an edit was given is not a rule at all.
 PARSE_MESSAGE = ("Failed to execute 'insertRule' on 'CSSStyleSheet': Failed to parse the"
                  " rule '{}'.")
+
 
 #: The size refusal CSSOM raises for an index the list does not have.
 RANGE_MESSAGE = "Index or size is negative or greater than the allowed amount."
@@ -101,19 +102,6 @@ def insert_rule(owner, text, index):
 class CSSRule:
     """What every rule answers: its type, its text, and where it came from."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="cssText", getter="get_cssText", side_effect=1),
-            AttributeSpec(name="parentRule", getter="get_parentRule", side_effect=1),
-            AttributeSpec(name="parentStyleSheet", getter="get_parentStyleSheet",
-                          side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CSSRule",
-        has_constructor=0,
-    )
-
     RULE_TYPE = 0
 
     def _init_rule(self, prelude, block, sheet, parent):
@@ -142,16 +130,6 @@ class CSSStyleRule(CSSRule):
 
     RULE_TYPE = 1
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="selectorText", getter="get_selectorText", side_effect=1),
-            AttributeSpec(name="style", getter="get_style", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CSSStyleRule",
-        has_constructor=0,
-    )
-
     def _init_rule(self, prelude, block, sheet, parent):
         super()._init_rule(prelude, block, sheet, parent)
         self._style = CSSStyleDeclaration(block=block, parent_rule=self)
@@ -167,18 +145,6 @@ class CSSStyleRule(CSSRule):
 @interface('CSSGroupingRule', 'CSSRule')
 class CSSGroupingRule(CSSRule):
     """A rule that holds rules of its own, such as @media."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="cssRules", getter="get_cssRules",
-                                  side_effect=1),),
-        methods=(
-            MethodSpec(name="insertRule", callback="fn_insertRule", length=2),
-            MethodSpec(name="deleteRule", callback="fn_deleteRule", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CSSGroupingRule",
-        has_constructor=0,
-    )
 
     def _init_rule(self, prelude, block, sheet, parent):
         super()._init_rule(prelude, block, sheet, parent)
@@ -221,30 +187,12 @@ class CSSMediaRule(CSSConditionRule):
 
     RULE_TYPE = 4
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="media", getter="get_media", side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="CSSMediaRule",
-        has_constructor=0,
-    )
-
     def get_media(self): return MediaList(_prelude_name(self._prelude)[1])
 
 
 @interface('MediaList', None)
 class MediaList:
     """The medium a @media rule names."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="mediaText", getter="get_mediaText", side_effect=1),
-            AttributeSpec(name="length", getter="get_length", side_effect=1),
-        ),
-        methods=(MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="MediaList",
-        has_constructor=1,
-    )
 
     def __init__(self, text="", **_):
         self._text = str(text)
@@ -264,14 +212,6 @@ class CSSRuleList(ReadOnlyIndexedPropertyMixin):
     """A sheet's rules as a page sees them: the same list every read, and what an
     edit mutates."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="CSSRuleList",
-        has_constructor=1,
-    )
-
     def __init__(self, rules=None, **_):
         self._rules = rules if rules is not None else []
 
@@ -282,7 +222,6 @@ class CSSRuleList(ReadOnlyIndexedPropertyMixin):
             raise missing_error('CSSRuleList', 'item', 1, 0, constructor=False)
         position = integer(index)
         return self._rules[position] if 0 <= position < len(self._rules) else pyv8.Null
-
 
 __all__ = ["CSSGroupingRule", "CSSConditionRule", "CSSMediaRule", "CSSRule",
            "CSSRuleList", "CSSStyleRule", "MediaList", "build_rules", "insert_rule",

@@ -6,10 +6,7 @@ modules sit above this one.
 """
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import V8Attribute
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     boolean,
@@ -125,6 +122,9 @@ def _bump_style_version(node):
 
 @interface('Node', 'EventTarget')
 class Node(EventTarget):
+    #: ``nodeType`` reads as a constant: it is not enumerated on an instance.
+    __idl_overrides__ = {"members": {"nodeType": {"property_flags": "dont_enum"}}}
+
     ELEMENT_NODE, ATTRIBUTE_NODE, TEXT_NODE, COMMENT_NODE = 1, 2, 3, 8
     CDATA_SECTION_NODE, ENTITY_REFERENCE_NODE, ENTITY_NODE = 4, 5, 6
     PROCESSING_INSTRUCTION_NODE, NOTATION_NODE = 7, 12
@@ -135,43 +135,6 @@ class Node(EventTarget):
     DOCUMENT_POSITION_CONTAINS = 8
     DOCUMENT_POSITION_CONTAINED_BY = 16
     DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="nodeType", getter="get_nodeType", property_flags=V8Attribute.DontEnum, side_effect=1),
-            AttributeSpec(name="nodeName", getter="get_nodeName", side_effect=1),
-            AttributeSpec(name="baseURI", getter="get_baseURI", side_effect=1),
-            AttributeSpec(name="isConnected", getter="get_isConnected", side_effect=1),
-            AttributeSpec(name="ownerDocument", getter="get_ownerDocument", side_effect=1),
-            AttributeSpec(name="parentNode", getter="get_parentNode", side_effect=1),
-            AttributeSpec(name="parentElement", getter="get_parentElement", side_effect=1),
-            AttributeSpec(name="childNodes", getter="get_childNodes", side_effect=1),
-            AttributeSpec(name="firstChild", getter="get_firstChild", side_effect=1),
-            AttributeSpec(name="lastChild", getter="get_lastChild", side_effect=1),
-            AttributeSpec(name="previousSibling", getter="get_previousSibling", side_effect=1),
-            AttributeSpec(name="nextSibling", getter="get_nextSibling", side_effect=1),
-            AttributeSpec(name="textContent", getter="get_textContent", setter="set_textContent"),
-            AttributeSpec(name="nodeValue", getter="get_nodeValue", setter="set_nodeValue"),
-        ),
-        methods=(
-            MethodSpec(name="appendChild", callback="fn_appendChild", length=1),
-            MethodSpec(name="insertBefore", callback="fn_insertBefore", length=2),
-            MethodSpec(name="removeChild", callback="fn_removeChild", length=1),
-            MethodSpec(name="replaceChild", callback="fn_replaceChild", length=2),
-            MethodSpec(name="cloneNode", callback="fn_cloneNode"),
-            MethodSpec(name="contains", callback="fn_contains", length=1, side_effect=1),
-            MethodSpec(name="hasChildNodes", callback="fn_hasChildNodes", side_effect=1),
-            MethodSpec(name="isEqualNode", callback="fn_isEqualNode", length=1),
-            MethodSpec(name="compareDocumentPosition", callback="fn_compareDocumentPosition", length=1),
-            MethodSpec(name="getRootNode", callback="fn_getRootNode"),
-            MethodSpec(name="isDefaultNamespace", callback="fn_isDefaultNamespace", length=1),
-            MethodSpec(name="isSameNode", callback="fn_isSameNode", length=1),
-            MethodSpec(name="lookupNamespaceURI", callback="fn_lookupNamespaceURI", length=1),
-            MethodSpec(name="lookupPrefix", callback="fn_lookupPrefix", length=1),
-            MethodSpec(name="normalize", callback="fn_normalize"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
 
     def __init__(self, services=None, node_type=0, node_name="", value=None, **kw):
         super().__init__(services=services, **kw)
@@ -576,13 +539,6 @@ class Node(EventTarget):
 
 @interface('DocumentFragment', 'Node')
 class DocumentFragment(_ParentNodeMixin, Node):
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="querySelector", callback="fn_querySelector", length=1, side_effect=1),
-            MethodSpec(name="querySelectorAll", callback="fn_querySelectorAll", length=1, side_effect=1),
-        ),
-        constructor_behavior=1, has_constructor=1,
-    )
     def __init__(self, *_extra, services=None, **kw):
         if services is pyv8.Undefined:
             services = None
@@ -613,17 +569,6 @@ class ShadowRoot(DocumentFragment):
     the page can reach it again through ``host.shadowRoot``.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="mode", getter="get_mode", side_effect=1),
-            AttributeSpec(name="host", getter="get_host", side_effect=1),
-            AttributeSpec(name="innerHTML", getter="get_innerHTML", setter="set_innerHTML"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="ShadowRoot",
-        has_constructor=0,
-    )
-
     def __init__(self, mode="open", host=None, services=None, **_):
         super().__init__(services=services)
         self._mode, self._host = mode, host
@@ -643,20 +588,6 @@ class ShadowRoot(DocumentFragment):
 
 @interface('Attr', 'Node')
 class Attr(Node):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="name", getter="get_name", side_effect=1),
-            AttributeSpec(name="value", getter="get_value", setter="set_value"),
-            AttributeSpec(name="specified", getter="get_specified", side_effect=1),
-            AttributeSpec(name="namespaceURI", getter="get_namespaceURI", side_effect=1),
-            AttributeSpec(name="prefix", getter="get_prefix", side_effect=1),
-            AttributeSpec(name="localName", getter="get_localName", side_effect=1),
-            AttributeSpec(name="ownerElement", getter="get_ownerElement", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Attr",
-        has_constructor=1,
-    )
     def __init__(self, name="", value="", ownerElement=None, services=None, **kw):
         super().__init__(services=services, node_type=Node.ATTRIBUTE_NODE, node_name=str(name), value=str(value), **kw)
         self.ownerElement = ownerElement

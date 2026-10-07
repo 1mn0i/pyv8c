@@ -7,9 +7,8 @@ a page can observe is the event and the fields it promises.
 """
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dictionary, number
 from .events import Event, event_constructor_arguments, event_init
 
@@ -18,9 +17,11 @@ __all__ = [
     "DeviceOrientationEvent",
 ]
 
+
 #: The fields of each reading, in the order the specification lists them.
 ACCELERATION_FIELDS = ("x", "y", "z")
 ROTATION_FIELDS = ("alpha", "beta", "gamma")
+
 
 #: What Chrome exposes only on a secure origin.
 INSECURE_ORIGIN_INTERFACES = (
@@ -44,16 +45,6 @@ def _field(value):
 class DeviceMotionEventAcceleration:
     """One acceleration reading; every field is null without a sensor."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=field, getter="get_" + field, side_effect=1)
-            for field in ACCELERATION_FIELDS
-        ),
-        constructor_behavior=0,
-        to_string_tag="DeviceMotionEventAcceleration",
-        has_constructor=1,
-    )
-
     def __init__(self, x=None, y=None, z=None, **_):
         self._values = dict(zip(ACCELERATION_FIELDS, (x, y, z)))
 
@@ -66,16 +57,6 @@ class DeviceMotionEventAcceleration:
 class DeviceMotionEventRotationRate:
     """One rotation-rate reading, with the same all-null shape."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=field, getter="get_" + field, side_effect=1)
-            for field in ROTATION_FIELDS
-        ),
-        constructor_behavior=0,
-        to_string_tag="DeviceMotionEventRotationRate",
-        has_constructor=1,
-    )
-
     def __init__(self, alpha=None, beta=None, gamma=None, **_):
         self._values = dict(zip(ROTATION_FIELDS, (alpha, beta, gamma)))
 
@@ -87,21 +68,6 @@ class DeviceMotionEventRotationRate:
 @interface('DeviceMotionEvent', 'Event')
 class DeviceMotionEvent(Event):
     """``devicemotion``: the reading a page subscribes to for device movement."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="acceleration", getter="get_acceleration", side_effect=1),
-            AttributeSpec(name="accelerationIncludingGravity",
-                          getter="get_accelerationIncludingGravity", side_effect=1),
-            AttributeSpec(name="rotationRate", getter="get_rotationRate", side_effect=1),
-            AttributeSpec(name="interval", getter="get_interval", side_effect=1),
-        ),
-        methods=(MethodSpec(name="requestPermission", callback="fn_requestPermission"),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="DeviceMotionEvent",
-        has_constructor=1,
-    )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('DeviceMotionEvent', event_type, options)
@@ -128,20 +94,6 @@ class DeviceMotionEvent(Event):
 @interface('DeviceOrientationEvent', 'Event')
 class DeviceOrientationEvent(Event):
     """``deviceorientation``: the reading a page subscribes to for device posture."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="alpha", getter="get_alpha", side_effect=1),
-            AttributeSpec(name="beta", getter="get_beta", side_effect=1),
-            AttributeSpec(name="gamma", getter="get_gamma", side_effect=1),
-            AttributeSpec(name="absolute", getter="get_absolute", side_effect=1),
-        ),
-        methods=(MethodSpec(name="requestPermission", callback="fn_requestPermission"),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="DeviceOrientationEvent",
-        has_constructor=1,
-    )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments('DeviceOrientationEvent', event_type,

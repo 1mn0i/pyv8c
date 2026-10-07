@@ -13,7 +13,7 @@ from typing import Literal
 
 import pyv8  # patch target for native Context instrumentation
 
-from ..engine.universe import BaselineRepository, InterfaceUniverse
+from ..engine.bindings import Idl, Bindings
 from ..foundation.environment import BrowserEnvironment
 from ..foundation.errors import InvalidStateError, NetworkError
 from ..foundation.urls import origin_string, origin_tuple
@@ -230,7 +230,7 @@ class Browser:
                  expose_unimplemented: bool = True,
                  stub_logging: Literal["on", "verbose", "off"] = "off",
                  interface_overrides: dict | None = None,
-                 interface_baseline_path: str | os.PathLike | None = None,
+                 idl_path: str | os.PathLike | None = None,
                  baseline_mismatch: Literal["error", "warn"] = "warn"):
         """Configure one browser.
 
@@ -305,7 +305,7 @@ class Browser:
             calls read-only, a bound method and anything not callable are refused
             here.  Constructors, constants and the named/indexed handlers are not
             covered.
-        :param interface_baseline_path: Chromium interface baseline JSON or ZIP to
+        :param idl_path: Chromium interface baseline JSON or ZIP to
             use instead of the bundled one.
         :param baseline_mismatch: ``"warn"`` (the default) logs a difference
             between hand-written implementations and the chosen baseline once and
@@ -346,9 +346,9 @@ class Browser:
         self.expose_unimplemented = bool(expose_unimplemented)
         self.stub_logging = str(stub_logging or "off")
         self._startup_stats = {}
-        snapshot = BaselineRepository.load(interface_baseline_path)
+        snapshot = Idl.load(idl_path)
         loaded = time.perf_counter_ns()
-        self.interface_universe = InterfaceUniverse(
+        self.bindings = Bindings(
             snapshot, runtime=bootstrap_runtime(),
             stub_logging=self.stub_logging,
             expose_unimplemented=self.expose_unimplemented,
@@ -356,24 +356,24 @@ class Browser:
             interface_overrides=interface_overrides,
         )
         validation_finished = validation_started = loaded
-        self.interface_baseline_path = snapshot.path
-        self.interface_baseline_info = snapshot.info
-        self._startup_stats.update(BaselineRepository._last_timings)
-        plan = self.interface_universe.plan("Window")
+        self.idl_path = snapshot.path
+        self.idl_info = snapshot.info
+        self._startup_stats.update(Idl._last_timings)
+        plan = self.bindings.plan("Window")
         self._startup_stats.update({
             "validation_ms": (validation_finished - validation_started) / 1_000_000,
             "browser_init_ms": (validation_finished - started) / 1_000_000,
-            "known_interfaces": len(plan.declared),
-            "core_interfaces": len(plan.staged),
-            "startup_interfaces": len(plan.startup),
-            "deferred_interfaces": len(plan.deferred),
+            "known_interfaces": len(plan.installs),
+            "core_interfaces": len(plan.eager),
+            "startup_interfaces": len(plan.ready),
+            "deferred_interfaces": len(plan.lazy),
             "materialized_interfaces": 0,
-            "binding_assembly_ms": 0.0,
+            "binding_binder_ms": 0.0,
             "context_create_ms": 0.0,
             "deferred_global_declare_ms": 0.0,
             "deferred_globals": 0,
             "deferred_materialized": 0,
-            "baseline_discrepancies": len(self.interface_universe.discrepancies),
+            "baseline_discrepancies": len(self.bindings.discrepancies),
         })
 
     @property

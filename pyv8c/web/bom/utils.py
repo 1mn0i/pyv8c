@@ -4,9 +4,6 @@ needs each of them.
 
 from urllib.parse import urlsplit
 
-from pyv8 import AttributeSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, SideEffectType
-
 from ...foundation.errors import SecurityError
 
 
@@ -93,11 +90,4 @@ def settled(services, *, value=None, error=None):
     return promise
 
 
-def window_attribute(name, getter, setter=None, *, cross_origin=False, flags=0, side_effect=SideEffectType.kHasSideEffect):
-    check = FlagCrossOriginCheck.kCheck if cross_origin else FlagCrossOriginCheck.kDoNotCheck
-    return AttributeSpec(name=name, getter=getter, setter=setter, location=FlagLocation.kInstance, property_flags=flags, cross_origin_get_check=check, cross_origin_set_check=check, side_effect=side_effect)
 
-
-def window_method(name, callback, length=0, *, cross_origin=False, side_effect=SideEffectType.kHasSideEffect):
-    check = FlagCrossOriginCheck.kCheck if cross_origin else FlagCrossOriginCheck.kDoNotCheck
-    return MethodSpec(name=name, callback=callback, length=length, location=FlagLocation.kInstance, cross_origin_check=check, side_effect=side_effect)

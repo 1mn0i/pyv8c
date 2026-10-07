@@ -9,15 +9,13 @@ import base64
 import os
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (MISSING, dictionary, dom_string, integer, is_nullish,
                                      missing_error)
 from ...foundation.errors import InvalidStateError, dom_exception
 from ..dom.events import (Event, EventTarget, _install_handler_slots,
                           event_constructor_arguments, event_init)
+
 
 #: ``(mimeType, clockRate, channels, sdpFmtpLine)`` per codec, in the order Chrome lists
 #: them; ``channels`` is ``None`` for a direction that reports none.
@@ -31,6 +29,7 @@ AUDIO_CODECS = (
     ("audio/telephone-event", 48000, 1, ""),
     ("audio/telephone-event", 8000, 1, ""),
 )
+
 
 def _h264(profile):
     """The two packetization modes Chrome lists for one H264 profile."""
@@ -56,6 +55,7 @@ VIDEO_CODECS = (
     ("video/ulpfec", 90000, None, ""),
     ("video/flexfec-03", 90000, None, "repair-window=10000000"),
 )
+
 
 #: The header extensions, which are the same for both directions but for the first.
 AUDIO_EXTENSIONS = (
@@ -99,18 +99,6 @@ def _capabilities(codecs, extensions):
 
 @interface('RTCRtpReceiver', None)
 class RTCRtpReceiver:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="getCapabilities", callback="fn_getCapabilities", length=1,
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-        ),
-        constructor_behavior=0,
-        to_string_tag="RTCRtpReceiver",
-        has_constructor=0,
-    )
-
     @staticmethod
     def fn_getCapabilities(_realm, kind=MISSING, *_extra):
         if kind is MISSING:
@@ -194,18 +182,6 @@ def _offer_sdp():
 class RTCSessionDescription:
     """What ``createOffer`` resolves with: the type and its description."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="type", getter="get_type", setter="set_type", side_effect=1),
-            AttributeSpec(name="sdp", getter="get_sdp", setter="set_sdp", side_effect=1),
-        ),
-        methods=(MethodSpec(name="toJSON", callback="fn_toJSON", side_effect=1),),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="RTCSessionDescription",
-        has_constructor=1,
-    )
-
     def __init__(self, description=MISSING, *_extra, **_kw):
         options = {} if is_nullish(description) or description is MISSING \
             else dictionary(description)
@@ -222,14 +198,6 @@ class RTCSessionDescription:
 @interface('RTCPeerConnectionIceEvent', 'Event')
 class RTCPeerConnectionIceEvent(Event):
     """One ICE candidate, and the null candidate that says gathering is over."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="candidate", getter="get_candidate", side_effect=1),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="RTCPeerConnectionIceEvent",
-        has_constructor=1,
-    )
 
     def __init__(self, event_type=MISSING, options=None, *_extra, **kw):
         event_type, options = event_constructor_arguments(
@@ -258,33 +226,6 @@ class RTCDataChannel(EventTarget):
 
     ``priority`` is left to the baseline, which answers ``undefined`` on this build.
     """
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="label", getter="get_label", side_effect=1),
-            AttributeSpec(name="ordered", getter="get_ordered", side_effect=1),
-            AttributeSpec(name="maxPacketLifeTime", getter="get_maxPacketLifeTime",
-                          side_effect=1),
-            AttributeSpec(name="maxRetransmits", getter="get_maxRetransmits", side_effect=1),
-            AttributeSpec(name="protocol", getter="get_protocol", side_effect=1),
-            AttributeSpec(name="negotiated", getter="get_negotiated", side_effect=1),
-            AttributeSpec(name="id", getter="get_id", side_effect=1),
-            AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
-            AttributeSpec(name="bufferedAmount", getter="get_bufferedAmount", side_effect=1),
-            AttributeSpec(name="bufferedAmountLowThreshold",
-                          getter="get_bufferedAmountLowThreshold",
-                          setter="set_bufferedAmountLowThreshold", side_effect=1),
-            AttributeSpec(name="binaryType", getter="get_binaryType", setter="set_binaryType"),
-            AttributeSpec(name="reliable", getter="get_reliable", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="close", callback="fn_close"),
-            MethodSpec(name="send", callback="fn_send", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="RTCDataChannel",
-        has_constructor=1,
-    )
 
     def __init__(self, label="", services=None, _realm=None, **_):
         if services is pyv8.Undefined:
@@ -324,58 +265,13 @@ class RTCDataChannel(EventTarget):
             self._ready_state = "closing"
 
 
-RTCDataChannel.__v8_idl_spec__ = RTCDataChannel.__v8_idl_spec__.replace(
-    attributes=RTCDataChannel.__v8_idl_spec__.attributes
-    + _install_handler_slots(RTCDataChannel, _CHANNEL_HANDLERS)
-)
+#: Accessors only: the baseline says which of these the channel publishes.
+_install_handler_slots(RTCDataChannel, _CHANNEL_HANDLERS)
 
 
 @interface('RTCPeerConnection', 'EventTarget')
 class RTCPeerConnection(EventTarget):
     """A connection that never negotiates: every state reads as a fresh one."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="localDescription", getter="get_localDescription",
-                          side_effect=1),
-            AttributeSpec(name="currentLocalDescription", getter="get_currentLocalDescription",
-                          side_effect=1),
-            AttributeSpec(name="pendingLocalDescription", getter="get_pendingLocalDescription",
-                          side_effect=1),
-            AttributeSpec(name="remoteDescription", getter="get_remoteDescription",
-                          side_effect=1),
-            AttributeSpec(name="currentRemoteDescription", getter="get_currentRemoteDescription",
-                          side_effect=1),
-            AttributeSpec(name="pendingRemoteDescription", getter="get_pendingRemoteDescription",
-                          side_effect=1),
-            AttributeSpec(name="signalingState", getter="get_signalingState", side_effect=1),
-            AttributeSpec(name="iceGatheringState", getter="get_iceGatheringState",
-                          side_effect=1),
-            AttributeSpec(name="iceConnectionState", getter="get_iceConnectionState",
-                          side_effect=1),
-            AttributeSpec(name="connectionState", getter="get_connectionState", side_effect=1),
-            AttributeSpec(name="canTrickleIceCandidates", getter="get_canTrickleIceCandidates",
-                          side_effect=1),
-            AttributeSpec(name="sctp", getter="get_sctp", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="createDataChannel", callback="fn_createDataChannel", length=1),
-            MethodSpec(name="createOffer", callback="fn_createOffer"),
-            MethodSpec(name="createAnswer", callback="fn_createAnswer"),
-            MethodSpec(name="setLocalDescription", callback="fn_setLocalDescription", length=0),
-            MethodSpec(name="close", callback="fn_close"),
-            MethodSpec(name="getConfiguration", callback="fn_getConfiguration"),
-            MethodSpec(name="getSenders", callback="fn_getSenders"),
-            MethodSpec(name="getReceivers", callback="fn_getReceivers"),
-            MethodSpec(name="getTransceivers", callback="fn_getTransceivers"),
-            MethodSpec(name="getLocalStreams", callback="fn_getLocalStreams"),
-            MethodSpec(name="getRemoteStreams", callback="fn_getRemoteStreams"),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="RTCPeerConnection",
-        has_constructor=1,
-    )
 
     def __init__(self, configuration=MISSING, *_extra, services=None, _realm=None, **kw):
         if services is pyv8.Undefined:
@@ -466,10 +362,8 @@ class RTCPeerConnection(EventTarget):
     def fn_getRemoteStreams(self, *_extra): return []
 
 
-RTCPeerConnection.__v8_idl_spec__ = RTCPeerConnection.__v8_idl_spec__.replace(
-    attributes=RTCPeerConnection.__v8_idl_spec__.attributes
-    + _install_handler_slots(RTCPeerConnection, _PEER_HANDLERS)
-)
+#: Accessors only: the baseline says which of these the connection publishes.
+_install_handler_slots(RTCPeerConnection, _PEER_HANDLERS)
 
 
 __all__ = ["RTCRtpReceiver", "RTCDataChannel", "RTCPeerConnection",

@@ -99,7 +99,7 @@ python -m pytest -q
 - [资源加载与拦截](docs/resource-interception.md)
 - [网络引擎与参数](docs/network-engines.md)
 - [Window、iframe 与同源边界](docs/WINDOW_SECURITY.md)
-- [Interface baseline](docs/interface-baseline-fields.md)
+- [IDL document](docs/idl-fields.md)
 - [AI 接手开发规范](docs/AI_DEVELOPMENT.md)
 
 ## 相邻仓库

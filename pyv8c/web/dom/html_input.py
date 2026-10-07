@@ -4,9 +4,8 @@ types, validation patterns and step/selection arithmetic for the tag."""
 import re
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     boolean,
@@ -27,15 +26,6 @@ class HTMLTextAreaElement(HTMLElement):
     """``<textarea>``: ``defaultValue`` is its raw value, the child text.  The live
     ``value`` is not modelled yet, so the raw value is what a page reads and writes."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="defaultValue", getter="get_defaultValue", setter="set_defaultValue"),
-            AttributeSpec(name="name", getter="get_name", setter="set_name"),
-            AttributeSpec(name="form", getter="get_form", side_effect=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def get_name(self): return self._attr("name")
     def set_name(self, value): self._set_string("name", value)
     def get_form(self): return self._find_form()
@@ -61,16 +51,6 @@ class HTMLOptionElement(HTMLElement):
     script's set is not undone; ``value`` falls back to the option's text.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="selected", getter="get_selected", setter="set_selected"),
-            AttributeSpec(name="value", getter="get_value", setter="set_value"),
-            AttributeSpec(name="text", getter="get_text", side_effect=1),
-            AttributeSpec(name="label", getter="get_label", setter="set_label"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def _select_ancestor(self):
         node = self.parentNode
         while node is not None:
@@ -116,19 +96,6 @@ class HTMLSelectElement(HTMLElement):
     """``<select>``: the option list and what is selected.  ``options`` is the live
     view, ``selectedIndex`` reports and moves the selection, ``value`` shortcuts it."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="value", getter="get_value", setter="set_value"),
-            AttributeSpec(name="name", getter="get_name", setter="set_name"),
-            AttributeSpec(name="form", getter="get_form", side_effect=1),
-            AttributeSpec(name="options", getter="get_options", side_effect=1),
-            AttributeSpec(name="selectedIndex", getter="get_selectedIndex", setter="set_selectedIndex"),
-            AttributeSpec(name="length", getter="get_length", side_effect=1),
-            AttributeSpec(name="selectedOptions", getter="get_selectedOptions", side_effect=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def _options(self):
         return [node for node in self._descendants() if isinstance(node, HTMLOptionElement)]
     def get_name(self): return self._attr("name")
@@ -189,6 +156,7 @@ class HTMLSelectElement(HTMLElement):
         for option in self._options():
             option.set_selected(option is match)
 
+
 #: Input types, in the spelling Chromium's ``HTMLInputElement.type`` accepts.
 _INPUT_TYPES = frozenset((
     "hidden", "text", "search", "tel", "url", "email", "password", "date", "month",
@@ -226,14 +194,6 @@ class FileList(ReadOnlyIndexedPropertyMixin):
     """The empty file list of an ``<input type=file>`` with no picked files: no file
     picker is modelled, but ``files`` keeps Chrome's shape."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="FileList",
-        has_constructor=1,
-    )
-
     def __init__(self, values=None, **_):
         self._values = tuple(values or ())
     def _indexed_items(self): return self._values
@@ -252,16 +212,6 @@ class ValidityState:
 
     _FLAGS = ("valueMissing", "typeMismatch", "badInput", "patternMismatch", "rangeOverflow",
               "rangeUnderflow", "stepMismatch", "tooLong", "tooShort", "customError")
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=name, getter="get_" + name, side_effect=1)
-            for name in (*_FLAGS, "valid")
-        ),
-        constructor_behavior=0,
-        to_string_tag="ValidityState",
-        has_constructor=1,
-    )
 
     def __init__(self, owner=None, **_):
         self._owner = owner
@@ -285,74 +235,11 @@ class HTMLInputElement(HTMLElement):
     """The HTML ``input`` element with Chrome's value, selection and validation
     semantics; ``value``/``checked`` keep dirty flags and validity flags are per type."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="capture", getter="get_capture", setter="set_capture"),
-            _attribute("accept", "get_accept", "set_accept"),
-            _attribute("alt", "get_alt", "set_alt"),
-            _attribute("autocomplete", "get_autocomplete", "set_autocomplete"),
-            AttributeSpec(name="defaultChecked", getter="get_defaultChecked", setter="set_defaultChecked"),
-            AttributeSpec(name="checked", getter="get_checked", setter="set_checked"),
-            _attribute("dirName", "get_dirName", "set_dirName"),
-            AttributeSpec(name="disabled", getter="get_disabled", setter="set_disabled"),
-            AttributeSpec(name="form", getter="get_form", side_effect=1),
-            AttributeSpec(name="files", getter="get_files", setter="set_files"),
-            _attribute("formAction", "get_formAction", "set_formAction"),
-            _attribute("formEnctype", "get_formEnctype", "set_formEnctype"),
-            _attribute("formMethod", "get_formMethod", "set_formMethod"),
-            AttributeSpec(name="formNoValidate", getter="get_formNoValidate", setter="set_formNoValidate"),
-            _attribute("formTarget", "get_formTarget", "set_formTarget"),
-            _attribute("height", "get_height", "set_height"),
-            AttributeSpec(name="indeterminate", getter="get_indeterminate", setter="set_indeterminate"),
-            AttributeSpec(name="list", getter="get_list", side_effect=1),
-            _attribute("max", "get_max", "set_max"),
-            AttributeSpec(name="maxLength", getter="get_maxLength", setter="set_maxLength"),
-            _attribute("min", "get_min", "set_min"),
-            AttributeSpec(name="minLength", getter="get_minLength", setter="set_minLength"),
-            AttributeSpec(name="multiple", getter="get_multiple", setter="set_multiple"),
-            _attribute("name", "get_name", "set_name"),
-            _attribute("pattern", "get_pattern", "set_pattern"),
-            _attribute("placeholder", "get_placeholder", "set_placeholder"),
-            AttributeSpec(name="readOnly", getter="get_readOnly", setter="set_readOnly"),
-            AttributeSpec(name="required", getter="get_required", setter="set_required"),
-            AttributeSpec(name="size", getter="get_size", setter="set_size"),
-            _url_attr("src", "get_src", "set_src"),
-            _attribute("step", "get_step", "set_step"),
-            _attribute("type", "get_type", "set_type"),
-            AttributeSpec(name="defaultValue", getter="get_defaultValue", setter="set_defaultValue"),
-            AttributeSpec(name="value", getter="get_value", setter="set_value"),
-            AttributeSpec(name="valueAsDate", getter="get_valueAsDate", setter="set_valueAsDate"),
-            AttributeSpec(name="valueAsNumber", getter="get_valueAsNumber", setter="set_valueAsNumber"),
-            _attribute("width", "get_width", "set_width"),
-            AttributeSpec(name="willValidate", getter="get_willValidate", side_effect=1),
-            AttributeSpec(name="validity", getter="get_validity", side_effect=1),
-            AttributeSpec(name="validationMessage", getter="get_validationMessage", side_effect=1),
-            AttributeSpec(name="labels", getter="get_labels", side_effect=1),
-            AttributeSpec(name="selectionStart", getter="get_selectionStart", setter="set_selectionStart"),
-            AttributeSpec(name="selectionEnd", getter="get_selectionEnd", setter="set_selectionEnd"),
-            AttributeSpec(name="selectionDirection", getter="get_selectionDirection", setter="set_selectionDirection"),
-            _attribute("align", "get_align", "set_align"),
-            _attribute("useMap", "get_useMap", "set_useMap"),
-            AttributeSpec(name="webkitdirectory", getter="get_webkitdirectory", setter="set_webkitdirectory"),
-            AttributeSpec(name="incremental", getter="get_incremental", setter="set_incremental"),
-            AttributeSpec(name="popoverTargetElement", getter="get_popoverTargetElement", setter="set_popoverTargetElement"),
-            _attribute("popoverTargetAction", "get_popoverTargetAction", "set_popoverTargetAction"),
-            AttributeSpec(name="webkitEntries", getter="get_webkitEntries", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="checkValidity", callback="fn_checkValidity"),
-            MethodSpec(name="reportValidity", callback="fn_reportValidity"),
-            MethodSpec(name="select", callback="fn_select"),
-            MethodSpec(name="setCustomValidity", callback="fn_setCustomValidity", length=1),
-            MethodSpec(name="setRangeText", callback="fn_setRangeText", length=1),
-            MethodSpec(name="setSelectionRange", callback="fn_setSelectionRange", length=2),
-            MethodSpec(name="showPicker", callback="fn_showPicker"),
-            MethodSpec(name="stepDown", callback="fn_stepDown"),
-            MethodSpec(name="stepUp", callback="fn_stepUp"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 0
+        }
+    }
 
     def __init__(self, tag_name="input", services=None, **kw):
         super().__init__(tag_name, services=services, **kw)

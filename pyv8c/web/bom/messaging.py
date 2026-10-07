@@ -6,9 +6,8 @@ that realm's queue: the sending side never runs the receiving handler itself.
 from __future__ import annotations
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, is_nullish, missing_error
 from ..dom.events import EventTarget
 from ..fetch.clone import message_transfer, transfer_ports
@@ -19,22 +18,6 @@ __all__ = ["MessageChannel", "MessagePort"]
 
 @interface('MessagePort', 'EventTarget')
 class MessagePort(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="onmessage", getter="get_onmessage", setter="set_onmessage"),
-            AttributeSpec(name="onmessageerror", getter="get_onmessageerror",
-                          setter="set_onmessageerror"),
-        ),
-        methods=(
-            MethodSpec(name="postMessage", callback="fn_postMessage", length=1),
-            MethodSpec(name="start", callback="fn_start"),
-            MethodSpec(name="close", callback="fn_close"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="MessagePort",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **kw):
         if services is pyv8.Undefined:
             services = None
@@ -135,16 +118,6 @@ class MessagePort(EventTarget):
 
 @interface('MessageChannel', None)
 class MessageChannel:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="port1", getter="get_port1", side_effect=1),
-            AttributeSpec(name="port2", getter="get_port2", side_effect=1),
-        ),
-        constructor_behavior=1,
-        to_string_tag="MessageChannel",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **_):
         if services is pyv8.Undefined:
             services = None

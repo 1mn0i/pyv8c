@@ -17,6 +17,7 @@ from ...foundation.arguments import (
 from ...foundation.clock import clock_of
 from ...foundation.logging import logger
 
+
 #: A frame falls due one display refresh after the last, as a compositor paces it.
 ANIMATION_FRAME_MS = 1000.0 / 60.0
 
@@ -28,7 +29,7 @@ class _SchedulingMixin:
     (scripting and microtask queue).
     """
 
-    #: Interface name the missing-argument errors report.
+    #: IdlInterface name the missing-argument errors report.
     _scheduling_interface = "Window"
 
     def fn_setTimeout(self, callback=MISSING, delay=0, *arguments):
@@ -144,6 +145,5 @@ class _SchedulingMixin:
         value = int(integer(ident, signed=True))
         logger.debug("{} {}", name, value)
         self._services.task_services.cancel(value)
-
 
 __all__ = ["_SchedulingMixin"]

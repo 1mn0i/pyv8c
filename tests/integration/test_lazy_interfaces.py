@@ -15,9 +15,9 @@ def test_cold_start_leaves_deferred_interfaces_for_first_access():
     try:
         session = page.binding_session
         materialized = set(session.materialized_interfaces)
-        plan = browser.interface_universe.plan("Window")
-        staged = set(plan.staged)
-        deferred = set(plan.deferred)
+        plan = browser.bindings.plan("Window")
+        staged = set(plan.eager)
+        deferred = set(plan.lazy)
         exposed = set(session.interface_names("Window"))
 
         assert staged
@@ -34,10 +34,10 @@ def test_the_plan_names_every_interface_startup_builds():
     browser = Browser(stub_logging="off")
     page = browser.new_context().new_page()
     try:
-        plan = browser.interface_universe.plan("Window")
+        plan = browser.bindings.plan("Window")
         materialized = set(page.binding_session.materialized_interfaces)
-        assert set(plan.startup) == materialized
-        assert set(plan.staged) < set(plan.startup)
+        assert set(plan.ready) == materialized
+        assert set(plan.eager) < set(plan.ready)
     finally:
         browser.close()
 
@@ -170,13 +170,13 @@ def test_interfaces_the_realm_never_exposes_are_declared_but_not_installed():
     browser = Browser(stub_logging="off")
     try:
         page = browser.new_context().new_page()
-        universe = browser.interface_universe
+        bindings = browser.bindings
         # Implemented, in the baseline, but not exposed to Window: exactly the case the
         # realm has to answer for without the name ever being installed.
-        assert "WebGLDebugRendererInfo" not in universe.plan("Window").declared
-        assert universe.runtime.interface("WebGLDebugRendererInfo") is not None
+        assert "WebGLDebugRendererInfo" not in bindings.plan("Window").installs
+        assert bindings.runtime.interface("WebGLDebugRendererInfo") is not None
         # The realm answers for it: an object of that interface still gets its overlay.
-        assert universe.describes("WebGLDebugRendererInfo") is True
+        assert bindings.describes("WebGLDebugRendererInfo") is True
         assert page.evaluate("[typeof WebGLDebugRendererInfo,"
                              " 'WebGLDebugRendererInfo' in window]") == ["undefined", False]
     finally:

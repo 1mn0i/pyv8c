@@ -2,7 +2,7 @@ import pytest
 from pyv8 import IdlSpec
 
 from pyv8c import Browser
-from pyv8c.engine.universe import BaselineRepository, InterfaceUniverse
+from pyv8c.engine.bindings import Idl, Bindings
 from pyv8c.foundation.errors import DOMException
 from pyv8c.platform.sessions import BindingSession
 from pyv8c.web.fetch.clone import structured_clone
@@ -59,16 +59,14 @@ def test_cookie_path_match_uses_path_boundary_and_preserves_repeated_set_cookie(
 def test_native_specs_do_not_mutate_interface_declarations(name):
     from pyv8c.platform.bootstrap import bootstrap_runtime
 
-    universe = InterfaceUniverse(
-        BaselineRepository.load(), runtime=bootstrap_runtime(), stub_logging="off",
+    bindings = Bindings(
+        Idl.load(), runtime=bootstrap_runtime(), stub_logging="off",
     )
-    interface = universe.class_for(name)
-    declaration = interface.__dict__["__v8_idl_spec__"]
-    assert isinstance(declaration, IdlSpec)
-    before = (declaration.methods, declaration.attributes, declaration.length)
-    config = BindingSession(universe, object()).class_config_for(name)
+    interface = bindings.class_for(name)
+    # A class no longer has to state anything: what a spec used to restate is the IDL's now.
+    declaration = dict(interface.__dict__.get("__idl_overrides__") or {})
+    config = BindingSession(bindings, object()).class_config_for(name)
     assert isinstance(config, IdlSpec)
-    assert config is not declaration
-    assert (declaration.methods, declaration.attributes, declaration.length) == before
     assert all(callable(member.callback) for member in config.methods)
     assert not hasattr(config, "callback_owner")
+    assert (interface.__dict__.get("__idl_overrides__") or {}) == declaration

@@ -5,10 +5,7 @@ page starts in.
 import re
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagLocation, FlagReceiverCheck
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (MISSING, callback_value, dictionary, dom_string,
                                      missing_error, number)
 from ...foundation.environment import environment_of
@@ -22,17 +19,6 @@ from .utils import settled
 
 @interface('External', None)
 class External:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="AddSearchProvider", callback="fn_AddSearchProvider", length=1),
-            MethodSpec(name="IsSearchProviderInstalled", callback="fn_IsSearchProviderInstalled",
-                       length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="External",
-        has_constructor=1,
-    )
-
     #: No provider is registered, so nothing is added and nothing is installed.
     def fn_AddSearchProvider(self, *_extra): return None
     def fn_IsSearchProviderInstalled(self, *_extra): return 0
@@ -40,14 +26,6 @@ class External:
 
 @interface('StyleMedia', None)
 class StyleMedia:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="type", getter="get_type", side_effect=1),),
-        methods=(MethodSpec(name="matchMedium", callback="fn_matchMedium", length=1, side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="StyleMedia",
-        has_constructor=1,
-    )
-
     def __init__(self, window=None, **_):
         self._window = window
 
@@ -61,17 +39,6 @@ class StyleMedia:
 
 @interface('CrashReportContext', None)
 class CrashReportContext:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="delete", callback="fn_delete", length=1),
-            MethodSpec(name="initialize", callback="fn_initialize", length=1),
-            MethodSpec(name="set", callback="fn_set", length=2),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CrashReportContext",
-        has_constructor=1,
-    )
-
     #: Nothing here reports a crash.
     def fn_delete(self, *_extra): return None
     def fn_initialize(self, *_extra): return None
@@ -80,13 +47,6 @@ class CrashReportContext:
 
 @interface('LaunchQueue', None)
 class LaunchQueue:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="setConsumer", callback="fn_setConsumer", length=1),),
-        constructor_behavior=0,
-        to_string_tag="LaunchQueue",
-        has_constructor=1,
-    )
-
     def __init__(self, **_):
         self._consumer = None
 
@@ -99,13 +59,6 @@ class LaunchQueue:
 
 @interface('Viewport', None)
 class Viewport:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="segments", getter="get_segments", side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="Viewport",
-        has_constructor=1,
-    )
-
     #: One segment covering the whole view, split into none.
     def get_segments(self): return []
 
@@ -127,6 +80,7 @@ def _voice_entries(services):
     return tuple((entry["name"], entry["lang"], entry["local_service"], entry["default"])
                  for entry in collected.voices)
 
+
 #: How long Chrome's speech service takes to answer: a page reads the empty list
 #: first and hears about the voices after this, which is when Chrome fires them.
 _VOICES_READY_SECONDS = 0.27
@@ -135,19 +89,6 @@ _VOICES_READY_SECONDS = 0.27
 @interface('SpeechSynthesisVoice', None)
 class SpeechSynthesisVoice:
     """One voice the synthesiser can speak with."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="voiceURI", getter="get_voiceURI", side_effect=1),
-            AttributeSpec(name="name", getter="get_name", side_effect=1),
-            AttributeSpec(name="lang", getter="get_lang", side_effect=1),
-            AttributeSpec(name="localService", getter="get_localService", side_effect=1),
-            AttributeSpec(name="default", getter="get_default", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="SpeechSynthesisVoice",
-        has_constructor=1,
-    )
 
     def __init__(self, name="", lang="", local_service=True, default=False, **_):
         self._name, self._lang = str(name), str(lang)
@@ -163,26 +104,6 @@ class SpeechSynthesisVoice:
 
 @interface('SpeechSynthesis', 'EventTarget')
 class SpeechSynthesis(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="pending", getter="get_pending", side_effect=1),
-            AttributeSpec(name="speaking", getter="get_speaking", side_effect=1),
-            AttributeSpec(name="paused", getter="get_paused", side_effect=1),
-            AttributeSpec(name="onvoiceschanged", getter="get_onvoiceschanged",
-                          setter="set_onvoiceschanged"),
-        ),
-        methods=(
-            MethodSpec(name="cancel", callback="fn_cancel"),
-            MethodSpec(name="getVoices", callback="fn_getVoices", length=0, side_effect=1),
-            MethodSpec(name="pause", callback="fn_pause"),
-            MethodSpec(name="resume", callback="fn_resume"),
-            MethodSpec(name="speak", callback="fn_speak", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="SpeechSynthesis",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         super().__init__(services=services)
         #: None until the service answers, then the voices every later read hands out.
@@ -214,19 +135,6 @@ class SpeechSynthesis(EventTarget):
 
 @interface('Notification', 'EventTarget')
 class Notification(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="permission", getter="get_permission",
-                                  location=FlagLocation.kInterface,
-                                  receiver_check=FlagReceiverCheck.kDoNotCheck),
-                    AttributeSpec(name="maxActions", getter="get_maxActions",
-                                  location=FlagLocation.kInterface,
-                                  receiver_check=FlagReceiverCheck.kDoNotCheck),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="Notification",
-        has_constructor=1,
-    )
-
     #: No user is here to answer the prompt, so the page keeps the initial state.
     @staticmethod
     def get_permission(*_args): return "default"
@@ -238,28 +146,11 @@ class Notification(EventTarget):
 
 @interface('Scheduling', None)
 class Scheduling:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="isInputPending", callback="fn_isInputPending"),),
-        constructor_behavior=0,
-        to_string_tag="Scheduling",
-        has_constructor=1,
-    )
-
     def fn_isInputPending(self, *_extra): return False
 
 
 @interface('Scheduler', None)
 class Scheduler:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="postTask", callback="fn_postTask", length=1),
-            MethodSpec(name="yield", callback="fn_yield", length=0),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Scheduler",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         self._services = services
 
@@ -299,15 +190,6 @@ def _empty_rect(owner):
 class UserActivation:
     """A freshly loaded page has had no gesture, so both flags are false."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="isActive", getter="get_isActive", side_effect=1),
-                    AttributeSpec(name="hasBeenActive", getter="get_hasBeenActive",
-                                  side_effect=1)),
-        constructor_behavior=0,
-        to_string_tag="UserActivation",
-        has_constructor=1,
-    )
-
     def get_isActive(self): return False
     def get_hasBeenActive(self): return False
 
@@ -315,15 +197,6 @@ class UserActivation:
 @interface('DevicePosture', 'EventTarget')
 class DevicePosture(EventTarget):
     """One flat display: the posture is continuous."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="type", getter="get_type", side_effect=1),
-                    AttributeSpec(name="onchange", getter="get_onchange",
-                                  setter="set_onchange")),
-        constructor_behavior=0,
-        to_string_tag="DevicePosture",
-        has_constructor=1,
-    )
 
     def __init__(self, services=None, **_):
         super().__init__(services=services)
@@ -337,14 +210,6 @@ class DevicePosture(EventTarget):
 class ProtectedAudience:
     """No feature table of our own, so every query answers undefined."""
 
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="queryFeatureSupport", callback="fn_queryFeatureSupport",
-                            length=1),),
-        constructor_behavior=0,
-        to_string_tag="ProtectedAudience",
-        has_constructor=1,
-    )
-
     def fn_queryFeatureSupport(self, feature=MISSING, *_extra):
         if feature is MISSING:
             raise missing_error('ProtectedAudience', 'queryFeatureSupport', 1, 0,
@@ -356,15 +221,6 @@ class ProtectedAudience:
 class Presentation:
     """Nothing was ever presented, so both members read null."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="defaultRequest", getter="get_defaultRequest",
-                                  side_effect=1),
-                    AttributeSpec(name="receiver", getter="get_receiver", side_effect=1)),
-        constructor_behavior=0,
-        to_string_tag="Presentation",
-        has_constructor=1,
-    )
-
     def get_defaultRequest(self): return pyv8.Null
     def get_receiver(self): return pyv8.Null
 
@@ -372,20 +228,6 @@ class Presentation:
 @interface('VirtualKeyboard', 'EventTarget')
 class VirtualKeyboard(EventTarget):
     """No on-screen keyboard: an empty box, never overlaid, with nothing to show."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="boundingRect", getter="get_boundingRect",
-                                  side_effect=1),
-                    AttributeSpec(name="overlaysContent", getter="get_overlaysContent",
-                                  setter="set_overlaysContent"),
-                    AttributeSpec(name="ongeometrychange", getter="get_ongeometrychange",
-                                  setter="set_ongeometrychange")),
-        methods=(MethodSpec(name="show", callback="fn_show"),
-                 MethodSpec(name="hide", callback="fn_hide")),
-        constructor_behavior=0,
-        to_string_tag="VirtualKeyboard",
-        has_constructor=1,
-    )
 
     def __init__(self, services=None, **_):
         super().__init__(services=services)
@@ -403,16 +245,6 @@ class VirtualKeyboard(EventTarget):
 @interface('WindowControlsOverlay', 'EventTarget')
 class WindowControlsOverlay(EventTarget):
     """No titlebar overlay is drawn, so it is hidden and its area is empty."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="visible", getter="get_visible", side_effect=1),
-                    AttributeSpec(name="ongeometrychange", getter="get_ongeometrychange",
-                                  setter="set_ongeometrychange")),
-        methods=(MethodSpec(name="getTitlebarAreaRect", callback="fn_getTitlebarAreaRect"),),
-        constructor_behavior=0,
-        to_string_tag="WindowControlsOverlay",
-        has_constructor=1,
-    )
 
     def __init__(self, services=None, **_):
         super().__init__(services=services)
@@ -508,16 +340,6 @@ class MediaCapabilities:
     here too, and as a rejected promise rather than a throw, which is what Chrome does.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="decodingInfo", callback="fn_decodingInfo", length=1, side_effect=1),
-            MethodSpec(name="encodingInfo", callback="fn_encodingInfo", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="MediaCapabilities",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         self._services = services
 
@@ -555,14 +377,6 @@ class MediaCapabilities:
 
 @interface('NavigatorLogin', None)
 class NavigatorLogin:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="setStatus", callback="fn_setStatus", length=1,
-                            side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="NavigatorLogin",
-        has_constructor=1,
-    )
-
     _STATUSES = ("logged-in", "logged-out")
 
     def __init__(self, services=None, **_):
@@ -582,17 +396,6 @@ class NavigatorLogin:
 @interface('NavigatorManagedData', 'EventTarget')
 class NavigatorManagedData(EventTarget):
     """No management is in force, so a configuration read is refused as in Chrome."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="onmanagedconfigurationchange",
-                                  getter="get_onmanagedconfigurationchange",
-                                  setter="set_onmanagedconfigurationchange"),),
-        methods=(MethodSpec(name="getManagedConfiguration",
-                            callback="fn_getManagedConfiguration", length=1, side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="NavigatorManagedData",
-        has_constructor=1,
-    )
 
     def __init__(self, services=None, **_):
         super().__init__(services=services)
@@ -614,16 +417,6 @@ class NavigatorManagedData(EventTarget):
 class DelegatedInkTrailPresenter:
     """A handle a page can hold; with no compositor it draws nothing."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="presentationArea", getter="get_presentationArea",
-                                  side_effect=1),),
-        methods=(MethodSpec(name="updateInkTrailStartPoint",
-                            callback="fn_updateInkTrailStartPoint", length=2),),
-        constructor_behavior=0,
-        to_string_tag="DelegatedInkTrailPresenter",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         self._services = services
         self._area = pyv8.Null
@@ -638,14 +431,6 @@ class DelegatedInkTrailPresenter:
 
 @interface('Ink', None)
 class Ink:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="requestPresenter", callback="fn_requestPresenter", length=0,
-                            side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="Ink",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         self._services = services
 
@@ -653,7 +438,6 @@ class Ink:
         """Resolves a presenter; with no compositor there is no area to draw one in."""
         return settled(self._services,
                        value=DelegatedInkTrailPresenter(services=self._services))
-
 
 __all__ = [
     "CrashReportContext", "DelegatedInkTrailPresenter", "DevicePosture", "External", "Ink",

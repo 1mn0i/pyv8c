@@ -145,7 +145,7 @@ def test_a_hook_answers_the_member_without_touching_the_implementation_class():
         assert page.evaluate("document.createElement('div').classList.contains('x')") is True
         assert frozenset(DOMTokenList.__dict__) == before
         # A hook is an answer, not a baseline difference.
-        assert browser.interface_universe.discrepancies == ()
+        assert browser.bindings.discrepancies == ()
     finally:
         browser.close()
 

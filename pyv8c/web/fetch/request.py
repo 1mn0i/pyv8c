@@ -2,9 +2,8 @@
 import re
 from urllib.parse import urljoin, urlsplit
 
-from pyv8 import AttributeSpec, IdlSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, abort_signal, byte_string, dictionary, enum_value, is_nullish, missing_error, usv_string
 from ...foundation.errors import V8TypeError
 from ..bom.abort import AbortSignal
@@ -13,22 +12,6 @@ from .headers import Headers
 
 @interface('Request', None)
 class Request:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="url", getter="get_url", side_effect=1),
-            AttributeSpec(name="method", getter="get_method", side_effect=1),
-            AttributeSpec(name="headers", getter="get_headers", side_effect=1),
-            AttributeSpec(name="mode", getter="get_mode", side_effect=1),
-            AttributeSpec(name="credentials", getter="get_credentials", side_effect=1),
-            AttributeSpec(name="destination", getter="get_destination", side_effect=1),
-            AttributeSpec(name="bodyUsed", getter="get_bodyUsed", side_effect=1),
-            AttributeSpec(name="signal", getter="get_signal", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
-
     def __init__(self, url=MISSING, options=None, *_extra, services=None, _realm=None, **_):
         if url is MISSING:
             raise missing_error('Request', 'constructor', 1, 0, constructor=True)
@@ -100,6 +83,5 @@ class Request:
         # Nothing here consumes the body by streaming it; it is read in Python.
         return False
     def get_signal(self): return self._signal
-
 
 __all__ = ["Request"]

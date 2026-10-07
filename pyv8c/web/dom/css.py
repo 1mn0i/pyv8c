@@ -4,11 +4,8 @@ import re
 from urllib.parse import urljoin
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import (FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck,
-                    V8Attribute)
-
-from ...engine.features import interface
+from pyv8.flag import ArrayProto, V8Attribute
+from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, missing_error
 from ...foundation.errors import IndexSizeError, V8TypeError
 from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
@@ -20,6 +17,7 @@ _OBJECT_NAMES = OBJECT_PROTOTYPE_NAMES | {
     "getPropertyValue", "item", "removeProperty", "setProperty",
 }
 
+
 def _property_name(value):
     value = str(dom_string(value)).strip()
     if value.startswith("--"):
@@ -27,10 +25,12 @@ def _property_name(value):
     value = value.lower()
     return value if _NAME_RE.match(value) else ""
 
+
 def _normalize_value(value):
     value = str(dom_string(value)).strip()
     if not value or any(ch in value for ch in "{};\x00"): return ""
     return re.sub(r"[ \t\r\n]+", " ", value)
+
 
 def _split_priority(value):
     match = re.search(r"\s*!\s*important\s*$", value, re.I)
@@ -40,6 +40,7 @@ def _split_priority(value):
 # ``'color' in style`` only answers for properties the engine supports, so the
 # list matches what Chrome reports: ``-webkit-`` forms because Blink ships them,
 # no ``-moz-``/``-ms-``/``-o-``, and custom properties always accepted.
+
 
 #: camelCase, as reported by a real Chrome CSSStyleDeclaration, in the order it
 #: enumerates them: a declaration moves no name and a custom property is not listed.
@@ -194,7 +195,6 @@ def _canonical(name):
     """The dashed, lower-case form every spelling of a property maps onto."""
     return _dash_name(name).lstrip("-").lower()
 
-
 SUPPORTED_NAMES = frozenset(_canonical(name) for name in _CAMEL_NAMES)
 
 
@@ -211,6 +211,7 @@ INHERITED_PROPERTIES = frozenset((
     "line-height", "letter-spacing", "word-spacing", "visibility", "white-space",
 ))
 
+
 #: The initial value the cascade starts from for each supported property.
 INITIAL_VALUES = {
     "display": "block", "position": "static", "visibility": "visible",
@@ -219,6 +220,7 @@ INITIAL_VALUES = {
     "word-spacing": "normal", "box-sizing": "content-box",
     "color": "rgb(0, 0, 0)", "white-space": "normal",
 }
+
 
 #: The display a tag starts from, measured from Chrome 153's user-agent sheet.
 TAG_DISPLAY = {
@@ -237,8 +239,10 @@ TAG_DISPLAY = {
     "tr": "table-row", "ul": "block",
 }
 
+
 #: What an element with no entry in :data:`TAG_DISPLAY` starts from.
 UNTAGGED_DISPLAY = "inline"
+
 
 #: Box defaults the user-agent sheet gives a tag, measured from Chrome 154 in px at
 #: the 16px root font size it starts from.
@@ -300,38 +304,43 @@ def parse_declarations(raw):
 
 @interface("CSSStyleDeclaration", None)
 class CSSStyleDeclaration:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="cssText", getter="get_cssText", setter="set_cssText"),
-                    AttributeSpec(name="length", getter="get_length", side_effect=1),
-                    AttributeSpec(name="parentRule", getter="get_parentRule", side_effect=1),
-                    AttributeSpec(name="cssFloat", getter="get_cssFloat", setter="set_cssFloat")),
-        methods=(MethodSpec(name="getPropertyPriority", callback="fn_getPropertyPriority", length=1, side_effect=1),
-                 MethodSpec(name="getPropertyValue", callback="fn_getPropertyValue", length=1, side_effect=1),
-                 MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-                 MethodSpec(name="removeProperty", callback="fn_removeProperty", length=1),
-                 MethodSpec(name="setProperty", callback="fn_setProperty", length=2)),
-        constructor_behavior=0, has_constructor=1, to_string_tag="CSSStyleDeclaration",
-        #: Iterable without the four named methods; the spec is stated rather than a bare "1".
-        array="iterator",
-        name_get="__v8_name_get__", name_set="__v8_name_set__", name_query="__v8_name_query__",
-        name_del="__v8_name_del__", name_enum="__v8_name_enum__",
-        index_get="__v8_index_get__", index_set="__v8_index_set__", index_query="__v8_index_query__",
-        index_del="__v8_index_del__", index_enum="__v8_index_enum__",
-    )
-    def __init__(self, element=None, block=None, parent_rule=None, **_):
+    #: ``ArrayProto.iterator`` rather than the document's ``iterable``: the four named methods are
+    #: absent, and this declaration is what says so.
+    __idl_overrides__ = {
+        "interface": {
+            "array": ArrayProto.iterator,
+            "index_del": "__v8_index_del__",
+            "index_enum": "__v8_index_enum__",
+            "index_get": "__v8_index_get__",
+            "index_query": "__v8_index_query__",
+            "index_set": "__v8_index_set__",
+            "length": 0,
+            "name_del": "__v8_name_del__",
+            "name_enum": "__v8_name_enum__",
+            "name_get": "__v8_name_get__",
+            "name_query": "__v8_name_query__",
+            "name_set": "__v8_name_set__"
+        }
+    }
+    def __init__(self, element=None, block=None, parent_rule=None, computed=None, **_):
         self._element = element
         self._parent_rule = parent_rule
         #: A rule's style is a declaration block rather than an element's attribute, so
         #: the two read from different places and only one of them is ever set.
         self._block = None if block is None else parse_declarations(str(block))
+        #: A computed style reads the cascade instead, and nothing writes it back.
+        self._computed_values = None if computed is None else dict(computed)
     def _declarations(self):
         if self._block is not None:
             return list(self._block)
-        if hasattr(self, "_computed_values"):
-            return [(name, value, "") for name, value in self._computed_values.items() if value not in ("", None)]
+        if self._computed_values is not None:
+            return [(name, value, "") for name, value in self._computed_values.items()
+                    if value not in ("", None)]
         raw = str(self._element.attributes.get("style", "")) if self._element is not None else ""
         return parse_declarations(raw)
     def _write(self, declarations):
+        if self._computed_values is not None:
+            return
         if self._block is not None:
             self._block = list(declarations)
             return
@@ -420,22 +429,10 @@ class CSSStyleDeclaration:
     def __v8_index_del__(self, index): return None
     def __v8_index_enum__(self): return self.get_length()
 
+
 @interface('CSS', None)
 class CSS:
     """The CSSOM entry point: one question a page asks before it writes a rule."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(),
-        methods=(
-            MethodSpec(name="supports", callback="fn_supports", length=2,
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CSS",
-        has_constructor=0,
-    )
 
     @staticmethod
     def fn_supports(_realm, property=MISSING, value=MISSING, *_extra):
@@ -483,20 +480,6 @@ def stylesheet_source(node):
 class StyleSheet:
     """One stylesheet as a page sees it: where it came from, and what it is for."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="href", getter="get_href", side_effect=1),
-            AttributeSpec(name="title", getter="get_title", side_effect=1),
-            AttributeSpec(name="disabled", getter="get_disabled", setter="set_disabled"),
-            AttributeSpec(name="ownerNode", getter="get_ownerNode", side_effect=1),
-            AttributeSpec(name="parentStyleSheet", getter="get_parentStyleSheet", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="StyleSheet",
-        has_constructor=0,
-    )
-
     def __init__(self, owner=None, document=None, **_):
         self._owner, self._document = owner, document
 
@@ -530,18 +513,6 @@ class StyleSheet:
 @interface('CSSStyleSheet', 'StyleSheet')
 class CSSStyleSheet(StyleSheet):
     """A sheet of CSS rules: the owner it came from, and the rules themselves."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="cssRules", getter="get_cssRules",
-                                  side_effect=1),),
-        methods=(
-            MethodSpec(name="insertRule", callback="fn_insertRule", length=2),
-            MethodSpec(name="deleteRule", callback="fn_deleteRule", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CSSStyleSheet",
-        has_constructor=0,
-    )
 
     def _owner_sheet(self): return self
 
@@ -583,16 +554,6 @@ class StyleSheetList(ReadOnlyIndexedPropertyMixin, LegacyNamedPropertyMixin):
     """The document's sheets, live: ``<style>`` elements and the ``<link>`` elements
     that are stylesheets, in document order."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="length", getter="get_length", side_effect=1),),
-        methods=(
-            MethodSpec(name="item", callback="fn_item", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="StyleSheetList",
-        has_constructor=1,
-    )
-
     def __init__(self, document=None, **_):
         self._document = document
 
@@ -628,7 +589,6 @@ class StyleSheetList(ReadOnlyIndexedPropertyMixin, LegacyNamedPropertyMixin):
             if node.attributes.get("id") == name:
                 return self._sheet_for(node)
         return pyv8.Null
-
 
 __all__ = ["CSS", "CSSStyleDeclaration", "CSSStyleSheet", "StyleSheet", "StyleSheetList",
            "SUPPORTED_NAMES", "parse_declarations", "stylesheet_source", "supported"]

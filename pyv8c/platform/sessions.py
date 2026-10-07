@@ -14,8 +14,8 @@ from pyv8 import IdlSpec
 class BindingSession:
     """Context-local registration state for one V8 realm."""
 
-    def __init__(self, universe, realm=None):
-        self.universe = universe
+    def __init__(self, bindings, realm=None):
+        self.bindings = bindings
         self.realm = realm
         self._configs: dict[type, IdlSpec] = {}
         self._materialized: set[str] = set()
@@ -27,10 +27,10 @@ class BindingSession:
         self.realm = None
 
     def interface_names(self, context_type="Window"):
-        return self.universe.plan(context_type).declared
+        return self.bindings.plan(context_type).installs
 
     def class_for(self, name):
-        return self.universe.class_for(name)
+        return self.bindings.class_for(name)
 
     @property
     def materialized_interfaces(self):
@@ -46,7 +46,7 @@ class BindingSession:
 
         The plan calls it staged, so this keeps that work off the first script's path.
         """
-        self._stage(self.universe.plan(context_type).staged)
+        self._stage(self.bindings.plan(context_type).eager)
 
     def materialize(self, name):
         """Stage what *name* needs, and answer the class behind it."""
@@ -78,7 +78,7 @@ class BindingSession:
                 if on_materialize is not None:
                     on_materialize(name)
                 return extra
-            if not self.universe.describes(name):
+            if not self.bindings.describes(name):
                 return None
             cls = self.class_for(name)
             chain = self._stage((name,))
@@ -100,11 +100,11 @@ class BindingSession:
         chain = []
         materialized = set()
         for name in names:
-            for group_name in self.universe.runtime.interface_group(name):
-                for interface_name in reversed(tuple(self.universe.table.ancestors(group_name))):
+            for group_name in self.bindings.runtime.interface_group(name):
+                for interface_name in reversed(tuple(self.bindings.idl.ancestors(group_name))):
                     cls = self.class_for(interface_name)
                     if cls not in self._configs and cls not in staged:
-                        staged[cls] = self.universe.class_config_for(interface_name, self.realm)
+                        staged[cls] = self.bindings.class_config_for(interface_name, self.realm)
                     chain.append(interface_name)
                     materialized.add(interface_name)
         self._configs.update(staged)

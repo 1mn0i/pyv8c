@@ -3,9 +3,9 @@ import re
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ..engine.features import FeatureImplementation, interface
+from ..engine.features import FeatureImplementation
+from ..idl import interface
 from ..foundation.arguments import (
     MISSING,
     dom_string,
@@ -26,27 +26,6 @@ from ..network.models import NetworkUnavailableError
 @interface('WebSocket', 'EventTarget')
 class WebSocket(EventTarget):
     CONNECTING, OPEN, CLOSING, CLOSED = 0, 1, 2, 3
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="url", getter="get_url", side_effect=1),
-            AttributeSpec(name="protocol", getter="get_protocol", side_effect=1),
-            AttributeSpec(name="readyState", getter="get_readyState", side_effect=1),
-            AttributeSpec(name="extensions", getter="get_extensions", side_effect=1),
-            AttributeSpec(name="binaryType", getter="get_binaryType", setter="set_binaryType"),
-            AttributeSpec(name="bufferedAmount", getter="get_bufferedAmount", side_effect=1),
-            AttributeSpec(name="onopen", getter="get_onopen", setter="set_onopen"),
-            AttributeSpec(name="onmessage", getter="get_onmessage", setter="set_onmessage"),
-            AttributeSpec(name="onerror", getter="get_onerror", setter="set_onerror"),
-            AttributeSpec(name="onclose", getter="get_onclose", setter="set_onclose"),
-        ),
-        methods=(
-            MethodSpec(name="send", callback="fn_send", length=1),
-            MethodSpec(name="close", callback="fn_close", length=2),
-        ),
-        constructor_behavior=1,
-        length=1,
-        has_constructor=1,
-    )
 
     def __init__(self, url=MISSING, protocols=pyv8.Undefined, *_extra, _realm=None, **kw):
         if url is MISSING:
@@ -183,7 +162,6 @@ class WebSocket(EventTarget):
             "code": code, "reason": reason, "wasClean": was_clean,
         }))
         self._services.context_services.discard_websocket(ws)
-
 
 __all__ = ["WebSocket"]
 

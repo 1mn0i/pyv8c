@@ -4,9 +4,8 @@ No keyboard layout is modelled here, so the map is empty rather than fifty inven
 """
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, callback_value, dom_string, missing_error
 from .utils import settled
 
@@ -21,22 +20,6 @@ def _js_call(fn, this, *args):
 
 @interface('KeyboardLayoutMap', None)
 class KeyboardLayoutMap:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="size", getter="get_size", side_effect=1),),
-        methods=(
-            MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
-            MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
-            MethodSpec(name="keys", callback="fn_keys", length=0, side_effect=1),
-            MethodSpec(name="values", callback="fn_values", length=0, side_effect=1),
-            MethodSpec(name="entries", callback="fn_entries", length=0, side_effect=1),
-            MethodSpec(name="forEach", callback="fn_forEach", length=1),
-        ),
-        array="iterable",
-        constructor_behavior=0,
-        to_string_tag="KeyboardLayoutMap",
-        has_constructor=1,
-    )
-
     def __init__(self, entries=None, **_):
         self._entries = dict(entries or {})
 
@@ -64,18 +47,6 @@ class KeyboardLayoutMap:
 
 @interface('Keyboard', None)
 class Keyboard:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="getLayoutMap", callback="fn_getLayoutMap", length=0,
-                       side_effect=1),
-            MethodSpec(name="lock", callback="fn_lock", length=0, side_effect=1),
-            MethodSpec(name="unlock", callback="fn_unlock", length=0),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Keyboard",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, environment=None, **_):
         self._services = services
         self._environment = environment

@@ -1,9 +1,6 @@
 """``DOMPoint``: one point, and the matrix transform applied to it."""
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     dictionary,
@@ -42,25 +39,6 @@ def point_init(value):
 
 @interface('DOMPointReadOnly', None)
 class DOMPointReadOnly:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=name, getter=f"get_{name}", side_effect=1)
-            for name in ("x", "y", "z", "w")),
-        methods=(
-            MethodSpec(name="matrixTransform", callback="fn_matrixTransform",
-                       side_effect=1),
-            MethodSpec(name="toJSON", callback="fn_toJSON", side_effect=1),
-            MethodSpec(name="fromPoint", callback="fn_fromPoint",
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="DOMPointReadOnly",
-        has_constructor=1,
-    )
-
     def __init__(self, x=MISSING, y=MISSING, z=MISSING, w=MISSING, *_extra, **_):
         # Chrome reads the four numbers and nothing else: an object handed to the
         # first argument is a value that cannot be a number, not a dictionary.
@@ -98,20 +76,11 @@ class DOMPointReadOnly:
 
 @interface('DOMPoint', 'DOMPointReadOnly')
 class DOMPoint(DOMPointReadOnly):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=name, getter=f"get_{name}", setter=f"set_{name}")
-            for name in ("x", "y", "z", "w")),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="DOMPoint",
-        has_constructor=1,
-    )
+    # Declared: the baseline does not say they are writable, so ``set_<name>`` makes them so.
 
     def set_x(self, value): self._x = double(value)
     def set_y(self, value): self._y = double(value)
     def set_z(self, value): self._z = double(value)
     def set_w(self, value): self._w = double(value)
-
 
 __all__ = ["DOMPoint", "DOMPointReadOnly", "double", "point_init"]

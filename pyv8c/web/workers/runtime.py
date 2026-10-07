@@ -216,5 +216,4 @@ class SharedWorkerRuntime(WorkerRuntime):
         self.owner._port._entangle(port)
         self._scope.fn_dispatchEvent(MessageEvent("connect", {"isTrusted": True, "ports": [port]}))
 
-
 __all__ = ["WorkerRuntime", "SharedWorkerRuntime"]

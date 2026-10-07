@@ -6,9 +6,8 @@ carried over: both are visible in the interface, neither is modelled.
 from __future__ import annotations
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error
 from ..dom.events import EventTarget
 
@@ -17,21 +16,6 @@ __all__ = ["CookieStore"]
 
 @interface('CookieStore', 'EventTarget')
 class CookieStore(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="onchange", getter="get_onchange", setter="set_onchange"),
-        ),
-        methods=(
-            MethodSpec(name="get", callback="fn_get", side_effect=1),
-            MethodSpec(name="getAll", callback="fn_getAll", side_effect=1),
-            MethodSpec(name="set", callback="fn_set", length=1),
-            MethodSpec(name="delete", callback="fn_delete", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CookieStore",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **kw):
         if services is pyv8.Undefined:
             services = None

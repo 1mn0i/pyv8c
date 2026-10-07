@@ -200,7 +200,7 @@ def trace_frames(seconds):
 
 
 def trace_binding(seconds):
-    """Interface materialisations, and whether the frame's wrapper stays healthy."""
+    """IdlInterface materialisations, and whether the frame's wrapper stays healthy."""
     from pyv8c.platform.sessions import BindingSession
     log = []
     for attribute in ("materialize", "class_config_for", "_stage"):

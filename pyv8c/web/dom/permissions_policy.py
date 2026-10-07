@@ -2,13 +2,14 @@
 
 from urllib.parse import urlsplit
 
-from pyv8 import IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
+
 
 #: The schemes a document can have an origin of its own in; anything else is opaque.
 _TUPLE_SCHEMES = ("http", "https", "ws", "wss", "ftp")
+
 
 #: The features Chrome 154 reports, in the order ``features()`` answers with them.
 FEATURES = (
@@ -39,19 +40,6 @@ class PermissionsPolicy:
     features a page can reach without an ``allow`` attribute restricting them.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="allowsFeature", callback="fn_allowsFeature", length=1, side_effect=1),
-            MethodSpec(name="allowedFeatures", callback="fn_allowedFeatures", length=0, side_effect=1),
-            MethodSpec(name="features", callback="fn_features", length=0, side_effect=1),
-            MethodSpec(name="getAllowlistForFeature", callback="fn_getAllowlistForFeature",
-                       length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="PermissionsPolicy",
-        has_constructor=1,
-    )
-
     def fn_allowsFeature(self, feature=MISSING, *_extra):
         if feature is MISSING:
             raise missing_error('PermissionsPolicy', 'allowsFeature', 1, 0, constructor=False)
@@ -76,6 +64,5 @@ class PermissionsPolicy:
         if name not in FEATURES or urlsplit(self._url).scheme.lower() not in _TUPLE_SCHEMES:
             return []
         return ["self"]
-
 
 __all__ = ["FEATURES", "PermissionsPolicy"]

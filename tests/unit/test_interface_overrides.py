@@ -6,13 +6,13 @@ Browser is being built rather than after a page has run.
 """
 import pytest
 
-from pyv8c.engine.baseline import BaselineRepository, InterfaceTable
+from pyv8c.engine.idl import Idl
 from pyv8c.engine.overrides import MemberOverrides
 
 
 @pytest.fixture(scope="module")
 def table():
-    return InterfaceTable(BaselineRepository.load(), surface=None)
+    return Idl.load(profile=None)
 
 
 def hook(*_args):
@@ -26,10 +26,10 @@ class _Member:
 
 
 class _Table:
-    """The smallest thing the table asks of a baseline: names and members."""
+    """The smallest thing the parser asks of a collection: interfaces and members."""
 
     def __init__(self, members):
-        self.baseline = type("baseline", (), {"interfaces": {"Fake": {}}})()
+        self.interfaces = {"Fake": {}}
         self._members = members
 
     def member(self, name, public_name, kind):

@@ -14,6 +14,6 @@
 | 选择网络引擎、传入参数 | [网络引擎与参数](network-engines.md) |
 | 请求头与浏览器一致 | [请求头对齐](request-headers.md) |
 | Window、iframe、跨源访问 | [Window 安全模型](WINDOW_SECURITY.md) |
-| 更新 Chromium 接口基线 | [Baseline 格式与生成](interface-baseline-fields.md) |
+| 更新 IDL 文档 | [IDL 格式与生成](idl-fields.md) |
 
 专题文档只解释一个稳定主题；测试是行为事实的最终来源。临时验证结果、交接状态和历史过程不单独维护文档。

@@ -7,6 +7,7 @@ after, which is the shape this keeps.
 """
 import struct
 
+
 #: ``struct`` formats are not worth it for four bytes; these read big/little endian directly.
 def _be16(data, offset):
     return (data[offset] << 8) | data[offset + 1]
@@ -111,6 +112,5 @@ def _svg_size(data):
         if len(numbers) == 4 and numbers[2] > 0 and numbers[3] > 0:
             return (int(round(numbers[2])), int(round(numbers[3])))
     return (0, 0)
-
 
 __all__ = ["image_size"]

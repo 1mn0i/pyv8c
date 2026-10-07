@@ -71,7 +71,7 @@ class MemberOverrides:
     @staticmethod
     def _kind(table, name, public_name) -> str:
         """The kind of member *name* answers for *public_name*, or a refusal."""
-        if name not in table.baseline.interfaces:
+        if name not in table.interfaces:
             raise TypeError(f"interface {name!r} is not in the Chromium interface baseline")
         for kind in ("operation", "attribute"):
             if table.member(name, public_name, kind) is not None:

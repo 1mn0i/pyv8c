@@ -7,15 +7,15 @@ throwing when the markup does not parse.
 """
 import re
 
-from pyv8 import IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
 from ...foundation.errors import V8TypeError
 from .character_data import Comment, Text
 from .document import HTMLDocument, XMLDocument, detached_services
 from .parser import IncrementalDOMParser
 from .utils import XHTML_NAMESPACE
+
 
 #: The ``SupportedType`` enum: Chrome takes these five spellings and nothing else,
 #: so a parameter, a case difference or surrounding space is a TypeError.
@@ -183,14 +183,6 @@ class _XmlTree:
 
 @interface('DOMParser', None)
 class DOMParser:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="parseFromString", callback="fn_parseFromString", length=2),),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="DOMParser",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, services=None, **_):
         self._services = services
 
@@ -212,6 +204,5 @@ class DOMParser:
             IncrementalDOMParser(document._services, document, source, active=False).run()
             return document
         return _XmlTree(document._services, document).parse(source)
-
 
 __all__ = ["DOMParser", "SUPPORTED"]

@@ -5,13 +5,11 @@ node the filter *accepts* is handed out, a node it *skips* is stepped over but i
 children are still visited, and a node it *rejects* takes its whole subtree with it.
 """
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import (MISSING, callback_value, integer, is_nullish,
                                      missing_error)
 from ...foundation.errors import V8TypeError
+
 
 #: What a filter answers, and what ``whatToShow`` masks are built from.
 FILTER_ACCEPT, FILTER_REJECT, FILTER_SKIP = 1, 2, 3
@@ -116,12 +114,6 @@ class _Traversal:
 class NodeFilter:
     """Only its constants matter; a page never builds one."""
 
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0,
-        to_string_tag="NodeFilter",
-        has_constructor=1,
-    )
-
     FILTER_ACCEPT, FILTER_REJECT, FILTER_SKIP = FILTER_ACCEPT, FILTER_REJECT, FILTER_SKIP
     SHOW_ALL, SHOW_ELEMENT, SHOW_ATTRIBUTE, SHOW_TEXT = SHOW_ALL, SHOW_ELEMENT, SHOW_ATTRIBUTE, SHOW_TEXT
     SHOW_CDATA_SECTION, SHOW_ENTITY_REFERENCE, SHOW_ENTITY = (SHOW_CDATA_SECTION,
@@ -136,26 +128,6 @@ class NodeFilter:
 @interface('NodeIterator', None)
 class NodeIterator(_Traversal):
     """A flat run over the collection, with a pointer that sits before or after a node."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="root", getter="get_root", side_effect=1),
-            AttributeSpec(name="referenceNode", getter="get_referenceNode", side_effect=1),
-            AttributeSpec(name="pointerBeforeReferenceNode",
-                          getter="get_pointerBeforeReferenceNode", side_effect=1),
-            AttributeSpec(name="whatToShow", getter="get_whatToShow", side_effect=1),
-            AttributeSpec(name="filter", getter="get_filter", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="nextNode", callback="fn_nextNode", side_effect=1),
-            MethodSpec(name="previousNode", callback="fn_previousNode", side_effect=1),
-            MethodSpec(name="detach", callback="fn_detach"),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="NodeIterator",
-        has_constructor=1,
-    )
 
     def __init__(self, root=None, what_to_show=None, filter=None, **kw):
         super().__init__(root, what_to_show, filter, **kw)
@@ -199,29 +171,6 @@ class NodeIterator(_Traversal):
 @interface('TreeWalker', None)
 class TreeWalker(_Traversal):
     """The same collection, with a current node a page can move and assign."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="root", getter="get_root", side_effect=1),
-            AttributeSpec(name="whatToShow", getter="get_whatToShow", side_effect=1),
-            AttributeSpec(name="filter", getter="get_filter", side_effect=1),
-            AttributeSpec(name="currentNode", getter="get_currentNode",
-                          setter="set_currentNode", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="parentNode", callback="fn_parentNode", side_effect=1),
-            MethodSpec(name="firstChild", callback="fn_firstChild", side_effect=1),
-            MethodSpec(name="lastChild", callback="fn_lastChild", side_effect=1),
-            MethodSpec(name="previousSibling", callback="fn_previousSibling", side_effect=1),
-            MethodSpec(name="nextSibling", callback="fn_nextSibling", side_effect=1),
-            MethodSpec(name="previousNode", callback="fn_previousNode", side_effect=1),
-            MethodSpec(name="nextNode", callback="fn_nextNode", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="TreeWalker",
-        has_constructor=1,
-    )
 
     def __init__(self, root=None, what_to_show=None, filter=None, **kw):
         super().__init__(root, what_to_show, filter, **kw)
@@ -351,7 +300,6 @@ def create_node_iterator(document, root, what_to_show, filter):
 def create_tree_walker(document, root, what_to_show, filter):
     return TreeWalker(root=root, what_to_show=what_to_show, filter=filter,
                       services=getattr(document, "_services", None))
-
 
 __all__ = ["NodeFilter", "NodeIterator", "TreeWalker",
            "create_node_iterator", "create_tree_walker"]

@@ -8,9 +8,8 @@ reports the number as written, its unit, and -- for absolute units -- user units
 
 import re
 
-from pyv8 import AttributeSpec, IdlSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import dom_string, number
 from ...foundation.errors import NotSupportedError
 from .css import CSSStyleDeclaration
@@ -20,12 +19,15 @@ from .html_elements import Element
 __all__ = ["SVGAnimatedLength", "SVGElement", "SVGGeometryElement", "SVGGraphicsElement",
            "SVGLength", "SVGRectElement"]
 
+
 #: The unit types an SVGLength reports, named as the baseline names its constants.
 _UNKNOWN, _NUMBER, _PERCENTAGE, _EMS, _EXS, _PX, _CM, _MM, _IN, _PT, _PC = range(11)
+
 
 #: A length as written: a number, an optional unit, nothing else.
 _LENGTH = re.compile(r"^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*([a-z%]*)$",
                      re.IGNORECASE)
+
 
 #: What an absolute unit is worth in user units, with the type it reports.
 _ABSOLUTE = {"": (_NUMBER, 1.0), "px": (_PX, 1.0), "in": (_IN, 96.0),
@@ -73,16 +75,6 @@ def _suffix(unit_type):
 class SVGElement(Element):
     """An SVG element carries an inline style like an HTML one does."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="style", getter="get_style", side_effect=1),
-            AttributeSpec(name="attributeStyleMap", getter="get_attributeStyleMap",
-                          side_effect=1),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
-
     def get_style(self):
         """The same inline style object an HTML element hands out."""
         value = getattr(self, "_style_declaration", None)
@@ -123,19 +115,6 @@ class SVGLength:
     SVG_LENGTHTYPE_PT = _PT
     SVG_LENGTHTYPE_PC = _PC
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="unitType", getter="get_unitType"),
-            AttributeSpec(name="value", getter="get_value", setter="set_value"),
-            AttributeSpec(name="valueInSpecifiedUnits", getter="get_valueInSpecifiedUnits",
-                          setter="set_valueInSpecifiedUnits"),
-            AttributeSpec(name="valueAsString", getter="get_valueAsString",
-                          setter="set_valueAsString"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, element=None, name="", **_):
         self._element, self._name = element, str(name)
 
@@ -167,15 +146,6 @@ class SVGAnimatedLength:
     Nothing animates here, so both name the attribute -- and they are still two objects.
     """
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="baseVal", getter="get_baseVal"),
-            AttributeSpec(name="animVal", getter="get_animVal"),
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, element=None, name="", **_):
         self._element, self._name = element, str(name)
         self._lengths = {}
@@ -194,14 +164,7 @@ class SVGAnimatedLength:
 class SVGRectElement(SVGGeometryElement):
     """The rectangle, whose six numbers are all presentation attributes."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=name, getter="get_" + name)
-            for name in ("x", "y", "width", "height", "rx", "ry")
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
+    # The six numbers are ``get_<name>`` over baseline members, so the convention binds them.
 
     def _animated(self, name):
         """The animated value for one of the six, held so a second read is the same
@@ -221,4 +184,3 @@ class SVGRectElement(SVGGeometryElement):
     def get_height(self): return self._animated("height")
     def get_rx(self): return self._animated("rx")
     def get_ry(self): return self._animated("ry")
-

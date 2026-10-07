@@ -4,9 +4,8 @@ No device is attached here, so each answers what Chrome answers with none: an em
 device list, and a chooser that refuses without a user gesture.
 """
 
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, missing_error
 from ...foundation.errors import NotSupportedError, SecurityError
 from ..dom.events import EventTarget
@@ -14,27 +13,13 @@ from .utils import settled
 
 __all__ = ["HID", "USB", "XRSystem"]
 
+
 #: Chrome's own wording for the chooser refusal; a page reads it out of the rejection.
 _GESTURE = "Must be handling a user gesture to show a permission request."
 
 
 @interface('USB', 'EventTarget')
 class USB(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="onconnect", getter="get_onconnect", setter="set_onconnect"),
-            AttributeSpec(name="ondisconnect", getter="get_ondisconnect",
-                          setter="set_ondisconnect"),
-        ),
-        methods=(
-            MethodSpec(name="getDevices", callback="fn_getDevices", length=0, side_effect=1),
-            MethodSpec(name="requestDevice", callback="fn_requestDevice", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="USB",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         super().__init__(services=services)
 
@@ -52,21 +37,6 @@ class USB(EventTarget):
 
 @interface('HID', 'EventTarget')
 class HID(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="onconnect", getter="get_onconnect", setter="set_onconnect"),
-            AttributeSpec(name="ondisconnect", getter="get_ondisconnect",
-                          setter="set_ondisconnect"),
-        ),
-        methods=(
-            MethodSpec(name="getDevices", callback="fn_getDevices", length=0, side_effect=1),
-            MethodSpec(name="requestDevice", callback="fn_requestDevice", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="HID",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         super().__init__(services=services)
 
@@ -84,19 +54,6 @@ class HID(EventTarget):
 
 @interface('XRSystem', 'EventTarget')
 class XRSystem(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="ondevicechange", getter="get_ondevicechange",
-                                  setter="set_ondevicechange"),),
-        methods=(
-            MethodSpec(name="isSessionSupported", callback="fn_isSessionSupported", length=1,
-                       side_effect=1),
-            MethodSpec(name="requestSession", callback="fn_requestSession", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="XRSystem",
-        has_constructor=1,
-    )
-
     def __init__(self, services=None, **_):
         super().__init__(services=services)
 

@@ -20,13 +20,13 @@ def test_window_defers_low_frequency_bom_modules_and_keeps_identity():
         assert window.location.href == "http://lazy.test/start"
 
         assert page.evaluate("navigator === navigator")
-        assert "navigator" in browser.interface_universe.runtime.loaded_features
+        assert "navigator" in browser.bindings.runtime.loaded_features
         assert page.evaluate("screen === screen")
         assert page.evaluate("localStorage === localStorage")
         assert page.evaluate("sessionStorage === sessionStorage")
         assert page.evaluate("history === history")
         assert page.evaluate("indexedDB === indexedDB")
-        assert "indexeddb" in browser.interface_universe.runtime.loaded_features
+        assert "indexeddb" in browser.bindings.runtime.loaded_features
         assert page.evaluate("history.length") == 1
     finally:
         browser.close()

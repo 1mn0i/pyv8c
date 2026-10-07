@@ -123,6 +123,7 @@ def test_offline_scripts_do_not_import_browser_runtime():
 
 def test_every_offline_script_has_only_a_wrapper_in_the_repository_tools():
     """``tools/X.py`` hands over to ``pyv8c/tools/X.py`` and holds no logic."""
+    pytest.importorskip("pyv8", reason="imports every tool, and two of them reach the extension")
     for path in (ROOT / "tools").glob("*.py"):
         if path.name.startswith("__"):
             continue
@@ -131,47 +132,50 @@ def test_every_offline_script_has_only_a_wrapper_in_the_repository_tools():
         assert shell.main is implementation.main, path
 
 
-def test_the_baseline_and_the_compiler_each_have_one_home():
-    universe_source = (ROOT / "engine" / "universe.py").read_text(encoding="utf-8")
-    extractor_source = (ROOT / "tools" / "extract_interfaces.py").read_text(encoding="utf-8")
-    baseline_source = (ROOT / "engine" / "baseline.py").read_text(encoding="utf-8")
-    assembly_source = (ROOT / "engine" / "assembly.py").read_text(encoding="utf-8")
-    # A baseline is read, decoded and planned in one module.
-    for declaration in ("class BaselineRepository", "class BaselineSnapshot", "class InterfaceTable",
-                        "class RealmPlan", "class WindowSurface", "def write_baseline"):
-        assert declaration in baseline_source, declaration
-    # Turning it into native specs, and the shells and realm bindings that go with it,
-    # are one module.
-    for declaration in ("class InterfaceCompiler", "class SignatureCache",
-                        "class BindingWrapperFactory", "class StubFactory", "apply_template_flags"):
-        assert declaration in assembly_source, declaration
+def test_the_idl_and_the_binder_each_have_one_home():
+    bindings_source = (ROOT / "engine" / "bindings.py").read_text(encoding="utf-8")
+    extractor_source = (ROOT / "tools" / "extract_idl.py").read_text(encoding="utf-8")
+    idl_source = (ROOT / "engine" / "idl.py").read_text(encoding="utf-8")
+    binder_source = (ROOT / "engine" / "binder.py").read_text(encoding="utf-8")
+    # One collection: the document, the profile that narrows it, and the lookups over both.
+    for declaration in ("class Idl", "class IdlInterface", "class IdlMember", "class Profile",
+                        "class RealmPlan", "def write_idl"):
+        assert declaration in idl_source, declaration
+    # Turning it into native specs, and the shells and realm callbacks that go with it, are one
+    # module, and ``Binder`` is the only concept in it.
+    for declaration in ("class Binder", "def _parameters_for", "class _Callbacks", "class _Stubs",
+                        "apply_template_flags"):
+        assert declaration in binder_source, declaration
     # The modules those two replaced are gone, not re-exported.
-    for gone in ("interface_table", "plan", "surface", "schema", "stubs", "wrappers", "config", "sessions"):
+    for gone in ("interface_table", "plan", "surface", "schema", "stubs", "wrappers", "config",
+                 "sessions", "baseline", "assembly", "universe"):
         assert not (ROOT / "engine" / f"{gone}.py").exists(), gone
-    assert "InterfaceTable" in universe_source
-    assert "class InterfaceCompiler" not in universe_source
-    # The offline extractor writes baselines, so the writer and the schema it writes have to
-    # stay reachable there -- one statement, so the version they agree on changes in one place.
-    assert "from ..engine.baseline import BASELINE_SCHEMA, write_baseline" in extractor_source
+    assert "Idl" in bindings_source
+    assert "class Binder" not in bindings_source
+    # The offline extractor writes documents, so the writer, the version it writes and the two
+    # value vocabularies it states have to stay reachable there -- one statement, so what the
+    # document and the engine agree on changes in one place.
+    assert "from ..engine.idl import ArrayProto, DefinitionKind, IDL_VERSION, write_idl" in (
+        extractor_source)
 
 
-def test_universe_stays_a_composition_root():
-    """Stub/wrapper/assembly/session bodies must not creep back into universe.py."""
-    universe_source = (ROOT / "engine" / "universe.py").read_text(encoding="utf-8")
+def test_bindings_stay_a_composition_root():
+    """Stub, callback and binder bodies must not creep back into bindings.py."""
+    bindings_source = (ROOT / "engine" / "bindings.py").read_text(encoding="utf-8")
     for token in (
         "_stub_method", "_member_configs", "_class_config_for", "_declared_handlers",
-        "class StubFactory", "class BindingWrapperFactory", "class ClassConfigBuilder",
+        "class _Stubs", "class _Callbacks", "class ClassConfigBuilder",
         "class BindingSession", "def _stub_", "mark_direct",
     ):
-        assert token not in universe_source, token
+        assert token not in bindings_source, token
 
 
-def test_universe_collaborators_use_public_surface_only():
-    """The compiler and a realm's session must not reach into universe privates."""
-    for path in (ROOT / "engine" / "assembly.py", ROOT / "platform" / "sessions.py"):
+def test_binder_collaborators_use_public_surface_only():
+    """The binder and a realm's session must not reach into bindings privates."""
+    for path in (ROOT / "engine" / "binder.py", ROOT / "platform" / "sessions.py"):
         source = path.read_text(encoding="utf-8")
-        assert "self.universe._" not in source, path
-        assert "universe._assembly" not in source, path
+        assert "self.bindings._" not in source, path
+        assert "bindings._binder" not in source, path
 
 
 def test_layering_has_no_upward_imports():

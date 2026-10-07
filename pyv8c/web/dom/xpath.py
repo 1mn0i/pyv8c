@@ -9,9 +9,8 @@ evaluated rather than answered with the wrong nodes.
 import re
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
 from ...foundation.errors import V8TypeError, dom_exception
 
@@ -192,26 +191,6 @@ class XPathResult:
     ANY_UNORDERED_NODE_TYPE = 8
     FIRST_ORDERED_NODE_TYPE = 9
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="resultType", getter="get_resultType", side_effect=1),
-            AttributeSpec(name="numberValue", getter="get_numberValue", side_effect=1),
-            AttributeSpec(name="stringValue", getter="get_stringValue", side_effect=1),
-            AttributeSpec(name="booleanValue", getter="get_booleanValue", side_effect=1),
-            AttributeSpec(name="singleNodeValue", getter="get_singleNodeValue", side_effect=1),
-            AttributeSpec(name="invalidIteratorState", getter="get_invalidIteratorState",
-                          side_effect=1),
-            AttributeSpec(name="snapshotLength", getter="get_snapshotLength", side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="iterateNext", callback="fn_iterateNext", length=0, side_effect=1),
-            MethodSpec(name="snapshotItem", callback="fn_snapshotItem", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="XPathResult",
-        has_constructor=1,
-    )
-
     def __init__(self, nodes=(), requested=0, **_):
         self._nodes = list(nodes)
         self._position = 0
@@ -283,13 +262,6 @@ class XPathResult:
 
 @interface('XPathExpression', None)
 class XPathExpression:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(MethodSpec(name="evaluate", callback="fn_evaluate", length=2, side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="XPathExpression",
-        has_constructor=1,
-    )
-
     def __init__(self, expression="", plan=None, **_):
         self._expression, self._plan = str(expression), plan
 
@@ -307,18 +279,6 @@ class XPathExpression:
 
 @interface('XPathEvaluator', None)
 class XPathEvaluator:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="createExpression", callback="fn_createExpression", length=1),
-            MethodSpec(name="createNSResolver", callback="fn_createNSResolver", length=1),
-            MethodSpec(name="evaluate", callback="fn_evaluate", length=2, side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=0,
-        to_string_tag="XPathEvaluator",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, **_options):
         """An evaluator holds nothing: it is the document's XPath entry point."""
 
@@ -346,6 +306,5 @@ def create_expression(expression=MISSING):
         raise missing_error('XPathEvaluator', 'createExpression', 1, 0, constructor=False)
     text = dom_string(expression)
     return XPathExpression(text, compile_expression(text))
-
 
 __all__ = ["XPathEvaluator", "XPathExpression", "XPathResult", "create_expression"]

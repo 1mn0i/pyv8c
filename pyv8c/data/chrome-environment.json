@@ -4,7 +4,7 @@
     "browser": "Chrome/154.0.8037.95",
     "executable": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "platform": "win32",
-    "collected": "2026-10-07T04:49:10+00:00",
+    "collected": "2026-10-07T14:44:01+00:00",
     "arguments": [
       "--remote-debugging-port=0",
       "--remote-allow-origins=*",
@@ -45,7 +45,7 @@
   "screen.pixel_depth": 24,
   "connection.effective_type": "3g",
   "connection.rtt": 350,
-  "connection.downlink": 1.25,
+  "connection.downlink": 1.4,
   "connection.save_data": false,
   "battery.charging": true,
   "battery.charging_time": 0.0,
@@ -551,7 +551,7 @@
     "texture_formats_tier1",
     "uniform_buffer_standard_layout"
   ],
-  "window_surface": {
+  "bindings": {
     "keys": [
       "alert",
       "atob",
@@ -791,7 +791,7 @@
       "webkitResolveLocalFileSystemURL",
       "window"
     ],
-    "own_names": [
+    "exposed": [
       "AbortController",
       "AbortSignal",
       "AbsoluteOrientationSensor",
@@ -2027,666 +2027,668 @@
       "webkitURL",
       "window"
     ],
-    "prototype_gaps": {
-      "WebGLRenderingContext": [
-        "texElementImage2D",
-        "texElementSubImage2D"
-      ],
-      "WebGL2RenderingContext": [
-        "texElementImage2D",
-        "texElementSubImage2D"
-      ],
-      "VTTCue": [
-        "lineAlign",
-        "positionAlign",
-        "region"
-      ],
-      "URLPattern": [
-        "generate"
-      ],
-      "TrustedTypePolicy": [
-        "createParserOptions"
-      ],
-      "TextMetrics": [
-        "emHeightAscent",
-        "emHeightDescent",
-        "getActualBoundingBox",
-        "getIndexFromOffset",
-        "getSelectionRects",
-        "getTextClusters"
-      ],
-      "Text": [
-        "convertPointFromNode",
-        "convertQuadFromNode",
-        "convertRectFromNode",
-        "getBoxQuads"
-      ],
-      "SubmitEvent": [
-        "agentInvoked",
-        "respondWith"
-      ],
-      "SourceBuffer": [
-        "appendEncodedChunks",
-        "audioTracks",
-        "trackDefaults",
-        "videoTracks"
-      ],
-      "ShadowRoot": [
-        "appendHTML",
-        "appendHTMLUnsafe",
-        "prependHTML",
-        "prependHTMLUnsafe",
-        "streamAppendHTML",
-        "streamAppendHTMLUnsafe",
-        "streamHTML",
-        "streamHTMLUnsafe",
-        "streamPrependHTML",
-        "streamPrependHTMLUnsafe"
-      ],
-      "SecurityPolicyViolationEvent": [
-        "evalHash",
-        "urlHash"
-      ],
-      "Scheduler": [
-        "asyncData"
-      ],
-      "SVGTextPathElement": [
-        "side"
-      ],
-      "SVGPathElement": [
-        "getPathData",
-        "setPathData"
-      ],
-      "SVGElement": [
-        "onbeforefilter",
-        "oncomplete",
-        "onoverscrollcancel",
-        "onoverscrollchanging",
-        "onoverscrollend",
-        "onoverscrollstart",
-        "ontouchcancel",
-        "ontouchend",
-        "ontouchmove",
-        "ontouchstart"
-      ],
-      "Request": [
-        "getRetryOptions"
-      ],
-      "RTCEncodedVideoFrame": [
-        "setMetadata"
-      ],
-      "RTCEncodedAudioFrame": [
-        "setMetadata"
-      ],
-      "Permissions": [
-        "request",
-        "requestAll",
-        "revoke"
-      ],
-      "PerformanceResourceTiming": [
-        "initiatorUrl"
-      ],
-      "PerformanceEventTiming": [
-        "targetSelector"
-      ],
-      "Performance": [
-        "bind",
-        "getSpeculations",
-        "markConditional",
-        "measureConditional",
-        "measureUserAgentSpecificMemory"
-      ],
-      "OffscreenCanvasRenderingContext2D": [
-        "beginLayer",
-        "createMesh2DIndexBuffer",
-        "createMesh2DUVBuffer",
-        "createMesh2DVertexBuffer",
-        "drawElementImage",
-        "drawMesh",
-        "endLayer",
-        "fillTextCluster",
-        "globalHDRHeadroom",
-        "strokeTextCluster"
-      ],
-      "OffscreenCanvas": [
-        "clearElementGeometry",
-        "getElementTransform",
-        "updateElementGeometry"
-      ],
-      "NetworkInformation": [
-        "downlinkMax",
-        "ontypechange",
-        "type"
-      ],
-      "Navigator": [
-        "contacts",
-        "createAdRequest",
-        "createHandwritingRecognizer",
-        "finalizeAd",
-        "globalPrivacyControl",
-        "install",
-        "lockedMode",
-        "ml",
-        "playHaptics",
-        "preferences",
-        "queryHandwritingRecognizer",
-        "rtc",
-        "smartCard"
-      ],
-      "NavigateEvent": [
-        "deferPageSwap"
-      ],
-      "MessagePort": [
-        "onclose"
-      ],
-      "MediaStreamTrack": [
-        "onconfigurationchange"
-      ],
-      "MediaSource": [
-        "handle"
-      ],
-      "MathMLElement": [
-        "onbeforefilter",
-        "oncomplete",
-        "onoverscrollcancel",
-        "onoverscrollchanging",
-        "onoverscrollend",
-        "onoverscrollstart",
-        "ontouchcancel",
-        "ontouchend",
-        "ontouchmove",
-        "ontouchstart"
-      ],
-      "KeyframeEffect": [
-        "iterationComposite"
-      ],
-      "HTMLTemplateElement": [
-        "buffer",
-        "crossOrigin",
-        "integrity",
-        "referrerPolicy",
-        "sanitize",
-        "shadowRootAdoptedStyleSheets",
-        "src"
-      ],
-      "HTMLSelectElement": [
-        "selectedContentElement"
-      ],
-      "HTMLScriptElement": [
-        "cacheHint",
-        "signature"
-      ],
-      "HTMLMediaElement": [
-        "audioTracks",
-        "latencyHint",
-        "videoTracks"
-      ],
-      "HTMLInputElement": [
-        "alpha",
-        "capture",
-        "colorSpace",
-        "switch"
-      ],
-      "HTMLImageElement": [
-        "onuareplaceend",
-        "onuareplacestart",
-        "replacedByUserAgent"
-      ],
-      "HTMLIFrameElement": [
-        "connectionAllowlist",
-        "permissionsPolicy",
-        "policy"
-      ],
-      "HTMLFrameSetElement": [
-        "ongamepadrawinputchanged",
-        "onmove",
-        "onorientationchange",
-        "ontimezonechange"
-      ],
-      "HTMLFieldSetElement": [
-        "checkable"
-      ],
-      "HTMLElement": [
-        "accessKeyLabel",
-        "hideUnboundedElement",
-        "onbeforefilter",
-        "oncomplete",
-        "onoverscrollcancel",
-        "onoverscrollchanging",
-        "onoverscrollend",
-        "onoverscrollstart",
-        "ontouchcancel",
-        "ontouchend",
-        "ontouchmove",
-        "ontouchstart",
-        "overscrollarea",
-        "overscrollcontainer",
-        "scrollParent",
-        "showUnboundedElement",
-        "unbounded"
-      ],
-      "HTMLCanvasElement": [
-        "captureElementImage",
-        "clearElementGeometry",
-        "configureHighDynamicRange",
-        "getElementTransform",
-        "layoutSubtree",
-        "onpaint",
-        "requestPaint",
-        "updateElementGeometry"
-      ],
-      "HTMLBodyElement": [
-        "ongamepadrawinputchanged",
-        "onmove",
-        "onorientationchange",
-        "ontimezonechange"
-      ],
-      "HTMLAreaElement": [
-        "hreflang",
-        "type"
-      ],
-      "GamepadButton": [
-        "type"
-      ],
-      "Gamepad": [
-        "touchEvents"
-      ],
-      "ElementInternals": [
-        "ariaOwnsElements",
-        "behaviors",
-        "setToolParamSchema"
-      ],
-      "Element": [
-        "afterHTML",
-        "afterHTMLUnsafe",
-        "appendHTML",
-        "appendHTMLUnsafe",
-        "ariaOwnsElements",
-        "beforeHTML",
-        "beforeHTMLUnsafe",
-        "computedName",
-        "computedRole",
-        "containerTiming",
-        "containerTimingIgnore",
-        "convertPointFromNode",
-        "convertQuadFromNode",
-        "convertRectFromNode",
-        "getBoxQuads",
-        "getCanvasTransform",
-        "headingOffset",
-        "headingReset",
-        "matchContainer",
-        "prependHTML",
-        "prependHTMLUnsafe",
-        "replaceWithHTML",
-        "replaceWithHTMLUnsafe",
-        "setCanvasTransform",
-        "streamAfterHTML",
-        "streamAfterHTMLUnsafe",
-        "streamAppendHTML",
-        "streamAppendHTMLUnsafe",
-        "streamBeforeHTML",
-        "streamBeforeHTMLUnsafe",
-        "streamHTML",
-        "streamHTMLUnsafe",
-        "streamPrependHTML",
-        "streamPrependHTMLUnsafe",
-        "streamReplaceWithHTML",
-        "streamReplaceWithHTMLUnsafe"
-      ],
-      "DocumentType": [
-        "afterHTML",
-        "afterHTMLUnsafe",
-        "beforeHTML",
-        "beforeHTMLUnsafe",
-        "replaceWithHTML",
-        "replaceWithHTMLUnsafe",
-        "streamAfterHTML",
-        "streamAfterHTMLUnsafe",
-        "streamBeforeHTML",
-        "streamBeforeHTMLUnsafe",
-        "streamReplaceWithHTML",
-        "streamReplaceWithHTMLUnsafe"
-      ],
-      "Document": [
-        "convertPointFromNode",
-        "convertQuadFromNode",
-        "convertRectFromNode",
-        "getBoxQuads",
-        "modelContext",
-        "onautofill",
-        "onbeforefilter",
-        "oncomplete",
-        "onoverscrollcancel",
-        "onoverscrollchanging",
-        "onoverscrollend",
-        "onoverscrollstart",
-        "ontouchcancel",
-        "ontouchend",
-        "ontouchmove",
-        "ontouchstart",
-        "permissionsPolicy",
-        "requestStorageAccessFor",
-        "setSequentialFocusStartingPoint",
-        "spellCheckCustomDictionary"
-      ],
-      "CharacterData": [
-        "afterHTML",
-        "afterHTMLUnsafe",
-        "beforeHTML",
-        "beforeHTMLUnsafe",
-        "replaceWithHTML",
-        "replaceWithHTMLUnsafe",
-        "streamAfterHTML",
-        "streamAfterHTMLUnsafe",
-        "streamBeforeHTML",
-        "streamBeforeHTMLUnsafe",
-        "streamReplaceWithHTML",
-        "streamReplaceWithHTMLUnsafe"
-      ],
-      "CanvasRenderingContext2D": [
-        "beginLayer",
-        "createMesh2DIndexBuffer",
-        "createMesh2DUVBuffer",
-        "createMesh2DVertexBuffer",
-        "drawElementImage",
-        "drawMesh",
-        "endLayer",
-        "fillTextCluster",
-        "globalHDRHeadroom",
-        "strokeTextCluster"
-      ],
-      "CanvasGradient": [
-        "colorInterpolationMethod",
-        "hueInterpolationMethod",
-        "premultipliedAlpha"
-      ],
-      "CSPViolationReportBody": [
-        "evalHash",
-        "urlHash"
-      ],
-      "AnimationTimeline": [
-        "getCurrentTime"
-      ],
-      "AbstractRange": [
-        "endContainer",
-        "startContainer"
-      ],
-      "AudioWorklet": [
-        "port"
-      ],
-      "GPUAdapterInfo": [
-        "backend",
-        "d3dShaderModel",
-        "driver",
-        "memoryHeaps",
-        "powerPreference",
-        "subgroupMatrixConfigs",
-        "type",
-        "vkDriverVersion"
-      ],
-      "GPUBuffer": [
-        "mapSync"
-      ],
-      "GPUCommandEncoder": [
-        "writeTimestamp"
-      ],
-      "GPUComputePassEncoder": [
-        "setResourceTable"
-      ],
-      "GPUDevice": [
-        "createResourceTable"
-      ],
-      "GPUExternalTexture": [
-        "isZeroCopy"
-      ],
-      "GPUQueue": [
-        "copyElementImageToTexture",
-        "drawElementImageToTexture"
-      ],
-      "GPURenderPassEncoder": [
-        "multiDrawIndexedIndirect",
-        "multiDrawIndirect"
-      ],
-      "MediaDevices": [
-        "getAllScreensMedia",
-        "selectAudioOutput",
-        "setPreferredSinkId"
-      ],
-      "NavigatorManagedData": [
-        "getAnnotatedAssetId",
-        "getAnnotatedLocation",
-        "getDirectoryId",
-        "getHostname",
-        "getSerialNumber"
-      ],
-      "ScreenDetailed": [
-        "bluePrimaryX",
-        "bluePrimaryY",
-        "greenPrimaryX",
-        "greenPrimaryY",
-        "hdrHeadroom",
-        "highDynamicRangeHeadroom",
-        "onhdrheadroomchange",
-        "redPrimaryX",
-        "redPrimaryY",
-        "whitePointX",
-        "whitePointY"
-      ],
-      "ServiceWorkerRegistration": [
-        "index"
-      ],
-      "SubtleCrypto": [
-        "decapsulateBits",
-        "decapsulateKey",
-        "encapsulateBits",
-        "encapsulateKey",
-        "getPublicKey"
-      ],
-      "VideoEncoder": [
-        "getAllFrameBuffers"
-      ],
-      "WebTransport": [
-        "anticipatedConcurrentIncomingBidirectionalStreams",
-        "anticipatedConcurrentIncomingUnidirectionalStreams",
-        "congestionControl",
-        "createSendGroup",
-        "draining",
-        "getStats",
-        "responseHeaders"
-      ],
-      "Bluetooth": [
-        "getDevices",
-        "onadvertisementreceived",
-        "requestLEScan"
-      ],
-      "BluetoothDevice": [
-        "forget",
-        "onadvertisementreceived",
-        "watchAdvertisements",
-        "watchingAdvertisements"
-      ],
-      "CaptureController": [
-        "oncapturedmousechange"
-      ],
-      "FileSystemFileHandle": [
-        "createSyncAccessHandle"
-      ],
-      "FileSystemHandle": [
-        "getCloudIdentifiers",
-        "getUniqueId",
-        "move"
-      ],
-      "FileSystemObserver": [
-        "unobserve"
-      ],
-      "FragmentDirective": [
-        "createSelectorDirective",
-        "items"
-      ],
-      "LanguageModel": [
-        "inputQuota",
-        "inputUsage",
-        "measureInputUsage",
-        "onquotaoverflow",
-        "samplingMode",
-        "temperature",
-        "topK"
-      ],
-      "StorageBucket": [
-        "durability",
-        "locks"
-      ],
-      "XRFrame": [
-        "detectedMeshes",
-        "getImageTrackingResults"
-      ],
-      "XRPose": [
-        "angularVelocity",
-        "linearVelocity"
-      ],
-      "XRSession": [
-        "frameRate",
-        "getTrackedImageScores",
-        "isSystemKeyboardSupported",
-        "onframeratechange",
-        "supportedFrameRates",
-        "updateTargetFrameRate"
-      ],
-      "CSSPseudoElement": [
-        "convertPointFromNode",
-        "convertQuadFromNode",
-        "convertRectFromNode",
-        "getBoxQuads"
-      ],
-      "FencedFrameConfig": [
-        "setSharedStorageContext"
-      ],
-      "HTMLUserMediaElement": [
-        "initialPermissionStatus",
-        "invalidReason",
-        "isValid",
-        "onpromptaction",
-        "onpromptdismiss",
-        "onvalidationstatuschange",
-        "permissionStatus",
-        "type"
-      ],
-      "Notification": [
-        "scenario",
-        "showTrigger"
-      ],
-      "PerformanceLongAnimationFrameTiming": [
-        "layoutDuration",
-        "scriptCount",
-        "styleDuration",
-        "userTimingEntries"
-      ],
-      "PerformanceScriptTiming": [
-        "forcedLayoutDuration",
-        "forcedStyleDuration",
-        "sourceColumn",
-        "sourceLine"
-      ],
-      "RTCDataChannel": [
-        "priority"
-      ]
+    "omits": {
+      "prototype": {
+        "WebGLRenderingContext": [
+          "texElementImage2D",
+          "texElementSubImage2D"
+        ],
+        "WebGL2RenderingContext": [
+          "texElementImage2D",
+          "texElementSubImage2D"
+        ],
+        "VTTCue": [
+          "lineAlign",
+          "positionAlign",
+          "region"
+        ],
+        "URLPattern": [
+          "generate"
+        ],
+        "TrustedTypePolicy": [
+          "createParserOptions"
+        ],
+        "TextMetrics": [
+          "emHeightAscent",
+          "emHeightDescent",
+          "getActualBoundingBox",
+          "getIndexFromOffset",
+          "getSelectionRects",
+          "getTextClusters"
+        ],
+        "Text": [
+          "convertPointFromNode",
+          "convertQuadFromNode",
+          "convertRectFromNode",
+          "getBoxQuads"
+        ],
+        "SubmitEvent": [
+          "agentInvoked",
+          "respondWith"
+        ],
+        "SourceBuffer": [
+          "appendEncodedChunks",
+          "audioTracks",
+          "trackDefaults",
+          "videoTracks"
+        ],
+        "ShadowRoot": [
+          "appendHTML",
+          "appendHTMLUnsafe",
+          "prependHTML",
+          "prependHTMLUnsafe",
+          "streamAppendHTML",
+          "streamAppendHTMLUnsafe",
+          "streamHTML",
+          "streamHTMLUnsafe",
+          "streamPrependHTML",
+          "streamPrependHTMLUnsafe"
+        ],
+        "SecurityPolicyViolationEvent": [
+          "evalHash",
+          "urlHash"
+        ],
+        "Scheduler": [
+          "asyncData"
+        ],
+        "SVGTextPathElement": [
+          "side"
+        ],
+        "SVGPathElement": [
+          "getPathData",
+          "setPathData"
+        ],
+        "SVGElement": [
+          "onbeforefilter",
+          "oncomplete",
+          "onoverscrollcancel",
+          "onoverscrollchanging",
+          "onoverscrollend",
+          "onoverscrollstart",
+          "ontouchcancel",
+          "ontouchend",
+          "ontouchmove",
+          "ontouchstart"
+        ],
+        "Request": [
+          "getRetryOptions"
+        ],
+        "RTCEncodedVideoFrame": [
+          "setMetadata"
+        ],
+        "RTCEncodedAudioFrame": [
+          "setMetadata"
+        ],
+        "Permissions": [
+          "request",
+          "requestAll",
+          "revoke"
+        ],
+        "PerformanceResourceTiming": [
+          "initiatorUrl"
+        ],
+        "PerformanceEventTiming": [
+          "targetSelector"
+        ],
+        "Performance": [
+          "bind",
+          "getSpeculations",
+          "markConditional",
+          "measureConditional",
+          "measureUserAgentSpecificMemory"
+        ],
+        "OffscreenCanvasRenderingContext2D": [
+          "beginLayer",
+          "createMesh2DIndexBuffer",
+          "createMesh2DUVBuffer",
+          "createMesh2DVertexBuffer",
+          "drawElementImage",
+          "drawMesh",
+          "endLayer",
+          "fillTextCluster",
+          "globalHDRHeadroom",
+          "strokeTextCluster"
+        ],
+        "OffscreenCanvas": [
+          "clearElementGeometry",
+          "getElementTransform",
+          "updateElementGeometry"
+        ],
+        "NetworkInformation": [
+          "downlinkMax",
+          "ontypechange",
+          "type"
+        ],
+        "Navigator": [
+          "contacts",
+          "createAdRequest",
+          "createHandwritingRecognizer",
+          "finalizeAd",
+          "globalPrivacyControl",
+          "install",
+          "lockedMode",
+          "ml",
+          "playHaptics",
+          "preferences",
+          "queryHandwritingRecognizer",
+          "rtc",
+          "smartCard"
+        ],
+        "NavigateEvent": [
+          "deferPageSwap"
+        ],
+        "MessagePort": [
+          "onclose"
+        ],
+        "MediaStreamTrack": [
+          "onconfigurationchange"
+        ],
+        "MediaSource": [
+          "handle"
+        ],
+        "MathMLElement": [
+          "onbeforefilter",
+          "oncomplete",
+          "onoverscrollcancel",
+          "onoverscrollchanging",
+          "onoverscrollend",
+          "onoverscrollstart",
+          "ontouchcancel",
+          "ontouchend",
+          "ontouchmove",
+          "ontouchstart"
+        ],
+        "KeyframeEffect": [
+          "iterationComposite"
+        ],
+        "HTMLTemplateElement": [
+          "buffer",
+          "crossOrigin",
+          "integrity",
+          "referrerPolicy",
+          "sanitize",
+          "shadowRootAdoptedStyleSheets",
+          "src"
+        ],
+        "HTMLSelectElement": [
+          "selectedContentElement"
+        ],
+        "HTMLScriptElement": [
+          "cacheHint",
+          "signature"
+        ],
+        "HTMLMediaElement": [
+          "audioTracks",
+          "latencyHint",
+          "videoTracks"
+        ],
+        "HTMLInputElement": [
+          "alpha",
+          "capture",
+          "colorSpace",
+          "switch"
+        ],
+        "HTMLImageElement": [
+          "onuareplaceend",
+          "onuareplacestart",
+          "replacedByUserAgent"
+        ],
+        "HTMLIFrameElement": [
+          "connectionAllowlist",
+          "permissionsPolicy",
+          "policy"
+        ],
+        "HTMLFrameSetElement": [
+          "ongamepadrawinputchanged",
+          "onmove",
+          "onorientationchange",
+          "ontimezonechange"
+        ],
+        "HTMLFieldSetElement": [
+          "checkable"
+        ],
+        "HTMLElement": [
+          "accessKeyLabel",
+          "hideUnboundedElement",
+          "onbeforefilter",
+          "oncomplete",
+          "onoverscrollcancel",
+          "onoverscrollchanging",
+          "onoverscrollend",
+          "onoverscrollstart",
+          "ontouchcancel",
+          "ontouchend",
+          "ontouchmove",
+          "ontouchstart",
+          "overscrollarea",
+          "overscrollcontainer",
+          "scrollParent",
+          "showUnboundedElement",
+          "unbounded"
+        ],
+        "HTMLCanvasElement": [
+          "captureElementImage",
+          "clearElementGeometry",
+          "configureHighDynamicRange",
+          "getElementTransform",
+          "layoutSubtree",
+          "onpaint",
+          "requestPaint",
+          "updateElementGeometry"
+        ],
+        "HTMLBodyElement": [
+          "ongamepadrawinputchanged",
+          "onmove",
+          "onorientationchange",
+          "ontimezonechange"
+        ],
+        "HTMLAreaElement": [
+          "hreflang",
+          "type"
+        ],
+        "GamepadButton": [
+          "type"
+        ],
+        "Gamepad": [
+          "touchEvents"
+        ],
+        "ElementInternals": [
+          "ariaOwnsElements",
+          "behaviors",
+          "setToolParamSchema"
+        ],
+        "Element": [
+          "afterHTML",
+          "afterHTMLUnsafe",
+          "appendHTML",
+          "appendHTMLUnsafe",
+          "ariaOwnsElements",
+          "beforeHTML",
+          "beforeHTMLUnsafe",
+          "computedName",
+          "computedRole",
+          "containerTiming",
+          "containerTimingIgnore",
+          "convertPointFromNode",
+          "convertQuadFromNode",
+          "convertRectFromNode",
+          "getBoxQuads",
+          "getCanvasTransform",
+          "headingOffset",
+          "headingReset",
+          "matchContainer",
+          "prependHTML",
+          "prependHTMLUnsafe",
+          "replaceWithHTML",
+          "replaceWithHTMLUnsafe",
+          "setCanvasTransform",
+          "streamAfterHTML",
+          "streamAfterHTMLUnsafe",
+          "streamAppendHTML",
+          "streamAppendHTMLUnsafe",
+          "streamBeforeHTML",
+          "streamBeforeHTMLUnsafe",
+          "streamHTML",
+          "streamHTMLUnsafe",
+          "streamPrependHTML",
+          "streamPrependHTMLUnsafe",
+          "streamReplaceWithHTML",
+          "streamReplaceWithHTMLUnsafe"
+        ],
+        "DocumentType": [
+          "afterHTML",
+          "afterHTMLUnsafe",
+          "beforeHTML",
+          "beforeHTMLUnsafe",
+          "replaceWithHTML",
+          "replaceWithHTMLUnsafe",
+          "streamAfterHTML",
+          "streamAfterHTMLUnsafe",
+          "streamBeforeHTML",
+          "streamBeforeHTMLUnsafe",
+          "streamReplaceWithHTML",
+          "streamReplaceWithHTMLUnsafe"
+        ],
+        "Document": [
+          "convertPointFromNode",
+          "convertQuadFromNode",
+          "convertRectFromNode",
+          "getBoxQuads",
+          "modelContext",
+          "onautofill",
+          "onbeforefilter",
+          "oncomplete",
+          "onoverscrollcancel",
+          "onoverscrollchanging",
+          "onoverscrollend",
+          "onoverscrollstart",
+          "ontouchcancel",
+          "ontouchend",
+          "ontouchmove",
+          "ontouchstart",
+          "permissionsPolicy",
+          "requestStorageAccessFor",
+          "setSequentialFocusStartingPoint",
+          "spellCheckCustomDictionary"
+        ],
+        "CharacterData": [
+          "afterHTML",
+          "afterHTMLUnsafe",
+          "beforeHTML",
+          "beforeHTMLUnsafe",
+          "replaceWithHTML",
+          "replaceWithHTMLUnsafe",
+          "streamAfterHTML",
+          "streamAfterHTMLUnsafe",
+          "streamBeforeHTML",
+          "streamBeforeHTMLUnsafe",
+          "streamReplaceWithHTML",
+          "streamReplaceWithHTMLUnsafe"
+        ],
+        "CanvasRenderingContext2D": [
+          "beginLayer",
+          "createMesh2DIndexBuffer",
+          "createMesh2DUVBuffer",
+          "createMesh2DVertexBuffer",
+          "drawElementImage",
+          "drawMesh",
+          "endLayer",
+          "fillTextCluster",
+          "globalHDRHeadroom",
+          "strokeTextCluster"
+        ],
+        "CanvasGradient": [
+          "colorInterpolationMethod",
+          "hueInterpolationMethod",
+          "premultipliedAlpha"
+        ],
+        "CSPViolationReportBody": [
+          "evalHash",
+          "urlHash"
+        ],
+        "AnimationTimeline": [
+          "getCurrentTime"
+        ],
+        "AbstractRange": [
+          "endContainer",
+          "startContainer"
+        ],
+        "AudioWorklet": [
+          "port"
+        ],
+        "GPUAdapterInfo": [
+          "backend",
+          "d3dShaderModel",
+          "driver",
+          "memoryHeaps",
+          "powerPreference",
+          "subgroupMatrixConfigs",
+          "type",
+          "vkDriverVersion"
+        ],
+        "GPUBuffer": [
+          "mapSync"
+        ],
+        "GPUCommandEncoder": [
+          "writeTimestamp"
+        ],
+        "GPUComputePassEncoder": [
+          "setResourceTable"
+        ],
+        "GPUDevice": [
+          "createResourceTable"
+        ],
+        "GPUExternalTexture": [
+          "isZeroCopy"
+        ],
+        "GPUQueue": [
+          "copyElementImageToTexture",
+          "drawElementImageToTexture"
+        ],
+        "GPURenderPassEncoder": [
+          "multiDrawIndexedIndirect",
+          "multiDrawIndirect"
+        ],
+        "MediaDevices": [
+          "getAllScreensMedia",
+          "selectAudioOutput",
+          "setPreferredSinkId"
+        ],
+        "NavigatorManagedData": [
+          "getAnnotatedAssetId",
+          "getAnnotatedLocation",
+          "getDirectoryId",
+          "getHostname",
+          "getSerialNumber"
+        ],
+        "ScreenDetailed": [
+          "bluePrimaryX",
+          "bluePrimaryY",
+          "greenPrimaryX",
+          "greenPrimaryY",
+          "hdrHeadroom",
+          "highDynamicRangeHeadroom",
+          "onhdrheadroomchange",
+          "redPrimaryX",
+          "redPrimaryY",
+          "whitePointX",
+          "whitePointY"
+        ],
+        "ServiceWorkerRegistration": [
+          "index"
+        ],
+        "SubtleCrypto": [
+          "decapsulateBits",
+          "decapsulateKey",
+          "encapsulateBits",
+          "encapsulateKey",
+          "getPublicKey"
+        ],
+        "VideoEncoder": [
+          "getAllFrameBuffers"
+        ],
+        "WebTransport": [
+          "anticipatedConcurrentIncomingBidirectionalStreams",
+          "anticipatedConcurrentIncomingUnidirectionalStreams",
+          "congestionControl",
+          "createSendGroup",
+          "draining",
+          "getStats",
+          "responseHeaders"
+        ],
+        "Bluetooth": [
+          "getDevices",
+          "onadvertisementreceived",
+          "requestLEScan"
+        ],
+        "BluetoothDevice": [
+          "forget",
+          "onadvertisementreceived",
+          "watchAdvertisements",
+          "watchingAdvertisements"
+        ],
+        "CaptureController": [
+          "oncapturedmousechange"
+        ],
+        "FileSystemFileHandle": [
+          "createSyncAccessHandle"
+        ],
+        "FileSystemHandle": [
+          "getCloudIdentifiers",
+          "getUniqueId",
+          "move"
+        ],
+        "FileSystemObserver": [
+          "unobserve"
+        ],
+        "FragmentDirective": [
+          "createSelectorDirective",
+          "items"
+        ],
+        "LanguageModel": [
+          "inputQuota",
+          "inputUsage",
+          "measureInputUsage",
+          "onquotaoverflow",
+          "samplingMode",
+          "temperature",
+          "topK"
+        ],
+        "StorageBucket": [
+          "durability",
+          "locks"
+        ],
+        "XRFrame": [
+          "detectedMeshes",
+          "getImageTrackingResults"
+        ],
+        "XRPose": [
+          "angularVelocity",
+          "linearVelocity"
+        ],
+        "XRSession": [
+          "frameRate",
+          "getTrackedImageScores",
+          "isSystemKeyboardSupported",
+          "onframeratechange",
+          "supportedFrameRates",
+          "updateTargetFrameRate"
+        ],
+        "CSSPseudoElement": [
+          "convertPointFromNode",
+          "convertQuadFromNode",
+          "convertRectFromNode",
+          "getBoxQuads"
+        ],
+        "FencedFrameConfig": [
+          "setSharedStorageContext"
+        ],
+        "HTMLUserMediaElement": [
+          "initialPermissionStatus",
+          "invalidReason",
+          "isValid",
+          "onpromptaction",
+          "onpromptdismiss",
+          "onvalidationstatuschange",
+          "permissionStatus",
+          "type"
+        ],
+        "Notification": [
+          "scenario",
+          "showTrigger"
+        ],
+        "PerformanceLongAnimationFrameTiming": [
+          "layoutDuration",
+          "scriptCount",
+          "styleDuration",
+          "userTimingEntries"
+        ],
+        "PerformanceScriptTiming": [
+          "forcedLayoutDuration",
+          "forcedStyleDuration",
+          "sourceColumn",
+          "sourceLine"
+        ],
+        "RTCDataChannel": [
+          "priority"
+        ]
+      },
+      "interface": {
+        "URLPattern": [
+          "compareComponent"
+        ],
+        "TrustedScriptURL": [
+          "fromLiteral"
+        ],
+        "TrustedScript": [
+          "fromLiteral"
+        ],
+        "TrustedHTML": [
+          "fromLiteral"
+        ],
+        "CSS": [
+          "animationWorklet",
+          "layoutWorklet"
+        ],
+        "SubtleCrypto": [
+          "supports"
+        ],
+        "IdentityProvider": [
+          "register",
+          "unregister"
+        ],
+        "LanguageModel": [
+          "params"
+        ],
+        "HTMLUserMediaElement": [
+          "isTypeSupported"
+        ]
+      }
     },
-    "interface_gaps": {
-      "URLPattern": [
-        "compareComponent"
-      ],
-      "TrustedScriptURL": [
-        "fromLiteral"
-      ],
-      "TrustedScript": [
-        "fromLiteral"
-      ],
-      "TrustedHTML": [
-        "fromLiteral"
-      ],
-      "CSS": [
-        "animationWorklet",
-        "layoutWorklet"
-      ],
-      "SubtleCrypto": [
-        "supports"
-      ],
-      "IdentityProvider": [
-        "register",
-        "unregister"
-      ],
-      "LanguageModel": [
-        "params"
-      ],
-      "HTMLUserMediaElement": [
-        "isTypeSupported"
-      ]
+    "array_protos": {
+      "ViewTransitionTypeSet": 31,
+      "URLSearchParams": 31,
+      "TouchList": 1,
+      "TextTrackList": 1,
+      "TextTrackCueList": 1,
+      "StyleSheetList": 1,
+      "StylePropertyMapReadOnly": 31,
+      "StylePropertyMap": 31,
+      "SourceBufferList": 1,
+      "SVGTransformList": 1,
+      "SVGStringList": 1,
+      "SVGPointList": 1,
+      "SVGNumberList": 1,
+      "SVGLengthList": 1,
+      "RadioNodeList": 31,
+      "RTCStatsReport": 31,
+      "PluginArray": 1,
+      "Plugin": 1,
+      "NodeList": 31,
+      "NamedNodeMap": 1,
+      "MimeTypeArray": 1,
+      "MediaList": 1,
+      "HighlightRegistry": 31,
+      "Highlight": 31,
+      "Headers": 31,
+      "HTMLSelectElement": 1,
+      "HTMLOptionsCollection": 1,
+      "HTMLFormElement": 1,
+      "HTMLFormControlsCollection": 1,
+      "HTMLCollection": 1,
+      "HTMLAllCollection": 1,
+      "FormData": 31,
+      "FontFaceSet": 31,
+      "FileList": 1,
+      "EventCounts": 31,
+      "DataTransferItemList": 1,
+      "DOMTokenList": 31,
+      "DOMStringList": 1,
+      "DOMRectList": 1,
+      "CustomStateSet": 31,
+      "CSSUnparsedValue": 31,
+      "CSSTransformValue": 31,
+      "CSSStyleDeclaration": 1,
+      "CSSRuleList": 1,
+      "CSSPositionTryDescriptors": 1,
+      "CSSNumericArray": 31,
+      "CSSKeyframesRule": 1,
+      "AudioParamMap": 31,
+      "GPUSupportedFeatures": 31,
+      "ImageTrackList": 1,
+      "KeyboardLayoutMap": 31,
+      "MIDIInputMap": 31,
+      "MIDIOutputMap": 31,
+      "MediaKeyStatusMap": 31,
+      "WGSLLanguageFeatures": 31,
+      "XRAnchorSet": 31,
+      "XRHand": 31,
+      "XRInputSourceArray": 31,
+      "XRPlaneSet": 31,
+      "CSSFunctionDescriptors": 1,
+      "SpeechGrammarList": 1,
+      "TimelineTriggerRangeList": 31
     },
-    "array_words": {
-      "ViewTransitionTypeSet": "iterable",
-      "URLSearchParams": "iterable",
-      "TouchList": "iterator",
-      "TextTrackList": "iterator",
-      "TextTrackCueList": "iterator",
-      "StyleSheetList": "iterator",
-      "StylePropertyMapReadOnly": "iterable",
-      "StylePropertyMap": "iterable",
-      "SourceBufferList": "iterator",
-      "SVGTransformList": "iterator",
-      "SVGStringList": "iterator",
-      "SVGPointList": "iterator",
-      "SVGNumberList": "iterator",
-      "SVGLengthList": "iterator",
-      "RadioNodeList": "iterable",
-      "RTCStatsReport": "iterable",
-      "PluginArray": "iterator",
-      "Plugin": "iterator",
-      "NodeList": "iterable",
-      "NamedNodeMap": "iterator",
-      "MimeTypeArray": "iterator",
-      "MediaList": "iterator",
-      "HighlightRegistry": "iterable",
-      "Highlight": "iterable",
-      "Headers": "iterable",
-      "HTMLSelectElement": "iterator",
-      "HTMLOptionsCollection": "iterator",
-      "HTMLFormElement": "iterator",
-      "HTMLFormControlsCollection": "iterator",
-      "HTMLCollection": "iterator",
-      "HTMLAllCollection": "iterator",
-      "FormData": "iterable",
-      "FontFaceSet": "iterable",
-      "FileList": "iterator",
-      "EventCounts": "iterable",
-      "DataTransferItemList": "iterator",
-      "DOMTokenList": "iterable",
-      "DOMStringList": "iterator",
-      "DOMRectList": "iterator",
-      "CustomStateSet": "iterable",
-      "CSSUnparsedValue": "iterable",
-      "CSSTransformValue": "iterable",
-      "CSSStyleDeclaration": "iterator",
-      "CSSRuleList": "iterator",
-      "CSSPositionTryDescriptors": "iterator",
-      "CSSNumericArray": "iterable",
-      "CSSKeyframesRule": "iterator",
-      "AudioParamMap": "iterable",
-      "GPUSupportedFeatures": "iterable",
-      "ImageTrackList": "iterator",
-      "KeyboardLayoutMap": "iterable",
-      "MIDIInputMap": "iterable",
-      "MIDIOutputMap": "iterable",
-      "MediaKeyStatusMap": "iterable",
-      "WGSLLanguageFeatures": "iterable",
-      "XRAnchorSet": "iterable",
-      "XRHand": "iterable",
-      "XRInputSourceArray": "iterable",
-      "XRPlaneSet": "iterable",
-      "CSSFunctionDescriptors": "iterator",
-      "SpeechGrammarList": "iterator",
-      "TimelineTriggerRangeList": "iterable"
-    },
-    "baseline_digest": "da7cbf3cdd438f60db29a3ffae19155db5109cd94a9fc517fc4551d2bd4e27ed"
+    "against": "dc70596be109fc04ee7c603cf74c05d539fe2f3b052a43e82e6770c2eb60ece4"
   }
 }

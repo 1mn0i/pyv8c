@@ -110,7 +110,8 @@ class DOMException(Exception):
     Extending ``Exception`` is what gives it ``Error.prototype`` in the realm.
     The legacy numeric ``code`` is derived from :data:`_DOM_CODES` rather than
     duplicated as class constants; scripts read it through the ``code`` accessor
-    registered in ``engine.builtin_errors``.
+    the document states, on the interface the core feature declares
+    (``web/features/core.py``).
     """
 
     __v8_error__ = True

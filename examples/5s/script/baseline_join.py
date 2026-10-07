@@ -15,14 +15,15 @@ import json
 import pathlib
 import sys
 
+from pyv8c.engine.idl import Idl
+
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parent
-BASELINE = HERE.parents[2] / "pyv8c" / "baselines" / "interface-baseline.json"
 
 
 def load_pair(probe="surface", holder_filter=None, chrome_kind=None, show_all=False,
               interfaces_only=False):
-    baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
+    baseline = Idl.load(profile=None).interfaces
     mine = json.loads((OUT / f"surface-{probe}-pyv8c.json").read_text(encoding="utf-8"))
     theirs = json.loads((OUT / f"surface-{probe}-chrome.json").read_text(encoding="utf-8"))
     rows = []
@@ -42,7 +43,7 @@ def load_pair(probe="surface", holder_filter=None, chrome_kind=None, show_all=Fa
             template = entry.get("template") or {}
             rows.append((holder, name, left, right, constructor.get("allow_call"),
                          constructor.get("allow_new"), constructor.get("length"),
-                         template.get("as_object"), entry.get("parent")))
+                         template.get("definition_kind"), entry.get("parent")))
     return rows
 
 
@@ -56,11 +57,11 @@ def main(argv):
                      _value_of(argv, "--holder"), _value_of(argv, "--chrome"),
                      "--all" in argv, "--interfaces" in argv)
     #: ASCII only: this console is GBK and a report that dies on its own header reports nothing.
-    print(f"{'holder.member':42} {'pyv8c':14} {'chrome':16} call new len asObj parent")
-    for (holder, name, left, right, call, new, length, as_object, parent) in rows:
+    print(f"{'holder.member':42} {'pyv8c':14} {'chrome':16} call new len kind parent")
+    for (holder, name, left, right, call, new, length, kind, parent) in rows:
         where = f"{holder}.{name}"
         print(f"{where:42} {str(left):14} {str(right):16} {str(call):5} {str(new):5} "
-              f"{str(length):4} {str(as_object):6} {parent}")
+              f"{str(length):4} {str(kind):16} {parent}")
     print(f"\n{len(rows)} rows")
     return 0
 

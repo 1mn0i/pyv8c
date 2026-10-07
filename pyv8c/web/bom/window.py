@@ -5,9 +5,9 @@ Cross-origin access goes through :mod:`dom.window_proxy`, imported by
 """
 import pyv8
 
-from pyv8 import AttributeSpec, IdlSpec
 
-from ...engine.features import LazyValueStore, interface
+from ...engine.features import LazyValueStore
+from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
     dictionary,
@@ -43,10 +43,10 @@ from .trusted_types import TrustedTypePolicyFactory
 from .visual_viewport import VisualViewport
 from .performance import Performance
 from .scheduling import _SchedulingMixin
-from .utils import (deny_cross_origin, is_secure_context, window_attribute, window_method,
-                    window_secure_context)
+from .utils import deny_cross_origin, is_secure_context, window_secure_context
 
 __all__ = ["BarProp", "Window", "WindowProperties"]
+
 
 #: The two ways V8 words a failed string conversion, which a method prefixes.
 _CONVERSION_FAILURES = frozenset({
@@ -68,6 +68,7 @@ def _string_argument(value, member):
             raise
         raise V8TypeError(f"Failed to execute '{member}' on 'Window': {reason}") from None
 
+
 #: Names WindowProxy exposes to a cross-origin caller; the table lives here for both.
 _PROXY_SAFE_NAMES = frozenset((
     "window", "self", "top", "parent", "opener", "frames", "length", "closed",
@@ -82,12 +83,13 @@ class WindowProperties(EventTarget):
     Its callbacks run against the owning Window and use a separate callback
     family from Window's own named interceptors.
     """
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0,
-        has_constructor=0,
-        to_string_tag="WindowProperties",
-        named_properties_object=True,
-    )
+    __idl_overrides__ = {
+        "interface": {
+            #: This is the object a page's bare names resolve through.
+            "named_properties_object": True,
+            "length": 0,
+        }
+    }
 
     _NAMED_TAGS = frozenset(("embed", "form", "img", "object"))
 
@@ -123,18 +125,9 @@ class WindowProperties(EventTarget):
         return []
 
 
-
-
 @interface('BarProp', None)
 class BarProp:
     """One of a window's bars: only ``visible`` is observable, and always true."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="visible", getter="get_visible", side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="BarProp",
-        has_constructor=1,
-    )
 
     def __init__(self, name="", visible=True, **_):
         self._name, self._visible = str(name), bool(visible)
@@ -260,113 +253,26 @@ def fetch_like(services, interface_name, request, options, resources=None, initi
 
 @interface('Window', 'WindowProperties')
 class Window(_SchedulingMixin, WindowProperties):
-    __v8_idl_spec__ = IdlSpec(
-        global_this=True,
-        attributes=(
-            window_attribute("window", "get_window"),
-            window_attribute("self", "get_self"),
-            window_attribute("parent", "get_parent"),
-            window_attribute("top", "get_top"),
-            window_attribute("frames", "get_frames"),
-            window_attribute("length", "get_length"),
-            window_attribute("closed", "get_closed"),
-            window_attribute("opener", "get_opener"),
-            window_attribute("location", "get_location", "set_location"),
-            window_attribute("onmessage", "get_onmessage", "set_onmessage", cross_origin=True),
-            window_attribute("document", "get_document", cross_origin=True),
-            window_attribute("navigator", "get_navigator", cross_origin=True),
-            window_attribute("clientInformation", "get_clientInformation", cross_origin=True),
-            window_attribute("screen", "get_screen", cross_origin=True),
-            window_attribute("localStorage", "get_localStorage", cross_origin=True),
-            window_attribute("sessionStorage", "get_sessionStorage", cross_origin=True),
-            window_attribute("history", "get_history", cross_origin=True),
-            window_attribute("indexedDB", "get_indexedDB", cross_origin=True),
-            window_attribute("innerWidth", "get_innerWidth", cross_origin=True),
-            window_attribute("innerHeight", "get_innerHeight", cross_origin=True),
-            window_attribute("outerWidth", "get_outerWidth", cross_origin=True),
-            window_attribute("outerHeight", "get_outerHeight", cross_origin=True),
-            window_attribute("devicePixelRatio", "get_devicePixelRatio", cross_origin=True),
-            window_attribute("offscreenBuffering", "get_offscreenBuffering"),
-            window_attribute("name", "get_name", "set_name", cross_origin=True),
-            window_attribute("origin", "get_origin", cross_origin=True),
-            window_attribute("scrollX", "get_scrollX", cross_origin=True),
-            window_attribute("scrollY", "get_scrollY", cross_origin=True),
-            window_attribute("pageXOffset", "get_pageXOffset", cross_origin=True),
-            window_attribute("pageYOffset", "get_pageYOffset", cross_origin=True),
-            window_attribute("screenX", "get_screenX", cross_origin=True),
-            window_attribute("screenY", "get_screenY", cross_origin=True),
-            window_attribute("screenLeft", "get_screenLeft", cross_origin=True),
-            window_attribute("screenTop", "get_screenTop", cross_origin=True),
-            window_attribute("isSecureContext", "get_isSecureContext", cross_origin=True),
-            window_attribute("crossOriginIsolated", "get_crossOriginIsolated", cross_origin=True),
-            window_attribute("originAgentCluster", "get_originAgentCluster", cross_origin=True),
-            window_attribute("credentialless", "get_credentialless", cross_origin=True),
-            window_attribute("status", "get_status", "set_status", cross_origin=True),
-            window_attribute("frameElement", "get_frameElement", cross_origin=True),
-            window_attribute("performance", "get_performance", cross_origin=True),
-            window_attribute("crypto", "get_crypto", cross_origin=True),
-            window_attribute("customElements", "get_customElements", cross_origin=True),
-            window_attribute("visualViewport", "get_visualViewport", cross_origin=True),
-            window_attribute("viewport", "get_viewport", cross_origin=True),
-            window_attribute("external", "get_external", cross_origin=True),
-            window_attribute("styleMedia", "get_styleMedia", cross_origin=True),
-            window_attribute("crashReport", "get_crashReport", cross_origin=True),
-            window_attribute("launchQueue", "get_launchQueue", cross_origin=True),
-            window_attribute("speechSynthesis", "get_speechSynthesis", cross_origin=True),
-            window_attribute("scheduler", "get_scheduler", cross_origin=True),
-            window_attribute("cookieStore", "get_cookieStore", cross_origin=True),
-            window_attribute("navigation", "get_navigation", cross_origin=True),
-            window_attribute("trustedTypes", "get_trustedTypes", cross_origin=True),
-            window_attribute("fence", "get_fence", cross_origin=True),
-            # Declared, and answered as absent, exactly as Chrome presents them.
-            window_attribute("event", "get_event", cross_origin=True),
-            window_attribute("caches", "get_caches", cross_origin=True),
-            window_attribute("documentPictureInPicture", "get_documentPictureInPicture",
-                             cross_origin=True),
-            window_attribute("locationbar", "get_locationbar", cross_origin=True),
-            window_attribute("menubar", "get_menubar", cross_origin=True),
-            window_attribute("toolbar", "get_toolbar", cross_origin=True),
-            window_attribute("statusbar", "get_statusbar", cross_origin=True),
-            window_attribute("scrollbars", "get_scrollbars", cross_origin=True),
-            window_attribute("personalbar", "get_personalbar", cross_origin=True),
-        ),
-        methods=(
-            window_method("setTimeout", "fn_setTimeout", 1, cross_origin=True),
-            window_method("clearTimeout", "fn_clearTimeout", 1, cross_origin=True),
-            window_method("setInterval", "fn_setInterval", 1, cross_origin=True),
-            window_method("clearInterval", "fn_clearInterval", 1, cross_origin=True),
-            window_method("queueMicrotask", "fn_queueMicrotask", 1, cross_origin=True),
-            window_method("requestAnimationFrame", "fn_requestAnimationFrame", 1, cross_origin=True),
-            window_method("cancelAnimationFrame", "fn_cancelAnimationFrame", 1, cross_origin=True),
-            window_method("fetch", "fn_fetch", 1, cross_origin=True),
-            window_method("close", "fn_close"),
-            window_method("focus", "fn_focus"),
-            window_method("blur", "fn_blur"),
-            window_method("postMessage", "fn_postMessage", 1),
-            window_method("webkitRequestFileSystem", "fn_webkitRequestFileSystem", 3, cross_origin=True),
-            window_method("matchMedia", "fn_matchMedia", 1, cross_origin=True),
-            window_method("getComputedStyle", "fn_getComputedStyle", 1, cross_origin=True),
-            window_method("atob", "fn_atob", 1),
-            window_method("btoa", "fn_btoa", 1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Window",
-        has_constructor=1,
-        cross_origin_check="__v8_cross_origin_check__",
-        cross_origin_name_get="__v8_cross_origin_name_get__",
-        cross_origin_name_set="__v8_cross_origin_name_set__",
-        cross_origin_name_query="__v8_cross_origin_name_query__",
-        cross_origin_name_del="__v8_cross_origin_name_del__",
-        cross_origin_name_enum="__v8_cross_origin_name_enum__",
-        cross_origin_index_get="__v8_cross_origin_index_get__",
-        cross_origin_index_set="__v8_cross_origin_index_set__",
-        cross_origin_index_del="__v8_cross_origin_index_del__",
-        index_get="__v8_index_get__",
-        # No ``index_query``: the native definer would then refuse every define.
-        index_set="__v8_index_set__",
-        index_del="__v8_index_del__",
-        index_enum="__v8_index_enum__",
-    )
+    __idl_overrides__ = {
+        "interface": {
+            #: A window is the global object itself, which its own ``self`` reads back.
+            "global_this": True,
+            "cross_origin_check": "__v8_cross_origin_check__",
+            "cross_origin_index_del": "__v8_cross_origin_index_del__",
+            "cross_origin_index_get": "__v8_cross_origin_index_get__",
+            "cross_origin_index_set": "__v8_cross_origin_index_set__",
+            "cross_origin_name_del": "__v8_cross_origin_name_del__",
+            "cross_origin_name_enum": "__v8_cross_origin_name_enum__",
+            "cross_origin_name_get": "__v8_cross_origin_name_get__",
+            "cross_origin_name_query": "__v8_cross_origin_name_query__",
+            "cross_origin_name_set": "__v8_cross_origin_name_set__",
+            "index_del": "__v8_index_del__",
+            "index_enum": "__v8_index_enum__",
+            "index_get": "__v8_index_get__",
+            "index_set": "__v8_index_set__",
+            "length": 0
+        }
+    }
     # Ordinary members use Web IDL bindings; dynamic names live on
     # WindowProperties, not a generic Python interceptor on Window.
     _context_origins = {}
@@ -423,7 +329,7 @@ class Window(_SchedulingMixin, WindowProperties):
         """
         if "history" in self._features.cached_names:
             self.history.replace_same_document(str(url))
-    
+
     def __v8_cross_origin_check__(self, accessor):
         return accessor is self or getattr(accessor, "_origin", None) == self._origin
 
@@ -646,7 +552,6 @@ class Window(_SchedulingMixin, WindowProperties):
     def get_crypto(self):
         self._require_same_origin()
         return self._window_value("crypto")
-
 
     def get_customElements(self):
         self._require_same_origin()

@@ -10,16 +10,17 @@ import math
 import re
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
 from .events import EventTarget
 from .html_elements import HTMLElement
 from .webgl import WebGL2RenderingContext, WebGLRenderingContext
 
+
 #: ``textBaseline`` accepts these spellings; any other value leaves the state untouched.
 _TEXT_BASELINES = frozenset(("alphabetic", "bottom", "hanging", "ideographic", "middle", "top"))
+
 
 #: The context kinds a canvas can answer for; ``experimental-webgl`` is the older spelling.
 _CONTEXT_KINDS = ("2d", "webgl", "webgl2")
@@ -36,20 +37,6 @@ def _requested_context(kind):
 class TextMetrics:
     """What ``measureText`` returns.  Only ``width`` is measured; the boxes a
     caller rarely reads report that same run's edges, as Chrome's do."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=name, getter="get_" + name, side_effect=1)
-            for name in ("width", "actualBoundingBoxLeft", "actualBoundingBoxRight",
-                         "actualBoundingBoxAscent", "actualBoundingBoxDescent",
-                         "fontBoundingBoxAscent", "fontBoundingBoxDescent",
-                         "emHeightAscent", "emHeightDescent", "hangingBaseline",
-                         "alphabeticBaseline", "ideographicBaseline")
-        ),
-        constructor_behavior=0,
-        to_string_tag="TextMetrics",
-        has_constructor=1,
-    )
 
     def __init__(self, width=0.0, **_):
         self._width = float(width)
@@ -97,18 +84,6 @@ def _canvas_color(value):
 class ImageData:
     """A rectangle of RGBA pixels, as ``getImageData`` hands it back."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="width", getter="get_width", side_effect=1),
-            AttributeSpec(name="height", getter="get_height", side_effect=1),
-            AttributeSpec(name="data", getter="get_data", side_effect=1),
-            AttributeSpec(name="colorSpace", getter="get_colorSpace", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="ImageData",
-        has_constructor=1,
-    )
-
     def __init__(self, pixels=b"", width=0, height=0, **_):
         self._width, self._height = int(width), int(height)
         self._data = pyv8.JSTypeArray(list(pixels), pyv8.ArrayType.Uint8ClampedArray)
@@ -124,31 +99,8 @@ class CanvasRenderingContext2D:
     #: Chrome's ``2d`` context also carries ``lineWidth``, ``globalAlpha``, ``miterLimit``,
     #: ``lineDashOffset``, ``imageSmoothingEnabled`` and the three ``shadow*``; the baseline is
     #: missing that mixin, and the engine rejects a declaration that contradicts it, so the fix
-    #: is a regenerated baseline (``tools/extract_interfaces.py``, needs ``CHROMIUM_ROOT``).
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="canvas", getter="get_canvas", side_effect=1),
-                    AttributeSpec(name="fillStyle", getter="get_fillStyle", setter="set_fillStyle"),
-                    AttributeSpec(name="strokeStyle", getter="get_strokeStyle", setter="set_strokeStyle"),
-                    AttributeSpec(name="font", getter="get_font", setter="set_font"),
-                    AttributeSpec(name="textBaseline", getter="get_textBaseline", setter="set_textBaseline")),
-        methods=(
-            MethodSpec(name="getImageData", callback="fn_getImageData", length=4, side_effect=1),
-            MethodSpec(name="fillRect", callback="fn_fillRect"),
-            MethodSpec(name="clearRect", callback="fn_clearRect"),
-            MethodSpec(name="fillText", callback="fn_fillText"),
-            MethodSpec(name="strokeText", callback="fn_strokeText"),
-            MethodSpec(name="beginPath", callback="fn_beginPath"),
-            MethodSpec(name="moveTo", callback="fn_moveTo"),
-            MethodSpec(name="lineTo", callback="fn_lineTo"),
-            MethodSpec(name="arc", callback="fn_arc"),
-            MethodSpec(name="stroke", callback="fn_stroke"),
-            MethodSpec(name="strokeRect", callback="fn_strokeRect"),
-            MethodSpec(name="measureText", callback="fn_measureText"),
-            MethodSpec(name="save", callback="fn_save"),
-            MethodSpec(name="restore", callback="fn_restore"),
-        ),
-        constructor_behavior=0, has_constructor=0,
-    )
+    #: is a regenerated document (``tools/extract_idl.py``, needs ``CHROMIUM_ROOT``).
+
     def __init__(self, canvas):
         self._canvas = canvas; self._fill = "#000000"; self._stroke = "#000000"; self._font = "10px sans-serif"
         self._baseline = "alphabetic"
@@ -255,13 +207,6 @@ class CanvasRenderingContext2D:
 
 @interface('HTMLCanvasElement', 'HTMLElement')
 class HTMLCanvasElement(HTMLElement):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="width", getter="get_width", setter="set_width"),
-                    AttributeSpec(name="height", getter="get_height", setter="set_height")),
-        methods=(MethodSpec(name="getContext", callback="fn_getContext"),
-                 MethodSpec(name="toDataURL", callback="fn_toDataURL")),
-        constructor_behavior=0, has_constructor=1,
-    )
     def __init__(self, tag_name="canvas", services=None, **kw):
         super().__init__(tag_name, services=services, **kw); self._width=300; self._height=150; self._context2d=None
         self._context_kind=None; self._webgl=None; self._webgl2=None
@@ -307,22 +252,11 @@ class OffscreenCanvasRenderingContext2D(CanvasRenderingContext2D):
 class OffscreenCanvas(EventTarget):
     """A canvas with no element behind it: the page keeps the surface for itself."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="width", getter="get_width", setter="set_width"),
-                    AttributeSpec(name="height", getter="get_height", setter="set_height"),
-                    AttributeSpec(name="oncontextlost", getter="get_oncontextlost",
-                                  setter="set_oncontextlost"),
-                    AttributeSpec(name="oncontextrestored", getter="get_oncontextrestored",
-                                  setter="set_oncontextrestored")),
-        methods=(MethodSpec(name="getContext", callback="fn_getContext"),
-                 MethodSpec(name="convertToBlob", callback="fn_convertToBlob"),
-                 MethodSpec(name="transferToImageBitmap", callback="fn_transferToImageBitmap"),
-                 MethodSpec(name="clearElementGeometry", callback="fn_clearElementGeometry"),
-                 MethodSpec(name="getElementTransform", callback="fn_getElementTransform"),
-                 MethodSpec(name="updateElementGeometry", callback="fn_updateElementGeometry")),
-        constructor_behavior=1, length=2, has_constructor=1,
-        to_string_tag="OffscreenCanvas",
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "length": 2
+        }
+    }
 
     def __init__(self, width=MISSING, height=MISSING, *args, services=pyv8.Undefined,
                  _realm=None, **kwargs):

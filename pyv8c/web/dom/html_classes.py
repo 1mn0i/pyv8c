@@ -30,7 +30,8 @@ from .html_input import (
 from .html_media import HTMLAudioElement, HTMLMediaElement, HTMLVideoElement
 from .html_tag_interfaces import TAG_INTERFACES
 
-#: Interface name -> implementation class, for every modelled interface.
+
+#: IdlInterface name -> implementation class, for every modelled interface.
 HTML_CLASSES = {
     **{name: _html_class(name) for name in (
         "HTMLHtmlElement", "HTMLHeadElement", "HTMLBodyElement", "HTMLDivElement",
@@ -71,6 +72,7 @@ HTML_CLASSES = {
     # Chromium also resolves the historical lowercase spelling.
     "HTMLIframeElement": HTMLIFrameElement,
 }
+
 
 #: Local name -> implementation class, from the measured tag table.
 TAG_CLASSES = {tag: HTML_CLASSES[name]
@@ -117,7 +119,6 @@ def svg_interface_name(local_name):
     capital = local_name[:2].upper() + local_name[2:] if local_name.startswith("fe") \
         else local_name[:1].upper() + local_name[1:]
     return "SVG" + capital + "Element"
-
 
 __all__ = ["HTML_CLASSES", "TAG_CLASSES", "class_for_local_name", "class_for_tag",
            "svg_interface_name"]

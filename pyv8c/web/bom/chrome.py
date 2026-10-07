@@ -11,6 +11,7 @@ import pyv8
 
 __all__ = ["ChromeBindings", "install_window_chrome"]
 
+
 # Blink reports a normal navigation as 15 (WebNavigationType::kNavigationTypeOther).
 _TRANSITION_TYPE = 15
 # Milestones in ms after navigationStart; an unreached one reports 0, as Chromium

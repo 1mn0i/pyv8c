@@ -6,14 +6,12 @@ the two views of one element never disagree.
 import re
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
-
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, callback_value, dom_string, missing_error
 from ...foundation.errors import V8TypeError
 from . import css
 from .utils import dash_name
+
 
 #: ``<number>`` with an optional unit, the values Typed OM answers as a ``CSSUnitValue``.
 _NUMBER = re.compile(r"^([+-]?(?:\d+\.?\d*|\.\d+))"
@@ -66,23 +64,6 @@ def _js_call(callback, this, *args):
 
 @interface('CSSStyleValue', None)
 class CSSStyleValue:
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="toString", callback="fn_toString", side_effect=1),
-            MethodSpec(name="parse", callback="fn_parse", length=2, side_effect=1,
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-            MethodSpec(name="parseAll", callback="fn_parseAll", length=2, side_effect=1,
-                       location=FlagLocation.kInterface,
-                       receiver_check=FlagReceiverCheck.kDoNotCheck,
-                       cross_origin_check=FlagCrossOriginCheck.kDoNotCheck),
-        ),
-        constructor_behavior=0,
-        to_string_tag="CSSStyleValue",
-        has_constructor=1,
-    )
-
     def __init__(self, text="", **_):
         self._text = str(text)
 
@@ -114,26 +95,11 @@ class CSSStyleValue:
 
 @interface('CSSNumericValue', 'CSSStyleValue')
 class CSSNumericValue(CSSStyleValue):
-    __v8_idl_spec__ = IdlSpec(
-        constructor_behavior=0,
-        to_string_tag="CSSNumericValue",
-        has_constructor=1,
-    )
+    pass
 
 
 @interface('CSSUnitValue', 'CSSNumericValue')
 class CSSUnitValue(CSSNumericValue):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="value", getter="get_value", side_effect=1),
-            AttributeSpec(name="unit", getter="get_unit", side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=2,
-        to_string_tag="CSSUnitValue",
-        has_constructor=1,
-    )
-
     def __init__(self, value=0.0, unit="number", **_):
         self._value = float(value)
         self._unit = str(unit)
@@ -150,14 +116,6 @@ class CSSUnitValue(CSSNumericValue):
 
 @interface('CSSKeywordValue', 'CSSStyleValue')
 class CSSKeywordValue(CSSStyleValue):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="value", getter="get_value", side_effect=1),),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="CSSKeywordValue",
-        has_constructor=1,
-    )
-
     def __init__(self, value=MISSING, **_):
         if value is MISSING:
             raise missing_error('CSSKeywordValue', 'CSSKeywordValue', 1, 0, constructor=True)
@@ -172,20 +130,13 @@ class CSSKeywordValue(CSSStyleValue):
 
 @interface('StylePropertyMapReadOnly', None)
 class StylePropertyMapReadOnly:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(AttributeSpec(name="size", getter="get_size", side_effect=1),),
-        methods=(
-            MethodSpec(name="get", callback="fn_get", length=1, side_effect=1),
-            MethodSpec(name="getAll", callback="fn_getAll", length=1, side_effect=1),
-            MethodSpec(name="has", callback="fn_has", length=1, side_effect=1),
-            MethodSpec(name="forEach", callback="fn_forEach", length=1, side_effect=1),
-        ),
-        # keys/values/entries/@iterator come from the iteration source.
-        iterate="__v8_iterate__",
-        constructor_behavior=0,
-        to_string_tag="StylePropertyMapReadOnly",
-        has_constructor=1,
-    )
+    #: ``keys``/``values``/``entries`` and ``Symbol.iterator`` hand out pairs from here.
+    __idl_overrides__ = {
+        "interface": {
+            "iterate": "__v8_iterate__",
+            "length": 0,
+        }
+    }
 
     def __init__(self, element=None, **_):
         self._element = element
@@ -240,18 +191,12 @@ class StylePropertyMapReadOnly:
 
 @interface('StylePropertyMap', 'StylePropertyMapReadOnly')
 class StylePropertyMap(StylePropertyMapReadOnly):
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="append", callback="fn_append", length=2),
-            MethodSpec(name="clear", callback="fn_clear"),
-            MethodSpec(name="delete", callback="fn_delete", length=1),
-            MethodSpec(name="set", callback="fn_set", length=2),
-        ),
-        iterate="__v8_iterate__",
-        constructor_behavior=0,
-        to_string_tag="StylePropertyMap",
-        has_constructor=1,
-    )
+    __idl_overrides__ = {
+        "interface": {
+            "iterate": "__v8_iterate__",
+            "length": 0,
+        }
+    }
 
     def fn_set(self, property=MISSING, value=MISSING, *_extra):
         if property is MISSING:
@@ -281,7 +226,6 @@ class StylePropertyMap(StylePropertyMapReadOnly):
 
     def fn_clear(self, *_extra):
         self._style().set_cssText("")
-
 
 __all__ = ["CSSKeywordValue", "CSSNumericValue", "CSSStyleValue", "CSSUnitValue",
            "StylePropertyMap", "StylePropertyMapReadOnly"]

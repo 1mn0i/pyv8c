@@ -3,9 +3,9 @@
 Every field is read from the browser environment's screen configuration.
 """
 
-from pyv8 import AttributeSpec, IdlSpec
 
-from ...engine.features import LazyValueStore, interface
+from ...engine.features import LazyValueStore
+from ...idl import interface
 from ...foundation.environment import BrowserEnvironment
 from ..dom.events import EventTarget
 
@@ -15,17 +15,6 @@ __all__ = ["Screen", "ScreenOrientation"]
 @interface('ScreenOrientation', 'EventTarget')
 class ScreenOrientation(EventTarget):
     """The display's orientation: a desktop screen is wider than it is tall."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="angle", getter="get_angle", side_effect=1),
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="onchange", getter="get_onchange", setter="set_onchange"),
-        ),
-        constructor_behavior=0,
-        to_string_tag="ScreenOrientation",
-        has_constructor=1,
-    )
 
     def __init__(self, width=1280, height=720, **_):
         super().__init__(**_)
@@ -47,27 +36,6 @@ def _screen_values(screen):
 
 @interface('Screen', 'EventTarget')
 class Screen(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-
-                AttributeSpec(name=n, getter="get_" + n, side_effect=1)
-                for n in (
-                    "width",
-                    "height",
-                    "availWidth",
-                    "availHeight",
-                    "availLeft",
-                    "availTop",
-                    "colorDepth",
-                    "pixelDepth",
-                    "isExtended",
-                    "orientation",
-                )
-
-        ),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def __init__(self, environment=None, **_):
         super().__init__(**_)
         config = BrowserEnvironment.from_dict(environment).screen

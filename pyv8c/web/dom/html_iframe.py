@@ -2,9 +2,8 @@
 reflected attributes are Chromium's; the resource layer builds the browsing context."""
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string
 from .collections import DOMTokenList
 from .html_elements import HTMLElement, _attribute, _set_url_value, _url_attr, _url_value
@@ -28,41 +27,6 @@ _REFERRER_POLICIES = (
 
 @interface('HTMLIFrameElement', 'HTMLElement')
 class HTMLIFrameElement(HTMLElement):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            _url_attr("src", "get_src", "set_src"),
-            _attribute("srcdoc", "get_srcdoc", "set_srcdoc"),
-            _attribute("name", "get_name", "set_name"),
-            AttributeSpec(name="sandbox", getter="get_sandbox", setter="set_sandbox",
-                          side_effect=1),
-            _attribute("allow", "get_allow", "set_allow"),
-            _attribute("allowFullscreen", "get_allowFullscreen", "set_allowFullscreen"),
-            _attribute("width", "get_width", "set_width"),
-            _attribute("height", "get_height", "set_height"),
-            _attribute("referrerPolicy", "get_referrerPolicy", "set_referrerPolicy"),
-            _attribute("loading", "get_loading", "set_loading"),
-            _attribute("align", "get_align", "set_align"),
-            _attribute("scrolling", "get_scrolling", "set_scrolling"),
-            _attribute("frameBorder", "get_frameBorder", "set_frameBorder"),
-            _url_attr("longDesc", "get_longDesc", "set_longDesc"),
-            _attribute("marginHeight", "get_marginHeight", "set_marginHeight"),
-            _attribute("marginWidth", "get_marginWidth", "set_marginWidth"),
-            _attribute("csp", "get_csp", "set_csp"),
-            _attribute("privateToken", "get_privateToken", "set_privateToken"),
-            _attribute("credentialless", "get_credentialless", "set_credentialless"),
-            _attribute("allowPaymentRequest", "get_allowPaymentRequest",
-                       "set_allowPaymentRequest"),
-            _attribute("browsingTopics", "get_browsingTopics", "set_browsingTopics"),
-            _attribute("adAuctionHeaders", "get_adAuctionHeaders",
-                       "set_adAuctionHeaders"),
-            AttributeSpec(name="contentDocument", getter="get_contentDocument", side_effect=1),
-            AttributeSpec(name="contentWindow", getter="get_contentWindow", side_effect=1),
-            AttributeSpec(name="featurePolicy", getter="get_featurePolicy", side_effect=1),
-        ),
-        methods=(MethodSpec(name="getSVGDocument", callback="fn_getSVGDocument", side_effect=1),),
-        constructor_behavior=0,
-        has_constructor=1,
-    )
     def __init__(self, tag_name="iframe", services=None, **kw):
         super().__init__(tag_name, services=services, **kw)
         self._child_services = None
@@ -229,6 +193,5 @@ class HTMLIFrameElement(HTMLElement):
         from ..bom.window import Window
         parent_window = Window._accessor_window(self._services.document_services.window)
         return parent_window._view(child_window)
-
 
 __all__ = ["HTMLIFrameElement"]

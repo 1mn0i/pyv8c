@@ -4,8 +4,7 @@ Chrome keeps each as a function object rather than an interface, and a call buil
 detached element.  One is built per realm -- a factory reaches its own window's document
 -- and installed only where the reference surface says the browser has the name.
 """
-from pyv8 import IdlSpec
-
+from ...idl import standalone
 from ..dom.html_elements import HTMLImageElement
 from ..dom.html_input import HTMLOptionElement
 from ..dom.html_media import HTMLAudioElement
@@ -41,8 +40,16 @@ def _fill(name, element, arguments):
 def factory_class(name, document):
     """One realm's factory: a class whose instances are that realm's elements."""
     class LegacyFactory(FACTORY_TYPE[name]):
-        __v8_idl_spec__ = IdlSpec(has_constructor=1, constructor_behavior=1, length=0,
-                                  to_string_tag=FACTORY_TYPE[name].__name__)
+        #: A factory is not an interface the document carries: the name is a function a page
+        #: calls, and what it builds is the element class it is named for.
+        __idl_overrides__ = {
+            "interface": {
+                "constructor_behavior": 1,
+                "has_constructor": 1,
+                "length": 0,
+                "to_string_tag": FACTORY_TYPE[name].__name__,
+            }
+        }
 
         def __new__(cls, *arguments, **_):
             element = document._new_element(FACTORY_TAG[name])
@@ -50,7 +57,7 @@ def factory_class(name, document):
             return element
 
     LegacyFactory.__name__ = name
-    return LegacyFactory
+    return standalone(LegacyFactory)
 
 
 def install_legacy_factories(context, *, session, table, document):
@@ -60,7 +67,5 @@ def install_legacy_factories(context, *, session, table, document):
         session.add_extra_class(name, factory_class(name, document))
     if names:
         context.install(names)
-
-
 
 __all__ = ["FACTORY_TAG", "factory_class", "install_legacy_factories"]

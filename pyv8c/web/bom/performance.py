@@ -1,14 +1,14 @@
 """``window.performance``: the clock, and the entries this document measured."""
 
 import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagLocation, FlagReceiverCheck
+from pyv8 import AttributeSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error
 from ...foundation.clock import clock_of
 from ...foundation.errors import V8TypeError, dom_exception
 from ..dom.events import EventTarget
+
 
 #: The PerformanceTiming fields; only navigationStart is known here, the rest read 0.
 _TIMING_FIELDS = (
@@ -43,14 +43,6 @@ def _double(value, message):
 class PerformanceTiming:
     """Navigation timings: when the clock started, and nothing measured after it."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(AttributeSpec(name=field, getter="get_" + field, side_effect=1)
-                         for field in _TIMING_FIELDS),
-        constructor_behavior=0,
-        to_string_tag="PerformanceTiming",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **_):
         if services is pyv8.Undefined:
             services = None
@@ -73,7 +65,6 @@ def _timing_reader(field):
         return float(record.get(field, 0)) if record is not None else 0
     return read
 
-
 for _field in _TIMING_FIELDS:
     setattr(PerformanceTiming, "get_" + _field, _timing_reader(_field))
 
@@ -83,16 +74,6 @@ class PerformanceNavigation:
     """This navigation: a normal load, with no redirect behind it."""
 
     TYPE_NAVIGATE, TYPE_RELOAD, TYPE_BACK_FORWARD, TYPE_RESERVED = 0, 1, 2, 255
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="type", getter="get_type", side_effect=1),
-            AttributeSpec(name="redirectCount", getter="get_redirectCount", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="PerformanceNavigation",
-        has_constructor=1,
-    )
 
     def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **_):
         if services is pyv8.Undefined:
@@ -108,17 +89,6 @@ class PerformanceNavigation:
 
 @interface('MemoryInfo', None)
 class MemoryInfo:
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="jsHeapSizeLimit", getter="get_jsHeapSizeLimit", side_effect=1),
-            AttributeSpec(name="totalJSHeapSize", getter="get_totalJSHeapSize", side_effect=1),
-            AttributeSpec(name="usedJSHeapSize", getter="get_usedJSHeapSize", side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="MemoryInfo",
-        has_constructor=1,
-    )
-
     def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **_):
         if services is pyv8.Undefined:
             services = None
@@ -169,6 +139,7 @@ _RESOURCE_DEFAULTS = {
     "serverTiming": (),
 }
 
+
 #: What a navigation adds: the milestones this document reached.
 _NAVIGATION_DEFAULTS = {
     "unloadEventStart": 0.0,
@@ -191,15 +162,6 @@ _NAVIGATION_DEFAULTS = {
 @interface('PerformanceEntry', None)
 class PerformanceEntry:
     """One measurement: what it was called, which kind it is, and when it happened."""
-
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("name"), _attribute("entryType"),
-                    _attribute("startTime"), _attribute("duration")),
-        methods=(MethodSpec(name="toJSON", callback="fn_toJSON", length=0, side_effect=1),),
-        constructor_behavior=0,
-        to_string_tag="PerformanceEntry",
-        has_constructor=1,
-    )
 
     #: The extra attributes this kind of entry reports.
     fields = ()
@@ -253,13 +215,6 @@ class PerformanceMark(PerformanceEntry):
 
     fields = ("detail",)
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("detail"),),
-        constructor_behavior=1,
-        to_string_tag="PerformanceMark",
-        has_constructor=1,
-    )
-
     #: A mark serializes like the base entry: ``detail`` is not part of it.
     serialized = ()
 
@@ -288,13 +243,6 @@ class PerformanceMeasure(PerformanceEntry):
 
     fields = ("detail",)
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(_attribute("detail"),),
-        constructor_behavior=0,
-        to_string_tag="PerformanceMeasure",
-        has_constructor=1,
-    )
-
     #: A measure serializes like the base entry: ``detail`` is not part of it.
     serialized = ()
 
@@ -313,13 +261,6 @@ class PerformanceResourceTiming(PerformanceEntry):
     fields = tuple(_RESOURCE_DEFAULTS)
     serialized = tuple(_RESOURCE_DEFAULTS)
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(_attribute(field) for field in _RESOURCE_DEFAULTS),
-        constructor_behavior=0,
-        to_string_tag="PerformanceResourceTiming",
-        has_constructor=1,
-    )
-
     def _defaults(self):
         return _RESOURCE_DEFAULTS
 
@@ -331,16 +272,8 @@ class PerformanceNavigationTiming(PerformanceResourceTiming):
     fields = tuple(_RESOURCE_DEFAULTS) + tuple(_NAVIGATION_DEFAULTS)
     serialized = tuple(_RESOURCE_DEFAULTS) + tuple(_NAVIGATION_DEFAULTS)
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(_attribute(field) for field in _NAVIGATION_DEFAULTS),
-        constructor_behavior=0,
-        to_string_tag="PerformanceNavigationTiming",
-        has_constructor=1,
-    )
-
     def _defaults(self):
         return {**_RESOURCE_DEFAULTS, **_NAVIGATION_DEFAULTS}
-
 
 for _entry_class, _entry_fields in ((PerformanceResourceTiming, _RESOURCE_DEFAULTS),
                                     (PerformanceNavigationTiming, _NAVIGATION_DEFAULTS)):
@@ -365,17 +298,6 @@ def _filtered(entries, name, entry_type):
 class PerformanceObserverEntryList:
     """The entries one observer callback was handed."""
 
-    __v8_idl_spec__ = IdlSpec(
-        methods=(
-            MethodSpec(name="getEntries", callback="fn_getEntries", length=0, side_effect=1),
-            MethodSpec(name="getEntriesByName", callback="fn_getEntriesByName", length=1, side_effect=1),
-            MethodSpec(name="getEntriesByType", callback="fn_getEntriesByType", length=1, side_effect=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="PerformanceObserverEntryList",
-        has_constructor=1,
-    )
-
     def __init__(self, entries=(), **_):
         self._entries = tuple(entries)
 
@@ -397,33 +319,6 @@ class PerformanceObserverEntryList:
 
 @interface('Performance', 'EventTarget')
 class Performance(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="timeOrigin", getter="get_timeOrigin", side_effect=1),
-            AttributeSpec(name="timing", getter="get_timing", side_effect=1),
-            AttributeSpec(name="navigation", getter="get_navigation", side_effect=1),
-            AttributeSpec(name="memory", getter="get_memory", side_effect=1),
-            AttributeSpec(name="onresourcetimingbufferfull",
-                          getter="get_onresourcetimingbufferfull",
-                          setter="set_onresourcetimingbufferfull"),
-        ),
-        methods=(
-            MethodSpec(name="getEntries", callback="fn_getEntries", length=0, side_effect=1),
-            MethodSpec(name="getEntriesByName", callback="fn_getEntriesByName", length=1, side_effect=1),
-            MethodSpec(name="getEntriesByType", callback="fn_getEntriesByType", length=1, side_effect=1),
-            MethodSpec(name="now", callback="fn_now", length=0, side_effect=1),
-            MethodSpec(name="mark", callback="fn_mark", length=1),
-            MethodSpec(name="measure", callback="fn_measure", length=1),
-            MethodSpec(name="clearMarks", callback="fn_clearMarks", length=0),
-            MethodSpec(name="clearMeasures", callback="fn_clearMeasures", length=0),
-            MethodSpec(name="clearResourceTimings", callback="fn_clearResourceTimings", length=0),
-            MethodSpec(name="setResourceTimingBufferSize", callback="fn_setResourceTimingBufferSize", length=1),
-        ),
-        constructor_behavior=0,
-        to_string_tag="Performance",
-        has_constructor=1,
-    )
-
     #: The navigation id every entry reports.  Private: a bare class attribute becomes page
     #: surface, and Chrome's ``performance`` has no ``navigation_id``.
     _navigation_id = 1
@@ -699,23 +594,6 @@ _SUPPORTED_ENTRY_TYPES = (
 class PerformanceObserver:
     """The observer a page builds: entries it asked for, handed over once per task."""
 
-    __v8_idl_spec__ = IdlSpec(
-        attributes=(
-            AttributeSpec(name="supportedEntryTypes", getter="get_supportedEntryTypes",
-                          location=FlagLocation.kInterface,
-                          receiver_check=FlagReceiverCheck.kDoNotCheck, side_effect=1),
-        ),
-        methods=(
-            MethodSpec(name="observe", callback="fn_observe", length=1),
-            MethodSpec(name="disconnect", callback="fn_disconnect", length=0),
-            MethodSpec(name="takeRecords", callback="fn_takeRecords", length=0, side_effect=1),
-        ),
-        constructor_behavior=1,
-        length=1,
-        to_string_tag="PerformanceObserver",
-        has_constructor=1,
-    )
-
     def __init__(self, callback=MISSING, *_extra, services=pyv8.Undefined, _realm=None, **_):
         if callback is MISSING:
             raise missing_error('PerformanceObserver', 'constructor', 1, 0, constructor=True)
@@ -812,7 +690,6 @@ class PerformanceObserver:
         if not pending or not callable(self._callback):
             return
         self._callback(PerformanceObserverEntryList(pending))
-
 
 __all__ = [
     "Performance", "PerformanceEntry", "PerformanceMark", "PerformanceMeasure",

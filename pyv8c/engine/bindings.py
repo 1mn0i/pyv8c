@@ -1,6 +1,6 @@
-"""Per-Browser interface universe: one baseline view, one compiler, one plan per realm.
+"""Per-Browser interface bindings: one baseline view, one compiler, one plan per realm.
 
-The composition root: reading the baseline is :mod:`.baseline`'s business, turning it
+The composition root: reading the baseline is :mod:`.idl`'s business, turning it
 into specs is :mod:`.assembly`'s, and this holds what the Browsers share -- the class
 each interface name answers with, and the mismatches tolerated once each.
 """
@@ -10,37 +10,38 @@ from __future__ import annotations
 import threading
 from dataclasses import replace
 
-from .assembly import InterfaceCompiler
-from .baseline import (
-    DEFAULT_BASELINE_PATH,
-    BaselineRepository,
-    BaselineSnapshot,
-    InterfaceTable,
+from .binder import Binder
+from .idl import (
+    DEFAULT_IDL_PATH,
+    Idl,
     RealmPlan,
     build_plan,
-    load_window_surface,
 )
-from .features import FeatureRuntime, InterfaceSpec
+from .features import FeatureRuntime
+from ..idl.spec import InterfaceSpec
 from .overrides import MemberOverrides
 from ..foundation.logging import logger
 
 __all__ = [
-    "DEFAULT_BASELINE_PATH",
-    "BaselineRepository",
-    "BaselineSnapshot",
-    "InterfaceUniverse",
+    "DEFAULT_IDL_PATH",
+    "Idl",
+    "Bindings",
 ]
 
 
-class InterfaceUniverse:
-    """One isolated baseline view and FeatureRuntime class config set."""
+#: Stub classes for the interfaces with no body, one per document and logging mode: stable
+#: identity is what lets a later Browser reuse their specs (``assembly._COMPILED``).
+_GENERATED: dict = {}
 
-    def __init__(self, baseline: BaselineSnapshot, *, runtime: FeatureRuntime, stub_logging="off",
+
+class Bindings:
+    """One IDL collection, the Python implementations, and this Browser's host hooks."""
+
+    def __init__(self, idl: Idl, *, runtime: FeatureRuntime, stub_logging="off",
                  expose_unimplemented=True, baseline_mismatch="warn", interface_overrides=None):
-        self.baseline = baseline
-        self.table = InterfaceTable(baseline, surface=load_window_surface())
-        #: Host hooks that answer baseline members, checked against the baseline here.
-        self.overrides = MemberOverrides.parse(interface_overrides, self.table)
+        self.idl = idl
+        #: Host hooks that answer IDL members, checked against the document here.
+        self.overrides = MemberOverrides.parse(interface_overrides, self.idl)
         self.runtime = runtime
         self.stub_logging = str(stub_logging or "off").lower()
         self.expose_unimplemented = bool(expose_unimplemented)
@@ -57,7 +58,7 @@ class InterfaceUniverse:
         self._lock = threading.RLock()
         self._classes: dict[str, type] = {}
         self._plans: dict[str, RealmPlan] = {}
-        self._assembly = InterfaceCompiler(self, stub_logging=self.stub_logging, lock=self._lock)
+        self._binder = Binder(self, stub_logging=self.stub_logging, lock=self._lock)
 
     def report_mismatch(self, message):
         """Report an implementation/baseline mismatch; true when it is tolerated.
@@ -75,13 +76,13 @@ class InterfaceUniverse:
 
     @property
     def discrepancies(self) -> tuple:
-        """Each implementation/baseline difference this universe tolerated, once."""
+        """Each implementation/baseline difference this bindings tolerated, once."""
         return tuple(sorted(self._mismatches))
 
     def spec(self, name):
         """The raw baseline spec of one interface."""
         try:
-            return self.table.raw(name)
+            return self.idl.raw(name)
         except KeyError as exc:
             if self.report_mismatch(f"interface {name!r} is missing from the interface baseline"):
                 return {}
@@ -93,27 +94,27 @@ class InterfaceUniverse:
             cached = self._plans.get(context_type)
             if cached is None:
                 cached = build_plan(
-                    self.table, context_type,
+                    self.idl, context_type,
                     # An interface somebody hooks is wanted, even with no implementation.
                     implements=set(self.runtime.catalog.interfaces) | self.overrides.interfaces,
                     expose_unimplemented=self.expose_unimplemented,
-                    staged=self.staged_interfaces,
+                    eager=self.staged_interfaces,
                 )
-                cached = replace(cached, startup=self._startup_names(cached.staged, context_type))
+                cached = replace(cached, ready=self._startup_names(cached.eager, context_type))
                 self._plans[context_type] = cached
             return cached
 
-    def _startup_names(self, staged, context_type):
+    def _startup_names(self, eager, context_type):
         """What a realm has built once ready: the skeleton, its groups' ancestors,
         and the alias targets the window declares."""
-        seeds = set(staged)
+        seeds = set(eager)
         if context_type == "Window":
-            seeds.update(target for target in self.table.window_aliases().values()
+            seeds.update(target for target in self.idl.window_aliases().values()
                          if self.describes(target))
         built = set()
         for name in seeds:
             for group_name in self.runtime.interface_group(name):
-                built.update(self.table.ancestors(group_name))
+                built.update(self.idl.ancestors(group_name))
         return tuple(sorted(built))
 
     def class_for(self, name):
@@ -132,12 +133,16 @@ class InterfaceUniverse:
             parent = self.class_for(parent_name) if parent_name else object
             implementation = self.runtime.interface(name)
             if implementation is None:
-                cls = type(name, (parent,), {
-                    "__module__": "pyv8c.engine.generated",
-                    "__init__": self._assembly.stubs.constructor(name),
-                    "__idl_spec__": InterfaceSpec(name, parent_name),
-                    "__v8_idl_stub__": True,
-                })
+                key = (getattr(self.idl, "digest", ""), name, parent_name, self.stub_logging)
+                cls = _GENERATED.get(key)
+                if cls is None:
+                    cls = type(name, (parent,), {
+                        "__module__": "pyv8c.engine.generated",
+                        "__init__": self._binder.stubs.constructor(name),
+                        "__idl_spec__": InterfaceSpec(name, parent_name),
+                        "__v8_idl_stub__": True,
+                    })
+                    _GENERATED[key] = cls
             else:
                 cls = implementation
             self._classes[name] = cls
@@ -145,11 +150,11 @@ class InterfaceUniverse:
 
     def class_config_for(self, name, realm=None):
         """The spec one interface is built from in one realm."""
-        return self._assembly.bind(name, realm)
+        return self._binder.bind(name, realm)
 
     def describes(self, name):
-        """Whether this universe can commit an overlay for ``name``."""
-        if name not in self.baseline.interfaces:
+        """Whether this bindings can commit an overlay for ``name``."""
+        if name not in self.idl.interfaces:
             return False
         return getattr(self.class_for(name), "__name__", None) == name
 
@@ -157,6 +162,6 @@ class InterfaceUniverse:
         """Compile every interface once, to surface mismatches before a page runs."""
         with self._lock:
             if not self._validated:
-                for name in self.baseline.interfaces:
-                    self._assembly.compile(name)
+                for name in self.idl.interfaces:
+                    self._binder.compile(name)
                 self._validated = True

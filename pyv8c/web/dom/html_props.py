@@ -14,6 +14,7 @@ Three shapes live here, all of them measured on Chrome 154 rather than described
   form of the property: accessKey is accesskey, focusGroup is focusgroup.
 """
 
+
 #: (property, attribute, default, words the getter accepts, true word, false word)
 BOOLEAN_WORDS = (
     ("autocorrect", "autocorrect", True, ("true", "false", "on", "off"), "on", "off"),
@@ -22,8 +23,10 @@ BOOLEAN_WORDS = (
     ("draggable", "draggable", False, ("true", "false"), "true", "false"),
 )
 
+
 #: The two that take a nullish value as a removal rather than stringifying it.
 REMOVES_ON_NULL = ("popover",)
+
 
 #: (property, attribute, default when absent, default when the value is unknown, words)
 KEYWORDS = (
@@ -41,11 +44,13 @@ KEYWORDS = (
     ("writingSuggestions", "writingsuggestions", "true", "true", ("true", "false")),
 )
 
+
 #: (property, attribute)
 PLAIN = (
     ("lang", "lang"),
     ("accessKey", "accesskey"),
 )
+
 
 #: The boolean attributes, whose names are the ones Chrome measures the same way.
 FLAGS = ("autofocus", "inert", "focusGroupStart")

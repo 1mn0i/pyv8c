@@ -4,6 +4,9 @@ import re
 
 import pytest
 
+pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+
+from pyv8c.engine.idl import ArrayProto  # noqa: E402
 from pyv8c.foundation.environment import COLLECTED_KEYS, BrowserEnvironment
 from pyv8c.tools import collect_environment as collector
 from pyv8c.web.dom.media_source import (families_in, parse_type, probe_candidates,
@@ -102,16 +105,17 @@ def test_a_run_writes_the_environment_and_the_surface_together():
         "digest-of-the-baseline")
     document = collector.build_profile(collected, surface, source={"browser": "Chrome/154.0.8037.95"})
 
-    assert document["window_surface"] == {
-        "keys": ["a"], "own_names": ["a", "b"],
-        "prototype_gaps": {"Node": ["append"]},
-        # An interface object answers for its own members, where a namespace keeps them.
-        "interface_gaps": {"CSS": ["animationWorklet"], "Node": ["ELEMENT_NODE"]},
+    assert document["bindings"] == {
+        "keys": ["a"], "exposed": ["a", "b"],
+        "omits": {
+            "prototype": {"Node": ["append"]},
+            # An interface object answers for its own members, where a namespace keeps them.
+            "interface": {"CSS": ["animationWorklet"], "Node": ["ELEMENT_NODE"]}},
         # What each interface borrows from Array.prototype, in the field's own vocabulary.
-        "array_words": {"Node": "iterable"},
-        "baseline_digest": "digest-of-the-baseline"}
+        "array_protos": {"Node": ArrayProto.iterable},
+        "against": "digest-of-the-baseline"}
     assert document["source"]["browser"] == "Chrome/154.0.8037.95"
-    assert set(document) == {"schema", "source", "window_surface", *COLLECTED_KEYS}
+    assert set(document) == {"schema", "source", "bindings", *COLLECTED_KEYS}
     # The section is not an environment key: the profile still loads as one.
     assert BrowserEnvironment.from_dict(document).to_dict() == collected
 
@@ -121,10 +125,10 @@ def test_a_surface_without_gap_readings_writes_empty_sections():
     surface = collector.build_surface({"keys": ["a"], "own": ["a"]},
                                       {"Node": {"prototype": {"appendChild"}}})
 
-    assert surface["prototype_gaps"] == {}
-    assert surface["interface_gaps"] == {}
-    assert surface["array_words"] == {}
-    assert surface["baseline_digest"] == ""
+    assert surface["omits"]["prototype"] == {}
+    assert surface["omits"]["interface"] == {}
+    assert surface["array_protos"] == {}
+    assert surface["against"] == ""
 
 
 def test_only_a_declared_name_can_be_a_gap():
@@ -134,8 +138,8 @@ def test_only_a_declared_name_can_be_a_gap():
                                        "objects": {"Unknown": ["x"]}},
                                       {"Node": {"prototype": {"appendChild"}}})
 
-    assert surface["prototype_gaps"] == {"Node": ["appendChild"]}
-    assert surface["interface_gaps"] == {}
+    assert surface["omits"]["prototype"] == {"Node": ["appendChild"]}
+    assert surface["omits"]["interface"] == {}
 
 
 def test_a_location_is_only_compared_with_its_own_reading():
@@ -146,11 +150,11 @@ def test_a_location_is_only_compared_with_its_own_reading():
          "objects": {"CSS": ["supports"]}},
         {"CSS": {"prototype": {"animationWorklet"}, "interface": {"supports", "escape"}}})
 
-    assert surface["prototype_gaps"] == {}
-    assert surface["interface_gaps"] == {"CSS": ["escape"]}
+    assert surface["omits"]["prototype"] == {}
+    assert surface["omits"]["interface"] == {"CSS": ["escape"]}
 
 
-def test_the_array_word_is_the_shape_the_browser_publishes():
+def test_the_array_value_is_the_shape_the_browser_publishes():
     """The field states the iterator alone or that iterator with all four, and nothing else.
 
     A prototype that answers no ``@@iterator`` records nothing -- which is how ``Cache`` (whose
@@ -160,14 +164,14 @@ def test_the_array_word_is_the_shape_the_browser_publishes():
     """
     declared = {"NodeList": {"prototype": set()}, "HTMLCollection": {"prototype": set()},
                 "Cache": {"prototype": set()}}
-    words = collector._array_words(
+    protos = collector._array_protos(
         {"NodeList": {"iterator": 1, "four": 4},
          "HTMLCollection": {"iterator": 1, "four": 0},
          "Cache": {"iterator": 0, "four": 1},
          "Unknown": {"iterator": 1, "four": 4}},
         set(declared))
 
-    assert words == {"NodeList": "iterable", "HTMLCollection": "iterator"}
+    assert protos == {"NodeList": ArrayProto.iterable, "HTMLCollection": ArrayProto.iterator}
 
 
 def test_a_shape_no_word_carries_stops_the_run():
@@ -184,7 +188,7 @@ def test_a_shape_no_word_carries_stops_the_run():
                                 {"NodeList": {"prototype": set()}})
     # …and it is not raised for an interface the baseline does not know.
     surface = collector.build_surface(dict(reading, keys=[], own=[]), {})
-    assert surface["array_words"] == {}
+    assert surface["array_protos"] == {}
 
 
 def test_a_non_finite_number_is_written_as_its_name():

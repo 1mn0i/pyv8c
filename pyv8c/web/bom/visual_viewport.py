@@ -1,9 +1,9 @@
 """``window.visualViewport``: the layout viewport's twin, unzoomed here."""
 
-from pyv8 import AttributeSpec, IdlSpec
 
-from ...engine.features import interface
+from ...idl import interface
 from ..dom.events import EventTarget, _install_handler_slots
+
 
 #: Read away one at a time below; each is initialised to nothing here.
 VALUES = ("offsetLeft", "offsetTop", "pageLeft", "pageTop", "width", "height", "scale")
@@ -12,14 +12,34 @@ HANDLERS = ("onresize", "onscroll", "onscrollend")
 
 @interface('VisualViewport', 'EventTarget')
 class VisualViewport(EventTarget):
-    __v8_idl_spec__ = IdlSpec(
-        attributes=tuple(
-            AttributeSpec(name=name, getter="get_" + name, side_effect=1) for name in VALUES
-        ),
-        constructor_behavior=0,
-        to_string_tag="VisualViewport",
-        has_constructor=1,
-    )
+    __idl_overrides__ = {
+        "members": {
+            "height": {
+                "side_effect": 1
+            },
+            "offsetLeft": {
+                "side_effect": 1
+            },
+            "offsetTop": {
+                "side_effect": 1
+            },
+            "pageLeft": {
+                "side_effect": 1
+            },
+            "pageTop": {
+                "side_effect": 1
+            },
+            "scale": {
+                "side_effect": 1
+            },
+            "width": {
+                "side_effect": 1
+            }
+        },
+        "interface": {
+            "length": 0
+        }
+    }
 
     def __init__(self, window=None, **_):
         super().__init__(**_)
@@ -35,10 +55,8 @@ class VisualViewport(EventTarget):
     def get_pageTop(self): return 0
 
 
-VisualViewport.__v8_idl_spec__ = VisualViewport.__v8_idl_spec__.replace(
-    attributes=VisualViewport.__v8_idl_spec__.attributes
-    + _install_handler_slots(VisualViewport, HANDLERS)
-)
+#: ``onresize`` and friends are this interface's own members, so the convention binds them.
+_install_handler_slots(VisualViewport, HANDLERS)
 
 
 __all__ = ["VisualViewport"]

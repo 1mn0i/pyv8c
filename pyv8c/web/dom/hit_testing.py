@@ -12,6 +12,7 @@ import pyv8
 from .html_elements import Element
 from .layout import Box, computed_style, layout, positioned_box
 
+
 #: Viewport used when a document has no environment to ask, matching ``dom.layout``.
 _DEFAULT_VIEWPORT = (1280, 720)
 
@@ -90,7 +91,6 @@ def element_from_point(document, x, y):
     """The topmost element under a point, or ``None`` when the point is outside."""
     stack = elements_from_point(document, x, y)
     return stack[0] if stack else None
-
 
 __all__ = [
     "Box", "border_box", "contains", "element_from_point", "elements_from_point",

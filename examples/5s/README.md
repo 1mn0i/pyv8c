@@ -231,7 +231,7 @@ VERDICT: FAIL -- no cf_clearance
 
 - **症状**：`performance` 上多出一个**可枚举**的数字属性 `navigation_id` ✗（Chrome 的 `performance` 没有 ✓）。
 - **两侧证据**：`surface_diff.py` 的 `performance` 行 34 vs 33 ✓、`only-here` 里点名 ✓。
-- **根因**：`pyv8c/web/bom/performance.py` 的 `navigation_id = 1` 是**普通类属性** ✓ ⇒ 被 IDL 表面当成数据属性交给页面 ✗（同文件其余内部字段都带下划线 ✓ ⇒ 只有它漏了 ✓）。真正施法的是 `engine/assembly.py` 里那段"收割非下划线 int 类属性当常量" ✗ —— **该段已在"全表面扫"一节里删掉** ✓，本条只是当时堵住的一处 ✓。
+- **根因**：`pyv8c/web/bom/performance.py` 的 `navigation_id = 1` 是**普通类属性** ✓ ⇒ 被 IDL 表面当成数据属性交给页面 ✗（同文件其余内部字段都带下划线 ✓ ⇒ 只有它漏了 ✓）。真正施法的是 `engine/binder.py` 里那段"收割非下划线 int 类属性当常量" ✗ —— **该段已在"全表面扫"一节里删掉** ✓，本条只是当时堵住的一处 ✓。
 - **改法**：改名 `_navigation_id` ✓ 并同步 4 处 `self._navigation_id` ✓。
 - **判据**：`only-here` 归零 ✓；守护测试断言 `Object.getOwnPropertyNames(performance)` 与 `Object.keys(performance)` 里都没有 `navigation_id` ✓，且 `performance.now()` 仍正常 ✓。
 
@@ -241,7 +241,7 @@ VERDICT: FAIL -- no cf_clearance
 - **两侧证据**：`surface_diff.py` 的 `CSS` 行 ✓（修前 `only-here` 10 ✓、修后 8 ✓，剩下的 8 条全是"它是函数"那一族 ✓）。
 - **根因**：它们在基线里位于 **`location: interface`** ✓（`CSS` 的 71 个 interface 成员之一 ✓），而实测 profile 只测了 **window 自有名 + prototype** ✓ —— 代码里那句注释就是证词 ✓："Only the prototype was measured, not instance or interface-object members." ✗。基线"含全部 flag 状态、由实测收窄" ✓，于是这两条**没有收窄通路** ✗。
 - **改法**：把测量扩到接口对象自身 ✓：`SURFACE_SCRIPT` 对每个 `window[X]` 读 `Object.getOwnPropertyNames(window[X])` ✓（命名空间不是函数 ✓，所以 `typeof === 'object'` 也读 ✓），profile 新增 `interface_gaps` 一节 ✓，`WindowSurface`/`InterfaceTable` 按**位置**分别收窄 ✓（`prototype_gaps` 只作用于 prototype ✓、`interface_gaps` 只作用于 interface ✓；`instance` 仍不测 ✓）。旧 profile 缺这节 ⇒ 完全不收窄 ✓（与"prototype 节缺席"同一套回退 ✓）。
-- **判据**：重生成后 `CSS` 行 `only-chrome` **0** ✓、`only-here` **10 → 8** ✓、全局 `only-here` **50 → 48** ✓；`tests/unit/test_window_surface.py` 新增 `test_an_interface_gap_narrows_the_interface_object_only` ✓、`tests/unit/test_collect_environment.py` 新增"同一位置才互相比较" ✓、`tests/integration/test_environment_collection.py` 断言 `"animationWorklet" in interface_gaps["CSS"]` ✓、`docs/interface-baseline-fields.md` 就地改写 ✓。
+- **判据**：重生成后 `CSS` 行 `only-chrome` **0** ✓、`only-here` **10 → 8** ✓、全局 `only-here` **50 → 48** ✓；`tests/unit/test_profile.py` 新增 `test_an_interface_gap_narrows_the_interface_object_only` ✓、`tests/unit/test_collect_environment.py` 新增"同一位置才互相比较" ✓、`tests/integration/test_environment_collection.py` 断言 `"animationWorklet" in interface_gaps["CSS"]` ✓、`docs/interface-baseline-fields.md` 就地改写 ✓。
 - **同一机制还抓出另外 8 个同类接口** ✓（都是基线声明、参照 Chrome 不装的 interface 成员 ✓）：`SubtleCrypto.supports` ✓、`IdentityProvider.register`/`unregister` ✓、`URLPattern.compareComponent` ✓、`TrustedScript`/`TrustedScriptURL`/`TrustedHTML` 的 `fromLiteral` ✓、`LanguageModel.params` ✓、`HTMLUserMediaElement.isTypeSupported` ✓。
 - **重生成配方** ✓（只动一个变量 ✓）：`python -m pyv8c.tools.collect_environment --headed --window-size 1920,1080` ✓ —— **必须 headed** ✓（无头跑会改掉 `user_agent`/`viewport`/`screen` ✓，实测 ✓）。与现行 profile 对比后，除新增的 `interface_gaps` 与 `source.collected` ✓ 只有 `connection.rtt/downlink/effective_type` 三个**活读数**不同 ✓ ⇒ 采集器输出即为真源 ✓。
 
@@ -253,7 +253,7 @@ VERDICT: FAIL -- no cf_clearance
 
 | 族 | 规模（首扫） | 根因 / 状态 |
 | --- | --- | --- |
-| **内部状态被当常量装出去** ✗ | 293 次里的 **208 次** ✓（`inputs`/`outputs` 46+46 ✓、`RULE_TYPE` 54 ✓、`channel_count` 4 ✓、`ELEMENT_NODE` 一族 3×18 ✓） | **已修** ✓：`engine/assembly.py` 那段"任何非下划线 int 类属性都当 IDL 常量收割" ✓ —— 删掉 ✓（真常量由**基线**给 ✓）。判据：`only-here` **293 → 141** ✓、种类 45 → 40 ✓、全量 **1103 passed** ✓、且 `only-chrome` 里**没有任何全大写常量** ✓（即没有真常量被误删 ✓） |
+| **内部状态被当常量装出去** ✗ | 293 次里的 **208 次** ✓（`inputs`/`outputs` 46+46 ✓、`RULE_TYPE` 54 ✓、`channel_count` 4 ✓、`ELEMENT_NODE` 一族 3×18 ✓） | **已修** ✓：`engine/binder.py` 那段"任何非下划线 int 类属性都当 IDL 常量收割" ✓ —— 删掉 ✓（真常量由**基线**给 ✓）。判据：`only-here` **293 → 141** ✓、种类 45 → 40 ✓、全量 **1103 passed** ✓、且 `only-chrome` 里**没有任何全大写常量** ✓（即没有真常量被误删 ✓） |
 | **命名空间是函数** ✗ | 8 种 × 6 持有者 ✓ | 未修 ✗（需原生层 ✓，见未解决表 ✓） |
 | **迭代器方法装错接口** ✗ | 4 种：`HTMLCollection.prototype` 一派**多** 7×4 ✓、`CSSNumericArray.prototype`/`CSSTransformValue.prototype` 一派**少** 5×4 ✓ | 未修 ✗（一因两果 ✓：同一套 `entries/keys/values/forEach` 装到了集合接口上 ✓，Chrome 只在 `NodeList` 与那两个 CSS 序列上有 ✓） |
 | canvas 2d 的 8 个属性 ✗ | 8 种 × 2 持有者 ✓（`CanvasRenderingContext2D.prototype` **与** `OffscreenCanvasRenderingContext2D.prototype` ✓） | 未修 ✗（基线缺 ✓，见未解决表 ✓） |
@@ -263,7 +263,7 @@ VERDICT: FAIL -- no cf_clearance
 
 - **症状**：接口对象/实例上多出**可枚举**的内部状态 ✗（`navigation_id` ✓、音频节点上 46 处 `inputs`/`outputs` ✓、54 处 `RULE_TYPE` ✓）。
 - **两侧证据**：`surface_diff.py --probe surface_wide` ✓ 聚合出"同一名字同一 `value:number` 出现在 N 个持有者里" ✓ —— 这种**跨持有者的重复**就是"引擎把实现细节当表面装出去"的特征 ✓。
-- **根因**：`engine/assembly.py` 曾把**任何**非下划线的 `int` 类属性当 IDL 常量收割 ✓（`constants.setdefault(field, ConstantSpec(...))` ✓）—— 所以 `inputs=1`、`channel_count=1`、`RULE_TYPE=1` 全被装上 ✗，而字符串属性（`channel_count_mode` ✓）不会 ✓ —— 这条**正好解释了**为什么只有 int 泄漏 ✓。
+- **根因**：`engine/binder.py` 曾把**任何**非下划线的 `int` 类属性当 IDL 常量收割 ✓（`constants.setdefault(field, ConstantSpec(...))` ✓）—— 所以 `inputs=1`、`channel_count=1`、`RULE_TYPE=1` 全被装上 ✗，而字符串属性（`channel_count_mode` ✓）不会 ✓ —— 这条**正好解释了**为什么只有 int 泄漏 ✓。
 - **改法**：删掉那段收割 ✓（真常量由基线的 `constants` 与成员表提供 ✓）。上轮对 `navigation_id` 的改名仍然有效 ✓，但它当时只堵了一处 ✗ —— 根在这里 ✓。
 - **判据**：`only-here` 293 → **141** ✓；`tests/browser/test_surface_members.py::test_implementation_state_is_not_an_idl_constant` 两半都守 ✓：`AudioNode`/`ScriptProcessorNode`/`AnalyserNode` 的自有名里**没有** `inputs`/`outputs`/`channel_count` ✓，而 `Node.ELEMENT_NODE === 1`、`Node.TEXT_NODE === 3` 且它仍是 `Node` 的自有属性 ✓。
 
@@ -281,7 +281,7 @@ VERDICT: FAIL -- no cf_clearance
 
 - **盲区**：`Object.getOwnPropertyNames` **从不列 symbol** ✗ ⇒ `Symbol.toStringTag`（`Object.prototype.toString.call(x)` 正是读它 ✓）与两个迭代 symbol **从未被两侧对照** ✗。两个表面探针现在都比四个带 ASCII 标签的符号 ✓（`@@iterator`/`@@asyncIterator`/`@@toStringTag`/`@@toPrimitive` ✓）—— 只标值得比的那四个 ✓：未标名的 symbol 会在两侧各自命名 ✗，读出来是"引擎的差异"其实是"名字的差异" ✗。
 - **立刻抓到的族** ✓（`only-chrome` **51 → 74** ✓，全是符号 ✓）：`@@iterator` 缺 **14** 个 prototype ✓、`@@toStringTag` 缺 6 个（**就是那 6 个命名空间** ✓，与本条同源 ✓）、`@@asyncIterator` 缺 2 个 ✓、`location` 的 `@@toPrimitive` 缺 1 个 ✓。
-- **已修** ✓：那 14 个都**没有 Python 类** ✗（`AudioParamMap`/`CustomStateSet`/`RTCStatsReport` 一类 Maplike/Setlike ✓）⇒ 四个具名方法由**基线成员**发布 ✓，但 `Symbol.iterator` 只能由 `array=` 位发布 ✗ ⇒ 无人发布 ✓。改法：`engine/assembly.py` 在**没有手写 `array=`** 时，若基线在 prototype 上声明的 **`entries` 是 operation** ✓ ⇒ 只发 iterator 位 ✓（四个名字仍由基线给 ✓）。
+- **已修** ✓：那 14 个都**没有 Python 类** ✗（`AudioParamMap`/`CustomStateSet`/`RTCStatsReport` 一类 Maplike/Setlike ✓）⇒ 四个具名方法由**基线成员**发布 ✓，但 `Symbol.iterator` 只能由 `array=` 位发布 ✗ ⇒ 无人发布 ✓。改法：`engine/binder.py` 在**没有手写 `array=`** 时，若基线在 prototype 上声明的 **`entries` 是 operation** ✓ ⇒ 只发 iterator 位 ✓（四个名字仍由基线给 ✓）。
 - **踩到的坑（写下来 ✓）**：判据起初只看**名字** ✓ ⇒ `CSSMathMax` 的 **`values` 是 attribute**（长度 ✓，不是迭代器 ✓）被误判 ✗ ⇒ 一次多发 **13** 个 iterator ✗（`only-here` 113 → 126 ✓ 被扫出来 ✓）。收紧为"`entries` 且 `kind == operation`" ✓ ⇒ 多发降到 3 ✓。
 - **判据**：`@@iterator` 的 `only-chrome` **14 → 0** ✓✓、`only-here` 的 `@@iterator` 13 → **3** ✓；总量 `only-chrome 74 → 60` ✓、`only-here 113 → 116` ✓ ⇒ **净减 11** ✓；全量 **1106 passed** ✓；守护 `test_a_maplike_interface_publishes_its_iterator_and_a_value_is_not_one` ✓ 两面都守（三个 Maplike 必须有 iterator ✓、`CSSMathMax` 必须没有 ✓ 而它的 `values` 属性仍要在 ✓）。
 - **残留（已量 ✓）**：3 个多发 ✓（`FileSystemDirectoryHandle`/`Navigation` 一类 —— 在 Chrome 里**只异步可迭代** ✗，而 sync/async 这个区别**基线里没有** ✓ ⇒ 只能靠实测 ✓）；`@@asyncIterator` 2 个 ✓；`location[Symbol.toPrimitive]` 1 个 ✓。
@@ -333,11 +333,24 @@ typeof CSSMathMax.prototype[Symbol.iterator]               // "undefined" -> 缺
 
 - **症状**（两侧读数 ✓）：10 个接口的原型上 `constructor` 是 `fn:1` ✗，Chrome 是 `fn:0` ✓ —— `BeforeUnloadEvent`/`CSSRule`/`CSSGroupingRule`/`CSSStyleRule`/`CSSStyleSheet`/`StyleSheet`/`RTCRtpReceiver`/`CanvasRenderingContext2D` ✓。
 - **逐层复现**（决定性 ✓）：`CSSStyleSheet.prototype` 与 `StyleSheet.prototype` 都**没有自有 `constructor`** ✗ ⇒ 链落到 `Object.prototype.constructor` ✓（`Object.length` 正是 **1** ✓）⇒ 那 10 个 `fn:1` 的**真身就是 `Object`** ✗。
-- **根因**：这些类的 spec 写着 `has_constructor=0` ✗，而引擎在"类写了 spec"时就照它办 ✗（`engine/assembly.py:492` ✓）—— 与 `engine/features.py:20` 那句"realm exposure 归 Chromium 基线、类不再声明"直接矛盾 ✓。
+- **根因**：这些类的 spec 写着 `has_constructor=0` ✗，而引擎在"类写了 spec"时就照它办 ✗（`engine/binder.py` ✓）—— 与 `engine/features.py:20` 那句"realm exposure 归 Chromium 基线、类不再声明"直接矛盾 ✓。
 - **改法**：曝露一律取基线的 `has_interface_object` ✓；"不可构造"交给 `constructor_behavior` ✓（本来就是基线说了算 ✓ `assembly.py:517` ✓）。
 - **顺带定下一条规则** ✓：接口对象没有构造器 ⇒ `length` 为 0 ✓ —— 参照读数 **548/548**、零例外 ✓ ⇒ 同时修掉 `SnapEvent`/`FencedFrameConfig` 的 arity ✗。
 - **判据**：宽扫 `kind` **11 → 2** ✓、`only-chrome 40` / `only-here 113` 未变 ✓（零回归 ✓）；新增守护 `tests/browser/test_collections.py::test_a_non_constructible_interface_object_is_its_prototypes_constructor` ✓（9 个接口：自有 ✓、同一对象 ✓、arity 0 ✓）；`tests/repros/corpus.py` 那条的 `known_divergence` 已**删除** ✓（`test_repros.py` 的规矩正是"不再分歧就删" ✓）；全量 **1118 passed** ✓。
 - **仍未修（都带判据 ✓）**：① `SnapEvent`/`FencedFrameConfig` 的 arity ✗（基线 `allow_new` 与 arity 都记错 ✓，真身是"IDL 只数**必填**参数" ✓ ⇒ 抽取器/数据 ✓）；② `NodeFilter` 有 `prototype` ✗（Chrome 没有 ✓，与命名空间同一个原生限制 ✓，判据 `'prototype' in NodeFilter === false` ✓）；③ 接口对象的 `__proto__` 没接 `Function.prototype` ✗（`Audio`/`Image`/`Option` 的 18–27 项 only-here ✓，判据 `Object.getPrototypeOf(window.Audio) === Function.prototype` ✓ —— 与本仓"实现/接口两张图未分开"同源 ✓）。
+
+### 重构：`__v8_idl_spec__` 从"清单"退成"差异"（已落地 ✓）
+
+- **引擎按约定解析**（`engine/binder.py` ✓）：每个基线成员依次问 **宿主 override → 类自己的差异声明 → `fn_<name>`/`get_<name>`+`set_<name>` 约定 → 桩** ✓；位置、arity、property flags、`side_effect`、cross-origin **一律取基线** ✓，attribute 可写性取基线 `setter_state`，基线不表态时才由声明/约定决定 ✓。
+- **实测三件事**（都是先量后改 ✓）：
+  1. 今天"有约定名方法、spec 却没声明"的成员 **0 个** ✓ ⇒ 约定这一层是纯下沉 ✓，落地即行为中性 ✓；
+  2. 声明里的 `location`/`property_flags`/`side_effect`/`cross-origin` **引擎从不读** ✓（实测 `AbortController.signal` 声明 `side_effect=1`、编译结果 = 基线的 `0` ✓）⇒ 1382 条 `flags` 声明与重述同类 ✓；这类"我们曾声明、绑定从不读"的记录存档在 `spec-member-claims.json` ✓；
+  3. 声明**基类也声明同一成员**时不能单独删 ✓ —— 删掉子类声明后引擎会回落到父类那条（没写 setter ✗），writer 变成桩 ✗。
+- **规模**：`declared` **2406 → 197** ✓、`restating` **815 → 31** ✓、`flags` **1382 → 6** ✓、带 spec 的类 **366 → 95** ✓；共删约 **2900 行** ✓（成员条目 ✓ + 接口级字段 955 处 ✓ + 惰性 flags 1079 行 ✓ + 推导式字段 ✓ + 空 `IdlSpec()` 271 处 ✓）。残留 31 条记在守护测试注释里 ✓（它们同时充当**实现来源**：`ValidityState` 的校验位、`PerformanceTiming` 的时间点 ✓，拿掉名字会连实现一起拿掉 ✗）。
+- **空 `IdlSpec()` 不是"标记"而是噪声** ✓：引擎读的是 `cls.__dict__.get("__v8_idl_spec__", IdlSpec())` ✓ ⇒ 空的那个与"没有"同义 ✓（267 处 ✓ 已删 ✓，判据同样是编译面零差异 ✓）。唯二的例外是**锚点**：`X.__v8_idl_spec__ = X.__v8_idl_spec__.replace(...)` 要读它 ✓，而且类体没了 spec 后这行会**静默读到父类的 spec** ✗ ⇒ 这类引用改写成 `IdlSpec().replace(...)` ✓（`EventTarget` ✓、`HTMLElement` ✓ 两处 ✓）。
+- **中性判据**：`script/dump_compiled.py` 前后快照 ✓ —— 1254 接口 / 10361 成员的 `methods`/`attributes`/`handlers`/`fields` **逐项零差异** ✓（唯一两处差异是**修好的 bug** ✓）：`Element.setAttributeNS` 有实现、spec 漏声明 ⇒ 旧行为下是**桩** ✓（调用静默无效 ✗）；`CharacterData.data` 声明只写 getter ⇒ 旧行为下 setter 是**桩** ✓（Chrome 里 `data` 可写 ✓）。
+- **工具留档**：`pyv8c/tools/idl_audit.py`（谁在重述 ✓，分 `restating`/`flags`/`renamed`/`resolved`/`unresolved` ✓）、`script/dump_compiled.py`（编译面快照 ✓）、`script/trim_spec_restatements.py`（按审计删行 ✓，含 `--check`/`--fields`/`--generators`/`--fix`/`--tidy` ✓）。守护测试：`tests/unit/test_spec_is_a_difference.py` ✓、`tests/browser/test_convention_binding.py` ✓、`tests/unit/test_compile_cost.py` ✓。
+- **性能**：`tools/measure_startup.py` 实测 —— 已编译 spec 进程级复用 ✓（第二个 `Bindings` **0 次未命中 / 编译 8.5 ms ✓**）；首屏余下 288 ms 是 materialize（本步未动 ✓）。缓存只在**可互换**的 bindings 间共享 ✓（同基线 ✓、同 profile ✓、无宿主钩子 ✓、静默桩 ✓、且本次编译没报不匹配 ✓ —— 最后一条保证 `baseline_mismatch="warn"` 仍按 bindings 报一次 ✓）。
 
 ## 撤回（被实测推翻的推断）
 
@@ -354,10 +367,10 @@ typeof CSSMathMax.prototype[Symbol.iterator]               // "undefined" -> 缺
 | --- | --- |
 | **迭代器方法装错接口** ✗ → **两侧已全同** ✓ | **多**的一半：7 个接口（`HTMLCollection` 家族 3 + `NamedNodeMap` + `Plugin`/`PluginArray`/`MimeTypeArray` ✓）各多 4 个 ✗ —— 已修 ✓（"迭代表面"一节 ✓）。**少**的一半：`CSSNumericArray`/`CSSTransformValue`/`CSSUnparsedValue`/`TimelineTriggerRangeList`/`XRInputSourceArray` 各少 4 个 ✗ —— 它们是没有 Python 类的纯基线接口 ✓，**由"重设计 `array`"一节修好** ✓（形状进了基线数据 ✓）。**判据**：`iterable_probe.py` **20 行全部两侧一致** ✓（原先 5 行 `differs` ✗）；宽扫 `only-here 116 → 113` ✓、`only-chrome 60 → 40` ✓ |
 | 零星的 interface 面差异 ✗ | `console.memory` / `console.createTask` ✓、`WebAssembly.compileStreaming` / `instantiateStreaming` ✓、`Iterator.prototype.includes`/`join` 与 `Iterator.zip`/`zipKeyed` ✓、`Date.prototype.toTemporalInstant` ✓、`window.Audio` 上多出 `Object.prototype` 那一串（`hasOwnProperty`/`valueOf`/… ✓）。全部来自 `--probe surface_wide` 的聚合 ✓，逐条明细见 `surface-wide-report.txt` 与 `surface-surface_wide-*.json` ✓ |
-| **`canvas.getContext('2d')` 少 8 个属性**（根因已定 ✗，未修） | `globalAlpha`/`imageSmoothingEnabled`/`lineDashOffset`/`lineWidth`/`miterLimit`/`shadowBlur`/`shadowOffsetX`/`shadowOffsetY` ✓：Chrome 有、我们读到 `undefined` ✗（`surface_diff.py` 的 `canvas.2d` 行 84 vs 76 ✓）。**根因不在代码** ✓：`InterfaceTable(repo).member('CanvasRenderingContext2D','lineWidth','attribute') -> None` ✓ 而 `fillStyle -> Member(...)` ✓ ⇒ **基线快照**（`baselines/interface-baseline.json` ✓ 由 `tools/extract_interfaces.py` 从 Blink bindings 抽取 ✓）缺这一族 mixin ✓。就地声明会被引擎自己的规矩挡住 ✓（`universe.validate()` 要求声明不得与基线矛盾 ✓，实测就是这条拦住 ✓）。**判据**：用 `CHROMIUM_ROOT` 重新生成基线后，`canvas.2d` 的 `only-chrome` 8 → 0 ✓ 且 `pytest tests/unit/test_baseline_discrepancies.py` 仍绿 ✓ |
-| `Response.json`（静态）缺失 ✗ | Chrome：`typeof Response.json === 'function'`、`length` 1 ✓；我们 `undefined` ✗。**根因**：成员表以**名字**为键 ✓（`engine/assembly.py:_members` ✓）⇒ 一个接口无法在**两处**声明同名成员 ✓，编译器直接拒绝（实测 `TypeError: Response declares duplicate methods: json` ✓）。已**撤回**这次尝试 ✓ 并把原因写在 `response.py` 的 spec 注释里 ✓。**判据**：支持 (name, location) 双键后，`Response.json` 出现且**实例** `response.json()` 仍在 ✓（守护测试现在就盯着实例那一个 ✓） |
+| **`canvas.getContext('2d')` 少 8 个属性**（根因已定 ✗，未修） | `globalAlpha`/`imageSmoothingEnabled`/`lineDashOffset`/`lineWidth`/`miterLimit`/`shadowBlur`/`shadowOffsetX`/`shadowOffsetY` ✓：Chrome 有、我们读到 `undefined` ✗（`surface_diff.py` 的 `canvas.2d` 行 84 vs 76 ✓）。**根因不在代码** ✓：`Idl.load().member('CanvasRenderingContext2D','lineWidth','attribute') -> None` ✓ 而 `fillStyle -> Member(...)` ✓ ⇒ **基线快照**（`baselines/idl.json` ✓ 由 `tools/extract_idl.py` 从 Blink bindings 抽取 ✓）缺这一族 mixin ✓。就地声明会被引擎自己的规矩挡住 ✓（`Bindings.validate()` 要求声明不得与基线矛盾 ✓，实测就是这条拦住 ✓）。**判据**：用 `CHROMIUM_ROOT` 重新生成基线后，`canvas.2d` 的 `only-chrome` 8 → 0 ✓ 且 `pytest tests/unit/test_baseline_discrepancies.py` 仍绿 ✓ |
+| `Response.json`（静态）缺失 ✗ | Chrome：`typeof Response.json === 'function'`、`length` 1 ✓；我们 `undefined` ✗。**根因**：成员表以**名字**为键 ✓（`engine/binder.py:_members` ✓）⇒ 一个接口无法在**两处**声明同名成员 ✓，编译器直接拒绝（实测 `TypeError: Response declares duplicate methods: json` ✓）。已**撤回**这次尝试 ✓ 并把原因写在 `response.py` 的 spec 注释里 ✓。**判据**：支持 (name, location) 双键后，`Response.json` 出现且**实例** `response.json()` 仍在 ✓（守护测试现在就盯着实例那一个 ✓） |
 | `window.Temporal` 缺失 ✗ | Chrome 有 `Temporal` 命名空间 ✓（`value:object !enum` ✓），我们 `undefined` ✗。这是一整块实现（日历/时区 ✓），未修 ✓ |
-| **6 个命名空间被做成函数** ✗（`CSS` + 五个 `GPU*`） | Chrome：`value:object` ✓ 且**没有** `length`/`name`/`prototype` ✓；我们：`fn:0` ✗ 且带 `Function.prototype` 那一套 ✓（`only-here` 48 项 ✓ = 6×8 ✓；原先 50 ✓ —— 多的那 2 项是下面那条，已修 ✓）。**基线已经说了是哪六个** ✓：`constructor.allow_call is None` 且 `allow_new` 为 false ✓（= 生成的绑定里根本没有构造器回调 ✓；IDL 那条来源把同一件事写作 `False` ✓）——**6/6 命中** ✓、反向 **0/909** ✓（`script/baseline_join.py` ✓）。**为什么没修** ✗：接口对象由**原生绑定**创建 ✓，`as_object` 只标 Python 类模板 ✓（`_pyv8/src/interfaces/pyclass.cpp` ✓），`has_constructor=0` 也不把全局上的那个变成对象 ✓ —— 两种都实测过 ✓（`typeof CSS` 仍是 `'function'` ✓）⇒ 需在原生层或按 `chrome.js` 那样的 JS bootstrap 做 ✓（撤回的推导见 `engine/assembly.py` 里的判据注释 ✓）。**判据**：`typeof CSS === 'object'` 且 `Object.getOwnPropertyNames(CSS)` 不含 `length`/`name`/`prototype` ✓ |
+| **6 个命名空间被做成函数** ✗（`CSS` + 五个 `GPU*`） | Chrome：`value:object` ✓ 且**没有** `length`/`name`/`prototype` ✓；我们：`fn:0` ✗ 且带 `Function.prototype` 那一套 ✓（`only-here` 48 项 ✓ = 6×8 ✓；原先 50 ✓ —— 多的那 2 项是下面那条，已修 ✓）。**基线已经说了是哪六个** ✓：`constructor.allow_call is None` 且 `allow_new` 为 false ✓（= 生成的绑定里根本没有构造器回调 ✓；IDL 那条来源把同一件事写作 `False` ✓）——**6/6 命中** ✓、反向 **0/909** ✓（`script/baseline_join.py` ✓）。**为什么没修** ✗：接口对象由**原生绑定**创建 ✓，`definition_kind` 只标 Python 类模板 ✓（`_pyv8/src/interfaces/pyclass.cpp` ✓），`has_constructor=0` 也不把全局上的那个变成对象 ✓ —— 两种都实测过 ✓（`typeof CSS` 仍是 `'function'` ✓）⇒ 需在原生层或按 `chrome.js` 那样的 JS bootstrap 做 ✓（撤回的推导见 `engine/binder.py` 里的判据注释 ✓）。**判据**：`typeof CSS === 'object'` 且 `Object.getOwnPropertyNames(CSS)` 不含 `length`/`name`/`prototype` ✓ |
 | `FencedFrameConfig`/`SnapEvent`/`canvas.2d.constructor` 的 `length` 差 1 ✗ | 我们 `fn:1` vs Chrome `fn:0` ✓（`Function.length` 是常见指纹位 ✓）。来源是基线里的构造器 arity ✓，随基线一起重生成 ✓ |
 | **收尾仍差最后一步：`POST steamdb.info/…/fo/` 从未发出**（当前焦点 ✗） | 2026-10-07 两轮都能走到 `… → ci → fo@cf` ✓（Chrome 是 `… → ci → fo@cf → fo@steamdb` ✓），差的正是这次"回投站点"——`cf_clearance` 挂在它的响应上 ✓。widget 自报 `验证成功。正在等待 steamdb.info 响应` ✓ 且面板是 `cf-error` ✓。**判据**：出现 `POST steamdb.info/…/fo/`，且它的响应带 `set-cookie: cf_clearance` |
 | `i@hagen`（只有我们）+ 它的 `cf-chl-peek` 回包 | trace：同一个 worker 被要求 `try{fetch("https://<随机子域>.challenges.cloudflare.com/…/i/…")}` ✓ ⇒ 我们**多探了一步** ✗；Chrome 全程不请求它 ✓。**判据**：`i` 消失（或证明 Chrome 也会发） |
@@ -379,7 +392,7 @@ typeof CSSMathMax.prototype[Symbol.iterator]               // "undefined" -> 缺
 - **`script/trace_sweep.py` 是入口**：四个桶（引擎抛错 / dispatch error / not implemented / 页面未捕获）+ `--errors`（异常连同其后几行 ✓）+ `--before eb/`（上报请求之前发生了什么 ✓）。
 - **只读插桩是定位 `AttributeError` 这类"引擎自伤"的最快路径**：trace 只给异常类型 ✗，把可疑回调包一层打印 `traceback` ✓（`5s.py` 的 `watch_calls()` ✓）一次就能拿到文件与行号 ✓。
 - **表面类差异用 `script/surface_diff.py`**：两侧同一探针枚举成员 ✓，三个计数器（`only-chrome` / `only-here` / `kind` ✓）就是判据 ✓；`--only-missing` 只看"页面读得到、我们读 `undefined`"的那一类 ✓；全量名单落在 `surface-surface-pyv8c.json` / `surface-surface-chrome.json` ✓（探针名在前 ✓）。
-- **差异找到之后先问"基线知不知道"** ✓：`script/baseline_join.py` 把两侧读数与 `baselines/interface-baseline.json` 按名字 join ✓，输出 `allow_call/allow_new/length/as_object/parent` ✓ —— 这一个问题就决定了改哪儿：**基线有**（引擎忽略了给它的信息 ✓）就改引擎 ✓，**基线没有/更宽**（✗）就是数据 ✓，需要重生成或收窄 ✓（canvas 那族与 `CSS` 那两条是后者 ✓）。`--holder window --chrome value --all --interfaces` 就是"基线里哪些接口 Chrome 报成对象" ✓，反向 `--chrome fn` 是防假阳性的那一步 ✓。
+- **差异找到之后先问"基线知不知道"** ✓：`script/baseline_join.py` 把两侧读数与包内 IDL（`Idl.load(profile=None)`）按名字 join ✓，输出 `allow_call/allow_new/length/definition_kind/parent` ✓（该列原为 `as_object` ✓ —— 形状标志收敛成一个词后随之改名 ✓）—— 这一个问题就决定了改哪儿：**基线有**（引擎忽略了给它的信息 ✓）就改引擎 ✓，**基线没有/更宽**（✗）就是数据 ✓，需要重生成或收窄 ✓（canvas 那族与 `CSS` 那两条是后者 ✓）。`--holder window --chrome value --all --interfaces` 就是"基线里哪些接口 Chrome 报成对象" ✓，反向 `--chrome fn` 是防假阳性的那一步 ✓。
 - **引擎日志走 loguru，不是标准库 logging** ✗：两侧运行器里 `logging.getLogger("pyv8c").setLevel(...)` **什么都不做** ✓ —— 正确做法是 `loguru.logger.disable("pyv8c")` ✓（`skills/.../scripts/harness.py` 已这么做 ✓）。症状是探针答案被几千行 `dispatch …` 淹没 ✓。
 - **工具的**输出**要 ASCII** ✗：这段控制台是 GBK ✓，脚本里一句中文段落标题或 `✗` 就能让整个报告**在印出关键清单之前**崩掉 ✓（实测 ✓）；名称/结论放 JSON 与案例文档 ✓，控制台只留 ASCII ✓。
 - **把"活读数"钉进断言会让测试随环境变红** ✗（本轮又遇到一次 ✓）：重采 profile 后 `tests/browser/test_navigator_plugins.py` 红在 `connection.effective_type == "4g"` ✗ —— 而随包 profile **就是**默认值来源 ✓（`foundation/environment.py` 的 `DEFAULTS` 读 `data/chrome-environment.json` ✓），这次采集当时的网络报 `3g` ✓ ⇒ 失败与代码无关 ✓，是断言把"采集时那台机器的连接类型"当成了常量 ✗。改成与 `profile["connection.effective_type"]` 比较 ✓（同文件下一行的 `battery.level` 本来就是这么写的 ✓），并保留它真正想守的枚举校验 ✓。与 cookie 那条同类 ✓：**凡是从环境采来的值，断言要拿它与同一个来源比，而不是钉死某个读数** ✓。
@@ -391,3 +404,23 @@ typeof CSSMathMax.prototype[Symbol.iterator]               // "undefined" -> 缺
 - **先量再断**：本轮的 `pat` 401、空 cookie 罐两条推断都被 Chrome 侧一次 13 秒的运行推翻 ⇒ 每条结论都要有两侧证据。
 - **PS 里别写 Python 一行式**：引号会被吃掉（本轮踩过 ✓），改代码用编辑工具。
 - **全量回归必须跑**：改动落在上下文/导航核心路径时，全量回归抓出了 `worker=True` 那处自伤。
+
+### 宽扫读数：一个持有者就能盖住整张表（口径已修 ✓）
+
+- **症状**✦：`surface_diff.py --probe surface_wide` 读 `only-chrome 1299 / only-here 211 / kind 9` ✗，与本日志里记录的 `40/113/2` 差得离谱 ✗。
+- **定位**：按持有者排序，**1227 项只来自持有者 `0`** ✓ —— fixture（`RECT_PAGE`）里 `<iframe>` 的 window ✓：我们给 `WindowProxy`（21 项 ✓）、Chrome 给真实 `Window`（1248 项 ✓）。两侧本来就不可比 ✓（跨源时能给的就是那个门面 ✓），但表把它的自身名字当成了"窗口的表面"✗。
+- **改法**：探针在枚举 window 自身名字时，给"数字名字 + 自引用 window"的持有者标一条 `__frameWindow` 诊断 ✓（`skills/pyv8c-challenge-parity/scripts/probes.py` ✓）；工具把这类持有者**单列一行、不计入合计** ✓（`examples/5s/script/surface_diff.py` ✓），并在合计下说明排除了几个 ✓。
+- **判据**：同一探针读数变为 `only-chrome 72 / only-here 211 / kind 2` ✓（`kind 2` 与本日志记录的 `2` 一致 ✓）；`0  frame window, not comparable` 单独一行 ✓。
+- **归因**（四族既有差异 ✓，都与声明面改动无关 ✓ —— 成员总数 10361 与全量测试未变 ✓ 印证）：命名空间被做成函数 ✓（`GPUTextureUsage.prototype` 多 `apply/bind/call/prototype` ✓）、常量落位 ✓（`NodeFilter.prototype`、legacy 工厂类上多 `FILTER_*`/`*_NODE` ✓）、legacy 工厂原型 ✓、`only-chrome 72` ✓。
+
+### `NodeFilter.prototype`：不是口径问题，是接口对象的形状（已修 ✓）
+
+- **症状**：`page.evaluate("NodeFilter.prototype")` 我们给一个 28 项的对象 ✓，Chrome 给 `undefined` ✓；`NodeFilter` 自己也多一项 `prototype` ✓。
+- **查源码**（不再靠猜 ✓）：Blink 的 `core/dom/node_filter.idl` 是 **`callback interface`** ✓；三个形状写在同一处 —— `bindings/core/v8/generated_code_helper.cc` ✓：
+  - `SetupIDLInterfaceTemplate`：`ReadOnlyPrototype()` + `SetClassName()` + 给 **prototype** 挂 `@@toStringTag` ✓（`Node`/`Element` 走这条 ✓）；
+  - `SetupIDLNamespaceTemplate`：把 `@@toStringTag` 挂**自身**（是个 `ObjectTemplate` ✓）⇒ `CSS`/`GPU*` ✓；
+  - `SetupIDLCallbackInterfaceTemplate`：**`RemovePrototype()`** + `SetClassName()`，**不挂 tag** ⇒ `NodeFilter` ✓。
+- **改法**：`_pyv8` 新增 `IdlSpec.callback_interface` ✓（`src/interfaces/{idl_spec.h,idl_spec.cpp}` ✓），在 `pyclass.cpp` 里照抄 Blink 那条分支 ✓（`RemovePrototype()` 本仓 `iterable.cpp` 已用过 ✓）；web 侧一行 `NodeFilter → {"interface": {"callback_interface": True}}` ✓。
+- **判据**：`typeof NodeFilter` 是 `function` ✓、`'prototype' in NodeFilter` 是 **false** ✓、`[object Function]` ✓、`name`/`length` 不可枚举 ✓、16 个常量可枚举 ✓、`new NodeFilter()` 抛 `TypeError` ✓ ⇒ 守护在 `tests/browser/test_surface_members.py::test_a_callback_interface_is_a_function_without_a_prototype` ✓；重测（本侧新跑 ✓、Chrome 侧用上一次两侧运行的参考 JSON ✓）读数 `only-chrome 72 / only-here 186 / kind 2` ✓，持有者从 2046 降到 2045 ✓。
+- **回归**：`_pyv8` 全量 **402 passed + 69 subtests** ✓；pyv8c 全量 **1137 passed** ✓；重建 `build_ext --inplace` 156 s ✓。
+- **剩下一族已在后续批次修好** ✓：命名空间（`CSS`/`GPU*`）的接口对象改按 `WrapperTypeInfo::kIdlNamespace` 造 ✓ —— 即 `SetupIDLNamespaceTemplate` 那条 `ObjectTemplate` 路 ✓，`typeof CSS` 是 `object`、没有 `prototype`/`name`/`length`、`CSS.supports` 仍是函数 ✓。顺带把两个布尔形状标志收敛成一个**数** ✓：`IdlSpec.definition_kind` 取 `pyv8.DefinitionKind.kInterface`/`kIdlNamespace`/`kWrapperTypeNoPrototype`（0/1/2，缺省 0 = 普通接口）✓，旧的 `as_object` 与 `callback_interface` 两个键消失 ✓（两个布尔量能写出"既是命名空间又是回调接口"，重抽时真出现过 7 例 ✗ ⇒ 单个取值从结构上排除 ✓）；`array` 的词也一并换成位 ✓（`pyv8.ArrayProto.iterator` 1 / `.iterable` 31，0 表示不借 ✓），profile 的 `array_words` 段随之改名 `array_protos` 并同样存数 ✓ —— 口径是**值在线上是数字、名字在 `pyv8.flag`** ✓。守护：`tests/browser/test_surface_members.py::test_a_namespace_is_an_object_without_a_prototype` ✓、`tests/unit/test_idl_extractor.py::test_the_definition_kind_decides_the_interface_object` ✓、`tests/unit/test_interface_flags.py::test_the_documents_vocabulary_is_the_bindings` ✓；判据：编译成员总数 **10361（delta 0）** ✓、编译快照把新数值翻回旧词后**逐项一致（0 差异）** ✓、`_pyv8` **404 passed + 72 subtests** ✓、pyv8c 全量 **1140 passed** ✓。

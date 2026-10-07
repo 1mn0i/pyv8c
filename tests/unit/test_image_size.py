@@ -5,7 +5,11 @@ is also the point: this build decodes nothing, and the size is not something a d
 """
 import struct
 
-from pyv8c.web.dom.images import image_size
+import pytest
+
+pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+
+from pyv8c.web.dom.images import image_size  # noqa: E402
 
 
 def _png(width, height):
