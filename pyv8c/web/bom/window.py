@@ -656,6 +656,26 @@ class Window(_SchedulingMixin, WindowProperties):
                 " correctly encoded.")
         return decoded
 
+    def fn_structuredClone(self, value=MISSING, options=None, *_extra):
+        """``structuredClone``: the value serialized here and deserialized here.
+
+        Chromium's own implementation is exactly that round trip -- ``SerializeMessageByMove``
+        then ``Deserialize`` (``UniversalGlobalScope::structuredClone``) -- and the transfer
+        list is applied between the two, which is what leaves the buffers it names detached on
+        this side while their bytes travel in the wire.
+        """
+        from ..fetch.clone import (message_transfer, rebuild_clone, structured_clone,
+                                   transfer_ports)
+
+        if value is MISSING:
+            raise missing_error("Window", "structuredClone", 1, 0, constructor=False)
+        context = pyv8.current_context()
+        data = structured_clone(value, context=context)
+        transfer = message_transfer(options)
+        if transfer:
+            transfer_ports(transfer, services=self._services, caller="Window")
+        return rebuild_clone(data, context=context)
+
     def fn_btoa(self, data=MISSING, *_extra):
         if data is MISSING:
             raise missing_error("Window", "btoa", 1, 0, constructor=False)
