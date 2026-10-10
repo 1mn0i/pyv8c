@@ -15,7 +15,7 @@ _EXCLUDED_GETTERS = frozenset((
     "Date", "Object", "window", "Symbol", "Number", "Function", "parseFloat", "parseInt",
     "Math", "BigInt", "RegExp", "console", "isNaN", "Boolean", "NaN", "Infinity",
     "Symbol.toPrimitive", "Symbol.toStringTag", "unescape", "decodeURIComponent",
-    "Map", "Set", "Proxy"
+    "Map", "Set", "Proxy", "Reflect"
 ))
 
 
@@ -66,7 +66,7 @@ def _owner_name(receiver):
 
 def format_trace(event, receiver, name, arguments, value, error, is_construct, ctx_type):
     """Format one event; return None for excluded getter names."""
-    if name in _EXCLUDED_GETTERS or isinstance(name, str) and name.startswith("_"):
+    if name in _EXCLUDED_GETTERS:
         return None
     owner = _owner_name(receiver)
     if event == "get":
