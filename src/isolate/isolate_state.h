@@ -93,9 +93,13 @@ public:
     v8::Local<v8::External> callback_data(context_c* context, PyObject* target);
     void invalidate_callbacks(context_c* context);
     static PyObject* callback_target(v8::Local<v8::Value> data);
-    bool attach_exception_state(v8::Local<v8::Object> object,
-                                PyObject* exc_type,
-                                PyObject* exc_traceback);
+
+    // A failure of the host's own, which no realm may be shown: it ends the crossing
+    // and waits here for the Python boundary that asked for it.
+    void hold_aborted_failure(PyObject* exc_type, PyObject* exc_value, PyObject* exc_traceback);
+    bool resume_aborted_failure();
+    bool has_aborted_failure() const { return aborted_value_ != nullptr; }
+    void clear_aborted_failure();
 
 private:
     static PythonObjectOwner* find_python_owner(context_c* context, PyObject* py_object);
@@ -124,6 +128,9 @@ private:
     v8::Isolate* isolate_;
     std::size_t live_v8_handles_;
     bool error_hooks_installed_;
+    PyObject* aborted_type_;
+    PyObject* aborted_value_;
+    PyObject* aborted_traceback_;
     std::unordered_set<PythonObjectOwner*> python_owners_;
     std::unordered_set<CallbackData*> callback_data_;
     static void callback_data_collected(const v8::WeakCallbackInfo<CallbackData>& info);

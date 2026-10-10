@@ -95,7 +95,7 @@ py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
     int owned = 0;
     int filled = 0;
     for (int index = 0; index < argument_count; ++index) {
-        PyObject* argument = py_argument_from_js(info[index], context);
+        PyObject* argument = py_from_js(info[index], context);
         if (argument == nullptr) {
             while (owned > 0) Py_DECREF(arguments[--owned]);
             js_throw_py();
@@ -160,7 +160,7 @@ py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
         return;
     }
     if (!py_class_init_js_object(
-            v8_compat::callback_holder(info), new_object, context, self)) {
+            v8_compat::callback_holder(info), new_object, context)) {
         Py_DECREF((PyObject*)new_object);
         js_throw_py();
         return;
@@ -306,7 +306,7 @@ static void attribute_set_impl(const FunctionCallbackInfo<Value>& info, bool ins
     // setter runs, and a setter that closes its context drops the reference the
     // context held on the spec.
     PyOwnedRef keep_binding(PyV8_NewRef((PyObject*)binding));
-    PyObject* value = py_argument_from_js(info[0], context);
+    PyObject* value = py_from_js(info[0], context);
     JS_PROPAGATE_PY(value);
     PyObject* argv[] = {self, value};
     PyObject* result = PyObject_Vectorcall(binding->setter, argv + (self == Py_None),

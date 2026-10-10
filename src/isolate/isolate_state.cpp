@@ -1,8 +1,10 @@
 #include "isolate_state.h"
 
 #include "debugger.h"
+#include "error_family.h"
 #include "error_hooks.h"
 #include "isolate_scope.h"
+#include "callback_boundary.h"
 #include "context.h"
 #include "v8_compat.h"
 
@@ -17,18 +19,60 @@ IsolateState::IsolateState()
       isolate_(nullptr),
       live_v8_handles_(0),
       error_hooks_installed_(false),
+      aborted_type_(nullptr),
+      aborted_value_(nullptr),
+      aborted_traceback_(nullptr),
       disposed_(false)
 {
 }
 
 IsolateState::~IsolateState()
 {
+    clear_aborted_failure();
     // Avoid V8 teardown during arbitrary extension-module unloading.
     if (isolate_ != nullptr)
     {
         v8_strings_.release();
         allocator_.release();
     }
+}
+
+void
+IsolateState::hold_aborted_failure(PyObject* exc_type, PyObject* exc_value, PyObject* exc_traceback)
+{
+    // The references belong to the slot from here on, whether or not V8 answers.
+    clear_aborted_failure();
+    aborted_type_ = exc_type;
+    aborted_value_ = exc_value;
+    aborted_traceback_ = exc_traceback;
+    if (isolate_ != nullptr)
+        isolate_->TerminateExecution();
+}
+
+bool
+IsolateState::resume_aborted_failure()
+{
+    if (aborted_value_ == nullptr)
+        return false;
+    // The failure stays held until the next entry starts: a boundary inside the
+    // unwinding may swallow it, and the crossing that began the execution still has
+    // to hear it.
+    Py_XINCREF(aborted_type_);
+    Py_INCREF(aborted_value_);
+    Py_XINCREF(aborted_traceback_);
+    // The abort was the host's, so the isolate is free to run the next crossing.
+    if (isolate_ != nullptr)
+        isolate_->CancelTerminateExecution();
+    PyErr_Restore(aborted_type_, aborted_value_, aborted_traceback_);
+    return true;
+}
+
+void
+IsolateState::clear_aborted_failure()
+{
+    Py_CLEAR(aborted_type_);
+    Py_CLEAR(aborted_value_);
+    Py_CLEAR(aborted_traceback_);
 }
 
 std::size_t
@@ -100,6 +144,10 @@ IsolateState::initialize()
 
     isolate_->SetData(0, this);
     isolate_->AddNearHeapLimitCallback(&IsolateState::near_heap_limit_callback, this);
+    // What ``Error.isError`` hears about this binding's API objects; Blink answers the same
+    // for its DOMExceptions (v8_initializer.cc, IsDOMExceptionWrapper).
+    isolate_->SetIsJSApiWrapperNativeErrorCallback(
+        CallbackBoundary<error_family::is_native_error_wrapper>::call);
     watchdog_ = std::make_unique<Watchdog>(isolate_);
     isolate_->SetCaptureStackTraceForUncaughtExceptions(
         true, 100,
@@ -171,6 +219,8 @@ IsolateState::shutdown(bool report_error)
         if (report_error) PyErr_SetString(PyExc_RuntimeError, "cannot close V8 isolate during active execution");
         return false;
     }
+    // A failure no boundary collected would otherwise outlive the isolate holding it.
+    clear_aborted_failure();
 
     if (live_v8_handles_ != 0)
     {

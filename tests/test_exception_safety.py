@@ -90,19 +90,19 @@ class TestExceptionSafety(unittest.TestCase):
         # 构造失败不能影响同一上下文中的后续执行。
         self.assertEqual(self.context.exec_js("3 + 3"), 6)
 
-    def test_python_exception_round_trip_and_js_metadata(self):
-        """Python 异常应能穿过 JavaScript 并保留原类型、消息和堆栈。"""
+    def test_a_declared_failure_carries_its_message_and_stack_into_javascript(self):
+        """被声明的失败带着消息与堆栈到达 JavaScript。"""
 
-        class PythonFailure(ValueError):
-            __v8_error__ = True
+        class PythonFailure(pyv8.JsError):
+            pass
 
         def raise_python_failure():
             raise PythonFailure("python callback boom")
 
         self.context.expose(raise_python_failure=raise_python_failure)
 
-        # JavaScript 未捕获时，应在 Python 侧恢复原始异常类型。
-        with self.assertRaisesRegex(PythonFailure, "python callback boom"):
+        # JavaScript 未捕获时，回到 Python 的是那个 JavaScript 错误。
+        with self.assertRaises(pyv8.JSException):
             self.context.exec_js("raise_python_failure()")
 
         # JavaScript 捕获时，应能读取异常消息和 V8 捕获的 stack。
@@ -117,6 +117,21 @@ class TestExceptionSafety(unittest.TestCase):
         ))
         self.assertEqual(result, ["python callback boom", "string", True])
         self.assertEqual(snapshot(self.context.exec_js("5 + 5")), 10)
+
+    def test_an_undeclared_failure_is_kept_from_javascript(self):
+        """宿主自身的失败不进 JavaScript，原样回到宿主。"""
+
+        class HostFailure(RuntimeError):
+            pass
+
+        def fail():
+            raise HostFailure("scheduling trouble")
+
+        self.context.expose(fail=fail)
+        with self.assertRaisesRegex(HostFailure, "scheduling trouble") as raised:
+            self.context.exec_js("(function(){try{fail()}catch(e){return 'caught'}})()")
+        self.assertIsInstance(raised.exception, HostFailure)
+        self.assertEqual(snapshot(self.context.exec_js("6 * 6")), 36)
 
     def test_timeout_cleanup_allows_next_execution(self):
         """执行超时后应清理定时器，并允许上下文继续运行。"""

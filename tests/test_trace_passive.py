@@ -4,7 +4,7 @@ import pytest
 import pyv8
 from pyv8 import IdlSpec
 
-from tests.test_trace_contracts import Window, Target, Failure
+from tests.test_trace_contracts import Window, Target
 
 
 @pytest.mark.parametrize("kind,source", [
@@ -12,15 +12,23 @@ from tests.test_trace_contracts import Window, Target, Failure
     ("method", "target.add()"), ("construct", "new Target(true)"),
 ])
 def test_observer_failure_preserves_python_business_error(kind, source):
+    """The observer's own failure must not become the failure that is reported.
+
+    The target's failure is one a realm may see, so that is what the operation ends
+    with -- not the failure the observer raised while watching it.
+    """
+    class ObserverFailure(RuntimeError):
+        """The observer's own: nothing joins it to the family."""
+
     def sink(*event):
-        raise Failure("observer failure")
+        raise ObserverFailure("observer failure")
 
     context = pyv8.Context(Window(), trace=True, trace_callback=sink)
     try:
         target = Target()
         target.fail = True
         context.expose(Target, target=target)
-        with pytest.raises(Failure, match=f"{kind} failed"):
+        with pytest.raises(pyv8.JSException, match=f"{kind} failed"):
             context.exec_js(source)
     finally:
         context.close()

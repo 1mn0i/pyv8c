@@ -2,7 +2,6 @@
 
 #include "pyv8.h"
 #include "convert.h"
-#include "exception.h"
 #include "pyclass.h"
 #include "pyclass_cross_origin_handlers.h"
 #include "pyclass_handlers.h"

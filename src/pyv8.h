@@ -13,7 +13,9 @@
 #include <v8.h>
 #include "v8_compat.h"
 #include "polyfill.h"
-#include "exception.h"
+#include "crossing.h"
+#include "js_exception.h"
+#include "error_family.h"
 #include "abi3.h"
 #include "gil_scope.h"
 #include "jsnull.h"

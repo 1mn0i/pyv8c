@@ -279,29 +279,6 @@ IsolateState::cached_js_wrapper(context_c* context, PyObject* py_object)
     return wrapper;
 }
 
-bool
-IsolateState::attach_exception_state(Local<Object> object,
-                                     PyObject* exc_type,
-                                     PyObject* exc_traceback)
-{
-    if (object->InternalFieldCount() <= PYTHON_OWNER_FIELD)
-        return false;
-    Local<Data> owner_value = object->GetInternalField(PYTHON_OWNER_FIELD);
-    PythonObjectOwner* owner = static_cast<PythonObjectOwner*>(
-        v8_compat::external_value(owner_value));
-    if (owner == nullptr || owner->isolate_state != this)
-        return false;
-
-    Py_XINCREF((PyObject*)exc_type);
-    Py_XINCREF((PyObject*)exc_traceback);
-    Py_XDECREF(owner->exc_type);
-    Py_XDECREF(owner->exc_traceback);
-    owner->exc_type = exc_type;
-    owner->exc_traceback = exc_traceback;
-
-    return true;
-}
-
 PyObject* IsolateState::python_object(Local<Object> object) {
     auto* owner = static_cast<PythonObjectOwner*>(
         v8_compat::external_value(object->GetInternalField(PYTHON_OWNER_FIELD)));

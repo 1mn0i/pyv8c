@@ -84,12 +84,24 @@ honest:
 
 ## Errors
 
-`set_error_map` lets the host own the error hierarchy: the binding does not keep a
-table of names, it asks the map it was given, and `__v8_error_name__` on the mapped
-class tells it what to call the error on the way back.  Uncaught exceptions and
-unhandled rejections are reported through the hooks installed with
-`Context.set_error_hooks`, which is also where a host that wants the page's `error`
-event gets its chance.
+The binding owns the standard error family: `pyv8.JsError` and the six types beside it,
+each deriving from the builtin its error stands for, so a host catching that builtin keeps
+catching what it always did.  A host joins the family by inheriting one of them, and that
+inheritance is the whole declaration -- there is no table to install, nothing to declare
+before a realm runs, and no name to keep in step.  A class the family does not contain is
+the host's own failure, which no realm is ever shown, because the crossing is terminated
+and the exception is raised at the boundary that began it.  The family is stated in one
+place, `values/error_family.cpp`: a table the module publishes itself, so no second copy
+of the names exists to fall out of step.  A realm constructor that is not one of the
+standard names is declared on the class itself, the way `DOMException` says it is shown
+as `DOMException` with `__v8_error_shape__` -- one triple of (constructor name,
+constructor argument attributes, copied (python, JavaScript) field pairs).
+What a realm is shown is the error itself: the host's own frames and file paths are not
+put on the object, so a script that catches it -- or reports it -- learns nothing about
+the host's side of the failure.
+Uncaught exceptions and unhandled rejections are reported through the hooks installed
+with `Context.set_error_hooks`, which is also where a host that wants the page's
+`error` event gets its chance.
 
 ## Interfaces
 

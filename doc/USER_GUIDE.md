@@ -809,25 +809,27 @@ class IndexedCollection:
 `IdlSpec.index_enum` 返回要枚举的连续索引数量，V8 将生成 `0` 到 `length - 1`。
 
 Handler 抛出的 Python 异常会传播到 JavaScript；若未被 JavaScript 捕获，会恢复到 Python
-调用方。一次 handler 失败不应破坏后续 Context 执行。
+调用方。一次 handler 失败不应破坏后续 Context 执行。只有继承绑定错误族（`pyv8.JsError`
+一族）的异常才会进入 JavaScript，其余属于宿主自身（见「Python 异常进入 JavaScript」）。
 
-Setter/deleter handler 还支持内部失败标记 `__v8_interceptor_failure__`。当异常实例或其
-类型将该属性设为真时，原生桥按照 `PropertyCallbackInfo::ShouldThrowOnError()` 处理：
+Setter/deleter 另有一项声明：类同时继承 `pyv8.JsInterceptorFailure` 表示这是一次 legacy
+具名/索引属性失败，原生桥按照 `PropertyCallbackInfo::ShouldThrowOnError()` 处理：
 
 - 非严格模式下清除异常，将操作视为已拦截的失败；
 - 严格模式下将异常继续抛给 JavaScript；
-- 该标记仅用于 named/indexed setter 和 deleter，不应标记普通业务异常。
+- 该标记只用于 named/indexed setter 和 deleter，不应加在普通业务异常上。
 
 ```python
 import pyv8
-class LegacyPropertyError(Exception):
-    __v8_error__ = True
-    __v8_error_name__ = "TypeError"
-    __v8_interceptor_failure__ = True
+
+
+class LegacyPropertyError(pyv8.JsTypeError, pyv8.JsInterceptorFailure):
+    """A legacy write or delete that V8 may leave unraised."""
 
 
 class LegacyCollection:
     __v8_idl_spec__ = pyv8.IdlSpec(index_set="__v8_index_set__")
+
     def __v8_index_set__(self, index, value):
         raise LegacyPropertyError(
             f"Failed to set an indexed property [{index}] on "
@@ -836,7 +838,7 @@ class LegacyCollection:
 ```
 
 此时 `collection[0] = value` 在非严格模式静默失败，在严格模式产生 JavaScript
-`TypeError`。单独使用 `__v8_error_name__` 不会启用这种严格模式分流。
+`TypeError`。
 
 ## Cross-origin 与 trace
 
@@ -1015,18 +1017,23 @@ except pyv8.JSException as error:
 
 ### Python 异常进入 JavaScript
 
-给异常类添加 `__v8_error__ = True`：
+错误层级属于绑定：`pyv8.JsError` 与它旁边的六个类型（`JsTypeError`、`JsRangeError`、
+`JsReferenceError`、`JsSyntaxError`、`JsURIError`、`JsEvalError`）各以对应的 Python 内建为
+基类。**让一个类继承其中一员，就是全部的声明**——没有表要安装，也没有名字要对齐：
 
 ```python
-class V8TypeError(TypeError):
-    __v8_error__ = True
+import pyv8
+
+
+class PageTypeError(pyv8.JsTypeError):
+    pass
 
 
 def fail():
-    raise V8TypeError("invalid payload")
+    raise PageTypeError("invalid payload")
 
 
-context.expose(fail)
+context.expose(fail=fail)
 result = context.exec_js(
     """
     try {
@@ -1040,22 +1047,17 @@ result = context.exec_js(
 assert result.to_python() == ["TypeError", "invalid payload", "string"]
 ```
 
-支持按 Python 异常类名映射到 `TypeError`、`RangeError`、`ReferenceError`、`SyntaxError`
-和普通 `Error`。Python 异常经过 JavaScript catch/rethrow 后，pyv8 会尽量恢复原异常类型。
-
-当 Python 类名不适合使用 `V8TypeError` 等约定名称时，可以通过字符串属性
-`__v8_error_name__` 显式指定 JavaScript Error 类型：
-
-```python
-class ValidationFailure(Exception):
-    __v8_error__ = True
-    __v8_error_name__ = "TypeError"
-```
-
-`__v8_error__` 将异常标记为预期的 JavaScript-facing 错误，并阻止原生桥把它作为意外
-Python 异常打印 traceback；`__v8_error_name__` 只覆盖 JavaScript Error 构造器的选择，
-不改变异常的传播时机。目前支持的映射名称为 `Error`、`TypeError`、`RangeError`、
-`ReferenceError` 和 `SyntaxError`。
+- 页面看到的是**所继承的那一类**错误，由访问方 realm 自己的构造器建出来，所以
+  `DOMException` 用的是访问方自己的那一个；
+- 不继承这一族的异常（含调度与运行等宿主自身的失败）只有宿主看得见：桥接层会终止当前脚本，
+  并在边界处把原异常抛回宿主；
+- 一个恰好叫 `TypeError` 的宿主类不会因此被误映射——它没继承，就不会进 JavaScript；
+- 形状不标准的类在自己的类上声明：`__v8_error_shape__`，一个三元组——realm 里的构造器名、
+  跟在消息后的构造参数属性名（例如 `DOMException` 的 `("_name",)`）、建好后拷贝上去的
+  `(Python 属性, JavaScript 属性)` 对。不声明即默认：按所继承的家族成员显示，无额外参数、
+  无附加字段；
+- 错误对象上只有浏览器语义的内容（名字、消息、声明过的字段）：宿主自身的调用链与文件路径
+  不会被写到对象上，页面 `catch` 到它、或把它上报出去，都读不到宿主那一侧。
 
 ### 执行超时
 
@@ -1333,8 +1335,11 @@ python314 -m tox -e py314
 
 ```bash
 python setup.py build_ext --inplace --force
-python -m pytest
+python -m pytest -q -n auto
 ```
+
+（`pytest-xdist` 在 dev extras 里。本套件很小，并行与串行无实质差别——403 passed 实测 5.42 s vs 5.55 s——
+按仓库统一习惯带上 `-n auto` 即可。）
 
 指定测试：
 

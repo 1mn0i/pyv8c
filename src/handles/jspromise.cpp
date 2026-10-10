@@ -80,10 +80,18 @@ js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
     }
     Local<Promise> promise = resolver->GetPromise();
     if (resolve != NULL) {
-        Local<Object> exception = pyexception_to_jsexception(resolve, context);
+        Local<Object> exception = error_family::exception_as_value(resolve, context);
         Local<Value> js_resolve;
         if (!exception.IsEmpty())
             js_resolve = exception;
+        else if (PyExceptionInstance_Check(resolve)) {
+            // The rule the resolver settles by: a Python failure the table does not
+            // declare is not a reason a realm may be given, so it goes back to the
+            // caller that tried to settle with it rather than into JavaScript.
+            Py_DECREF((PyObject*)self);
+            PyErr_SetObject((PyObject*)Py_TYPE(resolve), resolve);
+            return NULL;
+        }
         else {
             js_resolve = js_from_py(resolve, context);
             if (PyErr_Occurred()) {
@@ -100,10 +108,15 @@ js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 
     }
     if (reject != NULL) {
-        Local<Object> exception = pyexception_to_jsexception(reject, context);
+        Local<Object> exception = error_family::exception_as_value(reject, context);
         Local<Value> js_reject;
         if (!exception.IsEmpty())
             js_reject = exception;
+        else if (PyExceptionInstance_Check(reject)) {
+            Py_DECREF((PyObject*)self);
+            PyErr_SetObject((PyObject*)Py_TYPE(reject), reject);
+            return NULL;
+        }
         else {
             js_reject = js_from_py(reject, context);
             if (PyErr_Occurred()) {
@@ -164,36 +177,17 @@ bool resolver_context(js_promise_resolver* self, context_c** out)
     return true;
 }
 
-//: A JavaScript error carrying a Python exception's own text, which a rejected promise needs
-//: whether or not the raiser marked it ``__v8_error__``.
-Local<Value> python_error_value(PyObject* value, v8::Isolate* isolate)
-{
-    PyObject* text = PyObject_Str(value);
-    if (text == nullptr)
-        return Local<Value>();
-    const char* message = PyUnicode_AsUTF8_abi3(text);
-    Local<Value> error;
-    if (message != nullptr) {
-        Local<String> js_message;
-        if (String::NewFromUtf8(isolate, message).ToLocal(&js_message))
-            error = Exception::Error(js_message);
-    }
-    Py_DECREF(text);
-    return error;
-}
-
-//: What a resolve/reject call settles with: a Python exception becomes a JS error object.
+//: What a resolve/reject call settles with.  A Python exception becomes the JavaScript
+//: error the host's table declares, and one the table does not declare is not a reason a
+//: realm may be given: it is raised to the caller that tried to settle with it.
 Local<Value> settle_value(PyObject* value, Local<Context> context)
 {
-    Local<Object> exception = pyexception_to_jsexception(value, context);
+    Local<Object> exception = error_family::exception_as_value(value, context);
     if (!exception.IsEmpty())
         return exception;
     if (PyExceptionInstance_Check(value)) {
-        Local<Value> error = python_error_value(value, v8_compat::context_isolate(context));
-        if (!error.IsEmpty())
-            return error;
-        if (PyErr_Occurred())
-            return Local<Value>();
+        PyErr_SetObject((PyObject*)Py_TYPE(value), value);
+        return Local<Value>();
     }
     return js_from_py(value, context);
 }

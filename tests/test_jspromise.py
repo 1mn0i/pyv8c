@@ -54,9 +54,9 @@ def test_python_callback_result_flows_to_chained_promise(context):
 
 
 def test_python_callback_error_rejects_chained_promise(context):
-    class Failure(Exception):
-        __v8_error__ = True
-        __v8_error_name__ = "TypeError"
+    from tests.error_family import declared
+
+    Failure = declared("Failure", javascript="TypeError")
 
     def fail(value):
         raise Failure("callback failed")

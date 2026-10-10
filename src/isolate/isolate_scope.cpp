@@ -68,6 +68,12 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
         PyErr_SetString(PyExc_RuntimeError, "V8 isolate has been closed");
         return;
     }
+    if (state_->entry_depth == 0)
+    {
+        // A crossing that begins now starts clean: a failure the host ended the last
+        // one for was raised at its own boundary and is not this one's to inherit.
+        state_->clear_aborted_failure();
+    }
     isolate_->Enter();
     entered_ = true;
     ++state_->entry_depth;

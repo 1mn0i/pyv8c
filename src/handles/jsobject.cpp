@@ -37,7 +37,7 @@ static PyObject* js_object_read(js_object* self, PyObject* name) {
         PyErr_SetString(PyExc_RuntimeError, "failed to read JavaScript property");
         return nullptr;
     }
-    return py_argument_from_js(value, context);
+    return py_from_js(value, context);
 }
 
 static PyObject* js_object_to_python(js_object* self, PyObject*) {
@@ -55,6 +55,49 @@ static PyObject* js_object_to_python(js_object* self, PyObject*) {
     if (tc.HasCaught()) Py_XDECREF(result);
     PY_PROPAGATE_JS;
     return result;
+}
+
+static PyObject* js_object_bytes(js_object* self, PyObject*) {
+    if (!js_object_require_active(self)) return nullptr;
+    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(self)) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Object> object = self->object.Get(isolate);
+    IN_CONTEXT(object->GetCreationContextChecked());
+    JS_TRY
+    DeadlineScope guard(context);
+    if (!guard.start()) return nullptr;
+    // The whole block in one read: an ArrayBuffer is the bytes it holds, and a view --
+    // a typed array or a DataView -- is the range of the buffer behind it that it looks
+    // at.  This is what reading element by element across the boundary used to be, and
+    // what silently truncated a multi-byte element to one of its bytes.
+    const char* data = nullptr;
+    size_t start = 0, length = 0, capacity = 0;
+    if (object->IsArrayBuffer()) {
+        std::shared_ptr<v8::BackingStore> store = object.As<ArrayBuffer>()->GetBackingStore();
+        if (store) {
+            data = static_cast<const char*>(store->Data());
+            capacity = store->ByteLength();
+            start = 0;
+            length = capacity;
+        }
+    }
+    else if (object->IsArrayBufferView()) {
+        Local<ArrayBufferView> view = object.As<ArrayBufferView>();
+        std::shared_ptr<v8::BackingStore> store = view->Buffer()->GetBackingStore();
+        if (store) {
+            data = static_cast<const char*>(store->Data());
+            capacity = store->ByteLength();
+            start = view->ByteOffset();
+            length = view->ByteLength();
+        }
+    }
+    if (!guard.stop()) return nullptr;
+    PY_PROPAGATE_JS;
+    if (data != nullptr && length > 0 && start <= capacity && length <= capacity - start)
+        return PyBytes_FromStringAndSize(data + start, static_cast<Py_ssize_t>(length));
+    // A detached buffer holds nothing, and so does one the realm cannot describe.
+    return PyBytes_FromStringAndSize("", 0);
 }
 
 static PyObject* js_object_string(js_object* self, PyObject*) {
@@ -100,7 +143,7 @@ static PyObject* js_object_iterator_method(js_object* self, PyObject*) {
         PyErr_SetString(PyExc_RuntimeError, "failed to read the JavaScript iterator");
         return nullptr;
     }
-    return py_argument_from_js(result, context);
+    return py_from_js(result, context);
 }
 
 static PyObject* js_object_invoke(js_object* self, PyObject* args) {
@@ -132,7 +175,7 @@ static PyObject* js_object_invoke(js_object* self, PyObject* args) {
         PyErr_SetString(PyExc_RuntimeError, "failed to invoke JavaScript callable");
         return nullptr;
     }
-    return py_argument_from_js(result, context);
+    return py_from_js(result, context);
 }
 
 static PyObject* js_object_keys(js_object* self, PyObject*) {
@@ -179,6 +222,7 @@ PyMethodDef js_object_methods[] = {
     {"_to_number", (PyCFunction)PythonBoundary<js_object_number>::call, METH_NOARGS, nullptr},
     {"_get", (PyCFunction)PythonBoundary<js_object_read>::call, METH_O, "Read one property without eagerly converting objects."},
     {"to_python", (PyCFunction)PythonBoundary<js_object_to_python>::call, METH_NOARGS, "Explicitly materialize arrays and plain objects."},
+    {"_bytes", (PyCFunction)PythonBoundary<js_object_bytes>::call, METH_NOARGS, "The bytes a buffer holds or a view looks at, in one read."},
     {"__dir__", (PyCFunction)PythonBoundary<js_object_dir>::call, METH_NOARGS, NULL},
     {NULL} };
 

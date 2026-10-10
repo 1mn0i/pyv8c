@@ -5,6 +5,7 @@
 
 #include "pyv8.h"
 #include "convert.h"
+#include "error_family.h"
 #include "pyclass.h"
 #include "idl_spec.h"
 #include "pyclass_handlers.h"
@@ -114,7 +115,7 @@ static PyObject* get_handler_method(PyObject* self, HandlerId which)
 
 // Legacy platform objects report failed writes/deletes through the V8
 // callback result.  Python callbacks cannot see ShouldThrowOnError(), so a
-// marked exception is suppressed in sloppy mode and propagated in strict
+// declared exception is suppressed in sloppy mode and propagated in strict
 // mode by the native bridge.
 static bool
 consume_legacy_property_error(bool should_throw)
@@ -124,8 +125,7 @@ consume_legacy_property_error(bool should_throw)
     PyObject *exc_type = NULL, *exc_value = NULL, *exc_traceback = NULL;
     PyErr_Fetch(&exc_type, &exc_value, &exc_traceback);
     PyErr_NormalizeException(&exc_type, &exc_value, &exc_traceback);
-    int marked = exc_value != NULL && PyObject_HasAttrString(
-        exc_value, "__v8_interceptor_failure__");
+    int marked = error_family::is_interceptor_failure(exc_value);
     // fprintf(stderr, "legacy marked=%d strict=%d\\n", marked, should_throw);
     if (marked && !should_throw) {
         Py_XDECREF((PyObject*)exc_type);

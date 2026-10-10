@@ -27,7 +27,7 @@ bool PythonArguments::convert(const FunctionCallbackInfo<Value>& info,
     size_t offset = receiver ? 1 : 0;
     if (receiver) { Py_INCREF((PyObject*)receiver); values_[0] = receiver; }
     for (int i = 0; i < info.Length(); ++i) {
-        values_[i + offset] = py_argument_from_js(info[i], context);
+        values_[i + offset] = py_from_js(info[i], context);
         if (!values_[i + offset]) return false;
     }
     return true;
@@ -360,8 +360,4 @@ py_from_js(Local<Value> value, Local<Context> context)
         return (PyObject*)js_object_new(object, context);
     }
     return py_from_js_impl(value, context, nullptr);
-}
-
-PyObject* py_argument_from_js(Local<Value> value, Local<Context> context) {
-    return py_from_js(value, context);
 }

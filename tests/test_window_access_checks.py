@@ -7,8 +7,14 @@ import weakref
 import pyv8
 
 
-class DOMException(Exception):
-    __v8_error__ = True
+class DOMException(pyv8.JsError):
+    """A failure the accessing realm is told about, built with that realm's constructor.
+
+    Its realm constructor is not one of the standard names, so the class says what it is
+    shown as and what travels with it.
+    """
+
+    __v8_error_shape__ = ("DOMException", ("_name",), (("_code", "code"),))
 
     def __init__(self):
         super().__init__("cross-origin access denied")
@@ -77,7 +83,8 @@ def test_python_dom_exception_survives_native_access_check():
     two = pyv8.Context(second)
     try:
         # Raw V8 has no DOM. A browser embedding provides its DOMException
-        # constructor; the native bridge must use the accessing realm's one.
+        # constructor; the class says what it is shown as, so the error is built by the
+        # accessing realm's own.
         one.exec_js('''globalThis.DOMException = class DOMException extends Error {
             constructor(message, name) { super(message); this.name = name; this.code = 18; }
         }''')

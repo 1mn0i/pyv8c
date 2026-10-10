@@ -22,6 +22,10 @@ reporting_isolate()
     IsolateState* state = current_isolate_state();
     if (state == nullptr || !state->is_active())
         return nullptr;
+    // A crossing the host ended for its own failure reports nothing: the boundary
+    // that asked for it raises that failure, and no realm hears about it.
+    if (state->has_aborted_failure())
+        return nullptr;
     return state;
 }
 

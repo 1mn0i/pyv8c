@@ -145,7 +145,6 @@ PyObject* context_set_error_hooks(context_c* self, PyObject* args, PyObject* kwa
 // Embedder data slots
 #define CONTEXT_OBJECT_SLOT 1
 #define OBJECT_PROTOTYPE_SLOT 2
-#define ERROR_PROTOTYPE_SLOT 3
 #define CTX_TYPE 4
 
 PyObject* context_get_global(context_c* self, void* ignored);

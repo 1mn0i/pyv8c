@@ -79,7 +79,11 @@ def test_foreign_host_callback_after_close_throws_without_crashing():
     second.expose(foreign=first.exec_js('callback'))
     first.close()
     try:
-        assert second.exec_js("try { foreign(); false } catch (e) { true }")
+        # A callback whose realm is gone is the host's failure: the crossing it was
+        # called in ends, and the reason reaches the caller instead of the script.
+        with pytest.raises(RuntimeError, match="context is closed"):
+            second.exec_js("try { foreign(); false } catch (e) { true }")
+        assert second.exec_js('21 * 2') == 42
     finally:
         second.close()
 
@@ -167,7 +171,9 @@ def test_explicit_close_removes_incoming_context_dependencies():
     del source
     collect()
     assert ref() is None
-    assert target.exec_js('try { foreign(); false } catch (e) { true }')
+    with pytest.raises(RuntimeError, match="context is closed"):
+        target.exec_js('try { foreign(); false } catch (e) { true }')
+    assert target.exec_js('21 * 2') == 42
     target.close()
 
 
@@ -199,7 +205,9 @@ def test_several_sources_can_depend_on_one_context_and_one_can_repeat():
     del first, second
     collect()
     # 来源关闭后,target 仍要继续工作,调用已失效的句柄应当是可控的失败。
-    assert target.exec_js("try { one(); false } catch (e) { true }")
+    with pytest.raises(RuntimeError, match="context is closed"):
+        target.exec_js("try { one(); false } catch (e) { true }")
+    assert target.exec_js("21 * 2") == 42
     target.close()
 
 

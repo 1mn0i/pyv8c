@@ -439,7 +439,6 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     if (!self->resources->lifetime) self->resources->lifetime = std::make_shared<ContextLifetime>(self);
     context->SetEmbedderData(CONTEXT_OBJECT_SLOT, v8_compat::external_new(isolate, self->resources->lifetime.get()));
     context->SetEmbedderData(OBJECT_PROTOTYPE_SLOT, Object::New(isolate)->GetPrototype());
-    context->SetEmbedderData(ERROR_PROTOTYPE_SLOT, Exception::Error(String::Empty(isolate)).As<Object>()->GetPrototype());
 
     if (global != NULL) {
         if (!py_class_init_js_object(

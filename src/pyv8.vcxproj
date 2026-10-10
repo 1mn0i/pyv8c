@@ -134,7 +134,9 @@
     <ClCompile Include="values\convert_to_python.cpp" />
     <ClCompile Include="values\convert_to_javascript.cpp" />
     <ClCompile Include="tools\debugger.cpp" />
-    <ClCompile Include="values\exception.cpp" />
+    <ClCompile Include="values\js_exception.cpp" />
+    <ClCompile Include="values\crossing.cpp" />
+    <ClCompile Include="values\error_family.cpp" />
     <ClCompile Include="isolate\execution.cpp" />
     <ClCompile Include="isolate\error_hooks.cpp" />
     <ClCompile Include="interfaces\idl_spec.cpp" />
@@ -149,7 +151,6 @@
     <ClCompile Include="handles\jstypedarray.cpp" />
     <ClCompile Include="values\jsundefined.cpp" />
     <ClCompile Include="values\jsvalue.cpp" />
-    <ClCompile Include="values\error_map.cpp" />
     <ClCompile Include="interfaces\pyclass.cpp" />
     <ClCompile Include="interfaces\pyclass_handlers.cpp" />
     <ClCompile Include="interfaces\pyclass_interceptors.cpp" />
@@ -170,9 +171,10 @@
     <ClInclude Include="gil_scope.h" />
     <ClInclude Include="isolate\context.h" />
     <ClInclude Include="values\convert.h" />
-    <ClInclude Include="values\error_map.h" />
+    <ClInclude Include="values\js_exception.h" />
+    <ClInclude Include="values\crossing.h" />
+    <ClInclude Include="values\error_family.h" />
     <ClInclude Include="tools\debugger.h" />
-    <ClInclude Include="values\exception.h" />
     <ClInclude Include="isolate\execution.h" />
     <ClInclude Include="values\handle_resource.h" />
     <ClInclude Include="isolate\error_hooks.h" />

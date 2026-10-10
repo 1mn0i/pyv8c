@@ -249,8 +249,11 @@ python314 -m tox -e py314
 
 ```bash
 python setup.py build_ext --inplace --force
-python -m pytest
+python -m pytest -q -n auto
 ```
+
+（`pytest-xdist` 在 dev extras 里。本套件很小，并行与串行无实质差别——403 passed 实测 5.42 s vs 5.55 s——
+按仓库统一习惯带上 `-n auto` 即可。）
 
 `tests/run_tests.py` 也统一使用 pytest，避免 unittest discovery 漏掉函数式测试。
 

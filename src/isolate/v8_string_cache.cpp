@@ -13,7 +13,6 @@ constexpr std::size_t kStringCount =
 // Each literal beside the id it belongs to: a positional list would shift as soon
 // as an id is added anywhere but the end.
 constexpr std::array<std::pair<V8StringId, std::string_view>, kStringCount> kStringValues = {{
-    {V8StringId::ErrorPrototypeMagic, "Error Prototype Will Appear Here"},
     {V8StringId::PythonObjectMagic, "A wild object appeared!"},
     {V8StringId::Message, "message"},
 }};

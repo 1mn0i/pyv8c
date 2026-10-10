@@ -7,13 +7,12 @@ import pytest
 import pyv8
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
-
 class Window:
     __v8_idl_spec__ = IdlSpec(global_this=True)
 
 
-class Failure(RuntimeError):
-    __v8_error__ = True
+class Failure(pyv8.JsError):
+    """A failure a realm is told about, inheriting the error it arrives as."""
 
 
 class Target:
@@ -163,13 +162,15 @@ def test_four_events_and_single_property_evaluation(traced):
     ("get", "target.value"), ("set", "target.value=2"),
     ("method", "target.add()"), ("construct", "new Target(true)"),
 ])
-def test_original_errors_observed_and_rethrown(traced, kind, source):
+def test_errors_are_reported_as_the_realm_sees_them(traced, kind, source):
+    """The trace carries the error JavaScript was thrown, and the script gets it back."""
     context, target, events = traced
     target.fail = True
-    with pytest.raises(Failure, match=f"{kind} failed"):
+    with pytest.raises(pyv8.JSException, match=f"{kind} failed"):
         context.exec_js(source)
-    event = next(event for event in events if event[0] == kind and isinstance(event[5], Failure))
-    assert str(event[5]) == f"{kind} failed"
+    event = next(event for event in events
+                 if event[0] == kind and isinstance(event[5], pyv8.JSObject))
+    assert event[5].message == f"{kind} failed"
     target.fail = False
     assert context.exec_js("target.value") == 5
 

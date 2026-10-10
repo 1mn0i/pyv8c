@@ -58,13 +58,26 @@ private:
     v8::Local<v8::Value>* values_;
 };
 
+// The two ways a JavaScript value becomes Python data, and the one way back:
+//
+// ``py_from_js`` is the *handle* reading -- the reading a bridge callback does.  A
+// primitive arrives as its value, a host's own object arrives as itself, and a
+// JavaScript object arrives as a ``JSObject`` handle: nothing is enumerated, no
+// prototype is probed, no accessor runs, so reading can never run page code.
+//
+// ``py_materialize`` is the *snapshot* reading -- the reading an algorithm asks for
+// when it needs the data itself.  Arrays and plain objects are walked and materialized
+// into Python containers (through ``JSObject.to_python()``); accessors may run, and a
+// getter's failure arrives as a Python error.
 PyObject *py_from_js(v8::Local<v8::Value> js_value, v8::Local<v8::Context> context);
 PyObject *py_materialize(v8::Local<v8::Value> value, v8::Local<v8::Context> context);
-PyObject *py_argument_from_js(v8::Local<v8::Value> value, v8::Local<v8::Context> context);
+
+// Python becomes JavaScript in the realm given.  The two-argument form serves the
+// realm it is handed; the three-argument form names the isolate the value is built
+// for, for the one crossing that hands a value to another isolate.  Python ``bytes``
+// arrive as a fresh ``ArrayBuffer``, whole.
 v8::Local<v8::Value> js_from_py(PyObject *py_value, v8::Local<v8::Context> context);
 v8::Local<v8::Value> js_from_py(PyObject *py_value, v8::Local<v8::Context> context, v8::Isolate* isolate);
 
 void jss_from_pys(PyObject *py_args, v8::Local<v8::Value> *js_args, v8::Local<v8::Context> context);
-
-v8::Local<v8::Object> pyexception_to_jsexception(PyObject* value, v8::Local<v8::Context> context);
 #endif

@@ -189,7 +189,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     self->unconstructable = 0;
     self->has_constructor = 0;
     self->to_obj = 0;
-    self->error_prototype = 0;
+    self->error_class = 0;
     self->iterator_prototype = 0;
     self->templ.Reset();
 
@@ -472,13 +472,21 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     }
     Py_XDECREF((PyObject*)bases);
 
-    if (last_base == PyExc_Exception || last_base == PyExc_BaseException) {
-        // A class extending Exception gets Error.prototype.  The marker below is
-        // what resolve_error_prototype reads; it has to be a private property
-        // because a template cannot carry an internal field, only an object can.
-        templ->PrototypeTemplate()->SetPrivate(
-            v8::Private::ForApi(isolate, JSTR("__proto__")),
-            isolate_state->v8_string(V8StringId::ErrorPrototypeMagic));
+    // A class a realm is shown as a JavaScript error -- one deriving from the error family
+    // or from a builtin exception -- inherits %Error.prototype% directly, the way V8's own
+    // error prototypes and Chromium's DOMException do.  The Python bases do not show: they
+    // are how one ``isinstance`` answers for the whole family.
+    const bool error_class =
+        last_base == PyExc_Exception || last_base == PyExc_BaseException
+        || error_family::family_name((PyTypeObject*)cls) != nullptr;
+    self->error_class = error_class ? 1 : 0;
+
+    if (error_class) {
+        Local<FunctionTemplate> intrinsic = FunctionTemplate::New(
+            isolate, nullptr, Local<Value>(), Local<Signature>(), 0, ConstructorBehavior::kThrow);
+        intrinsic->RemovePrototype();
+        intrinsic->SetIntrinsicDataProperty(V8String(isolate, "prototype"), Intrinsic::kErrorPrototype);
+        templ->Inherit(intrinsic);
     }
     else if (last_base != NULL && last_base != (PyObject*)&PyBaseObject_Type) {
         py_class* superclass_templ = (py_class*)py_class_to_template(last_base, py_ctx);
@@ -722,46 +730,8 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
     return function;
 }
 
-// Does this class stand for a JavaScript Error, and if so give its prototype
-// Error.prototype.  Answers 1, or -1 for no, or 0 when it could not be told (with
-// the Python error set).  The answer belongs to the class, so the caller caches it.
-static int
-resolve_error_prototype(Local<Object> js_object, Local<Context> context,
-                        Isolate* isolate, IsolateState* isolate_state)
-{
-    Local<Value> last_proto = js_object;
-    Local<Object> last_proto_object;
-    while (!last_proto->StrictEquals(context->GetEmbedderData(OBJECT_PROTOTYPE_SLOT))) {
-        last_proto_object = last_proto.As<Object>();
-        last_proto = last_proto_object->GetPrototype();
-    }
-    // last_proto is guaranteed to have a value because the loop is guaranteed
-    // to run at least once because last_proto_chain is initialized to js_object
-    assert(!last_proto.IsEmpty());
-    Local<Value> proto_override;
-    if (!last_proto_object->GetPrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).ToLocal(&proto_override)) {
-        PyErr_SetString(PyExc_RuntimeError, "failed to read JavaScript prototype marker");
-        return 0;
-    }
-    if (!proto_override->StrictEquals(
-            isolate_state->v8_string(V8StringId::ErrorPrototypeMagic)))
-        return -1;
-    bool delete_worked;
-    if (!last_proto_object->DeletePrivate(context, v8::Private::ForApi(isolate, JSTR("__proto__"))).To(&delete_worked)) {
-        PyErr_SetString(PyExc_RuntimeError, "failed to clear JavaScript prototype marker");
-        return 0;
-    }
-    bool set_worked;
-    if (!last_proto_object->SetPrototype(context, context->GetEmbedderData(ERROR_PROTOTYPE_SLOT)).To(&set_worked)) {
-        PyErr_SetString(PyExc_RuntimeError, "failed to set JavaScript error prototype");
-        return 0;
-    }
-    return 1;
-}
-
 bool
-py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context,
-                        py_class* self)
+py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context)
 {
     Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
@@ -772,13 +742,6 @@ py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Cont
     js_object->SetInternalField(
         PYTHON_MAGIC_FIELD,
         isolate_state->v8_string(V8StringId::PythonObjectMagic));
-    if (self == nullptr || self->error_prototype == 0) {
-        const int error_prototype = resolve_error_prototype(js_object, context, isolate, isolate_state);
-        if (error_prototype == 0)
-            return false;
-        if (self != nullptr)
-            self->error_prototype = error_prototype;
-    }
     // The pair is published by track_python_object, which owns it.
     return true;
 }
@@ -806,8 +769,13 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
         return Local<Object>();
     }
     delete_constructor(self, context);
-    if (!py_class_init_js_object(object, py_object, context, self)) {
+    if (!py_class_init_js_object(object, py_object, context)) {
         return Local<Object>();
+    }
+    if (self->error_class) {
+        // An error the host makes for a realm carries a stack; a page's own ``new X()``
+        // does not, which is what Chromium leaves on ``new DOMException()``.
+        error_family::attach_stack(context, object);
     }
     return hs.Escape(object);
 }

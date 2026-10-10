@@ -139,8 +139,8 @@ class TestLazyConstruct(unittest.TestCase):
         self.assertEqual(context.exec_js("typeof Missing"), "undefined")
         self.assertEqual(self.calls, ["Window", "Missing"])
 
-    def test_factory_exception_follows_js_error_semantics(self):
-        """A failing factory must behave like any other JS-thrown error."""
+    def test_factory_exception_is_a_host_failure(self):
+        """A failing factory is the host's failure: the caller hears it, JavaScript does not."""
         def factory(name):
             if name != "Bad":
                 return None
@@ -155,11 +155,12 @@ class TestLazyConstruct(unittest.TestCase):
             context.exec_js("typeof Bad")
         self.assertIn("boom Bad", str(caught.exception))
 
-        # Caught: JavaScript must be able to intercept it like a V8 exception.
-        self.assertEqual(
-            context.exec_js("try { Bad } catch (e) { e.message }"),
-            "boom Bad",
-        )
+        # A script cannot catch what it was never shown: the crossing ends there, and
+        # the reason is the one the factory raised.
+        with self.assertRaises(RuntimeError) as caught:
+            context.exec_js("try { Bad } catch (e) { e.message }")
+        self.assertIn("boom Bad", str(caught.exception))
+        self.assertEqual(context.exec_js("6 * 7"), 42)
 
     def test_failed_materialisation_is_not_cached(self):
         """A name that failed to materialise must retry on the next access."""

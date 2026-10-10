@@ -7,6 +7,7 @@
 
 #include "context.h"
 #include "convert.h"
+#include "error_family.h"
 #include "script.h"
 #include "pyclass.h"
 #include "jsobject.h"
@@ -440,6 +441,11 @@ pyv8_module_exec(PyObject* module)
     if (js_undefined_type_init() < 0)
         return -1;
     if (PyModule_AddObject(module, "Undefined", js_undefined_object) < 0)
+        return -1;
+
+    // The family publishes itself: the table in error_family.cpp is the only copy of
+    // these names.
+    if (!error_family::publish(module))
         return -1;
 
     return 0;

@@ -1,4 +1,5 @@
 from tests.values import snapshot
+from tests.error_family import declared
 
 from pyv8 import IdlSpec
 import math
@@ -19,8 +20,8 @@ class TestBridgeResilience(unittest.TestCase):
     def tearDown(self):
         del self.context
 
-    def test_python_exception_type_mapping(self):
-        """带 V8 类型名称的 Python 异常应映射为对应 JavaScript Error。"""
+    def test_declared_classes_arrive_as_the_errors_they_name(self):
+        """每一类声明到的 JavaScript 错误，都是表里写的那一个。"""
 
         callbacks = {}
         expected_names = {
@@ -30,16 +31,9 @@ class TestBridgeResilience(unittest.TestCase):
             "syntax": "SyntaxError",
             "error": "Error",
         }
-        python_names = {
-            "type": "V8TypeError",
-            "range": "V8RangeError",
-            "reference": "V8ReferenceError",
-            "syntax": "V8SyntaxError",
-            "error": "V8Error",
-        }
 
-        for key, class_name in python_names.items():
-            exception_type = type(class_name, (Exception,), {"__v8_error__": True})
+        for key, javascript in expected_names.items():
+            exception_type = declared(key.title() + "Failure", javascript=javascript)
 
             def callback(exception_type=exception_type, key=key):
                 raise exception_type(f"{key} boom")
@@ -59,38 +53,29 @@ class TestBridgeResilience(unittest.TestCase):
             ))
             self.assertEqual(result, [expected_name, f"{key} boom"])
 
-    def test_explicit_python_exception_name_mapping(self):
-        """__v8_error_name__ overrides class-name based Error selection."""
+    def test_the_declaration_names_the_error_not_the_python_class(self):
+        """A class arrives as its declaration says, whatever it is called here."""
 
         for error_name in (
             "Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError"
         ):
             with self.subTest(error_name=error_name):
-                exception_type = type(
-                    "DomainFailure",
-                    (Exception,),
-                    {
-                        "__v8_error__": True,
-                        "__v8_error_name__": error_name,
-                    },
-                )
+                exception_type = declared("DomainFailure", javascript=error_name)
 
                 def fail(exception_type=exception_type):
-                    raise exception_type("explicit mapping")
+                    raise exception_type("declared mapping")
 
                 self.context.expose(fail=fail)
                 result = snapshot(self.context.exec_js(
                     "try { fail(); } catch (error) { [error.name, error.message]; }"
                 ))
-                self.assertEqual(result, [error_name, "explicit mapping"])
+                self.assertEqual(result, [error_name, "declared mapping"])
 
-    def test_interceptor_failure_marker_respects_strict_mode(self):
-        """Marked setter/deleter failures are silent only in sloppy mode."""
+    def test_a_declared_interceptor_failure_is_silent_only_in_sloppy_mode(self):
+        """A declaration says a failed write or delete may go unraised where V8 allows it."""
 
-        class LegacyWriteFailure(Exception):
-            __v8_error__ = True
-            __v8_error_name__ = "TypeError"
-            __v8_interceptor_failure__ = True
+        class LegacyWriteFailure(pyv8.JsTypeError, pyv8.JsInterceptorFailure):
+            """A failed legacy write or delete, which may go unraised where V8 allows it."""
 
         class LegacyTarget:
             __v8_idl_spec__ = IdlSpec(
@@ -121,28 +106,24 @@ class TestBridgeResilience(unittest.TestCase):
         ))
         self.assertEqual(result, ["TypeError", "legacy write rejected"])
 
-    def test_python_exception_rethrow_restores_original_type(self):
-        """Python 异常经过 JavaScript catch/rethrow 后应恢复原异常。"""
+    def test_a_declared_error_rethrown_arrives_as_that_error(self):
+        """JavaScript catches what a realm was given, so that is what comes back."""
 
-        class BridgeFailure(RuntimeError):
-            __v8_error__ = True
+        BridgeFailure = declared("BridgeFailure", javascript="TypeError", base=RuntimeError)
 
         def fail():
             raise BridgeFailure("round trip boom")
 
         self.context.expose(fail=fail)
-        with self.assertRaisesRegex(BridgeFailure, "round trip boom"):
-            self.context.exec_js(
-                "try { fail(); } catch (error) { throw error; }"
-            )
+        with self.assertRaises(pyv8.JSException) as raised:
+            self.context.exec_js("try { fail(); } catch (error) { throw error; }")
+        self.assertIn("round trip boom", str(raised.exception))
         self.assertEqual(self.context.exec_js("40 + 2"), 42)
 
     def test_exception_with_failing_string_conversion(self):
         """异常自身无法转成字符串时应使用安全消息并保持上下文可用。"""
 
-        class BrokenStringError(Exception):
-            __v8_error__ = True
-
+        class BrokenStringError(pyv8.JsError):
             def __str__(self):
                 raise RuntimeError("broken __str__")
 
@@ -207,7 +188,7 @@ class TestBridgeResilience(unittest.TestCase):
         """named/indexed 的五类 handler 抛错后均应恢复原异常和 Context。"""
 
         class InterceptorFailure(RuntimeError):
-            __v8_error__ = True
+            pass
 
         class ThrowingInterceptor:
             active_handler = None

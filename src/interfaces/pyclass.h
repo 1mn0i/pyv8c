@@ -19,10 +19,8 @@ typedef struct {
     int unconstructable;
     int has_constructor;
     int to_obj;
-    // 0 until this class has settled whether its instances inherit from
-    // Error.prototype, then 1 when they do and -1 when they do not.  The answer
-    // belongs to the class, so it is reached once and remembered.
-    int error_prototype;
+    // 1 when a realm is shown this class as a JavaScript error; decided with its template.
+    int error_class;
     // 0 until an iteration source's iterator prototype is finished, 1 afterwards.
     int iterator_prototype;
     V8HandleSlot<v8::FunctionTemplate> templ;
@@ -40,10 +38,9 @@ PyObject* py_class_to_template(PyObject* cls, context_c *py_ctx);
 // A function for an interface or a callback interface, an object for a namespace (``CSS``).
 v8::Local<v8::Value> py_class_get_constructor(v8::Local<v8::Context> context, py_class* self, py_class* parent);
 v8::Local<v8::Object> py_class_create_js_object(py_class *self, PyObject *py_object, v8::Local<v8::Context> context);
-// *self*, when given, is the class the object was made from; passing it lets the
-// Error.prototype decision be reached once per class instead of once per object.
+// Publishes the object/instance pair and stamps the marker the conversion reads back.
 bool py_class_init_js_object(v8::Local<v8::Object> js_object, PyObject *py_object,
-                             v8::Local<v8::Context> context, py_class* self = nullptr);
+                             v8::Local<v8::Context> context);
 // The interceptor entry points are declared in pyclass_handlers.h, beside the
 // handlers they look up, because they are reached only from there: a class hands
 // them to V8 when it installs its templates.

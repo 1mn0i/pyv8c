@@ -24,6 +24,11 @@ Other objects, including functions and typed arrays, remain handles.
 JS identity is preserved when handles return to V8; Python wrapper identity
 is not promised. Function property access preserves its receiver.
 
+Binary data crosses whole, in one call in either direction. `_bytes()` on a
+`JSObject` returns the bytes a buffer holds or a view looks at; Python `bytes`
+handed back into a realm arrive as a fresh `ArrayBuffer`. Reading a buffer element
+by element across the boundary is what these replace.
+
 In pyv8c, `Page.evaluate()` materializes the result on the page executor;
 `Page.evaluate_handle()` returns the unmaterialized value. Internal Web API
 code uses handles until its Web IDL conversion explicitly needs Python data.

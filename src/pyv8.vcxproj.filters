@@ -6,7 +6,9 @@
     <ClCompile Include="values\convert_to_python.cpp" />
     <ClCompile Include="values\convert_to_javascript.cpp" />
     <ClCompile Include="tools\debugger.cpp" />
-    <ClCompile Include="values\exception.cpp" />
+    <ClCompile Include="values\js_exception.cpp" />
+    <ClCompile Include="values\crossing.cpp" />
+    <ClCompile Include="values\error_family.cpp" />
     <ClCompile Include="isolate\isolate.cpp" />
     <ClCompile Include="isolate\isolate_scope.cpp" />
     <ClCompile Include="isolate\isolate_state.cpp" />
@@ -30,15 +32,15 @@
     <ClCompile Include="values\jsnull.cpp" />
     <ClCompile Include="values\jsundefined.cpp" />
     <ClCompile Include="values\jsvalue.cpp" />
-    <ClCompile Include="values\error_map.cpp" />
     <ClCompile Include="isolate\watchdog.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="isolate\context.h" />
     <ClInclude Include="values\convert.h" />
-    <ClInclude Include="values\error_map.h" />
+    <ClInclude Include="values\js_exception.h" />
+    <ClInclude Include="values\crossing.h" />
+    <ClInclude Include="values\error_family.h" />
     <ClInclude Include="tools\debugger.h" />
-    <ClInclude Include="values\exception.h" />
     <ClInclude Include="isolate\isolate.h" />
     <ClInclude Include="isolate\isolate_scope.h" />
     <ClInclude Include="isolate\isolate_state.h" />

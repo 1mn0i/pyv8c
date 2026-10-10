@@ -9,7 +9,6 @@
 
 enum class V8StringId : std::uint8_t
 {
-    ErrorPrototypeMagic,
     PythonObjectMagic,
     Message,
     Count,
