@@ -57,7 +57,7 @@ static PyObject* js_object_to_python(js_object* self, PyObject*) {
     return result;
 }
 
-static PyObject* js_object_bytes(js_object* self, PyObject*) {
+PyObject* js_object_bytes(js_object* self, PyObject*) {
     if (!js_object_require_active(self)) return nullptr;
     ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
     if (!execution || !js_object_require_active(self)) return nullptr;

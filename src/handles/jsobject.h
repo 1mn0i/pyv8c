@@ -33,6 +33,9 @@ int js_object_traverse(js_object* self, visitproc visit, void* arg);
 PyObject *js_object_getattro(js_object *self, PyObject *name);
 int js_object_setattro(js_object *self, PyObject *name, PyObject *value);
 PyObject *js_object_getiter(js_object *self);
+
+//: The bytes a buffer or a view holds: what ``__bytes__`` answers for both.
+PyObject *js_object_bytes(js_object *self, PyObject *unused);
 PyObject *js_object_dir(js_object *self);
 PyObject *js_object_repr(js_object *self);
 PyObject* js_object_richcompare(js_object* self, PyObject* other, int operation);

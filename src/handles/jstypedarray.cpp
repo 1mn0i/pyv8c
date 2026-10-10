@@ -26,10 +26,18 @@ enum class ArrayType {
 
 PyTypeObject* js_typedarray_type = NULL;
 
+//: ``bytes(view)`` answers the range of the buffer the view looks at, rather than the
+//: property names a plain JavaScript object iterates.
+static PyMethodDef js_typedarray_methods[] = {
+    {"__bytes__", (PyCFunction)PythonBoundary<js_object_bytes>::call, METH_NOARGS,
+     "The bytes this view holds"},
+    {NULL, NULL, 0, NULL} };
+
 static PyType_Slot js_typedarray_slots[] = {
     {Py_tp_dealloc, (void*)PythonBoundary<js_typedarray_dealloc>::call},
     {Py_tp_new, (void*)PythonBoundary<js_typearray_new>::call},
     {Py_tp_repr, (void*)PythonBoundary<js_typedarray_repr>::call},
+    {Py_tp_methods, (void*)js_typedarray_methods},
     {Py_tp_doc, (void*)"v8 TypedArray"},
     {0, NULL} };
 
