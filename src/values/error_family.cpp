@@ -43,6 +43,9 @@ PyTypeObject* interceptor_marker = nullptr;
 //: ``(constructor, argument attributes, (python attribute, JavaScript property) pairs)``.
 constexpr const char* kShapeAttribute = "__v8_error_shape__";
 
+//: How one instance says its realm should read no stack: ``__v8_error_stack__ = False``.
+constexpr const char* kStackAttribute = "__v8_error_stack__";
+
 //: What *thing* declares under *attribute*, or null with the reason cleared: a malformed
 //: shape is passed over rather than raised, since an exception is already on its way out.
 PyObject* declared(PyObject* thing, const char* attribute)
@@ -279,6 +282,16 @@ void attach_stack(Local<Context> context, Local<Object> error)
     if (context.IsEmpty() || error.IsEmpty())
         return;
     Exception::CaptureStackTrace(context, error).FromMaybe(false);
+}
+
+bool carries_stack(PyObject* exc_value)
+{
+    PyObject* declared_stack = declared(exc_value, kStackAttribute);
+    if (declared_stack == nullptr)
+        return true;
+    const int wanted = PyObject_IsTrue(declared_stack);
+    Py_DECREF(declared_stack);
+    return wanted != 0;
 }
 
 //: The realm's constructor for *shown*, from a source a page cannot rebind: the interface

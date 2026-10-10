@@ -774,8 +774,10 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
     }
     if (self->error_class) {
         // An error the host makes for a realm carries a stack; a page's own ``new X()``
-        // does not, which is what Chromium leaves on ``new DOMException()``.
-        error_family::attach_stack(context, object);
+        // does not, which is what Chromium leaves on ``new DOMException()``.  An error
+        // rebuilt from the wire asks for none, as the reader Chromium uses builds one.
+        if (error_family::carries_stack(py_object))
+            error_family::attach_stack(context, object);
     }
     return hs.Escape(object);
 }

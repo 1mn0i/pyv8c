@@ -33,6 +33,10 @@ bool is_native_error_wrapper(v8::Isolate* isolate, v8::Local<v8::Object> object)
 //: make an error for a realm, never a page's own constructor.
 void attach_stack(v8::Local<v8::Context> context, v8::Local<v8::Object> error);
 
+//: Whether *exc_value* asks for that stack -- an instance a reader rebuilt from the wire
+//: says no, since Chromium leaves no stack on the error it rebuilds either.
+bool carries_stack(PyObject* exc_value);
+
 //: The JavaScript error *exc_value* is shown as, built from its shape with the realm
 //: constructor *name* names; empty when the realm offers no constructor to build it with.
 v8::Local<v8::Object> build(v8::Isolate* isolate, v8::Local<v8::Context> context,
