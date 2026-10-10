@@ -14,6 +14,7 @@
 #include "jsvalue.h"
 #include "jsfunction.h"
 #include "jspromise.h"
+#include "serialization.h"
 #include "jstypedarray.h"
 #include "pyfunction.h"
 #include "debugger.h"
@@ -446,6 +447,17 @@ pyv8_module_exec(PyObject* module)
     // The family publishes itself: the table in error_family.cpp is the only copy of
     // these names.
     if (!error_family::publish(module))
+        return -1;
+
+    // One realm's structured-clone wire: V8's own serializer plus the host-object
+    // callbacks, which is what Chromium's structuredClone is made of.
+    if (serialization_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "Serializer", (PyObject*)serialization_type) < 0)
+        return -1;
+    if (PyModule_AddObject(module, "SerializationWriter", (PyObject*)serialization_writer_type) < 0)
+        return -1;
+    if (PyModule_AddObject(module, "SerializationReader", (PyObject*)serialization_reader_type) < 0)
         return -1;
 
     return 0;
