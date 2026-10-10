@@ -56,6 +56,30 @@ def test_a_windows_1252_label_decodes_the_bytes_chrome_decodes(page):
         }))""")) == ["\ufffd\ufffdA", "\u20ac\u00e9A"]
 
 
+def test_decode_takes_the_bare_array_buffer_chrome_takes(page):
+    """``BufferSource`` is an ``ArrayBuffer`` or a view over one, and ``decode`` takes either.
+
+    A live run of the challenge handed ``decode`` the bare buffer and got a ``TypeError`` for it
+    twice, which the widget then reported back to the edge (measured 2026-10-10, see
+    ``examples/5s/README.md``).  Chrome answers "ABC" for all three forms here; the two-sided
+    reading is ``examples/5s/script/trace_gaps.py``.
+    """
+    assert json.loads(page.evaluate("""JSON.stringify(
+        [new Uint8Array([65, 66, 67]),
+         new Uint8Array([65, 66, 67]).buffer,
+         new Uint8Array([65, 66, 67]).buffer.slice(0)]
+            .map(function (source) { return new TextDecoder().decode(source); }))""")) == \
+        ["ABC", "ABC", "ABC"]
+
+
+def test_decode_still_refuses_what_is_not_a_buffer_source(page):
+    """The widening has to stop at the standard's edge, or a wrong argument stops raising."""
+    assert page.evaluate("""(() => {
+        try { new TextDecoder().decode({}); return 'no error'; }
+        catch (error) { return error.name; }
+    })()""") == "TypeError"
+
+
 def test_an_unknown_label_is_a_range_error(page):
     assert page.evaluate("""(() => {
         try { new TextDecoder('bogus-encoding'); return 'no error'; }

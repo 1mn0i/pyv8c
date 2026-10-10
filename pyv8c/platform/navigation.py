@@ -7,7 +7,7 @@ from ..foundation.host_errors import HostStateError
 from ..foundation.tasks import TaskSource
 from ..foundation.urls import absolute_url
 from ..network.redirects import reportable_hops
-from ..web.bom.utils import page_secure_context
+from ..web.bom.utils import page_base_url, page_secure_context
 from ..web.dom.document import Document, HTMLDocument
 from ..web.dom.motion import INSECURE_ORIGIN_INTERFACES
 from ..web.dom.parser import IncrementalDOMParser
@@ -138,7 +138,7 @@ class NavigationController:
         }
         if wait_until not in states:
             raise ValueError("wait_until must be 'commit', 'domcontentloaded', or 'load'")
-        target = absolute_url(url, self.page.url)
+        target = absolute_url(url, page_base_url(self.page))
         if not self.navigation_allowed():
             return None
         timeout_value = None if timeout is None else max(0.0, float(timeout))
@@ -182,7 +182,7 @@ class NavigationController:
         """Queue a navigation a script, a link or a form submission asked for."""
         if self.page.closed or self.page.context_owner.closed:
             raise HostStateError("Page is closed")
-        target = absolute_url(url, self.page.url)
+        target = absolute_url(url, page_base_url(self.page))
         self.pending += 1
         request_id = self.pending
 

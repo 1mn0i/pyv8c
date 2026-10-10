@@ -61,6 +61,31 @@ def page_secure_context(page, url=None):
     return False
 
 
+def page_base_url(page, url=None):
+    """The URL relative loads in a ``Page``'s document resolve against.
+
+    ``about:blank`` and ``about:srcdoc`` carry no scheme of their own, so a browser takes the
+    base URL from the document that created them -- which is why ``<script src="/cdn-cgi/.../jsd/main.js">``
+    inside a frame still reaches the host that served the frame.  Resolving against the
+    document's own address instead yields a bare path, and that path is then refused as "not
+    a scheme a page loads", so nothing is requested at all (measured against Chrome
+    2026-10-10, see ``examples/5s/script/base_url_frames.py``).
+
+    Same walk as :func:`page_secure_context`, and the same reason: ``Page.origin`` already
+    inherits along ``parent_page``, so resolution has to follow it too.  The document's own URL
+    is left alone -- ``location.href`` still reads ``about:blank``.
+    """
+    for _hop in range(CREATOR_HOPS):
+        if page is None:
+            return str(url or "")
+        text = str(url if url is not None else getattr(page, "url", "") or "")
+        if urlsplit(text).scheme.lower() not in ("", "about"):
+            return text
+        url = None
+        page = getattr(page, "parent_page", None)
+    return str(url or "")
+
+
 def window_secure_context(window, url=None):
     """``window``'s secure context, found through the realm's page rather than its parent.
 

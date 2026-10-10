@@ -35,3 +35,9 @@ examples/5s/surface-*.json
 examples/5s/surface-*.txt
 examples/5s/run-*.txt
 examples/5s/frame.txt
+# The challenge's own scripts, written by examples/5s/script/dump_scripts.py: megabytes of
+# third-party obfuscated JS, read offline through the skill's references/js-reverse.md.
+examples/5s/script/cf_frame/
+# The challenge's own documents, written by examples/5s/script/dump_documents.py: the same
+# readings on the response side, which is where a resource the page never asked for is found.
+examples/5s/script/cf_html/

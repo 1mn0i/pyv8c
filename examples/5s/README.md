@@ -6,17 +6,30 @@
 cd pyv8env\pyv8c\examples\5s
 $env:PYTHONPATH="D:\code\pyv8env\pyv8c;D:\code\pyv8env\_pyv8"
 
-python312 5s.py --trace --seconds 30 --timeout 220    # 判定入口：交换表 + 罐 + 页面状态 + PASS/FAIL，trace -> 5s.log
+python 5s.py                                          # 简单入口：等 60 秒（整轮≈2 分钟），打一行 PASS/FAIL 并以 0/1 退出
+python312 script\script/5s.py --trace --seconds 30 --timeout 220    # 判定入口：交换表 + 罐 + 页面状态 + PASS/FAIL，trace -> 5s.log
 python312 script\chrome_side.py --seconds 30          # 参照侧：headed Chrome 的同口径交换表
 python312 ..\..\skills\pyv8c-challenge-parity\scripts\trace_analyze.py 5s.log   # 归类：答 undefined 的读取 / 抛错
 python312 script\secure_frame.py                      # 已修差异的两侧复现（本地，零第三方流量）
+
+# 只读工具：回答"谁在热读、谁不返回、缺什么"
+python script\dump_scripts.py --seconds 30            # 页面每个 realm 的脚本 -> script\cf_frame\（离线读）
+python script\trace_reflect.py --seconds 30           # 每个被读名字的次数，以及读它的脚本/门（trace 回调当探针）
+python script\slow_handlers.py --seconds 40 --over .8 # 超过阈值的回调 -> 源码（Function.prototype.toString）
+python script\trace_gaps.py                           # trace 里几个尖锐差异的两侧最小复现（本地 fixture）
+python script\frame_loop.py --seconds 90 --at 5000    # 在 realm 内部包 Reflect 的 getter，抓自旋栈并推回 Python
+python script\eb_witness.py --seconds 110 --after 20 --click 640,430 960,540 1010,545 --dump %TEMP%\eb_build
+                                                      # widget 上报的异常（编码前）与被拒的 DOM 实参；--dump 与报告同一轮
 ```
+
+> 上面那段 `python312` 与 `D:\code\pyv8env` 是写这份文档的机器上的写法；本机（2026-10-10）是
+> `D:\src\pyv8env` 且解释器叫 `python`（3.12.9）。命令本体不变，路径与解释器按当前 checkout 换。
 
 方法用 `skills/pyv8c-challenge-parity/`：trace 归类 → 两侧最小复现/两侧交换表 → 修 + 守护测试 → 重跑比对。
 
 ## 两侧交换表（同一台机器、同一个站点）
 
-`5s.py` 在 `CurlCffiTransport._call` 上挂观测（只说"服务器给了什么、我们收没收到"，不改行为）；
+`script/5s.py` 在 `CurlCffiTransport._call` 上挂观测（只说"服务器给了什么、我们收没收到"，不改行为）；
 `chrome_side.py` 用 headed Chrome（`--enable-automation` 关掉、`AutomationControlled` 禁用）。
 **Chrome 13.3 秒拿到 `cf_clearance`** ✓。差异按"只在一边出现"读：
 
@@ -116,6 +129,26 @@ VERDICT: FAIL -- no cf_clearance
 - **判据**：同一套扫描器跑新 trace ⇒ 两条 `AttributeError` **消失** ✓；`dispatch error` **3 → 0** ✓（我们的失败不再漏进页面 ✓）；`startswith` 之外的一切不变 ✓。
 - **回归**：`tests/unit/test_realm_scripts_closed.py` ✓；全量 `tests`（除 repros）**1083 passed, 1 skipped** ✓，其中 1 个 failed 是既有的**帧提交时序抖动** ✓（隔离 **3/3 通过** ✓，与本改动无关 ✓）。
 
+**另一族：widget 自己捕获到的异常（未修 ✗）** —— 上面那条修掉的是"我们的 Python 异常漏进页面" ✓；
+这一族是 widget 内部**自己抛错** ✓（它自己也报 ✓）。只读见证 `script/eb_witness.py` ✓（每个 realm 装 bootstrap ✓，
+劫住 widget 上报时交给 `JSON.stringify` 的那个值 ✓，另在 JS 侧包住 `Node` 的四个变更方法 ✓ 把被拒实参的种类推回 Python ✓）
+在同一轮抓到三份上报 ✓：
+
+| 上报的错 | 同一调用链（widget 内 ✓） | 读出的含义 |
+| --- | --- | --- |
+| `TypeError: Failed to execute 'replaceChild' on 'Node': parameter 1 is not of type 'Node'.` | `…ZE → …run → g4 → …` | 页面把某个值当节点用 ✓，而我们不认 ✗（Chrome 不报 ⇒ 它认得 ✓） |
+| `TypeError: bI is not a function`（×3 ✓） | 同链 ✓ | widget 读到的某个 API 不是函数 ✗ ⇒ skill 的"答 `undefined` ⇒ 调用抛"链 ✓（`bI` 是查表取的局部名 ✗，名字待定） |
+| `InvalidStateError: Worker has been terminated` | 同链 ✓ | worker 已终止而 widget 仍在用 ✗ |
+
+- **判据**：`eb` 归零 ✓ 且两侧交换表里收尾的 `fo@cf` / `fo@steamdb` 出现 ✓（Chrome 有、我们缺 ✗）。
+- **每轮不同** ✓：三轮分别只出现 `replaceChild` ✓ / `bI`+`Worker has been terminated` ✓ / 无 ✓ ⇒
+  只能按**集合**读 ✓，别按条数或单轮下结论 ✓。
+- **工具的一个硬约束** ✓：`--dump` 落盘的脚本必须与报告**同一轮** ✓ —— widget 包每轮换 build ✓，
+  包里 `replaceChild` 等字面量 0 次 ✓（方法名查表取 ✓），栈里的列号只对当轮 build 有效 ✓
+  （拿上一轮的 dump 去读对不上 ✗，已实测 ✓）。
+- **下一步**：把 `eb` 报告与**同一轮**的 `answered undefined` 列表并排 ✓ —— `bI is not a function`
+  的上游一定是一次答 `undefined` 的读取 ✓（那正是 trace 的分类器擅长的 ✓）。
+
 #### 深挖：为什么会是 `NoneType`（因果链完整 ✓）
 
 | 步骤 | 证据 |
@@ -163,7 +196,7 @@ VERDICT: FAIL -- no cf_clearance
 
 ### 帧提交"就地执行"：`RealmBusyError` 的真正根因（已修 ✓）
 
-- **证据（全线程转储 ✓，`5s.py` 的 `watch_executor()` ✓）**：一次运行里同一处卡了三次 ✓，两份栈合起来是完整因果链：
+- **证据（全线程转储 ✓，`script/5s.py` 的 `watch_executor()` ✓）**：一次运行里同一处卡了三次 ✓，两份栈合起来是完整因果链：
 
   | 线程 | 栈 |
   | --- | --- |
@@ -352,6 +385,129 @@ typeof CSSMathMax.prototype[Symbol.iterator]               // "undefined" -> 缺
 - **工具留档**：`pyv8c/tools/idl_audit.py`（谁在重述 ✓，分 `restating`/`flags`/`renamed`/`resolved`/`unresolved` ✓）、`script/dump_compiled.py`（编译面快照 ✓）、`script/trim_spec_restatements.py`（按审计删行 ✓，含 `--check`/`--fields`/`--generators`/`--fix`/`--tidy` ✓）。守护测试：`tests/unit/test_spec_is_a_difference.py` ✓、`tests/browser/test_convention_binding.py` ✓、`tests/unit/test_compile_cost.py` ✓。
 - **性能**：`tools/measure_startup.py` 实测 —— 已编译 spec 进程级复用 ✓（第二个 `Bindings` **0 次未命中 / 编译 8.5 ms ✓**）；首屏余下 288 ms 是 materialize（本步未动 ✓）。缓存只在**可互换**的 bindings 间共享 ✓（同基线 ✓、同 profile ✓、无宿主钩子 ✓、静默桩 ✓、且本次编译没报不匹配 ✓ —— 最后一条保证 `baseline_mismatch="warn"` 仍按 bindings 报一次 ✓）。
 
+### 帧文档没有自己的地址时，相对 URL 现在按**创建者**解析（已修 ✓）
+
+- **症状**（真站 2026-10-10 ✓）：
+
+```
+WARNING pyv8c.platform.lifecycle:dispatch_script_error - a script's failure was the host's own:
+: is not a scheme a page loads, so nothing was requested </cdn-cgi/challenge-platform/scripts/jsd/main.js>
+```
+
+  冒号前**没有 scheme** ✓ ⇒ 那个根相对 `src` 根本没被解析 ✓ ⇒ 挑战自己的 jsd 脚本一个字节都没请求 ✓。
+- **两侧证据**（`script/base_url_frames.py` ✓，本地 fixture、零第三方流量 ✓，同一页里三种形状各用一个不同路径 ✓；
+  帧自己把 `document.baseURI`、`String(s.src)`、`load`/`error` 事件 `postMessage` 出来 ✓，父页回读 C 的文档 ✓）：
+
+  | 形状 | Chrome | pyv8c | 判定 |
+  | --- | --- | --- | --- |
+  | B 普通 `srcdoc` 帧 | 请求 `https://probe.test/B.js` ✓、`__b_ran = 1` ✓ | 修前是 `/B.js`（无 scheme ✗）⇒ 修后请求同一条 ✓、脚本也跑了 ✓ | **已对齐 ✓** |
+  | A `srcdoc` + `sandbox="allow-scripts"` | `baseURI` 是父页 URL ✓、`s.src` 解析成 `https://probe.test/A.js` ✓、随后 **`error` 事件且不发请求** ✗ | 解析成同一条 ✓、**照发并成功加载**（`load` 事件 ✓） | **未对齐 ✗** |
+  | C `about:blank` 帧（父页写） | `contentDocument` 同步可用 ✓、`scripts:1 / ran:'1'` ✓ | `contentDocument` 是 **null** ✗（`TypeError: Cannot read properties of null (reading 'write')` ✓）、`scripts:0` ✗ | **未对齐 ✗**（根因已定 ✓） |
+
+- **撤回一条**（上一轮写的"Chrome 对 sandbox `srcdoc` 直接丢弃"✗）：那是**探针自己**造成的 ✓ ——
+  A 的 srcdoc 里首个内联脚本执行时，Chrome 的 `document.body` 还是 **null** ✗ ⇒ `appendChild` 抛错 ⇒
+  既不发请求也不触发事件 ✓（正是 skill 坑表第一条"测量工具自己干扰被测对象"✓）。给那段 srcdoc 补上
+  `<body>` 之后，Chrome 的行为变成"解析成功 + `error` 事件" ✓（读数见上表 ✓）。
+- **A 的未对齐点与下一步** ✗：Chrome 解析成功却**拒发**这次加载 ✓（有 `error`、`page.on("request")` 无记录 ✓），
+  我们照发并成功 ✓ ⇒ 差在"opaque origin 的帧到底能不能取这个子资源" ✓。这条**还需要更强的见证** ✗：
+  现在的见证是 Playwright 侧的请求表 ✓，而 Chrome 可能在它之前就拒了 ✓ ⇒ 下一步改用**本机小服务**当见证
+  （服务端计数 ✓、不经拦截 ✓）再判一次 ✓。
+- **C 的根因（在代码里对上了 ✓）**：`HTMLIFrameElement.get_contentDocument()` 在 `_child_services is None`
+  时返回 `null` ✓，而子上下文由 `platform/resource_loading.py` 的 `ensure_iframe_context()` 建 ✓ ——
+  它的 docstring 自己写着"**插帧的那个任务之后**建 ✓，因为**在一个运行中的脚本里建 realm 不可重入**" ✗。
+  Chrome 是**创建即有初始 `about:blank` 文档** ✓ ⇒ 父页可以立刻写进去（挑战正是用这种写法注入 jsd 的 ✓）。
+  **改法形状**（与本案已修的"帧提交就地执行"同一族 ✓）：让这两个 getter 在被访问时**就地**建这个初始上下文
+  （没人访问就不付代价 ✓），并只走"无 `src`/`srcdoc` 的初始文档"这条 ✓。**判据**：C 行两侧同集合 ✓
+  （`contentDocument` 非 null ✓、`/C.js` 被请求 ✓、脚本把 `__c_ran` 置 1 ✓）。
+
+- **根因**：`about:blank` / `about:srcdoc` 的文档自己的 URL 没有 scheme ✓，而资源解析拿的是
+  `page.url` ✗ ⇒ `urljoin("about:srcdoc", "/cdn-cgi/…")` 得到一条**路径** ✗ ⇒ 随后被
+  `foundation/urls.py` 的 `unloadable_scheme()` 判成"不是页面能加载的 scheme" ✗（就是那条 WARNING ✓）。
+- **改法**：`web/bom/utils.py` 新增 `page_base_url(page, url=None)` ✓ —— 沿 `parent_page` 走到第一个
+  有 scheme 的地址 ✓，与同文件里 `page_secure_context()`（2026-10-06 修的那条 ✓）**同一套继承规则** ✓；
+  接在 `platform/resource_loading.py`（同步/异步加载 ✓ + 两处 iframe `src` ✓）与 `platform/navigation.py`
+  （两处导航 ✓）上 ✓。文档自身的 URL 不动 ✓：`location.href` 仍读 `about:blank` ✓。
+- **判据**：`script/base_url_frames.py` 的 B 行两侧逐字一致 ✓（修前是 `DIFFERENT` ✗）；守护
+  `tests/browser/test_frame_base_url.py` 三条 ✓（普通 srcdoc ✓ / sandbox ✓ / 自有地址的文档仍按自己解析 ✓）；
+  全量 `tests`（除 repros）**1241 passed, 1 skipped** ✓（唯一 error 是既有 devtools 抖动 ✓，隔离跑 2/2 通过 ✓）。
+
+### `TextDecoder.decode` 收下 `ArrayBuffer`（已修 ✓）
+
+- **症状**：挑战自己的脚本用**裸 `ArrayBuffer`** 调 `decode` ✓，我们抛
+  `TypeError: … parameter 1 is not of type 'BufferSource'` ✗。
+- **两侧证据**：pyv8c 抛错（真站 trace 的 `engine raised` ✓）/ Chrome `"ABC"` ✓（`script/trace_gaps.py` ✓）。
+- **根因**：`web/dom/encoding.py::_bytes_of()` 只认 TypedArray 视图 ✗，而 `BufferSource` 是
+  "`ArrayBuffer` **或**它的视图" ✓。
+- **改法**：补裸 `ArrayBuffer` 分支 ✓（取字节用 `pyv8.JSTypeArray(buffer, Uint8Array)` ✓，与
+  `web/bom/crypto.py`、`web/bom/audio.py` 同款 ✓）与 `memoryview` ✓；`encodeInto` 未动 ✓（标准只收 `Uint8Array` ✓）。
+- **判据**：`tests/browser/test_encoding_and_touch.py` 新增两条 ✓（`view`/`buffer`/`slice` → `"ABC"` ✓；
+  非 `BufferSource` 仍抛 ✓）；该文件 8 passed ✓。
+- **未修**：`DataView` 同样抛 `TypeError` ✗（见"缺的成员"表 ✓）。
+- **对挑战暂无效** ✗：修后同一窗口 `eb` 仍 5 次 ✓ ⇒ widget 报的不是这个错 ✓。
+
+### 挑战的热循环在读全局名：我们是 Python 访问器，Chrome 是数据属性（2026-10-10 两侧已量 ✓，未修 ✗）
+
+- **症状**（`script/5s.py --trace`，90 s 窗口 ✓）：`[FRAME] getter: Window.Reflect` **13 万次** ✓、
+  `get:isNaN` **68 万次** ✓、`get:String` **68 万次** ✓（三个名字的次数几乎相等 ⇒ 同一个循环体每次各读一次 ✓）；
+  realm 整窗不 idle ⇒ 判定脚本收尾时 `page.evaluate` 也被 `RealmBusyError` 挡在 60 s 上 ✗。
+- **不是页面自己死循环** ✗：`script/trace_reflect.py` 把每次读归到"正在执行的脚本 + realm"✓
+  （包 `ScriptController.evaluate` + thread-local ✓；trace 回调与脚本同线程 ✓），并把栈打出来 ✓。
+  第 **20 万次**读的栈是 `xhr.py:97 _state → events._invoke → _js_call(handler, …)` ✓
+  ⇒ 读发生在**页面某个 XHR `readystatechange` 处理器的一次调用里** ✓（只有最早的读落在
+  `scripting.py:72 exec_js` ✓）。带 trace 时这一次调用是分钟级 ✗；**不带 trace 时
+  `script/slow_handlers.py` 量到 244 个回调里没有一个超过 0.8 s** ✓ ⇒ 那 67 万次读的绝大部分
+  开销来自**日志本身** ✗（`--trace` 把它放大成分钟级 ✓）。
+- **两侧代价**（本地 fixture ✓、各 5 万次 ✓、无 trace ✓）：
+
+  | 形态 | pyv8c | Chrome | 倍率 |
+  | --- | --- | --- | --- |
+  | `window['Math']` 读 | 56.5 ms | 0.4 ms | **~140×** ✗ |
+  | `performance.now()` ×2 | 178.7 ms | 13.1 ms | ~13× ✗ |
+  | `Reflect.get(o,'a')` | 1.0 ms | 1.0 ms | 1× ✓ |
+
+  命令：`python script\reflect_cost.py`（`_ask_page` 的两侧探针 ✓）—— `Reflect.get` 同速 ✓、
+  只有**读全局名**慢 ✗ ⇒ 不是"JS 普遍慢" ✗。
+- **根因**：这些名字由 binding 装成**访问器** ✓（trace 把每一次读都记成 `getter: Window.X` ✓
+  就是见证 ✓），所以页面每读一次全局名都要绕一趟 Python ✗（~1.1 µs ✓）；Chrome 把同样的名字
+  放在全局对象上做**数据属性** ✓（V8 可以把它提到循环外 ⇒ 8 ns ✓）。`Math` 那一行的两侧差
+  就是这条机制的直接读数 ✓。
+- **判据**：修好后 `window['Math']` 读应进入 ns 量级 ✓，且 `script/5s.py --trace` 不再出现六位数级的
+  `get:String`/`get:isNaN`/`get:Reflect` ✓。
+- **未修的原因** ✗：全局名的形状由 `engine/binder.py` 决定（成员按需物化 ✓），改成数据属性要动
+  "谁能当数据属性、何时冻结"那条边界 ✓ ⇒ 留给下一轮；本轮只把读数与判据钉住 ✓。
+
+### 收尾停在 `fo@cf` 之后 —— 已修，机制是被丢掉的那条脚本 ✓
+
+- **判据**：修掉"帧文档 base URL"之后重跑（同一 60 s 窗口 ✓）：那条 WARNING 不再出现 ✓、
+  `GET https://steamdb.info/cdn-cgi/challenge-platform/scripts/jsd/main.js` 真的发出去了 ✓，
+  交换表**回到了 `pat` 401 ✓ / `ci` 200（18820B）✓** ⇒ "停在 `fo@cf` 之后"确实是被那条被丢掉的
+  脚本卡住的 ✓（机制与判据见"帧文档没有自己的地址时"一节 ✓）。
+- **根因**：挑战自己的 jsd 脚本因为**帧文档 base URL** 被丢掉 ✓（见"帧文档没有自己的地址时"一节 ✓）。
+- **别把它读成"realm 忙"** ✗：`killed after 200s` 与 realm 整窗不 idle 只在**带 trace** 时成立 ✓，
+  是**判读脚本**的局限 ✗，不是挑战停住的因 ✗。
+
+### 缺的成员：canvas/WebGL/ImageData 一族与 `DataView`（Chrome 侧已实测 ✓，pyv8c 侧待复现 ✗）
+
+`trace_analyze.py` 的"答 undefined / 抛错"里，除已撤回的三条 ✓，剩四条待修 ✗ 与一条已修 ✓：
+
+| 读 / 调用 | pyv8c | Chrome（实测 ✓） |
+| --- | --- | --- |
+| `OffscreenCanvasRenderingContext2D.getContextAttributes()` | `undefined` ✗（7 次 ✓） | `{"alpha":true,"colorSpace":"srgb","colorType":"unorm8","desynchronized":false,…}` ✓ |
+| `WebGL2RenderingContext.getInternalformatParameter(RENDERBUFFER, RGBA8, SAMPLES)` | `undefined` ✗（34 次 ✓） | `object:4`（`Int32Array` ✓） |
+| `ImageData.pixelFormat` | `undefined` ✗（4 次 ✓） | `"rgba-unorm8"` ✓ |
+| `TextDecoder.decode(<ArrayBuffer>)` | **已修** ✓（原先 `TypeError: … parameter 1 is not of type 'BufferSource'` ✗） | `"ABC"` ✓ |
+| `TextDecoder.decode(<DataView>)` | `TypeError` ✗（同为 `BufferSource` ✓，修法同源 ✓） | `"ABC"` ✓ |
+
+- **Chrome 一列来自实测** ✓（`script\trace_gaps.py` 的两侧探针 ✓：同一页在 Chrome 里
+  `decode ArrayBuffer → ABC` ✓、`imagedata pixelFormat → true:string:rgba-unorm8` ✓、
+  `webgl2 internalformat → object:4` ✓、`canvas attrs` 有对象 ✓）。
+- **pyv8c 一列只有真站 trace** ✗：同一份 fixture 页在 pyv8c 侧 `window.__out` 是 `undefined`
+  （页内脚本没执行 ✓，而 Chrome 侧同页正常 ✓）⇒ **"本地两侧复现"这一环本轮没做通** ✗。
+  下一步的第一件事是查清"fixture 页在 pyv8c 里为什么不执行脚本" ✓（`script\reflect_cost.py`
+  的 fixture 是执行的 ✓，差别只在页面内容 ✓）。
+- 与既有条目同源 ✓：canvas 那族的根因是**基线快照缺 mixin** ✓（见"未解决"表 ✓），
+  `getContextAttributes`/`getInternalformatParameter`/`pixelFormat` 很可能同因 ✓。
+
 ## 撤回（被实测推翻的推断）
 
 | 曾推断 | 实测结论 |
@@ -372,7 +528,7 @@ typeof CSSMathMax.prototype[Symbol.iterator]               // "undefined" -> 缺
 | `window.Temporal` 缺失 ✗ | Chrome 有 `Temporal` 命名空间 ✓（`value:object !enum` ✓），我们 `undefined` ✗。这是一整块实现（日历/时区 ✓），未修 ✓ |
 | **6 个命名空间被做成函数** ✗（`CSS` + 五个 `GPU*`） | Chrome：`value:object` ✓ 且**没有** `length`/`name`/`prototype` ✓；我们：`fn:0` ✗ 且带 `Function.prototype` 那一套 ✓（`only-here` 48 项 ✓ = 6×8 ✓；原先 50 ✓ —— 多的那 2 项是下面那条，已修 ✓）。**基线已经说了是哪六个** ✓：`constructor.allow_call is None` 且 `allow_new` 为 false ✓（= 生成的绑定里根本没有构造器回调 ✓；IDL 那条来源把同一件事写作 `False` ✓）——**6/6 命中** ✓、反向 **0/909** ✓（`script/baseline_join.py` ✓）。**为什么没修** ✗：接口对象由**原生绑定**创建 ✓，`definition_kind` 只标 Python 类模板 ✓（`_pyv8/src/interfaces/pyclass.cpp` ✓），`has_constructor=0` 也不把全局上的那个变成对象 ✓ —— 两种都实测过 ✓（`typeof CSS` 仍是 `'function'` ✓）⇒ 需在原生层或按 `chrome.js` 那样的 JS bootstrap 做 ✓（撤回的推导见 `engine/binder.py` 里的判据注释 ✓）。**判据**：`typeof CSS === 'object'` 且 `Object.getOwnPropertyNames(CSS)` 不含 `length`/`name`/`prototype` ✓ |
 | `FencedFrameConfig`/`SnapEvent`/`canvas.2d.constructor` 的 `length` 差 1 ✗ | 我们 `fn:1` vs Chrome `fn:0` ✓（`Function.length` 是常见指纹位 ✓）。来源是基线里的构造器 arity ✓，随基线一起重生成 ✓ |
-| **收尾仍差最后一步：`POST steamdb.info/…/fo/` 从未发出**（当前焦点 ✗） | 2026-10-07 两轮都能走到 `… → ci → fo@cf` ✓（Chrome 是 `… → ci → fo@cf → fo@steamdb` ✓），差的正是这次"回投站点"——`cf_clearance` 挂在它的响应上 ✓。widget 自报 `验证成功。正在等待 steamdb.info 响应` ✓ 且面板是 `cf-error` ✓。**判据**：出现 `POST steamdb.info/…/fo/`，且它的响应带 `set-cookie: cf_clearance` |
+| **最后一步是 JSD 链，不是 `fo@steamdb`**（2026-10-10 两侧实测订正 ✓，当前焦点 ✗） | 两侧同窗口各跑一轮（我们 `script/5s.py --seconds 60` ✓、参照 `script/chrome_side.py --seconds 45` ✓，对照 `script/flow_compare.py` ✓）：**Chrome 拿到 `cf_clearance`** ✓，它的序列是 `GET / → 403` ✓ → `GET …/challenge-platform/scripts/jsd/main.js → **302**` ✓ → `POST …/cdn-cgi/rum? → 204` ✓ → `GET …/h/g/scripts/jsd/<id>/main.js → 200` ✓ → **`POST …/h/g/jsd/oneshot/<id>/…`** ✓（clearance 就挂在这条上 ✓）。我们这一侧**连第一跳都没有** ✗（同窗口 `run-pyv8c.txt` 里 `jsd` 命中 0 行 ✓，那条"我们发过 jsd"的旧记录**撤回** ✗——它来自更早一轮的日志，不是同口径对照 ✓）⇒ 缺的不是收尾的回报，而是**整条链的起点** ✓。**判据**：出现 `GET …/scripts/jsd/main.js → 302` ✓，再出现 `POST …/jsd/oneshot/<id>/…` 且其响应带 `set-cookie: cf_clearance` ✓（旧假设"收尾必发 `fo@steamdb`"已被两轮对照推翻 ✗） |
 | `i@hagen`（只有我们）+ 它的 `cf-chl-peek` 回包 | trace：同一个 worker 被要求 `try{fetch("https://<随机子域>.challenges.cloudflare.com/…/i/…")}` ✓ ⇒ 我们**多探了一步** ✗；Chrome 全程不请求它 ✓。**判据**：`i` 消失（或证明 Chrome 也会发） |
 | `pat` 时好时坏：401 ✓ / 400 ✗ | 一轮 401（与 Chrome 同 ✓）、一轮 400 ✗；400 那轮的响应**带着 `cf-chl-out`** ✓ 但体为 0 ✓，且顺序也不同（`i` 在 `pat` 前/后 ✓）⇒ 疑似与"偷看"那一步有关 ✓。**判据**：固定 401 |
 | `cf-chl-out` 的**消费**仍不完整 | 修好 `Content-Type` 后它出现了 ✓（响应头见证 ✓），但 widget 没据此走完 ✗ ⇒ 下一步比对两侧 `cf-chl-out` 的**值与结构**（Chrome 那两条 ✓） |
@@ -381,6 +537,11 @@ typeof CSSMathMax.prototype[Symbol.iterator]               // "undefined" -> 缺
 | `fo@steamdb` 数量 1 vs 2 | Chrome 收尾会再发一次 ✓ —— 与"最后一步"同因 ✓ |
 | 旧文档的任务在 commit 后仍在跑 | 症状已挡住 ✓（`foundation/promises.py` 的关闭兜底 ✓）；根治仍是"别再跑旧文档的任务" ✓（`navigation.py:59` 只取消定时器 ✗）。**判据**：替换文档后旧任务不再产生 trace |
 | OPFS `not implemented`（2 条 ✓） | 诚实桩 ✓（`navigator.storage.getDirectory()` ✓），站点会读成"环境不合格" ✓。**判据**：按 Chrome 的失败语义返回（`NotSupportedError` ✓）或实现 |
+| **全局名是 Python 访问器 ⇒ 挑战的热循环慢 ~140×**（本轮焦点 ✗） | 两侧已量 ✓：`window['Math']` 5 万次 56.5 ms vs Chrome 0.4 ms ✓、`performance.now()` 178.7 vs 13.1 ✓、而 `Reflect.get` 同速 ✓ ⇒ 只有"读全局名"慢 ✓。读者是页面 XHR `readystatechange` 处理器的一次调用 ✓（栈证据 ✓，`script\trace_reflect.py` ✓）；带 trace 是分钟级 ✗、不带 trace 无 0.8 s 以上回调 ✓ ⇒ 大头是日志放大 ✓。**判据**：`window['Math']` 进入 ns 量级且 trace 不再出现六位数 `get:String`/`get:isNaN`/`get:Reflect` ✓ |
+| `getContextAttributes` / `getInternalformatParameter` / `ImageData.pixelFormat` / `TextDecoder.decode(ArrayBuffer)` 缺 ✗ | Chrome 侧已实测 ✓（`script\trace_gaps.py` ✓：对象 ✓ / `Int32Array(4)` ✓ / `"rgba-unorm8"` ✓ / `"ABC"` ✓）；pyv8c 侧只有真站 trace ✓（同一 fixture 页在 pyv8c 里不执行脚本 ✗ ⇒ 本地复现待做 ✓）。**判据**：同一 fixture 页两侧逐字一致 ✓ |
+| `script/5s.py` 收尾的 `page.evaluate(SNAPSHOT)` 在 realm 忙时挡 60 s ✗ | 交换表与罐仍能打出 ✓，判定行只能等 200 s 硬杀 ✓。**判据**：收尾有界（realm 忙时跳过快照并照打 FAIL ✓） |
+| **手势送不进去 ⇒ 已在案例里解决 ✓**（2026-10-10 ✓，`/login/` 的 managed 挑战要手势才能过 ✓） | 症状：`script/5s.py --click …` 从本线程直接调 `mouse.move` ⇒ `gesture move to 640,430 refused: RealmBusyError: realm executor did not complete '_move_to' within 60.0s` ✗（挑战自己的循环把 realm 占住 ✓，`platform/input.py` 的 `_call` 走 `executor.call` ⇒ 60 s 期限 ✗）。**改法（只动案例 ✓）**：把手势**投到页面自己的执行器队列** ✓（`page.realm.executor.post(...)` ✓，队列里每个 `mouse.move` 因已是 owner 线程而**内联执行** ✓），调用方带界等待 ✓ —— 这正是浏览器对输入的做法（排队、等空再派 ✓）。**为什么不动引擎** ✗：试过让 `input._call` 在 `RealmBusyError` 时自动排队 ✓，结果 `test_a_frames_window_keeps_its_identity_across_a_navigation` **必然失败** ✗（隔离 3/3；撤回后恢复成既有的**抖动** 1/2 ✓）⇒ 引擎的"忙就报错"是既有约定 ✓，回退了 ✓。**判据**：`--click` 不再抛 ✓ 且手势确实执行 ✓ —— 已达成（`gesture at 25s` ✓，122 s 内跑完并打出判定 ✓）。**下一步**：该轮交换表尾部是一串 `POST …/eb/…` ×5 ✓（站点上报**我们的异常** ✓）⇒ 去看它报的是什么 ✓ |
+| 帧文档 base URL：**A（sandbox `srcdoc`）与 C（`about:blank`+父页写）两形仍不同** ✗ | 两侧读数见 `script/base_url_frames.py` ✓（三种形状同页 ✓，帧自报 `baseURI`/`s.src`/事件 ✓）：A —— Chrome 解析成 `https://probe.test/A.js` ✓ 却**拒发**（`error`、无请求 ✓），我们照发并成功 ✓；C —— Chrome 的 `contentDocument` 同步可用且脚本跑了 ✓，我们的 `contentDocument` 是 **null** ✗（`ensure_iframe_context()` 把初始文档放到"插帧后的任务"✓，docstring 明说"运行中的脚本里建 realm 不可重入"✗）。**判据**：A 用本机小服务当见证再判一次 ✓；C 的 getter 就地建初始文档后两侧同集合 ✓ |
 
 **两个观测口径的修正** ✓（都已落进脚本 ✓）：
 - Playwright 的 `request.headers` 只是**子集** ✗（导航请求竟只列出 3 个头、连 `accept-language` 都没有 ✓）⇒ Chrome 参照必须用 `all_headers()` ✓，否则比头会造出**假差异** ✗；
@@ -388,9 +549,14 @@ typeof CSSMathMax.prototype[Symbol.iterator]               // "undefined" -> 缺
 
 ## 方法与坑（可复用到别的案子）
 
-- **每次重新分析都重跑一份新 trace**：`5s.py --trace --seconds 90` ✓（窗口 90 秒见上；挑战每轮变体不同，旧日志会把上一轮的结论带偏 ✗）。
+- **包我们自己的 DOM 方法要在 JS 侧包** ✓：在 Python 里后手替换 `Node.fn_replaceChild` 看不到任何调用 ✗
+  —— binder 在建接口时就把方法取走了 ✓。要观察页面怎么调它，就在 realm 里包 `Node.prototype.<method>` ✓
+  （用 `Context.exec_js` 注入 ✓）；而 `executeScript` 型的注入口可以**每条脚本前重试** ✓
+  —— realm 的第一条脚本到达时 `Node` 还不在 ✓（实测：一次性安装只会得到 "no Node.prototype" ✗）。
+
+- **每次重新分析都重跑一份新 trace**：`script/5s.py --trace --seconds 90` ✓（窗口 90 秒见上；挑战每轮变体不同，旧日志会把上一轮的结论带偏 ✗）。
 - **`script/trace_sweep.py` 是入口**：四个桶（引擎抛错 / dispatch error / not implemented / 页面未捕获）+ `--errors`（异常连同其后几行 ✓）+ `--before eb/`（上报请求之前发生了什么 ✓）。
-- **只读插桩是定位 `AttributeError` 这类"引擎自伤"的最快路径**：trace 只给异常类型 ✗，把可疑回调包一层打印 `traceback` ✓（`5s.py` 的 `watch_calls()` ✓）一次就能拿到文件与行号 ✓。
+- **只读插桩是定位 `AttributeError` 这类"引擎自伤"的最快路径**：trace 只给异常类型 ✗，把可疑回调包一层打印 `traceback` ✓（`script/5s.py` 的 `watch_calls()` ✓）一次就能拿到文件与行号 ✓。
 - **表面类差异用 `script/surface_diff.py`**：两侧同一探针枚举成员 ✓，三个计数器（`only-chrome` / `only-here` / `kind` ✓）就是判据 ✓；`--only-missing` 只看"页面读得到、我们读 `undefined`"的那一类 ✓；全量名单落在 `surface-surface-pyv8c.json` / `surface-surface-chrome.json` ✓（探针名在前 ✓）。
 - **差异找到之后先问"基线知不知道"** ✓：`script/baseline_join.py` 把两侧读数与包内 IDL（`Idl.load(profile=None)`）按名字 join ✓，输出 `allow_call/allow_new/length/definition_kind/parent` ✓（该列原为 `as_object` ✓ —— 形状标志收敛成一个词后随之改名 ✓）—— 这一个问题就决定了改哪儿：**基线有**（引擎忽略了给它的信息 ✓）就改引擎 ✓，**基线没有/更宽**（✗）就是数据 ✓，需要重生成或收窄 ✓（canvas 那族与 `CSS` 那两条是后者 ✓）。`--holder window --chrome value --all --interfaces` 就是"基线里哪些接口 Chrome 报成对象" ✓，反向 `--chrome fn` 是防假阳性的那一步 ✓。
 - **引擎日志走 loguru，不是标准库 logging** ✗：两侧运行器里 `logging.getLogger("pyv8c").setLevel(...)` **什么都不做** ✓ —— 正确做法是 `loguru.logger.disable("pyv8c")` ✓（`skills/.../scripts/harness.py` 已这么做 ✓）。症状是探针答案被几千行 `dispatch …` 淹没 ✓。
@@ -400,8 +566,64 @@ typeof CSSMathMax.prototype[Symbol.iterator]               // "undefined" -> 缺
 - **站点上报的请求是"我们的异常"的指纹**：本例 `POST …/eb/<id>/chl_api_message` ×3 正对 3 条 `dispatch error` ✓；修好引擎异常后它随之归零 ✓。
 - **trace 是主线**：`, error:` 行数是个位数级的强信号；`answered undefined` 按名字聚合后共同守卫一眼可见。
 - **`network download:` 是"有没有发过请求"的唯一见证**：没有它，就无法区分"页面没决定发"与"我们拒了"。
-- **两侧交换表要同口径**：`5s.py` 与 `chrome_side.py` 报同样三项（交换、cookie、页面状态）才能逐行读。
+- **两侧交换表要同口径**：`script/5s.py` 与 `chrome_side.py` 报同样三项（交换、cookie、页面状态）才能逐行读。
 - **先量再断**：本轮的 `pat` 401、空 cookie 罐两条推断都被 Chrome 侧一次 13 秒的运行推翻 ⇒ 每条结论都要有两侧证据。
+- **JSD 链的起点，在"收到的 markup"和"跑过的脚本"里都不存在** ✓（2026-10-10 负结果 ✓，省下一轮 ✓）：
+  两条通道各落盘一轮 —— `script/dump_documents.py`（文档响应 ✓：403 页 10.8 KB ✓ + widget 帧 253 KB ✓）与
+  `script/dump_scripts.py --seconds 120`（6 个已执行脚本 ✓，含 240 KB 的 `chl_page` 与 246 KB 的 widget 帧 ✓）——
+  对 `jsd` / `/cdn-cgi/rum` / `oneshot` 的命中数**全是 0** ✗；403 页里拼出来的是 `orchestrate/chl_page/v1` ✓（那条我们确实发 ✓）。
+  ⇒ 下一步要分的是"**页面尝试过那条 URL、我们在它之前就丢了**"还是"页面根本没试" ✗：
+  `track_document_resource` 的失败只写 `logger.debug("resource failed: …")` ✓ ⇒ 用 DEBUG sink 跑一小段并 grep
+  `resource failed` 就能把这两种分开 ✓（INFO 级看不到它 ✗，这也是它一直隐形的原因 ✓）。
+  **已量**（`script/5s.py --log-level DEBUG` ✓，新增的开关 ✓ —— 不开 trace 也能到 DEBUG ✓）：
+  25 s 与 90 s 各一轮 ✓，`resource failed`、`jsd`、`oneshot`、`/cdn-cgi/rum` 四个计数**全是 0** ✓
+  ⇒ 这两个变体里我们**没有尝试过那条 URL、也没有丢掉任何资源** ✓ ⇒ 缺口在**网络层之前** ✓（该发它的那段代码没跑到 ✗），
+  不是"被丢掉的请求" ✓。注意同一支引擎在**修好 base URL 那轮**是发过 `jsd/main.js` 的 ✓
+  ⇒ 这一跳在**我们的**运行里由 widget 帧的内联 markup 驱动 ✓、随变体出现 ✓ ⇒ 要读它就得先撞上一轮包含它的 ✓（连跑几轮并 grep ✓），再与同轮 Chrome 对照 ✓。
+- **风味差异：Chrome 那轮是 JSD，我们连跑 5 轮都是 Turnstile** ✓（2026-10-10 实测 ✓，**尚未定论** ✗）：
+  同一台机、同一站点、同窗口 —— Chrome（`script/chrome_side.py` ✓）**1/1** 走 JSD 链并拿到 `cf_clearance` ✓；
+  我们 **5 轮**（25 s ✓ / 60 s ✓ / 60 s ✓ / 90 s ✓ / 60 s ✓，其中一轮带 `--impersonate chrome150` ✓）**全部**是
+  Turnstile 风味 ✓、`jsd` 命中 **0** ✓。两侧**首次请求**逐头对照（`script/flow_compare.py --kind root` ✓）
+  **只差一个头**：Chrome 有 `priority: u=0, i` ✓（正是 curl_cffi 的 Chrome profile 会加的那个 ✓），我们没有 ✗。
+  换传输指纹一轮**没有**改变风味 ✗ ⇒ 「风味由传输指纹决定」这条**不作为结论** ✓，也**未被证伪** ✗。
+  **已裁决**（`script/chrome_side.py` 再连跑 3 轮 ✓，**全部针对 `/`** ✓）：Chrome **4/4** 都是 JSD ✓（`jsd` 命中 7 ✓、
+  `orchestrate`/`turnstile` **各 0** ✓、`cf_clearance` 每轮都有 ✓），我们 **0/5** 全是 Turnstile ✓
+  ⇒ 在 `/` 上风味差异是真的、不随轮变 ✓（50/50 下 p≈0.008 ✓），且是**服务器在第一次 403 时就定了**的 ✓。
+  **但风味随 URL 变 ✗⇒✓**（2026-10-10 换到 `https://steamdb.info/login/` 后立即复量 ✓）：
+  **Chrome 在 `/login/` 上拿到的是 orchestrate/managed ✓**（`307 → 403 → orchestrate/chl_page/v1` ✓），
+  与我们在 `/login/` 上的风味**相同** ✓ ⇒ 上一段"Chrome 总是 JSD"只是**对 `/`** 成立 ✗，
+  不是引擎能力差异 ✓。**换到 `/login/` 后，两侧的差异变成那条 307**：
+  Chrome 是 `GET /login/ → **307** → 403` ✓，我们是 `GET /login/ → 403`（直接）✗ ——
+  即案例文档早先记过的"少一次 307"✓，在 `/login/` 上**稳定复现** ✓（在 `/` 上今天不复现 ✗）。
+  注意见证只记最终响应 ✓ ⇒ 我们那 307 也可能发生在 curl_cffi 的跟随内部而看不见 ✗（口径问题 ✓，先别下结论 ✓）。
+  **下一步（单变量 A/B，最干净）**：用两侧各自的传输指纹把**同一个 URL、同一组头**各打一次 ✓，
+  比两份 403 正文里**各自拼的是哪条 URL** ✓ —— 一份就能定位信号落在头、TLS、还是 HTTP 版本上 ✓。
+- **这台机器上已经把两个变量排除掉了** ✓（`script/flavour_probe.py` ✓，同 URL、同头、只换传输指纹 ✓，
+  看服务器 403 正文里拼的是哪条链 ✓）：
+  | 变量 | 读数 | 结论 |
+  | --- | --- | --- |
+  | 传输指纹（TLS/JA3） | `impersonate=chrome` ✓ / `chrome150` ✓ / `chrome136` ✓ 三档都给 **orchestrate** ✓（10,824 B ✓）；无 profile 那次连接超时（curl 28 ✗，未计入 ✓） | **TLS 不是那个信号** ✓ |
+  | 单看 HTTP/3 | 上面这几跳全部 **`http=3`** ✓ 且仍是 orchestrate ✓ | h3 **自身**不决定风味 ✓ |
+  同一条对照反过来说明另一个变量还活着 ✓：Chrome 那份首次请求带 **HTTP/2 伪头**（`:authority`/`:path`… ✓）
+  而我们的不带 ✓ ⇒ 两侧不在同一个 HTTP 版本上 ✓。**下一步**：让这支探针**强制 h2**（`http_version` ✓，
+  curl_cffi 的选项名 ✓ 已在 `network/curl_cffi.py` 的转发表里 ✓）再打一次 ✓ —— 若 h2 那份 403 里变成 `jsd` ✓，
+  信号就是 **HTTP 版本** ✓✓；若还是 orchestrate ✗，就继续排除（下一位候选：`priority` 头 ✓ 与连接复用/时序 ✓）。
+- **`trace_callback` 就是过滤器** ✓：`script/5s.py` 的 `--trace-only NAMES` 在回调里丢掉"没点名、也没抛错"的事件 ✓
+  —— 本地 fixture 实测：回调拿到 TOP/FRAME 的每个事件 ✓、返回 `None` 真的不落盘 ✓（`script/trace_filter_probe.py` ✓）；
+  真站那轮却仍写出 14–171 MB ✗（199,830 行里 **0 行**带 `, error:` ✓、洪水是 `getter: Window.Reflect` 19.5 万 ✓）
+  ⇒ 那些行**不可能**来自这个回调 ✓，**来源仍未定** ✗。已经排除的一项：`page.trace` 的开关**不会**顶掉回调 ✓
+  （同一探针：toggle 前后 48 → 54 个事件 ✓、0 行泄漏 ✓）。
+- **`Page.trace` 是属性，不是方法** ✗⇒✓：写 `page.trace = True` ✓；写成 `page.trace(True)` 会得到
+  `TypeError: 'bool' object is not callable` ✓ —— `--trace-after` 的第一版就是这么**静默**失败的 ✓（日志里 0 行 trace ✓）。
+- **trace 回调本身就是最好的探针** ✗⇒✓：`Browser(trace=True, trace_callback=…)` 换掉 `log_trace` ✓，
+  就能按**名字**计数、按需打 Python 栈 ✓（`script\trace_reflect.py` ✓）—— 比在页面里 hook 可靠得多 ✓
+  （页面里改描述符，挑战看得见 ✓：`script\frame_loop.py` 第一版就撞上"帧里 `Reflect` 是数据属性"✓）。
+- **卡住的 realm 叫不出来** ✗：它自己的 JS 还在跑 ⇒ `evaluate` 只会在 60 s 后 `RealmBusyError` ✓
+  ⇒ 数据必须**从 realm 里推**出来 ✓（`context.glob` 装一个 Python 回调 ✓ —— `script\frame_loop.py`
+  的 `__probe_report` ✓；从 132 行那次失败学到：`window` 在 worker 里不存在 ✓，`exec_js` 的第一次
+  调用也可能早于全局对象就绪 ✓ ⇒ bootstrap 用 `globalThis` 且只在**被接受**后才记账 ✓）。
+- **控制台是 GBK** ✗：报告里出现 `€` 之类的字符会让 `print` 抛 `UnicodeEncodeError` ✓ 整段结论消失 ✗
+  （本轮踩到一次 ✓）⇒ 打印前过滤成 ASCII ✓，字符本身留在 JSON/案例文档里 ✓。
 - **PS 里别写 Python 一行式**：引号会被吃掉（本轮踩过 ✓），改代码用编辑工具。
 - **全量回归必须跑**：改动落在上下文/导航核心路径时，全量回归抓出了 `worker=True` 那处自伤。
 

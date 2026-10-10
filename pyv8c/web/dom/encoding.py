@@ -105,10 +105,24 @@ def _view(value):
 
 
 def _bytes_of(value):
-    """The bytes of an ArrayBufferView, or ``None`` when the value is not one."""
+    """The bytes of a ``BufferSource``, or ``None`` when the value is not one.
+
+    ``BufferSource`` is an ``ArrayBuffer`` or a view over one, and ``decode`` takes either: the
+    challenge's own script hands it the buffer, and answering the bare-buffer case with the
+    ``TypeError`` cost the widget two failures it reports back to the edge (measured on a live
+    run, 2026-10-10).  A buffer is read through a ``Uint8Array`` over it, which is how every
+    other BufferSource reader here takes bytes (``web/bom/crypto.py``, ``web/bom/audio.py``).
+    """
     view = _view(value)
-    if view is None:
-        return bytes(value) if isinstance(value, (bytes, bytearray)) else None
+    if view is not None:
+        return bytes(int(view[index]) for index in range(int(view._get("byteLength"))))
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value)
+    name = (getattr(value._get("constructor"), "name", None)
+            if isinstance(value, pyv8.JSObject) else None)
+    if name != "ArrayBuffer":
+        return None
+    view = pyv8.JSTypeArray(value, pyv8.ArrayType.Uint8Array)
     return bytes(int(view[index]) for index in range(int(view._get("byteLength"))))
 
 

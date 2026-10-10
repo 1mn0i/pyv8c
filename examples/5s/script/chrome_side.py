@@ -23,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "skills"
 
 from harness import _bounded, chrome_path  # noqa: E402
 
-URL = "https://steamdb.info/"
+#: Same page as the pyv8c side, so the two tables stay comparable (``/login/`` since 2026-10-10).
+URL = "https://steamdb.info/login/"
 
 #: The hosts whose answers decide this case; anything else is noise.
 WATCHED = ("challenges.cloudflare.com", "steamdb.info")

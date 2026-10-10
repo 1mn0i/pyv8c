@@ -19,6 +19,7 @@ from ..foundation.logging import logger
 from ..foundation.environment import extension_resource
 from ..foundation.host_errors import LoadFailure
 from ..foundation.urls import DEFAULT_PORTS, absolute_url, same_origin, unloadable_scheme
+from ..web.bom.utils import page_base_url
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
 from ..network.models import NetworkRequest
@@ -464,7 +465,9 @@ class ResourceController:
         page = self.page
         if page.closed or page.context_owner.closed:
             raise LoadFailure("Page is closed")
-        target = absolute_url(url, page.url)
+        #: The base is the creator's when this document has no address of its own: a frame's
+        #: root-relative ``src`` resolves against the page that made it, as in Chrome.
+        target = absolute_url(url, page_base_url(page))
         given = dict(request or {"method": "GET"})
         request = self._request_with_environment_headers(given, page, target)
         intercepted = self._intercept(target, request)
@@ -859,7 +862,7 @@ class ResourceController:
         if page.closed or page.context_owner.closed:
             page.tasks.post(lambda: deliver(None, LoadFailure("Page is closed")))
             return handle
-        target = urljoin(page.url, str(url))
+        target = urljoin(page_base_url(page), str(url))
         given = dict(request or {})
         request = self._request_with_environment_headers(given, page, target)
         interceptor = page.resource_interceptor
@@ -1171,7 +1174,7 @@ class ResourceController:
 
     def load_iframe_response(self, iframe, response, callback):
         page = self.page
-        target = response.url or urljoin(page.url, iframe.get_src() or "about:blank")
+        target = response.url or urljoin(page_base_url(page), iframe.get_src() or "about:blank")
         child = self._child_frame_page(iframe, target)
         try:
             child.set_content(response.body_text(), url=target)
@@ -1185,7 +1188,7 @@ class ResourceController:
         markup = iframe.attributes.get("srcdoc")
         if markup is not None:
             return self.load_iframe_markup(iframe, str(markup))
-        target = urljoin(page.url, iframe.get_src() or "about:blank")
+        target = urljoin(page_base_url(page), iframe.get_src() or "about:blank")
         if page.navigation.has_navigation and not page.navigation.parsing:
             self.discover_element_resource(iframe)
             return getattr(iframe, "_child_services", None)
