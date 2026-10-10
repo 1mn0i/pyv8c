@@ -12,12 +12,19 @@ from ...foundation.arguments import (
     sequence,
     usv_string,
 )
+from ...foundation.realm import realm_of
 from ..dom.events import Event
-from .clone import rebuild_clone, unread
+from ..clone import rebuild_clone, unread
 
 
 #: What a browser hands a handler for a message's ports: one array, and frozen.
 _FROZEN_PORTS = "(ports) => Object.freeze(ports)"
+
+
+def _reading_realm(event):
+    """The realm reading this event: the one it belongs to, else the one running now."""
+    context = getattr(realm_of(event), "context", None)
+    return context if context is not None else pyv8.current_context()
 
 
 @interface('MessageEvent', 'Event')
@@ -41,7 +48,7 @@ class MessageEvent(Event):
         here, once: what the realm was handed is what it keeps, so ``data`` is the same
         object twice.  A host reading it through Python gets the bytes it holds.
         """
-        context = pyv8.current_context()
+        context = _reading_realm(self)
         if context is None:
             return rebuild_clone(self.data)
         if self._data_handed is unread:
@@ -56,7 +63,7 @@ class MessageEvent(Event):
         That is one frozen array, and the same array every time it is read; a host
         reading it through Python gets the list itself.
         """
-        context = pyv8.current_context()
+        context = _reading_realm(self)
         if context is None:
             return self.ports
         if self._ports_handed is unread:

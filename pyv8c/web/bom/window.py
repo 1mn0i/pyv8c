@@ -664,7 +664,7 @@ class Window(_SchedulingMixin, WindowProperties):
         list is applied between the two, which is what leaves the buffers it names detached on
         this side while their bytes travel in the wire.
         """
-        from ..fetch.clone import (message_transfer, rebuild_clone, structured_clone,
+        from ..clone import (message_transfer, rebuild_clone, structured_clone,
                                    transfer_ports)
 
         if value is MISSING:
@@ -729,7 +729,7 @@ class Window(_SchedulingMixin, WindowProperties):
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
         from ..page_errors import PageSyntaxError
-        from ..fetch.clone import structured_clone, transfer_ports
+        from ..clone import structured_clone, transfer_ports
         from ..fetch.events import MessageEvent
 
         # Null is an empty WindowPostMessageOptions dictionary.

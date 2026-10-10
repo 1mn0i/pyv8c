@@ -6,7 +6,7 @@ from pyv8c.engine.bindings import Idl, Bindings
 from pyv8c.foundation.host_errors import HostStateError
 from pyv8c.web.page_errors import DOMException
 from pyv8c.platform.sessions import BindingSession
-from pyv8c.web.fetch.clone import rebuild_clone, structured_clone
+from pyv8c.web.clone import rebuild_clone, structured_clone
 from pyv8c.web.fetch.response import Response
 from pyv8c.network.cookies import CookieJar
 

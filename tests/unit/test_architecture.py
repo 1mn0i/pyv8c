@@ -76,8 +76,9 @@ OPTIONAL_FEATURES = {
 }
 
 #: Web packages every feature may build on at import time.  ``page_errors`` is the layer
-#: that owns the error vocabulary, so every feature may name it.
-SHARED_WEB_PACKAGES = ("dom", "fetch", "page_errors")
+#: that owns the error vocabulary, and ``clone`` the value every channel and store crosses,
+#: so every feature may name them.
+SHARED_WEB_PACKAGES = ("clone", "dom", "fetch", "page_errors")
 
 #: ``bom`` helper modules that hold no interface behind them.
 SHARED_BOM_MODULES = ("bom.scheduling", "bom.utils")

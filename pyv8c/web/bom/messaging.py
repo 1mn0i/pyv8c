@@ -10,10 +10,17 @@ import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, is_nullish, missing_error
 from ..dom.events import EventTarget
-from ..fetch.clone import message_transfer, structured_clone, transfer_ports
+from ...foundation.realm import realm_of
+from ..clone import message_transfer, structured_clone, transfer_ports
 from ..fetch.events import MessageEvent
 
 __all__ = ["MessageChannel", "MessagePort"]
+
+
+def _posting_realm(port):
+    """The realm posting from this port: its own, else the one running now."""
+    context = getattr(realm_of(port), "context", None)
+    return context if context is not None else pyv8.current_context()
 
 
 @interface('MessagePort', 'EventTarget')
@@ -59,7 +66,7 @@ class MessagePort(EventTarget):
         #: its own data, so what the sender does to its object afterwards is not seen
         #: on the other side, and a port that outlives its realm still delivers plain
         #: values rather than objects of an isolate that is gone.
-        data = structured_clone(message, context=pyv8.current_context())
+        data = structured_clone(message, context=_posting_realm(self))
         twin = self._twin
         # The ports travel into the realm the twin dispatches in, which is why the
         # transfer is read here and not where the twin receives it.
@@ -118,7 +125,8 @@ class MessagePort(EventTarget):
         if services is not None:
             services.realm_services.materialize_interface("MessageEvent")
         self.fn_dispatchEvent(MessageEvent("message", {"data": data, "origin": "",
-                                                       "ports": ports, "isTrusted": True}))
+                                                       "ports": ports, "isTrusted": True},
+                                           services=services))
 
 
 @interface('MessageChannel', None)

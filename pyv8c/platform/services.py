@@ -131,6 +131,10 @@ class _RealmCapability(_TaskSource):
     def origin(self):
         return self._owner._origin
 
+    @property
+    def context(self):
+        return getattr(self._owner._page_realm, "context", None)
+
     def make_promise(self):
         return self._owner._scripts.make_promise()
 
@@ -262,6 +266,10 @@ class _WorkerRealmCapability(_TaskSource):
     def __init__(self, tasks, runtime):
         super().__init__(tasks)
         self._runtime = runtime
+
+    @property
+    def context(self):
+        return self._runtime.context
 
     def heap_statistics(self):
         """V8's heap numbers for this realm's isolate, in bytes."""

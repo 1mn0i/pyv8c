@@ -12,7 +12,7 @@ from ...foundation.lifecycle import ResourceScope
 from ...foundation.rejections import RejectionTracker
 from ..dom.events import PromiseRejectionEvent
 from ..page_errors import PageError
-from ..fetch.clone import structured_clone, transfer_ports
+from ..clone import structured_clone, transfer_ports
 from ..fetch.events import ErrorEvent, MessageEvent
 
 #: Schemes whose source belongs to the page: reading one is a lookup, not a load, so it can
@@ -138,7 +138,7 @@ class WorkerRuntime:
             #: A message delivered to a worker carries no origin and is a real event.
             self._scope.fn_dispatchEvent(MessageEvent("message", {
                 "data": value, "origin": "", "ports": ports, "isTrusted": True,
-            }))
+            }, services=self._realm.services if self._realm is not None else None))
         except BaseException as exc:  # a message error is reported, not raised
             self._report_error(exc)
 

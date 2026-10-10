@@ -15,6 +15,7 @@ class RealmServices(Protocol):
     url: str
     origin: Any
     closed: bool
+    context: Any
 
     def post_task(self, callback) -> None: ...
     def enqueue_microtask(self, callback) -> None: ...

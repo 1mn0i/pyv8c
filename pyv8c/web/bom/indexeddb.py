@@ -38,7 +38,7 @@ from ...foundation.logging import logger
 from ...foundation.realm import post_or_call
 from ..dom.collections import DOMStringList
 from ..dom.events import Event, EventTarget
-from ..fetch.clone import rebuild_clone, structured_clone, unread
+from ..clone import rebuild_clone, structured_clone, unread
 
 __all__ = [
     "IDBFactory", "IDBDatabase", "IDBTransaction", "IDBObjectStore", "IDBIndex",
@@ -513,6 +513,12 @@ def _store_clone(value):
     #: The caller's own context, so what goes into the store carries its bytes: an
     #: ArrayBuffer has nothing enumerable on it, and used to be stored as ``{}``.
     return structured_clone(value, context=pyv8.current_context())
+
+
+def _key_clone(value):
+    """The value a key path reads: its own clone, so no getter runs twice."""
+    context = pyv8.current_context()
+    return materialize(rebuild_clone(structured_clone(value, context=context), context))
 
 
 def _maybe_update_generator(store, key):
@@ -1281,7 +1287,7 @@ class IDBObjectStore:
                     "The object store uses in-line keys and the key parameter was provided."
                 )
             cloned = _store_clone(value)
-            extracted = _extract_key(cloned, store.key_path)
+            extracted = _extract_key(_key_clone(value), store.key_path)
             if extracted is not None:
                 return cloned, extracted
             if not store.auto_increment:
@@ -1516,7 +1522,7 @@ class IDBObjectStore:
         cloned = _store_clone(value)
         store = self._store
         if store.key_path is not None:
-            extracted = _extract_key(cloned, store.key_path)
+            extracted = _extract_key(_key_clone(value), store.key_path)
             if extracted is not None and _cmp(extracted, primary_key) != 0:
                 raise _data_error("The effective key of the cursor cannot be changed.")
 

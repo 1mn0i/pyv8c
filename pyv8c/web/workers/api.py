@@ -19,7 +19,7 @@ from ...foundation.urls import origin_string
 from ..bom.scheduling import _SchedulingMixin
 from ..bom.utils import is_secure_context
 from ..dom.events import EventTarget
-from ..fetch.clone import message_transfer
+from ..clone import message_transfer
 from ..fetch.events import ErrorEvent, MessageEvent
 
 
@@ -209,7 +209,8 @@ class Worker(EventTarget):
         if not self._terminated:
             #: A message from a worker carries no origin, and it is a real event (as in Chrome).
             self.fn_dispatchEvent(MessageEvent("message", {
-                "data": value, "origin": "", "ports": ports, "isTrusted": True}))
+                "data": value, "origin": "", "ports": ports, "isTrusted": True},
+                services=self._services))
 
     def _receive_error(self, error):
         if not self._terminated:
