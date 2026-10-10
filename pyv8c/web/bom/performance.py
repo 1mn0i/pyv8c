@@ -6,7 +6,7 @@ from pyv8 import AttributeSpec
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error
 from ...foundation.clock import clock_of
-from ...foundation.errors import V8TypeError, dom_exception
+from ..page_errors import PageTypeError, dom_exception
 from ..dom.events import EventTarget
 
 
@@ -32,11 +32,11 @@ def _now(services=None):
 
 def _double(value, message):
     if isinstance(value, bool) or is_nullish(value):
-        raise V8TypeError(message)
+        raise PageTypeError(message)
     try:
         return float(value)
     except (TypeError, ValueError) as exc:
-        raise V8TypeError(message) from exc
+        raise PageTypeError(message) from exc
 
 
 @interface('PerformanceTiming', None)
@@ -598,7 +598,7 @@ class PerformanceObserver:
         if callback is MISSING:
             raise missing_error('PerformanceObserver', 'constructor', 1, 0, constructor=True)
         if not callable(callback):
-            raise V8TypeError("Failed to construct 'PerformanceObserver': parameter 1 is not "
+            raise PageTypeError("Failed to construct 'PerformanceObserver': parameter 1 is not "
                               "of type 'Function'.")
         self._callback = callback
         self._services = services if services is not pyv8.Undefined else _realm
@@ -619,17 +619,17 @@ class PerformanceObserver:
     def fn_observe(self, options=MISSING, *_extra):
         message = "Failed to execute 'observe' on 'PerformanceObserver': "
         if options is MISSING or is_nullish(options):
-            raise V8TypeError(message + "An observe() call must include either entryTypes or "
+            raise PageTypeError(message + "An observe() call must include either entryTypes or "
                                         "type arguments.")
         options = dictionary(options, name="PerformanceObserverInit", prefix=message)
         entry_types = options.get("entryTypes", pyv8.Undefined)
         typed = options.get("type", pyv8.Undefined)
         like_types, like_type = not is_nullish(entry_types), not is_nullish(typed)
         if like_types and like_type:
-            raise V8TypeError(message + "An observe() call must not include both entryTypes "
+            raise PageTypeError(message + "An observe() call must not include both entryTypes "
                                         "and type arguments.")
         if not like_types and not like_type:
-            raise V8TypeError(message + "An observe() call must include either entryTypes or "
+            raise PageTypeError(message + "An observe() call must include either entryTypes or "
                                         "type arguments.")
         style = "entryTypes" if like_types else "type"
         previous = self._registration
@@ -644,7 +644,7 @@ class PerformanceObserver:
         self._registration = style
         if like_types:
             if isinstance(entry_types, str) or not hasattr(entry_types, "__iter__"):
-                raise V8TypeError(message + "The provided value is not of type 'sequence'.")
+                raise PageTypeError(message + "The provided value is not of type 'sequence'.")
             self._types = tuple(dom_string(item) for item in entry_types)
         else:
             self._types = (dom_string(typed),)

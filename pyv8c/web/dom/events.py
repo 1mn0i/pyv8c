@@ -20,16 +20,30 @@ from ...foundation.arguments import (
     missing_error,
     number,
 )
-from ...foundation.errors import V8TypeError
+from ...foundation.clock import clock_of
+from ...foundation.arguments import IdlArgumentError
+from ..page_errors import PageTypeError
 from ...foundation.logging import logger
 from .collections import ReadOnlyIndexedPropertyMixin
 
 _DOCUMENT_NODE = 9  # DOM standard nodeType of Document; hardcoded to avoid a dom.nodes import cycle.
 
 
+#: What the binding answers when the realm a handler was built in is gone -- the
+#: document that owned it was replaced while its task was still queued.  Nobody is left
+#: to hear the call, which is the same silence a promise settling into a gone realm gets.
+_GONE_REALM = ("no active V8 isolate", "belongs to is closed")
+
+
 def _js_call(fn, this, *args):
     if isinstance(fn, pyv8.JSObject):
-        return fn.call(this, *args)
+        try:
+            return fn.call(this, *args)
+        except RuntimeError as error:
+            if not any(phrase in str(error) for phrase in _GONE_REALM):
+                raise
+            logger.debug("an event handler of a replaced document was not called: {}", error)
+            return None
     return fn(*args)
 
 
@@ -64,10 +78,28 @@ def _nullable_string(value):
     return pyv8.Null if is_nullish(value) else dom_string(value)
 
 
+def _event_clock(services):
+    """The realm's clock: the event's own, the running one's, or the shared fallback."""
+    if services is None:
+        # A page-made event has no realm at construction; the read happens in one.
+        from ..bom.window import Window
+        window = Window._accessor_window()
+        services = getattr(window, "_services", None)
+    return clock_of(services)
+
+
+def _stamped(services, created):
+    """*created* (a ``perf_counter`` reading) as a reading of the realm's clock."""
+    clock = _event_clock(services)
+    elapsed = (time.perf_counter() - created) * 1000.0
+    return round((clock.now_ms() - elapsed) / clock.RESOLUTION_MS) * clock.RESOLUTION_MS
+
+
 @interface('Event', None)
 class Event:
 
-    def __init__(self, event_type=MISSING, options=None, *_extra, **_):
+    def __init__(self, event_type=MISSING, options=None, *_extra,
+                 services=pyv8.Undefined, _realm=None, **_):
         event_type, options = event_constructor_arguments('Event', event_type, options)
         init = event_init(options)
         self.type = event_type
@@ -76,7 +108,10 @@ class Event:
         self.target = self.currentTarget = None; self.eventPhase = 0; self.defaultPrevented = False
         self._stop = self._immediate = False; self._path = []; self._passive = False
         self._composed = boolean(init.get("composed", False))
-        self._time_stamp = time.time() * 1000.0
+        self._services = None if services is pyv8.Undefined else (services or _realm)
+        #: When the event was made, and its stamp once a realm's clock has answered.
+        self._created = time.perf_counter()
+        self._time_stamp = None if self._services is None else _stamped(self._services, self._created)
         # Trust is host state, never an EventInit member.
         self._trusted = bool(init.get("isTrusted", False)) if type(options) is dict else False
         self._persisted = bool(init.get("persisted", False)) if type(options) is dict else False
@@ -93,7 +128,10 @@ class Event:
     def set_cancelBubble(self, value):
         value = boolean(value)
         self._stop = bool(value)
-    def get_timeStamp(self): return self._time_stamp
+    def get_timeStamp(self):
+        if self._time_stamp is None:
+            self._time_stamp = _stamped(self._services, self._created)
+        return self._time_stamp
     def get_isTrusted(self): return self._trusted
     def get_composed(self): return self._composed
     def get_persisted(self): return self._persisted
@@ -319,6 +357,10 @@ class PointerEvent(MouseEvent):
         self.pointerType = dom_string(init.get("pointerType", ""))
         self.isPrimary = boolean(init.get("isPrimary", False))
         self.persistentDeviceId = integer(init.get("persistentDeviceId", 0), signed=True)
+        #: The samples this event stands for, its own reading last.  Only a move carries
+        #: them, which is the shape Chrome reports.
+        self._coalesced = (tuple(init.get("coalesced") or ())
+                           + ((self,) if str(event_type).endswith("move") else ()))
 
     def get_pointerId(self): return self.pointerId
     def get_width(self): return self.width
@@ -333,8 +375,15 @@ class PointerEvent(MouseEvent):
     def get_pointerType(self): return self.pointerType
     def get_isPrimary(self): return self.isPrimary
     def get_persistentDeviceId(self): return self.persistentDeviceId
-    # No coalescing/prediction pipeline; return empty so iterating scripts keep working.
-    def fn_getCoalescedEvents(self, *_extra): return []
+    def fn_getCoalescedEvents(self, *_extra):
+        """The samples this event stands for, its own reading last.
+
+        Chrome reports a list of one even when nothing was merged; the host's input
+        path fills it with the samples a burst of positions arrived as.
+        """
+        return list(self._coalesced)
+
+    # No prediction pipeline: Chrome reports an empty list here too.
     def fn_getPredictedEvents(self, *_extra): return []
 
 
@@ -663,8 +712,8 @@ class EventTarget:
         if isinstance(options, dict):
             try:
                 signal = abort_signal(options.get("signal"))
-            except V8TypeError as exc:
-                raise V8TypeError(
+            except (PageTypeError, IdlArgumentError) as exc:
+                raise PageTypeError(
                     "Failed to execute 'addEventListener' on 'EventTarget': Failed to read"
                     " the 'signal' property from 'AddEventListenerOptions': Failed to"
                     " convert value to 'AbortSignal'.") from exc
@@ -725,7 +774,10 @@ class EventTarget:
             raise missing_error('EventTarget', 'dispatchEvent', 1, 0, constructor=False)
         event = interface_value(event, 'Event', 'EventTarget', 'dispatchEvent', 1, nullable=False)
         if not isinstance(event, Event):
-            raise V8TypeError("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
+            raise PageTypeError("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
+        if event._services is None and self._services is not None:
+            # A host-built event is stamped where it is delivered: its clock is the target's.
+            event._services = self._services
         # Every event a page receives passes through here, trusted or not.
         logger.debug("dispatch {} on {} (trusted={}, listeners={})", event.type,
                      type(self).__name__, event._trusted,

@@ -551,6 +551,20 @@
     "texture_formats_tier1",
     "uniform_buffer_standard_layout"
   ],
+  "extensions": {
+    "cneomjecgakdfoeehmmmoiklncdiodmh": [
+      {
+        "resources": [
+          "/icons/icon_64.png",
+          "/_locales/*/messages.json"
+        ],
+        "matches": [
+          "http://*/*",
+          "https://*/*"
+        ]
+      }
+    ]
+  },
   "bindings": {
     "keys": [
       "alert",

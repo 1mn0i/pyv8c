@@ -9,7 +9,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import boolean, dom_string
-from ...foundation.errors import LegacyPropertyError, V8TypeError
+from ..page_errors import LegacyPropertyError, PageTypeError
 from .collections import DOMTokenList, HTMLFormControlsCollection, HYPERLINK_REL_TOKENS, NodeList
 from .html_elements import Element, HTMLElement, _document_url, _set_url_value, _url_value
 from .utils import crlf, encode_entries, replace_query, urlencoded
@@ -305,11 +305,11 @@ class HTMLFormElement(HTMLElement):
     def fn_requestSubmit(self, submitter=pyv8.Undefined, *_extra):
         if submitter is not pyv8.Undefined and submitter is not pyv8.Null:
             if submitter not in self._controls() or getattr(submitter, "localName", "") not in ("button", "input"):
-                raise V8TypeError("The specified value is not a submit button.")
+                raise PageTypeError("The specified value is not a submit button.")
             if getattr(submitter, "localName", "") == "input" and submitter.get_type() not in ("submit", "image"):
-                raise V8TypeError("The specified value is not a submit button.")
+                raise PageTypeError("The specified value is not a submit button.")
             if getattr(submitter, "localName", "") == "button" and submitter.get_type() != "submit":
-                raise V8TypeError("The specified value is not a submit button.")
+                raise PageTypeError("The specified value is not a submit button.")
         else:
             submitter = None
         self._submit(submitter)

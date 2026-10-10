@@ -59,7 +59,7 @@ FLAGS = ("autofocus", "inert", "focusGroupStart")
 def install(cls):
     """Give *cls* these members, and return the specs to declare them with."""
     from ...foundation.arguments import boolean, dom_string, is_nullish
-    from ...foundation.errors import V8TypeError
+    from ..page_errors import PageTypeError
 
     specs = []
 
@@ -161,7 +161,7 @@ def install(cls):
     def set_editContext(self, value):
         if is_nullish(value):
             return None
-        raise V8TypeError("Failed to set the 'editContext' property on 'HTMLElement':"
+        raise PageTypeError("Failed to set the 'editContext' property on 'HTMLElement':"
                           " Failed to convert value to 'EditContext'.")
 
     declare("editContext", get_editContext, set_editContext)

@@ -9,7 +9,9 @@ from ...idl import interface
 from ...foundation.arguments import (MISSING, callback_value, dictionary, dom_string,
                                      missing_error, number)
 from ...foundation.environment import environment_of
-from ...foundation.errors import V8TypeError, dom_exception
+from ...foundation.arguments import IdlArgumentError
+from ..page_errors import PageTypeError, dom_exception
+from ..page_errors import js_error_value
 from ..dom.events import Event, EventTarget
 from ..dom.media_source import (families_in, hardware_codecs, hardware_encoders,
                                 is_type_supported, media_facts, webrtc_codec, webrtc_supported)
@@ -171,7 +173,7 @@ class Scheduler:
             try:
                 resolve(callback() if callback is not None else None)
             except BaseException as error:
-                reject(services.realm_services.js_error_value(error))
+                reject(js_error_value(error))
 
         services.task_services.schedule(run, 0, repeat=False)
         return promise
@@ -279,7 +281,7 @@ _MEDIA_NAMES = {"video": "VideoConfiguration", "audio": "AudioConfiguration"}
 
 def _refused(method, member):
     """The ``TypeError`` Chromium answers a media-capability call it will not read with."""
-    return V8TypeError(f"Failed to execute '{method}' on 'MediaCapabilities': "
+    return PageTypeError(f"Failed to execute '{method}' on 'MediaCapabilities': "
                        f"the configuration has no valid {member}.")
 
 
@@ -365,7 +367,7 @@ class MediaCapabilities:
     def _capability(self, configuration, method):
         try:
             type_name, media = _media_configuration(configuration, method)
-        except V8TypeError as refused:
+        except (PageTypeError, IdlArgumentError) as refused:
             return settled(self._services, error=refused)
         return settled(self._services, value=self._answers(type_name, media, method))
 
@@ -387,7 +389,7 @@ class NavigatorLogin:
             raise missing_error('NavigatorLogin', 'setStatus', 1, 0, constructor=False)
         if dom_string(status) not in self._STATUSES:
             # Chrome rejects rather than throwing, which is what the probe measured.
-            return settled(self._services, error=V8TypeError(
+            return settled(self._services, error=PageTypeError(
                 "Failed to execute 'setStatus' on 'NavigatorLogin': "
                 "The provided value is not a valid LoginStatus."))
         return settled(self._services, value=None)

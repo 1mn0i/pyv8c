@@ -11,7 +11,7 @@ import json
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 
-from ..foundation.errors import NetworkError
+from ..foundation.host_errors import LoadFailure
 
 
 @dataclass
@@ -73,7 +73,7 @@ _XHR = """    const answer = await new Promise((resolve, reject) => {
                  url: String(xhr.responseURL || url),
                  text: String(xhr.responseText == null ? '' : xhr.responseText)});
       };
-      xhr.onerror = () => reject({name: 'NetworkError', message: 'XMLHttpRequest failed'});
+      xhr.onerror = () => reject({name: 'LoadFailure', message: 'XMLHttpRequest failed'});
       xhr.open(%(method)s, url);
 %(credentials)s
 %(headers)s
@@ -205,7 +205,7 @@ class JsHttpController:
     def _response(url, payload):
         """The snapshot object one answer becomes, or the error it carries."""
         if not payload.get("ok"):
-            raise NetworkError(f"{payload.get('name', 'Error')}: {payload.get('message', '')}")
+            raise LoadFailure(f"{payload.get('name', 'Error')}: {payload.get('message', '')}")
         headers = {str(name): str(value) for name, value in payload.get("headers") or ()}
         return JsHttpResponse(
             url=str(payload.get("url") or url),

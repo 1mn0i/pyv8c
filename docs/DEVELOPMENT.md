@@ -25,13 +25,18 @@ python -c "import pyv8, pyv8c; print(pyv8.__file__); print(pyv8c.__file__)"
 ## 常用验证
 
 ```powershell
-python -m pytest -q
+python -m pytest -q -n auto
 python -m pytest tests/unit/test_lazy_interface_modules.py tests/integration/test_lazy_interfaces.py -q
 python -m pytest tests/integration/test_indexeddb.py -q
 python -m pytest tests/browser/test_devtools.py -q
 python -m pytest tests/unit/test_idl_extractor.py tests/unit/test_idl_compilation.py -q
 git diff --check
 ```
+
+**测试默认并行**（`pytest-xdist`，dev extras 里）：`-n auto` 压的三套 1235 passed 实测 105.7 s → 19.9 s（16 核）。
+单文件或少数用例不要加——进程启动开销反超收益。`tests/repros` 保持串行（见下节）。并行下时序敏感的用例
+（`race`、少数语料）会因机器负载假失败，所以并行跑出的失败要去掉 `-n` 串行复跑确认。相邻 `_pyv8` 的套件
+很小，并行与串行无实质差别（403 passed，5.42 s vs 5.55 s）。
 
 Feature 全量结构校验使用：
 
@@ -70,6 +75,10 @@ python tools/check_policy.py --record-startup # 接受当前启动时延作为�
 ```powershell
 python -m pytest tests/repros -q -rs     # -rs 显示被排除的用例及原因
 ```
+
+这一套**不要加 `-n`**：它驱动本机 Chrome，那半边对线程与时序敏感（并行实测 29 failed、321 s；串行
+272 passed、17 s）。整套跑时 Chrome 对照那半边的 `greenlet.error: Cannot switch to a different thread`
+是既有环境问题——单独跑该文件正常——并行只会把它放大。
 
 - `corpus.py` 的每个 `Repro` 里 `expected` 是 pyv8c 的答案，每次运行都被断言；`expect_error` 用于
   该抛错的用例。

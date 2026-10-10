@@ -13,7 +13,7 @@ from ...foundation.arguments import (
     missing_error,
     sequence,
 )
-from ...foundation.errors import V8TypeError
+from ..page_errors import PageTypeError
 from ..dom.mixins import ReadOnlyIndexedPropertyMixin
 
 
@@ -47,7 +47,7 @@ class Headers(ReadOnlyIndexedPropertyMixin):
         if init is None:
             return
         if is_nullish(init) or isinstance(init, (str, bool, int, float)):
-            raise V8TypeError("Failed to construct 'Headers': The provided value is not of type '(sequence<sequence<ByteString>> or record<ByteString, ByteString>)'.")
+            raise PageTypeError("Failed to construct 'Headers': The provided value is not of type '(sequence<sequence<ByteString>> or record<ByteString, ByteString>)'.")
         iterable = isinstance(init, (list, tuple))
         iterator = MISSING
         if isinstance(init, pyv8.JSObject):
@@ -57,7 +57,7 @@ class Headers(ReadOnlyIndexedPropertyMixin):
         def convert_pair(entry):
             pair = sequence(entry, byte_string)
             if len(pair) != 2:
-                raise V8TypeError("Failed to construct 'Headers': Sequence initializer must only contain pair elements.")
+                raise PageTypeError("Failed to construct 'Headers': Sequence initializer must only contain pair elements.")
             return tuple(pair)
 
         if iterable:

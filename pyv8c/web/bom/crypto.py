@@ -16,7 +16,8 @@ import pyv8
 from ...idl import interface
 from ...foundation.arguments import (MISSING, dictionary, integer, missing_error,
                                      sequence)
-from ...foundation.errors import V8TypeError, dom_exception
+from ..page_errors import PageTypeError, dom_exception
+from ..page_errors import js_error_value
 
 
 #: The digest names the standard library backs, and the HMAC hash names as well.
@@ -71,7 +72,7 @@ def _bytes_of(value, method, position):
     name = (getattr(value._get("constructor"), "name", None)
             if isinstance(value, pyv8.JSObject) else None)
     if name != "ArrayBuffer":
-        raise V8TypeError(f"Failed to execute '{method}' on 'SubtleCrypto': parameter"
+        raise PageTypeError(f"Failed to execute '{method}' on 'SubtleCrypto': parameter"
                           f" {position} is not of type 'BufferSource'.")
     view = pyv8.JSTypeArray(value, pyv8.ArrayType.Uint8Array)
     return bytes(int(view[index]) for index in range(int(view._get("byteLength"))))
@@ -143,7 +144,7 @@ class SubtleCrypto:
         if error is None:
             resolve(value)
         else:
-            reject(realm.js_error_value(error))
+            reject(js_error_value(error))
         return promise
 
     def _key_for(self, key, operation):
@@ -230,7 +231,7 @@ class SubtleCrypto:
             raise missing_error('SubtleCrypto', 'exportKey', 2, 1, constructor=False)
         kind = str(format).lower()
         if not isinstance(key, CryptoKey):
-            raise V8TypeError("Failed to execute 'exportKey' on 'SubtleCrypto':"
+            raise PageTypeError("Failed to execute 'exportKey' on 'SubtleCrypto':"
                               " parameter 2 is not of type 'CryptoKey'.")
         if kind != "raw":
             return self._settle(error=_unsupported('exportKey', kind))

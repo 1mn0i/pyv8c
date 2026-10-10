@@ -14,7 +14,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
-from ...foundation.errors import InvalidStateError
+from ..page_errors import InvalidStateError
 from ...foundation.urls import origin_string
 from ..dom.events import EventTarget
 from ..fetch.events import MessageEvent

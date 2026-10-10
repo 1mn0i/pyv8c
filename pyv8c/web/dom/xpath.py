@@ -12,7 +12,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
-from ...foundation.errors import V8TypeError, dom_exception
+from ..page_errors import PageTypeError, dom_exception
 
 _AXES = ("child", "descendant", "self", "parent", "attribute")
 _PREDICATE_ATTRIBUTE = re.compile(r"^@([\w.-]+)\s*=\s*(['\"])(.*?)\2$")
@@ -255,7 +255,7 @@ class XPathResult:
         return node
 
     def _wrong(self, member):
-        raise V8TypeError(
+        raise PageTypeError(
             f"Failed to read the '{member}' property from 'XPathResult':"
             f" The result type is {self._result_type_name()}.")
 

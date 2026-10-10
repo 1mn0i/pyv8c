@@ -3,7 +3,9 @@
 import pyv8
 
 
-from ..foundation.errors import NotFoundError
+from ..foundation.host_errors import HostStateError
+from ..foundation.error_policy import is_host_failure
+from ..foundation.logging import logger
 from ..web.bom.utils import page_secure_context
 from ..web.dom.events import Event, MOTION_EVENT_TYPES
 
@@ -152,7 +154,7 @@ class DocumentLifecycle:
         if selector is not None:
             node = page.document.fn_querySelector(str(selector))
             if node is pyv8.Null or node is None:
-                raise NotFoundError(f"No element matches the selector {selector!r}")
+                raise HostStateError(f"No element matches the selector {selector!r}")
             return node
         if target == "window" or target is page.window:
             return page.window
@@ -224,6 +226,11 @@ class DocumentLifecycle:
 
         An exception raised inside a microtask job never returns to Python, so
         the isolate reports its message, position and thrown value instead.
+
+        A failure outside the error family is the host's own -- a script that could
+        not be fetched, a handler the host could not build.  What a page is told for
+        one is the ``error`` a browser reports on the element; the reason stays in the
+        log and never becomes the event's message or its ``error`` value.
         """
         if node is not None:
             self.dispatch_page_event("error", node, {"bubbles": False})
@@ -231,8 +238,15 @@ class DocumentLifecycle:
             # A browser hands handlers the original JavaScript error, so a binding
             # wrapper is replaced by the JS value it stands for.
             original = getattr(error, "original", None)
-            message = str(error)
-            value = error if original is None else original
+            if error is not None and is_host_failure(error):
+                #: The reason is the host's own -- a load that failed, a handler it could
+                #: not build -- so the page is told the script did not arrive, with no
+                #: host text and no exception object behind it; the reason goes to the log.
+                logger.warning("a script's failure was the host's own: {}", error)
+                message = "Failed to load the script"
+            else:
+                message = str(error)
+                value = error if original is None else original
         event = self.materialize_event_class("ErrorEvent")(
             "error", {
                 "message": message,

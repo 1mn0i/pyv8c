@@ -45,7 +45,7 @@ browser = Browser(real_network=False)                           # 不联网：�
 | max_workers | 两个内置 HTTP 引擎的桥接层 | 桥接线程池大小，默认 4；不转发给客户端 |
 | default_headers | curl_cffi | 作为会话选项传入；默认 False，本环境不额外添加请求头 |
 | cookies / headers | websockets | 握手是否带 context 的 cookie（默认带）；`headers` 追加握手头 |
-| proxy | 两个内置引擎的桥接层 | 出口代理，由 `Browser(proxy=...)`/`new_context(proxy=...)` 解析后注入；空串表示直连。curl_cffi 逐请求传 `proxies`（空串即钉住直连），websockets 传 `connect(proxy=...)`。见 [USAGE 的网络代理](USAGE.md) |
+| proxy | 三个内置引擎的桥接层 | 出口代理，由 `Browser(proxy=...)`/`new_context(proxy=...)` 解析后注入；空串表示直连。curl_cffi 逐请求传 `proxies`（空串即钉住直连），cronet 在构造时把 `proxies` 交给客户端，websockets 传 `connect(proxy=...)`。见 [USAGE 的网络代理](USAGE.md) |
 | 其余键 | 该引擎的客户端 | 按其构造签名转交，如 cronet 的 `timeout_ms`/`verify`、curl_cffi 的 `impersonate`、websockets 的 `open_timeout`/`ping_interval`/`max_size` |
 
 校验发生在**创建 Context 时**（`new_context()`），并且**按角色分别进行**：
@@ -65,7 +65,7 @@ browser = Browser(real_network=False)                           # 不联网：�
 browser = Browser(http_engine="cronet", http_options={"timeout_ms": 5000, "impersonete": "chrome"})
 browser.new_context()
 # TypeError: unknown option 'impersonete' for http engine 'cronet';
-#            accepted: base_url, chrometls, default_domain, headers, max_workers, proxies, timeout_ms, verify
+#            accepted: base_url, chrometls, default_domain, headers, max_workers, proxy, proxies, timeout_ms, verify
 ```
 
 各引擎的键集合来自各自客户端的构造签名：cronet 随已安装 cycronet 版本变化；curl_cffi 把会话参数 TypedDict 只留给类型检查器（运行时不存在），属于上表第三行；websockets 取已安装 `websockets.sync.client.connect` 的具名参数——它末尾的 `**kwargs` 会转交 `socket.create_connection`，因此不计入，那里的拼写错误只会在 socket 线程里炸。

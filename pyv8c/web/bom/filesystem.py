@@ -23,7 +23,7 @@ from ...foundation.arguments import (
     is_nullish,
     missing_error,
 )
-from ...foundation.errors import V8TypeError
+from ..page_errors import PageTypeError
 from ...foundation.realm import post_or_call
 from ..dom.events import Event, EventTarget, _install_handler_slots
 from ..fetch.blob import Blob
@@ -38,7 +38,7 @@ def _callback(value, name, position, optional=False):
     if value is pyv8.Undefined or value is None or value is pyv8.Null:
         if optional:
             return None
-        raise V8TypeError(f"Failed to execute '{name}' on 'Entry': parameter {position} is not a function.")
+        raise PageTypeError(f"Failed to execute '{name}' on 'Entry': parameter {position} is not a function.")
     return callback_value(value)
 
 
@@ -181,7 +181,7 @@ class DirectoryEntry(Entry):
     def fn_createReader(self, *_extra): return DirectoryReader(self._fs, self._path)
     def _child(self, name):
         name = dom_string(name)
-        if not name or "/" in str(name) or str(name) in (".", ".."): raise V8TypeError("Invalid path")
+        if not name or "/" in str(name) or str(name) in (".", ".."): raise PageTypeError("Invalid path")
         return self._path / str(name)
     def fn_getFile(self, path=MISSING, options=None, success=MISSING, error=None, *_extra):
         if path is MISSING: raise missing_error("DirectoryEntry", "getFile", 1, 0)
@@ -216,9 +216,9 @@ FileSystem = DOMFileSystem
 
 def request_file_system(window, kind, size, success, error):
     kind = integer(kind, bits=16)
-    if kind not in (0, 1): raise V8TypeError("Invalid file system type")
+    if kind not in (0, 1): raise PageTypeError("Invalid file system type")
     size = integer(size, bits=64)
-    if size < 0: raise V8TypeError("Invalid file system size")
+    if size < 0: raise PageTypeError("Invalid file system size")
     success = callback_value(success)
     if error is not pyv8.Undefined and error is not None and error is not pyv8.Null: error = callback_value(error)
     root = tempfile.mkdtemp(prefix="pyv8-fs-")

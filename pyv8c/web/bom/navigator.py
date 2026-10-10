@@ -21,7 +21,9 @@ from ...foundation.arguments import (
     usv_string,
 )
 from ...foundation.environment import BrowserEnvironment, MimeTypeView, environment_of
-from ...foundation.errors import V8TypeError, dom_exception
+from ...foundation.arguments import IdlArgumentError
+from ..page_errors import PageTypeError, dom_exception
+from ..page_errors import js_error_value
 from ...foundation.realm import post_or_call
 from ...foundation.urls import origin_string
 from ..fetch.blob import Blob
@@ -66,14 +68,14 @@ class _LegacyNamedCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMi
 
     def _item_argument(self, args, api_name):
         if not args:
-            raise V8TypeError(
+            raise PageTypeError(
                 f"Failed to execute 'item' on '{api_name}': 1 argument required, but only 0 present."
             )
         return integer(args[0], bits=32)
 
     def _named_argument(self, args, api_name):
         if not args:
-            raise V8TypeError(
+            raise PageTypeError(
                 f"Failed to execute 'namedItem' on '{api_name}': 1 argument required, but only 0 present."
             )
         return str(args[0])
@@ -213,9 +215,9 @@ class Geolocation:
         if options is not pyv8.Undefined:
             options = dictionary(options)
         if not callable(success):
-            raise V8TypeError("success callback must be callable")
+            raise PageTypeError("success callback must be callable")
         if not is_nullish(error) and not callable(error):
-            raise V8TypeError("error callback must be callable")
+            raise PageTypeError("error callback must be callable")
         self._deliver(success, error)
 
     def fn_watchPosition(self, success=MISSING, error=None, options=None, *_extra):
@@ -233,9 +235,9 @@ class Geolocation:
         if options is not pyv8.Undefined:
             options = dictionary(options)
         if not callable(success):
-            raise V8TypeError("success callback must be callable")
+            raise PageTypeError("success callback must be callable")
         if not is_nullish(error) and not callable(error):
-            raise V8TypeError("error callback must be callable")
+            raise PageTypeError("error callback must be callable")
         ident = self._next_watch
         self._next_watch += 1
         self._watchers[ident] = (success, error)
@@ -354,7 +356,7 @@ class NavigatorUAData:
             except BaseException as error:
                 # The hints convert when the promise settles, so a bad argument
                 # rejects rather than throwing.
-                reject(services.realm_services.js_error_value(error))
+                reject(js_error_value(error))
                 return
             resolve(result)
 
@@ -447,7 +449,7 @@ def _settled(services, *, value=None, error=None):
     if error is None:
         resolve(value)
     else:
-        reject(services.realm_services.js_error_value(error))
+        reject(js_error_value(error))
     return promise
 
 
@@ -526,9 +528,9 @@ class MediaDevices(EventTarget):
         try:
             options = {} if is_nullish(constraints) else dictionary(constraints)
             if not options.get("audio") and not options.get("video"):
-                raise V8TypeError("Failed to execute 'getUserMedia' on 'MediaDevices': "
+                raise PageTypeError("Failed to execute 'getUserMedia' on 'MediaDevices': "
                                   "At least one of audio and video must be requested")
-        except V8TypeError as refused:
+        except (PageTypeError, IdlArgumentError) as refused:
             return _settled(self._services, error=refused)
         return _settled(self._services,
                         error=dom_exception("NotAllowedError", "Permission denied"))
@@ -568,7 +570,7 @@ class Permissions:
         names = self._environment.permissions.names or PERMISSION_NAMES
         if name not in names:
             # The enum check rejects the promise rather than throwing at the call.
-            return _settled(self._services, error=V8TypeError(
+            return _settled(self._services, error=PageTypeError(
                 "Failed to execute 'query' on 'Permissions': Failed to read the 'name' property "
                 "from 'PermissionDescriptor': The provided value "
                 f"'{name}' is not a valid enum value of type PermissionName."))
@@ -649,7 +651,7 @@ class MediaSession:
             self._metadata = None
             return
         if not isinstance(value, MediaMetadata):
-            raise V8TypeError("Failed to set the 'metadata' property on 'MediaSession': "
+            raise PageTypeError("Failed to set the 'metadata' property on 'MediaSession': "
                               "Failed to convert value to 'MediaMetadata'.")
         self._metadata = value
 
@@ -667,14 +669,14 @@ class MediaSession:
             raise missing_error('MediaSession', 'setActionHandler', 2, 1, constructor=False)
         name = str(dom_string(action))
         if name not in _SESSION_ACTIONS:
-            raise V8TypeError("Failed to execute 'setActionHandler' on 'MediaSession': "
+            raise PageTypeError("Failed to execute 'setActionHandler' on 'MediaSession': "
                               f"The provided value '{name}' is not a valid enum value of "
                               "type MediaSessionAction.")
         if is_nullish(handler):
             self._handlers.pop(name, None)
             return None
         if not callable(handler):
-            raise V8TypeError("Failed to execute 'setActionHandler' on 'MediaSession': "
+            raise PageTypeError("Failed to execute 'setActionHandler' on 'MediaSession': "
                               "parameter 2 is not of type 'Function'.")
         self._handlers[name] = callback_value(handler)
         return None
@@ -697,15 +699,15 @@ class MediaSession:
         values = dictionary(state)
         duration = _number_or_none(values.get("duration"))
         if duration is None or duration < 0:
-            raise V8TypeError("Failed to execute 'setPositionState' on 'MediaSession': "
+            raise PageTypeError("Failed to execute 'setPositionState' on 'MediaSession': "
                               "The provided duration cannot be less than zero.")
         position = _number_or_none(values.get("position")) or 0.0
         if position > duration:
-            raise V8TypeError("Failed to execute 'setPositionState' on 'MediaSession': "
+            raise PageTypeError("Failed to execute 'setPositionState' on 'MediaSession': "
                               "The provided position cannot be greater than the duration.")
         rate = _number_or_none(values.get("playbackRate")) or 1.0
         if rate <= 0:
-            raise V8TypeError("Failed to execute 'setPositionState' on 'MediaSession': "
+            raise PageTypeError("Failed to execute 'setPositionState' on 'MediaSession': "
                               "The provided playback rate is not in the supported range.")
         return None
 
@@ -760,7 +762,7 @@ class ServiceWorkerContainer(EventTarget):
         scope = target[:target.rfind("/") + 1]
         content_type = self._script_type(target)
         if content_type is None:
-            return _settled(self._services, error=V8TypeError(
+            return _settled(self._services, error=PageTypeError(
                 "Failed to register a ServiceWorker: The script could not be fetched."))
         if not any(content_type.startswith(name) for name in _SCRIPT_MIME_TYPES):
             return _settled(self._services, error=dom_exception(
@@ -808,7 +810,7 @@ class CredentialsContainer:
                 "Only exactly one of 'password', 'federated', and 'publicKey' credential "
                 "types are currently supported."))
         if kinds[0] == "password" and "id" not in dictionary(values["password"]):
-            raise V8TypeError(
+            raise PageTypeError(
                 "Failed to execute 'create' on 'CredentialsContainer': Failed to read the "
                 "'password' property from 'CredentialCreationOptions': Failed to read the "
                 "'id' property from 'CredentialData': Required member is undefined.")
@@ -822,7 +824,7 @@ class CredentialsContainer:
         if credential is MISSING:
             raise missing_error('CredentialsContainer', 'store', 1, 0, constructor=False)
         # No Credential interface is modelled, so nothing can be one.
-        raise V8TypeError("Failed to execute 'store' on 'CredentialsContainer': "
+        raise PageTypeError("Failed to execute 'store' on 'CredentialsContainer': "
                           "parameter 1 is not of type 'Credential'.")
 
     def _kinds(self, options):
@@ -1017,7 +1019,7 @@ class Navigator:
         services = self._services
         target = urljoin(services.realm_services.url, usv_string(url))
         if urlsplit(target).scheme not in ("http", "https"):
-            raise V8TypeError("Failed to execute 'sendBeacon' on 'Navigator': Beacons are"
+            raise PageTypeError("Failed to execute 'sendBeacon' on 'Navigator': Beacons are"
                               " only supported over HTTP(S).")
         body, content_type = _beacon_body(data)
         services.resource_services.load_resource_async(target, {

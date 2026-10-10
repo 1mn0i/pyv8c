@@ -12,7 +12,7 @@ import pyv8
 from ...engine.features import LazyValueStore
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, integer, is_nullish, missing_error, usv_string
-from ...foundation.errors import SecurityError
+from ..page_errors import SecurityError
 from ..dom.collections import DOMStringList
 from ..dom.events import EventTarget, HashChangeEvent, PopStateEvent, _install_handler_slots
 from .utils import document_key

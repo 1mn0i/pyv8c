@@ -3,7 +3,7 @@
 [返回文档索引](README.md)。本页对应 [Browser 实现](../pyv8c/platform/browser.py) 与 [Page 实现](../pyv8c/platform/page.py)，不假定与 Playwright 或 Chrome API 等价。
 
 顶层只导出对象模型（`Browser`、`BrowserContext`、`Page`、`DevToolsHandle`、`DevToolsOptions`、`BrowserEnvironment`）、
-可捕获的错误（`V8Error` 家族、`DOMException`、`NetworkUnavailableError`）与网络扩展点（`NetworkBackend`、
+可捕获的错误（`PageError` 家族、`DOMException`、`NetworkUnavailableError`）与网络扩展点（`NetworkBackend`、
 `HttpTransport`/`WebSocketTransport`、`register_transport`/`register_ws_transport`/`transport_names`、
 `NetworkRequest`/`NetworkResponse`）。引擎实现类从各自模块导入，例如 `pyv8c.network.cronet.CronetTransport`。
 
@@ -38,14 +38,14 @@ Context 关闭会关闭其页面、DevTools 和网络客户端，并清理 Blob 
 | `page.dispatch_event(type, *, target="window", selector=None, event_class=None, init=None)` | 宿主侧派发 trusted 事件；返回是否未被取消，详见下节 |
 | `page.query_selector(selector)` | 返回宿主侧 DOM 节点句柄，未命中返回 None |
 | `page.set_visibility(hidden)` | 切换文档可见性并派发 visibilitychange/ freeze / resume |
-| `page.mouse.move(x, y, steps=1)` | 移动指针并派发整串边界/移动事件，见下节 |
+| `page.mouse.move(x, y, steps=None, *, duration=None)` | 移动指针并派发整串边界/移动事件，见下节 |
 | `page.mouse.down(*, button="left", click_count=None)` / `page.mouse.up(...)` | 按下 / 抬起；一次按下抬起在最近公共祖先上产生 click |
-| `page.mouse.click(x=None, y=None, *, button="left", click_count=None)` | 给了坐标先移动，再按下抬起 |
-| `page.mouse.dblclick(x=None, y=None, *, button="left")` | 两次计数连续的点击，第二次之后追加 dblclick |
-| `page.mouse.move_to_element(element, *, force=False)` / `click_element(...)` | 按元素（而非坐标）移动 / 点击，中心被遮挡时报错 |
-| `page.click(selector, *, button="left", click_count=1, force=False)` | 移到元素中心点击，含激活行为 |
-| `page.dblclick(selector, *, button="left", force=False)` | 同上，双击 |
-| `page.hover(selector, *, force=False)` | 移到元素中心，元素保持 hover |
+| `page.mouse.click(x=None, y=None, *, button="left", click_count=None, delay=None)` | 给了坐标先移动，再按下抬起 |
+| `page.mouse.dblclick(x=None, y=None, *, button="left", delay=None)` | 两次计数连续的点击，第二次之后追加 dblclick |
+| `page.mouse.move_to_element(element, *, force=False, duration=None)` / `click_element(...)` | 按元素（而非坐标）移动 / 点击，中心被遮挡时报错 |
+| `page.click(selector, *, button="left", click_count=1, force=False, delay=None, duration=None)` | 移到元素中心点击，含激活行为 |
+| `page.dblclick(selector, *, button="left", force=False, delay=None, duration=None)` | 同上，双击 |
+| `page.hover(selector, *, force=False, duration=None)` | 移到元素中心，元素保持 hover |
 | `page.trace = True/False` | 切换该页面观察状态，需要创建时配置观察能力 |
 | `page.net.fetch(url, *, method="GET", headers=None, body=None, credentials=None, timeout=30)` | 用页面自己的 `fetch` 发请求并等它落定；返回快照对象（见下节） |
 | `page.net.fetch_async(...)` | 同上，返回 `concurrent.futures.Future`，不阻塞页面 |
@@ -79,6 +79,14 @@ finally:
 
 默认 executor 自动消费事件循环；run_until_idle 是测试/等待辅助工具，并非每条语句之后都必须调用。
 持续 interval 或永不结束的脚本不能被“空闲”调用可靠收敛；等待超时也不能抢占已开始的同步 Python 回调。
+
+等待卡在哪、真正失败的是什么，都能读出来：
+
+- `page.goto` 的超时是**导航自己的**：一条命令内部文档请求与生命周期等待共享 `timeout`，超时抛出 `TimeoutError`，文案里带等待的状态、文档请求耗时、以及**仍在加载**的资源（如 `still loading 1 script`）——即"卡在哪个脚本"。
+- 子资源失败时，页面只听到 Chrome 的通用措辞，真正的原因写进日志：`resource failed: <url> (<异常>)`（DEBUG）。脚本元素也一样：`error` 事件里只有"脚本没到"这一件事，宿主的文本与异常对象都不在事件上（`event.error` 读出来是 `undefined`），原因进日志。JS 侧 `fetch`/XHR 的原因同样只进日志（`fetch failed: …`）。
+- executor 的同步调用超时抛 `RealmBusyError`：`(command cancelled)` 表示命令还在排队、可安全取消；`(already running)` 表示命令已在 owner 线程上执行——它不会被打断，**结束时把结果或异常写进日志**（WARNING，形如 `'goto' failed 61.2s after it was submitted: NetworkError: …`）。所以"看起来卡死"时先看日志里那条迟到结果。
+- `goto` 给 executor 留的宽限是 `NAVIGATION_GRACE`（5 s），保证报出原因的是导航本身而不是 executor。
+- `PYV8C_CALL_TIMEOUT` 改的是**没显式传超时**的同步调用的默认预算（默认 60 s，`0`/负值不限）。
 
 ## 事件触发
 
@@ -143,6 +151,25 @@ finally:
 
 `detail` 由计数决定：同元素、0.5 秒内、4 像素内的下一次点击计为同一次连续点击；`click_count=` 可显式指定，`mousedown`/`mouseup`/`click` 共用同一个计数。
 
+`duration=` 与 `delay=` 把节拍交给调用方。不传时一次 `move(steps=N)` 的落点在同一循环里连着发（实测整批事件时间戳差 0–1 ms），而真 Chrome 对手工输入也按帧投递（实测相邻落点间隔 14–17 ms），所以「像不像真人」的差别主要在这里：
+
+```python
+page.hover("#next", duration=0.15)               # 接近用 150 ms
+page.click("#next", delay=0.06)                  # 按下到抬起停 60 ms
+page.mouse.move(400, 300, steps=12, duration=0.25)
+```
+
+节拍是宿主侧的**真实等待**：文档的时钟跟着真实时间走（`performance.now()` 与 `Event.timeStamp` 都如此），暂停是让落点真正分开的唯一手段；`page.run_until_idle(timeout=…)` 在页面空闲时会立刻返回，不能当节拍器用。每个落点又是一次全树命中测试（与 `document.elementFromPoint` 同一套几何），小页面约 10 ms、Radisson 那类真页面约 0.9 s，所以 `duration` 与采样数要按页面规模取舍。
+
+`curve="human"` 让落点走一条弧线（二次贝塞尔 + 缓入缓出 + 小幅抖动），端点仍**精确**落在目标上；`seed=` 让同一条路径可复现，不传则每次自己弯一个方向。元素级入口同样接受它：
+
+```python
+page.hover("#next", curve="human", duration=0.3, seed=1)    # 像手一样绕过去再停住
+page.mouse.move(900, 500, curve="human", seed=2)            # 采样数默认 24，可用 steps= 指定
+```
+
+事件的 `timeStamp` 读的是文档自己的时钟（与 `performance.now()` 同一时间轴，自 `timeOrigin` 起算）：脚本 `new Event(...)` 在构造那一刻取值，派发不再改。`performance.timeOrigin` 仍是 epoch 毫秒。
+
 激活行为在 `click` 未被取消时执行：`<a href>` 走 `location`（因此 `#fragment` 是同文档导航）、checkbox/radio 翻转并触发 trusted 的 `input`/`change`、`<label>` 先聚焦再点它的控件、submit/reset 按钮按 `requestSubmit`/`reset` 走（含校验与 `submit` 事件，被取消则不提交；提交本身发出什么见下一段）。`<a download>` 不导航，`target="_blank"` 不新开页面。
 
 `element.click()` 走同一套：派发一个 `isTrusted=false`、`detail=0`、坐标为原点的 `click`，再执行激活行为。所以 `a.click()` 会导航、`checkbox.click()` 会翻转，而被禁用的控件什么都不派发。`<label>` 的转发分两种：真实鼠标点击转发的是**它收到的那次按下**（保留坐标、计数与 trust），脚本 `label.click()` 转发的则是合成点击。
@@ -159,6 +186,8 @@ finally:
 - `page.click`/`hover`/`dblclick` 不等待：没有渲染循环，也就没有“元素稳定”可等。选择器未命中抛 `NotFoundError`，元素无盒子（未渲染）抛 `InvalidStateError`；中心被别的元素占住时默认拒绝并说明是谁，`force=True` 表示“照点”，此时事件落在遮挡者身上。提交请求同样是排队发出的，`page.click` 不等待它：要看结果用 `page.run_until_idle()` 或等 `page.url` 变化。
 - 表单提交还不实现提交者对 action/enctype/method 的覆盖（`formaction`/`formenctype`/`formmethod`/`formnovalidate`，`<button>` 上也还没有这些属性）、`method=dialog`（没有对话框 UI，视为不提交）、`<input type=file>`（没有文件选择器，永远不产生条目）与 `input type=image` 的 x/y 坐标。
 - 没有滚轮、键盘、触摸与拖放 API；`page.mouse` 不实现指针捕获与 `pointercancel`。
+- `pointermove.getCoalescedEvents()` 给出该次输入里已合并的落点，末项是事件自身；一批落点（同一次 `move(steps=N)` 且无 `duration`）会累积到每个事件上，带节拍时每个落点自成一批。真 Chrome 在无合并时返回长度 1 的**等值副本**（不是同一个对象），我们不复制。`getPredictedEvents()` 恒为 `[]`，与 Chrome 的实测一致。移动类以外的指针事件（over/out/enter/leave/down/up）返回空列表，与 Chrome 相同。
+- `click`/`auxclick`/`contextmenu`/`dblclick` 在这里是 `MouseEvent`，真 Chrome 派发的是 `PointerEvent`（因此没有 `pointerId`/`pointerType`/`isPrimary`，`e.constructor` 与 `instanceof` 也不同）。这条差异由 `tests/repros/test_mouse_events_vs_chrome.py` 的记录器捕获（对照时只对移动类事件比较合并表形状）。
 
 ## 文档写入
 
@@ -296,6 +325,7 @@ $env:PYTHONPATH = 'D:\src\pyv8env\pyv8c'
 python tools/collect_environment.py                       # 写随包 profile（pyv8c/data/chrome-environment.json）
 python tools/collect_environment.py --out -               # 写到标准输出
 python tools/collect_environment.py --headed --window-size 1920,1080 --accept-lang en-US,en
+python tools/collect_environment.py --profile "C:\Users\me\AppData\Local\Google\Chrome\User Data"
 ```
 
 - 产物只含**真实读到**的键（字段表中 `collected=True` 的那批）：缺一个即报错并以非零码退出，不会静默回落默认值。
@@ -306,6 +336,10 @@ python tools/collect_environment.py --headed --window-size 1920,1080 --accept-la
 - 产物还带 `bindings` 段（`keys` 与 `exposed`）：参照浏览器实际装到多少，接口装配用它收窄 baseline，
   不手写名单。它不属于环境键，`BrowserEnvironment` 读 profile 时跳过，`engine/idl.py` 单独读这一段。
   一次运行同时给出两份事实，所以两者不可能来自不同浏览器。
+- 产物还带环境键 `extensions`：本机**已启用且公开了资源**的扩展，`id -> [{resources, matches}]`（Chrome 自己的
+  `web_accessible_resources` 形状），被权限变更暂停（`disable_reasons` 非空）的扩展不在其中。页面无法枚举扩展，
+  所以这一项由采集器从浏览器自己的 profile 读取：`--profile` 指向 user-data-dir 或其中某个 profile，默认用本机的。
+  资源层用它回答页面发出的 `chrome-extension://` 加载，见 [资源加载、拦截与缓存](resource-interception.md)。
 - 默认无头启动，UA 因而会是 `HeadlessChrome/…`；要正常 UA 加 `--headed`。
 - 调试端口本身会让 `navigator.webdriver` 为真；采集器用 `--disable-blink-features=AutomationControlled`
   中和这项由自己引入的痕迹，该参数同样记录在 `source.arguments` 中，便于复核。
@@ -406,7 +440,7 @@ finally:
 | --- | --- |
 | 非 http/https（如 `socks5://`）、缺 scheme、缺主机、端口不可解析 | 构造 Browser 或 `new_context(proxy=...)` 时 `ValueError`（非字符串为 `TypeError`） |
 | `real_network=False` 却给了代理 | 创建 Context 时 `TypeError`：没有引擎能承载它 |
-| 引擎不声明支持代理（如 cronet） | 创建 Context 时 `TypeError`，指出该引擎不能被代理 |
+| 引擎不声明支持代理（内置三个都声明了，自定义引擎默认没有） | 创建 Context 时 `TypeError`，指出该引擎不能被代理 |
 | 同时给了 `proxy=` 与该角色自己的代理键（`proxy`/`proxies`/`proxy_auth`） | 创建 Context 时 `TypeError`，指出该保留哪一个 |
 
 不做的部分：SOCKS4/5、PAC、页级覆盖、代理健康检查。自定义引擎要用代理，需在注册时声明 `proxy=True`（见 [网络引擎与参数](network-engines.md)）。

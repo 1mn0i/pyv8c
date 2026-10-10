@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 
-from pyv8c.foundation.errors import DOMException  # skipped before import
+from pyv8c.foundation.host_errors import HostStateError
 
 
 @pytest.fixture
@@ -56,9 +56,9 @@ def test_dispatch_event_reports_cancellation(host_page):
 
 
 def test_dispatch_event_validates_its_arguments(host_page):
-    with pytest.raises(DOMException) as missing:
+    with pytest.raises(HostStateError) as missing:
         host_page.dispatch_event("click", selector="#missing")
-    assert missing.value.get_name() == "NotFoundError"
+    assert "No element matches" in str(missing.value)
     with pytest.raises(ValueError):
         host_page.dispatch_event("click", target="body")
     with pytest.raises(TypeError):

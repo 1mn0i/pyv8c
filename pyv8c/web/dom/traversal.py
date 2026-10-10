@@ -8,7 +8,7 @@ import pyv8
 from ...idl import interface
 from ...foundation.arguments import (MISSING, callback_value, integer, is_nullish,
                                      missing_error)
-from ...foundation.errors import V8TypeError
+from ..page_errors import PageTypeError
 
 
 #: What a filter answers, and what ``whatToShow`` masks are built from.
@@ -54,7 +54,7 @@ class _Traversal:
             return FILTER_ACCEPT
         answer = integer(_js_call(self._filter, pyv8.Null, node), signed=True, bits=16)
         if answer not in (FILTER_ACCEPT, FILTER_REJECT, FILTER_SKIP):
-            raise V8TypeError("The filter function returned a value that is not one of"
+            raise PageTypeError("The filter function returned a value that is not one of"
                               " the NodeFilter constants.")
         return answer
 

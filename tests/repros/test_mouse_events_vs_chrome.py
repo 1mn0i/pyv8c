@@ -34,7 +34,12 @@ const record = (type) => (e) => log.push([type, e.target.id || e.target.localNam
     String(e.detail), String(e.isTrusted), String(e.button), String(e.buttons),
     String(Math.round(e.clientX)), String(Math.round(e.clientY)),
     String(Math.round(e.pageX)), String(Math.round(e.pageY)),
-    String(Math.round(e.movementX)), String(Math.round(e.movementY))]);
+    String(Math.round(e.movementX)), String(Math.round(e.movementY)),
+    String(Math.abs(e.timeStamp - performance.now()) < 1000),
+    String(e.type.endsWith('move')
+        ? (e.getCoalescedEvents ? (() => { const merged = e.getCoalescedEvents();
+              return merged.length >= 1 && merged[0] instanceof PointerEvent; })() : false)
+        : true)]);
 for (const type of ['pointerover', 'pointerout', 'pointerenter', 'pointerleave', 'pointermove',
                     'pointerdown', 'pointerup', 'mouseover', 'mouseout', 'mouseenter',
                     'mouseleave', 'mousemove', 'mousedown', 'mouseup', 'click', 'dblclick',
@@ -215,3 +220,29 @@ def test_the_two_browsers_dispatch_the_same_sequence(compared):
 def test_the_same_scenarios_agree_on_the_coordinates_too(compared):
     chrome, here = compared
     assert here == chrome
+
+
+@pytest.fixture(scope="module")
+def timestamped(reference):
+    """One scenario's logs, for the question the sequence comparison does not ask."""
+    steps = SCENARIOS["click-a-button"]
+    return _chrome_log(reference, steps), _here_log(steps)
+
+
+def test_both_browsers_stamp_events_on_the_documents_own_clock(timestamped):
+    """A page can compare an event's timeStamp with performance.now() on either side."""
+    chrome, here = timestamped
+    assert here and {row[12] for row in here} == {"true"}
+    assert {row[12] for row in chrome} == {"true"}
+
+
+def test_both_browsers_report_the_same_shape_of_merged_samples(timestamped):
+    """A pointer event's merged samples read as a non-empty list of pointer events.
+
+    Only that much is compared: Chrome hands back a copy with coordinates of its own
+    where this one reports the event itself, and how many samples an input step
+    carries is not a contract either side can be held to.
+    """
+    chrome, here = timestamped
+    assert here and {row[13] for row in here if row[0] == "pointermove"} == {"true"}
+    assert [row[13] for row in here] == [row[13] for row in chrome]

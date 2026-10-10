@@ -1,4 +1,9 @@
-"""Guard the package layering introduced by the domain-package refactor."""
+"""Guard the package layering introduced by the domain-package refactor.
+
+One rule about errors lives with these: an error a realm can be shown is built where a
+page could be the cause of one, which is ``web/``.  ``tests/unit/test_error_provenance.py``
+holds it, with the registered exceptions and the reason each cannot reach a realm.
+"""
 
 import ast
 import importlib
@@ -29,8 +34,9 @@ PUBLIC_SURFACE = {
     "HttpTransport", "WebSocketTransport", "NetworkBackend",
     "register_transport", "register_ws_transport", "transport_names",
     "NetworkRequest", "NetworkResponse", "NetworkUnavailableError",
-    "V8Error", "V8TypeError", "V8RangeError", "V8ReferenceError", "V8SyntaxError",
-    "V8URIError", "V8EvalError", "DOMException",
+    "PageError", "PageTypeError", "PageRangeError", "PageReferenceError", "PageSyntaxError",
+    "PageURIError", "PageEvalError", "DOMException",
+    "HostFailure",
 }
 
 
@@ -39,7 +45,7 @@ def test_the_root_exports_only_the_public_surface():
     # The root must remain importable for the standalone Chromium extractor;
     # resolving browser classes themselves requires the optional native pyv8.
     assert callable(pyv8c.__getattr__)
-    for internal in ("CronetTransport", "CurlCffiTransport", "WebSocketsTransport", "as_js_error"):
+    for internal in ("CronetTransport", "CurlCffiTransport", "WebSocketsTransport"):
         with pytest.raises(AttributeError):
             getattr(pyv8c, internal)
 
@@ -69,8 +75,9 @@ OPTIONAL_FEATURES = {
     "web/workers/runtime.py": ("workers", 2),
 }
 
-#: Web packages every feature may build on at import time.
-SHARED_WEB_PACKAGES = ("dom", "fetch")
+#: Web packages every feature may build on at import time.  ``page_errors`` is the layer
+#: that owns the error vocabulary, so every feature may name it.
+SHARED_WEB_PACKAGES = ("dom", "fetch", "page_errors")
 
 #: ``bom`` helper modules that hold no interface behind them.
 SHARED_BOM_MODULES = ("bom.scheduling", "bom.utils")
@@ -320,7 +327,7 @@ def test_page_keeps_only_user_facing_api():
 
     for name in (
         "post_task", "schedule", "cancel", "begin_network", "complete_network",
-        "begin_worker", "complete_worker", "make_promise", "js_error_value",
+        "begin_worker", "complete_worker", "make_promise",
         "promise_resolve", "install_inline_handler", "load_resource",
         "load_resource_async", "load_iframe", "resolve_worker_source",
         "websocket", "close_websocket", "network_available", "cookie_jar",

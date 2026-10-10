@@ -6,7 +6,7 @@ from urllib.parse import urljoin
 
 import pyv8
 
-from ..foundation.errors import InvalidStateError
+from ..foundation.host_errors import HostStateError
 from ..foundation.tasks import TaskSource
 
 
@@ -44,8 +44,8 @@ class ScriptController:
         """The realm this controller borrows its promises from.
 
         The realm owns the context, so it is also what answers once that context is gone: a
-        promise, a microtask or a rejection reason built by the replaced document reaches the
-        realm it was made in, not whichever realm the page has by then.
+        promise or a microtask built by the replaced document reaches the realm it was made
+        in, not whichever realm the page has by then.
         """
         realm = self._realm_owner
         if realm is None:
@@ -54,10 +54,6 @@ class ScriptController:
 
     def make_promise(self):
         return self._realm.make_promise()
-
-    def js_error_value(self, exc):
-        """What a rejection should carry for *exc*."""
-        return self._realm.js_error_value(exc)
 
     def promise_resolve(self, value):
         return self._realm.promise_resolve(value)
@@ -68,7 +64,7 @@ class ScriptController:
 
     def evaluate(self, script, filename=None):
         if self.page.closed or self.page.context_owner.closed:
-            raise InvalidStateError("Page is closed")
+            raise HostStateError("Page is closed")
         target = self.page._devtools_target
         if target is not None:
             target.before_script()
@@ -204,10 +200,13 @@ class ScriptController:
             if not node._resource_async:
                 self.dom_blocking_scripts += 1
                 self.queue.append(node)
-            page.resources.track_document_resource(
-                node, node.get_src(),
-                {"method": "GET", "mode": "same-origin", "resource_type": "script"}, "script"
-            )
+            #: A classic script is a no-cors load; a module script, and one that says
+            #: ``crossorigin``, asks for CORS.
+            script_request = {"method": "GET", "resource_type": "script"}
+            if str(node.attributes.get("type", "")).lower() == "module" \
+                    or node.attributes.get("crossorigin") is not None:
+                script_request["mode"] = "cors"
+            page.resources.track_document_resource(node, node.get_src(), script_request, "script")
         else:
             # A script's source is its text content: _raw_text only holds the parse-time
             # copy, which a script built with textContent has none of.

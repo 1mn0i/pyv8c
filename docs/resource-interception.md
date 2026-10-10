@@ -96,6 +96,23 @@ python -m pip install -e ".[network]"
 跟随由资源层完成（见 [redirects.py](../pyv8c/network/redirects.py)），引擎一律被要求不自己跟随；逐跳 CORS 只在该路径本来就会执行响应策略时进行，
 因此同步 loader 路径既不重跑策略，也不逐跳检查。重定向链的 `redirect: "manual"` 交付 opaque redirect（status 0、type opaqueredirect、url 为请求 URL），`redirect: "error"` 与跳数超限都是网络错误。
 
+## chrome-extension:
+
+`http`/`https`/`about`/`blob`/`data` 以外，页面发出的加载在资源层就被拒绝，不会上网——`chrome-extension:`、`devtools:` 这类 scheme 属于浏览器自己。
+
+例外是**已安装且正在运行**的扩展向页面公开的资源：环境键 `extensions` 记录 `id -> [{resources, matches}]`（就是 Chrome 自己的 `web_accessible_resources` 形状），资源层据此本地回答。命中时 `type` 为 `basic`（Chrome 对这类资源免 CORS，`fetch`/XHR 与元素加载都拿得到），且不经过拦截器之外的任何网络路径；未声明的 id、未公开的路径、`matches` 未点名当前来源、以及被暂停（`disable_reasons` 非空）的扩展一律照常失败——这与 Chrome 实测一致。
+
+```python
+browser = Browser(environment={"extensions": {
+    "cneomjecgakdfoeehmmmoiklncdiodmh": [
+        {"resources": ["/icons/icon_64.png", "/_locales/*/messages.json"],
+         "matches": ["http://*/*", "https://*/*"]},
+    ],
+}})
+```
+
+档案里没有文件的**字节**：命中时按路径后缀给一份同类型的占位内容（图片 1×1 PNG、SVG 16×16、文本为空）。所以"取不取得到"与 Chrome 一致，`naturalWidth` 之类的**具体尺寸**不保证一致；要完全一致得把文件本身带进档案。
+
 ## 磁盘缓存
 
 仅 Browser(cache=True, cache_dir="./.pyv8c-cache") 会写入资源响应缓存；默认 cache_dir=None 没有持久响应缓存。
@@ -114,7 +131,8 @@ cache=False 关闭响应缓存使用；Browser.close 不删除显式持久目录
 ## 回归入口
 
 [导航测试](../tests/integration/test_navigation.py)、[网络后端测试](../tests/unit/test_network_backend.py)、
-[生命周期测试](../tests/integration/test_lifecycle.py)、[竞态回归](../tests/integration/test_race_regressions.py)。
+[生命周期测试](../tests/integration/test_lifecycle.py)、[竞态回归](../tests/integration/test_race_regressions.py)、
+[扩展资源测试](../tests/integration/test_extension_resources.py)。
 重定向的规则表见 [单元用例](../tests/unit/test_redirect_rules.py)，loader 驱动的完整行为见 [集成用例](../tests/integration/test_redirects.py)，
 与本机 Chrome 的逐条对照见 [对照用例](../tests/repros/test_redirects_vs_chrome.py)。
 实际 Cookie 行为见 [cookies.py](../pyv8c/network/cookies.py) 与 [document.cookie 测试](../tests/browser/test_document_cookie.py)。

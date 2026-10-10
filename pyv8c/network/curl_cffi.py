@@ -11,7 +11,7 @@ from threading import RLock
 
 from ..foundation.logging import logger
 
-from ..foundation.errors import InvalidStateError, NetworkError
+from ..foundation.host_errors import HostStateError, LoadFailure
 from .backend import RequestDelivery
 from .cookies import CookieJar
 from .models import (
@@ -100,7 +100,7 @@ class CurlCffiTransport(RequestDelivery):
 
     def _call(self, request: NetworkRequest):
         if self._closed:
-            raise InvalidStateError("network backend is closed")
+            raise HostStateError("network backend is closed")
         logger.debug("network download: {} {}", request.method, request.url)
         headers = dict(request.headers)
         cookie = cookie_header(self.cookies, request)
@@ -128,7 +128,7 @@ class CurlCffiTransport(RequestDelivery):
         try:
             raw = self.session.request(str(request.method).upper(), request.url, **kwargs)
         except Exception as exc:  # every transport failure reads the same here
-            raise NetworkError(f"{request.method} {request.url} failed: {exc}") from exc
+            raise LoadFailure(f"{request.method} {request.url} failed: {exc}") from exc
         response = self._response(raw, request.url, time.perf_counter() - started)
         set_cookie = response.headers.get("set-cookie")
         if set_cookie:

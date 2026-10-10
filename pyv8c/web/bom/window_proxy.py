@@ -125,6 +125,16 @@ class WindowProxy:
             return frame._child_services.window
         return self._child_context.window
 
+    def __getattr__(self, name):
+        """What a forwarded member asks of its own window is answered by the child.
+
+        A member the interceptor hands over runs with the proxy as its receiver, so
+        ``self._services`` and the rest would look for the child's state here.
+        """
+        if "_child_context" not in self.__dict__:
+            raise AttributeError(name)
+        return getattr(self._child_window, name)
+
     #: The names a cross-origin caller may read; see :mod:`dom.window`.
     _safe_names = _PROXY_SAFE_NAMES
 

@@ -4,11 +4,14 @@ Every sequence asserted here is the one Chrome 153 was observed dispatching for
 the same scenario; ``tests/repros/test_mouse_events_vs_chrome.py`` re-runs them
 side by side and compares the two logs.
 """
+import time
+
 import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 
-from pyv8c import Browser, DOMException
+from pyv8c import Browser
+from pyv8c.foundation.host_errors import HostStateError
 
 #: Records the members the mouse events are held to, in the order they fire.
 #: Coordinates are left out: the layout model is coarser than Chromium's for
@@ -94,6 +97,39 @@ def test_a_first_move_reports_both_over_events_then_both_move_events(page):
         ["pointermove", "a", "0", "true", "-1", "0"],
         ["mousemove", "a", "0", "true", "0", "0"],
     ]
+
+
+def hit_tests(page, monkeypatch, action):
+    """How many hit tests *action* makes: one walk of the tree per input position."""
+    from pyv8c.platform import input as input_module
+
+    asked = []
+    original = input_module.element_from_point
+
+    def counted(document, x, y):
+        asked.append((x, y))
+        return original(document, x, y)
+
+    monkeypatch.setattr(input_module, "element_from_point", counted)
+    action()
+    return len(asked)
+
+
+def test_a_step_asks_which_element_is_under_the_cursor_once(page, monkeypatch):
+    """The hit test walks the document, so a position resolves its point once."""
+    assert hit_tests(page, monkeypatch, lambda: page.mouse.move(50, 20, steps=3)) == 3
+
+
+def test_a_press_and_a_release_each_read_their_own_position(page, monkeypatch):
+    assert hit_tests(page, monkeypatch, lambda: page.mouse.click(50, 20)) == 3
+
+
+def test_hovering_an_element_reuses_the_hit_the_covered_check_read(page, monkeypatch):
+    assert hit_tests(page, monkeypatch, lambda: page.hover("#a")) == 1
+
+
+def test_clicking_an_element_reuses_it_for_the_move_only(page, monkeypatch):
+    assert hit_tests(page, monkeypatch, lambda: page.click("#a")) == 3
 
 
 def test_the_page_reports_the_cursor_arriving_in_it_once(page):
@@ -282,15 +318,14 @@ def test_a_disabled_control_receives_pointer_events_only(page):
 
 def test_clicking_an_element_with_no_box_is_refused(page):
     page.evaluate("document.body.innerHTML = '<div id=\"flat\" style=\"height:0\"></div>'")
-    with pytest.raises(DOMException) as refused:
+    with pytest.raises(HostStateError) as refused:
         page.click("#flat")
-    assert refused.value.get_name() == "InvalidStateError"
     assert "no box to click" in str(refused.value)
 
 
 def test_moving_to_an_element_that_is_not_rendered_is_refused(page):
     page.evaluate("document.body.innerHTML = '<div id=\"gone\" style=\"display:none\"></div>'")
-    with pytest.raises(DOMException) as refused:
+    with pytest.raises(HostStateError) as refused:
         page.hover("#gone")
     assert "not rendered" in str(refused.value)
 
@@ -478,9 +513,9 @@ def test_page_click_moves_to_the_element_and_clicks_it(page):
 
 
 def test_page_click_refuses_a_selector_that_matches_nothing(page):
-    with pytest.raises(DOMException) as refused:
+    with pytest.raises(HostStateError) as refused:
         page.click("#missing")
-    assert refused.value.get_name() == "NotFoundError"
+    assert "No element matches" in str(refused.value)
 
 
 def test_page_hover_leaves_the_element_hovered(page):
@@ -495,3 +530,167 @@ def test_page_dblclick_counts_both_clicks(page):
     assert [(row[0], row[2]) for row in page.evaluate("log") if row[0] == "click"] == [
         ("click", "1"), ("click", "2"),
     ]
+
+
+# -- what an event's timeStamp reads -------------------------------------------
+
+
+def test_a_dispatched_event_is_stamped_on_the_documents_clock(page):
+    """Chrome reports the reading a page can compare with performance.now() directly."""
+    page.evaluate("""(() => { globalThis.stamps = [];
+      addEventListener('mousemove', (e) => stamps.push([e.timeStamp, performance.now()])); })()""")
+    page.mouse.move(50, 20)
+    stamp, now = page.evaluate("stamps[0]")
+    assert 0 <= stamp <= now + 1
+
+
+def test_a_page_made_event_keeps_the_moment_it_was_made(page):
+    """The stamp belongs to the moment of construction: reading it later still reports then."""
+    page.evaluate("globalThis.made = new Event('x')")
+    # The document's clock follows real time, so a host pause is the wait that shows it.
+    page.run_until_idle(timeout=0)
+    time.sleep(0.05)
+    behind = page.evaluate("globalThis.made.timeStamp - performance.now()")
+    assert -200 <= behind <= -20, behind
+
+
+def test_a_subclass_a_page_constructs_is_stamped_too(page):
+    deltas = page.evaluate(
+        "[(() => new Event('x').timeStamp - performance.now())(),"
+        " (() => new MouseEvent('x').timeStamp - performance.now())()]")
+    assert all(-10 <= delta <= 1 for delta in deltas), deltas
+
+
+def test_time_origin_still_reads_the_wall_clock(page):
+    """The stamp moved onto the document's clock; timeOrigin stays epoch milliseconds."""
+    assert page.evaluate("Math.abs(performance.timeOrigin - Date.now()) < 60000") is True
+
+
+# -- pacing --------------------------------------------------------------------
+
+
+def test_a_move_without_a_duration_dispatches_its_positions_at_once(page):
+    """The default stays a burst, which is what a driver that wants speed asks for."""
+    page.evaluate("""(() => { globalThis.times = [];
+      addEventListener('mousemove', (e) => times.push(e.timeStamp)); })()""")
+    page.mouse.move(50, 20, steps=4)
+    times = page.evaluate("times")
+    assert len(times) == 4
+    assert times[-1] - times[0] < 30
+
+
+def test_a_move_with_a_duration_spreads_its_positions_over_it(page):
+    """Chrome delivers a position per frame; ``duration`` is how a driver asks for that."""
+    page.evaluate("""(() => { globalThis.times = [];
+      addEventListener('mousemove', (e) => times.push([e.timeStamp, performance.now()])); })()""")
+    started = time.perf_counter()
+    page.mouse.move(50, 20, steps=4, duration=0.2)
+    elapsed = time.perf_counter() - started
+    times = page.evaluate("times")
+    gaps = [times[index + 1][0] - times[index][0] for index in range(len(times) - 1)]
+    assert elapsed >= 0.18, elapsed
+    assert len(gaps) == 3 and min(gaps) >= 30, gaps
+    # The document's own clock moved with the pauses, which is what makes them real.
+    assert times[-1][1] - times[0][1] >= 150, times
+
+
+def test_a_click_can_hold_the_button_down_for_a_delay(page):
+    """A press lasts a moment in Chrome; ``delay`` is the pause before the release."""
+    page.evaluate("""(() => { globalThis.down = 0; globalThis.held = 0;
+      addEventListener('mousedown', () => { globalThis.down = performance.now(); }, true);
+      addEventListener('mouseup', () => { globalThis.held = performance.now() - globalThis.down; },
+                       true); })()""")
+    page.mouse.click(50, 20, delay=0.06)
+    assert page.evaluate("globalThis.held") >= 40
+
+
+# -- the shape of a move -------------------------------------------------------
+
+
+def positions(page, action):
+    """The positions *action* reports: pointer events keep the fractional coordinates."""
+    page.evaluate("""(() => {
+      if (!globalThis.recording) {
+        globalThis.recording = true;
+        addEventListener('pointermove', (e) => globalThis.positions.push([e.clientX, e.clientY]));
+      }
+      globalThis.positions = [];
+    })()""")
+    action()
+    return page.evaluate("globalThis.positions")
+
+
+def test_a_straight_move_keeps_to_the_line_between_its_ends(page):
+    points = positions(page, lambda: page.mouse.move(120, 80, steps=4))
+    assert points[-1] == [120.0, 80.0]
+    assert [point[1] * 3 - point[0] * 2 for point in points] == [0.0] * 4
+
+
+def test_a_human_curve_bows_away_from_that_line_and_lands_on_the_target(page):
+    from pyv8c.platform.input import HUMAN_SAMPLES
+
+    points = positions(page, lambda: page.mouse.move(300, 200, curve="human", seed=7))
+    assert len(points) == HUMAN_SAMPLES
+    assert points[-1] == [300.0, 200.0]
+    assert any(abs(point[1] * 3 - point[0] * 2) > 1 for point in points)
+
+
+def test_a_curve_reports_the_count_it_is_given(page):
+    points = positions(page, lambda: page.mouse.move(300, 200, curve="human", steps=5, seed=7))
+    assert len(points) == 5
+    assert points[-1] == [300.0, 200.0]
+
+
+def test_the_same_seed_replays_the_same_path(page):
+    first = positions(page, lambda: page.mouse.move(300, 200, curve="human", seed=7))
+    page.mouse.move(0, 0)
+    second = positions(page, lambda: page.mouse.move(300, 200, curve="human", seed=7))
+    assert first == second
+
+
+def test_an_unknown_curve_is_refused(page):
+    with pytest.raises(ValueError):
+        page.mouse.move(10, 10, curve="spiral")
+
+
+# -- merged samples ------------------------------------------------------------
+
+
+#: What each pointer position reports about the samples it stands for.
+COALESCED_SHAPES = """(() => { globalThis.shapes = [];
+  addEventListener('pointermove', (e) => {
+    const merged = e.getCoalescedEvents();
+    shapes.push([merged.length, merged[merged.length - 1] === e, e.getPredictedEvents().length]);
+  }); })()"""
+
+
+def test_a_burst_of_positions_arrives_as_one_batch(page):
+    """A page reading the merged samples sees the burst so far, its own reading last."""
+    page.evaluate(COALESCED_SHAPES)
+    page.mouse.move(120, 80, steps=4)
+    shapes = page.evaluate("globalThis.shapes")
+    assert [shape[0] for shape in shapes] == [1, 2, 3, 4]
+    assert shapes[-1][1] is True
+    assert {shape[2] for shape in shapes} == {0}
+
+
+def test_a_paced_move_merges_nothing(page):
+    page.evaluate(COALESCED_SHAPES)
+    page.mouse.move(120, 80, steps=3, duration=0.15)
+    shapes = page.evaluate("globalThis.shapes")
+    assert [shape[0] for shape in shapes] == [1, 1, 1]
+    assert {shape[1] for shape in shapes} == {True}
+
+
+def test_only_pointer_events_carry_merged_samples(page):
+    """Chrome's mouse events have no such reading either."""
+    assert page.evaluate("typeof MouseEvent.prototype.getCoalescedEvents") == "undefined"
+
+
+def test_other_pointer_events_carry_none(page):
+    """Chrome reports an empty list for the pointer events that are not moves."""
+    page.evaluate("""(() => { globalThis.shapes = [];
+      for (const type of ['pointerdown', 'pointerup'])
+        addEventListener(type, (e) => shapes.push([type, e.getCoalescedEvents().length])); })()""")
+    page.mouse.click(50, 20)
+    assert page.evaluate("globalThis.shapes") == [["pointerdown", 0], ["pointerup", 0]]

@@ -2,7 +2,7 @@ import time
 from loguru import logger
 from pyv8c import Browser
 
-logger.add("ruishu.log", level="DEBUG")
+logger.add("ruishu.log", level="DEBUG", mode="w")
 
 def run(page, url):
     page.goto(url, wait_until="domcontentloaded")
@@ -19,7 +19,7 @@ if "__main__" == __name__:
     st = time.time()
 
     def intercept(url, request):
-        print(request.get("resource_type") , url)
+        # print(request.get("resource_type") , url)
         if request.get("resource_type") in {"image", "style"}:
             return False
         if request.get("resource_type") == "script":
@@ -57,12 +57,19 @@ if "__main__" == __name__:
     # print(page.evaluate("HTMLImageElement.prototype"))
     # print(page.evaluate("navigation.entries()"))
     # page.evaluate("navigator.mimeTypes")
-    print(page.evaluate("NodeFilter.prototype"))
-    print(page.evaluate("NodeFilter.FILTER_ACCEPT"))
+    # print(page.evaluate("NodeFilter.prototype"))
+    # print(page.evaluate("NodeFilter.FILTER_ACCEPT"))
     # page.evaluate("navigator.plugins.refresh = '865'")
     # print(page.evaluate("new URL('https://www.koreanair.com/')"))
     # # print(page.evaluate("URL('https://www.koreanair.com/')"))
     # print(page.evaluate("navigator.plugins.refresh"))
+    # print(page.evaluate("a=1;try {String(DOMException.prototype)} catch (error) {a=2};a==2"))
+    # print(page.evaluate("(Object.getPrototypeOf(DOMException.prototype) === Error.prototype) == true"))
+    # print(page.evaluate("e = new DOMException('');e.stack == undefined"))
+    # print(page.evaluate("Error.isError(new DOMException('')) == true"))
+    # print(page.evaluate("Error.isError(new DOMError('')) == false"))
+    # print(page.evaluate("e = new DOMException('');e.__proto__"))
+    # print(page.evaluate("DOMException instanceof Error"))
     # print(page.evaluate("c = document.createElement('canvas');d=c.getContext('webgl');d.getExtension('WEBGL_debug_renderer_info');"))
     # print(page.evaluate("""
     # i = document.createElement('input');
@@ -71,5 +78,6 @@ if "__main__" == __name__:
     # i.capture
     # """))
 
+    logger.info("browser close")
     browser.close()
     print(time.time() - st)

@@ -16,7 +16,7 @@ pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 pytest.importorskip("curl_cffi", reason="these exercise the curl_cffi engine")
 
 from pyv8c import Browser
-from pyv8c.foundation.errors import DOMException
+from pyv8c.foundation.host_errors import LoadFailure
 
 
 class _EchoHandler(BaseHTTPRequestHandler):
@@ -176,9 +176,8 @@ def test_page_net_without_a_transport_says_so():
     browser = Browser(stub_logging="off", real_network=False)
     try:
         instance = browser.new_context().new_page()
-        # ``NetworkError`` is a DOMException factory in this codebase, so the
-        # raised type is the exception it builds.
-        with pytest.raises(DOMException) as failure:
+        # A missing engine is the host's own failure to load, so the host sees it.
+        with pytest.raises(LoadFailure) as failure:
             instance.net.get("http://example.test/")
         assert instance.net.available is False
     finally:

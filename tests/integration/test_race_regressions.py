@@ -29,7 +29,7 @@ import pytest
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.race
 
-from pyv8c.foundation.errors import V8Error
+from pyv8c.web.page_errors import PageError
 from pyv8c.foundation.executor import RealmExecutor
 from pyv8c.platform.resource_loading import RequestHandle
 
@@ -219,11 +219,20 @@ def test_pump_until_does_not_sleep_out_a_delivery_that_races_the_wait():
 
 
 def test_post_exception_reaches_the_realm_error_sink():
-    """A3: a fire-and-forget command must not swallow its own exception."""
+    """A3: a fire-and-forget command must not swallow its own exception.
+
+    A declared error reaches the realm's sink; a failure outside the error family is
+    the host's own, so it reaches the log instead.  Either way it does not vanish.
+    """
+    from loguru import logger
+
+    from pyv8c.web.page_errors import PageTypeError
     from pyv8c.foundation.tasks import TaskQueue
 
     queue = TaskQueue()
     executor = RealmExecutor(name="race-error-sink")
+    messages = []
+    token = logger.add(lambda message: messages.append(str(message).strip()), format="{message}")
     try:
         executor.attach_task_queue(queue)
         seen = []
@@ -231,13 +240,21 @@ def test_post_exception_reaches_the_realm_error_sink():
         assert executor.post(lambda: (_ for _ in ()).throw(RuntimeError("boom")))
 
         deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not messages:
+            time.sleep(0.01)
+
+        assert any("boom" in line for line in messages), "the host's failure was swallowed"
+        assert seen == [], seen
+
+        assert executor.post(lambda: (_ for _ in ()).throw(PageTypeError("boom")))
+        deadline = time.monotonic() + 5
         while time.monotonic() < deadline and not seen:
             time.sleep(0.01)
 
-        assert seen, "post() exception was swallowed by the owner thread"
-        assert isinstance(seen[0], V8Error)
+        assert isinstance(seen[0], PageTypeError), seen
         assert "boom" in str(seen[0])
     finally:
+        logger.remove(token)
         executor.close()
 
 

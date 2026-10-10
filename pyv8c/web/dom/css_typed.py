@@ -8,7 +8,7 @@ import re
 import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, callback_value, dom_string, missing_error
-from ...foundation.errors import V8TypeError
+from ..page_errors import PageTypeError
 from . import css
 from .utils import dash_name
 
@@ -44,14 +44,14 @@ def _property(value, method, interface_name, wording="Invalid propertyName"):
             return name
     elif css.supported(name) and name == dash_name(name).lstrip("-").lower():
         return name
-    raise V8TypeError(f"Failed to execute '{method}' on '{interface_name}': {wording}: {name}")
+    raise PageTypeError(f"Failed to execute '{method}' on '{interface_name}': {wording}: {name}")
 
 
 def _declaration(name, value, method):
     """The declaration text for one property, or a ``TypeError`` as Chrome raises it."""
     declarations = css.parse_declarations(f"{name}: {dom_string(value)}")
     if not declarations:
-        raise V8TypeError(f"Failed to execute '{method}' on 'StylePropertyMap':"
+        raise PageTypeError(f"Failed to execute '{method}' on 'StylePropertyMap':"
                           " Invalid type for property")
     return str(declarations[0][1])
 
@@ -215,7 +215,7 @@ class StylePropertyMap(StylePropertyMapReadOnly):
         _declaration(name, value, 'append')
         # Without a per-property grammar this backend cannot tell a list-valued property
         # from a single-value one, and Chrome refuses the ones that cannot hold a list.
-        raise V8TypeError("Failed to execute 'append' on 'StylePropertyMap':"
+        raise PageTypeError("Failed to execute 'append' on 'StylePropertyMap':"
                           " Property does not support multiple values")
 
     def fn_delete(self, property=MISSING, *_extra):

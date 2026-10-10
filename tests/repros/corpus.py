@@ -4887,4 +4887,22 @@ CASES = (
         expected=[["AbortSignal", "own", True, True], ["BeforeUnloadEvent", "own", True, True],
                   0, "function"],
     ),
+    Repro(
+        name="a_worker_from_a_revoked_blob_url_still_starts",
+        note="A page that bundles its worker inline revokes the URL in the same turn it "
+             "hands it over; the script is taken while the worker is made, so the revoke "
+             "is too late to take it away.",
+        html=page(body="""<script>
+            window.__out = [];
+            const url = URL.createObjectURL(new Blob(
+                ["self.postMessage('started');"], {type: 'text/javascript'}));
+            const worker = new Worker(url);
+            URL.revokeObjectURL(url);
+            worker.onmessage = (event) => window.__out.push(String(event.data));
+            worker.onerror = () => window.__out.push('onerror');
+        </script>"""),
+        script="window.__out",
+        expected=["started"],
+        settle=0.5,
+    ),
 )

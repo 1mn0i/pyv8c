@@ -9,9 +9,7 @@ from pyv8 import AttributeSpec
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dictionary, dom_string, integer, interface_value, is_nullish, missing_error
-from ...foundation.errors import (InvalidCharacterError, NotFoundError,
-                                NotSupportedError, V8SyntaxError, V8TypeError,
-                                dom_exception)
+from ..page_errors import InvalidCharacterError, NotFoundError, NotSupportedError, PageSyntaxError, PageTypeError, dom_exception
 from ...foundation.urls import credentials_netloc
 from ...foundation.urls import origin_string
 from .character_data import Text
@@ -74,16 +72,16 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         options = init if isinstance(init, dict) else (
             dictionary(init) if isinstance(init, pyv8.JSObject) else None)
         if options is None:
-            raise V8TypeError("Failed to execute 'attachShadow' on 'Element': The provided"
+            raise PageTypeError("Failed to execute 'attachShadow' on 'Element': The provided"
                               " value is not of type 'ShadowRootInit'.")
         mode = options.get("mode", pyv8.Undefined)
         if is_nullish(mode):
-            raise V8TypeError("Failed to execute 'attachShadow' on 'Element': Failed to"
+            raise PageTypeError("Failed to execute 'attachShadow' on 'Element': Failed to"
                               " read the 'mode' property from 'ShadowRootInit': Required"
                               " member is undefined.")
         mode = str(dom_string(mode))
         if mode not in ("open", "closed"):
-            raise V8TypeError("Failed to execute 'attachShadow' on 'Element': Failed to"
+            raise PageTypeError("Failed to execute 'attachShadow' on 'Element': Failed to"
                               " read the 'mode' property from 'ShadowRootInit': The"
                               f" provided value '{mode}' is not a valid enum value of type"
                               " ShadowRootMode.")
@@ -311,7 +309,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if attr is MISSING:
             raise missing_error('Element', 'setAttributeNode', 1, 0, constructor=False)
         attr = interface_value(attr, 'Attr', 'Element', 'setAttributeNode', 1, nullable=False)
-        if not isinstance(attr, Attr): raise V8TypeError("parameter 1 is not of type 'Attr'.")
+        if not isinstance(attr, Attr): raise PageTypeError("parameter 1 is not of type 'Attr'.")
         previous = self.fn_getAttributeNode(attr.get_name())
         self.attributes[str(attr.get_name()).lower()] = attr.get_value()
         return previous
@@ -319,7 +317,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if attr is MISSING:
             raise missing_error('Element', 'removeAttributeNode', 1, 0, constructor=False)
         attr = interface_value(attr, 'Attr', 'Element', 'removeAttributeNode', 1, nullable=False)
-        if not isinstance(attr, Attr): raise V8TypeError("parameter 1 is not of type 'Attr'.")
+        if not isinstance(attr, Attr): raise PageTypeError("parameter 1 is not of type 'Attr'.")
         name = str(attr.get_name()).lower()
         if name not in self.attributes: raise NotFoundError("The attribute was not found.")
         return Attr(name, self.attributes.pop(name), ownerElement=self, services=self._services)
@@ -348,7 +346,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
     def _insert_adjacent(self, where, nodes):
         where = str(where).lower()
         if where not in _ADJACENT_POSITIONS:
-            raise V8SyntaxError(
+            raise PageSyntaxError(
                 f"The value provided ('{where}') is not one of "
                 + ", ".join(f"'{p}'" for p in _ADJACENT_POSITIONS) + "."
             )
@@ -371,7 +369,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         where = dom_string(where)
         element = interface_value(element, 'Element', 'Element', 'insertAdjacentElement', 2, nullable=False)
         if not isinstance(element, Element):
-            raise V8TypeError("parameter 2 is not of type 'Element'")
+            raise PageTypeError("parameter 2 is not of type 'Element'")
         self._insert_adjacent(where, [element])
         return element
     def fn_insertAdjacentText(self, where=MISSING, data=MISSING, *_extra):

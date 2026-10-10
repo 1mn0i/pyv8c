@@ -11,6 +11,7 @@ import asyncio
 import os
 import queue
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -18,7 +19,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from .logging import logger
 
 from . import timer_resolution
-from .errors import RealmBusyError
+from .host_errors import RealmBusyError
 
 #: Exceptions that must interrupt the process rather than be logged.
 _CONTROL_EXCEPTIONS = (KeyboardInterrupt, SystemExit)
@@ -54,10 +55,27 @@ def _default_call_timeout():
 _UNSET = object()
 
 
-def _swallow(future):
-    """Retrieve a late result so CPython does not warn about it."""
-    if not future.cancelled():
-        future.exception()
+def _report_late(future, name, submitted, timeout):
+    """What a command that outlived its caller ended with.
+
+    The caller is gone, so the answer has nowhere to go but the log: without this a
+    network timeout or a failure inside a command is lost, which is what makes a
+    realm that is merely waiting look like one that is silent.
+
+    The caller's own budget is repeated here because the two durations read
+    differently: ending just past it means the command only started near the
+    deadline, so what took the time was whatever held the owner thread before it.
+    """
+    seconds = time.perf_counter() - submitted
+    note = f" after it was submitted (its caller waited {timeout:g}s)"
+    if future.cancelled():
+        logger.warning(f"{name!r} was cancelled{note}")
+        return
+    outcome = future.exception()
+    if outcome is None:
+        logger.warning(f"{name!r} finished {seconds:.1f}s{note}")
+        return
+    logger.warning(f"{name!r} failed {seconds:.1f}s{note}: {type(outcome).__name__}: {outcome}")
 
 
 class RealmExecutor:
@@ -151,20 +169,23 @@ class RealmExecutor:
                 raise RuntimeError("realm executor is closed")
             self._commands.put((future, callback, args, kwargs))
         self.wakeup()
+        name = getattr(callback, "__name__", callback)
+        submitted = time.perf_counter()
         try:
             return future.result(timeout=timeout)
         except FutureTimeoutError:
             if future.done():
                 return future.result()
             # A queued command cancels safely; a running one was already preempted
-            # by the realm's deadline, and its late result is drained, not awaited.
+            # by the realm's deadline, and what it ends with is logged, not awaited.
             cancelled = future.cancel()
             if not cancelled:
-                future.add_done_callback(_swallow)
+                future.add_done_callback(
+                    lambda done: _report_late(done, name, submitted, timeout))
             raise RealmBusyError(
-                f"realm executor did not complete {getattr(callback, '__name__', callback)!r} "
-                f"within {timeout}s"
-                + (" (command cancelled)" if cancelled else " (already running)")
+                f"realm executor did not complete {name!r} within {timeout}s"
+                + (" (command cancelled)" if cancelled else
+                   " (already running; its outcome is logged when it ends)")
             ) from None
 
     def post(self, callback, *args, **kwargs):

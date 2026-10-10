@@ -17,7 +17,7 @@ import json as json_module
 from concurrent.futures import Future, ThreadPoolExecutor
 from urllib.parse import urlencode, urljoin, urlsplit
 
-from ..foundation.errors import InvalidStateError, NetworkError
+from ..foundation.host_errors import HostStateError, LoadFailure
 from ..foundation.urls import header_set as _header_set
 from ..network.models import NetworkRequest, NetworkResponse
 from .js_http import JsHttpController, JsHttpResponse
@@ -64,9 +64,9 @@ class PageNet:
     def _backend(self):
         backend = self._page.network_backend
         if backend is None or not backend.http_available:
-            raise NetworkError("page.net requires an HTTP engine; set http_engine= or real_network=True")
+            raise LoadFailure("page.net requires an HTTP engine; set http_engine= or real_network=True")
         if self._closed:
-            raise InvalidStateError("page.net is closed")
+            raise HostStateError("page.net is closed")
         return backend
 
     def _default_headers(self, target, method):
@@ -159,7 +159,7 @@ class PageNet:
         request = self.build(method, url, **kwargs)
         future: Future = Future()
         if self._closed:
-            future.set_exception(InvalidStateError("page.net is closed"))
+            future.set_exception(HostStateError("page.net is closed"))
             return future
 
         def run():
@@ -196,7 +196,7 @@ class PageNet:
             JS ``RequestInit`` names them.
         :param timeout: seconds to wait for the request to settle.
         :returns: the :class:`~pyv8c.platform.js_http.JsHttpResponse` snapshot.
-        :raises NetworkError: the page's ``fetch`` rejected.
+        :raises LoadFailure: the page's ``fetch`` rejected.
         :raises TimeoutError: the request had not settled within *timeout*.
         :raises RuntimeError: the page is closed.
         """
@@ -243,7 +243,7 @@ class PageNet:
         :param credentials: ``"include"`` turns on ``withCredentials``.
         :param timeout: seconds to wait for the request to settle.
         :returns: the :class:`~pyv8c.platform.js_http.JsHttpResponse` snapshot.
-        :raises NetworkError: the request failed.
+        :raises LoadFailure: the request failed.
         :raises TimeoutError: the request had not settled within *timeout*.
         :raises RuntimeError: the page is closed.
         """

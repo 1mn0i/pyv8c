@@ -126,9 +126,6 @@ class WorkerRealm:
     def make_promise(self):
         return promises.make_promise(self.context)
 
-    def js_error_value(self, exc):
-        return promises.js_error_value(exc)
-
     def promise_resolve(self, value):
         return promises.promise_resolve(self.context, value)
 
@@ -250,9 +247,6 @@ class PageRealm:
 
     def make_promise(self):
         return promises.make_promise(self.context)
-
-    def js_error_value(self, exc):
-        return promises.js_error_value(exc)
 
     def promise_resolve(self, value):
         return promises.promise_resolve(self.context, value)

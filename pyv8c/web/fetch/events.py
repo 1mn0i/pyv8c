@@ -13,6 +13,11 @@ from ...foundation.arguments import (
     usv_string,
 )
 from ..dom.events import Event
+from .clone import rebuild_clone, unread
+
+
+#: What a browser hands a handler for a message's ports: one array, and frozen.
+_FROZEN_PORTS = "(ports) => Object.freeze(ports)"
 
 
 @interface('MessageEvent', 'Event')
@@ -21,17 +26,42 @@ class MessageEvent(Event):
         event_type, init = event_constructor_arguments('MessageEvent', event_type, options)
         super().__init__(event_type, init, **kw)
         self.data = init.get("data", pyv8.Null)
+        self._data_handed = unread
         self.origin = usv_string(init.get("origin", ""))
         self.lastEventId = dom_string(init.get("lastEventId", ""))
         self.source = init.get("source", pyv8.Null)
         ports = init.get("ports", pyv8.Undefined)
         self.ports = [] if is_nullish(ports) else sequence(ports)
+        self._ports_handed = unread
 
-    def get_data(self): return self.data
+    def get_data(self):
+        """The message's data, with any binary built in the realm reading it.
+
+        Reading is the only moment a realm is at hand to build a view in, so it happens
+        here, once: what the realm was handed is what it keeps, so ``data`` is the same
+        object twice.  A host reading it through Python gets the bytes it holds.
+        """
+        context = pyv8.current_context()
+        if context is None:
+            return rebuild_clone(self.data)
+        if self._data_handed is unread:
+            self._data_handed = rebuild_clone(self.data, context)
+        return self._data_handed
     def get_origin(self): return self.origin
     def get_lastEventId(self): return self.lastEventId
     def get_source(self): return self.source
-    def get_ports(self): return self.ports
+    def get_ports(self):
+        """The message's ports, in the shape a browser hands them over.
+
+        That is one frozen array, and the same array every time it is read; a host
+        reading it through Python gets the list itself.
+        """
+        context = pyv8.current_context()
+        if context is None:
+            return self.ports
+        if self._ports_handed is unread:
+            self._ports_handed = context.exec_js(_FROZEN_PORTS).call(None, self.ports)
+        return self._ports_handed
 
 
 @interface('CloseEvent', 'Event')

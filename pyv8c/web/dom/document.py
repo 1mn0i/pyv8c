@@ -7,7 +7,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error, number
-from ...foundation.errors import InvalidCharacterError, SecurityError, V8TypeError, dom_exception
+from ..page_errors import InvalidCharacterError, SecurityError, PageTypeError, dom_exception
 from .animation import DocumentTimeline
 from .character_data import Comment, DocumentType, Text
 from .collections import HTMLAllCollection, HTMLCollection, NodeList, tag_name_ns_collection
@@ -264,7 +264,7 @@ class Document(_ParentNodeMixin, Node):
         """Assigning to it assigns ``location.href``; without a window it throws."""
         window = self._browsing_window()
         if window is None:
-            raise V8TypeError("Failed to set the 'location' property on 'Document': "
+            raise PageTypeError("Failed to set the 'location' property on 'Document': "
                               "The attribute value is not an object")
         window.location.set_href(value)
     def get_readyState(self): return self.ready_state
@@ -714,7 +714,7 @@ class DOMImplementation:
                                   if space == XHTML_NAMESPACE else "application/xml")
         if not is_nullish(doctype):
             if not isinstance(doctype, DocumentType):
-                raise V8TypeError("Failed to execute 'createDocument' on 'DOMImplementation': "
+                raise PageTypeError("Failed to execute 'createDocument' on 'DOMImplementation': "
                                   "parameter 3 is not of type 'DocumentType'.")
             document.append_child(doctype)
         if not is_nullish(qualified_name) and str(dom_string(qualified_name)):

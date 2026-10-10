@@ -1,9 +1,8 @@
 """Eager feature implementation for page-essential Web APIs."""
 
 from ...engine.features import FeatureImplementation
-from ...foundation import errors
+from .. import page_errors as errors
 from ...foundation.environment import BrowserEnvironment
-from ...idl import interface
 from ..bom import (
     abort,
     accessories,
@@ -67,11 +66,6 @@ def _interfaces(*classes):
     return {cls.__idl_spec__.name: cls for cls in classes}
 
 
-#: The two error objects a page receives from Python callbacks.  The document owns their shape
-#: and their getters follow the ``get_<name>`` convention, so identity is all they state -- and
-#: they are declared here, in the feature that installs them.
-interface("DOMException", None)(errors.DOMException)
-interface("DOMError", None)(errors.DOMError)
 
 FEATURE = FeatureImplementation(
     _interfaces(

@@ -1,8 +1,9 @@
 """Navigation and HTML document parsing for a single Page."""
 
 import re
+import time
 
-from ..foundation.errors import InvalidStateError, TimeoutError
+from ..foundation.host_errors import HostStateError
 from ..foundation.tasks import TaskSource
 from ..foundation.urls import absolute_url
 from ..network.redirects import reportable_hops
@@ -10,6 +11,11 @@ from ..web.bom.utils import page_secure_context
 from ..web.dom.document import Document, HTMLDocument
 from ..web.dom.motion import INSECURE_ORIGIN_INTERFACES
 from ..web.dom.parser import IncrementalDOMParser
+
+
+#: How much longer than the navigation's own budget the executor waits: the
+#: navigation knows what it was waiting for, so it must be the one that gives up.
+NAVIGATION_GRACE = 5.0
 
 
 def hide_insecure_origin_interfaces(page):
@@ -93,7 +99,7 @@ class NavigationController:
 
     def set_content(self, html, url="about:blank"):
         if self.page.closed or self.page.context_owner.closed:
-            raise InvalidStateError("Page is closed")
+            raise HostStateError("Page is closed")
         if not self.navigation_allowed():
             return self.page
         return self.commit_content(html, url)
@@ -123,7 +129,7 @@ class NavigationController:
         is the other source of ``Sec-Fetch-User``.
         """
         if self.page.closed or self.page.context_owner.closed:
-            raise InvalidStateError("Page is closed")
+            raise HostStateError("Page is closed")
         states = {
             None: None,
             "commit": None,
@@ -147,23 +153,35 @@ class NavigationController:
             request["body"] = body
         if content_type:
             request["content_type"] = content_type
+        started = time.perf_counter()
         response = self.page.resources.load_resource(target, request)
+        document_seconds = time.perf_counter() - started
         final_url = response.url or target
         self.commit_content(self.decode_html(response), final_url, response)
         ready = states[wait_until]
         if ready is not None:
             # Wait on the lifecycle state, not a fixed-interval poll: the pump
             # sleeps on the realm executor and the advancing delivery wakes it.
+            # The document and this wait share one budget, so ``timeout`` bounds
+            # the navigation rather than each half of it.
             limit = 30.0 if timeout_value is None else timeout_value
-            if not self.page.tasks.pump_until(ready, timeout=limit):
-                raise TimeoutError(f"Navigation to {target} timed out")
+            remaining = limit - document_seconds
+            if remaining > 0 and self.page.tasks.pump_until(ready, timeout=remaining):
+                return response
+            outstanding = self.page.resources.outstanding()
+            waiting = ", ".join(f"{count} {kind}" for kind, count in sorted(outstanding.items()))
+            raise HostStateError(
+                f"Navigation to {target} timed out after {limit:g}s waiting for {wait_until}"
+                + (f"; still loading {waiting}" if waiting else "")
+                + f" (the document request took {document_seconds:.1f}s)"
+            )
         return response
 
     def request_navigation(self, url, *, method="GET", body=None,
                            content_type=None, user_activated=False):
         """Queue a navigation a script, a link or a form submission asked for."""
         if self.page.closed or self.page.context_owner.closed:
-            raise InvalidStateError("Page is closed")
+            raise HostStateError("Page is closed")
         target = absolute_url(url, self.page.url)
         self.pending += 1
         request_id = self.pending

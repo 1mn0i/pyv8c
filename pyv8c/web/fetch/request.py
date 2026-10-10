@@ -5,7 +5,8 @@ from urllib.parse import urljoin, urlsplit
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, abort_signal, byte_string, dictionary, enum_value, is_nullish, missing_error, usv_string
-from ...foundation.errors import V8TypeError
+from ...foundation.arguments import IdlArgumentError
+from ..page_errors import PageTypeError
 from ..bom.abort import AbortSignal
 from .headers import Headers
 
@@ -38,20 +39,20 @@ class Request:
         except ValueError:
             valid_url = False
         if not valid_url:
-            raise V8TypeError("Failed to construct 'Request': Failed to parse URL")
+            raise PageTypeError("Failed to construct 'Request': Failed to parse URL")
         if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", self._method):
-            raise V8TypeError("Failed to construct 'Request': Invalid HTTP method")
+            raise PageTypeError("Failed to construct 'Request': Invalid HTTP method")
         upper = self._method.upper()
         if upper in ("CONNECT", "TRACE", "TRACK"):
-            raise V8TypeError("Failed to construct 'Request': Unsupported HTTP method")
+            raise PageTypeError("Failed to construct 'Request': Unsupported HTTP method")
         if upper in ("DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"):
             self._method = upper
         if self._mode == "navigate":
-            raise V8TypeError("Failed to construct 'Request': Cannot construct a Request with a RequestInit whose mode member is set as 'navigate'.")
+            raise PageTypeError("Failed to construct 'Request': Cannot construct a Request with a RequestInit whose mode member is set as 'navigate'.")
         if self._mode == "no-cors" and upper not in ("GET", "HEAD", "POST"):
-            raise V8TypeError("Failed to construct 'Request': Unsupported method in no-cors mode")
+            raise PageTypeError("Failed to construct 'Request': Unsupported method in no-cors mode")
         if upper in ("GET", "HEAD") and not is_nullish(self._body):
-            raise V8TypeError("Failed to construct 'Request': Request with GET/HEAD method cannot have body.")
+            raise PageTypeError("Failed to construct 'Request': Request with GET/HEAD method cannot have body.")
 
     def get_url(self): return self._url
     def _read_signal(self, options, original):
@@ -64,8 +65,8 @@ class Request:
         try:
             given = abort_signal(options.get(
                 "signal", original._signal if original else None))
-        except V8TypeError as exc:
-            raise V8TypeError("Failed to construct 'Request': Failed to read the 'signal'"
+        except (PageTypeError, IdlArgumentError) as exc:
+            raise PageTypeError("Failed to construct 'Request': Failed to read the 'signal'"
                               " property from 'RequestInit': Failed to convert value to"
                               " 'AbortSignal'.") from exc
         signal = AbortSignal(services=self._services)

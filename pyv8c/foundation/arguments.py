@@ -6,7 +6,15 @@ from typing import Any
 
 import pyv8
 
-from .errors import V8TypeError
+
+class IdlArgumentError(pyv8.JsTypeError):
+    """An IDL coercion or arity failure: what a member reports for a value it was handed
+    and cannot convert.
+
+    Inheriting the binding's own ``TypeError`` is what a realm shows it as, and a caller
+    catching the builtin still catches it, since that is what the binding inherits too.
+    """
+
 
 MISSING = object()
 
@@ -14,7 +22,7 @@ MISSING = object()
 def missing_error(interface, member, required, present, *, constructor=False):
     prefix = f"Failed to construct '{interface}'" if constructor else f"Failed to execute '{member}' on '{interface}'"
     noun = "argument" if required == 1 else "arguments"
-    return V8TypeError(f"{prefix}: {required} {noun} required, but only {present} present.")
+    return IdlArgumentError(f"{prefix}: {required} {noun} required, but only {present} present.")
 
 
 def is_nullish(value):
@@ -33,7 +41,7 @@ def abort_signal(value):
     if any(getattr(getattr(base, "__idl_spec__", None), "name", None) == "AbortSignal"
            for base in type(value).__mro__):
         return value
-    raise V8TypeError("Failed to convert value to 'AbortSignal'.")
+    raise IdlArgumentError("Failed to convert value to 'AbortSignal'.")
 
 
 def dom_string(value):
@@ -75,7 +83,7 @@ def usv_string(value):
 def byte_string(value, *, prefix=""):
     result = dom_string(value)
     if any(ord(character) > 255 for character in result):
-        raise V8TypeError(prefix + "String contains non ISO-8859-1 code point.")
+        raise IdlArgumentError(prefix + "String contains non ISO-8859-1 code point.")
     return result
 
 
@@ -122,7 +130,7 @@ def integer(value, *, bits=32, signed=False, enforce_range=False):
         minimum = -(limit // 2) if signed else 0
         maximum = limit // 2 - 1 if signed else limit - 1
         if not math.isfinite(result) or not minimum <= math.trunc(result) <= maximum:
-            raise V8TypeError("Value is outside the permitted range.")
+            raise IdlArgumentError("Value is outside the permitted range.")
         return math.trunc(result)
     if not math.isfinite(result) or result == 0:
         return 0
@@ -164,7 +172,7 @@ def dictionary(value, *, name="Object", prefix=""):
         return value
     if isinstance(value, (list, tuple)) or callable(value):
         return {}
-    raise V8TypeError(f"{prefix}The provided value is not of type '{name}'.")
+    raise IdlArgumentError(f"{prefix}The provided value is not of type '{name}'.")
 
 
 def event_init(options):
@@ -189,22 +197,22 @@ def event_constructor_arguments(interface, event_type, options):
 
 def sequence(value, convert=None, *, iterator_method=MISSING):
     if isinstance(value, (str, dict)) or is_nullish(value):
-        raise V8TypeError("The object must have a callable @@iterator property.")
+        raise IdlArgumentError("The object must have a callable @@iterator property.")
     if isinstance(value, pyv8.JSObject):
         method = value._iterator_method() if iterator_method is MISSING else iterator_method
         if not callable(method):
-            raise V8TypeError("The object must have a callable @@iterator property.")
+            raise IdlArgumentError("The object must have a callable @@iterator property.")
         iterator = method._invoke(value)
         if not isinstance(iterator, pyv8.JSObject):
-            raise V8TypeError("Iterator result is not an object.")
+            raise IdlArgumentError("Iterator result is not an object.")
         next_value = iterator._get("next")
         if not callable(next_value):
-            raise V8TypeError("Iterator next is not callable.")
+            raise IdlArgumentError("Iterator next is not callable.")
         result: list[Any] = []
         while True:
             step = next_value._invoke(iterator)
             if not isinstance(step, pyv8.JSObject):
-                raise V8TypeError("Iterator result is not an object.")
+                raise IdlArgumentError("Iterator result is not an object.")
             if boolean(step._get("done")):
                 return result
             item = step._get("value")
@@ -212,7 +220,7 @@ def sequence(value, convert=None, *, iterator_method=MISSING):
     try:
         result = list(value)
     except TypeError as exc:
-        raise V8TypeError("The provided value cannot be converted to a sequence.") from exc
+        raise IdlArgumentError("The provided value cannot be converted to a sequence.") from exc
     return [convert(item) for item in result] if convert else result
 
 
@@ -232,7 +240,7 @@ def interface_value(value, expected, interface, method, position, *, nullable=Fa
         _INTERFACE_CHECKS[key] = matched
     if matched:
         return value
-    raise V8TypeError(
+    raise IdlArgumentError(
         f"Failed to execute '{method}' on '{interface}': parameter {position} is not of type '{expected}'."
     )
 
@@ -240,13 +248,13 @@ def interface_value(value, expected, interface, method, position, *, nullable=Fa
 def enum_value(value, allowed):
     result = dom_string(value)
     if result not in allowed:
-        raise V8TypeError(f"The provided value '{result}' is not a valid enum value.")
+        raise IdlArgumentError(f"The provided value '{result}' is not a valid enum value.")
     return result
 
 
 def callback_value(value):
     if not callable(value):
-        raise V8TypeError("The provided callback is not a function.")
+        raise IdlArgumentError("The provided callback is not a function.")
     return value
 
 
@@ -255,7 +263,7 @@ def event_listener(value):
         return None
     if callable(value) or isinstance(value, (dict, pyv8.JSObject)):
         return value
-    raise V8TypeError("The provided value is not of type 'Object'.")
+    raise IdlArgumentError("The provided value is not of type 'Object'.")
 
 
 def event_handler(value):
@@ -265,12 +273,12 @@ def event_handler(value):
 def header_name(value):
     value = byte_string(value)
     if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", value):
-        raise V8TypeError("Invalid header name")
+        raise IdlArgumentError("Invalid header name")
     return value.lower()
 
 
 def header_value(value):
     value = byte_string(value).strip(" \t\r\n")
     if any(character in value for character in "\r\n\0"):
-        raise V8TypeError("Invalid header value")
+        raise IdlArgumentError("Invalid header value")
     return value

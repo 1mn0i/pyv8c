@@ -10,7 +10,7 @@ import re
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
-from ...foundation.errors import V8TypeError
+from ..page_errors import PageTypeError
 from .character_data import Comment, Text
 from .document import HTMLDocument, XMLDocument, detached_services
 from .parser import IncrementalDOMParser
@@ -193,7 +193,7 @@ class DOMParser:
             raise missing_error('DOMParser', 'parseFromString', 2, 1, constructor=False)
         source, kind = dom_string(type), dom_string(mime)
         if kind not in SUPPORTED:
-            raise V8TypeError(
+            raise PageTypeError(
                 "Failed to execute 'parseFromString' on 'DOMParser': The provided value"
                 f" '{kind}' is not a valid enum value of type SupportedType.")
         services, url = _caller(self._services)

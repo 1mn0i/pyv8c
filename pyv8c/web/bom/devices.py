@@ -7,7 +7,7 @@ device list, and a chooser that refuses without a user gesture.
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, missing_error
-from ...foundation.errors import NotSupportedError, SecurityError
+from ..page_errors import NotSupportedError, SecurityError
 from ..dom.events import EventTarget
 from .utils import settled
 

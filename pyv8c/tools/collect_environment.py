@@ -565,11 +565,90 @@ def idl_view(idl=None):
     return declared, idl.digest
 
 
-def read_profile(chrome, view=None, **options):
-    """``(payload, surface, source)``: both readings a run makes, from one session."""
+#: Where each platform keeps the profile a normal visit uses.
+USER_DATA_DIRS = (
+    r"%LOCALAPPDATA%\Google\Chrome\User Data",
+    "~/Library/Application Support/Google/Chrome",
+    "~/.config/google-chrome",
+)
+
+
+def default_user_data():
+    """The browser's own profile directory on this machine, or ``None``."""
+    for candidate in USER_DATA_DIRS:
+        path = Path(os.path.expandvars(candidate)).expanduser()
+        if path.is_dir():
+            return path
+    return None
+
+
+def _read_json(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _profile_settings(directory):
+    """A profile's extension table, which the browser keeps in its own preferences."""
+    for name in ("Secure Preferences", "Preferences"):
+        settings = ((_read_json(Path(directory) / name).get("extensions") or {})
+                    .get("settings") or {})
+        if settings:
+            return settings
+    return {}
+
+
+def extension_entries(declared):
+    """Web-accessible resources in Chrome's own ``{resources, matches}`` shape."""
+    entries = []
+    for item in declared or []:
+        if isinstance(item, str):
+            entries.append({"resources": [item], "matches": ["<all_urls>"]})
+        elif isinstance(item, dict) and item.get("resources"):
+            entries.append({
+                "resources": [str(resource) for resource in item["resources"]],
+                "matches": [str(match) for match in (item.get("matches") or ["<all_urls>"])],
+            })
+    return entries
+
+
+def profile_extensions(user_data_dir, profile="Default"):
+    """``id -> declared resources`` for the extensions a profile has installed and enabled.
+
+    Read from the profile itself: an extension that is suspended or blocked answers a
+    page with nothing, and one that exposes no resource to pages cannot answer a probe.
+    """
+    root = Path(user_data_dir).expanduser()
+    directory = root / profile if (root / profile / "Extensions").is_dir() else root
+    settings = _profile_settings(directory)
+    declared = {}
+    for extension in sorted((directory / "Extensions").iterdir()):
+        if not extension.is_dir():
+            continue
+        if (settings.get(extension.name) or {}).get("disable_reasons"):
+            continue
+        versions = sorted(item for item in extension.iterdir() if (item / "manifest.json").exists())
+        if not versions:
+            continue
+        entries = extension_entries(_read_json(versions[-1] / "manifest.json")
+                                    .get("web_accessible_resources"))
+        if entries:
+            declared[extension.name] = entries
+    return declared
+
+
+def read_profile(chrome, view=None, extensions=None, **options):
+    """``(payload, surface, source)``: both readings a run makes, from one session.
+
+    *extensions* is the profile's extension table, read from the browser's own profile:
+    a page cannot enumerate extensions, and the session read here runs with none.
+    """
     declared, digest = view if view is not None else idl_view()
     values, source = read_pages(chrome, (COLLECT_SCRIPT, SURFACE_SCRIPT), **options)
-    return json.loads(values[0]), build_surface(json.loads(values[1]), declared, digest), source
+    payload = json.loads(values[0])
+    payload["extensions"] = dict(extensions or {})
+    return payload, build_surface(json.loads(values[1]), declared, digest), source
 
 
 def build_environment(payload):
@@ -678,18 +757,25 @@ def main(argv=None):
     parser.add_argument("--window-size", help="pin the window size as WIDTH,HEIGHT")
     parser.add_argument("--timeout", type=float, default=30.0, help="seconds to wait for the browser")
     parser.add_argument("--chrome-arg", action="append", default=[], help="extra browser argument")
+    parser.add_argument("--profile", type=Path,
+                        help="Chrome user-data-dir (or a profile inside it) whose installed "
+                             "extensions the profile records; default: this machine's own")
     arguments = parser.parse_args(argv)
 
     try:
         chrome = find_chrome(arguments.chrome)
+        user_data = arguments.profile or default_user_data()
+        extensions = profile_extensions(user_data) if user_data is not None else {}
         payload, surface, source = read_profile(
             chrome,
+            extensions=extensions,
             headed=arguments.headed,
             accept_lang=arguments.accept_lang,
             window_size=arguments.window_size,
             extra_args=arguments.chrome_arg,
             timeout=arguments.timeout,
         )
+        source["extensions"] = str(user_data) if user_data is not None else ""
         # Only the keys the browser answered; the rest stay defaults, unclaimed.
         document = build_profile(payload, surface, source)
     except (CollectionError, TypeError, ValueError) as error:
@@ -707,7 +793,8 @@ def main(argv=None):
         f" {len(surface['omits']['prototype'])} interfaces with prototype gaps,"
         f" {len(surface['omits']['interface'])} with interface-object gaps,"
         f" {len(surface['array_protos'])} with an array value,"
-        f" {len(surface['keys'])} keys, from {source.get('browser', 'unknown')}",
+        f" {len(surface['keys'])} keys, {len(payload['extensions'])} extensions,"
+        f" from {source.get('browser', 'unknown')}",
         file=sys.stderr,
     )
     return 0
@@ -715,8 +802,8 @@ def main(argv=None):
 __all__ = [
     "CHROME_ENV", "CHROME_PATHS", "COLLECT_SCRIPT", "DEFAULT_OUTPUT", "ITERATOR_MEMBERS",
     "SURFACE_SCRIPT", "CdpSession", "CollectionError", "idl_view", "build_environment",
-    "build_profile", "build_surface", "find_chrome", "main", "read_devtools_port", "read_pages",
-    "read_profile",
+    "build_profile", "build_surface", "default_user_data", "extension_entries", "find_chrome",
+    "main", "profile_extensions", "read_devtools_port", "read_pages", "read_profile",
 ]
 
 

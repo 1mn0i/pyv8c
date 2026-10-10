@@ -13,7 +13,7 @@ from pyv8c import Browser
 
 #: ``NetworkError`` and ``InvalidStateError`` are DOMException factories here, so
 #: the raised type is the exception they build.
-from pyv8c.foundation.errors import DOMException
+from pyv8c.foundation.host_errors import LoadFailure
 
 DOCUMENT = "<body></body>"
 
@@ -93,9 +93,9 @@ def test_a_rejected_fetch_raises_the_pages_error(page):
     page.set_content(DOCUMENT, url="http://example.test/")
     page.evaluate("globalThis.fetch = () => Promise.reject(new TypeError('nope'));")
 
-    with pytest.raises(DOMException, match="nope"):
+    with pytest.raises(LoadFailure, match="nope"):
         page.net.fetch("/echo")
-    with pytest.raises(DOMException, match="TypeError"):
+    with pytest.raises(LoadFailure, match="TypeError"):
         page.net.fetch_async("/echo").result(timeout=10)
 
 

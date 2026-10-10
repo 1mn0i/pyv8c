@@ -12,7 +12,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, is_nullish, missing_error, usv_string
-from ...foundation.errors import V8TypeError, dom_exception
+from ..page_errors import PageTypeError, dom_exception
 
 __all__ = ["TextDecoder", "TextEncoder"]
 
@@ -136,7 +136,7 @@ class TextEncoder:
             raise missing_error('TextEncoder', 'encodeInto', 2, 1, constructor=False)
         target = _view(destination)
         if target is None:
-            raise V8TypeError("Failed to execute 'encodeInto' on 'TextEncoder': "
+            raise PageTypeError("Failed to execute 'encodeInto' on 'TextEncoder': "
                               "parameter 2 is not of type 'Uint8Array'.")
         text = usv_string(source)
         room = int(target._get("length"))
@@ -176,7 +176,7 @@ class TextDecoder:
     def fn_decode(self, input=pyv8.Undefined, options=None, *_extra):
         data = b"" if input is pyv8.Undefined or is_nullish(input) else _bytes_of(input)
         if data is None:
-            raise V8TypeError("Failed to execute 'decode' on 'TextDecoder': "
+            raise PageTypeError("Failed to execute 'decode' on 'TextDecoder': "
                               "parameter 1 is not of type 'BufferSource'.")
         if self._codec is None:
             #: The two the standard defines without one.
@@ -191,5 +191,5 @@ class TextDecoder:
         try:
             return data.decode(self._codec, "strict" if self._fatal else "replace")
         except (UnicodeDecodeError, LookupError) as error:
-            raise V8TypeError("Failed to execute 'decode' on 'TextDecoder': "
+            raise PageTypeError("Failed to execute 'decode' on 'TextDecoder': "
                               "The encoded data was not valid.") from error

@@ -11,7 +11,7 @@ import re
 
 from ...idl import interface
 from ...foundation.arguments import dom_string, number
-from ...foundation.errors import NotSupportedError
+from ..page_errors import NotSupportedError
 from .css import CSSStyleDeclaration
 from .css_typed import StylePropertyMap
 from .html_elements import Element

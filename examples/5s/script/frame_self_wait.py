@@ -34,7 +34,7 @@ _INNER = ("<!doctype html><body>inner<scr" + "ipt>"
 
 def watch():
     """Report every executor timeout with the stack that asked and the stacks that held."""
-    from pyv8c.foundation.errors import RealmBusyError
+    from pyv8c.foundation.host_errors import RealmBusyError
     from pyv8c.foundation.executor import RealmExecutor
 
     original = RealmExecutor.call

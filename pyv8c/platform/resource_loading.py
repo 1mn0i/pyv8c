@@ -16,8 +16,9 @@ import pyv8
 from ..foundation.logging import logger
 
 
-from ..foundation.errors import InvalidStateError, NetworkError, SecurityError
-from ..foundation.urls import DEFAULT_PORTS, absolute_url, same_origin
+from ..foundation.environment import extension_resource
+from ..foundation.host_errors import LoadFailure
+from ..foundation.urls import DEFAULT_PORTS, absolute_url, same_origin, unloadable_scheme
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
 from ..network.models import NetworkRequest
@@ -45,13 +46,13 @@ def data_url_response(url, services):
     """
     header, comma, payload = str(url)[len("data:"):].partition(",")
     if not comma:
-        raise NetworkError("data: URL carries no payload")
+        raise LoadFailure("data: URL carries no payload")
     if header.endswith(";base64"):
         header = header[: -len(";base64")]
         try:
             body = base64.b64decode(payload + "=" * (-len(payload) % 4), validate=False)
         except ValueError as exc:  # binascii.Error is one
-            raise NetworkError(f"data: URL payload is not base64: {exc}") from None
+            raise LoadFailure(f"data: URL payload is not base64: {exc}") from None
     else:
         body = unquote_to_bytes(payload)
     content_type = header or "text/plain;charset=US-ASCII"
@@ -88,6 +89,52 @@ class RequestHandle:
         self._done.set()
 
 
+
+
+
+#: The kind of file each suffix promises; an unknown suffix is served as bytes.
+EXTENSION_TYPES = {
+    "css": "text/css", "js": "text/javascript", "mjs": "text/javascript",
+    "json": "application/json", "html": "text/html", "htm": "text/html",
+    "txt": "text/plain", "svg": "image/svg+xml",
+    "png": "image/png", "gif": "image/gif", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "webp": "image/webp", "bmp": "image/bmp", "ico": "image/x-icon",
+}
+
+#: A one-pixel PNG, and a small SVG: an image that decodes, for a path promising one.
+_EXTENSION_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/QFz7GjWAAAAAElFTkSuQmCC"
+)
+_EXTENSION_SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"></svg>'
+
+
+def extension_response(page, target, request):
+    """The response for a resource this browser's extensions expose, or ``None``.
+
+    Chrome answers one locally, in the file's own kind, and a page whose origin the
+    extension's ``matches`` names reads it without a CORS check; a page cannot navigate
+    to one, which is the only place the answer differs from a network response.
+    """
+    resource = extension_resource(page.environment, target, source_url=page.url)
+    if resource is None:
+        return None
+    if str(request.get("mode", "")) == "navigate" and not request.get("browser_initiated"):
+        return None
+    content_type = EXTENSION_TYPES.get(resource.rsplit(".", 1)[-1].lower(), "application/octet-stream")
+    if content_type == "image/svg+xml":
+        body = _EXTENSION_SVG
+    elif content_type.startswith("image/"):
+        body = _EXTENSION_PNG
+    else:
+        body = b""
+    return Response(
+        body,
+        {"url": target, "type": "basic",
+         "headers": {"content-type": content_type, "content-length": str(len(body))}},
+        services=page.services,
+    )
+
+
 class ResourceController:
     """Own in-flight document resources; runs on the owning Page thread."""
 
@@ -97,9 +144,28 @@ class ResourceController:
         self.counter = itertools.count(1)
 
     def reset(self):
+        """Cancel what the previous document still had in flight, and drop it.
+
+        A cancelled load never completes, so its entry, left behind, would keep counting
+        as outstanding -- which is how one image still loading when a navigation committed
+        held the next document's ``load`` for the whole navigation budget.
+        """
         for _generation, _node, _kind, handle in self.resources.values():
             handle.cancel()
         self.resources.clear()
+
+    def outstanding(self):
+        """``kind -> count`` for the loads this document is still waiting on.
+
+        What a navigation that timed out was waiting for: the kinds name the phase,
+        and an element load that never arrives is a script or a stylesheet.  A load
+        that was cancelled is not waited on; its document went away with it.
+        """
+        counts = {}
+        for _generation, _node, kind, handle in self.resources.values():
+            if not handle.done and not handle.cancelled:
+                counts[str(kind)] = counts.get(str(kind), 0) + 1
+        return counts
 
     def cancel_node(self, node):
         """Cancel an in-flight request owned by a DOM resource node."""
@@ -265,7 +331,17 @@ class ResourceController:
         try:
             page.context_owner.browser.loader_pool.submit(pool_side)
         except BaseException as exc:
-            page.tasks.post(lambda: tail(None, exc))
+            #: A pool that is already down is the run winding down rather than a load the
+            #: page asked for: nothing began, so no realm is owed an outcome.
+            if getattr(page, "closed", False) or "shutdown" in str(exc):
+                logger.debug("the loader pool is down; nothing was requested")
+                tasks.complete_loader()
+                return
+            #: Bound now, as a default: the ``except`` block deletes its variable when
+            #: it ends, and a task reading that cell afterwards finds it empty -- which
+            #: is how a failed submit used to keep its reason from ever reaching the
+            #: tail, and log "cannot access free variable 'exc'" in its place.
+            page.tasks.post(lambda exc=exc: tail(None, exc))
             tasks.complete_loader()
 
     def _call_off(self, call, timeout=None):
@@ -387,7 +463,7 @@ class ResourceController:
     def load_resource(self, url, request=None):
         page = self.page
         if page.closed or page.context_owner.closed:
-            raise InvalidStateError("Page is closed")
+            raise LoadFailure("Page is closed")
         target = absolute_url(url, page.url)
         given = dict(request or {"method": "GET"})
         request = self._request_with_environment_headers(given, page, target)
@@ -400,10 +476,16 @@ class ResourceController:
         if target.startswith("blob:"):
             body, content_type = page.context_owner.resolve_blob_url(target)
             return Response(body, {"url": target, "headers": {"content-type": content_type}})
+        extension = extension_response(page, target, request)
+        if extension is not None:
+            return extension
         if page.resource_loader:
             response = self.follow(target, given, self.loader_send(page))
             self._store_response(target, request, response)
             return response
+        blocked = unloadable_scheme(target)
+        if blocked is not None:
+            raise LoadFailure(blocked)
         backend = page.network_backend
         if backend is not None and backend.http_available:
             follows_itself = bool(getattr(backend.http, "FOLLOWS_ITSELF", False))
@@ -413,7 +495,7 @@ class ResourceController:
             return response
         if target.startswith("about:blank") or target == page.url:
             return Response("", {"url": target})
-        raise NetworkError("Network access requires an explicit resource_loader")
+        raise LoadFailure("Network access requires an explicit resource_loader")
 
     @staticmethod
     def header_dict(headers):
@@ -436,16 +518,41 @@ class ResourceController:
         )
 
     def apply_response_policy(self, response, request):
-        if str(request.get("mode", "cors")) == "navigate":
+        """What a cross-origin response leaves the page that asked for it.
+
+        A page's own ``fetch(..., {mode: 'no-cors'})`` gets the opaque answer the Fetch API
+        hands it; an element's own load -- a classic ``<script>``, a stylesheet, an image --
+        is a no-cors load too, and there the loader reads the body it asked for.  Everything
+        else has to pass the CORS check.
+        """
+        stated = request.get("mode")
+        mode = fetch_mode(self._destination(request), stated)
+        if mode == "navigate":
             return response
         if same_origin(self.page.url, response.url):
             return response
-        mode = str(request.get("mode", "cors"))
-        if mode == "no-cors":
+        if stated is not None and str(stated) == "no-cors":
             response.status, response.body, response.headers, response.type = 0, "", Headers(), "opaque"
+            return response
+        if mode == "no-cors":
             return response
         self.check_cors(response, request)
         return response
+
+    #: The destinations an element loads for itself: a classic script, a stylesheet, an
+    #: image, media.  Each is a no-cors load in a browser, so neither its hops nor its
+    #: answer are CORS-checked, while the body stays readable for the loader that asked.
+    _NO_CORS_DESTINATIONS = ("script", "style", "image", "audio", "video")
+
+    def _request_mode(self, request):
+        """The mode a request stands for: what it states, else what its destination makes
+        it, which is how the request's own headers were built."""
+        stated = request.get("mode")
+        if stated is not None:
+            return str(stated)
+        if self._destination(request) in ResourceController._NO_CORS_DESTINATIONS:
+            return "no-cors"
+        return "cors"
 
     def check_cors(self, response, request):
         """The check one cross-origin response has to pass.
@@ -456,11 +563,11 @@ class ResourceController:
         allowed = response.headers.fn_get("access-control-allow-origin")
         allowed = "" if allowed is None or allowed is pyv8.Null else str(allowed)
         if allowed not in ("*", self.page.window.location.get_origin()):
-            raise SecurityError("CORS check failed")
+            raise LoadFailure("CORS check failed")
         if request.get("credentials") == "include":
             credentials = response.headers.fn_get("access-control-allow-credentials")
             if allowed == "*" or str(credentials).lower() != "true":
-                raise SecurityError("credentialed CORS request was not allowed")
+                raise LoadFailure("credentialed CORS request was not allowed")
         return response
 
     def follow(self, target, request, send, finalize=None, engine_follows=False):
@@ -481,7 +588,7 @@ class ResourceController:
             try:
                 decision = self.decide(response, carrier)
             except RedirectFailure as failure:
-                raise NetworkError(str(failure)) from failure
+                raise LoadFailure(str(failure)) from failure
             if isinstance(decision, Deliver):
                 return self.delivered(response, carrier, request, finalize, decision)
             self.advance(carrier, decision)
@@ -529,13 +636,17 @@ class ResourceController:
         return None
 
     def hop_carrier(self, target, request):
-        """The state one hop carries: where it goes, how, and with which headers."""
+        """The state one hop carries: where it goes, how, and with which headers.
+
+        The mode is the same one the answer's policy reads, so an element's own no-cors
+        load is not CORS-checked hop by hop.
+        """
         return {
             "url": target,
             "method": str(request.get("method", "GET")),
             "body": request.get("body"),
             "headers": self.header_dict(request.get("headers")),
-            "mode": str(request.get("mode", "cors")),
+            "mode": self._request_mode(request),
             "redirect": str(request.get("redirect", "follow")),
             "hops": 0,
             "crossed": False,
@@ -599,7 +710,7 @@ class ResourceController:
         forbid following are refused rather than quietly obeyed."""
         if carrier["mode"] == "navigate" or carrier["redirect"] == "follow":
             return
-        raise NetworkError(
+        raise LoadFailure(
             "this engine follows redirects by itself and cannot be told not to, so"
             f" redirect: {carrier['redirect']!r} cannot be honoured"
         )
@@ -721,9 +832,17 @@ class ResourceController:
                     response, error = None, exc
                 page.tasks.post(lambda: deliver(response, error))
                 return
+            extension = extension_response(page, target, given)
+            if extension is not None:
+                page.tasks.post(lambda: deliver(extension, None))
+                return
             if page.resource_loader:
                 self.follow_async(target, given, self.loader_send_async(page, handle), landed,
                                   finalize=self.apply_response_policy)
+                return
+            blocked = unloadable_scheme(target)
+            if blocked is not None:
+                page.tasks.post(lambda: deliver(None, LoadFailure(blocked)))
                 return
             backend = page.network_backend
             if backend is not None and backend.http_available:
@@ -733,11 +852,12 @@ class ResourceController:
                                   engine_follows=follows_itself)
                 return
             page.tasks.post(
-                lambda: deliver(None, NetworkError("Network access requires an explicit resource_loader or real_network=True"))
+                lambda: deliver(None, LoadFailure(
+                    "Network access requires an explicit resource_loader or real_network=True"))
             )
 
         if page.closed or page.context_owner.closed:
-            page.tasks.post(lambda: deliver(None, InvalidStateError("Page is closed")))
+            page.tasks.post(lambda: deliver(None, LoadFailure("Page is closed")))
             return handle
         target = urljoin(page.url, str(url))
         given = dict(request or {})
@@ -781,7 +901,13 @@ class ResourceController:
             if not async_script and not getattr(node, "_script_defer", False) and not getattr(node, "_parser_script", False):
                 page.scripts.dom_blocking_scripts += 1
                 page.scripts.queue.append(node)
-            self.track_document_resource(node, src, {"method": "GET", "mode": "same-origin", "resource_type": "script"}, "script")
+            #: A classic script is a no-cors load, so a CDN tag without an ``ACAO`` still
+            #: runs; a module script, and one that says ``crossorigin``, asks for CORS.
+            script_request = {"method": "GET", "resource_type": "script"}
+            if str(node.attributes.get("type", "")).lower() == "module" \
+                    or node.attributes.get("crossorigin") is not None:
+                script_request["mode"] = "cors"
+            self.track_document_resource(node, src, script_request, "script")
             return
         preload = None
         if tag == "link":
@@ -823,6 +949,10 @@ class ResourceController:
         request = {"method": "GET", "resource_type": resource_type, "destination": destination}
         if tag == "iframe":
             request["mode"] = "navigate"
+        elif node.attributes.get("crossorigin") is not None:
+            #: ``crossorigin`` is the element asking for a CORS answer, and it gets the
+            #: check: anything else of this kind loads no-cors.
+            request["mode"] = "cors"
         self.track_document_resource(node, src, request, kind)
 
     def track_document_resource(self, node, url, request, kind):
@@ -837,6 +967,9 @@ class ResourceController:
         def done(response, error):
             handle.finish()
             page.services.resource_services._untrack_resource(handle)
+            if error is not None and not handle.cancelled:
+                # The page only ever hears Chrome's wording, so the reason lands here.
+                logger.debug("resource failed: {} ({})", url, error)
             if not handle.cancelled:
                 page.tasks.post(lambda: self.complete_document_resource(token, generation, response, error, handle))
 
@@ -1067,4 +1200,10 @@ class ResourceController:
             "method": "GET", "mode": "same-origin", "destination": "worker",
             "resource_type": "script",
         })
+        if response.status and not 200 <= response.status < 300:
+            #: A worker whose script does not arrive is a failed load, the way a browser
+            #: reads it; the web layer turns that into the Worker's ``error``.  A script
+            #: a page made itself -- ``blob:``, ``data:`` -- carries no status and is
+            #: not an answer that went wrong.
+            raise LoadFailure(f"the worker script {script_url} answered {response.status}")
         return response.body_text()

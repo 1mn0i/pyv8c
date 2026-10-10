@@ -15,7 +15,7 @@ from ...foundation.arguments import (
     is_nullish,
     missing_error,
 )
-from ...foundation.errors import InvalidStateError, NotSupportedError, V8TypeError
+from ..page_errors import InvalidStateError, NotSupportedError, PageTypeError
 from .collections import HTMLCollection, HTMLOptionsCollection, NodeList
 from .html_elements import Element, HTMLElement, _attribute, _set_url_value, _url_attr, _url_value
 from .mixins import ReadOnlyIndexedPropertyMixin
@@ -552,7 +552,7 @@ class HTMLInputElement(HTMLElement):
     def set_selectionDirection(self, value):
         value = dom_string(value)
         if value not in ("forward", "backward", "none"):
-            raise V8TypeError("Failed to set the 'selectionDirection' property on 'HTMLInputElement': "
+            raise PageTypeError("Failed to set the 'selectionDirection' property on 'HTMLInputElement': "
                                "The provided value is not one of 'forward', 'backward', or 'none'.")
         self._selection_direction = str(value)
     def fn_select(self, *_extra):
@@ -566,7 +566,7 @@ class HTMLInputElement(HTMLElement):
         self._require_selectable()
         direction = "none" if is_nullish(direction) else str(dom_string(direction))
         if direction not in ("forward", "backward", "none"):
-            raise V8TypeError("Failed to execute 'setSelectionRange' on 'HTMLInputElement': "
+            raise PageTypeError("Failed to execute 'setSelectionRange' on 'HTMLInputElement': "
                                "The provided value is not one of 'forward', 'backward', or 'none'.")
         self._selection_start, self._selection_end = self._clamp_selection(start, end)
         self._selection_direction = str(direction)
@@ -577,13 +577,13 @@ class HTMLInputElement(HTMLElement):
         replacement = dom_string(replacement)
         mode = "preserve" if is_nullish(mode) else str(mode)
         if mode not in ("preserve", "select", "start", "end"):
-            raise V8TypeError("Failed to execute 'setRangeText' on 'HTMLInputElement': "
+            raise PageTypeError("Failed to execute 'setRangeText' on 'HTMLInputElement': "
                                "The selection mode must be 'preserve', 'select', 'start' or 'end'.")
         length = len(self.get_value())
         start = self._selection_start if start is None else int(start)
         end = self._selection_end if end is None else int(end)
         start, end = max(0, min(start, length)), max(0, min(end, length))
-        if start > end: raise V8TypeError("Failed to execute 'setRangeText' on 'HTMLInputElement': start > end.")
+        if start > end: raise PageTypeError("Failed to execute 'setRangeText' on 'HTMLInputElement': start > end.")
         value = self.get_value()
         updated = value[:start] + str(replacement) + value[end:]
         self.set_value(updated)

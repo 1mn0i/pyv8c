@@ -148,9 +148,6 @@ class _RealmCapability(_TaskSource):
     def promise_resolve(self, value):
         return self._owner._scripts.promise_resolve(value)
 
-    def js_error_value(self, exc):
-        return self._owner._scripts.js_error_value(exc)
-
     def report_exception(self, exc):
         """Report an uncaught exception through this realm's error reporting.
 
@@ -287,9 +284,6 @@ class _WorkerRealmCapability(_TaskSource):
 
     def make_promise(self):
         return self._runtime.make_promise()
-
-    def js_error_value(self, exc):
-        return self._runtime.js_error_value(exc)
 
     def promise_resolve(self, value):
         return self._runtime.promise_resolve(value)

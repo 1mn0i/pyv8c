@@ -15,6 +15,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
+from urllib.parse import urlsplit
+
+from .urls import origin_tuple
 
 SCHEMA_VERSION = 3
 
@@ -89,6 +92,111 @@ def _named_tokens(value):
     if not isinstance(value, Mapping):
         raise TypeError("must be a mapping of names to token lists")
     return MappingProxyType({str(name): _tokens(tokens) for name, tokens in value.items()})
+
+
+#: Chrome's extension ids: 32 characters of ``a``..``p``.
+_EXTENSION_ID = re.compile(r"[a-p]{32}\Z")
+
+
+def _extensions(value):
+    """``id -> declared resources``: what each installed extension exposes to a page.
+
+    The declaration is Chrome's own shape -- the MV2 list of patterns, or a list of
+    ``{resources, matches}`` -- so a profile carries the browser's answer, not ours.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise TypeError("must map extension ids to their declared resources")
+    accepted = {}
+    for identifier, declared in value.items():
+        identifier = str(identifier)
+        if not _EXTENSION_ID.match(identifier):
+            raise ValueError(f"{identifier!r} is not an extension id")
+        accepted[identifier] = _extension_entries(declared)
+    return MappingProxyType(accepted)
+
+
+def _extension_entries(declared):
+    """One extension's entries, each ``{"resources": patterns, "matches": origins}``."""
+    if isinstance(declared, (str, Mapping)):
+        declared = (declared,)
+    if not isinstance(declared, (list, tuple)) or not declared:
+        raise TypeError("must list the resources an extension exposes")
+    entries = []
+    for entry in declared:
+        if isinstance(entry, str):
+            resources, matches = (entry,), ("<all_urls>",)
+        elif isinstance(entry, Mapping):
+            resources = _tokens(entry.get("resources")) or ()
+            if not resources:
+                raise TypeError("an entry needs at least one resource pattern")
+            matches = _tokens(entry.get("matches")) or ("<all_urls>",)
+        else:
+            raise TypeError("entries must be resource patterns or {resources, matches}")
+        entries.append(MappingProxyType({"resources": resources, "matches": matches}))
+    return tuple(entries)
+
+
+def extension_resource(environment, url, *, source_url=""):
+    """The resource *url* names, when this browser's extensions expose it to *source_url*.
+
+    ``None`` is what Chrome also answers when nothing can serve it: the id is unknown,
+    the extension is not installed or enabled, the path is not one it exposes, or the
+    page asking is not one its ``matches`` names.
+    """
+    if environment is None:
+        return None
+    declared = environment.extensions
+    if not declared:
+        return None
+    parts = urlsplit(str(url))
+    if parts.scheme.lower() != "chrome-extension":
+        return None
+    path = (parts.path or "/").lstrip("/")
+    for entry in declared.get((parts.hostname or "").lower(), ()):
+        if source_url and not any(_source_matches(pattern, source_url) for pattern in entry["matches"]):
+            continue
+        if any(_resource_matches(str(pattern).lstrip("/"), path) for pattern in entry["resources"]):
+            return path
+    return None
+
+
+def _resource_matches(pattern, path):
+    """Chrome's resource patterns: a literal path, or one whose ``*`` stands for anything."""
+    if pattern == path:
+        return True
+    if "*" not in pattern:
+        return False
+    parts = pattern.split("*")
+    if not path.startswith(parts[0]):
+        return False
+    at = len(parts[0])
+    for part in parts[1:-1]:
+        found = path.find(part, at)
+        if found < 0:
+            return False
+        at = found + len(part)
+    return path.endswith(parts[-1]) and at <= len(path) - len(parts[-1])
+
+
+def _source_matches(pattern, url):
+    """Whether a page on *url* may read the resource: Chrome's match patterns, coarsely."""
+    if pattern in ("<all_urls>", "*://*/*"):
+        return True
+    origin = origin_tuple(url)
+    if origin[0] == "opaque":
+        return False
+    scheme, host = origin[0], origin[1]
+    left, separator, right = str(pattern).partition("://")
+    if not separator or left not in ("*", scheme):
+        return False
+    expected = right.split("/", 1)[0].lower()
+    if expected == "*":
+        return True
+    if expected.startswith("*."):
+        return host == expected[2:] or host.endswith(expected[1:])
+    return host == expected
 
 
 def _enum(*allowed):
@@ -264,6 +372,8 @@ FIELDS: tuple[Field, ...] = (
     #: The name ``PermissionStatus.name`` reports, which is not the one queried.
     Field("permissions.spec_names", _text_mapping, True),
     Field("gpu.wgsl_features", _tokens, True),
+    #: The installed extensions a page can read out of: ``id -> declared resources``.
+    Field("extensions", _extensions, True),
 )
 
 _BY_NAME = {field.name: field for field in FIELDS}
@@ -671,5 +781,5 @@ __all__ = [
     "ViewportView", "ScreenView", "GeolocationView", "ConnectionView", "BatteryView",
     "StorageView", "QuotaView", "BluetoothView", "ClientHintsView", "Brand", "PluginView",
     "MimeTypeView", "WebGLView", "KeyboardView", "MediaView", "SpeechView", "PermissionsView",
-    "GpuView", "environment_of", "json_value",
+    "GpuView", "environment_of", "extension_resource", "json_value",
 ]

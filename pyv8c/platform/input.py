@@ -30,7 +30,7 @@ import time
 
 import pyv8
 
-from ..foundation.errors import InvalidStateError
+from ..foundation.host_errors import HostStateError
 from ..web.dom.activation import accepts_mouse_events, run_activation
 from ..web.dom.focus import focus_on_mousedown
 from ..web.dom.hit_testing import border_box, element_from_point
@@ -97,6 +97,57 @@ def describe(element):
     return f"<{tag} id={identifier!r}>" if identifier else f"<{tag}>"
 
 
+#: Positions a human path is sampled at when the caller names no count.
+HUMAN_SAMPLES = 24
+
+
+def _straight_points(start, end, samples):
+    """*samples* positions evenly spaced from *start* to *end*, the last one at *end*."""
+    start_x, start_y = start
+    end_x, end_y = end
+    return [(start_x + (end_x - start_x) * step / samples,
+             start_y + (end_y - start_y) * step / samples) for step in range(1, samples + 1)]
+
+
+def _curve_points(curve, start, end, samples, seed):
+    """The positions a hand passes through, ending exactly at *end*.
+
+    A real reach bows sideways and starts and stops slowly.  The same *seed* replays
+    the same path, which is what keeps a test that asks for one reproducible.
+    """
+    if curve != "human":
+        raise ValueError(f"unknown curve {curve!r}; expected 'human'")
+    import random
+
+    start_x, start_y = start
+    end_x, end_y = end
+    delta_x, delta_y = end_x - start_x, end_y - start_y
+    reach = math.hypot(delta_x, delta_y)
+    samples = max(2, int(samples or HUMAN_SAMPLES))
+    if not reach:
+        return [(end_x, end_y)] * samples
+    rng = random.Random(seed)
+    # The control point sits off the straight line: that offset is the bow.
+    bow = rng.uniform(-0.15, 0.15) * reach
+    control_x = start_x + delta_x / 2 - delta_y / reach * bow
+    control_y = start_y + delta_y / 2 + delta_x / reach * bow
+    wobble = min(1.0, reach * 0.01)
+    points = []
+    for index in range(1, samples + 1):
+        eased = 0.5 - 0.5 * math.cos(math.pi * index / samples)
+        inverse = 1.0 - eased
+        point_x = (inverse * inverse * start_x + 2 * inverse * eased * control_x
+                   + eased * eased * end_x)
+        point_y = (inverse * inverse * start_y + 2 * inverse * eased * control_y
+                   + eased * eased * end_y)
+        if index < samples:
+            # Every position but the landing one wanders, the way a hand's does.
+            point_x += rng.uniform(-wobble, wobble)
+            point_y += rng.uniform(-wobble, wobble)
+        points.append((point_x, point_y))
+    return points
+
+
 class MouseInput:
     """One page's mouse, reached as ``page.mouse``.
 
@@ -132,7 +183,9 @@ class MouseInput:
         """The buttons currently held down, as a set of names."""
         return frozenset(name for name, bit in BUTTON_BIT.items() if self._bits & bit)
 
-    def move(self, x: float, y: float, *, steps: int = 1) -> None:
+    def move(self, x: float, y: float, *, steps: int | None = None,
+             duration: float | None = None, curve: str | None = None,
+             seed: int | None = None) -> None:
         """Move the mouse to ``(x, y)``, moving through *steps* positions.
 
         Each position fires the boundary events a crossing element makes and
@@ -141,9 +194,17 @@ class MouseInput:
 
         :param x: viewport x coordinate.
         :param y: viewport y coordinate.
-        :param steps: how many intermediate positions to report; ``1`` jumps.
+        :param steps: how many positions to report; ``1`` jumps, and a curve
+            samples :data:`HUMAN_SAMPLES` of its own when this is left out.
+        :param duration: seconds to spread the positions over; without it they
+            are dispatched as fast as they are built, which is what a
+            scripted driver usually wants.
+        :param curve: ``"human"`` walks a bowed, eased path instead of the
+            straight line, for a page that reads the shape of the movement.
+        :param seed: makes a curve replayable; without it each call bows its own way.
         """
-        return self._call(self._move_to, float(x), float(y), max(1, int(steps)))
+        return self._call(self._move_to, float(x), float(y), steps, duration=duration,
+                          curve=curve, seed=seed)
 
     def down(self, *, button: str = "left", click_count: int | None = None) -> None:
         """Press *button* where the mouse is, and focus what the press lands on.
@@ -167,39 +228,50 @@ class MouseInput:
               y: float | None = None,
               *,
               button: str = "left",
-              click_count: int | None = None) -> None:
-        """Move to ``(x, y)`` when both are given, then press and release *button*."""
-        return self._call(self._click, x, y, self._button(button), click_count)
+              click_count: int | None = None,
+              delay: float | None = None) -> None:
+        """Move to ``(x, y)`` when both are given, then press and release *button*.
+
+        :param delay: seconds the button stays down before it is released; a real
+            press lasts tens of milliseconds, a scripted one none at all.
+        """
+        return self._call(self._click, x, y, self._button(button), click_count, delay=delay)
 
     def dblclick(self,
                  x: float | None = None,
                  y: float | None = None,
                  *,
-                 button: str = "left") -> None:
+                 button: str = "left",
+                 delay: float | None = None) -> None:
         """Two clicks reported as one run, ending in ``dblclick`` on the second."""
-        return self._call(self._dblclick, x, y, self._button(button))
+        return self._call(self._dblclick, x, y, self._button(button), delay=delay)
 
-    def move_to_element(self, element, *, force: bool = False) -> None:
-        """Move the mouse to the centre of *element*.
+    def move_to_element(self, element, *, force: bool = False,
+                        duration: float | None = None, curve: str | None = None,
+                        seed: int | None = None) -> None:
+        """Move the mouse to the centre of *element*, as :meth:`move` does.
 
-        :raises InvalidStateError: the element has no box (it is not rendered),
+        :raises HostStateError: the element has no box (it is not rendered),
             or something else covers the centre and *force* is false.
         """
-        return self._call(self._move_to_element, element, force)
+        return self._call(self._move_to_element, element, force, duration=duration,
+                          curve=curve, seed=seed)
 
     def click_element(self, element, *, button: str = "left", click_count: int = 1,
-                      force: bool = False) -> None:
+                      force: bool = False, delay: float | None = None,
+                      duration: float | None = None) -> None:
         """Move to the centre of *element* and click there, the way a user would.
 
-        :raises InvalidStateError: the element has no box, or the centre is not
+        :raises HostStateError: the element has no box, or the centre is not
             the element or one of its descendants and *force* is false.
         """
         return self._call(
             self._click_element, element, self._button(button), int(click_count), force,
+            delay=delay, duration=duration,
         )
 
-    def _call(self, action, *args):
-        return self._page.realm.executor.call(action, *args)
+    def _call(self, action, *args, **kwargs):
+        return self._page.realm.executor.call(action, *args, **kwargs)
 
     def _button(self, name):
         if name not in BUTTON_INDEX:
@@ -209,17 +281,22 @@ class MouseInput:
             )
         return name
 
+    def _hit(self, x, y):
+        """``(hit, target)`` for a point: what is under it, and what an event lands on."""
+        document = self._page.document
+        hit = element_from_point(document, x, y)
+        if hit is not None:
+            return hit, hit
+        root = document.get_documentElement()
+        return None, None if root is None or root is pyv8.Null else root
+
     def _target(self):
         """The element the mouse is over, or the root when it is outside the viewport."""
-        document = self._page.document
-        found = element_from_point(document, self._x, self._y)
-        if found is not None:
-            return found
-        root = document.get_documentElement()
-        return None if root is None or root is pyv8.Null else root
+        return self._hit(self._x, self._y)[1]
 
     def _emit(self, event_type, target, *, button=0, detail=0, related=None,
-              bubbles=True, cancelable=True, event_class=None, propagates=True):
+              bubbles=True, cancelable=True, event_class=None, propagates=True,
+              coalesced=()):
         """Dispatch one event and hand it back, or ``None`` when there is no target."""
         if target is None:
             return None
@@ -241,6 +318,8 @@ class MouseInput:
         interface = event_class or ("PointerEvent" if event_type.startswith("pointer") else "MouseEvent")
         if interface == "PointerEvent":
             options.update({"pointerId": POINTER_ID, "pointerType": "mouse", "isPrimary": True})
+            if coalesced:
+                options["coalesced"] = tuple(coalesced)
             if not event_type.endswith(("down", "up")):
                 # No button transition is -1 on a pointer event; the mouse event
                 # beside it keeps the 0 Chromium gives it.
@@ -254,15 +333,28 @@ class MouseInput:
             event_type, target, options, event_class=interface, propagates=propagates,
         )
 
-    def _move_to(self, x, y, steps):
-        start_x, start_y = self._x, self._y
-        for step in range(1, steps + 1):
-            self._move_once(
-                start_x + (x - start_x) * step / steps,
-                start_y + (y - start_y) * step / steps,
-            )
+    def _move_to(self, x, y, steps, known=None, duration=None, curve=None, seed=None):
+        """Move through *steps* positions, evenly spaced, or along *curve* when one is named."""
+        start, end = (self._x, self._y), (float(x), float(y))
+        # A caller that already read the landing point hands it in for the last step.
+        points = (_curve_points(curve, start, end, steps, seed) if curve is not None
+                  else _straight_points(start, end, max(1, int(steps or 1))))
+        slice_seconds = 0.0 if duration is None else max(0.0, float(duration)) / len(points)
+        batch = []
+        for index, (point_x, point_y) in enumerate(points, start=1):
+            if slice_seconds:
+                # The document's clock follows real time, so the pause is what makes the
+                # positions arrive apart, the way a cursor's do.
+                time.sleep(slice_seconds)
+                # A paced position is its own reading: nothing is merged into it.
+                batch = []
+            pointer = self._move_once(point_x, point_y, known if index == len(points) else None,
+                                      tuple(batch))
+            if pointer is not None:
+                # A burst arrives as one batch; a page can read what was merged into it.
+                batch.append(pointer)
 
-    def _move_once(self, x, y):
+    def _move_once(self, x, y, known=None, coalesced=()):
         # Chrome reports whole pixels, and the first move after the cursor arrives
         # reports no movement at all.
         if self._moved:
@@ -271,17 +363,12 @@ class MouseInput:
             self._movement_x = self._movement_y = 0
             self._moved = True
         self._x, self._y = x, y
-        document = self._page.document
-        hit = element_from_point(document, x, y)
-        self._cross(hit if hit is not None else self._root(), hit is not None)
-        target = self._target()
-        self._emit("pointermove", target)
+        # One hit test per position: it walks the whole tree, so both answers come from it.
+        hit, target = self._hit(x, y) if known is None else known
+        self._cross(target, hit is not None)
+        pointer = self._emit("pointermove", target, coalesced=coalesced)
         self._emit("mousemove", target)
-
-    def _root(self):
-        document = self._page.document
-        root = document.get_documentElement()
-        return None if root is None or root is pyv8.Null else root
+        return pointer
 
     def _cross(self, target, inside=True):
         """Fire the boundary events a move from the hovered element to *target* makes."""
@@ -367,42 +454,51 @@ class MouseInput:
         if count == 2:
             self._emit("dblclick", clicked, detail=count)
 
-    def _click(self, x, y, button, click_count):
+    def _click(self, x, y, button, click_count, known=None, delay=None, duration=None):
         if x is not None and y is not None:
-            self._move_to(float(x), float(y), 1)
+            self._move_to(float(x), float(y), 1, known, duration)
         self._down(button, click_count)
+        if delay:
+            time.sleep(max(0.0, float(delay)))
         self._up(button, click_count)
 
-    def _dblclick(self, x, y, button):
-        self._click(x, y, button, 1)
-        self._click(None, None, button, 2)
+    def _dblclick(self, x, y, button, delay=None):
+        self._click(x, y, button, 1, None, delay)
+        self._click(None, None, button, 2, None, delay)
 
     def _point_in(self, element, force, action):
         """The centre of *element*, once it is the element a click would reach there."""
         box = border_box(element)
         if box.width <= 0 or box.height <= 0:
-            raise InvalidStateError(
+            raise HostStateError(
                 f"{describe(element)} has no box to click: it is not rendered"
             )
         x, y = box.left + box.width / 2, box.top + box.height / 2
-        if not force:
-            hit = element_from_point(self._page.document, x, y)
+        # Nothing runs between this read and the action, so the landing the check saw is
+        # the one the action starts from.
+        known = None if force else self._hit(x, y)
+        if known is not None:
+            hit = known[0]
             covered = hit is not element and not any(
                 node is element for node in _ancestors(hit)
             )
             if covered:
-                raise InvalidStateError(
+                raise HostStateError(
                     f"{describe(element)} is covered at its centre ({x:g}, {y:g})"
                     f" by {describe(hit)}; pass force=True to click there anyway"
                 )
-        return action(x, y)
+        return action(x, y, known)
 
-    def _move_to_element(self, element, force):
-        return self._point_in(element, force, lambda x, y: self._move_to(x, y, 1))
-
-    def _click_element(self, element, button, click_count, force):
+    def _move_to_element(self, element, force, duration=None, curve=None, seed=None):
         return self._point_in(
-            element, force, lambda x, y: self._click(x, y, button, click_count),
+            element, force,
+            lambda x, y, known: self._move_to(x, y, None, known, duration, curve, seed),
+        )
+
+    def _click_element(self, element, button, click_count, force, delay=None, duration=None):
+        return self._point_in(
+            element, force,
+            lambda x, y, known: self._click(x, y, button, click_count, known, delay, duration),
         )
 
 

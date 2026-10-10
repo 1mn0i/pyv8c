@@ -13,7 +13,8 @@ from ...foundation.arguments import (
     missing_error,
     usv_string,
 )
-from ...foundation.errors import InvalidStateError
+from ..page_errors import InvalidStateError
+from ...foundation.error_policy import host_boundary
 from ...foundation.urls import origin_string
 from ..bom.scheduling import _SchedulingMixin
 from ..bom.utils import is_secure_context
@@ -144,7 +145,14 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
         transfer = message_transfer(options)
         self._runtime.post_to_parent(value, transfer)
     def fn_close(self, *_extra):
-        self._runtime.stop()
+        #: A browser answers ``undefined`` however the teardown goes: the host's own
+        #: difficulty is logged, never thrown at the script that asked to close.
+        #: A worker global's own script is the only JavaScript that reaches this
+        #: thread, and a worker realm is built on its own isolate -- the one shape
+        #: ``pyv8.current_context()`` cannot answer for.
+        with host_boundary("WorkerGlobalScope.close",
+                           from_script=self._runtime.executor.is_owner_thread()):
+            self._runtime.stop()
 
 
 @interface('DedicatedWorkerGlobalScope', 'WorkerGlobalScope')
@@ -229,7 +237,10 @@ class Worker(EventTarget):
 
     def fn_terminate(self, *_extra):
         if not self._terminated:
-            self._runtime.stop()
+            #: ``terminate()`` always succeeds for the page, as it does in a browser;
+            #: the host's own difficulty with the teardown is logged instead.
+            with host_boundary("Worker.terminate"):
+                self._runtime.stop()
             self._terminated = True
             self._finish_lifecycle()
 
@@ -308,7 +319,8 @@ class SharedWorker(EventTarget):
         """What the page's own cleanup calls: the worker and its realm go away."""
         if not self._terminated:
             self._terminated = True
-            self._runtime.stop()
+            with host_boundary("SharedWorker.terminate"):
+                self._runtime.stop()
             self._finish_lifecycle()
 
 __all__ = ["Worker", "WorkerGlobalScope", "DedicatedWorkerGlobalScope",

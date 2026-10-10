@@ -34,7 +34,7 @@ CHROME_PATHS = (
     r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe",
 )
 
-#: pyv8 spells an error ``V8TypeError``, Chrome writes ``TypeError: boom``; the class
+#: pyv8 spells an error ``PageTypeError``, Chrome writes ``TypeError: boom``; the class
 #: is the part the two can be held to.
 ERROR_NAME = re.compile(r"(?:V8)?([A-Z][A-Za-z]*Error)")
 

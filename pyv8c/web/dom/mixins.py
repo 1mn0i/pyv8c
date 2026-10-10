@@ -7,7 +7,7 @@ model and every legacy collection are composed from them.
 import pyv8
 from pyv8.flag import V8Attribute
 
-from ...foundation.errors import LegacyPropertyError
+from ..page_errors import LegacyPropertyError
 from .utils import NAMED_PROPERTY_ATTRIBUTES, OBJECT_PROTOTYPE_NAMES, as_nodes, is_element
 
 

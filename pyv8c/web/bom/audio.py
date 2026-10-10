@@ -24,7 +24,9 @@ from ...foundation.arguments import (
     sequence,
 )
 from ...foundation.clock import clock_of
-from ...foundation.errors import V8TypeError, dom_exception
+from ...foundation.arguments import IdlArgumentError
+from ..page_errors import PageTypeError, dom_exception
+from ..page_errors import js_error_value
 from ..dom.events import Event, EventTarget
 
 
@@ -47,11 +49,11 @@ def _attribute(name, getter=None, setter=None, side_effect=1):
 
 def _double(value, what):
     if isinstance(value, bool) or is_nullish(value):
-        raise V8TypeError(f"The provided value for {what} is not of type 'double'.")
+        raise PageTypeError(f"The provided value for {what} is not of type 'double'.")
     try:
         return float(value)
     except (TypeError, ValueError) as exc:
-        raise V8TypeError(f"The provided value for {what} is not of type 'double'.") from exc
+        raise PageTypeError(f"The provided value for {what} is not of type 'double'.") from exc
 
 
 @interface('AudioParam', None)
@@ -78,7 +80,7 @@ class AudioParam:
     def set_automationRate(self, value):
         value = dom_string(value)
         if value not in ("a-rate", "k-rate"):
-            raise V8TypeError(f"The provided value '{value}' is not a valid enum value.")
+            raise PageTypeError(f"The provided value '{value}' is not a valid enum value.")
         self._automation_rate = value
 
     def value_at(self, seconds):
@@ -289,20 +291,20 @@ class AudioNode(EventTarget):
     def set_channelCountMode(self, value):
         value = dom_string(value)
         if value not in ("max", "clamped-max", "explicit"):
-            raise V8TypeError(f"The provided value '{value}' is not a valid enum value.")
+            raise PageTypeError(f"The provided value '{value}' is not a valid enum value.")
         self._channel_count_mode = value
     def get_channelInterpretation(self): return self._channel_interpretation
     def set_channelInterpretation(self, value):
         value = dom_string(value)
         if value not in ("speakers", "discrete"):
-            raise V8TypeError(f"The provided value '{value}' is not a valid enum value.")
+            raise PageTypeError(f"The provided value '{value}' is not a valid enum value.")
         self._channel_interpretation = value
 
     def fn_connect(self, destination=MISSING, *_extra):
         if destination is MISSING:
             raise missing_error('AudioNode', 'connect', 1, 0, constructor=False)
         if not isinstance(destination, AudioNode):
-            raise V8TypeError("Failed to execute 'connect' on 'AudioNode': parameter 1 is not"
+            raise PageTypeError("Failed to execute 'connect' on 'AudioNode': parameter 1 is not"
                               " of type 'AudioNode'.")
         self._outputs.append(destination)
         destination._inputs.append(self)
@@ -375,7 +377,7 @@ class OscillatorNode(AudioScheduledSourceNode):
     def set_type(self, value):
         value = dom_string(value)
         if value not in self.TYPES:
-            raise V8TypeError(f"The provided value '{value}' is not a valid enum value.")
+            raise PageTypeError(f"The provided value '{value}' is not a valid enum value.")
         self._type = value
     def get_frequency(self): return self._frequency
     def get_detune(self): return self._detune
@@ -384,7 +386,7 @@ class OscillatorNode(AudioScheduledSourceNode):
         if wave is MISSING:
             raise missing_error('OscillatorNode', 'setPeriodicWave', 1, 0, constructor=False)
         if not isinstance(wave, PeriodicWave):
-            raise V8TypeError("Failed to execute 'setPeriodicWave' on 'OscillatorNode':"
+            raise PageTypeError("Failed to execute 'setPeriodicWave' on 'OscillatorNode':"
                               " parameter 1 is not of type 'PeriodicWave'.")
         self._periodic = wave
         self._type = "custom"
@@ -592,7 +594,7 @@ class AudioBuffer:
         offset = max(integer(start), 0)
         view = destination if _is_float32_array(destination) else None
         if view is None:
-            raise V8TypeError("Failed to execute 'copyFromChannel' on 'AudioBuffer':"
+            raise PageTypeError("Failed to execute 'copyFromChannel' on 'AudioBuffer':"
                               " parameter 1 is not of type 'Float32Array'.")
         samples = self._samples[index]
         for position in range(min(self._length - offset, int(view.length))):
@@ -689,7 +691,7 @@ class BaseAudioContext(EventTarget):
         """
         try:
             decoded = _wav_channels(_buffer_bytes(data))
-        except V8TypeError as error:
+        except (PageTypeError, IdlArgumentError) as error:
             return self._decoded(None, error, success, failure)
         if decoded is None:
             # Nothing throws here: Chrome answers this one as a rejected promise too.
@@ -709,9 +711,9 @@ class BaseAudioContext(EventTarget):
         realm = getattr(services, "realm_services", services)
         handler = failure if error is not None else success
         if callable(handler):
-            handler(realm.js_error_value(error) if error is not None else value)
+            handler(js_error_value(error) if error is not None else value)
         promise, resolve, reject = realm.make_promise()
-        reject(realm.js_error_value(error)) if error is not None else resolve(value)
+        reject(js_error_value(error)) if error is not None else resolve(value)
         return promise
 
     def _promise(self, value=pyv8.Undefined):
@@ -907,7 +909,7 @@ class AudioBufferSourceNode(AudioScheduledSourceNode):
             self._buffer = None
             return
         if not isinstance(value, AudioBuffer):
-            raise V8TypeError("Failed to set the 'buffer' property on 'AudioBufferSourceNode':"
+            raise PageTypeError("Failed to set the 'buffer' property on 'AudioBufferSourceNode':"
                               " The provided value is not of type 'AudioBuffer'.")
         self._buffer = value
     def get_playbackRate(self): return self._playback_rate
@@ -985,7 +987,7 @@ def _buffer_bytes(data):
     name = getattr(data._get("constructor"), "name", None) \
         if isinstance(data, pyv8.JSObject) else None
     if name != "ArrayBuffer":
-        raise V8TypeError("Failed to execute 'decodeAudioData' on 'BaseAudioContext':"
+        raise PageTypeError("Failed to execute 'decodeAudioData' on 'BaseAudioContext':"
                           " parameter 1 is not of type 'ArrayBuffer'.")
     view = pyv8.JSTypeArray(data, pyv8.ArrayType.Uint8Array)
     return bytes(int(view[index]) for index in range(int(view._get("byteLength"))))
@@ -1115,7 +1117,7 @@ def _sequence(value, what):
     try:
         return [float(item) for item in sequence(value)]
     except (TypeError, ValueError) as exc:
-        raise V8TypeError(f"Failed to execute '{what}': the value is not a sequence.") from exc
+        raise PageTypeError(f"Failed to execute '{what}': the value is not a sequence.") from exc
 
 
 def _is_float32_array(value):
@@ -1129,7 +1131,7 @@ def _float32_view(value, what):
     """The Float32Array a page handed over, or the TypeError another type earns."""
     if _is_float32_array(value):
         return value
-    raise V8TypeError(f"Failed to execute '{what}': parameter 1 is not of type 'Float32Array'.")
+    raise PageTypeError(f"Failed to execute '{what}': parameter 1 is not of type 'Float32Array'.")
 
 
 def _view_length(view, what):
@@ -1144,7 +1146,7 @@ class PeriodicWave:
 
     def __init__(self, context=None, options=None, *, _realm=None, **_):
         if is_nullish(options):
-            raise V8TypeError("Failed to construct 'PeriodicWave': 2 arguments required, but"
+            raise PageTypeError("Failed to construct 'PeriodicWave': 2 arguments required, but"
                               " only 1 present.")
         options = dictionary(options, name="PeriodicWaveOptions",
                              prefix="Failed to construct 'PeriodicWave': ")
@@ -1330,7 +1332,7 @@ class ConvolverNode(AudioNode):
         if is_nullish(value) or value is pyv8.Null:
             self._buffer = None
         elif not isinstance(value, AudioBuffer):
-            raise V8TypeError("Failed to set the 'buffer' property on 'ConvolverNode':"
+            raise PageTypeError("Failed to set the 'buffer' property on 'ConvolverNode':"
                               " The provided value is not of type 'AudioBuffer'.")
         elif value.get_numberOfChannels() not in (1, 2, 4):
             raise dom_exception("NotSupportedError",
@@ -1470,7 +1472,7 @@ class BiquadFilterNode(AudioNode):
     def set_type(self, value):
         value = dom_string(value)
         if value not in self.TYPES:
-            raise V8TypeError(f"The provided value '{value}' is not a valid enum value.")
+            raise PageTypeError(f"The provided value '{value}' is not a valid enum value.")
         self._type = value
     def get_frequency(self): return self._frequency
     def get_detune(self): return self._detune
@@ -1586,7 +1588,7 @@ class WaveShaperNode(AudioNode):
     def set_oversample(self, value):
         value = dom_string(value)
         if value not in self.OVERSAMPLE:
-            raise V8TypeError(f"The provided value '{value}' is not a valid enum value.")
+            raise PageTypeError(f"The provided value '{value}' is not a valid enum value.")
         self._oversample = value
 
     def set_curve(self, value):
@@ -1595,7 +1597,7 @@ class WaveShaperNode(AudioNode):
             self._view = None
             return
         if not _is_float32_array(value):
-            raise V8TypeError("Failed to set the 'curve' property on 'WaveShaperNode':"
+            raise PageTypeError("Failed to set the 'curve' property on 'WaveShaperNode':"
                               " The provided value is not of type 'Float32Array'.")
         values = _sequence(value, "WaveShaperNode")
         if len(values) < 2:
@@ -1672,13 +1674,13 @@ class PannerNode(AudioNode):
     def set_panningModel(self, value):
         value = dom_string(value)
         if value not in self.PANNING_MODELS:
-            raise V8TypeError(f"The provided value '{value}' is not a valid enum value.")
+            raise PageTypeError(f"The provided value '{value}' is not a valid enum value.")
         self._panning_model = value
     def get_distanceModel(self): return self._distance_model
     def set_distanceModel(self, value):
         value = dom_string(value)
         if value not in self.DISTANCE_MODELS:
-            raise V8TypeError(f"The provided value '{value}' is not a valid enum value.")
+            raise PageTypeError(f"The provided value '{value}' is not a valid enum value.")
         self._distance_model = value
     def get_refDistance(self): return self._ref_distance
     def set_refDistance(self, value):

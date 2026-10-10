@@ -160,8 +160,8 @@ def test_websockets_is_told_directly_rather_than_left_to_its_default():
 def test_engines_declare_whether_they_can_be_sent_through_a_proxy():
     assert accepts_proxy("curl_cffi", "http") is True
     assert accepts_proxy("websockets", "ws") is True
-    assert accepts_proxy("cronet", "http") is False
-    assert accepts_proxy("cronet", "ws") is False
+    assert accepts_proxy("cronet", "http") is True
+    assert accepts_proxy("cronet", "ws") is True
     assert accepts_proxy("not-registered", "http") is False
     assert accepts_proxy("curl_cffi", "ws") is False
 

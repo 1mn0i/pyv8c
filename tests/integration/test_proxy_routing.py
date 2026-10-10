@@ -22,7 +22,7 @@ import pytest
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 
 from proxy_harness import RecordingProxy
-from pyv8c import Browser, DOMException
+from pyv8c import Browser, DOMException, register_transport
 
 PAGE = """<!doctype html><html><body>
 <img id=pixel src="/pixel.png">
@@ -249,7 +249,9 @@ def test_https_traffic_is_tunnelled_rather_than_dropped(proxy, origin):
             page = browser.new_context().new_page()
             # The tunnel is refused, so the request cannot succeed -- which is
             # the point: it went to the proxy rather than straight out.
-            with pytest.raises(DOMException):
+            from pyv8c.foundation.host_errors import LoadFailure
+
+            with pytest.raises(LoadFailure):
                 page.net.get("https://127.0.0.1:8443/data")
         finally:
             browser.close()
@@ -411,12 +413,36 @@ def test_a_proxy_without_an_engine_is_refused():
 
 
 def test_an_engine_that_cannot_be_proxied_is_refused():
-    browser = Browser(stub_logging="off", http_engine="cronet", proxy="http://127.0.0.1:3128")
+    class Silent:
+        def request_sync(self, request):
+            raise NotImplementedError
+
+        def close(self):
+            return None
+
+    register_transport("proxy-refusing-probe", lambda *, options=None: Silent(),
+                       option_keys=lambda: frozenset())
+    browser = Browser(stub_logging="off", http_engine="proxy-refusing-probe",
+                      proxy="http://127.0.0.1:3128")
     try:
         with pytest.raises(TypeError, match="cannot be sent through a proxy"):
             browser.new_context()
     finally:
         browser.close()
+
+
+def test_cronet_carries_its_traffic_through_the_proxy(proxy, origin):
+    """cycronet is handed the context's proxy at construction, so its loads leave by it."""
+    url, _hits = origin
+    browser = Browser(stub_logging="off", http_engine="cronet", proxy=proxy.url)
+    try:
+        page = browser.new_context().new_page()
+        page.goto(f"{url}/page", wait_until="load")
+        assert page.evaluate("document.querySelector('#pixel') !== null")
+    finally:
+        browser.close()
+    carried = proxy.carried()
+    assert carried and all(url in line for line in carried)
 
 
 def test_a_proxy_and_the_engines_own_proxy_option_are_refused_together():

@@ -148,7 +148,7 @@ class CanvasRenderingContext2D:
         left, top = int(math.floor(float(x))), int(math.floor(float(y)))
         width, height = int(float(sw)), int(float(sh))
         if width < 0 or height < 0:
-            from ...foundation.errors import IndexSizeError
+            from ..page_errors import IndexSizeError
             raise IndexSizeError(
                 "Failed to execute 'getImageData' on 'CanvasRenderingContext2D':"
                 " The source width or height is negative.")

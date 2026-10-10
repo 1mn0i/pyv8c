@@ -10,6 +10,7 @@ from pyv8c.foundation.environment import (
     PROFILE,
     SCHEMA_VERSION,
     BrowserEnvironment,
+    extension_resource,
 )
 
 WINDOWS_CHROME = (
@@ -213,3 +214,65 @@ def test_an_environment_is_immutable():
         environment.screen = None
     with pytest.raises(AttributeError):
         environment.nope
+
+
+# -- the extensions a page can read out of ------------------------------------
+
+X_PATH = "cneomjecgakdfoeehmmmoiklncdiodmh"
+TRANSLATE = "aapbdbdomjkkjkaonfhkkikfgjllcleb"
+
+
+def installed(**overrides):
+    """One enabled extension: a literal file, a glob, and the origins it names."""
+    declaration = {
+        X_PATH: [{"resources": ["/icons/icon_64.png", "/_locales/*/messages.json"],
+                  "matches": ["http://*/*", "https://*/*"]}],
+    }
+    declaration.update(overrides)
+    return BrowserEnvironment({"extensions": declaration})
+
+
+def test_an_extension_declaration_is_kept_in_chromes_own_shape():
+    environment = installed(**{TRANSLATE: ["popup_css_compiled.css"]})
+    assert environment.extensions[TRANSLATE] == (
+        {"resources": ("popup_css_compiled.css",), "matches": ("<all_urls>",)},
+    )
+
+
+def test_an_extension_id_and_its_resources_are_checked():
+    with pytest.raises(ValueError, match="not an extension id"):
+        BrowserEnvironment({"extensions": {"not-an-id": ["a.css"]}})
+    with pytest.raises(TypeError, match="must list the resources"):
+        BrowserEnvironment({"extensions": {TRANSLATE: []}})
+    with pytest.raises(TypeError, match="at least one resource pattern"):
+        BrowserEnvironment({"extensions": {TRANSLATE: [{"matches": ["<all_urls>"]}]}})
+    with pytest.raises(TypeError, match="must map extension ids"):
+        BrowserEnvironment({"extensions": ["a.css"]})
+
+
+def test_a_hit_needs_the_installed_id_the_declared_path_and_a_named_source():
+    environment = installed()
+    source = "https://www.radissonhotels.com/zh-cn/"
+    assert extension_resource(environment, f"chrome-extension://{X_PATH}/icons/icon_64.png",
+                              source_url=source) == "icons/icon_64.png"
+    assert extension_resource(environment, f"chrome-extension://{X_PATH}/_locales/am/messages.json",
+                              source_url=source) == "_locales/am/messages.json"
+    # A path the extension does not expose, an id it does not have, and another scheme.
+    assert extension_resource(environment, f"chrome-extension://{X_PATH}/content.css",
+                              source_url=source) is None
+    assert extension_resource(environment, f"chrome-extension://{TRANSLATE}/icons/icon_64.png",
+                              source_url=source) is None
+    assert extension_resource(environment, "https://example.test/icons/icon_64.png",
+                              source_url=source) is None
+    assert extension_resource(None, f"chrome-extension://{X_PATH}/icons/icon_64.png") is None
+
+
+def test_a_page_the_declaration_does_not_name_cannot_read_it():
+    environment = installed(**{TRANSLATE: [{"resources": ["popup_css_compiled.css"],
+                                           "matches": ["https://elsewhere.test/*"]}]})
+    target = f"chrome-extension://{TRANSLATE}/popup_css_compiled.css"
+    assert extension_resource(environment, target, source_url="https://elsewhere.test/app") == \
+        "popup_css_compiled.css"
+    assert extension_resource(environment, target, source_url="https://example.test/") is None
+    # Nothing named the source: a load with no page behind it still resolves.
+    assert extension_resource(environment, target) == "popup_css_compiled.css"

@@ -16,11 +16,12 @@ from ..foundation.arguments import (
     sequence,
     usv_string,
 )
-from ..foundation.errors import InvalidStateError, V8SyntaxError, dom_exception
+from .page_errors import InvalidStateError, PageSyntaxError, dom_exception
+from ..foundation.logging import logger
 from .dom.events import Event, EventTarget
 from .fetch.blob import Blob, bytes_from_value
 from .fetch.events import CloseEvent, ErrorEvent, MessageEvent
-from ..network.models import NetworkUnavailableError
+
 
 
 @interface('WebSocket', 'EventTarget')
@@ -54,24 +55,36 @@ class WebSocket(EventTarget):
             _ = parts.port
             url = urlunsplit((scheme, parts.netloc, parts.path or "/", parts.query, ""))
         except ValueError as exc:
-            raise V8SyntaxError("Failed to construct 'WebSocket': The URL is invalid.") from exc
+            raise PageSyntaxError("Failed to construct 'WebSocket': The URL is invalid.") from exc
         if len(set(protocols)) != len(protocols) or any(
             not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", protocol) for protocol in protocols
         ):
-            raise V8SyntaxError("Failed to construct 'WebSocket': Invalid or duplicate subprotocol.")
+            raise PageSyntaxError("Failed to construct 'WebSocket': Invalid or duplicate subprotocol.")
         super().__init__(services=services, **kw)
-        if not services or not services.context_services.ws_available:
-            raise NetworkUnavailableError(
-                "WebSocket requires a WebSocket engine; set ws_engine= or real_network=True"
-            )
         self._services, self._url = services, str(url)
         self._protocol = self._extensions = ""
         self._state_value, self._binary_type, self._buffered = self.CONNECTING, "blob", 0
         self._ws = None
+        if not services or not services.context_services.ws_available:
+            #: A browser always has an engine, so a missing one is the host's own gap.
+            #: The constructor still answers, and the page learns about it the way it
+            #: learns about any socket that cannot be opened: ``error``, then ``close``
+            #: with 1006.  Why stays in the host's log.
+            logger.warning("WebSocket needs an engine; set ws_engine= or real_network=True")
+            self._state_value = self.CLOSED
+            if services is not None:
+                services.task_services.post_task(self._fail_without_engine)
+            return
         callbacks = {"open": self._on_open, "message": self._on_message,
                      "error": self._on_error, "close": self._on_close}
         self._ws = services.context_services.websocket(self._url, protocols, callbacks)
         services.context_services.track_websocket(self._ws)
+
+    def _fail_without_engine(self):
+        """What a socket that cannot be opened reports, without saying why."""
+        self.fn_dispatchEvent(Event("error", {"isTrusted": True}))
+        self.fn_dispatchEvent(CloseEvent("close", {
+            "isTrusted": True, "code": 1006, "reason": "", "wasClean": False}))
 
     def get_url(self): return self._url
     def get_protocol(self): return self._protocol
@@ -129,7 +142,7 @@ class WebSocket(EventTarget):
         if code != 1000 and not 3000 <= code <= 4999:
             raise dom_exception("InvalidAccessError", "The code must be either 1000, or between 3000 and 4999.")
         if len(reason.encode("utf-8")) > 123:
-            raise V8SyntaxError("The close reason must not be greater than 123 UTF-8 bytes.")
+            raise PageSyntaxError("The close reason must not be greater than 123 UTF-8 bytes.")
         if self._state_value in (self.CLOSING, self.CLOSED):
             return
         self._state_value = self.CLOSING
@@ -154,7 +167,11 @@ class WebSocket(EventTarget):
         }))
 
     def _on_error(self, ws, error, net_error=None):
-        self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, "message": str(error)}))
+        #: What a browser reports for a socket that cannot be opened is a plain
+        #: ``error`` with nothing in it, so the page is not handed the transport's own
+        #: words; why it failed is the host's to read.
+        logger.debug("websocket error: {}", error)
+        self.fn_dispatchEvent(Event("error", {"isTrusted": True}))
 
     def _on_close(self, ws, code, reason, was_clean=True):
         self._state_value = self.CLOSED

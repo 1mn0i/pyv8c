@@ -10,9 +10,10 @@ from functools import lru_cache
 from urllib.parse import urljoin, urlsplit
 
 __all__ = [
-    "DEFAULT_PORTS", "SPECIAL_SCHEMES",
+    "DEFAULT_PORTS", "SPECIAL_SCHEMES", "LOADABLE_SCHEMES",
     "origin_tuple", "same_origin", "serialize_origin", "origin_string",
     "absolute_url", "quote_form", "form_urlencoded", "credentials_netloc", "header_set",
+    "unloadable_scheme",
 ]
 
 #: Schemes whose origin is derived from host and port ("special schemes"); the rest are opaque.
@@ -20,6 +21,18 @@ SPECIAL_SCHEMES = frozenset({"http", "https", "ws", "wss", "ftp"})
 
 #: Port implied by a special scheme when the URL omits it.
 DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443, "ftp": 21}
+
+#: The schemes a page's own loads may use; the rest are the browser's own
+#: (``chrome-extension:``, ``devtools:``), which Chrome answers locally or blocks.
+LOADABLE_SCHEMES = ("http", "https", "about", "blob", "data")
+
+
+def unloadable_scheme(target):
+    """Why a page cannot load *target*, or ``None`` when it can reach the network."""
+    scheme = urlsplit(str(target)).scheme.lower()
+    if scheme in LOADABLE_SCHEMES:
+        return None
+    return f"{scheme}: is not a scheme a page loads, so nothing was requested <{target}>"
 
 
 def origin_tuple(value, *, inherited=None):

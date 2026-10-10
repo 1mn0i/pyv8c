@@ -15,7 +15,7 @@ import pyv8  # patch target for native Context instrumentation
 
 from ..engine.bindings import Idl, Bindings
 from ..foundation.environment import BrowserEnvironment
-from ..foundation.errors import InvalidStateError, NetworkError
+from ..foundation.host_errors import HostStateError, LoadFailure
 from ..foundation.urls import origin_string, origin_tuple
 from ..network.assembly import assemble_backend
 from ..network.cookies import CookieJar
@@ -62,7 +62,7 @@ class BrowserContext:
 
     def _ensure_open(self):
         if self.closed or self.browser._closed:
-            raise InvalidStateError("BrowserContext is closed")
+            raise HostStateError("BrowserContext is closed")
 
     def create_blob_url(self, blob, realm=None):
         """Mint a ``blob:`` URL whose origin is the creating realm's origin.
@@ -83,7 +83,7 @@ class BrowserContext:
     def resolve_blob_url(self, url):
         self._ensure_open()
         if url not in self._blob_urls:
-            raise NetworkError("revoked or unknown Blob URL")
+            raise LoadFailure("revoked or unknown Blob URL")
         return self._blob_urls[url]
 
     def revoke_blob_url(self, url):
@@ -155,9 +155,9 @@ class BrowserContext:
         """
         self._ensure_open()
         if page not in self.pages or page.closed:
-            raise InvalidStateError("Page does not belong to this BrowserContext")
+            raise HostStateError("Page does not belong to this BrowserContext")
         if self._devtools is not None:
-            raise InvalidStateError("BrowserContext already has DevTools attached")
+            raise HostStateError("BrowserContext already has DevTools attached")
         from .devtools import start_devtools
         return start_devtools(self, page, options=options)
 
@@ -411,7 +411,7 @@ class Browser:
         :raises ValueError: the proxy value is not an ``http``/``https`` URL.
         """
         if self._closed:
-            raise InvalidStateError("Browser is closed")
+            raise HostStateError("Browser is closed")
         if trace_callback is not None and not callable(trace_callback):
             raise TypeError("trace_callback must be callable or None")
         context = BrowserContext(self, proxy=None if proxy is None else normalize_proxy(proxy),
@@ -440,11 +440,10 @@ class Browser:
         """
         if self._closed:
             return
-        pool = self._loader_pool
-        if pool is not None:
-            # Loader work is not the browser's to wait for, and a callback may be
-            # blocked on its own I/O.
-            pool.shutdown(wait=False, cancel_futures=True)
+        # Contexts close first: a page that is already closed is what makes its queued
+        # loads stand down quietly.  The pool going away first was the other order, and
+        # every load still queued then failed into a script's error event -- a burst of
+        # warnings about a shutdown, on a page that was on its way out anyway.
         first_error = None
         for context in list(self.contexts):
             try:
@@ -452,6 +451,11 @@ class Browser:
             except BaseException as exc:  # every context still gets its close attempt
                 if first_error is None:
                     first_error = exc
+        pool = self._loader_pool
+        if pool is not None:
+            # Loader work is not the browser's to wait for, and a callback may be
+            # blocked on its own I/O.
+            pool.shutdown(wait=False, cancel_futures=True)
         if first_error is not None:
             raise first_error
         self._closed = True

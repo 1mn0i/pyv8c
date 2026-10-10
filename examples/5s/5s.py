@@ -206,7 +206,7 @@ def watch_executor():
     import faulthandler
     import traceback
 
-    from pyv8c.foundation.errors import RealmBusyError
+    from pyv8c.foundation.host_errors import RealmBusyError
     from pyv8c.foundation.executor import RealmExecutor
 
     original = RealmExecutor.call

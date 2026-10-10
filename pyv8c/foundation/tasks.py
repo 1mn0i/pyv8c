@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import enum
 import heapq
+import traceback
 import itertools
 import threading
 import time
@@ -17,7 +18,8 @@ from collections import deque
 from collections.abc import Callable
 from typing import Protocol
 
-from .errors import as_js_error
+from .error_policy import is_host_failure
+from .logging import logger
 
 #: Timed on the finest monotonic clock Python exposes: Windows' ``time.monotonic()``
 #: moves once per 64 Hz tick, so a 5 ms timer could only be seen 15.6 ms late; on
@@ -111,7 +113,7 @@ class TaskQueue:
         try:
             return callback(*args)
         except BaseException as exc:  # reported below
-            self._report_error(exc)
+            self._report_error(exc, callback)
             return None
 
     def report_error(self, exc):
@@ -122,15 +124,33 @@ class TaskQueue:
         """
         self._report_error(exc)
 
-    def _report_error(self, exc):
-        """Record a task exception and hand it to the realm's reporter."""
-        error = as_js_error(exc)
+    def _report_error(self, exc, callback=None):
+        """Record a task exception and hand it to the realm's reporter.
+
+        A failure of the host's own scheduling is not a task's: an ``error`` event is
+        what a script does wrong, so the reason is logged and the realm is not told.
+        """
+        if is_host_failure(exc):
+            #: An error raised across the native boundary often arrives with no Python
+            #: frames at all, so the traceback below can be empty; the task's own name
+            #: is then the only thing that says where the failure happened.
+            who = getattr(callback, "__qualname__", None) or repr(callback)
+            logger.warning("the host could not finish: {} (task: {})", exc, who)
+            #: The one line above rarely says where it came from; the traceback, at
+            #: debug, does -- a host failure is diagnosed in the log or not at all.
+            logger.debug(
+                "the host could not finish, from:\n{}",
+                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip(),
+            )
+            return
+        #: What is left is a declared error or a JavaScript exception: both are the
+        #: realm's to see as they are, so nothing stands between them and the sink.
         with self._lock:
-            self.errors.append(error)
+            self.errors.append(exc)
         sink = self._error_sink
         if sink is not None:
             try:
-                sink(error)
+                sink(exc)
             except BaseException:  # reporting must never break the turn
                 pass
 

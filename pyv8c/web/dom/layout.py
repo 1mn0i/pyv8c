@@ -17,7 +17,7 @@ try:
 except Exception:  # optional dependency  # pragma: no cover
     ImageFont = None
 
-from ...foundation.errors import V8SyntaxError
+from ..page_errors import PageSyntaxError
 from .character_data import Text
 from .css import (
     INHERITED_PROPERTIES,
@@ -122,7 +122,7 @@ def _selector_matches(element, selector):
     """Match one stylesheet selector; unsupported syntax simply never matches."""
     try:
         return matches(element, selector)
-    except V8SyntaxError:
+    except PageSyntaxError:
         return False
 
 

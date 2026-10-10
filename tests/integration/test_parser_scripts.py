@@ -77,6 +77,54 @@ def test_an_async_defer_script_does_not_hold_up_the_document():
     browser.close()
 
 
+def test_a_classic_script_crosses_origins_without_asking_for_cors():
+    """A classic script is a no-cors load: a tag served without ``ACAO`` still runs.
+
+    That is what a CDN tag does on a real page.  Only a module script, or one that says
+    ``crossorigin``, asks for a CORS answer -- and the page's own ``fetch`` of the same URL
+    is still refused, which is the boundary this keeps.
+    """
+    def loader(url, request):
+        return Response("window.__tag = true;",
+                        {"url": url, "content-type": "text/javascript"})
+
+    browser = Browser(resource_loader=loader)
+    page = browser.new_context().new_page()
+    page.set_content("<body></body>", url="http://site.test/")
+    page.evaluate("""
+        window.__fetch = null;
+        const s = document.createElement('script');
+        s.src = 'http://other.test/tag.js';
+        document.head.appendChild(s);
+        fetch('http://other.test/tag.js').then(
+            () => __fetch = 'allowed',
+            error => __fetch = error.name);
+    """)
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("[window.__tag, window.__fetch]") == [True, "TypeError"]
+    browser.close()
+
+
+def test_a_crossorigin_script_still_asks_for_cors():
+    """The ``crossorigin`` attribute is the element asking for a CORS answer."""
+    def loader(url, request):
+        return Response("window.__tag = true;",
+                        {"url": url, "content-type": "text/javascript"})
+
+    browser = Browser(resource_loader=loader)
+    page = browser.new_context().new_page()
+    page.set_content("<body></body>", url="http://site.test/")
+    page.evaluate("""
+        const s = document.createElement('script');
+        s.src = 'http://other.test/tag.js';
+        s.setAttribute('crossorigin', 'anonymous');
+        document.head.appendChild(s);
+    """)
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("[window.__tag === undefined, document.readyState]") == [True, "complete"]
+    browser.close()
+
+
 def test_detached_dynamic_script_does_not_fetch_until_inserted():
     calls = []
     def loader(url, request):

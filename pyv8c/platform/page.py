@@ -9,7 +9,8 @@ import pyv8
 from ..foundation.logging import logger
 
 from ..foundation.arguments import is_nullish
-from ..foundation.errors import NotFoundError
+from ..foundation.host_errors import HostStateError
+from ..foundation.error_policy import is_host_failure
 from ..foundation.lifecycle import ResourceScope
 from ..foundation.rejections import RejectionTracker
 from ..foundation.tasks import TaskQueue
@@ -19,7 +20,7 @@ from ..web.dom.document import Document, HTMLDocument
 from ..web.dom.nodes import Node
 from ..web.fetch.response import Response
 from .lifecycle import DocumentLifecycle
-from .navigation import NavigationController
+from .navigation import NAVIGATION_GRACE, NavigationController
 from .net import PageNet
 from .realms import PageRealm, RealmExecutor
 from .resource_loading import ResourceController
@@ -206,6 +207,11 @@ class Page:
         """
         if self.closed or self._reporting_error:
             return
+        #: A script error is the page's; a failure of the host's own scheduling is
+        #: not, so the window hears nothing and the reason stays in the log.
+        if error is not None and is_host_failure(error):
+            logger.warning("the host could not finish: {}", error)
+            return
         self._reporting_error = True
         try:
             self.lifecycle.dispatch_script_error(
@@ -367,9 +373,14 @@ class Page:
         :raises ValueError: *wait_until* is not one of the accepted values.
         :raises InvalidStateError: the page or its context is closed.
         """
+        grace = None if timeout is None else max(0.0, float(timeout)) + NAVIGATION_GRACE
         return self.realm.executor.call(
-            self.navigation.goto, url, timeout=timeout, wait_until=wait_until,
+            self._goto, url, timeout, wait_until, timeout=grace,
         )
+
+    def _goto(self, url, timeout, wait_until):
+        """The navigation itself, named so a timeout says which call it was."""
+        return self.navigation.goto(url, timeout=timeout, wait_until=wait_until)
 
     def evaluate(self,
                  script: str,
@@ -449,7 +460,7 @@ class Page:
             ``cancelable`` defaults a browser would use are filled in when absent.
         :returns: ``True`` when the event was not cancelled, ``False`` when a
             listener called ``preventDefault``.
-        :raises NotFoundError: *selector* matches nothing.
+        :raises HostStateError: *selector* matches nothing.
         :raises TypeError: *event_class* is not an ``Event`` interface.
         """
         return self.realm.executor.call(
@@ -485,7 +496,7 @@ class Page:
         """The node *selector* matches, or the error a missing one is worth."""
         node = self.query_selector(selector)
         if node is None:
-            raise NotFoundError(f"No element matches the selector {selector!r}")
+            raise HostStateError(f"No element matches the selector {selector!r}")
         return node
 
     def click(self,
@@ -493,7 +504,9 @@ class Page:
               *,
               button: str = "left",
               click_count: int = 1,
-              force: bool = False) -> None:
+              force: bool = False,
+              delay: float | None = None,
+              duration: float | None = None) -> None:
         """Click the element *selector* matches, the way a user would.
 
         The mouse is moved to the element's centre and pressed and released
@@ -507,31 +520,40 @@ class Page:
         :param click_count: the ``detail`` the press and the click report.
         :param force: click the centre even when another element is on top of
             it, which is the one thing that would otherwise refuse the click.
-        :raises NotFoundError: *selector* matches nothing.
+        :param delay: seconds the button stays down before it is released.
+        :param duration: seconds the approach move is spread over.
+        :raises HostStateError: *selector* matches nothing.
         :raises InvalidStateError: the element has no box to click, or its
             centre is covered by another element and *force* is false.
         """
         return self.mouse.click_element(
-            self._require_element(selector), button=button, click_count=click_count, force=force,
+            self._require_element(selector), button=button, click_count=click_count,
+            force=force, delay=delay, duration=duration,
         )
 
-    def dblclick(self, selector: str, *, button: str = "left", force: bool = False) -> None:
+    def dblclick(self, selector: str, *, button: str = "left", force: bool = False,
+                 delay: float | None = None, duration: float | None = None) -> None:
         """Double-click the element *selector* matches.
 
         Two clicks counted as one run, so the second reports ``detail`` 2 and a
         ``dblclick`` follows it.
         """
         node = self._require_element(selector)
-        self.mouse.move_to_element(node, force=force)
-        return self.mouse.dblclick(button=button)
+        self.mouse.move_to_element(node, force=force, duration=duration)
+        return self.mouse.dblclick(button=button, delay=delay)
 
-    def hover(self, selector: str, *, force: bool = False) -> None:
+    def hover(self, selector: str, *, force: bool = False,
+              duration: float | None = None, curve: str | None = None,
+              seed: int | None = None) -> None:
         """Move the mouse to the centre of the element *selector* matches.
 
         The element is left hovered, which is what the boundary events report:
         a page watching ``mouseover`` sees the move arrive.
         """
-        return self.mouse.move_to_element(self._require_element(selector), force=force)
+        return self.mouse.move_to_element(
+            self._require_element(selector), force=force, duration=duration,
+            curve=curve, seed=seed,
+        )
 
     def close(self) -> None:
         """Close the page and everything it owns.

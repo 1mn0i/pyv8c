@@ -14,7 +14,10 @@ import pytest
 
 pytest.importorskip("pyv8", reason="the module is built against the native extension")
 
+import pyv8  # noqa: E402
+
 from pyv8c.foundation import promises  # noqa: E402
+from pyv8c.web.page_errors import PageError, PageTypeError  # noqa: E402
 
 
 def test_a_realm_without_a_context_answers_instead_of_raising():
@@ -30,9 +33,20 @@ def test_a_realm_without_a_context_answers_instead_of_raising():
     assert promises.enqueue_microtask(None, lambda: None) is False
 
 
-def test_a_rejection_reason_crosses_as_itself():
-    #: The native resolver turns a Python exception into a JavaScript error when it settles,
-    #: so nothing is built here -- and a non-exception reason stays what it is.
-    error = RuntimeError("late rejection")
-    assert promises.js_error_value(error) is error
-    assert promises.js_error_value("plain reason") == "plain reason"
+def test_a_realm_that_closed_after_the_promise_answers_with_silence():
+    """A worker that answered and exited, a page that navigated: the promise outlives
+    its realm, and settling it then reaches a resolver whose context is gone.  Nobody is
+    left to read the answer, so both settle functions say nothing -- which a task queue
+    would otherwise report as the host's own failure ("JavaScript object has no active V8
+    isolate"), once per answer that arrived late.
+    """
+    context = pyv8.Context(object())
+    promise, resolve, reject = promises.make_promise(context)
+    assert promise is not None
+    context.close()
+    resolve("late")
+    reject(PageError("late"))
+
+
+#: A rejection's reason -- what it carries, and what a page is allowed to read -- is
+#: tested in ``tests/unit/test_host_failures.py``, where the error table is the subject.

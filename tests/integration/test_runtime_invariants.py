@@ -3,9 +3,10 @@ from pyv8 import IdlSpec
 
 from pyv8c import Browser
 from pyv8c.engine.bindings import Idl, Bindings
-from pyv8c.foundation.errors import DOMException
+from pyv8c.foundation.host_errors import HostStateError
+from pyv8c.web.page_errors import DOMException
 from pyv8c.platform.sessions import BindingSession
-from pyv8c.web.fetch.clone import structured_clone
+from pyv8c.web.fetch.clone import rebuild_clone, structured_clone
 from pyv8c.web.fetch.response import Response
 from pyv8c.network.cookies import CookieJar
 
@@ -23,9 +24,9 @@ def test_closed_context_rejects_new_pages_and_blob_access():
     browser = Browser()
     context = browser.new_context()
     context.close()
-    with pytest.raises(DOMException, match="BrowserContext is closed"):
+    with pytest.raises(HostStateError, match="BrowserContext is closed"):
         context.new_page()
-    with pytest.raises(DOMException, match="BrowserContext is closed"):
+    with pytest.raises(HostStateError, match="BrowserContext is closed"):
         context.resolve_blob_url("blob:null/not-present")
     browser.close()
 
@@ -40,9 +41,15 @@ def test_structured_clone_rejects_cycles_and_nontransferable_values():
 
 
 def test_js_values_are_strictly_cloneable_for_worker_messages():
+    """A value read out of a realm clones into something a message can carry.
+
+    Binary inside it is held as the view and its bytes until a realm reads it, so a host
+    reading the clone itself asks for the bytes -- which is what a realm's read gets when
+    there is no realm to build a view in.
+    """
     browser, _, page = new_page()
     value = page.evaluate("({value:4, bytes:new Uint8Array([1,2,3])})")
-    cloned = structured_clone(value)
+    cloned = rebuild_clone(structured_clone(value))
     assert cloned["value"] == 4
     assert bytes(cloned["bytes"]) == b"\x01\x02\x03"
     page.close()

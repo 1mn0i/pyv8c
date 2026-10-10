@@ -20,7 +20,8 @@ from ...foundation.arguments import (
     sequence,
     usv_string,
 )
-from ...foundation.errors import InvalidStateError, V8TypeError, V8URIError
+from ...foundation.arguments import IdlArgumentError
+from ..page_errors import InvalidStateError, PageTypeError, PageURIError
 from ...foundation.urls import SPECIAL_SCHEMES, credentials_netloc, form_urlencoded
 from ..fetch.blob import Blob
 
@@ -69,7 +70,7 @@ class URLSearchParams:
                 pair = sequence(entry, usv_string)
                 if len(pair) != 2:
                     # Chromium words the constructor's failure twice over.
-                    raise V8TypeError(
+                    raise PageTypeError(
                         "Failed to construct 'URLSearchParams': Failed to construct "
                         "'URLSearchParams': Sequence initializer must only contain "
                         "pair elements")
@@ -211,8 +212,8 @@ class URL:
             if base is not None:
                 base = self._resolve(base)
             self.href = self._resolve(url, base)
-        except V8TypeError as exc:
-            raise V8TypeError("Failed to construct 'URL': Invalid URL") from exc
+        except (PageTypeError, IdlArgumentError) as exc:
+            raise PageTypeError("Failed to construct 'URL': Invalid URL") from exc
         self._values = _url_values(self)
 
     @staticmethod
@@ -223,15 +224,15 @@ class URL:
         """
         raw = str(url).translate(_URL_DROP).strip(_URL_TRIM).replace(" ", "%20")
         if not raw:
-            raise V8TypeError("Invalid URL")
+            raise PageTypeError("Invalid URL")
         value = raw if base is None else urljoin(str(base), raw)
         try:
             parts = urlsplit(value)
             if not parts.scheme or (parts.scheme in SPECIAL_SCHEMES and not parts.netloc):
-                raise V8URIError("Invalid URL")
+                raise PageURIError("Invalid URL")
             _ = parts.port
-        except (ValueError, V8URIError) as exc:
-            raise V8TypeError("Invalid URL") from exc
+        except (ValueError, PageURIError) as exc:
+            raise PageTypeError("Invalid URL") from exc
         return urlunsplit(parts)
 
     def _parts(self): return urlsplit(self.href)
@@ -320,7 +321,7 @@ class URL:
         if base is not pyv8.Undefined:
             base = dom_string(base)
         try: URL(url, base)
-        except (V8URIError, TypeError, ValueError): return False
+        except (PageURIError, TypeError, ValueError): return False
         return True
 
     @staticmethod
@@ -331,7 +332,7 @@ class URL:
         if base is not pyv8.Undefined:
             base = dom_string(base)
         try: return URL(url, base)
-        except (V8URIError, TypeError, ValueError): return pyv8.Null
+        except (PageURIError, TypeError, ValueError): return pyv8.Null
 
     @staticmethod
     def fn_createObjectURL(_realm, blob=MISSING, *_extra):
@@ -340,7 +341,7 @@ class URL:
         blob = interface_value(blob, 'Blob', 'URL', 'createObjectURL', 1, nullable=False)
         services = _realm
         if services is None or services.realm_services.closed: raise InvalidStateError("The execution context is no longer active")
-        if not isinstance(blob, Blob): raise V8TypeError("The object is not a Blob")
+        if not isinstance(blob, Blob): raise PageTypeError("The object is not a Blob")
         return services.context_services.create_blob_url(blob, realm=services.realm_services)
 
     @staticmethod

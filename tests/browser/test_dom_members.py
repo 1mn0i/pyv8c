@@ -5,7 +5,10 @@ unimplemented.  The URL attributes share one resolution helper, and the
 stylesheet tests guard the cascade entry points that keep ``layout`` from
 rescanning the document on every read.
 """
+import json
+
 import pytest
+from loguru import logger
 
 from pyv8c import Browser
 
@@ -440,6 +443,159 @@ def test_a_transferred_message_port_arrives_in_the_events_ports(page):
     assert page.evaluate("window.__neutered") is False
 
 
+def test_the_exception_prototype_behaves_like_chromium(page):
+    """``DOMException``'s surface, as Chromium's own assertions state it.
+
+    Every assertion below is a case in
+    ``WebIDL/ecmascript-binding/es-exceptions/DOMException-custom-bindings.any.js`` or
+    ``DOMException-is-error.any.js`` -- with one exception: a script-made ``DOMException``
+    carries no ``stack``, which Chromium records as an expected failure.
+    """
+    assert page.evaluate(
+        "a = 1; try { String(DOMException.prototype) } catch (error) { a = 2 }; a") == 2
+    answer = page.evaluate("""(() => {
+        const e = new DOMException("message", "name");
+        const proto = DOMException.prototype;
+        const brand = (name) => {
+            const getter = Object.getOwnPropertyDescriptor(proto, name).get;
+            try { getter.call({}); return "no-throw"; } catch (error) { return error.constructor.name; }
+        };
+        const applies = (call) => {
+            try { return call(); } catch (error) { return error.constructor.name; }
+        };
+        return [
+            Object.getPrototypeOf(proto) === Error.prototype,
+            Object.getPrototypeOf(DOMException) === Function.prototype,
+            e.hasOwnProperty("name"), e.hasOwnProperty("message"), e.hasOwnProperty("code"),
+            proto.hasOwnProperty("toString"),
+            typeof e.toString,
+            String(Object.getOwnPropertyDescriptor(proto, "message").get.call(e)),
+            brand("name"), brand("code"),
+            applies(() => proto.toString()),
+            Object.prototype.toString.call(e),
+            e.toString(),
+            typeof e.stack,
+            [typeof new Error("x").stack, typeof new TypeError("x").stack],
+            Error.isError(e), Error.isError(new Error("x")), Error.isError({}),
+        ];
+    })()""")
+    assert answer == [True, True, False, False, False, False, "function", "message",
+                      "TypeError", "TypeError", "TypeError", "[object DOMException]",
+                      "name: message", "undefined", ["string", "string"],
+                      True, True, False]
+
+
+def test_a_plain_object_is_cloned_without_a_word_of_complaint(page):
+    """Most of what a message carries is plain data, which is no structured kind at all.
+
+    The realm answers ``null`` for it and the clone takes the plain snapshot; that
+    answer is not a failure, so it leaves nothing in the log.  It used to be read as
+    one, and every plain object a page posted logged an error that was not there.
+    """
+    messages, token = [], logger.add(
+        lambda message: messages.append(str(message).strip()), format="{message}")
+    try:
+        page.evaluate("""(() => {
+            const channel = new MessageChannel();
+            window.__seen = null;
+            channel.port2.onmessage = event => { window.__seen = event.data; };
+            channel.port1.postMessage({plain: {deep: [1, 'two', false]}, more: true});
+        })()""")
+        page.run_until_idle(timeout=1)
+    finally:
+        logger.remove(token)
+    assert page.evaluate("window.__seen") == {"plain": {"deep": [1, "two", False]}, "more": True}
+    assert not any("could not be read" in line for line in messages), messages
+
+
+def test_a_posted_message_is_a_copy_taken_when_it_is_posted(page):
+    """A port carries a snapshot, as a browser does.
+
+    What the sender does to its object after the call is not seen on the other side,
+    and binary data is copied rather than shared.  A reference passed along would
+    instead let one realm read the other's object -- and outlive the realm it came
+    from, which is how a port that outlived its worker used to hand over something
+    no isolate owned any more.
+    """
+    page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        window.__seen = [];
+        channel.port2.onmessage = event => {
+            const data = event.data;
+            window.__seen.push(data.nested.n, data.list.join(','),
+                               new Uint8Array(data.buffer)[0]);
+        };
+        const payload = {nested: {n: 1}, list: [1, 2],
+                         buffer: new Uint8Array([7, 8]).buffer};
+        channel.port1.postMessage(payload);
+        payload.nested.n = 99;
+        payload.list.push(3);
+        new Uint8Array(payload.buffer)[0] = 42;
+    })()""")
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("window.__seen") == [1, "1,2", 7]
+
+
+def test_a_port_that_outlives_its_worker_still_delivers():
+    """A message a worker posted through a port arrives after that worker is gone.
+
+    The page holds its own queue shut for the moment the worker needs to post and
+    close, so the message is processed when the realm that posted it no longer
+    exists.  What arrives is the page's own copy of the data; a reference into the
+    worker's realm would leave this message undeliverable, which is what it used to.
+    """
+    worker_source = ("onmessage = function (event) {"
+                     "  event.ports[0].postMessage({n: 7, list: [1, 2]});"
+                     "  self.close();"
+                     "};")
+    body = ("<!doctype html><body><script>"
+            "var channel = new MessageChannel();"
+            "window.__seen = [];"
+            "window.__error = '';"
+            "channel.port1.onmessage = function (event) {"
+            "  try { window.__seen.push(event.data.n, event.data.list.join(',')); }"
+            "  catch (error) { window.__error = error.name + ': ' + error.message; }"
+            "};"
+            "var worker = new Worker(URL.createObjectURL("
+            "new Blob([__SOURCE__], {type: 'text/javascript'})));"
+            "worker.postMessage('go', [channel.port2]);"
+            "var until = Date.now() + 600; while (Date.now() < until) {}"
+            "</script></body>")
+    body = body.replace("__SOURCE__", json.dumps(worker_source).replace("</", "<\\/"))
+
+    def loader(url, request):
+        return {"body": body, "headers": {"content-type": "text/html"}}
+
+    browser = Browser(stub_logging="off", real_network=False, resource_loader=loader)
+    try:
+        page = browser.new_context().new_page()
+        page.goto("http://port.test/")
+        page.run_until_idle(timeout=1)
+        assert page.evaluate("window.__error") == ""
+        assert page.evaluate("window.__seen") == [7, "1,2"]
+    finally:
+        browser.close()
+
+
+def test_post_message_carries_binary_data(page):
+    """An ``ArrayBuffer`` a page posts arrives as one, with its bytes.
+
+    A clone that walks enumerable properties alone finds nothing on a buffer, so it
+    used to arrive as an empty object; a browser hands the other realm the bytes.
+    """
+    page.evaluate("""(() => {
+        window.__seen = [];
+        onmessage = event => {
+            const data = event.data;
+            window.__seen.push(data instanceof ArrayBuffer, data.byteLength,
+                               Array.from(new Uint8Array(data)).join(','));
+        };
+        postMessage(new Uint8Array([1, 2, 3, 4]).buffer, '*');
+    })()""")
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("window.__seen") == [True, 4, "1,2,3,4"]
+
+
 def test_a_transfer_list_refuses_what_it_cannot_move(page):
     assert page.evaluate("""(() => {
         const answers = [];
@@ -457,6 +613,250 @@ def test_a_transfer_list_refuses_what_it_cannot_move(page):
         "DataCloneError: Failed to execute 'postMessage' on 'Window':"
         " Port at index 0 is already neutered.",
     ]
+
+
+def test_a_transfer_list_hands_over_an_arraybuffer(page):
+    """A transferred buffer is handed over rather than copied: the realm that gave it
+    up has nothing left of it, and the other end reads a buffer with those bytes."""
+    assert page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        window.__seen = [];
+        channel.port2.onmessage = event => {
+            const data = event.data;
+            window.__seen.push(data instanceof ArrayBuffer, data.byteLength,
+                               Array.from(new Uint8Array(data)).join(','));
+        };
+        const buffer = new Uint8Array([1, 2, 3, 4]).buffer;
+        channel.port1.postMessage(buffer, [buffer]);
+        return buffer.byteLength;
+    })()""") == 0
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("window.__seen") == [True, 4, "1,2,3,4"]
+
+
+def test_a_posted_view_arrives_as_the_same_kind_of_view(page):
+    """What crosses is the kind of value that was posted, not only its bytes.
+
+    A browser hands the other realm the same view over its own copy of the bytes, and an
+    offset view keeps looking through the same buffer it looked through: two bytes seen
+    from offset 1 of a four-byte buffer arrive that way, not as a two-byte buffer.
+    """
+    page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        window.__seen = [];
+        const describe = (data) => [
+            Object.prototype.toString.call(data),
+            data.byteOffset === undefined ? -1 : data.byteOffset,
+            data.byteLength === undefined ? -1 : data.byteLength,
+            data.buffer === undefined ? -1 : data.buffer.byteLength,
+        ];
+        channel.port2.onmessage = event => {
+            const data = event.data;
+            window.__seen.push(...describe(data.words), ...describe(data.half),
+                               ...describe(data.view), ...describe(data.window),
+                               data.list.length,
+                               ...describe(data.list[0]));
+        };
+        const buffer = new Uint8Array([1, 2, 3, 4]).buffer;
+        channel.port1.postMessage({words: new Int32Array([300, -2]),
+                                   half: new Float64Array([1.5]),
+                                   view: new Uint8Array(buffer, 1, 2),
+                                   window: new DataView(new Uint8Array([1, 2, 3]).buffer),
+                                   list: [new Uint8Array([5, 6])]});
+    })()""")
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("window.__seen") == [
+        "[object Int32Array]", 0, 8, 8,
+        "[object Float64Array]", 0, 8, 8,
+        "[object Uint8Array]", 1, 2, 4,
+        "[object DataView]", 0, 3, 3,
+        1,
+        "[object Uint8Array]", 0, 2, 2,
+    ]
+
+
+def test_a_posted_map_set_date_and_regexp_arrive_as_themselves(page):
+    """A browser's clone keeps the kind of value it was given.
+
+    A ``Map`` arrives a ``Map`` with its entries, a ``Set`` a ``Set``, a ``Date`` the
+    moment it stood for, a ``RegExp`` its pattern and flags -- and what is nested inside
+    them is built the same way, so a ``Set`` inside a ``Map`` is a ``Set`` too.  None of
+    these used to cross at all: the message failed with a ``DataCloneError``.
+    """
+    page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        window.__seen = [];
+        const tag = item => Object.prototype.toString.call(item);
+        channel.port2.onmessage = event => {
+            const data = event.data;
+            window.__seen.push(tag(data.map), data.map instanceof Map, data.map.get('a'),
+                               data.map.get('b').n, data.map.size,
+                               tag(data.set), data.set.has(1), data.set.size,
+                               tag(data.date), data.date.getTime(),
+                               tag(data.re), data.re.source, data.re.flags,
+                               tag(data.nested.get('inner')), data.nested.get('inner').has('x'));
+        };
+        channel.port1.postMessage({
+            map: new Map([['a', 1], ['b', {n: 2}]]),
+            set: new Set([1, 2]),
+            date: new Date(1700000000000),
+            re: /ab+c/gi,
+            nested: new Map([['inner', new Set(['x'])]]),
+        });
+    })()""")
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("window.__seen") == [
+        "[object Map]", True, 1, 2, 2,
+        "[object Set]", True, 2,
+        "[object Date]", 1700000000000,
+        "[object RegExp]", "ab+c", "gi",
+        "[object Set]", True,
+    ]
+
+
+def test_views_of_one_buffer_share_it_after_crossing(page):
+    """One buffer is one buffer on the other side.
+
+    A browser clones a buffer once and builds every view of it over that clone, so a
+    view of it, a second view of it and the buffer itself all answer with the same
+    object -- even one nested inside a ``Map`` -- while another buffer that happens to
+    hold the same bytes stays a buffer of its own.
+    """
+    page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        window.__seen = [];
+        const buffer = new Uint8Array([1, 2, 3, 4]).buffer;
+        const other = new Uint8Array([1, 2, 3, 4]).buffer;
+        channel.port2.onmessage = event => {
+            const data = event.data;
+            window.__seen.push(data.view.buffer === data.bare,
+                               data.again.buffer === data.bare,
+                               data.nested.get('inner').buffer === data.bare,
+                               data.separate.buffer === data.bare,
+                               data.view.byteOffset, data.view.byteLength);
+        };
+        channel.port1.postMessage({bare: buffer,
+                                   view: new Uint8Array(buffer, 1, 2),
+                                   again: new Uint8Array(buffer),
+                                   separate: new Uint8Array(other),
+                                   nested: new Map([['inner', new DataView(buffer)]])});
+    })()""")
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("window.__seen") == [True, True, True, False, 1, 2]
+
+
+def test_a_posted_error_arrives_as_the_same_kind_of_error(page):
+    """An error crosses as the error it was: the same kind, the same name, the same
+    message.  A ``DOMException`` keeps the name its legacy ``code`` follows from, and
+    the ports a message carries are a frozen array, as a browser hands them over."""
+    page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        window.__seen = [];
+        const one = item => [Object.prototype.toString.call(item), item instanceof Error,
+                             item.name, item.message, typeof item.stack];
+        channel.port2.onmessage = event => {
+            const data = event.data;
+            window.__seen.push(...one(data.error), ...one(data.type_error), ...one(data.dom),
+                               data.dom.code, Object.isFrozen(event.ports));
+        };
+        channel.port1.postMessage({error: new Error('boom'),
+                                   type_error: new TypeError('bad type'),
+                                   dom: new DOMException('nope', 'NotFoundError')});
+    })()""")
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("window.__seen") == [
+        "[object Error]", True, "Error", "boom", "string",
+        "[object Error]", True, "TypeError", "bad type", "string",
+        "[object DOMException]", True, "NotFoundError", "nope", "undefined",
+        8, True,
+    ]
+
+
+def test_what_cannot_be_cloned_says_which_value_it_was(page):
+    """Chrome names the value it refuses: a weak map or a promise by its kind, and a
+    function by its own source.  The error the host raises for it carries a stack, as a
+    browser's own ``DOMException`` does -- unlike one a page makes with ``new``."""
+    assert page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        const answers = [];
+        for (const value of [new WeakMap(), Promise.resolve(1), () => 1]) {
+            try { channel.port1.postMessage(value); answers.push('no throw'); }
+            catch (error) { answers.push(error.message, typeof error.stack); }
+        }
+        return answers;
+    })()""") == ["#<WeakMap> could not be cloned.", "string",
+                "#<Promise> could not be cloned.", "string",
+                "() => 1 could not be cloned.", "string"]
+
+
+def test_a_posted_file_arrives_as_a_file(page):
+    """A ``File`` crosses as the file it was, not as the blob it is made of: its bytes,
+    and the name and timestamp that make it more than a blob.  A blob beside it stays a
+    blob, and one nested inside a ``Map`` is a file where it arrives."""
+    page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        window.__seen = [];
+        const one = item => [Object.prototype.toString.call(item), item instanceof File,
+                             item instanceof Blob,
+                             item.name === undefined ? '(no name)' : item.name,
+                             item.type, item.size,
+                             item.lastModified === undefined ? -1 : item.lastModified];
+        channel.port2.onmessage = event => {
+            const data = event.data;
+            window.__seen.push(...one(data.file), ...one(data.blob),
+                               ...one(data.nested.get('inner')));
+        };
+        const stamp = 1700000000000;
+        channel.port1.postMessage({
+            file: new File(['hello'], 'a.txt', {type: 'text/plain', lastModified: stamp}),
+            blob: new Blob(['hi'], {type: 'text/plain'}),
+            nested: new Map([['inner', new File(['xyz'], 'b.bin', {lastModified: stamp})]]),
+        });
+    })()""")
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("window.__seen") == [
+        "[object File]", True, True, "a.txt", "text/plain", 5, 1700000000000,
+        "[object Blob]", False, True, "(no name)", "text/plain", 2, -1,
+        "[object File]", True, True, "b.bin", "", 3, 1700000000000,
+    ]
+
+
+def test_a_posted_view_carries_the_bytes_it_holds(page):
+    """A view is the bytes it holds, not the numbers it shows.
+
+    An ``Int32Array`` of ``[300, -2]`` is eight bytes, and a ``DataView`` holds whatever
+    it looks at; reading a view element by element instead gave two truncated bytes for
+    the first and nothing at all for the second.  The bytes are read back through a view
+    built on the receiving side, so how the data arrived is not what is asserted.
+    """
+    page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        window.__seen = [];
+        const bytesOf = value => (value instanceof ArrayBuffer ? value : value.buffer);
+        channel.port2.onmessage = event => {
+            const data = event.data;
+            window.__seen.push(new Int32Array(bytesOf(data.words))[0],
+                               new Int32Array(bytesOf(data.words))[1],
+                               new Float64Array(bytesOf(data.half))[0],
+                               Array.from(new Uint8Array(bytesOf(data.window))).join(','));
+        };
+        channel.port1.postMessage({words: new Int32Array([300, -2]),
+                                   half: new Float64Array([1.5]),
+                                   window: new DataView(new Uint8Array([1, 2, 3]).buffer)});
+    })()""")
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("window.__seen") == [300, -2, 1.5, "1,2,3"]
+
+
+def test_a_transfer_list_refuses_a_buffer_that_is_already_detached(page):
+    assert page.evaluate("""(() => {
+        const channel = new MessageChannel();
+        const buffer = new Uint8Array([1, 2]).buffer;
+        channel.port1.postMessage(buffer, [buffer]);
+        try { channel.port1.postMessage('second', [buffer]); return 'no throw'; }
+        catch (error) { return error.name + ': ' + error.message; }
+    })()""") == ("DataCloneError: Failed to execute 'postMessage' on 'MessagePort':"
+                 " ArrayBuffer at index 0 is already detached.")
 
 
 def test_is_type_supported_answers_the_codecs_the_build_carries(page):

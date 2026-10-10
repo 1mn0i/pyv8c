@@ -9,8 +9,8 @@ import struct
 import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, is_nullish, missing_error, sequence
-from ...foundation.errors import V8Error
-from ...foundation.errors import InvalidStateError, V8SyntaxError, V8TypeError
+from ..page_errors import PageError
+from ..page_errors import InvalidStateError, PageSyntaxError, PageTypeError
 from .point import DOMPoint, double, point_init
 
 
@@ -170,7 +170,7 @@ def _as_sequence(value):
         return None
     try:
         return sequence(value, iterator_method=value._iterator_method())
-    except (V8Error, TypeError, ValueError):
+    except (PageError, TypeError, ValueError):
         return None
 
 
@@ -193,7 +193,7 @@ def _parse_text(init):
 def _sequence_values(source, length, prefix=""):
     """The six or sixteen numbers of a sequence, as ``fromFloat32Array`` reads one."""
     if length not in (6, 16):
-        raise V8TypeError(f"{prefix} The sequence must contain 6 elements for a 2D matrix"
+        raise PageTypeError(f"{prefix} The sequence must contain 6 elements for a 2D matrix"
                           f" or 16 elements for a 3D matrix.")
     if length == 6:
         values = identity()
@@ -249,7 +249,7 @@ class DOMMatrixReadOnly:
         text = _parse_text(init)
         parsed = _parse(text)
         if parsed is None:
-            raise V8SyntaxError(f"Failed to construct 'DOMMatrix': Failed to parse '{text}'.")
+            raise PageSyntaxError(f"Failed to construct 'DOMMatrix': Failed to parse '{text}'.")
         self._matrix, self._is_2d = parsed
 
     # -- storage ---------------------------------------------------------------
@@ -492,7 +492,7 @@ class DOMMatrix(DOMMatrixReadOnly):
         written = _parse_text(text)
         parsed = _parse(written)
         if parsed is None:
-            raise V8SyntaxError(f"Failed to execute 'setMatrixValue' on 'DOMMatrix':"
+            raise PageSyntaxError(f"Failed to execute 'setMatrixValue' on 'DOMMatrix':"
                                 f" Failed to parse '{written}'.")
         self._store(*parsed)
         return self

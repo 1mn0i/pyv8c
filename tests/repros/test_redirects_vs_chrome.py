@@ -10,9 +10,8 @@ arrived while one that cannot be resolved fails, ``redirect: "manual"`` reads as
 redirect reaches the next hop, and a navigation counts its redirects -- zero once a
 hop crossed origins.
 
-Two things are deliberately not compared.  A network failure rejects a pyv8c promise
-with ``NetworkError`` and a CORS failure with ``SecurityError`` where Chrome says
-``TypeError`` for both, so a refused load is held to "both refused".  And a
+A refused load is held to "both refused": the reason a load failed is the host's own, so
+neither side shows it to the page.  One thing is still deliberately not compared: a
 cross-origin response reads ``"cors"`` in Chrome but ``"basic"`` from the curl_cffi
 bridge, a transport label this layer does not rewrite.
 """

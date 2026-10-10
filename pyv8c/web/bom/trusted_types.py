@@ -9,7 +9,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error
-from ...foundation.errors import V8TypeError
+from ..page_errors import PageTypeError
 
 
 class _TrustedValue:
@@ -78,7 +78,7 @@ class TrustedTypePolicy:
             raise missing_error('TrustedTypePolicy', operation, 1, 0, constructor=False)
         callback = self._rules.get(operation)
         if callback is None:
-            raise V8TypeError(
+            raise PageTypeError(
                 f"Failed to execute '{operation}' on 'TrustedTypePolicy':"
                 f" Policy \"{self._name}\" does not implement {operation}.")
         return _WRAPPERS[operation](callback(dom_string(value)))

@@ -25,9 +25,7 @@ def test_a_tolerated_mismatch_is_counted_once_and_error_mode_counts_none():
 
 
 def test_no_hand_written_declaration_contradicts_the_baseline():
-    """Compiling every interface reports nothing: a declared member the baseline does
-    not carry (a method written as an attribute, a dropped interface member) is a bug
-    in one of the two, and this is where it has to show."""
+    """Compiling every interface reports no tolerated difference at all."""
     bindings = _bindings("warn")
     bindings.validate()
     assert bindings.discrepancies == ()

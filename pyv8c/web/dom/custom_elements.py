@@ -5,7 +5,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
-from ...foundation.errors import dom_exception
+from ..page_errors import dom_exception
 
 
 @interface('CustomElementRegistry', None)

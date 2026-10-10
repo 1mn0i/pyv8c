@@ -10,7 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class RealmServices(Protocol):
-    """Identity, scripting and error materialisation of one JS realm."""
+    """Identity, scripting and promise settlement of one JS realm."""
 
     url: str
     origin: Any
@@ -25,10 +25,6 @@ class RealmServices(Protocol):
     def evaluate_script(self, source: str) -> Any: ...
     def make_promise(self) -> Any:
         """Return ``(promise, resolve, reject)`` in this realm's context."""
-        ...
-
-    def js_error_value(self, exc: BaseException) -> Any:
-        """Materialise a Python exception as a native JS error object."""
         ...
 
 

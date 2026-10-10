@@ -7,7 +7,7 @@ Chrome waits for a permission prompt here; without one a page's call ends in
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, missing_error
-from ...foundation.errors import dom_exception
+from ..page_errors import dom_exception
 from ..dom.events import EventTarget
 from .utils import settled
 

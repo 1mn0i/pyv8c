@@ -14,7 +14,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
-from ...foundation.errors import IndexSizeError, dom_exception
+from ..page_errors import IndexSizeError, dom_exception
 from .css import CSSStyleDeclaration
 from .mixins import ReadOnlyIndexedPropertyMixin
 

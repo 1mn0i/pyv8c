@@ -10,7 +10,8 @@ from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
 from pyv8c import Browser, DevToolsOptions
-from pyv8c.foundation.errors import DOMException
+from pyv8c.foundation.host_errors import HostStateError
+from pyv8c.web.page_errors import DOMException
 
 #: How long a client waits for something the browser has to answer.  The answer is
 #: produced in-process, but it can still queue behind a busy realm or a machine
@@ -116,7 +117,7 @@ def test_discovery_and_nonblocking_start(devtools_page):
 
 def test_only_one_service_and_client(devtools_page):
     context, page, handle = devtools_page
-    with pytest.raises(DOMException):
+    with pytest.raises(HostStateError):
         context.start_devtools(page)
     with Client(handle) as first:
         first.request("Target.getTargets")

@@ -5,7 +5,9 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import byte_string, dictionary, integer, is_nullish, usv_string
-from ...foundation.errors import V8RangeError, V8SyntaxError, V8TypeError
+from ...foundation.arguments import IdlArgumentError
+from ..page_errors import PageRangeError, PageSyntaxError, PageTypeError
+from ..page_errors import js_error_value
 from .blob import Blob
 from .headers import Headers
 
@@ -33,11 +35,11 @@ class Response:
         self.status = integer(options.get("status", 200), bits=16)
         self.status_text = byte_string(options.get("statusText", options.get("reason", "")))
         if _realm is not None and not 200 <= self.status <= 599:
-            raise V8RangeError("Failed to construct 'Response': The status provided (" + str(self.status) + ") is outside the range [200, 599].")
+            raise PageRangeError("Failed to construct 'Response': The status provided (" + str(self.status) + ") is outside the range [200, 599].")
         if _realm is not None and self.status in (204, 205, 304) and not is_nullish(body):
-            raise V8TypeError("Failed to construct 'Response': Response with null body status cannot have body")
+            raise PageTypeError("Failed to construct 'Response': Response with null body status cannot have body")
         if any(character in self.status_text for character in "\r\n"):
-            raise V8TypeError("Failed to construct 'Response': Invalid statusText")
+            raise PageTypeError("Failed to construct 'Response': Invalid statusText")
         self.url = str(options.get("url", ""))
         self.redirected = bool(options.get("redirected", False))
         # A response a script builds is "default"; "basic" is what a same-origin
@@ -59,7 +61,7 @@ class Response:
         its own; neither side counts as consumed until something reads it.
         """
         if self.body_used:
-            raise V8TypeError("Body has already been consumed.")
+            raise PageTypeError("Body has already been consumed.")
         return Response(self.body, {"status": self.status, "statusText": self.status_text,
                                     "headers": self.headers, "url": self.url,
                                     "redirected": self.redirected, "type": self.type},
@@ -72,7 +74,7 @@ class Response:
 
     def _body_value(self):
         if self.body_used:
-            raise V8TypeError("Body has already been consumed.")
+            raise PageTypeError("Body has already been consumed.")
         self.body_used = True
         return self.body_text()
 
@@ -85,8 +87,8 @@ class Response:
         promise, resolve, reject = self._services.realm_services.make_promise()
         try:
             resolve(self._body_value())
-        except (V8TypeError, pyv8.JSException, UnicodeError) as exc:
-            reject(self._services.realm_services.js_error_value(exc))
+        except (PageTypeError, pyv8.JSException, UnicodeError, IdlArgumentError) as exc:
+            reject(js_error_value(exc))
         return promise
     def fn_json(self, *_extra):
         if not self._services:
@@ -97,10 +99,14 @@ class Response:
             try:
                 value = json.loads(text)
             except ValueError as exc:
-                raise V8SyntaxError(str(exc)) from exc
+                #: The page hears the shape a browser reports, not the parser's own
+                #: wording: what went wrong where, in the terms Chrome uses.
+                raise PageSyntaxError(
+                    f"Unexpected token in JSON at position {getattr(exc, 'pos', 0)}"
+                ) from exc
             resolve(value)
-        except (V8TypeError, V8SyntaxError, pyv8.JSException, UnicodeError) as exc:
-            reject(self._services.realm_services.js_error_value(exc))
+        except (PageTypeError, PageSyntaxError, pyv8.JSException, UnicodeError, IdlArgumentError) as exc:
+            reject(js_error_value(exc))
         return promise
     def fn_arrayBuffer(self, *_extra):
         if not self._services:
@@ -109,8 +115,8 @@ class Response:
         try:
             text = self._body_value()
             resolve(self.body if isinstance(self.body, bytes) else text.encode())
-        except (V8TypeError, pyv8.JSException, UnicodeError) as exc:
-            reject(self._services.realm_services.js_error_value(exc))
+        except (PageTypeError, pyv8.JSException, UnicodeError, IdlArgumentError) as exc:
+            reject(js_error_value(exc))
         return promise
 
 __all__ = ["Response"]

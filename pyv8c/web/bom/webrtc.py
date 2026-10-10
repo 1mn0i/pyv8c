@@ -12,7 +12,8 @@ import pyv8
 from ...idl import interface
 from ...foundation.arguments import (MISSING, dictionary, dom_string, integer, is_nullish,
                                      missing_error)
-from ...foundation.errors import InvalidStateError, dom_exception
+from ..page_errors import InvalidStateError, dom_exception
+from ..page_errors import js_error_value
 from ..dom.events import (Event, EventTarget, _install_handler_slots,
                           event_constructor_arguments, event_init)
 
@@ -141,7 +142,7 @@ def _rejected_promise(services, error):
     if realm is None:
         return error
     promise, _resolve, reject = realm.make_promise()
-    reject(realm.js_error_value(error))
+    reject(js_error_value(error))
     return promise
 
 

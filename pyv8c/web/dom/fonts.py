@@ -9,7 +9,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error
-from ...foundation.errors import V8TypeError
+from ..page_errors import PageTypeError
 from .events import EventTarget
 
 __all__ = ["FontFace", "FontFaceSet"]
@@ -94,7 +94,7 @@ class FontFaceSet(EventTarget):
 
     def _face_argument(self, value, member):
         if not isinstance(value, FontFace):
-            raise V8TypeError(f"Failed to execute '{member}' on 'FontFaceSet': "
+            raise PageTypeError(f"Failed to execute '{member}' on 'FontFaceSet': "
                               "parameter 1 is not of type 'FontFace'.")
         return value
 

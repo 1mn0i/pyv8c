@@ -88,6 +88,22 @@ def test_sequence_converts_before_next_without_iterator_close(argument_page):
     })()""") == ["iterator", "next", "convert"]
 
 
+def test_a_blob_part_that_is_a_buffer_contributes_its_bytes(argument_page):
+    """A ``BufferSource`` part is the bytes it holds, not the text it reads as.
+
+    A buffer, a view of one and a ``DataView`` each contribute their bytes; a part that
+    is none of those still goes through the string conversion it always had.
+    """
+    assert argument_page.evaluate("""(() => {
+        const buffer = new Uint8Array([1, 2, 3]).buffer;
+        return [new Blob([buffer]).size,
+                new Blob([new Uint8Array(buffer, 1, 2)]).size,
+                new Blob([buffer, 'ab']).size,
+                new Blob([new DataView(buffer)]).size,
+                new Blob([{a: 1}]).size];
+    })()""") == [3, 2, 5, 3, 15]
+
+
 def test_timer_optional_and_variadic_arguments(argument_page):
     argument_page.evaluate("""globalThis.timerArgumentResults=[];
         clearTimeout();clearInterval();
@@ -134,7 +150,7 @@ def test_websocket_validation_precedes_network_and_state(argument_page):
         catch(error){return error.name==='SyntaxError'}
         return false;
     })()""")
-    from pyv8c.foundation.errors import DOMException
+    from pyv8c.web.page_errors import DOMException
     from pyv8c.web.websocket import WebSocket
 
     socket=object.__new__(WebSocket)

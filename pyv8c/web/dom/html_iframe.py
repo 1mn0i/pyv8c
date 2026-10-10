@@ -5,6 +5,8 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string
+from ...foundation.error_policy import host_boundary
+from ...foundation.urls import unloadable_scheme
 from .collections import DOMTokenList
 from .html_elements import HTMLElement, _attribute, _set_url_value, _url_attr, _url_value
 from .permissions_policy import PermissionsPolicy
@@ -69,7 +71,19 @@ class HTMLIFrameElement(HTMLElement):
         self._resource_started = False
         if self._services and self._is_connected() and "srcdoc" not in self.attributes:
             resource_services = self._services.resource_services
-            if resource_services is not None: resource_services.load_iframe(self)
+            if resource_services is not None:
+                #: A scheme a page does not load -- a ``javascript:`` URL is the common one
+                #: -- leaves the frame where it was, as a browser leaves it: nothing was
+                #: asked for, so there is no outcome to report.  No address at all is not
+                #: that case: the frame still loads the empty document it starts with.
+                target = _url_value(self, "src")
+                if target and unloadable_scheme(target) is not None:
+                    return
+                #: A load the host will not make is the host's own outcome: the frame
+                #: stays where it was and the reason is logged, the way a browser leaves
+                #: the assignment alone rather than failing the script that made it.
+                with host_boundary("HTMLIFrameElement.src"):
+                    resource_services.load_iframe(self)
     def get_srcdoc(self): return self.attributes.get("srcdoc", "")
     def set_srcdoc(self, value):
         markup = str(dom_string(value))

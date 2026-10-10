@@ -2,14 +2,14 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
-from ...foundation.errors import V8SyntaxError
+from ..page_errors import PageSyntaxError
 from .html_elements import Element
 
 
 # Selector parser failures cross the Python/V8 binding boundary; raising the
 # project's marked error type lets V8 materialize a native SyntaxError a page can
 # catch, rather than a Python traceback.
-SyntaxError = V8SyntaxError
+SyntaxError = PageSyntaxError
 
 
 @dataclass

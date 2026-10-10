@@ -40,6 +40,31 @@ def page():
         browser.close()
 
 
+def test_a_stored_arraybuffer_keeps_its_bytes(page):
+    """A buffer has nothing enumerable on it, so a clone that walks properties alone
+    would store an empty object; what comes back is the buffer a browser stores."""
+    page.evaluate("""(() => {
+        window.__seen = null;
+        const request = indexedDB.open('binary', 1);
+        request.onupgradeneeded = () => request.result.createObjectStore('s');
+        request.onsuccess = () => {
+            const db = request.result;
+            const put = db.transaction('s', 'readwrite').objectStore('s')
+                          .put(new Uint8Array([1, 2, 3, 4]).buffer, 'k');
+            put.onsuccess = () => {
+                const get = db.transaction('s').objectStore('s').get('k');
+                get.onsuccess = () => {
+                    const data = get.result;
+                    window.__seen = [data instanceof ArrayBuffer, data.byteLength,
+                                     Array.from(new Uint8Array(data)).join(',')];
+                };
+            };
+        };
+    })()""")
+    wait_until(page, "window.__seen !== null")
+    assert page.evaluate("window.__seen") == [True, 4, "1,2,3,4"]
+
+
 def wait_until(page, expression, until=True, timeout=10.0, interval=0.01):
     deadline = time.monotonic() + timeout
     last = None

@@ -9,7 +9,8 @@ import math
 import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, abort_signal, is_nullish, missing_error, number, sequence
-from ...foundation.errors import V8TypeError, as_js_error, dom_exception
+from ...foundation.arguments import IdlArgumentError
+from ..page_errors import PageError, PageTypeError, dom_exception
 from ..dom.events import Event, EventTarget, _install_handler_slots
 
 __all__ = ["AbortController", "AbortSignal"]
@@ -28,10 +29,10 @@ _UNSIGNED_LONG_LONG = 2**53 - 1
 
 def _milliseconds(value):
     if not math.isfinite(number(value)):
-        raise V8TypeError("Failed to execute 'timeout' on 'AbortSignal': Value is not of"
+        raise PageTypeError("Failed to execute 'timeout' on 'AbortSignal': Value is not of"
                           " type 'unsigned long long'.")
     if not 0 <= math.trunc(number(value)) <= _UNSIGNED_LONG_LONG:
-        raise V8TypeError("Failed to execute 'timeout' on 'AbortSignal': Value is outside"
+        raise PageTypeError("Failed to execute 'timeout' on 'AbortSignal': Value is outside"
                           " the 'unsigned long long' value range.")
     return math.trunc(number(value))
 
@@ -72,7 +73,10 @@ class AbortSignal(EventTarget):
             return pyv8.Undefined
         if isinstance(self._reason, BaseException):
             raise self._reason
-        raise as_js_error(self._reason)
+        #: A reason that is not an exception -- a string, a JavaScript value -- crosses
+        #: as the error its text describes, which is as close as Python comes to
+        #: throwing the value itself.
+        raise PageError(str(self._reason) or "Aborted")
 
     def _subscribe(self, callback):
         """Run *callback* on abort; a signal already aborted runs it at once."""
@@ -104,22 +108,22 @@ class AbortSignal(EventTarget):
     @staticmethod
     def fn_static_any(_realm, signals=MISSING, *_extra):
         if signals is MISSING:
-            raise V8TypeError("Failed to execute 'any' on 'AbortSignal': 1 argument"
+            raise PageTypeError("Failed to execute 'any' on 'AbortSignal': 1 argument"
                               " required, but only 0 present.")
         try:
             items = sequence(signals)
-        except V8TypeError as exc:
-            raise V8TypeError("Failed to execute 'any' on 'AbortSignal': The provided"
+        except (PageTypeError, IdlArgumentError) as exc:
+            raise PageTypeError("Failed to execute 'any' on 'AbortSignal': The provided"
                               " value cannot be converted to a sequence.") from exc
         combined = AbortSignal(services=_realm)
         for item in items:
             try:
                 member = abort_signal(item)
-            except V8TypeError as exc:
-                raise V8TypeError("Failed to execute 'any' on 'AbortSignal': Failed to"
+            except (PageTypeError, IdlArgumentError) as exc:
+                raise PageTypeError("Failed to execute 'any' on 'AbortSignal': Failed to"
                                   " convert value to 'AbortSignal'.") from exc
             if member is None:
-                raise V8TypeError("Failed to execute 'any' on 'AbortSignal': Failed to"
+                raise PageTypeError("Failed to execute 'any' on 'AbortSignal': Failed to"
                                   " convert value to 'AbortSignal'.")
             member._subscribe(lambda member=member: combined._abort(member._reason))
         return combined

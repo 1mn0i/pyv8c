@@ -7,7 +7,7 @@ import pyv8
 from pyv8.flag import ArrayProto, V8Attribute
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, missing_error
-from ...foundation.errors import IndexSizeError, V8TypeError
+from ..page_errors import IndexSizeError, PageTypeError
 from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
 from .utils import OBJECT_PROTOTYPE_NAMES, camel_name as _camel_name, dash_name as _dash_name
 

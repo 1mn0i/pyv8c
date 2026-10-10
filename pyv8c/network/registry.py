@@ -270,10 +270,10 @@ def _websockets_keys():
 
 
 register_transport("curl_cffi", _curl_cffi, option_keys=_curl_cffi_keys, proxy=True)
-# The cronet client takes **kwargs and names no proxy, so one is refused rather than ignored.
-register_transport("cronet", _cronet, option_keys=_cronet_http_keys, proxy=False)
+# cycronet names its proxy option ``proxies``; the bridge renames the context's.
+register_transport("cronet", _cronet, option_keys=_cronet_http_keys, proxy=True)
 register_ws_transport("websockets", _websockets, option_keys=_websockets_keys, proxy=True)
-register_ws_transport("cronet", _cronet, option_keys=_cronet_ws_keys, proxy=False)
+register_ws_transport("cronet", _cronet, option_keys=_cronet_ws_keys, proxy=True)
 
 
 __all__ = [

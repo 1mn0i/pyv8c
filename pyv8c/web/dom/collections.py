@@ -7,11 +7,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, is_nullish, missing_error
-from ...foundation.errors import (
-    InvalidCharacterError,
-    V8TypeError,
-    dom_exception,
-)
+from ..page_errors import InvalidCharacterError, PageTypeError, dom_exception
 from .mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
 from .utils import OBJECT_PROTOTYPE_NAMES, XHTML_NAMESPACE, camel_name, dash_name
 
@@ -120,7 +116,7 @@ class NamedNodeMap(_ListItems, ReadOnlyIndexedPropertyMixin):
             raise missing_error('NamedNodeMap', 'setNamedItem', 1, 0, constructor=False)
         attr = interface_value(attr, 'Attr', 'NamedNodeMap', 'setNamedItem', 1, nullable=False)
         from .nodes import Attr
-        if not isinstance(attr, Attr): raise V8TypeError("parameter is not of type Attr")
+        if not isinstance(attr, Attr): raise PageTypeError("parameter is not of type Attr")
         old = self.fn_getNamedItem(attr.get_name())
         self._element.attributes[attr.get_name()] = attr.get_value()
         return old
@@ -128,7 +124,7 @@ class NamedNodeMap(_ListItems, ReadOnlyIndexedPropertyMixin):
         if name is MISSING:
             raise missing_error('NamedNodeMap', 'removeNamedItem', 1, 0, constructor=False)
         name = dom_string(name)
-        from ...foundation.errors import NotFoundError
+        from ..page_errors import NotFoundError
         name = str(name)
         if name not in self._element.attributes: raise NotFoundError("The attribute was not found.")
         from .nodes import Attr
@@ -269,7 +265,7 @@ class HTMLAllCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
 
     def fn_namedItem(self, *args):
         if not args:
-            raise V8TypeError(
+            raise PageTypeError(
                 "Failed to execute 'namedItem' on 'HTMLAllCollection': 1 argument required, but only 0 present."
             )
         return self._named(dom_string(args[0]))
@@ -427,7 +423,7 @@ class DOMTokenList(ReadOnlyIndexedPropertyMixin):
             raise missing_error('DOMTokenList', 'supports', 1, 0, constructor=False)
         token = dom_string(token)
         if self._supported_tokens is None:
-            raise V8TypeError("DOMTokenList has no supported tokens.")
+            raise PageTypeError("DOMTokenList has no supported tokens.")
         return str(token).lower() in self._supported_tokens
 
     def fn_toString(self, *_extra):

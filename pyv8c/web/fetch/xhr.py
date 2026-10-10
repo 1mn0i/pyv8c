@@ -1,4 +1,5 @@
 """XMLHttpRequest implementation."""
+import json
 import re
 from urllib.parse import urljoin, urlsplit
 
@@ -8,10 +9,10 @@ from ...idl import interface
 from ...foundation.arguments import (
     MISSING, boolean, byte_string, dom_string, integer, is_nullish, missing_error, usv_string,
 )
-from ...foundation.errors import InvalidStateError, NotSupportedError, SecurityError, V8SyntaxError
+from ..page_errors import InvalidStateError, NotSupportedError, SecurityError, PageSyntaxError, PageTypeError
 from ..dom.events import Event, EventTarget
 from .blob import Blob
-from .events import ErrorEvent
+from .events import ErrorEvent, ProgressEvent
 from .headers import Headers
 
 
@@ -23,6 +24,9 @@ class XMLHttpRequestEventTarget(EventTarget):
 @interface('XMLHttpRequest', 'XMLHttpRequestEventTarget')
 class XMLHttpRequest(XMLHttpRequestEventTarget):
     UNSENT, OPENED, HEADERS_RECEIVED, LOADING, DONE = 0, 1, 2, 3, 4
+
+    #: The IDL's response type enum; the binary and document kinds read as ``Null``.
+    _RESPONSE_TYPES = ("", "arraybuffer", "blob", "document", "json", "text")
 
     def __init__(self, *_extra, services=None, _realm=None, **kw):
         if services is pyv8.Undefined:
@@ -38,7 +42,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self.status_text = ""
         self.response_url = ""
         self.responseText = ""
-        self.response = None
+        self.response_type = ""
         self.timeout = 0
         self.withCredentials = False
         #: The load in flight and the deadline armed for it, so a timeout can drop it.
@@ -50,7 +54,35 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
     def get_statusText(self): return self.status_text
     def get_responseURL(self): return self.response_url
     def get_responseText(self): return self.responseText
-    def get_response(self): return self.response
+
+    def get_response(self):
+        """The body in the shape ``responseType`` asks for, as Chrome leaves it."""
+        if self._response is None:
+            return "" if self.response_type in ("", "text") else pyv8.Null
+        if self.response_type == "json":
+            try:
+                return json.loads(self.responseText)
+            except ValueError:
+                return pyv8.Null
+        if self.response_type in ("", "text"):
+            return self.responseText
+        return pyv8.Null
+
+    def get_responseType(self): return self.response_type
+
+    def set_responseType(self, value):
+        if self.readyState in (self.LOADING, self.DONE):
+            raise InvalidStateError("XMLHttpRequest is in the LOADING or DONE state")
+        name = dom_string(value)
+        if name not in self._RESPONSE_TYPES:
+            raise PageTypeError(
+                f"'{name}' is not a valid value for enumeration XMLHttpRequestResponseType")
+        self.response_type = name
+
+    def get_responseXML(self):
+        """No response here is a document, so there is no XML value to answer."""
+        return pyv8.Null
+
     def get_withCredentials(self): return bool(self.withCredentials)
     def set_withCredentials(self, value): self.withCredentials = boolean(value)
     def get_timeout(self): return self.timeout
@@ -75,7 +107,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             async_value = True
         async_value = boolean(async_value)
         if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", method):
-            raise V8SyntaxError("Invalid HTTP method")
+            raise PageSyntaxError("Invalid HTTP method")
         if method.upper() in ("CONNECT", "TRACE", "TRACK"):
             raise SecurityError("Forbidden HTTP method")
         base = self._services.realm_services.url if self._services else "about:blank"
@@ -87,9 +119,12 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             # Reading the port is what rejects a URL whose port cannot be one.
             _ = parts.port
         except ValueError as exc:
-            raise V8SyntaxError("Invalid URL") from exc
+            raise PageSyntaxError("Invalid URL") from exc
         if not async_value:
             raise NotSupportedError("synchronous XMLHttpRequest is not supported")
+        # A new request starts from nothing: whatever the last one left is gone.
+        self._response = None
+        self.status, self.status_text, self.response_url, self.responseText = 0, "", "", ""
         self._method, self._url, self._async = method.upper(), resolved, async_value
         self._state(self.OPENED)
 
@@ -159,8 +194,10 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         if error:
             self.status = 0
             self._state(self.DONE)
-            self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, "message": str(error)}))
-            self.fn_dispatchEvent(Event("loadend"))
+            # A ProgressEvent with nothing in it, as Chrome sends it: the reason a load
+            # failed stays host-side.
+            self.fn_dispatchEvent(ProgressEvent("error", {"isTrusted": True}))
+            self.fn_dispatchEvent(ProgressEvent("loadend", {"isTrusted": True}))
             return
         self._response = response
         self.status = response.status
@@ -168,12 +205,15 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         # What the request ended at: a redirect the engine followed moves it.
         self.response_url = str(response.url or self._url)
         self.responseText = response._body_value()
-        self.response = self.responseText
         self._state(self.HEADERS_RECEIVED)
         self._state(self.LOADING)
         self._state(self.DONE)
-        self.fn_dispatchEvent(Event("load"))
-        self.fn_dispatchEvent(Event("loadend"))
+        body = response.body
+        loaded = len(body) if isinstance(body, (bytes, bytearray)) else len(str(body))
+        self.fn_dispatchEvent(ProgressEvent("load", {
+            "isTrusted": True, "lengthComputable": True, "loaded": loaded, "total": loaded}))
+        self.fn_dispatchEvent(ProgressEvent("loadend", {
+            "isTrusted": True, "lengthComputable": True, "loaded": loaded, "total": loaded}))
 
     def fn_getAllResponseHeaders(self, *_extra):
         """The response's headers as one block, lower-case and sorted as Chrome writes
@@ -197,8 +237,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self._timer = self._stop_timer()
         self._response = None
         self.readyState = self.UNSENT
-        self.fn_dispatchEvent(Event("abort"))
-        self.fn_dispatchEvent(Event("loadend"))
+        self.fn_dispatchEvent(ProgressEvent("abort", {"isTrusted": True}))
+        self.fn_dispatchEvent(ProgressEvent("loadend", {"isTrusted": True}))
 
     def _stop_timer(self):
         """Disarm the timeout, answering with the ident so the caller can store it."""
@@ -220,6 +260,6 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self._response = None
         self.status = 0
         self._state(self.DONE)
-        self.fn_dispatchEvent(Event("loadend"))
+        self.fn_dispatchEvent(ProgressEvent("loadend", {"isTrusted": True}))
 
 __all__ = ["XMLHttpRequestEventTarget", "XMLHttpRequest"]

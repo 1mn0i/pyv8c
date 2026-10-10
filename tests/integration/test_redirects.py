@@ -130,7 +130,8 @@ def test_a_missing_location_is_delivered_as_it_arrived(page):
 
 def test_a_location_that_cannot_be_resolved_fails_the_load(page):
     answer = _ask(page, "/bad-location")
-    assert answer.startswith("ERR") and "cannot resolve" in answer
+    #: The page hears Chrome's wording; why the load failed stays on the host's side.
+    assert answer == "ERR TypeError: Failed to fetch"
     assert _hops() == [("GET", "/bad-location")]
 
 
@@ -144,7 +145,7 @@ def test_a_manual_redirect_reads_as_opaque(page):
 
 def test_a_redirect_mode_of_error_refuses_the_first_redirect(page):
     answer = _ask(page, "/a", {"redirect": "error"})
-    assert answer.startswith("ERR") and "error" in answer
+    assert answer == "ERR TypeError: Failed to fetch"
     assert _hops() == [("GET", "/a")]
 
 
@@ -153,13 +154,13 @@ def test_the_twenty_first_redirect_fails_and_the_twentieth_lands(page):
     assert len(_hops()) == 21
     del WIRE[:]
     answer = _ask(page, "/chain/21/0")
-    assert answer.startswith("ERR") and "more than 20" in answer
+    assert answer == "ERR TypeError: Failed to fetch"
     assert len(_hops()) == 21
 
 
 def test_an_intermediate_cross_origin_hop_must_pass_its_own_cors_check(page):
     answer = _ask(page, "/cross")
-    assert answer.startswith("ERR SecurityError")
+    assert answer == "ERR TypeError: Failed to fetch"
     assert _hops() == [("GET", "/cross"), ("GET", "/plain")]
 
 

@@ -9,6 +9,7 @@ pytestmark = pytest.mark.native
 
 from pyv8c import Browser
 from pyv8c.network.models import NetworkRequest
+from pyv8c.network.registry import accepted_option_keys
 from pyv8c.web.fetch.response import Response
 
 
@@ -159,6 +160,36 @@ def test_max_workers_is_consumed_by_backend_not_cycronet(monkeypatch):
     browser.close()
 
 
+def test_the_contexts_proxy_reaches_cronet_as_proxies(monkeypatch):
+    """cycronet names its proxy option ``proxies``, so the bridge renames the context's."""
+    install_fake_cycronet(monkeypatch)
+    browser = Browser(real_network=True, http_engine="cronet", proxy="http://127.0.0.1:3128")
+    try:
+        engine = browser.new_context().network_backend.http
+        assert engine.client.options.get("proxies") == "http://127.0.0.1:3128"
+    finally:
+        browser.close()
+
+
+def test_a_context_without_a_proxy_gives_cronet_none(monkeypatch):
+    install_fake_cycronet(monkeypatch)
+    browser = Browser(real_network=True, http_engine="cronet")
+    try:
+        engine = browser.new_context().network_backend.http
+        assert "proxies" not in engine.client.options
+    finally:
+        browser.close()
+
+
+def test_cronet_declares_the_proxy_key_for_both_roles(monkeypatch):
+    """A client that names its options is checked against them before it is built."""
+    install_declaring_cycronet(monkeypatch)
+    http_keys = accepted_option_keys("cronet", "http")
+    ws_keys = accepted_option_keys("cronet", "ws")
+    assert http_keys == {"timeout_ms", "verify", "proxy", "max_workers"}
+    assert ws_keys == {"timeout_ms", "verify", "proxy"}
+
+
 def test_real_network_fetch_is_delivered_on_page_queue(monkeypatch):
     install_fake_cycronet(monkeypatch)
     browser = Browser(real_network=True, http_engine="cronet", http_options={"verify": True})
@@ -211,7 +242,15 @@ def test_an_engine_that_cannot_stop_following_refuses_a_manual_redirect(monkeypa
             ".catch((e) => { window.__m = e.name + ': ' + e.message; });"
         )
         page.run_until_idle(timeout=3)
-        assert "cannot be told not to" in str(page.evaluate("window.__m"))
+        # A page hears Chrome's wording for any network failure, and nothing else.
+        assert page.evaluate("window.__m") == "TypeError: Failed to fetch"
+
+        # The reason stays host-side, where a caller can act on it.
+        from pyv8c.foundation.host_errors import LoadFailure
+
+        with pytest.raises(LoadFailure) as refused:
+            page.services.resource_services.load_resource("/x", {"redirect": "manual"})
+        assert "cannot be told not to" in str(refused.value)
     finally:
         browser.close()
 
@@ -533,16 +572,16 @@ def test_naming_one_role_assembles_exactly_that_role(monkeypatch):
 
 
 def test_a_context_without_an_http_engine_says_so(monkeypatch):
-    from pyv8c.foundation.errors import DOMException
+    from pyv8c.foundation.host_errors import LoadFailure
     from pyv8c.network.models import NetworkRequest, NetworkUnavailableError
 
     install_fake_ws_engine(monkeypatch)
     browser = Browser(stub_logging="off", http_engine=None, ws_engine="fixture-sockets")
     try:
         context = browser.new_context()
-        # The host API reports it as the network error it is, not as a crash
+        # The host API reports it as the host's own failure to load, not as a crash
         # somewhere deeper in a page's fetch.
-        with pytest.raises(DOMException, match="HTTP engine"):
+        with pytest.raises(LoadFailure, match="HTTP engine"):
             context.new_page().net.get("http://example.test/")
         # And the assembled backend refuses a request itself: there is no engine
         # behind it to hand the work to.

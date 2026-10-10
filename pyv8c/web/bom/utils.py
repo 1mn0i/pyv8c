@@ -4,7 +4,8 @@ needs each of them.
 
 from urllib.parse import urlsplit
 
-from ...foundation.errors import SecurityError
+from ..page_errors import SecurityError
+from ..page_errors import js_error_value
 
 
 def deny_cross_origin():
@@ -86,7 +87,7 @@ def settled(services, *, value=None, error=None):
     if error is None:
         resolve(value)
     else:
-        reject(services.realm_services.js_error_value(error))
+        reject(js_error_value(error))
     return promise
 
 

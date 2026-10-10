@@ -10,7 +10,7 @@ from threading import RLock
 
 from ..foundation.logging import logger  # patch target for cookie-change logging tests
 
-from ..foundation.errors import InvalidStateError
+from ..foundation.host_errors import HostStateError
 from .backend import RequestDelivery
 from .cookies import CookieJar
 from .models import (
@@ -19,6 +19,7 @@ from .models import (
     NetworkUnavailableError,
     cookie_header,
 )
+from .proxy import PROXY_OPTION
 from .registry import signature_option_keys
 
 
@@ -56,17 +57,21 @@ class CronetTransport(RequestDelivery):
         """The keys the *kind* role's options may carry: the client's, plus ours.
 
         Leftovers go straight to the installed client, so its constructor is the list;
-        only the request role owns a thread pool, configured by ``max_workers``.
+        the request role owns a thread pool and both roles take the context's proxy.
         """
         client_keys = signature_option_keys(_cycronet_client_type(_cycronet_module()))
+        ours = {PROXY_OPTION, "max_workers"} if kind == "http" else {PROXY_OPTION}
         if client_keys is None:
             return None
-        return client_keys | ({"max_workers"} if kind == "http" else frozenset())
+        return client_keys | ours
 
     def __init__(self, *, options=None):
         self.options = dict(options or {})
-        # Ours, not the client's: consume it before the client is built.
+        # Ours, not the client's: consumed here, and the proxy renamed on the way.
         max_workers = int(self.options.pop("max_workers", 4))
+        proxy = self.options.pop(PROXY_OPTION, None)
+        if proxy and "proxies" not in self.options:
+            self.options["proxies"] = proxy
         self.cycronet = _cycronet_module()
         self.client = self._new_client()
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="pyv8c-cronet")
@@ -101,7 +106,7 @@ class CronetTransport(RequestDelivery):
 
     def _call(self, request: NetworkRequest):
         if self._closed:
-            raise InvalidStateError("network backend is closed")
+            raise HostStateError("network backend is closed")
         logger.debug("network download: {} {}", request.method, request.url)
         headers = dict(request.headers)
         cookie = cookie_header(self.cookies, request)
@@ -159,7 +164,7 @@ class CronetTransport(RequestDelivery):
 
     def websocket(self, page, url, protocols, callbacks, options=None):
         if self._closed:
-            raise InvalidStateError("network backend is closed")
+            raise HostStateError("network backend is closed")
         factory = getattr(self.client, "websocket", None)
         if factory is None:
             raise NetworkUnavailableError("installed cycronet does not expose websocket callback API")

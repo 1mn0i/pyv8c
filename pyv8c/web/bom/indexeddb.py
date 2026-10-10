@@ -31,11 +31,14 @@ from ...foundation.arguments import (
     number,
     sequence,
 )
-from ...foundation.errors import V8TypeError, dom_exception
+from ...foundation.arguments import IdlArgumentError
+from ..page_errors import PageTypeError, dom_exception
+from ...foundation.error_policy import is_declared
+from ...foundation.logging import logger
 from ...foundation.realm import post_or_call
 from ..dom.collections import DOMStringList
 from ..dom.events import Event, EventTarget
-from ..fetch.clone import structured_clone
+from ..fetch.clone import rebuild_clone, structured_clone, unread
 
 __all__ = [
     "IDBFactory", "IDBDatabase", "IDBTransaction", "IDBObjectStore", "IDBIndex",
@@ -500,8 +503,16 @@ def _databases(services):
     return services.context_services._databases.setdefault(_origin_key(services), {})
 
 
+def _handed(value):
+    """A stored value as the realm reading it gets it: its own copy of any binary."""
+    context = pyv8.current_context()
+    return rebuild_clone(value) if context is None else rebuild_clone(value, context)
+
+
 def _store_clone(value):
-    return structured_clone(value)
+    #: The caller's own context, so what goes into the store carries its bytes: an
+    #: ArrayBuffer has nothing enumerable on it, and used to be stored as ``{}``.
+    return structured_clone(value, context=pyv8.current_context())
 
 
 def _maybe_update_generator(store, key):
@@ -536,7 +547,7 @@ class IDBRecord:
         )
 
     def get_value(self):
-        return self._value if self._value is not None else pyv8.Undefined
+        return _handed(self._value) if self._value is not None else pyv8.Undefined
 
 
 @interface('IDBVersionChangeEvent', 'Event')
@@ -567,6 +578,7 @@ class _RequestMixin:
         self._transaction = transaction
         self._done = False
         self._result = pyv8.Undefined
+        self._result_handed = unread
         self._error = None
         self.readyState = "pending"
         self._blocked_fired = False
@@ -613,6 +625,7 @@ class _RequestMixin:
         """Clear the done flag so a cursor can reuse the same request."""
         self._done = False
         self._result_ready = False
+        self._result_handed = unread
         self.readyState = "pending"
 
 
@@ -625,7 +638,14 @@ class IDBRequest(EventTarget, _RequestMixin):
     def get_result(self):
         if not self._done and not self._result_ready:
             raise _invalid_state_error("The request has not finished.")
-        return self._result
+        #: A stored value came out of a clone, so the realm reading it is handed its own
+        #: copy of the binary in it; a host reading it through Python gets the bytes.
+        context = pyv8.current_context()
+        if context is None:
+            return rebuild_clone(self._result)
+        if self._result_handed is unread:
+            self._result_handed = rebuild_clone(self._result, context)
+        return self._result_handed
 
     def get_error(self):
         if not self._done:
@@ -875,7 +895,7 @@ class _CursorBody:
         self._require_usable()
         steps = int(count)
         if steps <= 0:
-            raise V8TypeError("The count parameter must be greater than 0.")
+            raise PageTypeError("The count parameter must be greater than 0.")
         self._iterate(steps=steps)
         return None
 
@@ -914,7 +934,7 @@ class IDBCursor(_CursorBody):
 @interface('IDBCursorWithValue', 'IDBCursor')
 class IDBCursorWithValue(IDBCursor):
     def get_value(self):
-        return self._value if self._value is not None else pyv8.Undefined
+        return _handed(self._value) if self._value is not None else pyv8.Undefined
 
 
 @interface('IDBTransaction', 'EventTarget')
@@ -1038,9 +1058,14 @@ class IDBTransaction(EventTarget):
                 try:
                     result = operation()
                 except BaseException as exc:
-                    error = exc if getattr(exc, "__v8_error__", False) else _fail(
-                        "UnknownError", str(exc) or "The operation failed."
-                    )
+                    #: What the error family contains is what the request may report;
+                    #: anything else is a host failure, which the page is told as the
+                    #: unknown one and the host keeps the reason for.
+                    if is_declared(exc):
+                        error = exc
+                    else:
+                        logger.warning("an IndexedDB operation failed in the host: {}", exc)
+                        error = _fail("UnknownError", "The operation failed.")
                     # A canceled error event (``defaultPrevented``) keeps the
                     # surrounding transaction alive.
                     if request._fail_with(error) and self._state != "finished":
@@ -1144,7 +1169,7 @@ def _new_cursor(source, query, direction, key_only):
     and the index differ only in that check.
     """
     if direction not in _DIRECTIONS:
-        raise V8TypeError("The direction parameter is not a valid cursor direction.")
+        raise PageTypeError("The direction parameter is not a valid cursor direction.")
     key_range = _to_key_range(query)
     transaction = source._transaction
     request = IDBRequest(services=source._services, source=source, transaction=transaction)
@@ -1781,7 +1806,7 @@ class IDBDatabase(EventTarget):
             if name not in self._model.stores:
                 raise _not_found_error("The object store '%s' does not exist." % name)
         if mode not in ("readonly", "readwrite"):
-            raise V8TypeError("The mode parameter is not 'readonly' or 'readwrite'.")
+            raise PageTypeError("The mode parameter is not 'readonly' or 'readwrite'.")
         transaction = IDBTransaction(
             services=self._services, database=self, stores=scope, mode=mode,
             durability=durability,
@@ -1830,14 +1855,14 @@ class IDBFactory:
             version = number(version)
             try:
                 version = integer(version, bits=64, enforce_range=True)
-            except V8TypeError as exc:
-                raise V8TypeError("Failed to execute 'open' on 'IDBFactory': Value is outside the 'unsigned long long' value range.") from exc
+            except (PageTypeError, IdlArgumentError) as exc:
+                raise PageTypeError("Failed to execute 'open' on 'IDBFactory': Value is outside the 'unsigned long long' value range.") from exc
         name = str(name)
         requested = None
         if not is_nullish(version):
             requested = int(version)
             if requested <= 0:
-                raise V8TypeError("The version provided must be greater than 0.")
+                raise PageTypeError("The version provided must be greater than 0.")
         request = IDBOpenDBRequest(services=self._services)
         post_or_call(self._services, lambda: self._open_step(request, name, requested, 0.0))
         return request

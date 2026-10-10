@@ -10,7 +10,7 @@ import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, is_nullish, missing_error
 from ..dom.events import EventTarget
-from ..fetch.clone import message_transfer, transfer_ports
+from ..fetch.clone import message_transfer, structured_clone, transfer_ports
 from ..fetch.events import MessageEvent
 
 __all__ = ["MessageChannel", "MessagePort"]
@@ -55,15 +55,20 @@ class MessagePort(EventTarget):
         transfer = message_transfer(options)
         if self._closed or self._detached:
             return None
+        #: A port carries a snapshot taken now, not a reference: the far realm builds
+        #: its own data, so what the sender does to its object afterwards is not seen
+        #: on the other side, and a port that outlives its realm still delivers plain
+        #: values rather than objects of an isolate that is gone.
+        data = structured_clone(message, context=pyv8.current_context())
         twin = self._twin
         # The ports travel into the realm the twin dispatches in, which is why the
         # transfer is read here and not where the twin receives it.
         ports = transfer_ports(transfer, services=twin._services if twin else None,
                                caller='MessagePort')
         if twin is None:
-            self._outbox.append((message, ports))
+            self._outbox.append((data, ports))
             return None
-        self._send(message, ports)
+        self._send(data, ports)
         return None
 
     def _detach(self):

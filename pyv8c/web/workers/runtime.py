@@ -2,15 +2,22 @@
 
 import threading
 
+import pyv8
 from loguru import logger
 
 from ...foundation.arguments import is_nullish
+from ...foundation.error_policy import is_host_failure
 from ...foundation.executor import RealmExecutor
 from ...foundation.lifecycle import ResourceScope
 from ...foundation.rejections import RejectionTracker
 from ..dom.events import PromiseRejectionEvent
+from ..page_errors import PageError
 from ..fetch.clone import structured_clone, transfer_ports
 from ..fetch.events import ErrorEvent, MessageEvent
+
+#: Schemes whose source belongs to the page: reading one is a lookup, not a load, so it can
+#: happen on the thread that is constructing the worker.
+_LOCAL_SOURCE_SCHEMES = ("blob:", "data:")
 
 
 class WorkerRuntime:
@@ -30,15 +37,53 @@ class WorkerRuntime:
         self._scope = None
         self._devtools = None
         self.debug_target = None
+        # A source the page made itself is read here, on the thread that is making the
+        # worker, rather than on the worker's own thread where ``_run`` reads everything
+        # else: an inlined worker is handed over as a ``blob:`` URL and the page revokes
+        # that URL in the same turn, while a browser takes the script before the revoke
+        # can land.  Nothing here does I/O, so the page's realm waits on nothing; a
+        # failure is kept and reported where a worker's failures go, by ``_run``.
+        self._source = None
+        self._source_error = None
+        if self.services is not None and self.script_url.startswith(_LOCAL_SOURCE_SCHEMES):
+            try:
+                self._source = self.services.resource_services.resolve_worker_source(
+                    self.script_url)
+            except BaseException as exc:
+                self._source_error = exc
         # Start asynchronously (``new Worker()`` does not wait for the script):
         # ``_run`` is posted first, so every later ``_dispatch_message`` runs after
         # the scope exists, and messages stay ordered.
         self.executor.post(self._run)
 
+    def _source_of_worker(self):
+        """The worker's script, read where it belongs.
+
+        A source the page made itself was read while the worker was constructed, so that
+        a revoke in the same turn cannot take it (see ``__init__``); everything else -- a
+        network fetch above all -- is read here, on the worker's own thread, so no realm
+        ever waits for a load.
+        """
+        if self._source_error is not None:
+            raise self._source_error
+        if self._source is not None:
+            return self._source
+        return self.services.resource_services.resolve_worker_source(self.script_url)
+
     def _run(self):
         try:
             config = self.services.worker_services.worker_configuration()
-            source = self.services.resource_services.resolve_worker_source(self.script_url)
+            try:
+                source = self._source_of_worker()
+            except BaseException as exc:  # a script that never arrives
+                #: A worker whose script cannot be fetched is still an ``error`` on the
+                #: Worker, as it is in a browser; why it could not be fetched is the
+                #: host's to read.
+                logger.warning("worker {} could not be fetched: {}", self.script_url, exc)
+                self.services.task_services.post_task(
+                    lambda: self.owner._receive_error(
+                        PageError("Failed to load the worker's script")))
+                return
             self._realm = self.services.worker_services.create_worker_realm(config)
             self._realm.script_url = self.script_url
             # The worker drives its own task queue from this thread, so timers
@@ -159,15 +204,24 @@ class WorkerRuntime:
             logger.debug("failed to report a worker rejection", exc_info=True)
 
     def _report_error(self, exc):
+        #: An ``error`` event is what a script does wrong; the host's own failure is
+        #: the host's, so it is logged here and the page is not told about it.
+        if is_host_failure(exc):
+            logger.warning("worker {} failed in the host: {}", self.script_url, exc)
+            return
         self.services.task_services.post_task(lambda: self.owner._receive_error(exc))
 
     def post_from_parent(self, value, transfer=()):
         if not self._stop.is_set():
-            # The port moves out of the page now; the realm it moves into is the
-            # worker's, which ``_run`` has already been posted ahead of.
+            # The message is cloned before the list is applied, so a buffer it is about
+            # to detach still carries its bytes.  The port moves out of the page now;
+            # the realm it moves into is the worker's, which ``_run`` has already been
+            # posted ahead of.
+            #: The page's context, so binary data is read as the bytes it holds rather
+            #: than element by element.
+            data = structured_clone(value, context=pyv8.current_context())
             ports = transfer_ports(transfer, services=self.services, caller='Worker')
-            self.executor.post(self._dispatch_from_parent,
-                               (structured_clone(value), ports))
+            self.executor.post(self._dispatch_from_parent, (data, ports))
 
     def _dispatch_from_parent(self, payload):
         value, ports = payload
@@ -177,25 +231,44 @@ class WorkerRuntime:
         self._dispatch_message(value, ports)
 
     def post_to_parent(self, value, transfer=()):
+        # Cloned first: the list is about to detach whatever buffer it names.
+        data = structured_clone(value, context=self._context)
         ports = transfer_ports(transfer, services=self.services, caller='WorkerGlobalScope')
-        value = structured_clone(value, context=self._context)
         self.services.task_services.post_task(
-            lambda: self.owner._receive_message(value, ports))
+            lambda: self.owner._receive_message(data, ports))
 
     def stop(self):
+        """Ask the worker to take itself down, and return without waiting for it.
+
+        The teardown belongs to the worker's own thread.  Waiting for it here spends the
+        worker's delay in the *caller's* realm, and a page's own teardown calls this from
+        inside the page realm -- which is how a page ends up with its timers, port
+        deliveries and pending callbacks held for as long as a worker takes to answer.
+        ``RealmExecutor.call``'s budget exists to report a wedged realm, not to make one
+        realm wait on another.  A worker that is mid-script finishes its command first,
+        which is also what a browser's ``terminate()`` looks like from the page.
+        """
         if self.executor.closed and self._realm is None:
             return
         self._stop.set()
         target = self.debug_target
         if target is not None:
             target.wake_waiting_owner()
+        # Posted, not called: the command is served once whatever the worker is doing
+        # ends, and the two steps below run on the worker's thread, where they belong.
+        self.executor.post(self._teardown_owner)
+
+    def _teardown_owner(self):
+        """The teardown itself, on the worker's own thread.
+
+        Closing the executor from inside it is what keeps that join off the caller: the
+        driver leaves its loop when this command returns and the thread ends by itself.
+        """
         try:
-            self.executor.call(self._cleanup_owner, timeout=5)
-        except RuntimeError:
-            if not (self.executor.closed and self._realm is None):
-                raise
-        self.executor.close()
-        self._lifecycle_scope.close()
+            self._cleanup_owner()
+        finally:
+            self.executor.close()
+            self._lifecycle_scope.close()
 
 
 class SharedWorkerRuntime(WorkerRuntime):

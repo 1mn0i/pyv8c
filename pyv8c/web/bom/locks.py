@@ -8,6 +8,7 @@ from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, missing_error
 from ..dom.events import Event, EventTarget
 from .utils import settled
+from ..page_errors import js_error_value
 
 
 @interface('Lock', None)
@@ -45,7 +46,7 @@ class LockManager:
             try:
                 resolve(run())
             except BaseException as error:
-                reject(services.realm_services.js_error_value(error))
+                reject(js_error_value(error))
 
         services.task_services.schedule(task, 0, repeat=False)
         return promise

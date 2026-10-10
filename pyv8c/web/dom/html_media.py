@@ -4,7 +4,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, missing_error, number
-from ...foundation.errors import dom_exception
+from ..page_errors import dom_exception
 from .events import EventTarget
 from .html_elements import HTMLElement, _set_url_value, _url_value
 from .media_source import can_play_type, media_facts

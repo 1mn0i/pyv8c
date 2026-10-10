@@ -21,11 +21,19 @@ def payload(**overrides):
     return {name: resolved[name] for name in COLLECTED_KEYS} | overrides
 
 
+#: A page cannot enumerate extensions, so the collector reads that one from the
+#: browser's own profile instead of asking the document (``profile_extensions``).
+HOST_READ_KEYS = ("extensions",)
+
+
 def test_the_script_asks_for_every_key_the_table_collects():
     asked = set(DOTTED_LITERAL.findall(collector.COLLECT_SCRIPT))
     dotted = {name for name in COLLECTED_KEYS if "." in name}
     assert asked == dotted
     for name in COLLECTED_KEYS:
+        if name in HOST_READ_KEYS:
+            assert f"'{name}'" not in collector.COLLECT_SCRIPT
+            continue
         assert f"'{name}'" in collector.COLLECT_SCRIPT
 
 
@@ -231,6 +239,64 @@ def test_the_default_output_is_the_profile_the_package_ships():
     assert collector.DEFAULT_OUTPUT.name == "chrome-environment.json"
     assert collector.DEFAULT_OUTPUT.parent.name == "data"
     assert collector.DEFAULT_OUTPUT.exists()
+
+
+def install_extension(profile, identifier, manifest, reasons=()):
+    """One extension directory the collector reads, and what the browser says about it."""
+    version = profile / "Extensions" / identifier / "1.0.0_0"
+    version.mkdir(parents=True)
+    (version / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return {"disable_reasons": list(reasons)}
+
+
+def write_settings(profile, settings):
+    (profile / "Secure Preferences").write_text(
+        json.dumps({"extensions": {"settings": settings}}), encoding="utf-8")
+
+
+def test_a_profile_reports_only_the_extensions_that_answer_a_page(tmp_path):
+    """Enabled and exposing something is what a page can read; a suspended one answers none."""
+    profile = tmp_path / "Default"
+    settings = {
+        "cneomjecgakdfoeehmmmoiklncdiodmh": install_extension(profile,
+            "cneomjecgakdfoeehmmmoiklncdiodmh",
+            {"manifest_version": 3, "web_accessible_resources": [
+                {"resources": ["/icons/icon_64.png"], "matches": ["https://*/*"]}]}),
+        "nmmhkkegccagdldgiimedpiccmgmieda": install_extension(profile,
+            "nmmhkkegccagdldgiimedpiccmgmieda",
+            {"manifest_version": 2, "web_accessible_resources": ["branding.css"]}),
+        "aapbdbdomjkkjkaonfhkkikfgjllcleb": install_extension(profile,
+            "aapbdbdomjkkjkaonfhkkikfgjllcleb",
+            {"manifest_version": 3, "web_accessible_resources": [
+                {"resources": ["popup_css_compiled.css"], "matches": ["<all_urls>"]}]},
+            reasons=(1,)),
+        "ojfebgpkimhlhcblbalbfjblapadhbol": install_extension(profile,
+            "ojfebgpkimhlhcblbalbfjblapadhbol", {"manifest_version": 3}),
+    }
+    write_settings(profile, settings)
+    assert collector.profile_extensions(tmp_path) == {
+        "cneomjecgakdfoeehmmmoiklncdiodmh": [
+            {"resources": ["/icons/icon_64.png"], "matches": ["https://*/*"]}],
+        "nmmhkkegccagdldgiimedpiccmgmieda": [
+            {"resources": ["branding.css"], "matches": ["<all_urls>"]}],
+    }
+
+
+def test_a_user_data_dir_can_be_named_or_one_profile_inside_it(tmp_path):
+    profile = tmp_path / "Profile 1"
+    write_settings(profile, {"cneomjecgakdfoeehmmmoiklncdiodmh": install_extension(profile,
+        "cneomjecgakdfoeehmmmoiklncdiodmh",
+        {"manifest_version": 3, "web_accessible_resources": [{"resources": ["a.css"]}]})})
+    assert collector.profile_extensions(tmp_path, profile="Profile 1") == {
+        "cneomjecgakdfoeehmmmoiklncdiodmh": [
+            {"resources": ["a.css"], "matches": ["<all_urls>"]}]}
+    # The same directory named on its own: no ``Extensions`` one level in.
+    assert collector.profile_extensions(profile) == collector.profile_extensions(tmp_path, profile="Profile 1")
+
+
+def test_the_collected_payload_carries_the_extension_table():
+    environment = collector.build_environment(payload())
+    assert "extensions" in environment.to_dict()
 
 
 def test_a_failed_collection_exits_nonzero_with_the_reason(monkeypatch, capsys):

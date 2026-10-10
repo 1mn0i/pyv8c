@@ -16,7 +16,7 @@ from ...foundation.arguments import (
     is_nullish,
     missing_error,
 )
-from ...foundation.errors import HierarchyRequestError, NotFoundError, V8TypeError
+from ..page_errors import HierarchyRequestError, NotFoundError, PageTypeError
 from .collections import NodeList
 from .events import EventTarget
 from .mixins import _ParentNodeMixin
@@ -311,7 +311,7 @@ class Node(EventTarget):
                                  previous=previous, next_=next_)
 
     def _ensure_adoptable(self, node):
-        if not isinstance(node, Node): raise V8TypeError("The new child is not a Node")
+        if not isinstance(node, Node): raise PageTypeError("The new child is not a Node")
         # HierarchyRequestError fires only when ``node`` is an inclusive ancestor of
         # ``self``; re-inserting an existing descendant is a plain move.
         if node is self or node.fn_contains(self):
@@ -411,7 +411,7 @@ class Node(EventTarget):
         new = interface_value(new, 'Node', 'Node', 'replaceChild', 1, nullable=False)
         old = interface_value(old, 'Node', 'Node', 'replaceChild', 2, nullable=False)
         if not isinstance(new, Node) or not isinstance(old, Node):
-            raise V8TypeError("Failed to execute 'replaceChild' on 'Node': parameter is not of type 'Node'.")
+            raise PageTypeError("Failed to execute 'replaceChild' on 'Node': parameter is not of type 'Node'.")
         if old not in self._children:
             #: Chrome's message, prefix and wording (measured side by side 2026-10-06).
             raise NotFoundError("Failed to execute 'replaceChild' on 'Node': "
@@ -443,7 +443,7 @@ class Node(EventTarget):
         other = interface_value(other, 'Node', 'Node', 'compareDocumentPosition', 1, nullable=False)
         """Bitmask describing ``other``'s position relative to ``self``."""
         if not isinstance(other, Node):
-            raise V8TypeError("Failed to execute 'compareDocumentPosition' on 'Node': parameter 1 is not of type 'Node'.")
+            raise PageTypeError("Failed to execute 'compareDocumentPosition' on 'Node': parameter 1 is not of type 'Node'.")
         if other is self:
             return 0
         if self.root_node() is not other.root_node():

@@ -13,7 +13,9 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, missing_error
-from ...foundation.errors import V8TypeError
+from ...foundation.arguments import IdlArgumentError
+from ..page_errors import PageTypeError
+from ..page_errors import js_error_value
 from ...foundation.urls import origin_string
 from .request import Request
 from .response import Response
@@ -44,7 +46,7 @@ def _settle(services, value=None, error=None):
     if error is None:
         resolve(value)
     else:
-        reject(realm.js_error_value(error))
+        reject(js_error_value(error))
     return promise
 
 
@@ -123,7 +125,7 @@ def _as_request(value, services):
     request = value if isinstance(value, Request) else Request(_url_of(value),
                                                                services=services)
     if _method_of(request) not in _STORABLE_METHODS:
-        raise V8TypeError("Failed to execute 'put' on 'Cache': Request method"
+        raise PageTypeError("Failed to execute 'put' on 'Cache': Request method"
                           f" '{_method_of(request)}' is unsupported.")
     return request
 
@@ -153,12 +155,12 @@ class Cache:
         if response is MISSING:
             raise missing_error('Cache', 'put', 2, 1, constructor=False)
         if not isinstance(response, Response):
-            return _settle(self._services, error=V8TypeError(
+            return _settle(self._services, error=PageTypeError(
                 "Failed to execute 'put' on 'Cache': parameter 2 is not of type"
                 " 'Response'."))
         try:
             self._store(_as_request(request, self._services), response)
-        except V8TypeError as refusal:
+        except (PageTypeError, IdlArgumentError) as refusal:
             return _settle(self._services, error=refusal)
         return _settle(self._services)
 
@@ -198,7 +200,7 @@ class Cache:
     def _load(self, url, finish):
         resource = getattr(self._services, "resource_services", None)
         if resource is None:
-            finish(None, V8TypeError("Cache: no resource loader in this realm"))
+            finish(None, PageTypeError("Cache: no resource loader in this realm"))
             return
         resource.load_resource_async(url, {"method": "GET", "headers": [], "body": None,
                                            "resource_type": "cache"}, finish)
@@ -210,17 +212,17 @@ class Cache:
 
         def finish(response, error):
             if error is not None:
-                reject(self._services.realm_services.js_error_value(error))
+                reject(js_error_value(error))
                 return
             if not response.ok:
-                reject(self._services.realm_services.js_error_value(V8TypeError(
+                reject(js_error_value(PageTypeError(
                     "Failed to execute 'add' on 'Cache': Request failed with status"
                     f" {response.status}.")))
                 return
             try:
                 self._store(Request(urls[index], services=self._services), response)
-            except V8TypeError as refusal:
-                reject(self._services.realm_services.js_error_value(refusal))
+            except (PageTypeError, IdlArgumentError) as refusal:
+                reject(js_error_value(refusal))
                 return
             self._store_fetched(urls, resolve, reject, index + 1)
 
@@ -229,7 +231,7 @@ class Cache:
     def _fetch_into(self, values):
         realm = getattr(self._services, "realm_services", None)
         if realm is None:
-            raise V8TypeError("Cache: no realm to fetch from")
+            raise PageTypeError("Cache: no realm to fetch from")
         promise, resolve, reject = realm.make_promise()
         self._store_fetched([_url_of(value) for value in values], resolve, reject)
         return promise
@@ -244,7 +246,7 @@ class Cache:
             raise missing_error('Cache', 'addAll', 1, 0, constructor=False)
         values = [requests] if isinstance(requests, str) else list(requests)
         if not values:
-            return _settle(self._services, error=V8TypeError(
+            return _settle(self._services, error=PageTypeError(
                 "Failed to execute 'addAll' on 'Cache': at least one request is"
                 " required."))
         return self._fetch_into(values)
@@ -267,7 +269,7 @@ class CacheStorage:
         if name is MISSING:
             raise missing_error('CacheStorage', 'open', 1, 0, constructor=False)
         if not str(name):
-            return _settle(self._services, error=V8TypeError(
+            return _settle(self._services, error=PageTypeError(
                 "Failed to execute 'open' on 'CacheStorage': Cache name cannot be"
                 " empty."))
         return _settle(self._services, self._cache(name))

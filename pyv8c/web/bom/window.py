@@ -19,7 +19,8 @@ from ...foundation.arguments import (
 )
 from ...foundation.base64 import forgiving_base64_decode, forgiving_base64_encode
 from ...foundation.environment import BrowserEnvironment
-from ...foundation.errors import InvalidCharacterError, LegacyPropertyError, SecurityError, V8TypeError
+from ..page_errors import DOMException, InvalidCharacterError, LegacyPropertyError, SecurityError, PageTypeError
+from ..page_errors import js_error_value
 from ...foundation.urls import origin_tuple, serialize_origin
 from ..dom.custom_elements import CustomElementRegistry
 from ..dom.events import EventTarget
@@ -66,7 +67,7 @@ def _string_argument(value, member):
         reason = str(original._get("message")) if isinstance(original, pyv8.JSObject) else ""
         if reason not in _CONVERSION_FAILURES:
             raise
-        raise V8TypeError(f"Failed to execute '{member}' on 'Window': {reason}") from None
+        raise PageTypeError(f"Failed to execute '{member}' on 'Window': {reason}") from None
 
 
 #: Names WindowProxy exposes to a cross-origin caller; the table lives here for both.
@@ -183,6 +184,25 @@ def _singleton_values(window):
     })
 
 
+def _fetch_failure(error):
+    """What a page's ``fetch`` rejects with: a bare ``TypeError``, as Chrome answers.
+
+    A load the page cannot have -- a scheme it may not use, a CORS answer it may not
+    read, a transport that failed -- is the host's own outcome, so the page hears what a
+    browser tells it and the reason stays in the log.
+    """
+    from ...foundation.error_policy import is_host_failure
+
+    if is_host_failure(error) or (isinstance(error, DOMException)
+                                  and error.get_name() == "NetworkError"):
+        from loguru import logger
+
+        # The reason stays in the log; the page hears only Chrome's wording.
+        logger.debug("fetch failed: {}", error)
+        return PageTypeError("Failed to fetch")
+    return error
+
+
 def fetch_like(services, interface_name, request, options, resources=None, initiator_url=None):
     """``fetch`` as a window and a worker global both run it: a promise either way.
 
@@ -208,7 +228,7 @@ def fetch_like(services, interface_name, request, options, resources=None, initi
             prefix=f"Failed to execute 'fetch' on '{interface_name}': ")
         req = Request(request, options, services=services)
     except BaseException as exc:
-        realm.post_task(lambda exc=exc: reject(realm.js_error_value(exc)))
+        realm.post_task(lambda exc=exc: reject(js_error_value(exc)))
         return promise
     def deliver(response, error):
         """Hand the answer to the realm that asked, which is not always the one that built it.
@@ -218,7 +238,7 @@ def fetch_like(services, interface_name, request, options, resources=None, initi
         crosses as bytes, and the object is rebuilt where it is read.
         """
         if error is not None:
-            reject(realm.js_error_value(error))
+            reject(js_error_value(_fetch_failure(error)))
             return
         if services is not getattr(response, "_services", None):
             try:
@@ -228,7 +248,7 @@ def fetch_like(services, interface_name, request, options, resources=None, initi
                     "redirected": response.redirected, "type": response.type,
                 }, services=services)
             except BaseException as exc:  # a rebuild that fails must be seen, not swallowed
-                reject(realm.js_error_value(exc))
+                reject(js_error_value(exc))
                 return
         resolve(response)
 
@@ -243,7 +263,7 @@ def fetch_like(services, interface_name, request, options, resources=None, initi
         handle.cancel()
         reason = req._signal._reason
         if isinstance(reason, BaseException):
-            reason = realm.js_error_value(reason)
+            reason = js_error_value(reason)
         realm.post_task(lambda reason=reason: reject(reason))
 
     if req._signal is not None:
@@ -688,7 +708,7 @@ class Window(_SchedulingMixin, WindowProperties):
         return computed_style_object(element, rendered=rendered)
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
-        from ...foundation.errors import V8SyntaxError
+        from ..page_errors import PageSyntaxError
         from ..fetch.clone import structured_clone, transfer_ports
         from ..fetch.events import MessageEvent
 
@@ -708,11 +728,15 @@ class Window(_SchedulingMixin, WindowProperties):
         else:
             expected_origin = origin_tuple(target_origin)
             if expected_origin[0] == "opaque":
-                raise V8SyntaxError("Invalid target origin in postMessage")
+                raise PageSyntaxError("Invalid target origin in postMessage")
         # A transfer happens at the call, as Chrome does it: a port whose target
         # refuses the message is moved out of this realm all the same.
+        #: The message is cloned before the list is applied, so a buffer the list is
+        #: about to detach still carries its bytes; the sender's own context turns
+        #: binary data into bytes rather than into an object with nothing enumerable on
+        #: it, which is how an ArrayBuffer used to arrive as ``{}``.
+        data = structured_clone(message, context=pyv8.current_context())
         ports = transfer_ports(transfer, services=self._services)
-        data = structured_clone(message)
         serialized = serialize_origin(source._origin)
 
         def deliver():

@@ -3,7 +3,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import dictionary, dom_string, enum_value, integer, is_nullish, sequence, usv_string
-from ...foundation.errors import V8TypeError
+from ..page_errors import PageTypeError
 
 
 def bytes_from_value(value):
@@ -25,6 +25,45 @@ def bytes_from_value(value):
         return None
 
 
+#: A buffer, or a view of one, holds bytes only its realm can read out -- a ``DataView``
+#: is a view the Python side does not know by name.  Anything else answers ``null``: a
+#: part that is a buffer has to arrive as its bytes, since stringifying it would make the
+#: blob hold its own description instead.
+_ARRAY_BUFFER_BYTES = """(value) => {
+  if (Object.prototype.toString.call(value) === '[object ArrayBuffer]')
+    return Array.from(new Uint8Array(value));
+  if (ArrayBuffer.isView(value))
+    return Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+  return null;
+}"""
+
+
+def _array_buffer_bytes(value):
+    context = pyv8.current_context()
+    if context is None or not isinstance(value, pyv8.JSObject):
+        return None
+    try:
+        elements = context.exec_js(_ARRAY_BUFFER_BYTES).call(None, value).to_python()
+    except BaseException:
+        return None
+    if not isinstance(elements, list):
+        return None
+    return bytes(bytearray(int(element) & 255 for element in elements))
+
+
+def _part_value(part):
+    """A blob part as the value it contributes.
+
+    A blob, bytes or a view are themselves, a buffer is read out of the realm that holds
+    it, and anything else is the string it converts to -- which is the only reading left
+    for a value that is none of those.
+    """
+    if isinstance(part, (Blob, bytes, bytearray, memoryview, pyv8.JSTypeArray)):
+        return part
+    buffer = _array_buffer_bytes(part)
+    return buffer if buffer is not None else usv_string(part)
+
+
 @interface('Blob', None)
 class Blob:
 
@@ -32,9 +71,9 @@ class Blob:
         if parts is pyv8.Undefined:
             parts = []
         elif is_nullish(parts) or isinstance(parts, (int, float, bool, str)):
-            raise V8TypeError("Failed to construct 'Blob': The provided value cannot be converted to a sequence.")
+            raise PageTypeError("Failed to construct 'Blob': The provided value cannot be converted to a sequence.")
         else:
-            parts = sequence(parts, lambda part: part if isinstance(part, (Blob, bytes, bytearray, memoryview, pyv8.JSTypeArray)) else usv_string(part))
+            parts = sequence(parts, _part_value)
         if options is pyv8.Undefined:
             options = None
         if options is not pyv8.Undefined:

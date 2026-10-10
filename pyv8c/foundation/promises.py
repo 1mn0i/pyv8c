@@ -22,16 +22,44 @@ def _no_op(*_args, **_kwargs):
     """Settle a promise nobody can observe: say nothing, change nothing."""
 
 
+#: What the binding answers, in either of its two wordings, when the realm a settle
+#: function was built for is gone: the resolver was asked after its realm closed, or the
+#: context the resolver lives in is no longer active.  Both mean the same thing -- nobody
+#: is left to read the answer -- which is what this module promises to meet with silence.
+_GONE_REALM = (
+    "belongs to is closed",
+    "no active V8 isolate",
+)
+
+
+def _settler(settle):
+    """*settle*, answered with silence once the realm it settles in is gone."""
+
+    def settled(value):
+        try:
+            return settle(value)
+        except RuntimeError as error:
+            if not any(phrase in str(error) for phrase in _GONE_REALM):
+                raise
+        #: A realm can close before its promise does -- a worker that answered and
+        #: exited, a page that navigated away.  The answer had nowhere to arrive.
+
+    return settled
+
+
 def make_promise(context):
     """A pending promise and the two callables that settle it, for *context*'s realm.
 
     The settle functions hold the native resolver alive until they are called or dropped, so a
-    fetch, a timer or a worker reply can settle whenever it finishes.
+    fetch, a timer or a worker reply can settle whenever it finishes.  A realm can close before
+    its promise does, and the settle functions of one that did answer with silence -- that is
+    the promise this module makes above, and what a task queue would otherwise turn into a
+    host-failure warning about an isolate nobody was using any more.
     """
     if context is None:
         return None, _no_op, _no_op
     resolver = pyv8.PromiseResolver(context)
-    return resolver.promise(), resolver.resolve, resolver.reject
+    return resolver.promise(), _settler(resolver.resolve), _settler(resolver.reject)
 
 
 def promise_resolve(context, value):
@@ -50,17 +78,4 @@ def enqueue_microtask(context, callback):
     return context.enqueue_microtask(callback)
 
 
-def js_error_value(exc):
-    """What a rejection should carry for *exc*.
-
-    A Python exception crosses into JavaScript when the resolver settles it, so nothing has to
-    be built here; anything that is not an exception (a JavaScript value, a string) is a
-    legitimate rejection reason and crosses as itself, which is what the page would see from a
-    native rejection too.
-    """
-    if isinstance(exc, pyv8.JSException):
-        return exc.original
-    return exc
-
-
-__all__ = ["make_promise", "promise_resolve", "enqueue_microtask", "js_error_value"]
+__all__ = ["make_promise", "promise_resolve", "enqueue_microtask"]

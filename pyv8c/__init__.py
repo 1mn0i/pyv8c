@@ -27,12 +27,13 @@ _EXPORTS = {
     "NetworkRequest": ".network.models",
     "NetworkResponse": ".network.models",
     "NetworkUnavailableError": ".network.models",
+    "HostFailure": ".foundation.host_errors",
 }
 for _name in (
-    "V8Error", "V8TypeError", "V8RangeError", "V8ReferenceError", "V8SyntaxError", "V8URIError", "V8EvalError",
+    "PageError", "PageTypeError", "PageRangeError", "PageReferenceError", "PageSyntaxError", "PageURIError", "PageEvalError",
     "DOMException",
 ):
-    _EXPORTS[_name] = ".foundation.errors"
+    _EXPORTS[_name] = ".web.page_errors"
 
 __all__ = tuple(_EXPORTS)
 

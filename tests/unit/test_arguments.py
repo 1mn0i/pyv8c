@@ -10,8 +10,15 @@ import pytest
 pyv8 = pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.native
 
-from pyv8c.foundation.arguments import boolean, byte_string, dom_string, integer, missing_error, usv_string  # noqa: E402
-from pyv8c.foundation.errors import V8TypeError  # noqa: E402
+from pyv8c.foundation.arguments import (  # noqa: E402
+    IdlArgumentError,
+    boolean,
+    byte_string,
+    dom_string,
+    integer,
+    missing_error,
+    usv_string,
+)
 
 
 @pytest.mark.parametrize(
@@ -36,7 +43,7 @@ def test_integer_conversion_uses_wrapping_or_explicit_range():
     assert integer(2**32 - 1, signed=True) == -1
     assert integer("0x10") == 16
     assert integer(math.inf) == 0
-    with pytest.raises(V8TypeError):
+    with pytest.raises(IdlArgumentError):
         integer(-1, enforce_range=True)
 
 
@@ -47,14 +54,15 @@ def test_boolean_uses_javascript_truthiness():
 
 
 def test_string_subtypes():
-    with pytest.raises(V8TypeError):
+    with pytest.raises(IdlArgumentError):
         byte_string("中")
     assert usv_string(chr(0xD800)) == chr(0xFFFD)
 
 
-def test_missing_error_is_browser_error():
+def test_missing_error_carries_the_browser_wording():
+    """The class is this layer's own; a realm sees it as the TypeError it inherits."""
     error = missing_error("Storage", "setItem", 2, 1)
-    assert isinstance(error, V8TypeError)
+    assert isinstance(error, IdlArgumentError)
     assert str(error) == "Failed to execute 'setItem' on 'Storage': 2 arguments required, but only 1 present."
 
 
