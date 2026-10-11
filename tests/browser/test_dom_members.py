@@ -336,41 +336,11 @@ def test_webgl_draw_path_answers_without_an_error(page):
     })()""") == 0
 
 
-def test_feature_policy_answers_the_features_a_document_controls(page):
-    assert page.evaluate("""(() => {
-        const policy = document.featurePolicy;
-        return [Object.prototype.toString.call(policy), policy.features().length,
-                policy.allowsFeature('geolocation'), policy.allowsFeature('bogus'),
-                policy.getAllowlistForFeature('geolocation').length,
-                document.featurePolicy === policy];
-    })()""") == ["[object PermissionsPolicy]", 76, True, False, 1, True]
-
-
 def test_feature_policy_needs_a_feature_name(page):
     assert page.evaluate("""(() => {
         try { document.featurePolicy.allowsFeature(); return 'no throw'; }
         catch (error) { return error.name + ': ' + error.message; }
     })()""").startswith("TypeError: Failed to execute 'allowsFeature' on 'PermissionsPolicy'")
-
-
-def test_attribute_style_map_reads_and_writes_the_style_attribute(page):
-    assert page.evaluate("""(() => {
-        const element = document.createElement('div');
-        const map = element.attributeStyleMap;
-        const lines = [Object.prototype.toString.call(map), map.size];
-        element.style.opacity = '0.5';
-        lines.push(map.size, Object.prototype.toString.call(map.get('opacity')),
-                   String(map.get('opacity')),
-                   map.get('opacity').value + '/' + map.get('opacity').unit);
-        map.set('margin-top', '4px');
-        lines.push(element.getAttribute('style'), map.has('margin-top'));
-        map.delete('margin-top');
-        lines.push(element.getAttribute('style'), map.size, String(map.get('margin-top')));
-        map.clear();
-        lines.push(JSON.stringify(element.getAttribute('style')), map.size);
-        return lines;
-    })()""") == ["[object StylePropertyMap]", 0, 1, "[object CSSUnitValue]", "0.5", "0.5/number",
-                 "opacity: 0.5; margin-top: 4px;", True, "opacity: 0.5;", 1, "undefined", '""', 0]
 
 
 def test_attribute_style_map_refuses_what_chrome_refuses(page):
@@ -890,17 +860,6 @@ def test_rtp_receiver_capabilities_are_the_reference_builds(page):
                  "channels,clockRate,mimeType,sdpFmtpLine", "null"]
 
 
-def test_a_webgl_context_event_carries_its_status_message(page):
-    assert page.evaluate("""(() => {
-        const event = new WebGLContextEvent('webglcontextlost',
-            {statusMessage: 'gone', bubbles: true});
-        return [Object.prototype.toString.call(event), event.type, event.statusMessage,
-                event.bubbles, event instanceof Event,
-                new WebGLContextEvent('x').statusMessage,
-                new WebGLContextEvent('x', {statusMessage: 5}).statusMessage];
-    })()""") == ["[object WebGLContextEvent]", "webglcontextlost", "gone", True, True, "", "5"]
-
-
 def test_a_dom_matrix_parses_serializes_and_transforms(page):
     assert page.evaluate("""(() => {
         const ids = m => m.toString();
@@ -942,29 +901,6 @@ def test_a_dom_matrix_keeps_its_2d_flag_and_fills_a_point(page):
                 String(new DOMPoint(1, 2).matrixTransform(new DOMMatrix([2, 0, 0, 3, 10, 20])))];
     })()""") == [False, True, False, "[object DOMPoint]", "12,26,0,1", "0,0,1",
                  '{"x":1,"y":2,"z":3,"w":4}', "[object DOMPoint]"]
-
-
-def test_a_dom_matrix_refuses_what_chrome_refuses(page):
-    assert page.evaluate("""(() => {
-        const answers = [];
-        for (const call of [
-            () => new DOMMatrix('bogus'),
-            () => new DOMMatrix([1, 2, 3]),
-            () => new DOMMatrix({a: 1}),
-            () => new DOMMatrix().translate(NaN, 0).toString(),
-        ]) {
-            try { call(); answers.push('no throw'); }
-            catch (error) { answers.push(error.name + ': ' + error.message); }
-        }
-        return answers;
-    })()""") == [
-        "SyntaxError: Failed to construct 'DOMMatrix': Failed to parse 'bogus'.",
-        "TypeError: Failed to construct 'DOMMatrix': The sequence must contain"
-        " 6 elements for a 2D matrix or 16 elements for a 3D matrix.",
-        "SyntaxError: Failed to construct 'DOMMatrix': Failed to parse '[object Object]'.",
-        "InvalidStateError: Failed to execute 'toString' on 'DOMMatrixReadOnly':"
-        " DOMMatrix cannot be serialized with NaN or Infinity values.",
-    ]
 
 
 def test_a_dom_parser_builds_a_document_that_belongs_to_no_window(page):

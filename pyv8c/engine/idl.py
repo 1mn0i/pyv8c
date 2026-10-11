@@ -323,7 +323,7 @@ def _read_file(target, label) -> tuple:
         _write_cache(binary, digest, metadata, interfaces)
     # Never mutated, and a top-level read-only view avoids copying the 2.6 MB document.
     found = (label, digest, MappingProxyType(metadata), MappingProxyType(interfaces))
-    _DOCUMENTS.clear()          # one process reads one file version
+    _DOCUMENTS.clear()
     _DOCUMENTS[stamp] = found
     Idl._last_timings = {
         "idl_read_ms": (decoded - started) / 1_000_000,
@@ -521,7 +521,7 @@ class Idl:
         view = _VIEWS.get(key)
         if view is None:
             view = cls(label, digest, metadata, interfaces, chosen)
-            _VIEWS.clear()      # one document through one profile is all a realm needs
+            _VIEWS.clear()
             _VIEWS[key] = view
         return view
 

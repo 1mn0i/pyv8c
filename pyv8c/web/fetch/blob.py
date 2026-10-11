@@ -3,6 +3,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import dictionary, dom_string, enum_value, integer, is_nullish, sequence, usv_string
+from ..clone import js_helper
 from ..page_errors import PageTypeError
 
 
@@ -25,30 +26,27 @@ def bytes_from_value(value):
         return None
 
 
-#: A buffer, or a view of one, holds bytes only its realm can read out -- a ``DataView``
-#: is a view the Python side does not know by name.  Anything else answers ``null``: a
-#: part that is a buffer has to arrive as its bytes, since stringifying it would make the
-#: blob hold its own description instead.
-_ARRAY_BUFFER_BYTES = """(value) => {
-  if (Object.prototype.toString.call(value) === '[object ArrayBuffer]')
-    return Array.from(new Uint8Array(value));
-  if (ArrayBuffer.isView(value))
-    return Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
-  return null;
-}"""
+#: The names a buffer or a view answers with.  A ``DataView`` is a view, so it belongs here;
+#: a typed array never reaches this reader, because ``_part_value`` takes those as they are.
+_BUFFER_NAMES = ("ArrayBuffer", "SharedArrayBuffer", "DataView")
 
 
 def _array_buffer_bytes(value):
-    context = pyv8.current_context()
-    if context is None or not isinstance(value, pyv8.JSObject):
+    """The bytes a buffer or a view holds, in one native read.
+
+    The gate stays on this side: the native reader answers ``b""`` for a value that is
+    neither a buffer nor a view, and such a part has to fall back to its string form
+    instead (see ``_part_value``).
+    """
+    if not isinstance(value, pyv8.JSObject):
+        return None
+    name = getattr(value._get("constructor"), "name", None)
+    if name not in _BUFFER_NAMES:
         return None
     try:
-        elements = context.exec_js(_ARRAY_BUFFER_BYTES).call(None, value).to_python()
+        return value._bytes()
     except BaseException:
         return None
-    if not isinstance(elements, list):
-        return None
-    return bytes(bytearray(int(element) & 255 for element in elements))
 
 
 def _part_value(part):
@@ -74,11 +72,8 @@ class Blob:
             raise PageTypeError("Failed to construct 'Blob': The provided value cannot be converted to a sequence.")
         else:
             parts = sequence(parts, _part_value)
-        if options is pyv8.Undefined:
-            options = None
-        if options is not pyv8.Undefined:
-            if not is_nullish(options):
-                options = dictionary(options)
+        if not is_nullish(options):
+            options = dictionary(options)
         self._realm = _realm
         endings = enum_value(options.get("endings", "transparent"), ("transparent", "native")) if isinstance(options, dict) else "transparent"
         data = bytearray()

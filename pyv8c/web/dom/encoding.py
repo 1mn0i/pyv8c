@@ -115,15 +115,17 @@ def _bytes_of(value):
     """
     view = _view(value)
     if view is not None:
-        return bytes(int(view[index]) for index in range(int(view._get("byteLength"))))
+        return view._bytes()
     if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value)
     name = (getattr(value._get("constructor"), "name", None)
             if isinstance(value, pyv8.JSObject) else None)
-    if name != "ArrayBuffer":
+    # A ``BufferSource`` is an ArrayBuffer or a view over one, and ``DataView`` is such a
+    # view.  A shared buffer is not accepted here: Blink refuses it for this API too
+    # ("The provided <type> value must not be shared.").
+    if name not in ("ArrayBuffer", "DataView"):
         return None
-    view = pyv8.JSTypeArray(value, pyv8.ArrayType.Uint8Array)
-    return bytes(int(view[index]) for index in range(int(view._get("byteLength"))))
+    return value._bytes()
 
 
 def _code_units(character):

@@ -30,8 +30,8 @@ description: Use when pyv8c has to behave like a real browser on a live challeng
 ### ① 抓 trace（有界运行，日志 = 证据）
 
 ```powershell
-cd D:\code\pyv8env\pyv8c\examples\5s
-$env:PYTHONPATH="D:\code\pyv8env\pyv8c;D:\code\pyv8env\_pyv8"
+cd <pyv8c 仓库根>\examples\5s
+$env:PYTHONPATH = "$PWD\..\..;$PWD\..\..\..\_pyv8"
 python 5s.py --trace --seconds 30 --timeout 150      # 建议先删旧 5s.log：mode="w" 会截断，但残留会混淆
 ```
 

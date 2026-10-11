@@ -321,7 +321,7 @@ finally:
 写出一个可直接加载的 profile；`tools/collect_environment.py` 是它的命令行壳：
 
 ```powershell
-$env:PYTHONPATH = 'D:\src\pyv8env\pyv8c'
+$env:PYTHONPATH = $PWD                            # 在 pyv8c 仓库根目录执行
 python tools/collect_environment.py                       # 写随包 profile（pyv8c/data/chrome-environment.json）
 python tools/collect_environment.py --out -               # 写到标准输出
 python tools/collect_environment.py --headed --window-size 1920,1080 --accept-lang en-US,en

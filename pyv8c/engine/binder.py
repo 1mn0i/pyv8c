@@ -564,7 +564,6 @@ class Binder:
         for public_name, declared in declared_attributes.items():
             if bindings.idl.member(name, public_name, "attribute") is None:
                 if bindings.idl.declares(name, public_name, "attribute"):
-                    # Same as operations.
                     continue
                 if not bindings.report_mismatch(
                         f"{name}.{public_name} is not present in the interface baseline"):

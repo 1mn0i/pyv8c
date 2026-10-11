@@ -13,8 +13,11 @@ Each is asked here the way the challenge asks it, on both sides, in one page.
 """
 import json
 import sys
+from pathlib import Path
 
-sys.path.insert(0, r"D:\src\pyv8env\pyv8c\skills\pyv8c-challenge-parity\scripts")
+#: The skill's scripts sit beside this checkout, whatever drive it lives on.
+SKILL = Path(__file__).resolve().parents[3] / "skills" / "pyv8c-challenge-parity" / "scripts"
+sys.path.insert(0, str(SKILL))
 
 from harness import _ask_page  # noqa: E402
 

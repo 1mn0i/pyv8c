@@ -5,8 +5,8 @@
 ## 环境
 
 ```powershell
-Set-Location D:\src\pyv8env\pyv8c
-$env:PYTHONPATH = 'D:\src\pyv8env\_pyv8;D:\src\pyv8env\pyv8c'
+Set-Location <pyv8c 仓库根>
+$env:PYTHONPATH = "$PWD;$PWD\..\_pyv8"
 python -m pip install -e ".[dev]"
 python -c "import pyv8, pyv8c; print(pyv8.__file__); print(pyv8c.__file__)"
 ```

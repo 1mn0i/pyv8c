@@ -9,10 +9,10 @@ from __future__ import annotations
 import binascii
 import re
 
-ASCII_WHITESPACE = "\t\n\x0c\r "
-ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-_NOT_IN_ALPHABET = re.compile("[^%s]" % re.escape(ALPHABET))
-_DROP_WHITESPACE = {ord(character): None for character in ASCII_WHITESPACE}
+_ASCII_WHITESPACE = "\t\n\x0c\r "
+_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+_NOT_IN_ALPHABET = re.compile("[^%s]" % re.escape(_ALPHABET))
+_DROP_WHITESPACE = {ord(character): None for character in _ASCII_WHITESPACE}
 
 
 def forgiving_base64_decode(text):
@@ -33,4 +33,4 @@ def forgiving_base64_encode(data):
     return binascii.b2a_base64(data.encode("latin-1"), newline=False).decode("ascii")
 
 
-__all__ = ["ASCII_WHITESPACE", "ALPHABET", "forgiving_base64_decode", "forgiving_base64_encode"]
+__all__ = ["forgiving_base64_decode", "forgiving_base64_encode"]

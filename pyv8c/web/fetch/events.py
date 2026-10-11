@@ -14,7 +14,7 @@ from ...foundation.arguments import (
 )
 from ...foundation.realm import realm_of
 from ..dom.events import Event
-from ..clone import rebuild_clone, unread
+from ..clone import js_helper, rebuild_clone, unread
 
 
 #: What a browser hands a handler for a message's ports: one array, and frozen.
@@ -67,7 +67,7 @@ class MessageEvent(Event):
         if context is None:
             return self.ports
         if self._ports_handed is unread:
-            self._ports_handed = context.exec_js(_FROZEN_PORTS).call(None, self.ports)
+            self._ports_handed = js_helper(context, _FROZEN_PORTS).call(None, self.ports)
         return self._ports_handed
 
 

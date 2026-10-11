@@ -21,7 +21,8 @@ from ..foundation.arguments import dictionary, is_nullish, materialize, sequence
 from ..foundation.logging import logger
 from .page_errors import DataCloneError, DOMException
 
-__all__ = ["Wire", "message_transfer", "rebuild_clone", "structured_clone", "transfer_ports", "unread"]
+__all__ = ["Wire", "js_helper", "message_transfer", "rebuild_clone", "structured_clone",
+           "transfer_ports", "unread"]
 
 #: What a reader has not been handed yet.  A message and a stored value hold this until the
 #: realm reading them asks once, so what that realm was handed is what it keeps.
@@ -32,7 +33,7 @@ class Wire(bytes):
     """A payload, told apart from bytes that are just data: Blink's ``SerializedScriptValue``."""
 
 
-# ---------------------------------------------------------------- the wire
+
 
 #: The tags the host's own objects are written with.  The letters are Blink's
 #: (``serialization_tag.h``: 'b' Blob, 'f' File, 'x' DOMException); what follows each tag is
@@ -232,14 +233,14 @@ def rebuild_clone(value, context=None):
         raise DataCloneError(_refusal(error)) from None
 
 
-# ------------------------------------------------------------ the transfer
+
 
 #: The helpers the transfer list asks a realm to run, one compilation per realm: a realm that
 #: cannot be referenced is compiled per call, which costs time and nothing else.
 _HELPERS = weakref.WeakKeyDictionary()
 
 
-def _helper(context, source):
+def js_helper(context, source):
     """*source* compiled in *context*, built once per realm."""
     try:
         helpers = _HELPERS[context]
@@ -276,7 +277,7 @@ def _binary_kind(value, context):
     if context is None:
         return None
     try:
-        answer = _helper(context, _BINARY_KIND).call(None, value)
+        answer = js_helper(context, _BINARY_KIND).call(None, value)
     except BaseException as exc:  # a value the realm cannot describe is simply not one
         logger.debug("a transfer list value could not be classified: {}", exc)
         return None
@@ -286,7 +287,7 @@ def _binary_kind(value, context):
 
 def _detach_buffer(value, context):
     if context is not None:
-        _helper(context, _DETACH).call(None, value)
+        js_helper(context, _DETACH).call(None, value)
 
 
 def message_transfer(value):

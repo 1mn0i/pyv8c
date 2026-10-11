@@ -3,11 +3,11 @@
 **判据**：上下文 cookie 罐里有 `steamdb.info` 的 `cf_clearance`，且页面是 SteamDB 本身而不是拦截页。
 
 ```powershell
-cd pyv8env\pyv8c\examples\5s
-$env:PYTHONPATH="D:\code\pyv8env\pyv8c;D:\code\pyv8env\_pyv8"
+cd <pyv8c 仓库根>\examples\5s          # 本机示例：D:\code\pyv8env\pyv8c\examples\5s
+$env:PYTHONPATH = "$PWD\..\..;$PWD\..\..\..\_pyv8"
 
 python 5s.py                                          # 简单入口：等 60 秒（整轮≈2 分钟），打一行 PASS/FAIL 并以 0/1 退出
-python312 script\script/5s.py --trace --seconds 30 --timeout 220    # 判定入口：交换表 + 罐 + 页面状态 + PASS/FAIL，trace -> 5s.log
+python312 script\5s.py --trace --seconds 30 --timeout 220           # 判定入口：交换表 + 罐 + 页面状态 + PASS/FAIL，trace -> 5s.log
 python312 script\chrome_side.py --seconds 30          # 参照侧：headed Chrome 的同口径交换表
 python312 ..\..\skills\pyv8c-challenge-parity\scripts\trace_analyze.py 5s.log   # 归类：答 undefined 的读取 / 抛错
 python312 script\secure_frame.py                      # 已修差异的两侧复现（本地，零第三方流量）
@@ -22,8 +22,7 @@ python script\eb_witness.py --seconds 110 --after 20 --click 640,430 960,540 101
                                                       # widget 上报的异常（编码前）与被拒的 DOM 实参；--dump 与报告同一轮
 ```
 
-> 上面那段 `python312` 与 `D:\code\pyv8env` 是写这份文档的机器上的写法；本机（2026-10-10）是
-> `D:\src\pyv8env` 且解释器叫 `python`（3.12.9）。命令本体不变，路径与解释器按当前 checkout 换。
+> 解释器名按当前机器取（本机为 `python312`）；路径都相对当前 checkout，不需要改。
 
 方法用 `skills/pyv8c-challenge-parity/`：trace 归类 → 两侧最小复现/两侧交换表 → 修 + 守护测试 → 重跑比对。
 

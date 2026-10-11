@@ -198,8 +198,8 @@ PX 没调用任何未实现的成员。
 ## 8. 运行
 
 ```powershell
-cd pyv8env\pyv8c\examples\px3
-$env:PYTHONPATH="D:\code\pyv8env\pyv8c;D:\code\pyv8env\_pyv8"
+cd <pyv8c 仓库根>\examples\px3
+$env:PYTHONPATH = "$PWD\..\..;$PWD\..\..\..\_pyv8"
 
 python312 px3.py --timeout 300            # 跑一遍挑战（等按钮→按住→松开→看结果）
 python312 script/parity.py                # 全部最小对照（两引擎）

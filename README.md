@@ -18,8 +18,8 @@ V8 负责执行 JavaScript；Python 负责页面、DOM/BOM、资源、事件循�
 要求 Python 3.10+，并且运行环境能导入相邻仓库构建的 `pyv8` 扩展：
 
 ```powershell
-Set-Location D:\src\pyv8env\pyv8c
-$env:PYTHONPATH = 'D:\src\pyv8env\_pyv8;D:\src\pyv8env\pyv8c'
+Set-Location <pyv8c 仓库根>                        # 例如 D:\code\pyv8env\pyv8c
+$env:PYTHONPATH = "$PWD;$PWD\..\_pyv8"            # 本仓库，加上相邻的原生仓库
 python -m pip install -e .
 python -c "import pyv8; print(pyv8.__file__)"
 ```
@@ -86,7 +86,8 @@ Feature 相关代码位于 `pyv8c/engine/features.py` 和 `pyv8c/web/features/`�
 ## 测试与开发
 
 ```powershell
-$env:PYTHONPATH = 'D:\src\pyv8env\_pyv8;D:\src\pyv8env\pyv8c'
+# 在 pyv8c 仓库根目录执行
+$env:PYTHONPATH = "$PWD;$PWD\..\_pyv8"
 python -m pytest -q
 ```
 

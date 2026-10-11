@@ -4,8 +4,8 @@
 输出力求可复现：能给出数字就不要给结论。
 
 ```powershell
-cd pyv8env\pyv8c\examples\px3
-$env:PYTHONPATH="D:\code\pyv8env\pyv8c;D:\code\pyv8env\_pyv8"
+cd <pyv8c 仓库根>\examples\px3
+$env:PYTHONPATH = "$PWD\..\..;$PWD\..\..\..\_pyv8"
 ```
 
 | 文件 | 作用 |

@@ -4,12 +4,12 @@
 
 ## 开始工作前
 
-1. 在 `D:\src\pyv8env\pyv8c` 执行 `git status --short`，保留用户已有改动，不使用 `git reset --hard` 或覆盖式 checkout。
-2. 同时确认相邻 `D:\src\pyv8env\_pyv8` 是否有原生改动；除非任务明确要求，不把两个仓库混成一次修改。
+1. 在 `pyv8c` 仓库根执行 `git status --short`，保留用户已有改动，不使用 `git reset --hard` 或覆盖式 checkout。
+2. 同时确认相邻 `_pyv8` 仓库是否有原生改动；除非任务明确要求，不把两个仓库混成一次修改。
 3. 设置：
 
    ```powershell
-   $env:PYTHONPATH = 'D:\src\pyv8env\_pyv8;D:\src\pyv8env\pyv8c'
+   $env:PYTHONPATH = "$PWD;$PWD\..\_pyv8"
    ```
 
 4. 先用 `rg` 搜索入口、调用者和测试，再修改文件。不要根据旧文档猜测架构。

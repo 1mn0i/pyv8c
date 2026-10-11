@@ -41,10 +41,6 @@ def name_fault(value):
     return None if invalid is None else ("character", invalid)
 
 
-#: What a collection borrows from ``Array.prototype``: ``IdlSpec.array`` and the baseline's
-#: ``template.array`` both take ``"iterator"`` or ``"iterable"``; the bits are the binding's.
-
-
 #: ``Object.prototype`` string keys (plus ``__proto__``) that named properties never shadow.
 OBJECT_PROTOTYPE_NAMES = frozenset((
     "constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty",

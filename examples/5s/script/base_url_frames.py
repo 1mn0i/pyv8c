@@ -26,9 +26,11 @@ the markup it wrote, the script count, and whether the script ran.  No third-par
 import json
 import sys
 import time
+from pathlib import Path
 
-SKILL = r"D:\src\pyv8env\pyv8c\skills\pyv8c-challenge-parity\scripts"
-sys.path.insert(0, SKILL)
+#: The skill's scripts sit beside this checkout, whatever drive it lives on.
+SKILL = Path(__file__).resolve().parents[3] / "skills" / "pyv8c-challenge-parity" / "scripts"
+sys.path.insert(0, str(SKILL))
 
 URL = "https://probe.test/base_url.html"
 

@@ -25,16 +25,10 @@ from typing import Any, Mapping
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagLocation
 
-__all__ = ["INTERFACE_FIELDS", "MEMBER_FIELDS", "InterfaceSpec", "idl_spec", "members_of",
+__all__ = ["INTERFACE_FIELDS", "InterfaceSpec", "idl_spec", "members_of",
            "standalone", "stated_fields", "stated_key", "unresolved_members"]
 
-#: What a class may state about one member.  ``location`` is here because a member the document
-#: only resolves through another interface -- ``onclick`` on ``EventTarget`` -- is placed by the
-#: class that installs it, not by the ancestor the document happens to answer with.  The flag
-#: fields are the document's too, and are here because a class may need to contradict it.
-MEMBER_FIELDS = ("callback", "getter", "setter", "length", "side_effect", "location",
-                 "property_flags", "receiver_check", "cross_origin_check",
-                 "cross_origin_get_check", "cross_origin_set_check")
+
 
 #: What a class may state about the interface itself, keyed as the native builder spells them.
 INTERFACE_FIELDS = (
@@ -259,11 +253,6 @@ def _member_statements(cls) -> Mapping:
 def _location(location) -> int:
     return {"instance": FlagLocation.kInstance, "prototype": FlagLocation.kPrototype,
             "interface": FlagLocation.kInterface}.get(location, FlagLocation.kPrototype)
-
-
-#: The word a class writes for each place a member can live, and the reverse for the planner.
-LOCATION_WORDS = {"instance": FlagLocation.kInstance, "prototype": FlagLocation.kPrototype,
-                  "interface": FlagLocation.kInterface}
 
 
 #: Built declarations, one per class and document: a class states its differences once.

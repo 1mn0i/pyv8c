@@ -38,10 +38,19 @@ def abort_signal(value):
     """
     if is_nullish(value):
         return None
-    if any(getattr(getattr(base, "__idl_spec__", None), "name", None) == "AbortSignal"
-           for base in type(value).__mro__):
+    if _matches_interface(value, "AbortSignal"):
         return value
     raise IdlArgumentError("Failed to convert value to 'AbortSignal'.")
+
+def _matches_interface(value, expected):
+    """Whether *value* is one of the interfaces *expected* names, answered once per type."""
+    key = (type(value), expected)
+    matched = _INTERFACE_CHECKS.get(key)
+    if matched is None:
+        matched = any(getattr(getattr(base, "__idl_spec__", None), "name", None) == expected
+                      for base in type(value).__mro__)
+        _INTERFACE_CHECKS[key] = matched
+    return matched
 
 
 def dom_string(value):
@@ -232,13 +241,7 @@ _INTERFACE_CHECKS: dict[tuple[type, str], bool] = {}
 def interface_value(value, expected, interface, method, position, *, nullable=False):
     if nullable and is_nullish(value):
         return None
-    key = (type(value), expected)
-    matched = _INTERFACE_CHECKS.get(key)
-    if matched is None:
-        matched = any(getattr(getattr(base, "__idl_spec__", None), "name", None) == expected
-                      for base in type(value).__mro__)
-        _INTERFACE_CHECKS[key] = matched
-    if matched:
+    if _matches_interface(value, expected):
         return value
     raise IdlArgumentError(
         f"Failed to execute '{method}' on '{interface}': parameter {position} is not of type '{expected}'."
