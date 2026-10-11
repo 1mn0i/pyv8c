@@ -88,7 +88,7 @@ def _read_bytes(reader):
 def _write_host(value, writer):
     """A host object the serializer met, written as its own bytes (Blink's ``WriteDOMObject``)."""
     from .bom.filesystem import File
-    from .fetch.blob import Blob
+    from .fileapi.blob import Blob
 
     item = materialize(value)
     if isinstance(item, File):
@@ -124,7 +124,7 @@ def _read_host(reader):
     answers is handed to the realm by the binding, as every other crossing is.
     """
     from .bom.filesystem import File
-    from .fetch.blob import Blob
+    from .fileapi.blob import Blob
 
     tag = reader.read_tag()
     if tag == _TAG_BLOB:
@@ -170,7 +170,7 @@ def _host_copy(value, active):
     the bytes it looks at rather than as the elements it indexes.
     """
     from .bom.filesystem import File
-    from .fetch.blob import Blob
+    from .fileapi.blob import Blob
 
     item = materialize(value)
     if item is None or item is pyv8.Null or item is pyv8.Undefined:

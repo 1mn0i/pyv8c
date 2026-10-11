@@ -26,7 +26,7 @@ from ..page_errors import PageTypeError, dom_exception
 from ..page_errors import js_error_value
 from ...foundation.realm import post_or_call
 from ...foundation.urls import origin_string
-from ..fetch.blob import Blob
+from ..fileapi.blob import Blob
 from ..dom.events import EventTarget
 from ..dom.media_source import device_kinds, media_facts
 from ..dom.mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin

@@ -23,7 +23,7 @@ from ...foundation.arguments import (
 from ...foundation.arguments import IdlArgumentError
 from ..page_errors import InvalidStateError, PageTypeError, PageURIError
 from ...foundation.urls import SPECIAL_SCHEMES, credentials_netloc, form_urlencoded
-from ..fetch.blob import Blob
+from ..fileapi.blob import Blob
 
 __all__ = ["URL", "URLSearchParams"]
 

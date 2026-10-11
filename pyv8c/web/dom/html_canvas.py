@@ -305,7 +305,7 @@ class OffscreenCanvas(EventTarget):
         out = io.BytesIO()
         if surface._image is not None:
             surface._image.save(out, format='PNG')
-        from ..fetch.blob import Blob
+        from ..fileapi.blob import Blob
         return self._promise(Blob([out.getvalue()], {"type": "image/png"}))
 
     def fn_transferToImageBitmap(self, *_):

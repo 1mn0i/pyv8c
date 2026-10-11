@@ -14,7 +14,7 @@ import pytest
 import pyv8c
 
 ROOT = Path(__file__).resolve().parents[2] / "pyv8c"
-DOMAIN_PACKAGES = {"web", "web/dom", "web/bom", "web/fetch", "web/workers"}
+DOMAIN_PACKAGES = {"web", "web/dom", "web/bom", "web/fetch", "web/fileapi", "web/workers"}
 
 
 def _imports(path):
@@ -76,9 +76,10 @@ OPTIONAL_FEATURES = {
 }
 
 #: Web packages every feature may build on at import time.  ``page_errors`` is the layer
-#: that owns the error vocabulary, and ``clone`` the value every channel and store crosses,
-#: so every feature may name them.
-SHARED_WEB_PACKAGES = ("clone", "dom", "fetch", "page_errors")
+#: that owns the error vocabulary, ``clone`` the value every channel and store crosses, and
+#: ``fileapi`` the blob a navigator, a socket or a store hands back, so every feature may
+#: name them.
+SHARED_WEB_PACKAGES = ("clone", "dom", "fetch", "fileapi", "page_errors")
 
 #: ``bom`` helper modules that hold no interface behind them.
 SHARED_BOM_MODULES = ("bom.scheduling", "bom.utils")

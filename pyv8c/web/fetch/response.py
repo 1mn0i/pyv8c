@@ -8,7 +8,7 @@ from ...foundation.arguments import byte_string, dictionary, integer, is_nullish
 from ...foundation.arguments import IdlArgumentError
 from ..page_errors import PageRangeError, PageSyntaxError, PageTypeError
 from ..page_errors import js_error_value
-from .blob import Blob
+from ..fileapi.blob import Blob
 from .headers import Headers
 
 

@@ -19,7 +19,7 @@ from ..foundation.arguments import (
 from .page_errors import InvalidStateError, PageSyntaxError, dom_exception
 from ..foundation.logging import logger
 from .dom.events import Event, EventTarget
-from .fetch.blob import Blob, bytes_from_value
+from .fileapi.blob import Blob, bytes_from_value
 from .fetch.events import CloseEvent, ErrorEvent, MessageEvent
 
 

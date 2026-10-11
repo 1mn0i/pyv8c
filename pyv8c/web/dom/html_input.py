@@ -189,22 +189,6 @@ _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _URL_PATTERN = re.compile(r"^[^\s:]+:[^\s]*$")
 
 
-@interface('FileList', None)
-class FileList(ReadOnlyIndexedPropertyMixin):
-    """The empty file list of an ``<input type=file>`` with no picked files: no file
-    picker is modelled, but ``files`` keeps Chrome's shape."""
-
-    def __init__(self, values=None, **_):
-        self._values = tuple(values or ())
-    def _indexed_items(self): return self._values
-    def get_length(self): return len(self._values)
-    def fn_item(self, index=MISSING, *_extra):
-        if index is MISSING:
-            raise missing_error('FileList', 'item', 1, 0, constructor=False)
-        items = self._values
-        index = int(index)
-        return items[index] if 0 <= index < len(items) else pyv8.Null
-
 
 @interface('ValidityState', None)
 class ValidityState:
@@ -697,12 +681,14 @@ class HTMLInputElement(HTMLElement):
         if self.get_type() != "file":
             raise InvalidStateError("Failed to read the 'files' property from 'HTMLInputElement': "
                                     f"the input element's type ('{self.get_type()}') does not support it.")
+        from ..fileapi.file_list import FileList  # lazy: the fileapi package imports this one
         if self._files is None: self._files = FileList()
         return self._files
     def set_files(self, value):
         if self.get_type() != "file":
             raise InvalidStateError("Failed to set the 'files' property from 'HTMLInputElement': "
                                     f"the input element's type ('{self.get_type()}') does not support it.")
+        from ..fileapi.file_list import FileList  # lazy: the fileapi package imports this one
         if is_nullish(value): self._files = FileList()
         else: self._files = interface_value(value, 'FileList', 'FileList', 'files', 0, nullable=True)
     def fn_showPicker(self, *_extra):

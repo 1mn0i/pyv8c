@@ -58,7 +58,8 @@ from ..dom import (
     webgl,
     xpath,
 )
-from ..fetch import blob, cache, formdata, headers, request, response, xhr
+from ..fetch import cache, formdata, headers, request, response, xhr
+from ..fileapi import blob, file_list
 from ..fetch import events as fetch_events
 
 
@@ -122,7 +123,7 @@ FEATURE = FeatureImplementation(
         webgl.WebGLActiveInfo, webgl.WebGLShaderPrecisionFormat, webgl.WebGLUniformLocation,
         *webgl.EXTENSION_INTERFACES.values(),
         webgl.WebGLRenderingContext, webgl.WebGL2RenderingContext,
-        html_input.ValidityState, html_input.FileList,
+        html_input.ValidityState, file_list.FileList,
         *(html_classes.HTML_CLASSES[name] for name in (
             "HTMLHtmlElement", "HTMLHeadElement", "HTMLBodyElement", "HTMLDivElement", "HTMLSpanElement",
             "HTMLAnchorElement", "HTMLInputElement", "HTMLFormElement", "HTMLCanvasElement", "HTMLMediaElement",

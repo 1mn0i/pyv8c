@@ -12,7 +12,7 @@ from ...idl import interface
 from ...foundation.arguments import (MISSING, callback_value, dom_string, missing_error,
                                      usv_string)
 from ..dom.mixins import ReadOnlyIndexedPropertyMixin
-from .blob import Blob
+from ..fileapi.blob import Blob
 
 
 def _js_call(fn, this, *args):

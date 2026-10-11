@@ -1,6 +1,6 @@
 """Fetch data, events, and XMLHttpRequest interfaces."""
 
-from .blob import Blob
+from ..fileapi.blob import Blob
 from .cache import Cache, CacheStorage
 from .events import CloseEvent, ErrorEvent, MessageEvent
 from .formdata import FormData

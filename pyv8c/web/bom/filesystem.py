@@ -26,7 +26,8 @@ from ...foundation.arguments import (
 from ..page_errors import PageTypeError
 from ...foundation.realm import post_or_call
 from ..dom.events import Event, EventTarget, _install_handler_slots
-from ..fetch.blob import Blob
+from ..fileapi.blob import Blob
+from ..fileapi.file import File
 from ..fetch.events import ProgressEvent
 
 
@@ -40,37 +41,6 @@ def _callback(value, name, position, optional=False):
             return None
         raise PageTypeError(f"Failed to execute '{name}' on 'Entry': parameter {position} is not a function.")
     return callback_value(value)
-
-
-@interface("File", "Blob")
-class File(Blob):
-    """The ``File`` global and the ``FileEntry.file()`` view; ``size``/``type``
-    come from :class:`Blob`.
-    """
-
-    __idl_overrides__ = {
-        "size": {
-            "side_effect": 1
-        },
-        "type": {
-            "side_effect": 1
-        }
-    }
-
-    def __init__(self, file_bits=pyv8.Undefined, file_name=pyv8.Undefined, options=None, *_extra, **kw):
-        if file_bits is pyv8.Undefined:
-            raise missing_error("File", "constructor", 2, 0, constructor=True)
-        if file_name is pyv8.Undefined:
-            raise missing_error("File", "constructor", 2, 1, constructor=True)
-        init = {} if is_nullish(options) else dictionary(options, name="FilePropertyBag")
-        super().__init__(file_bits, init, *_extra, **kw)
-        self._name = dom_string(file_name)
-        last_modified = init.get("lastModified")
-        self._last_modified = (int(time.time() * 1000) if last_modified is None
-                               else int(integer(last_modified, bits=64)))
-
-    def get_name(self): return self._name
-    def get_lastModified(self): return self._last_modified
 
 
 def _file_from_path(path):
