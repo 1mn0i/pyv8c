@@ -4,6 +4,7 @@
 #include <v8.h>
 
 #include "convert.h"
+#include "jsbuffer.h"
 #include "jsobject.h"
 #include "context.h"
 #include "jsfunction.h"
@@ -14,12 +15,22 @@
 using namespace v8;
 
 
+//: What every handle method opens with: the handle must be live, its isolate and realm
+//: entered, and the object it stands for read out.  *self* is the handle; the other two
+//: name the locals the caller then uses.  It lives here rather than in a header because
+//: only this file expands it, and because its body needs ``ExecutionScope`` and
+//: ``context_c``, which ``jsobject.h`` cannot include without a cycle through ``context.h``.
+#define JS_OBJECT_ENTER(self, isolate, object)                                  \
+    if (!js_object_require_active(self)) return nullptr;                        \
+    ExecutionScope execution((context_c*)(self)->registration.context,           \
+                             (PyObject*)(self));                                \
+    if (!execution || !js_object_require_active(self)) return nullptr;           \
+    auto* isolate = execution.isolate();                                         \
+    Local<Object> object = (self)->object.Get(isolate)
+
+
 static PyObject* js_object_read(js_object* self, PyObject* name) {
-    if (!js_object_require_active(self)) return nullptr;
-    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
-    if (!execution || !js_object_require_active(self)) return nullptr;
-    auto* isolate = execution.isolate();
-    Local<Object> object = self->object.Get(isolate);
+    JS_OBJECT_ENTER(self, isolate, object);
     IN_CONTEXT(object->GetCreationContextChecked());
     Local<Value> key = js_from_py(name, context);
     if (key.IsEmpty() || PyErr_Occurred()) return nullptr;
@@ -41,11 +52,7 @@ static PyObject* js_object_read(js_object* self, PyObject* name) {
 }
 
 static PyObject* js_object_to_python(js_object* self, PyObject*) {
-    if (!js_object_require_active(self)) return nullptr;
-    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
-    if (!execution || !js_object_require_active(self)) return nullptr;
-    auto* isolate = execution.isolate();
-    Local<Object> object = self->object.Get(isolate);
+    JS_OBJECT_ENTER(self, isolate, object);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
     DeadlineScope guard(context);
@@ -58,11 +65,7 @@ static PyObject* js_object_to_python(js_object* self, PyObject*) {
 }
 
 PyObject* js_object_bytes(js_object* self, PyObject*) {
-    if (!js_object_require_active(self)) return nullptr;
-    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
-    if (!execution || !js_object_require_active(self)) return nullptr;
-    auto* isolate = execution.isolate();
-    Local<Object> object = self->object.Get(isolate);
+    JS_OBJECT_ENTER(self, isolate, object);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
     DeadlineScope guard(context);
@@ -75,6 +78,18 @@ PyObject* js_object_bytes(js_object* self, PyObject*) {
     size_t start = 0, length = 0, capacity = 0;
     if (object->IsArrayBuffer()) {
         std::shared_ptr<v8::BackingStore> store = object.As<ArrayBuffer>()->GetBackingStore();
+        if (store) {
+            data = static_cast<const char*>(store->Data());
+            capacity = store->ByteLength();
+            start = 0;
+            length = capacity;
+        }
+    }
+    else if (object->IsSharedArrayBuffer()) {
+        // A shared buffer is not an ArrayBuffer to V8, so it needs its own arm; a view
+        // over one is already covered below, since Buffer() hands back the shared store.
+        std::shared_ptr<v8::BackingStore> store =
+            object.As<SharedArrayBuffer>()->GetBackingStore();
         if (store) {
             data = static_cast<const char*>(store->Data());
             capacity = store->ByteLength();
@@ -100,16 +115,27 @@ PyObject* js_object_bytes(js_object* self, PyObject*) {
     return PyBytes_FromStringAndSize("", 0);
 }
 
+//: ``bytes(value)`` for a buffer or a view.  The one-read reader above answers ``b""`` for
+//: anything else, which is a poor answer for the bytes protocol, so a value that holds no
+//: bytes is refused the way Python refuses one.
+static PyObject* js_object_as_bytes(js_object* self, PyObject* unused) {
+    JS_OBJECT_ENTER(self, isolate, object);
+    if (!object->IsArrayBuffer() && !object->IsSharedArrayBuffer() &&
+        !object->IsArrayBufferView()) {
+        // The limited API leaves the type opaque, so the message cannot name it.
+        PyErr_SetString(PyExc_TypeError,
+                        "JavaScript object holds no bytes: not a buffer or a view");
+        return nullptr;
+    }
+    return js_object_bytes(self, unused);
+}
+
 static PyObject* js_object_string(js_object* self, PyObject*) {
     return js_object_repr(self);
 }
 
 static PyObject* js_object_number(js_object* self, PyObject*) {
-    if (!js_object_require_active(self)) return nullptr;
-    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
-    if (!execution || !js_object_require_active(self)) return nullptr;
-    auto* isolate = execution.isolate();
-    Local<Object> object = self->object.Get(isolate);
+    JS_OBJECT_ENTER(self, isolate, object);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
     DeadlineScope guard(context);
@@ -126,11 +152,7 @@ static PyObject* js_object_number(js_object* self, PyObject*) {
 }
 
 static PyObject* js_object_iterator_method(js_object* self, PyObject*) {
-    if (!js_object_require_active(self)) return nullptr;
-    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
-    if (!execution || !js_object_require_active(self)) return nullptr;
-    auto* isolate = execution.isolate();
-    Local<Object> object = self->object.Get(isolate);
+    JS_OBJECT_ENTER(self, isolate, object);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
     DeadlineScope guard(context);
@@ -147,11 +169,7 @@ static PyObject* js_object_iterator_method(js_object* self, PyObject*) {
 }
 
 static PyObject* js_object_invoke(js_object* self, PyObject* args) {
-    if (!js_object_require_active(self)) return nullptr;
-    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
-    if (!execution || !js_object_require_active(self)) return nullptr;
-    auto* isolate = execution.isolate();
-    Local<Object> object = self->object.Get(isolate);
+    JS_OBJECT_ENTER(self, isolate, object);
     IN_CONTEXT(object->GetCreationContextChecked());
     if (!object->IsCallable() || PyTuple_Size(args) < 1) {
         PyErr_SetString(PyExc_TypeError, "_invoke requires a callable and a receiver");
@@ -179,11 +197,7 @@ static PyObject* js_object_invoke(js_object* self, PyObject* args) {
 }
 
 static PyObject* js_object_keys(js_object* self, PyObject*) {
-    if (!js_object_require_active(self)) return nullptr;
-    ExecutionScope execution((context_c*)self->registration.context, (PyObject*)self);
-    if (!execution || !js_object_require_active(self)) return nullptr;
-    auto* isolate = execution.isolate();
-    Local<Object> object = self->object.Get(isolate);
+    JS_OBJECT_ENTER(self, isolate, object);
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
     DeadlineScope guard(context);
@@ -223,6 +237,8 @@ PyMethodDef js_object_methods[] = {
     {"_get", (PyCFunction)PythonBoundary<js_object_read>::call, METH_O, "Read one property without eagerly converting objects."},
     {"to_python", (PyCFunction)PythonBoundary<js_object_to_python>::call, METH_NOARGS, "Explicitly materialize arrays and plain objects."},
     {"_bytes", (PyCFunction)PythonBoundary<js_object_bytes>::call, METH_NOARGS, "The bytes a buffer holds or a view looks at, in one read."},
+    {"__bytes__", (PyCFunction)PythonBoundary<js_object_as_bytes>::call, METH_NOARGS, "The bytes a buffer or a view holds; anything else holds none."},
+    {"_buffer_view", (PyCFunction)PythonBoundary<js_object_buffer>::call, METH_NOARGS, "**Experimental**. Return a python buffer(memoryview) object pointing to the underlying V8 ArrayBuffer data.  Underscore-prefixed because instance lookup only reaches those."},
     {"__dir__", (PyCFunction)PythonBoundary<js_object_dir>::call, METH_NOARGS, NULL},
     {NULL} };
 

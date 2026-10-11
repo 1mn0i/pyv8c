@@ -38,8 +38,7 @@ namespace
 class JsToPyConversionContext
 {
 public:
-    explicit JsToPyConversionContext(Isolate* isolate)
-        : isolate_(isolate)
+    explicit JsToPyConversionContext(Isolate*)
     {
     }
 
@@ -94,7 +93,6 @@ private:
     // V8 identity hashes make lookups constant-time on average. StrictEquals
     // remains the final check because identity hashes are not unique.
     std::unordered_map<int, std::vector<Entry>> visited_;
-    Isolate* isolate_;
 };
 }
 
@@ -300,18 +298,6 @@ py_from_js_impl(Local<Value> value,
             return dict;
         }
 
-        if (obj_value->InternalFieldCount() == OBJECT_INTERNAL_FIELDS)
-        {
-            Local<Data> magic = obj_value->GetInternalField(PYTHON_MAGIC_FIELD);
-            if (isolate_state != nullptr &&
-                magic == isolate_state->v8_string(V8StringId::PythonObjectMagic))
-            {
-                PyObject *object = IsolateState::python_object(obj_value);
-                if (!object) return nullptr;
-                Py_INCREF((PyObject*)object);
-                return object;
-            }
-        }
         return (PyObject *)js_object_new(obj_value, context);
     }
 

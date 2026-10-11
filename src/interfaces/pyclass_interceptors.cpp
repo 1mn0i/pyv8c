@@ -112,20 +112,40 @@ void properties_named_enumerator(Info(Array)) {
     info.GetReturnValue().Set(Array::New(info.GetIsolate(), 0));
 }
 
+//: The name an indexed property answers to.  The digits are built on the stack: the
+//: ``std::to_string`` this replaced allocated a string for every interception.
+static Local<Name> indexed_name(Isolate* isolate, uint32_t index) {
+    char digits[11];
+    unsigned length = 0;
+    if (index == 0) {
+        digits[length++] = '0';
+    }
+    else {
+        char reversed[10];
+        unsigned count = 0;
+        for (uint32_t rest = index; rest != 0; rest /= 10)
+            reversed[count++] = static_cast<char>('0' + rest % 10);
+        while (count != 0)
+            digits[length++] = reversed[--count];
+    }
+    digits[length] = '\0';
+    return V8String(isolate, digits);
+}
+
 Intercepted properties_indexed_getter(uint32_t index, Info(Value)) {
-    return properties_named_getter(V8String(info.GetIsolate(), std::to_string(index).c_str()), info);
+    return properties_named_getter(indexed_name(info.GetIsolate(), index), info);
 }
 Intercepted properties_indexed_query(uint32_t index, Info(Integer)) {
-    return properties_named_query(V8String(info.GetIsolate(), std::to_string(index).c_str()), info);
+    return properties_named_query(indexed_name(info.GetIsolate(), index), info);
 }
 Intercepted properties_indexed_descriptor(uint32_t index, Info(Value)) {
-    return properties_named_descriptor(V8String(info.GetIsolate(), std::to_string(index).c_str()), info);
+    return properties_named_descriptor(indexed_name(info.GetIsolate(), index), info);
 }
 Intercepted properties_indexed_deleter(uint32_t index, Info(Boolean)) {
-    return properties_named_deleter(V8String(info.GetIsolate(), std::to_string(index).c_str()), info);
+    return properties_named_deleter(indexed_name(info.GetIsolate(), index), info);
 }
 Intercepted properties_indexed_definer(uint32_t index, const PropertyDescriptor& desc, Info(Boolean)) {
-    return properties_named_definer(V8String(info.GetIsolate(), std::to_string(index).c_str()), desc, info);
+    return properties_named_definer(indexed_name(info.GetIsolate(), index), desc, info);
 }
 
 

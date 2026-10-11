@@ -101,17 +101,6 @@ inline v8::Local<v8::Object> callback_holder(
 #endif
 }
 
-template <typename T>
-inline v8::Local<v8::Object> property_callback_receiver(
-    const v8::PropertyCallbackInfo<T>& info)
-{
-#if V8_MAJOR_VERSION >= 15
-    return info.Holder();
-#else
-    return info.This();
-#endif
-}
-
 }  // namespace v8_compat
 
 #endif

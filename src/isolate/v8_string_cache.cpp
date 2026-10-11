@@ -14,7 +14,6 @@ constexpr std::size_t kStringCount =
 // as an id is added anywhere but the end.
 constexpr std::array<std::pair<V8StringId, std::string_view>, kStringCount> kStringValues = {{
     {V8StringId::PythonObjectMagic, "A wild object appeared!"},
-    {V8StringId::Message, "message"},
 }};
 }
 

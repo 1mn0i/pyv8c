@@ -71,7 +71,7 @@ object roundtrip and exceptions. Trace, DOM and page lifecycle are reported
 separately. Run benchmarks without concurrent builds or tests.
 
 ```powershell
-$env:PYTHONPATH='D:\src\pyv8env\_pyv8;D:\src\pyv8env\pyv8c'
+$env:PYTHONPATH = "$PWD;$PWD\..\pyv8c"    # run from this (_pyv8) checkout
 python benchmarks/bridge.py --output benchmarks/after.json --compare benchmarks/before.json
 python benchmarks/lifecycle.py --count 1000 --output benchmarks/lifecycle-after.json
 python -m pytest -q

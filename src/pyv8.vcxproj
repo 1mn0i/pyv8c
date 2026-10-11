@@ -146,6 +146,7 @@
     <ClCompile Include="isolate\isolate_state.cpp" />
     <ClCompile Include="handles\jsfunction.cpp" />
     <ClCompile Include="values\jsnull.cpp" />
+    <ClCompile Include="handles\jsbuffer.cpp" />
     <ClCompile Include="handles\jsobject.cpp" />
     <ClCompile Include="handles\jspromise.cpp" />
     <ClCompile Include="handles\jstypedarray.cpp" />
@@ -186,6 +187,7 @@
     <ClInclude Include="isolate\isolate_state.h" />
     <ClInclude Include="handles\jsfunction.h" />
     <ClInclude Include="values\jsnull.h" />
+    <ClInclude Include="handles\jsbuffer.h" />
     <ClInclude Include="handles\jsobject.h" />
     <ClInclude Include="handles\jspromise.h" />
     <ClInclude Include="handles\jstypedarray.h" />

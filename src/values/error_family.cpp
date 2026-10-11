@@ -6,6 +6,7 @@
 #include "pyclass.h"
 #include "runtime.h"
 
+#include <cstdarg>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -35,6 +36,11 @@ const Member kMembers[] = {
     {"EvalError", "JsEvalError", "pyv8.JsEvalError", nullptr},
 };
 constexpr int kFamilySize = 7;
+
+//: A member's position in *kMembers* is its ``Kind``, so the two must stay in step; the
+//: host-facing API names members by kind and never repeats the table's contents.
+static_assert(static_cast<int>(Kind::EvalError) + 1 == kFamilySize,
+              "Kind needs one member per row of kMembers, in the same order");
 
 PyTypeObject* family[kFamilySize] = {};
 PyTypeObject* interceptor_marker = nullptr;
@@ -217,6 +223,55 @@ bool initialize()
 }
 
 }  // namespace
+
+//: The type a member is published as, or null while the family is not published yet.
+PyTypeObject* member_type(Kind kind)
+{
+    const int index = static_cast<int>(kind);
+    if (index < 0 || index >= kFamilySize)
+        return nullptr;
+    return family[index];
+}
+
+PyObject* make(Kind kind, const char* format, ...)
+{
+    PyTypeObject* type = member_type(kind);
+    if (type == nullptr)
+    {
+        // No realm is there to read an error the family does not hold yet: the failure is
+        // the host's own, and the wording says which one it refused.
+        PyErr_SetString(PyExc_RuntimeError, format);
+        return nullptr;
+    }
+    va_list arguments;
+    va_start(arguments, format);
+    PyObject* message = PyUnicode_FromFormatV(format, arguments);
+    va_end(arguments);
+    if (message == nullptr)
+        return nullptr;
+    PyObject* instance = PyObject_CallFunctionObjArgs((PyObject*)type, message, nullptr);
+    Py_DECREF(message);
+    return instance;
+}
+
+void raise(Kind kind, const char* format, ...)
+{
+    PyTypeObject* type = member_type(kind);
+    if (type == nullptr)
+    {
+        PyErr_SetString(PyExc_RuntimeError, format);
+        return;
+    }
+    va_list arguments;
+    va_start(arguments, format);
+    PyObject* message = PyUnicode_FromFormatV(format, arguments);
+    va_end(arguments);
+    if (message == nullptr)
+        return;
+    // The message, not an instance: ``e.args`` stays exactly what ``PyErr_Format`` left.
+    PyErr_SetObject((PyObject*)type, message);
+    Py_DECREF(message);
+}
 
 bool publish(PyObject* module)
 {

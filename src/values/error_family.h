@@ -15,6 +15,31 @@ namespace error_family {
 //: Publishes the family and the interceptor marker on *module*.
 bool publish(PyObject* module);
 
+//: The family, as the key a host names a member by.  The table in the implementation is
+//: still the only copy of the family: a kind's position there is its type, its JavaScript
+//: constructor and the built-in it derives from.
+enum class Kind
+{
+    Error,
+    TypeError,
+    RangeError,
+    ReferenceError,
+    SyntaxError,
+    URIError,
+    EvalError,
+};
+
+//: A new instance of *kind*, with the message *format* builds, not raised yet.  The caller
+//: owns the reference, and ``None`` with the reason set when the family is not published.
+//: The specifiers are ``PyErr_Format``'s, so a literal message goes through ``"%s"``.
+PyObject* make(Kind kind, const char* format, ...);
+
+//: Refuse something the way a realm would: raise *kind* with that message.  A host raises
+//: through this rather than fetching a type, so which member answers stays the family's
+//: business, and the built-in each member derives from (``ValueError``, ``TypeError``)
+//: keeps ``except`` working as before.
+void raise(Kind kind, const char* format, ...);
+
 //: The JavaScript constructor an error of *exc_type* is built with; null when the family
 //: does not hold that type, which is what makes the failure the host's own.  The walk is
 //: taken per call: a table keyed by the type's address would answer for a type whose address

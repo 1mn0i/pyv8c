@@ -191,12 +191,10 @@ js_terminated_type_init()
 // The one rendering of a JavaScript exception as text: what the exception says, and --
 // when V8 reported a message -- where it said it, the line it appears on and the stack
 // beneath it.  It is what ``str()`` answers, and the one place that text is made.
-const std::string
+std::string
 extract_exception(Isolate* isolate, Local<Value> exception, Local<Message> message)
 {
     assert(isolate->InContext());
-
-    v8::HandleScope handle_scope(isolate);
 
     std::ostringstream oss;
 

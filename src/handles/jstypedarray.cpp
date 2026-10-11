@@ -3,13 +3,18 @@
 #include <v8.h>
 
 #include "convert.h"
+#include "error_family.h"
 #include "jsobject.h"
 #include "jstypedarray.h"
 #include "context.h"
 
+#include <cstdint>
 #include <limits>
 
 using namespace v8;
+
+
+//: Every refusal below names a kind of the family; nothing here holds a type.
 
 
 enum class ArrayType {
@@ -21,7 +26,10 @@ enum class ArrayType {
     Int8Array,
     Float64Array,
     Float32Array,
-    Uint8ClampedArray
+    Uint8ClampedArray,
+    // Appended rather than inserted: the numbers a host already passes keep their meaning.
+    BigInt64Array,
+    BigUint64Array
 };
 
 PyTypeObject* js_typedarray_type = NULL;
@@ -76,19 +84,48 @@ static bool
 parse_array_type(PyObject* value, ArrayType* array_type)
 {
     if (!PyLong_Check(value)) {
-        PyErr_SetString(PyExc_TypeError, "typed must be an ArrayType integer");
+        error_family::raise(error_family::Kind::TypeError, "%s", "typed must be an ArrayType integer");
         return false;
     }
     long raw_type = PyLong_AsLong(value);
     if (PyErr_Occurred())
         return false;
     if (raw_type < static_cast<long>(ArrayType::Uint32Array) ||
-        raw_type > static_cast<long>(ArrayType::Uint8ClampedArray)) {
-        PyErr_SetString(PyExc_ValueError, "unsupported typed array type");
+        raw_type > static_cast<long>(ArrayType::BigUint64Array)) {
+        error_family::raise(error_family::Kind::RangeError, "%s", "unsupported typed array type");
         return false;
     }
     *array_type = static_cast<ArrayType>(raw_type);
     return true;
+}
+
+//: The name a realm answers for this kind, which is what V8's wording uses.
+static const char*
+array_type_name(ArrayType array_type)
+{
+    switch (array_type) {
+    case ArrayType::Uint32Array: return "Uint32Array";
+    case ArrayType::Uint16Array: return "Uint16Array";
+    case ArrayType::Uint8Array: return "Uint8Array";
+    case ArrayType::Int32Array: return "Int32Array";
+    case ArrayType::Int16Array: return "Int16Array";
+    case ArrayType::Int8Array: return "Int8Array";
+    case ArrayType::Float64Array: return "Float64Array";
+    case ArrayType::Float32Array: return "Float32Array";
+    case ArrayType::Uint8ClampedArray: return "Uint8ClampedArray";
+    case ArrayType::BigInt64Array: return "BigInt64Array";
+    case ArrayType::BigUint64Array: return "BigUint64Array";
+    }
+    return "TypedArray";
+}
+
+//: Whether the bytes of this kind are BigInts, which a realm converts with ToBigInt rather
+//: than ToNumber.
+static bool
+array_type_is_bigint(ArrayType array_type)
+{
+    return array_type == ArrayType::BigInt64Array ||
+           array_type == ArrayType::BigUint64Array;
 }
 
 static size_t
@@ -108,47 +145,133 @@ array_type_item_size(ArrayType array_type)
         return sizeof(uint8_t);
     case ArrayType::Float64Array:
         return sizeof(double);
+    case ArrayType::BigInt64Array:
+    case ArrayType::BigUint64Array:
+        return sizeof(uint64_t);
     }
     return 0;
 }
 
+//: The typed array V8 builds for this kind over *buffer*.  Chromium chooses the overload
+//: from the backing store's sharedness the same way (dom_typed_array.cc:26-32), because
+//: the two entry points refuse each other's store (api.cc:9275-9288, 9628-9641).
+#define PYV8_TYPED_ARRAY_ON_BUFFER(Kind)                                       \
+    do {                                                                       \
+        if (shared)                                                            \
+            return Kind::New(buffer.As<SharedArrayBuffer>(), byte_offset,      \
+                             length);                                          \
+        return Kind::New(buffer.As<ArrayBuffer>(), byte_offset, length);       \
+    } while (0)
+
+//: The view a realm builds for ``new <Kind>(buffer, byteOffset, byteLength)``.  The checks,
+//: their order and their wording are V8's (typed-array-createtypedarray.tq:314-396 and
+//: message-template.h:425/435/437/107-108); Blink keeps the same rules in
+//: DOMTypedArray::VerifySubRange (dom_typed_array.h:123-138).
 static Local<Object>
-typed_array_from_buffer(Local<ArrayBuffer> array_buffer,
-                       size_t byte_offset,
-                       size_t byte_length,
-                       ArrayType array_type)
+typed_array_from_buffer(Local<Value> buffer, size_t byte_offset, size_t byte_length,
+                        ArrayType array_type)
 {
-    size_t item_size = array_type_item_size(array_type);
-    if (item_size == 0 || byte_offset % item_size != 0 ||
-        byte_length % item_size != 0) {
-        PyErr_SetString(PyExc_ValueError,
-                        "ArrayBuffer byte range is not aligned for the requested typed array");
+    const size_t item_size = array_type_item_size(array_type);
+    const char* type_name = array_type_name(array_type);
+    if (item_size == 0) {
+        error_family::raise(error_family::Kind::TypeError, "%s", "unsupported typed array type");
+        return Local<Object>();
+    }
+    if (byte_offset % item_size != 0) {
+        // "start offset of Uint8Array should be a multiple of 2"
+        error_family::raise(error_family::Kind::RangeError,
+                     "start offset of %s should be a multiple of %zu", type_name,
+                     item_size);
+        return Local<Object>();
+    }
+    if (byte_length % item_size != 0) {
+        error_family::raise(error_family::Kind::RangeError,
+                     "byte length of %s should be a multiple of %zu", type_name,
+                     item_size);
         return Local<Object>();
     }
 
-    size_t length = byte_length / item_size;
+    const bool shared = buffer->IsSharedArrayBuffer();
+    const size_t capacity = shared
+        ? static_cast<size_t>(buffer.As<SharedArrayBuffer>()->ByteLength())
+        : static_cast<size_t>(buffer.As<ArrayBuffer>()->ByteLength());
+    if (!shared && buffer.As<ArrayBuffer>()->WasDetached()) {
+        // "Cannot perform Construct on a detached ArrayBuffer"
+        error_family::raise(error_family::Kind::TypeError, "%s",
+                        "Cannot perform Construct on a detached ArrayBuffer");
+        return Local<Object>();
+    }
+    if (byte_offset > capacity) {
+        error_family::raise(error_family::Kind::RangeError,
+                     "Start offset %zu is outside the bounds of the buffer", byte_offset);
+        return Local<Object>();
+    }
+    if (byte_length > capacity - byte_offset) {
+        error_family::raise(error_family::Kind::RangeError,
+                     "Invalid typed array length: %zu", byte_length / item_size);
+        return Local<Object>();
+    }
+
+    const size_t length = byte_length / item_size;
     switch (array_type) {
     case ArrayType::Uint32Array:
-        return Uint32Array::New(array_buffer, byte_offset, length);
+        PYV8_TYPED_ARRAY_ON_BUFFER(Uint32Array);
     case ArrayType::Uint16Array:
-        return Uint16Array::New(array_buffer, byte_offset, length);
+        PYV8_TYPED_ARRAY_ON_BUFFER(Uint16Array);
     case ArrayType::Uint8Array:
-        return Uint8Array::New(array_buffer, byte_offset, length);
+        PYV8_TYPED_ARRAY_ON_BUFFER(Uint8Array);
     case ArrayType::Int32Array:
-        return Int32Array::New(array_buffer, byte_offset, length);
+        PYV8_TYPED_ARRAY_ON_BUFFER(Int32Array);
     case ArrayType::Int16Array:
-        return Int16Array::New(array_buffer, byte_offset, length);
+        PYV8_TYPED_ARRAY_ON_BUFFER(Int16Array);
     case ArrayType::Int8Array:
-        return Int8Array::New(array_buffer, byte_offset, length);
+        PYV8_TYPED_ARRAY_ON_BUFFER(Int8Array);
     case ArrayType::Float64Array:
-        return Float64Array::New(array_buffer, byte_offset, length);
+        PYV8_TYPED_ARRAY_ON_BUFFER(Float64Array);
     case ArrayType::Float32Array:
-        return Float32Array::New(array_buffer, byte_offset, length);
+        PYV8_TYPED_ARRAY_ON_BUFFER(Float32Array);
     case ArrayType::Uint8ClampedArray:
-        return Uint8ClampedArray::New(array_buffer, byte_offset, length);
+        PYV8_TYPED_ARRAY_ON_BUFFER(Uint8ClampedArray);
+    case ArrayType::BigInt64Array:
+        PYV8_TYPED_ARRAY_ON_BUFFER(BigInt64Array);
+    case ArrayType::BigUint64Array:
+        PYV8_TYPED_ARRAY_ON_BUFFER(BigUint64Array);
     }
-    PyErr_SetString(PyExc_ValueError, "unsupported typed array type");
+    error_family::raise(error_family::Kind::TypeError, "%s", "unsupported typed array type");
     return Local<Object>();
+}
+
+#undef PYV8_TYPED_ARRAY_ON_BUFFER
+
+//: One of the two byte counts a caller may pass alongside an ArrayBuffer.  V8 reads them
+//: with ToIndex, so a negative or unrepresentable one is the RangeError a realm would
+//: raise; anything that is not an integer is the TypeError a realm would raise.
+static bool
+read_byte_count(PyObject* value, bool is_offset, size_t* out)
+{
+    if (!PyLong_Check(value)) {
+        error_family::raise(error_family::Kind::TypeError, "%s must be an integer",
+                     is_offset ? "byte_offset" : "byte_length");
+        return false;
+    }
+    const long long raw = PyLong_AsLongLong(value);
+    if (raw == -1 && PyErr_Occurred()) {
+        PyErr_Clear();
+        error_family::raise(error_family::Kind::RangeError,
+                     is_offset ? "Start offset %R is outside the bounds of the buffer"
+                               : "Invalid typed array length: %R",
+                     value);
+        return false;
+    }
+    if (raw < 0) {
+        error_family::raise(error_family::Kind::RangeError,
+                     is_offset ? "Start offset %R is outside the bounds of the buffer"
+                               : "Invalid typed array length: %R",
+                     value);
+        return false;
+    }
+    *out = static_cast<size_t>(raw);
+    return true;
 }
 
 static Local<Object>
@@ -208,10 +331,45 @@ typed_array_from_list(Isolate* isolate, Local<Context> context,
     case ArrayType::Uint8ClampedArray:
         typed_array = Uint8ClampedArray::New(array_buffer, 0, length);
         break;
+    case ArrayType::BigInt64Array:
+        typed_array = BigInt64Array::New(array_buffer, 0, length);
+        break;
+    case ArrayType::BigUint64Array:
+        typed_array = BigUint64Array::New(array_buffer, 0, length);
+        break;
     }
     if (typed_array.IsEmpty()) {
         PyErr_SetString(PyExc_RuntimeError, "failed to create V8 typed array");
         return Local<Object>();
+    }
+
+    if (array_type_is_bigint(array_type)) {
+        // ToBigInt64/ToBigUint64: the low 64 bits, read as signed for the first one.  The
+        // mask does the modulo, and C++20 defines the narrowing cast as two's complement.
+        const bool signed_array = array_type == ArrayType::BigInt64Array;
+        for (Py_ssize_t i = 0; i < py_length; ++i) {
+            PyObject* item = PyList_GetItem(data, i);
+            if (item == NULL)
+                return Local<Object>();
+            if (!PyLong_Check(item)) {
+                error_family::raise(error_family::Kind::TypeError, "Cannot convert %R to a BigInt", item);
+                return Local<Object>();
+            }
+            const unsigned long long raw = PyLong_AsUnsignedLongLongMask(item);
+            if (PyErr_Occurred())
+                return Local<Object>();
+            Local<BigInt> value = signed_array
+                ? BigInt::New(isolate, static_cast<int64_t>(raw))
+                : BigInt::NewFromUnsigned(isolate, raw);
+            bool set_worked;
+            if (!typed_array->Set(context, static_cast<uint32_t>(i), value).To(&set_worked) ||
+                !set_worked) {
+                PyErr_Format(PyExc_RuntimeError,
+                             "failed to set typed array item %zd", i);
+                return Local<Object>();
+            }
+        }
+        return typed_array;
     }
 
     bool is_float_array = array_type == ArrayType::Float32Array ||
@@ -257,14 +415,18 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 
     PyObject* data = NULL;
     PyObject* typed = NULL;
-    static const char* keywords[] = {"data", "typed", NULL };
+    PyObject* byte_offset = NULL;
+    PyObject* byte_length = NULL;
+    static const char* keywords[] = {"data", "typed", "byte_offset", "byte_length", NULL };
     if (!PyArg_ParseTupleAndKeywords(
-            args, kwargs, "OO", (char**)keywords, &data, &typed))
+            args, kwargs, "OO|OO", (char**)keywords, &data, &typed,
+            &byte_offset, &byte_length))
         return NULL;
 
     if (!PyList_Check(data) && !PyObject_TypeCheck(data, js_object_type)) {
-        PyErr_SetString(PyExc_TypeError,
-                        "data must be a list, ArrayBuffer, or ArrayBufferView");
+        error_family::raise(error_family::Kind::TypeError, "%s",
+                        "data must be a list, ArrayBuffer, SharedArrayBuffer"
+                        " or ArrayBufferView");
         return NULL;
     }
     ArrayType array_type;
@@ -293,28 +455,50 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
             return NULL;
         }
         Local<Object> source = py_value->object.Get(isolate);
-        Local<ArrayBuffer> array_buffer;
-        size_t byte_offset = 0;
-        size_t byte_length = 0;
+        Local<Value> buffer;
+        size_t offset = 0;
+        size_t length = 0;
+        const bool is_view = source->IsArrayBufferView();
         if (source->IsArrayBuffer()) {
-            array_buffer = source.As<ArrayBuffer>();
-            byte_length = array_buffer->ByteLength();
+            buffer = source;
+            length = static_cast<size_t>(source.As<ArrayBuffer>()->ByteLength());
         }
-        else if (source->IsArrayBufferView()) {
+        else if (source->IsSharedArrayBuffer()) {
+            buffer = source;
+            length = static_cast<size_t>(
+                source.As<SharedArrayBuffer>()->ByteLength());
+        }
+        else if (is_view) {
             Local<ArrayBufferView> view = source.As<ArrayBufferView>();
-            array_buffer = view->Buffer();
-            byte_offset = view->ByteOffset();
-            byte_length = view->ByteLength();
+            buffer = view->Buffer();
+            offset = view->ByteOffset();
+            length = view->ByteLength();
         }
         else {
-            PyErr_SetString(PyExc_TypeError,
-                            "JSObject data must wrap an ArrayBuffer or ArrayBufferView");
+            error_family::raise(error_family::Kind::TypeError, "%s",
+                            "JSObject data must wrap an ArrayBuffer, a SharedArrayBuffer"
+                            " or an ArrayBufferView");
             return NULL;
         }
-        typed_array = typed_array_from_buffer(
-            array_buffer, byte_offset, byte_length, array_type);
+        // A range is a property of the buffer: V8's constructor draws the same line between
+        // its buffer form and its iterable form, so a view is taken whole.
+        if (is_view && (byte_offset != NULL || byte_length != NULL)) {
+            error_family::raise(error_family::Kind::TypeError, "%s",
+                            "byte_offset and byte_length apply to a buffer, not to a view");
+            return NULL;
+        }
+        if (byte_offset != NULL && !read_byte_count(byte_offset, true, &offset))
+            return NULL;
+        if (byte_length != NULL && !read_byte_count(byte_length, false, &length))
+            return NULL;
+        typed_array = typed_array_from_buffer(buffer, offset, length, array_type);
     }
     else {
+        if (byte_offset != NULL || byte_length != NULL) {
+            error_family::raise(error_family::Kind::TypeError, "%s",
+                            "byte_offset and byte_length apply to a buffer, not to a list");
+            return NULL;
+        }
         typed_array = typed_array_from_list(
             isolate, context, data, array_type);
         if (typed_array.IsEmpty())
@@ -322,7 +506,10 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
     }
 
     if (typed_array.IsEmpty()) {
-        PyErr_SetString(PyExc_RuntimeError, "failed to create V8 typed array");
+        // The helpers above refuse an argument with the family error a realm would raise;
+        // only an unexplained empty handle is the host's own failure.
+        if (!PyErr_Occurred())
+            PyErr_SetString(PyExc_RuntimeError, "failed to create V8 typed array");
         return NULL;
     }
     js_typedarray* self = (js_typedarray*)PyType_GenericAlloc(type, 0);

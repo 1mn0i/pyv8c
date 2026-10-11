@@ -16,6 +16,7 @@
 #include "jspromise.h"
 #include "serialization.h"
 #include "jstypedarray.h"
+#include "jsbuffer.h"
 #include "pyfunction.h"
 #include "debugger.h"
 #include "isolate.h"
@@ -416,6 +417,11 @@ pyv8_module_exec(PyObject* module)
     if (js_typedarray_type_init() < 0)
         return -1;
     if (PyModule_AddObject(module, "JSTypeArray", (PyObject *)js_typedarray_type) < 0)
+        return -1;
+
+    if (js_buffer_type_init() < 0)
+        return -1;
+    if (PyModule_AddObject(module, "JSBuffer", (PyObject *)js_buffer_type) < 0)
         return -1;
 
     if (js_function_type_init() < 0)

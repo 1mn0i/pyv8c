@@ -348,6 +348,14 @@ class JSObject:
     def _is_array(self) -> bool: ...
     def to_python(self) -> Any: ...
     def _bytes(self) -> bytes: ...
+    def __bytes__(self) -> bytes: ...
+    def _buffer_view(self) -> memoryview:
+        """**实验性**。零拷贝地把底层 V8 ArrayBuffer 的数据暴露为 Python buffer 对象。
+
+        名字带下划线，是因为实例属性查找只回退到下划线开头的成员（同 ``_bytes``/``_get``）。
+        对象被分离（detach）后范围失效：视图按当前状态重算，分离后长度为 0。
+        """
+        ...
     def _to_string(self) -> str: ...
     def _to_number(self) -> float: ...
 
@@ -418,9 +426,26 @@ class Serializer:
 
 
 class JSTypeArray(JSObject):
-    """JavaScript TypedArray的Python封装"""
-    def __init__(self, data: Union[List[Union[int, float]], JSObject], typed: int) -> None: ...
+    """JavaScript TypedArray的Python封装
+
+    文档: ``data`` 为列表时按 ``typed`` 建一个新数组；为 ``ArrayBuffer``/``SharedArrayBuffer``
+    时在其上建视图，``byte_offset``/``byte_length`` 指定范围（缺省为整段）；为视图时整段接管。
+    """
+    def __init__(
+        self,
+        data: Union[List[Union[int, float]], JSObject],
+        typed: int,
+        byte_offset: Optional[int] = None,
+        byte_length: Optional[int] = None,
+    ) -> None: ...
     def __repr__(self) -> str: ...
+
+
+class JSBuffer(JSObject):
+    """**实验性**。零拷贝的 V8 缓冲区字节视图（只读 buffer protocol）。
+
+    由 ``JSObject.buffer_view()`` 返回；缓冲区被分离后按当前状态长度变为 0。
+    """
 
 class JSValue:
     def _to_string(self) -> str: ...
@@ -482,9 +507,9 @@ def v8_gc() -> None: ...
 def current_context(isolate: Optional[Isolate] = None) -> Optional[Context]: ...
 
 # 页面可能看到的错误族：让一个类继承其中一员，realm 就以那个错误报告它；不继承即
-# 宿主自身的失败，永不出现在 JS 里。形状不标准的类在自己的类上声明 __v8_error_name__
-# （realm 里的构造器名）、__v8_error_arguments__（跟在消息后的构造参数）与
-# __v8_error_fields__（建好后拷贝上去的 (Python 属性, JS 属性) 对）。
+# 宿主自身的失败，永不出现在 JS 里。形状不标准的类在自己的类上声明 __v8_error_shape__
+# （realm 里的构造器名、构造参数属性、建好后拷贝上去的 (Python 属性, JS 属性) 对）；
+# 实例上写 __v8_error_stack__ = False 表示这个错误不带 stack，读回来的错误就是这样。
 class JsError(Exception): ...
 class JsTypeError(TypeError): ...
 class JsRangeError(ValueError): ...

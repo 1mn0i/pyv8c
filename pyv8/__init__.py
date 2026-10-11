@@ -68,6 +68,8 @@ class ArrayType:
     Float64Array = 7
     Float32Array = 8
     Uint8ClampedArray = 9
+    BigInt64Array = 10
+    BigUint64Array = 11
 
 
 # The flag constants come from flag.py, which is also where a new one is declared,
