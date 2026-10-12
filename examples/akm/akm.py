@@ -33,8 +33,9 @@ def wait_for_cookie(browser_ctx, url, seconds=30):
     waited = 0.0
     while waited < seconds:
         c = browser_ctx.cookies.header_for(url)
-        if "~0~" in c:
-            return c
+        for part in c.split('; '):
+            if "_abck=" in part and "~0~" in part:
+                return c
         time.sleep(0.5)
         waited += 0.5
 
@@ -54,8 +55,8 @@ if "__main__" == __name__:
     context = browser.new_context()
     page = context.new_page()
 
-    # url = "https://www.bestbuy.com"
-    url = "https://www.koreanair.com"
+    url = "https://www.bestbuy.com"
+    # url = "https://www.koreanair.com"
     # url = "https://www.radissonhotels.com/zh-cn/"
     page.goto(url, wait_until="domcontentloaded")
 

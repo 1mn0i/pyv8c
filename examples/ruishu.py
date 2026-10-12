@@ -69,7 +69,8 @@ if "__main__" == __name__:
     # print(page.evaluate("Error.isError(new DOMException('')) == true"))
     # print(page.evaluate("Error.isError(new DOMError('')) == false"))
     # print(page.evaluate("e = new DOMException('');e.__proto__"))
-    # print(page.evaluate("DOMException instanceof Error"))
+    print(page.evaluate("DOMException instanceof Error"))
+    print(page.evaluate("chrome"))
     # print(page.evaluate("c = document.createElement('canvas');d=c.getContext('webgl');d.getExtension('WEBGL_debug_renderer_info');"))
     # print(page.evaluate("""
     # i = document.createElement('input');
