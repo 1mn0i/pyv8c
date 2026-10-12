@@ -6,8 +6,10 @@ from urllib.parse import urlsplit
 import pyv8
 
 from ...idl import interface
-from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error, number
-from ..page_errors import InvalidCharacterError, SecurityError, PageTypeError, dom_exception
+from ...foundation.arguments import (MISSING, dom_string, interface_value, is_nullish, missing_error,
+                                     number)
+from ..page_errors import (InvalidCharacterError, NotSupportedError, SecurityError, PageTypeError,
+                           dom_exception)
 from .animation import DocumentTimeline
 from .character_data import Comment, DocumentType, Text
 from .collections import HTMLAllCollection, HTMLCollection, NodeList, tag_name_ns_collection
@@ -16,7 +18,7 @@ from .fonts import FontFaceSet
 from .html_classes import class_for_local_name, class_for_tag, svg_interface_name
 from .html_elements import Element
 from .mixins import _ParentNodeMixin
-from .nodes import Attr, DocumentFragment, Node
+from .nodes import Attr, DocumentFragment, Node, ShadowRoot
 from .permissions_policy import PermissionsPolicy
 from .utils import MATHML_NAMESPACE, SVG_NAMESPACE, XHTML_NAMESPACE, _VALID_NAME_RE, name_fault
 
@@ -175,6 +177,21 @@ class Document(_ParentNodeMixin, Node):
         if context is MISSING:
             raise missing_error('Document', 'evaluate', 2, 1, constructor=False)
         return create_expression(expression).fn_evaluate(context, type, result)
+
+    def fn_importNode(self, node=MISSING, deep=False, *_extra):
+        """A node cloned for this document; a document or shadow root is refused."""
+        if node is MISSING:
+            raise missing_error('Document', 'importNode', 1, 0, constructor=False)
+        node = interface_value(node, 'Node', 'Document', 'importNode', 1, nullable=False)
+        if isinstance(node, Document):
+            raise NotSupportedError(
+                "Failed to execute 'importNode' on 'Document':"
+                " The node provided is a document, which may not be imported.")
+        if isinstance(node, ShadowRoot):
+            raise NotSupportedError(
+                "Failed to execute 'importNode' on 'Document':"
+                " The node provided is a shadow root, which may not be imported.")
+        return node.fn_cloneNode(bool(deep))
 
     def fn_createEvent(self, type=MISSING, *_extra):
         """An uninitialised event of the legacy interface name asked for."""

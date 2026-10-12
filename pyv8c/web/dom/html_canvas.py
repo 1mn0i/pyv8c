@@ -12,7 +12,8 @@ import re
 import pyv8
 
 from ...idl import interface
-from ...foundation.arguments import MISSING, dom_string, missing_error
+from ...foundation.arguments import (MISSING, IdlArgumentError, dictionary, dom_string, integer,
+                                     is_nullish, missing_error)
 from .events import EventTarget
 from .html_elements import HTMLElement
 from .webgl import WebGL2RenderingContext, WebGLRenderingContext
@@ -31,6 +32,92 @@ def _requested_context(kind):
     requested = str(kind).lower()
     if requested == "experimental-webgl": return "webgl"
     return requested if requested in _CONTEXT_KINDS else None
+
+
+#: ``globalCompositeOperation``'s names, from Blink: twelve composite, then sixteen blend.
+_COMPOSITE_OPERATIONS = frozenset((
+    "clear", "copy", "source-over", "source-in", "source-out", "source-atop",
+    "destination-over", "destination-in", "destination-out", "destination-atop", "xor",
+    "lighter"))
+_BLEND_OPERATIONS = frozenset((
+    "normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge",
+    "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation",
+    "color", "luminosity"))
+#: The CSS filter functions the ``filter`` setter accepts.
+_FILTER_FUNCTIONS = frozenset((
+    "blur", "brightness", "contrast", "drop-shadow", "grayscale", "hue-rotate", "invert",
+    "opacity", "saturate", "sepia"))
+_COLOR_SPACES = ("srgb", "display-p3")
+#: What ``drawImage`` takes first, in the IDL's own order.
+_CANVAS_IMAGE_SOURCE = ("CSSImageValue or HTMLImageElement or SVGImageElement or HTMLVideoElement"
+                        " or HTMLCanvasElement or ImageBitmap or OffscreenCanvas or VideoFrame")
+#: The canvas transform: (a, b, c, d, e, f) reads x' = ax + cy + e.
+_IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def _enum_error(interface, member, value, enum_name):
+    """What the bindings raise for a value outside a WebIDL enum."""
+    return IdlArgumentError(
+        f"Failed to execute '{member}' on '{interface}':"
+        f" The provided value '{value}' is not a valid enum value of type {enum_name}.")
+
+
+def _signature_error(interface, member):
+    """What the bindings raise when no overload accepts the arguments they were given."""
+    return IdlArgumentError(
+        f"Failed to execute '{member}' on '{interface}':"
+        " No function was found that matched the signature provided.")
+
+
+def _parses_as_filter(text):
+    """Whether CSS would take this ``filter`` value as a filter list."""
+    value = text.strip()
+    if value == "none":
+        return True
+    if value.lower() in ("inherit", "initial", "unset", "revert", "revert-layer"):
+        return False
+    if not value or not value.endswith(")") or value.count("(") != value.count(")"):
+        return False
+    for entry in value.split(")")[:-1]:
+        name, _, arguments = entry.partition("(")
+        if name.strip().lower() not in _FILTER_FUNCTIONS or not arguments.strip():
+            return False
+    return True
+
+
+def _parses_as_color(value):
+    """Whether the canvas colour parser would take this string."""
+    text = str(value).strip()
+    if not text:
+        return False
+    if text.lower() == "transparent":
+        return True
+    if re.fullmatch(r"rgba?\([^)]*\)|hsla?\([^)]*\)|hwb\([^)]*\)|lab\([^)]*\)|lch\([^)]*\)"
+                    r"|oklab\([^)]*\)|oklch\([^)]*\)|color\([^)]*\)", text, re.I):
+        return True
+    try:
+        from PIL import ImageColor
+        ImageColor.getrgb(text)
+        return True
+    except (ImportError, ValueError):
+        return False
+
+
+def _creation_settings(interface, options):
+    """What ``getContext('2d', options)`` asked for, as ``getContextAttributes`` reports it."""
+    settings = dictionary(options)
+    record = {key: settings[key] for key in
+              ("alpha", "desynchronized", "willReadFrequently", "colorSpace") if key in settings}
+    if "colorSpace" in record and str(record["colorSpace"]) not in _COLOR_SPACES:
+        raise _enum_error(interface, "getContext", record["colorSpace"], "PredefinedColorSpace")
+    return record
+
+
+def _is_canvas_image_source(value):
+    """Whether ``drawImage`` may take this value; only the canvas ones can also be read."""
+    return type(value).__name__ in ("HTMLCanvasElement", "OffscreenCanvas", "HTMLImageElement",
+                                    "SVGImageElement", "HTMLVideoElement", "ImageBitmap",
+                                    "VideoFrame")
 
 
 @interface('TextMetrics', None)
@@ -86,12 +173,211 @@ class ImageData:
 
     def __init__(self, pixels=b"", width=0, height=0, **_):
         self._width, self._height = int(width), int(height)
+        self._bytes = bytes(pixels)
         self._data = pyv8.JSTypeArray(list(pixels), pyv8.ArrayType.Uint8ClampedArray)
 
     def get_width(self): return self._width
     def get_height(self): return self._height
     def get_data(self): return self._data
     def get_colorSpace(self): return "srgb"
+    def get_pixelFormat(self): return "rgba-unorm8"
+
+
+@interface('ImageBitmap', None)
+class ImageBitmap:
+    """A decoded image: ``drawImage`` draws it, and ``close`` empties it."""
+
+    def __init__(self, image=None, width=0, height=0, **_):
+        self._image = image
+        self._width, self._height = int(width), int(height)
+
+    def get_width(self): return self._width
+    def get_height(self): return self._height
+    def fn_close(self, *_):
+        """Emptied, as Chromium empties it: every later read reports 0."""
+        self._image = None
+        self._width = self._height = 0
+
+
+#: What ``createImageBitmap`` takes, in the IDL's own order.
+_IMAGE_BITMAP_SOURCE = ("HTMLImageElement or SVGImageElement or HTMLVideoElement"
+                        " or HTMLCanvasElement or Blob or ImageData or ImageBitmap"
+                        " or OffscreenCanvas or VideoFrame")
+
+
+def _is_bitmap_source(value):
+    """Whether ``createImageBitmap`` may take this value."""
+    return type(value).__name__ in ("HTMLImageElement", "SVGImageElement", "HTMLVideoElement",
+                                    "HTMLCanvasElement", "Blob", "ImageData", "ImageBitmap",
+                                    "OffscreenCanvas", "VideoFrame")
+
+
+def bitmap_source_image(source):
+    """The pixels behind an image source, or ``None`` when the engine has none for it."""
+    if isinstance(source, ImageBitmap):
+        return source._image
+    image = getattr(source, "_image", None)
+    if image is not None: return image
+    context = getattr(source, "_context2d", None)
+    if context is not None: return context._image
+    if isinstance(source, ImageData):
+        if not (source._width and source._height): return None
+        try:
+            from PIL import Image
+            return Image.frombytes("RGBA", (source._width, source._height), source._bytes)
+        except (ImportError, ValueError):
+            return None
+    for name in ("_bytes", "_body", "_buffer"):
+        data = getattr(source, name, None)
+        if isinstance(data, (bytes, bytearray)) and data:
+            try:
+                from io import BytesIO
+                from PIL import Image
+                return Image.open(BytesIO(bytes(data))).convert("RGBA")
+            except (ImportError, OSError, ValueError):
+                return None
+    return None
+
+
+def _resize_size(options, size):
+    """The size ``resizeWidth``/``resizeHeight`` ask for, keeping the aspect ratio."""
+    width, height = size
+    asked = [options.get("resizeWidth"), options.get("resizeHeight")]
+    wanted = [int(value) if value is not None else 0 for value in asked]
+    if wanted[0] <= 0 and wanted[1] <= 0: return size
+    if wanted[0] <= 0: wanted[0] = max(1, round(width * wanted[1] / height))
+    if wanted[1] <= 0: wanted[1] = max(1, round(height * wanted[0] / width))
+    return (wanted[0], wanted[1])
+
+
+def create_image_bitmap(interface, image, arguments, services):
+    """Chromium's ``createImageBitmap``: a promise, or a throw before one is made."""
+    from ..page_errors import InvalidStateError, PageRangeError
+    if image is MISSING:
+        raise missing_error(interface, 'createImageBitmap', 1, 0, constructor=False)
+    if not _is_bitmap_source(image):
+        raise IdlArgumentError(
+            f"Failed to execute 'createImageBitmap' on '{interface}':"
+            f" The provided value is not of type '({_IMAGE_BITMAP_SOURCE})'.")
+    rest, options = list(arguments), {}
+    if len(rest) in (1, 5):
+        options = dictionary(rest.pop())
+    if len(rest) == 4:
+        sx, sy, sw, sh = (integer(value, signed=True) for value in rest)
+        if sw < 0: sx, sw = sx + sw, -sw
+        if sh < 0: sy, sh = sy + sh, -sh
+        if sw == 0 or sh == 0:
+            raise PageRangeError(
+                f"Failed to execute 'createImageBitmap' on '{interface}':"
+                f" The crop rect {'height' if sw else 'width'} is 0.")
+    elif rest:
+        raise _signature_error(interface, 'createImageBitmap')
+    else:
+        sx = sy = 0
+        sw = sh = None
+    bitmap = bitmap_source_image(image)
+    if bitmap is None:
+        raise InvalidStateError(
+            f"Failed to execute 'createImageBitmap' on '{interface}':"
+            " The image source is not usable.")
+    if bitmap.size[0] <= 0 or bitmap.size[1] <= 0:
+        raise InvalidStateError(
+            f"Failed to execute 'createImageBitmap' on '{interface}':"
+            f" The image source's {'width' if bitmap.size[0] <= 0 else 'height'} is 0.")
+    if sw is not None: bitmap = bitmap.crop((sx, sy, sx + sw, sy + sh))
+    size = _resize_size(options, bitmap.size)
+    if size != bitmap.size: bitmap = bitmap.resize(size)
+    result = ImageBitmap(bitmap, bitmap.size[0], bitmap.size[1])
+    realm = getattr(services, "realm_services", None)
+    if realm is None: return result
+    promise, resolve, _reject = realm.make_promise()
+    resolve(result)
+    return promise
+
+
+def _number_text(value):
+    """How Chromium's ``String::Number`` spells a double in its messages."""
+    if math.isnan(value): return "NaN"
+    if math.isinf(value): return "Infinity" if value > 0 else "-Infinity"
+    return f"{value:g}"
+
+
+def _parse_color(value):
+    """The RGBA a canvas colour string parses to (alpha 0..1), or ``None`` when refused."""
+    text = str(value).strip()
+    if not text: return None
+    if text.lower() == "transparent": return (0, 0, 0, 0.0)
+    match = re.fullmatch(r"rgba?\(([^)]*)\)", text, re.I)
+    if match:
+        parts = [part.strip() for part in match.group(1).split(",")]
+        if len(parts) not in (3, 4): return None
+        try:
+            channels = [round(float(part[:-1]) * 2.55) if part.endswith("%") else int(float(part))
+                        for part in parts[:3]]
+            alpha = 1.0 if len(parts) == 3 else (
+                float(parts[3][:-1]) / 100 if parts[3].endswith("%") else float(parts[3]))
+        except ValueError:
+            return None
+        return (*(max(0, min(255, channel)) for channel in channels), max(0.0, min(1.0, alpha)))
+    if re.fullmatch(r"hsla?\([^)]*\)", text, re.I):
+        red, green, blue, alpha = _canvas_color(text)
+        return (red, green, blue, alpha / 255)
+    try:
+        from PIL import ImageColor
+        parts = ImageColor.getrgb(text)
+    except (ImportError, ValueError):
+        return None
+    channels = tuple(parts) + (255,) * (4 - len(parts))
+    return (channels[0], channels[1], channels[2], channels[3] / 255)
+
+
+def _serialize_color(rgba):
+    """Chrome's canvas serialization: opaque as hex, translucent as ``rgba()``."""
+    red, green, blue, alpha = rgba
+    if alpha >= 1: return f"#{red:02x}{green:02x}{blue:02x}"
+    return f"rgba({red}, {green}, {blue}, {_number_text(round(alpha, 3))})"
+
+
+def _quadratic(start, control, end, steps=24):
+    """A quadratic Bézier sampled into points, the start point excluded."""
+    return [((1 - t) ** 2 * start[0] + 2 * (1 - t) * t * control[0] + t * t * end[0],
+             (1 - t) ** 2 * start[1] + 2 * (1 - t) * t * control[1] + t * t * end[1])
+            for t in (index / steps for index in range(1, steps + 1))]
+
+
+def _cubic(start, first, second, end, steps=24):
+    """A cubic Bézier sampled into points, the start point excluded."""
+    return [((1 - t) ** 3 * start[0] + 3 * (1 - t) ** 2 * t * first[0]
+             + 3 * (1 - t) * t * t * second[0] + t ** 3 * end[0],
+             (1 - t) ** 3 * start[1] + 3 * (1 - t) ** 2 * t * first[1]
+             + 3 * (1 - t) * t * t * second[1] + t ** 3 * end[1])
+            for t in (index / steps for index in range(1, steps + 1))]
+
+
+@interface('CanvasGradient', None)
+class CanvasGradient:
+    """What ``createRadialGradient`` and ``createLinearGradient`` hand back."""
+
+    def __init__(self, stops=None, **_):
+        self._stops = list(stops or ())
+
+    def fn_addColorStop(self, offset=MISSING, color=MISSING, *_extra):
+        """Record one stop, or refuse the value the way Chromium's parser does."""
+        from ..page_errors import IndexSizeError, dom_exception
+        for position, value in enumerate((offset, color)):
+            if value is MISSING:
+                raise missing_error('CanvasGradient', 'addColorStop', 2, position, constructor=False)
+        value = float(offset)
+        if not 0.0 <= value <= 1.0:
+            raise IndexSizeError(
+                "Failed to execute 'addColorStop' on 'CanvasGradient':"
+                f" The provided value ({_number_text(value)}) is outside the range (0.0, 1.0).")
+        if not _parses_as_color(color):
+            raise dom_exception(
+                "SyntaxError",
+                "Failed to execute 'addColorStop' on 'CanvasGradient':"
+                f" The value provided ('{color}') could not be parsed as a color.")
+        self._stops.append((value, str(color)))
 
 
 @interface('CanvasRenderingContext2D', None)
@@ -105,6 +391,11 @@ class CanvasRenderingContext2D:
         self._canvas = canvas; self._fill = "#000000"; self._stroke = "#000000"; self._font = "10px sans-serif"
         self._baseline = "alphabetic"
         self._path = []; self._stack = []
+        self._composite = "source-over"; self._filter = "none"
+        self._transform = _IDENTITY
+        self._shadow = "rgba(0, 0, 0, 0)"
+        #: The options ``getContext('2d', ...)`` was given, for ``getContextAttributes``.
+        self._creation = {}
         try:
             from PIL import Image, ImageDraw
             self._image = Image.new("RGBA", (canvas._width, canvas._height), (0, 0, 0, 0))
@@ -156,26 +447,45 @@ class CanvasRenderingContext2D:
                   self._image.crop((left, top, left + width, top + height)).tobytes())
         return ImageData(pixels, width, height)
 
+    def _device(self, x, y):
+        """A user-space point in device space, through the current transform."""
+        a, b, c, d, e, f = self._transform
+        return (a * float(x) + c * float(y) + e, b * float(x) + d * float(y) + f)
+
+    def _rect(self, x, y, w, h):
+        (x0, y0), (x1, y1) = self._device(x, y), self._device(float(x) + float(w), float(y) + float(h))
+        return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+    def _paint_path(self):
+        """Fill every subpath with the current fillStyle.  Windings are not distinguished."""
+        if self._draw is None: return
+        for subpath in self._path:
+            points = [self._device(x, y) for x, y in subpath]
+            if len(points) >= 3: self._draw.polygon(points, fill=_canvas_color(self._fill))
+
     def fn_fillRect(self, x=0, y=0, w=0, h=0, *_):
         if self._draw:
-            self._draw.rectangle((float(x), float(y), float(x)+float(w), float(y)+float(h)), fill=_canvas_color(self._fill))
+            self._draw.rectangle(self._rect(x, y, w, h), fill=_canvas_color(self._fill))
     def fn_clearRect(self, x=0, y=0, w=0, h=0, *_):
-        if self._draw: self._draw.rectangle((float(x), float(y), float(x)+float(w), float(y)+float(h)), fill=(0,0,0,0))
+        if self._draw: self._draw.rectangle(self._rect(x, y, w, h), fill=(0,0,0,0))
     def fn_fillText(self, text='', x=0, y=0, *_):
         if self._draw:
             self._draw.text(
-                (float(x), float(y)), str(text), font=self._font_obj(),
+                self._device(x, y), str(text), font=self._font_obj(),
                 fill=_canvas_color(self._fill), anchor='ls',
             )
     def fn_strokeText(self, text='', x=0, y=0, *_):
         if self._draw:
             self._draw.text(
-                (float(x), float(y)), str(text), font=self._font_obj(),
+                self._device(x, y), str(text), font=self._font_obj(),
                 fill=None, stroke_width=1, stroke_fill=_canvas_color(self._stroke), anchor='ls',
             )
     def fn_beginPath(self, *_): self._path = []
-    def fn_moveTo(self, x=0, y=0, *_): self._path.append([(float(x), float(y))])
+    def fn_moveTo(self, x=0, y=0, *_):
+        if math.isfinite(float(x)) and math.isfinite(float(y)):
+            self._path.append([(float(x), float(y))])
     def fn_lineTo(self, x=0, y=0, *_):
+        if not math.isfinite(float(x)) or not math.isfinite(float(y)): return
         if not self._path: self.fn_moveTo(x, y)
         else: self._path[-1].append((float(x), float(y)))
     def fn_arc(self, x=0, y=0, r=0, start=0, end=0, anticlockwise=False, *_):
@@ -186,23 +496,184 @@ class CanvasRenderingContext2D:
             for i in range(n + 1)
         ]
         self._path.append(pts)
+    def fn_closePath(self, *_):
+        """Close the last subpath; nothing at all when the path is empty."""
+        if not self._path: return
+        points = self._path[-1]
+        if points and points[0] != points[-1]: points.append(points[0])
+    def fn_bezierCurveTo(self, cp1x=0, cp1y=0, cp2x=0, cp2y=0, x=0, y=0, *_):
+        values = (cp1x, cp1y, cp2x, cp2y, x, y)
+        if not all(math.isfinite(float(value)) for value in values): return
+        cp1x, cp1y, cp2x, cp2y, x, y = (float(value) for value in values)
+        if not self._path: self.fn_moveTo(cp1x, cp1y)
+        self._path[-1].extend(_cubic(self._path[-1][-1], (cp1x, cp1y), (cp2x, cp2y), (x, y)))
+    def fn_quadraticCurveTo(self, cpx=0, cpy=0, x=0, y=0, *_):
+        values = (cpx, cpy, x, y)
+        if not all(math.isfinite(float(value)) for value in values): return
+        cpx, cpy, x, y = (float(value) for value in values)
+        if not self._path: self.fn_moveTo(cpx, cpy)
+        self._path[-1].extend(_quadratic(self._path[-1][-1], (cpx, cpy), (x, y)))
+    def fn_ellipse(self, x=0, y=0, rx=0, ry=0, rotation=0, start=0, end=0,
+                   anticlockwise=False, *_):
+        """An ellipse arc; non-finite values are ignored, a negative radius is refused."""
+        from ..page_errors import IndexSizeError
+        values = (x, y, rx, ry, rotation, start, end)
+        if not all(math.isfinite(float(value)) for value in values): return
+        x, y, rx, ry, rotation, start, end = (float(value) for value in values)
+        for radius, axis in ((rx, "major"), (ry, "minor")):
+            if radius < 0:
+                raise IndexSizeError(
+                    f"Failed to execute 'ellipse' on '{type(self).__name__}':"
+                    f" The {axis}-axis radius provided ({_number_text(radius)}) is negative.")
+        sweep = end - start
+        if anticlockwise:
+            while sweep > 0: sweep -= 2 * math.pi
+        else:
+            while sweep < 0: sweep += 2 * math.pi
+
+        def point(angle):
+            cosine, sine = math.cos(angle), math.sin(angle)
+            return (x + rx * cosine * math.cos(rotation) - ry * sine * math.sin(rotation),
+                    y + rx * cosine * math.sin(rotation) + ry * sine * math.cos(rotation))
+
+        if not self._path: self.fn_moveTo(*point(start))
+        steps = max(8, int(abs(sweep) * 24))
+        self._path[-1].extend(point(start + sweep * index / steps) for index in range(1, steps + 1))
+    def get_shadowColor(self): return self._shadow
+    def set_shadowColor(self, value):
+        """A colour the parser refuses is ignored, leaving the state as it was."""
+        color = _parse_color(value)
+        if color is not None: self._shadow = _serialize_color(color)
+    def fn_fill(self, *args):
+        """Fill the current path; a path argument draws nothing here, as a stub one would."""
+        interface = type(self).__name__
+        rule = "nonzero"
+        if args:
+            first = args[0]
+            if isinstance(first, str):
+                rule = first
+            elif isinstance(first, (int, float)) and not isinstance(first, bool):
+                raise _signature_error(interface, 'fill')
+            elif len(args) > 1 and isinstance(args[1], str):
+                rule = args[1]
+        if rule not in ("nonzero", "evenodd"):
+            raise _enum_error(interface, 'fill', rule, "CanvasFillRule")
+        self._paint_path()
     def fn_stroke(self, *_):
         if self._draw:
-            for p in self._path:
-                if len(p) > 1: self._draw.line(p, fill=_canvas_color(self._stroke), width=1)
+            for subpath in self._path:
+                points = [self._device(x, y) for x, y in subpath]
+                if len(points) > 1: self._draw.line(points, fill=_canvas_color(self._stroke), width=1)
     def fn_strokeRect(self, x=0, y=0, w=0, h=0, *_):
         if self._draw:
-            self._draw.rectangle(
-                (float(x), float(y), float(x) + float(w), float(y) + float(h)),
-                outline=_canvas_color(self._stroke), width=1,
-            )
+            self._draw.rectangle(self._rect(x, y, w, h),
+                                 outline=_canvas_color(self._stroke), width=1)
+    def fn_scale(self, x=MISSING, y=MISSING, *_extra):
+        """Multiply the transform; a non-finite factor is ignored, as Chromium ignores it."""
+        interface = type(self).__name__
+        for position, value in enumerate((x, y)):
+            if value is MISSING:
+                raise missing_error(interface, 'scale', 2, position, constructor=False)
+        sx, sy = float(x), float(y)
+        if not (math.isfinite(sx) and math.isfinite(sy)): return
+        a, b, c, d, e, f = self._transform
+        self._transform = (a * sx, b * sx, c * sy, d * sy, e, f)
+    def fn_createRadialGradient(self, x0=MISSING, y0=MISSING, r0=MISSING, x1=MISSING, y1=MISSING,
+                                r1=MISSING, *_extra):
+        """A radial gradient, or ``null`` for the values Blink answers that way."""
+        from ..page_errors import IndexSizeError
+        interface = type(self).__name__
+        values = (x0, y0, r0, x1, y1, r1)
+        for position, value in enumerate(values):
+            if value is MISSING:
+                raise missing_error(interface, 'createRadialGradient', 6, position, constructor=False)
+        x0, y0, r0, x1, y1, r1 = (float(value) for value in values)
+        for name, radius in (("r0", r0), ("r1", r1)):
+            if radius < 0:
+                raise IndexSizeError(
+                    f"Failed to execute 'createRadialGradient' on '{interface}':"
+                    f" The {name} provided is less than 0.")
+        if not all(math.isfinite(value) for value in (x0, y0, r0, x1, y1, r1)):
+            return pyv8.Null
+        return CanvasGradient()
+    def fn_drawImage(self, *args):
+        """Draw a source onto this surface, with Blink's overloads and its silences."""
+        from ..page_errors import InvalidStateError
+        interface = type(self).__name__
+        if not args:
+            raise missing_error(interface, 'drawImage', 3, 0, constructor=False)
+        source, rest = args[0], args[1:]
+        if len(rest) == 2:
+            sx, sy, sw, sh = 0.0, 0.0, MISSING, MISSING
+            dx, dy, dw, dh = float(rest[0]), float(rest[1]), MISSING, MISSING
+        elif len(rest) == 4:
+            dx, dy, dw, dh = (float(value) for value in rest)
+            sx, sy, sw, sh = 0.0, 0.0, MISSING, MISSING
+        elif len(rest) == 8:
+            sx, sy, sw, sh, dx, dy, dw, dh = (float(value) for value in rest)
+        else:
+            raise _signature_error(interface, 'drawImage')
+        if not _is_canvas_image_source(source):
+            raise IdlArgumentError(
+                f"Failed to execute 'drawImage' on '{interface}':"
+                f" The provided value is not of type '({_CANVAS_IMAGE_SOURCE})'.")
+        numbers = [sx, sy, dx, dy] + [value for value in (sw, sh, dw, dh) if value is not MISSING]
+        if not all(math.isfinite(value) for value in numbers): return
+        if int(getattr(source, '_width', 1)) <= 0 or int(getattr(source, '_height', 1)) <= 0:
+            raise InvalidStateError(
+                f"Failed to execute 'drawImage' on '{interface}':"
+                " The image argument is a canvas element with a width or height of 0.")
+        image = bitmap_source_image(source)
+        if image is None or self._draw is None or self._image is None: return
+        # A negative source side is read as a rectangle drawn the other way round.
+        if sw is not MISSING:
+            if sw < 0: sx, sw = sx + sw, -sw
+            if sh < 0: sy, sh = sy + sh, -sh
+            if sw == 0 or sh == 0: return
+        width = dw if dw is not MISSING else (sw if sw is not MISSING else int(source._width))
+        height = dh if dh is not MISSING else (sh if sh is not MISSING else int(source._height))
+        if width == 0 or height == 0: return
+        (x0, y0), (x1, y1) = self._device(dx, dy), self._device(dx + width, dy + height)
+        box = (round(min(x0, x1)), round(min(y0, y1)), round(max(x0, x1)), round(max(y0, y1)))
+        piece = image if sw is MISSING else image.crop(
+            (round(sx), round(sy), round(sx + sw), round(sy + sh)))
+        size = (max(1, box[2] - box[0]), max(1, box[3] - box[1]))
+        if piece.size != size: piece = piece.resize(size)
+        self._image.paste(piece, (box[0], box[1]))
+    def fn_getContextAttributes(self, *_):
+        """The settings ``getContext`` was given, under the dictionary's own defaults."""
+        return {
+            "alpha": bool(self._creation.get("alpha", True)),
+            "desynchronized": bool(self._creation.get("desynchronized", False)),
+            "colorSpace": str(self._creation.get("colorSpace", "srgb")),
+            "toneMapping": {},
+            "willReadFrequently": bool(self._creation.get("willReadFrequently", False)),
+        }
+    def get_globalCompositeOperation(self): return self._composite
+    def set_globalCompositeOperation(self, value):
+        """A name outside the two lists is ignored, leaving the state as it was."""
+        text = str(dom_string(value))
+        if text in _COMPOSITE_OPERATIONS or text in _BLEND_OPERATIONS:
+            self._composite = text
+    def get_filter(self): return self._filter
+    def set_filter(self, value):
+        """A value CSS would not parse is ignored; an object is kept as Chromium keeps it."""
+        if is_nullish(value): return
+        if not isinstance(value, str):
+            self._filter = value
+        elif _parses_as_filter(str(value)):
+            self._filter = str(value)
     def fn_measureText(self, text='', *_):
         width = (self._draw.textlength(str(text), font=self._font_obj())
                  if self._draw else len(str(text)) * 10)
         return TextMetrics(width)
-    def fn_save(self, *_): self._stack.append((self._fill, self._stroke, self._font, self._baseline))
+    def fn_save(self, *_):
+        self._stack.append((self._fill, self._stroke, self._font, self._baseline,
+                            self._composite, self._filter, self._transform, self._shadow))
     def fn_restore(self, *_):
-        if self._stack: self._fill, self._stroke, self._font, self._baseline = self._stack.pop()
+        if self._stack:
+            (self._fill, self._stroke, self._font, self._baseline,
+             self._composite, self._filter, self._transform, self._shadow) = self._stack.pop()
 
 
 @interface('HTMLCanvasElement', 'HTMLElement')
@@ -217,14 +688,17 @@ class HTMLCanvasElement(HTMLElement):
     def get_height(self): return self._height
     def set_height(self, v):
         self._height=max(0, int(float(v))); self.attributes['height']=str(self._height); self._resize()
-    def fn_getContext(self, kind='', *_):
+    def fn_getContext(self, kind='', options=None, *_):
         requested = _requested_context(kind)
         if requested is None: return pyv8.Null
         # The first context a canvas answers for fixes its type, as it does in Chrome.
         if self._context_kind not in (None, requested): return pyv8.Null
         self._context_kind = requested
         if requested == '2d':
-            if self._context2d is None: self._context2d=CanvasRenderingContext2D(self)
+            if self._context2d is None:
+                settings = _creation_settings(type(self).__name__, options)
+                self._context2d=CanvasRenderingContext2D(self)
+                self._context2d._creation = settings
             return self._context2d
         if requested == 'webgl2':
             if self._webgl2 is None: self._webgl2=WebGL2RenderingContext(self)
@@ -289,7 +763,10 @@ class OffscreenCanvas(EventTarget):
         if self._context_kind not in (None, requested): return pyv8.Null
         self._context_kind = requested
         if requested == '2d':
-            if self._context2d is None: self._context2d = OffscreenCanvasRenderingContext2D(self)
+            if self._context2d is None:
+                settings = _creation_settings(type(self).__name__, options)
+                self._context2d = OffscreenCanvasRenderingContext2D(self)
+                self._context2d._creation = settings
             return self._context2d
         if requested == 'webgl2':
             if self._webgl2 is None: self._webgl2 = WebGL2RenderingContext(self)

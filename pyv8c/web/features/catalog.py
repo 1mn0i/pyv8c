@@ -71,7 +71,7 @@ CORE_INTERFACES = (
     "MutationObserver", "MutationRecord", "CustomElementRegistry", "VisualViewport",
     "External", "StyleMedia", "CrashReportContext", "LaunchQueue", "SpeechSynthesis",
     "SpeechSynthesisVoice",
-    "Scheduler", "Scheduling", "Viewport", "ImageData", "Navigation", "NavigationActivation",
+    "Scheduler", "Scheduling", "Viewport", "ImageData", "CanvasGradient", "ImageBitmap", "Summarizer", "Navigation", "NavigationActivation",
     "UserActivation", "DevicePosture", "ProtectedAudience", "Presentation", "VirtualKeyboard",
     "WindowControlsOverlay",
     "USB", "HID", "XRSystem", "Clipboard", "Keyboard", "KeyboardLayoutMap", "StorageBucket",

@@ -674,6 +674,9 @@ class HTMLElement(Element):
     def _set_bool(self, name, value):
         if boolean(value): self.attributes[name] = ""
         else: self.attributes.pop(name, None)
+    def set_style(self, value):
+        """``style`` is ``[PutForwards=cssText]``: an assignment lands on the declaration."""
+        self.get_style().set_cssText(dom_string(value))
     def get_style(self):
         value = getattr(self, "_style_declaration", None)
         if value is None:

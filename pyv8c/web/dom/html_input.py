@@ -15,10 +15,16 @@ from ...foundation.arguments import (
     is_nullish,
     missing_error,
 )
-from ..page_errors import InvalidStateError, NotSupportedError, PageTypeError
+from ..page_errors import IndexSizeError, InvalidStateError, NotSupportedError, PageTypeError
 from .collections import HTMLCollection, HTMLOptionsCollection, NodeList
 from .html_elements import Element, HTMLElement, _attribute, _set_url_value, _url_attr, _url_value
 from .mixins import ReadOnlyIndexedPropertyMixin
+
+
+def _signed_long(value):
+    """An IDL ``long`` argument: the value wraps into 32 signed bits."""
+    number = int(float(value)) & 0xFFFFFFFF
+    return number - 0x100000000 if number >= 0x80000000 else number
 
 
 @interface('HTMLTextAreaElement', 'HTMLElement')
@@ -42,6 +48,22 @@ class HTMLTextAreaElement(HTMLElement):
         return pyv8.Null
     def get_defaultValue(self): return str(self.get_textContent())
     def set_defaultValue(self, value): self.set_textContent(str(dom_string(value)))
+    def get_maxLength(self):
+        """``-1`` for an attribute that is missing, unparseable or negative."""
+        try:
+            number = int(str(self.attributes.get("maxlength")))
+        except (TypeError, ValueError):
+            return -1
+        return number if number >= 0 else -1
+    def set_maxLength(self, value):
+        number = _signed_long(value)
+        if number < 0:
+            raise IndexSizeError(
+                f"Failed to set the 'maxLength' property on '{type(self).__name__}':"
+                f" The provided value ({number}) is not positive or 0.")
+        self.attributes["maxlength"] = str(number)
+    def get_dirName(self): return self._attr("dirname")
+    def set_dirName(self, value): self._set_string("dirname", value)
 
 
 @interface('HTMLOptionElement', 'HTMLElement')
@@ -74,6 +96,10 @@ class HTMLOptionElement(HTMLElement):
         return select._selects_first_option(self) if select is not None else False
     def set_selected(self, value):
         self._selected_state = boolean(value)
+    def get_defaultSelected(self): return "selected" in self.attributes
+    def set_defaultSelected(self, value):
+        if boolean(value): self.attributes["selected"] = ""
+        else: self.attributes.pop("selected", None)
     def _own_text(self):
         """The option's own text: its text content with whitespace collapsed."""
         return " ".join(str(self.get_textContent() or "").split())

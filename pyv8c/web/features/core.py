@@ -26,6 +26,7 @@ from ..bom import (
     window,
 )
 from ..dom import (
+    ai,
     animation,
     character_data,
     collections,
@@ -113,6 +114,7 @@ FEATURE = FeatureImplementation(
         performance.PerformanceTiming, performance.PerformanceNavigation,
         screen.ScreenOrientation,
         html_canvas.HTMLCanvasElement, html_canvas.CanvasRenderingContext2D, html_canvas.ImageData,
+        html_canvas.CanvasGradient, html_canvas.ImageBitmap, ai.Summarizer,
         html_canvas.OffscreenCanvas, html_canvas.OffscreenCanvasRenderingContext2D,
         html_canvas.TextMetrics,
         webgl.WebGLObject, webgl.WebGLBuffer, webgl.WebGLFramebuffer, webgl.WebGLProgram,

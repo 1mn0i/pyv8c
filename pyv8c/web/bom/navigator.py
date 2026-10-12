@@ -997,6 +997,14 @@ class Navigator:
     def get_languages(self): return list(self._environment.languages)
     def get_onLine(self): return self._environment.on_line
     def get_hardwareConcurrency(self): return self._environment.hardware_concurrency
+    def get_cpuPerformance(self):
+        """Chromium's platform tier: 1 low, 2 mid, 3 high, 4 ultra, 0 unknown."""
+        cores = self._environment.hardware_concurrency or 0
+        if not cores: return 0
+        return 1 if cores <= 2 else 2 if cores <= 4 else 3 if cores <= 8 else 4
+    def fn_getGamepads(self, *_extra):
+        """Four slots, all null until a device connects."""
+        return [pyv8.Null] * 4
     def get_deviceMemory(self): return self._environment.device_memory
     def get_maxTouchPoints(self): return self._environment.max_touch_points
     def get_vendor(self): return self._environment.vendor

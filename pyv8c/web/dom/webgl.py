@@ -999,6 +999,24 @@ class WebGL2RenderingContext(WebGLRenderingContext):
     def _extensions(self):
         return _WEBGL2_EXTENSION_MAP
 
+    #: The internal formats WebGL 2 takes for a renderbuffer.
+    _RENDERBUFFER_FORMATS = (
+        "RGBA8", "RGBA4", "RGB5_A1", "RGB565", "DEPTH_COMPONENT16", "DEPTH_COMPONENT24",
+        "DEPTH24_STENCIL8", "STENCIL_INDEX8", "SRGB8_ALPHA8", "R8", "RG8", "RGB8", "R16F",
+        "RG16F", "RGB16F", "RGBA16F", "RGBA32F", "R11F_G11F_B10F",
+    )
+
+    def fn_getInternalformatParameter(self, target=MISSING, internalformat=MISSING, pname=MISSING,
+                                      *arguments):
+        """A format's sample counts, as an ``Int32Array``; a bad argument sets INVALID_ENUM."""
+        self._require('getInternalformatParameter', 3, target, internalformat, pname)
+        allowed = {getattr(self, name) for name in self._RENDERBUFFER_FORMATS}
+        if target != self.RENDERBUFFER or internalformat not in allowed or pname != self.SAMPLES:
+            self._error = self.INVALID_ENUM
+            return pyv8.Null
+        # 4 is the count Chrome reports for these formats on ordinary hardware.
+        return _typed(pyv8.ArrayType.Int32Array, (4,))
+
     def fn_createVertexArray(self, *_):
         return self._remember(WebGLVertexArrayObject(context=self))
 
@@ -1052,5 +1070,10 @@ for _name, _value in (
     ("VERTEX_SHADER", 35633), ("FRAGMENT_SHADER", 35632), ("LOW_FLOAT", 36336),
     ("MEDIUM_FLOAT", 36337), ("HIGH_FLOAT", 36338), ("LOW_INT", 36339), ("MEDIUM_INT", 36340),
     ("HIGH_INT", 36341),
+    ("RENDERBUFFER", 36161), ("RGBA8", 32856), ("RGBA4", 32854), ("RGB5_A1", 32855),
+    ("RGB565", 36194), ("DEPTH_COMPONENT16", 33189), ("DEPTH_COMPONENT24", 33190),
+    ("DEPTH24_STENCIL8", 35056), ("STENCIL_INDEX8", 36168), ("SRGB8_ALPHA8", 35907),
+    ("R8", 33321), ("RG8", 33323), ("RGB8", 32849), ("R16F", 33325), ("RG16F", 33327),
+    ("RGB16F", 34843), ("RGBA16F", 34842), ("RGBA32F", 34836), ("R11F_G11F_B10F", 35898),
 ):
     setattr(WebGLRenderingContext, _name, _value)

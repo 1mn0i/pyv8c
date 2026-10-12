@@ -574,6 +574,17 @@ class ShadowRoot(DocumentFragment):
         self._mode, self._host = mode, host
 
     def get_mode(self): return self._mode
+    def get_activeElement(self):
+        """The element focused inside this tree, or null: no body fallback for a shadow root."""
+        document = getattr(getattr(self._services, "document_services", None), "document", None)
+        if document is None: return pyv8.Null
+        from .focus import active_element
+        focused = active_element(document)
+        node = focused
+        while node is not None:
+            if node is self: return focused
+            node = getattr(node, "parentNode", None)
+        return pyv8.Null
     def get_host(self): return pyv8.Null if self._host is None else self._host
     def get_innerHTML(self): return "".join(child.outer_html() for child in self._children)
     def set_innerHTML(self, value):

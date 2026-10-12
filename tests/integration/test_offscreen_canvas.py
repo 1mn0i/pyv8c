@@ -1,5 +1,6 @@
 """``OffscreenCanvas`` hands out a working 2D surface with no element behind it."""
 import pytest
+from loguru import logger
 
 from pyv8c import Browser
 
@@ -29,3 +30,82 @@ def test_an_offscreen_canvas_draws_and_reports_its_pixels():
 
     assert value == [2, 8, 6, "OffscreenCanvas", True, True, True, True, "function",
                      "function", "object", [255, 0, 0, 255]]
+
+
+def test_the_eight_members_the_log_reported_answer_like_chromium():
+    """The members the case run reported as 待实现, with Chromium's values and refusals."""
+    browser = Browser(stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://repro.test/index.html")
+        page.run_until_idle(timeout=2)
+        value = page.evaluate("""(() => {
+            const context = new OffscreenCanvas(8, 8).getContext('2d', {alpha: false});
+            const attempt = (action) => {
+                try { return 'ok:' + String(action()); }
+                catch (error) { return error.name + ': ' + error.message; }
+            };
+            return [
+                Object.keys(context.getContextAttributes()),
+                context.getContextAttributes().alpha, context.getContextAttributes().colorSpace,
+                context.globalCompositeOperation, context.filter,
+                attempt(() => context.fill('bogus')),
+                attempt(() => { context.fill(); return 'filled'; }),
+                attempt(() => { context.closePath(); return 'closed'; }),
+                attempt(() => { context.scale(Infinity, 1); return 'scaled'; }),
+                attempt(() => context.createRadialGradient(0, 0, -1, 1, 1, 2)),
+                attempt(() => String(context.createRadialGradient(0, 0, 0, NaN, 1, 2))),
+                attempt(() => context.createRadialGradient(1, 1, 2, 1, 1, 2).constructor.name),
+                attempt(() => context.drawImage()),
+                attempt(() => { context.drawImage(new OffscreenCanvas(2, 2), 0, 0); return 'drawn'; }),
+                attempt(() => context.drawImage({}, 0, 0)),
+                attempt(() => { context.scale(2, 2); context.fillRect(0, 0, 1, 1); return 'scaled'; }),
+            ];
+        })()""")
+    finally:
+        browser.close()
+
+    assert value == [
+        ["alpha", "desynchronized", "colorSpace", "toneMapping", "willReadFrequently"],
+        False, "srgb", "source-over", "none",
+        "TypeError: Failed to execute 'fill' on 'OffscreenCanvasRenderingContext2D':"
+        " The provided value 'bogus' is not a valid enum value of type CanvasFillRule.",
+        "ok:filled", "ok:closed", "ok:scaled",
+        "IndexSizeError: Failed to execute 'createRadialGradient' on"
+        " 'OffscreenCanvasRenderingContext2D': The r0 provided is less than 0.",
+        "ok:null", "ok:CanvasGradient",
+        "TypeError: Failed to execute 'drawImage' on 'OffscreenCanvasRenderingContext2D':"
+        " 3 arguments required, but only 0 present.",
+        "ok:drawn",
+        "TypeError: Failed to execute 'drawImage' on 'OffscreenCanvasRenderingContext2D':"
+        " The provided value is not of type '(CSSImageValue or HTMLImageElement or"
+        " SVGImageElement or HTMLVideoElement or HTMLCanvasElement or ImageBitmap or"
+        " OffscreenCanvas or VideoFrame)'.",
+        "ok:scaled",
+    ]
+
+
+def test_no_offscreen_2d_member_reports_itself_as_unimplemented():
+    """Driving every member the log reported leaves the stub reporter silent."""
+    messages = []
+    token = logger.add(lambda message: messages.append(str(message)), format="{message}")
+    try:
+        browser = Browser(stub_logging="on")
+        try:
+            page = browser.new_context().new_page()
+            page.set_content("<body></body>", url="https://repro.test/index.html")
+            page.evaluate("""(() => {
+                const context = new OffscreenCanvas(4, 4).getContext('2d');
+                context.fill(); context.fill('evenodd'); context.closePath(); context.scale(1, 1);
+                context.getContextAttributes();
+                context.createRadialGradient(0, 0, 1, 2, 2, 3).addColorStop(0.5, 'rgba(1,2,3,0.5)');
+                context.drawImage(new OffscreenCanvas(2, 2), 0, 0, 1, 1);
+                context.globalCompositeOperation = 'multiply';
+                context.filter = 'blur(2px)';
+            })()""")
+        finally:
+            browser.close()
+    finally:
+        logger.remove(token)
+    assert [message for message in messages
+            if "OffscreenCanvasRenderingContext2D" in message and "待实现" in message] == []
