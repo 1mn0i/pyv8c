@@ -110,6 +110,20 @@ class _PerformanceCapability:
             self._listeners.append(listener)
 
 
+def parse_json_in(context, window, text):
+    """V8's own ``JSON.parse``: the parse stays in the isolate, so ``null`` arrives as ``null``.
+
+    A Python parse hands every value back across the boundary, where the conversion
+    spells Python ``None`` as ``undefined`` -- a property holding ``null`` would come
+    back missing -- and the failure would be the host parser's wording, not V8's.
+    """
+    if context is None or window is None:
+        import json
+        return json.loads(text)
+    json_object = context.js_obj(window)["JSON"]
+    return json_object["parse"]._invoke(json_object, text)
+
+
 class _RealmCapability(_TaskSource):
     """Realm identity, scripting and task posting (implements RealmServices)."""
 
@@ -151,6 +165,9 @@ class _RealmCapability(_TaskSource):
 
     def promise_resolve(self, value):
         return self._owner._scripts.promise_resolve(value)
+
+    def parse_json(self, text):
+        return parse_json_in(self.context, self._owner.window, text)
 
     def report_exception(self, exc):
         """Report an uncaught exception through this realm's error reporting.
@@ -295,6 +312,9 @@ class _WorkerRealmCapability(_TaskSource):
 
     def promise_resolve(self, value):
         return self._runtime.promise_resolve(value)
+
+    def parse_json(self, text):
+        return parse_json_in(self.context, getattr(self._runtime, "window", None), text)
 
     def report_exception(self, exc):
         """Route a listener exception to the worker's error reporting.

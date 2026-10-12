@@ -60,9 +60,11 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         if self._response is None:
             return "" if self.response_type in ("", "text") else pyv8.Null
         if self.response_type == "json":
-            try:
+            if not self._services:
                 return json.loads(self.responseText)
-            except ValueError:
+            try:
+                return self._services.realm_services.parse_json(self.responseText)
+            except (ValueError, pyv8.JSException):
                 return pyv8.Null
         if self.response_type in ("", "text"):
             return self.responseText

@@ -91,21 +91,13 @@ class Response:
             reject(js_error_value(exc))
         return promise
     def fn_json(self, *_extra):
+        """The body parsed inside the realm: one parse, and no value crosses to Python."""
         if not self._services:
             return json.loads(self._body_value())
         promise, resolve, reject = self._services.realm_services.make_promise()
         try:
-            text = self._body_value()
-            try:
-                value = json.loads(text)
-            except ValueError as exc:
-                #: The page hears the shape a browser reports, not the parser's own
-                #: wording: what went wrong where, in the terms Chrome uses.
-                raise PageSyntaxError(
-                    f"Unexpected token in JSON at position {getattr(exc, 'pos', 0)}"
-                ) from exc
-            resolve(value)
-        except (PageTypeError, PageSyntaxError, pyv8.JSException, UnicodeError, IdlArgumentError) as exc:
+            resolve(self._services.realm_services.parse_json(self._body_value()))
+        except (PageTypeError, pyv8.JSException, UnicodeError, IdlArgumentError) as exc:
             reject(js_error_value(exc))
         return promise
     def fn_arrayBuffer(self, *_extra):
