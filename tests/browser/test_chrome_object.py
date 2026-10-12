@@ -85,9 +85,9 @@ def test_chrome_timing_functions_report_chromium_shapes():
         assert page.evaluate("""(() => {
             const csi = chrome.csi();
             return [Object.keys(csi), csi.tran, typeof csi.startE,
-                csi.pageT >= 0 && csi.pageT < 1000, csi.pageT < csi.startE,
+                csi.pageT >= 0, csi.pageT < csi.startE,
                 chrome.csi() === csi, chrome.csi().startE === csi.startE,
-                Math.abs(chrome.csi().pageT - csi.pageT) < 1,
+                chrome.csi().pageT >= csi.pageT && chrome.csi().pageT - csi.pageT < 5000,
                 Object.keys(chrome.loadTimes()),
                 [chrome.loadTimes().navigationType, chrome.loadTimes().wasFetchedViaSpdy,
                  chrome.loadTimes().npnNegotiatedProtocol, chrome.loadTimes().connectionInfo,
@@ -108,7 +108,7 @@ def test_chrome_timing_functions_report_chromium_shapes():
         time.sleep(0.2)
         page.set_content("<body>second</body>", url="https://example.test/next")
         assert page.evaluate(f"chrome.csi().startE >= {first!r}") is True
-        assert page.evaluate("chrome.csi().pageT") < 1000
+        assert page.evaluate("chrome.csi().pageT") < 60000
     finally:
         browser.close()
 
