@@ -84,16 +84,18 @@ def test_chrome_timing_functions_report_chromium_shapes():
         page = _page(browser)
         assert page.evaluate("""(() => {
             const csi = chrome.csi();
-            return [Object.keys(csi), csi.tran, typeof csi.startE, csi.pageT >= csi.startE,
+            return [Object.keys(csi), csi.tran, typeof csi.startE,
+                csi.pageT >= 0 && csi.pageT < 1000, csi.pageT < csi.startE,
                 chrome.csi() === csi, chrome.csi().startE === csi.startE,
-                chrome.csi().pageT === csi.pageT,
+                Math.abs(chrome.csi().pageT - csi.pageT) < 1,
                 Object.keys(chrome.loadTimes()),
                 [chrome.loadTimes().navigationType, chrome.loadTimes().wasFetchedViaSpdy,
                  chrome.loadTimes().npnNegotiatedProtocol, chrome.loadTimes().connectionInfo,
                  chrome.loadTimes().wasAlternateProtocolAvailable,
                  chrome.loadTimes().firstPaintAfterLoadTime]];
         })()""") == [
-            ["startE", "onloadT", "pageT", "tran"], 15, "number", True, False, True, False,
+            # pageT is a duration, as Chromium's ``now - start`` is.
+            ["startE", "onloadT", "pageT", "tran"], 15, "number", True, True, False, True, True,
             ["requestTime", "startLoadTime", "commitLoadTime", "finishDocumentLoadTime",
              "finishLoadTime", "firstPaintTime", "firstPaintAfterLoadTime", "navigationType",
              "wasFetchedViaSpdy", "wasNpnNegotiated", "npnNegotiatedProtocol",
@@ -106,7 +108,7 @@ def test_chrome_timing_functions_report_chromium_shapes():
         time.sleep(0.2)
         page.set_content("<body>second</body>", url="https://example.test/next")
         assert page.evaluate(f"chrome.csi().startE >= {first!r}") is True
-        assert page.evaluate("chrome.csi().pageT - chrome.csi().startE") < 100
+        assert page.evaluate("chrome.csi().pageT") < 1000
     finally:
         browser.close()
 
@@ -196,5 +198,80 @@ def test_worker_globals_have_no_chrome_object():
         })()""")
         page.run_until_idle(timeout=5)
         assert page.evaluate("__workerChrome") == "undefined"
+    finally:
+        browser.close()
+
+
+def test_timing_fields_are_accessors_with_an_empty_setter():
+    """A write is accepted and ignored, as ``SetNativeDataProperty(..., EmptySetter, value)``."""
+    browser = Browser(stub_logging="off")
+    try:
+        page = _page(browser)
+        assert page.evaluate("""(() => {
+            const fields = chrome.loadTimes();
+            const field = Object.getOwnPropertyDescriptor(fields, 'requestTime');
+            const before = fields.requestTime;
+            let write = 'accepted';
+            try { fields.requestTime = 12345; } catch (error) { write = 'threw ' + error.name; }
+            const csi = Object.getOwnPropertyDescriptor(chrome.csi(), 'pageT');
+            return [typeof field.get, typeof field.set, field.enumerable,
+                    field.configurable, write, fields.requestTime === before,
+                    typeof csi.get, typeof csi.set];
+        })()""") == ["function", "function", True, True, "accepted", True, "function", "function"]
+    finally:
+        browser.close()
+
+
+def test_the_timings_are_the_ones_performance_reports():
+    """Chromium reads all three from the browser's performance metrics, not by measuring again."""
+    browser = Browser(stub_logging="off")
+    try:
+        page = _page(browser)
+        page.run_until_idle(timeout=2)
+        assert page.evaluate("""(() => {
+            const timing = performance.timing;
+            const load = chrome.loadTimes();
+            const csi = chrome.csi();
+            return [load.requestTime === timing.navigationStart,
+                    load.finishDocumentLoadTime === timing.domContentLoadedEventEnd,
+                    load.finishLoadTime === timing.loadEventEnd,
+                    csi.onloadT === timing.domContentLoadedEventEnd,
+                    csi.startE === performance.timeOrigin,
+                    timing.domContentLoadedEventEnd > 0, timing.loadEventEnd > 0];
+        })()""") == [True, True, True, True, True, True, True]
+    finally:
+        browser.close()
+
+
+def test_chrome_app_is_installed_lazily():
+    """A lazy accessor, as ``SetLazyDataProperty`` leaves it: the first read replaces it."""
+    browser = Browser(stub_logging="off")
+    try:
+        page = _page(browser)
+        assert page.evaluate("""(() => {
+            const before = Object.getOwnPropertyDescriptor(chrome, 'app');
+            const app = chrome.app;
+            const after = Object.getOwnPropertyDescriptor(chrome, 'app');
+            return [typeof before.get, 'value' in before, 'value' in after,
+                    after.value === app, typeof app.getDetails];
+        })()""") == ["function", False, True, True, "function"]
+    finally:
+        browser.close()
+
+
+def test_an_existing_chrome_object_is_reused():
+    """The object is created once, so what a realm already carries survives a second install
+    (run on the page's owner thread, where such a layer sits)."""
+    from pyv8c.web.bom.chrome import install_window_chrome
+
+    browser = Browser(stub_logging="off")
+    try:
+        page = _page(browser)
+        page.evaluate("window.chrome.__marker = 7")
+        page.realm.executor.call(
+            lambda: install_window_chrome(page.context, page.services))
+        assert page.evaluate(
+            "[window.chrome.__marker, typeof chrome.csi, chrome.app.isInstalled]"
+        ) == [7, "function", False]
     finally:
         browser.close()

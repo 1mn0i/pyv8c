@@ -50,19 +50,33 @@ class PerformanceTiming:
         self._clock = clock_of(self._services)
 
 
-def _navigation_record(services):
-    """The record this document's navigation was measured into, if there is one."""
+def timeline_of(services):
+    """The realm's timeline, or ``None`` when these services own no realm."""
     realm = getattr(services, "realm_services", services)
-    timeline = getattr(realm, "performance", None)
+    return getattr(realm, "performance", None)
+
+
+def navigation_record(services):
+    """The record this document's navigation was measured into, if there is one.
+
+    Shared: the timings below and ``window.chrome`` read the same numbers, as they do in
+    Chromium.
+    """
+    timeline = timeline_of(services)
     return None if timeline is None else timeline.navigation()
 
 
 def _timing_reader(field):
     def read(self):
+        #: Legacy ``PerformanceTiming`` reports epoch milliseconds; the record keeps
+        #: offsets from the origin.  A field it lacks was never reached and reads 0 --
+        #: asked by membership, since a milestone reached at offset 0 is still reached.
         if field == "navigationStart":
             return self._clock.time_origin()
-        record = _navigation_record(self._services)
-        return float(record.get(field, 0)) if record is not None else 0
+        record = navigation_record(self._services)
+        if record is None or field not in record:
+            return 0.0
+        return self._clock.time_origin() + float(record[field])
     return read
 
 for _field in _TIMING_FIELDS:
@@ -83,7 +97,7 @@ class PerformanceNavigation:
     def get_type(self): return self.TYPE_NAVIGATE
 
     def get_redirectCount(self):
-        record = _navigation_record(self._services)
+        record = navigation_record(self._services)
         return int(record.get("redirectCount", 0)) if record is not None else 0
 
 
