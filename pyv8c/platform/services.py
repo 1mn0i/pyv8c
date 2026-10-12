@@ -666,5 +666,11 @@ class PageServices:
         realm = self._page_realm
         return None if realm is None else realm.page
 
+    @property
+    def global_proxy(self):
+        """The window object this realm hands out, the same one across navigations."""
+        page = self._realm_page()
+        return None if page is None else page.global_proxy
+
 
 __all__ = ["PageServices", "WorkerContext", "WorkerRealmServices"]

@@ -93,6 +93,10 @@ class Page:
         #: The frame tree's isolate, owned by the page that started the tree and shared by
         #: its frames; ``None`` means the process default (see :meth:`realm_isolate`).
         self.isolate = None
+        #: The window object of this browsing context, the same one across navigations.
+        self.global_proxy = None
+        #: Realms earlier documents ran in, kept open for the references a page holds.
+        self._retired_realms = []
         self.origin = tuple(origin) if origin is not None else origin_tuple(
             url, inherited=getattr(parent, "origin", None)
         )
@@ -320,12 +324,10 @@ class Page:
         self.context = self.realm.context
         Window._bind_context(self.context, window)
         Window._unbind_context(previous_realm.context)
-        # This command runs on the page's one owner thread, so the previous
-        # realm's document-scoped parts close inline; the thread itself stays.
-        try:
-            previous_realm.close_context()
-        except BaseException as error:
-            self.report_exception(error)
+        #: Kept for the references a page holds; retired with the page (``_close_owner``).
+        if previous_realm.context is not None:
+            previous_realm.context.detach()
+        self._retired_realms.append(previous_realm)
         return window
 
     @property
@@ -663,10 +665,17 @@ class Page:
         if first_error is not None:
             # Keep the realm owner available to retry failed native resources.
             raise first_error
+        #: Retired realms close with the page, before the isolate they were built on.
+        pending, self._retired_realms = self._retired_realms, []
+        for realm in pending:
+            if not attempt(realm.close):
+                self._retired_realms.append(realm)
         Window._unbind_context(self.context)
         self.realm.close()
         self.executor.close()
         self.context = None
+        #: Dropped with the realm: the handle keeps the context it was read from alive.
+        self.global_proxy = None
         if self.isolate is not None:
             #: Last of the tree: every context built on it is closed by now -- the frames
             #: above, this page's realm just now -- and V8 refuses to close an isolate that

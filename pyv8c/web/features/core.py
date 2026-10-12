@@ -186,7 +186,7 @@ FEATURE = FeatureImplementation(
         html_svg.SVGLength, html_svg.SVGAnimatedLength,
     ),
     {
-        "location": lambda owner: navigation.Location(services=owner._services),
+        "location": lambda owner: navigation.Location(services=owner._services, window=owner),
         "screen": lambda owner: screen.Screen(environment=BrowserEnvironment.from_dict(getattr(getattr(owner._services, "realm_services", None), "environment", None))),
         "localStorage": lambda owner: storage.Storage(),
         "sessionStorage": lambda owner: storage.Storage(),

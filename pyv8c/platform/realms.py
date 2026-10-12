@@ -16,11 +16,12 @@ from .services import WorkerRealmServices
 from .sessions import BindingSession
 
 
-def _context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False, exposure_type=None, isolate=None):
+def _context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False, exposure_type=None, isolate=None, reuse_global=None):
     """Shared native Context arguments assembled from one binding session.
 
-    ``isolate`` goes in only when the caller has one: the worker path calls
-    ``Isolate.context()``, which takes none.
+    ``isolate`` and ``reuse_global`` go in only when the caller has one: the worker
+    path calls ``Isolate.context()``, which takes its isolate from the receiver and
+    carries no window across navigations.
     """
     kwargs = {
         "trace": trace,
@@ -31,6 +32,8 @@ def _context_kwargs(session, context_type, trace, on_materialize=None, trace_cal
     }
     if isolate is not None:
         kwargs["isolate"] = isolate
+    if reuse_global is not None:
+        kwargs["reuse_global"] = reuse_global
     return kwargs
 
 
@@ -203,7 +206,10 @@ class PageRealm:
             trace_callback=page.context_owner.trace_callback,
             traceable=page.context_owner.traceable,
             isolate=page.realm_isolate(),
+            reuse_global=page.global_proxy,
         ))
+        #: Kept so the next document is handed the same window object.
+        page.global_proxy = self.context.glob
         self.executor.attach_deadline_source(self.context)
         context_created = time.perf_counter_ns()
         deferred_globals = _declare_realm_interfaces(

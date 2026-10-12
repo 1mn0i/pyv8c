@@ -15,7 +15,7 @@ from ...foundation.arguments import MISSING, dictionary, dom_string, integer, is
 from ..page_errors import SecurityError
 from ..dom.collections import DOMStringList
 from ..dom.events import EventTarget, HashChangeEvent, PopStateEvent, _install_handler_slots
-from .utils import document_key
+from .utils import deny_cross_origin, document_key
 
 __all__ = ["Location", "History", "Navigation", "NavigationHistoryEntry"]
 
@@ -32,15 +32,38 @@ _LOCATION_SETTERS = {
 
 @interface('Location', None)
 class Location:
-    def __init__(self, href="about:blank", services=None, **_): self.href, self._services = href, services
+    def __init__(self, href="about:blank", services=None, window=None, **_):
+        self.href, self._services = href, services
+        #: The window this location belongs to: the document it was made with.
+        self._window = window
+    def _follow_frame(self):
+        """Take the location of the frame's current document, while it is still ours.
+
+        A fragment change updates the window's own location, and the object a page
+        reads is the one the engine keeps; so a view answers with it -- as long as the
+        document it belongs to is still the one the frame holds.  Once the frame has
+        navigated past it, the snapshot stays and the readers refuse.
+        """
+        window = self._window
+        frame = getattr(window, "_frame_element", None)
+        services = getattr(frame, "_child_services", None)
+        current = getattr(getattr(services, "document_services", None), "window", None)
+        if current is not None and current is not window:
+            return
+        real = getattr(current or window, "location", None)
+        if real is not None:
+            self.href, self._services = real.href, real._services
     def _require_access(self):
+        self._follow_frame()
         if self._services is not None:
             target = self._services.document_services.window
             if target is not None:
                 target._require_same_origin()
+
     def _parts(self): self._require_access(); return urlsplit(self.href)
     def get_href(self): self._require_access(); return self.href
     def set_href(self, value):
+        self._follow_frame()
         value = dom_string(value)
         target = urljoin(self.href, str(value))
         if self._services is None:
@@ -78,12 +101,15 @@ class Location:
     def set_search(self, value): self._set_component(query=dom_string(value).lstrip("?"))
     def set_hash(self, value): self._set_component(fragment=dom_string(value).lstrip("#"))
     def fn_assign(self, value=MISSING, *_extra):
+        #: Cross-origin in the baseline: the write through ``href`` is still allowed.
+        self._require_access()
         if value is MISSING:
             raise missing_error('Location', 'assign', 1, 0)
         self.set_href(usv_string(value))
     def fn_replace(self, value=MISSING, *_extra):
         if value is MISSING:
             raise missing_error('Location', 'replace', 1, 0)
+        self._follow_frame()
         target = urljoin(self.href, usv_string(value))
         if self._services is None:
             self.href = target
@@ -93,6 +119,8 @@ class Location:
             return
         self._services.document_services.request_navigation(target)
     def fn_reload(self, *_extra):
+        #: Cross-origin like ``assign``: a page may not reload a window it cannot read.
+        self._require_access()
         if self._services is not None:
             self._services.document_services.request_navigation(self.href)
     def get_origin(self):

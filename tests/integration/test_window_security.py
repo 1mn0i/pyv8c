@@ -34,8 +34,11 @@ def caught(page, expression):
     'w.document', 'w.navigator', 'w.history', 'w.screen', 'w.localStorage',
     'w.sessionStorage', 'w.custom', 'w.fetch', 'w.setTimeout',
     'w.location.href', 'w.location.origin', 'w.location.host',
-    'w.custom = 1', 'w.document = {}', 'w.top = {}', 'delete w.custom',
-    'Object.defineProperty(w, "custom", {value: 1})',
+    'w.custom = 1', 'w.document = {}', 'w.top = {}',
+    #: V8 decides these itself, reporting through the isolate rather than the handlers
+    #: (answered by ``Window.__v8_cross_origin_denied__``).
+    'delete w.custom', 'Object.defineProperty(w, "custom", {value: 1})',
+    'Object.freeze(w)', 'Object.seal(w)', 'Object.setPrototypeOf(w, null)',
     'Object.getOwnPropertyDescriptor(w, "document")',
 ])
 def test_cross_origin_rejects_sensitive_access(windows, expression):
@@ -106,6 +109,25 @@ def test_cross_origin_location_write_queues_navigation(windows, assignment):
     assert caught(page, 'w.location.href') == ['SecurityError', 18, True]
 
 
+@pytest.mark.parametrize('call', [
+    'w.location.assign("http://b.test/next")',
+    'w.location.reload()',
+])
+def test_cross_origin_location_operations_are_refused(windows, call):
+    """A cross-origin operation is refused when invoked, not when named.
+
+    The baseline checks ``assign`` and ``reload`` and leaves only ``replace`` free.
+    """
+    page, child = windows
+    assert page.evaluate('''[typeof window[0].location.assign,
+        typeof window[0].location.reload,
+        typeof window[0].location.replace]''') == ['function'] * 3
+    assert caught(page, call) == ['SecurityError', 18, True]
+    page.run_until_idle(timeout=1)
+    assert child.url == 'http://b.test/child'
+    assert caught(page, 'w.location.replace("http://a.test/next")') == ['allowed']
+
+
 def test_post_message_delivery_origin_source_and_target_filter(windows):
     page, child = windows
     child.evaluate('window.messages = []; addEventListener("message", e => messages.push([e.data.value,e.origin,e.source===parent]))')
@@ -165,11 +187,35 @@ def test_initial_about_blank_iframe_does_not_need_network():
 
 
 def test_saved_location_is_restricted_after_origin_changes(windows):
+    """A saved location belongs to the document it was made with, and keeps answering.
+
+    A frame that navigates leaves that document behind; the reference a page saved goes
+    on describing it -- the realm it came from is kept with the page rather than closed
+    by the navigation, so the read does not fail as a dead handle.  What a cross-origin
+    caller is handed is a view of the frame's *current* location, which asks the origin
+    on every read.
+
+    This is Blink's own shape: a replaced realm is the "detached global" state, where
+    the context and its objects stay alive for the references scripts hold
+    (``bindings/core/v8/window_proxy.h:206-231``), and a Location is checked against the
+    window it belongs to rather than the frame's current one, its readers never asking
+    whether the frame still shows it (``binding_security.cc:92-97``, ``location.cc:94``,
+    ``location.cc:326``).
+    """
     page, child = windows
+    #: Cross-origin to begin with: the caller is handed a view of the frame's location.
+    assert caught(page, 'window.savedView = window[0].location') == ['allowed']
+    assert caught(page, 'savedView.href') == ['SecurityError', 18, True]
+    #: Reachable: this is the window's own Location, and the page may keep it.
     child.set_content('<body/>', url='http://a.test/child')
-    page.evaluate('window.savedLocation = window[0].location')
+    assert page.evaluate('''(() => { window.savedLocation = window[0].location;
+        return [savedLocation.pathname, savedLocation === window[0].location]; })()''') \
+        == ['/child', True]
+    #: The frame goes on: the location still answers for the document it was made with,
+    #: while a fresh read of the frame's location is a cross-origin one and is refused.
     child.set_content('<body/>', url='http://b.test/secret')
-    assert page.evaluate('try { savedLocation.href; } catch(e) { [e.name,e.code]; }') == ['SecurityError', 18]
+    assert page.evaluate('savedLocation.href') == 'http://a.test/child'
+    assert caught(page, 'window[0].location.pathname') == ['SecurityError', 18, True]
 
 
 def test_blob_origin_comes_from_creator_page(windows):

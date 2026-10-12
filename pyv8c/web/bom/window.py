@@ -1,7 +1,7 @@
 """Window and the named-properties prototype it inherits.
 
-Cross-origin access goes through :mod:`dom.window_proxy`, imported by
-:meth:`Window._view` on first use.
+A frame's window is the object another realm is handed, whatever the origins are; its
+own access check decides what a cross-origin caller may reach.
 """
 import pyv8
 
@@ -70,7 +70,7 @@ def _string_argument(value, member):
         raise PageTypeError(f"Failed to execute '{member}' on 'Window': {reason}") from None
 
 
-#: Names WindowProxy exposes to a cross-origin caller; the table lives here for both.
+#: The names a cross-origin caller may reach; the window's own access check answers.
 _PROXY_SAFE_NAMES = frozenset((
     "window", "self", "top", "parent", "opener", "frames", "length", "closed",
     "location", "close", "focus", "blur", "postMessage",
@@ -299,7 +299,7 @@ class Window(_SchedulingMixin, WindowProperties):
     def __init__(self, services=None, feature_runtime=None, **kw):
         super().__init__(services=services, **kw); self._services = services
         self._origin = getattr(services, "_origin", ("opaque", object()))
-        self._proxies = {}
+        self._location_cache = None
         #: Set for a window a frame owns; the element is what survives navigation.
         self._frame_element = None
         environment = getattr(getattr(services, "realm_services", None), "environment", None)
@@ -353,39 +353,77 @@ class Window(_SchedulingMixin, WindowProperties):
     def __v8_cross_origin_check__(self, accessor):
         return accessor is self or getattr(accessor, "_origin", None) == self._origin
 
-    def _cross_origin_proxy(self):
-        entry = self._context_origins.get(id(pyv8.current_context()))
-        if entry is None:
-            raise SecurityError("The accessing Window is not available")
-        return entry[0]._view(self)
+    def _location_view(self):
+        """The Location this window hands out: tied to the document it was made with,
+        so a stale one refuses (see ``Location._require_active_window``)."""
+        view = self._location_cache
+        if view is None:
+            from .navigation import Location
+            view = self._location_cache = Location(
+                href=self.location.href, services=self._services, window=self)
+        return view
+
+    def _cross_origin_member(self, name):
+        """What a cross-origin caller reads for one of Blink's allowed names."""
+        if name in ("window", "self", "frames"):
+            return self._services.global_proxy or self
+        if name == "top":
+            return self._view(self._top_target())
+        if name == "parent":
+            return self._view(self._parent_target())
+        if name == "location":
+            return self._location_view()
+        if name == "opener": return self.get_opener()
+        if name == "length": return self.get_length()
+        if name == "closed": return self.get_closed()
+        if name in ("close", "focus", "blur", "postMessage"):
+            return getattr(self, "fn_" + name)
+        if name == "then": return pyv8.Undefined
+        return None
+
+    def __v8_cross_origin_denied__(self, accessor):
+        """V8 refused an access before any handler saw it: raise what a browser reports."""
+        deny_cross_origin()
 
     def __v8_cross_origin_name_get__(self, name):
-        proxy = self._cross_origin_proxy()
-        if name in _PROXY_SAFE_NAMES:
-            getter = getattr(proxy, "get_" + name, None)
-            return getter() if getter else getattr(proxy, "fn_" + name)
-        return proxy.__v8_name_get__(name)
+        """One name a cross-origin caller reads: allowlisted, or refused."""
+        if isinstance(name, str):
+            value = self._cross_origin_member(name)
+            if value is not None:
+                return value
+        deny_cross_origin()
 
     def __v8_cross_origin_name_set__(self, name, value):
-        return self._cross_origin_proxy().__v8_name_set__(name, value)
+        """What a cross-origin caller may assign: a navigation, and ``opener``."""
+        if name == "location":
+            self.set_location(value)
+            return True
+        if name == "opener":
+            return True
+        deny_cross_origin()
 
     def __v8_cross_origin_name_query__(self, name):
-        return self._cross_origin_proxy().__v8_name_query__(name)
+        if isinstance(name, str) and name in _PROXY_SAFE_NAMES:
+            return pyv8.V8Attribute.kNone
+        deny_cross_origin()
 
     def __v8_cross_origin_name_del__(self, name):
-        return self._cross_origin_proxy().__v8_name_del__(name)
+        deny_cross_origin()
 
     def __v8_cross_origin_name_enum__(self):
         return list(_PROXY_SAFE_NAMES)
 
     def __v8_cross_origin_index_get__(self, index):
-        return self._cross_origin_proxy().__v8_index_get__(index)
+        frames = self._frame_windows()
+        if 0 <= index < len(frames):
+            return self._view(frames[index])
+        deny_cross_origin()
 
     def __v8_cross_origin_index_set__(self, index, value):
-        return self._cross_origin_proxy().__v8_index_set__(index, value)
+        deny_cross_origin()
 
     def __v8_cross_origin_index_del__(self, index):
-        return self._cross_origin_proxy().__v8_index_del__(index)
+        deny_cross_origin()
 
     @classmethod
     def _bind_context(cls, context, window):
@@ -426,17 +464,11 @@ class Window(_SchedulingMixin, WindowProperties):
         return self if top is None else top
 
     def _view(self, target):
+        """The object another realm sees for ``target``: that window itself, whose own
+        access check decides what a cross-origin caller may reach."""
         if target is self:
             return self
-        # One proxy per browsing context, not per Window: a navigation replaces
-        # the Window while the reference a page holds stays the same object.
-        frame = getattr(target, "_frame_element", None)
-        key = frame if frame is not None else target._services
-        proxy = self._proxies.get(key)
-        if proxy is None:
-            from .window_proxy import WindowProxy
-            proxy = self._proxies[key] = WindowProxy(self, target)
-        return proxy
+        return getattr(target._services, "global_proxy", None) or target
 
     def __v8_index_get__(self, index):
         frames = self._frame_windows()
@@ -474,7 +506,10 @@ class Window(_SchedulingMixin, WindowProperties):
             value = event_handler(value)
         self._require_same_origin()
         self._set_handler('onmessage', value)
-    def get_location(self): return self.location
+    def get_location(self):
+        """This window's own ``Location``: the object itself, which the retired realm
+        keeps answering for; a cross-origin caller is handed :meth:`_location_view`."""
+        return self.location
     def set_location(self, value): self.location.set_href(value)
     def get_navigator(self): self._require_same_origin(); return self.navigator
     def get_clientInformation(self): self._require_same_origin(); return self.navigator
@@ -705,7 +740,8 @@ class Window(_SchedulingMixin, WindowProperties):
             transfer = sequence(transfer)
         else:
             transfer = ()
-        self._post_message(self, message, target_origin, transfer)
+        # The sender is the window that called, which need not be this one.
+        self._post_message(Window._accessor_window(self) or self, message, target_origin, transfer)
 
     def fn_webkitRequestFileSystem(self, type=MISSING, size=MISSING, success=MISSING, error=pyv8.Undefined, *_extra):
         if type is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 0, constructor=False)

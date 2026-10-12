@@ -23,68 +23,6 @@ USER_AGENT = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHT
               ' Chrome/150.0.0.0 Safari/537.36')
 KEYWORD = 'NORTHWEST'
 TIMEOUT = 45.0
-page = None  # 由 __main__ 赋值：拦截器要用它取原始文档
-
-
-def content_window(frame):
-    # 同源 iframe 返回原生子窗口 handle，避免代理接收者调用 setTimeout 时报 Illegal invocation。
-    child = frame._child_services
-    parent = Window._accessor_window(frame._services.document_services.window)
-    if child is not None and parent._origin == child._origin:
-        return child._page_realm.context.js_obj(child.window)
-    return HTMLIFrameElement.get_contentWindow(frame)
-
-
-def response_json(response, *_):
-    # native binding 把 None 转成 undefined；JSON null 必须显式保留。
-    def nulls(value):
-        if value is None:
-            return pyv8.Null
-        if isinstance(value, list):
-            return [nulls(item) for item in value]
-        if isinstance(value, dict):
-            return {key: nulls(item) for key, item in value.items()}
-        return value
-
-    def parse():
-        try:
-            return nulls(json.loads(response._body_value()))
-        except json.JSONDecodeError as exc:
-            raise PageSyntaxError(f'Unexpected token in JSON at position {exc.pos}') from exc
-
-    if response._services is None:
-        return parse()
-    promise, resolve, reject = response._services.realm_services.make_promise()
-    try:
-        resolve(parse())
-    except (PageTypeError, PageSyntaxError, pyv8.JSException) as exc:
-        reject(js_error_value(exc))
-    return promise
-
-
-def keep_challenge_scripts(html):
-    """只保留挑战脚本（SDK 与 Imperva 那条），页面其余脚本不跑。"""
-    class Collector(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.tags = []
-
-        def handle_starttag(self, tag, attrs):
-            parsed = urlsplit(dict(attrs).get('src', ''))
-            if tag != 'script' or (parsed.netloc and parsed.hostname != 'orion.nv.gov'):
-                return
-            if parsed.path == SDK_PATH or (parsed.path == '/_Incapsula_Resource'
-                                           and 'SWJIYLWA' in parse_qs(parsed.query)):
-                self.tags.append('<script ' + ' '.join(
-                    name if value is None else f'{name}="{escape(value, quote=True)}"'
-                    for name, value in attrs) + '></script>')
-
-    collector = Collector()
-    collector.feed(html)
-    if not collector.tags:
-        raise RuntimeError('当前页面里没有可识别的挑战脚本')
-    return ('<!doctype html><html><head><title>NV-SOS Case Management</title>'
-            + ''.join(collector.tags) + '</head><body></body></html>')
 
 
 def intercept(url, request):
@@ -96,13 +34,9 @@ def intercept(url, request):
         (parsed.path == '/_Incapsula_Resource' and method == 'GET'
          and ('SWJIYLWA' in parse_qs(parsed.query) or 'SWKMTFSR' in parse_qs(parsed.query))))
     if not allowed:
+        print('×', method, parsed.path)
         return False
-    print('  ', method, parsed.path)
-    if parsed.path != '/portal/public/':
-        return None
-    response = page.net.request('GET', url, headers=request.get('headers'), timeout=20)
-    return {'status': response.status, 'statusText': response.status_text,
-            'body': keep_challenge_scripts(response.text), 'headers': response.headers}
+    print('✓', method, parsed.path)
 
 
 def wait_for_cookie(context, url, seconds=TIMEOUT):
@@ -131,9 +65,9 @@ if "__main__" == __name__:
 
     browser = Browser(
         resource_interceptor=intercept,
-        interface_overrides={'HTMLIFrameElement': {'contentWindow': content_window},
-                            #  'Response': {'json': response_json}
-                             },
+        # interface_overrides={'HTMLIFrameElement': {'contentWindow': content_window},
+        #                     #  'Response': {'json': response_json}
+        #                      },
         cache=False,
         http_engine='curl_cffi',
         http_options={'impersonate': 'chrome150', 'timeout': 20},

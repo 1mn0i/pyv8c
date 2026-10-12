@@ -100,9 +100,12 @@ def test_borrowed_prototype_uses_owning_document(page):
     child.set_content('<div id="childOnly"></div>', url='http://example.test/child')
     props = child.evaluate('Object.getPrototypeOf(Window.prototype)')
     page.context.expose(childProperties=props)
-    assert page.evaluate('''[childProperties.childOnly === window[0].document.getElementById('childOnly'),
+    page.context.expose(childElement=child.evaluate("document.getElementById('childOnly')"))
+    #: Each realm has its own wrapper, so identity is asked of the owning realm.
+    assert page.evaluate('''[childProperties.childOnly === childElement,
+        childProperties.childOnly.id,
         childProperties.unique === undefined, 'childOnly' in childProperties,
-        'unique' in childProperties]''') == [True, True, True, False]
+        'unique' in childProperties]''') == [True, 'childOnly', True, True, False]
     child.set_content('<div id="childOnly"></div>', url='http://other.test/child')
     page.context.expose(childProperties=child.evaluate('Object.getPrototypeOf(Window.prototype)'))
     assert page.evaluate('try { childProperties.childOnly; } catch (e) { [e.name, e.code]; }') == ['SecurityError', 18]

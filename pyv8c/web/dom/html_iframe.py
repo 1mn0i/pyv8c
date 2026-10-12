@@ -193,13 +193,19 @@ class HTMLIFrameElement(HTMLElement):
         return policy
     def fn_getSVGDocument(self, *_args): return pyv8.Null
     def get_contentDocument(self):
+        """The child's own document object, or null while it is cross-origin."""
         if self._child_services is None:
             return pyv8.Null
         from ..bom.window import Window
         accessor = Window._accessor_window(self._services.document_services.window)
         if accessor._origin != self._child_services._origin:
             return pyv8.Null
-        return self._child_services.document_services.document
+        document = self._child_services.document_services.document
+        # The child's own object: ``contentDocument`` and ``contentWindow.document`` are one.
+        realm = getattr(self._child_services, "realm_services", None)
+        context = getattr(realm, "context", None)
+        value = None if context is None else context.js_obj(document)
+        return document if value is None else value
     def get_contentWindow(self):
         if self._child_services is None:
             return pyv8.Null
