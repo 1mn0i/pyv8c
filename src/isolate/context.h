@@ -77,6 +77,8 @@ typedef struct context_c
     PyObject* lazy_factory;
     PyObject* py_global;
     bool has_done;
+    //: Left behind by a navigation; see ``context_is_detached``.
+    bool detached;
     double timeout;
     bool trace;
     bool traceable;
@@ -114,6 +116,12 @@ PyObject* context_ask_factory(context_c* self, PyObject* name);
 
 bool context_is_active(context_c* self);
 context_c* context_from_v8(v8::Local<v8::Context> context);
+
+//: Whether a navigation has replaced this realm's document.  Blink's detached global
+//: object: still alive, but answering "less things" (``window_proxy.h``).
+bool context_is_detached(v8::Local<v8::Context> context);
+//: Mark a realm as left behind (``context_is_detached``).
+PyObject* context_detach(context_c* self, PyObject* ignored);
 bool context_check_callback(v8::Local<v8::Context> context);
 void context_finish_close(context_c* self);
 void context_register_handle(context_c* self, PyObject* handle, int (*clear)(PyObject*));

@@ -71,6 +71,8 @@ public:
     v8::Local<v8::String> v8_string(V8StringId id) const;
 
     bool track_python_object(v8::Local<v8::Object> object, PyObject* py_object, context_c* context);
+    // Release the owner the old realm published; the object is left standing.
+    bool transfer_python_object(v8::Local<v8::Object> object);
     // The JavaScript object that already stands for *py_object* in *context*;
     // wrapping one Python object twice would give JavaScript two objects where it
     // can only tell one apart.  Empty means "not wrapped here yet".

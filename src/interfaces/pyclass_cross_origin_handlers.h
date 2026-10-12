@@ -8,6 +8,11 @@ bool cross_origin_access_check(
     v8::Local<v8::Object> accessed_object,
     v8::Local<v8::Value> unused_data);
 
+void cross_origin_failed_access(
+    v8::Local<v8::Object> holder,
+    v8::AccessType type,
+    v8::Local<v8::Value> unused_data);
+
 v8::Intercepted cross_origin_named_getter(
     v8::Local<v8::Name> name,
     const v8::PropertyCallbackInfo<v8::Value>& info);

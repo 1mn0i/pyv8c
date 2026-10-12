@@ -408,6 +408,11 @@ void report_piece(const char* what, const char* name)
 Local<Object> build(Isolate* isolate, Local<Context> context, const char* name,
                     PyObject* exc_value, const char* message)
 {
+    // A detached realm builds nothing new: its own error class would run the embedder
+    // side inside a realm whose document is gone, so the message rides a plain error.
+    if (context_is_detached(context))
+        return Exception::Error(V8String(isolate, message)).As<Object>();
+
     PyTypeObject* exc_type = Py_TYPE(exc_value);
     std::string shown = name;
     std::vector<std::string> arguments;

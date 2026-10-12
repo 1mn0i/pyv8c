@@ -39,6 +39,20 @@ context_c* context_from_v8(Local<Context> context) {
     return lifetime ? lifetime->owner : nullptr;
 }
 
+bool context_is_detached(Local<Context> context) {
+    context_c* owner = context_from_v8(context);
+    return owner != nullptr && owner->detached;
+}
+
+PyObject* context_detach(context_c* self, PyObject* ignored) {
+    (void)ignored;
+    //: Left behind: still readable, but nothing new is built inside it.
+    self->detached = true;
+    // Nothing new is asked of the embedder for a realm that no longer has a document.
+    Py_CLEAR(self->lazy_factory);
+    PYV8_RETURN_NONE;
+}
+
 // Whether an intercepted access may proceed.  The accepting path costs a few
 // reads and a state check, no allocation and no string.
 bool context_check_callback(Local<Context> context) {
@@ -165,6 +179,8 @@ PyMethodDef context_methods[] = {
     {"set_error_hooks", (PyCFunction)PythonBoundary<context_set_error_hooks>::call,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"close", (PyCFunction)PythonBoundary<context_close>::call, METH_NOARGS, NULL},
+    {"detach", (PyCFunction)PythonBoundary<context_detach>::call, METH_NOARGS,
+     "mark the realm as left behind by a navigation"},
     {"to_js", (PyCFunction)PythonBoundary<context_to_js>::call, METH_O, NULL},
     {"import_handle", (PyCFunction)PythonBoundary<context_import_handle>::call, METH_O, NULL},
     {"set_deadline", (PyCFunction)PythonBoundary<context_set_deadline>::call, METH_VARARGS | METH_KEYWORDS, NULL},
@@ -211,6 +227,9 @@ static PyObject* context_isolate_id(context_c* self, void*) {
     if (!state) return nullptr;
     return PyLong_FromVoidPtr(state->isolate());
 }
+static PyObject* context_get_detached(context_c* self, void*) {
+    return PyBool_FromLong(self->detached ? 1 : 0);
+}
 // The Python wrappers this realm still owns; zero once it has released them.
 static PyObject* context_live_handles(context_c* self, void*) {
     auto* resources = self->resources;
@@ -240,6 +259,7 @@ PyGetSetDef context_getset[] = {
     {(char*)"live_handles", (getter)PythonBoundary<context_live_handles>::call, NULL, NULL, NULL},
     {(char*)"heap_terminations", (getter)PythonBoundary<context_heap_terminations>::call, NULL, NULL, NULL},
     {(char*)"glob", (getter)PythonBoundary<context_get_global>::call, NULL, NULL, NULL},
+    {(char*)"detached", (getter)PythonBoundary<context_get_detached>::call, NULL, NULL, NULL},
     {(char*)"trace", (getter)PythonBoundary<context_get_trace>::call, (setter)PythonBoundary<context_set_trace>::call, NULL, NULL},
     {(char*)"timeout", (getter)PythonBoundary<context_get_timeout>::call, (setter)PythonBoundary<context_set_timeout>::call, NULL, NULL},
     {NULL},
@@ -297,11 +317,13 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* lazy_factory = Py_None;
     PyObject* trace_callback = Py_None;
     PyObject* traceable = Py_False;
-    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", NULL};
+    PyObject* reuse_global = Py_None;
+    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", "reuse_global", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOOO", (char **) keywords,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOOOO", (char **) keywords,
                                     &global, &trace, &ctx_type, &timeout, &py_isolate,
-                                    &lazy_factory, &trace_callback, &traceable)) {
+                                    &lazy_factory, &trace_callback, &traceable,
+                                    &reuse_global)) {
         return NULL;
     }
 
@@ -318,6 +340,28 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     if (isolate_state == nullptr)
         return NULL;
     IN_ISOLATE(isolate_state);
+
+    // The frame's window again, which V8 accepts from the same template.
+    Local<Value> reused;
+    if (reuse_global != Py_None) {
+        if (!PyObject_TypeCheck(reuse_global, js_object_type)) {
+            PyErr_SetString(PyExc_TypeError, "reuse_global expects a realm's global object");
+            return NULL;
+        }
+        js_object* reused_handle = (js_object*)reuse_global;
+        if (reused_handle->isolate_state != isolate_state) {
+            PyErr_SetString(PyExc_RuntimeError, "reuse_global belongs to another isolate");
+            return NULL;
+        }
+        if (!js_object_require_active(reused_handle))
+            return NULL;
+        Local<Object> reused_object = reused_handle->object.Get(isolate);
+        if (reused_object.IsEmpty() ||
+            !isolate_state->transfer_python_object(reused_object)) {
+            return NULL;
+        }
+        reused = reused_object;
+    }
 
     if (global != NULL) {
         if (PyType_Check(global)) {
@@ -353,6 +397,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     }
     self->py_global = global;
     self->has_done = false;
+    self->detached = false;
     self->timeout = timeout;
     self->trace = trace == Py_True;
     self->traceable = self->trace || traceable == Py_True;
@@ -427,7 +472,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 
     }
 
-    IN_CONTEXT(Context::New(isolate, NULL, global_template));
+    IN_CONTEXT(Context::New(isolate, NULL, global_template, reused));
     self->js_context.Set(isolate_state, isolate, context);
     self->has_done = true;
 

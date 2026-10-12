@@ -223,6 +223,7 @@ class Isolate:
         lazy_factory: Optional[Callable[[str], Any]] = None,
         trace_callback: Optional[Callable[..., Any]] = None,
         traceable: bool = False,
+        reuse_global: Optional[JSObject] = None,
     ) -> Context: ...
     def gc(self) -> None: ...
     @property
@@ -237,12 +238,16 @@ class Isolate:
 # 基本类型
 class Context:
     """V8 JavaScript执行上下文"""
-    def __init__(self, global_this: Any, trace: bool = False, ctx_type: Optional[str] = None, timeout: Optional[float] = None, isolate: Optional[Isolate] = None, lazy_factory: Optional[Callable[[str], Any]] = None, trace_callback: Optional[Callable[..., Any]] = None, traceable: bool = False) -> None:
+    def __init__(self, global_this: Any, trace: bool = False, ctx_type: Optional[str] = None, timeout: Optional[float] = None, isolate: Optional[Isolate] = None, lazy_factory: Optional[Callable[[str], Any]] = None, trace_callback: Optional[Callable[..., Any]] = None, traceable: bool = False, reuse_global: Optional[JSObject] = None) -> None:
         """Create a realm.
 
         *lazy_factory* answers what a name means here: it takes an interface name and
         returns the class, ``(class, {name: spec})`` when the realm holds the overlay
         itself, or ``None`` for a name it does not know.
+
+        *reuse_global* hands this realm the global object of a realm made earlier from
+        the same template -- the window a navigation replaces.  Its state is reset and
+        only the identity of the object remains, so a page keeps the reference it held.
         """
         ...
     def exec_js(self, script: str | Script, filename: Optional[str] = None, timeout: Optional[float] = None) -> Any: ...
@@ -282,6 +287,16 @@ class Context:
         ...
     def gc(self) -> None: ...
     def close(self) -> None: ...
+    def detach(self) -> None:
+        """Mark the realm as left behind by a navigation.
+
+        Its objects stay readable -- page scripts hold references into it -- while the
+        engine stops building new things inside it, so a failure raised there cannot walk
+        back into the realm that replaced it.  Blink's detached global object.
+        """
+        ...
+    @property
+    def detached(self) -> bool: ...
     def to_js(self, value: Any) -> Any: ...
     def import_handle(self, handle: JSObject | JSValue) -> JSObject | JSValue: ...
     def set_error_hooks(

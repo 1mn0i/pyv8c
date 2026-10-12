@@ -114,6 +114,52 @@ void cross_origin_indexed_enumerator(Info(Array)) {
         info, context, self, HandlerId::CrossOriginIndexEnum);
 }
 
+// V8 refuses some accesses itself and reports them through the isolate, never through
+// the handlers; the held realm is asked here for the error, raised in the realm that
+// asked.  A realm stating no such hook keeps V8's own TypeError.
+void cross_origin_failed_access(
+    Local<Object> holder,
+    AccessType type,
+    Local<Value> unused_data) {
+    (void)type;
+    (void)unused_data;
+
+    Local<Context> accessed_context;
+    if (!holder->GetCreationContext().ToLocal(&accessed_context))
+        return;
+    context_c* accessed_ctx_c = context_from_v8(accessed_context);
+    if (accessed_ctx_c == nullptr || accessed_ctx_c->py_global == nullptr)
+        return;
+
+    Isolate* isolate = v8_compat::context_isolate(accessed_context);
+    if (isolate == nullptr)
+        return;
+    Local<Context> accessing_context = isolate->GetCurrentContext();
+    if (accessing_context.IsEmpty())
+        return;
+    context_c* accessing_ctx_c = context_from_v8(accessing_context);
+
+    PyObject* interviewee = accessed_ctx_c->py_global;
+    PyObject* denied = PyObject_GetAttrString(interviewee, "__v8_cross_origin_denied__");
+    if (denied == nullptr) {
+        PyErr_Clear();
+        return;
+    }
+    PyObject* argv[] = {
+        interviewee,
+        accessing_ctx_c != nullptr ? accessing_ctx_c->py_global : Py_None};
+    PyObject* value = call_handler(denied, argv, 2);
+    Py_DECREF((PyObject*)denied);
+    if (value == nullptr) {
+        // Keep the realm's own exception pending in the accessing JS realm, where the
+        // refused operation ran: it is that realm's DOMException, not V8's TypeError.
+        Context::Scope scope(accessing_context);
+        js_throw_py();
+        return;
+    }
+    Py_DECREF((PyObject*)value);
+}
+
 bool cross_origin_access_check(
     v8::Local<v8::Context> accessing_context,
     v8::Local<v8::Object> accessed_object,

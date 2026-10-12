@@ -214,6 +214,40 @@ IsolateState::track_python_object(Local<Object> object, PyObject* py_object, con
     return true;
 }
 
+bool
+IsolateState::transfer_python_object(Local<Object> object)
+{
+    if (object->InternalFieldCount() <= PYTHON_OWNER_FIELD)
+    {
+        PyErr_SetString(PyExc_TypeError,
+                        "reuse_global expects a realm's global object");
+        return false;
+    }
+    Local<Data> magic = object->GetInternalField(PYTHON_MAGIC_FIELD);
+    if (magic != v8_string(V8StringId::PythonObjectMagic))
+    {
+        PyErr_SetString(PyExc_TypeError,
+                        "reuse_global expects a realm's global object");
+        return false;
+    }
+    auto* owner = static_cast<PythonObjectOwner*>(
+        v8_compat::external_value(object->GetInternalField(PYTHON_OWNER_FIELD)));
+    if (owner == nullptr)
+    {
+        PyErr_SetString(PyExc_TypeError,
+                        "reuse_global expects a realm's global object");
+        return false;
+    }
+    // The weak handle goes with the owner, which the deferred release frees.
+    owner->object.Reset();
+    release_python_owner(owner);
+    // Cleared: a reader in between must find nothing, not a released owner.
+    Local<External> cleared = v8_compat::external_new(isolate_, nullptr);
+    object->SetInternalField(PYTHON_MAGIC_FIELD, cleared);
+    object->SetInternalField(PYTHON_OWNER_FIELD, cleared);
+    return true;
+}
+
 PythonObjectOwner*
 IsolateState::find_python_owner(context_c* context, PyObject* py_object)
 {
