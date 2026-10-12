@@ -231,7 +231,8 @@ class Browser:
                  stub_logging: Literal["on", "verbose", "off"] = "off",
                  interface_overrides: dict | None = None,
                  idl_path: str | os.PathLike | None = None,
-                 baseline_mismatch: Literal["error", "warn"] = "warn"):
+                 baseline_mismatch: Literal["error", "warn"] = "warn",
+                 shard_isolates: bool = False):
         """Configure one browser.
 
         Every value is read here: native templates and the interface baseline are
@@ -312,6 +313,9 @@ class Browser:
             skips it, which is how another Chromium version's baseline is run;
             ``"error"`` fails at assembly instead, which is what keeps a mistake in
             one's own implementation from passing silently.
+        :param shard_isolates: give each page tree its own V8 isolate, so its scripts
+            can run while another page's do; ``False`` (the default) shares the
+            process default.
         """
         if trace_callback is not None and not callable(trace_callback):
             raise TypeError("trace_callback must be callable or None")
@@ -324,6 +328,8 @@ class Browser:
         self.resource_loader = resource_loader
         self.resource_interceptor = resource_interceptor
         self.threaded_loaders = bool(threaded_loaders)
+        #: Whether a page tree builds an isolate of its own (see ``Page.realm_isolate``).
+        self.shard_isolates = bool(shard_isolates)
         self._loader_pool = None
         self._loader_lock = threading.Lock()
         self.cache_enabled = bool(cache)

@@ -16,15 +16,22 @@ from .services import WorkerRealmServices
 from .sessions import BindingSession
 
 
-def _context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False, exposure_type=None):
-    """Shared native Context arguments assembled from one binding session."""
-    return {
+def _context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False, exposure_type=None, isolate=None):
+    """Shared native Context arguments assembled from one binding session.
+
+    ``isolate`` goes in only when the caller has one: the worker path calls
+    ``Isolate.context()``, which takes none.
+    """
+    kwargs = {
         "trace": trace,
         "traceable": traceable,
         "trace_callback": (log_trace if trace_callback is None else trace_callback) if trace or traceable else None,
         "ctx_type": context_type,
         "lazy_factory": session.lazy_factory(exposure_type or context_type, on_materialize=on_materialize),
     }
+    if isolate is not None:
+        kwargs["isolate"] = isolate
+    return kwargs
 
 
 class _RealmTaskHost:
@@ -169,10 +176,11 @@ class PageRealm:
         self.binding_session = BindingSession(browser.bindings, page.services)
         page.services.bind_realm(self)
         try:
-            if pyv8.current_context() is not None:
-                # Asked for inside a running script, where waiting on the realm's
-                # own thread would deadlock; an inserted frame's window must exist
-                # before the inserting script returns.
+            # Inside a running script, waiting on the realm's own thread would deadlock.
+            # Ask about *this realm's* isolate -- for a sharded page the default one would
+            # answer "not running", sending the frame's realm to a thread that cannot enter
+            # the isolate the inserting script still holds.
+            if pyv8.current_context(page.realm_isolate()) is not None:
                 self._initialize()
             else:
                 self.executor.call(self._initialize)
@@ -194,6 +202,7 @@ class PageRealm:
             on_materialize=self._record_deferred_materialized,
             trace_callback=page.context_owner.trace_callback,
             traceable=page.context_owner.traceable,
+            isolate=page.realm_isolate(),
         ))
         self.executor.attach_deadline_source(self.context)
         context_created = time.perf_counter_ns()

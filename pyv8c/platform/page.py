@@ -90,6 +90,9 @@ class Page:
         self.context_owner = context
         self.parent_page = parent
         self.top_page = parent.top_page if parent is not None else self
+        #: The frame tree's isolate, owned by the page that started the tree and shared by
+        #: its frames; ``None`` means the process default (see :meth:`realm_isolate`).
+        self.isolate = None
         self.origin = tuple(origin) if origin is not None else origin_tuple(
             url, inherited=getattr(parent, "origin", None)
         )
@@ -275,6 +278,23 @@ class Page:
             except BaseException:
                 pass
         return getattr(previous_window, "_window_name", "")
+
+    def realm_isolate(self):
+        """The isolate this page's realm belongs to, or ``None`` for the process default.
+
+        A document and its frames must share one -- their scripts reach each other's
+        objects directly -- so a frame answers with its top page's.  Pages get their own
+        under ``Browser(shard_isolates=True)``, which is what lets them run at once; the
+        isolate is built on first use, outlives navigation like :attr:`executor`, and its
+        owner closes it.
+        """
+        if self.parent_page is not None:
+            return self.top_page.realm_isolate()
+        if not self.context_owner.browser.shard_isolates:
+            return None
+        if self.isolate is None:
+            self.isolate = pyv8.Isolate()
+        return self.isolate
 
     def _renew_document_realm(self, url):
         """Give the page the Window and realm a new document comes with.
@@ -647,6 +667,13 @@ class Page:
         self.realm.close()
         self.executor.close()
         self.context = None
+        if self.isolate is not None:
+            #: Last of the tree: every context built on it is closed by now -- the frames
+            #: above, this page's realm just now -- and V8 refuses to close an isolate that
+            #: still carries persistent handles.  A frame never reaches this: only the page
+            #: that created the tree's isolate holds one.
+            if attempt(self.isolate.close):
+                self.isolate = None
         self.closed = True
         self.context_owner._discard_page(self)
         parent_cleanup = getattr(self, "_parent_scope_cleanup", None)

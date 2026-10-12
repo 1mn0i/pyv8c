@@ -497,7 +497,8 @@ def report(context, page, started):
 
 
 def browse(stub_logging, trace, log, seconds, watch, trace_after=None, trace_only=None,
-           log_level=None, impersonate=None, click_points=(), click_after=20.0):
+           log_level=None, impersonate=None, click_points=(), click_after=20.0,
+           shard_isolates=False):
     from loguru import logger
     from pyv8c import Browser
 
@@ -535,7 +536,8 @@ def browse(stub_logging, trace, log, seconds, watch, trace_after=None, trace_onl
         print(f"transport: curl_cffi impersonating {impersonate}")
     browser = Browser(stub_logging=stub_logging, trace=trace or bool(trace_only),
                       traceable=trace or trace_after is not None or bool(trace_only),
-                      trace_callback=callback, threaded_loaders=True, **transport)
+                      trace_callback=callback, threaded_loaders=True,
+                      shard_isolates=shard_isolates, **transport)
     context = browser.new_context()
     #: Say what was installed rather than assume it: a filter that is silently dropped shows up
     #: as a hundred-megabyte log, so these two lines are worth their ink.
@@ -638,6 +640,10 @@ def main(argv=None):
     #: the two sides different flavours of this challenge.
     parser.add_argument("--impersonate", default=None, metavar="PROFILE",
                         help="curl_cffi profile for the transport (e.g. chrome136, as in akm.py)")
+    #: Realm placement, as a variable of its own: its own isolate runs the page on its own
+    #: thread, the shared default runs it with every other page.
+    parser.add_argument("--shard-isolates", action="store_true",
+                        help="give the page tree its own V8 isolate (Browser(shard_isolates=True))")
     #: The managed challenge on ``/login/`` waits for a hand -- see ``gesture()``.  Repeatable:
     #: ``--click 360,220 --click 700,380``.
     parser.add_argument("--click", action="append", default=None, metavar="X,Y",
@@ -658,7 +664,7 @@ def main(argv=None):
         browse("verbose" if arguments.trace else "off", arguments.trace, arguments.log,
                arguments.seconds, not arguments.no_watch, arguments.trace_after,
                arguments.trace_only, arguments.log_level, arguments.impersonate,
-               tuple(points), arguments.click_after)
+               tuple(points), arguments.click_after, arguments.shard_isolates)
         return 0
 
     command = [sys.executable, "-u", __file__, "--child", "--log", str(arguments.log),
@@ -669,6 +675,8 @@ def main(argv=None):
         command += ["--log-level", str(arguments.log_level)]
     if arguments.impersonate:
         command += ["--impersonate", str(arguments.impersonate)]
+    if arguments.shard_isolates:
+        command.append("--shard-isolates")
     for x, y in points:
         command += ["--click", f"{x},{y}"]
     if points:
