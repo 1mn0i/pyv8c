@@ -205,6 +205,11 @@ class HTMLIFrameElement(HTMLElement):
         realm = getattr(self._child_services, "realm_services", None)
         context = getattr(realm, "context", None)
         value = None if context is None else context.js_obj(document)
+        if value is None and context is not None:
+            # The first reader may be the parent. Create the wrapper in the
+            # child's realm before it crosses, just like window.document.
+            context.to_js(document)
+            value = context.js_obj(document)
         return document if value is None else value
     def get_contentWindow(self):
         if self._child_services is None:

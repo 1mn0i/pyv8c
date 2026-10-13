@@ -214,6 +214,31 @@ def test_a_frames_window_keeps_its_identity_across_a_navigation(page):
     })()""") == [True, True, "second"]
 
 
+def test_an_inserted_frame_answers_content_window_at_once(page):
+    """A frame gets its window where it is inserted, not on the task after the turn.
+
+    A browser has the initial about:blank window the moment the frame joins the document,
+    and a page reads ``contentWindow`` right then -- an inline challenge bootstrap does,
+    and a null there throws inside it (``examples/ali.py``).  Only the document the frame
+    asks for arrives later.
+    """
+    page.set_content("""<body><script>
+        const frame = document.createElement('iframe');
+        frame.src = 'about:blank';
+        document.body.appendChild(frame);
+        window.__inline = [String(frame.contentWindow), document.readyState,
+                           frame.contentDocument !== null,
+                           frame.contentWindow.document !== null];
+    </script></body>""", url="https://frames.test/")
+    page.run_until_idle(timeout=1)
+    assert page.evaluate("__inline") == ['[object Window]', 'loading', True, True]
+    assert page.evaluate("""(() => {
+        const frame = document.querySelector('iframe');
+        return [frame.contentWindow.location.href, typeof frame.contentDocument.body,
+                typeof frame.contentWindow.document.readyState];
+    })()""") == ['about:blank', 'object', 'string']
+
+
 def test_a_navigation_gives_the_page_a_new_window_and_keeps_the_context(page):
     page.set_content("<body>first</body>", url="https://nav.test/one")
     page.evaluate("""(() => {

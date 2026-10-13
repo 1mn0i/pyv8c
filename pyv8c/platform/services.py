@@ -445,14 +445,11 @@ class _DocumentCapability:
         if getattr(node, "localName", "") == "iframe":
             if not node._is_connected():
                 return None
-            # An inserted frame gets its own context.  Built while a script runs, the realm is
-            # queued instead: entering another realm re-enters this executor.
+            # The initial about:blank exists in the inserting turn, even inside an
+            # inline script. PageRealm enters a shared isolate on this thread;
+            # only the requested document's navigation is deferred.
             services = self._owner._resources
-            page = services.page
-            if page.document.current_script is None:
-                services.ensure_iframe_context(node)
-            else:
-                page.tasks.post(lambda: services.ensure_iframe_context(node))
+            services.ensure_iframe_context(node)
             if (node.get_src()
                     and not getattr(node, "_resource_started", False)):
                 services.discover_element_resource(node)

@@ -18,7 +18,7 @@ from ..foundation.logging import logger
 
 from ..foundation.environment import extension_resource
 from ..foundation.host_errors import LoadFailure
-from ..foundation.urls import DEFAULT_PORTS, absolute_url, same_origin, unloadable_scheme
+from ..foundation.urls import DEFAULT_PORTS, absolute_url, origin_string, same_origin, unloadable_scheme
 from ..web.bom.utils import page_base_url
 from ..web.fetch.headers import Headers
 from ..web.fetch.response import Response
@@ -88,9 +88,6 @@ class RequestHandle:
 
     def finish(self):
         self._done.set()
-
-
-
 
 
 #: The kind of file each suffix promises; an unknown suffix is served as bytes.
@@ -190,16 +187,24 @@ class ResourceController:
             page.tasks.post(page.close)
 
     def _cache_key(self, target, request):
-        if not self.page.cache_enabled:
+        if not self.page.cache_enabled or self.page.context_owner.resource_cache_dir is None:
             return None
         method = str(request.get("method", "GET")).upper()
         if method not in ("GET", "HEAD") or str(request.get("cache", "default")) in ("no-store", "reload", "no-cache"):
+            return None
+        headers = {str(name).lower(): str(value) for name, value in self.header_dict(request.get("headers")).items()}
+        # This persistent cache is shared across context restarts.  It must not
+        # reuse authenticated bodies or mix request variants and initiating origins.
+        jar = self.page.context_owner.cookies
+        if "authorization" in headers or "cookie" in headers or (jar is not None and jar.header_for(target)):
             return None
         return (
             method,
             target,
             str(request.get("mode", "cors")),
             str(request.get("credentials", "same-origin")),
+            origin_string(request.get("initiator_url") or self.page.url),
+            tuple(sorted(headers.items())),
         )
 
     def _cached_response(self, target, request):
@@ -264,6 +269,13 @@ class ResourceController:
         # An opaque-redirect response stands for a redirect the page may not read, so
         # what it "contains" is no answer at all.
         if key is None or response is None or response.type == "opaqueredirect":
+            return
+        headers = {name.lower(): value for name, value in response.headers._data.items()}
+        directives = {part.strip().split("=", 1)[0].lower()
+                      for part in str(headers.get("cache-control", "")).split(",")}
+        if (directives & {"no-store", "no-cache", "private"}
+                or "set-cookie" in headers or str(headers.get("vary", "")).strip() == "*"
+                or not 200 <= response.status < 300):
             return
         context = self.page.context_owner
         payload = {
@@ -800,7 +812,7 @@ class ResourceController:
             """Cache what the chain answered, then hand it to the page once."""
             if error is None:
                 try:
-                    self._store_response(target, given, response)
+                    self._store_response(target, request, response)
                 except BaseException as exc:  # a cache write must not lose the answer
                     response, error = None, exc
             deliver(response, error)
@@ -1120,25 +1132,31 @@ class ResourceController:
         return "opaque", object()
 
     def ensure_iframe_context(self, iframe):
-        """The context an inserted frame gets, on the task after its insertion.
-
-        A browser builds it while inserting the element; building a realm is not
-        reentrant with a running script here, so it happens on the next task.
-        """
+        """Create the complete initial about:blank in the inserting turn."""
         if getattr(iframe, "_child_services", None) is not None:
             return iframe._child_services
+        page = self.page
+        generation = page.navigation.generation
+        child = self._child_frame_page(iframe, "about:blank")
+        child.navigation.initialize_empty_document()
         markup = iframe.attributes.get("srcdoc")
         if markup is not None:
-            return self.load_iframe_markup(iframe, str(markup))
-        page = self.page
-        child = self._child_frame_page(iframe, "about:blank")
-        # With a URL or srcdoc the initial about:blank is replaced by the same
-        # insertion navigation and must not emit its own iframe load events.
-        if iframe.get_src() or "srcdoc" in iframe.attributes:
+            # A srcdoc script must not run before appendChild returns. Keep the
+            # initial window available while that document is waiting to commit.
+            def commit_markup():
+                if (not page.closed and page.navigation.generation == generation
+                        and iframe._child_services is child.services and iframe.isConnected
+                        and iframe.attributes.get("srcdoc") == markup):
+                    self.load_iframe_markup(iframe, str(markup))
+            page.tasks.post(commit_markup)
             return child
-        child.set_content("", url="about:blank")
-        child.lifecycle.when_loaded(lambda ok: page.tasks.post(
-            lambda: self.dispatch_frame_completion(iframe, ok)))
+        target = urljoin(page_base_url(page), iframe.get_src() or "about:blank")
+        if target != "about:blank":
+            return child
+        # Chrome fires the initial empty-document load before insertion returns.
+        # It is not a navigation: writes from that turn keep this document.
+        iframe._resource_started = True
+        self.dispatch_frame_completion(iframe, True)
         return child
 
     def load_iframe_markup(self, iframe, markup):
