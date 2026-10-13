@@ -50,7 +50,7 @@ def worker():
         return args[0] if args else 1
 
     def fail():
-        raise ValueError("benchmark")
+        raise pyv8.JsTypeError("benchmark")
 
     results = {}
     context = pyv8.Context(Window(), traceable=True, trace_callback=lambda *args: None)
@@ -74,7 +74,7 @@ def worker():
         context.close()
 
     from pyv8c import Browser
-    browser = Browser(stub_logging="off")
+    browser = Browser(real_network=False, stub_logging="off")
     owner = browser.new_context()
     page = owner.new_page()
     page.set_content('<div id="target"></div>')
@@ -116,6 +116,9 @@ def main():
               "runs_ns": runs,
               "medians_ns": {name: statistics.median(statistics.median(run[name]) for run in runs)
                              for name in runs[0]}}
+    root = Path(__file__).resolve().parents[1]
+    report["worktree_sha256"] = hashlib.sha256(subprocess.check_output(
+        ["git", "diff", "--binary", "HEAD"], cwd=root)).hexdigest()
     if args.compare:
         before = json.loads(args.compare.read_text())
         ratios = {name: value / before["medians_ns"][name] for name, value in report["medians_ns"].items()}

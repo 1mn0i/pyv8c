@@ -404,7 +404,8 @@ class SerializationWriter:
     """A host object's bytes, written during its ``host_writer`` callback.
 
     The primitives are V8's own (its varint formats), which is why a host object's payload
-    is only readable by the matching reader.
+    is only readable by the matching reader. Operations are valid only during
+    the callback, on its creating thread; later use raises RuntimeError.
     """
 
     def write_tag(self, tag: int) -> None: ...
@@ -415,7 +416,10 @@ class SerializationWriter:
 
 
 class SerializationReader:
-    """A host object's bytes, read during its ``host_reader`` callback."""
+    """A host object's bytes, read during its ``host_reader`` callback.
+
+    Operations outside that callback or on another thread raise RuntimeError.
+    """
 
     def read_tag(self) -> int: ...
     def read_uint32(self) -> int: ...

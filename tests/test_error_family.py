@@ -136,3 +136,26 @@ def test_the_error_carries_no_python_internals():
         assert captured.getvalue() == ""
     finally:
         context.close()
+
+
+def test_a_throwing_fallback_constructor_getter_cannot_crash_the_binding():
+    # Run in a child: dereferencing an empty V8 Local used to abort the process.
+    import subprocess
+    import sys
+    program = """
+import pyv8
+class Window: pass
+class Mapped(pyv8.JsURIError): pass
+context = pyv8.Context(Window())
+try:
+    def boom(): raise Mapped('original')
+    context.expose(boom=boom)
+    context.exec_js("Object.defineProperty(globalThis, 'URIError', {get(){throw new Error('getter')}})")
+    result = context.exec_js("(() => {try{boom()}catch(e){return e.name+'|'+e.message}})()")
+    assert result == 'Error|original', result
+    assert context.exec_js('6*7') == 42
+finally:
+    context.close()
+"""
+    result = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr

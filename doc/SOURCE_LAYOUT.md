@@ -1,13 +1,9 @@
 # Source layout
 
-`src/` holds 69 files (34 `.cpp` and 35 `.h`, about 11.9k lines) that used to sit
-flat in one directory, next to a `faker/` subdirectory that had to reach back up
-with `#include "../runtime.h"`. Flat made two questions hard to answer: where a
-new file belongs, and what a file is allowed to use. This document answers both,
-and `tools/check_layout.py` checks the second answer against the tree -- along
-with the two build files, which have to agree with it. Both are gone now: every
-group is one flat directory, and the `faker` object that subdirectory held is no
-longer part of the binding.
+`src/` groups the binding by ownership and dependency direction. Run
+`python tools/check_layout.py --list` for the current file inventory; compiled
+sources, headers and included `.def` macro tables are all checked. File counts
+are generated rather than maintained in this document.
 
 This is the *where*. For the *why* -- how the isolate, the realm, the pair table
 and the handle types hold each other up, and what each layer is for -- see
@@ -19,12 +15,12 @@ and the handle types hold each other up, and what each layer is for -- see
 | --- | --- | --- | --- |
 | `src/` | 0 | portability shims and the module entry point; included by everything | `pyv8.h` `pyv8.cpp` `polyfill.h` `abi3.h/.cpp` `v8_compat.h` `boundary.h` `callback_boundary.h` |
 | `src/isolate/` | 1 | the V8 platform, the isolate, the realm and their lifetimes | `platform_state.*` `v8_string_cache.*` `isolate.*` `isolate_state.*` `isolate_scope.*` `execution.*` `runtime.*` `context.*` `context_names.cpp` `context_resources.cpp` `timeout_guard.*` `error_hooks.*` |
-| `src/values/` | 2 | values crossing the boundary, error mapping, handle registration | `convert.h` `convert_to_python.cpp` `convert_to_javascript.cpp` `exception.*` `jsvalue.*` `jsnull.*` `jsundefined.*` `handle_resource.h` |
-| `src/handles/` | 3 | the Python types that stand for JavaScript values | `jsobject.*` `jsfunction.*` `jspromise.*` `jstypedarray.*` `script.*` |
+| `src/values/` | 2 | values crossing the boundary, error mapping, handle registration | `convert.h` `convert_to_python.cpp` `convert_to_javascript.cpp` `error_family.*` `serialization.h` `exception.*` `jsvalue.*` `jsnull.*` `jsundefined.*` `handle_resource.h` |
+| `src/handles/` | 3 | the Python types that stand for JavaScript values | `jsobject.*` `jsfunction.*` `jspromise.*` `jstypedarray.*` `script.*` `serialization.cpp` |
 | `src/tools/` | 3 | tracing -- the hook the interface layer wraps its entry points in -- and the devtools bridge | `trace.h` `debugger.*` |
 | `src/interfaces/` | 4 | declarations into templates into callbacks | `idl_spec.*` `pyclass.*` `pyclass_handlers.*` `pyclass_interceptors.cpp` `pyclass_cross_origin_handlers.*` `v8tools.*` `pyclass_callbacks.cpp` `pyfunction.*` |
 
-8 + 22 + 12 + 10 + 3 + 14 = 69.
+The checker reports the current counts and verifies build include roots.
 
 `tools/` sits at the same layer as `handles/`, not above `interfaces/`. The
 tracing hook is included *by* the interface layer (`pyclass_handlers.cpp`,
@@ -36,7 +32,7 @@ bridge is reached only from the composition points below.
 ## Allowed includes
 
 A file may include headers from its own layer and from lower ones. Reaching
-upward is what stops a layer from being one. Eight files exist to tie layers
+upward is what stops a layer from being one. A small set of files exists to tie layers
 together, and they are the whole exception list:
 
 | file | may include | why |
@@ -44,7 +40,7 @@ together, and they are the whole exception list:
 | `pyv8.h` | 0-2 | the aggregate header: every unit includes it, and it re-exports the shims and the two singletons |
 | `pyv8.cpp` | everything | the module entry point registers every type |
 | `context.cpp` | 1-3 | the realm owner builds the interface templates, creates the realm's handles and wires the devtools bridge |
-| `context_names.cpp` | 1-4 | installing names into a realm and keeping the registry behind them is what `install`, `expose` and the lazy factory protocol do, so this is the one part of a context's life that knows the interface layer |
+| `context_names.cpp` | 1-4 | installing names into a realm and keeping the registry behind them is what `install`, `expose` and the lazy factory protocol do, so this is the part of a context's life that knows the interface layer; it also provides registered constructors to error conversion and installs the failed-access callback at realm entry |
 | `context_resources.cpp` | 1-3 | the pair table materialises a Python handle for a JavaScript object |
 | `convert_to_python.cpp` | 1-3 | one direction of the converter: it builds handles for objects coming in, which the handles layer defines |
 | `convert_to_javascript.cpp` | 1-4 | the other direction, which additionally has to know the class and function machinery |

@@ -103,6 +103,9 @@ a name whose template already exists is ignored, so a template is always built
 from the spec that arrived with its build and configuration cannot arrive after
 installation. `Context.install(names)` installs each name as a non-enumerable
 lazy constructor on the global; nothing is built for a name no script reads.
+Reading that name through another realm still builds and caches the interface in
+the global holder's creation realm, so its constructor and prototype keep that
+realm's identity.
 
 A realm's class templates are keyed by the class's own name, so one IDL name holds one
 template and a second class claiming that name is refused.

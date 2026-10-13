@@ -8,6 +8,8 @@
 #include "pyclass.h"
 #include "v8tools.h"
 #include "trace.h"
+#include "callback_boundary.h"
+#include "pyclass_cross_origin_handlers.h"
 
 using namespace v8;
 
@@ -354,3 +356,33 @@ context_hide_global(context_c *self, PyObject *name)
     return PyBool_FromLong(deleted ? 1 : 0);
 }
 
+
+void context_install_access_check(v8::Isolate* isolate)
+{
+    isolate->SetFailedAccessCheckCallbackFunction(
+        CallbackBoundary<cross_origin_failed_access>::call);
+}
+
+v8::Local<v8::Function> context_own_constructor(v8::Local<v8::Context> context, const char* shown)
+{
+    context_c* owner = context_from_v8(context);
+    PyObject* name = owner == nullptr ? nullptr : PyUnicode_FromString(shown);
+    if (name == nullptr)
+    {
+        PyErr_Clear();
+        return Local<Function>();
+    }
+    PyObject* interface_template = context_registry_get(owner, name, REGISTRY_TEMPLATE);
+    Py_DECREF(name);
+    PyErr_Clear();
+    if (interface_template == nullptr)
+        return Local<Function>();
+    auto* klass = (py_class*)interface_template;
+    Local<Value> interface = py_class_get_constructor(context, klass, (py_class*)klass->parent);
+    if (interface.IsEmpty() || !interface->IsFunction())
+    {
+        PyErr_Clear();
+        return Local<Function>();
+    }
+    return interface.As<Function>();
+}

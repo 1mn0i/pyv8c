@@ -46,6 +46,32 @@ def widget_class(declared_method=None):
 
 
 class TestRegistry(unittest.TestCase):
+    def test_a_lazy_interface_read_from_another_realm_belongs_to_its_holder(self):
+        class OpenWindow:
+            __v8_idl_spec__ = IdlSpec(
+                global_this=True, cross_origin_check=lambda self, accessor: True)
+
+        widget = widget_class()
+        asked = []
+
+        def factory(name):
+            asked.append(name)
+            return widget if name == "Widget" else None
+
+        parent = pyv8.Context(OpenWindow(), lazy_factory=lambda name: widget if name == "Widget" else None)
+        child = pyv8.Context(OpenWindow(), lazy_factory=factory)
+        self.addCleanup(parent.close)
+        self.addCleanup(child.close)
+        parent.install(["Widget"])
+        child.install(["Widget"])
+        parent.expose(child=child.glob)
+        self.assertTrue(parent.exec_js("child.Widget !== Widget"))
+        self.assertEqual(asked.count("Widget"), 1)
+        parent.expose(child_constructor=child.exec_js("Widget"))
+        self.assertTrue(parent.exec_js("child.Widget === child_constructor"))
+        self.assertTrue(parent.exec_js(
+            "Object.getPrototypeOf(child.Widget) === child.Function.prototype"))
+
     def make_context(self, factory):
         context = pyv8.Context(Window(), ctx_type="Top", lazy_factory=factory)
         self.addCleanup(context.close)

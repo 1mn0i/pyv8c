@@ -114,6 +114,10 @@ bool context_registry_askable(context_c* self, PyObject* name);
 //: Py_None when the realm has no answer, or NULL with an error set.
 PyObject* context_ask_factory(context_c* self, PyObject* name);
 
+// Realm composition owns the interface callbacks and registered constructors.
+void context_install_access_check(v8::Isolate* isolate);
+v8::Local<v8::Function> context_own_constructor(v8::Local<v8::Context> context, const char* name);
+
 bool context_is_active(context_c* self);
 context_c* context_from_v8(v8::Local<v8::Context> context);
 

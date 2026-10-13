@@ -3,7 +3,7 @@
 #include "gil_scope.h"
 #include "isolate_state.h"
 #include "callback_boundary.h"
-#include "pyclass_cross_origin_handlers.h"
+#include "context.h"
 
 #include <Python.h>
 
@@ -79,8 +79,7 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
     isolate_->Enter();
     entered_ = true;
     // It lives on the thread's V8 state, so every entry has to set it.
-    isolate_->SetFailedAccessCheckCallbackFunction(
-        CallbackBoundary<cross_origin_failed_access>::call);
+    context_install_access_check(isolate_);
     ++state_->entry_depth;
     active_isolate_state = state_;
 }

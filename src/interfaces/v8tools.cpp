@@ -17,7 +17,11 @@ namespace bindings {
 
     void ConstructAccessorNameGetterCallback(Local<Name> property, const PropertyCallbackInfo<Value>& info) {
         v8::Isolate* isolate = info.GetIsolate();
-        Local<Context> context = isolate->GetCurrentContext();
+        // Reading child.Interface from a parent script must build the interface
+        // in the holder's realm, not cache the parent's constructor on the child.
+        Local<Context> context;
+        if (!v8_compat::callback_holder(info)->GetCreationContext().ToLocal(&context)) return;
+        Context::Scope scope(context);
         if (!context_check_callback(context)) return;
         context_c* py_ctx = context_from_v8(context);
         if (py_ctx == nullptr) {

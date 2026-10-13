@@ -68,7 +68,7 @@ COMPOSITION_POINTS = {
 }
 
 INCLUDE = re.compile(r'^#\s*include\s+"([^"]+)"')
-SUFFIXES = (".cpp", ".h")
+SUFFIXES = (".cpp", ".h", ".def")
 
 
 def group_of(path: Path) -> str:

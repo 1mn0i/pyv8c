@@ -130,3 +130,14 @@ per class, and the window's own name table is a separate, layered thing:
 | Attribute protocol: hooks, errors, subscript | `tests/test_jsobject.py` |
 | The window name table and indices | `tests/test_window_name_table.py` |
 | Cost of crossing, installing, strings | `benchmarks/` |
+
+## Structured-clone callback lifetime
+
+`handles/serialization.cpp` owns the serializer and its temporary Python stream
+wrappers; `values/serialization.h` declares the conversion protocol. Streams are
+valid only on the callback's creating thread and are invalidated on both success
+and failure. Serializer values and transfer entries use the ordinary conversion
+path, including closed-context and foreign-isolate checks. Host callbacks may
+reenter JavaScript through V8's explicit allow scope. A Python callback failure
+is checked even when V8 reports a successful write or read, preserving the original
+exception rather than returning a value with an exception set.

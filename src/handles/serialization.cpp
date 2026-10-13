@@ -40,6 +40,7 @@ typedef struct
     PyObject_HEAD
     v8::ValueSerializer* serializer;
     v8::Isolate* isolate;
+    unsigned long thread_id;
 } js_serialization_writer;
 
 typedef struct
@@ -47,19 +48,8 @@ typedef struct
     PyObject_HEAD
     v8::ValueDeserializer* deserializer;
     v8::Isolate* isolate;
+    unsigned long thread_id;
 } js_serialization_reader;
-
-//: The value a Python object stands for, when it is one of the wrappers.
-v8::Local<v8::Value> local_of(PyObject* item, v8::Isolate* isolate)
-{
-    if (item == nullptr || item == Py_None)
-        return v8::Local<v8::Value>();
-    if (PyObject_TypeCheck(item, js_object_type))
-        return ((js_object*)item)->object.Get(isolate);
-    if (PyObject_TypeCheck(item, js_value_type))
-        return ((js_value*)item)->value.Get(isolate);
-    return v8::Local<v8::Value>();
-}
 
 // ---------------------------------------------------------------- writer
 
@@ -70,6 +60,7 @@ PyObject* js_serialization_writer_new(v8::ValueSerializer* serializer, v8::Isola
     PyErr_PROPAGATE(self);
     self->serializer = serializer;
     self->isolate = isolate;
+    self->thread_id = PyThread_get_thread_ident();
     return (PyObject*)self;
 }
 
@@ -78,11 +69,28 @@ void js_serialization_writer_dealloc(js_serialization_writer* self)
     TP_FREE_ABI3(serialization_writer_type, self);
 }
 
+bool writer_active(js_serialization_writer* self)
+{
+    if (self->serializer == nullptr || self->thread_id != PyThread_get_thread_ident())
+    {
+        PyErr_SetString(PyExc_RuntimeError,
+            "SerializationWriter is only valid during its callback on the creating thread");
+        return false;
+    }
+    return true;
+}
+
 PyObject* js_serialization_writer_write_tag(js_serialization_writer* self, PyObject* tag)
 {
+    if (!writer_active(self)) return nullptr;
     long value = PyLong_AsLong(tag);
     if (value == -1 && PyErr_Occurred())
         return nullptr;
+    if (value < 0 || value > 255)
+    {
+        PyErr_SetString(PyExc_ValueError, "a serialization tag must be between 0 and 255");
+        return nullptr;
+    }
     uint8_t byte = (uint8_t)value;
     self->serializer->WriteRawBytes(&byte, 1);
     Py_RETURN_NONE;
@@ -90,6 +98,7 @@ PyObject* js_serialization_writer_write_tag(js_serialization_writer* self, PyObj
 
 PyObject* js_serialization_writer_write_uint32(js_serialization_writer* self, PyObject* number)
 {
+    if (!writer_active(self)) return nullptr;
     unsigned long value = PyLong_AsUnsignedLong(number);
     if (value == (unsigned long)-1 && PyErr_Occurred())
         return nullptr;
@@ -99,6 +108,7 @@ PyObject* js_serialization_writer_write_uint32(js_serialization_writer* self, Py
 
 PyObject* js_serialization_writer_write_uint64(js_serialization_writer* self, PyObject* number)
 {
+    if (!writer_active(self)) return nullptr;
     unsigned long long value = PyLong_AsUnsignedLongLong(number);
     if (value == (unsigned long long)-1 && PyErr_Occurred())
         return nullptr;
@@ -108,6 +118,7 @@ PyObject* js_serialization_writer_write_uint64(js_serialization_writer* self, Py
 
 PyObject* js_serialization_writer_write_double(js_serialization_writer* self, PyObject* number)
 {
+    if (!writer_active(self)) return nullptr;
     double value = PyFloat_AsDouble(number);
     if (value == -1.0 && PyErr_Occurred())
         return nullptr;
@@ -117,6 +128,7 @@ PyObject* js_serialization_writer_write_double(js_serialization_writer* self, Py
 
 PyObject* js_serialization_writer_write_raw_bytes(js_serialization_writer* self, PyObject* data)
 {
+    if (!writer_active(self)) return nullptr;
     Py_buffer view;
     if (PyObject_GetBuffer(data, &view, PyBUF_SIMPLE) < 0)
         return nullptr;
@@ -160,6 +172,7 @@ PyObject* js_serialization_reader_new(v8::ValueDeserializer* deserializer, v8::I
     PyErr_PROPAGATE(self);
     self->deserializer = deserializer;
     self->isolate = isolate;
+    self->thread_id = PyThread_get_thread_ident();
     return (PyObject*)self;
 }
 
@@ -168,8 +181,20 @@ void js_serialization_reader_dealloc(js_serialization_reader* self)
     TP_FREE_ABI3(serialization_reader_type, self);
 }
 
+bool reader_active(js_serialization_reader* self)
+{
+    if (self->deserializer == nullptr || self->thread_id != PyThread_get_thread_ident())
+    {
+        PyErr_SetString(PyExc_RuntimeError,
+            "SerializationReader is only valid during its callback on the creating thread");
+        return false;
+    }
+    return true;
+}
+
 PyObject* js_serialization_reader_read_tag(js_serialization_reader* self, PyObject* Py_UNUSED(ignored))
 {
+    if (!reader_active(self)) return nullptr;
     const void* data = nullptr;
     if (!self->deserializer->ReadRawBytes(1, &data))
     {
@@ -181,6 +206,7 @@ PyObject* js_serialization_reader_read_tag(js_serialization_reader* self, PyObje
 
 PyObject* js_serialization_reader_read_uint32(js_serialization_reader* self, PyObject* Py_UNUSED(ignored))
 {
+    if (!reader_active(self)) return nullptr;
     uint32_t value = 0;
     if (!self->deserializer->ReadUint32(&value))
     {
@@ -192,6 +218,7 @@ PyObject* js_serialization_reader_read_uint32(js_serialization_reader* self, PyO
 
 PyObject* js_serialization_reader_read_uint64(js_serialization_reader* self, PyObject* Py_UNUSED(ignored))
 {
+    if (!reader_active(self)) return nullptr;
     uint64_t value = 0;
     if (!self->deserializer->ReadUint64(&value))
     {
@@ -203,6 +230,7 @@ PyObject* js_serialization_reader_read_uint64(js_serialization_reader* self, PyO
 
 PyObject* js_serialization_reader_read_double(js_serialization_reader* self, PyObject* Py_UNUSED(ignored))
 {
+    if (!reader_active(self)) return nullptr;
     double value = 0;
     if (!self->deserializer->ReadDouble(&value))
     {
@@ -214,6 +242,7 @@ PyObject* js_serialization_reader_read_double(js_serialization_reader* self, PyO
 
 PyObject* js_serialization_reader_read_raw_bytes(js_serialization_reader* self, PyObject* count)
 {
+    if (!reader_active(self)) return nullptr;
     Py_ssize_t length = PyLong_AsSsize_t(count);
     if (length < 0)
     {
@@ -297,6 +326,9 @@ public:
 
     v8::Maybe<bool> IsHostObject(v8::Isolate* isolate, v8::Local<v8::Object> object) override
     {
+        // V8 forbids JavaScript while traversing its wire format. Host callbacks
+        // are embedder code and may legitimately call back into their realm.
+        v8::Isolate::AllowJavascriptExecutionScope callbacks(isolate);
         if (host_check_ == nullptr)
             return v8::Just(false);
         js_object* wrapper = js_object_new(object, context_);
@@ -316,6 +348,9 @@ public:
 
     v8::Maybe<bool> WriteHostObject(v8::Isolate* isolate, v8::Local<v8::Object> object) override
     {
+        // V8 forbids JavaScript while traversing its wire format. Host callbacks
+        // are embedder code and may legitimately call back into their realm.
+        v8::Isolate::AllowJavascriptExecutionScope callbacks(isolate);
         if (host_writer_ == nullptr)
         {
             //: A host object whose clone cannot be written: V8's own refusal, thrown where the
@@ -336,6 +371,7 @@ public:
         }
         PyObject* answer =
             PyObject_CallFunctionObjArgs(host_writer_, (PyObject*)wrapper, writer, NULL);
+        ((js_serialization_writer*)writer)->serializer = nullptr;
         Py_DECREF((PyObject*)wrapper);
         Py_DECREF(writer);
         if (answer == nullptr)
@@ -367,7 +403,7 @@ class ValueReaderDelegate : public v8::ValueDeserializer::Delegate
 {
 public:
     ValueReaderDelegate(v8::Local<v8::Context> context, PyObject* host_reader)
-        : context_(context), host_reader_(host_reader ? PyV8_NewRef(host_reader) : nullptr) {}
+        : context_(context), host_reader_(host_reader && host_reader != Py_None ? PyV8_NewRef(host_reader) : nullptr) {}
 
     ~ValueReaderDelegate() override { Py_XDECREF(host_reader_); }
 
@@ -375,12 +411,16 @@ public:
 
     v8::MaybeLocal<v8::Object> ReadHostObject(v8::Isolate* isolate) override
     {
+        // V8 forbids JavaScript while traversing its wire format. Host callbacks
+        // are embedder code and may legitimately call back into their realm.
+        v8::Isolate::AllowJavascriptExecutionScope callbacks(isolate);
         if (host_reader_ == nullptr)
             return v8::MaybeLocal<v8::Object>();
         PyObject* reader = js_serialization_reader_new(deserializer_, isolate);
         if (reader == nullptr)
             return v8::MaybeLocal<v8::Object>();
         PyObject* answer = PyObject_CallFunctionObjArgs(host_reader_, reader, NULL);
+        ((js_serialization_reader*)reader)->deserializer = nullptr;
         Py_DECREF(reader);
         if (answer == nullptr)
             return v8::MaybeLocal<v8::Object>();
@@ -412,7 +452,7 @@ typedef struct
 //: The transfer list, applied before the value is written and detached once it has been: an
 //: ArrayBuffer named here travels as a transfer (its bytes are not copied) and the sender's
 //: buffer is left detached, which is what a browser leaves behind.
-bool apply_transfer(v8::ValueSerializer& serializer, PyObject* listed, v8::Isolate* isolate,
+bool apply_transfer(v8::ValueSerializer& serializer, PyObject* listed, v8::Local<v8::Context> context,
                     std::vector<v8::Local<v8::ArrayBuffer>>* buffers)
 {
     if (listed == nullptr || listed == Py_None)
@@ -429,11 +469,12 @@ bool apply_transfer(v8::ValueSerializer& serializer, PyObject* listed, v8::Isola
         PyObject* entry = PySequence_GetItem(listed, index);
         if (entry == nullptr)
             return false;
-        v8::Local<v8::Value> item = local_of(entry, isolate);
+        v8::Local<v8::Value> item = js_from_py(entry, context);
         Py_DECREF(entry);
         if (item.IsEmpty() || !item->IsArrayBuffer())
         {
-            PyErr_Format(PyExc_TypeError, "transfer entry %zd is not an ArrayBuffer", index);
+            if (!PyErr_Occurred())
+                PyErr_Format(PyExc_TypeError, "transfer entry %zd is not an ArrayBuffer", index);
             return false;
         }
         serializer.TransferArrayBuffer((uint32_t)index, item.As<v8::ArrayBuffer>());
@@ -460,9 +501,7 @@ PyObject* js_serializer_serialize(js_serializer* self, PyObject* args, PyObject*
     v8::Local<v8::Context> context = execution.context();
     JS_TRY
 
-    v8::Local<v8::Value> value = local_of(py_value, isolate);
-    if (value.IsEmpty())
-        value = js_from_py(py_value, context);
+    v8::Local<v8::Value> value = js_from_py(py_value, context);
     if (value.IsEmpty())
         return nullptr;
 
@@ -471,7 +510,7 @@ PyObject* js_serializer_serialize(js_serializer* self, PyObject* args, PyObject*
     delegate.set_serializer(&serializer);
 
     std::vector<v8::Local<v8::ArrayBuffer>> buffers;
-    if (!apply_transfer(serializer, py_transfer, isolate, &buffers))
+    if (!apply_transfer(serializer, py_transfer, context, &buffers))
         return nullptr;
 
     bool wrote = false;
@@ -481,6 +520,8 @@ PyObject* js_serializer_serialize(js_serializer* self, PyObject* args, PyObject*
     //: A delegate that refuses mid-write leaves its own exception behind even when V8 reports
     //: the write as done, so the caught exception is asked for as well.
     v8::Maybe<bool> written = serializer.WriteValue(context, value);
+    if (PyErr_Occurred())
+        return nullptr;
     if (!tc.HasCaught() && (written.IsNothing() || !written.FromJust()))
         written = v8::Just(false);
     if (written.IsNothing() || !written.FromJust())
@@ -555,11 +596,12 @@ PyObject* js_serializer_deserialize(js_serializer* self, PyObject* args, PyObjec
                 PyBuffer_Release(&view);
                 return nullptr;
             }
-            v8::Local<v8::Value> item = local_of(entry, isolate);
+            v8::Local<v8::Value> item = js_from_py(entry, context);
             Py_DECREF(entry);
             if (item.IsEmpty() || !item->IsArrayBuffer())
             {
                 PyBuffer_Release(&view);
+                if (!PyErr_Occurred())
                 PyErr_Format(PyExc_TypeError, "transfer entry %zd is not an ArrayBuffer", index);
                 return nullptr;
             }
@@ -579,6 +621,8 @@ PyObject* js_serializer_deserialize(js_serializer* self, PyObject* args, PyObjec
     }
     v8::MaybeLocal<v8::Value> read = deserializer.ReadValue(context);
     PyBuffer_Release(&view);
+    if (PyErr_Occurred())
+        return nullptr;
     v8::Local<v8::Value> value;
     if (!read.ToLocal(&value) || value.IsEmpty())
     {

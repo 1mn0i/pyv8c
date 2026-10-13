@@ -3,7 +3,6 @@
 #include "convert.h"
 #include "handle_resource.h"
 #include "js_exception.h"
-#include "pyclass.h"
 #include "runtime.h"
 
 #include <cstdarg>
@@ -353,26 +352,7 @@ bool carries_stack(PyObject* exc_value)
 //: this binding built for that name (a ``DOMException``), else nothing.
 Local<Function> own_constructor(Isolate* isolate, Local<Context> context, const char* shown)
 {
-    context_c* owner = context_from_v8(context);
-    PyObject* name = owner == nullptr ? nullptr : PyUnicode_FromString(shown);
-    if (name == nullptr)
-    {
-        PyErr_Clear();
-        return Local<Function>();
-    }
-    PyObject* interface_template = context_registry_get(owner, name, REGISTRY_TEMPLATE);
-    Py_DECREF(name);
-    PyErr_Clear();
-    if (interface_template == nullptr)
-        return Local<Function>();
-    auto* klass = (py_class*)interface_template;
-    Local<Value> interface = py_class_get_constructor(context, klass, (py_class*)klass->parent);
-    if (interface.IsEmpty() || !interface->IsFunction())
-    {
-        PyErr_Clear();
-        return Local<Function>();
-    }
-    return interface.As<Function>();
+    return context_own_constructor(context, shown);
 }
 
 //: V8's own error of that name, made without asking the realm anything; empty for the two
@@ -392,8 +372,13 @@ Local<Value> native_error(const char* shown, Local<String> message)
 Local<Value> global_function(Isolate* isolate, Local<Context> context, const char* shown)
 {
     Local<Value> value;
+    // A page may replace this fallback with a throwing accessor.  Its failure
+    // must not leave an empty Local to dereference or replace the host error.
+    TryCatch lookup(isolate);
     if (!context.IsEmpty() && !context->Global().IsEmpty())
         context->Global()->Get(context, V8String(isolate, shown)).ToLocal(&value);
+    if (lookup.HasCaught())
+        lookup.Reset();
     PyErr_Clear();
     return value;
 }
@@ -436,7 +421,7 @@ Local<Object> build(Isolate* isolate, Local<Context> context, const char* name,
         if (constructor.IsEmpty())
         {
             Local<Value> offered = global_function(isolate, context, shown.c_str());
-            if (offered->IsFunction())
+            if (!offered.IsEmpty() && offered->IsFunction())
                 constructor = offered.As<Function>();
         }
         if (!constructor.IsEmpty() && constructor->IsConstructor())
