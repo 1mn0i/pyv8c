@@ -15,7 +15,7 @@ V8 负责执行 JavaScript；Python 负责页面、DOM/BOM、资源、事件循�
 
 ## 快速开始
 
-要求 Python 3.10+，并且运行环境能导入相邻仓库构建的 `pyv8` 扩展：
+要求 Python 3.12+，并且运行环境能导入相邻仓库构建的 `pyv8` 扩展：
 
 ```powershell
 Set-Location <pyv8c 仓库根>                        # 例如 D:\code\pyv8env\pyv8c
@@ -29,10 +29,10 @@ python -c "import pyv8; print(pyv8.__file__)"
 ```python
 from pyv8c import Browser
 
-browser = Browser(stub_logging="off")
+browser = Browser(real_network=False, stub_logging="off")
 try:
-    page = browser.new_context().new_page("https://example.test/")
-    page.set_content("<main id='app'>ready</main>")
+    page = browser.new_context().new_page()
+    page.set_content("<main id='app'>ready</main>", url="https://example.test/")
     assert page.evaluate("document.querySelector('#app').textContent") == "ready"
     page.evaluate("globalThis.answer = 0; setTimeout(() => answer = 42, 0)")
     page.run_until_idle(timeout=1)
@@ -41,7 +41,7 @@ finally:
     browser.close()
 ```
 
-默认不会访问外网。使用 `resource_loader` 注入页面和资源，或显式启用真实网络后端。
+默认 `real_network=True`，导航或资源请求会使用真实网络。离线场景使用 `Browser(real_network=False)`，配合 `resource_loader` 或 `set_content()`。
 
 请显式关闭 Page、BrowserContext 或 Browser。关闭的 Page 会从所属上下文移除，
 关闭的 BrowserContext 会从 Browser 移除；页面返回的原生 JS 对象和函数随页面关闭

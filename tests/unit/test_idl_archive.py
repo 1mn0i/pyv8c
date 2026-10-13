@@ -122,3 +122,27 @@ def test_the_document_this_build_reads_is_the_archive_it_ships():
     """The one artifact in the tree, and the name a Browser reports for it."""
     assert Path(module.DEFAULT_IDL_PATH).name == "idl.zip"
     assert Path(module.DEFAULT_IDL_PATH).is_file()
+
+
+def test_failed_cache_replacement_preserves_the_published_cache(tmp_path, monkeypatch):
+    path = tmp_path / 'idl.pyv8ccache'
+    path.write_bytes(b'published')
+    def fail(*args, **kwargs):
+        raise OSError('cannot replace')
+    monkeypatch.setattr(module.os, 'replace', fail)
+    assert module._write_cache(path, 'digest', {}, {}) is False
+    assert path.read_bytes() == b'published'
+    assert sorted(p.name for p in tmp_path.iterdir()) == ['idl.pyv8ccache']
+
+
+def test_sidecar_remains_complete_while_its_replacement_is_written(tmp_path):
+    path = tmp_path / 'idl.json'
+    path.write_bytes(b'old-complete')
+    def write(handle):
+        handle.write(b'new-')
+        handle.flush()
+        assert path.read_bytes() == b'old-complete'
+        handle.write(b'complete')
+    module._replace_sidecar(path, write)
+    assert path.read_bytes() == b'new-complete'
+    assert len(list(tmp_path.iterdir())) == 1

@@ -616,7 +616,7 @@ class Document(_ParentNodeMixin, Node):
         return None if realm is None else realm.interface_class(name)
     def query_selector(self, selector, root):
         from .selectors import select
-        return next(iter(select(root, selector)), pyv8.Null)
+        return select(root, selector, first=True) or pyv8.Null
     def query_selector_all(self, selector, root):
         from .selectors import select
         return list(select(root, selector))

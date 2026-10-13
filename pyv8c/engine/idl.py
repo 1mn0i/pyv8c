@@ -10,6 +10,8 @@ use.  Nothing here knows the native binding, which keeps it importable by the of
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import pickle
 import time
 import zipfile
@@ -235,14 +237,31 @@ def _read_cache(path, digest):
     return metadata, interfaces
 
 
+def _replace_sidecar(path, write):
+    """Publish a complete sidecar atomically; concurrent readers never see a prefix."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
+            temporary = handle.name
+            write(handle)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
 def _write_cache(path, digest, metadata, interfaces) -> bool:
     """Best-effort cache write: a startup never depends on it."""
+    def write(handle):
+        handle.write(_CACHE_MAGIC)
+        pickle.dump({"digest": digest, "version": IDL_VERSION}, handle,
+                    protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump((metadata, interfaces), handle, protocol=pickle.HIGHEST_PROTOCOL)
     try:
-        with open(path, "wb") as handle:
-            handle.write(_CACHE_MAGIC)
-            pickle.dump({"digest": digest, "version": IDL_VERSION}, handle,
-                        protocol=pickle.HIGHEST_PROTOCOL)
-            pickle.dump((metadata, interfaces), handle, protocol=pickle.HIGHEST_PROTOCOL)
+        _replace_sidecar(path, write)
     except Exception:
         return False
     return True
@@ -269,7 +288,7 @@ def _payload(target, cache_target, stat, cache_stat) -> bytes:
             raise ValueError(f"the IDL archive contains an unsafe member path: {members[0].filename}")
         raw = archive.read(members[0])
     try:
-        cache_target.write_bytes(raw)
+        _replace_sidecar(cache_target, lambda handle: handle.write(raw))
     except OSError as exc:
         _report_unwritable_sidecar(cache_target, exc)
     return raw

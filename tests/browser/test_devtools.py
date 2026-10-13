@@ -359,3 +359,23 @@ def test_service_close_while_paused_keeps_host(devtools_page):
         assert result.result(3) == 42
         assert not page.closed
         assert page.evaluate("21+21") == 42
+
+
+def test_parent_unregister_follows_descendant_close(devtools_page, monkeypatch):
+    _, page, handle = devtools_page
+    page.set_content('<iframe></iframe>')
+    child = next(iter(page._owned.frames))
+    adapter = page.context_owner._devtools
+    unregister = adapter.unregister
+    order = []
+
+    def checked(realm):
+        if realm is page:
+            assert child.closed, "parent mailbox must remain live until descendants close"
+        order.append(realm)
+        return unregister(realm)
+
+    monkeypatch.setattr(adapter, "unregister", checked)
+    page.close()
+    assert order == [child, page]
+    assert not handle._router.cleanup

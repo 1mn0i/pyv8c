@@ -64,8 +64,7 @@ git diff --check
 - **默认并行**：`python -m pytest -n auto`（`pytest-xdist` 在 dev extras 里）。16 核实测三套 1235 passed：
   105.7 s → 19.9 s。单文件或少数用例不必加——进程启动开销会反超收益；`--dist loadfile` 更慢，别用。
 - `tests/repros` **保持串行**：它驱动本机 Chrome，那半边与线程/时序敏感（并行实测 29 failed、321 s，串行
-  272 passed、17 s）。整套跑时 Chrome 对照那半边的 `greenlet.error: Cannot switch to a different thread`
-  是既有环境问题（单文件跑正常），不是并行造成的，但并行会把它放大。
+  272 passed、17 s）。Chrome 对照夹具在创建 Playwright 的线程上关闭浏览器和 dispatcher；整套保持串行，并在会话结束时释放共享 pyv8c 引擎。
 - 时序敏感的用例（`race` 与少数语料）在并行下会因机器负载假失败：并行跑出的失败要串行复跑确认
   （去掉 `-n` 再跑一次）才算数。
 - `_pyv8` 的套件很小，并行与串行无实质差别（403 passed，5.42 s vs 5.55 s），统一带 `-n auto` 即可。

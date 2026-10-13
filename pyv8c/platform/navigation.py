@@ -43,6 +43,17 @@ class NavigationController:
     def navigation_allowed(self):
         return not self.has_navigation or self.page.lifecycle.dispatch_beforeunload()
 
+    def initialize_empty_document(self):
+        """Populate an iframe's initial about:blank without starting a navigation.
+
+        The insertion's script can read and write this complete document immediately;
+        src/srcdoc navigation is separate from creating this document.
+        """
+        IncrementalDOMParser(self.page.services, self.page.document, "", active=False).run()
+        self.parser_done = True
+        self.page.lifecycle.dom_content_loaded = True
+        self.page.lifecycle.document_load_fired = True
+
     def commit_content(self, html, url, response=None):
         lifecycle = self.page.lifecycle
         if self.has_navigation:

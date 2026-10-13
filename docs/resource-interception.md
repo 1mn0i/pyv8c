@@ -119,11 +119,11 @@ browser = Browser(environment={"extensions": {
 该缓存与 baseline 的 JSON/pickle 编译缓存完全不同。
 
 - GET/HEAD 可缓存；请求 cache 为 no-store、reload、no-cache 时绕过。
-- 缓存键包含 method、URL、mode、credentials；目录按目标域名/非默认端口组织，文件名为键摘要。
+- 缓存键包含 method、URL、mode、credentials、发起源和规范化请求头；目录按目标域名/非默认端口组织，文件名为键摘要。
 - 复用命中时输出 Loguru DEBUG 的 resource cache hit 日志。
-- 没有完整 HTTP freshness、ETag/304、Cache-Control、Vary 等缓存语义保证。
+- 响应 no-store、no-cache、private、Set-Cookie、Vary: * 和非 2xx 状态不写入；仍没有完整 HTTP freshness、ETag/304 和重验证语义。
 - 重定向链只缓存最终响应，键仍是原始请求的 method/URL/mode/credentials；中间跳不单独入缓存，与 Chrome 的逐跳缓存不同。
-- 键不包含 Cookie、Authorization 或完整请求头。同一目录可能被多个 Context/Browser 共享，私有响应存在串用风险。
+- 请求携带 Authorization、Cookie 或 CookieJar 中存在匹配 Cookie 时绕过缓存。同一目录仍可被多个 Context/Browser 共享；旧版缓存键与新版不同，旧记录不会被新版命中。
 - 处理鉴权、敏感或依赖 Cookie 的内容时关闭缓存，或使用隔离目录并自行控制可缓存资源。
 
 cache=False 关闭响应缓存使用；Browser.close 不删除显式持久目录。

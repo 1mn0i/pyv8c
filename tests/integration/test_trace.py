@@ -179,6 +179,9 @@ def test_a_frames_realm_is_labelled_apart_from_the_pages_own():
         events.clear()
         page.set_content('<body><iframe srcdoc="&lt;script&gt;navigator.userAgent&lt;/script&gt;">'
                          "</iframe></body>", url="https://example.test/")
+        # srcdoc commits after insertion, as in Chrome; the assertion is about
+        # the realm label, not whether the parser completed the child already.
+        page.run_until_idle(timeout=1)
         messages = _messages(events)
         assert any(message.startswith("[FRAME] ") and "userAgent" in message for message in messages)
         assert not any(message.startswith("[TOP] ") and "userAgent" in message for message in messages)

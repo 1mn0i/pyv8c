@@ -355,7 +355,7 @@ class DocumentLifecycle:
         # A window's load event is fired at the window with the document as its target.
         event = self.event_class("load")("load", {"bubbles": False})
         event._trusted = True
-        event.target = page.document
+        event._legacy_target_override = page.document
         page.window.fn_dispatchEvent(event)
         performance.note(loadEventEnd=clock.now_ms())
         self.dispatch_page_show(False)

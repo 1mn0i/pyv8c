@@ -118,10 +118,9 @@ def _write_host(value, writer):
 def _read_host(reader):
     """The host object a stream describes, as the host's value for the realm reading it.
 
-    A Python object, not a JavaScript one: this callback runs *inside* V8's deserializer, so
-    entering the realm here (``exec_js``) would take the isolate a second time and never
-    return -- measured once, as a test that sat in ``run_until_idle`` for good.  What the host
-    answers is handed to the realm by the binding, as every other crossing is.
+    The callback returns the host object for the binding to wrap in the reading
+    realm. Native stream primitives are valid only during this callback; retain
+    the decoded data, never the reader itself.
     """
     from .bom.filesystem import File
     from .fileapi.blob import Blob

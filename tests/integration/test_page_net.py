@@ -183,3 +183,76 @@ def test_page_net_without_a_transport_says_so():
     finally:
         browser.close()
     assert "real_network" in str(failure.value)
+
+
+def test_host_request_future_tracks_running_and_queued_cancellation(monkeypatch):
+    """Cancelling queued work prevents the request; running work cannot be cancelled."""
+    import threading
+    from concurrent.futures import CancelledError
+    from types import SimpleNamespace
+    from pyv8c.platform.net import PageNet
+
+    entered = [threading.Event(), threading.Event()]
+    release = threading.Event()
+    calls = []
+
+    def request(value):
+        calls.append(value)
+        entered[value].set()
+        assert release.wait(3)
+        return value
+
+    net = PageNet(SimpleNamespace(context_owner=SimpleNamespace(browser=SimpleNamespace())))
+    monkeypatch.setattr(net, "_backend", lambda: SimpleNamespace(request_sync=request))
+    monkeypatch.setattr(net, "build", lambda method, url, **kw: url)
+    try:
+        first = net.request_async("GET", 0)
+        second = net.request_async("GET", 1)
+        assert all(event.wait(3) for event in entered)
+        assert first.running() and not first.cancel()
+        queued = net.request_async("GET", 2)
+        assert queued.cancel()
+        release.set()
+        assert first.result(3) == 0 and second.result(3) == 1
+        with pytest.raises(CancelledError):
+            queued.result(3)
+        assert sorted(calls) == [0, 1]
+    finally:
+        release.set()
+        net.close()
+
+
+def test_host_request_shutdown_completes_cancelled_queue(monkeypatch):
+    import threading
+    from types import SimpleNamespace
+    from pyv8c.platform.net import PageNet
+
+    entered = [threading.Event(), threading.Event()]
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    def request(value):
+        entered[value].set()
+        assert release.wait(3)
+
+    net = PageNet(SimpleNamespace(context_owner=SimpleNamespace(browser=SimpleNamespace())))
+    monkeypatch.setattr(net, "_backend", lambda: SimpleNamespace(request_sync=request))
+    monkeypatch.setattr(net, "build", lambda method, url, **kw: url)
+    closer = threading.Thread(target=net.close)
+    try:
+        active = [net.request_async("GET", value) for value in (0, 1)]
+        assert all(event.wait(3) for event in entered)
+        queued = net.request_async("GET", 2)
+        queued.add_done_callback(lambda _: cancelled.set())
+        closer.start()
+        assert cancelled.wait(3), "shutdown must complete the returned queued Future"
+        assert queued.cancelled()
+        release.set()
+        closer.join(3)
+        assert not closer.is_alive()
+        assert all(future.done() for future in active)
+    finally:
+        release.set()
+        if closer.ident is not None:
+            closer.join(3)
+        net.close()

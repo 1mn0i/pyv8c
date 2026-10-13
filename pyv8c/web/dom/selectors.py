@@ -153,7 +153,7 @@ def _nth(pos, expr):
     m = re.match(r"([+-]?\d*)n([+-]\d+)?$", expr)
     if not m: raise SyntaxError("Invalid nth expression")
     a = -1 if m.group(1) == "-" else 1 if m.group(1) in ("", "+") else int(m.group(1)); b = int(m.group(2) or 0)
-    return pos >= b if a == 0 else (pos - b) * a >= 0 and (pos - b) % a == 0
+    return pos == b if a == 0 else (pos - b) * a >= 0 and (pos - b) % a == 0
 
 _FORM_CONTROL_TAGS = {"button", "input", "select", "textarea", "option", "optgroup", "fieldset"}
 
@@ -184,6 +184,8 @@ def _matches_attribute(actual, op, wanted):
     """Whether *actual* satisfies ``[name<op>wanted]``."""
     if op == "=":
         return actual == wanted
+    if op in {"^=", "$=", "*="} and not wanted:
+        return False
     if op == "^=":
         return actual.startswith(wanted)
     if op == "$=":
@@ -223,7 +225,8 @@ def _simple_match(node, simple):
         if actual is None: return False
         if op and not _matches_attribute(actual, op, wanted): return False
     for name, arg in simple.pseudos:
-        pos, sibling_count = _sibling_position(node, name.endswith("of-type"))
+        if name in {"first-child", "last-child", "nth-child", "first-of-type", "last-of-type", "nth-of-type"}:
+            pos, sibling_count = _sibling_position(node, name.endswith("of-type"))
         if name == "first-child" and pos != 1 or name == "last-child" and pos != sibling_count: return False
         if name in ("nth-child", "nth-of-type") and not _nth(pos, arg): return False
         if name in ("first-of-type", "last-of-type") and (pos != 1 if name.startswith("first") else pos != sibling_count): return False
@@ -239,38 +242,59 @@ def _simple_match(node, simple):
 
 
 def _matches_ast(node, ast):
-    compounds, relations = ast; current = node
-    if not _simple_match(current, compounds[-1]): return False
-    for index in range(len(compounds) - 2, -1, -1):
-        relation = relations[index]
-        if relation == ">": current = current.parentNode
-        elif relation == "+":
-            current = _previous_element(current)
-        elif relation == "~":
-            current = _previous_element(
-                current, lambda item, index=index: _simple_match(item, compounds[index]),
-            )
-            if current is not None: continue
-        else:
+    compounds, relations = ast
+
+    def at(current, index):
+        if current is None or not _simple_match(current, compounds[index]):
+            return False
+        if index == 0:
+            return True
+        relation = relations[index - 1]
+        if relation == ">":
+            return at(current.parentNode, index - 1)
+        if relation == "+":
+            return at(_previous_element(current), index - 1)
+        if relation == "~":
+            parent = current.parentNode
+            if parent is None:
+                return False
+            # Every earlier sibling is a candidate: a nearer partial match
+            # must not hide an earlier sibling whose entire prefix matches.
+            for sibling in parent._children:
+                if sibling is current:
+                    break
+                if at(sibling, index - 1):
+                    return True
+            return False
+        current = current.parentNode
+        while current is not None:
+            if at(current, index - 1):
+                return True
             current = current.parentNode
-            while current is not None and not _simple_match(current, compounds[index]): current = current.parentNode
-        if current is None or not _simple_match(current, compounds[index]): return False
-    return True
+        return False
+
+    return at(node, len(compounds) - 1)
 
 
 def matches(node, selector): return any(_matches_ast(node, group) for group in parse(selector))
 
 
-def select(root, selector):
-    ast = parse(selector); nodes = []
+def select(root, selector, *, first=False):
+    """Match descendants in tree order; the query root is never a result.
+
+    A first-result query walks lazily. Repeated full scans reuse the existing
+    tree-versioned snapshot, with no result cache to invalidate on attributes.
+    """
+    ast = parse(selector)
+    candidates = root._descendants() if first else root._descendant_snapshot()
+    if len(ast) == 1 and len(ast[0][0]) == 1:
+        simple = ast[0][0][0]
+        if first:
+            return next((node for node in candidates if _simple_match(node, simple)), None)
+        return [node for node in candidates if _simple_match(node, simple)]
     if len(ast) == 1:
-        # One group is the common case, where the per-node generator `any` costs more
-        # than the match itself.
         group = ast[0]
-        if isinstance(root, Element) and _matches_ast(root, group): nodes.append(root)
-        nodes.extend(n for n in root._descendant_snapshot()
-                     if isinstance(n, Element) and _matches_ast(n, group))
-        return nodes
-    if isinstance(root, Element) and any(_matches_ast(root, group) for group in ast): nodes.append(root)
-    nodes.extend(n for n in root._descendant_snapshot() if isinstance(n, Element) and any(_matches_ast(n, group) for group in ast))
-    return nodes
+        selected = (node for node in candidates if _matches_ast(node, group))
+    else:
+        selected = (node for node in candidates if any(_matches_ast(node, group) for group in ast))
+    return next(selected, None) if first else list(selected)

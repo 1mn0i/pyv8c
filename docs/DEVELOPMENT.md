@@ -77,8 +77,7 @@ python -m pytest tests/repros -q -rs     # -rs 显示被排除的用例及原因
 ```
 
 这一套**不要加 `-n`**：它驱动本机 Chrome，那半边对线程与时序敏感（并行实测 29 failed、321 s；串行
-272 passed、17 s）。整套跑时 Chrome 对照那半边的 `greenlet.error: Cannot switch to a different thread`
-是既有环境问题——单独跑该文件正常——并行只会把它放大。
+272 passed、17 s）。Chrome 对照夹具在创建 Playwright 的线程上关闭浏览器和 dispatcher；整套保持串行，并在会话结束时释放共享 pyv8c 引擎。
 
 - `corpus.py` 的每个 `Repro` 里 `expected` 是 pyv8c 的答案，每次运行都被断言；`expect_error` 用于
   该抛错的用例。
@@ -109,15 +108,16 @@ getter"的条目。cross-origin 的配置由 `SetAccessCheckCallbackAndHandler` 
 
 不要用未经测量的“提速”描述替代基准。Feature 模块应在首次使用时导入，Browser Runtime 状态不能跨实例共享；Realm Session 配置不能跨页面共享。网络线程不得同步等待页面 owner 线程，页面回调内不得阻塞本 realm 的 loop，关闭操作必须幂等。loader/interceptor 回调默认在 owner 线程，开启 `threaded_loaders` 后在池线程上，此时不得回调 realm。
 
-`tools/benchmark.py` 是这句话的落点：11 个用例覆盖启动、页面开合、跨桥调用、DOM 构建/解析/查询、事件派发、子资源加载与常驻内存，全程离线、各自新建 Browser，每个用例报中位数与最小值。
+`tools/benchmark.py` 是这句话的落点：基准用例覆盖启动、页面开合、跨桥调用、DOM 构建/解析/查询、事件派发、子资源加载与常驻内存，全程离线、各自新建 Browser，每个用例报中位数与最小值。
 
 ```powershell
 python tools/benchmark.py --record     # 接受当前数字为基线，写 tools/perf_baseline.json
+python tools/benchmark.py --runs 5 --output .pytest_cache/performance.json # 保存样本与环境，不重录基线
 python tools/benchmark.py              # 与基线对比，中位数与最小值双双变慢的用例会标出来
 python tools/benchmark.py --cases dom_query --runs 5
 ```
 
-两次测量之间机器负载不同，差异可能落在噪声里；要看结论，先用 `git stash` 量一次改动前再量改动后。`resident_pages` 的 MB 数是进程提交内存的差值，偏粗；同一条里的“每页 Python 句柄数”是精确值（`Context.live_handles`，原生侧另有 `Isolate.live_v8_handles` 可在关闭前确认句柄归零）。
+两次测量之间机器负载不同，差异可能落在噪声里；要看结论，保存当前工作区基线到独立副本，再在同机、同解释器下量改动前后，保留用户已有修改。`resident_pages` 的 MB 数是进程提交内存的差值，偏粗；同一条里的“每页 Python 句柄数”是精确值（`Context.live_handles`，原生侧另有 `Isolate.live_v8_handles` 可在关闭前确认句柄归零）。
 
 按这个口径实测过一轮（2026-09-28，`git stash` 回 HEAD 对照）：`dom_query` −57%、`dom_build` −48%、`host_call` −33%、`resource_batch` −23%、`dom_parse` −3%，启动中位数 259 → 245 ms（导入模块 435 → 394）。跨桥一次约 3.7 µs 降到约 1.9 µs，其中原生派发只占 0.18 µs——宿主方法体才是跨桥成本所在，所以先查 Python 侧再看 C++。
 

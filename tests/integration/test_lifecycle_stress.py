@@ -229,3 +229,34 @@ async def _cdp_request(ws, payload):
             return message
 
 
+
+
+def test_page_trees_release_native_handles_and_threads_after_close():
+    import pyv8
+    browser = Browser(real_network=False, shard_isolates=True, stub_logging="off")
+    owner = browser.new_context()
+    warm = owner.new_page()
+    warm.close()
+    baseline = threading.active_count()
+    try:
+        for _ in range(10):
+            page = owner.new_page()
+            page.set_content('<iframe srcdoc="<body>child</body>"></iframe>')
+            page.run_until_idle(1)
+            page.evaluate("globalThis.worker = new Worker(URL.createObjectURL(new Blob(['self.onmessage=()=>{}'])));")
+            old_context = page.context
+            handle = page.evaluate_handle('({node:document.body, fn:()=>42})')
+            page.set_content('<body>replacement</body>')
+            isolate = page.isolate
+            page.close()
+            assert old_context.live_handles == 0
+            assert isolate.live_v8_handles == 0
+            with pytest.raises(RuntimeError):
+                handle.to_python()
+            assert not owner.pages
+        deadline = time.monotonic() + 5
+        while threading.active_count() > baseline and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert threading.active_count() <= baseline
+    finally:
+        browser.close()

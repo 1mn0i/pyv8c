@@ -20,6 +20,10 @@ pytest.importorskip("pyv8")
 pytestmark = pytest.mark.slow
 from pyv8c import Browser
 
+# Narrow bulk-result, generated-key, unique-index and multiEntry behaviour is
+# compared with Chrome in tests/repros/corpus.py. This battery retains the
+# compound connection, cursor, transaction rollback and schema-upgrade scenarios.
+
 ORIGIN = "http://127.0.0.1:9"
 
 

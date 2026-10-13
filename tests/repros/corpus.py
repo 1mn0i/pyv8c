@@ -1996,6 +1996,103 @@ CASES = (
         })()""",
         expected=[None, False, True, True, 1, "complete"],
     ),
+      *(Repro(
+          name=f"an_inline_inserted_{label}_frame_starts_with_about_blank",
+          note="Insertion exposes the child realm immediately; the requested document "
+               "has not committed while the parent's inline script is running.",
+          html=page(body="""<script>
+              const frame = document.createElement('iframe');
+              __SETUP__;
+              const detached = frame.contentWindow === null;
+              document.body.appendChild(frame);
+              const child = frame.contentWindow, doc = frame.contentDocument;
+              window.__initialFrame = [detached, child !== null, doc.URL, doc.readyState,
+                  doc.body !== null, doc.compatMode, child === frame.contentWindow,
+                  child === window[0], child === child.window, doc === child.document,
+                  doc.defaultView === child, child.parent === window,
+                  Object.getPrototypeOf(child) === child.Window.prototype,
+                  child.Object !== Object, child.document.getElementById('inside') === null];
+          </script>""".replace("__SETUP__", setup)),
+          script="window.__initialFrame",
+          expected=[True, True, "about:blank", "complete", True, "BackCompat",
+                    True, True, True, True, True, True, True, True, True],
+      ) for label, setup in (
+          ("empty", ""),
+          ("blank", "frame.src = 'about:blank'"),
+          ("srcdoc", "frame.srcdoc = '<body><p id=inside>inner</p>'"),
+          ("data", "frame.src = 'data:text/html,<body>inner</body>'"),
+      )),
+      Repro(
+          name="initial_blank_frame_writes_survive_its_load_event",
+          note="An initial about:blank load does not replace the document the inserting "
+               "script wrote; the child supplies its own native Window and intrinsics.",
+          html=page(body="""<script>
+              const frame = document.createElement('iframe');
+              frame.src = 'about:blank';
+              window.__blankLoads = 0;
+              frame.onload = () => ++__blankLoads;
+              document.body.appendChild(frame);
+              window.__blankWindow = frame.contentWindow;
+              window.__blankDocument = frame.contentDocument;
+              __blankDocument.body.innerHTML = '<p id=inside>kept</p>';
+          </script>"""),
+          script="""[__blankLoads, __blankWindow === document.querySelector('iframe').contentWindow,
+              __blankDocument === __blankWindow.document,
+              __blankWindow.document.body.textContent, __blankDocument.readyState]""",
+          settle=0.1,
+          expected=[1, True, True, "kept", "complete"],
+      ),
+      *(Repro(
+          name=f"initial_{label}_frame_load_fires_during_insertion",
+          note="Chrome's initial empty document is complete and its load listener "
+               "runs before the parent's appendChild returns.",
+          html=EMPTY_PAGE,
+          script="""(() => {
+              const events = [], frame = document.createElement('iframe');
+              __SETUP__;
+              frame.onload = () => events.push('load:' + frame.contentDocument.readyState);
+              events.push('before');
+              document.body.appendChild(frame);
+              events.push('after');
+              return events;
+          })()""".replace("__SETUP__", setup),
+          expected=["before", "load:complete", "after"],
+      ) for label, setup in (("empty", ""), ("blank", "frame.src = 'about:blank'"))),
+      Repro(
+          name="srcdoc_commits_after_the_inserting_script",
+          note="A srcdoc script runs after the insertion returns, with a stable "
+               "WindowProxy and a different document from the initial about:blank.",
+          html=page(body="""<script>
+              const frame = document.createElement('iframe');
+              frame.srcdoc = '<body><script>parent.__srcdocRanAfter = parent.__insertionReturned === true<\\/script>';
+              document.body.appendChild(frame);
+              window.__srcdocWindow = frame.contentWindow;
+              window.__initialDocument = frame.contentDocument;
+              window.__insertionReturned = true;
+          </script>"""),
+          script="""[__srcdocRanAfter, __srcdocWindow === document.querySelector('iframe').contentWindow,
+              __initialDocument !== __srcdocWindow.document, __srcdocWindow.document.URL]""",
+          settle=0.1,
+          expected=[True, True, True, "about:srcdoc"],
+      ),
+      Repro(
+          name="reinserting_a_frame_creates_a_new_browsing_context",
+          note="Removing a frame clears contentWindow/contentDocument; reinserting "
+               "it creates a fresh window rather than reviving the detached one.",
+          html=EMPTY_PAGE,
+          script="""(() => {
+              const frame = document.createElement('iframe');
+              document.body.appendChild(frame);
+              const child = frame.contentWindow;
+              child.document.body.innerHTML = '<p>old</p>';
+              frame.remove();
+              const detached = [frame.contentWindow === null, frame.contentDocument === null];
+              document.body.appendChild(frame);
+              return [...detached, frame.contentWindow !== child,
+                      frame.contentDocument.body.textContent, frame.contentDocument.readyState];
+          })()""",
+          expected=[True, True, True, "", "complete"],
+      ),
     Repro(
         name="a_child_window_keeps_its_member_names",
         note="The same-origin child is a proxy here, so what it hands back has to be the "
@@ -4905,4 +5002,139 @@ CASES = (
         expected=["started"],
         settle=0.5,
     ),
+    Repro(
+        name="element_selector_queries_exclude_the_root",
+        html=page(body='<div id="root" class="match"><span class="match"></span></div>'),
+        script="""(() => {const root=document.getElementById('root'); return [
+            root.querySelector('#root')===null, root.querySelectorAll('.match').length,
+            root.querySelectorAll('#root,.match').length, root.matches('#root')];})()""",
+        expected=[True, 1, 1, True],
+    ),
+    Repro(
+        name="selector_combinators_backtrack_over_candidate_ancestors_and_siblings",
+        html=page(body='<main><div class="a"><div class="a"><i id="target"></i></div></div></main>'
+                       '<section><b class="a"></b><b class="b"></b><b class="b"></b><i id="sibling"></i></section>'),
+        script="""(() => {return [document.querySelector('main > .a i')?.id,
+            document.querySelector('.a + .b ~ i')?.id];})()""",
+        expected=['target', 'sibling'],
+    ),
+    Repro(
+        name="zero_coefficient_nth_selectors_match_only_the_offset",
+        html=page(body='<div><i id="a"></i><i id="b"></i><i id="c"></i></div>'),
+        script="Array.from(document.querySelectorAll('i:nth-child(0n+2)')).map(x=>x.id)",
+        expected=['b'],
+    ),
+    Repro(
+        name="empty_attribute_substring_selectors_match_nothing",
+        html=page(body='<i data-x="hello"></i><i data-x=""></i>'),
+        script="""['^=','$=','*='].map(op=>document.querySelectorAll('[data-x'+op+'""'+']').length)""",
+        expected=[0,0,0],
+    ),
+
+    Repro(
+        name="redispatched_events_update_their_target_and_clear_dispatch_state",
+        html=page(body='<div id="parent"><i id="a"></i><i id="b"></i></div>'),
+        script="""(() => {const a=document.getElementById('a'),b=document.getElementById('b');
+          const e=new Event('x',{bubbles:true}); const seen=[];
+          document.getElementById('parent').addEventListener('x',v=>v.stopPropagation(),true);
+          a.dispatchEvent(e); seen.push(e.eventPhase,e.currentTarget===null,e.cancelBubble,e.composedPath().length);
+          b.dispatchEvent(e); seen.push(e.target===b,e.eventPhase,e.currentTarget===null); return seen;})()""",
+        expected=[0,True,False,0,True,0,True],
+    ),
+    Repro(
+        name="a_once_listener_is_removed_before_reentrant_dispatch",
+        script="""(() => {const t=new EventTarget(); let calls=0;
+          t.addEventListener('x',()=>{if(++calls===1)t.dispatchEvent(new Event('x'));},{once:true});
+          t.dispatchEvent(new Event('x')); return calls;})()""",
+        expected=1,
+    ),
+    Repro(
+        name="a_listener_removed_during_dispatch_is_not_invoked",
+        script="""(() => {const t=new EventTarget();const seen=[];const second=()=>seen.push('second');
+          t.addEventListener('x',()=>{seen.push('first');t.removeEventListener('x',second);});
+          t.addEventListener('x',second); t.dispatchEvent(new Event('x'));return seen;})()""",
+        expected=['first'],
+    ),
+    Repro(
+        name="an_event_cannot_be_recursively_dispatched_or_reinitialized",
+        script="""(() => {const t=new EventTarget();const e=new Event('x');const seen=[];
+          t.addEventListener('x',()=>{e.initEvent('y');seen.push(e.type);
+            try{t.dispatchEvent(e);}catch(error){seen.push(error.name);}} ,{once:true});
+          t.dispatchEvent(e); return seen;})()""",
+        expected=['x','InvalidStateError'],
+    ),
+
+    Repro(
+        name="event_listener_identity_survives_multiple_bridge_crossings",
+        script="""(() => {const t=new EventTarget();let calls=0;const f=()=>calls++;
+          t.addEventListener('x',f);t.addEventListener('x',f);t.dispatchEvent(new Event('x'));
+          const first=calls;t.removeEventListener('x',f);t.dispatchEvent(new Event('x'));return [first,calls];})()""",
+        expected=[1,1],
+    ),
+
+    Repro(
+        name="indexeddb_bulk_results_and_indexes_read_stored_objects",
+        html=page(body="""<script>
+          const open=indexedDB.open('objects',1);
+          open.onupgradeneeded=()=>{const s=open.result.createObjectStore('s',{keyPath:'id'});s.createIndex('name','name');};
+          open.onsuccess=()=>{const db=open.result,tx=db.transaction('s','readwrite'),store=tx.objectStore('s');
+            store.put({id:1,name:'first',data:new Uint8Array([7,8]).buffer});store.put({id:2,name:'second'});
+            tx.oncomplete=()=>{const s=db.transaction('s').objectStore('s'),all=s.getAll();
+              all.onsuccess=()=>{const rows=all.result;const notes=[rows.map(x=>x.name),rows===all.result,
+                rows[0].data instanceof ArrayBuffer,Array.from(new Uint8Array(rows[0].data))];
+                const index=db.transaction('s').objectStore('s').index('name').get('second');
+                index.onsuccess=()=>{notes.push(index.result.id);globalThis.idbProbe=notes;db.close();};};};};
+        </script>"""),
+        script="globalThis.idbProbe",
+        expected=[['first','second'],True,True,[7,8],2],
+        settle=0.05,
+    ),
+    Repro(
+        name="indexeddb_generated_keys_are_injected_into_the_clone_once",
+        html=page(body="""<script>
+          const open=indexedDB.open('generated',1);
+          open.onupgradeneeded=()=>open.result.createObjectStore('s',{keyPath:'id',autoIncrement:true});
+          open.onsuccess=()=>{const db=open.result,tx=db.transaction('s','readwrite');let reads=0;const value={};
+            Object.defineProperty(value,'name',{enumerable:true,get(){reads++;return 'first';}});
+            const put=tx.objectStore('s').put(value);let key;put.onsuccess=()=>key=put.result;
+            tx.oncomplete=()=>{const get=db.transaction('s').objectStore('s').get(key);
+              get.onsuccess=()=>{globalThis.idbProbe=[key,value.id===undefined,get.result.id,get.result.name,reads];db.close();};};};
+        </script>"""),
+        script="globalThis.idbProbe",
+        expected=[1,True,1,'first',1],
+        settle=0.05,
+    ),
+    Repro(
+        name="indexeddb_handled_unique_index_errors_preserve_existing_records",
+        html=page(body="""<script>
+          const open=indexedDB.open('unique',1);
+          open.onupgradeneeded=()=>{const s=open.result.createObjectStore('s',{keyPath:'id'});s.createIndex('name','name',{unique:true});};
+          open.onsuccess=()=>{const db=open.result,seed=db.transaction('s','readwrite');
+            seed.objectStore('s').put({id:1,name:'a'});seed.objectStore('s').put({id:2,name:'b'});
+            seed.oncomplete=()=>{const tx=db.transaction('s','readwrite');const put=tx.objectStore('s').put({id:2,name:'a'});let error;
+              put.onerror=e=>{error=put.error.name;e.preventDefault();};
+              tx.oncomplete=()=>{const all=db.transaction('s').objectStore('s').getAll();
+                all.onsuccess=()=>{globalThis.idbProbe=[error,all.result.map(x=>x.name)];db.close();};};};};
+        </script>"""),
+        script="globalThis.idbProbe",
+        expected=['ConstraintError',['a','b']],
+        settle=0.05,
+    ),
+
+    Repro(
+        name="indexeddb_multi_entry_indexes_deduplicate_keys_without_changing_values",
+        html=page(body="""<script>
+          const open=indexedDB.open('multi',1);
+          open.onupgradeneeded=()=>{const s=open.result.createObjectStore('s',{keyPath:'id'});s.createIndex('tags','tags',{unique:true,multiEntry:true});};
+          open.onsuccess=()=>{const db=open.result,tx=db.transaction('s','readwrite');
+            tx.objectStore('s').put({id:1,tags:['x','x']});
+            tx.oncomplete=()=>{const store=db.transaction('s').objectStore('s'),count=store.index('tags').count('x');
+              count.onsuccess=()=>{const get=db.transaction('s').objectStore('s').get(1);
+                get.onsuccess=()=>{globalThis.idbProbe=[count.result,get.result.tags];db.close();};};};};
+        </script>"""),
+        script="globalThis.idbProbe",
+        expected=[1,['x','x']],
+        settle=0.05,
+    ),
+
 )

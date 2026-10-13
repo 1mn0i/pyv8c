@@ -5,9 +5,14 @@
 
 ## 当前模型
 
-iframe 使用子 Page/realm；WindowProxy 在访问者一侧缓存目标窗口的代理。
-访问时动态检查 origin，而不是仅在创建代理时检查一次。
-更改 iframe.src 会复用已有子 Page/Window，从而尽量保持 contentWindow 身份；这不代表完整 Chromium Frame 生命周期。
+iframe 插入文档时同步创建子 Page/realm，并提供已完成的初始 `about:blank` 文档和 html/head/body。
+即使插入发生在内联脚本中，`contentWindow` 与同源 `contentDocument` 也立即可用；未连接或已移除的 iframe 返回 null。
+`srcdoc` 与外部文档随后提交，初始 `about:blank` 的加载不清空同轮脚本写入的内容。
+无 src 或精确的 `about:blank` 初始加载在插入时同步派发 iframe 的 load；其他导航等待文档加载。
+
+访问者拿到子 realm 的原生全局代理，`contentWindow`、数字索引和 `document.defaultView` 保持身份一致。
+访问时动态检查 origin，而不是仅在创建代理时检查一次。导航替换 Document/realm 并复用这个全局代理；
+移除后重新插入则创建新的浏览上下文。这些规则不代表完整 Chromium Frame 生命周期。
 
 顶层 top、parent、self、window 指向自身；子 frame 的 top 指向顶层，parent 指向直接父页面。
 contentWindow、document.defaultView 和数字 frame 索引使用一致的代理映射。

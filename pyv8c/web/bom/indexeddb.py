@@ -1,6 +1,6 @@
 """``window.indexedDB`` -- Indexed Database API (W3C IndexedDB 3.0).
 
-Data lives in a process-wide in-memory registry keyed by origin, so pages on
+Data lives in the browsing context's in-memory registry keyed by origin, so pages on
 the same origin share databases the way a real browser does.
 
 Known deviations: values are cloned with the runtime's ``structured_clone``
@@ -38,7 +38,7 @@ from ...foundation.logging import logger
 from ...foundation.realm import post_or_call
 from ..dom.collections import DOMStringList
 from ..dom.events import Event, EventTarget
-from ..clone import rebuild_clone, structured_clone, unread
+from ..clone import Wire, rebuild_clone, structured_clone, unread
 
 __all__ = [
     "IDBFactory", "IDBDatabase", "IDBTransaction", "IDBObjectStore", "IDBIndex",
@@ -190,6 +190,8 @@ def _valid_key_path(key_path):
 
 
 def _get_path(value, path):
+    if isinstance(value, Wire):
+        value = materialize(_handed(value))
     if path == "":
         return value
     current = value
@@ -310,7 +312,7 @@ class _IndexModel:
         if extracted is None:
             return []
         if self.multi_entry and extracted[0] == _ARRAY:
-            return list(extracted[1])
+            return list(dict.fromkeys(extracted[1]))
         return [extracted]
 
     def add(self, value, primary_key):
@@ -337,20 +339,14 @@ class _IndexModel:
                 self._unique_keys.add(sort_key[0])
 
     def remove(self, value, primary_key):
-        keys = list(self.keys_for(value))
-        if not keys:
-            return
-        wanted = {_key_sort_key(key) for key in keys}
-        kept = []
-        kept_sort = []
-        for entry, sort_key in zip(self.entries, self._sort_keys):
-            if entry[1] == primary_key and sort_key[0] in wanted:
-                continue
-            kept.append(entry)
-            kept_sort.append(sort_key)
-        self.entries, self._sort_keys = kept, kept_sort
+        # Index entries already name their owning record; no realm or decode is
+        # needed to remove all entries for it, including multiEntry keys.
+        kept = [(entry, sort_key) for entry, sort_key in zip(self.entries, self._sort_keys)
+                if entry[1] != primary_key]
+        self.entries = [entry for entry, _ in kept]
+        self._sort_keys = [sort_key for _, sort_key in kept]
         if self.unique:
-            self._unique_keys = {sort_key[0] for sort_key in kept_sort}
+            self._unique_keys = {sort_key[0] for sort_key in self._sort_keys}
 
     def clear(self):
         self.entries = []
@@ -382,11 +378,22 @@ class _StoreModel:
         self._sort_keys.insert(position, sort_key)
         self._record_map[key] = entry
 
-    def store(self, key, value, no_overwrite):
+    def store(self, key, value, no_overwrite, index_value=None):
         existing = self.find(key)
+        if existing is not None and no_overwrite:
+            raise _constraint_error("A record with the given key already exists.")
+        indexed = value if index_value is None else index_value
+        # A handled request error must leave both the old record and all indexes
+        # intact. Check every unique index before mutating any of them.
+        for index in self.indexes.values():
+            if not index.unique:
+                continue
+            owned = ({_key_sort_key(entry[0]) for entry in index.entries if entry[1] == key}
+                     if existing is not None else set())
+            if any(marker in index._unique_keys and marker not in owned
+                   for marker in map(_key_sort_key, index.keys_for(indexed))):
+                raise _constraint_error("The index key already exists.")
         if existing is not None:
-            if no_overwrite:
-                raise _constraint_error("A record with the given key already exists.")
             for index in self.indexes.values():
                 index.remove(existing[1], key)
             position = self._record_map.pop(key, None)
@@ -395,7 +402,7 @@ class _StoreModel:
                 self.records.pop(index)
                 self._sort_keys.pop(index)
         for index in self.indexes.values():
-            index.add(value, key)
+            index.add(indexed, key)
         self._sorted_insert(key, value)
         return key
 
@@ -505,20 +512,20 @@ def _databases(services):
 
 def _handed(value):
     """A stored value as the realm reading it gets it: its own copy of any binary."""
+    if isinstance(value, (list, tuple)):
+        return [_handed(item) for item in value]
     context = pyv8.current_context()
     return rebuild_clone(value) if context is None else rebuild_clone(value, context)
 
 
 def _store_clone(value):
+    if isinstance(value, Wire):
+        # Serialized bytes are immutable: a rollback snapshot copies the record
+        # table, not a new serialization of those bytes as an ArrayBuffer.
+        return value
     #: The caller's own context, so what goes into the store carries its bytes: an
     #: ArrayBuffer has nothing enumerable on it, and used to be stored as ``{}``.
     return structured_clone(value, context=pyv8.current_context())
-
-
-def _key_clone(value):
-    """The value a key path reads: its own clone, so no getter runs twice."""
-    context = pyv8.current_context()
-    return materialize(rebuild_clone(structured_clone(value, context=context), context))
 
 
 def _maybe_update_generator(store, key):
@@ -648,9 +655,9 @@ class IDBRequest(EventTarget, _RequestMixin):
         #: copy of the binary in it; a host reading it through Python gets the bytes.
         context = pyv8.current_context()
         if context is None:
-            return rebuild_clone(self._result)
+            return _handed(self._result)
         if self._result_handed is unread:
-            self._result_handed = rebuild_clone(self._result, context)
+            self._result_handed = context.to_js(_handed(self._result))
         return self._result_handed
 
     def get_error(self):
@@ -1287,15 +1294,16 @@ class IDBObjectStore:
                     "The object store uses in-line keys and the key parameter was provided."
                 )
             cloned = _store_clone(value)
-            extracted = _extract_key(_key_clone(value), store.key_path)
+            extracted = _extract_key(materialize(_handed(cloned)), store.key_path)
             if extracted is not None:
                 return cloned, extracted
             if not store.auto_increment:
                 raise _data_error("Evaluating the object store's key path yielded no value.")
             generated = self._generate_key()
-            if not _inject_key(cloned, store.key_path, generated):
+            snapshot = materialize(_handed(cloned))
+            if not _inject_key(snapshot, store.key_path, generated):
                 raise _data_error("The generated key could not be injected into the value.")
-            return cloned, generated
+            return _store_clone(snapshot), generated
         if given:
             resolved = _to_key(key)
             if store.auto_increment:
@@ -1396,10 +1404,11 @@ class IDBObjectStore:
     def _write(self, value, key, no_overwrite):
         _require_writable(self)
         cloned, resolved = self._resolve_key(value, key)
+        index_value = materialize(_handed(cloned)) if self._store.indexes else None
 
         def run():
             _require_writable(self)
-            self._store.store(resolved, cloned, no_overwrite)
+            self._store.store(resolved, cloned, no_overwrite, index_value)
             return _key_to_value(resolved)
 
         return self._request(run)
@@ -1520,15 +1529,16 @@ class IDBObjectStore:
     def _cursor_update(self, cursor, value):
         primary_key = cursor._primary_key
         cloned = _store_clone(value)
+        index_value = materialize(_handed(cloned)) if self._store.indexes else None
         store = self._store
         if store.key_path is not None:
-            extracted = _extract_key(_key_clone(value), store.key_path)
+            extracted = _extract_key(materialize(_handed(cloned)), store.key_path)
             if extracted is not None and _cmp(extracted, primary_key) != 0:
                 raise _data_error("The effective key of the cursor cannot be changed.")
 
         def run():
             _require_writable(self)
-            store.store(primary_key, cloned, False)
+            store.store(primary_key, cloned, False, index_value)
             return _key_to_value(primary_key)
 
         return self._request(run)

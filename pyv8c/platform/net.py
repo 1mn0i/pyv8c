@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json as json_module
 from concurrent.futures import Future, ThreadPoolExecutor
+import threading
 from urllib.parse import urlencode, urljoin, urlsplit
 
 from ..foundation.host_errors import HostStateError, LoadFailure
@@ -51,6 +52,7 @@ class PageNet:
         self._js_http = JsHttpController(page)
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pyv8c-net")
         self._closed = False
+        self._submit_lock = threading.Lock()
         #: Read once: the browser's headers cannot change after construction.
         self._browser_headers = dict(getattr(page.context_owner.browser, "default_headers", None) or {})
         #: Above the browser's and below a request's own; mutable on purpose.
@@ -154,24 +156,20 @@ class PageNet:
         return backend.request_sync(self.build(method, url, **kwargs))
 
     def request_async(self, method, url, **kwargs) -> Future:
-        """Send one request on this page's pool, returning a ``Future``"""
+        """Send a host request on this page's pool and return its task Future.
+
+        Queued work can be cancelled; running requests cannot. Closing the pool
+        cancels queued Futures, whose result() raises CancelledError.
+        """
         backend = self._backend()
         request = self.build(method, url, **kwargs)
-        future: Future = Future()
-        if self._closed:
-            future.set_exception(HostStateError("page.net is closed"))
-            return future
-
-        def run():
-            try:
-                result = backend.request_sync(request)
-            except BaseException as exc:
-                future.set_exception(exc)
-            else:
-                future.set_result(result)
-
-        self._executor.submit(run)
-        return future
+        # Return the pool's own Future: cancellation and shutdown then refer to
+        # the same queued work.  A separate Future could stay pending forever
+        # when shutdown cancelled its runner, or accept cancellation mid-request.
+        with self._submit_lock:
+            if self._closed:
+                raise HostStateError("page.net is closed")
+            return self._executor.submit(backend.request_sync, request)
 
     def fetch(self,
               url: str,
@@ -271,9 +269,10 @@ class PageNet:
                                        credentials=credentials)
 
     def close(self):
-        if self._closed:
-            return
-        self._closed = True
+        with self._submit_lock:
+            if self._closed:
+                return
+            self._closed = True
         self._executor.shutdown(wait=True, cancel_futures=True)
 
 

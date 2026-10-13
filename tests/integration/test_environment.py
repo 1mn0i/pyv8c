@@ -350,3 +350,44 @@ def test_fetch_blob_url_uses_context_storage_async():
         assert page.evaluate("blobFetch") == "blob-body"
     finally:
         browser.close()
+
+
+@pytest.mark.parametrize("headers", [{"Cache-Control":"no-store"}, {"Cache-Control":"no-cache"},
+                                     {"Cache-Control":"private"}, {"Vary":"*"}, {"Set-Cookie":"a=1"}])
+def test_persistent_resource_cache_honours_response_exclusions(tmp_path, headers):
+    calls = []
+    def loader(url, request):
+        calls.append(url)
+        return {"body": str(len(calls)), "headers": headers}
+    browser = Browser(real_network=False, stub_logging="off", resource_loader=loader, cache_dir=tmp_path)
+    try:
+        page = browser.new_context().new_page()
+        page.set_content('<body></body>', url='http://cache.test/')
+        assert page.resources.load_resource('/data').body_text() == '1'
+        assert page.resources.load_resource('/data').body_text() == '2'
+        assert not list(tmp_path.rglob('*.json'))
+    finally:
+        browser.close()
+
+
+def test_persistent_cache_partitions_request_headers_and_bypasses_credentials(tmp_path):
+    calls = []
+    def loader(url, request):
+        calls.append(request)
+        return {"body": request['headers'].get('Accept-Language', '')}
+    browser = Browser(real_network=False, stub_logging="off", resource_loader=loader, cache_dir=tmp_path)
+    try:
+        page = browser.new_context().new_page()
+        page.set_content('<body></body>', url='http://cache.test/')
+        for language in ['en', 'ja', 'en']:
+            assert page.resources.load_resource('/data', {'headers':{'Accept-Language':language}}).body_text() == language
+        assert len(calls) == 2
+        for _ in range(2):
+            page.resources.load_resource('/private', {'headers':{'Authorization':'Bearer fixture'}})
+        assert len(calls) == 4
+        page.context_owner.cookies.add_from_response('http://cache.test/', 'session=fixture; Path=/')
+        for _ in range(2):
+            page.resources.load_resource('/data', {'headers':{'Accept-Language':'en'}})
+        assert len(calls) == 6
+    finally:
+        browser.close()

@@ -372,3 +372,96 @@ def test_race_teardown_returns_to_thread_baseline(thread_leak_check, browser):
         page.close()
 
     thread_leak_check(tolerance=0, timeout=15)
+
+
+def test_browser_close_refuses_new_contexts_while_teardown_is_running(monkeypatch):
+    from pyv8c import Browser
+    from pyv8c.foundation.host_errors import HostStateError
+    browser = Browser(real_network=False, stub_logging="off")
+    context = browser.new_context()
+    entered, release = threading.Event(), threading.Event()
+    original = context.close
+    errors = []
+    def gated_close():
+        entered.set()
+        assert release.wait(3)
+        original()
+    monkeypatch.setattr(context, "close", gated_close)
+    def close():
+        try: browser.close()
+        except BaseException as exc: errors.append(exc)
+    thread = threading.Thread(target=close)
+    try:
+        thread.start()
+        assert entered.wait(3)
+        with pytest.raises(HostStateError):
+            browser.new_context()
+    finally:
+        release.set()
+        thread.join(3)
+        browser.close()
+    assert not thread.is_alive() and not errors
+    assert browser.contexts == []
+    with pytest.raises(HostStateError):
+        _ = browser.loader_pool
+    assert browser._loader_pool is None
+
+
+def test_browser_close_retry_keeps_the_loader_for_failed_context(monkeypatch):
+    from pyv8c import Browser
+    browser = Browser(real_network=False, stub_logging="off")
+    context = browser.new_context()
+    pool = browser.loader_pool
+    original = context.close
+    def fail(): raise RuntimeError('fixture cleanup failed')
+    monkeypatch.setattr(context, 'close', fail)
+    with pytest.raises(RuntimeError, match='fixture cleanup failed'):
+        browser.close()
+    assert browser.loader_pool is pool
+    assert pool.submit(lambda:42).result(3) == 42
+    monkeypatch.setattr(context, 'close', original)
+    browser.close()
+    assert browser._closed
+
+
+def test_page_close_retries_failed_retired_realm_cleanup():
+    from pyv8c import Browser
+    browser = Browser(real_network=False, stub_logging="off")
+    page = browser.new_context().new_page()
+    attempts = []
+    def close():
+        attempts.append(1)
+        if len(attempts) == 1: raise RuntimeError('retired cleanup failed')
+    retired = SimpleNamespace(close=close)
+    page._retired_realms.append(retired)
+    try:
+        with pytest.raises(RuntimeError, match='retired cleanup failed'):
+            page.close()
+        assert not page.closed and not page.executor.closed
+        assert page.realm.context is not None
+        assert page._retired_realms == [retired]
+        page.close()
+        assert page.closed and attempts == [1, 1]
+    finally:
+        browser.close()
+
+
+def test_page_close_retries_failed_owned_isolate_cleanup():
+    from pyv8c import Browser
+    browser = Browser(real_network=False, shard_isolates=True, stub_logging="off")
+    page = browser.new_context().new_page()
+    isolate = page.isolate
+    attempts = []
+    def close():
+        attempts.append(1)
+        if len(attempts) == 1: raise RuntimeError('isolate cleanup failed')
+        isolate.close()
+    page.isolate = SimpleNamespace(close=close)
+    try:
+        with pytest.raises(RuntimeError, match='isolate cleanup failed'):
+            page.close()
+        assert not page.closed and not page.executor.closed
+        page.close()
+        assert page.closed and page.executor.closed and attempts == [1, 1]
+    finally:
+        browser.close()

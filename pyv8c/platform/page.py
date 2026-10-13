@@ -636,12 +636,6 @@ class Page:
         # Drop cached JS scripts before the V8 context goes away.
         self.scripts.clear_js_helpers()
         self.scripts.reset()
-        if self._devtools_target is not None:
-            if self.context_owner._devtools is not None:
-                if attempt(self.context_owner._devtools.unregister, self):
-                    self._devtools_target = None
-            else:
-                self._devtools_target = None
         attempt(self.net.close)
         attempt(self.tasks.close)
         attempt(self.resources.reset)
@@ -662,6 +656,15 @@ class Page:
                 self.services.worker_services.discard_worker(worker)
             else:
                 self._owned.track("workers", worker)
+        # Descendants can still hold the shared isolate's Inspector pause loop.
+        # Close them before unregistering this target, so its disposal mailbox
+        # is drained before this executor stops accepting commands.
+        if self._devtools_target is not None:
+            if self.context_owner._devtools is not None:
+                if attempt(self.context_owner._devtools.unregister, self):
+                    self._devtools_target = None
+            else:
+                self._devtools_target = None
         if first_error is not None:
             # Keep the realm owner available to retry failed native resources.
             raise first_error
@@ -670,19 +673,22 @@ class Page:
         for realm in pending:
             if not attempt(realm.close):
                 self._retired_realms.append(realm)
+        if first_error is not None:
+            raise first_error
         Window._unbind_context(self.context)
         self.realm.close()
-        self.executor.close()
-        self.context = None
-        #: Dropped with the realm: the handle keeps the context it was read from alive.
-        self.global_proxy = None
         if self.isolate is not None:
             #: Last of the tree: every context built on it is closed by now -- the frames
             #: above, this page's realm just now -- and V8 refuses to close an isolate that
             #: still carries persistent handles.  A frame never reaches this: only the page
             #: that created the tree's isolate holds one.
-            if attempt(self.isolate.close):
-                self.isolate = None
+            if not attempt(self.isolate.close):
+                # Keep the executor alive for a host-resource cleanup retry.
+                raise first_error
+            self.isolate = None
+        self.executor.close()
+        self.context = None
+        self.global_proxy = None
         self.closed = True
         self.context_owner._discard_page(self)
         parent_cleanup = getattr(self, "_parent_scope_cleanup", None)

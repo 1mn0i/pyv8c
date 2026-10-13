@@ -286,7 +286,7 @@ class Browser:
             implies it.
         :param cache: enable the per-context resource cache.
         :param cache_dir: keep that cache on disk under this directory; without
-            it responses are cached in memory only.
+            it resource responses are not cached.
         :param expose_unimplemented: let the exposure plan include baseline
             interfaces with no hand-written implementation (they answer with
             stubs).
@@ -322,6 +322,8 @@ class Browser:
         self.trace_callback = trace_callback
         started = time.perf_counter_ns()
         self._closed = False
+        self._closing = False
+        self._state_lock = threading.Lock()
         # pyv8 starts its global V8 runtime on first use, not at import, so the
         # first realm created below carries that cost.
         self.contexts = []
@@ -416,26 +418,32 @@ class Browser:
         :raises InvalidStateError: the browser is closed.
         :raises ValueError: the proxy value is not an ``http``/``https`` URL.
         """
-        if self._closed:
-            raise HostStateError("Browser is closed")
+        with self._state_lock:
+            if self._closed or self._closing:
+                raise HostStateError("Browser is closed or closing")
         if trace_callback is not None and not callable(trace_callback):
             raise TypeError("trace_callback must be callable or None")
         context = BrowserContext(self, proxy=None if proxy is None else normalize_proxy(proxy),
                                  trace=trace, traceable=traceable, trace_callback=trace_callback)
-        self.contexts.append(context)
+        with self._state_lock:
+            accepted = not (self._closed or self._closing)
+            if accepted:
+                self.contexts.append(context)
+        if not accepted:
+            context.close()
+            raise HostStateError("Browser is closed or closing")
         return context
 
     @property
     def loader_pool(self):
         """The bounded pool the page's loader callbacks run on, created on first use."""
-        pool = self._loader_pool
-        if pool is None:
-            with self._loader_lock:
-                if self._loader_pool is None:
-                    self._loader_pool = ThreadPoolExecutor(
-                        max_workers=_LOADER_WORKERS, thread_name_prefix="pyv8c-loader")
-                pool = self._loader_pool
-        return pool
+        with self._loader_lock:
+            if self._closed:
+                raise HostStateError("Browser is closed")
+            if self._loader_pool is None:
+                self._loader_pool = ThreadPoolExecutor(
+                    max_workers=_LOADER_WORKERS, thread_name_prefix="pyv8c-loader")
+            return self._loader_pool
 
     def close(self) -> None:
         """Close every context, then mark the browser closed.
@@ -444,24 +452,28 @@ class Browser:
         when an earlier one raised, and the first error is re-raised afterwards.
         A closed browser refuses new contexts.
         """
-        if self._closed:
-            return
-        # Contexts close first: a page that is already closed is what makes its queued
-        # loads stand down quietly.  The pool going away first was the other order, and
-        # every load still queued then failed into a script's error event -- a burst of
-        # warnings about a shutdown, on a page that was on its way out anyway.
-        first_error = None
-        for context in list(self.contexts):
-            try:
-                context.close()
-            except BaseException as exc:  # every context still gets its close attempt
-                if first_error is None:
-                    first_error = exc
-        pool = self._loader_pool
-        if pool is not None:
-            # Loader work is not the browser's to wait for, and a callback may be
-            # blocked on its own I/O.
-            pool.shutdown(wait=False, cancel_futures=True)
-        if first_error is not None:
-            raise first_error
-        self._closed = True
+        with self._state_lock:
+            if self._closed or self._closing:
+                return
+            self._closing = True
+            contexts = tuple(self.contexts)
+        try:
+            # Never hold the state lock while calling a realm owner or host factory.
+            first_error = None
+            for context in contexts:
+                try:
+                    context.close()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
+            if first_error is not None:
+                # Keep the loader available for a failed context's cleanup retry.
+                raise first_error
+            with self._loader_lock:
+                self._closed = True
+                pool = self._loader_pool
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
+        finally:
+            with self._state_lock:
+                self._closing = False

@@ -22,7 +22,7 @@ from ...foundation.arguments import (
 )
 from ...foundation.clock import clock_of
 from ...foundation.arguments import IdlArgumentError
-from ..page_errors import PageTypeError
+from ..page_errors import PageTypeError, dom_exception
 from ...foundation.logging import logger
 from .collections import ReadOnlyIndexedPropertyMixin
 
@@ -49,6 +49,13 @@ def _js_call(fn, this, *args):
 
 #: Exceptions that must interrupt the process rather than become a page's error.
 _CONTROL_EXCEPTIONS = (KeyboardInterrupt, SystemExit)
+
+
+def _same_listener(left, right):
+    # A JavaScript function can arrive through different Python handle wrappers.
+    # Python callbacks still use identity; page callbacks use V8's identity.
+    return left is right or (isinstance(left, pyv8.JSObject)
+                             and isinstance(right, pyv8.JSObject) and left == right)
 
 
 def _report_listener_exception(target, exc):
@@ -107,6 +114,8 @@ class Event:
         self.cancelable = boolean(init.get("cancelable", False))
         self.target = self.currentTarget = None; self.eventPhase = 0; self.defaultPrevented = False
         self._stop = self._immediate = False; self._path = []; self._passive = False
+        self._dispatching = False
+        self._legacy_target_override = None
         self._composed = boolean(init.get("composed", False))
         self._services = None if services is pyv8.Undefined else (services or _realm)
         #: When the event was made, and its stamp once a realm's clock has answered.
@@ -127,7 +136,8 @@ class Event:
     def get_cancelBubble(self): return self._stop
     def set_cancelBubble(self, value):
         value = boolean(value)
-        self._stop = bool(value)
+        if value:
+            self._stop = True
     def get_timeStamp(self):
         if self._time_stamp is None:
             self._time_stamp = _stamped(self._services, self._created)
@@ -148,7 +158,8 @@ class Event:
     def fn_composedPath(self, *_extra):
         return list(self._path)
     def fn_initEvent(self, event_type=MISSING, bubbles=False, cancelable=False, *_extra):
-        # Legacy initializer; the DOM's "already dispatching" no-op is out of scope here.
+        if self._dispatching:
+            return
         if event_type is MISSING:
             raise missing_error('Event', 'initEvent', 3, 0, constructor=False)
         if bubbles is pyv8.Undefined:
@@ -720,7 +731,7 @@ class EventTarget:
         if is_nullish(listener):
             return
         bucket = self._listeners.setdefault(str(event_type), [])
-        if not any(item[0] is listener and item[1] == capture for item in bucket):
+        if not any(_same_listener(item[0], listener) and item[1] == capture for item in bucket):
             self._listener_order += 1; bucket.append((listener, capture, once, passive, signal, self._listener_order))
             if signal is not None:
                 # Chrome takes the listener back out when the signal fires; the check
@@ -735,7 +746,7 @@ class EventTarget:
             if bucket:
                 self._listeners[event_type] = [
                     item for item in bucket
-                    if not (item[0] is listener and item[1] == capture)]
+                    if not (_same_listener(item[0], listener) and item[1] == capture)]
         return drop
 
     def _motion_listener_added(self, event_type):
@@ -767,7 +778,7 @@ class EventTarget:
             options = dictionary(options)
         capture = boolean(options.get("capture", False)) if isinstance(options, dict) else boolean(options)
         bucket = self._listeners.get(str(event_type), [])
-        self._listeners[str(event_type)] = [x for x in bucket if not (x[0] is listener and x[1] == capture)]
+        self._listeners[str(event_type)] = [x for x in bucket if not (_same_listener(x[0], listener) and x[1] == capture)]
 
     def fn_dispatchEvent(self, event=MISSING, *_extra):
         if event is MISSING:
@@ -782,34 +793,44 @@ class EventTarget:
         logger.debug("dispatch {} on {} (trusted={}, listeners={})", event.type,
                      type(self).__name__, event._trusted,
                      len(self._listeners.get(event.type, ())))
-        event.target = event.target or self
-        # A non-propagating event reaches its target alone: Chromium dispatches
-        # ``mouseenter``/``mouseleave`` (and pointer twins) with a path of just the node.
-        path = [self]
-        if not event._non_propagating:
-            node = self
-            while node is not None:
-                node = getattr(node, "parentNode", None)
-                if node is None and getattr(path[-1], "nodeType", None) == _DOCUMENT_NODE:
-                    node = getattr(getattr(getattr(path[-1], "_services", None), "document_services", None), "window", None)
-                if node is not None:
-                    path.append(node)
-        event._path = list(path)
-        for target in reversed(path[1:]):
-            event.eventPhase, event.currentTarget = 1, target
-            target._invoke(event, capture=True)
-            if event._stop:
-                return not event.defaultPrevented
-        event.eventPhase, event.currentTarget = 2, self
-        self._invoke(event, capture=True)
-        if not event._immediate: self._invoke(event, capture=False)
-        if event.bubbles and not event._stop:
-            for target in path[1:]:
-                event.eventPhase, event.currentTarget = 3, target
-                target._invoke(event, capture=False)
-                if event._stop: break
-        event.eventPhase, event.currentTarget = 0, None
-        return not event.defaultPrevented
+        if event._dispatching:
+            raise dom_exception("InvalidStateError", "The event is already being dispatched.")
+        event._dispatching = True
+        try:
+            event.target = event._legacy_target_override or self
+            # A non-propagating event reaches its target alone: Chromium dispatches
+            # ``mouseenter``/``mouseleave`` (and pointer twins) with a path of just the node.
+            path = [self]
+            if not event._non_propagating:
+                node = self
+                while node is not None:
+                    node = getattr(node, "parentNode", None)
+                    if node is None and getattr(path[-1], "nodeType", None) == _DOCUMENT_NODE:
+                        node = getattr(getattr(getattr(path[-1], "_services", None), "document_services", None), "window", None)
+                    if node is not None:
+                        path.append(node)
+            event._path = list(path)
+            for target in reversed(path[1:]):
+                event.eventPhase, event.currentTarget = 1, target
+                target._invoke(event, capture=True)
+                if event._stop:
+                    return not event.defaultPrevented
+            event.eventPhase, event.currentTarget = 2, self
+            self._invoke(event, capture=True)
+            if not event._immediate: self._invoke(event, capture=False)
+            if event.bubbles and not event._stop:
+                for target in path[1:]:
+                    event.eventPhase, event.currentTarget = 3, target
+                    target._invoke(event, capture=False)
+                    if event._stop: break
+            event.eventPhase, event.currentTarget = 0, None
+            return not event.defaultPrevented
+        finally:
+            event.eventPhase, event.currentTarget = 0, None
+            event._dispatching = False
+            event._legacy_target_override = None
+            event._stop = event._immediate = event._passive = False
+            event._path = []
 
     def _invoke(self, event, capture):
         listeners = self._listeners.get(event.type)
@@ -818,10 +839,17 @@ class EventTarget:
         # nothing: this is the check that keeps those visits to two dict reads.
         if listeners is None and handler is None:
             return
-        for listener, registered_capture, once, passive, signal, _order in list(listeners or ()):
+        for registration in list(listeners or ()):
+            listener, registered_capture, once, passive, signal, _order = registration
+            # A previous callback may remove or remove-and-readd this registration.
+            current = self._listeners.get(event.type, ())
+            if current is not listeners and registration not in current:
+                continue
             if registered_capture != capture:
                 continue
             if signal is not None and getattr(signal, "aborted", False): continue
+            if once:
+                self._listeners[event.type] = [entry for entry in current if entry is not registration]
             event._passive = passive
             try:
                 if callable(listener):
@@ -836,7 +864,6 @@ class EventTarget:
                 _report_listener_exception(self, exc)
             finally:
                 event._passive = False
-            if once: self._listeners[event.type] = [x for x in self._listeners.get(event.type, ()) if x[0] is not listener or x[1] != registered_capture]
             if event._immediate:
                 return
         # EventHandler slots may hold non-callable objects; Blink invokes their function.

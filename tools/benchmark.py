@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
+import platform
+import subprocess
 import json
 import statistics
 import sys
@@ -352,6 +355,7 @@ def measure(case, runs):
     first["median"] = statistics.median(sample["median"] for sample in samples)
     first["min"] = min(sample["min"] for sample in samples)
     first["runs"] = runs
+    first["samples"] = samples
     return first, None
 
 
@@ -374,7 +378,7 @@ def record(results):
 def compare(results):
     if not BASELINE_FILE.exists():
         print("-- no baseline recorded; run with --record")
-        return True
+        return all(result is not None for result, _ in results.values())
     baseline = json.loads(BASELINE_FILE.read_text(encoding="utf-8"))
     print(f"{'case':18s}{'baseline':>10s}{'now':>10s}{'delta':>9s}  unit       detail")
     regressed = []
@@ -396,15 +400,18 @@ def compare(results):
         print(f"{name:18s}{before:10.2f}{now:10.2f}{change:+8.1%}{flag}  {unit:10s}{detail}")
     if regressed:
         print(f"\nslower: {', '.join(regressed)} (median and minimum both past {TOLERANCE:.0%})")
-    return not regressed
+    return not regressed and all(result is not None for result, _ in results.values())
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--record", action="store_true", help="write the baseline file")
+    parser.add_argument("--output", type=Path, help="save measured samples and environment without changing the baseline")
     parser.add_argument("--runs", type=int, default=3, help="runs per case")
     parser.add_argument("--cases", default="", help="comma-separated subset of case names")
     arguments = parser.parse_args(argv)
+    if arguments.runs < 1:
+        parser.error("--runs must be positive")
 
     available = dict(CASES)
     selected = [name.strip() for name in arguments.cases.split(",") if name.strip()]
@@ -419,9 +426,19 @@ def main(argv=None):
         if results[name][1] is not None:
             print(f"-- {name}: {results[name][1]}")
 
+    if arguments.output:
+        import pyv8
+        binary = Path(pyv8._pyv8.__file__)
+        report = {"python": sys.version, "platform": platform.platform(),
+                  "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+                  "revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
+                  "worktree_sha256": hashlib.sha256(subprocess.check_output(["git", "diff", "--binary", "HEAD"], cwd=REPO)).hexdigest(),
+                  "cases": {name: {"result": result, "error": reason} for name, (result, reason) in results.items()}}
+        arguments.output.parent.mkdir(parents=True, exist_ok=True)
+        arguments.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if arguments.record:
         record(results)
-        return 0
+        return int(any(result is None for result, _ in results.values()))
     return 0 if compare(results) else 1
 
 

@@ -19,6 +19,49 @@ import pytest
 from pyv8c import Browser
 
 
+@pytest.mark.parametrize("shard_isolates", [False, True])
+def test_initial_frame_window_does_not_wait_for_its_network_document(shard_isolates):
+    """The insertion can return while the child document is blocked in a loader.
+
+    The corpus guards the initial window's shape; this guards thread ownership,
+    an in-flight cross-origin navigation and access checks on the saved window.
+    """
+    release = threading.Event()
+    requested = threading.Event()
+
+    def loader(url, request):
+        requested.set()
+        assert release.wait(5), "the inserting script waited for the frame's request"
+        return {"body": "<body>remote</body>", "headers": {"content-type": "text/html"}}
+
+    browser = Browser(real_network=False, resource_loader=loader, threaded_loaders=True,
+                      shard_isolates=shard_isolates, stub_logging="off")
+    try:
+        page = browser.new_context().new_page()
+        page.set_content("""<body><script>
+            const frame = document.createElement('iframe');
+            frame.src = 'https://other.test/child';
+            document.body.appendChild(frame);
+            window.__savedWindow = frame.contentWindow;
+            window.__initial = [__savedWindow.document.URL,
+                                __savedWindow.document.readyState,
+                                frame.contentDocument === __savedWindow.document];
+        </script></body>""", url="https://parent.test/")
+        assert requested.wait(1)
+        assert page.evaluate("__initial") == ["about:blank", "complete", True]
+        release.set()
+        page.run_until_idle(timeout=2)
+        assert page.evaluate("""(() => {
+            const frame = document.querySelector('iframe');
+            let name = '';
+            try { __savedWindow.document; } catch (error) { name = error.name; }
+            return [__savedWindow === frame.contentWindow, frame.contentDocument === null, name];
+        })()""") == [True, True, "SecurityError"]
+    finally:
+        release.set()
+        browser.close()
+
+
 def _bounded(action, seconds=10.0):
     """Close on a daemon thread: a frame that never finishes must not wedge the suite."""
     done = threading.Event()
@@ -54,7 +97,7 @@ def _reporting(label):
 
 
 def _literal(label):
-    """The frame document as a JavaScript string that never spells ``</script>``.
+    r"""The frame document as a JavaScript string that never spells ``</script>``.
 
     ``\/`` is a valid JSON escape that reads the same to JavaScript, so the page's own script
     tag is not closed early by the document it carries.
