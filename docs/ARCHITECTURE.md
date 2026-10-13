@@ -108,7 +108,11 @@ Chromium 生成的 `idl/idl.zip` 只提供接口结构、继承、成员、模�
 
 ## 资源与调试
 
-资源加载由 `ResourceController` 统一处理 loader、拦截器、缓存、脚本和网络响应。Trace 是被动观察；`resource_interceptor` 是主动改变请求，两者不能混用。
+资源加载实现集中在 `platform/resources/`。Page 直接拥有 ResourceFetchController、DocumentResourceController 和 FrameResourceController；请求准备、来源选择、响应策略和逐跳决策由同步/异步驱动共用。CallbackRunner 管理 host 回调执行和池计数，BrowserContext 拥有 ResourceCache，缓存只保存普通 payload。
+
+文档加载屏障通过 `page.document_resources.has_pending` 查询，不能读取内部条目，也不能将传输结束视为 iframe 文档加载结束。LoadHandle 管理原子终态与迟到 transport 绑定，ResourceScope 继续作为唯一释放机制。新增实现应放入 `resources/`，旧的 `platform/resource_loading.py` 已移除。
+
+Trace 是被动观察；`resource_interceptor` 是主动改变请求，两者不能混用。
 HTTP 重定向也在这一层逐跳跟随（规则表在 `network/redirects.py`，引擎只被要求不要自己跟随），因为一个跳要不要跟、下一跳带什么头、跨源要不要过 CORS 检查，都只有知道页面 origin 的这一层能回答。
 
 DevTools 协议、传输、请求路由和 Inspector 会话核心位于相邻 `_pyv8` 的 `pyv8.devtools`；`pyv8c.platform.devtools` 只提供 Page/iframe/Worker 的宿主描述和关闭回调。
@@ -236,3 +240,5 @@ kind 9` ✗，其中 1227 项来自持有者 `0` —— fixture 里 `<iframe>` �
 
 余下两族是既有差异 ✓（成员总数 10361 与全量测试未变 ✓ 印证）：常量落位 ✓（legacy 工厂类上多出
 `*_NODE` ✓）、以及 `only-chrome 72` ✓。
+
+ResourceOwnership 强引用活动票据并通过一个 ResourceScope 清理入口释放。结果交付与登记释放分别记账；Fetcher 负责登记，ResourceServices 只路由。文档发现、条目登记与身份校验、完成事件分别由 discovery、tracker、completion 负责。tracker 的节点索引只经 add/take/clear 修改。

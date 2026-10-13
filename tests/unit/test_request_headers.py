@@ -7,7 +7,7 @@ pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.native
 
 from pyv8c.foundation.environment import BrowserEnvironment
-from pyv8c.platform.request_headers import (
+from pyv8c.platform.resources.request_headers import (
     ACCEPT_ENCODING,
     NAVIGATION_ACCEPT,
     accept_language,
@@ -183,7 +183,9 @@ def test_https_omits_connection_because_it_negotiates_http2():
 
 def test_xhr_and_fetch_take_the_empty_destination_in_cors_mode():
     assert fetch_mode("empty") == "cors"
-    assert fetch_mode("empty", "same-origin") == "cors"
+    # Local Chrome sends the stated mode, including same-origin and no-cors.
+    assert fetch_mode("empty", "same-origin") == "same-origin"
+    assert fetch_mode("empty", "no-cors") == "no-cors"
     assert fetch_mode("script") == "no-cors"
     assert fetch_mode("script", "cors") == "cors"
     assert fetch_mode("document") == "navigate"

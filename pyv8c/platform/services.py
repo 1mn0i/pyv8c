@@ -10,7 +10,7 @@ from typing import Any
 
 from ..foundation.clock import Clock
 from ..foundation.urls import origin_string, serialize_origin
-from .request_headers import ACCEPT_ENCODING, accept_language
+from .resources.request_headers import ACCEPT_ENCODING, accept_language
 from .sessions import BindingSession
 from .state import Ownership
 
@@ -332,70 +332,29 @@ class _ResourceCapability:
         self._owner = owner
 
     def load_resource(self, url, request=None):
-        return self._owner._resources.load_resource(url, request)
+        return self._owner._resource_fetcher.load_resource(url, request)
 
     def load_resource_async(self, url, request, callback):
-        # A request can finish before this call returns, so the two orders --
-        # delivery first or registration first -- converge on one untrack.
-        state = {"handle": None, "tracked": False, "done": False}
-        lock = threading.Lock()
-
-        def complete(response, error):
-            with lock:
-                state["done"] = True
-                handle, tracked = state["handle"], state["tracked"]
-            try:
-                callback(response, error)
-            finally:
-                if handle is not None and tracked:
-                    self._untrack_resource(handle)
-
-        handle = self._owner._resources.load_resource_async(url, request, complete)
-        with lock:
-            state["handle"] = handle
-            if handle is not None:
-                self._track_resource(handle)
-                state["tracked"] = True
-            completed_early = state["done"]
-        if completed_early and handle is not None:
-            self._untrack_resource(handle)
-        return handle
+        return self._owner._resource_fetcher.load_resource_async(url, request, callback)
 
     def load_iframe(self, iframe):
-        return self._owner._resources.load_iframe(iframe)
+        return self._owner._frame_resources.load_iframe(iframe)
 
     def ensure_iframe_context(self, iframe):
-        return self._owner._resources.ensure_iframe_context(iframe)
+        return self._owner._frame_resources.ensure_iframe_context(iframe)
 
     def discard_iframe_context(self, iframe):
-        return self._owner._resources.discard_iframe_context(iframe)
+        return self._owner._frame_resources.discard_iframe_context(iframe)
 
     def load_iframe_markup(self, iframe, markup):
-        return self._owner._resources.load_iframe_markup(iframe, markup)
+        return self._owner._frame_resources.load_iframe_markup(iframe, markup)
 
     def resolve_worker_source(self, script_url):
-        return self._owner._resources.resolve_worker_source(script_url)
+        return self._owner._resource_fetcher.resolve_worker_source(script_url)
 
     def discover_element_resource(self, node):
-        return self._owner._resources.discover_element_resource(node)
+        return self._owner._document_resources.discover_element_resource(node)
 
-    def _track_resource(self, handle):
-        if handle is not None:
-            callback = handle.cancel
-            self._owner._register_owned("resources", handle, callback)
-            try:
-                handle._scope_callback = callback
-            except AttributeError:
-                pass
-
-    def _untrack_resource(self, handle):
-        callback = getattr(handle, "_scope_callback", None)
-        if callback is not None:
-            self._owner._unregister_owned("resources", handle)
-            try:
-                handle._scope_callback = None
-            except AttributeError:
-                pass
 
 
 class _DocumentCapability:
@@ -448,11 +407,10 @@ class _DocumentCapability:
             # The initial about:blank exists in the inserting turn, even inside an
             # inline script. PageRealm enters a shared isolate on this thread;
             # only the requested document's navigation is deferred.
-            services = self._owner._resources
-            services.ensure_iframe_context(node)
+            self._owner._frame_resources.ensure_iframe_context(node)
             if (node.get_src()
                     and not getattr(node, "_resource_started", False)):
-                services.discover_element_resource(node)
+                self._owner._document_resources.discover_element_resource(node)
             return None
         return self._owner._scripts.node_adopted(node)
 
@@ -598,7 +556,7 @@ class PageServices:
     """
 
     def __init__(self, context, environment, trace, ownership: Ownership,
-                 navigation, scripts, resources, tasks, scope):
+                 navigation, scripts, resource_fetcher, frame_resources, document_resources, tasks, scope):
         self._context = context
         self.environment = environment
         self.trace = trace
@@ -608,7 +566,9 @@ class PageServices:
         self._registrations = {}
         self._navigation = navigation
         self._scripts = scripts
-        self._resources = resources
+        self._resource_fetcher = resource_fetcher
+        self._frame_resources = frame_resources
+        self._document_resources = document_resources
         self._tasks = tasks
         # Held directly: the task queue lives in foundation and must not be a
         # back door to the Page.

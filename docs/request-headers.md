@@ -1,6 +1,8 @@
 # 请求头与 Chromium 对齐
 
-[返回文档索引](README.md)。实现入口：[request_headers.py](../pyv8c/platform/request_headers.py)（唯一真源）、三个接入点 [resource_loading.py](../pyv8c/platform/resource_loading.py)（导航/子资源/fetch/XHR）、[net.py](../pyv8c/platform/net.py)（`page.net`）、[services.py](../pyv8c/platform/services.py)（WebSocket 握手）。
+[返回文档索引](README.md)。实现入口：[resources/request_headers.py](../pyv8c/platform/resources/request_headers.py)（唯一真源）、三个接入点 [resources/fetcher.py](../pyv8c/platform/resources/fetcher.py)（导航/子资源/fetch/XHR）、[net.py](../pyv8c/platform/net.py)（`page.net`）、[services.py](../pyv8c/platform/services.py)（WebSocket 握手）。
+
+显式 Fetch mode 保留 `same-origin`、`no-cors` 或 `cors`；导航使用 `navigate`。资源管线同时传入真实 Realm origin，避免继承或 sandbox origin 被页面 URL 覆盖。
 
 pyv8c 发出的请求头在**名称、取值与排列顺序**上与 Chromium 一致。取值全部来自 pyv8c 自己的 environment（`user_agent`、`languages`、`client_hints.*`），因此与页面报告的 `navigator.userAgent`、`navigator.userAgentData` 自洽——不借用任何第三方静态指纹。
 

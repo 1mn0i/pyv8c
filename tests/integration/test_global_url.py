@@ -124,6 +124,7 @@ def test_a_worker_realm_iterates_url_search_params_too():
     browser = Browser(resource_loader=lambda url, request: {"body": source, "url": url})
     try:
         page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("const worker = new Worker('https://example.test/worker.js');"
                       " worker.onmessage = event => globalThis.workerParams = event.data;")
         page.run_until_idle(2)

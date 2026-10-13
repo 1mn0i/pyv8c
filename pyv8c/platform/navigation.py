@@ -68,7 +68,7 @@ class NavigationController:
         renew_realm = self.has_navigation
         self.has_navigation = True
         self.parser_done = lifecycle.dom_content_loaded = lifecycle.document_load_fired = False
-        self.page.resources.reset()
+        self.page.document_resources.reset()
         self.page.scripts.reset()
         if renew_realm:
             # The replaced document's timers go with it; the queue belongs to the page
@@ -165,7 +165,7 @@ class NavigationController:
         if content_type:
             request["content_type"] = content_type
         started = time.perf_counter()
-        response = self.page.resources.load_resource(target, request)
+        response = self.page.resource_fetcher.load_resource(target, request)
         document_seconds = time.perf_counter() - started
         final_url = response.url or target
         self.commit_content(self.decode_html(response), final_url, response)
@@ -179,7 +179,7 @@ class NavigationController:
             remaining = limit - document_seconds
             if remaining > 0 and self.page.tasks.pump_until(ready, timeout=remaining):
                 return response
-            outstanding = self.page.resources.outstanding()
+            outstanding = self.page.document_resources.outstanding()
             waiting = ", ".join(f"{count} {kind}" for kind, count in sorted(outstanding.items()))
             raise HostStateError(
                 f"Navigation to {target} timed out after {limit:g}s waiting for {wait_until}"
@@ -237,7 +237,7 @@ class NavigationController:
         self.parser_generation = self.generation
         self.parser_done = False
         document.ready_state = "loading"
-        self.page.resources.reset()
+        self.page.document_resources.reset()
         self.page.scripts.reset()
         for child in list(document.get_childNodes() or ()):
             document.fn_removeChild(child)
@@ -303,7 +303,7 @@ class NavigationController:
         # A script fetch starts when its start tag is seen, so async/defer/module
         # resources progress while the parser still collects their raw text.
         if getattr(node, "get_src", lambda: "")():
-            self.page.resources.discover_element_resource(node)
+            self.page.document_resources.discover_element_resource(node)
 
     def parser_script_complete(self, node, source):
         scripts = self.page.scripts
@@ -325,7 +325,7 @@ class NavigationController:
                     scripts.dom_blocking_scripts += 1
                     scripts.queue.append(node)
                     node._resource_queued = True
-            self.page.resources.discover_element_resource(node)
+            self.page.document_resources.discover_element_resource(node)
         elif source:
             node._inline_source = source
             if is_defer:

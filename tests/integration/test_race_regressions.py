@@ -31,7 +31,7 @@ pytestmark = pytest.mark.race
 
 from pyv8c.web.page_errors import PageError
 from pyv8c.foundation.executor import RealmExecutor
-from pyv8c.platform.resource_loading import RequestHandle
+from pyv8c.platform.resources.handles import LoadHandle
 
 pytestmark = [pytest.mark.race, pytest.mark.native]
 
@@ -286,43 +286,20 @@ def test_post_control_exception_marks_the_executor_closed():
 
 
 def test_fetch_completion_beating_registration_does_not_strand_the_handle(browser, monkeypatch):
-    """A4: a response that beats its registration must still be untracked.
-
-    The facet tracks the handle only after ``load_resource_async`` returns,
-    and a response can complete on the issuing thread before that happens.
-    The state machine converges both orders on exactly one untrack.
-    """
-    context = browser.new_context()
-    page = context.new_page()
+    """Delivery before binding releases ownership even for a pending handle."""
+    page = browser.new_context().new_page()
     try:
-        controller = page.services._resources
-        facet = page.services.resource_services
         responses = []
-        untracked = []
-        real_untrack = facet._untrack_resource
-
         def synchronous(url, request, callback):
-            handle = RequestHandle()
-            callback(_response_for(url), None)  # completes on this thread
+            handle = LoadHandle()
+            callback(_response_for(url), None)
             return handle
-
-        def spied_untrack(handle):
-            untracked.append(handle)
-            real_untrack(handle)
-
-        monkeypatch.setattr(controller, "load_resource_async", synchronous)
-        monkeypatch.setattr(facet, "_untrack_resource", spied_untrack)
-
-        handle = facet.load_resource_async(
-            "http://127.0.0.1:9/x", {"method": "GET"}, lambda r, e: responses.append((r, e))
-        )
-
-        assert handle is not None
+        monkeypatch.setattr(page.resource_fetcher, "_start_async", synchronous)
+        handle = page.services.resource_services.load_resource_async(
+            "http://127.0.0.1:9/x", {"method": "GET"}, lambda r, e: responses.append((r, e)))
+        assert not handle.done
         assert len(responses) == 1 and responses[0][1] is None
-        assert len(untracked) == 1, "completion-before-registration lost the untrack"
-        assert ("resources", id(handle)) not in page.services._registrations, (
-            "handle stayed registered after a synchronous completion"
-        )
+        assert page.resource_ownership.active_count == 0
     finally:
         page.close()
 
@@ -337,10 +314,10 @@ def test_document_resource_is_tracked_before_its_request_is_issued(browser, monk
     context = browser.new_context()
     page = context.new_page()
     try:
-        controller = page.services._resources
+        controller = page.document_resources
         facet = page.services.resource_services
         order = []
-        real_track = facet._track_resource
+        real_track = page.resource_ownership.track
 
         def spied_track(handle):
             order.append("track")
@@ -348,10 +325,10 @@ def test_document_resource_is_tracked_before_its_request_is_issued(browser, monk
 
         def recording_issue(url, request, callback):
             order.append("issue")
-            return RequestHandle()
+            return LoadHandle()
 
-        monkeypatch.setattr(facet, "_track_resource", spied_track)
-        monkeypatch.setattr(controller, "load_resource_async", recording_issue)
+        monkeypatch.setattr(page.resource_ownership, "track", spied_track)
+        monkeypatch.setattr(page.resource_fetcher, "load_resource_async", recording_issue)
 
         controller.track_document_resource(
             _DummyNode(), "http://127.0.0.1:9/doc.js", {"method": "GET"}, "script"

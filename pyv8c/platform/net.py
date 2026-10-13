@@ -22,7 +22,7 @@ from ..foundation.host_errors import HostStateError, LoadFailure
 from ..foundation.urls import header_set as _header_set
 from ..network.models import NetworkRequest, NetworkResponse
 from .js_http import JsHttpController, JsHttpResponse
-from .request_headers import browser_headers
+from .resources.request_headers import browser_headers
 
 #: Methods the convenience helpers exist for.
 _METHODS = ("get", "post", "put", "patch", "delete", "head", "options")

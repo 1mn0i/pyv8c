@@ -345,7 +345,7 @@ class DocumentLifecycle:
 
     def maybe_fire_document_load(self):
         page = self.page
-        if page.closed or not self.dom_content_loaded or page.resources.resources or self.document_load_fired:
+        if page.closed or not self.dom_content_loaded or page.document_resources.has_pending or self.document_load_fired:
             return
         self.document_load_fired = True
         self.set_ready_state("complete")

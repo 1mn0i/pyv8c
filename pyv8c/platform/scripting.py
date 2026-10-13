@@ -132,14 +132,14 @@ class ScriptController:
         side_effects = re.findall(r"(?:^|;)\s*import\s*(['\"])([^'\"]+)\1\s*;?", source)
         for _prefix, _clause, _quote, specifier in imports:
             dep_url = urljoin(key, specifier)
-            dep = self.page.resources.load_resource(
+            dep = self.page.resource_fetcher.load_resource(
                 dep_url, {"method": "GET", "mode": "cors", "destination": "script",
                           "resource_type": "script"},
             )
             self.execute_module(dep.body_text(), dep.url or dep_url, trail)
         for _quote, specifier in side_effects:
             dep_url = urljoin(key, specifier)
-            dep = self.page.resources.load_resource(
+            dep = self.page.resource_fetcher.load_resource(
                 dep_url, {"method": "GET", "mode": "cors", "destination": "script",
                           "resource_type": "script"},
             )
@@ -206,7 +206,7 @@ class ScriptController:
             if str(node.attributes.get("type", "")).lower() == "module" \
                     or node.attributes.get("crossorigin") is not None:
                 script_request["mode"] = "cors"
-            page.resources.track_document_resource(node, node.get_src(), script_request, "script")
+            page.document_resources.track_document_resource(node, node.get_src(), script_request, "script")
         else:
             # A script's source is its text content: _raw_text only holds the parse-time
             # copy, which a script built with textContent has none of.

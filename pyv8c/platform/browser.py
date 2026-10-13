@@ -23,6 +23,7 @@ from ..network.proxy import normalize_proxy
 from ..network.registry import HttpTransport, WebSocketTransport
 from .bootstrap import bootstrap_runtime
 from .page import Page
+from .resources.cache import ResourceCache
 
 #: With ``threaded_loaders``, loader and interceptor callbacks run here instead of on
 #: the page's owner thread, or a slow one would freeze the realm.
@@ -51,6 +52,7 @@ class BrowserContext:
         self.trace_callback = browser.trace_callback if trace_callback is None else trace_callback
         self.resource_cache_dir = browser.cache_dir if browser.cache_enabled else None
         self.resource_cache_lock = threading.RLock()
+        self.resource_cache = ResourceCache(self)
         self.network_backend = assemble_backend(browser, proxy=self.proxy)
         if self.network_backend is not None:
             self.network_backend.cookies = self.cookies

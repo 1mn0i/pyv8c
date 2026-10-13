@@ -23,7 +23,10 @@ from .lifecycle import DocumentLifecycle
 from .navigation import NAVIGATION_GRACE, NavigationController
 from .net import PageNet
 from .realms import PageRealm, RealmExecutor
-from .resource_loading import ResourceController
+from .resources.fetcher import ResourceFetchController
+from .resources.frames import FrameResourceController
+from .resources.documents import DocumentResourceController
+from .resources.ownership import ResourceOwnership
 from .scripting import ScriptController
 from .services import PageServices
 from .state import Ownership
@@ -108,12 +111,15 @@ class Page:
         self._trace = context.trace if trace is None else bool(trace)
         self.closed = False
         self._resource_scope = ResourceScope()
+        self.resource_ownership = ResourceOwnership(self._resource_scope)
         self._close_lock = threading.Lock()
         self._closing = False
         self.navigation = NavigationController(self)
         self.lifecycle = DocumentLifecycle(self)
         self.scripts = ScriptController(self)
-        self.resources = ResourceController(self)
+        self.resource_fetcher = ResourceFetchController(self)
+        self.frame_resources = FrameResourceController(self, self.resource_fetcher)
+        self.document_resources = DocumentResourceController(self, self.resource_fetcher, self.frame_resources)
         self.tasks = TaskQueue(_TaskHostAdapter(self))
         # An uncaught exception must surface as an ErrorEvent on the window.
         self._reporting_error = False
@@ -125,7 +131,7 @@ class Page:
         # Web-facing objects see this narrow surface, never the Page itself.
         self.services = PageServices(
             context, self.environment, self.trace, self._owned,
-            self.navigation, self.scripts, self.resources, self.tasks,
+            self.navigation, self.scripts, self.resource_fetcher, self.frame_resources, self.document_resources, self.tasks,
             self._resource_scope,
         )
         self.services._origin = self.origin
@@ -638,7 +644,7 @@ class Page:
         self.scripts.reset()
         attempt(self.net.close)
         attempt(self.tasks.close)
-        attempt(self.resources.reset)
+        attempt(self.document_resources.reset)
         self.rejections.close()
         self.lifecycle.load_waiters.clear()
         for frame in self._owned.drain("frames"):

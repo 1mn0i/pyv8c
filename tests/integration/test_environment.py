@@ -107,7 +107,7 @@ def test_page_environment_override_and_iframe_inheritance():
         assert second.evaluate("[navigator.userAgent, innerWidth]") == ["Browser UA", 1904]
         iframe = first.document.fn_createElement("iframe")
         iframe.set_src("https://example.test/frame")
-        child = first.resources.load_iframe(iframe)
+        child = first.frame_resources.load_iframe(iframe)
         assert child.window.navigator.get_userAgent() == "Page UA"
     finally:
         browser.close()
@@ -166,8 +166,8 @@ def test_resource_loader_gets_environment_headers_and_explicit_headers_win():
     try:
         page = browser.new_context().new_page("https://example.test/")
         calls.clear()
-        page.resources.load_resource("/one")
-        page.resources.load_resource("/two", {"headers": {"user-agent": "Explicit UA", "ACCEPT-LANGUAGE": "de"}})
+        page.resource_fetcher.load_resource("/one")
+        page.resource_fetcher.load_resource("/two", {"headers": {"user-agent": "Explicit UA", "ACCEPT-LANGUAGE": "de"}})
         assert calls[0]["headers"]["User-Agent"] == "Env UA"
         assert calls[0]["headers"]["Accept-Language"] == "fr-FR,en;q=0.9"
         assert calls[0]["headers"]["Accept"] == "*/*"
@@ -262,7 +262,7 @@ def test_resource_cache_persists_across_browser_restart(tmp_path, monkeypatch):
     try:
         page = browser.new_context().new_page()
         page.set_content("<body></body>", url="http://cache.test/")
-        assert page.resources.load_resource("/app.js").body_text() == "persisted-js"
+        assert page.resource_fetcher.load_resource("/app.js").body_text() == "persisted-js"
         assert first_calls == ["http://cache.test/app.js"]
         assert len(list((cache_dir / "cache.test").glob("*.json"))) == 1
     finally:
@@ -273,14 +273,14 @@ def test_resource_cache_persists_across_browser_restart(tmp_path, monkeypatch):
 
     messages = []
     monkeypatch.setattr(
-        "pyv8c.platform.resource_loading.logger.debug",
+        "pyv8c.platform.resources.cache.logger.debug",
         lambda message, *values: messages.append((message, *values)),
     )
     browser = Browser(resource_loader=unavailable_loader, cache_dir=cache_dir)
     try:
         page = browser.new_context().new_page()
         page.set_content("<body></body>", url="http://cache.test/")
-        assert page.resources.load_resource("/app.js").body_text() == "persisted-js"
+        assert page.resource_fetcher.load_resource("/app.js").body_text() == "persisted-js"
         assert ("resource cache hit: {}", "http://cache.test/app.js") in messages
     finally:
         browser.close()
@@ -294,6 +294,7 @@ def test_worker_inherits_page_environment_snapshot():
     )
     try:
         page = browser.new_context().new_page(environment={"user_agent": "Worker UA", "languages": ["ja-JP"], "max_touch_points": 2})
+        page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("const worker = new Worker('https://example.test/worker.js'); worker.onmessage = event => globalThis.workerEnvironment = event.data; worker.postMessage(null);")
         page.run_until_idle(2)
         assert page.evaluate("workerEnvironment") == ["Worker UA", "ja-JP", 2]
@@ -306,6 +307,7 @@ def test_worker_navigator_does_not_expose_window_only_surfaces():
     browser = Browser(resource_loader=lambda url, request: {"body": source, "url": url})
     try:
         page = browser.new_context().new_page()
+        page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("const worker = new Worker('https://example.test/worker.js'); worker.onmessage = event => globalThis.workerSurfaces = event.data;")
         page.run_until_idle(1)
         assert page.evaluate("workerSurfaces") == ["undefined", "undefined", "undefined"]
@@ -363,8 +365,8 @@ def test_persistent_resource_cache_honours_response_exclusions(tmp_path, headers
     try:
         page = browser.new_context().new_page()
         page.set_content('<body></body>', url='http://cache.test/')
-        assert page.resources.load_resource('/data').body_text() == '1'
-        assert page.resources.load_resource('/data').body_text() == '2'
+        assert page.resource_fetcher.load_resource('/data').body_text() == '1'
+        assert page.resource_fetcher.load_resource('/data').body_text() == '2'
         assert not list(tmp_path.rglob('*.json'))
     finally:
         browser.close()
@@ -380,14 +382,14 @@ def test_persistent_cache_partitions_request_headers_and_bypasses_credentials(tm
         page = browser.new_context().new_page()
         page.set_content('<body></body>', url='http://cache.test/')
         for language in ['en', 'ja', 'en']:
-            assert page.resources.load_resource('/data', {'headers':{'Accept-Language':language}}).body_text() == language
+            assert page.resource_fetcher.load_resource('/data', {'headers':{'Accept-Language':language}}).body_text() == language
         assert len(calls) == 2
         for _ in range(2):
-            page.resources.load_resource('/private', {'headers':{'Authorization':'Bearer fixture'}})
+            page.resource_fetcher.load_resource('/private', {'headers':{'Authorization':'Bearer fixture'}})
         assert len(calls) == 4
         page.context_owner.cookies.add_from_response('http://cache.test/', 'session=fixture; Path=/')
         for _ in range(2):
-            page.resources.load_resource('/data', {'headers':{'Accept-Language':'en'}})
+            page.resource_fetcher.load_resource('/data', {'headers':{'Accept-Language':'en'}})
         assert len(calls) == 6
     finally:
         browser.close()

@@ -28,7 +28,6 @@ class RequestHandle:
         self._cancelled = False
         self._lock = RLock()
         self.future = None
-        self._scope_callback = None
 
     @property
     def cancelled(self):
@@ -47,7 +46,7 @@ class RequestHandle:
 class NetworkRequest:
     """One transport-level request.
 
-    Field order is load-bearing: the resource loader builds these positionally.
+    Resource loading constructs these by keyword, independently of field order.
     """
 
     url: str

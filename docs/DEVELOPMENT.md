@@ -22,6 +22,8 @@ python -c "import pyv8, pyv8c; print(pyv8.__file__); print(pyv8c.__file__)"
 5. 检查 capability 边界、Feature 所有权、Realm 物化和关闭顺序。
 6. 运行专项测试、完整测试和 diff 检查。
 
+资源加载实现统一放在 `platform/resources/`。修改来源选择、重定向或响应策略时，覆盖同步/异步以及线程内/线程池两种路径；先运行 `tests/integration/test_resource_loading.py`，再串行运行 `tests/repros/test_resource_loading_vs_chrome.py`。文档与 iframe 状态由各自 tracker/controller 管理，Web API 只消费 ResourceServices；详细边界见 [资源加载文档](resource-interception.md)。
+
 ## 常用验证
 
 ```powershell
@@ -124,3 +126,5 @@ python tools/benchmark.py --cases dom_query --runs 5
 ## 交付
 
 最终说明列出实现变化、测试命令和结果、环境限制、未处理失败以及是否创建 commit。删除代码或文档时说明原因；不恢复历史日志文件，不修改任务范围外的 IndexedDB、DevTools、trace 或相邻仓库改动。
+
+资源加载第二轮内部迁移：Page 不再有 resources；请求使用 resource_fetcher，iframe 使用 frame_resources，文档发现与加载屏障使用 document_resources。ResourceController 和资源侧 RequestHandle 别名已删除。新增并发测试见 test_resource_ownership.py，索引测试见 test_document_resource_tracker.py。磁盘缓存格式未改变，完整 HTTP 新鲜度仍未实现。

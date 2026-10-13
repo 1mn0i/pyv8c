@@ -1,11 +1,11 @@
 # 资源加载、拦截与缓存
 
-[返回文档索引](README.md)。实现入口：[ResourceController](../pyv8c/platform/resource_loading.py)。
+[返回文档索引](README.md)。实现集中在 [platform/resources](../pyv8c/platform/resources/)，组合入口为 Page.resource_fetcher / Page.frame_resources / Page.document_resources。
 资源拦截会主动改变请求；它不是只观察参数和结果的 [Trace](TRACE.md)。
 
 ## 离线 loader
 
-默认不访问外网。为导航、外部脚本、Fetch/XHR 等提供明确的资源来源：
+默认 `real_network=True`。离线运行时设置 `real_network=False`，并为 HTTP(S) 导航、外部脚本、Fetch/XHR 等提供明确的资源来源：
 
 ```python
 from pyv8c import Browser
@@ -16,7 +16,7 @@ def load(url, request):
     return {"status": 200, "body": "<script src='/app.js'></script>",
             "headers": {"content-type": "text/html"}}
 
-browser = Browser(resource_loader=load, stub_logging="off")
+browser = Browser(real_network=False, resource_loader=load, stub_logging="off")
 try:
     page = browser.new_context().new_page()
     response = page.goto("https://example.test/")
@@ -47,11 +47,44 @@ loader 默认在页面 owner 线程上执行，所以它可以在等请求的同
 ## 请求顺序
 
 公共入口先检查关闭状态、解析 URL、补环境请求头，再执行资源拦截和磁盘缓存查找。
-之后处理本地 about:blank/Blob URL、注入 loader 或真实网络；同步与异步路径对 about:blank 的位置有细微区别。
+之后处理本地 `about:blank`、`data:`、`blob:` 和允许的扩展资源，再选择注入 loader 或真实网络。同步与异步入口使用同一来源选择和逐跳策略。
 同时配置 loader 与真实网络时，loader 优先，不会自动因其返回空值而回退到网络。
 
-异步完成通知通过任务队列回到 realm。RequestHandle、ResourceScope 与导航 generation 用于取消、清理和丢弃过期结果；
+异步完成通知通过任务队列回到 realm。LoadHandle、ResourceScope 与导航 generation 用于取消、清理和丢弃过期结果；
 导航代际保护不等于能够强制终止已经运行的任意 Python 函数（`threaded_loaders` 下它在池线程上跑，至少不再挡住 realm）。
+
+HTTP 与 loader 响应使用相同的逐跳 CORS、`same-origin` 和重定向检查。检查使用请求发起时的真实 Realm origin；初始 iframe 的继承 origin 与 sandbox 的 opaque origin 不由页面 URL 代替。
+Blob 读取检查创建者 origin；共享 BrowserContext 不授予跨源读取权限。Blob 文档导航仍由 iframe/导航生命周期处理。
+显式 `mode="no-cors"` 的跨域 fetch 返回 opaque 响应，元素自身的经典脚本、样式和图片加载仍可消费资源内容。导航使用 navigate 模式。
+
+## 实现与生命周期
+
+| 文件 | 职责与状态归属 |
+| --- | --- |
+| `resources/ownership.py` | Page 的组合入口；Web API 仍只使用 ResourceServices |
+| `resources/fetcher.py` | 请求快照、来源选择、同步/异步驱动和共享跳转决策 |
+| `resources/callbacks.py` | host 回调执行、池提交失败和 loader 计数清理 |
+| `resources/cache.py` | BrowserContext 所属缓存；读写普通 payload，不持有 Realm Response |
+| `resources/handles.py` | 原子取消/完成与 transport 绑定；取消后的迟到绑定立即取消 |
+| `resources/documents.py` | 文档资源记录、加载屏障、事件及导航代际 |
+| `resources/frames.py` | 初始文档、srcdoc、子 Page 生命周期和完成通知 |
+| `resources/local.py` / `resources/request_headers.py` | 本地解析和请求头生成 |
+
+传输结束不等于文档资源完成：iframe 的条目持续占用加载屏障，直到匹配的子文档完成。过期 token、导航代次或子文档身份不会派发完成事件。
+取消和交付都会释放 ResourceScope 登记；取消后不再继续跳转、写缓存或向页面交付结果。不能中断的池回调可在后台结束，其结果会被丢弃。
+
+## 行为迁移
+
+公开调用签名及 loader/interceptor 字典格式保持不变。内部导入改为 `platform.resources.fetcher.ResourceFetchController` 和 `platform.resources.handles.LoadHandle`；旧的 `platform/resource_loading.py` 已移除，不提供兼容转发。
+原同步路径的以下隐式行为已收敛：本地 URL 不再交给 loader；自定义 loader 不再绕过 CORS；`same-origin` 请求跨源时不会发送下一跳。
+需要向本地 URL 注入替代内容时仍可使用 interceptor。测试 Worker 应先设置有效的同源文档地址，例如：
+
+```python
+page.set_content("<body></body>", url="https://example.test/")
+page.evaluate("new Worker('/worker.js')")
+```
+
+维护内部代码时，请求头辅助函数从 `pyv8c.platform.resources.request_headers` 导入；不要读取 controller 的内部资源字典，使用 `has_pending_document_resources` 和 `outstanding()`。
 
 ## 主动拦截
 
@@ -130,9 +163,27 @@ cache=False 关闭响应缓存使用；Browser.close 不删除显式持久目录
 
 ## 回归入口
 
+资源驱动和生命周期契约见 [专项测试](../tests/integration/test_resource_loading.py)，loader/真实 HTTP 的请求模式与本地来源见 [Chrome 对照](../tests/repros/test_resource_loading_vs_chrome.py)。
+
 [导航测试](../tests/integration/test_navigation.py)、[网络后端测试](../tests/unit/test_network_backend.py)、
 [生命周期测试](../tests/integration/test_lifecycle.py)、[竞态回归](../tests/integration/test_race_regressions.py)、
 [扩展资源测试](../tests/integration/test_extension_resources.py)。
 重定向的规则表见 [单元用例](../tests/unit/test_redirect_rules.py)，loader 驱动的完整行为见 [集成用例](../tests/integration/test_redirects.py)，
 与本机 Chrome 的逐条对照见 [对照用例](../tests/repros/test_redirects_vs_chrome.py)。
 实际 Cookie 行为见 [cookies.py](../pyv8c/network/cookies.py) 与 [document.cookie 测试](../tests/browser/test_document_cookie.py)。
+
+
+### Round 2 internal migration
+
+```python
+# Was page.resources.load_resource(...)
+page.resource_fetcher.load_resource(url, options)
+# Was page.resources.ensure_iframe_context(...)
+page.frame_resources.ensure_iframe_context(element)
+# Was page.resources.discover_element_resource(...)
+page.document_resources.discover_element_resource(element)
+```
+
+ResourceServices remains the Web API boundary. ResourceOwnership registers one cleanup callback in ResourceScope. Its tickets distinguish ownership release from result delivery; document tickets survive transfer completion until element completion. Closed/obsolete synchronous owners raise LoadFailure; asynchronous owners cancel and stop delivery. BrowserContext always owns a CookieJar.
+
+Discovery consumes immutable owner-thread snapshots. The tracker owns typed document records, generations and child-document identity checks. Completion owns element effects and events. _AsyncLoad drives asynchronous requests; HopState is shared with the blocking driver. Neither driver waits for its own task queue. No RequestHandle alias or ResourceController compatibility facade is provided.
