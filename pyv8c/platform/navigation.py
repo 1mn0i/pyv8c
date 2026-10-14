@@ -86,6 +86,9 @@ class NavigationController:
         devtools = self.page.profile._devtools
         if devtools is not None:
             devtools.target_info_changed(self.page)
+        # Realm replacement can read the old document while retiring its frames.
+        # Clear after those reads, just before relinquishing this document.
+        self.page.document._invalidate_tree()
         self.page.document = HTMLDocument(services=self.page.services, url=str(url),
                                           ready_state="loading")
         # A new document starts its own timeline; earlier records belong to the old one.

@@ -242,3 +242,9 @@ kind 9` ✗，其中 1227 项来自持有者 `0` —— fixture 里 `<iframe>` �
 `*_NODE` ✓）、以及 `only-chrome 72` ✓。
 
 ResourceOwnership 强引用活动票据并通过一个 ResourceScope 清理入口释放。结果交付与登记释放分别记账；Fetcher 负责登记，ResourceServices 只路由。文档发现、条目登记与身份校验、完成事件分别由 discovery、tracker、completion 负责。tracker 的节点索引只经 add/take/clear 修改。
+
+DOM 查询缓存由节点所属子树持有。`_ChildList` 结构修改只清除该节点及其祖先的
+快照和 ID 索引，不影响其它文档或分离树；缓存移除立即释放旧节点引用。
+ID 索引按查询需要推进树序遍历，重复 ID 保留首项，结构变化或 `_AttributeMap` 的 ID
+写入使其失效。属性映射整体替换也经过 Element 的统一 setter；class/name 查询仍动态过滤，
+不能只用结构缓存保存其结果。Document、DocumentFragment、ShadowRoot 的 ID 查找共用此入口。

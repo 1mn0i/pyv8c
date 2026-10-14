@@ -17,6 +17,8 @@ try:
 except Exception:  # optional dependency  # pragma: no cover
     ImageFont = None
 
+from ...foundation.environment import environment_of
+from ...foundation.system_fonts import file_for, normalize, table_of
 from ..page_errors import PageSyntaxError
 from .character_data import Text
 from .css import (
@@ -42,69 +44,198 @@ def _px(value, reference=0.0):
     if value in ("0", "0px"): return 0.0
     return _number(value, 0.0)
 
-_FONT_ROOTS = (
-    os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"),
-    "/usr/share/fonts/truetype/dejavu",
-    "/usr/share/fonts/truetype/liberation2",
-)
-_FONT_FALLBACKS = ("arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf")
+
+#: What CSS's absolute font-size keywords mean, in the sizes a 16px ``medium`` maps to.
+_FONT_SIZE_KEYWORDS = {
+    "xx-small": 9.0, "x-small": 10.0, "small": 13.0, "medium": 16.0,
+    "large": 18.0, "x-large": 24.0, "xx-large": 32.0, "xxx-large": 48.0,
+}
+
+#: ``smaller`` and ``larger`` are a ratio of the parent, not a step in the table above.
+_FONT_SIZE_STEP = 1.2
+
+#: One length in a font-size, with the unit CSS allows it to carry.
+_FONT_SIZE_TERM = re.compile(
+    r"(-?[0-9]*\.?[0-9]+)(px|pt|pc|in|cm|mm|q|em|rem|ex|ch|%|vw|vh|vmin|vmax)?", re.I)
 
 
-#: A page measures text far more often than a font directory changes, so the listing,
-#: the resolved paths and the loaded handles are each read once per process.
-_FONT_FILES: dict[str, tuple[str, ...]] = {}
-_FONT_PATHS: dict[tuple, list[str]] = {}
-_FONT_HANDLES: dict[tuple, object] = {}
-
-
-def _stem(value):
-    return re.sub(r"[^A-Za-z0-9]", "", str(value)).lower()
-
-
-def _font_files(root):
-    if root not in _FONT_FILES:
-        try:
-            _FONT_FILES[root] = tuple(os.listdir(root)) if os.path.isdir(root) else ()
-        except OSError:
-            _FONT_FILES[root] = ()
-    return _FONT_FILES[root]
-
-
-def _font(path_candidates, size, weight="400", italic=False):
-    if ImageFont is None: return None
-    for path in path_candidates:
-        key = (path, max(1, int(round(size))))
-        handle = _FONT_HANDLES.get(key)
-        if handle is None:
-            try: handle = _FONT_HANDLES[key] = ImageFont.truetype(path, key[1])
-            except Exception: continue
-        return handle
+def _font_size_term(term, parent, root):
+    """One length as pixels, or ``None`` when it is not a length this engine reads."""
+    match = _FONT_SIZE_TERM.fullmatch(str(term).strip())
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    unit = (match.group(2) or "").lower()
+    if unit in ("", "px"):
+        return amount
+    if unit == "em":
+        return amount * parent
+    if unit == "rem":
+        return amount * root
+    if unit == "%":
+        return amount * parent / 100.0
+    if unit == "pt":
+        return amount * 96.0 / 72.0
+    if unit == "pc":
+        return amount * 16.0
+    if unit == "in":
+        return amount * 96.0
+    if unit == "cm":
+        return amount * 96.0 / 2.54
+    if unit == "mm":
+        return amount * 96.0 / 25.4
+    if unit == "q":
+        return amount * 96.0 / 101.6
+    if unit in ("ex", "ch"):
+        # A face's own ex and ch need its metrics; half an em is what they are taken for.
+        return amount * parent * 0.5
     return None
 
 
-def _font_candidates(families):
-    key = tuple(families)
-    if key not in _FONT_PATHS:
-        names = [
-            name for family in families
-            for root in _FONT_ROOTS for name in _font_files(root)
-            if name.lower().endswith((".ttf", ".otf")) and _stem(family) in _stem(name)
-        ]
-        names.extend(_FONT_FALLBACKS)
-        _FONT_PATHS[key] = [
-            os.path.join(root, name) for root in _FONT_ROOTS for name in names
-            if os.path.exists(os.path.join(root, name))
-        ]
-    return _FONT_PATHS[key]
+def _calc_size(text, parent, root):
+    """``calc(...)`` as pixels: a sum of lengths, which is all a font-size asks of it."""
+    inner = text[text.index("(") + 1:text.rindex(")")].replace(" ", "")
+    total = 0.0
+    sign = 1.0
+    terms = re.findall(r"[+-]?[^+-]+", inner)
+    if not terms:
+        return None
+    for term in terms:
+        if term[0] in "+-":
+            sign = 1.0 if term[0] == "+" else -1.0
+            term = term[1:]
+        value = _font_size_term(term, parent, root)
+        if value is None:
+            return None
+        total += sign * value
+    return total
 
 
-def text_width(text, style):
+def _font_size_px(declared, parent=16.0, root=16.0):
+    """``font-size`` as the absolute size every browser's computed style reports.
+
+    A relative length resolves against the parent's computed size, ``rem`` against the
+    root's, and a keyword against the table CSS defines for it.  A value this cannot read
+    leaves the inherited size in place, which is what a declaration CSS refused to parse
+    amounts to.
+    """
+    text = str(declared).strip().lower()
+    if not text:
+        return parent
+    if text in _FONT_SIZE_KEYWORDS:
+        return _FONT_SIZE_KEYWORDS[text]
+    if text == "smaller":
+        return parent / _FONT_SIZE_STEP
+    if text == "larger":
+        return parent * _FONT_SIZE_STEP
+    if text.startswith("calc(") and text.endswith(")"):
+        value = _calc_size(text, parent, root)
+        return parent if value is None else value
+    value = _font_size_term(text, parent, root)
+    return parent if value is None else value
+
+
+def _px_text(value):
+    """A computed length as CSS writes it: four decimals at most, then the unit."""
+    text = f"{value:.4f}".rstrip("0").rstrip(".")
+    return f"{text or '0'}px"
+
+
+def _root_font_size(element):
+    """The root element's computed size, which is what ``rem`` is relative to."""
+    document = getattr(element, "ownerDocument", None)
+    get_root = getattr(document, "get_documentElement", None) if document is not None else None
+    root = get_root() if get_root is not None else None
+    if root is None or root is element:
+        return 16.0
+    return _px(computed_style(root).get("font-size", "16px"), 16) or 16
+
+#: What CSS's generic families mean here: the platform's own default for each, in the
+#: order a name would be tried, because a page asking for ``sans-serif`` is asking for
+#: whatever this browser would have used.
+_GENERIC_FAMILIES = {
+    "serif": ("Times New Roman", "Times", "Liberation Serif", "DejaVu Serif"),
+    "sans-serif": ("Arial", "Helvetica", "Liberation Sans", "DejaVu Sans"),
+    "monospace": ("Consolas", "Courier New", "Liberation Mono", "DejaVu Sans Mono"),
+    "cursive": ("Comic Sans MS", "Apple Chancery", "DejaVu Sans"),
+    "fantasy": ("Impact", "Papyrus", "DejaVu Sans"),
+    "system-ui": ("Segoe UI", "Helvetica Neue", "DejaVu Sans"),
+    "ui-serif": ("Times New Roman", "Liberation Serif", "DejaVu Serif"),
+    "ui-sans-serif": ("Arial", "Liberation Sans", "DejaVu Sans"),
+    "ui-monospace": ("Consolas", "Liberation Mono", "DejaVu Sans Mono"),
+    "ui-rounded": ("Segoe UI", "DejaVu Sans"),
+    "emoji": ("Segoe UI Emoji", "Apple Color Emoji"),
+    "math": ("Cambria Math", "DejaVu Sans"),
+    "fangsong": ("FangSong", "DejaVu Serif"),
+}
+
+#: What a name no face and no table knows falls back to: CSS's standard font, which is the
+#: serif family and not the sans-serif one -- Chrome measures such a family with Times.
+_DEFAULT_FAMILIES = _GENERIC_FAMILIES["serif"]
+
+#: One handle per file, face and size: what Pillow needs, and what a page asks for most.
+_FONT_HANDLES: dict[tuple, object] = {}
+
+
+def _environment_for(element):
+    """The environment a box's text is measured in, which a profile may have set."""
+    return environment_of(getattr(element, "_services", None))
+
+
+def _first_family(table, name):
+    """The first face of a family, or ``None``: what a whole family resolves to for text."""
+    key = normalize(name)
+    for record in table:
+        if normalize(record.family) == key:
+            return record
+    return None
+
+
+def _face_for(families, environment=None):
+    """The face a family list resolves to: the first family known here, then the default.
+
+    An uninstalled family is not a failure -- CSS walks the list and then falls back to the
+    platform's own default -- so a name the machine does not have still measures with the
+    face the browser would have used for it.
+
+    The table is the same one ``FontFace`` asks whether a ``local()`` name exists, which is
+    what keeps "the page said this font is here" and "measuring text works" in step.
+    """
+    table = table_of(environment)
+    for family in families:
+        for name in _GENERIC_FAMILIES.get(normalize(family), (family,)):
+            record = _first_family(table, name)
+            if record is not None:
+                return record
+    for name in _DEFAULT_FAMILIES:
+        record = _first_family(table, name)
+        if record is not None:
+            return record
+    return None
+
+
+def _font(record, size):
+    if ImageFont is None or record is None:
+        return None
+    # A profile names the file, not where it is: the roots decide, and a face this machine
+    # does not have measures with the default instead, which is what a missing font does.
+    path = file_for(record)
+    if path is None:
+        return None
+    key = (path, record.index, max(1, int(round(size))))
+    handle = _FONT_HANDLES.get(key)
+    if handle is None:
+        try:
+            handle = _FONT_HANDLES[key] = ImageFont.truetype(path, key[2], index=record.index)
+        except Exception:
+            return None
+    return handle
+
+
+def text_width(text, style, environment=None):
     size = _px(style.get("font-size", "16px"), 16) or 16
     families = [x.strip().strip('"\'') for x in style.get("font-family", "sans-serif").split(",")]
-    font = _font(
-        _font_candidates(families), size,
-        style.get("font-weight", "400"), style.get("font-style") == "italic",
-    )
+    font = _font(_face_for(families, environment), size)
     if font is not None:
         try: width = font.getlength(text)
         except AttributeError: width = font.getbbox(text)[2]
@@ -138,6 +269,7 @@ def _specificity(selector):
 def _cascade(element, rules):
     values = initial_values_for(element)
     parent = getattr(element, "parentElement", None)
+    parent_size = 16.0
     if parent is not None:
         inherited = _cascade(parent, rules)
         # Inherit every inherited property, not only those with an initial value here.
@@ -145,6 +277,7 @@ def _cascade(element, rules):
             name: inherited.get(name, values.get(name, ""))
             for name in INHERITED_PROPERTIES
         })
+        parent_size = _px(inherited.get("font-size", "16px"), 16) or 16
     # Last applied wins, so the order is CSS's: important, inline, specificity, source.
     matched = []
     order = 0
@@ -163,6 +296,10 @@ def _cascade(element, rules):
         order += 1
     for _important, _inline, _count, _order, name, value in sorted(matched, key=lambda item: item[:4]):
         values[name] = value
+    # A computed size is absolute in every browser, so a relative one is resolved here,
+    # where the parent's own computed size -- and the root's -- are at hand.
+    values["font-size"] = _px_text(_font_size_px(values.get("font-size", "16px"),
+                                                 parent_size, _root_font_size(element)))
     return values
 
 
@@ -465,7 +602,7 @@ def _intrinsic_width(element, style, rules, depth=0):
     widest = 0.0
     for child in _child_elements(element):
         if isinstance(child, Text):
-            inline += text_width(child.get_textContent() or "", style)
+            inline += text_width(child.get_textContent() or "", style, _environment_for(element))
             continue
         child_style = _style_of(child, rules)
         if child_style.get("display") == "none":
@@ -510,7 +647,7 @@ def _flow_children(element, style, walk, containing, positioned):
                 # Collapsible whitespace with nothing before it makes no line box,
                 # which is what keeps the newlines between blocks out of the flow.
                 continue
-            line_x += text_width(content, style)
+            line_x += text_width(content, style, _environment_for(element))
             line_height = max(line_height, _line_height(style))
             continue
         child_style = _style_of(child, walk.rules)

@@ -645,6 +645,7 @@ class Page:
         attempt(self.net.close)
         attempt(self.tasks.close)
         attempt(self.document_resources.reset)
+        attempt(self.document._invalidate_tree)
         self.rejections.close()
         self.lifecycle.load_waiters.clear()
         for frame in self._owned.drain("frames"):
@@ -692,6 +693,7 @@ class Page:
                 # Keep the executor alive for a host-resource cleanup retry.
                 raise first_error
             self.isolate = None
+        self.document._invalidate_tree()
         self.executor.close()
         self.v8_context = None
         self.global_proxy = None

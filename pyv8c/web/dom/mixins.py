@@ -204,6 +204,7 @@ class LegacyNamedPropertyMixin:
 
     __idl_overrides__ = {
         "interface": {
+            "named_properties_non_masking": True,
             "length": 0,
             "name_del": "__v8_name_del__",
             "name_enum": "__v8_name_enum__",
@@ -226,13 +227,13 @@ class LegacyNamedPropertyMixin:
         return [name for name in self._supported_names() if name not in self._prototype_names]
 
     def __v8_name_get__(self, name):
-        if not isinstance(name, str) or name not in self._visible_names():
+        if not isinstance(name, str) or name in self._prototype_names or name not in self._visible_names():
             return None
         value = self._named_item(name)
         return None if value is pyv8.Null else value
 
     def __v8_name_set__(self, name, value):
-        if isinstance(name, str) and name in self._visible_names():
+        if isinstance(name, str) and name not in self._prototype_names and name in self._visible_names():
             raise LegacyPropertyError.named(
                 "set", name, self._interface_name(),
                 "Named property setter is not supported.",
@@ -240,12 +241,12 @@ class LegacyNamedPropertyMixin:
         return None
 
     def __v8_name_query__(self, name):
-        if not isinstance(name, str):
+        if not isinstance(name, str) or name in self._prototype_names:
             return None
         return NAMED_PROPERTY_ATTRIBUTES if name in self._visible_names() else None
 
     def __v8_name_del__(self, name):
-        if isinstance(name, str) and name in self._visible_names():
+        if isinstance(name, str) and name not in self._prototype_names and name in self._visible_names():
             raise LegacyPropertyError.named(
                 "delete", name, self._interface_name(),
                 "Named property deleter is not supported.",

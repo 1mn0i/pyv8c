@@ -95,7 +95,7 @@ def test_blob_fetch_checks_creator_origin(reference, origins, mode, cross_origin
     script = """window.__answer=null; fetch(%s, {mode:%s}).then(r => r.text().then(text => {
         window.__answer={text:text};
     })).catch(e => {window.__answer={error:e.name};}); 'started'"""
-    chrome_context = reference.browser.new_profile()
+    chrome_context = reference.browser.new_context()
     creator = chrome_context.new_page()
     reader = chrome_context.new_page()
     try:

@@ -43,6 +43,63 @@ _VOID_ELEMENTS = frozenset({
 })
 
 
+class _AttributeMap(dict):
+    """Internal writes invalidate the owning tree's ID lookup too."""
+    __slots__ = ('_owner',)
+    def __init__(self, owner, values):
+        super().__init__(values)
+        self._owner = owner
+
+    def __setitem__(self, key, value):
+        if key == 'id' and self.get(key) != value:
+            self._owner._invalidate_id_index()
+        super().__setitem__(key, value)
+        nodes = self._owner.__dict__.get('_attribute_nodes')
+        if nodes is not None:
+            cached = nodes.get(key)
+            if cached is not None: cached.nodeValue = str(value)
+
+    def _detach_node(self, key):
+        nodes = self._owner.__dict__.get('_attribute_nodes')
+        if nodes is not None:
+            cached = nodes.pop(key, None)
+            if cached is not None: cached.ownerElement = None
+
+    def __delitem__(self, key):
+        if key == 'id': self._owner._invalidate_id_index()
+        super().__delitem__(key)
+        self._detach_node(key)
+
+    def update(self, *args, **kwargs):
+        for key, value in dict(*args, **kwargs).items(): self[key] = value
+
+    def setdefault(self, key, default=None):
+        if key not in self: self[key] = default
+        return self[key]
+
+    def pop(self, key, *default):
+        if key == 'id' and key in self: self._owner._invalidate_id_index()
+        value = super().pop(key, *default)
+        self._detach_node(key)
+        return value
+
+    def popitem(self):
+        key, value = super().popitem()
+        if key == 'id': self._owner._invalidate_id_index()
+        self._detach_node(key)
+        return key, value
+
+    def clear(self):
+        if 'id' in self: self._owner._invalidate_id_index()
+        super().clear()
+        cached = self._owner.__dict__.get('_attribute_nodes')
+        if cached:
+            for node in cached.values(): node.ownerElement = None
+            cached.clear()
+
+    def __ior__(self, values): self.update(values); return self
+
+
 @interface('Element', 'Node')
 class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
     """Base implementation for HTML and XML elements."""
@@ -116,7 +173,22 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             self._namespace = None if is_nullish(namespace) else str(namespace)
             self._prefix = None if is_nullish(prefix) else str(prefix)
         super().__init__(services=services, node_type=Node.ELEMENT_NODE, node_name=node_name, **kw)
-        self.localName, self.attributes = local, dict(attributes or {})
+        # A fresh node cannot have cached lookups yet. Wrap once without the
+        # replacement setter or a redundant temporary dictionary on the parse path.
+        self.localName = local
+        self._attribute_map = _AttributeMap(self, attributes or {})
+
+    @property
+    def attributes(self): return self._attribute_map
+
+    @attributes.setter
+    def attributes(self, values):
+        self._invalidate_id_index()
+        cached = self.__dict__.get('_attribute_nodes')
+        if cached:
+            for node in cached.values(): node.ownerElement = None
+            cached.clear()
+        self._attribute_map = _AttributeMap(self, values)
 
     def get_namespaceURI(self): return self._namespace or pyv8.Null
     def get_prefix(self): return self._prefix or pyv8.Null
@@ -268,9 +340,16 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if not _VALID_NAME_RE.match(name):
             raise InvalidCharacterError("The attribute name provided is invalid.")
         lowered = name.lower()
-        previous = self.attributes.get(lowered)
+        attributes = self.attributes
+        previous = attributes.get(lowered)
         written = str(value)
-        self.attributes[lowered] = written
+        # Avoid a Python dictionary callback when there is no ID index or Attr
+        # view to maintain; notifications below still follow the same path.
+        if previous != written:
+            if lowered != 'id' and not self.__dict__.get('_attribute_nodes'):
+                dict.__setitem__(attributes, lowered, written)
+            else:
+                attributes[lowered] = written
         record_mutation(self, "attributes", attribute_name=lowered,
                         old_value=previous)
         self._attribute_changed_here(lowered, previous, written)

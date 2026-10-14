@@ -40,7 +40,7 @@ INTERFACE_FIELDS = (
     "definition_kind", "has_constructor",
     "hidden", "immutable", "index_del", "index_enum", "index_get", "index_query", "index_set",
     "iterate", "length", "name", "name_del", "name_enum", "name_get", "name_query", "name_set",
-    "named_properties_object", "parent_class", "skip_inherit", "to_string_tag", "undetectable",
+    "named_properties_object", "named_properties_non_masking", "parent_class", "skip_inherit", "to_string_tag", "undetectable",
     "unconstructable", "global_this",
 )
 

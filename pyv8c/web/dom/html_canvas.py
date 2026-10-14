@@ -122,19 +122,35 @@ def _is_canvas_image_source(value):
 
 @interface('TextMetrics', None)
 class TextMetrics:
-    """What ``measureText`` returns.  Only ``width`` is measured; the boxes a
-    caller rarely reads report that same run's edges, as Chrome's do."""
+    """What ``measureText`` returns: the width, and the boxes that same run sits in.
 
-    def __init__(self, width=0.0, **_):
+    ``actualBoundingBox`` is the run's ink and ``fontBoundingBox`` is the face's own ascent
+    and descent, both taken from the face the width was measured with, so a page that reads
+    them reads what this engine measured rather than a constant.
+
+    ``emHeight*`` and the three baselines stay zero.  Chrome takes them from the face's own
+    ``OS/2`` and HarfBuzz extents, which Pillow does not expose; a plausible-looking number
+    would be worse than none, because a page can compare them with the font's real metrics.
+    """
+
+    def __init__(self, width=0.0, *, actual_left=0.0, actual_right=None,
+                 actual_ascent=0.0, actual_descent=0.0,
+                 font_ascent=0.0, font_descent=0.0, **_):
         self._width = float(width)
+        self._actual_left = float(actual_left)
+        self._actual_right = float(width if actual_right is None else actual_right)
+        self._actual_ascent = float(actual_ascent)
+        self._actual_descent = float(actual_descent)
+        self._font_ascent = float(font_ascent)
+        self._font_descent = float(font_descent)
 
     def get_width(self): return self._width
-    def get_actualBoundingBoxLeft(self): return 0.0
-    def get_actualBoundingBoxRight(self): return self._width
-    def get_actualBoundingBoxAscent(self): return 0.0
-    def get_actualBoundingBoxDescent(self): return 0.0
-    def get_fontBoundingBoxAscent(self): return 0.0
-    def get_fontBoundingBoxDescent(self): return 0.0
+    def get_actualBoundingBoxLeft(self): return self._actual_left
+    def get_actualBoundingBoxRight(self): return self._actual_right
+    def get_actualBoundingBoxAscent(self): return self._actual_ascent
+    def get_actualBoundingBoxDescent(self): return self._actual_descent
+    def get_fontBoundingBoxAscent(self): return self._font_ascent
+    def get_fontBoundingBoxDescent(self): return self._font_descent
     def get_emHeightAscent(self): return 0.0
     def get_emHeightDescent(self): return 0.0
     def get_hangingBaseline(self): return 0.0
@@ -419,17 +435,26 @@ class CanvasRenderingContext2D:
         if value in _TEXT_BASELINES:
             self._baseline = value
     def _font_obj(self):
+        """The face this context's ``font`` asks for, resolved as the page's text is.
+
+        ``measureText`` is a measurement a page can read, so it reads the same table layout
+        does: the family list goes through the profile's fonts, which is what keeps a canvas
+        width and the width of the same text in a box in step.  When nothing resolves -- no
+        such family, or a face this machine has no file for -- the default face stands in.
+        """
         if self._image is None: return None
         from PIL import ImageFont
-        m = re.search(r"([0-9.]+)\s*(px|pt)", self._font); size = float(m.group(1)) if m else 10
-        if m and m.group(2) == 'pt': size *= 96 / 72
-        family = self._font[m.end():].strip().split(',')[0].strip('"\' ') if m else ''
-        candidates = [family, "arial", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"]
-        for f in candidates:
-            try:
-                if f: return ImageFont.truetype(f, max(1, int(size)))
-            except OSError: pass
-        return ImageFont.load_default()
+        from . import layout
+        from ...foundation.environment import environment_of
+        match = re.search(r"([0-9.]+)\s*(px|pt)", self._font)
+        size = float(match.group(1)) if match else 10
+        if match and match.group(2) == 'pt': size *= 96 / 72
+        names = self._font[match.end():].strip() if match else ''
+        families = [name.strip().strip('"\' ') for name in names.split(',')]
+        families = [name for name in families if name] or ["sans-serif"]
+        environment = environment_of(getattr(self._canvas, "_services", None))
+        font = layout._font(layout._face_for(families, environment), size)
+        return font if font is not None else ImageFont.load_default()
     def fn_getImageData(self, x=MISSING, y=MISSING, sw=MISSING, sh=MISSING, *_extra):
         """The pixels of one rectangle, transparent black outside the canvas."""
         for position, value in enumerate((x, y, sw, sh)):
@@ -663,10 +688,36 @@ class CanvasRenderingContext2D:
             self._filter = value
         elif _parses_as_filter(str(value)):
             self._filter = str(value)
+    def _text_boxes(self, font, text):
+        """The boxes ``measureText`` reports, from the face the width was measured with.
+
+        ``actualBoundingBox`` is the run's ink, which Pillow measures from the top of the
+        line while the spec measures it from the baseline -- the ascent is what separates
+        the two, and the sign is flipped on the left because the spec counts leftwards.
+        """
+        if font is None:
+            return {}
+        try:
+            ascent, descent = font.getmetrics()
+        except Exception:  # noqa: BLE001 - a face with no metrics reports none
+            return {}
+        boxes = {"font_ascent": float(ascent), "font_descent": float(descent)}
+        if not text:
+            # An empty run has the face's own box and no ink of its own.
+            return boxes
+        try:
+            left, top, right, bottom = font.getbbox(text)
+        except Exception:  # noqa: BLE001 - a face with no boxes reports none
+            return boxes
+        boxes.update({"actual_left": -float(left), "actual_right": float(right),
+                      "actual_ascent": float(ascent) - float(top),
+                      "actual_descent": float(bottom) - float(ascent)})
+        return boxes
     def fn_measureText(self, text='', *_):
-        width = (self._draw.textlength(str(text), font=self._font_obj())
-                 if self._draw else len(str(text)) * 10)
-        return TextMetrics(width)
+        text = str(text)
+        font = self._font_obj()
+        width = (self._draw.textlength(text, font=font) if self._draw else len(text) * 10)
+        return TextMetrics(width, **self._text_boxes(font, text))
     def fn_save(self, *_):
         self._stack.append((self._fill, self._stroke, self._font, self._baseline,
                             self._composite, self._filter, self._transform, self._shadow))

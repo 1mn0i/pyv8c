@@ -289,6 +289,9 @@ def select(root, selector, *, first=False):
     candidates = root._descendants() if first else root._descendant_snapshot()
     if len(ast) == 1 and len(ast[0][0]) == 1:
         simple = ast[0][0][0]
+        if (first and simple.tag == '*' and len(simple.ids) == 1
+                and not (simple.classes or simple.attrs or simple.pseudos)):
+            return root._find_element_by_id(simple.ids[0])
         if first:
             return next((node for node in candidates if _simple_match(node, simple)), None)
         return [node for node in candidates if _simple_match(node, simple)]

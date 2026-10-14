@@ -24,11 +24,13 @@ import tempfile
 import threading
 import time
 import urllib.request
+from dataclasses import replace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ..engine.idl import ArrayProto, Idl
+from ..foundation import system_fonts
 from ..foundation.environment import COLLECTED_KEYS, SCHEMA_VERSION, BrowserEnvironment, json_value
 from ..web.bom.navigator import PERMISSION_NAMES
 from ..web.dom.media_source import WEBRTC_CONTENT_TYPES, WEBRTC_VIDEO_FAMILIES, probe_candidates
@@ -736,13 +738,24 @@ def build_surface(payload, declared=None, against=""):
     }
 
 
-def build_profile(payload, surface, source):
-    """The document a run writes: the environment keys, and what the browser installs of the IDL.
+def build_profile(payload, surface, source, fonts=None):
+    """The document a run writes: the environment keys, what the browser installs of the IDL,
+    and the machine's fonts.
+
+    The font table is not an environment key -- no browser answers it over DevTools -- but it
+    is what the profile then answers ``local()``, text measurement and ``queryLocalFonts``
+    with, so it travels beside the keys rather than being read again at run time.
 
     A non-finite number travels as its name, so a strict JSON parser accepts the file.
     """
     document = {"schema": SCHEMA_VERSION, "source": dict(source)}
     document.update(build_environment(payload).to_dict())
+    # A profile travels, so a face keeps the file's name and not the path it was read from:
+    # an absolute path would neither leave this machine nor arrive intact on another.
+    document["fonts.records"] = [
+        replace(record, path=os.path.basename(record.path))
+        for record in (system_fonts.records() if fonts is None else fonts)
+    ]
     document["bindings"] = surface
     return json_value(document)
 

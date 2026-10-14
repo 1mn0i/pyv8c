@@ -8,6 +8,7 @@ pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 
 from pyv8c.engine.idl import ArrayProto  # noqa: E402
 from pyv8c.foundation.environment import COLLECTED_KEYS, BrowserEnvironment
+from pyv8c.foundation.system_fonts import FontRecord
 from pyv8c.tools import collect_environment as collector
 from pyv8c.web.dom.media_source import (families_in, parse_type, probe_candidates,
                                         probe_containers, probe_families)
@@ -111,7 +112,12 @@ def test_a_run_writes_the_environment_and_the_surface_together():
                   "interface": {"Node", "ELEMENT_NODE"}},
          "CSS": {"prototype": set(), "interface": {"escape", "supports", "animationWorklet"}}},
         "digest-of-the-baseline")
-    document = collector.build_profile(collected, surface, source={"browser": "Chrome/154.0.8037.95"})
+    #: An absolute path goes in, because that is what this machine's table holds; what the
+    #: profile keeps is the file's name, which is what travels.
+    fonts = (FontRecord("Probe-Regular", "Probe Regular", "Probe", "Regular",
+                        r"C:\Fonts\p.ttf", 0),)
+    document = collector.build_profile(collected, surface,
+                                       source={"browser": "Chrome/154.0.8037.95"}, fonts=fonts)
 
     assert document["bindings"] == {
         "keys": ["a"], "exposed": ["a", "b"],
@@ -123,9 +129,15 @@ def test_a_run_writes_the_environment_and_the_surface_together():
         "array_protos": {"Node": ArrayProto.iterable},
         "against": "digest-of-the-baseline"}
     assert document["source"]["browser"] == "Chrome/154.0.8037.95"
-    assert set(document) == {"schema", "source", "bindings", *COLLECTED_KEYS}
-    # The section is not an environment key: the profile still loads as one.
-    assert BrowserEnvironment.from_dict(document).to_dict() == collected
+    assert set(document) == {"schema", "source", "fonts.records", "bindings", *COLLECTED_KEYS}
+    # The sections beside the keys are not environment keys: the profile still loads as one,
+    # and the fonts it carries are what the pages of that profile answer ``local()`` with.
+    resolved = BrowserEnvironment.from_dict(document)
+    assert {key: resolved.to_dict()[key] for key in COLLECTED_KEYS} == collected
+    assert [record.postscript_name for record in resolved.fonts.records] == ["Probe-Regular"]
+    assert document["fonts.records"] == [
+        {"postscript_name": "Probe-Regular", "full_name": "Probe Regular",
+         "family": "Probe", "style": "Regular", "path": "p.ttf", "index": 0}]
 
 
 def test_a_surface_without_gap_readings_writes_empty_sections():

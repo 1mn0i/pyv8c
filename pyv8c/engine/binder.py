@@ -589,6 +589,10 @@ class Binder:
         ] + ["__v8_cross_origin_check__"]
         options = {}
         declarations = tuple(stated_fields(base) for base in cls.__mro__)
+        for fields in declarations:
+            if 'named_properties_non_masking' in fields:
+                options['named_properties_non_masking'] = fields['named_properties_non_masking']
+                break
         for callback_name in handler_names:
             key = callback_name[5:-2]
             reference = next(

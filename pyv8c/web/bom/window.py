@@ -22,8 +22,10 @@ from ...foundation.environment import BrowserEnvironment
 from ..page_errors import DOMException, InvalidCharacterError, LegacyPropertyError, SecurityError, PageTypeError
 from ..page_errors import js_error_value
 from ...foundation.urls import origin_tuple, serialize_origin
+from ...foundation.environment import environment_of
 from ..dom.custom_elements import CustomElementRegistry
 from ..dom.events import EventTarget
+from ..dom.fonts import font_entries
 from ..fetch.cache import CacheStorage
 from ..fetch.request import Request
 from ..fetch.response import Response
@@ -724,6 +726,45 @@ class Window(_SchedulingMixin, WindowProperties):
                 "Failed to execute 'btoa' on 'Window': The string to be encoded contains"
                 " characters outside of the Latin1 range.")
         return forgiving_base64_encode(text)
+
+    def fn_queryLocalFonts(self, options=None, *_extra):
+        """The machine's fonts, behind the gates Chromium puts in front of them.
+
+        The policy gate throws where Chromium throws; the answer the browser process would
+        give rejects the promise instead.  A hidden page, a permission the user denied and
+        a pending permission with no gesture behind it are three different answers, and the
+        last is what a probe without a click receives -- the same refusal a real browser
+        gave a page asking this way.  Granting ``local-fonts`` in the profile is how a page
+        gets the list.
+        """
+        settings = {} if is_nullish(options) else dictionary(options)
+        from ...foundation.arguments import sequence
+        selected = settings.get("postscriptNames")
+        if not is_nullish(selected):
+            # The dictionary hands back live JavaScript values, so the list is read here.
+            selected = tuple(str(name) for name in sequence(selected))
+        else:
+            selected = None
+        document = self.get_document()
+        policy = getattr(document, "_feature_policy", None)
+        if policy is not None and not policy.fn_allowsFeature("local-fonts"):
+            raise SecurityError('Access to the feature "local fonts" is disallowed by '
+                                "permissions policy.")
+        promise, resolve, reject = self._services.realm_services.make_promise()
+        if getattr(document, "hidden", False):
+            reject(js_error_value(SecurityError("Page needs to be visible.")))
+            return promise
+        state = self.get_navigator().get_permissions()._state("local-fonts")
+        if state == "denied":
+            # A denied permission is an empty list in Chromium, not a rejection.
+            resolve([])
+            return promise
+        activation = self.get_navigator().get_userActivation()
+        if state != "granted" and not getattr(activation, "get_hasBeenActive", bool)():
+            reject(js_error_value(SecurityError("User activation is required.")))
+            return promise
+        resolve(font_entries(environment_of(self._services), selected))
+        return promise
 
     def fn_close(self, *_extra): return None
     def fn_focus(self, *_extra): return None

@@ -288,7 +288,7 @@ class Document(_ParentNodeMixin, Node):
     def get_fonts(self):
         value = getattr(self, "_fonts", None)
         if value is None:
-            value = self._fonts = FontFaceSet(services=self._services)
+            value = self._fonts = FontFaceSet(services=self._services, document=self)
         return value
     def get_hidden(self): return self.hidden
     def get_characterSet(self): return 'UTF-8'
@@ -473,7 +473,7 @@ class Document(_ParentNodeMixin, Node):
         if value is MISSING:
             raise missing_error('Document', 'getElementById', 1, 0, constructor=False)
         value = dom_string(value)
-        return next((x for x in self._descendants() if isinstance(x, Element) and x.get_id() == str(value)), pyv8.Null)
+        return self._find_element_by_id(str(value)) or pyv8.Null
     def fn_getElementsByName(self, value=MISSING, *_extra):
         if value is MISSING:
             raise missing_error('Document', 'getElementsByName', 1, 0, constructor=False)

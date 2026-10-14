@@ -93,7 +93,7 @@ FEATURE = FeatureImplementation(
         nodes.Node, nodes.DocumentFragment, nodes.ShadowRoot, nodes.Attr,
         traversal.NodeFilter, traversal.NodeIterator, traversal.TreeWalker,
         encoding.TextEncoder, encoding.TextDecoder,
-        fonts.FontFace, fonts.FontFaceSet,
+        fonts.FontFace, fonts.FontFaceSet, fonts.FontData,
         character_data.CharacterData, character_data.Text, character_data.Comment, character_data.DocumentType,
         document.Document, document.HTMLDocument, document.XMLDocument,
         document.FragmentDirective, animation.AnimationTimeline, animation.DocumentTimeline,

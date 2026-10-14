@@ -104,8 +104,15 @@ class NamedNodeMap(_ListItems, ReadOnlyIndexedPropertyMixin):
         return 0 if any(item.get_name() == str(name) for item in self._attribute_items()) else None
     def _attribute_items(self):
         from .nodes import Attr
-        return [Attr(k, v, ownerElement=self._element, services=self._element._services)
-                for k, v in self._element.attributes.items()]
+        cache = self._element.__dict__.setdefault('_attribute_nodes', {})
+        items = []
+        for name, value in self._element.attributes.items():
+            node = cache.get(name)
+            if node is None:
+                node = cache[name] = Attr(name, value, ownerElement=self._element,
+                                         services=self._element._services)
+            items.append(node)
+        return items
     def fn_getNamedItem(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('NamedNodeMap', 'getNamedItem', 1, 0, constructor=False)
@@ -118,7 +125,16 @@ class NamedNodeMap(_ListItems, ReadOnlyIndexedPropertyMixin):
         from .nodes import Attr
         if not isinstance(attr, Attr): raise PageTypeError("parameter is not of type Attr")
         old = self.fn_getNamedItem(attr.get_name())
+        if old is attr: return old
+        if attr.ownerElement is not None and attr.ownerElement is not self._element:
+            from ..page_errors import dom_exception
+            raise dom_exception('InUseAttributeError', 'The attribute is already in use.')
+        cache = self._element.__dict__.setdefault('_attribute_nodes', {})
+        cache.pop(attr.get_name(), None)
+        if old is not pyv8.Null: old.ownerElement = None
         self._element.attributes[attr.get_name()] = attr.get_value()
+        attr.ownerElement = self._element
+        cache[attr.get_name()] = attr
         return old
     def fn_removeNamedItem(self, name=MISSING, *_extra):
         if name is MISSING:
@@ -127,8 +143,9 @@ class NamedNodeMap(_ListItems, ReadOnlyIndexedPropertyMixin):
         from ..page_errors import NotFoundError
         name = str(name)
         if name not in self._element.attributes: raise NotFoundError("The attribute was not found.")
-        from .nodes import Attr
-        return Attr(name, self._element.attributes.pop(name), ownerElement=self._element, services=self._element._services)
+        old = self.fn_getNamedItem(name)
+        self._element.attributes.pop(name)
+        return old
 
 
 def _node_id(node):

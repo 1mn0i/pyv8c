@@ -12,11 +12,12 @@ import json
 import math
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from pathlib import Path
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
+from .system_fonts import FontRecord
 from .urls import origin_tuple
 
 SCHEMA_VERSION = 3
@@ -284,6 +285,36 @@ def _text_mapping(value):
     return MappingProxyType({str(key): str(item) for key, item in value.items()})
 
 
+#: The four names a font face carries, and the two places one is measured from.
+_FONT_NAMES = ("postscript_name", "full_name", "family", "style")
+
+
+def _font_records(value):
+    """``local()``-visible faces, when a profile carries a machine's font set.
+
+    A page reads four names off a face, so those are what such a profile holds; the file
+    and face index are what measuring text needs, and a profile that cannot know them
+    leaves them out, which answers for existence and not for metrics.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes, Mapping)):
+        raise TypeError("must be a list of font records")
+    records = []
+    for entry in value:
+        if not isinstance(entry, Mapping):
+            raise TypeError("every font record must be a mapping")
+        names = {name: str(entry.get(name) or "") for name in _FONT_NAMES}
+        if not names["postscript_name"] and not names["full_name"]:
+            raise ValueError("a font record needs a PostScript name or a full name")
+        records.append(FontRecord(
+            path=str(entry.get("path") or ""),
+            index=_integer(entry.get("index") or 0),
+            **names,
+        ))
+    return tuple(records)
+
+
 @dataclass(frozen=True)
 class Field:
     """One setting: its dotted key, how a given value is checked, whether a browser reports it."""
@@ -374,6 +405,8 @@ FIELDS: tuple[Field, ...] = (
     Field("gpu.wgsl_features", _tokens, True),
     #: The installed extensions a page can read out of: ``id -> declared resources``.
     Field("extensions", _extensions, True),
+    #: The faces this profile stands in for; absent means "ask this machine".
+    Field("fonts.records", _font_records, default=None),
 )
 
 _BY_NAME = {field.name: field for field in FIELDS}
@@ -550,6 +583,19 @@ class GpuView:
     wgsl_features: tuple
 
 
+@dataclass(frozen=True)
+class FontsView:
+    """The faces a page can see: the profile's own, or ``None`` for this machine's."""
+
+    records: tuple[FontRecord, ...] | None
+
+    def resolved(self):
+        """The records to answer with, asking this machine when the profile named none."""
+        from .system_fonts import records
+
+        return records() if self.records is None else self.records
+
+
 def _platform_name(user_agent, fallback):
     for token, name in (
         ("Windows", "Windows"), ("Android", "Android"), ("iPhone", "iOS"),
@@ -597,6 +643,10 @@ def json_value(value):
         return {key: json_value(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
         return [json_value(item) for item in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        # A view is its fields: what ``dumps(resolved=True)`` writes for one.
+        return {field.name: json_value(getattr(value, field.name))
+                for field in dataclass_fields(value)}
     return value
 
 
@@ -633,7 +683,7 @@ class BrowserEnvironment:
         "_explicit", "_resolved",
         "viewport", "screen", "geolocation", "connection", "battery", "storage",
         "bluetooth", "client_hints", "plugins", "webgl", "keyboard", "media",
-        "speech", "permissions", "gpu",
+        "speech", "permissions", "gpu", "fonts",
     )
 
     def __init__(self, data=None, *, base=None):
@@ -717,6 +767,7 @@ class BrowserEnvironment:
         ))
         object.__setattr__(self, "gpu", GpuView(
             tuple(values["gpu.wgsl_features"] or ())))
+        object.__setattr__(self, "fonts", FontsView(values["fonts.records"]))
 
     def __setattr__(self, name, value):
         raise AttributeError("BrowserEnvironment is immutable")
@@ -781,5 +832,5 @@ __all__ = [
     "ViewportView", "ScreenView", "GeolocationView", "ConnectionView", "BatteryView",
     "StorageView", "QuotaView", "BluetoothView", "ClientHintsView", "Brand", "PluginView",
     "MimeTypeView", "WebGLView", "KeyboardView", "MediaView", "SpeechView", "PermissionsView",
-    "GpuView", "environment_of", "extension_resource", "json_value",
+    "GpuView", "FontsView", "environment_of", "extension_resource", "json_value",
 ]

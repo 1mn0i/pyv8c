@@ -44,3 +44,13 @@ def test_failed_measurement_never_succeeds_without_a_baseline(benchmark, tmp_pat
     def fail(): raise RuntimeError('measurement failed')
     benchmark.CASES = (('failed', fail),)
     assert benchmark.main(['--runs', '1'] + (['--record'] if record else [])) == 1
+
+
+def test_changed_workload_is_not_compared_or_marked_passed(benchmark, tmp_path, capsys):
+    baseline = tmp_path / 'baseline.json'
+    baseline.write_text('{"cases":{"query":{"median":10,"min":10}}}')
+    benchmark.BASELINE_FILE = baseline
+    result = {'median':1,'min':1,'unit':'ms','detail':'new','workload':'v2'}
+    assert benchmark.compare({'query':(result,None)}) is False
+    assert 'incomparable workload' in capsys.readouterr().out
+    assert 'workload' not in baseline.read_text()

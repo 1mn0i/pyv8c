@@ -198,3 +198,7 @@ python tools/extract_idl.py --chromium-root .chromium-build/chromium --report
 更新后运行 [提取器测试](../tests/unit/test_idl_extractor.py)、[归档与缓存测试](../tests/unit/test_idl_archive.py)、
 [baseline 版本测试](../tests/integration/test_baseline_versions.py)、[IDL 编译测试](../tests/unit/test_idl_compilation.py)
 与完整浏览器回归共同验证文档更新。
+
+命名属性可用 `named_properties_non_masking=True` 声明不得遮蔽真实属性或原型成员。
+该字段对应原生 IdlSpec/V8 handler 规则，默认为 False，已有调用无需迁移。
+LegacyNamedPropertyMixin 的声明经过 Binder 继承；此规则不代替 LegacyOverrideBuiltIns 接口的规则。

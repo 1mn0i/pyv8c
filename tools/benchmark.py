@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import gc
 import hashlib
 import platform
 import subprocess
@@ -18,6 +19,7 @@ import json
 import statistics
 import sys
 import time
+import threading
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -210,10 +212,13 @@ def case_js_loop():
         browser.close()
 
 
-def _member_call_seconds(browser):
+def _member_call_seconds(browser, *, expect_aborted):
     """Seconds the same member call takes, however that member is answered."""
     page = _page(browser)
     try:
+        actual = page.evaluate('(() => { const c = new AbortController(); c.abort(); return c.signal.aborted; })()')
+        if actual is not expect_aborted:
+            raise RuntimeError('member benchmark implementation does not match its workload')
         elapsed = _js_seconds(page, (
             f"for (let i = 0; i < {MEMBER_CALL_REPEATS}; i++) new AbortController().abort();"
         ))
@@ -224,15 +229,27 @@ def _member_call_seconds(browser):
 
 def case_stub_call():
     """The floor a host hook is held to: the same member call, answered by its stub."""
-    return _sample(_member_call_seconds(_browser()), "ms",
-                   f"{MEMBER_CALL_REPEATS} stub member calls")
+    from pyv8c.engine.binder import _Stubs
+    callback = _Stubs('off').method('AbortController', 'abort')
+    if not getattr(callback, '__v8_idl_stub__', False):
+        raise RuntimeError('benchmark callback is not a stub')
+    result = _sample(_member_call_seconds(_browser(interface_overrides={
+        'AbortController': {'abort': callback}}), expect_aborted=False), 'ms',
+        f'{MEMBER_CALL_REPEATS} stub member calls')
+    result['workload'] = 'stub-abort-v2'
+    return result
 
 
 def case_hook_call():
     """What answering that member from a host hook costs instead."""
     browser = _browser(interface_overrides={"AbortController": {"abort": lambda *_: None}})
-    return _sample(_member_call_seconds(browser), "ms",
+    return _sample(_member_call_seconds(browser, expect_aborted=False), "ms",
                    f"{MEMBER_CALL_REPEATS} hooked member calls")
+
+
+def case_abort_call():
+    return _sample(_member_call_seconds(_browser(), expect_aborted=True), 'ms',
+                   f'{MEMBER_CALL_REPEATS} implemented AbortController calls')
 
 
 def case_dom_build():
@@ -271,9 +288,11 @@ def case_dom_query():
     try:
         elapsed = _js_seconds(page, (
             f"for (let i = 0; i < {QUERY_REPEATS}; i++) {{"
-            " document.querySelectorAll('div.row'); document.getElementsByTagName('span'); }"
+            " document.querySelectorAll('div.row').length; document.getElementsByTagName('span').length; }"
         ))
-        return _sample(elapsed * 1000, "ms", f"{QUERY_REPEATS} scans of a {DOM_NODES}-row tree")
+        result = _sample(elapsed * 1000, "ms", f"{QUERY_REPEATS} scans of a {DOM_NODES}-row tree")
+        result['workload'] = 'consumed-dom-query-v2'
+        return result
     finally:
         browser.close()
 
@@ -309,20 +328,48 @@ def case_resource_batch():
 
 
 def case_resident_pages():
-    """What each page costs the process while it stays open."""
+    """Measure one memory batch in a fresh process, independent of prior cases."""
+    child = subprocess.run([sys.executable, str(Path(__file__).resolve()), '--memory-worker'],
+                           capture_output=True, text=True, check=True)
+    return json.loads(child.stdout)
+
+
+def _resident_pages_worker():
+    from pyv8c.foundation.logging import logger
+    logger.remove()
     browser = _browser()
     profile = browser.new_profile()
+    pages = []
     try:
+        # Separate retained pages from one-time V8/binder initialization.
+        warm = profile.new_page()
+        warm.set_content('<body>x</body>')
+        warm.close()
+        warm.executor._thread.join(5)
+        gc.collect()
         before = _committed_bytes()
         pages = [profile.new_page() for _ in range(RESIDENT_PAGES)]
         for page in pages:
             page.set_content("<body><div>x</div></body>")
         after = _committed_bytes()
-        handles = sum(page.v8_context.live_handles for page in pages)
-        return _sample((after - before) / RESIDENT_PAGES / (1024 * 1024), "MB/page",
-                       f"{RESIDENT_PAGES} live pages, {handles // RESIDENT_PAGES} python handles each")
+        contexts = [page.v8_context for page in pages]
+        handles = sum(context.live_handles for context in contexts)
+        result = _sample((after - before) / RESIDENT_PAGES / (1024 * 1024), 'MB/page',
+                         f'{RESIDENT_PAGES} live pages, {handles // RESIDENT_PAGES} python handles each')
+        result.update(workload='isolated-resident-pages-v2', private_before=before,
+                      private_resident=after, handles_resident=handles)
     finally:
         browser.close()
+    # Page closes from its owner thread. A repeated executor.close() already
+    # sees "closed" and does not join that thread's final unwind.
+    for thread in threading.enumerate():
+        if thread.name.startswith('pyv8c-'): thread.join(5)
+    gc.collect()
+    result.update(private_after_close=_committed_bytes(),
+                  handles_after_close=sum(context.live_handles for context in contexts),
+                  owner_threads_after_close=sum(thread.name.startswith('pyv8c-')
+                                                for thread in threading.enumerate()))
+    return result
 
 
 CASES = (
@@ -334,6 +381,7 @@ CASES = (
     ("js_loop", case_js_loop),
     ("stub_call", case_stub_call),
     ("hook_call", case_hook_call),
+    ("abort_call", case_abort_call),
     ("dom_build", case_dom_build),
     ("dom_parse", case_dom_parse),
     ("dom_query", case_dom_query),
@@ -382,6 +430,7 @@ def compare(results):
     baseline = json.loads(BASELINE_FILE.read_text(encoding="utf-8"))
     print(f"{'case':18s}{'baseline':>10s}{'now':>10s}{'delta':>9s}  unit       detail")
     regressed = []
+    incomparable = []
     for name, (result, reason) in results.items():
         if result is None:
             print(f"{name:18s}{'--':>10s}{'--':>10s}{'':9s}  {reason}")
@@ -390,6 +439,10 @@ def compare(results):
         now, unit, detail = result["median"], result["unit"], result["detail"]
         if recorded is None:
             print(f"{name:18s}{'new':>10s}{now:10.2f}{'':9s}  {unit:10s}{detail}")
+            continue
+        if result.get('workload') != recorded.get('workload'):
+            print(f'{name:18s}  incomparable workload; baseline was not changed')
+            incomparable.append(name)
             continue
         before = recorded["median"]
         change = (now - before) / before if before else 0.0
@@ -400,7 +453,7 @@ def compare(results):
         print(f"{name:18s}{before:10.2f}{now:10.2f}{change:+8.1%}{flag}  {unit:10s}{detail}")
     if regressed:
         print(f"\nslower: {', '.join(regressed)} (median and minimum both past {TOLERANCE:.0%})")
-    return not regressed and all(result is not None for result, _ in results.values())
+    return not regressed and not incomparable and all(result is not None for result, _ in results.values())
 
 
 def main(argv=None):
@@ -409,7 +462,11 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, help="save measured samples and environment without changing the baseline")
     parser.add_argument("--runs", type=int, default=3, help="runs per case")
     parser.add_argument("--cases", default="", help="comma-separated subset of case names")
+    parser.add_argument('--memory-worker', action='store_true', help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
+    if arguments.memory_worker:
+        print(json.dumps(_resident_pages_worker()))
+        return 0
     if arguments.runs < 1:
         parser.error("--runs must be positive")
 

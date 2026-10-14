@@ -53,16 +53,6 @@ def _contains_style(node):
     return False
 
 
-#: Moves on every structural change in the document, so a tree walk can cache its answer
-#: until the next change; one counter for the process cannot miss a mutation site.
-_tree_version = 0
-
-
-def _bump_tree_version():
-    global _tree_version
-    _tree_version += 1
-
-
 class _ChildList(list):
     """A node's children: every change moves the version a tree walk keys on.
 
@@ -70,14 +60,46 @@ class _ChildList(list):
     only a change to the list it belongs to does.
     """
 
-    def append(self, value): _bump_tree_version(); super().append(value)
-    def insert(self, index, value): _bump_tree_version(); super().insert(index, value)
-    def remove(self, value): _bump_tree_version(); super().remove(value)
-    def pop(self, index=-1): _bump_tree_version(); return super().pop(index)
-    def clear(self): _bump_tree_version(); super().clear()
-    def extend(self, values): _bump_tree_version(); super().extend(values)
-    def __setitem__(self, index, value): _bump_tree_version(); super().__setitem__(index, value)
-    def __delitem__(self, index): _bump_tree_version(); super().__delitem__(index)
+    __slots__ = ('_owner',)
+
+    def __init__(self, owner):
+        self._owner = owner
+
+    def append(self, value): self._owner._invalidate_tree(); super().append(value)
+    def insert(self, index, value): self._owner._invalidate_tree(); super().insert(index, value)
+    def remove(self, value): self._owner._invalidate_tree(); super().remove(value)
+    def pop(self, index=-1): self._owner._invalidate_tree(); return super().pop(index)
+    def clear(self): self._owner._invalidate_tree(); super().clear()
+    def extend(self, values): self._owner._invalidate_tree(); super().extend(values)
+    def __setitem__(self, index, value): self._owner._invalidate_tree(); super().__setitem__(index, value)
+    def __delitem__(self, index): self._owner._invalidate_tree(); super().__delitem__(index)
+    def __iadd__(self, values): self.extend(values); return self
+    def __imul__(self, count): self._owner._invalidate_tree(); super().__imul__(count); return self
+    def reverse(self): self._owner._invalidate_tree(); super().reverse()
+    def sort(self, *args, **kwargs): self._owner._invalidate_tree(); super().sort(*args, **kwargs)
+
+
+class _IdIndex:
+    """Index only as far as a lookup needs, preserving cheap early matches."""
+    __slots__ = ('_first', '_remaining')
+
+    def __init__(self, descendants):
+        self._first = {}
+        self._remaining = descendants
+
+    def get(self, value):
+        found = self._first.get(value)
+        if found is not None or self._remaining is None:
+            return found
+        for node in self._remaining:
+            if node.nodeType == Node.ELEMENT_NODE:
+                name = node.attributes.get('id')
+                if name:
+                    self._first.setdefault(name, node)
+                    if name == value:
+                        return self._first[name]
+        self._remaining = None
+        return None
 
 
 def _subtree_nodes(node):
@@ -140,7 +162,7 @@ class Node(EventTarget):
         super().__init__(services=services, **kw)
         self.nodeType, self.nodeName, self.nodeValue = node_type, node_name, value
         self.parentNode = None
-        self._children = _ChildList()
+        self._children = _ChildList(self)
         self._child_nodes_view = NodeList(owner=self, getter=lambda: self._children)
 
     @property
@@ -237,10 +259,34 @@ class Node(EventTarget):
         tuple for one of those turned parsing into a quadratic walk.
         """
         cached = self.__dict__.get("_descendants_cache")
-        if cached is None or cached[0] != _tree_version:
-            cached = (_tree_version, tuple(self._walk_descendants()))
+        if cached is None:
+            cached = tuple(self._walk_descendants())
             self.__dict__["_descendants_cache"] = cached
-        return cached[1]
+        return cached
+
+    def _invalidate_tree(self):
+        # Only this subtree and its ancestors changed. Discard cached references
+        # immediately, including removed nodes, rather than retaining old snapshots.
+        node = self
+        while node is not None:
+            node.__dict__.pop('_descendants_cache', None)
+            node.__dict__.pop('_id_index', None)
+            node = node.parentNode
+
+    def _invalidate_id_index(self):
+        node = self
+        while node is not None:
+            node.__dict__.pop('_id_index', None)
+            node = node.parentNode
+
+    def _find_element_by_id(self, value):
+        if not value:
+            return None
+        index = self.__dict__.get('_id_index')
+        if index is None:
+            index = _IdIndex(self._descendants())
+            self.__dict__['_id_index'] = index
+        return index.get(value)
 
     def get_nodeType(self): return self.nodeType
     def get_nodeName(self): return self.nodeName
@@ -361,7 +407,7 @@ class Node(EventTarget):
             self._notify_removed(child)
         if removed:
             _record_mutation(self, "childList", removed=removed)
-        self._children = _ChildList()
+        self._children.clear()
         for node in nodes:
             self._adopt_child(node)
 
@@ -543,6 +589,10 @@ class DocumentFragment(_ParentNodeMixin, Node):
         if services is pyv8.Undefined:
             services = None
         super().__init__(services=services, node_type=Node.DOCUMENT_FRAGMENT_NODE, node_name="#document-fragment", **kw)
+    def fn_getElementById(self, value=MISSING, *_extra):
+        if value is MISSING:
+            raise missing_error('DocumentFragment', 'getElementById', 1, 0, constructor=False)
+        return self._find_element_by_id(str(dom_string(value))) or pyv8.Null
     def _document(self):
         """The document the fragment belongs to; the selector engine lives above this
         module, so the match is delegated to the document."""
@@ -607,6 +657,8 @@ class Attr(Node):
     def set_value(self, value):
         value = dom_string(value)
         self.nodeValue = str(value)
+        if self.ownerElement is not None:
+            self.ownerElement._set_attribute(self.nodeName, self.nodeValue)
     def get_specified(self): return True
     # HTML attributes carry no namespace, so both namespace accessors are null.
     def get_namespaceURI(self): return pyv8.Null

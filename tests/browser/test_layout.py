@@ -1,10 +1,9 @@
 """Layout and computed-style behavior needed by browser scripts."""
 
-import os
-
 import pytest
 
 from pyv8c import Browser
+from pyv8c.foundation import system_fonts
 from pyv8c.web.dom import layout
 
 
@@ -19,37 +18,32 @@ def page():
         browser.close()
 
 
-def test_a_font_lookup_reads_each_root_once(tmp_path, monkeypatch):
-    """A page measures text far more often than fonts change: the directory is read
-    once, and the repeated lookup answers exactly what the first one did."""
-    root = tmp_path / "Fonts"
-    root.mkdir()
-    for name in ("Arial.ttf", "Arial-Bold.ttf", "Unrelated.otf"):
-        (root / name).write_bytes(b"")
+def test_a_family_is_measured_with_the_face_that_family_names():
+    """One table answers both "is this font here" and "how wide is this text", so a face
+    ``local()`` finds is the face the page then measures with."""
+    record = next((item for item in system_fonts.records() if item.path), None)
+    if record is None:
+        pytest.skip("this machine has no fonts to measure with")
+    face = layout._face_for([record.family])
+    assert face is not None
+    assert system_fonts.normalize(face.family) == system_fonts.normalize(record.family)
 
-    reads, exists = [], []
-    listed, present = os.listdir, os.path.exists
-    monkeypatch.setattr(os, "listdir", lambda path: (reads.append(str(path)), listed(path))[1])
-    monkeypatch.setattr(os.path, "exists",
-                        lambda path: (exists.append(str(path)), present(path))[1])
-    monkeypatch.setattr(layout, "_FONT_ROOTS", (str(root),))
-    layout._FONT_FILES.clear()
-    layout._FONT_PATHS.clear()
-    try:
-        first = layout._font_candidates(["Arial"])
-        after_first = len(exists)
-        for _ in range(5):
-            assert layout._font_candidates(["Arial"]) == first
-    finally:
-        layout._FONT_FILES.clear()
-        layout._FONT_PATHS.clear()
 
-    # The family's files, then the fallback that also exists here: a case-insensitive
-    # filesystem reaches the same file through both spellings, so only names are compared.
-    assert sorted({os.path.basename(path).lower() for path in first}) == [
-        "arial-bold.ttf", "arial.ttf"]
-    assert reads == [str(root)]
-    assert len(exists) == after_first
+def test_a_collection_face_is_measured_at_its_own_index():
+    """A face inside a ``.ttc`` is a face of its own: measuring it needs the index."""
+    record = next((item for item in system_fonts.records() if item.index), None)
+    if record is None:
+        pytest.skip("this machine has no font collection")
+    assert layout._font(record, 16) is not None
+
+
+def test_an_uninstalled_family_falls_back_instead_of_failing():
+    """CSS walks the family list and then uses the platform's default, so a name this
+    machine does not have still measures -- which is what an uninstalled font looks like."""
+    if not system_fonts.records():
+        pytest.skip("this machine has no fonts to measure with")
+    assert layout._face_for(["Definitely Not A Font 123"]) is not None
+    assert layout.text_width("abc", {"font-family": "Definitely Not A Font 123"}) > 0
 
 
 def test_hidden_element_keeps_layout_and_font_size_changes_height(page):

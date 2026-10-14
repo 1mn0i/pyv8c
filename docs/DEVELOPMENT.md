@@ -123,6 +123,15 @@ python tools/benchmark.py --cases dom_query --runs 5
 
 按这个口径实测过一轮（2026-09-28，`git stash` 回 HEAD 对照）：`dom_query` −57%、`dom_build` −48%、`host_call` −33%、`resource_batch` −23%、`dom_parse` −3%，启动中位数 259 → 245 ms（导入模块 435 → 394）。跨桥一次约 3.7 µs 降到约 1.9 µs，其中原生派发只占 0.18 µs——宿主方法体才是跨桥成本所在，所以先查 Python 侧再看 C++。
 
+性能基准区分真实 `abort_call`、有 stub 标记的 `stub_call` 和无操作 `hook_call`。
+DOM 查询必须消费 live collection 的 length/items。常驻内存每批在新进程中测量，
+记录预热后的提交内存、关闭后的提交内存、Python 句柄与 owner 线程；这些是不同指标。
+改变工作负载时附带 workload 版本，旧基线不兼容会明确失败，不能据此报告提速；本轮未重录基线。
+
+重复主机 `evaluate` 会逐次投递线程命令。需要一次读取多个值时，可将工作合并为一段
+JavaScript，例如 `page.evaluate("[document.title, document.body.childElementCount]")`。
+合并会改变调用间的调度边界，应由调用方选择，框架不自动合并既有调用。
+
 ## 交付
 
 最终说明列出实现变化、测试命令和结果、环境限制、未处理失败以及是否创建 commit。删除代码或文档时说明原因；不恢复历史日志文件，不修改任务范围外的 IndexedDB、DevTools、trace 或相邻仓库改动。

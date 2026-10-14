@@ -81,7 +81,7 @@ CORE_INTERFACES = (
     "TrustedHTML", "TrustedScript", "TrustedScriptURL", "TrustedTypePolicy",
     "TrustedTypePolicyFactory", "XPathEvaluator", "XPathExpression", "XPathResult",
     "Notification", "MessageChannel", "MessagePort", "BroadcastChannel",
-    "FontFace", "FontFaceSet", "CookieStore",
+    "FontFace", "FontFaceSet", "FontData", "CookieStore",
     "MemoryInfo", "PerformanceObserver", "PerformanceEntry", "PerformanceMark",
     "PerformanceMeasure", "PerformanceResourceTiming", "PerformanceNavigationTiming",
     "PerformanceObserverEntryList",
