@@ -67,6 +67,40 @@ def test_hidden_element_keeps_layout_and_font_size_changes_height(page):
     })()""") == [True, 137, "DFPhelvetica", "114px", True]
 
 
+def test_the_cascade_orders_by_importance_and_specificity(page):
+    """Important beats plain, and specificity beats the order the rules were written in."""
+    assert page.evaluate("""(() => {
+        document.body.innerHTML =
+            '<style>#a { height: 9px } div { height: 1px }'
+            + ' .b { height: 3px !important } .b { height: 7px }</style>'
+            + '<div id="a"></div><div class="b" style="height:5px"></div>';
+        return [document.getElementById('a').offsetHeight,
+                document.querySelector('.b').offsetHeight];
+    })()""") == [9, 3]
+
+
+def test_a_fixed_box_measures_from_the_viewport(page):
+    """A fixed box measures against the viewport, and has no offset parent."""
+    assert page.evaluate("""(() => {
+        document.body.innerHTML = '<div style="position:relative;padding:40px">'
+            + '<div id="t" style="position:fixed;left:0;top:0;width:10px;height:10px"></div>'
+            + '</div>';
+        const box = document.getElementById('t');
+        const rect = box.getBoundingClientRect();
+        return [rect.left, rect.top, String(box.offsetParent)];
+    })()""") == [0, 0, "null"]
+
+
+def test_auto_margins_centre_the_box(page):
+    """``margin: auto`` shares the free space, so a declared width sits in the middle."""
+    assert page.evaluate("""(() => {
+        document.body.innerHTML = '<div id="t" style="width:100px;height:10px;margin:0 auto"></div>';
+        const box = document.getElementById('t');
+        const left = box.getBoundingClientRect().left - document.body.getBoundingClientRect().left;
+        return [left, (document.body.clientWidth - 100) / 2, left === (document.body.clientWidth - 100) / 2];
+    })()""")[2] is True
+
+
 def test_style_rules_and_basic_flex_grid_geometry(page):
     assert page.evaluate("""(() => {
         document.body.innerHTML = '<style>.item { height: 10px } span { color: red }</style>'

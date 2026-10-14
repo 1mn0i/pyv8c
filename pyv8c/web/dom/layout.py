@@ -115,7 +115,55 @@ def text_width(text, style):
 
 
 def _inline_declarations(element):
-    return {name: value for name, value, _ in CSSStyleDeclaration(element=element)._declarations()}
+    return tuple(CSSStyleDeclaration(element=element)._declarations())
+
+
+#: How CSS counts a selector: ids, then classes and attributes, then types.
+_SPECIFICITY_PATTERNS = (
+    (0, re.compile(r"#[\w-]+")),
+    (1, re.compile(r"\.[\w-]+|\[[^\]]*\]|::?[\w-]+(?:\([^)]*\))?")),
+    (2, re.compile(r"(?<![\w.#\[:-])[A-Za-z][\w-]*")),
+)
+
+
+def _specificity(selector):
+    """The three numbers CSS orders two rules by when both match."""
+    selector = re.sub(r":not\(([^)]*)\)", r"\1", str(selector))
+    counts = [0, 0, 0]
+    for slot, pattern in _SPECIFICITY_PATTERNS:
+        counts[slot] = len(pattern.findall(selector))
+    return tuple(counts)
+
+
+def _cascade(element, rules):
+    values = initial_values_for(element)
+    parent = getattr(element, "parentElement", None)
+    if parent is not None:
+        inherited = _cascade(parent, rules)
+        # Inherit every inherited property, not only those with an initial value here.
+        values.update({
+            name: inherited.get(name, values.get(name, ""))
+            for name in INHERITED_PROPERTIES
+        })
+    # Last applied wins, so the order is CSS's: important, inline, specificity, source.
+    matched = []
+    order = 0
+    for selectors, declarations, counts in rules:
+        best = None
+        for part, count in zip(selectors, counts):
+            if (best is None or count > best) and _selector_matches(element, part):
+                best = count
+        if best is None:
+            continue
+        for name, value, priority in declarations:
+            matched.append(((priority == "important"), False, best, order, name, value))
+            order += 1
+    for name, value, priority in _inline_declarations(element):
+        matched.append(((priority == "important"), True, (0, 0, 0), order, name, value))
+        order += 1
+    for _important, _inline, _count, _order, name, value in sorted(matched, key=lambda item: item[:4]):
+        values[name] = value
+    return values
 
 
 def _selector_matches(element, selector):
@@ -127,12 +175,8 @@ def _selector_matches(element, selector):
 
 
 def document_rules(document):
-    """The document's ``<style>`` rules as ``(selectors, declarations)`` pairs.
-
-    Reading the sheet walks the document and every layout query re-reads it, so
-    the result is cached on the document, keyed on ``style_version`` (bumped
-    whenever a ``<style>`` is added, removed or edited).
-    """
+    """The document's ``<style>`` rules, cached on ``style_version`` as
+    ``(selectors, declarations, counts)`` -- the specificity counted once, not per node."""
     if document is None:
         return ()
     version = getattr(document, "style_version", 0)
@@ -151,27 +195,10 @@ def _parse_style_elements(document):
         if not source:
             continue
         for selector, block in re.findall(r"([^{}]+)\{([^{}]*)\}", source):
-            rules.append((selector.split(","), parse_declarations(block)))
+            parts = selector.split(",")
+            rules.append((parts, parse_declarations(block),
+                          tuple(_specificity(part) for part in parts)))
     return tuple(rules)
-
-
-def _cascade(element, rules):
-    values = initial_values_for(element)
-    parent = getattr(element, "parentElement", None)
-    if parent is not None:
-        inherited = _cascade(parent, rules)
-        # Inherit every inherited property, not only those with an initial value here.
-        values.update({
-            name: inherited.get(name, values.get(name, ""))
-            for name in INHERITED_PROPERTIES
-        })
-    for selectors, declarations in rules:
-        if not any(_selector_matches(element, part) for part in selectors):
-            continue
-        for name, value, _priority in declarations:
-            values[name] = value
-    values.update(_inline_declarations(element))
-    return values
 
 
 def computed_style(element):
@@ -244,6 +271,14 @@ def _sides(style, name, reference, default="0"):
 
 def _auto(value):
     return value is None or str(value).strip().lower() in ("", "auto")
+
+
+def _margin_is_auto(style, side):
+    """Whether one horizontal margin asked for ``auto``: its own, else the shorthand."""
+    declared = style.get(f"margin-{side}")
+    if declared is None:
+        declared = _expand(style.get("margin", "0"))[_SIDES.index(side)]
+    return _auto(declared)
 
 
 def _style_of(element, rules):
@@ -324,6 +359,15 @@ def _place(element, style, walk, containing, positioned):
                             if style.get("box-sizing", "content-box") == "border-box"
                             else width)
     border_width = content_width + horizontal
+    if not _auto(declared_width) and style.get("display", "block") not in _INLINE:
+        # ``auto`` shares the free space; a side with a length keeps it.
+        auto_sides = [side for side in ("left", "right") if _margin_is_auto(style, side)]
+        if auto_sides:
+            free = max(0.0, containing.width - border_width - sum(
+                margin[side] for side in ("left", "right") if side not in auto_sides))
+            for side in auto_sides:
+                margin[side] = free / len(auto_sides)
+            left = containing.left + margin["left"]
 
     position = style.get("position", "static")
     left = containing.left + margin["left"]
@@ -336,7 +380,9 @@ def _place(element, style, walk, containing, positioned):
     else:
         content_height = None
     if position in ("absolute", "fixed"):
-        block = positioned or _Containing(0.0, 0.0, *walk.viewport)
+        # A fixed box measures against the viewport, an absolute one against its ancestor.
+        block = (_Containing(0.0, 0.0, *walk.viewport) if position == "fixed"
+                 else positioned or _Containing(0.0, 0.0, *walk.viewport))
         if not _auto(style.get("left")):
             left = block.left + _px(style["left"], block.width) + margin["left"]
         elif not _auto(style.get("right")):
@@ -576,6 +622,12 @@ def positioned_box(element):
 def offset_parent(element):
     """The box an element's ``offsetLeft`` is measured against, or ``None``."""
     if not getattr(element, "isConnected", False):
+        return None
+    own = computed_style(element)
+    if own.get("position", "static") == "fixed":
+        # Chrome answers no offset parent for a fixed box, nor for one with no box at all.
+        return None
+    if own.get("display", "block") == "none":
         return None
     document = getattr(element, "ownerDocument", None)
     if getattr(element, "localName", "") in ("html", "body"):

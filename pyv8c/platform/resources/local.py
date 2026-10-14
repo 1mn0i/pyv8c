@@ -8,6 +8,8 @@ from ...web.fetch.response import Response
 #: how the load completes (an image completes as one so its element answers for the size).
 PRELOAD_KINDS = {
     "image": ("image", "image", "img"),
+    "audio": ("media", "audio", "preload"),
+    "video": ("media", "video", "preload"),
     "font": ("font", "font", "preload"),
     "script": ("script", "script", "preload"),
     "style": ("style", "style", "preload"),

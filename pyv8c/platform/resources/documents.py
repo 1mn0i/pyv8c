@@ -46,6 +46,12 @@ class DocumentResourceController:
             self.tracker.take(token)
             self._cancel(item)
 
+    def restart_element_resource(self, node):
+        """A load-bearing write replaced the URL: drop the load in flight, then discover."""
+        self.cancel_node(node)
+        node._resource_started = False
+        self.discover_element_resource(node)
+
     def discover_element_resource(self, node):
         page = self.page
         if page.closed or getattr(node, "_resource_started", False):
@@ -59,8 +65,6 @@ class DocumentResourceController:
             if not spec.async_script and not getattr(node, "_script_defer", False) and not getattr(node, "_parser_script", False):
                 page.scripts.dom_blocking_scripts += 1
                 page.scripts.queue.append(node)
-        if spec.media_start:
-            page.tasks.post(lambda: page.lifecycle.dispatch_page_event("loadstart", node, {"bubbles": False}))
         self.track_document_resource(node, spec.url, dict(spec.options), spec.kind)
 
     def track_document_resource(self, node, url, request, kind):
@@ -93,7 +97,8 @@ class DocumentResourceController:
             self.tracker.take(token)
             self._cancel(item)
             raise
-        page.lifecycle.dispatch_progress_event(node, "loadstart")
+        # Chromium starts the load in its own task, and fires this once.
+        page.tasks.post(lambda: page.lifecycle.dispatch_progress_event(node, "loadstart"))
         return handle
 
     def _release_cancelled(self, token, item):
@@ -161,7 +166,6 @@ class DocumentResourceController:
         page = self.page
         if generation != page.navigation.generation or page.closed:
             return
-        item = self.tracker.get(token)
         services = getattr(node, "_child_services", None)
         child = getattr(getattr(services, "_page_realm", None), "page", None)
         item = self.tracker.frame_matches(token, generation, node, services, child)

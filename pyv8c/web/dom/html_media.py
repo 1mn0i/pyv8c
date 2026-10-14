@@ -59,7 +59,13 @@ class HTMLMediaElement(HTMLElement):
         else: self.attributes.pop(name, None)
 
     def get_src(self): return _url_value(self, "src")
-    def set_src(self, value): _set_url_value(self, "src", value)
+    def set_src(self, value):
+        _set_url_value(self, "src", value)
+        self._restart_resource()
+    def _attribute_changed_here(self, name, old, new):
+        super()._attribute_changed_here(name, old, new)
+        if name == "src":
+            self._restart_resource()
     def get_currentSrc(self): return ""          # nothing was ever loaded
     def get_crossOrigin(self): return self.attributes.get("crossorigin") or pyv8.Null
     def get_paused(self): return True

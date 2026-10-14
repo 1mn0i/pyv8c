@@ -13,7 +13,6 @@ class FrameResourceController:
         iframe._child_services = None
         if services is None:
             return
-        services.closed = True
         page = getattr(getattr(services, "_page_realm", None), "page", None)
         if page is not None and not page.closed:
             # Removal can happen while the parent realm executes; closing the

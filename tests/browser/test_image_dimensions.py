@@ -26,6 +26,15 @@ out.seen = [];
 </script></body>"""
 
 PROBE_URL = "https://preload.test/"
+
+MEDIA_PAGE = """<!doctype html><head>
+<link id="reel" rel="preload" as="video" href="/reel.mp4">
+<link id="tune" rel="preload" as="audio" href="/tune.mp3">
+</head><body><script>
+var out = window.__out = {loaded: []};
+for (const id of ['reel', 'tune'])
+    document.getElementById(id).addEventListener('load', function () { out.loaded.push(this.id); });
+</script></body>"""
 FETCHED = []
 
 
@@ -94,3 +103,30 @@ def test_a_preload_link_is_fetched_even_though_nothing_uses_it():
     _page, reading = main()
     assert [target for target in FETCHED if target.endswith("quiet.woff2")], FETCHED
     assert reading["font"], reading
+
+
+def test_media_preload_links_are_fetched_too():
+    """``as=video``/``as=audio`` are Chrome's destinations: fetched, with ``load`` fired."""
+    del FETCHED[:]
+
+    def load(url, request):
+        target = str(url)
+        FETCHED.append(target)
+        if target.endswith("reel.mp4"):
+            return {"body": b"\x00\x00\x00\x18ftypmp42", "headers": {"content-type": "video/mp4"}}
+        if target.endswith("tune.mp3"):
+            return {"body": b"ID3\x03", "headers": {"content-type": "audio/mpeg"}}
+        return {"body": MEDIA_PAGE, "headers": {"content-type": "text/html"}}
+
+    browser = Browser(stub_logging="off", threaded_loaders=True, real_network=False,
+                      resource_loader=load)
+    try:
+        page = browser.new_profile().new_page()
+        page.goto("https://preload.test/media")
+        _pump(page)
+        loaded = json.loads(page.evaluate("JSON.stringify(__out.loaded)"))
+    finally:
+        _bounded(browser.close)
+    assert [target for target in FETCHED if target.endswith("reel.mp4")], FETCHED
+    assert [target for target in FETCHED if target.endswith("tune.mp3")], FETCHED
+    assert sorted(loaded) == ["reel", "tune"], loaded

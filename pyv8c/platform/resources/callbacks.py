@@ -48,7 +48,7 @@ class CallbackRunner:
         """
         if not self.browser.threaded_loaders:
             return call()
-        browser, tasks = self.browser, self.tasks
+        browser = self.browser
         answer = {}
         arrived = threading.Event()
 

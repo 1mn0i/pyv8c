@@ -355,6 +355,9 @@ class _ResourceCapability:
     def discover_element_resource(self, node):
         return self._owner._document_resources.discover_element_resource(node)
 
+    def restart_element_resource(self, node):
+        return self._owner._document_resources.restart_element_resource(node)
+
 
 
 class _DocumentCapability:

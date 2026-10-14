@@ -29,7 +29,6 @@ class ResourceSpec:
     options: Mapping
     kind: str
     async_script: bool = False
-    media_start: bool = False
 
 
 def discover(snapshot):
@@ -73,4 +72,4 @@ def discover(snapshot):
         options["mode"] = "navigate"
     elif attrs.get("crossorigin") is not None:
         options["mode"] = "cors"
-    return ResourceSpec(src, MappingProxyType(options), kind, media_start=tag in ("audio", "video"))
+    return ResourceSpec(src, MappingProxyType(options), kind)

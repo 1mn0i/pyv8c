@@ -280,6 +280,12 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         changed = getattr(self, "_attribute_changed", None)
         if changed is not None and old != new:
             changed(name, old, new)
+
+    def _restart_resource(self):
+        """Either write of a load-bearing URL: the layer drops what was loading."""
+        services = getattr(self, "_services", None)
+        if services:
+            services.resource_services.restart_element_resource(self)
     def fn_removeAttributeNS(self, namespace=MISSING, local_name=MISSING, *_extra):
         if namespace is MISSING:
             raise missing_error('Element', 'removeAttributeNS', 2, 0, constructor=False)
@@ -973,7 +979,18 @@ class HTMLImageElement(HTMLElement):
     def get_src(self): return _url_value(self, "src")
     def set_src(self, value):
         _set_url_value(self, "src", value)
-        if self._services: self._services.resource_services.discover_element_resource(self)
+        self._reset_image_load()
+        self._restart_resource()
+    def _reset_image_load(self):
+        # A new URL is a new load: nothing has settled and no size is known until it does.
+        self._image_complete = False
+        self._image_bytes = None
+        self._image_type = ""
+    def _attribute_changed_here(self, name, old, new):
+        super()._attribute_changed_here(name, old, new)
+        if name == "src":
+            self._reset_image_load()
+            self._restart_resource()
     def get_alt(self): return self.attributes.get("alt", "")
     def set_alt(self, value):
         value = dom_string(value)
@@ -1072,11 +1089,20 @@ class HTMLLinkElement(HTMLElement):
             value = self._rel_list = DOMTokenList(self, "rel", LINK_REL_TOKENS)
         return value
     def get_href(self): return _url_value(self, "href")
-    def set_href(self, value): _set_url_value(self, "href", value)
+    def set_href(self, value):
+        _set_url_value(self, "href", value)
+        self._restart_resource()
+    #: ``rel`` and ``as`` decide whether an ``href`` is a resource at all.
+    _RESOURCE_ATTRIBUTES = ("href", "rel", "as")
+    def _attribute_changed_here(self, name, old, new):
+        super()._attribute_changed_here(name, old, new)
+        if name in self._RESOURCE_ATTRIBUTES:
+            self._restart_resource()
     def get_rel(self): return self.attributes.get("rel", "")
     def set_rel(self, value):
         value = dom_string(value)
         self.attributes['rel'] = str(value)
+        self._restart_resource()
     def get_media(self): return self.attributes.get("media", "")
     def set_media(self, value):
         value = dom_string(value)
@@ -1087,6 +1113,7 @@ class HTMLLinkElement(HTMLElement):
     def set_as(self, value):
         value = dom_string(value)
         self.attributes['as'] = str(value)
+        self._restart_resource()
 
 
 @interface('HTMLAnchorElement', 'HTMLElement')
