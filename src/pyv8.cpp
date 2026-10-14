@@ -1,3 +1,4 @@
+#include "bridge_base.h"
 #include <Python.h>
 #include "pyv8.h"
 #include "idl_spec.h"
@@ -117,7 +118,7 @@ trigger_low_memory_notification(PyObject *self, PyObject *args)
 {
     if (!runtime_manager.ensure_initialized())
         return NULL;
-    IsolateState* isolate_state = runtime_manager.default_isolate();
+    IsolateState* isolate_state = select_isolate(IsolateSelection::DefaultOnly);
     IN_ISOLATE(isolate_state);
     isolate->LowMemoryNotification();
     PYV8_RETURN_NONE;
@@ -175,14 +176,12 @@ construct_new_object(PyObject *self, PyObject *args)
     }
     if (PyErr_Occurred())
         return NULL;
-    if (!timeout_guard.start())
-        return NULL;
+    timeout_guard.start();
     result = without_gil([&] {
         return object->CallAsConstructor(isolate->GetCurrentContext(), argc, argv.data());
     });
 
-    if (!timeout_guard.stop())
-        return NULL;
+    timeout_guard.stop();
 
     PY_PROPAGATE_JS;
 
@@ -204,7 +203,10 @@ context_get_current(PyObject *self, PyObject *args)
     PyObject* py_isolate = Py_None;
     if (!PyArg_ParseTuple(args, "|O", &py_isolate))
         return NULL;
-    IsolateState* isolate_state = isolate_state_from_python(py_isolate, true);
+    // A worker/explicit isolate callback queries its own execution, not the
+    // unrelated default isolate. Outside execution retain the default fallback.
+    IsolateState* isolate_state = select_isolate(
+        py_isolate == Py_None ? IsolateSelection::ActiveOrDefault : IsolateSelection::Explicit, py_isolate);
     if (isolate_state == nullptr)
         return NULL;
     IN_ISOLATE(isolate_state);
@@ -234,7 +236,10 @@ context_get_incumbent(PyObject* self, PyObject* args)
     PyObject* py_isolate = Py_None;
     if (!PyArg_ParseTuple(args, "|O", &py_isolate))
         return NULL;
-    IsolateState* isolate_state = isolate_state_from_python(py_isolate, true);
+    // A worker/explicit isolate callback queries its own execution, not the
+    // unrelated default isolate. Outside execution retain the default fallback.
+    IsolateState* isolate_state = select_isolate(
+        py_isolate == Py_None ? IsolateSelection::ActiveOrDefault : IsolateSelection::Explicit, py_isolate);
     if (isolate_state == nullptr)
         return NULL;
     IN_ISOLATE(isolate_state);
@@ -266,25 +271,25 @@ v8_gc(PyObject *self, PyObject *args)
 {
     if (!runtime_manager.ensure_initialized())
         return NULL;
-    IsolateState* isolate_state = runtime_manager.default_isolate();
+    IsolateState* isolate_state = select_isolate(IsolateSelection::DefaultOnly);
     IN_ISOLATE(isolate_state);
     isolate->LowMemoryNotification();
     PYV8_RETURN_NONE;
 }
 
 static PyMethodDef v8_methods[] = {
-    {"hidden", mark_hidden, METH_O, ""},
-    {"unconstructable", mark_unconstructable, METH_O, ""},
-    {"current_context", context_get_current, METH_VARARGS, "get current v8 context"},
-    {"incumbent_context", context_get_incumbent, METH_VARARGS, "get incumbent v8 context"},
-    {"new", construct_new_object, METH_VARARGS, "Creates a new JavaScript object from a given constructor function"},
-    {"low_memory_notification", trigger_low_memory_notification, METH_NOARGS, "Trigger V8 low memory notification"},
+    {"hidden", (PyCFunction)PythonBoundary<mark_hidden>::call, METH_O, ""},
+    {"unconstructable", (PyCFunction)PythonBoundary<mark_unconstructable>::call, METH_O, ""},
+    {"current_context", (PyCFunction)PythonBoundary<context_get_current>::call, METH_VARARGS, "get current v8 context"},
+    {"incumbent_context", (PyCFunction)PythonBoundary<context_get_incumbent>::call, METH_VARARGS, "get incumbent v8 context"},
+    {"new", (PyCFunction)PythonBoundary<construct_new_object>::call, METH_VARARGS, "Creates a new JavaScript object from a given constructor function"},
+    {"low_memory_notification", (PyCFunction)PythonBoundary<trigger_low_memory_notification>::call, METH_NOARGS, "Trigger V8 low memory notification"},
     {"init_v8", (PyCFunction)PythonBoundary<py_initialize_v8>::call, METH_VARARGS | METH_KEYWORDS, "initialize v8 platform and isolate"},
-    {"shutdown_v8", py_shutdown_v8, METH_NOARGS, "shut down v8 platform and isolate"},
+    {"shutdown_v8", (PyCFunction)PythonBoundary<py_shutdown_v8>::call, METH_NOARGS, "shut down v8 platform and isolate"},
     {"configure", (PyCFunction)PythonBoundary<py_configure>::call, METH_VARARGS | METH_KEYWORDS, "set the ICU data file and V8 flags the next startup should use"},
     {"is_initialized", (PyCFunction)PythonBoundary<py_is_initialized>::call, METH_NOARGS, "whether v8 has been started"},
-    {"v8_version", v8_version, METH_NOARGS, "v8 version"},
-    {"v8_gc", v8_gc, METH_NOARGS, "v8 gc"},
+    {"v8_version", (PyCFunction)PythonBoundary<v8_version>::call, METH_NOARGS, "v8 version"},
+    {"v8_gc", (PyCFunction)PythonBoundary<v8_gc>::call, METH_NOARGS, "v8 gc"},
     {NULL},
 };
 

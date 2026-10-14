@@ -1,6 +1,7 @@
+#include "bridge_base.h"
 #include <Python.h>
 
-#include "pyv8.h"
+#include "crossing.h"
 #include "convert.h"
 #include "pyclass.h"
 #include "pyclass_cross_origin_handlers.h"

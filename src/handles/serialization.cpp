@@ -10,12 +10,13 @@
 // ``SerializationWriter`` and ``SerializationReader`` below -- the same shape as Blink's
 // ``V8ScriptValueSerializer::WriteDOMObject`` and its deserializer counterpart.
 
+#include "bridge_base.h"
 #include "serialization.h"
 
 //: The order every source here keeps: the module header first, then V8.  V8's headers read
-//: what ``pyv8.h`` sets up (the compat shims included), so the other way round they fail to
+//: what ``bridge_base.h`` sets up (the compat shims included), so the other way round they fail to
 //: parse -- with errors pointing inside V8 rather than here.
-#include "pyv8.h"
+#include "runtime.h"
 #include <v8.h>
 
 #include <utility>
@@ -693,7 +694,7 @@ PyObject* js_serializer_new(PyTypeObject* type, PyObject* args, PyObject* kwargs
 {
     PyObject* py_context = nullptr;
     static const char* keywords[] = {"context", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char**)keywords, &py_context) < 0)
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char**)keywords, &py_context))
         return nullptr;
     if (!PyObject_TypeCheck(py_context, context_type))
     {

@@ -1,6 +1,7 @@
 #ifndef PAIR_ITERABLE_H
 #define PAIR_ITERABLE_H
 
+#include "bridge_base.h"
 #include <v8.h>
 
 #include "pyclass.h"

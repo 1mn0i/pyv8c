@@ -1,6 +1,7 @@
 #ifndef JS_NULL_H
 #define JS_NULL_H
 
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
 

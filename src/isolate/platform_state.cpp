@@ -1,3 +1,4 @@
+#include "bridge_base.h"
 #include "platform_state.h"
 
 #include "abi3.h"

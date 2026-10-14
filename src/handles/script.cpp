@@ -1,5 +1,9 @@
+#include "bridge_base.h"
 #include <Python.h>
-#include "pyv8.h"
+#include "entry.h"
+#include "execution.h"
+#include "runtime.h"
+#include "crossing.h"
 #include <v8.h>
 
 #include "convert.h"
@@ -80,7 +84,7 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     static const char *keywords[] = {"context", "source", "filename", NULL};
     PyObject *source;
     PyObject *filename = Py_None;
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "OO|O", (char **) keywords, &py_ctx, &source, &filename) < 0) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|O", (char **) keywords, &py_ctx, &source, &filename)) {
         return NULL;
     }
     if (!PyObject_TypeCheck((PyObject*)py_ctx, context_type)) {

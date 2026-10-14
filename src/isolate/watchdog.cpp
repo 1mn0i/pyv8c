@@ -1,6 +1,8 @@
+#include "bridge_base.h"
 #include "watchdog.h"
 
 #include <algorithm>
+#include <iterator>
 
 #include "context.h"
 #include "isolate_state.h"
@@ -21,8 +23,7 @@ Watchdog* watchdog_for(Isolate* isolate)
 
 Watchdog::Watchdog(Isolate* isolate) : isolate_(isolate)
 {
-    for (auto& deadline : deadlines_)
-        deadline = Clock::time_point::max();
+    deadlines_.reserve(8);
 }
 
 Watchdog::~Watchdog()
@@ -32,10 +33,9 @@ Watchdog::~Watchdog()
 
 void Watchdog::refresh_deadline_locked()
 {
-    const int count = depth_ < kMaxNesting ? depth_ : kMaxNesting;
     Clock::time_point earliest = Clock::time_point::max();
-    for (int index = 0; index < count; ++index)
-        earliest = std::min(earliest, deadlines_[index]);
+    for (const auto& deadline : deadlines_)
+        earliest = std::min(earliest, deadline.expires);
     deadline_ = earliest;
     armed_ = earliest != Clock::time_point::max();
 }
@@ -48,96 +48,116 @@ void Watchdog::start_thread_locked()
     thread_ = std::thread(&Watchdog::run, this);
 }
 
-void Watchdog::arm(double seconds)
+Watchdog::Ticket Watchdog::add_deadline_locked(double seconds, const void* owner)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     start_thread_locked();
-    // The counter saturates: past kMaxNesting there is no slot to write, and a depth
-    // that kept climbing would leave the array holding deadlines nothing owns.
-    const bool was_idle = depth_ == 0;
+    const bool was_idle = deadlines_.empty();
     const bool was_armed = armed_;
-    const Clock::time_point previous = deadline_;
-    if (depth_ < kMaxNesting)
-    {
-        deadlines_[depth_] = seconds > 0
-            ? Clock::now() + std::chrono::microseconds(static_cast<long long>(seconds * 1e6))
-            : Clock::time_point::max();
-        ++depth_;
-    }
-    refresh_deadline_locked();
-    // The sleeper only recomputes its wait when the deadline moved earlier or heap
-    // watching switched on; anything else it notices at its own next wake.
-    if (was_idle || !was_armed || (armed_ && deadline_ < previous))
-        wake_.notify_all();
-}
-
-void Watchdog::disarm()
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    // A crossing that ended while terminated has consumed the abort it owed.
-    abort_next_ = false;
-    if (depth_ == 0)
-        return;
-    --depth_;
-    // The slot this scope occupied goes with it.  A deadline left behind stays the
-    // earliest one every later command sees, and fires on whichever runs then.
-    deadlines_[depth_] = Clock::time_point::max();
-    refresh_deadline_locked();
-    // The sleeper recomputes its wait at its own next wake; nothing here is urgent.
-}
-
-void Watchdog::begin_crossing(double seconds)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    start_thread_locked();
-    if (terminated_ && !abort_next_)
-    {
-        // The crossing that killed the isolate has already reported
-        // JavaScriptTerminated by the time the next one begins.
-        terminated_ = false;
-        isolate_->CancelTerminateExecution();
-    }
-    else if (abort_next_)
-    {
-        // terminate() asked for an abort while nothing was running.  V8 only
-        // honours the request on a thread that is executing, which is now.
-        abort_next_ = false;
-        terminated_ = true;
-        isolate_->TerminateExecution();
-    }
-    const bool was_idle = depth_ == 0;
-    const bool was_armed = armed_;
-    const Clock::time_point previous = deadline_;
-    if (depth_ < kMaxNesting)
-    {
-        deadlines_[depth_] = seconds > 0
-            ? Clock::now() + std::chrono::microseconds(static_cast<long long>(seconds * 1e6))
-            : Clock::time_point::max();
-        ++depth_;
-    }
+    const auto previous = deadline_;
+    const auto ticket = next_ticket_++;
+    deadlines_.push_back({ticket, seconds > 0
+        ? Clock::now() + std::chrono::microseconds(static_cast<long long>(seconds * 1e6))
+        : Clock::time_point::max(), owner});
     refresh_deadline_locked();
     if (was_idle || !was_armed || (armed_ && deadline_ < previous))
         wake_.notify_all();
+    return ticket;
 }
 
-void Watchdog::terminate_now()
-{
+bool Watchdog::has_crossing_locked() const {
+    return std::any_of(deadlines_.begin(), deadlines_.end(),
+                       [](const Deadline& entry) { return entry.owner == nullptr; });
+}
+
+void Watchdog::arm(double seconds, const void* owner) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (terminated_)
-        return;
-    terminated_ = true;
-    abort_next_ = true;
+    add_deadline_locked(seconds, owner);
+}
+
+void Watchdog::disarm(const void* owner) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    wait_transition_locked(lock);
+    auto found = std::find_if(deadlines_.rbegin(), deadlines_.rend(),
+                             [owner](const Deadline& entry) { return entry.owner == owner; });
+    if (found != deadlines_.rend()) {
+        const auto removed = found->ticket;
+        deadlines_.erase(std::next(found).base());
+        if (termination_ == Termination::AbortPending && abort_ticket_ == removed)
+            resume_locked(lock);
+    }
+    refresh_deadline_locked();
+    wake_.notify_all();
+}
+
+void Watchdog::release_owner(const void* owner) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    wait_transition_locked(lock);
+    const bool cancels_abort = termination_ == Termination::AbortPending &&
+        std::any_of(deadlines_.begin(), deadlines_.end(), [this, owner](const Deadline& entry) {
+            return entry.owner == owner && entry.ticket == abort_ticket_;
+        });
+    std::erase_if(deadlines_, [owner](const Deadline& entry) { return entry.owner == owner; });
+    if (cancels_abort) resume_locked(lock);
+    refresh_deadline_locked();
+    wake_.notify_all();
+}
+
+void Watchdog::wait_transition_locked(std::unique_lock<std::mutex>& lock) {
+    wake_.wait(lock, [this] {
+        return termination_ != Termination::Issuing &&
+               termination_ != Termination::IssuingNext && termination_ != Termination::Resuming;
+    });
+}
+
+void Watchdog::issue_termination_locked(std::unique_lock<std::mutex>& lock, bool pending, Ticket cause) {
+    abort_ticket_ = pending ? cause : 0;
+    termination_ = pending ? Termination::IssuingNext : Termination::Issuing;
+    lock.unlock();
     isolate_->TerminateExecution();
+    lock.lock();
+    termination_ = pending ? Termination::AbortPending : Termination::Terminating;
+    wake_.notify_all();
 }
 
-void Watchdog::cancel_termination()
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!terminated_)
-        return;
-    terminated_ = false;
-    abort_next_ = false;
+void Watchdog::resume_locked(std::unique_lock<std::mutex>& lock) {
+    termination_ = Termination::Resuming;
+    abort_ticket_ = 0;
+    lock.unlock();
     isolate_->CancelTerminateExecution();
+    lock.lock();
+    termination_ = Termination::Ready;
+    wake_.notify_all();
+}
+
+Watchdog::Ticket Watchdog::begin_crossing(double seconds) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    wait_transition_locked(lock);
+    if (termination_ == Termination::Completed) resume_locked(lock);
+    else if (termination_ == Termination::AbortPending) issue_termination_locked(lock, false);
+    return add_deadline_locked(seconds, nullptr);
+}
+
+void Watchdog::end_crossing(Ticket ticket) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    wait_transition_locked(lock);
+    std::erase_if(deadlines_, [ticket](const Deadline& entry) { return entry.ticket == ticket; });
+    if (termination_ == Termination::Terminating && !has_crossing_locked())
+        termination_ = Termination::Completed;
+    refresh_deadline_locked();
+    wake_.notify_all();
+}
+
+void Watchdog::terminate_now() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    wait_transition_locked(lock);
+    if (termination_ != Termination::Ready) return;
+    issue_termination_locked(lock, !has_crossing_locked());
+}
+
+void Watchdog::cancel_termination() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    wait_transition_locked(lock);
+    if (termination_ != Termination::Ready) resume_locked(lock);
 }
 
 void Watchdog::flag_heap_pressure()
@@ -203,13 +223,13 @@ bool Watchdog::take_collection_slot()
 bool Watchdog::terminated() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return terminated_;
+    return termination_ != Termination::Ready;
 }
 
 bool Watchdog::abort_pending() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return abort_next_;
+    return termination_ == Termination::AbortPending || termination_ == Termination::IssuingNext;
 }
 
 void Watchdog::run()
@@ -217,28 +237,24 @@ void Watchdog::run()
     std::unique_lock<std::mutex> lock(mutex_);
     while (!stopping_)
     {
-        if (heap_pressure_)
-        {
-            // The terminate call belongs to this thread: one made from inside V8 --
-            // a heap-limit callback or an interrupt -- runs too late to be heard.
+        wait_transition_locked(lock);
+        if (stopping_) break;
+        if (heap_pressure_) {
             heap_pressure_ = false;
-            if (!terminated_)
-            {
-                // The crossing that is executing reports the termination, so the next
-                // one resumes the isolate: abort_next_ stays false for that reason.
-                terminated_ = true;
-                abort_next_ = false;
+            if (termination_ == Termination::Ready) {
                 ++heap_terminations_;
-                lock.unlock();
-                isolate_->TerminateExecution();
-                lock.lock();
+                issue_termination_locked(lock, !has_crossing_locked());
             }
+            continue;
+        }
+        if (termination_ != Termination::Ready) {
+            wake_.wait(lock);
             continue;
         }
         // A crossing is an open deadline scope, whether or not it carries a deadline,
         // and the heap is watched for as long as one is running -- but only when a
         // budget exists to watch it against.
-        if (!armed_ && (depth_ == 0 || heap_budget_bytes() == 0))
+        if (!armed_ && (deadlines_.empty() || heap_budget_bytes() == 0))
         {
             wake_.wait(lock);
             continue;
@@ -252,7 +268,7 @@ void Watchdog::run()
         {
             // The reading has to happen on the isolate's thread, so this thread only
             // asks for one between safepoints.
-            if (depth_ > 0 && !heap_check_pending_ && heap_budget_bytes() != 0)
+            if (!deadlines_.empty() && !heap_check_pending_ && heap_budget_bytes() != 0)
             {
                 heap_check_pending_ = true;
                 lock.unlock();
@@ -261,22 +277,14 @@ void Watchdog::run()
             }
             continue;
         }
-        armed_ = false;
-        terminated_ = true;
-        // The deadline that fired is spent, and the scopes it stood for are about to
-        // unwind.  Keeping those entries would make every later refresh arm on a
-        // moment already past, so one overrun would terminate a run of scripts that
-        // have nothing to do with it.  Clearing them leaves the next deadline to be
-        // the next scope that arms one.
-        for (auto& deadline : deadlines_)
-            deadline = Clock::time_point::max();
-        depth_ = 0;
+        // Spend deadlines without destroying ownership: each outstanding scope
+        // still acknowledges its own ticket during unwind.
+        Ticket cause = 0;
+        for (const auto& entry : deadlines_)
+            if (entry.expires == deadline_) { cause = entry.ticket; break; }
+        for (auto& entry : deadlines_) entry.expires = Clock::time_point::max();
         refresh_deadline_locked();
-        wake_.notify_all();
-        // TerminateExecution is the one V8 call that is meant for another thread.
-        lock.unlock();
-        isolate_->TerminateExecution();
-        lock.lock();
+        issue_termination_locked(lock, !has_crossing_locked(), cause);
     }
 }
 
@@ -310,20 +318,15 @@ DeadlineScope::~DeadlineScope()
     stop();
 }
 
-bool DeadlineScope::start()
-{
-    if (watchdog_ == nullptr || started_)
-        return true;
-    watchdog_->begin_crossing(seconds_);
-    started_ = true;
-    return true;
+void DeadlineScope::start() {
+    if (watchdog_ != nullptr && ticket_ == 0)
+        ticket_ = watchdog_->begin_crossing(seconds_);
 }
 
-bool DeadlineScope::stop()
-{
-    if (!started_)
-        return true;
-    started_ = false;
-    watchdog_->disarm();
-    return true;
+void DeadlineScope::stop() {
+    if (ticket_ != 0) {
+        auto ticket = ticket_;
+        ticket_ = 0;
+        watchdog_->end_crossing(ticket);
+    }
 }

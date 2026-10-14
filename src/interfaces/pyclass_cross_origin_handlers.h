@@ -1,6 +1,7 @@
 #ifndef PYCLASS_CROSS_ORIGIN_HANDLERS_H
 #define PYCLASS_CROSS_ORIGIN_HANDLERS_H
 
+#include "bridge_base.h"
 #include <v8.h>
 
 bool cross_origin_access_check(

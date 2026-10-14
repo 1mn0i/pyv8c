@@ -5,7 +5,7 @@ The binding is arranged so that a file may use what is below it and nothing
 above, in this order: the shims, the isolate, the values, the handles and the
 tracing beside them, then the interfaces.  A handful of files exist to tie those
 layers together and are allowed to reach upward; they are listed in
-`COMPOSITION_POINTS` below and each one is explained in the layout document.
+`COMPOSITION_EDGES` below and each one is explained in the layout document.
 
 The default is report mode: it prints what the tree looks like and always exits
 0, which is what makes it usable while the tree is being moved.  `--enforce`
@@ -25,6 +25,7 @@ whose files cannot see each other.
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 import tomllib
@@ -53,21 +54,77 @@ LAYERS = {
 
 #: Files whose whole purpose is to tie layers together, so an include that
 #: reaches upward is what they are for.  Everything else follows the plain rule.
-COMPOSITION_POINTS = {
-    "pyv8.h",                 # aggregate header, included by every unit
-    "pyv8.cpp",               # module entry point, registers every type
-    "context.cpp",            # realm owner, builds interfaces and handles
-    "context_names.cpp",      # installs names into a realm, so it knows interfaces
-    "context_resources.cpp",  # pair table, materialises a handle
-    "convert_to_python.cpp",      # JavaScript to Python, knows handles
-    "convert_to_javascript.cpp",  # Python to JavaScript, knows classes and functions
-    "error_hooks.cpp",        # hands an isolate's errors to the conversion layer
-    "isolate_state.cpp",      # disposal is where the instruments built on an
-                              # isolate are taken apart, and taking an inspector
-                              # apart is the tools layer's business
+COMPOSITION_EDGES = {
+    'isolate/context.cpp': frozenset({
+        'handles/jsobject.h',
+        'handles/script.h',
+        'interfaces/idl_spec.h',
+        'interfaces/pyclass.h',
+        'interfaces/v8tools.h',
+        'tools/debugger.h',
+        'values/convert.h',
+        'values/crossing.h',
+        'values/jsvalue.h',
+    }),
+    'isolate/context_names.cpp': frozenset({
+        'interfaces/idl_spec.h',
+        'interfaces/pyclass.h',
+        'interfaces/pyclass_cross_origin_handlers.h',
+        'interfaces/v8tools.h',
+        'tools/trace.h',
+        'values/convert.h',
+    }),
+    'isolate/context_resources.cpp': frozenset({
+        'handles/jsobject.h',
+    }),
+    'isolate/error_hooks.cpp': frozenset({
+        'values/convert.h',
+    }),
+    'isolate/isolate_state.cpp': frozenset({
+        'tools/debugger.h',
+        'values/error_family.h',
+    }),
+    'pyv8.cpp': frozenset({
+        'handles/jsbuffer.h',
+        'handles/jsfunction.h',
+        'handles/jsobject.h',
+        'handles/jspromise.h',
+        'handles/jstypedarray.h',
+        'handles/script.h',
+        'interfaces/idl_spec.h',
+        'interfaces/pyclass.h',
+        'interfaces/pyfunction.h',
+        'isolate/context.h',
+        'isolate/isolate.h',
+        'isolate/watchdog.h',
+        'tools/debugger.h',
+        'values/convert.h',
+        'values/error_family.h',
+        'values/jsvalue.h',
+        'values/serialization.h',
+    }),
+    'pyv8.h': frozenset({
+        'isolate/entry.h',
+        'isolate/execution.h',
+        'isolate/isolate_state.h',
+        'isolate/runtime.h',
+        'values/crossing.h',
+        'values/error_family.h',
+        'values/js_exception.h',
+        'values/jsnull.h',
+        'values/jsundefined.h',
+    }),
+    'values/convert_to_javascript.cpp': frozenset({
+        'handles/jsobject.h',
+        'interfaces/pyclass.h',
+        'interfaces/pyfunction.h',
+    }),
+    'values/convert_to_python.cpp': frozenset({
+        'handles/jsobject.h',
+    }),
 }
 
-INCLUDE = re.compile(r'^#\s*include\s+"([^"]+)"')
+INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
 SUFFIXES = (".cpp", ".h", ".def")
 
 
@@ -101,10 +158,27 @@ def includes_of(path: Path):
 def include_roots_the_build_declares() -> list[str]:
     """The `include_dirs` setup.py hands the compiler, as written there."""
     text = (PROJECT_ROOT / "setup.py").read_text(encoding="utf-8")
-    match = re.search(r"include_dirs=\s*\[(.*?)\]", text, re.S)
-    if match is None:
-        return []
-    return re.findall(r"'([^']+)'", match.group(1))
+    for node in ast.walk(ast.parse(text)):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != 'Extension':
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == 'include_dirs':
+                roots = ast.literal_eval(keyword.value)
+                if not isinstance(roots, (list, tuple)) or not all(isinstance(root, str) for root in roots):
+                    raise ValueError('Extension.include_dirs must be a literal list/tuple of paths')
+                return list(roots)
+    return []
+
+
+def resolve_include(source: Path, included: str, roots: list[Path]) -> Path | None:
+    relative = Path(included.replace('\\', '/'))
+    for root in [source.parent, *roots]:
+        candidate = (root / relative).resolve()
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def package_data_the_packaging_names() -> list[str]:
@@ -171,29 +245,43 @@ def main() -> int:
     upward: list[str] = []
     allowed_upward: list[str] = []
     edges = 0
+    try:
+        declared_roots = include_roots_the_build_declares()
+    except (SyntaxError, ValueError) as error:
+        print(f"cannot read Extension.include_dirs: {error}", file=sys.stderr)
+        return 1
+    include_roots = [SOURCE_ROOT / Path(root).relative_to('src')
+                     if Path(root).parts and Path(root).parts[0] == 'src' else PROJECT_ROOT / root
+                     for root in declared_roots]
+    known_paths = {path.resolve(): path for path in paths}
 
     for path in paths:
         group = group_of(path)
         layer = LAYERS.get(group)
         for number, included in includes_of(path):
-            name = Path(included).name
-            where = owners.get(name)
-            if where is None:
+            resolved = resolve_include(path, included, include_roots)
+            destination = known_paths.get(resolved)
+            name = Path(included.replace('\\', '/')).name
+            if destination is None:
                 unresolved.append(f"{path.relative_to(SOURCE_ROOT)}:{number}  \"{included}\"")
                 continue
             edges += 1
-            if included.startswith("../"):
+            if name == "pyv8.h" and path.relative_to(SOURCE_ROOT).as_posix() != "pyv8.cpp":
+                upward.append(f"{path.relative_to(SOURCE_ROOT)}:{number}  module composition header is private")
+            if included.replace("\\", "/").startswith("../"):
                 relative_parents.append(f"{path.relative_to(SOURCE_ROOT)}:{number}  \"{included}\"")
             if layer is None:
                 continue
-            target = LAYERS.get(group_of(where[0]))
+            target = LAYERS.get(group_of(destination))
             if target is None or target <= layer:
                 continue
             entry = (
                 f"{path.relative_to(SOURCE_ROOT)}:{number}  \"{included}\""
                 f"  (layer {layer} -> {target})"
             )
-            if path.name in COMPOSITION_POINTS:
+            source_key = path.relative_to(SOURCE_ROOT).as_posix()
+            target_key = destination.relative_to(SOURCE_ROOT).as_posix()
+            if target_key in COMPOSITION_EDGES.get(source_key, ()):
                 allowed_upward.append(entry)
             else:
                 upward.append(entry)

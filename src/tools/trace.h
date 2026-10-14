@@ -2,6 +2,7 @@
 #define PYV8_TRACE_H
 
 #include "context.h"
+#include "runtime.h"
 #include "convert.h"
 #include "jsobject.h"
 

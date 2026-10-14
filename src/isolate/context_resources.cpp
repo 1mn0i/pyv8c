@@ -1,10 +1,11 @@
+#include "bridge_base.h"
 #include "isolate_state.h"
 #include "context.h"
 #include "jsobject.h"
-#include "pyv8.h"
-#include "pyclass.h"
+#include "entry.h"
 #include "v8_compat.h"
 #include <cassert>
+#include <algorithm>
 #include <new>
 using namespace v8;
 
@@ -56,6 +57,23 @@ void IsolateState::defer_release(DeferredPythonRelease* record, PyObject* object
     record->object = object;
     record->next = pending_wrappers_;
     pending_wrappers_ = record;
+}
+
+bool IsolateState::register_inspector_waiter(PyObject* callback) {
+    if (std::find(inspector_waiters.begin(), inspector_waiters.end(), callback) != inspector_waiters.end())
+        return true;
+    try { inspector_waiters.push_back(callback); }
+    catch (const std::bad_alloc&) { PyErr_NoMemory(); return false; }
+    Py_INCREF(callback);
+    return true;
+}
+
+bool IsolateState::defer_context_close(context_c* context) {
+    if (entry_depth <= 1) return false;
+    Py_INCREF((PyObject*)context);
+    context->next_pending_close = pending_context_closes;
+    pending_context_closes = context;
+    return true;
 }
 
 void IsolateState::drain_deferred() {

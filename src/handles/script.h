@@ -1,7 +1,8 @@
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
 
-#include "pyv8.h"
+
 #include "handle_resource.h"
 
 typedef struct {

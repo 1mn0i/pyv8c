@@ -2,7 +2,8 @@
 #define PYCLASS_HANDLERS_H
 
 #include "pyclass.h"
-#include "pyv8.h"
+#include "bridge_base.h"
+#include "runtime.h"
 
 #define SETUP                                                          \
     v8::Isolate* isolate = info.GetIsolate();                          \

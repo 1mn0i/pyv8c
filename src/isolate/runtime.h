@@ -1,6 +1,7 @@
 #ifndef PYV8_RUNTIME_H
 #define PYV8_RUNTIME_H
 
+#include "bridge_base.h"
 #include <Python.h>
 
 #ifdef _WIN32
@@ -18,6 +19,8 @@
 #include <unordered_set>
 
 class IsolateState;
+enum class IsolateSelection { DefaultOnly, ActiveOrDefault, Explicit };
+IsolateState* select_isolate(IsolateSelection policy, PyObject* explicit_owner = nullptr);
 
 // The process-global V8 runtime.
 //

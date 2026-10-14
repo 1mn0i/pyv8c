@@ -1,6 +1,7 @@
 #ifndef PYV8_PLATFORM_STATE_H
 #define PYV8_PLATFORM_STATE_H
 
+#include "bridge_base.h"
 #include <Python.h>
 
 #ifdef _WIN32

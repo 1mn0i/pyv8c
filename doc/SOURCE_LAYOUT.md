@@ -13,9 +13,9 @@ and the handle types hold each other up, and what each layer is for -- see
 
 | group | layer | owns | files |
 | --- | --- | --- | --- |
-| `src/` | 0 | portability shims and the module entry point; included by everything | `pyv8.h` `pyv8.cpp` `polyfill.h` `abi3.h/.cpp` `v8_compat.h` `boundary.h` `callback_boundary.h` |
-| `src/isolate/` | 1 | the V8 platform, the isolate, the realm and their lifetimes | `platform_state.*` `v8_string_cache.*` `isolate.*` `isolate_state.*` `isolate_scope.*` `execution.*` `runtime.*` `context.*` `context_names.cpp` `context_resources.cpp` `timeout_guard.*` `error_hooks.*` |
-| `src/values/` | 2 | values crossing the boundary, error mapping, handle registration | `convert.h` `convert_to_python.cpp` `convert_to_javascript.cpp` `error_family.*` `serialization.h` `exception.*` `jsvalue.*` `jsnull.*` `jsundefined.*` `handle_resource.h` |
+| `src/` | 0 | portability shims and the private module entry point | `pyv8.h` `pyv8.cpp` `polyfill.h` `abi3.h/.cpp` `v8_compat.h` `boundary.h` `callback_boundary.h` `bridge_base.h` |
+| `src/isolate/` | 1 | the V8 platform, the isolate, the realm and their lifetimes | `platform_state.*` `v8_string_cache.*` `isolate.*` `isolate_state.*` `isolate_scope.*` `entry.h` `execution.*` `runtime.*` `context.*` `context_names.cpp` `context_resources.cpp` `watchdog.*` `error_hooks.*` |
+| `src/values/` | 2 | values crossing the boundary, error mapping, handle registration | `convert.h` `convert_to_python.cpp` `convert_to_javascript.cpp` `error_family.*` `serialization.h` `js_exception.*` `jsvalue.*` `jsnull.*` `jsundefined.*` `handle_resource.h` |
 | `src/handles/` | 3 | the Python types that stand for JavaScript values | `jsobject.*` `jsfunction.*` `jspromise.*` `jstypedarray.*` `script.*` `serialization.cpp` |
 | `src/tools/` | 3 | tracing -- the hook the interface layer wraps its entry points in -- and the devtools bridge | `trace.h` `debugger.*` |
 | `src/interfaces/` | 4 | declarations into templates into callbacks | `idl_spec.*` `pyclass.*` `pyclass_handlers.*` `pyclass_interceptors.cpp` `pyclass_cross_origin_handlers.*` `v8tools.*` `pyclass_callbacks.cpp` `pyfunction.*` |
@@ -33,13 +33,14 @@ bridge is reached only from the composition points below.
 
 A file may include headers from its own layer and from lower ones. Reaching
 upward is what stops a layer from being one. A small set of files exists to tie layers
-together, and they are the whole exception list:
+together. The table describes their roles; `COMPOSITION_EDGES` enumerates the
+exact permitted source/target pairs, rather than exempting entire files:
 
 | file | may include | why |
 | --- | --- | --- |
-| `pyv8.h` | 0-2 | the aggregate header: every unit includes it, and it re-exports the shims and the two singletons |
-| `pyv8.cpp` | everything | the module entry point registers every type |
-| `context.cpp` | 1-3 | the realm owner builds the interface templates, creates the realm's handles and wires the devtools bridge |
+| `pyv8.h` | exact declared edges | private module composition; not a dependency of lower units |
+| `pyv8.cpp` | exact module registration edges | the module entry point registers every type |
+| `context.cpp` | declared edges through layer 4 | the realm owner builds the interface templates, creates the realm's handles and wires the devtools bridge |
 | `context_names.cpp` | 1-4 | installing names into a realm and keeping the registry behind them is what `install`, `expose` and the lazy factory protocol do, so this is the part of a context's life that knows the interface layer; it also provides registered constructors to error conversion and installs the failed-access callback at realm entry |
 | `context_resources.cpp` | 1-3 | the pair table materialises a Python handle for a JavaScript object |
 | `convert_to_python.cpp` | 1-3 | one direction of the converter: it builds handles for objects coming in, which the handles layer defines |
@@ -50,8 +51,9 @@ together, and they are the whole exception list:
 Everything else, headers included, follows the plain rule. Two facts the checker
 reports rather than hides:
 
-* `pyv8.h` is a hub: 30 files include it, so touching it rebuilds most of the
-  binding. That is why the shims stay at the root and stay small.
+* `bridge_base.h` contains only base contracts. `pyv8.h` is private to the module
+  composition unit; lower files cannot include it. Isolate-only macros live in
+  `isolate/entry.h`, and crossing macros in `values/crossing.h`.
 * A stale include is a violation nobody meant to write. The first pass found
   `isolate_state.cpp -> pyclass.h`, `exception.cpp -> script.h` and
   `context.cpp -> jsfunction.h` / `pyfunction.h`; the pass that flattened
@@ -67,7 +69,7 @@ reports rather than hides:
 3. If the answer is "it has to reach upward", it is a composition point: write it
    into this document, add it to `tools/check_layout.py`, and keep the list short.
 
-## Moving the tree
+## Historical tree migration
 
 Staged so that every step is a plain move plus a build-configuration change, each
 verified on its own.
@@ -125,3 +127,21 @@ which needs a `_pyv8env/renderer` checkout that is not part of this tree.
 Nothing in this plan changes behaviour, so the criterion is that those numbers do
 not move beyond their own run-to-run noise: a move that changes a test result is
 a bug in the move.
+
+
+## Current enforcement
+
+The composition list in the table describes roles, not file-wide exemptions.
+`COMPOSITION_EDGES` pins each current allowed dependency by relative source and
+target path. New includes, same-name files in other directories and lower-layer
+includes of the module composition header fail enforcement. Header consumers
+must declare their runtime/crossing/entry dependencies explicitly. Use
+`python tools/check_layout.py --list` for the current inventory; migration counts
+and test results above are historical records.
+
+
+The checker resolves quoted paths exactly against the including file and the
+literal Extension include roots. Equivalent quote/list/tuple spellings are
+accepted; nonliteral roots fail with a diagnostic. A basename existing elsewhere
+in the tree does not make an incorrect include directory valid. buffer_range.h
+belongs to handles and owns no Context or cache; its callers supply guarded entry.

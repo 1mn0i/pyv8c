@@ -1,6 +1,7 @@
 #ifndef JS_UNDEFINED_H
 #define JS_UNDEFINED_H
 
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
 

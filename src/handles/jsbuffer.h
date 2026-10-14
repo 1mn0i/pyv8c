@@ -1,8 +1,9 @@
 #ifndef PYV8_JSBUFFER_H
 #define PYV8_JSBUFFER_H
 
-// pyv8.h first: it carries the MSVC shims V8's public headers expect.
-#include "pyv8.h"
+// bridge_base.h first: it carries the MSVC shims V8's public headers expect.
+#include "bridge_base.h"
+
 #include "jsobject.h"
 
 #include <memory>

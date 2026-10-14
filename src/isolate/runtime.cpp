@@ -1,10 +1,28 @@
+#include "bridge_base.h"
+#include "entry.h"
 #include "runtime.h"
 
 #include "isolate_state.h"
+#include "isolate_scope.h"
+#include "isolate.h"
 
 #include <new>
 
 RuntimeManager runtime_manager;
+
+IsolateState* select_isolate(IsolateSelection policy, PyObject* owner) {
+    switch (policy) {
+    case IsolateSelection::ActiveOrDefault:
+        if (auto* active = current_isolate_state()) return active;
+        return runtime_manager.default_isolate();
+    case IsolateSelection::Explicit:
+        return isolate_state_from_python(owner, false);
+    case IsolateSelection::DefaultOnly:
+        return runtime_manager.default_isolate();
+    }
+    return nullptr;
+}
+
 
 RuntimeManager::RuntimeManager() = default;
 

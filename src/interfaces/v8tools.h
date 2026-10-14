@@ -1,8 +1,9 @@
 #ifndef PYV8ENV_TOOLS_H
 #define PYV8ENV_TOOLS_H
 
+#include "bridge_base.h"
 #include <Python.h>
-#include "pyv8.h"
+
 #include "pyclass.h"
 #include <v8.h>
 

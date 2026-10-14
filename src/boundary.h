@@ -4,8 +4,15 @@
 #include <new>
 #include <type_traits>
 
+// Unwind legacy entry macros without replacing the Python error already set.
+struct PythonEntryFailure {};
+
 inline void translate_native_exception() noexcept {
     try { throw; }
+    catch (const PythonEntryFailure&) {
+        if (!PyErr_Occurred())
+            PyErr_SetString(PyExc_RuntimeError, "failed to enter V8 isolate");
+    }
     catch (const std::bad_alloc&) { PyErr_NoMemory(); }
     catch (...) { PyErr_SetString(PyExc_RuntimeError, "native bridge operation failed"); }
 }

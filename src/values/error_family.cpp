@@ -1,3 +1,4 @@
+#include "bridge_base.h"
 #include "error_family.h"
 
 #include "convert.h"

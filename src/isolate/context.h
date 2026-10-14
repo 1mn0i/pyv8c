@@ -2,6 +2,7 @@
 #define CONTEXT_H
 
 
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
 #include <unordered_map>
@@ -26,6 +27,16 @@ struct ContextLifetime {
 };
 
 struct ContextResources {
+    std::size_t handle_count() const { return handles.size(); }
+private:
+    friend class IsolateState;
+    friend PyObject* context_new(PyTypeObject*, PyObject*, PyObject*);
+    friend void context_finish_close(context_c*);
+    friend void context_register_handle(context_c*, PyObject*, int (*)(PyObject*));
+    friend void context_unregister_handle(context_c*, PyObject*);
+    friend bool context_retain_dependency(v8::Local<v8::Context>, PyObject*);
+    void drop_dependency(context_c* owner, context_c* origin);
+    void unlink_dependencies(context_c* owner);
     std::shared_ptr<ContextLifetime> lifetime;
     std::unordered_set<PythonObjectOwner*> python_owners;
     std::unordered_set<void*> callbacks;

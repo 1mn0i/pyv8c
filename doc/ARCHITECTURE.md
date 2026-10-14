@@ -19,7 +19,7 @@ shims                  *.h at the root  ABI3 and V8-version compatibility
 ```
 
 A file may include its own layer and the ones below it.  The exceptions are
-listed in `tools/check_layout.py` under `COMPOSITION_POINTS`, each with a reason:
+listed as exact relative source/target edges in `tools/check_layout.py` under `COMPOSITION_EDGES`, each with a reason:
 an aggregate header, the module entry point, and the five files whose job is to
 tie layers together (a realm building interfaces, a converter reaching into the
 handle types it produces).  `python tools/check_layout.py --enforce` holds the
@@ -59,11 +59,13 @@ error -- "no active V8 isolate" or "closed" -- and never reads V8.
 
 ## Threads
 
-There is one isolate per realm, and V8 requires that a realm be entered by one
-thread at a time.  `ExecutionScope` is how a Python entry point says "I am entering
+An isolate can host multiple realms; iframe realms can share their parent heap.
+V8 execution is mutually exclusive per isolate. Native entry can originate on
+different threads, while pyv8c separately owns task/DOM thread affinity.  `ExecutionScope` is how a Python entry point says "I am entering
 this realm": it takes the isolate lock and builds the handle and context scopes the
-work needs.  `IN_ISOLATE`/`IN_CONTEXT` are the older, macro-shaped way of doing the
-same thing.  Waiting for the isolate lock releases the GIL, and so does the window
+work needs.  `isolate/entry.h` provides Isolate-only scopes for initialization, teardown and
+already-entered handle construction. It does not substitute for Context entry or
+post-wait validation.  Waiting for the isolate lock releases the GIL, and so does the window
 in which V8 actually runs: `CallbackBoundary` takes it back at every V8 -> Python
 entry, which is the discipline the pair table and the owner lists rely on
 (`context_resources.cpp` says so where it matters).
@@ -141,3 +143,28 @@ path, including closed-context and foreign-isolate checks. Host callbacks may
 reenter JavaScript through V8's explicit allow scope. A Python callback failure
 is checked even when V8 reports a successful write or read, preserving the original
 exception rather than returning a value with an exception set.
+
+
+## Architecture contracts after the 2026-10-14 review
+
+`bridge_base.h` exports Python/V8 ABI shims and exception/GIL boundaries only;
+`pyv8.h` is private module composition. Lower units include each contract they
+consume. `ExecutionScope` is mandatory for Context/handle operations that can wait;
+owner and handle state must be checked after entry. Host-only diagnostic reads do
+not need a V8 entry. `import_handle` and trace configuration use this contract.
+
+`IsolateLockScope` alone modifies private entry counters/locks. IsolateState owns
+Inspector waiter registration and deferred Context close, including references
+and failed-allocation rollback. ContextResources registries are private to the
+Context lifecycle functions and IsolateState; dependency unlinking is an operation
+of that owner, and HandleRegistration delegates to the registration functions.
+
+Isolate selection declares DefaultOnly, ActiveOrDefault or Explicit. It does not
+change the public API's established policy: GC uses default, Context queries and
+callback constructors use active/default, explicit owners are validated explicitly.
+pyv8c retains scheduling and Web API ownership; this kernel supplies entry safety.
+
+The extension declares every .h/.def as a build dependency. Its manifest records
+source-content identity, ABI, compiler inputs, actual compiler and binary digest;
+failed builds do not publish a new manifest. Rebuilding unchanged sources must
+skip compilation. Architecture negative tests must reject new composition edges.

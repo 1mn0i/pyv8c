@@ -1,6 +1,7 @@
 #ifndef CONVERT_H
 #define CONVERT_H
 
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
 #include <memory>

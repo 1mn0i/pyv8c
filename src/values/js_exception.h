@@ -1,6 +1,7 @@
 #ifndef PYV8_JS_EXCEPTION_H
 #define PYV8_JS_EXCEPTION_H
 
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
 #include "context.h"

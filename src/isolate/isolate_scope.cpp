@@ -1,3 +1,5 @@
+#include "bridge_base.h"
+#include "entry.h"
 #include "isolate_scope.h"
 
 #include "gil_scope.h"
@@ -29,18 +31,27 @@ IsolateLockScope::IsolateLockScope(IsolateState* state, bool try_only)
         ++state_->entry_depth;
         return;
     }
-    if (try_only && !state_->entry_mutex.try_lock()) return;
+    // Never block on a second isolate while holding another isolate's lock.
+    // Uncontended nesting (including returning to an already-held isolate) works.
+    const bool cross_isolate = previous_ != nullptr;
+    const bool nonblocking = try_only || cross_isolate;
+    if (nonblocking && !state_->entry_mutex.try_lock()) {
+        if (!try_only)
+            PyErr_SetString(PyExc_RuntimeError,
+                "cannot wait for another V8 isolate during nested execution");
+        return;
+    }
     python_owner_ = state_->python_owner;
     Py_XINCREF((PyObject*)python_owner_);
     ++state_->entry_users;
-    bool locked = try_only;
+    bool locked = nonblocking;
     bool closed = false;
     try
     {
         // Waiting (mutex and locker) must not hold the GIL; the scope restores
         // it before this function returns.
         GILReleaseScope waiting;
-        if (!try_only) state_->entry_mutex.lock();
+        if (!nonblocking) state_->entry_mutex.lock();
         locked = true;
         isolate_ = state_->isolate();
         if (isolate_ == nullptr)

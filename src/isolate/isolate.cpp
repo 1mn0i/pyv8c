@@ -1,4 +1,6 @@
-#include "pyv8.h"
+#include "bridge_base.h"
+#include "entry.h"
+#include "runtime.h"
 
 #include "context.h"
 #include "isolate.h"
@@ -65,7 +67,7 @@ IsolateState*
 isolate_state_from_python(PyObject* object, bool allow_none)
 {
     if (allow_none && (object == nullptr || object == Py_None))
-        return runtime_manager.default_isolate();
+        return select_isolate(IsolateSelection::DefaultOnly);
     if (object == nullptr || !PyObject_TypeCheck(object, isolate_type))
     {
         PyErr_SetString(PyExc_TypeError, "isolate must be an Isolate instance");
@@ -98,7 +100,7 @@ isolate_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
         return nullptr;
     }
     self->state = state;
-    state->python_owner = (PyObject*)self;
+    state->bind_python_owner((PyObject*)self);
     return (PyObject*)self;
 }
 
@@ -107,7 +109,7 @@ isolate_dealloc(isolate_c* self)
 {
     if (self->state != nullptr)
     {
-        self->state->python_owner = nullptr;
+        self->state->bind_python_owner(nullptr);
         runtime_manager.destroy_isolate(self->state, false);
         self->state = nullptr;
         PyErr_Clear();

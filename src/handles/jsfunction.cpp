@@ -1,7 +1,11 @@
+#include "bridge_base.h"
 #include <Python.h>
-#include "pyv8.h"
+#include "entry.h"
+#include "execution.h"
+#include "crossing.h"
 #include <v8.h>
 #include <climits>
+#include <algorithm>
 
 #include "jsfunction.h"
 #include "jsobject.h"
@@ -13,7 +17,44 @@ using namespace v8;
 
 PyTypeObject *js_function_type = NULL;
 
+static PyObject* js_function_trace_source(js_function* self, PyObject*) {
+    if (!js_object_require_active(&self->base)) return nullptr;
+    ExecutionScope execution(self->base.registration.context, (PyObject*)self);
+    if (!execution || !js_object_require_active(&self->base)) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Object> object = self->base.object.Get(isolate);
+    IN_CONTEXT(object->GetCreationContextChecked());
+    JS_TRY;
+    Local<String> source;
+    // Use the engine's function source rather than the page's toString method.
+    if (!object.As<Function>()->FunctionProtoToString(context).ToLocal(&source)) {
+        PY_PROPAGATE_JS;
+        PyErr_SetString(PyExc_RuntimeError, "failed to preview function source");
+        return nullptr;
+    }
+    constexpr uint32_t limit = 160;
+    const uint32_t count = std::min<uint32_t>(source->Length(), limit);
+    uint16_t buffer[limit];
+    source->Write(isolate, 0, count, buffer);
+    int byte_order = -1;
+    PyObject* text = PyUnicode_DecodeUTF16(reinterpret_cast<const char*>(buffer),
+                                         count * 2, "replace", &byte_order);
+    if (text != nullptr && source->Length() > static_cast<int>(limit)) {
+        PyObject* clipped = PyUnicode_FromFormat("%U...", text);
+        Py_DECREF(text);
+        return clipped;
+    }
+    return text;
+}
+
+static PyMethodDef js_function_methods[] = {
+    {"_trace_source", (PyCFunction)PythonBoundary<js_function_trace_source>::call,
+     METH_NOARGS, "Bounded engine source for trace formatting."},
+    {nullptr, nullptr, 0, nullptr}
+};
+
 static PyType_Slot js_function_slots[] = {
+    {Py_tp_methods, js_function_methods},
     {Py_tp_dealloc, (void*)PythonBoundary<js_function_dealloc>::call},
     {Py_tp_repr, (void*)PythonBoundary<js_function_repr>::call},
     {Py_tp_call, (void*)PythonBoundary<js_function_call>::call},
@@ -84,9 +125,9 @@ PyObject *js_function_call(js_function *self, PyObject *args, PyObject *kwargs) 
     }
     jss_from_pys(args, argv.data(), context);
     if (PyErr_Occurred()) return NULL;
-    if (!timeout_guard.start()) return NULL;
+    timeout_guard.start();
     result = without_gil([&] { return object->CallAsFunction(context, js_this, argc, argv.data()); });
-    if (!timeout_guard.stop()) return NULL;
+    timeout_guard.stop();
     PY_PROPAGATE_JS;
     Local<Value> js_result;
     if (!result.ToLocal(&js_result)) {
@@ -108,13 +149,11 @@ PyObject* js_function_repr(js_function* self) {
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
     DeadlineScope timeout_guard(context);
-    if (!timeout_guard.start())
-        return NULL;
+    timeout_guard.start();
     String::Utf8Value str(isolate, object);
     PyObject* repr = PyUnicode_DecodeUTF8(*str, str.length(), NULL);
 
-    if (!timeout_guard.stop())
-        return NULL;
+    timeout_guard.stop();
 
     PY_PROPAGATE_JS;
     return repr;

@@ -1,3 +1,5 @@
+#include "bridge_base.h"
+#include "crossing.h"
 #include "v8tools.h"
 #include "idl_spec.h"
 #include "convert.h"

@@ -8,6 +8,7 @@ This is a simplified setup.py that works with pyproject.toml.
 """
 import os
 import json
+import hashlib
 import shutil
 import sys
 import sysconfig
@@ -166,7 +167,22 @@ class PyV8BuildExt(build_ext):
             raise V8BuildError(
                 'icudtl.dat was not found; set PYV8_ICU_DATA to the matching V8 ICU data file'
             )
+        source_hashes = {
+            path.relative_to(PROJECT_ROOT).as_posix(): file_sha256(path)
+            for path in sorted((PROJECT_ROOT / "src").rglob("*"))
+            if path.suffix in {".cpp", ".h", ".def"}
+        }
+        for name in ("setup.py", "pyproject.toml", "v8_build.py"):
+            source_hashes[name] = file_sha256(PROJECT_ROOT / name)
         return {
+            'bridge_sources_sha256': hashlib.sha256(json.dumps(source_hashes, sort_keys=True).encode()).hexdigest(),
+            'python_abi': sysconfig.get_config_var('SOABI'),
+            'compile_args': extra_compile_args,
+            'link_args': extra_link_args,
+            'toolchain_environment': {name: os.environ.get(name) for name in
+                                     ('CC', 'CXX', 'CFLAGS', 'CPPFLAGS', 'LDFLAGS',
+                                      'VSINSTALLDIR', 'VCToolsInstallDir', 'WindowsSDKVersion',
+                                      'DISTUTILS_USE_SDK', 'PYV8_VS_HOME')},
             'version': config.version,
             'v8_home': str(config.v8_home),
             'output_dir': str(config.output_dir),
@@ -179,16 +195,47 @@ class PyV8BuildExt(build_ext):
 
     def _require_rebuild_for_changed_v8(self, config):
         fingerprint = self._build_fingerprint(config)
+        fingerprint['toolchain'] = self._toolchain_identity()
         fingerprint_file = PROJECT_ROOT / 'build' / 'pyv8-extension.json'
         previous = None
         if fingerprint_file.is_file():
             try:
-                previous = json.loads(fingerprint_file.read_text(encoding='utf-8'))
+                recorded = json.loads(fingerprint_file.read_text(encoding='utf-8'))
+                previous = recorded.get('inputs', recorded)
             except (OSError, ValueError):
                 pass
         if previous != fingerprint:
             self.force = True
         return fingerprint_file, fingerprint
+
+    def _toolchain_identity(self):
+        compiler = self.compiler
+        if getattr(compiler, 'compiler_type', None) == 'msvc' and not compiler.initialized:
+            compiler.initialize()
+        identity = {}
+        for name in ('compiler_type', 'cc', 'linker', 'compiler', 'compiler_so',
+                     'compiler_cxx', 'linker_so', 'include_dirs', 'library_dirs',
+                     'compile_options', 'compile_options_debug'):
+            value = getattr(compiler, name, None)
+            identity[name] = list(value) if isinstance(value, tuple) else value
+        executables = {}
+        for name in ('cc', 'linker', 'compiler', 'compiler_so', 'compiler_cxx', 'linker_so'):
+            value = identity[name]
+            command = value[0] if isinstance(value, list) and value else value
+            if not isinstance(command, str):
+                continue
+            resolved = shutil.which(command) or command
+            path = Path(resolved)
+            if path.is_file():
+                executables[name] = {'path': str(path.resolve()), 'sha256': file_sha256(path)}
+        identity['executables'] = executables
+        return identity
+
+    def build_extensions(self):
+        # build_ext has selected/customized the actual compiler by this point.
+        # MSVC still needs initialization to resolve its automatically chosen tools.
+        self._fingerprint_file, self._extension_fingerprint = self._require_rebuild_for_changed_v8(self._v8_config)
+        super().build_extensions()
 
     def run(self):
         build_python = sys.version_info[:2]
@@ -210,14 +257,24 @@ class PyV8BuildExt(build_ext):
             config = self._configuration()
             config.prepare()
             self._configure_extensions(config)
-            fingerprint_file, fingerprint = self._require_rebuild_for_changed_v8(config)
+            self._v8_config = config
             super().run()
             self._copy_icu_data(config)
+            fingerprint_file, fingerprint = self._fingerprint_file, self._extension_fingerprint
             fingerprint_file.parent.mkdir(parents=True, exist_ok=True)
-            fingerprint_file.write_text(
-                json.dumps(fingerprint, indent=2, sort_keys=True) + '\n',
-                encoding='utf-8',
-            )
+            binary = Path(self.get_ext_fullpath('pyv8._pyv8'))
+            record = {'inputs': fingerprint,
+                      'binary_sha256': file_sha256(binary) if binary.is_file() else None,
+                      'compiler': {name: getattr(self.compiler, name, None)
+                                   for name in ('compiler_type', 'cc', 'linker')}}
+            if fingerprint_file.is_file():
+                try:
+                    prior = json.loads(fingerprint_file.read_text(encoding='utf-8'))
+                    if prior.get('binary_sha256') == record['binary_sha256']:
+                        record['compiler'] = prior.get('compiler', record['compiler'])
+                except (OSError, ValueError):
+                    pass
+            fingerprint_file.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n', encoding='utf-8')
         except V8BuildError as exc:
             raise RuntimeError(f'V8 preparation failed: {exc}') from exc
 
@@ -352,6 +409,9 @@ ext_modules = [
     Extension(
         'pyv8._pyv8',
         sources=sources,
+        depends=sorted(str(path.relative_to(PROJECT_ROOT)).replace(os.sep, "/")
+                       for path in (PROJECT_ROOT / "src").rglob("*")
+                       if path.suffix in {".h", ".def"}),
         # Every source keeps including its neighbours by bare file name, so the
         # layout groups are added as include roots rather than written into the
         # includes themselves.

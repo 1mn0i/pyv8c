@@ -1,5 +1,10 @@
+#include "bridge_base.h"
 #include <Python.h>
-#include "pyv8.h"
+#include "entry.h"
+#include "execution.h"
+#include "runtime.h"
+#include "crossing.h"
+#include "error_family.h"
 #include <v8.h>
 
 #include "convert.h"
@@ -52,15 +57,13 @@ js_promise_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
 {
     if (!runtime_manager.ensure_initialized())
         return NULL;
-    IsolateState* isolate_state = current_isolate_state();
-    if (isolate_state == nullptr)
-        isolate_state = runtime_manager.default_isolate();
+    IsolateState* isolate_state = select_isolate(IsolateSelection::ActiveOrDefault);
     IN_ISOLATE(isolate_state);
 
     PyObject* resolve = NULL;
     PyObject* reject = NULL;
     static const char* keywords[] = { "resolve", "reject", NULL};
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "|OO", (char**)keywords, &resolve, &reject) < 0) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|OO", (char**)keywords, &resolve, &reject)) {
         return NULL;
     }
     Local<Context> current_context = isolate->GetCurrentContext();
@@ -254,7 +257,7 @@ js_promise_resolver_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
         return NULL;
     PyObject* py_ctx;
     static const char* keywords[] = { "context", NULL };
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char**)keywords, &py_ctx) < 0) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char**)keywords, &py_ctx)) {
         return NULL;
     }
     if (!PyObject_TypeCheck(py_ctx, context_type)) {

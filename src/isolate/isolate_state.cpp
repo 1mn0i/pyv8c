@@ -1,3 +1,5 @@
+#include "bridge_base.h"
+#include "entry.h"
 #include "isolate_state.h"
 
 #include "debugger.h"

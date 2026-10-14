@@ -1,5 +1,6 @@
+#include "bridge_base.h"
 #include <Python.h>
-#include "pyv8.h"
+#include "entry.h"
 #include "context.h"
 #include "debugger.h"
 #include <v8-inspector.h>

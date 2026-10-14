@@ -1,4 +1,5 @@
-#include "pyv8.h"
+
+#include "bridge_base.h"
 #include "idl_spec.h"
 #include <cstddef>
 #include <cstring>
@@ -45,6 +46,7 @@ static Field IdlSpec_fields[] = {
     {"hidden", Kind::Bool, offsetof(IdlSpec, hidden), 0, 1},
     {"skip_inherit", Kind::Bool, offsetof(IdlSpec, skip_inherit), 0, 1},
     {"named_properties_object", Kind::Bool, offsetof(IdlSpec, named_properties_object), 0, 1},
+    {"named_properties_non_masking", Kind::Bool, offsetof(IdlSpec, named_properties_non_masking), 0, 1},
     {"code_like", Kind::Bool, offsetof(IdlSpec, code_like), 0, 1},
     {"attributes", Kind::Attributes, offsetof(IdlSpec, attributes), 0, 0},
     {"methods", Kind::Methods, offsetof(IdlSpec, methods), 0, 0},
@@ -54,28 +56,11 @@ static Field IdlSpec_fields[] = {
     {"parent_class", Kind::Type, offsetof(IdlSpec, parent_class), 0, 0},
     {"to_string_tag", Kind::String, offsetof(IdlSpec, to_string_tag), 0, 0},
     {"name", Kind::String, offsetof(IdlSpec, name), 0, 0},
-    {"name_get", Kind::Callback, offsetof(IdlSpec, name_get), 0, 0},
-    {"name_set", Kind::Callback, offsetof(IdlSpec, name_set), 0, 0},
-    {"name_query", Kind::Callback, offsetof(IdlSpec, name_query), 0, 0},
-    {"name_enum", Kind::Callback, offsetof(IdlSpec, name_enum), 0, 0},
-    {"name_del", Kind::Callback, offsetof(IdlSpec, name_del), 0, 0},
-    {"index_get", Kind::Callback, offsetof(IdlSpec, index_get), 0, 0},
-    {"index_set", Kind::Callback, offsetof(IdlSpec, index_set), 0, 0},
-    {"index_query", Kind::Callback, offsetof(IdlSpec, index_query), 0, 0},
-    {"index_enum", Kind::Callback, offsetof(IdlSpec, index_enum), 0, 0},
-    {"index_del", Kind::Callback, offsetof(IdlSpec, index_del), 0, 0},
-    {"iterate", Kind::Callback, offsetof(IdlSpec, iterate), 0, 0},
-    {"cross_origin_check", Kind::Callback, offsetof(IdlSpec, cross_origin_check), 0, 0},
-    {"cross_origin_name_get", Kind::Callback, offsetof(IdlSpec, cross_origin_name_get), 0, 0},
-    {"cross_origin_name_set", Kind::Callback, offsetof(IdlSpec, cross_origin_name_set), 0, 0},
-    {"cross_origin_name_query", Kind::Callback, offsetof(IdlSpec, cross_origin_name_query), 0, 0},
-    {"cross_origin_name_enum", Kind::Callback, offsetof(IdlSpec, cross_origin_name_enum), 0, 0},
-    {"cross_origin_name_del", Kind::Callback, offsetof(IdlSpec, cross_origin_name_del), 0, 0},
-    {"cross_origin_index_get", Kind::Callback, offsetof(IdlSpec, cross_origin_index_get), 0, 0},
-    {"cross_origin_index_set", Kind::Callback, offsetof(IdlSpec, cross_origin_index_set), 0, 0},
-    {"cross_origin_index_query", Kind::Callback, offsetof(IdlSpec, cross_origin_index_query), 0, 0},
-    {"cross_origin_index_enum", Kind::Callback, offsetof(IdlSpec, cross_origin_index_enum), 0, 0},
-    {"cross_origin_index_del", Kind::Callback, offsetof(IdlSpec, cross_origin_index_del), 0, 0},
+#define PYV8_HANDLER(id, declaration, field) {#field, Kind::Callback, offsetof(IdlSpec, field), 0, 0},
+#define PYV8_PROPERTY_NAME_HANDLER(id, declaration)
+#include "handler_table.def"
+#undef PYV8_PROPERTY_NAME_HANDLER
+#undef PYV8_HANDLER
 };
 static Field AttributeSpec_fields[] = {
     {"name", Kind::RequiredString, offsetof(AttributeSpec, name), 0, 0},

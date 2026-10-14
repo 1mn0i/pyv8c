@@ -1,6 +1,7 @@
 #ifndef PYV8_V8_HANDLE_SLOT_H
 #define PYV8_V8_HANDLE_SLOT_H
 
+#include "bridge_base.h"
 #include <v8.h>
 
 #include "isolate_state.h"

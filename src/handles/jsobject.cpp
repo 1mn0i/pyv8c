@@ -1,6 +1,11 @@
 
+#include "bridge_base.h"
+#include "buffer_range.h"
 #include <Python.h>
-#include "pyv8.h"
+#include "entry.h"
+#include "execution.h"
+#include "runtime.h"
+#include "crossing.h"
 #include <v8.h>
 
 #include "convert.h"
@@ -36,10 +41,10 @@ static PyObject* js_object_read(js_object* self, PyObject* name) {
     if (key.IsEmpty() || PyErr_Occurred()) return nullptr;
     JS_TRY
     DeadlineScope guard(context);
-    if (!guard.start()) return nullptr;
+    guard.start();
     Local<Value> value;
     bool success = without_gil([&] { return object->Get(context, key).ToLocal(&value); });
-    if (!guard.stop()) return nullptr;
+    guard.stop();
     PY_PROPAGATE_JS;
     if (!success) {
         // Nothing was thrown, so this message is the only thing that can tell the
@@ -56,9 +61,9 @@ static PyObject* js_object_to_python(js_object* self, PyObject*) {
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
     DeadlineScope guard(context);
-    if (!guard.start()) return nullptr;
+    guard.start();
     PyObject* result = py_materialize(object, context);
-    if (!guard.stop()) { Py_XDECREF(result); return nullptr; }
+    guard.stop();
     if (tc.HasCaught()) Py_XDECREF(result);
     PY_PROPAGATE_JS;
     return result;
@@ -69,50 +74,12 @@ PyObject* js_object_bytes(js_object* self, PyObject*) {
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
     DeadlineScope guard(context);
-    if (!guard.start()) return nullptr;
-    // The whole block in one read: an ArrayBuffer is the bytes it holds, and a view --
-    // a typed array or a DataView -- is the range of the buffer behind it that it looks
-    // at.  This is what reading element by element across the boundary used to be, and
-    // what silently truncated a multi-byte element to one of its bytes.
-    const char* data = nullptr;
-    size_t start = 0, length = 0, capacity = 0;
-    if (object->IsArrayBuffer()) {
-        std::shared_ptr<v8::BackingStore> store = object.As<ArrayBuffer>()->GetBackingStore();
-        if (store) {
-            data = static_cast<const char*>(store->Data());
-            capacity = store->ByteLength();
-            start = 0;
-            length = capacity;
-        }
-    }
-    else if (object->IsSharedArrayBuffer()) {
-        // A shared buffer is not an ArrayBuffer to V8, so it needs its own arm; a view
-        // over one is already covered below, since Buffer() hands back the shared store.
-        std::shared_ptr<v8::BackingStore> store =
-            object.As<SharedArrayBuffer>()->GetBackingStore();
-        if (store) {
-            data = static_cast<const char*>(store->Data());
-            capacity = store->ByteLength();
-            start = 0;
-            length = capacity;
-        }
-    }
-    else if (object->IsArrayBufferView()) {
-        Local<ArrayBufferView> view = object.As<ArrayBufferView>();
-        std::shared_ptr<v8::BackingStore> store = view->Buffer()->GetBackingStore();
-        if (store) {
-            data = static_cast<const char*>(store->Data());
-            capacity = store->ByteLength();
-            start = view->ByteOffset();
-            length = view->ByteLength();
-        }
-    }
-    if (!guard.stop()) return nullptr;
+    guard.start();
+    auto range = buffer_range(object);
+    guard.stop();
     PY_PROPAGATE_JS;
-    if (data != nullptr && length > 0 && start <= capacity && length <= capacity - start)
-        return PyBytes_FromStringAndSize(data + start, static_cast<Py_ssize_t>(length));
-    // A detached buffer holds nothing, and so does one the realm cannot describe.
-    return PyBytes_FromStringAndSize("", 0);
+    return PyBytes_FromStringAndSize(range.data() ? range.data() : "",
+                                     static_cast<Py_ssize_t>(range.length));
 }
 
 //: ``bytes(value)`` for a buffer or a view.  The one-read reader above answers ``b""`` for
@@ -139,10 +106,10 @@ static PyObject* js_object_number(js_object* self, PyObject*) {
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
     DeadlineScope guard(context);
-    if (!guard.start()) return nullptr;
+    guard.start();
     Local<Number> value;
     bool success = without_gil([&] { return object->ToNumber(context).ToLocal(&value); });
-    if (!guard.stop()) return nullptr;
+    guard.stop();
     PY_PROPAGATE_JS;
     if (!success) {
         PyErr_SetString(PyExc_RuntimeError, "failed to convert JavaScript object to a number");
@@ -156,10 +123,10 @@ static PyObject* js_object_iterator_method(js_object* self, PyObject*) {
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
     DeadlineScope guard(context);
-    if (!guard.start()) return nullptr;
+    guard.start();
     Local<Value> result;
     bool success = without_gil([&] { return object->Get(context, Symbol::GetIterator(isolate)).ToLocal(&result); });
-    if (!guard.stop()) return nullptr;
+    guard.stop();
     PY_PROPAGATE_JS;
     if (!success) {
         PyErr_SetString(PyExc_RuntimeError, "failed to read the JavaScript iterator");
@@ -182,12 +149,12 @@ static PyObject* js_object_invoke(js_object* self, PyObject* args) {
     if (PyErr_Occurred()) return nullptr;
     JS_TRY
     DeadlineScope guard(context);
-    if (!guard.start()) return nullptr;
+    guard.start();
     Local<Value> result;
     bool success = without_gil([&] {
         return object->CallAsFunction(context, converted.data()[0], length - 1, converted.data() + 1).ToLocal(&result);
     });
-    if (!guard.stop()) return nullptr;
+    guard.stop();
     PY_PROPAGATE_JS;
     if (!success) {
         PyErr_SetString(PyExc_RuntimeError, "failed to invoke JavaScript callable");
@@ -201,14 +168,14 @@ static PyObject* js_object_keys(js_object* self, PyObject*) {
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY
     DeadlineScope guard(context);
-    if (!guard.start()) return nullptr;
+    guard.start();
     Local<Array> keys;
     bool success = without_gil([&] {
         return object->GetOwnPropertyNames(context,
             static_cast<PropertyFilter>(ONLY_ENUMERABLE | SKIP_SYMBOLS),
             KeyConversionMode::kConvertToString).ToLocal(&keys);
     });
-    if (!guard.stop()) return nullptr;
+    guard.stop();
     PY_PROPAGATE_JS;
     if (!success) {
         PyErr_SetString(PyExc_RuntimeError, "failed to read JavaScript property names");
@@ -470,9 +437,9 @@ js_object_lookup(js_object* self, PyObject* name, MissingProperty missing)
     }
     JS_TRY
     DeadlineScope timeout_guard(context);
-    if (!timeout_guard.start()) return NULL;
+    timeout_guard.start();
     Maybe<bool> maybe_has_property = without_gil([&] { return object->Has(context, js_name); });
-    if (!timeout_guard.stop()) return NULL;
+    timeout_guard.stop();
     PY_PROPAGATE_JS;
     bool has_property;
     if (!maybe_has_property.To(&has_property)) {
@@ -501,9 +468,9 @@ js_object_lookup(js_object* self, PyObject* name, MissingProperty missing)
         return NULL;
     }
 
-    if (!timeout_guard.start()) return NULL;
+    timeout_guard.start();
     MaybeLocal<Value> js_value = without_gil([&] { return object->Get(context, js_name); });
-    if (!timeout_guard.stop()) return NULL;
+    timeout_guard.stop();
 
     PY_PROPAGATE_JS;
     Local<Value> local_js_value;
@@ -574,7 +541,7 @@ js_object_setattro(js_object *self, PyObject *name, PyObject *value)
     }
 
     DeadlineScope timeout_guard(context);
-    if (!timeout_guard.start()) return -1;
+    timeout_guard.start();
 
     Maybe<bool> maybe_worked = without_gil([&] {
         return value != NULL
@@ -582,7 +549,7 @@ js_object_setattro(js_object *self, PyObject *name, PyObject *value)
             : object->Delete(context, js_name);
     });
 
-    if (!timeout_guard.stop()) return -1;
+    timeout_guard.stop();
 
     PY_PROPAGATE_JS_RET(-1);
     bool worked;
@@ -618,9 +585,9 @@ js_object_dir(js_object *self)
     JS_TRY
 
     DeadlineScope timeout_guard(context);
-    if (!timeout_guard.start()) return NULL;
+    timeout_guard.start();
     MaybeLocal<Array> maybe_properties = without_gil([&] { return object->GetOwnPropertyNames(context, ALL_PROPERTIES); });
-    if (!timeout_guard.stop()) return NULL;
+    timeout_guard.stop();
     PY_PROPAGATE_JS;
     Local<Array> properties;
     if (!maybe_properties.ToLocal(&properties)) {
@@ -631,10 +598,7 @@ js_object_dir(js_object *self)
     PyObject *py_properties = PyList_New(properties->Length());
     PyErr_PROPAGATE(py_properties);
 
-    if (!timeout_guard.start()) {
-        Py_DECREF((PyObject*)py_properties);
-        return NULL;
-    }
+    timeout_guard.start();
     for (unsigned i = 0; i < properties->Length(); i++) {
         MaybeLocal<Value> js_property = properties->Get(context, i);
         Local<Value> local_js_property;
@@ -659,10 +623,7 @@ js_object_dir(js_object *self)
         }
     }
 
-    if (!timeout_guard.stop()) {
-        Py_DECREF((PyObject*)py_properties);
-        return NULL;
-    }
+    timeout_guard.stop();
 
     return py_properties;
 }
@@ -715,12 +676,10 @@ js_object_repr(js_object *self)
     IN_CONTEXT(object->GetCreationContextChecked());
     JS_TRY;
     DeadlineScope timeout_guard(context);
-    if (!timeout_guard.start())
-        return NULL;
+    timeout_guard.start();
     Local<String> v8_str;
     MaybeLocal<String> maybe_v8_str = without_gil([&] { return object->ToString(context); });
-    if (!timeout_guard.stop())
-        return NULL;
+    timeout_guard.stop();
     if (!maybe_v8_str.ToLocal(&v8_str)) {
         PY_PROPAGATE_JS;
         PyErr_SetString(PyExc_RuntimeError, "JavaScript ToString failed");

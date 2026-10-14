@@ -1,11 +1,12 @@
 // Pair iteration, as Chromium's PairSyncIterable gives it to an interface: the
 // binding installs the views, the host only answers "the pair at index N".
+#include "bridge_base.h"
 #include <v8.h>
 #include <Python.h>
 
 #include <string>
 
-#include "pyv8.h"
+#include "crossing.h"
 #include "callback_boundary.h"
 #include "convert.h"
 #include "pyclass.h"

@@ -1,6 +1,7 @@
 #ifndef PYV8_ISOLATE_SCOPE_H
 #define PYV8_ISOLATE_SCOPE_H
 
+#include "bridge_base.h"
 #include <memory>
 
 #include <v8.h>

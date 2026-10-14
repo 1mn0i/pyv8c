@@ -1,6 +1,7 @@
 #ifndef JS_PROMISE_H
 #define JS_PROMISE_H
 
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
 #include "jsobject.h"

@@ -1,8 +1,9 @@
+#include "bridge_base.h"
 #include "error_hooks.h"
 
-// pyv8.h first: it carries the MSVC shims V8's public headers expect (see the
+// bridge_base.h first: it carries the MSVC shims V8's public headers expect (see the
 // NO_RETURN handling in isolate_state.h), so it has to precede <v8.h>.
-#include "pyv8.h"
+#include "entry.h"
 
 #include "convert.h"
 #include "context.h"

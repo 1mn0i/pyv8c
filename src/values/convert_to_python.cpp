@@ -1,5 +1,8 @@
+#include "bridge_base.h"
+#include "jsnull.h"
+#include "jsundefined.h"
 #include <Python.h>
-#include "pyv8.h"
+#include "runtime.h"
 #include <v8.h>
 
 #include "convert.h"

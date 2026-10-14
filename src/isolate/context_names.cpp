@@ -1,5 +1,6 @@
+#include "bridge_base.h"
 #include <Python.h>
-#include "pyv8.h"
+#include "execution.h"
 #include <v8.h>
 
 #include "context.h"
@@ -259,8 +260,8 @@ context_define_global(context_c *self, PyObject *args, PyObject *kwargs)
     PyObject* value = NULL;
     unsigned int attributes = 0;
     static const char *keywords[] = {"name", "value", "attributes", NULL};
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "OO|I", (char **) keywords,
-                                    &name, &value, &attributes) < 0) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|I", (char **) keywords,
+                                    &name, &value, &attributes)) {
         return NULL;
     }
     if (PyUnicode_Check(name) == 0) {

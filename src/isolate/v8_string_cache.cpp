@@ -1,3 +1,4 @@
+#include "bridge_base.h"
 #include "v8_string_cache.h"
 
 #include <array>

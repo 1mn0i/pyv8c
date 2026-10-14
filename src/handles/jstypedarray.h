@@ -1,6 +1,7 @@
 #ifndef JS_TYPED_ARRAY_H
 #define JS_TYPED_ARRAY_H
 
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
 #include "jsobject.h"

@@ -1,6 +1,7 @@
 #ifndef PYV8_V8_STRING_CACHE_H
 #define PYV8_V8_STRING_CACHE_H
 
+#include "bridge_base.h"
 #include <v8.h>
 
 #include <array>

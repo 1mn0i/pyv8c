@@ -1,5 +1,8 @@
+#include "bridge_base.h"
 #include <Python.h>
-#include "pyv8.h"
+#include "entry.h"
+#include "runtime.h"
+#include "error_family.h"
 #include <v8.h>
 
 #include "convert.h"
@@ -374,6 +377,8 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     if ((py_ctx->traceable|| config.name_get) && !config.named_properties_object)
     {
         auto handler_flags = v8::PropertyHandlerFlags::kNone;
+        if (config.named_properties_non_masking)
+            handler_flags = v8::PropertyHandlerFlags::kNonMasking;
         if (config.undetectable) {
             handler_flags = static_cast<v8::PropertyHandlerFlags>(
                 int32_t(v8::PropertyHandlerFlags::kNonMasking) |

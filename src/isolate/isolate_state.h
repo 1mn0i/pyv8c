@@ -1,6 +1,7 @@
 #ifndef PYV8_ISOLATE_STATE_H
 #define PYV8_ISOLATE_STATE_H
 
+#include "bridge_base.h"
 #include <Python.h>
 
 #ifdef _WIN32
@@ -34,13 +35,18 @@ struct DeferredPythonRelease {
 
 class IsolateState
 {
-public:
+private:
+    friend class IsolateLockScope;
     std::recursive_mutex entry_mutex;
     unsigned entry_depth = 0;
-    unsigned entry_users = 0; // Includes waiting threads; protected by the GIL.
-    PyObject* python_owner = nullptr;
+    unsigned entry_users = 0; // GIL protected; includes threads waiting for entry.
+    PyObject* python_owner = nullptr; // borrowed from the Python Isolate owner
     std::vector<PyObject*> inspector_waiters;
     context_c* pending_context_closes = nullptr;
+public:
+    void bind_python_owner(PyObject* owner) { python_owner = owner; }
+    bool register_inspector_waiter(PyObject* callback);
+    bool defer_context_close(context_c* context);
     void drain_deferred();
     void defer_release(DeferredPythonRelease* record, PyObject* object);
     IsolateState();

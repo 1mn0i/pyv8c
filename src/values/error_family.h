@@ -1,8 +1,9 @@
 #ifndef PYV8_ERROR_FAMILY_H
 #define PYV8_ERROR_FAMILY_H
 
-// pyv8.h first: it carries the MSVC shims V8's public headers expect.
-#include "pyv8.h"
+// bridge_base.h first: it carries the MSVC shims V8's public headers expect.
+#include "bridge_base.h"
+
 
 // The error hierarchy a realm may observe.  The table in the implementation is the only
 // copy of the family: a host joins it by inheriting one of its types, and a class whose

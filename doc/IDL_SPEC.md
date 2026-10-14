@@ -135,3 +135,7 @@ template constants without a realm. This unsupported path now raises RuntimeErro
 instead of dereferencing an empty V8 context. Expose the object as a Context value
 or provide an explicit AttributeSpec getter. Reflected callables are retained
 before class metadata hooks can mutate the class or trigger garbage collection.
+
+`IdlSpec(named_properties_non_masking=True)` 将命名属性 handler 设为 V8 的 kNonMasking。
+默认为 False；仅为命名属性不得遮蔽既有属性/原型的接口启用。该字段只读，与其它字段一起
+参与 resolve/replace。已有 IdlSpec 调用无需修改，浏览器的普通 legacy collection 会启用此规则。

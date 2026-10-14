@@ -1,5 +1,9 @@
+#include "bridge_base.h"
 #include <Python.h>
-#include "pyv8.h"
+#include "entry.h"
+#include "execution.h"
+#include "runtime.h"
+#include "crossing.h"
 #include <v8.h>
 
 #include "convert.h"
@@ -433,9 +437,7 @@ js_typearray_new(PyTypeObject* type, PyObject* args, PyObject* kwargs)
     if (!parse_array_type(typed, &array_type))
         return NULL;
 
-    IsolateState* isolate_state = current_isolate_state();
-    if (isolate_state == nullptr)
-        isolate_state = runtime_manager.default_isolate();
+    IsolateState* isolate_state = select_isolate(IsolateSelection::ActiveOrDefault);
     IN_ISOLATE(isolate_state);
     Local<Context> current_context = isolate->GetCurrentContext();
     if (current_context.IsEmpty()) {

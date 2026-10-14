@@ -34,6 +34,7 @@ struct IdlSpec
     bool hidden = false;
     bool skip_inherit = false;
     bool named_properties_object = false;
+    bool named_properties_non_masking = false;
     bool code_like = false;
     PyObject *attributes = nullptr;
     PyObject *methods = nullptr;
@@ -43,28 +44,12 @@ struct IdlSpec
     PyObject *parent_class = nullptr;
     PyObject *to_string_tag = nullptr;
     PyObject *name = nullptr;
-    PyObject *name_get = nullptr;
-    PyObject *name_set = nullptr;
-    PyObject *name_query = nullptr;
-    PyObject *name_enum = nullptr;
-    PyObject *name_del = nullptr;
-    PyObject *index_get = nullptr;
-    PyObject *index_set = nullptr;
-    PyObject *index_query = nullptr;
-    PyObject *index_enum = nullptr;
-    PyObject *index_del = nullptr;
-    PyObject *iterate = nullptr;
-    PyObject *cross_origin_check = nullptr;
-    PyObject *cross_origin_name_get = nullptr;
-    PyObject *cross_origin_name_set = nullptr;
-    PyObject *cross_origin_name_query = nullptr;
-    PyObject *cross_origin_name_enum = nullptr;
-    PyObject *cross_origin_name_del = nullptr;
-    PyObject *cross_origin_index_get = nullptr;
-    PyObject *cross_origin_index_set = nullptr;
-    PyObject *cross_origin_index_query = nullptr;
-    PyObject *cross_origin_index_enum = nullptr;
-    PyObject *cross_origin_index_del = nullptr;
+    // Handler storage and constructor metadata share the same declaration table.
+#define PYV8_HANDLER(id, declaration, field) PyObject* field = nullptr;
+#define PYV8_PROPERTY_NAME_HANDLER(id, declaration)
+#include "handler_table.def"
+#undef PYV8_PROPERTY_NAME_HANDLER
+#undef PYV8_HANDLER
 };
 extern PyTypeObject *idl_spec_type;
 

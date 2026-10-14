@@ -1,5 +1,10 @@
+#include "bridge_base.h"
+#include <cmath>
 #include <Python.h>
-#include "pyv8.h"
+#include "entry.h"
+#include "execution.h"
+#include "runtime.h"
+#include "crossing.h"
 #include <v8.h>
 #include <algorithm>
 
@@ -26,6 +31,16 @@ static PyObject* context_clear_deadline(context_c* self, PyObject* ignored);
 static PyObject* context_terminate(context_c* self, PyObject* ignored);
 static int context_clear(context_c* self);
 static int context_traverse(context_c* self, visitproc visit, void* arg);
+
+static bool valid_timeout(double seconds) {
+    const double maximum = std::chrono::duration<double>(
+        std::chrono::steady_clock::time_point::max() - std::chrono::steady_clock::now()).count();
+    if (!std::isfinite(seconds) || seconds > maximum) {
+        PyErr_SetString(PyExc_ValueError, "timeout must be finite and fit the monotonic clock");
+        return false;
+    }
+    return true;
+}
 
 bool context_is_active(context_c* self) {
     return self != nullptr && self->state == ContextState::Active && self->isolate_state != nullptr &&
@@ -116,7 +131,7 @@ bool context_retain_dependency(Local<Context> target, PyObject* source) {
 // Drops *origin* from *owner*'s reference list, by swapping the last entry into
 // its place: the list is the strong references, and the slot map says where the
 // entry is, so neither lookup nor removal walks it.
-static void context_drop_dependency(context_c* owner, context_c* origin) {
+void ContextResources::drop_dependency(context_c* owner, context_c* origin) {
     if (owner->dependencies == nullptr || owner->resources == nullptr)
         return;
     auto slot = owner->resources->dependency_slots.find(origin);
@@ -141,14 +156,14 @@ static void context_drop_dependency(context_c* owner, context_c* origin) {
     PySequence_DelItem(owner->dependencies, last);
 }
 
-static void context_unlink_dependencies(context_c* self) {
+void ContextResources::unlink_dependencies(context_c* self) {
     if (self->resources != nullptr) {
         auto& dependents = self->resources->dependents;
         while (!dependents.empty()) {
             auto* target = *dependents.begin();
             dependents.erase(target);
             if (target->resources != nullptr) target->resources->dependencies.erase(self);
-            context_drop_dependency(target, self);
+            if (target->resources) target->resources->drop_dependency(target, self);
         }
         for (auto* origin : self->resources->dependencies) {
             if (origin->resources != nullptr) origin->resources->dependents.erase(self);
@@ -210,11 +225,7 @@ static PyObject* context_try_inspector(context_c* self, PyObject* args) {
     if (!state) return nullptr;
     IsolateLockScope scope(state, true);
     if (!scope.entered()) {
-        auto& waiters = state->inspector_waiters;
-        if (std::find(waiters.begin(), waiters.end(), wake) == waiters.end()) {
-            Py_INCREF((PyObject*)wake);
-            waiters.push_back(wake);
-        }
+        if (!state->register_inspector_waiter(wake)) return nullptr;
         Py_RETURN_FALSE;
     }
     PyObject* result = PyObject_CallNoArgs(callback);
@@ -234,7 +245,7 @@ static PyObject* context_get_detached(context_c* self, void*) {
 static PyObject* context_live_handles(context_c* self, void*) {
     auto* resources = self->resources;
     return PyLong_FromSsize_t(resources == nullptr ? 0
-                              : static_cast<Py_ssize_t>(resources->handles.size()));
+                              : static_cast<Py_ssize_t>(resources->handle_count()));
 }
 // How many crossings stopped because the heap was full; the limit itself is
 // recovered from: the next crossing resumes the isolate.
@@ -310,6 +321,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         return NULL;
 
     double timeout = 0;
+    PyObject* py_timeout = Py_None;
     PyObject* global = NULL;
     PyObject* trace = Py_False;
     PyObject* ctx_type = NULL;
@@ -320,12 +332,15 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* reuse_global = Py_None;
     static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", "reuse_global", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOdOOOOO", (char **) keywords,
-                                    &global, &trace, &ctx_type, &timeout, &py_isolate,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOOOOOOO", (char **) keywords,
+                                    &global, &trace, &ctx_type, &py_timeout, &py_isolate,
                                     &lazy_factory, &trace_callback, &traceable,
                                     &reuse_global)) {
         return NULL;
     }
+
+    if (py_timeout != Py_None) timeout = PyFloat_AsDouble(py_timeout);
+    if (PyErr_Occurred() || !valid_timeout(timeout)) return nullptr;
 
     if (lazy_factory != Py_None && !PyCallable_Check(lazy_factory)) {
         PyErr_SetString(PyExc_TypeError, "lazy_factory must be callable or None");
@@ -508,8 +523,11 @@ void
 context_finish_close(context_c *self)
 {
     self->state = ContextState::Closing;
+    if (self->isolate_state && self->isolate_state->is_active())
+        self->isolate_state->watchdog().release_owner(self);
     debugger_context_closed(self);
-    context_unlink_dependencies(self);
+    if (self->resources) self->resources->unlink_dependencies(self);
+    else Py_CLEAR(self->dependencies);
     if (self->isolate_state != nullptr) {
         self->isolate_state->invalidate_callbacks(self);
         if (!self->js_context.IsEmpty())
@@ -552,14 +570,10 @@ static int context_clear(context_c* self) {
     if (state == nullptr) { context_finish_close(self); return 0; }
     IN_ISOLATE(state);
     self->state = ContextState::Closing;
+    state->watchdog().release_owner(self);
     // Callback frames still borrow binding metadata until the outer entry exits.
-    if (state->entry_depth > 1) {
-        Py_INCREF((PyObject*)self);
-        self->next_pending_close = state->pending_context_closes;
-        state->pending_context_closes = self;
-    } else {
+    if (!state->defer_context_close(self))
         context_finish_close(self);
-    }
     return 0;
 }
 
@@ -610,10 +624,13 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     PyObject *program;
     PyObject *filename = Py_None;
     double timeout = self->timeout;
+    PyObject* py_timeout = Py_None;
     static const char *keywords[] = {"program", "filename", "timeout", NULL};
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O|Od", (char **) keywords, &program, &filename, &timeout) < 0) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OO", (char **) keywords, &program, &filename, &py_timeout)) {
         return NULL;
     }
+    if (py_timeout != Py_None) timeout = PyFloat_AsDouble(py_timeout);
+    if (PyErr_Occurred() || !valid_timeout(timeout)) return nullptr;
     if (!PyUnicode_Check(program) && !PyObject_IsInstance(program, (PyObject *)script_type))
     {
         PyErr_SetString(PyExc_TypeError, "program must be a string or Script");
@@ -650,11 +667,11 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     Local<Script> script = unbound_script->BindToCurrentContext();
 
     DeadlineScope timeout_guard(timeout, isolate);
-    if (!timeout_guard.start()) return NULL;
+    timeout_guard.start();
     debugger_prepare_script(self);
     MaybeLocal<Value> result = without_gil([&] { return script->Run(context); });
 
-    if (!timeout_guard.stop()) return NULL;
+    timeout_guard.stop();
     PY_PROPAGATE_JS;
     Local<Value> js_result;
     if (!result.ToLocal(&js_result)) {
@@ -679,10 +696,13 @@ context_set_trace(context_c* self, PyObject* value, void*)
         PyErr_SetString(PyExc_TypeError, "trace must be a bool");
         return -1;
     }
-    auto* state = context_require_isolate(self);
-    if (state == nullptr) return -1;
-    IN_ISOLATE(state);
-    if (context_require_isolate(self) == nullptr) return -1;
+    ExecutionScope execution(self, value);
+    if (!execution) {
+        // Keep this property's established closed-context error while sharing
+        // the guarded entry and its post-lock lifecycle validation.
+        if (!context_is_active(self)) context_require_isolate(self);
+        return -1;
+    }
     if (value == Py_True && !self->traceable) {
         PyErr_SetString(PyExc_RuntimeError, "create Context with trace=True or traceable=True before enabling trace");
         return -1;
@@ -703,6 +723,7 @@ context_set_timeout(context_c *self, PyObject *value, void *ignored)
     double timeout = PyFloat_AsDouble(value);
     if (PyErr_Occurred())
         return -1;
+    if (!valid_timeout(timeout)) return -1;
     self->timeout = timeout;
     return 0;
 }
@@ -848,13 +869,18 @@ context_import_handle(context_c* self, PyObject* handle)
 {
     // A handle from another realm of the same isolate: taking a reference on its
     // realm here is what keeps that realm alive until this one closes.
-    auto* state = context_require_isolate(self);
-    if (state == nullptr)
-        return nullptr;
+    ExecutionScope execution(self, handle);
+    if (!execution) return nullptr;
+    auto* state = self->isolate_state;
     PyObject* source = nullptr;
     if (PyObject_TypeCheck(handle, js_object_type))
     {
         js_object* value = (js_object*)handle;
+        if (value->object.IsEmpty() || value->isolate_state == nullptr ||
+            (value->registration.context && !context_is_active((context_c*)value->registration.context))) {
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value Context is closed");
+            return nullptr;
+        }
         if (!js_object_require_active(value))
             return nullptr;
         if (value->isolate_state != state)
@@ -869,6 +895,11 @@ context_import_handle(context_c* self, PyObject* handle)
     else if (PyObject_TypeCheck(handle, js_value_type))
     {
         js_value* value = (js_value*)handle;
+        if (value->value.IsEmpty() || value->isolate_state == nullptr ||
+            (value->registration.context && !context_is_active(value->registration.context))) {
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value Context is closed");
+            return nullptr;
+        }
         if (value->isolate_state != state)
         {
             PyErr_SetString(PyExc_RuntimeError,
@@ -888,8 +919,7 @@ context_import_handle(context_c* self, PyObject* handle)
         Py_INCREF(handle);
         return handle;
     }
-    IN_ISOLATE(state);
-    if (!context_retain_dependency(self->js_context.Get(isolate), source))
+    if (!context_retain_dependency(execution.context(), source))
         return nullptr;
     Py_INCREF(handle);
     return handle;
@@ -903,12 +933,12 @@ context_set_deadline(context_c* self, PyObject* args, PyObject* kwargs)
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char**)keywords, &seconds))
         return NULL;
     double value = PyFloat_AsDouble(seconds);
-    if (PyErr_Occurred())
+    if (PyErr_Occurred() || !valid_timeout(value))
         return NULL;
     auto* state = context_require_isolate(self);
     if (state == nullptr)
         return NULL;
-    state->watchdog().arm(value);
+    state->watchdog().arm(value, self);
     PYV8_RETURN_NONE;
 }
 
@@ -923,7 +953,7 @@ context_clear_deadline(context_c* self, PyObject* ignored)
     // next, long after the command that asked for it finished.
     IsolateState* state = self->isolate_state;
     if (state != nullptr && state->is_active())
-        state->watchdog().disarm();
+        state->watchdog().disarm(self);
     PYV8_RETURN_NONE;
 }
 

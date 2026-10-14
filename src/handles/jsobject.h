@@ -1,6 +1,7 @@
 #ifndef JS_OBJECT_H
 #define JS_OBJECT_H
 
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
 #include "handle_resource.h"

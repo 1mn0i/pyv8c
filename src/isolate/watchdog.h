@@ -1,13 +1,16 @@
 #ifndef PYV8_WATCHDOG_H
 #define PYV8_WATCHDOG_H
 
+#include "bridge_base.h"
 #include <v8.h>
 
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 // One resident thread per isolate that terminates the isolate when a deadline
 // passes.  It is also the only place that knows the isolate was terminated, so
@@ -19,11 +22,14 @@ public:
     ~Watchdog();
 
     // Nesting keeps the earliest deadline of the scopes that are open.
-    void arm(double seconds);
-    void disarm();
+    using Ticket = uint64_t;
+    void arm(double seconds, const void* owner);
+    void disarm(const void* owner);
+    void release_owner(const void* owner);
 
     // On the isolate's thread, around one crossing into V8.
-    void begin_crossing(double seconds);
+    Ticket begin_crossing(double seconds);
+    void end_crossing(Ticket ticket);
 
     void terminate_now();
     void cancel_termination();
@@ -38,7 +44,6 @@ public:
     void shutdown();
 
 private:
-    static constexpr int kMaxNesting = 8;
     // Where a script is stopped for the heap: this much of the budget is the limit,
     // and the check itself runs between safepoints on the isolate's thread.  Garbage
     // is collected earlier, while there is still room for the collection itself, and
@@ -57,17 +62,25 @@ private:
     void run();
     void refresh_deadline_locked();
     void start_thread_locked();
+    Ticket add_deadline_locked(double seconds, const void* owner);
+    bool has_crossing_locked() const;
+    void wait_transition_locked(std::unique_lock<std::mutex>& lock);
+    void issue_termination_locked(std::unique_lock<std::mutex>& lock, bool pending, Ticket cause = 0);
+    void resume_locked(std::unique_lock<std::mutex>& lock);
+
+    struct Deadline { Ticket ticket; Clock::time_point expires; const void* owner; };
+    enum class Termination { Ready, Issuing, IssuingNext, Terminating, AbortPending, Completed, Resuming };
 
     v8::Isolate* isolate_;
     mutable std::mutex mutex_;
     std::condition_variable wake_;
-    Clock::time_point deadlines_[kMaxNesting] = {};
+    std::vector<Deadline> deadlines_;
+    Ticket next_ticket_ = 1;
     Clock::time_point deadline_ = Clock::time_point::max();
     Clock::time_point next_collection_ = Clock::time_point{};
-    int depth_ = 0;
     bool armed_ = false;
-    bool terminated_ = false;
-    bool abort_next_ = false;
+    Termination termination_ = Termination::Ready;
+    Ticket abort_ticket_ = 0; // zero denotes explicit/heap termination, independent of an owner
     bool stopping_ = false;
     bool heap_check_pending_ = false;
     bool heap_pressure_ = false;
@@ -86,14 +99,14 @@ public:
     DeadlineScope(const DeadlineScope&) = delete;
     DeadlineScope& operator=(const DeadlineScope&) = delete;
 
-    bool start();
-    bool stop();
-    bool started() const { return started_; }
+    void start();
+    void stop();
+    bool started() const { return ticket_ != 0; }
 
 private:
     Watchdog* watchdog_ = nullptr;
     double seconds_ = 0;
-    bool started_ = false;
+    Watchdog::Ticket ticket_ = 0;
 };
 
 #endif

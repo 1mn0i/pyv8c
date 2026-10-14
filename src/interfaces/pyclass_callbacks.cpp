@@ -1,9 +1,10 @@
+#include "bridge_base.h"
 #include <v8.h>
 #include <Python.h>
 #include <climits>
 #include <sstream>
 
-#include "pyv8.h"
+#include "crossing.h"
 #include "convert.h"
 #include "pyclass.h"
 #include "idl_spec.h"

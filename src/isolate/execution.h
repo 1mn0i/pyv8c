@@ -1,6 +1,7 @@
 #ifndef PYV8_EXECUTION_H
 #define PYV8_EXECUTION_H
 
+#include "bridge_base.h"
 #include <v8.h>
 #include <Python.h>
 #include <optional>

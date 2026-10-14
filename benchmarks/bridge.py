@@ -75,7 +75,7 @@ def worker():
 
     from pyv8c import Browser
     browser = Browser(real_network=False, stub_logging="off")
-    owner = browser.new_context()
+    owner = browser.new_profile()
     page = owner.new_page()
     page.set_content('<div id="target"></div>')
     try:

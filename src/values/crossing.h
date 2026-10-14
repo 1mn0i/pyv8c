@@ -1,8 +1,10 @@
 #ifndef PYV8_CROSSING_H
 #define PYV8_CROSSING_H
 
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
+#include "js_exception.h"
 
 // One crossing of the language boundary, in either direction, and what the host's own
 // failure does there.  A JavaScript exception becomes a ``pyv8.JSException`` (see
@@ -13,7 +15,7 @@
 //
 // The propagation macros below are the boundary every bridge callback uses.  Their
 // names and semantics are a stable contract across the interfaces in src/interfaces;
-// code reaches them through pyv8.h.
+// callers include this boundary contract explicitly.
 
 void py_throw_js(v8::Local<v8::Value> js_exc, v8::Local<v8::Message> js_message);
 

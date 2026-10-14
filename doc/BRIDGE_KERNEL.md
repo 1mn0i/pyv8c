@@ -84,3 +84,79 @@ Cross-platform and sanitizer results must be reported separately from local
 Windows tests; a configured validation command is not a successful run.
 `tools/validate_linux.sh` enables ASan/UBSan for the bridge. Full V8 coverage
 also requires a V8 library built with matching sanitizer instrumentation.
+
+
+## Native review corrections (2026-10-14)
+
+`JSObject._buffer_view()` exports only fixed-size backing stores. Resizable
+ArrayBuffers, growable SharedArrayBuffers and their views raise TypeError;
+`bytes(value)` remains available for copying their current range. A backing-store
+reference alone cannot pin committed memory against ArrayBuffer.resize(). Fixed
+buffer exports remain read-only, honor buffer flags, and reject PyBUF_WRITABLE.
+
+Entering a different isolate while already holding an isolate never waits for a
+contended entry lock: it raises RuntimeError. Uncontended nesting, returning to
+an already-held isolate and ordinary top-level waiting remain supported. Hosts
+should dispatch contended cross-isolate work after returning from the callback.
+Legacy entry macros also stop before constructing V8 scopes when entry fails.
+
+Watchdog deadlines use a growing stack: every nested scope has its own deadline
+entry and removes exactly that entry on unwind. Nesting past eight levels no
+longer drops an outer deadline. Timeout and exception unwind tests run in child
+processes and verify that subsequent execution still succeeds.
+
+`current_context()` and `incumbent_context()` without an explicit isolate query
+this thread's active isolate first. Outside execution they retain the default
+isolate fallback. An explicit Isolate argument still queries that isolate.
+This prevents Worker callbacks from acquiring a parent's unrelated isolate merely
+to discover their own context during serialization or transferable processing.
+
+
+## Build and ownership contracts (2026-10-14)
+
+Normal builds track project .h/.def and source content, not just .cpp timestamps.
+`build/pyv8-extension.json` associates inputs and compiler identity with the built
+binary SHA256. Header-only edits invalidate the artifact without requiring force.
+
+Context/handle work that waits uses ExecutionScope. import_handle revalidates both
+the target and source handle after acquiring the isolate. Closed handles never
+recreate dependency records. Entry counters and pending queues are private;
+Inspector and close registration own their references and rollback locally.
+
+
+## Maintainability contracts (2026-10-14)
+
+The build resolves and initializes the actual compiler before comparing inputs.
+Tool paths, executable digests, SDK include/library paths and compiler options
+participate in the fingerprint; an automatically selected toolchain change must
+rebuild the extension. Build preparation code is also an input. Layout checking
+reads literal Extension include roots through AST and resolves quoted includes
+against the including file and those roots, rather than matching basenames.
+
+Handler storage and IdlSpec constructor metadata expand handler_table.def.
+Runtime contract tests require each handler to have a declared stub keyword,
+a None default, immutable replacement, and consistent callback validation.
+BufferRange owns its BackingStore and describes the current byte offset/length;
+copying and fixed-store exporting share that calculation. Resizable storage
+continues to refuse zero-copy exports. Ranges are not cached across JS execution.
+
+A DeadlineScope owns an opaque ticket; Context manual deadlines have a separate
+owner. clear_deadline removes only the newest manual ticket of that Context,
+and is a no-op when none exists. Logical close releases all manual tickets of
+that Context, even if binding metadata cannot be freed until the outer entry
+returns. Cleanup can withdraw that deadline's undelivered idle abort, but cannot
+withdraw explicit terminate() or heap termination. Idle expiry is delivered on
+the next crossing once unless its owner clears/closes it first.
+
+Termination transitions distinguish requesting, V8 issuance, pending delivery,
+active unwind, completion and resumption. A later entry cannot cancel an abort
+before TerminateExecution has actually returned; nested unwind cannot claim the
+outer crossing has finished. DeadlineScope start/stop are void and idempotent;
+allocation failures propagate through the existing native exception boundary.
+These ownership changes do not claim recovery from every V8 fatal OOM scenario.
+
+Context(timeout=None) selects zero; exec_js(timeout=None) inherits the Context
+setting. Non-finite or unrepresentable deadlines raise ValueError. Invalid
+argument parsing returns TypeError before touching V8 values. The actual keyword
+is exec_js(program=...), now correctly named in the stub; callers should replace
+an unsupported script= keyword with program= or use the positional argument.

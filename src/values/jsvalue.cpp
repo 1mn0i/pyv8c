@@ -1,6 +1,10 @@
 
+#include "bridge_base.h"
 #include <Python.h>
-#include "pyv8.h"
+#include "entry.h"
+#include "execution.h"
+#include "runtime.h"
+#include "crossing.h"
 #include <v8.h>
 #include <sstream>
 #include <iostream>

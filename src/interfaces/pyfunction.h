@@ -1,6 +1,7 @@
 #ifndef TEMPLATE_H
 #define TEMPLATE_H
 
+#include "bridge_base.h"
 #include <Python.h>
 #include <v8.h>
 
