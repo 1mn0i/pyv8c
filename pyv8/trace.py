@@ -3,8 +3,10 @@
 from . import JSFunction, JSObject, Null, Undefined
 
 
-#: An object's converted contents are a preview: one event stays one line, and a whole
-#: object graph is neither readable nor bounded (a page global held 439 KB of it).
+#: A converted value is a preview: one event stays one line, and nothing a page holds is
+#: bounded on its own.  An object graph is the older of the two hazards (a page global
+#: held 439 KB of it) and a string is the other: an ``atob`` argument, an XHR body and
+#: the script text a Trusted Types policy builds are each megabytes on one line.
 _MAX_DISPLAY = 160
 
 
@@ -19,35 +21,52 @@ _EXCLUDED_GETTERS = frozenset((
 ))
 
 
-def _display(value):
+def _clip(text):
+    """Bound one preview; every value a trace prints goes through here."""
+    if len(text) <= _MAX_DISPLAY:
+        return text
+    return text[:_MAX_DISPLAY] + "..."
+
+
+def _display(value, _depth=0):
     if value is Undefined:
         return "undefined"
     if value is Null:
         return "null"
-    if value is None or type(value) in (bool, int, float, str):
-        return repr(value)
+    if type(value) is str:
+        # Clip the input as well as the escaped representation. A short log must
+        # not allocate a representation of a multi-megabyte response body.
+        return _clip(repr(value[:_MAX_DISPLAY]) + ('...' if len(value) > _MAX_DISPLAY else ''))
+    if value is None or type(value) in (bool, int, float):
+        return _clip(repr(value))
     if type(value) is tuple:
-        return "(" + ", ".join(_display(item) for item in value) + ")"
+        if _depth >= 4:
+            return '(...)'
+        parts = []
+        length = 2
+        for index, item in enumerate(value):
+            if index >= 16 or length >= _MAX_DISPLAY:
+                parts.append('...')
+                break
+            text = _display(item, _depth + 1)
+            parts.append(text)
+            length += len(text) + 2
+        return _clip('(' + ', '.join(parts) + ')')
     if isinstance(value, JSFunction):
         # A function value shows its source, such as
         # "function eval() { [native code] }".  The wrapper asks the binding for
         # the raw source, so an overridden ``toString`` is not called, and a
         # multi-line source is trimmed to keep one event on one log line.
         try:
-            source = repr(value)
+            source = value._trace_source()
         except Exception:  # noqa: BLE001 - formatting must never break a trace
             source = ""
         if source:
-            return source.splitlines()[0]
+            return _clip(source.splitlines()[0])
     if isinstance(value, JSObject):
-        try:
-            text = repr(value.to_python())
-        except Exception:  # noqa: BLE001 - formatting must never break a trace
-            return f"<{type(value).__name__}>"
-        text = " ".join(text.split())
-        if len(text) <= _MAX_DISPLAY:
-            return text
-        return text[:_MAX_DISPLAY] + "..."
+        # The raw event still carries the handle. Formatting must not enumerate
+        # a Proxy, run accessors, or materialize the graph behind that handle.
+        return f"<{type(value).__name__}>..."
     return f"<{type(value).__name__}>"
 
 
