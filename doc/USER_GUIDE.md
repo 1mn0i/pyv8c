@@ -1273,7 +1273,7 @@ devtools://devtools/bundled/inspector.html?experiments=true&ws=127.0.0.1:9005/de
 
 | API | 说明 |
 | --- | --- |
-| `pyv8.Context(...)` | 创建 JavaScript Context |
+| `pyv8.Context(...)` / `pyv8.V8Context(...)` | 创建 JavaScript Context（`V8Context` 是同一类型的别名，与宿主的 profile 区分开） |
 | `pyv8.Isolate()` | 创建独立 V8 Isolate |
 | `pyv8.Script(context, source, name=None)` | 编译可复用脚本 |
 | `pyv8.new(constructor, *args)` | 调用 JavaScript 构造函数 |

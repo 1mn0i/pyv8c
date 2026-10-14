@@ -30,6 +30,9 @@ _NATIVE_EXPORTS = tuple(
 )
 globals().update({name: getattr(_pyv8, name) for name in _NATIVE_EXPORTS})
 
+#: The type the extension calls ``Context``, named for what it is: V8's context.
+V8Context = Context
+
 __version__ = "2.1.2"
 
 # DevTools and the trace helpers are re-exported, not imported: the service brings a
@@ -119,6 +122,7 @@ def transfer(value, target_context):
 __all__ = [
     *_NATIVE_EXPORTS,
     "ArrayType",
+    "V8Context",
     "DevToolsOptions",
     "DevToolsHandle",
     "start_devtools",

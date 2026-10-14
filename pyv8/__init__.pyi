@@ -16,6 +16,9 @@ from .trace import format_trace as format_trace, log_trace as log_trace
 
 from typing import Any
 
+#: The extension's ``Context``, named for what it is: V8's context.
+V8Context = Context
+
 __version__: str
 
 def transfer(value: Any, target_context: Context) -> Any:
