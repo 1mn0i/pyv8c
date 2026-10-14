@@ -21,7 +21,7 @@ def test_a_page_that_listens_receives_one_empty_reading_per_motion_type():
     orientation type saying so."""
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url="https://repro.test/index.html")
         page.run_until_idle()
         assert json.loads(page.evaluate("JSON.stringify(__events)")) == [
@@ -37,7 +37,7 @@ def test_a_listener_added_after_load_is_handed_one_reading():
     """A listener that arrives late gets one straight away, as Chrome's does."""
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body>body</body>", url="https://repro.test/index.html")
         page.run_until_idle()
         page.evaluate("window.__late = [];"
@@ -54,7 +54,7 @@ def test_an_insecure_origin_has_the_interfaces_taken_away():
     return with a secure document."""
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url="https://repro.test/index.html")
         page.run_until_idle()
         assert page.evaluate("typeof DeviceMotionEvent") == "function"

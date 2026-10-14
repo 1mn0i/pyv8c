@@ -9,7 +9,7 @@ from pyv8c import Browser
 @pytest.fixture
 def page():
     browser = Browser(cache=False, stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(
         "<html><body><label for='text'>Name</label>"
         "<input id='text' type='text' value='seed' maxlength='10' required>"

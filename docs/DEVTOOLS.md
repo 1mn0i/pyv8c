@@ -8,9 +8,9 @@ from pyv8c import Browser, DevToolsOptions
 
 browser = Browser(stub_logging="off")
 try:
-    context = browser.new_context()
-    page = context.new_page()
-    handle = context.start_devtools(page, options=DevToolsOptions(port=9005))
+    profile = browser.new_profile()
+    page = profile.new_page()
+    handle = profile.start_devtools(page, options=DevToolsOptions(port=9005))
     print(handle.url)
     input("打开调试地址后按回车继续：")
     if not handle.wait_for_ready(30):
@@ -27,9 +27,9 @@ finally:
 要关闭首句暂停，使用 DevToolsOptions(pause_on_start=False)。要等待客户端再启动业务，
 使用 wait_for_debugger=True；startup_timeout 超时抛出明确 TimeoutError，不执行该脚本、不关闭页面。
 
-Handle 的 url、host、port、close、上下文管理、wait_for_connection(timeout)、wait_for_ready(timeout)
-与独立 Context 一致。两个 wait 返回 bool；socket 连接不代表 Debugger 已就绪。
-Browser 已有执行器，直接调用 page.evaluate，不调用 handle.run；后者只用于独立 pyv8.Context。
+Handle 的 url、host、port、close、profile 管理、wait_for_connection(timeout)、wait_for_ready(timeout)
+与独立 Profile 一致。两个 wait 返回 bool；socket 连接不代表 Debugger 已就绪。
+Browser 已有执行器，直接调用 page.evaluate，不调用 handle.run；后者只用于独立 pyv8.V8Context。
 
 ## 子目标与关闭
 
@@ -51,7 +51,7 @@ Page 和 iframe 共享 Isolate，但拥有不同 context group；Worker 使用�
 - 原 host、port、startup_timeout 关键字放入 DevToolsOptions。
 - 原 start_paused=True 改为 DevToolsOptions(wait_for_debugger=True)。
 - 原 DevToolsServer、DevToolsTarget、DevtoolsDebugger 不再公开。
-- 原独立 Context 的 callback=fn 改为 handle.run(fn)，地址由调用者 print(handle.url)。
+- 原独立 Profile 的 callback=fn 改为 handle.run(fn)，地址由调用者 print(handle.url)。
 - 不再隐式打印或接管进程信号，也不保留旧 WebSocket/队列实现。
 
 不实现完整 CDP Page、Network、DOM 或多客户端协作。

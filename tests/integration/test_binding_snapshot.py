@@ -1,7 +1,7 @@
 """Binding-snapshot semantics under multi-realm concurrency.
 
 Materialization is answer based: a realm stages an overlay and hands it to the native
-Context as the lazy factory's answer.  The Python class for a given interface name must
+V8Context as the lazy factory's answer.  The Python class for a given interface name must
 be one shared object across every realm (so the native registry stays consistent), while
 each realm's config view and materialized set stay isolated from its neighbours.
 """
@@ -26,7 +26,7 @@ def browser():
 
 
 def _fresh_page(browser):
-    return browser.new_context().new_page()
+    return browser.new_profile().new_page()
 
 
 def test_concurrent_first_access_yields_one_class_object(browser):

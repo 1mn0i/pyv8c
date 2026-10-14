@@ -122,7 +122,7 @@ def test_a_host_request_goes_through_the_proxy(proxy, origin):
     url, hits = origin
     browser = Browser(stub_logging="off", proxy=proxy.url)
     try:
-        response = browser.new_context().new_page().net.get(f"{url}/data")
+        response = browser.new_profile().new_page().net.get(f"{url}/data")
         assert response.status == 200
         assert json.loads(response.body) == {"answer": 42}
     finally:
@@ -135,7 +135,7 @@ def test_a_navigation_goes_through_the_proxy(proxy, origin):
     url, hits = origin
     browser = Browser(stub_logging="off", proxy=proxy.url)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto(f"{url}/page", wait_until="load")
         assert page.evaluate("document.querySelector('#pixel') !== null")
     finally:
@@ -148,7 +148,7 @@ def test_a_subresource_goes_through_the_proxy(proxy, origin):
     url, _hits = origin
     browser = Browser(stub_logging="off", proxy=proxy.url)
     try:
-        browser.new_context().new_page().goto(f"{url}/page", wait_until="load")
+        browser.new_profile().new_page().goto(f"{url}/page", wait_until="load")
     finally:
         browser.close()
     assert carried(proxy, "/pixel.png"), proxy.carried()
@@ -158,7 +158,7 @@ def test_a_page_fetch_goes_through_the_proxy(proxy, origin):
     url, _hits = origin
     browser = Browser(stub_logging="off", proxy=proxy.url)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url=f"{url}/page")
         page.evaluate("globalThis.answer = null")
         page.evaluate("fetch('/data').then(r => r.json()).then(d => answer = d.answer)")
@@ -173,7 +173,7 @@ def test_xhr_goes_through_the_proxy(proxy, origin):
     url, _hits = origin
     browser = Browser(stub_logging="off", proxy=proxy.url)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url=f"{url}/page")
         page.evaluate("""
             globalThis.answer = null;
@@ -192,7 +192,7 @@ def test_xhr_goes_through_the_proxy(proxy, origin):
 def test_a_websocket_handshake_is_tunnelled_through_the_proxy(proxy, echo):
     browser = Browser(stub_logging="off", proxy=proxy.url)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate(f"""
             globalThis.said = null;
@@ -212,7 +212,7 @@ def test_credentials_in_the_url_are_sent_to_the_proxy(proxy, origin):
     url, _hits = origin
     browser = Browser(stub_logging="off", proxy=proxy.authenticated_url)
     try:
-        browser.new_context().new_page().net.get(f"{url}/data")
+        browser.new_profile().new_page().net.get(f"{url}/data")
     finally:
         browser.close()
     assert proxy.authorizations, proxy.carried()
@@ -224,7 +224,7 @@ def test_credentials_in_the_url_are_sent_to_the_proxy(proxy, origin):
 def test_credentials_reach_the_proxy_on_a_tunnel(proxy, echo):
     browser = Browser(stub_logging="off", proxy=proxy.authenticated_url)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate(f"""
             globalThis.state = 'connecting';
@@ -246,7 +246,7 @@ def test_https_traffic_is_tunnelled_rather_than_dropped(proxy, origin):
     try:
         browser = Browser(stub_logging="off", proxy=refuser.url)
         try:
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             # The tunnel is refused, so the request cannot succeed -- which is
             # the point: it went to the proxy rather than straight out.
             from pyv8c.foundation.host_errors import LoadFailure
@@ -268,8 +268,8 @@ def test_contexts_of_one_browser_leave_by_different_exits(proxy, origin):
     url, hits = origin
     browser = Browser(stub_logging="off")
     try:
-        through = browser.new_context(proxy=proxy.url)
-        direct = browser.new_context()
+        through = browser.new_profile(proxy=proxy.url)
+        direct = browser.new_profile()
         through.new_page().net.get(f"{url}/data")
         direct.new_page().net.get(f"{url}/data")
         assert through.proxy == proxy.url
@@ -284,7 +284,7 @@ def test_a_context_can_go_direct_while_the_browser_has_a_proxy(proxy, origin):
     url, hits = origin
     browser = Browser(stub_logging="off", proxy=proxy.url)
     try:
-        direct = browser.new_context(proxy="")
+        direct = browser.new_profile(proxy="")
         assert direct.proxy == ""
         direct.new_page().net.get(f"{url}/data")
     finally:
@@ -297,7 +297,7 @@ def test_a_context_can_be_given_a_proxy_the_browser_does_not_have(proxy, origin)
     url, hits = origin
     browser = Browser(stub_logging="off", proxy="")
     try:
-        through = browser.new_context(proxy=proxy.url)
+        through = browser.new_profile(proxy=proxy.url)
         through.new_page().net.get(f"{url}/data")
     finally:
         browser.close()
@@ -316,7 +316,7 @@ def test_an_unconfigured_browser_ignores_the_environment_proxy(proxy, origin, mo
     monkeypatch.setenv("http_proxy", proxy.url)
     browser = Browser(stub_logging="off")
     try:
-        response = browser.new_context().new_page().net.get(f"{url}/data")
+        response = browser.new_profile().new_page().net.get(f"{url}/data")
         assert response.status == 200
     finally:
         browser.close()
@@ -330,7 +330,7 @@ def test_an_unconfigured_browser_opens_a_websocket_directly(proxy, echo, monkeyp
     monkeypatch.setenv("http_proxy", proxy.url)
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate(f"""
             globalThis.said = null;
@@ -353,7 +353,7 @@ def test_a_resource_loader_answers_before_the_proxy_is_reached(proxy, origin):
 
     browser = Browser(stub_logging="off", proxy=proxy.url, resource_loader=loader)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto(f"{url}/page", wait_until="load")
         assert page.evaluate("document.body.textContent") == "loaded"
     finally:
@@ -370,7 +370,7 @@ def test_an_interceptor_that_answers_never_reaches_the_proxy(proxy, origin):
 
     browser = Browser(stub_logging="off", proxy=proxy.url, resource_interceptor=interceptor)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto(f"{url}/page", wait_until="load")
         assert page.evaluate("document.body.textContent") == "intercepted"
     finally:
@@ -398,7 +398,7 @@ def test_a_context_override_is_validated_too():
     browser = Browser(stub_logging="off")
     try:
         with pytest.raises(ValueError, match="SOCKS"):
-            browser.new_context(proxy="socks4://127.0.0.1:1080")
+            browser.new_profile(proxy="socks4://127.0.0.1:1080")
     finally:
         browser.close()
 
@@ -407,7 +407,7 @@ def test_a_proxy_without_an_engine_is_refused():
     browser = Browser(stub_logging="off", real_network=False, proxy="http://127.0.0.1:3128")
     try:
         with pytest.raises(TypeError, match="no network engine"):
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
 
@@ -426,7 +426,7 @@ def test_an_engine_that_cannot_be_proxied_is_refused():
                       proxy="http://127.0.0.1:3128")
     try:
         with pytest.raises(TypeError, match="cannot be sent through a proxy"):
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
 
@@ -436,7 +436,7 @@ def test_cronet_carries_its_traffic_through_the_proxy(proxy, origin):
     url, _hits = origin
     browser = Browser(stub_logging="off", http_engine="cronet", proxy=proxy.url)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto(f"{url}/page", wait_until="load")
         assert page.evaluate("document.querySelector('#pixel') !== null")
     finally:
@@ -453,6 +453,6 @@ def test_a_proxy_and_the_engines_own_proxy_option_are_refused_together():
     )
     try:
         with pytest.raises(TypeError, match="keep one"):
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()

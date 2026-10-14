@@ -18,12 +18,12 @@ def test_closed_context_is_removed_from_browser():
     refs = []
     try:
         for _ in range(20):
-            context = browser.new_context()
+            context = browser.new_profile()
             refs.append(weakref.ref(context))
             context.close()
             del context
         collect()
-        assert browser.contexts == []
+        assert browser.profiles == []
         assert not any(ref() is not None for ref in refs)
     finally:
         browser.close()
@@ -31,7 +31,7 @@ def test_closed_context_is_removed_from_browser():
 
 def test_closed_pages_are_collectable_with_chrome_installed():
     browser = Browser(stub_logging='off')
-    context = browser.new_context()
+    context = browser.new_profile()
     refs = []
     try:
         for _ in range(20):
@@ -49,15 +49,15 @@ def test_closed_pages_are_collectable_with_chrome_installed():
 
 def test_browser_close_closes_every_context():
     browser = Browser(stub_logging='off')
-    contexts = [browser.new_context() for _ in range(4)]
+    contexts = [browser.new_profile() for _ in range(4)]
     browser.close()
     assert all(context.closed for context in contexts)
-    assert browser.contexts == []
+    assert browser.profiles == []
 
 
 def test_page_cleanup_failure_can_be_retried(monkeypatch):
     browser = Browser(stub_logging='off')
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page()
     original = page.net.close
     calls = []
@@ -85,7 +85,7 @@ def test_page_cleanup_failure_can_be_retried(monkeypatch):
 
 def test_browser_cleanup_attempts_other_contexts_and_can_retry(monkeypatch):
     browser = Browser(stub_logging='off')
-    first, second = browser.new_context(), browser.new_context()
+    first, second = browser.new_profile(), browser.new_profile()
     original = first.close
     calls = []
 
@@ -99,10 +99,10 @@ def test_browser_cleanup_attempts_other_contexts_and_can_retry(monkeypatch):
     with pytest.raises(RuntimeError, match='temporary close failure'):
         browser.close()
     assert second.closed
-    assert browser.contexts == [first]
+    assert browser.profiles == [first]
     browser.close()
     assert first.closed
-    assert browser.contexts == []
+    assert browser.profiles == []
 
 
 def test_worker_isolate_failure_preserves_retry_state():
@@ -119,11 +119,11 @@ def test_worker_isolate_failure_preserves_retry_state():
 
     session = SimpleNamespace(detach=lambda: calls.append('detach'))
     realm = WorkerRealm(None, SimpleNamespace(session=session))
-    realm.context = SimpleNamespace(close=lambda: calls.append('context'))
+    realm.v8_context = SimpleNamespace(close=lambda: calls.append('context'))
     realm.isolate = Isolate()
     with pytest.raises(RuntimeError, match='persistent handle'):
         realm.close()
-    assert realm.context is None
+    assert realm.v8_context is None
     assert realm.isolate is not None
     assert calls[:3] == ['context', 'detach', 'isolate']
     realm.close()

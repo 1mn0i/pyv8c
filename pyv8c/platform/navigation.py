@@ -20,11 +20,11 @@ NAVIGATION_GRACE = 5.0
 
 def hide_insecure_origin_interfaces(page):
     """Take the motion interfaces out of a realm whose document is not secure."""
-    context = getattr(page, "context", None)
-    if context is None:
+    v8_context = getattr(page, "v8_context", None)
+    if v8_context is None:
         return
     for name in INSECURE_ORIGIN_INTERFACES:
-        context.hide_global(name)
+        v8_context.hide_global(name)
 
 
 class NavigationController:
@@ -83,7 +83,7 @@ class NavigationController:
             page.tasks.post(lambda: hide_insecure_origin_interfaces(page))
         self.page.window.location.href = str(url)
         self.page.window.sync_history_url(str(url))
-        devtools = self.page.context_owner._devtools
+        devtools = self.page.profile._devtools
         if devtools is not None:
             devtools.target_info_changed(self.page)
         self.page.document = HTMLDocument(services=self.page.services, url=str(url),
@@ -109,7 +109,7 @@ class NavigationController:
         return self.page
 
     def set_content(self, html, url="about:blank"):
-        if self.page.closed or self.page.context_owner.closed:
+        if self.page.closed or self.page.profile.closed:
             raise HostStateError("Page is closed")
         if not self.navigation_allowed():
             return self.page
@@ -139,7 +139,7 @@ class NavigationController:
         Only a browser-initiated navigation sends no ``Referer``; a user gesture
         is the other source of ``Sec-Fetch-User``.
         """
-        if self.page.closed or self.page.context_owner.closed:
+        if self.page.closed or self.page.profile.closed:
             raise HostStateError("Page is closed")
         states = {
             None: None,
@@ -191,7 +191,7 @@ class NavigationController:
     def request_navigation(self, url, *, method="GET", body=None,
                            content_type=None, user_activated=False):
         """Queue a navigation a script, a link or a form submission asked for."""
-        if self.page.closed or self.page.context_owner.closed:
+        if self.page.closed or self.page.profile.closed:
             raise HostStateError("Page is closed")
         target = absolute_url(url, page_base_url(self.page))
         self.pending += 1
@@ -230,7 +230,7 @@ class NavigationController:
 
     def open_document(self):
         """The document open steps: an empty document, reading ``loading`` as Chrome's does."""
-        if self.page.closed or self.page.context_owner.closed:
+        if self.page.closed or self.page.profile.closed:
             return False
         document = self.page.document
         self.generation += 1
@@ -269,7 +269,7 @@ class NavigationController:
         A page that opened a document and wrote part of it reads ``complete`` at once,
         and the markup it never wrote is not parsed.
         """
-        if self.page.closed or self.page.context_owner.closed:
+        if self.page.closed or self.page.profile.closed:
             return False
         self.parser = None
         if not self.parser_done:

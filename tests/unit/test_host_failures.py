@@ -27,14 +27,14 @@ WEDGED = "realm executor did not complete '_cleanup_owner' within 5s (already ru
 
 
 class Window:
-    """The smallest global a native Context needs."""
+    """The smallest global a native V8Context needs."""
 
     __v8_idl_spec__ = IdlSpec(global_this=True)
 
 
 @pytest.fixture
 def context():
-    instance = pyv8.Context(Window())
+    instance = pyv8.V8Context(Window())
     try:
         yield instance
     finally:
@@ -138,7 +138,7 @@ def test_a_host_failure_in_a_task_is_not_a_page_error():
 
     browser = Browser(stub_logging="off", real_network=False)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<html><body></body></html>")
         page.evaluate("window.__errors = [];"
                       " window.addEventListener('error',"

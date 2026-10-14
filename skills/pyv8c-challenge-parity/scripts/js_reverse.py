@@ -177,7 +177,7 @@ def cmd_run(arguments):
     browser = Browser(stub_logging="off", threaded_loaders=True, real_network=False,
                       resource_loader=load)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<!doctype html><body>", url="https://reverse.test/")
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:

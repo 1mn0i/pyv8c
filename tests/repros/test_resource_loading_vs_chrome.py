@@ -74,7 +74,7 @@ def test_source_and_mode_match_chrome(reference, origins, transport, source, mod
     browser = Browser(real_network=transport == "http", resource_loader=loader if transport == "loader" else None,
                       stub_logging="off")
     try:
-        page = browser.new_context().new_page(same + "/page")
+        page = browser.new_profile().new_page(same + "/page")
         page.evaluate(script)
         for _ in range(10):
             page.run_until_idle(1)
@@ -95,7 +95,7 @@ def test_blob_fetch_checks_creator_origin(reference, origins, mode, cross_origin
     script = """window.__answer=null; fetch(%s, {mode:%s}).then(r => r.text().then(text => {
         window.__answer={text:text};
     })).catch(e => {window.__answer={error:e.name};}); 'started'"""
-    chrome_context = reference.browser.new_context()
+    chrome_context = reference.browser.new_profile()
     creator = chrome_context.new_page()
     reader = chrome_context.new_page()
     try:
@@ -109,7 +109,7 @@ def test_blob_fetch_checks_creator_origin(reference, origins, mode, cross_origin
         chrome_context.close()
     browser = Browser(real_network=False, stub_logging="off")
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         creator, reader = context.new_page(), context.new_page()
         creator.set_content("<body></body>", url=creator_origin + "/page")
         reader.set_content("<body></body>", url=reader_origin + "/page")

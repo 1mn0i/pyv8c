@@ -5,7 +5,7 @@
 Python 3.12+ is required. `Page.evaluate()` returns materialized data;
 `Page.evaluate_handle()` returns primitives or live JS handles. Call
 `handle.to_python()` explicitly for arrays and plain objects. Handles are
-invalid after their Context closes. Internal bindings use the handle protocol
+invalid after their V8Context closes. Internal bindings use the handle protocol
 without implicit object enumeration.
 
 `pyv8c` 是一个运行在相邻 `_pyv8` 原生扩展之上的、可控且可测试的 Chromium-like JavaScript 页面环境。
@@ -31,7 +31,7 @@ from pyv8c import Browser
 
 browser = Browser(real_network=False, stub_logging="off")
 try:
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<main id='app'>ready</main>", url="https://example.test/")
     assert page.evaluate("document.querySelector('#app').textContent") == "ready"
     page.evaluate("globalThis.answer = 0; setTimeout(() => answer = 42, 0)")
@@ -43,8 +43,8 @@ finally:
 
 默认 `real_network=True`，导航或资源请求会使用真实网络。离线场景使用 `Browser(real_network=False)`，配合 `resource_loader` 或 `set_content()`。
 
-请显式关闭 Page、BrowserContext 或 Browser。关闭的 Page 会从所属上下文移除，
-关闭的 BrowserContext 会从 Browser 移除；页面返回的原生 JS 对象和函数随页面关闭
+请显式关闭 Page、Profile 或 Browser。关闭的 Page 会从所属 profile 移除，
+关闭的 Profile 会从 Browser 移除；页面返回的原生 JS 对象和函数随页面关闭
 失效，后续访问会报错。关闭某个页面不影响其他页面的错误钩子。
 独立资源清理失败时会报告异常，保留失败资源以便再次调用 `close()` 重试。
 
@@ -52,10 +52,10 @@ finally:
 
 ```text
 Browser
-└── BrowserContext
+└── Profile
     └── Page
-        ├── PageServices       窄能力接口：Realm、任务、资源、文档、Worker、上下文
-        ├── PageRealm           一个 V8 Context、BindingSession、owner executor
+        ├── PageServices       窄能力接口：Realm、任务、资源、文档、Worker、V8 上下文
+        ├── PageRealm           一个 V8Context、BindingSession、owner executor
         ├── Window/Document     页面对象与 DOM 状态
         ├── Navigation/Lifecycle/Scripting/ResourceController
         ├── iframe Page         独立 Realm，通过 WindowProxy 访问
@@ -105,4 +105,4 @@ python -m pytest -q
 
 ## 相邻仓库
 
-`_pyv8` 提供 Python/V8 原生桥接、Context/Isolate、Inspector 和 trace 原语。修改原生行为时，需要在 `_pyv8` 仓库单独运行其测试；本仓库只负责浏览器宿主和 Web API 实现。
+`_pyv8` 提供 Python/V8 原生桥接、V8Context/Isolate、Inspector 和 trace 原语。修改原生行为时，需要在 `_pyv8` 仓库单独运行其测试；本仓库只负责浏览器宿主和 Web API 实现。

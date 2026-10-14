@@ -131,7 +131,7 @@ class RealmExecutor:
         self._rejections = tracker
 
     def attach_deadline_source(self, source):
-        """Attach the realm's deadline holder (its native Context).
+        """Attach the realm's deadline holder (its native V8Context).
 
         Arming it for one command is what lets a command already running be
         preempted, so a wedged realm raises :class:`pyv8.JavaScriptTerminated`

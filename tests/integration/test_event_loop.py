@@ -66,7 +66,7 @@ def _loader(url, request):
 @pytest.fixture
 def page():
     browser = Browser(resource_loader=_loader, stub_logging="off")
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page(ORIGIN + "/")
     try:
         yield page
@@ -317,7 +317,7 @@ def test_timer_fires_after_its_delay(page):
 def test_auto_pump_disabled_keeps_legacy_wait_semantics(page, monkeypatch):
     monkeypatch.setenv("PYV8C_AUTO_PUMP", "0")
     browser = Browser(resource_loader=_loader, stub_logging="off")
-    context = browser.new_context()
+    context = browser.new_profile()
     quiet = context.new_page(ORIGIN + "/")
     try:
         quiet.evaluate("""

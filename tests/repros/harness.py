@@ -136,7 +136,7 @@ def close_engine():
 
 def observe_here(case: Repro) -> Observation:
     """What this environment observes for a case."""
-    context = _engine().new_context()
+    context = _engine().new_profile()
     try:
         page = context.new_page()
         page.set_content(case.html, url=case.url)

@@ -16,7 +16,7 @@
 
 ## 架构不变量
 
-- `Browser -> BrowserContext -> Page -> PageRealm` 是宿主生命周期主链。
+- `Browser -> Profile -> Page -> PageRealm` 是宿主生命周期主链。
 - Web API 只能依赖 `foundation` 合同和 `PageServices` capability，不能反向导入 `platform` 控制器、`Page` 或 `Browser`。
 - `FeatureCatalog` 只保存声明；`FeatureRuntime` 才拥有模块加载状态。每个 Browser 有独立 Runtime，Python `sys.modules` 的进程级缓存不等于 Browser 状态。
 - Feature 实现模块必须显式导出 `FEATURE`，接口映射必须完整；不要重新引入 `vars(module)` 扫描、注册表冻结后写入或散落的 loader。

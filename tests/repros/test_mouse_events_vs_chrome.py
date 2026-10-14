@@ -183,7 +183,7 @@ def _here_log(steps):
 
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE.replace("__RECORDER__", RECORDER), url=URL)
         _drive(page, steps)
         return page.evaluate("log")

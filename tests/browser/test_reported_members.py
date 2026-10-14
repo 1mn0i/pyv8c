@@ -7,7 +7,7 @@ from pyv8c import Browser
 
 
 def _page(browser):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(
         "<body><textarea id=t></textarea><option id=o>one</option><div id=d></div>"
         "<canvas id=c></canvas><canvas id=c2></canvas></body>", url="https://repro.test/index.html")

@@ -7,7 +7,7 @@ from pyv8c import Browser
 def test_the_timeline_restarts_with_each_document():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body>first</body>", url="https://repro.test/first")
         page.run_until_idle(timeout=2)
         assert page.evaluate("Math.round(performance.now())") < 1000
@@ -25,7 +25,7 @@ def test_the_timeline_restarts_with_each_document():
 def test_the_origin_is_an_epoch_instant_and_navigation_start_agrees():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body>body</body>", url="https://repro.test/index.html")
         page.run_until_idle(timeout=2)
         assert page.evaluate(

@@ -8,7 +8,7 @@ DEFAULT_HTML = "<div id='a' class='one two'><span class='one'>x</span><span>y</s
 
 def page_with(html=DEFAULT_HTML):
     browser = Browser()
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(html, url="http://example.test/")
     return browser, page
 

@@ -11,7 +11,7 @@ from pyv8c import Browser
 def argument_page():
     browser = Browser(stub_logging="off", resource_loader=lambda url, request: {"url": url, "body": ""})
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         yield page
     finally:

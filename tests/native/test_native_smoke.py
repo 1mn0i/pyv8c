@@ -17,7 +17,7 @@ faulthandler.enable()
 from pyv8c import Browser
 print('before-browser', flush=True)
 b = Browser()
-c = b.new_context()
+c = b.new_profile()
 p = c.new_page()
 print('before-content', flush=True)
 p.set_content({case!r}, url='http://example.test/')

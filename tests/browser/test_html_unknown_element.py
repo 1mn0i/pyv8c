@@ -29,7 +29,7 @@ CUSTOM_TAGS = ("my-widget", "x-y", "DIV-")
 @pytest.fixture
 def document_page():
     browser = Browser(stub_logging="off")
-    instance = browser.new_context().new_page()
+    instance = browser.new_profile().new_page()
     instance.set_content(PAGE_HTML, url="https://example.test/")
     try:
         yield instance

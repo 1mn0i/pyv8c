@@ -1,4 +1,4 @@
-"""Actual browser trace events, rather than Context constructor arguments."""
+"""Actual browser trace events, rather than V8Context constructor arguments."""
 
 import pytest
 import pyv8
@@ -12,7 +12,7 @@ def test_browser_events_lazy_interfaces_and_page_override():
     events = []
     browser = Browser(trace=True, trace_callback=lambda *event: events.append(event), stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         events.clear()
         assert page.evaluate("""(() => {
             const element = document.createElement('div');
@@ -33,7 +33,7 @@ def test_browser_events_lazy_interfaces_and_page_override():
         for name in page.binding_session.materialized_interfaces:
             cls = page.binding_session.class_for(name)
             assert not any(key.endswith('_hook__') for base in cls.__mro__ for key in base.__dict__)
-        quiet = browser.new_context().new_page(trace=False)
+        quiet = browser.new_profile().new_page(trace=False)
         events.clear()
         quiet.evaluate("document.createElement('div').id")
         assert events == []
@@ -46,7 +46,7 @@ def test_default_browser_sink_really_logs():
     sink = logger.add(lambda message: messages.append(message.record['message']))
     browser = Browser(trace=True, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         messages.clear()
         page.evaluate("document.createElement('div').id")
         assert any('method: HTMLDocument.createElement' in message for message in messages)
@@ -66,7 +66,7 @@ def test_an_interface_level_member_is_reported_with_its_interface_name():
     browser = Browser(trace=True, traceable=True,
                       trace_callback=lambda *event: events.append(event), stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("Notification.permission")
         messages = _messages(events)
@@ -84,7 +84,7 @@ def test_an_object_read_stays_on_one_bounded_line():
     browser = Browser(trace=True, traceable=True, stub_logging="off",
                       trace_callback=lambda *event: events.append(event))
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body><p>x</p></body>", url="https://example.test/")
         page.evaluate("""(() => {
             const cyclic = { name: 'cyclic' };
@@ -109,7 +109,7 @@ def test_declined_reads_are_reported_with_the_value_they_resolve_to():
     browser = Browser(trace=True, traceable=True, trace_callback=lambda *event: events.append(event),
                       stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         events.clear()
         assert page.evaluate("eval") is not None
@@ -128,7 +128,7 @@ def test_probes_are_reported_separately_from_reads():
     browser = Browser(trace=True, traceable=True, trace_callback=lambda *event: events.append(event),
                       stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         events.clear()
         assert page.evaluate("'eval' in window") is True
@@ -155,7 +155,7 @@ def test_declared_getters_are_reported_once_with_their_value():
     browser = Browser(trace=True, traceable=True, trace_callback=lambda *event: events.append(event),
                       stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         events.clear()
         page.evaluate("navigator.userAgent")
@@ -175,7 +175,7 @@ def test_a_frames_realm_is_labelled_apart_from_the_pages_own():
     browser = Browser(trace=True, traceable=True, trace_callback=lambda *event: events.append(event),
                       stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         events.clear()
         page.set_content('<body><iframe srcdoc="&lt;script&gt;navigator.userAgent&lt;/script&gt;">'
                          "</iframe></body>", url="https://example.test/")
@@ -193,7 +193,7 @@ def test_worker_inherits_context_sink_without_faker_switch():
     events = []
     browser = Browser(trace=True, trace_callback=lambda *event: events.append(event), stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.evaluate("""(() => {
             const source = new Blob(["postMessage(new Event('worker-trace').type)"], {type:'text/javascript'});
             const worker = new Worker(URL.createObjectURL(source));
@@ -210,7 +210,7 @@ def test_trace_keeps_cross_origin_access_denied():
     browser = Browser(trace=True, trace_callback=lambda *event: None, stub_logging="off",
                       resource_loader=lambda url, request: {'body': '<body>child</body>', 'url': url}, cache=False)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content('<iframe src="http://b.test/child"></iframe>', url='http://a.test/main')
         page.run_until_idle(timeout=2)
         assert page.evaluate("try { window[0].document; } catch(error) { error.name; }") == 'SecurityError'
@@ -224,19 +224,19 @@ def test_page_trace_can_pause_and_resume(initial):
     browser = Browser(trace=initial, traceable=True,
                       trace_callback=lambda *event: events.append(event), stub_logging="off")
     try:
-        page = browser.new_context().new_page()
-        quiet = browser.new_context().new_page(trace=False)
+        page = browser.new_profile().new_page()
+        quiet = browser.new_profile().new_page(trace=False)
         page.evaluate("window.element = document.createElement('div')")
-        original_context = page.context
+        original_context = page.v8_context
         for enabled in (True, False, True, False):
             page.trace = enabled
             events.clear()
             assert page.evaluate("element.id='value';element.id") == 'value'
             assert bool(events) is enabled
             assert page.trace is enabled
-            assert page.context.trace is enabled
+            assert page.v8_context.trace is enabled
             assert page.services.trace is enabled
-            assert page.context is original_context
+            assert page.v8_context is original_context
             events.clear()
             quiet.evaluate("document.createElement('div').id")
             assert events == []
@@ -252,7 +252,7 @@ def test_page_trace_can_pause_and_resume(initial):
 def test_page_without_instrumentation_rejects_activation():
     browser = Browser(stub_logging='off')
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         with pytest.raises(RuntimeError, match='traceable=True'):
             page.trace = True
         assert page.trace is False

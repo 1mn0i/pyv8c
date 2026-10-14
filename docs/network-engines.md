@@ -5,7 +5,7 @@
 
 ## 两个角色
 
-一个 context 的网络是两个可独立选择的部件：**HTTP 引擎**负责请求，**WebSocket 引擎**负责 socket。
+一个 profile 的网络是两个可独立选择的部件：**HTTP 引擎**负责请求，**WebSocket 引擎**负责 socket。
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ browser = Browser(real_network=False)                           # 不联网：�
 边界：
 
 - 角色互不影响：`ws_engine=None` 只关掉 socket，`http_engine=None` 只关掉 HTTP，`real_network=False` 两个都关（离线）。缺 HTTP 时 `page.net` 与资源加载报“没有 HTTP 引擎”（离线改用 `resource_loader`），缺 WebSocket 时 `new WebSocket` 报“没有 WebSocket 引擎”。
-- 每个角色可以给**名字**、**现成对象**（HTTP 要有 `request_sync`，socket 要有 `websocket`）或**工厂**（每个 context 调一次，各拿一个实例）。现成对象已经构造完成，所以给它设置对应的 options 会被拒绝（`TypeError`），不会被静默丢掉。
+- 每个角色可以给**名字**、**现成对象**（HTTP 要有 `request_sync`，socket 要有 `websocket`）或**工厂**（每个 profile 调一次，各拿一个实例）。现成对象已经构造完成，所以给它设置对应的 options 会被拒绝（`TypeError`），不会被静默丢掉。
 - `real_network=False` 时不装配任何引擎：名字只是偏好、就此不用，而现成对象会被拒绝（不静默丢弃）。
 - 两个角色给同一个名字或同一个对象时只构造/使用一次——否则会多出一个客户端、线程池与连接缓存；此时 `ws_options` 会被拒绝，而不是静默忽略。
 
@@ -44,11 +44,11 @@ browser = Browser(real_network=False)                           # 不联网：�
 | --- | --- | --- |
 | max_workers | 两个内置 HTTP 引擎的桥接层 | 桥接线程池大小，默认 4；不转发给客户端 |
 | default_headers | curl_cffi | 作为会话选项传入；默认 False，本环境不额外添加请求头 |
-| cookies / headers | websockets | 握手是否带 context 的 cookie（默认带）；`headers` 追加握手头 |
-| proxy | 三个内置引擎的桥接层 | 出口代理，由 `Browser(proxy=...)`/`new_context(proxy=...)` 解析后注入；空串表示直连。curl_cffi 逐请求传 `proxies`（空串即钉住直连），cronet 在构造时把 `proxies` 交给客户端，websockets 传 `connect(proxy=...)`。见 [USAGE 的网络代理](USAGE.md) |
+| cookies / headers | websockets | 握手是否带 profile 的 cookie（默认带）；`headers` 追加握手头 |
+| proxy | 三个内置引擎的桥接层 | 出口代理，由 `Browser(proxy=...)`/`new_profile(proxy=...)` 解析后注入；空串表示直连。curl_cffi 逐请求传 `proxies`（空串即钉住直连），cronet 在构造时把 `proxies` 交给客户端，websockets 传 `connect(proxy=...)`。见 [USAGE 的网络代理](USAGE.md) |
 | 其余键 | 该引擎的客户端 | 按其构造签名转交，如 cronet 的 `timeout_ms`/`verify`、curl_cffi 的 `impersonate`、websockets 的 `open_timeout`/`ping_interval`/`max_size` |
 
-校验发生在**创建 Context 时**（`new_context()`），并且**按角色分别进行**：
+校验发生在**创建 Profile 时**（`new_profile()`），并且**按角色分别进行**：
 
 | 情况 | 行为 |
 | --- | --- |
@@ -63,7 +63,7 @@ browser = Browser(real_network=False)                           # 不联网：�
 
 ```python
 browser = Browser(http_engine="cronet", http_options={"timeout_ms": 5000, "impersonete": "chrome"})
-browser.new_context()
+browser.new_profile()
 # TypeError: unknown option 'impersonete' for http engine 'cronet';
 #            accepted: base_url, chrometls, default_domain, headers, max_workers, proxy, proxies, timeout_ms, verify
 ```
@@ -79,7 +79,7 @@ socket 引擎按浏览器的做法发握手：环境派生的 `User-Agent` 与 `
 browser = Browser(ws_engine="websockets", ws_options={"cookies": False, "headers": {"X-Page": "socket"}})
 ```
 
-事件是异步的：`new WebSocket(url)` 返回后 open/message/error/close 依次到达页面；页面 `close(code, reason)` 完成关闭握手后，close 事件报告同一对 code/reason 且 `wasClean` 为真；Context 关闭会关闭它开过的全部 socket。
+事件是异步的：`new WebSocket(url)` 返回后 open/message/error/close 依次到达页面；页面 `close(code, reason)` 完成关闭握手后，close 事件报告同一对 code/reason 且 `wasClean` 为真；profile 关闭会关闭它开过的全部 socket。
 
 ## 自定义引擎
 
@@ -88,7 +88,7 @@ browser = Browser(ws_engine="websockets", ws_options={"cookies": False, "headers
 - `register_transport(name, factory, option_keys=..., proxy=False)`：HTTP 引擎。
 - `register_ws_transport(name, factory, option_keys=..., proxy=False)`：socket 引擎。
 
-factory 按 `factory(options=<字典或 None>)` 调用，每个 Context 一次；`option_keys` 是惰性可调用，返回该引擎接受的键，不声明就不校验（由宿主自己负责）。HTTP 引擎需要 `request_sync`/`request_async`，socket 引擎需要 `websocket`/`close_websocket`，两者都需要 `close`；`cookies` 由 Context 在构造后赋值。`proxy=True` 声明该引擎会走 `proxy` 选项（值形如 `http://host:port` 或空串表示直连）；不声明即不接受，装配时给了代理会报错而不是把设置丢掉。
+factory 按 `factory(options=<字典或 None>)` 调用，每个 profile 一次；`option_keys` 是惰性可调用，返回该引擎接受的键，不声明就不校验（由宿主自己负责）。HTTP 引擎需要 `request_sync`/`request_async`，socket 引擎需要 `websocket`/`close_websocket`，两者都需要 `close`；`cookies` 由 profile 在构造后赋值。`proxy=True` 声明该引擎会走 `proxy` 选项（值形如 `http://host:port` 或空串表示直连）；不声明即不接受，装配时给了代理会报错而不是把设置丢掉。
 
 ```python
 from pyv8c import register_transport, register_ws_transport
@@ -106,7 +106,7 @@ register_ws_transport("my-sockets", lambda options: MySockets(options))
 
 ## 与每请求参数的区别
 
-`http_options` 是**会话级**的，只在创建 Context 时读一次。单次请求的参数走 `page.net.<method>(..., options={...})`：
+`http_options` 是**会话级**的，只在创建 profile 时读一次。单次请求的参数走 `page.net.<method>(..., options={...})`：
 
 ```python
 page.net.get("https://example.test/", options={"impersonate": "chrome"})

@@ -16,7 +16,7 @@ def test_a_blocked_loader_no_longer_freezes_the_realm():
 
     browser = Browser(resource_loader=slow, threaded_loaders=True)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://example.test/")
         page.evaluate("fetch('/slow').then(r => r.text()).then(v => window.__slow = v)")
         started = time.perf_counter()
@@ -39,7 +39,7 @@ def test_the_default_loader_runs_on_the_owner_thread():
 
     browser = Browser(resource_loader=loader)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://example.test/")
         page.evaluate("fetch('/x').then(r => r.text()).then(v => window.__x = v)")
         page.run_until_idle(timeout=2)
@@ -59,7 +59,7 @@ def test_the_threaded_loader_runs_on_the_browser_pool():
 
     browser = Browser(resource_loader=loader, threaded_loaders=True)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://example.test/")
         page.evaluate("fetch('/x').then(r => r.text()).then(v => window.__x = v)")
         page.run_until_idle(timeout=2)
@@ -85,7 +85,7 @@ def test_the_loader_pool_runs_a_bounded_number_of_callbacks():
 
     browser = Browser(resource_loader=loader, threaded_loaders=True)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://example.test/")
         page.evaluate("for (let i = 0; i < 8; i++) fetch('/x?i=' + i).then(r => r.text())")
         page.run_until_idle(timeout=5)
@@ -104,7 +104,7 @@ def test_closing_the_browser_does_not_wait_for_a_blocked_loader():
         return {**_body("late"), "url": url}
 
     browser = Browser(resource_loader=loader, threaded_loaders=True)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
     page.evaluate("fetch('/x').then(r => r.text())")
     assert entered.wait(2), "the loader never ran"
@@ -137,9 +137,9 @@ def test_a_failed_submit_tells_the_tail_why_it_failed():
         lambda message: messages.append(str(message).strip()), format="{message}")
     browser = Browser(resource_loader=loader, threaded_loaders=True)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://example.test/")
-        page.context_owner.browser._loader_pool = Closed()
+        page.profile.browser._loader_pool = Closed()
         page.evaluate(
             "fetch('/x').then(r => r.text()).then(v => window.__x = v,"
             " e => window.__e = '' + e)")
@@ -172,7 +172,7 @@ def test_a_load_in_flight_when_a_navigation_commits_does_not_hold_the_next_one()
 
     browser = Browser(resource_loader=loader, threaded_loaders=True)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content('<body><img src="/slow.png"></body>', url="http://example.test/")
         started = time.perf_counter()
         page.goto("http://example.test/next.html", wait_until="load", timeout=5)
@@ -189,7 +189,7 @@ def test_a_parser_blocking_script_loads_with_the_threaded_loader():
 
     browser = Browser(resource_loader=loader, threaded_loaders=True)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body><script src='/a.js'></script></body>", url="http://example.test/")
         page.run_until_idle(timeout=3)
         assert page.evaluate("__loaded") is True

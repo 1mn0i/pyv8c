@@ -8,7 +8,7 @@ from pyv8c import Browser
 @pytest.fixture
 def page():
     browser = Browser(cache=False, stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(
         '<div id="target" style="color: red; margin-top: 2px; '
         'color: blue !important; broken"></div>',

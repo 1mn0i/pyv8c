@@ -31,7 +31,7 @@ python scripts/harness.py --probe ua --probe rect --probe style   # 先确认工
 # pyv8c 一侧
 from pyv8c import Browser
 browser = Browser(stub_logging="off", threaded_loaders=True)     # 走真实网络
-page = browser.new_context().new_page()
+page = browser.new_profile().new_page()
 page.goto(URL)
 pump(page, 20)                                                   # 见坑 1
 answer = page.evaluate(PROBE)                                    # 必须是表达式
@@ -67,7 +67,7 @@ answer = page.evaluate(PROBE)
 pyv8c 是 Python，可以直接包住内部方法观察：
 
 ```python
-from pyv8c.platform.resource_loading import ResourceController   # 资源发现/完成、iframe 上下文
+from pyv8c.platform.resources.documents import DocumentResourceController   # 资源发现/完成、iframe 上下文
 from pyv8c.platform.sessions import BindingSession               # 接口物化
 
 original = ResourceController.complete_document_resource

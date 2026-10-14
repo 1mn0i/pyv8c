@@ -12,7 +12,7 @@ from pyv8c import Browser
 @pytest.fixture
 def page():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<p>fs</p>", url="https://fs.test/page")
     page.run_until_idle(timeout=1)
     try:

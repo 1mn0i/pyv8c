@@ -9,7 +9,7 @@ def test_an_offscreen_canvas_draws_and_reports_its_pixels():
     pytest.importorskip("PIL", reason="Pillow backs the canvas drawing surface")
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://repro.test/index.html")
         page.run_until_idle(timeout=2)
         value = page.evaluate("""(() => {
@@ -36,7 +36,7 @@ def test_the_eight_members_the_log_reported_answer_like_chromium():
     """The members the case run reported as 待实现, with Chromium's values and refusals."""
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://repro.test/index.html")
         page.run_until_idle(timeout=2)
         value = page.evaluate("""(() => {
@@ -92,7 +92,7 @@ def test_no_offscreen_2d_member_reports_itself_as_unimplemented():
     try:
         browser = Browser(stub_logging="on")
         try:
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             page.set_content("<body></body>", url="https://repro.test/index.html")
             page.evaluate("""(() => {
                 const context = new OffscreenCanvas(4, 4).getContext('2d');

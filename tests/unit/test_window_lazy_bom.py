@@ -14,7 +14,7 @@ def _loader(url, request):
 def test_window_defers_low_frequency_bom_modules_and_keeps_identity():
     browser = Browser(stub_logging="off", resource_loader=_loader)
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         page = context.new_page("http://lazy.test/start")
         window = page.window
         assert window.location.href == "http://lazy.test/start"
@@ -35,7 +35,7 @@ def test_window_defers_low_frequency_bom_modules_and_keeps_identity():
 def test_lazy_history_starts_at_the_current_document_url():
     browser = Browser(stub_logging="off", resource_loader=_loader)
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         page = context.new_page("http://lazy.test/original")
         window = page.window
         window.location.href = "http://lazy.test/current"

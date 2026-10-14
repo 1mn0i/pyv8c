@@ -12,7 +12,7 @@ def windows():
         body = '<iframe src="http://a.test/nested"></iframe>' if url.endswith('/outer') else '<body>child</body>'
         return {"body": body, "url": url}
     browser = Browser(resource_loader=loader, cache=False)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content('<iframe src="http://b.test/child"></iframe>', url='http://a.test/main')
     page.run_until_idle(timeout=1)
     child = next(iter(page._owned.frames))
@@ -150,7 +150,7 @@ def test_origin_variants(windows, url, allowed):
 
 def test_native_window_access_handler_is_automatically_installed(windows):
     page, child = windows
-    page.context.expose(nativeChild=child.context.js_obj(child.window))
+    page.v8_context.expose(nativeChild=child.v8_context.js_obj(child.window))
     assert page.evaluate('try { nativeChild.document; } catch(e) { [e.name,e.code,e instanceof DOMException]; }') == ['SecurityError', 18, True]
     assert page.evaluate('[nativeChild.closed,nativeChild.top===window,nativeChild.self===window[0]]') == [False, True, True]
 
@@ -159,8 +159,8 @@ def test_context_entries_are_released_on_close():
     before = set(Window._context_origins)
     browser = Browser()
     try:
-        page = browser.new_context().new_page()
-        assert id(page.context) in Window._context_origins
+        page = browser.new_profile().new_page()
+        assert id(page.v8_context) in Window._context_origins
     finally:
         browser.close()
     assert set(Window._context_origins) == before
@@ -178,7 +178,7 @@ def test_iframe_src_navigation_retains_proxy(windows):
 def test_initial_about_blank_iframe_does_not_need_network():
     browser = Browser(cache=False)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content('<iframe></iframe>', url='http://a.test/main')
         page.run_until_idle(timeout=1)
         assert page.evaluate('[window.length, window[0].document.URL, window[0].parent === window]') == [1, 'about:blank', True]
@@ -220,7 +220,7 @@ def test_saved_location_is_restricted_after_origin_changes(windows):
 
 def test_blob_origin_comes_from_creator_page(windows):
     page, child = windows
-    creator = page.context_owner.new_page()
+    creator = page.profile.new_page()
     creator.set_content('<body/>', url='data:text/html,creator')
     blob_url = creator.evaluate('URL.createObjectURL(new Blob(["hello"]))')
     child.set_content('<body/>', url=blob_url)

@@ -71,7 +71,7 @@ def test_a_collection_publishes_the_iterators_its_interface_has():
     """
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url="https://surface.test/")
         answer = page.evaluate("""(() => {
           const four = ['entries', 'keys', 'values', 'forEach'];
@@ -133,7 +133,7 @@ def test_a_maplike_interface_publishes_its_iterator_and_a_value_is_not_one():
     """
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url="https://surface.test/")
         answer = page.evaluate("""(() => {
           const has = (name) => typeof window[name].prototype[Symbol.iterator];
@@ -175,7 +175,7 @@ def test_implementation_state_is_not_an_idl_constant():
     """
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url="https://surface.test/")
         answer = page.evaluate("""(() => {
           const state = ['inputs', 'outputs', 'channel_count'];
@@ -210,7 +210,7 @@ def test_implementation_state_is_not_an_idl_constant():
 def test_the_dom_bom_surface_matches_what_chrome_reports():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url="https://surface.test/")
         page.evaluate(SCRIPT)
         _pump(page)
@@ -259,7 +259,7 @@ def test_a_callback_interface_is_a_function_without_a_prototype():
     """
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url="https://surface.test/")
         answer = page.evaluate("""(() => {
           const flags = (name) => {
@@ -303,7 +303,7 @@ def test_a_namespace_is_an_object_without_a_prototype():
     """
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url="https://surface.test/")
         answer = page.evaluate("""(() => ({
           kind: typeof CSS,

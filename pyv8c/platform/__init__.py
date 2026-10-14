@@ -1,12 +1,13 @@
-"""Browser, context, and page orchestration."""
+"""Browser, profile, and page orchestration."""
 
 from importlib import import_module
 
-from .browser import Browser, BrowserContext
+from .browser import Browser, Profile
 from .page import Page
 from .realms import PageRealm, WorkerRealm
 
-__all__ = ["Browser", "BrowserContext", "Page", "PageRealm", "WorkerRealm", "DevToolsHandle", "DevToolsOptions"]
+__all__ = ["Browser", "Profile", "Page", "PageRealm", "WorkerRealm",
+           "DevToolsHandle", "DevToolsOptions"]
 
 # DevTools is re-exported, not imported: pyv8's DevTools service brings a
 # websocket server and asyncio with it, which a browser that never debugs should

@@ -60,7 +60,7 @@ def browser(local_server):
 
 
 def test_document_cookie_reads_writes_and_updates_shared_context(browser, local_server):
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page(f"{local_server}/app/index.html")
     assert page.evaluate("document.cookie") == ""
     assert page.evaluate("document.cookie = 'a=1'") == "a=1"
@@ -72,7 +72,7 @@ def test_document_cookie_reads_writes_and_updates_shared_context(browser, local_
 
 
 def test_document_cookie_is_an_enumerable_prototype_accessor_and_ignores_opaque_urls(browser):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     descriptor = page.evaluate("Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')")
     assert descriptor["get"] is not None
     assert descriptor["set"] is not None
@@ -83,7 +83,7 @@ def test_document_cookie_is_an_enumerable_prototype_accessor_and_ignores_opaque_
 
 
 def test_document_cookie_honors_path_httponly_and_deletion(browser, local_server):
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page(f"{local_server}/app/index.html")
     page.evaluate("document.cookie = 'root=1; Path=/'")
     page.evaluate("document.cookie = 'nested=2; Path=/app' ")
@@ -101,7 +101,7 @@ def test_document_cookie_ignores_invalid_script_assignments_and_logs_changes(bro
         "pyv8c.network.cronet.logger.debug",
         lambda message, *values: messages.append((message, *values)),
     )
-    page = browser.new_context().new_page(f"{local_server}/")
+    page = browser.new_profile().new_page(f"{local_server}/")
     page.evaluate("document.cookie = 'bad name=value'")
     assert page.evaluate("document.cookie") == ""
     page.evaluate("document.cookie = 'ok=1'")
@@ -110,7 +110,7 @@ def test_document_cookie_ignores_invalid_script_assignments_and_logs_changes(bro
 
 
 def test_document_cookie_cannot_overwrite_a_httponly_cookie(browser, local_server):
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page(f"{local_server}/")
     context.cookies.add_from_response(f"{local_server}/", "session=server; HttpOnly")
     page.evaluate("document.cookie = 'session=script'")

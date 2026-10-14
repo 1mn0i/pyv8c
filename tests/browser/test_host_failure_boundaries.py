@@ -36,7 +36,7 @@ def sink():
 
 def listening_page():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<html><body></body></html>")
     page.evaluate(
         "window.__errors = [];"

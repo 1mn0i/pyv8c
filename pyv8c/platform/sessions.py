@@ -12,7 +12,7 @@ from pyv8 import IdlSpec
 
 
 class BindingSession:
-    """Context-local registration state for one V8 realm."""
+    """V8Context-local registration state for one V8 realm."""
 
     def __init__(self, bindings, realm=None):
         self.bindings = bindings
@@ -64,7 +64,7 @@ class BindingSession:
         self._extras[str(name)] = cls
 
     def lazy_factory(self, context_type="Window", on_materialize=None):
-        """The realm's one source of specs, in the shape the native Context calls.
+        """The realm's one source of specs, in the shape the native V8Context calls.
 
         A name it cannot describe answers ``None``, which the native side remembers, so a
         refusal costs one call; a name it can answers the class plus its chain's specs.

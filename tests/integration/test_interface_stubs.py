@@ -8,7 +8,7 @@ from pyv8c.web.features.catalog import CATALOG
 
 def test_baseline_only_interface_is_generated_and_keeps_metadata():
     browser = Browser()
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     value = page.evaluate("""
       (() => {
         const c = new AbortController();
@@ -31,7 +31,7 @@ def test_stub_method_logs_and_real_member_wins():
     token = logger.add(lambda message: messages.append(str(message)), format="{message}")
     try:
         browser = Browser(stub_logging="on")
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         assert page.evaluate("new AudioDecoder({}).state") is pyv8.Undefined
         assert page.evaluate("AudioDecoder.isConfigSupported({})") is pyv8.Undefined
         assert any("AudioDecoder.state getter 待实现" in message for message in messages)
@@ -45,7 +45,7 @@ def test_stub_method_logs_and_real_member_wins():
 
 def test_internal_objects_are_not_exposed():
     browser = Browser()
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     value = page.evaluate("[typeof Page, typeof Browser, typeof BaselineRegistry, typeof __pyv8c_interface_runtime]")
     assert value == ["undefined", "undefined", "undefined", "undefined"]
     browser.close()
@@ -103,14 +103,14 @@ def test_a_filled_handler_reports_itself_only_when_asked():
     token = logger.add(lambda message: messages.append(str(message)), format="{message}")
     try:
         browser = Browser(stub_logging="on")
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://secure.test/")
         assert page.evaluate("localStorage[0]") is pyv8.Undefined
         assert not any("__v8_index_get__ 待实现" in message for message in messages)
 
         noisy = Browser(stub_logging="verbose")
         try:
-            page = noisy.new_context().new_page()
+            page = noisy.new_profile().new_page()
             page.set_content("<body></body>", url="https://secure.test/")
             assert page.evaluate("localStorage[0]") is pyv8.Undefined
             assert page.evaluate("localStorage[1]") is pyv8.Undefined
@@ -146,7 +146,7 @@ def test_every_declared_handler_is_installed_or_filled():
 
 
 def test_window_interfaces_are_materialized_on_demand(shared_browser):
-    page = shared_browser.new_context().new_page()
+    page = shared_browser.new_profile().new_page()
     try:
         session = page.binding_session
         at_cold_start = set(session.materialized_interfaces)

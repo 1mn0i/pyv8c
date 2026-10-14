@@ -29,7 +29,7 @@ def test_a_browser_own_scheme_never_reaches_the_engine():
 
     browser = Browser(stub_logging="off", http_engine=Transport)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://example.test/")
         page.evaluate("""
           fetch(%s).then(

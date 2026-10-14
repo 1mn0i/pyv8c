@@ -9,7 +9,7 @@ PAGE_HTML = "<body><div id='root'></div></body>"
 @pytest.fixture
 def page():
     browser = Browser(stub_logging="off")
-    instance = browser.new_context().new_page()
+    instance = browser.new_profile().new_page()
     instance.set_content(PAGE_HTML)
     try:
         yield instance

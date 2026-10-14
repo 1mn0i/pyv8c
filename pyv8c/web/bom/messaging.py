@@ -19,8 +19,8 @@ __all__ = ["MessageChannel", "MessagePort"]
 
 def _posting_realm(port):
     """The realm posting from this port: its own, else the one running now."""
-    context = getattr(realm_of(port), "context", None)
-    return context if context is not None else pyv8.current_context()
+    v8_context = getattr(realm_of(port), "v8_context", None)
+    return v8_context if v8_context is not None else pyv8.current_context()
 
 
 @interface('MessagePort', 'EventTarget')

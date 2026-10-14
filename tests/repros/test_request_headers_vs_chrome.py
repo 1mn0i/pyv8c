@@ -145,7 +145,7 @@ def compared(reference):
             RECORDS.clear()
         browser = Browser(real_network=True, stub_logging="off")
         try:
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             page.goto(url, wait_until="load")
             page.evaluate(script)
             page.run_until_idle(timeout=5)

@@ -37,7 +37,7 @@ def is_host_failure(error) -> bool:
 def script_on_the_stack() -> bool:
     """Whether a script is on the stack right now.
 
-    pyv8 knows every realm built on a shared ``Context``.  A worker's realm is built
+    pyv8 knows every realm built on a shared ``V8Context``.  A worker's realm is built
     on its own isolate, which is the one shape it does not answer for, so whoever
     serves such a realm answers for it instead.
     """

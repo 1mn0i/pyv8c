@@ -35,7 +35,7 @@ def _loader(url, request):
 @pytest.fixture
 def page():
     browser = Browser(resource_loader=_loader, stub_logging="off")
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page(ORIGIN + "/")
     try:
         yield page
@@ -602,7 +602,7 @@ def test_key_ordering_keyrange_and_exception_names(page):
 def test_databases_do_not_leak_across_contexts():
     browser = Browser(resource_loader=_loader, stub_logging="off")
     try:
-        first = browser.new_context().new_page(ORIGIN + "/")
+        first = browser.new_profile().new_page(ORIGIN + "/")
         first.evaluate("""(() => { globalThis.out = null;
             const req = indexedDB.open('leaky', 1);
             req.onupgradeneeded = () => req.result.createObjectStore('s');
@@ -611,7 +611,7 @@ def test_databases_do_not_leak_across_contexts():
         })()""")
         assert wait_until(first, "globalThis.out") is True
 
-        second = browser.new_context().new_page(ORIGIN + "/")
+        second = browser.new_profile().new_page(ORIGIN + "/")
         second.evaluate("""(() => { globalThis.names = null;
             indexedDB.databases().then((dbs) => { globalThis.names = dbs.map((d) => d.name); });
         })()""")

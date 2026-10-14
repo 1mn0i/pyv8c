@@ -117,7 +117,7 @@ def run_here(url, page_html, probe, settle, wait_for):
         options.update(real_network=False, resource_loader=load)
     browser = Browser(**options)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto(url)
         pump(page, settle, wait_for)
         answer = snapshot(page, probe)

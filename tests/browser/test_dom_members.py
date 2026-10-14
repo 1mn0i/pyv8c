@@ -36,7 +36,7 @@ CONTENT = """
 @pytest.fixture
 def page():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(CONTENT, url="https://dom.test/dir/page")
     page.run_until_idle(timeout=1)
     try:
@@ -563,7 +563,7 @@ def test_a_port_that_outlives_its_worker_still_delivers():
 
     browser = Browser(stub_logging="off", real_network=False, resource_loader=loader)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto("http://port.test/")
         page.run_until_idle(timeout=1)
         assert page.evaluate("window.__error") == ""
@@ -1047,7 +1047,7 @@ STYLE_CONTENT = """
 @pytest.fixture
 def style_page():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(STYLE_CONTENT, url="https://dom.test/dir/page")
     page.run_until_idle(timeout=1)
     try:

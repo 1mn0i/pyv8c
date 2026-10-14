@@ -30,7 +30,7 @@ def _loader(url, request):
 def page():
     del SENT[:]
     browser = Browser(stub_logging="off", resource_loader=_loader)
-    instance = browser.new_context().new_page()
+    instance = browser.new_profile().new_page()
     instance.set_content(PAGE, url="https://navigator.test/dir/page")
     try:
         yield instance

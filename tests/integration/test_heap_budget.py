@@ -23,10 +23,10 @@ def loader(url, request):
 
 browser = Browser(resource_loader=loader, stub_logging="off")
 try:
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(HTML, url="http://example.test/")
     print("readyState", page.evaluate("document.readyState"))
-    print("terminations", page.context.heap_terminations)
+    print("terminations", page.v8_context.heap_terminations)
 finally:
     browser.close()
 print("closed")

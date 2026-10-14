@@ -63,7 +63,7 @@ def _browser(**kwargs):
 
 
 def _page(browser, markup="<body></body>"):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(markup)
     return page
 
@@ -120,7 +120,7 @@ def _sample(value, unit, detail):
 
 
 def case_startup():
-    """Browser -> context -> page -> set_content, measured the way the gate measures it."""
+    """Browser -> profile -> page -> set_content, measured the way the gate measures it."""
     minimum, median, modules = measure_startup(runs=3)
     if median is None:
         raise RuntimeError(f"startup could not be measured: {modules}")
@@ -157,11 +157,11 @@ def case_cold_compile():
 def case_page_cycle():
     """Opening and closing a page: realm assembly and teardown."""
     browser = _browser()
-    context = browser.new_context()
+    profile = browser.new_profile()
     try:
         def operation():
             for _ in range(PAGE_CYCLES):
-                context.new_page().close()
+                profile.new_page().close()
         return _sample(_seconds_per(operation, PAGE_CYCLES) * 1000, "ms/op",
                        f"open then close, {PAGE_CYCLES} cycles")
     finally:
@@ -298,7 +298,7 @@ def case_resource_batch():
     """Loading the subresources of one document through a host loader."""
     markup = "".join(f"<img src='/image{i}.gif'>" for i in range(RESOURCE_COUNT))
     browser = _browser(resource_loader=_loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     try:
         def operation():
             page.set_content(markup, url="http://benchmark.test/")
@@ -311,14 +311,14 @@ def case_resource_batch():
 def case_resident_pages():
     """What each page costs the process while it stays open."""
     browser = _browser()
-    context = browser.new_context()
+    profile = browser.new_profile()
     try:
         before = _committed_bytes()
-        pages = [context.new_page() for _ in range(RESIDENT_PAGES)]
+        pages = [profile.new_page() for _ in range(RESIDENT_PAGES)]
         for page in pages:
             page.set_content("<body><div>x</div></body>")
         after = _committed_bytes()
-        handles = sum(page.context.live_handles for page in pages)
+        handles = sum(page.v8_context.live_handles for page in pages)
         return _sample((after - before) / RESIDENT_PAGES / (1024 * 1024), "MB/page",
                        f"{RESIDENT_PAGES} live pages, {handles // RESIDENT_PAGES} python handles each")
     finally:

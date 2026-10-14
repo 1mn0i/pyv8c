@@ -11,7 +11,7 @@ from pyv8c.web.dom import DOMTokenList
 
 def _page(html="<body></body>"):
     browser = Browser()
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(html, url="https://example.test/")
     return browser, page
 
@@ -103,7 +103,7 @@ def test_browser_does_not_mutate_real_implementation_classes():
     original_keys = frozenset(DOMTokenList.__dict__)
     browser = Browser(stub_logging="off")
     try:
-        browser.new_context().new_page()
+        browser.new_profile().new_page()
         assert DOMTokenList.__dict__["__init__"] is original_init
         assert DOMTokenList.__dict__["fn_contains"] is original_contains
         assert frozenset(DOMTokenList.__dict__) == original_keys

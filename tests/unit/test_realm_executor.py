@@ -48,7 +48,7 @@ def test_executor_runs_calls_on_one_owner_thread_and_closes_waiters():
 
 def test_page_background_timer_runs_without_manual_queue_pump():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     try:
         page.evaluate("window.__executorTimer = 0; setTimeout(() => __executorTimer = 1, 10)")
         time.sleep(0.2)
@@ -59,7 +59,7 @@ def test_page_background_timer_runs_without_manual_queue_pump():
 
 def test_page_close_stops_realm_executor():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.close()
     assert page.realm.executor.closed
     browser.close()

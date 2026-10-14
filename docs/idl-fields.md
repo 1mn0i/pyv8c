@@ -119,7 +119,7 @@ cross_origin、side_effect、main_world。
   计划，首次读时算一次并缓存。成员保留文档里的简写（`flags`/`receiver` 等），翻成绑定位是
   `engine/binder.py` 的事。
 - `engine/binder.py`：把这些声明编译成原生 IdlSpec，包括成员属性位、占位实现与 realm 绑定回调。
-- `platform/realms.py`：一份计划一次 `Context.install(names)` 装到全局上，接口对象的属性统一按
+- `platform/realms.py`：一份计划一次 `V8Context.install(names)` 装到全局上，接口对象的属性统一按
   Chromium 的属性位安装；realm 自己的注册状态（`platform/sessions.py`）回答原生侧对某个名字的问询。
 
 文档列出的是 Chromium 能装的全部成员与接口，而参照浏览器只装其平台与设置允许的子集。

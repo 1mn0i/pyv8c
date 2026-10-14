@@ -9,7 +9,7 @@ from pyv8c import Browser
 
 
 def _page(browser, url="https://example.test/"):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url=url)
     return page
 
@@ -138,7 +138,7 @@ def test_chrome_app_surface_and_missing_runtime():
 def test_chrome_is_ready_for_inline_head_scripts():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(
             "<head><script>window.__chromeType = typeof window.chrome;</script></head>",
             url="https://example.test/",
@@ -154,7 +154,7 @@ def test_installing_chrome_is_invisible_to_trace():
     browser = Browser(trace=True, traceable=True,
                       trace_callback=lambda *event: events.append(event), stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         # Building the realm probes interfaces, none of it about chrome.
         assert [event for event in events if event[2:3] == ("chrome",)] == []
         page.set_content("<body></body>", url="https://example.test/")
@@ -269,7 +269,7 @@ def test_an_existing_chrome_object_is_reused():
         page = _page(browser)
         page.evaluate("window.chrome.__marker = 7")
         page.realm.executor.call(
-            lambda: install_window_chrome(page.context, page.services))
+            lambda: install_window_chrome(page.v8_context, page.services))
         assert page.evaluate(
             "[window.chrome.__marker, typeof chrome.csi, chrome.app.isInstalled]"
         ) == [7, "function", False]

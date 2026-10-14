@@ -13,7 +13,7 @@ from pyv8c.network.cookies import CookieJar
 
 def new_page(*, loader=None):
     browser = Browser(resource_loader=loader)
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page()
     page.set_content("<body></body>", url="http://example.test/root")
     page.run_until_idle()
@@ -22,11 +22,11 @@ def new_page(*, loader=None):
 
 def test_closed_context_rejects_new_pages_and_blob_access():
     browser = Browser()
-    context = browser.new_context()
+    context = browser.new_profile()
     context.close()
-    with pytest.raises(HostStateError, match="BrowserContext is closed"):
+    with pytest.raises(HostStateError, match="Profile is closed"):
         context.new_page()
-    with pytest.raises(HostStateError, match="BrowserContext is closed"):
+    with pytest.raises(HostStateError, match="Profile is closed"):
         context.resolve_blob_url("blob:null/not-present")
     browser.close()
 

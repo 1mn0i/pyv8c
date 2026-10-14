@@ -250,7 +250,7 @@ def compared(reference):
             RECORDS.clear()
         browser = Browser(real_network=True, stub_logging="off")
         try:
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             page.goto(SAME["origin"] + "/page", wait_until="load")
             page.evaluate(script)
             for _ in range(40):
@@ -283,7 +283,7 @@ def _navigation(driver, origin):
         finally:
             page.close()
         return report
-    page = driver.new_context().new_page()
+    page = driver.new_profile().new_page()
     try:
         for label, path in (("same", "/nav/same1"), ("cross", "/nav/cross")):
             page.goto(origin + path, wait_until="load")

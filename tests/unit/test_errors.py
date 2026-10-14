@@ -7,14 +7,14 @@ from pyv8c import Browser, PageTypeError
 
 
 def test_dom_exception_constructor_and_legacy_code():
-    browser = Browser(); page = browser.new_context().new_page()
+    browser = Browser(); page = browser.new_profile().new_page()
     value = page.evaluate("(() => { const e = new DOMException('bad', 'InvalidStateError'); return [e.name, e.message, e.code, e instanceof DOMException, Object.prototype.toString.call(e), DOMException.length]; })()")
     assert value == ["InvalidStateError", "bad", 11, True, "[object DOMException]", 0]
     browser.close()
 
 
 def test_python_v8_error_metadata_and_dom_errors():
-    browser = Browser(); page = browser.new_context().new_page(); page.set_content("<body><div></div></body>")
+    browser = Browser(); page = browser.new_profile().new_page(); page.set_content("<body><div></div></body>")
     value = page.evaluate("""
       (() => {
         const results = [];
@@ -36,7 +36,7 @@ def test_python_v8_error_metadata_and_dom_errors():
 
 def test_history_security_error_and_fetch_rejection_object():
     browser = Browser(resource_loader=lambda url, request: (_ for _ in ()).throw(RuntimeError("offline")))
-    page = browser.new_context().new_page(); page.set_content("<body></body>", url="https://example.test/")
+    page = browser.new_profile().new_page(); page.set_content("<body></body>", url="https://example.test/")
     assert page.evaluate("(() => { try { history.pushState({}, '', 'https://other.test/'); } catch (e) { return [e.name, e.code, e instanceof DOMException]; } })()") == ["SecurityError", 18, True]
     page.evaluate("fetch('/offline').catch(e => window.__fetchError = [e.name, e instanceof Error, e.message])")
     page.run_until_idle()
@@ -45,7 +45,7 @@ def test_history_security_error_and_fetch_rejection_object():
 
 
 def test_a_dom_exception_reaches_python_as_the_browser_stringifies_it():
-    browser = Browser(); page = browser.new_context().new_page()
+    browser = Browser(); page = browser.new_profile().new_page()
     value = page.evaluate(
         "e = new DOMException('Service workers are not implemented here.',"
         " 'NotSupportedError'); e")

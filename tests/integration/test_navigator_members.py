@@ -24,7 +24,7 @@ def _settled(page, expression, *, name="__settled"):
 def test_each_member_answers_by_secure_context():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://secure.test/")
         assert page.evaluate("[" + ",".join(
             f"typeof navigator.{name}" for name in MEMBERS) + ", navigator.javaEnabled()]") == [
@@ -41,7 +41,7 @@ def test_each_member_answers_by_secure_context():
 def test_each_member_is_the_same_object_twice():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://secure.test/")
         assert page.evaluate("[" + ",".join(
             f"navigator.{name} === navigator.{name}" for name in MEMBERS) + "]") == [True] * 7
@@ -56,7 +56,7 @@ def test_a_worker_gets_only_the_members_chrome_gives_it():
               " typeof navigator.bluetooth, typeof navigator.javaEnabled]);")
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://secure.test/")
         page.evaluate("""(() => {
             const source = new Blob([%s], {type: 'text/javascript'});
@@ -78,7 +78,7 @@ def test_the_environment_answers_bluetooth_and_the_geolocation_permission():
                                    "geolocation.permission": "granted"},
                       stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://secure.test/")
         assert _settled(page, "navigator.bluetooth.getAvailability()") == ["value", False]
         assert _settled(page, "navigator.permissions.query({name: 'geolocation'})"
@@ -95,7 +95,7 @@ def test_the_calls_that_need_a_chooser_or_a_registration_refuse():
 
     browser = Browser(resource_loader=loader, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://secure.test/")
         assert _settled(page, "navigator.mediaDevices.getDisplayMedia({video: true})") == [
             "error", "NotAllowedError", "Permission denied"]
@@ -116,7 +116,7 @@ def test_the_calls_that_need_a_chooser_or_a_registration_refuse():
 def test_a_registration_whose_script_cannot_be_fetched_rejects():
     browser = Browser(real_network=False, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://secure.test/")
         settled = _settled(page, "navigator.serviceWorker.register('/sw.js')")
         assert settled[0] == "error"

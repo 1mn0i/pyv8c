@@ -37,7 +37,7 @@ def test_initial_frame_window_does_not_wait_for_its_network_document(shard_isola
     browser = Browser(real_network=False, resource_loader=loader, threaded_loaders=True,
                       shard_isolates=shard_isolates, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("""<body><script>
             const frame = document.createElement('iframe');
             frame.src = 'https://other.test/child';
@@ -156,7 +156,7 @@ document.body.appendChild(frame);
 @pytest.fixture
 def frame_page():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     try:
         page.set_content(PAGE_HTML, url="https://frames.test/")
         _pump(page)
@@ -169,7 +169,7 @@ def test_a_script_inserted_frame_runs_its_own_document():
     """The insertion happens inside a script's turn, so the frame commits on a task."""
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(SCRIPT_INSERTED_PAGE, url="https://frames.test/")
         _pump(page)
         seen = json.loads(page.evaluate("JSON.stringify(window.__out)"))

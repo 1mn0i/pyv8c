@@ -2,7 +2,7 @@
 
 [返回文档索引](README.md)。本页对应 [Browser 实现](../pyv8c/platform/browser.py) 与 [Page 实现](../pyv8c/platform/page.py)，不假定与 Playwright 或 Chrome API 等价。
 
-顶层只导出对象模型（`Browser`、`BrowserContext`、`Page`、`DevToolsHandle`、`DevToolsOptions`、`BrowserEnvironment`）、
+顶层只导出对象模型（`Browser`、`Profile`、`Page`、`DevToolsHandle`、`DevToolsOptions`、`BrowserEnvironment`）、
 可捕获的错误（`PageError` 家族、`DOMException`、`NetworkUnavailableError`）与网络扩展点（`NetworkBackend`、
 `HttpTransport`/`WebSocketTransport`、`register_transport`/`register_ws_transport`/`transport_names`、
 `NetworkRequest`/`NetworkResponse`）。引擎实现类从各自模块导入，例如 `pyv8c.network.cronet.CronetTransport`。
@@ -14,17 +14,17 @@ from pyv8c import Browser
 
 browser = Browser(stub_logging="off")
 try:
-    context = browser.new_context()
-    page = context.new_page()
+    profile = browser.new_profile()
+    page = profile.new_page()
     page.set_content("<p id='message'>hello</p>", url="https://example.test/")
     assert page.evaluate("document.getElementById('message').textContent") == "hello"
 finally:
     browser.close()
 ```
 
-Browser、BrowserContext、Page 均提供显式 close；不要假定实现了 Python with 协议。
-Context 关闭会关闭其页面、DevTools 和网络客户端，并清理 Blob URL。
-多个 Context 的 Cookie/Blob/网络会话独立；显式指向同一磁盘缓存目录时，缓存文件不随之隔离。
+Browser、Profile、Page 均提供显式 close；不要假定实现了 Python with 协议。
+profile 关闭会关闭其页面、DevTools 和网络客户端，并清理 Blob URL。
+多个 profile 的 Cookie/Blob/网络会话独立；显式指向同一磁盘缓存目录时，缓存文件不随之隔离。
 
 ## Page API
 
@@ -69,7 +69,7 @@ from pyv8c import Browser
 
 browser = Browser(stub_logging="off")
 try:
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.evaluate("globalThis.result = null; Promise.resolve(21).then(value => result = value * 2)")
     page.run_until_idle(timeout=1)
     assert page.evaluate("result") == 42
@@ -99,7 +99,7 @@ from pyv8c import Browser
 
 browser = Browser(stub_logging="off")
 try:
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<button id='go'>go</button>", url="https://example.test/")
     page.evaluate("document.querySelector('#go').onclick = e => window.__x = e.clientX")
     page.dispatch_event("click", selector="#go", init={"clientX": 7})   # 事件类按类型推断为 MouseEvent
@@ -125,7 +125,7 @@ from pyv8c import Browser
 
 browser = Browser(stub_logging="off")
 try:
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content('<a id=next href="#next">next</a>', url="https://example.test/")
     page.hover("#next")                     # 移到中心并保持 hover
     page.mouse.move(10, 10)                 # 也可以直接给坐标
@@ -204,9 +204,9 @@ page.mouse.move(900, 500, curve="human", seed=2)            # 采样数默认 24
 | --- | --- | --- |
 | resource_loader | None | 同步 Python 资源提供函数；离线测试首选 |
 | real_network | True | 是否装配 http_engine / ws_engine 指定的引擎；False 表示这个 Browser 不联网 |
-| http_engine / ws_engine | curl_cffi / websockets | 各给一个引擎：已注册的名字、现成对象（HTTP 要有 request_sync，socket 要有 websocket）或工厂（每个 Context 调一次）；None 表示该角色不装配 |
-| http_options / ws_options | None / None | 分别交给两个引擎的参数；引擎不认识的键在创建 Context 时报错 |
-| proxy | None | 出口代理 `http://[user:pass@]host:port`；None 与 `""` 都是直连（不看环境变量），可被 `new_context(proxy=...)` 覆盖，详见「网络代理」 |
+| http_engine / ws_engine | curl_cffi / websockets | 各给一个引擎：已注册的名字、现成对象（HTTP 要有 request_sync，socket 要有 websocket）或工厂（每个 profile 调一次）；None 表示该角色不装配 |
+| http_options / ws_options | None / None | 分别交给两个引擎的参数；引擎不认识的键在创建 profile 时报错 |
+| proxy | None | 出口代理 `http://[user:pass@]host:port`；None 与 `""` 都是直连（不看环境变量），可被 `new_profile(proxy=...)` 覆盖，详见「网络代理」 |
 | resource_interceptor | None | 主动跳过/替换请求，区别于被动 trace |
 | threaded_loaders | False | 让 resource_loader / resource_interceptor 在 Browser 的有界线程池上执行：慢回调不再冻结 realm，代价是这种回调不得触碰页面 |
 | cache / cache_dir | True / None | 允许缓存；只有显式目录才持久化资源响应 |
@@ -220,7 +220,7 @@ page.mouse.move(900, 500, curve="human", seed=2)            # 采样数默认 24
 | interface_overrides | None | 用宿主函数回答 baseline 成员（见下节）；未知接口/成员、类型不符、只读属性配写入钩子等在创建 Browser 时报错 |
 
 关闭 stub_logging 只关闭日志，不会让占位成员获得实现。
-原生 binding 描述和已创建模板不是热更新配置；更换 baseline 或修改接口声明后应创建新的 Browser/Context。
+原生 binding 描述和已创建模板不是热更新配置；更换 baseline 或修改接口声明后应创建新的 Browser/profile。
 
 ## 接口成员钩子
 
@@ -236,7 +236,7 @@ browser = Browser(stub_logging="off", interface_overrides={
     "HTMLInputElement": {"valueAsNumber": {"set": lambda self, value: None}},
 })
 try:
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<input id=i>", url="https://example.test/")
     assert page.evaluate("navigator.hardwareConcurrency") == 8
     assert page.evaluate("new AbortController().abort()") == "已接管"
@@ -291,7 +291,7 @@ environment = BrowserEnvironment({
 })
 browser = Browser(environment=environment, stub_logging="off")
 try:
-    page = browser.new_context().new_page(environment={"viewport.width": 390})
+    page = browser.new_profile().new_page(environment={"viewport.width": 390})
     assert page.evaluate("[navigator.language, innerWidth]") == ["zh-CN", 390]
 finally:
     browser.close()
@@ -400,23 +400,23 @@ page.evaluate("chrome.csi()")
 
 `page.net` 是页面的网络入口，两种语义各一条路。`page.net.fetch` / `page.net.xhr` 在页面里调用 JS 的 `fetch` / `XMLHttpRequest`：命中**页面重写后**的实现（埋点、测试库常见），请求走页面的资源栈（CORS、拦截器、缓存），返回宿主侧快照对象（`status`、`status_text`、`url`、`headers`、`body`，以及 `.ok`、`.text`、`.json()`）；XHR 那份的 `headers` 为空，因为该实现没有 `getAllResponseHeaders`。
 `page.net.get` / `page.net.post` 等相反：直接用 context 的传输，不经 JS、不做 CORS。需要哪种语义就选哪条路，但两者发出的头**一样**——都是本机 Chrome 会发的那一套（`Accept`、`Sec-Fetch-*`、`sec-ch-ua*`、`Referer`、`Origin` 等，取值来自 environment），见 [请求头对齐](request-headers.md)。
-默认联网：`Browser()` 为每个 context 装配 curl_cffi（HTTP）与 websockets（WebSocket），两者来自 `[network]` extra，缺失时在创建 Context 时报错并指明要装什么。
+默认联网：`Browser()` 为每个 profile 装配 curl_cffi（HTTP）与 websockets（WebSocket），两者来自 `[network]` extra，缺失时在创建 profile 时报错并指明要装什么。
 离线测试用 `Browser(real_network=False)` 配 resource_loader，或直接用 set_content 提交本地 HTML。
 http_engine / ws_engine 可改选其它已注册引擎（如 `"cronet"`，需装 `[cronet]` extra），也可直接给现成引擎对象或工厂，或传 None 关掉某个角色；http_options / ws_options 只对"按名字"的引擎生效，给现成对象时传会被拒绝。
 选引擎、参数含义、校验规则和自定义引擎见 [网络引擎与参数](network-engines.md)；完整 loader 契约、响应格式、拦截和缓存风险见 [资源加载与拦截](resource-interception.md)。
 
 ## 网络代理
 
-`Browser(proxy=...)` 是这个 Browser 所有 Context 的默认出口，`browser.new_context(proxy=...)` 可以按 Context 覆盖，所以同一个 Browser 里可以同时存在走代理与直连的会话（Cookie、缓存、引擎本来就各自独立）。
+`Browser(proxy=...)` 是这个 Browser 所有 profile 的默认出口，`browser.new_profile(proxy=...)` 可以按 profile 覆盖，所以同一个 Browser 里可以同时存在走代理与直连的会话（Cookie、缓存、引擎本来就各自独立）。
 
 ```python
 from pyv8c import Browser
 
 browser = Browser(stub_logging="off", proxy="http://user:pass@127.0.0.1:3128")
 try:
-    through = browser.new_context()                                # 走 Browser 的代理
-    direct = browser.new_context(proxy="")                         # 显式直连
-    another = browser.new_context(proxy="http://127.0.0.1:8080")   # 换一个出口
+    through = browser.new_profile()                                # 走 Browser 的代理
+    direct = browser.new_profile(proxy="")                         # 显式直连
+    another = browser.new_profile(proxy="http://127.0.0.1:8080")   # 换一个出口
     print(through.proxy, direct.proxy, another.proxy)
 finally:
     browser.close()
@@ -426,7 +426,7 @@ finally:
 
 | 值 | 含义 |
 | --- | --- |
-| 省略 / None | Browser 层：直连；Context 层：继承 Browser |
+| 省略 / None | Browser 层：直连；profile 层：继承 Browser |
 | `""` | 显式直连 |
 | `http://[user:pass@]host:port`（也接受 `https://`） | 经该代理；URL 里的凭据会作为 `Proxy-Authorization` 发给代理 |
 
@@ -438,10 +438,10 @@ finally:
 
 | 情况 | 行为 |
 | --- | --- |
-| 非 http/https（如 `socks5://`）、缺 scheme、缺主机、端口不可解析 | 构造 Browser 或 `new_context(proxy=...)` 时 `ValueError`（非字符串为 `TypeError`） |
-| `real_network=False` 却给了代理 | 创建 Context 时 `TypeError`：没有引擎能承载它 |
-| 引擎不声明支持代理（内置三个都声明了，自定义引擎默认没有） | 创建 Context 时 `TypeError`，指出该引擎不能被代理 |
-| 同时给了 `proxy=` 与该角色自己的代理键（`proxy`/`proxies`/`proxy_auth`） | 创建 Context 时 `TypeError`，指出该保留哪一个 |
+| 非 http/https（如 `socks5://`）、缺 scheme、缺主机、端口不可解析 | 构造 Browser 或 `new_profile(proxy=...)` 时 `ValueError`（非字符串为 `TypeError`） |
+| `real_network=False` 却给了代理 | 创建 profile 时 `TypeError`：没有引擎能承载它 |
+| 引擎不声明支持代理（内置三个都声明了，自定义引擎默认没有） | 创建 profile 时 `TypeError`，指出该引擎不能被代理 |
+| 同时给了 `proxy=` 与该角色自己的代理键（`proxy`/`proxies`/`proxy_auth`） | 创建 profile 时 `TypeError`，指出该保留哪一个 |
 
 不做的部分：SOCKS4/5、PAC、页级覆盖、代理健康检查。自定义引擎要用代理，需在注册时声明 `proxy=True`（见 [网络引擎与参数](network-engines.md)）。
 
@@ -454,9 +454,9 @@ from pyv8c import Browser, DevToolsOptions
 
 browser = Browser(stub_logging="off")
 try:
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page()
-    handle = context.start_devtools(page, options=DevToolsOptions(port=9005))
+    handle = profile.start_devtools(page, options=DevToolsOptions(port=9005))
     print(handle.url)
     input("打开调试地址后按回车继续：")
     page.evaluate("globalThis.debugValue = 42", filename="example.js")
@@ -467,8 +467,8 @@ finally:
 
 统一使用 `DevToolsOptions`：host="127.0.0.1"、port=0、wait_for_debugger=False、
 pause_on_start=True、startup_timeout=None。默认不阻塞业务；完成握手后，在下一段宿主脚本第一条语句暂停一次。
-每个 BrowserContext 只允许一个活动服务，保留单客户端模型；Browser 直接复用 `pyv8.devtools` 核心。
-Handle 提供 close、wait_for_connection、wait_for_ready 和上下文管理；不会自动打开浏览器、打印地址或接管进程信号。
+每个 Profile 只允许一个活动服务，保留单客户端模型；Browser 直接复用 `pyv8.devtools` 核心。
+Handle 提供 close、wait_for_connection、wait_for_ready 和 profile 管理；不会自动打开浏览器、打印地址或接管进程信号。
 `wait_for_debugger=True` 显式等待启动释放；超时抛出 TimeoutError，不执行该脚本也不关闭页面。
 同端口提供 /json、/json/list、/json/version。支持 iframe/Worker 自动附加和稳定 Target ID 重连。
 支持 Runtime/Debugger 和部分 Target 命令，不提供完整 Page/Network/DOM 域。
@@ -477,8 +477,8 @@ Handle 提供 close、wait_for_connection、wait_for_ready 和上下文管理；
 
 ## 使用时的限制
 
-- 不跨线程直接访问底层 Context 或操作持有的 JSObject；使用 Page 公开入口。
-- 页面/Context 关闭后不要继续使用它的 JS 引用。
+- 不跨线程直接访问底层 V8Context 或操作持有的 JSObject；使用 Page 公开入口。
+- 页面/Profile 关闭后不要继续使用它的 JS 引用。
 - 缺失成员可能只是 stub；对关键行为写断言，而不是仅检查 typeof。
 - 主动读取 trace 事件里的对象引用可能产生 JS 副作用；日志使用安全 formatter，见 [TRACE](TRACE.md)。
 - 这不是敌意代码安全沙箱；同源检查只覆盖已建模的浏览器行为。

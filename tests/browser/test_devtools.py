@@ -86,7 +86,7 @@ def background(callback):
 @pytest.fixture
 def devtools_page():
     browser = Browser(stub_logging="off", resource_loader=lambda url, request: {"url": url, "body": "<script>globalThis.childStarted=42</script>"})
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page()
     page.evaluate("globalThis.answer = 40")
     handle = context.start_devtools(page)
@@ -196,7 +196,7 @@ def test_disconnect_reconnect_preserves_host_and_target(devtools_page, phase):
 @pytest.mark.parametrize("disconnect", [False, True])
 def test_explicit_startup_wait(disconnect):
     browser = Browser(stub_logging="off")
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page()
     handle = context.start_devtools(page, options=DevToolsOptions(wait_for_debugger=True, pause_on_start=False, startup_timeout=3))
     try:
@@ -216,7 +216,7 @@ def test_explicit_startup_wait(disconnect):
 def test_timeout_does_not_execute_or_close_page():
     browser = Browser(stub_logging="off")
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         page = context.new_page()
         handle = context.start_devtools(page, options=DevToolsOptions(wait_for_debugger=True, startup_timeout=0))
         with pytest.raises(TimeoutError, match="startup timed out"):
@@ -258,7 +258,7 @@ def test_page_compile_failure_does_not_arm_helpers_or_console(devtools_page):
         client.ready()
         with pytest.raises(BaseException):
             page.evaluate("const =", filename="bad.js")
-        assert page.realm.executor.call(lambda: page.context.exec_js("21+21")) == 42
+        assert page.realm.executor.call(lambda: page.v8_context.exec_js("21+21")) == 42
         assert client.request("Runtime.evaluate", {"expression": "1+1"})["result"]["value"] == 2
         result = background(lambda: page.evaluate("42", filename="retry.js"))
         client.event("Debugger.paused")
@@ -283,7 +283,7 @@ def test_rapid_reconnect_does_not_replay_requests(devtools_page):
 
 def test_existing_iframe_autoattach_and_commands_during_shared_isolate_pause():
     browser = Browser(stub_logging="off", resource_loader=lambda url, request: {"url": url, "body": "<script>globalThis.childValue=7</script>"})
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page()
     page.set_content('<iframe src="http://example.test/child"></iframe>')
     page.run_until_idle(timeout=1)
@@ -365,7 +365,7 @@ def test_parent_unregister_follows_descendant_close(devtools_page, monkeypatch):
     _, page, handle = devtools_page
     page.set_content('<iframe></iframe>')
     child = next(iter(page._owned.frames))
-    adapter = page.context_owner._devtools
+    adapter = page.profile._devtools
     unregister = adapter.unregister
     order = []
 

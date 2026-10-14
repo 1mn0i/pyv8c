@@ -12,7 +12,7 @@ from importlib import import_module
 
 _EXPORTS = {
     "Browser": ".platform",
-    "BrowserContext": ".platform",
+    "Profile": ".platform",
     "Page": ".platform",
     "DevToolsHandle": ".platform",
     "DevToolsOptions": ".platform",

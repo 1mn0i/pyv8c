@@ -22,7 +22,7 @@ def test_goto_downloads_html_and_waits_for_document_load():
         )
 
     browser = Browser(resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     response = page.goto("http://example.test/index.html")
 
     assert response.url == "http://example.test/index.html"
@@ -43,7 +43,7 @@ def test_new_page_url_and_location_assignment_navigate_automatically():
         "http://example.test/next": "<html><body><h1>next</h1></body></html>",
     }
     browser = Browser(resource_loader=lambda url, _request: Response(pages[url], {"url": url}))
-    page = browser.new_context().new_page("http://example.test/first")
+    page = browser.new_profile().new_page("http://example.test/first")
 
     assert page.evaluate("[location.href, document.querySelector('h1').textContent]") == [
         "http://example.test/first", "first",
@@ -68,7 +68,7 @@ def test_document_location_is_the_windows_and_assigning_it_navigates():
     }
     browser = Browser(resource_loader=lambda url, _request: Response(pages[url], {"url": url}),
                       stub_logging="off")
-    page = browser.new_context().new_page("http://example.test/first")
+    page = browser.new_profile().new_page("http://example.test/first")
     try:
         assert page.evaluate("document.location === location") is True
         page.evaluate("document.location = '/next'")
@@ -86,20 +86,20 @@ def test_goto_decodes_http_charset_and_requires_a_loader_or_network_backend():
     browser = Browser(resource_loader=lambda url, _request: Response(
         html, {"url": url, "headers": {"content-type": "text/html; charset=gb18030"}},
     ))
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.goto("http://example.test/chinese")
     assert page.evaluate("document.body.textContent") == "中文页面"
     browser.close()
 
     browser = Browser(real_network=False)
     with pytest.raises(Exception, match="Network access requires"):
-        browser.new_context().new_page("http://example.test/")
+        browser.new_profile().new_page("http://example.test/")
     browser.close()
 
 
 def test_set_content_without_markup_starts_an_empty_standards_document():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     try:
         assert page.set_content() is page
         assert page.evaluate(
@@ -126,7 +126,7 @@ def test_a_navigation_that_times_out_names_the_state_and_what_is_still_loading()
 
     browser = Browser(stub_logging="off", threaded_loaders=True, resource_loader=loader)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         started = time.perf_counter()
         with pytest.raises(HostStateError, match="waiting for domcontentloaded") as caught:
             page.goto("http://example.test/page", wait_until="domcontentloaded", timeout=0.5)
@@ -158,7 +158,7 @@ def test_a_resource_that_fails_puts_its_reason_in_the_log():
 
     browser = Browser(stub_logging="off", resource_loader=loader)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto("http://example.test/index.html", wait_until="load", timeout=5)
         page.run_until_idle(timeout=1)
     finally:
@@ -193,7 +193,7 @@ def test_a_failed_script_tells_the_page_the_load_failed_and_nothing_more():
 
     browser = Browser(stub_logging="off", resource_loader=loader)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto("http://example.test/index.html", wait_until="load", timeout=5)
         page.run_until_idle(timeout=1)
         errors = page.evaluate("window.__errors")

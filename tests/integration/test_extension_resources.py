@@ -32,7 +32,7 @@ def url(identifier, path):
 
 def open_page(extensions=EXTENSIONS, **overrides):
     browser = Browser(stub_logging="off", environment={"extensions": extensions}, **overrides)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url=PAGE)
     return browser, page
 

@@ -20,7 +20,7 @@ def test_timers_report_themselves():
     try:
         browser = Browser(stub_logging="off")
         try:
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             page.set_content(PAGE, url="https://repro.test/index.html")
             page.run_until_idle(timeout=2)
         finally:

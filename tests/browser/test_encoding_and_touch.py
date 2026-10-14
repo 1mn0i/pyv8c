@@ -30,7 +30,7 @@ def _bounded_close(browser):
 def page():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<!doctype html><body>probe", url="https://encoding.test/")
         yield page
     finally:

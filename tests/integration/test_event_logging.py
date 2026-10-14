@@ -14,7 +14,7 @@ def test_each_dispatch_reports_itself():
     try:
         browser = Browser(stub_logging="off")
         try:
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             page.set_content(PAGE, url="https://repro.test/index.html")
             page.run_until_idle(timeout=2)
             page.evaluate("dispatchEvent(new Event('probe'))")

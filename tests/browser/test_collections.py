@@ -33,7 +33,7 @@ def browser():
 
 @pytest.fixture
 def page(browser):
-    instance = browser.new_context().new_page()
+    instance = browser.new_profile().new_page()
     instance.set_content(
         "<body><div id='root' class='  a\tb  a  '>"
         "<span id='first' name='named'></span>"
@@ -46,7 +46,7 @@ def page(browser):
 @pytest.fixture
 def document_page(browser):
     """A page that has finished parsing DOCUMENT."""
-    instance = browser.new_context().new_page()
+    instance = browser.new_profile().new_page()
     instance.set_content(DOCUMENT)
     instance.run_until_idle()
     return instance
@@ -550,7 +550,7 @@ def test_document_all_for_in_only_yields_indices_and_prototype_members(document_
 
 
 def test_document_all_empty_document_has_an_empty_collection(browser):
-    empty = browser.new_context().new_page()
+    empty = browser.new_profile().new_page()
     assert empty.evaluate("document.all.length") == 0
     assert empty.evaluate("typeof document.all") == "undefined"
     assert empty.evaluate("document.all[0]") is pyv8.Undefined
@@ -560,7 +560,7 @@ def test_document_all_empty_document_has_an_empty_collection(browser):
 
 
 def test_document_all_settling_the_page_keeps_length_consistent(browser):
-    instance = browser.new_context().new_page()
+    instance = browser.new_profile().new_page()
     instance.set_content(DOCUMENT)
     instance.run_until_idle()
     assert instance.evaluate("document.readyState") == "complete"
@@ -610,7 +610,7 @@ def test_document_all_renaming_an_id_changes_the_named_lookup(document_page):
 
 
 def test_document_all_lazy_interface_is_materialised_on_first_use(browser):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     session = page.binding_session
     assert "HTMLAllCollection" not in session.materialized_interfaces
     page.set_content(DOCUMENT)
@@ -622,7 +622,7 @@ def test_document_all_lazy_interface_is_materialised_on_first_use(browser):
 def test_document_all_materialises_through_the_feature_runtime():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(DOCUMENT)
         page.run_until_idle()
         assert page.evaluate("typeof document.all") == "undefined"
@@ -636,7 +636,7 @@ def test_document_all_accepts_the_interface_after_catalog_validation():
     browser = Browser(stub_logging="off")
     try:
         browser.bindings.validate()
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(DOCUMENT)
         page.run_until_idle()
         assert page.evaluate("document.all.length") == len(TAGS)

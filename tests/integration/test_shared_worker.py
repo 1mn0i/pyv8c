@@ -17,7 +17,7 @@ def _loader(url, request):
 def test_a_shared_worker_answers_on_the_port_it_hands_out():
     browser = Browser(resource_loader=_loader, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url="https://repro.test/index.html")
         page.run_until_idle(timeout=2)
         page.evaluate("""window.__seen = [];

@@ -184,7 +184,7 @@ def _chrome_submissions(reference, origin):
 
 def _pyv8c_submissions(browser, origin):
     collected = {}
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     try:
         for name, path, driver in CASES:
             with LOCK:

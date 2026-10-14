@@ -16,8 +16,8 @@ from .services import WorkerRealmServices
 from .sessions import BindingSession
 
 
-def _context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False, exposure_type=None, isolate=None, reuse_global=None):
-    """Shared native Context arguments assembled from one binding session.
+def _v8_context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False, exposure_type=None, isolate=None, reuse_global=None):
+    """Shared native V8Context arguments assembled from one binding session.
 
     ``isolate`` and ``reuse_global`` go in only when the caller has one: the worker
     path calls ``Isolate.context()``, which takes its isolate from the receiver and
@@ -94,7 +94,7 @@ class WorkerRealm:
         #: Written by the runtime that starts the worker; the realm only reads it.
         self.script_url = ""
         self.isolate = None
-        self.context = None
+        self.v8_context = None
         self.scope = None
         self.scripts = None
         # A worker global owns its task queue and drives it from its own owner
@@ -111,33 +111,33 @@ class WorkerRealm:
         session = config.session
         session.prepare("Worker")
         self.isolate = pyv8.Isolate()
-        self.context = self.isolate.context(
-            scope, **_context_kwargs(session, "Worker", config.trace,
+        self.v8_context = self.isolate.context(
+            scope, **_v8_context_kwargs(session, "Worker", config.trace,
                                      trace_callback=config.browser.trace_callback,
                                      traceable=config.browser.traceable),
         )
         _declare_realm_interfaces(
-            self.context,
+            self.v8_context,
             context_type="Worker",
             bindings=config.bindings,
         )
-        return self.context
+        return self.v8_context
 
     # The worker's global scope reaches these through WorkerRealmServices, as a
     # page reaches its own through PageServices.  The realm owns the context, so
     # it is also what decides how a promise behaves once that context is gone.
 
     def evaluate_script(self, source):
-        return self.context.exec_js(source)
+        return self.v8_context.exec_js(source)
 
     def enqueue_microtask(self, callback):
-        return promises.enqueue_microtask(self.context, callback)
+        return promises.enqueue_microtask(self.v8_context, callback)
 
     def make_promise(self):
-        return promises.make_promise(self.context)
+        return promises.make_promise(self.v8_context)
 
     def promise_resolve(self, value):
-        return promises.promise_resolve(self.context, value)
+        return promises.promise_resolve(self.v8_context, value)
 
     def close(self):
         first_error = None
@@ -153,10 +153,10 @@ class WorkerRealm:
                 return False
 
         attempt(self.tasks.close)
-        if self.context is not None and attempt(self.context.close):
-            self.context = None
+        if self.v8_context is not None and attempt(self.v8_context.close):
+            self.v8_context = None
         attempt(self.config.session.detach)
-        if self.context is None:
+        if self.v8_context is None:
             self.scope = None
         if self.isolate is not None and attempt(self.isolate.close):
             self.isolate = None
@@ -169,11 +169,11 @@ class PageRealm:
 
     def __init__(self, page, executor=None):
         self.page = page
-        self.context = None
+        self.v8_context = None
         self.executor = executor if executor is not None else RealmExecutor(name="pyv8c-page")
         #: False when the page owns the thread and hands it across navigations.
         self._owns_executor = executor is None
-        browser = page.context_owner.browser
+        browser = page.profile.browser
         # Web objects built through this session receive PageServices, not the
         # platform Page.
         self.binding_session = BindingSession(browser.bindings, page.services)
@@ -193,49 +193,49 @@ class PageRealm:
 
     def _initialize(self):
         page = self.page
-        browser = page.context_owner.browser
+        browser = page.profile.browser
         binding_started = time.perf_counter_ns()
         self.binding_session.prepare("Window")
         binding_prepared = time.perf_counter_ns()
         #: A frame's realm is not the top page's: the label says which it is.
         context_type = "FRAME" if page.parent_page is not None else "TOP"
-        self.context = pyv8.Context(page.window, **_context_kwargs(
+        self.v8_context = pyv8.V8Context(page.window, **_v8_context_kwargs(
             self.binding_session, context_type, page.trace,
             exposure_type="Window",
             on_materialize=self._record_deferred_materialized,
-            trace_callback=page.context_owner.trace_callback,
-            traceable=page.context_owner.traceable,
+            trace_callback=page.profile.trace_callback,
+            traceable=page.profile.traceable,
             isolate=page.realm_isolate(),
             reuse_global=page.global_proxy,
         ))
         #: Kept so the next document is handed the same window object.
-        page.global_proxy = self.context.glob
-        self.executor.attach_deadline_source(self.context)
+        page.global_proxy = self.v8_context.glob
+        self.executor.attach_deadline_source(self.v8_context)
         context_created = time.perf_counter_ns()
         deferred_globals = _declare_realm_interfaces(
-            self.context,
+            self.v8_context,
             context_type="Window",
             bindings=browser.bindings,
         )
         deferred_declared_at = time.perf_counter_ns()
         # Chromium installs window.chrome before any page script runs.
-        install_window_chrome(self.context, page.services)
-        _publish_window_name(self.context, page)
+        install_window_chrome(self.v8_context, page.services)
+        _publish_window_name(self.v8_context, page)
         install_legacy_factories(
-            self.context, session=self.binding_session,
+            self.v8_context, session=self.binding_session,
             table=browser.bindings.idl, document=page.document,
         )
         chrome_installed_at = time.perf_counter_ns()
         # The realm owns the context and the page's script controller borrows it,
         # so the isolate's error hooks and every Web API promise share one realm;
         # the hooks route exceptions V8 raises on its own.
-        self.context.set_error_hooks(
+        self.v8_context.set_error_hooks(
             page.report_uncaught_message, page.rejections.record,
         )
         plan = self.binding_session.bindings.plan("Window")
         browser._record_startup(
             binding_binder_ms=(binding_prepared - binding_started) / 1_000_000,
-            context_create_ms=(context_created - binding_prepared) / 1_000_000,
+            profile_create_ms=(context_created - binding_prepared) / 1_000_000,
             deferred_global_declare_ms=(deferred_declared_at - context_created) / 1_000_000,
             chrome_install_ms=(chrome_installed_at - deferred_declared_at) / 1_000_000,
             core_interfaces=len(self.binding_session.materialized_interfaces),
@@ -246,7 +246,7 @@ class PageRealm:
 
     def _record_deferred_materialized(self, name):
         """Keep startup stats in sync with on-demand interface materialisation."""
-        self.page.context_owner.browser._record_startup(
+        self.page.profile.browser._record_startup(
             materialized_interfaces=len(self.binding_session.materialized_interfaces),
             deferred_materialized=len(self.binding_session.materialized_interfaces)
             - len(self.binding_session.bindings.plan("Window").ready),
@@ -258,29 +258,29 @@ class PageRealm:
             self.executor.close()
 
     def enqueue_microtask(self, callback):
-        return promises.enqueue_microtask(self.context, callback)
+        return promises.enqueue_microtask(self.v8_context, callback)
 
     def make_promise(self):
-        return promises.make_promise(self.context)
+        return promises.make_promise(self.v8_context)
 
     def promise_resolve(self, value):
-        return promises.promise_resolve(self.context, value)
+        return promises.promise_resolve(self.v8_context, value)
 
     def close_context(self):
         """Close the document-scoped parts: the context and the binding session.
 
-        ``self.context`` going to ``None`` is what tells a late caller -- a promise of the
+        ``self.v8_context`` going to ``None`` is what tells a late caller -- a promise of the
         replaced document, a microtask of the old realm -- that there is nothing to settle.
         """
         if self.executor.closed:
             return
 
         def close_context():
-            context = self.context
-            close = getattr(context, "close", None)
+            v8_context = self.v8_context
+            close = getattr(v8_context, "close", None)
             if callable(close):
                 close()
-            self.context = None
+            self.v8_context = None
             self.binding_session.detach()
 
         self.executor.call(close_context)

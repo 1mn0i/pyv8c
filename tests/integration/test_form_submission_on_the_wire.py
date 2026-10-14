@@ -100,7 +100,7 @@ def submissions():
     browser = Browser(real_network=True, stub_logging="off")
     collected = {}
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
 
         def submit(name, path, drive):
             with LOCK:

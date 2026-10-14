@@ -4,7 +4,7 @@ import threading
 
 class CallbackRunner:
     def __init__(self, page):
-        self.browser = page.context_owner.browser
+        self.browser = page.profile.browser
         self.tasks = page.services.task_services
 
     def dispatch(self, call, tail):

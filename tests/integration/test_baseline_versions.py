@@ -123,8 +123,8 @@ def test_two_browsers_keep_generated_classes_and_templates_isolated(tmp_path):
     custom_browser = Browser(idl_path=custom, stub_logging="off")
     try:
         assert default_browser.bindings.class_for("ReadableStream") is not custom_browser.bindings.class_for("ReadableStream")
-        default_page = default_browser.new_context().new_page()
-        custom_page = custom_browser.new_context().new_page()
+        default_page = default_browser.new_profile().new_page()
+        custom_page = custom_browser.new_profile().new_page()
         assert default_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["function", "undefined"]
         assert custom_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["undefined", "function"]
         assert default_page.evaluate("Object.getPrototypeOf(ReadableStream.prototype) === Object.prototype") is True
@@ -156,8 +156,8 @@ def test_baseline_signatures_do_not_control_implementation_arguments(tmp_path):
     default_browser = Browser(stub_logging="off")
     strict_browser = Browser(idl_path=path, stub_logging="off")
     try:
-        default_page = default_browser.new_context().new_page()
-        strict_page = strict_browser.new_context().new_page()
+        default_page = default_browser.new_profile().new_page()
+        strict_page = strict_browser.new_profile().new_page()
         default_page.set_content("<body></body>")
         strict_page.set_content("<body></body>")
         assert default_page.evaluate("document.body.classList.contains('x')") is False
@@ -179,7 +179,7 @@ def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_pa
     path.write_text(json.dumps(document), encoding="utf-8")
     browser = Browser(idl_path=path, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         assert page.evaluate("document.createElement('div').classList.contains('x')") is False
     finally:
         browser.close()
@@ -194,7 +194,7 @@ def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_pa
     path.write_text(json.dumps(document), encoding="utf-8")
     browser = Browser(idl_path=path, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         assert page.evaluate("new ReadableStream().getReader(1, 2, 3)") is pyv8.Undefined
     finally:
         browser.close()
@@ -211,11 +211,11 @@ def test_worker_and_iframe_reuse_their_browser_bindings(tmp_path):
         stub_logging="off",
     )
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<iframe src='about:blank'></iframe>", url="http://example.test/")
         page.run_until_idle(timeout=1)
         frame_page = next(iter(page._owned.frames))
-        assert frame_page.context_owner.browser.bindings is browser.bindings
+        assert frame_page.profile.browser.bindings is browser.bindings
         assert frame_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["undefined", "function"]
 
         page.evaluate("""(() => {

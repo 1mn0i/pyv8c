@@ -18,7 +18,7 @@ def load(url, request):
 
 browser = Browser(real_network=False, resource_loader=load, stub_logging="off")
 try:
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     response = page.goto("https://example.test/")
     assert response.status == 200
     assert page.evaluate("loaded") == 42
@@ -54,7 +54,7 @@ loader 默认在页面 owner 线程上执行，所以它可以在等请求的同
 导航代际保护不等于能够强制终止已经运行的任意 Python 函数（`threaded_loaders` 下它在池线程上跑，至少不再挡住 realm）。
 
 HTTP 与 loader 响应使用相同的逐跳 CORS、`same-origin` 和重定向检查。检查使用请求发起时的真实 Realm origin；初始 iframe 的继承 origin 与 sandbox 的 opaque origin 不由页面 URL 代替。
-Blob 读取检查创建者 origin；共享 BrowserContext 不授予跨源读取权限。Blob 文档导航仍由 iframe/导航生命周期处理。
+Blob 读取检查创建者 origin；共享 Profile 不授予跨源读取权限。Blob 文档导航仍由 iframe/导航生命周期处理。
 显式 `mode="no-cors"` 的跨域 fetch 返回 opaque 响应，元素自身的经典脚本、样式和图片加载仍可消费资源内容。导航使用 navigate 模式。
 
 ## 实现与生命周期
@@ -64,7 +64,7 @@ Blob 读取检查创建者 origin；共享 BrowserContext 不授予跨源读取�
 | `resources/ownership.py` | Page 的组合入口；Web API 仍只使用 ResourceServices |
 | `resources/fetcher.py` | 请求快照、来源选择、同步/异步驱动和共享跳转决策 |
 | `resources/callbacks.py` | host 回调执行、池提交失败和 loader 计数清理 |
-| `resources/cache.py` | BrowserContext 所属缓存；读写普通 payload，不持有 Realm Response |
+| `resources/cache.py` | Profile 所属缓存；读写普通 payload，不持有 Realm Response |
 | `resources/handles.py` | 原子取消/完成与 transport 绑定；取消后的迟到绑定立即取消 |
 | `resources/documents.py` | 文档资源记录、加载屏障、事件及导航代际 |
 | `resources/frames.py` | 初始文档、srcdoc、子 Page 生命周期和完成通知 |
@@ -98,7 +98,7 @@ def intercept(url, request):
 
 browser = Browser(resource_interceptor=intercept, resource_loader=lambda url, request: {"body": ""})
 try:
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.goto("https://example.test/")
 finally:
     browser.close()
@@ -121,8 +121,8 @@ interceptor 接收 request 的副本；仅修改副本不是受支持的请求�
 python -m pip install -e ".[network]"
 ```
 
-默认联网（HTTP=curl_cffi、WebSocket=websockets，见 [Browser 参数](USAGE.md#browser-参数)），Browser(real_network=False) 表示不装配引擎。每个 BrowserContext 拥有自己的网络栈和 CookieJar。
-两个角色可用 http_engine / ws_engine 分别替换，http_options / ws_options 传该引擎的参数：引擎不认识的键（拼错，或属于另一个角色的引擎）会在创建 Context 时报错，不会被静默转交或丢弃；缺少依赖同样在创建 Context 时失败，不会静默伪装联网成功。
+默认联网（HTTP=curl_cffi、WebSocket=websockets，见 [Browser 参数](USAGE.md#browser-参数)），Browser(real_network=False) 表示不装配引擎。每个 Profile 拥有自己的网络栈和 CookieJar。
+两个角色可用 http_engine / ws_engine 分别替换，http_options / ws_options 传该引擎的参数：引擎不认识的键（拼错，或属于另一个角色的引擎）会在创建 profile 时报错，不会被静默转交或丢弃；缺少依赖同样在创建 profile 时失败，不会静默伪装联网成功。
 选引擎、参数含义、校验规则、握手与自定义引擎见 [网络引擎与参数](network-engines.md)。
 网络实现见 [registry.py](../pyv8c/network/registry.py) 与 [backend.py](../pyv8c/network/backend.py)，响应策略包含基础同源/CORS/no-cors 处理，但不是完整 Fetch/CORS 协议栈。
 不要假定拦截响应、缓存命中和所有同步 loader 路径都重新执行相同的安全策略。
@@ -156,7 +156,7 @@ browser = Browser(environment={"extensions": {
 - 复用命中时输出 Loguru DEBUG 的 resource cache hit 日志。
 - 响应 no-store、no-cache、private、Set-Cookie、Vary: * 和非 2xx 状态不写入；仍没有完整 HTTP freshness、ETag/304 和重验证语义。
 - 重定向链只缓存最终响应，键仍是原始请求的 method/URL/mode/credentials；中间跳不单独入缓存，与 Chrome 的逐跳缓存不同。
-- 请求携带 Authorization、Cookie 或 CookieJar 中存在匹配 Cookie 时绕过缓存。同一目录仍可被多个 Context/Browser 共享；旧版缓存键与新版不同，旧记录不会被新版命中。
+- 请求携带 Authorization、Cookie 或 CookieJar 中存在匹配 Cookie 时绕过缓存。同一目录仍可被多个 profile/Browser 共享；旧版缓存键与新版不同，旧记录不会被新版命中。
 - 处理鉴权、敏感或依赖 Cookie 的内容时关闭缓存，或使用隔离目录并自行控制可缓存资源。
 
 cache=False 关闭响应缓存使用；Browser.close 不删除显式持久目录。
@@ -184,6 +184,6 @@ page.frame_resources.ensure_iframe_context(element)
 page.document_resources.discover_element_resource(element)
 ```
 
-ResourceServices remains the Web API boundary. ResourceOwnership registers one cleanup callback in ResourceScope. Its tickets distinguish ownership release from result delivery; document tickets survive transfer completion until element completion. Closed/obsolete synchronous owners raise LoadFailure; asynchronous owners cancel and stop delivery. BrowserContext always owns a CookieJar.
+ResourceServices remains the Web API boundary. ResourceOwnership registers one cleanup callback in ResourceScope. Its tickets distinguish ownership release from result delivery; document tickets survive transfer completion until element completion. Closed/obsolete synchronous owners raise LoadFailure; asynchronous owners cancel and stop delivery. Profile always owns a CookieJar.
 
 Discovery consumes immutable owner-thread snapshots. The tracker owns typed document records, generations and child-document identity checks. Completion owns element effects and events. _AsyncLoad drives asynchronous requests; HopState is shared with the blocking driver. Neither driver waits for its own task queue. No RequestHandle alias or ResourceController compatibility facade is provided.

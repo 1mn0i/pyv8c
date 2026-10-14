@@ -165,7 +165,7 @@ def wire():
         ws = f"ws://127.0.0.1:{sockets.port}/socket"
         browser = Browser(real_network=True, stub_logging="off")
         try:
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             page.goto(f"{same_origin}/page", wait_until="load")
             page.net.fetch("/js/fetch-get")
             page.net.fetch("/js/fetch-post", method="POST", body='{"a": 1}',
@@ -303,7 +303,7 @@ def test_a_compressed_response_is_still_readable():
     try:
         browser = Browser(real_network=True, stub_logging="off")
         try:
-            page = browser.new_context().new_page(f"http://127.0.0.1:{server.server_port}/")
+            page = browser.new_profile().new_page(f"http://127.0.0.1:{server.server_port}/")
             assert page.net.fetch("/data").json() == {"ok": True}
         finally:
             browser.close()

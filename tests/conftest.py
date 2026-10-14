@@ -74,7 +74,7 @@ def browser():
 @pytest.fixture
 def page(browser):
     """A fresh Page on ``about:blank``, closed before its Browser."""
-    instance = browser.new_context().new_page()
+    instance = browser.new_profile().new_page()
     try:
         yield instance
     finally:
@@ -94,7 +94,7 @@ def shared_browser():
 @pytest.fixture(scope="module")
 def shared_page(shared_browser):
     """One Page for a whole module: only for cases that never write to it."""
-    instance = shared_browser.new_context().new_page()
+    instance = shared_browser.new_profile().new_page()
     try:
         yield instance
     finally:

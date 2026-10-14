@@ -86,7 +86,7 @@ def _served(html):
         return {"body": html, "headers": {"content-type": "text/html"}}
 
     browser = Browser(stub_logging="off", real_network=False, resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.goto("http://worker.test/")
     _pump(page)
     return browser, page, messages, token

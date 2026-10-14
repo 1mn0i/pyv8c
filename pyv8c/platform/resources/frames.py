@@ -94,11 +94,11 @@ class FrameResourceController:
         child_services = getattr(iframe, "_child_services", None)
         child = child_services._page_realm.page if child_services is not None else None
         if child is None or child.closed:
-            child = Page(page.context_owner, url=target, environment=page.environment, parent=page,
+            child = Page(page.profile, url=target, environment=page.environment, parent=page,
                          origin=self._frame_origin(iframe))
             iframe._child_services = child.services
             page.services.context_services.track_frame(child)
-            devtools = page.context_owner._devtools
+            devtools = page.profile._devtools
             if devtools is not None:
                 child._devtools_target = devtools.register_page(child, kind="iframe", parent=page)
         child.services.sandbox_tokens = self._sandbox_tokens(iframe)

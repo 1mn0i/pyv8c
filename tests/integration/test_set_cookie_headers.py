@@ -49,7 +49,7 @@ def server():
 def test_every_set_cookie_header_of_one_response_reaches_the_jar(server):
     browser = Browser(stub_logging="off", real_network=True, threaded_loaders=True)
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         page = context.new_page()
         page.goto(server)
         stored = sorted(name for (_domain, _path, name)

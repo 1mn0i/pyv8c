@@ -14,7 +14,7 @@ from pyv8c import Browser
 
 
 def _pages(browser, count):
-    context = browser.new_context()
+    context = browser.new_profile()
     pages = [context.new_page() for _ in range(count)]
     for page in pages:
         page.set_content("<body>x</body>")
@@ -60,7 +60,7 @@ def test_pages_share_the_process_isolate_by_default():
     browser = Browser(stub_logging="off")
     try:
         pages = _pages(browser, 3)
-        assert len({page.context.isolate_id for page in pages}) == 1
+        assert len({page.v8_context.isolate_id for page in pages}) == 1
     finally:
         browser.close()
 
@@ -69,7 +69,7 @@ def test_sharded_pages_get_an_isolate_each():
     browser = Browser(stub_logging="off", shard_isolates=True)
     try:
         pages = _pages(browser, 3)
-        assert len({page.context.isolate_id for page in pages}) == 3
+        assert len({page.v8_context.isolate_id for page in pages}) == 3
     finally:
         browser.close()
 
@@ -80,7 +80,7 @@ def test_a_frame_shares_the_isolate_of_its_page_tree():
         page = _pages(browser, 1)[0]
         page.evaluate("document.body.innerHTML = '<iframe srcdoc=\"child\"></iframe>'")
         _pump(page)
-        assert _child_page(page).context.isolate_id == page.context.isolate_id
+        assert _child_page(page).v8_context.isolate_id == page.v8_context.isolate_id
         # What the sharing is for: the child's own objects, reached live from the parent.
         assert page.evaluate("""(() => {
             const child = window.frames[0];
@@ -94,7 +94,7 @@ def test_a_frame_shares_the_isolate_of_its_page_tree():
 def test_a_script_inserted_frame_initializes_while_its_isolate_is_held():
     browser = Browser(stub_logging="off", shard_isolates=True)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body>x</body>")
         assert _bounded(lambda: page.evaluate(
             "document.body.innerHTML = '<iframe></iframe>'"))

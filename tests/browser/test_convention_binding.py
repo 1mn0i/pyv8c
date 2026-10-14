@@ -23,7 +23,7 @@ def test_an_interface_that_states_nothing_still_answers_its_bodies(browser, monk
     """The end state, on a real page: nothing stated, and the convention binds."""
     cls = browser.bindings.class_for("Element")
     monkeypatch.setattr(cls, "__idl_overrides__", {})
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     try:
         page.set_content("<div id='host'></div>")
 

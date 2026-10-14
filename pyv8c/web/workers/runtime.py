@@ -100,7 +100,7 @@ class WorkerRuntime:
             self.executor.attach_deadline_source(self._context)
             # A worker global schedules its own work, so the failures V8 raises
             # on its own are reported from this realm, not the page's.
-            self._realm.context.set_error_hooks(
+            self._realm.v8_context.set_error_hooks(
                 self._report_uncaught, self.rejections.record,
             )
             devtools = config.devtools

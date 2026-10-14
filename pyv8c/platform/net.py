@@ -54,7 +54,7 @@ class PageNet:
         self._closed = False
         self._submit_lock = threading.Lock()
         #: Read once: the browser's headers cannot change after construction.
-        self._browser_headers = dict(getattr(page.context_owner.browser, "default_headers", None) or {})
+        self._browser_headers = dict(getattr(page.profile.browser, "default_headers", None) or {})
         #: Above the browser's and below a request's own; mutable on purpose.
         self.headers: dict[str, str] = {}
 

@@ -15,7 +15,7 @@ class RealmServices(Protocol):
     url: str
     origin: Any
     closed: bool
-    context: Any
+    v8_context: Any
 
     def post_task(self, callback) -> None: ...
     def enqueue_microtask(self, callback) -> None: ...
@@ -28,7 +28,7 @@ class RealmServices(Protocol):
         ...
     def evaluate_script(self, source: str) -> Any: ...
     def make_promise(self) -> Any:
-        """Return ``(promise, resolve, reject)`` in this realm's context."""
+        """Return ``(promise, resolve, reject)`` in this realm's V8 context."""
         ...
 
 
@@ -89,7 +89,7 @@ class WorkerServices(Protocol):
 
 @runtime_checkable
 class ContextServices(Protocol):
-    """Browser-context level services: blob URLs and sockets."""
+    """Profile-level services: blob URLs and sockets."""
 
     def create_blob_url(self, blob, realm=None) -> str: ...
     def revoke_blob_url(self, url) -> None: ...
@@ -97,7 +97,7 @@ class ContextServices(Protocol):
 
     @property
     def ws_available(self) -> bool:
-        """Whether this context has an engine to open sockets through."""
+        """Whether this profile has an engine to open sockets through."""
         ...
 
     def websocket(self, url, protocols, callbacks): ...

@@ -9,7 +9,7 @@ from pyv8c.web.bom.window import Window
 @pytest.fixture
 def page():
     browser = Browser(cache=False, stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content('<div id="namedElement"></div>', url="http://a.test/")
     try:
         yield page

@@ -43,7 +43,7 @@ def test_a_missing_member_stops_the_page_in_error_mode(tmp_path):
     )
     try:
         with pytest.raises(TypeError, match="onmouseenter"):
-            browser.new_context().new_page()
+            browser.new_profile().new_page()
     finally:
         browser.close()
 
@@ -54,7 +54,7 @@ def test_warn_mode_skips_the_member_instead(tmp_path):
         baseline_mismatch="warn", stub_logging="off",
     )
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://warn.test/")
         # The member is not in this baseline, so the declaration that installs it is skipped.
         assert page.evaluate("typeof window.onmouseenter") == "undefined"
@@ -71,7 +71,7 @@ def test_warn_mode_reports_the_mismatch_once(tmp_path):
             baseline_mismatch="warn", stub_logging="on",
         )
         try:
-            browser.new_context().new_page()
+            browser.new_profile().new_page()
         finally:
             browser.close()
         reported = [message for message in messages

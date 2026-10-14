@@ -68,7 +68,7 @@ def main(seconds=0.6):
     browser = Browser(stub_logging="off", threaded_loaders=True, real_network=False,
                       resource_loader=_load)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto(PROBE_URL)
         _pump(page, seconds)
         return page, json.loads(page.evaluate("""JSON.stringify((() => {

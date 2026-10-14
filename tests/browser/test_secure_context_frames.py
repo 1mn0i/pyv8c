@@ -83,7 +83,7 @@ setTimeout(function () {
 def test_a_frameless_document_inherits_the_context_of_its_creator(url, secure):
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url=url)
         _pump(page)
         seen = json.loads(page.evaluate("JSON.stringify(window.__out || {})"))

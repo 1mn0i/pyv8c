@@ -63,13 +63,13 @@ class ScriptController:
         return self._realm.enqueue_microtask(callback)
 
     def evaluate(self, script, filename=None):
-        if self.page.closed or self.page.context_owner.closed:
+        if self.page.closed or self.page.profile.closed:
             raise HostStateError("Page is closed")
         target = self.page._devtools_target
         if target is not None:
             target.before_script()
         try:
-            return self.page.context.exec_js(self._compiled_script(script, filename))
+            return self.page.v8_context.exec_js(self._compiled_script(script, filename))
         finally:
             if target is not None:
                 target.after_script()
@@ -80,7 +80,7 @@ class ScriptController:
         if compiled is not None:
             self._compiled[key] = compiled
             return compiled
-        compiled = pyv8.Script(self.page.context, str(script), filename)
+        compiled = pyv8.Script(self.page.v8_context, str(script), filename)
         self._compiled[key] = compiled
         if len(self._compiled) > self.COMPILE_CACHE_LIMIT:
             self._compiled.pop(next(iter(self._compiled)))
@@ -223,7 +223,7 @@ class ScriptController:
         if self._sandboxed("allow-scripts"):
             return
         try:
-            fn = self.page.context.exec_js("(function(event){" + str(source) + "})")
+            fn = self.page.v8_context.exec_js("(function(event){" + str(source) + "})")
             node._handlers[str(name).lower()] = fn
         except BaseException as exc:
             self.page.lifecycle.dispatch_script_error(node, exc)

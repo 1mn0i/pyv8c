@@ -15,7 +15,7 @@ def browser():
 
 
 def test_write_inserts_at_the_insertion_point(browser):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(
         "<html><body><div id='before'></div>"
         "<script>document.write(\"<span id='written'>w</span>\");</script>"
@@ -31,7 +31,7 @@ def test_write_inserts_at_the_insertion_point(browser):
 
 
 def test_written_scripts_run_like_parser_inserted_scripts(browser):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(
         "<html><body><script>document.write("
         "\"<scr\" + \"ipt>window.order = (window.order || 0) + 1;</scr\" + \"ipt>\""
@@ -44,7 +44,7 @@ def test_written_scripts_run_like_parser_inserted_scripts(browser):
 
 
 def test_write_after_load_replaces_the_document(browser):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<html><body><div id='before'>old</div></body></html>", url="https://write.test/")
     assert page.evaluate("[document.readyState, !!document.getElementById('before')]") == ["complete", True]
     assert page.evaluate("document.write('<i id=after>new</i>')") is pyv8.Undefined
@@ -58,7 +58,7 @@ def test_write_after_load_replaces_the_document(browser):
 
 
 def test_writeln_appends_a_line_break(browser):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(
         "<html><body><script>"
         "document.writeln('<b id=first>1</b>');document.write('<b id=second>2</b>');"

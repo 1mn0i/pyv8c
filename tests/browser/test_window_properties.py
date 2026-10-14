@@ -7,7 +7,7 @@ from pyv8c.web.bom.window import Window
 @pytest.fixture
 def page():
     browser = Browser(cache=False, resource_loader=lambda url, request: '<div id="childOnly"></div>')
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content('''<div id="unique"></div><div id="duplicate"></div>
         <img name="duplicate"><form name="theForm"></form>
         <embed name="theEmbed"><object name="theObject"></object>
@@ -99,15 +99,15 @@ def test_borrowed_prototype_uses_owning_document(page):
     child = next(iter(page._owned.frames))
     child.set_content('<div id="childOnly"></div>', url='http://example.test/child')
     props = child.evaluate('Object.getPrototypeOf(Window.prototype)')
-    page.context.expose(childProperties=props)
-    page.context.expose(childElement=child.evaluate("document.getElementById('childOnly')"))
+    page.v8_context.expose(childProperties=props)
+    page.v8_context.expose(childElement=child.evaluate("document.getElementById('childOnly')"))
     #: Each realm has its own wrapper, so identity is asked of the owning realm.
     assert page.evaluate('''[childProperties.childOnly === childElement,
         childProperties.childOnly.id,
         childProperties.unique === undefined, 'childOnly' in childProperties,
         'unique' in childProperties]''') == [True, 'childOnly', True, True, False]
     child.set_content('<div id="childOnly"></div>', url='http://other.test/child')
-    page.context.expose(childProperties=child.evaluate('Object.getPrototypeOf(Window.prototype)'))
+    page.v8_context.expose(childProperties=child.evaluate('Object.getPrototypeOf(Window.prototype)'))
     assert page.evaluate('try { childProperties.childOnly; } catch (e) { [e.name, e.code]; }') == ['SecurityError', 18]
 
 

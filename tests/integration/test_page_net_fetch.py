@@ -35,7 +35,7 @@ def loader(url, request):
 def page():
     browser = Browser(real_network=False, resource_loader=loader, stub_logging="off")
     try:
-        yield browser.new_context().new_page("http://example.test/")
+        yield browser.new_profile().new_page("http://example.test/")
     finally:
         browser.close()
 

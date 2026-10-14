@@ -99,7 +99,7 @@ def intercept(url, request):
             "headers": dict(answer.headers)}
 
 browser = Browser(stub_logging="off", resource_interceptor=intercept, threaded_loaders=True)
-page = browser.new_context().new_page()
+page = browser.new_profile().new_page()
 page.goto(URL)
 pump(page, 30)
 print(page.evaluate("({seen: window.__watch.seen})"))
@@ -113,7 +113,7 @@ pyv8c 是 Python：直接包住内部方法就能看到"引擎以为发生了什
 
 ```python
 from pyv8c.platform.sessions import BindingSession      # 接口物化
-from pyv8c.platform.resource_loading import ResourceController  # 资源与 iframe 上下文
+from pyv8c.platform.resources.documents import DocumentResourceController  # 资源与 iframe 上下文
 
 log = []
 for attribute in ("materialize", "_stage"):
@@ -178,14 +178,14 @@ for attribute in ("materialize", "_stage"):
 6. **资源 kind 要对齐**：登记资源用的 `kind` 与消费处认的 `kind` 必须一致
    （`<link rel=stylesheet>` 的 CSS 曾因两边不一致而从未被保存）。
 7. **读 blob 源码**：`page.services.context_services.resolve_blob_url(url)` 返回
-   `(源码字节, content-type)`；它**只在它自己的 context 里**认识 blob（`create_blob_url(blob, realm=…)`
+   `(源码字节, content-type)`；它**只在它自己的 V8 context 里**认识 blob（`create_blob_url(blob, realm=…)`
    按 realm 登记），所以别的 realm 造的 blob 要么找该 realm 的 context services，要么进不了。
-   用 `page.context`/`realm.context` 这类**原生 context** 调不到它（没有该方法）。
+   用 `page.v8_context`/`realm.v8_context` 这类**原生 V8 context** 调不到它（没有该方法）。
 8. **进 worker realm**：`worker._runtime._realm.evaluate_script(...)`（`worker` 取 `page._owned.workers` 的成员）。
    `worker.services.realm_services.evaluate_script` 会答出**页面的**数据，是错误的一层；`worker._realm` 不存在。
    worker 里没有同步 `XMLHttpRequest`（Chrome 的 worker 有），所以别指望在 worker 里同步取自己的 blob。
 9. **trace 要显式开、且走日志**：`Browser(trace=True, traceable=True)` 之外还要
-   `context.trace = True`（`traceable` 是为"稍后再开"准备的）；`trace_callback=` 收不到事件，
+   `profile.trace = True`（`traceable` 是为"稍后再开"准备的）；`trace_callback=` 收不到事件，
    用 `logger.add(...)` 读 `pyv8c.engine.trace:log_trace` 的行。事件**带 realm 标签**
    （`[TOP]`/`[FRAME]`），成员名、参数和返回值都在里面——定位"哪一行/哪个成员"最快的就是它。
    拿它和钩子里记的 `Date.now()` 对齐，就能只读报错前那一小段。
@@ -196,7 +196,7 @@ for attribute in ("materialize", "_stage"):
 11. **包 pyv8c 的内部方法比包 JS 稳**：想在"页面造东西"时记录，直接包它的 Python 回调
    （例如 `TrustedTypePolicy.fn_createScript/fn_createScriptURL/fn_createHTML`）——不改 JS 行为、
    任何 realm 的策略都看得见；包 `window.eval`/`Function` 则会干扰被测对象（见第 10 条）。
-12. **blob 要"它自己的 realm"才读得到，而且层级会往下掉**：`resolve_blob_url` 只在对应 context
+12. **blob 要"它自己的 realm"才读得到，而且层级会往下掉**：`resolve_blob_url` 只在对应 V8 context
    里认识 blob；页面造的 blob 页面能读，**frame 的 worker、worker 里的 worker 造的**就只能由那一层读
    （主文档 / frame / 两者的 worker 都不行，会 `DOMException` 或返回错的东西）。
    枚举层级：主文档 `services.context_services` → `page._owned.frames`（是子 `Page`）→

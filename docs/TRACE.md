@@ -10,7 +10,7 @@ from pyv8c import Browser
 
 browser = Browser(traceable=True, stub_logging="off")
 try:
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.trace = True
     page.evaluate("document.createElement('div').id")
     page.trace = False
@@ -21,7 +21,7 @@ finally:
 - Browser(trace=True) 初始开启；Browser(traceable=True) 初始关闭但允许之后开启。
 - 两者都为 False 时，普通页面没有启用观察能力，临时开启会报错；这是配置约束，不是模板必须补装拦截器。
 - new_page(trace=False/True) 覆盖新页面初始状态。page.trace 必须赋 bool，关闭页面后不能切换。
-- 切换经 owner executor 串行执行，成功后同步 Page、PageServices 与 native Context 状态；不重建对象。
+- 切换经 owner executor 串行执行，成功后同步 Page、PageServices 与 native V8Context 状态；不重建对象。
 - browser.trace 是后续创建页面的默认值，不广播修改已有页面。建议创建时使用 traceable=True，不以修改 Browser 配置代替页面开关。
 - 当前 iframe 创建路径未传父页面 trace 覆盖，使用 Browser 默认值；修改父页面开关不会同步 iframe。
 - Worker 在初始化配置时读取所属页面 services.trace，使用 Browser 的 sink；已有 Worker 不随页面切换。
@@ -41,7 +41,7 @@ def observe(event, receiver, name, arguments, value, error, is_construct, ctx_ty
 
 browser = Browser(trace=True, trace_callback=observe, stub_logging="off")
 try:
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.evaluate("document.createElement('div').id")
     assert messages
 finally:
@@ -62,7 +62,7 @@ finally:
 | value | getter/方法/构造结果，或 setter 输入值；get/method/construct 失败时为 pyv8.Undefined |
 | error | 成功为 pyv8.Undefined；失败为原异常的 Python 表示 |
 | is_construct | 是否通过 new 调用 |
-| ctx_type | 原生 Context 类型标签；当前页面路径使用 Window，Worker 使用 Worker |
+| ctx_type | 原生 V8Context 类型标签；当前页面路径使用 Window，Worker 使用 Worker |
 
 set 失败时 value 仍保留写入值；不会为了确认写入后状态再次读取属性。
 基本值按值传递，原生 Python 对象保留身份，其他 JS 对象以 JSObject 系列引用传递。
@@ -86,7 +86,7 @@ handler 未处理时，V8 继续原来的查找；观察器不会额外读取后
 
 ## 实现与回归
 
-- [realms.py](../pyv8c/platform/realms.py)：装配 native Context 参数。
+- [realms.py](../pyv8c/platform/realms.py)：装配 native V8Context 参数。
 - [engine/trace.py](../pyv8c/engine/trace.py)：统一 Loguru sink。
 - [native trace.h](../../_pyv8/src/tools/trace.h)：RAII 观察、轻量转换、异常隔离和重入保护。
 - [集成测试](../tests/integration/test_trace.py)：实际浏览器、开关、延迟接口、Worker 与跨源。

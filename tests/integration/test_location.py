@@ -31,7 +31,7 @@ def _frame(page, origin):
 
 def test_ancestor_origins_names_the_frames_above_nearest_first():
     browser = Browser(stub_logging="off", resource_loader=_loader)
-    top = browser.new_context().new_page()
+    top = browser.new_profile().new_page()
     top.set_content(PAGE, url="http://top.test/")
     try:
         assert top.evaluate("Array.from(location.ancestorOrigins)") == []

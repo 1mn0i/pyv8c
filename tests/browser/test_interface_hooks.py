@@ -18,7 +18,7 @@ URL = "http://hooks.test/"
 
 
 def _page(browser, html="<input id=i>"):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(html, url=URL)
     return page
 

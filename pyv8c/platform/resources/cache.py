@@ -1,4 +1,4 @@
-"""Context-owned disk cache of plain payloads; HTTP freshness is not implemented."""
+"""Profile-owned disk cache of plain payloads; HTTP freshness is not implemented."""
 import base64
 import hashlib
 import json
@@ -12,19 +12,19 @@ from ...foundation.urls import DEFAULT_PORTS
 
 
 class ResourceCache:
-    def __init__(self, context):
-        self.context = context
+    def __init__(self, profile):
+        self.profile = profile
 
     def key(self, target, request, *, enabled, origin):
-        if not enabled or self.context.resource_cache_dir is None or origin == "null":
+        if not enabled or self.profile.resource_cache_dir is None or origin == "null":
             return None
         method = str(request.get("method", "GET")).upper()
         if method not in ("GET", "HEAD") or str(request.get("cache", "default")) in ("no-store", "reload", "no-cache"):
             return None
         headers = {str(name).lower(): str(value) for name, value in request["headers"].items()}
-        # This persistent cache is shared across context restarts.  It must not
+        # This persistent cache is shared across profile restarts.  It must not
         # reuse authenticated bodies or mix request variants and initiating origins.
-        jar = self.context.cookies
+        jar = self.profile.cookies
         if "authorization" in headers or "cookie" in headers or jar.header_for(target):
             return None
         return (
@@ -39,17 +39,17 @@ class ResourceCache:
     def get(self, key):
         if key is None:
             return None
-        context = self.context
-        with context.resource_cache_lock:
-            cached = self._read_disk_cache(context, key)
+        profile = self.profile
+        with profile.resource_cache_lock:
+            cached = self._read_disk_cache(profile, key)
         if cached is None:
             return None
         logger.debug("resource cache hit: {}", key[1])
         return cached
 
     @staticmethod
-    def _disk_cache_path(context, key):
-        cache_dir = context.resource_cache_dir
+    def _disk_cache_path(profile, key):
+        cache_dir = profile.resource_cache_dir
         if cache_dir is None:
             return None
         digest = hashlib.sha256(json.dumps(key, ensure_ascii=True, separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -66,8 +66,8 @@ class ResourceCache:
         domain = re.sub(r"[^A-Za-z0-9._-]+", "_", domain).strip("._") or "unknown"
         return Path(cache_dir) / domain / (digest + ".json")
 
-    def _read_disk_cache(self, context, key):
-        path = self._disk_cache_path(context, key)
+    def _read_disk_cache(self, profile, key):
+        path = self._disk_cache_path(profile, key)
         if path is None or not path.is_file():
             return None
         try:
@@ -100,11 +100,11 @@ class ResourceCache:
                 or "set-cookie" in headers or str(headers.get("vary", "")).strip() == "*"
                 or not 200 <= payload["status"] < 300):
             return
-        context = self.context
-        if context.cookies.header_for(key[1]):
+        profile = self.profile
+        if profile.cookies.header_for(key[1]):
             return
-        with context.resource_cache_lock:
-            path = self._disk_cache_path(context, key)
+        with profile.resource_cache_lock:
+            path = self._disk_cache_path(profile, key)
             if path is not None:
                 try:
                     temporary = None

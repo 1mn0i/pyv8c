@@ -57,7 +57,7 @@ def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, c
     collected = profile.resolved()
     browser = Browser(environment=profile, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://profile.test/")
         assert page.evaluate("""[
             navigator.userAgent, navigator.appVersion, navigator.platform, navigator.vendor,

@@ -65,7 +65,7 @@ def test_a_worker_fetches_and_reads_its_response():
     browser = Browser(stub_logging="off", threaded_loaders=True, real_network=False,
                       resource_loader=_load)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto(PROBE_URL)
         _pump(page)
         seen = json.loads(page.evaluate("JSON.stringify(window.__out.seen)"))

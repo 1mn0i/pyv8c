@@ -73,7 +73,7 @@ def _loader(url, request):
 @pytest.fixture
 def page():
     browser = Browser(resource_loader=_loader, stub_logging="off")
-    instance = browser.new_context().new_page(ORIGIN + "/start")
+    instance = browser.new_profile().new_page(ORIGIN + "/start")
     del WIRE[:]  # the document's own load is not part of what a test asks for
     try:
         yield instance

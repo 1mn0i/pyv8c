@@ -138,7 +138,7 @@ def test_real_network_requires_optional_dependency(monkeypatch):
 
     monkeypatch.setattr("pyv8c.network.curl_cffi.importlib.import_module", missing)
     with pytest.raises(RuntimeError, match="curl_cffi"):
-        Browser(real_network=True).new_context()
+        Browser(real_network=True).new_profile()
 
 
 def test_max_workers_is_consumed_by_backend_not_cycronet(monkeypatch):
@@ -154,7 +154,7 @@ def test_max_workers_is_consumed_by_backend_not_cycronet(monkeypatch):
         real_network=True, http_engine="cronet",
         http_options={"max_workers": 16, "timeout_ms": 5000},
     )
-    engine = browser.new_context().network_backend.http
+    engine = browser.new_profile().network_backend.http
     assert engine.client.options == {"timeout_ms": 5000}
     assert engine.executor._max_workers == 16
     browser.close()
@@ -165,7 +165,7 @@ def test_the_contexts_proxy_reaches_cronet_as_proxies(monkeypatch):
     install_fake_cycronet(monkeypatch)
     browser = Browser(real_network=True, http_engine="cronet", proxy="http://127.0.0.1:3128")
     try:
-        engine = browser.new_context().network_backend.http
+        engine = browser.new_profile().network_backend.http
         assert engine.client.options.get("proxies") == "http://127.0.0.1:3128"
     finally:
         browser.close()
@@ -175,7 +175,7 @@ def test_a_context_without_a_proxy_gives_cronet_none(monkeypatch):
     install_fake_cycronet(monkeypatch)
     browser = Browser(real_network=True, http_engine="cronet")
     try:
-        engine = browser.new_context().network_backend.http
+        engine = browser.new_profile().network_backend.http
         assert "proxies" not in engine.client.options
     finally:
         browser.close()
@@ -193,7 +193,7 @@ def test_cronet_declares_the_proxy_key_for_both_roles(monkeypatch):
 def test_real_network_fetch_is_delivered_on_page_queue(monkeypatch):
     install_fake_cycronet(monkeypatch)
     browser = Browser(real_network=True, http_engine="cronet", http_options={"verify": True})
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
     # The response is delivered on the page task queue, never inline: even a
     # fixture-short round trip resolves after the current script has ended.
@@ -211,7 +211,7 @@ def test_the_bridge_follows_only_a_follow_request(monkeypatch):
     install_fake_curl_cffi(monkeypatch)
     browser = Browser(real_network=True, stub_logging="off")
     try:
-        engine = browser.new_context().network_backend.http
+        engine = browser.new_profile().network_backend.http
         followed = {}
         for mode in ("follow", "manual", "error"):
             engine.request_sync(NetworkRequest("http://example.test/x", redirect=mode))
@@ -234,7 +234,7 @@ def test_an_engine_that_cannot_stop_following_refuses_a_manual_redirect(monkeypa
     monkeypatch.setitem(sys.modules, "cycronet", types.SimpleNamespace(CronetClient=FollowingClient))
     browser = Browser(real_network=True, http_engine="cronet", stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://example.test/")
         page.evaluate(
             "window.__m = null;"
@@ -263,7 +263,7 @@ def test_network_download_url_is_logged_at_debug_level(monkeypatch):
         lambda message, *values: messages.append((message, values)),
     )
     browser = Browser(real_network=True)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
     page.evaluate("fetch('/download').then(r => r.text())")
     page.run_until_idle(timeout=2)
@@ -274,7 +274,7 @@ def test_network_download_url_is_logged_at_debug_level(monkeypatch):
 def test_resource_loader_takes_precedence_over_real_network(monkeypatch):
     install_fake_curl_cffi(monkeypatch)
     browser = Browser(real_network=True, resource_loader=lambda url, request: Response("fixture", {"url": url}))
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
     assert page.evaluate("fetch('/data').then(r => r.text()).then(v => window.__result = v)") is not None
     page.run_until_idle()
@@ -285,7 +285,7 @@ def test_resource_loader_takes_precedence_over_real_network(monkeypatch):
 def test_websocket_events_are_delivered_on_page_queue(monkeypatch):
     install_fake_ws_engine(monkeypatch)
     browser = Browser(stub_logging="off", ws_engine="fixture-sockets")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
     page.evaluate("window.__events=[]; const ws=new WebSocket('ws://example.test/'); ws.onopen=()=>__events.push('open'); ws.onmessage=e=>__events.push(e.data); ws.onclose=()=>__events.push('close'); window.__ws=ws")
     page.run_until_idle()
@@ -300,7 +300,7 @@ def test_websocket_events_are_delivered_on_page_queue(monkeypatch):
 def test_websocket_binary_types_and_blob_api(monkeypatch):
     install_fake_ws_engine(monkeypatch)
     browser = Browser(stub_logging="off", ws_engine="fixture-sockets")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
     page.evaluate("window.__binary=[]; const ws=new WebSocket('ws://example.test/'); ws.binaryType='blob'; ws.onopen=()=>ws.send(new Blob(['abc'], {type:'application/test'})); ws.onmessage=e=>__binary.push([e.data instanceof Blob,e.data instanceof ArrayBuffer,e.data instanceof Blob ? e.data.size : e.data.byteLength]); window.__ws=ws")
     page.run_until_idle()
@@ -346,7 +346,7 @@ def test_header_deduped_cookies_are_restored_from_the_client_jar(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "cycronet", types.SimpleNamespace(CronetClient=DedupedClient))
     browser = Browser(real_network=True, http_engine="cronet", stub_logging="off")
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page()
     page.set_content("<body></body>", url="http://example.test/")
     page.evaluate("fetch('/page').then(r => r.text())")
@@ -371,7 +371,7 @@ def test_cross_origin_cors_and_no_cors(monkeypatch):
             return response
     monkeypatch.setitem(sys.modules, "cycronet", types.SimpleNamespace(CronetClient=CORSClient))
     browser = Browser(real_network=True, http_engine="cronet")
-    page = browser.new_context().new_page(); page.set_content("<body></body>", url="http://example.test/")
+    page = browser.new_profile().new_page(); page.set_content("<body></body>", url="http://example.test/")
     page.evaluate("fetch('http://other.test/data').then(r => r.text()).then(v => window.__cors = v)")
     page.run_until_idle(timeout=2)
     assert page.evaluate("__cors") == "cronet-ok"
@@ -385,7 +385,7 @@ def test_a_worker_navigator_comes_from_its_feature():
     """The worker global asks the realm for Navigator instead of importing it."""
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://example.test/")
         page.evaluate("""(() => {
             const source = new Blob([
@@ -403,7 +403,7 @@ def test_a_worker_navigator_comes_from_its_feature():
 
 def test_worker_executes_blob_script_and_uses_independent_queue():
     browser = Browser()
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
     result = page.evaluate("(() => { const src = new Blob([\"self.onmessage = e => self.postMessage({value:e.data.value + 1, bytes:e.data.bytes, helper:typeof __pyv8c_worker_value, windowProps:typeof WindowProperties});\"], {type:'text/javascript'}); const url=URL.createObjectURL(src); const w=new Worker(url); window.__workerInstance=w; w.onmessage=e=>window.__worker=e.data; w.onerror=e=>window.__workerError=e.message; w.postMessage({value:4, bytes:new Uint8Array([1,2,3])}); return [url.startsWith('blob:'), w instanceof Worker]; })()")
     assert result == [True, True]
@@ -421,7 +421,7 @@ def test_worker_executes_blob_script_and_uses_independent_queue():
 
 def test_worker_self_is_the_context_global_without_explicit_expose():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
     page.evaluate("""(() => {
       const source = new Blob([
@@ -521,7 +521,7 @@ def test_the_default_stack_is_curl_cffi_and_websockets(monkeypatch):
     install_fake_curl_cffi(monkeypatch)
     browser = Browser(real_network=True, stub_logging="off")
     try:
-        backend = browser.new_context().network_backend
+        backend = browser.new_profile().network_backend
         assert type(backend).__name__ == "NetworkBackend"
         assert type(backend.http).__name__ == "CurlCffiTransport"
         assert type(backend.ws).__name__ == "WebSocketsTransport"
@@ -536,7 +536,7 @@ def test_naming_the_engines_selects_each_role(monkeypatch):
     install_fake_ws_engine(monkeypatch)
     browser = Browser(stub_logging="off", http_engine="curl_cffi", ws_engine="fixture-sockets")
     try:
-        backend = browser.new_context().network_backend
+        backend = browser.new_profile().network_backend
         assert type(backend.http).__name__ == "CurlCffiTransport"
         assert type(backend.ws).__name__ == "FakeWebSocketEngine"
     finally:
@@ -546,7 +546,7 @@ def test_naming_the_engines_selects_each_role(monkeypatch):
     # client would mean a second pool and a connection cache of its own.
     browser = Browser(stub_logging="off", http_engine="cronet", ws_engine="cronet")
     try:
-        backend = browser.new_context().network_backend
+        backend = browser.new_profile().network_backend
         assert type(backend.http).__name__ == "CronetTransport"
         assert backend.http is backend.ws
     finally:
@@ -557,7 +557,7 @@ def test_naming_one_role_assembles_exactly_that_role(monkeypatch):
     install_fake_curl_cffi(monkeypatch)
     browser = Browser(stub_logging="off", http_engine="curl_cffi", ws_engine=None)
     try:
-        backend = browser.new_context().network_backend
+        backend = browser.new_profile().network_backend
         assert (backend.http_available, backend.ws_available) == (True, False)
     finally:
         browser.close()
@@ -565,7 +565,7 @@ def test_naming_one_role_assembles_exactly_that_role(monkeypatch):
     install_fake_ws_engine(monkeypatch)
     browser = Browser(stub_logging="off", http_engine=None, ws_engine="fixture-sockets")
     try:
-        backend = browser.new_context().network_backend
+        backend = browser.new_profile().network_backend
         assert (backend.http_available, backend.ws_available) == (False, True)
     finally:
         browser.close()
@@ -578,7 +578,7 @@ def test_a_context_without_an_http_engine_says_so(monkeypatch):
     install_fake_ws_engine(monkeypatch)
     browser = Browser(stub_logging="off", http_engine=None, ws_engine="fixture-sockets")
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         # The host API reports it as the host's own failure to load, not as a crash
         # somewhere deeper in a page's fetch.
         with pytest.raises(LoadFailure, match="HTTP engine"):
@@ -600,7 +600,7 @@ def test_curl_cffi_transport_forwards_options_and_keeps_every_cookie(monkeypatch
         http_options={"impersonate": "chrome", "max_workers": 3},
     )
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         session = context.network_backend.http.session
         assert session.options["impersonate"] == "chrome"
         # The transport adds no headers of its own: the caller decides them all.
@@ -644,7 +644,7 @@ def test_unknown_engine_names_what_is_registered(monkeypatch):
     browser = Browser(stub_logging="off", http_engine="does-not-exist")
     try:
         with pytest.raises(NetworkUnavailableError) as failure:
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
     message = str(failure.value)
@@ -663,7 +663,7 @@ def test_missing_curl_cffi_names_the_optional_package(monkeypatch):
     browser = Browser(stub_logging="off", http_engine="curl_cffi")
     try:
         with pytest.raises(NetworkUnavailableError, match="curl_cffi"):
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
 
@@ -692,7 +692,7 @@ def test_a_registered_transport_serves_the_context(monkeypatch):
     # is the host's business, and the registry has no way to know.
     browser = Browser(stub_logging="off", http_engine="fixture-engine", http_options={"anything": 1})
     try:
-        backend = browser.new_context().network_backend
+        backend = browser.new_profile().network_backend
         assert type(backend.http).__name__ == "StubBackend"
     finally:
         browser.close()
@@ -733,7 +733,7 @@ def test_a_misspelt_option_is_refused_when_the_context_is_created(monkeypatch):
     )
     try:
         with pytest.raises(TypeError) as failure:
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
     message = str(failure.value)
@@ -748,7 +748,7 @@ def test_an_option_belonging_to_another_engine_is_refused(monkeypatch):
     browser = Browser(real_network=True, http_engine="cronet", http_options={"impersonate": "chrome"})
     try:
         with pytest.raises(TypeError, match="'impersonate'"):
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
 
@@ -763,7 +763,7 @@ def test_a_missing_dependency_is_reported_before_the_options_are_checked(monkeyp
     browser = Browser(real_network=True, http_engine="cronet", http_options={"impersonete": "chrome"})
     try:
         with pytest.raises(NetworkUnavailableError, match="cycronet"):
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
 
@@ -777,7 +777,7 @@ def test_each_role_is_handed_its_own_options(monkeypatch):
         ws_engine="fixture-sockets", ws_options={"fixture": "socket"},
     )
     try:
-        backend = browser.new_context().network_backend
+        backend = browser.new_profile().network_backend
         # Each engine saw its own dictionary and nothing of the other's.
         assert backend.http.session.options["impersonate"] == "chrome"
         assert backend.http.executor._max_workers == 3
@@ -790,7 +790,7 @@ def test_options_without_an_engine_to_read_them_are_refused():
     browser = Browser(stub_logging="off", real_network=False, http_options={"max_workers": 2})
     try:
         with pytest.raises(TypeError, match="no network engine"):
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
 
@@ -814,7 +814,7 @@ def test_options_cannot_configure_a_ready_engine(monkeypatch):
         browser = Browser(stub_logging="off", http_engine=ready, http_options={"max_workers": 2})
         try:
             with pytest.raises(TypeError, match="ready"):
-                browser.new_context()
+                browser.new_profile()
         finally:
             browser.close()
 
@@ -824,7 +824,7 @@ def test_a_ready_engine_fills_its_own_role(monkeypatch):
     ready = InjectedBackend()
     browser = Browser(stub_logging="off", http_engine=ready, ws_engine="fixture-sockets")
     try:
-        backend = browser.new_context().network_backend
+        backend = browser.new_profile().network_backend
         assert backend.http is ready
         # The role it was not given keeps its own engine.
         assert type(backend.ws).__name__ == "FakeWebSocketEngine"
@@ -842,8 +842,8 @@ def test_a_factory_builds_one_engine_per_context():
 
     browser = Browser(stub_logging="off", http_engine=factory)
     try:
-        first = browser.new_context().network_backend.http
-        second = browser.new_context().network_backend.http
+        first = browser.new_profile().network_backend.http
+        second = browser.new_profile().network_backend.http
         assert first is not second
         assert made == [first, second]
     finally:
@@ -858,7 +858,7 @@ def test_an_object_in_both_roles_is_used_once():
     shared = BothBackend()
     browser = Browser(stub_logging="off", http_engine=shared, ws_engine=shared)
     try:
-        backend = browser.new_context().network_backend
+        backend = browser.new_profile().network_backend
         assert backend.http is shared and backend.ws is shared
     finally:
         browser.close()
@@ -869,7 +869,7 @@ def test_a_ready_engine_must_serve_the_role_it_is_given():
         browser = Browser(stub_logging="off", **{role: object()})
         try:
             with pytest.raises(TypeError, match=f"{role} must be"):
-                browser.new_context()
+                browser.new_profile()
         finally:
             browser.close()
 
@@ -878,14 +878,14 @@ def test_real_network_false_refuses_a_ready_engine():
     browser = Browser(stub_logging="off", real_network=False, http_engine=InjectedBackend())
     try:
         with pytest.raises(TypeError, match="real_network=False"):
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
 
     # A name is only a preference: it is simply unused.
     browser = Browser(stub_logging="off", real_network=False, http_engine="cronet")
     try:
-        assert browser.new_context().network_backend is None
+        assert browser.new_profile().network_backend is None
     finally:
         browser.close()
 
@@ -897,7 +897,7 @@ def test_curl_cffi_options_are_validated_when_the_session_declares_them(monkeypa
         http_options={"impersonate": "chrome", "max_workers": 2},
     )
     try:
-        session = browser.new_context().network_backend.http.session
+        session = browser.new_profile().network_backend.http.session
         assert session.options["impersonate"] == "chrome"
         assert session.options["default_headers"] is False
     finally:
@@ -906,7 +906,7 @@ def test_curl_cffi_options_are_validated_when_the_session_declares_them(monkeypa
     browser = Browser(stub_logging="off", http_engine="curl_cffi", http_options={"impersonete": "chrome"})
     try:
         with pytest.raises(TypeError, match="'impersonete'"):
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
 
@@ -917,7 +917,7 @@ def test_a_session_without_a_key_list_is_left_to_refuse_its_own_options(monkeypa
     browser = Browser(stub_logging="off", http_engine="curl_cffi", http_options={"impersonete": "chrome"})
     try:
         with pytest.raises(TypeError) as failure:
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()
     message = str(failure.value)
@@ -941,7 +941,7 @@ def test_a_registered_engine_may_declare_the_keys_it_accepts():
     )
     browser = Browser(stub_logging="off", http_engine="keyed-engine", http_options={"flavour": "mint"})
     try:
-        browser.new_context()
+        browser.new_profile()
         assert seen["options"] == {"flavour": "mint"}
     finally:
         browser.close()
@@ -949,6 +949,6 @@ def test_a_registered_engine_may_declare_the_keys_it_accepts():
     browser = Browser(stub_logging="off", http_engine="keyed-engine", http_options={"flavor": "mint"})
     try:
         with pytest.raises(TypeError, match="'flavor'"):
-            browser.new_context()
+            browser.new_profile()
     finally:
         browser.close()

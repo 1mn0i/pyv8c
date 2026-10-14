@@ -66,7 +66,7 @@ def _asked_for(page_html):
     browser = Browser(stub_logging="off", threaded_loaders=True, real_network=False,
                       resource_loader=_load(page_html))
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto(URL)
         _pump(page)
     finally:

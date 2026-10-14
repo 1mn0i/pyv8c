@@ -1,6 +1,6 @@
 """A realm whose document has been replaced must not raise at the page.
 
-``PageRealm.close_context`` sets ``self.context = None`` when the document is replaced, and work
+``PageRealm.close_context`` sets ``self.v8_context = None`` when the document is replaced, and work
 queued by the old document is still delivered afterwards -- the commit path cancels only timers.
 Settling a promise in that state used to reach a JavaScript helper that no longer existed and
 raised ``AttributeError: 'NoneType' object has no attribute 'exec_js'``; the page received that
@@ -40,7 +40,7 @@ def test_a_realm_that_closed_after_the_promise_answers_with_silence():
     would otherwise report as the host's own failure ("JavaScript object has no active V8
     isolate"), once per answer that arrived late.
     """
-    context = pyv8.Context(object())
+    context = pyv8.V8Context(object())
     promise, resolve, reject = promises.make_promise(context)
     assert promise is not None
     context.close()

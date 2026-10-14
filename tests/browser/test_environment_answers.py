@@ -23,7 +23,7 @@ def test_each_collected_fact_reaches_the_page():
         "gpu.wgsl_features": ["subgroup_id"],
     }, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(PAGE, url="https://environment.test/")
         assert page.evaluate("""(() => ({
             inset: [outerWidth - innerWidth, outerHeight - innerHeight],

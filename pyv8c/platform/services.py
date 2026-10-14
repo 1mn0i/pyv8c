@@ -146,8 +146,8 @@ class _RealmCapability(_TaskSource):
         return self._owner._origin
 
     @property
-    def context(self):
-        return getattr(self._owner._page_realm, "context", None)
+    def v8_context(self):
+        return getattr(self._owner._page_realm, "v8_context", None)
 
     def make_promise(self):
         return self._owner._scripts.make_promise()
@@ -167,7 +167,7 @@ class _RealmCapability(_TaskSource):
         return self._owner._scripts.promise_resolve(value)
 
     def parse_json(self, text):
-        return parse_json_in(self.context, self._owner.window, text)
+        return parse_json_in(self.v8_context, self._owner.window, text)
 
     def report_exception(self, exc):
         """Report an uncaught exception through this realm's error reporting.
@@ -207,8 +207,8 @@ class _RealmCapability(_TaskSource):
 
     def heap_statistics(self):
         """V8's heap numbers for this realm's isolate, in bytes."""
-        context = getattr(self._owner._page_realm, "context", None)
-        return context.heap_statistics() if context is not None else {}
+        v8_context = getattr(self._owner._page_realm, "v8_context", None)
+        return v8_context.heap_statistics() if v8_context is not None else {}
 
     def interface_materialized(self, name):
         return name in self._owner._page_realm.binding_session.materialized_interfaces
@@ -217,7 +217,7 @@ class _RealmCapability(_TaskSource):
         """Operate on a same-origin Window in its owning realm."""
         realm = self._owner._page_realm
         def apply():
-            target = realm.context.js_obj(self._owner.window)
+            target = realm.v8_context.js_obj(self._owner.window)
             if operation == "get":
                 try:
                     return target[name]
@@ -285,13 +285,13 @@ class _WorkerRealmCapability(_TaskSource):
         self._runtime = runtime
 
     @property
-    def context(self):
-        return self._runtime.context
+    def v8_context(self):
+        return self._runtime.v8_context
 
     def heap_statistics(self):
         """V8's heap numbers for this realm's isolate, in bytes."""
-        context = getattr(self._runtime._realm, "context", None)
-        return context.heap_statistics() if context is not None else {}
+        v8_context = self.v8_context
+        return v8_context.heap_statistics() if v8_context is not None else {}
 
     def materialize_interface(self, name):
         """Load the interface's feature and commit its config to this realm."""
@@ -314,7 +314,7 @@ class _WorkerRealmCapability(_TaskSource):
         return self._runtime.promise_resolve(value)
 
     def parse_json(self, text):
-        return parse_json_in(self.context, getattr(self._runtime, "window", None), text)
+        return parse_json_in(self.v8_context, getattr(self._runtime, "window", None), text)
 
     def report_exception(self, exc):
         """Route a listener exception to the worker's error reporting.
@@ -429,7 +429,7 @@ class _WorkerCapability:
         self._owner = owner
 
     def worker_configuration(self):
-        browser = self._owner._context.browser
+        browser = self._owner._profile.browser
         session = BindingSession(browser.bindings, self._owner)
         return WorkerContext(
             browser=browser,
@@ -439,7 +439,7 @@ class _WorkerCapability:
             trace=bool(self._owner.trace),
             expose_unimplemented=browser.expose_unimplemented,
             stub_logging=browser.stub_logging,
-            devtools=self._owner._context._devtools,
+            devtools=self._owner._profile._devtools,
             debug_parent=self._owner._page_realm.page._devtools_target,
         )
 
@@ -457,44 +457,44 @@ class _WorkerCapability:
 
 
 class _ContextCapability:
-    """Browser-context services: blobs, cookies, sockets (implements ContextServices)."""
+    """Profile-level services: blobs, cookies, sockets (implements ContextServices)."""
 
     def __init__(self, owner):
         self._owner = owner
 
     def create_blob_url(self, blob, realm=None):
-        return self._owner._context.create_blob_url(blob, realm=realm)
+        return self._owner._profile.create_blob_url(blob, realm=realm)
 
     def revoke_blob_url(self, url):
-        self._owner._context.revoke_blob_url(url)
+        self._owner._profile.revoke_blob_url(url)
 
     def resolve_blob_url(self, url):
-        return self._owner._context.resolve_blob_url(url)
+        return self._owner._profile.resolve_blob_url(url)
 
     @property
     def cookie_jar(self):
-        return self._owner._context.cookies
+        return self._owner._profile.cookies
 
     @property
     def _databases(self):
-        return self._owner._context._databases
+        return self._owner._profile._databases
 
     @property
     def network_available(self):
-        return self._owner._context.network_backend is not None
+        return self._owner._profile.network_backend is not None
 
     @property
     def http_available(self):
-        backend = self._owner._context.network_backend
+        backend = self._owner._profile.network_backend
         return backend is not None and backend.http_available
 
     @property
     def ws_available(self):
-        backend = self._owner._context.network_backend
+        backend = self._owner._profile.network_backend
         return backend is not None and backend.ws_available
 
     def websocket(self, url, protocols, callbacks):
-        backend = self._owner._context.network_backend
+        backend = self._owner._profile.network_backend
         if backend is None:
             return None
         return backend.websocket(
@@ -520,7 +520,7 @@ class _ContextCapability:
         return options
 
     def close_websocket(self, websocket):
-        backend = self._owner._context.network_backend
+        backend = self._owner._profile.network_backend
         if backend is not None:
             backend.close_websocket(websocket)
 
@@ -551,13 +551,13 @@ class _ContextCapability:
 class PageServices:
     """Composition root assembling the six realm capabilities.
 
-    Holds controllers, the owning context and late-bound window/document
+    Holds controllers, the owning profile and late-bound window/document
     references -- never the Page itself, which web code cannot reach through.
     """
 
-    def __init__(self, context, environment, trace, ownership: Ownership,
+    def __init__(self, profile, environment, trace, ownership: Ownership,
                  navigation, scripts, resource_fetcher, frame_resources, document_resources, tasks, scope):
-        self._context = context
+        self._profile = profile
         self.environment = environment
         self.trace = trace
         self._ownership = ownership

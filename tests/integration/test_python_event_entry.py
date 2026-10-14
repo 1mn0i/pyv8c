@@ -98,7 +98,7 @@ def test_dispatch_event_is_callable_from_another_thread(host_page):
 
 
 def test_dispatch_event_after_close_raises(browser):
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<div id='a'></div>", url="https://example.test/")
     page.close()
     with pytest.raises(Exception):  # executor/invalid-state variants

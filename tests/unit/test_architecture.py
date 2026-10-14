@@ -7,6 +7,7 @@ holds it, with the registered exceptions and the reason each cannot reach a real
 
 import ast
 import importlib
+import re
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,7 @@ def _imports(path):
 #: engines, web interface implementations, internal helpers -- belongs to the
 #: module that owns it.
 PUBLIC_SURFACE = {
-    "Browser", "BrowserContext", "Page", "DevToolsHandle", "DevToolsOptions",
+    "Browser", "Profile", "Page", "DevToolsHandle", "DevToolsOptions",
     "BrowserEnvironment",
     "HttpTransport", "WebSocketTransport", "NetworkBackend",
     "register_transport", "register_ws_transport", "transport_names",
@@ -253,7 +254,7 @@ def test_page_exposes_narrow_realm_services():
     )
 
     browser = Browser(stub_logging="off", real_network=False)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     try:
         assert isinstance(page.services.context_services, ContextServices)
         assert isinstance(page.services.realm_services, RealmServices)
@@ -290,10 +291,19 @@ def test_task_queue_exposes_event_loop_and_error_contract():
 
 
 def test_domain_code_uses_page_resource_ownership_api():
+    #: The rule is about reaching the Page's fields, so it matches a member access or a
+    #: quoted name: a bare word would also fire on the prose and the IDL vocabulary these
+    #: modules legitimately carry.
+    forbidden = re.compile(
+        r"\b(?:self|page|owner|host)\.(profile|network_backend|binding_session|v8_context)\b"
+        r"|\"(?:profile|network_backend|binding_session)\""
+        r"|'(?:profile|network_backend|binding_session)'"
+    )
     for path in (ROOT / "web").rglob("*.py"):
         source = path.read_text(encoding="utf-8")
+        found = forbidden.search(source)
+        assert found is None, (path, found.group(0))
         for token in (
-            "context_owner", "network_backend", "binding_session",
             "_owned_websockets", "_owned_workers", "_owned_frames",
             "binding_configuration(", "resource_loader",
             "self._page", "self.page",
@@ -308,14 +318,14 @@ def test_page_services_surface_is_structurally_narrow():
     from pyv8c import Browser
 
     source = (ROOT / "platform" / "services.py").read_text(encoding="utf-8")
-    for token in ("self.context_owner", "self.network_backend", "self.binding_session", "self.page"):
+    for token in ("self.profile", "self.network_backend", "self.binding_session", "self.page"):
         assert token not in source, token
 
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     try:
         services = page.services
-        for name in ("context_owner", "network_backend", "binding_session", "page", "realm", "context", "browser"):
+        for name in ("profile", "network_backend", "binding_session", "page", "realm", "v8_context", "browser"):
             assert not hasattr(services, name), name
     finally:
         browser.close()

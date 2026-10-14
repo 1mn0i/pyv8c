@@ -18,7 +18,7 @@ def test_parser_blocking_external_script_pauses_and_resumes_parser():
         return Response("window.__order.push('external:' + document.querySelector('#before').id);", {"url": url, "content-type": "text/javascript"})
 
     browser = Browser(resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.evaluate("window.__order=[]")
     page.set_content("<body><div id='before'></div><script src='/a.js'></script><div id='after'></div></body>", url="http://example.test/")
     assert paused == [[True, "loading"]]
@@ -37,7 +37,7 @@ def test_async_and_defer_order_and_dynamic_script_default_async():
         return Response("window.__order.push('dynamic')", {"url": url, "content-type": "text/javascript"})
 
     browser = Browser(resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.evaluate("window.__order=[]; window.addEventListener('DOMContentLoaded',()=>__order.push('dcl'))")
     page.set_content("<body><script async src='/async.js'></script><script defer src='/defer.js'></script><div id='end'></div></body>", url="http://example.test/")
     page.evaluate("const s=document.createElement('script'); s.src='/dynamic.js'; document.body.appendChild(s); __order.push('inserted')")
@@ -57,7 +57,7 @@ def test_an_async_defer_script_does_not_hold_up_the_document():
                         {"url": url, "content-type": "text/javascript"})
 
     browser = Browser(resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("""
         <head><script>
             window.__log = [];
@@ -89,7 +89,7 @@ def test_a_classic_script_crosses_origins_without_asking_for_cors():
                         {"url": url, "content-type": "text/javascript"})
 
     browser = Browser(resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://site.test/")
     page.evaluate("""
         window.__fetch = null;
@@ -112,7 +112,7 @@ def test_a_crossorigin_script_still_asks_for_cors():
                         {"url": url, "content-type": "text/javascript"})
 
     browser = Browser(resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://site.test/")
     page.evaluate("""
         const s = document.createElement('script');
@@ -131,7 +131,7 @@ def test_detached_dynamic_script_does_not_fetch_until_inserted():
         calls.append(url)
         return Response("window.__dynamic = (window.__dynamic || 0) + 1", {"url": url, "content-type": "text/javascript"})
     browser = Browser(resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
     page.evaluate("window.__dynamic=0; const s=document.createElement('script'); s.src='/dynamic.js'; window.__detached=s")
     assert calls == []

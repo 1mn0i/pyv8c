@@ -16,7 +16,7 @@ def frames():
         return {"body": '<body id="child">child</body>', "url": url}
 
     browser = Browser(resource_loader=loader, cache=False, stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content('<iframe src="http://a.test/child"></iframe>', url='http://a.test/main')
     page.run_until_idle(timeout=1)
     try:

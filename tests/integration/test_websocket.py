@@ -83,7 +83,7 @@ def echo():
 def test_a_page_socket_talks_to_a_real_server(echo):
     browser = Browser(ws_engine="websockets", resource_loader=document)
     try:
-        page = browser.new_context().new_page("http://example.test/")
+        page = browser.new_profile().new_page("http://example.test/")
         page.evaluate(f"""
             window.__events = [];
             const ws = new WebSocket('{echo.url}');
@@ -104,7 +104,7 @@ def test_a_page_socket_talks_to_a_real_server(echo):
 def test_binary_frames_survive_the_round_trip(echo):
     browser = Browser(ws_engine="websockets", resource_loader=document)
     try:
-        page = browser.new_context().new_page("http://example.test/")
+        page = browser.new_profile().new_page("http://example.test/")
         # A Blob built from a string carries its bytes; a Blob or a send built
         # from a bare typed array does not -- ``bytes_from_value`` falls through
         # to ``bytes(value)``, which iterates a JavaScript object: its indices,
@@ -127,7 +127,7 @@ def test_binary_frames_survive_the_round_trip(echo):
 def test_a_handshake_carries_the_browser_headers_and_the_jar(echo):
     browser = Browser(ws_engine="websockets", resource_loader=document)
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         page = context.new_page("http://example.test/")
         # A page sets cookies for its own host only, so the jar is filled the way
         # a response from the socket's host would have filled it.
@@ -150,7 +150,7 @@ def test_the_handshake_can_leave_the_cookies_behind(echo):
         ws_engine="websockets", ws_options={"cookies": False}, resource_loader=document,
     )
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         page = context.new_page("http://example.test/")
         context.cookies.set_from_document(echo.url.replace("ws://", "http://"), "sid=1; path=/")
         page.evaluate(f"window.__ws = new WebSocket('{echo.url}')")
@@ -165,7 +165,7 @@ def test_extra_handshake_headers_come_from_the_options(echo):
         ws_engine="websockets", ws_options={"headers": {"X-Page": "socket"}}, resource_loader=document,
     )
     try:
-        page = browser.new_context().new_page("http://example.test/")
+        page = browser.new_profile().new_page("http://example.test/")
         page.evaluate(f"window.__ws = new WebSocket('{echo.url}')")
         assert wait_for(page, "__ws.readyState === 1"), page.evaluate("__ws.readyState")
         assert echo.handshakes[-1]["x-page"] == "socket"
@@ -177,7 +177,7 @@ def test_a_subprotocol_is_negotiated():
     with EchoServer(subprotocols=["chat"]) as server:
         browser = Browser(ws_engine="websockets", resource_loader=document)
         try:
-            page = browser.new_context().new_page("http://example.test/")
+            page = browser.new_profile().new_page("http://example.test/")
             page.evaluate(f"window.__ws = new WebSocket('{server.url}', ['chat'])")
             assert wait_for(page, "__ws.readyState === 1"), page.evaluate("__ws.readyState")
             assert page.evaluate("__ws.protocol") == "chat"
@@ -188,7 +188,7 @@ def test_a_subprotocol_is_negotiated():
 def test_a_socket_that_cannot_connect_reports_error_then_close():
     browser = Browser(ws_engine="websockets", resource_loader=document)
     try:
-        page = browser.new_context().new_page("http://example.test/")
+        page = browser.new_profile().new_page("http://example.test/")
         page.evaluate("""
             window.__events = [];
             const ws = new WebSocket('ws://127.0.0.1:1/');
@@ -205,7 +205,7 @@ def test_a_socket_that_cannot_connect_reports_error_then_close():
 def test_closing_the_context_closes_the_socket(echo):
     browser = Browser(ws_engine="websockets", resource_loader=document)
     try:
-        page = browser.new_context().new_page("http://example.test/")
+        page = browser.new_profile().new_page("http://example.test/")
         page.evaluate(f"window.__ws = new WebSocket('{echo.url}')")
         assert wait_for(page, "__ws.readyState === 1"), page.evaluate("__ws.readyState")
     finally:

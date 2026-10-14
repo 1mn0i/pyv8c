@@ -7,7 +7,7 @@ from pyv8c import Browser
 def test_evaluate_data_and_handle_boundaries():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         assert page.evaluate("({items: [1, 2]})") == {"items": [1, 2]}
         value = page.evaluate_handle("({items: [1, 2]})")
         assert isinstance(value, pyv8.JSObject)

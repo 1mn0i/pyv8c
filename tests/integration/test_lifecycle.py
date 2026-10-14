@@ -14,7 +14,7 @@ def test_document_lifecycle_and_resource_events_are_queued():
         return Response("", {"url": url})
 
     browser = Browser(resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.evaluate("""
         window.__events = []; window.__order = [];
         window.addEventListener('DOMContentLoaded', e => __events.push(['dom', e.target === document, e.currentTarget === window]));
@@ -43,7 +43,7 @@ def test_document_lifecycle_and_resource_events_are_queued():
 
 def test_navigation_teardown_and_beforeunload_cancellation():
     browser = Browser()
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("""<body></body><script>
         const mark = value => sessionStorage.setItem('teardown',
             ((sessionStorage.getItem('teardown') || '') + ' ' + value).trim());

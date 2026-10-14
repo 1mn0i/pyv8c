@@ -9,7 +9,7 @@ def test_pageshow_and_pagereveal_arrive_once_after_load():
     """Chrome reports pageshow as bubbling and sends one pagereveal behind it."""
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("""<head><script>
             window.__seen = [];
             const note = (e) => window.__seen.push([e.type, e.bubbles,
@@ -35,7 +35,7 @@ def test_a_media_element_ends_where_chrome_ends_undecodable_bytes():
 
     browser = Browser(resource_loader=loader, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("""<body><video id="v" src="/movie.mp4"></video><script>
             window.__media = [];
             const video = document.querySelector('video');

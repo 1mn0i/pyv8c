@@ -189,7 +189,7 @@ def compared():
 
         browser = Browser(real_network=True, stub_logging="off")
         try:
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             page.goto(url, wait_until="load")
             page.evaluate("(() => { " + PROBE + ".then((value) => { window.__probe = value; },"
                           " (error) => { window.__probe = {rejected: String(error.name)}; }); })()")

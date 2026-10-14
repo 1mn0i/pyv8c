@@ -22,7 +22,7 @@ PAGE = "<!doctype html><title>abort</title><body><div id=host></div></body>"
 def _page(loader=None):
     browser = Browser(stub_logging="off", threaded_loaders=True,
                       resource_loader=loader or (lambda url, request: _response(url)))
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(PAGE, url=ORIGIN + "/")
     return browser, page
 

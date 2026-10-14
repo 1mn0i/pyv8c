@@ -43,7 +43,7 @@ def test_environment_drives_navigator_viewport_and_screen():
     })
     browser = Browser(environment=environment)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         # The insets are whatever the profile collected: outer is inner plus those.
         assert page.evaluate("[navigator.userAgent, navigator.platform, navigator.language, navigator.languages, navigator.hardwareConcurrency, navigator.deviceMemory, navigator.maxTouchPoints, innerWidth, innerHeight, outerWidth, outerHeight, devicePixelRatio, screen.width, screen.availHeight]") == [
             "Example UA", "Linux x86_64", "zh-CN", ["zh-CN", "en"], 12, 4, 5,
@@ -63,7 +63,7 @@ def test_environment_drives_the_client_hints():
         "client_hints.platform_version": "6.5.0",
     })
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://secure.test/")
         assert page.evaluate("""(() => {
             const data = navigator.userAgentData;
@@ -100,7 +100,7 @@ def test_page_environment_override_and_iframe_inheritance():
         resource_loader=lambda url, request: {"body": "<body>frame</body>", "url": url},
     )
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         first = context.new_page(environment={"user_agent": "Page UA", "viewport.width": 800})
         second = context.new_page()
         assert first.evaluate("[navigator.userAgent, innerWidth]") == ["Page UA", 800]
@@ -121,7 +121,7 @@ def test_geolocation_is_async_and_clear_watch_cancels_pending_callback():
         "geolocation.accuracy": 5,
     })
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         # The position callback is delivered on the page task queue, never
         # inline, so it is still pending when the requesting script ends.
         assert page.evaluate(
@@ -147,7 +147,7 @@ def test_geolocation_is_async_and_clear_watch_cancels_pending_callback():
 def test_geolocation_reports_permission_and_position_errors(geolocation, expected):
     browser = Browser(environment=geolocation)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.evaluate("navigator.geolocation.getCurrentPosition(() => globalThis.geoError = ['success'], error => globalThis.geoError = [error.code, error.message])")
         page.run_until_idle()
         assert page.evaluate("geoError") == expected
@@ -164,7 +164,7 @@ def test_resource_loader_gets_environment_headers_and_explicit_headers_win():
 
     browser = Browser(resource_loader=loader, environment={"user_agent": "Env UA", "languages": ["fr-FR", "en"]})
     try:
-        page = browser.new_context().new_page("https://example.test/")
+        page = browser.new_profile().new_page("https://example.test/")
         calls.clear()
         page.resource_fetcher.load_resource("/one")
         page.resource_fetcher.load_resource("/two", {"headers": {"user-agent": "Explicit UA", "ACCEPT-LANGUAGE": "de"}})
@@ -195,7 +195,7 @@ def test_resource_interceptor_filters_images_and_styles_and_cache_reuses_loader(
 
     browser = Browser(resource_loader=loader, resource_interceptor=interceptor, cache_dir=tmp_path / "cache")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body><img src='/a.png'><link rel='stylesheet' href='/a.css'></body>", url="http://example.test/")
         page.evaluate("fetch('/app.js').then(r => r.text()).then(v => window.__one=v); fetch('/app.js').then(r => r.text()).then(v => window.__two=v)")
         page.run_until_idle(timeout=2)
@@ -237,7 +237,7 @@ def test_every_request_a_page_makes_names_its_resource_type():
 
     browser = Browser(resource_loader=loader, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto("http://example.test/")
         page.run_until_idle(timeout=3)
         page.net.fetch("/host-fetch")
@@ -260,7 +260,7 @@ def test_resource_cache_persists_across_browser_restart(tmp_path, monkeypatch):
 
     browser = Browser(resource_loader=first_loader, cache_dir=cache_dir)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://cache.test/")
         assert page.resource_fetcher.load_resource("/app.js").body_text() == "persisted-js"
         assert first_calls == ["http://cache.test/app.js"]
@@ -278,7 +278,7 @@ def test_resource_cache_persists_across_browser_restart(tmp_path, monkeypatch):
     )
     browser = Browser(resource_loader=unavailable_loader, cache_dir=cache_dir)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://cache.test/")
         assert page.resource_fetcher.load_resource("/app.js").body_text() == "persisted-js"
         assert ("resource cache hit: {}", "http://cache.test/app.js") in messages
@@ -293,7 +293,7 @@ def test_worker_inherits_page_environment_snapshot():
         environment={"user_agent": "Browser UA", "languages": ["en-US"], "max_touch_points": 0},
     )
     try:
-        page = browser.new_context().new_page(environment={"user_agent": "Worker UA", "languages": ["ja-JP"], "max_touch_points": 2})
+        page = browser.new_profile().new_page(environment={"user_agent": "Worker UA", "languages": ["ja-JP"], "max_touch_points": 2})
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("const worker = new Worker('https://example.test/worker.js'); worker.onmessage = event => globalThis.workerEnvironment = event.data; worker.postMessage(null);")
         page.run_until_idle(2)
@@ -306,7 +306,7 @@ def test_worker_navigator_does_not_expose_window_only_surfaces():
     source = "self.postMessage([typeof navigator.plugins, typeof navigator.mimeTypes, typeof navigator.geolocation]);"
     browser = Browser(resource_loader=lambda url, request: {"body": source, "url": url})
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("const worker = new Worker('https://example.test/worker.js'); worker.onmessage = event => globalThis.workerSurfaces = event.data;")
         page.run_until_idle(1)
@@ -324,7 +324,7 @@ def test_fetch_and_xhr_receive_environment_headers():
 
     browser = Browser(resource_loader=loader, environment={"user_agent": "Async UA", "languages": ["ko-KR", "en"]})
     try:
-        page = browser.new_context().new_page("https://example.test/")
+        page = browser.new_profile().new_page("https://example.test/")
         calls.clear()
         page.evaluate("fetch('/fetch').then(() => globalThis.fetchDone = true)")
         page.evaluate("const xhr = new XMLHttpRequest(); xhr.open('GET', '/xhr'); xhr.onload = () => globalThis.xhrDone = true; xhr.send()")
@@ -345,7 +345,7 @@ def test_fetch_and_xhr_receive_environment_headers():
 def test_fetch_blob_url_uses_context_storage_async():
     browser = Browser(environment={"user_agent": "Blob UA"})
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         assert page.evaluate("(() => { const u = URL.createObjectURL(new Blob(['blob-body'])); fetch(u).then(r => r.text()).then(v => globalThis.blobFetch = v); return u; })()").startswith("blob:")
         page.run_until_idle(1)
@@ -363,7 +363,7 @@ def test_persistent_resource_cache_honours_response_exclusions(tmp_path, headers
         return {"body": str(len(calls)), "headers": headers}
     browser = Browser(real_network=False, stub_logging="off", resource_loader=loader, cache_dir=tmp_path)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content('<body></body>', url='http://cache.test/')
         assert page.resource_fetcher.load_resource('/data').body_text() == '1'
         assert page.resource_fetcher.load_resource('/data').body_text() == '2'
@@ -379,7 +379,7 @@ def test_persistent_cache_partitions_request_headers_and_bypasses_credentials(tm
         return {"body": request['headers'].get('Accept-Language', '')}
     browser = Browser(real_network=False, stub_logging="off", resource_loader=loader, cache_dir=tmp_path)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content('<body></body>', url='http://cache.test/')
         for language in ['en', 'ja', 'en']:
             assert page.resource_fetcher.load_resource('/data', {'headers':{'Accept-Language':language}}).body_text() == language
@@ -387,7 +387,7 @@ def test_persistent_cache_partitions_request_headers_and_bypasses_credentials(tm
         for _ in range(2):
             page.resource_fetcher.load_resource('/private', {'headers':{'Authorization':'Bearer fixture'}})
         assert len(calls) == 4
-        page.context_owner.cookies.add_from_response('http://cache.test/', 'session=fixture; Path=/')
+        page.profile.cookies.add_from_response('http://cache.test/', 'session=fixture; Path=/')
         for _ in range(2):
             page.resource_fetcher.load_resource('/data', {'headers':{'Accept-Language':'en'}})
         assert len(calls) == 6

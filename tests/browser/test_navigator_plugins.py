@@ -10,7 +10,7 @@ from pyv8c.foundation.environment import PROFILE
 
 def new_page(environment=None):
     browser = Browser(environment=environment, stub_logging="off")
-    return browser, browser.new_context().new_page()
+    return browser, browser.new_profile().new_page()
 
 
 def test_default_plugins_match_current_chrome_pdf_snapshot():
@@ -124,7 +124,7 @@ def test_environment_plugins_support_mapping_and_page_overrides():
     }
     browser = Browser(environment=base, stub_logging="off")
     try:
-        context = browser.new_context()
+        context = browser.new_profile()
         default_page = context.new_page()
         override_page = context.new_page(environment=override)
         assert default_page.evaluate(

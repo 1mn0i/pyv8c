@@ -11,7 +11,7 @@ from pyv8c.web.dom import layout
 @pytest.fixture
 def page():
     browser = Browser(cache=False, stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://layout.test/")
     try:
         yield page

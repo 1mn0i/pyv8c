@@ -61,7 +61,7 @@ python tools/check_policy.py --record-startup # 接受当前启动时延作为�
 - `layers`：分层规则，委托 `tests/unit/test_architecture.py`，不在此重复实现。
 - `companions`：`pyv8c/` 下改了 `.py` 却没有任何 `tests/` 文件随之改动时告警。
 - `startup`：与 `tools/startup_baseline.json` 记录的预算比较（中位数 +10% +5ms）。测量的是新
-  进程里 `Browser() -> new_context() -> new_page() -> set_content()` 的耗时与导入模块数；换
+  进程里 `Browser() -> new_profile() -> new_page() -> set_content()` 的耗时与导入模块数；换
   机器、或有意改变启动开销后需要重新记录。
 - `offline`：把 `_pyv8` 从 `PYTHONPATH` 上拿掉后跑 `tests/unit`，确保它不依赖原生扩展——离线
   抽取器 `pyv8c/tools/extract_idl.py` 就是在这种环境里用的。需要扩展的用例统一
@@ -119,7 +119,7 @@ python tools/benchmark.py              # 与基线对比，中位数与最小值
 python tools/benchmark.py --cases dom_query --runs 5
 ```
 
-两次测量之间机器负载不同，差异可能落在噪声里；要看结论，保存当前工作区基线到独立副本，再在同机、同解释器下量改动前后，保留用户已有修改。`resident_pages` 的 MB 数是进程提交内存的差值，偏粗；同一条里的“每页 Python 句柄数”是精确值（`Context.live_handles`，原生侧另有 `Isolate.live_v8_handles` 可在关闭前确认句柄归零）。
+两次测量之间机器负载不同，差异可能落在噪声里；要看结论，保存当前工作区基线到独立副本，再在同机、同解释器下量改动前后，保留用户已有修改。`resident_pages` 的 MB 数是进程提交内存的差值，偏粗；同一条里的“每页 Python 句柄数”是精确值（`V8Context.live_handles`，原生侧另有 `Isolate.live_v8_handles` 可在关闭前确认句柄归零）。
 
 按这个口径实测过一轮（2026-09-28，`git stash` 回 HEAD 对照）：`dom_query` −57%、`dom_build` −48%、`host_call` −33%、`resource_batch` −23%、`dom_parse` −3%，启动中位数 259 → 245 ms（导入模块 435 → 394）。跨桥一次约 3.7 µs 降到约 1.9 µs，其中原生派发只占 0.18 µs——宿主方法体才是跨桥成本所在，所以先查 Python 侧再看 C++。
 

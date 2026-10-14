@@ -7,7 +7,7 @@ from pyv8c import Browser
 
 def test_internal_bridge_names_are_not_global_and_url_is_public():
     browser = Browser()
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     values = page.evaluate("""
       [
         typeof URL,
@@ -28,7 +28,7 @@ def test_internal_bridge_names_are_not_global_and_url_is_public():
 
 def test_window_aliases_come_from_the_global_template():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     values = page.evaluate("""
       [
         window === self,
@@ -45,7 +45,7 @@ def test_window_aliases_come_from_the_global_template():
 
 def test_url_components_and_static_operations():
     browser = Browser()
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     values = page.evaluate("""
       (() => {
         const u = new URL('https://user:pass@example.com:8443/a?x=1#h');
@@ -73,7 +73,7 @@ def test_url_components_and_static_operations():
 
 def test_url_search_params_delete_and_has_take_an_optional_value():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     values = page.evaluate("""
       (() => {
         const params = new URLSearchParams('a=1&a=2&b=3');
@@ -90,7 +90,7 @@ def test_url_search_params_delete_and_has_take_an_optional_value():
 
 def test_url_search_params_iterates_the_way_chromium_does():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     values = page.evaluate("""
       (() => {
         const params = new URLSearchParams('a=1&b=2');
@@ -123,7 +123,7 @@ def test_a_worker_realm_iterates_url_search_params_too():
               " URLSearchParams.prototype[Symbol.iterator] === URLSearchParams.prototype.entries]);")
     browser = Browser(resource_loader=lambda url, request: {"body": source, "url": url})
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("const worker = new Worker('https://example.test/worker.js');"
                       " worker.onmessage = event => globalThis.workerParams = event.data;")
@@ -135,7 +135,7 @@ def test_a_worker_realm_iterates_url_search_params_too():
 
 def test_url_blob_methods_use_context_storage_without_global_bridge():
     browser = Browser()
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="https://github.com/path/index.html")
     values = page.evaluate("""
       (() => {

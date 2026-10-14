@@ -29,7 +29,7 @@ def _loader(url, request, released=None):
 
 def _page(loader):
     browser = Browser(stub_logging="off", threaded_loaders=True, resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content(PAGE, url=ORIGIN + "/")
     return browser, page
 

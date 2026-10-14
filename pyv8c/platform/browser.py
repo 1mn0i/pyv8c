@@ -1,4 +1,4 @@
-"""Browser and browser context: the lifecycle that owns a Page."""
+"""Browser and profile: the lifecycle that owns a Page."""
 from __future__ import annotations
 
 import os
@@ -11,7 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
-import pyv8  # patch target for native Context instrumentation
+import pyv8  # patch target for native V8Context instrumentation
 
 from ..engine.bindings import Idl, Bindings
 from ..foundation.environment import BrowserEnvironment
@@ -30,14 +30,14 @@ from .resources.cache import ResourceCache
 _LOADER_WORKERS = 4
 
 
-class BrowserContext:
-    """A browsing session: its own cookies, blob URLs and network stack.
+class Profile:
+    """A browser profile: its own cookies, blob URLs and network stack.
 
     Pages created here share that state, so a document, the ``fetch`` calls it
     makes and a ``page.net`` request are one session as far as a server is
-    concerned; ``context.pages`` lists the pages still open and
-    ``context.cookies`` is the jar behind them.  Contexts of one browser share
-    nothing else -- cookies, cached responses and engines are per context --
+    concerned; ``profile.pages`` lists the pages still open and
+    ``profile.cookies`` is the jar behind them.  Profiles of one browser share
+    nothing else -- cookies, cached responses and engines are per profile --
     except for a disk cache directory when one was configured.
     """
 
@@ -46,7 +46,7 @@ class BrowserContext:
         self.cookies = CookieJar()
         #: Its own proxy setting, or the browser's while it was given none.
         self.proxy = browser.proxy if proxy is None else proxy
-        #: Trace settings for this context alone; ``None`` keeps the browser's.
+        #: Trace settings for this profile alone; ``None`` keeps the browser's.
         self.trace = browser.trace if trace is None else bool(trace)
         self.traceable = (browser.traceable if traceable is None else bool(traceable)) or self.trace
         self.trace_callback = browser.trace_callback if trace_callback is None else trace_callback
@@ -64,7 +64,7 @@ class BrowserContext:
 
     def _ensure_open(self):
         if self.closed or self.browser._closed:
-            raise HostStateError("BrowserContext is closed")
+            raise HostStateError("Profile is closed")
 
     def create_blob_url(self, blob, realm=None):
         """Mint a ``blob:`` URL whose origin is the creating realm's origin.
@@ -93,7 +93,7 @@ class BrowserContext:
         self._blob_urls.pop(url, None)
         self._blob_origins.pop(url, None)
 
-    # Context-level services exposed to realm objects without exposing storage.
+    # Profile-level services exposed to realm objects without exposing storage.
     @property
     def cookie_jar(self):
         return self.cookies
@@ -103,7 +103,7 @@ class BrowserContext:
                  *,
                  trace: bool | None = None,
                  environment: dict | BrowserEnvironment | None = None) -> Page:
-        """Create a page in this context and return it.
+        """Create a page in this profile and return it.
 
         A URL other than ``about:blank`` is loaded right away with
         :meth:`Page.goto <pyv8c.platform.page.Page.goto>`; when that load fails
@@ -118,7 +118,7 @@ class BrowserContext:
             only.
         :returns: the new :class:`Page <pyv8c.platform.page.Page>`, appended to
             :attr:`pages`.
-        :raises InvalidStateError: the context or its browser is closed.
+        :raises InvalidStateError: the profile or its browser is closed.
         """
         self._ensure_open()
         page = Page(self, trace=trace, environment=environment)
@@ -143,28 +143,28 @@ class BrowserContext:
                        options: pyv8.DevToolsOptions | None = None) -> pyv8.DevToolsHandle:
         """Attach a DevTools server to *page* and return its handle.
 
-        One server per context, driving a single debugger client; the supported
+        One server per profile, driving a single debugger client; the supported
         protocol domains and the startup handshake are in ``docs/DEVTOOLS.md``.
 
-        :param page: a page of this context that is still open.
+        :param page: a page of this profile that is still open.
         :param options: :class:`pyv8.DevToolsOptions`; the defaults bind
             ``127.0.0.1`` on a system-chosen port and pause once, at the next
             host statement after the handshake.
         :returns: the handle -- ``url``, ``wait_for_connection``,
             ``wait_for_ready``, ``close``, and a context manager.
-        :raises InvalidStateError: the context is closed, the page belongs to
-            another context or is closed, or a server is already attached.
+        :raises InvalidStateError: the profile is closed, the page belongs to
+            another profile or is closed, or a server is already attached.
         """
         self._ensure_open()
         if page not in self.pages or page.closed:
-            raise HostStateError("Page does not belong to this BrowserContext")
+            raise HostStateError("Page does not belong to this profile")
         if self._devtools is not None:
-            raise HostStateError("BrowserContext already has DevTools attached")
+            raise HostStateError("Profile already has DevTools attached")
         from .devtools import start_devtools
         return start_devtools(self, page, options=options)
 
     def close(self) -> None:
-        """Close the context: its pages, then DevTools and the network stack.
+        """Close the profile: its pages, then DevTools and the network stack.
 
         Best effort and idempotent: each part is close-attempted even when an
         earlier one raised, blob URLs are dropped, and the first error is
@@ -197,17 +197,17 @@ class BrowserContext:
         if first_error is not None:
             raise first_error
         self.closed = True
-        if self in self.browser.contexts:
-            self.browser.contexts.remove(self)
+        if self in self.browser.profiles:
+            self.browser.profiles.remove(self)
 
 
 class Browser:
-    """A browser: the configuration every context and page starts from.
+    """A browser: the configuration every profile and page starts from.
 
     One instance owns the native runtime, the interface baseline and the
-    environment its contexts derive from.  :meth:`new_context` creates an
+    environment its profiles derive from.  :meth:`new_profile` creates an
     isolated session and :meth:`close` closes every session it handed out; the
-    engines a context needs are built when that context is created.
+    engines a profile needs are built when that profile is created.
 
     JS objects belong to the thread that owns their realm (see ``docs/USAGE.md``).
     """
@@ -243,7 +243,7 @@ class Browser:
 
         :param environment: flat "dotted key" dict or
             :class:`~pyv8c.foundation.environment.BrowserEnvironment`; keys left
-            out come from the bundled Chrome profile.  Contexts and pages may
+            out come from the bundled Chrome profile.  Profiles and pages may
             overlay it.
         :param real_network: assemble ``http_engine`` and ``ws_engine``; ``False``
             keeps this browser offline, and a ready engine handed to either of them
@@ -263,30 +263,30 @@ class Browser:
             and this host's own cache included.
         :param http_engine: the HTTP engine -- a registered name (built with
             ``http_options``), a ready object with ``request_sync``, or a factory
-            called once per context; ``None`` leaves the role empty.  Further
+            called once per profile; ``None`` leaves the role empty.  Further
             engines can be added with
             :func:`~pyv8c.network.registry.register_transport`.
         :param http_options: options handed to the HTTP engine; a key it does not
-            accept is refused when a context is created rather than reaching it.
+            accept is refused when a profile is created rather than reaching it.
         :param ws_engine: the WebSocket engine -- a registered name (built with
             ``ws_options``), a ready object with ``websocket``, or a factory called
-            once per context; ``None`` leaves the role empty.  Further engines can
+            once per profile; ``None`` leaves the role empty.  Further engines can
             be added with
             :func:`~pyv8c.network.registry.register_ws_transport`.
         :param ws_options: options handed to the WebSocket engine, same rule.
         :param proxy: the ``http://`` or ``https://`` proxy every request and
-            WebSocket handshake of this browser's contexts goes through, with
+            WebSocket handshake of this browser's profiles goes through, with
             any credentials in the URL (``http://user:pass@host:port``).  Left
             out, traffic goes directly even when the environment names a proxy;
-            ``""`` asks for the same thing explicitly.  A context may override
-            it with :meth:`new_context`, and SOCKS is not supported.
+            ``""`` asks for the same thing explicitly.  A profile may override
+            it with :meth:`new_profile`, and SOCKS is not supported.
         :param default_headers: headers every ``page.net`` request starts from.
         :param trace: start each page with tracing on.
         :param trace_callback: receives trace events instead of Loguru.
         :param traceable: allow a page to switch tracing on later (see
             :attr:`Page.trace <pyv8c.platform.page.Page.trace>`); ``trace=True``
             implies it.
-        :param cache: enable the per-context resource cache.
+        :param cache: enable the per-profile resource cache.
         :param cache_dir: keep that cache on disk under this directory; without
             it resource responses are not cached.
         :param expose_unimplemented: let the exposure plan include baseline
@@ -328,7 +328,7 @@ class Browser:
         self._state_lock = threading.Lock()
         # pyv8 starts its global V8 runtime on first use, not at import, so the
         # first realm created below carries that cost.
-        self.contexts = []
+        self.profiles = []
         self.resource_loader = resource_loader
         self.resource_interceptor = resource_interceptor
         self.threaded_loaders = bool(threaded_loaders)
@@ -343,10 +343,10 @@ class Browser:
         self.http_engine = http_engine
         self.ws_engine = ws_engine
         #: Options for the two engines; a key an engine does not accept is refused
-        #: when a context is created rather than passed on unread.
+        #: when a profile is created rather than passed on unread.
         self.http_options = dict(http_options or {})
         self.ws_options = dict(ws_options or {})
-        #: The proxy contexts start from: ``None`` is direct, ``""`` asks for it.
+        #: The proxy profiles start from: ``None`` is direct, ``""`` asks for it.
         self.proxy = normalize_proxy(proxy)
         #: Headers every host request starts from, on top of the environment ones.
         self.default_headers = dict(default_headers or {})
@@ -379,7 +379,7 @@ class Browser:
             "deferred_interfaces": len(plan.lazy),
             "materialized_interfaces": 0,
             "binding_binder_ms": 0.0,
-            "context_create_ms": 0.0,
+            "profile_create_ms": 0.0,
             "deferred_global_declare_ms": 0.0,
             "deferred_globals": 0,
             "deferred_materialized": 0,
@@ -391,7 +391,7 @@ class Browser:
         """Read-only snapshot of this Browser's startup timings and counts.
 
         Baseline read/cache/compile/decode, validation and browser-init
-        milliseconds, context-creation cost, and how many interfaces the Window
+        milliseconds, profile-creation cost, and how many interfaces the Window
         exposure plan knows, materialized or still deferred.  Set
         ``PYV8C_STARTUP_STATS=0`` to record nothing.
         """
@@ -401,22 +401,22 @@ class Browser:
         if os.environ.get("PYV8C_STARTUP_STATS", "1") != "0":
             self._startup_stats.update(values)
 
-    def new_context(self, *, proxy: str | None = None, trace: bool | None = None,
+    def new_profile(self, *, proxy: str | None = None, trace: bool | None = None,
                     traceable: bool | None = None,
-                    trace_callback: Callable | None = None) -> BrowserContext:
-        """Create an isolated session: its own cookies, blobs and network stack.
+                    trace_callback: Callable | None = None) -> Profile:
+        """Create an isolated profile: its own cookies, blobs and network stack.
 
-        :param proxy: where this context's traffic goes, overriding
+        :param proxy: where this profile's traffic goes, overriding
             :attr:`proxy` for it alone: left out it keeps the browser's setting,
             a URL sends it through that proxy instead, and ``""`` sends it
-            directly even when the browser has one.  Contexts of one browser may
+            directly even when the browser has one.  Profiles of one browser may
             therefore leave by different exits at the same time.
-        :param trace: report trace events for this context alone; ``None`` keeps
+        :param trace: report trace events for this profile alone; ``None`` keeps
             the browser setting.
         :param traceable: let its pages switch tracing on later, same defaulting.
-        :param trace_callback: receive this context's events instead of the
+        :param trace_callback: receive this profile's events instead of the
             browser's callback.
-        :returns: the new :class:`BrowserContext`, appended to :attr:`contexts`.
+        :returns: the new :class:`Profile`, appended to :attr:`profiles`.
         :raises InvalidStateError: the browser is closed.
         :raises ValueError: the proxy value is not an ``http``/``https`` URL.
         """
@@ -425,16 +425,16 @@ class Browser:
                 raise HostStateError("Browser is closed or closing")
         if trace_callback is not None and not callable(trace_callback):
             raise TypeError("trace_callback must be callable or None")
-        context = BrowserContext(self, proxy=None if proxy is None else normalize_proxy(proxy),
-                                 trace=trace, traceable=traceable, trace_callback=trace_callback)
+        profile = Profile(self, proxy=None if proxy is None else normalize_proxy(proxy),
+                          trace=trace, traceable=traceable, trace_callback=trace_callback)
         with self._state_lock:
             accepted = not (self._closed or self._closing)
             if accepted:
-                self.contexts.append(context)
+                self.profiles.append(profile)
         if not accepted:
-            context.close()
+            profile.close()
             raise HostStateError("Browser is closed or closing")
-        return context
+        return profile
 
     @property
     def loader_pool(self):
@@ -448,28 +448,28 @@ class Browser:
             return self._loader_pool
 
     def close(self) -> None:
-        """Close every context, then mark the browser closed.
+        """Close every profile, then mark the browser closed.
 
-        Best effort and idempotent: every context gets its close attempt even
+        Best effort and idempotent: every profile gets its close attempt even
         when an earlier one raised, and the first error is re-raised afterwards.
-        A closed browser refuses new contexts.
+        A closed browser refuses new profiles.
         """
         with self._state_lock:
             if self._closed or self._closing:
                 return
             self._closing = True
-            contexts = tuple(self.contexts)
+            profiles = tuple(self.profiles)
         try:
             # Never hold the state lock while calling a realm owner or host factory.
             first_error = None
-            for context in contexts:
+            for profile in profiles:
                 try:
-                    context.close()
+                    profile.close()
                 except BaseException as exc:
                     if first_error is None:
                         first_error = exc
             if first_error is not None:
-                # Keep the loader available for a failed context's cleanup retry.
+                # Keep the loader available for a failed profile's cleanup retry.
                 raise first_error
             with self._loader_lock:
                 self._closed = True

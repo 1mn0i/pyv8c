@@ -12,7 +12,7 @@ PEAK_DB = 20 * math.log10(0.42 / 2)
 
 def _open():
     browser = Browser(stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="https://repro.test/index.html")
     page.run_until_idle(timeout=2)
     return browser, page

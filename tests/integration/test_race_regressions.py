@@ -155,7 +155,7 @@ def test_devtools_close_skips_disconnect_when_owner_is_already_closed():
 
 def test_devtools_page_close_records_no_disconnect_diagnostics(browser):
     """A1: closing a live devtools page detaches on the owner without noise."""
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page()
     handle = context.start_devtools(page)
     try:
@@ -287,7 +287,7 @@ def test_post_control_exception_marks_the_executor_closed():
 
 def test_fetch_completion_beating_registration_does_not_strand_the_handle(browser, monkeypatch):
     """Delivery before binding releases ownership even for a pending handle."""
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     try:
         responses = []
         def synchronous(url, request, callback):
@@ -311,7 +311,7 @@ def test_document_resource_is_tracked_before_its_request_is_issued(browser, monk
     synchronous completion called ``_untrack_resource`` before the handle had a
     scope callback and silently stranded the registration.
     """
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page()
     try:
         controller = page.document_resources
@@ -342,7 +342,7 @@ def test_document_resource_is_tracked_before_its_request_is_issued(browser, monk
 def test_race_teardown_returns_to_thread_baseline(thread_leak_check, browser):
     """A1+A4 teardown must not leak owner, server, or network threads."""
     for _ in range(3):
-        context = browser.new_context()
+        context = browser.new_profile()
         page = context.new_page()
         handle = context.start_devtools(page)
         handle.close()
@@ -351,11 +351,11 @@ def test_race_teardown_returns_to_thread_baseline(thread_leak_check, browser):
     thread_leak_check(tolerance=0, timeout=15)
 
 
-def test_browser_close_refuses_new_contexts_while_teardown_is_running(monkeypatch):
+def test_browser_close_refuses_new_profiles_while_teardown_is_running(monkeypatch):
     from pyv8c import Browser
     from pyv8c.foundation.host_errors import HostStateError
     browser = Browser(real_network=False, stub_logging="off")
-    context = browser.new_context()
+    context = browser.new_profile()
     entered, release = threading.Event(), threading.Event()
     original = context.close
     errors = []
@@ -372,13 +372,13 @@ def test_browser_close_refuses_new_contexts_while_teardown_is_running(monkeypatc
         thread.start()
         assert entered.wait(3)
         with pytest.raises(HostStateError):
-            browser.new_context()
+            browser.new_profile()
     finally:
         release.set()
         thread.join(3)
         browser.close()
     assert not thread.is_alive() and not errors
-    assert browser.contexts == []
+    assert browser.profiles == []
     with pytest.raises(HostStateError):
         _ = browser.loader_pool
     assert browser._loader_pool is None
@@ -387,7 +387,7 @@ def test_browser_close_refuses_new_contexts_while_teardown_is_running(monkeypatc
 def test_browser_close_retry_keeps_the_loader_for_failed_context(monkeypatch):
     from pyv8c import Browser
     browser = Browser(real_network=False, stub_logging="off")
-    context = browser.new_context()
+    context = browser.new_profile()
     pool = browser.loader_pool
     original = context.close
     def fail(): raise RuntimeError('fixture cleanup failed')
@@ -404,7 +404,7 @@ def test_browser_close_retry_keeps_the_loader_for_failed_context(monkeypatch):
 def test_page_close_retries_failed_retired_realm_cleanup():
     from pyv8c import Browser
     browser = Browser(real_network=False, stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     attempts = []
     def close():
         attempts.append(1)
@@ -415,7 +415,7 @@ def test_page_close_retries_failed_retired_realm_cleanup():
         with pytest.raises(RuntimeError, match='retired cleanup failed'):
             page.close()
         assert not page.closed and not page.executor.closed
-        assert page.realm.context is not None
+        assert page.realm.v8_context is not None
         assert page._retired_realms == [retired]
         page.close()
         assert page.closed and attempts == [1, 1]
@@ -426,7 +426,7 @@ def test_page_close_retries_failed_retired_realm_cleanup():
 def test_page_close_retries_failed_owned_isolate_cleanup():
     from pyv8c import Browser
     browser = Browser(real_network=False, shard_isolates=True, stub_logging="off")
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     isolate = page.isolate
     attempts = []
     def close():

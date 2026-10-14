@@ -53,7 +53,7 @@ class _TaskHostAdapter:
 
 
 class _ContextBootstrapProxy:
-    """Placeholder published while native Context installs templates."""
+    """Placeholder published while native V8Context installs templates."""
 
     def __init__(self):
         self.args = ()
@@ -89,8 +89,8 @@ class Page:
     ``docs/USAGE.md``).
     """
 
-    def __init__(self, context, url="about:blank", *, trace=None, environment=None, parent=None, origin=None):
-        self.context_owner = context
+    def __init__(self, profile, url="about:blank", *, trace=None, environment=None, parent=None, origin=None):
+        self.profile = profile
         self.parent_page = parent
         self.top_page = parent.top_page if parent is not None else self
         #: The frame tree's isolate, owned by the page that started the tree and shared by
@@ -103,12 +103,12 @@ class Page:
         self.origin = tuple(origin) if origin is not None else origin_tuple(
             url, inherited=getattr(parent, "origin", None)
         )
-        self.origin = context._blob_origins.get(str(url), self.origin)
+        self.origin = profile._blob_origins.get(str(url), self.origin)
         self._opaque_origin = origin is not None and self.origin[0] == "opaque"
-        self.environment = context.browser.environment.overlay(environment)
-        self.resource_interceptor = context.browser.resource_interceptor
+        self.environment = profile.browser.environment.overlay(environment)
+        self.resource_interceptor = profile.browser.resource_interceptor
         # Overriding the browser default here leaves the other pages' setting alone.
-        self._trace = context.trace if trace is None else bool(trace)
+        self._trace = profile.trace if trace is None else bool(trace)
         self.closed = False
         self._resource_scope = ResourceScope()
         self.resource_ownership = ResourceOwnership(self._resource_scope)
@@ -130,19 +130,19 @@ class Page:
         self._owned = Ownership()
         # Web-facing objects see this narrow surface, never the Page itself.
         self.services = PageServices(
-            context, self.environment, self.trace, self._owned,
+            profile, self.environment, self.trace, self._owned,
             self.navigation, self.scripts, self.resource_fetcher, self.frame_resources, self.document_resources, self.tasks,
             self._resource_scope,
         )
         self.services._origin = self.origin
         self.document = HTMLDocument(services=self.services, url=url, ready_state="complete")
-        self.resource_loader = context.browser.resource_loader
-        self.resource_interceptor = context.browser.resource_interceptor
-        self.cache_enabled = context.browser.cache_enabled
-        self.network_backend = context.network_backend
+        self.resource_loader = profile.browser.resource_loader
+        self.resource_interceptor = profile.browser.resource_interceptor
+        self.cache_enabled = profile.browser.cache_enabled
+        self.network_backend = profile.network_backend
         self.window = Window(
             services=self.services,
-            feature_runtime=context.browser.bindings.runtime,
+            feature_runtime=profile.browser.bindings.runtime,
         )
         self.services.window = self.window
         self.services.document = self.document
@@ -152,8 +152,8 @@ class Page:
         # drag font measurement into a startup that does not need it yet.
         self._mouse = None
         # Native template installation can inspect the global object before
-        # Context.__init__ returns, so publish a sentinel until the realm exists.
-        self.context = _ContextBootstrapProxy()
+        # V8Context.__init__ returns, so publish a sentinel until the realm exists.
+        self.v8_context = _ContextBootstrapProxy()
         self._devtools_target = None
         #: One owner thread for the page's lifetime; navigations hand it to the
         #: next realm instead of starting another.
@@ -162,8 +162,8 @@ class Page:
         self.services.bind_realm(self.realm)
         self.realm.executor.attach_task_queue(self.tasks)
         self.realm.executor.attach_rejection_tracker(self.rejections)
-        self.context = self.realm.context
-        Window._bind_context(self.context, self.window)
+        self.v8_context = self.realm.v8_context
+        Window._bind_context(self.v8_context, self.window)
 
     @property
     def trace(self) -> bool:
@@ -183,9 +183,9 @@ class Page:
             raise TypeError("trace must be a bool")
 
         def update():
-            if self.closed or self.context_owner.closed:
+            if self.closed or self.profile.closed:
                 raise RuntimeError("page is closed")
-            self.context.trace = enabled
+            self.v8_context.trace = enabled
             self._trace = enabled
             self.services.trace = enabled
 
@@ -195,14 +195,14 @@ class Page:
         if self._opaque_origin:
             return
         self.origin = origin_tuple(url, inherited=getattr(self.parent_page, "origin", None))
-        self.origin = self.context_owner._blob_origins.get(str(url), self.origin)
+        self.origin = self.profile._blob_origins.get(str(url), self.origin)
         self.services._origin = self.origin
         self.window._origin = self.origin
         # The native access-check callback resolves the accessing realm from this
-        # table, and navigation can change the origin after the Context exists.
-        entry = Window._context_origins.get(id(self.context))
+        # table, and navigation can change the origin after the V8Context exists.
+        entry = Window._context_origins.get(id(self.v8_context))
         if entry is not None:
-            Window._context_origins[id(self.context)] = (entry[0], self.origin)
+            Window._context_origins[id(self.v8_context)] = (entry[0], self.origin)
 
     # One entry point for everything that notices an exception -- a task that
     # raised, a listener that threw, an isolate hook -- so all of them surface on
@@ -281,10 +281,10 @@ class Page:
 
     def _window_name_of(self, previous_window, previous_realm):
         """The browsing context's name, which a page may have set from script."""
-        context = previous_realm.context
-        if context is not None:
+        v8_context = previous_realm.v8_context
+        if v8_context is not None:
             try:
-                return str(context.exec_js("String(this.name)"))
+                return str(v8_context.exec_js("String(this.name)"))
             except BaseException:
                 pass
         return getattr(previous_window, "_window_name", "")
@@ -300,7 +300,7 @@ class Page:
         """
         if self.parent_page is not None:
             return self.top_page.realm_isolate()
-        if not self.context_owner.browser.shard_isolates:
+        if not self.profile.browser.shard_isolates:
             return None
         if self.isolate is None:
             self.isolate = pyv8.Isolate()
@@ -315,7 +315,7 @@ class Page:
         previous_window, previous_realm = self.window, self.realm
         window = Window(
             services=self.services,
-            feature_runtime=self.context_owner.browser.bindings.runtime,
+            feature_runtime=self.profile.browser.bindings.runtime,
         )
         window._frame_element = previous_window._frame_element
         window._window_name = self._window_name_of(previous_window, previous_realm)
@@ -327,12 +327,12 @@ class Page:
         self.services.bind_realm(self.realm)
         self.realm.executor.attach_task_queue(self.tasks)
         self.realm.executor.attach_rejection_tracker(self.rejections)
-        self.context = self.realm.context
-        Window._bind_context(self.context, window)
-        Window._unbind_context(previous_realm.context)
+        self.v8_context = self.realm.v8_context
+        Window._bind_context(self.v8_context, window)
+        Window._unbind_context(previous_realm.v8_context)
         #: Kept for the references a page holds; retired with the page (``_close_owner``).
-        if previous_realm.context is not None:
-            previous_realm.context.detach()
+        if previous_realm.v8_context is not None:
+            previous_realm.v8_context.detach()
         self._retired_realms.append(previous_realm)
         return window
 
@@ -365,7 +365,7 @@ class Page:
             pass the address the content claims to come from to keep the origin
             and relative URLs right.
         :returns: this page.
-        :raises InvalidStateError: the page or its context is closed.
+        :raises InvalidStateError: the page or its V8 context is closed.
         """
         if pyv8.current_context() is not None:
             #: Asked for from inside a running script, so waiting on this page's thread would
@@ -399,7 +399,7 @@ class Page:
         :raises TimeoutError: the requested lifecycle state was not reached in
             time.
         :raises ValueError: *wait_until* is not one of the accepted values.
-        :raises InvalidStateError: the page or its context is closed.
+        :raises InvalidStateError: the page or its V8 context is closed.
         """
         grace = None if timeout is None else max(0.0, float(timeout)) + NAVIGATION_GRACE
         return self.realm.executor.call(
@@ -666,8 +666,8 @@ class Page:
         # Close them before unregistering this target, so its disposal mailbox
         # is drained before this executor stops accepting commands.
         if self._devtools_target is not None:
-            if self.context_owner._devtools is not None:
-                if attempt(self.context_owner._devtools.unregister, self):
+            if self.profile._devtools is not None:
+                if attempt(self.profile._devtools.unregister, self):
                     self._devtools_target = None
             else:
                 self._devtools_target = None
@@ -681,7 +681,7 @@ class Page:
                 self._retired_realms.append(realm)
         if first_error is not None:
             raise first_error
-        Window._unbind_context(self.context)
+        Window._unbind_context(self.v8_context)
         self.realm.close()
         if self.isolate is not None:
             #: Last of the tree: every context built on it is closed by now -- the frames
@@ -693,10 +693,10 @@ class Page:
                 raise first_error
             self.isolate = None
         self.executor.close()
-        self.context = None
+        self.v8_context = None
         self.global_proxy = None
         self.closed = True
-        self.context_owner._discard_page(self)
+        self.profile._discard_page(self)
         parent_cleanup = getattr(self, "_parent_scope_cleanup", None)
         if callable(parent_cleanup):
             parent_cleanup()

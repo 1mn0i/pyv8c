@@ -7,8 +7,8 @@ __all__ = ["DevToolsHandle", "DevToolsOptions"]
 
 
 class BrowserDebugging:
-    def __init__(self, context, page, options):
-        self.context = context
+    def __init__(self, profile, page, options):
+        self.profile = profile
         self.targets = {}
         host = self.page_host(page)
         self.handle = create_service(host, options, on_close=self._did_close)
@@ -19,7 +19,7 @@ class BrowserDebugging:
 
     @staticmethod
     def page_host(page, kind="page"):
-        return Host(page.context, page.realm.executor, lambda: page.url, page.close, kind)
+        return Host(page.v8_context, page.realm.executor, lambda: page.url, page.close, kind)
 
     def _register_descendants(self, page):
         for child in tuple(page._owned.frames):
@@ -69,15 +69,15 @@ class BrowserDebugging:
             self.router.event("Target.targetInfoChanged", {"targetInfo": target.descriptor()})
 
     def _did_close(self):
-        if self.context._devtools is self:
-            self.context._devtools = None
+        if self.profile._devtools is self:
+            self.profile._devtools = None
         self.targets.clear()
 
     def close(self):
         self.handle.close()
 
 
-def start_devtools(context, page, *, options=None):
-    adapter = BrowserDebugging(context, page, options)
-    context._devtools = adapter
+def start_devtools(profile, page, *, options=None):
+    adapter = BrowserDebugging(profile, page, options)
+    profile._devtools = adapter
     return adapter.handle

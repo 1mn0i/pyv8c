@@ -28,7 +28,7 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
         }
         browser = Browser(stub_logging="off")
         try:
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             output = {"startup": {key: module in sys.modules for key, module in modules.items()}}
             output["indexeddb_identity"] = page.evaluate("indexedDB === indexedDB")
             output["after_idb"] = {key: module in sys.modules for key, module in modules.items()}

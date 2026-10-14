@@ -31,7 +31,7 @@ def test_inline_interceptor_return_does_not_replace_new_transport(monkeypatch):
     with closing(Browser(real_network=False, stub_logging="off",
                          resource_interceptor=lambda url, request: None,
                          resource_loader=lambda url, request: "ok")) as browser:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         monkeypatch.setattr(page.resource_fetcher, "callbacks", SimpleNamespace(dispatch=dispatch))
         handle = page.resource_fetcher.load_resource_async("http://local.test/", {},
                                                           lambda *args: pytest.fail("cancelled delivery"))
@@ -67,7 +67,7 @@ def test_local_sources_precede_loader(asynchronous, threaded, url, body):
     calls = []
     with closing(Browser(real_network=False, threaded_loaders=threaded, stub_logging="off",
                  resource_loader=lambda url, request: calls.append(url) or "unexpected")) as browser:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://site.test/")
         assert ask(page, url, {}, asynchronous).body_text() == body
         assert not calls
@@ -82,7 +82,7 @@ def test_loader_has_identical_response_policy(asynchronous, threaded, mode, allo
         calls.append(url)
         return {"body": "cross", "headers": {"access-control-allow-origin": "*"} if allowed else {}}
     with closing(Browser(real_network=False, threaded_loaders=threaded, stub_logging="off", resource_loader=loader)) as browser:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://site.test/")
         if mode == "cors" and allowed:
             assert ask(page, "http://other.test/x", {"mode": mode}, asynchronous).body_text() == "cross"
@@ -173,7 +173,7 @@ def test_late_loader_cannot_deliver_redirect_or_populate_cache(tmp_path, navigat
         return Response("late", {"url": url, "status": 302, "headers": {"location": "/next"}})
     with closing(Browser(real_network=False, resource_loader=loader, threaded_loaders=True,
                  stub_logging="off", cache_dir=tmp_path)) as browser:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://site.test/")
         handle = page.resource_fetcher.load_resource_async("/start", {}, lambda *args: answers.append(args))
         assert started.wait(3)
@@ -191,7 +191,7 @@ def test_late_loader_cannot_deliver_redirect_or_populate_cache(tmp_path, navigat
 def test_cache_write_failure_does_not_fail_resource(tmp_path, monkeypatch, asynchronous):
     with closing(Browser(real_network=False, stub_logging="off", cache_dir=tmp_path,
                  resource_loader=lambda *args: "ok")) as browser:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://site.test/")
         def fail(*args):
             raise OSError("read-only cache volume")
@@ -203,7 +203,7 @@ def test_cache_write_failure_does_not_fail_resource(tmp_path, monkeypatch, async
 
 def test_cancellation_releases_resource_scope_registration():
     with closing(Browser(real_network=False, stub_logging="off", resource_loader=lambda *args: "ok")) as browser:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://site.test/")
         def issue_and_cancel():
             handle = page.services.resource_services.load_resource_async("/x", {}, lambda *args: pytest.fail("cancelled delivery"))
@@ -216,7 +216,7 @@ def test_cancellation_releases_resource_scope_registration():
 def test_pool_submission_failure_delivers_and_balances_loader_count(monkeypatch):
     with closing(Browser(real_network=False, stub_logging="off", threaded_loaders=True,
                          resource_loader=lambda *args: "ok")) as browser:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://site.test/")
         def reject(*args):
             raise RuntimeError("cannot schedule new futures after shutdown")
@@ -233,7 +233,7 @@ def test_same_origin_redirect_is_rejected_before_cross_origin_send(asynchronous)
         calls.append(url)
         return {"status": 302, "headers": {"location": "http://other.test/end"}}
     with closing(Browser(real_network=False, stub_logging="off", resource_loader=loader)) as browser:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://site.test/")
         with pytest.raises(LoadFailure, match="same-origin"):
             ask(page, "/start", {"mode": "same-origin"}, asynchronous)
@@ -247,7 +247,7 @@ def test_request_headers_and_cors_use_realm_origin(opaque):
         calls.append(request)
         return {"body": "ok", "headers": {"access-control-allow-origin": "null" if opaque else "http://site.test"}}
     with closing(Browser(real_network=False, stub_logging="off", resource_loader=loader)) as browser:
-        parent = browser.new_context().new_page()
+        parent = browser.new_profile().new_page()
         parent.set_content("<body></body>", url="http://site.test/")
         if opaque:
             parent.evaluate("var f=document.createElement('iframe'); f.sandbox='allow-scripts'; document.body.appendChild(f)")
@@ -277,7 +277,7 @@ def test_cancelling_queued_loader_releases_pending_count():
         futures = [browser.loader_pool.submit(occupy) for _ in range(4)]
         try:
             gate.wait(3)
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             page.set_content("<body></body>", url="http://site.test/")
             def issue():
                 handle = page.services.resource_services.load_resource_async("/x", {}, lambda *args: pytest.fail("cancelled delivery"))
@@ -297,7 +297,7 @@ def test_cancelling_queued_loader_releases_pending_count():
 def test_duplicate_backend_completion_is_consumed_once(tmp_path, monkeypatch):
     from pyv8c.network.models import NetworkResponse
     with closing(Browser(real_network=False, stub_logging="off", cache_dir=tmp_path)) as browser:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="http://site.test/")
         def send(tasks, request, done):
             raw = NetworkResponse(url=request.url, status=200, body=b"ok")
@@ -306,7 +306,7 @@ def test_duplicate_backend_completion_is_consumed_once(tmp_path, monkeypatch):
             return LoadHandle()
         page.network_backend = SimpleNamespace(http_available=True, http=SimpleNamespace(FOLLOWS_ITSELF=False), request_async=send)
         stores = []
-        monkeypatch.setattr(page.context_owner.resource_cache, "put", lambda *args: stores.append(args))
+        monkeypatch.setattr(page.profile.resource_cache, "put", lambda *args: stores.append(args))
         assert ask(page, "/x", {}, True).body_text() == "ok"
         assert len(stores) == 1
 
@@ -321,7 +321,7 @@ def test_direct_document_handle_cancel_releases_load_barrier():
     with closing(Browser(real_network=False, stub_logging="off", threaded_loaders=True,
                          resource_loader=loader)) as browser:
         try:
-            page = browser.new_context().new_page()
+            page = browser.new_profile().new_page()
             page.set_content("<body></body>", url="http://site.test/")
             node = page.document.fn_createElement("img")
             handle = page.realm.executor.call(lambda: page.document_resources.track_document_resource(
@@ -340,7 +340,7 @@ def test_direct_document_handle_cancel_releases_load_barrier():
 @pytest.mark.parametrize("cross_origin", [False, True])
 def test_blob_source_checks_creator_origin(asynchronous, mode, cross_origin):
     with closing(Browser(real_network=False, stub_logging="off")) as browser:
-        context = browser.new_context()
+        context = browser.new_profile()
         creator, reader = context.new_page(), context.new_page()
         creator.set_content("<body></body>", url="http://site.test/")
         reader.set_content("<body></body>", url="http://other.test/" if cross_origin else "http://site.test/reader")
@@ -354,7 +354,7 @@ def test_blob_source_checks_creator_origin(asynchronous, mode, cross_origin):
 
 def test_closed_page_returns_terminal_async_handle():
     with closing(Browser(real_network=False, stub_logging="off")) as browser:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.close()
         handle = page.resource_fetcher.load_resource_async("http://site.test/", {}, lambda *args: pytest.fail("closed owner delivery"))
         assert handle.done and handle.cancelled

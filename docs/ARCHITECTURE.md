@@ -13,23 +13,23 @@ web               Feature 实现：DOM、BOM、Fetch、Worker、WebSocket、Inde
        ↑
 engine            baseline、FeatureRuntime、IDL 编译、包装器、stub 和 session
        ↓
-_pyv8             V8 Context/Isolate、Python 对象桥接、Inspector、trace 原语
+_pyv8             V8Context/Isolate、Python 对象桥接、Inspector、trace 原语
 ```
 
 `web` 只能通过 `foundation` 合同和 `PageServices` 的窄 capability 使用宿主能力；不能导入 `platform` 控制器、保存 `Page`/`Browser` owner 或读取隐式全局页面状态。
 
 ## 页面生命周期
 
-`Browser` 持有配置、接口 baseline、网络后端和上下文集合；`BrowserContext` 管理页面、Cookie、Blob URL 和 DevTools 入口；`Page` 组合导航、脚本、资源、任务、生命周期和服务对象。
+`Browser` 持有配置、接口 baseline、网络后端和 profile 集合；`Profile` 管理页面、Cookie、Blob URL 和 DevTools 入口；`Page` 组合导航、脚本、资源、任务、生命周期和服务对象。
 
 每个 Page 有一个 `PageRealm`：
 
-- 一个 V8 `Context`；
+- 一个 `V8Context`；
 - 一个 Realm-local `BindingSession`；
 - 一个 owner executor，所有页面脚本和普通 Inspector 操作在此执行；空闲时睡在唤醒事件上，朝定时器死线则睡在同线程的 asyncio loop 上；
 - 一个 `Window` 与 `Document` 对象。
 
-iframe 使用独立 Page/Realm，通过 `WindowProxy` 跨窗口访问。Worker 使用独立 Worker Realm 和执行器。关闭顺序是先停止新任务与网络，再在 owner 线程释放 Context/Realm，最后释放 Page/Browser 资源。
+iframe 使用独立 Page/Realm，通过 `WindowProxy` 跨窗口访问。Worker 使用独立 Worker Realm 和执行器。关闭顺序是先停止新任务与网络，再在 owner 线程释放 V8Context/Realm，最后释放 Page/Browser 资源。
 
 ## FeatureRuntime
 
@@ -82,7 +82,7 @@ Feature 模块加载和 Realm 物化是两件事：模块类缓存属于 Browser
 
 Chromium 生成的 `idl/idl.zip` 只提供接口结构、继承、成员、模板标志和生成签名状态。IDL 编译（含占位实现与 realm 绑定回调）在 `engine/binder.py` 完成。
 
-读它的路径只有两站：`engine/idl.py` 负责加载（压缩文档、边车与二进制缓存）、解码、查找与「一个 realm 要装什么」的计划，`platform/realms.py` 用一次 `Context.install(names)` 把名字装上去。参照浏览器实际装到多少，来自 `data/chrome-environment.json` 里 `bindings` 段的实测（同一模块读它，`tools/collect_environment.py` 在采集环境的那次会话里一并写入），不是手写名单。原生侧 `Context.install` 是唯一的安装入口，每个 IDL 名在 realm 的注册表里一条记录，模板与 spec 都按名索引。
+读它的路径只有两站：`engine/idl.py` 负责加载（压缩文档、边车与二进制缓存）、解码、查找与「一个 realm 要装什么」的计划，`platform/realms.py` 用一次 `V8Context.install(names)` 把名字装上去。参照浏览器实际装到多少，来自 `data/chrome-environment.json` 里 `bindings` 段的实测（同一模块读它，`tools/collect_environment.py` 在采集环境的那次会话里一并写入），不是手写名单。原生侧 `V8Context.install` 是唯一的安装入口，每个 IDL 名在 realm 的注册表里一条记录，模板与 spec 都按名索引。
 
 参数转换、缺参判断、重载、异常顺序和 Promise 拒绝由每个 Web API 实现直接负责。禁止新增签名驱动的运行时验证器或统一调用 wrapper。
 
@@ -108,7 +108,7 @@ Chromium 生成的 `idl/idl.zip` 只提供接口结构、继承、成员、模�
 
 ## 资源与调试
 
-资源加载实现集中在 `platform/resources/`。Page 直接拥有 ResourceFetchController、DocumentResourceController 和 FrameResourceController；请求准备、来源选择、响应策略和逐跳决策由同步/异步驱动共用。CallbackRunner 管理 host 回调执行和池计数，BrowserContext 拥有 ResourceCache，缓存只保存普通 payload。
+资源加载实现集中在 `platform/resources/`。Page 直接拥有 ResourceFetchController、DocumentResourceController 和 FrameResourceController；请求准备、来源选择、响应策略和逐跳决策由同步/异步驱动共用。CallbackRunner 管理 host 回调执行和池计数，Profile 拥有 ResourceCache，缓存只保存普通 payload。
 
 文档加载屏障通过 `page.document_resources.has_pending` 查询，不能读取内部条目，也不能将传输结束视为 iframe 文档加载结束。LoadHandle 管理原子终态与迟到 transport 绑定，ResourceScope 继续作为唯一释放机制。新增实现应放入 `resources/`，旧的 `platform/resource_loading.py` 已移除。
 

@@ -146,7 +146,7 @@ def test_worker_failures_reach_the_parent_and_the_scope():
     """
     browser = Browser(resource_loader=_loader, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<html><body>x</body></html>", url=ORIGIN + "/")
         page.run_until_idle(timeout=1)
         page.evaluate("""

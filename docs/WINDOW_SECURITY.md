@@ -22,7 +22,7 @@ contentWindow、document.defaultView 和数字 frame 索引使用一致的代理
 - HTTP(S)、WS(S)、FTP 使用规范化 scheme、hostname 和有效端口比较；路径、query、fragment 不参与。
 - 主机名进行 IDN 规范化；默认端口与等价的显式默认端口相同。
 - about:blank iframe 继承父 origin；顶层 about:blank 使用独立 opaque origin。
-- 同 Context 创建的 Blob URL 从注册表取得创建者 origin；不能仅靠 blob 字符串恢复所有权限。
+- 同 profile 创建的 Blob URL 从注册表取得创建者 origin；不能仅靠 blob 字符串恢复所有权限。
 - data 等 URL 使用 opaque origin；相同字符串不保证同源。
 - 导航提交更新 origin，旧代理的权限随目标当前状态变化。
 
@@ -63,7 +63,7 @@ postMessage 检查 targetOrigin 并设置 data、origin、source；支持 onmess
 导航和消息排入目标任务队列，默认 executor 自动推进；测试可使用 run_until_idle 等待。
 structured_clone 仅支持当前实现的类型，不能假定完整 transfer 列表或任意循环对象都可复制。
 
-同步同源代理转发使用 native 保存的目标 Context；不要在回调里同步等待另一 executor 或阻塞本 realm 的 loop，避免互等。
+同步同源代理转发使用 native 保存的目标 V8Context；不要在回调里同步等待另一 executor 或阻塞本 realm 的 loop，避免互等。
 跨源检查不应被 trace 跳过；trace 只观察原有回调出口。
 
 ## 已知限制
@@ -73,7 +73,7 @@ structured_clone 仅支持当前实现的类型，不能假定完整 transfer �
 - WindowProxy 的全部反射、symbol、命名 browsing context 查找不保证与 Chromium 完全一致。
 - 普通 JS 对象/数组经 Python 桥转发时，不保证所有引用具有 Chrome 的零复制 identity 语义。
 - popup/open/opener、真正焦点/窗口关闭、完整 Location/session history 仍不完整。
-- Blob URL 跨 Context 注册表校验与撤销后的 origin 生命周期仍有边界。
+- Blob URL 跨 profile 注册表校验与撤销后的 origin 生命周期仍有边界。
 
 当前已有同源模型；应针对这些明确缺口继续完善，而不是重新假定安全模型从未实现。
 

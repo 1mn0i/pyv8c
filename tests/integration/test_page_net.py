@@ -86,7 +86,7 @@ def page(origin):
         http_engine="curl_cffi",
         default_headers={"X-Custom": "browser"},
     )
-    instance = browser.new_context().new_page(origin + "/")
+    instance = browser.new_profile().new_page(origin + "/")
     try:
         yield instance
     finally:
@@ -165,7 +165,7 @@ def test_the_host_api_stays_out_of_the_realm():
     """
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         assert page.evaluate("[typeof window.net, typeof globalThis.net]") == ["undefined", "undefined"]
         assert page.evaluate("typeof globalThis.__pyv8cNetHost__") == "undefined"
     finally:
@@ -175,7 +175,7 @@ def test_the_host_api_stays_out_of_the_realm():
 def test_page_net_without_a_transport_says_so():
     browser = Browser(stub_logging="off", real_network=False)
     try:
-        instance = browser.new_context().new_page()
+        instance = browser.new_profile().new_page()
         # A missing engine is the host's own failure to load, so the host sees it.
         with pytest.raises(LoadFailure) as failure:
             instance.net.get("http://example.test/")
@@ -202,7 +202,7 @@ def test_host_request_future_tracks_running_and_queued_cancellation(monkeypatch)
         assert release.wait(3)
         return value
 
-    net = PageNet(SimpleNamespace(context_owner=SimpleNamespace(browser=SimpleNamespace())))
+    net = PageNet(SimpleNamespace(profile=SimpleNamespace(browser=SimpleNamespace())))
     monkeypatch.setattr(net, "_backend", lambda: SimpleNamespace(request_sync=request))
     monkeypatch.setattr(net, "build", lambda method, url, **kw: url)
     try:
@@ -235,7 +235,7 @@ def test_host_request_shutdown_completes_cancelled_queue(monkeypatch):
         entered[value].set()
         assert release.wait(3)
 
-    net = PageNet(SimpleNamespace(context_owner=SimpleNamespace(browser=SimpleNamespace())))
+    net = PageNet(SimpleNamespace(profile=SimpleNamespace(browser=SimpleNamespace())))
     monkeypatch.setattr(net, "_backend", lambda: SimpleNamespace(request_sync=request))
     monkeypatch.setattr(net, "build", lambda method, url, **kw: url)
     closer = threading.Thread(target=net.close)

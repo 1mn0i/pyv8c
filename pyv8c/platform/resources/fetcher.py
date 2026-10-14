@@ -47,7 +47,7 @@ class ResourceFetchController:
 
     def __init__(self, page):
         self.page = page
-        self.cache = page.context_owner.resource_cache
+        self.cache = page.profile.resource_cache
 
     @cached_property
     def callbacks(self):
@@ -213,20 +213,20 @@ class ResourceFetchController:
 
     def prepare(self, url, options):
         page = self.page
-        if page.closed or page.context_owner.closed:
+        if page.closed or page.profile.closed:
             raise LoadFailure("Page is closed")
         target = absolute_url(url, page_base_url(page))
         given = dict(options or {})
         initiator = str(given.get("initiator_url") or page.url)
         origin = tuple(page.origin)
         if given.get("initiator_url") and urlsplit(initiator).scheme in ("http", "https", "blob"):
-            origin = tuple(page.context_owner._blob_origins.get(initiator, origin_tuple(initiator)))
+            origin = tuple(page.profile._blob_origins.get(initiator, origin_tuple(initiator)))
         prepared = self._request_with_environment_headers(given, page, target, initiator, origin)
         key = self.cache.key(target, prepared, enabled=page.cache_enabled, origin=serialize_origin(origin))
         return LoadRequest(target, given, prepared, initiator, origin, page.navigation.generation, key)
 
     def active(self, load, handle=None):
-        return (not self.page.closed and not self.page.context_owner.closed
+        return (not self.page.closed and not self.page.profile.closed
                 and load.generation == self.page.navigation.generation
                 and (handle is None or not handle.done))
 
@@ -241,7 +241,7 @@ class ResourceFetchController:
         if target.startswith("blob:"):
             if self._request_mode(load.options) != "navigate" and not self.same_origin_response(target, load):
                 raise LoadFailure("Blob URL belongs to another origin")
-            body, content_type = self.page.context_owner.resolve_blob_url(target)
+            body, content_type = self.page.profile.resolve_blob_url(target)
             return "response", Response(body, {"url": target, "headers": {"content-type": content_type}}, services=self.page.services)
         if target[:5].lower() == "data:":
             return "response", data_url_response(target, self.page.services)
@@ -288,7 +288,7 @@ class ResourceFetchController:
         return self._request_with_environment_headers(options, self.page, carrier.url, load.initiator_url, load.origin)
 
     def same_origin_response(self, url, load):
-        inherited = self.page.context_owner._blob_origins.get(str(url))
+        inherited = self.page.profile._blob_origins.get(str(url))
         return load.origin == (tuple(inherited) if inherited is not None else origin_tuple(url))
 
     def check_cors(self, response, load):
@@ -409,7 +409,7 @@ class _AsyncLoad:
 
     def settle(self, response, error):
         page = self.fetcher.page
-        if (page.closed or page.context_owner.closed or
+        if (page.closed or page.profile.closed or
                 (self.load is not None and self.load.generation != page.navigation.generation)):
             self.handle.cancel()
         if self.handle.finish():
@@ -429,7 +429,7 @@ class _AsyncLoad:
         try:
             self.load = self.fetcher.prepare(url, request)
         except BaseException as error:
-            if self.fetcher.page.closed or self.fetcher.page.context_owner.closed:
+            if self.fetcher.page.closed or self.fetcher.page.profile.closed:
                 self.handle.cancel()
             else:
                 self.fail(error)

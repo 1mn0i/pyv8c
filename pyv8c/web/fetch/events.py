@@ -23,8 +23,8 @@ _FROZEN_PORTS = "(ports) => Object.freeze(ports)"
 
 def _reading_realm(event):
     """The realm reading this event: the one it belongs to, else the one running now."""
-    context = getattr(realm_of(event), "context", None)
-    return context if context is not None else pyv8.current_context()
+    v8_context = getattr(realm_of(event), "v8_context", None)
+    return v8_context if v8_context is not None else pyv8.current_context()
 
 
 @interface('MessageEvent', 'Event')

@@ -11,7 +11,7 @@ from pyv8c import Browser
 @pytest.fixture
 def page():
     browser = Browser(stub_logging="off")
-    instance = browser.new_context().new_page()
+    instance = browser.new_profile().new_page()
     instance.set_content(
         "<html><head><meta name='viewport' http-equiv='refresh' "
         "content='width=device-width' media='screen' scheme='text'>"

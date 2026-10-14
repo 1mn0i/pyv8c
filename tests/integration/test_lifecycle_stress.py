@@ -65,7 +65,7 @@ def _run_threads(threads, timeout=20):
 
 
 def test_concurrent_close_is_idempotent(browser):
-    page = browser.new_context().new_page(ORIGIN + "/")
+    page = browser.new_profile().new_page(ORIGIN + "/")
     _run_threads([threading.Thread(target=page.close) for _ in range(4)])
     assert page.closed
     page.close()  # still idempotent afterwards
@@ -74,7 +74,7 @@ def test_concurrent_close_is_idempotent(browser):
 
 
 def test_evaluate_races_page_close(browser):
-    page = browser.new_context().new_page(ORIGIN + "/")
+    page = browser.new_profile().new_page(ORIGIN + "/")
     errors = []
 
     def evaler():
@@ -98,8 +98,8 @@ def test_evaluate_races_page_close(browser):
 
 
 def test_worker_message_delivery_races_page_close(browser):
-    first = browser.new_context().new_page(ORIGIN + "/")
-    second = browser.new_context().new_page(ORIGIN + "/")
+    first = browser.new_profile().new_page(ORIGIN + "/")
+    second = browser.new_profile().new_page(ORIGIN + "/")
     for page in (first, second):
         page.evaluate("""
             window.__worker = 'pending';
@@ -118,7 +118,7 @@ def test_worker_message_delivery_races_page_close(browser):
 def test_a_worker_that_closed_itself_does_not_wedge_the_page_close(browser):
     """A worker's own ``close()`` tears its realm down on the owner thread; the page's
     ``terminate()`` must find that done rather than dispatch onto the dead context."""
-    page = browser.new_context().new_page(ORIGIN + "/")
+    page = browser.new_profile().new_page(ORIGIN + "/")
     page.evaluate("""
         var w = new Worker('/closing.js');
         w.postMessage('go');
@@ -129,7 +129,7 @@ def test_a_worker_that_closed_itself_does_not_wedge_the_page_close(browser):
 
 
 def test_network_response_landing_after_close_is_dropped(browser):
-    page = browser.new_context().new_page(ORIGIN + "/")
+    page = browser.new_profile().new_page(ORIGIN + "/")
     # load_resource_async posts the delivery onto the page task queue; closing
     # the page right after evaluate() returns must discard that delivery.
     page.evaluate("fetch('/slow')")
@@ -139,7 +139,7 @@ def test_network_response_landing_after_close_is_dropped(browser):
 
 
 def test_timer_pending_at_close_is_dropped(browser):
-    page = browser.new_context().new_page(ORIGIN + "/")
+    page = browser.new_profile().new_page(ORIGIN + "/")
     page.evaluate("""
         window.__count = 0;
         setInterval(function () { window.__count += 1; }, 10);
@@ -152,7 +152,7 @@ def test_timer_pending_at_close_is_dropped(browser):
 
 def test_devtools_pause_supports_cdp_attach_evaluate_detach_and_close():
     browser = Browser(resource_loader=_loader, stub_logging="off")
-    context = browser.new_context()
+    context = browser.new_profile()
     page = context.new_page()
     handle = context.start_devtools(page, options=DevToolsOptions(wait_for_debugger=True, startup_timeout=3))
     completed = threading.Event()
@@ -234,7 +234,7 @@ async def _cdp_request(ws, payload):
 def test_page_trees_release_native_handles_and_threads_after_close():
     import pyv8
     browser = Browser(real_network=False, shard_isolates=True, stub_logging="off")
-    owner = browser.new_context()
+    owner = browser.new_profile()
     warm = owner.new_page()
     warm.close()
     baseline = threading.active_count()
@@ -244,7 +244,7 @@ def test_page_trees_release_native_handles_and_threads_after_close():
             page.set_content('<iframe srcdoc="<body>child</body>"></iframe>')
             page.run_until_idle(1)
             page.evaluate("globalThis.worker = new Worker(URL.createObjectURL(new Blob(['self.onmessage=()=>{}'])));")
-            old_context = page.context
+            old_context = page.v8_context
             handle = page.evaluate_handle('({node:document.body, fn:()=>42})')
             page.set_content('<body>replacement</body>')
             isolate = page.isolate

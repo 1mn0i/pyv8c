@@ -49,7 +49,7 @@ BASELINE_FILE = Path(__file__).resolve().parent / "startup_baseline.json"
 STARTUP_TOLERANCE = 0.1
 STARTUP_FLOOR_MS = 5.0
 
-#: Browser -> context -> page -> set_content, the path a host pays before it can run
+#: Browser -> profile -> page -> set_content, the path a host pays before it can run
 #: anything, plus the module count that made the import graph visible.
 STARTUP_CODE = """
 import sys
@@ -59,8 +59,8 @@ import pyv8c
 
 started = time.perf_counter()
 browser = pyv8c.Browser()
-context = browser.new_context()
-page = context.new_page()
+profile = browser.new_profile()
+page = profile.new_page()
 page.set_content("<body></body>", url="http://example.test/")
 elapsed = (time.perf_counter() - started) * 1000.0
 print(round(elapsed, 1), len(sys.modules))

@@ -116,7 +116,7 @@ def test_javascript_setters_still_receive_and_convert_undefined():
 
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         assert page.evaluate("""(() => {
             const node = document.createElement('div');
             node.id = undefined;

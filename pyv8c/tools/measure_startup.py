@@ -54,7 +54,7 @@ def measure(pages=1):
     result["browser_ms"] = (time.perf_counter() - started) * 1000
     started = time.perf_counter()
     for _ in range(pages):
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         context_done = time.perf_counter()
         page.set_content("<body>x", url="https://measure.test/")
     finished = time.perf_counter()

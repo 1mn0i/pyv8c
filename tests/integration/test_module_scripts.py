@@ -16,7 +16,7 @@ def test_static_module_imports_execute_dependency_before_entry_and_block_dcl():
         return Response("", {"url": url})
 
     browser = Browser(resource_loader=loader)
-    page = browser.new_context().new_page()
+    page = browser.new_profile().new_page()
     page.evaluate("window.__order=[]; window.addEventListener('DOMContentLoaded', () => __order.push('dcl'))")
     page.set_content("<body><script type='module' src='/main.js'></script><div id='after'></div></body>", url="http://example.test/")
     # Module fetch/execution is deferred; parsing itself continues.

@@ -27,7 +27,7 @@ def test_deferred_scripts_run_before_dom_content_loaded_and_after_ready_state():
 
     browser = Browser(resource_loader=loader, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.evaluate("""
             window.__order = [];
             window.addEventListener('DOMContentLoaded', () => __order.push('domcontentloaded'));
@@ -55,7 +55,7 @@ def test_page_show_and_hide_are_page_transition_events():
     """
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content(
             "<body></body><script>" + record +
             "addEventListener('pagehide', e => mark('hide', e));</script>",
@@ -78,7 +78,7 @@ def test_page_show_and_hide_are_page_transition_events():
 def test_hashchange_and_popstate_carry_their_fields():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/page#one")
         page.run_until_idle()
         page.evaluate("""
@@ -118,7 +118,7 @@ def test_hashchange_and_popstate_carry_their_fields():
 def test_location_assign_and_replace_keep_the_document_alive():
     browser = Browser(stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/page#one")
         page.run_until_idle()
         # A listener on this document body only survives if the fragment
@@ -144,7 +144,7 @@ def test_resource_element_and_frame_events():
 
     browser = Browser(resource_loader=loader, stub_logging="off")
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.set_content("""
             <script>
               window.__resource = [];
