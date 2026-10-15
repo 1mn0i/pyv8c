@@ -11,6 +11,7 @@ in JavaScript rather than by a host class, so its prototype stays ``Object.proto
 """
 import pyv8
 
+from ...foundation.arguments import IdlArgumentError
 from ...foundation.clock import clock_of
 from .performance import navigation_record
 
@@ -37,6 +38,16 @@ _LOAD_TIME_FIELDS = (
 _APP_FUNCTIONS = (
     "getDetails", "getIsInstalled", "installState", "runningState",
 )
+#: What the extensions layer validates an ``app`` call against: the greatest number of
+#: arguments the API's schema declares, and that schema's parameter list as the bindings
+#: spell it in the message they report.  A call past the limit never reaches the
+#: implementation -- the layer refuses it first, and the page sees a ``TypeError``.
+_APP_MAX_ARGUMENTS = {
+    "getDetails": (0, ""),
+    "getIsInstalled": (0, ""),
+    "installState": (1, "optional function callback"),
+    "runningState": (0, ""),
+}
 # Temporary global handing the native functions to the bootstrap; the bootstrap
 # deletes it in the same synchronous step.
 _BRIDGE_GLOBAL = "__pyv8cChromeHost__"
@@ -122,10 +133,9 @@ class ChromeBindings:
         offset = float(offset)
         return origin + offset if offset <= elapsed else 0.0
 
-    def loadTimes(self):
+    def loadTimes(self, *_arguments):
         origin, elapsed, record = self._now()
         values = {
-            # Chromium reports navigationStart for both: the names predate the metric.
             "requestTime": origin,
             "startLoadTime": origin,
             "commitLoadTime": self._milestone(record, "responseStart", origin, elapsed),
@@ -135,7 +145,6 @@ class ChromeBindings:
             "firstPaintTime": self._milestone(record, "firstPaintTime", origin, elapsed),
             "firstPaintAfterLoadTime": 0.0,
             "navigationType": _NAVIGATION_TYPES.get(str(record.get("type")), "Other"),
-            # Chromium reads these off the response; this keeps one reading for every page.
             "wasFetchedViaSpdy": True,
             "wasNpnNegotiated": True,
             "npnNegotiatedProtocol": "h2",
@@ -144,27 +153,34 @@ class ChromeBindings:
         }
         return self._fields({field: values[field] for field in _LOAD_TIME_FIELDS})
 
-    def csi(self):
+    def csi(self, *_arguments):
         origin, elapsed, record = self._now()
         return self._fields({
             "startE": origin,
-            # Chromium reports DOMContentLoaded here; the name is historical.
             "onloadT": self._milestone(record, "domContentLoadedEventEnd", origin, elapsed),
-            # A duration since the origin, not a timestamp.
             "pageT": elapsed,
             "tran": _TRANSITIONS.get(str(record.get("type")), _TRANSITION_OTHER),
         })
 
-    def getDetails(self):
+    def _app_call(self, name, arguments):
+        limit, parameters = _APP_MAX_ARGUMENTS[name]
+        if len(arguments) > limit:
+            raise IdlArgumentError(f"Error in invocation of app.{name}({parameters}): ")
+
+    def getDetails(self, *arguments):
+        self._app_call("getDetails", arguments)
         return pyv8.Null
 
-    def getIsInstalled(self):
+    def getIsInstalled(self, *arguments):
+        self._app_call("getIsInstalled", arguments)
         return False
 
-    def installState(self):
+    def installState(self, *arguments):
+        self._app_call("installState", arguments)
         return "not_installed"
 
-    def runningState(self):
+    def runningState(self, *arguments):
+        self._app_call("runningState", arguments)
         return "cannot_run"
 
 

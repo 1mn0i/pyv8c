@@ -135,6 +135,92 @@ def test_chrome_app_surface_and_missing_runtime():
         browser.close()
 
 
+def test_app_members_refuse_arguments_their_schema_does_not_declare():
+    """The extensions layer validates an invocation before the implementation runs, so an
+    argument the schema does not declare is a ``TypeError`` the page catches rather than a
+    host failure; the message is the one those bindings build out of the schema.  Chrome 155
+    answers the same text for the same calls.
+    """
+    browser = Browser(stub_logging="off")
+    try:
+        page = _page(browser)
+        assert page.evaluate("""(() => {
+            const refused = (call) => {
+                try { call(); return 'accepted'; }
+                catch (error) {
+                    return [error.name, error instanceof TypeError, error.message];
+                }
+            };
+            return [
+                refused(() => chrome.app.getDetails(1)),
+                refused(() => chrome.app.getDetails(undefined)),
+                refused(() => chrome.app.getDetails(1, 2)),
+                refused(() => chrome.app.getIsInstalled(1)),
+                refused(() => chrome.app.runningState(null)),
+                refused(() => chrome.app.installState(1, 2)),
+                [chrome.app.getDetails.length, chrome.app.installState.length],
+            ];
+        })()""") == [
+            ["TypeError", True, "Error in invocation of app.getDetails(): "],
+            ["TypeError", True, "Error in invocation of app.getDetails(): "],
+            ["TypeError", True, "Error in invocation of app.getDetails(): "],
+            ["TypeError", True, "Error in invocation of app.getIsInstalled(): "],
+            ["TypeError", True, "Error in invocation of app.runningState(): "],
+            ["TypeError", True,
+             "Error in invocation of app.installState(optional function callback): "],
+            # An optional parameter leaves the count Chrome reports at zero.
+            [0, 0],
+        ]
+    finally:
+        browser.close()
+
+
+def test_the_arity_check_does_not_narrow_what_the_schema_accepts():
+    """Only the argument count is validated: ``installState``'s optional callback may be
+    anything (Chrome accepts ``null`` and a number there) and the other members take none.
+    """
+    browser = Browser(stub_logging="off")
+    try:
+        page = _page(browser)
+        assert page.evaluate("""(() => {
+            const accepted = (call) => {
+                try { return ['ok', String(call())]; }
+                catch (error) { return ['throw', error.name]; }
+            };
+            return [
+                accepted(() => chrome.app.getDetails()),
+                accepted(() => chrome.app.getIsInstalled()),
+                accepted(() => chrome.app.runningState()),
+                accepted(() => chrome.app.installState()),
+                accepted(() => chrome.app.installState(null)),
+                accepted(() => chrome.app.installState(1)),
+                accepted(() => chrome.app.installState(() => {})),
+            ];
+        })()""") == [
+            ["ok", "null"], ["ok", "false"], ["ok", "cannot_run"],
+            ["ok", "not_installed"], ["ok", "not_installed"], ["ok", "not_installed"],
+            ["ok", "not_installed"],
+        ]
+    finally:
+        browser.close()
+
+
+def test_timing_functions_ignore_the_arguments_they_are_handed():
+    """``csi`` and ``loadTimes`` never went through the extensions layer, so there is no
+    schema for a call to be measured against and Chrome reads past what it is given."""
+    browser = Browser(stub_logging="off")
+    try:
+        page = _page(browser)
+        assert page.evaluate("""(() => {
+            const load = chrome.loadTimes(1, 2);
+            const csi = chrome.csi(1);
+            return [Object.keys(load).length, load.navigationType, csi.tran,
+                    typeof csi.startE, csi.pageT >= 0];
+        })()""") == [13, "Other", 15, "number", True]
+    finally:
+        browser.close()
+
+
 def test_chrome_is_ready_for_inline_head_scripts():
     browser = Browser(stub_logging="off")
     try:
