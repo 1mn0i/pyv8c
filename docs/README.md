@@ -6,6 +6,7 @@
 | --- | --- |
 | 第一次运行 | [项目 README](../README.md) 与 [使用和配置](USAGE.md) |
 | 理解代码边界 | [架构与不变量](ARCHITECTURE.md) |
+| 理解任务、定时器、网络回调与事件循环 | [任务调度与事件循环](task-scheduling.md) |
 | 添加接口、修改绑定或运行测试 | [开发与验证](DEVELOPMENT.md) |
 | 让新的 AI 接手开发 | [AI 接手开发规范](AI_DEVELOPMENT.md) |
 | 调试首句、Worker、iframe 和重连 | [DevTools](DEVTOOLS.md) |
