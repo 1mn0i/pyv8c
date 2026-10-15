@@ -264,7 +264,7 @@ SURFACE_SCRIPT = """
         if (!name || !value || name in objects) return;
         try { objects[name] = Object.getOwnPropertyNames(value).sort(); } catch (error) {}
     };
-    // The iterator machinery (``template.array`` states which).  Descriptors up the chain only:
+    // The iterator machinery (iteration metadata states which).  Descriptors up the chain only:
     // a plain read would run ``CSSMathMax.prototype.values``, a getter that is not an iterator.
     const find = (start, key) => {
         let walk = start;
@@ -283,7 +283,7 @@ SURFACE_SCRIPT = """
             const four = ['entries', 'keys', 'values', 'forEach'].filter(
                 (member) => isFunction(find(prototype, member)));
             iterators[name] = {iterator: isFunction(find(prototype, Symbol.iterator)) ? 1 : 0,
-                               four: four.length};
+                               methods: four};
         } catch (error) {}
     };
     for (const name of Object.getOwnPropertyNames(window)) {
@@ -684,33 +684,19 @@ def _gaps_for(readings, declared, location):
 ITERATOR_MEMBERS = ("entries", "keys", "values", "forEach")
 
 
-def _array_protos(readings, known):
-    """``{interface: bits}`` for the interfaces the baseline declares.
-
-    ``@@iterator`` alone is ``ArrayProto.iterator``; with all four named methods it is
-    ``ArrayProto.iterable``; an interface answering no ``@@iterator`` records nothing, the field's
-    third value (as ``Cache``, whose ``keys`` is an async method, and ``CSSMathMax``, whose
-    ``values`` is a length, measure).
-
-    The iterator with only *some* of the four is a shape the field cannot state, so the run stops
-    rather than pick one: measured against Chrome 154, no declared interface is in that position.
-    """
-    protos = {}
+def _iteration_methods(readings, known):
+    """Measured method exposure only; never an inference about data semantics."""
+    bits = {"entries": 2, "keys": 4, "values": 8, "forEach": 16}
+    result = {}
     for name, reading in (readings or {}).items():
-        name = str(name)
         if name not in known or not isinstance(reading, dict) or not reading.get("iterator"):
             continue
-        count = reading.get("four")
-        if count == 4:
-            protos[name] = ArrayProto.iterable
-        elif count == 0:
-            protos[name] = ArrayProto.iterator
-        else:
-            raise CollectionError(
-                f"{name} answers @@iterator together with {count} of"
-                f" {', '.join(ITERATOR_MEMBERS)}: array states either the iterator alone or that"
-                " iterator with all four, and no value carries this")
-    return protos
+        methods = reading.get("methods")
+        if not isinstance(methods, list) or any(method not in bits for method in methods):
+            raise CollectionError(f"invalid iteration methods for {name}: {methods!r}")
+        result[str(name)] = 1 | sum(bits[method] for method in set(methods))
+    return result
+
 
 
 def build_surface(payload, declared=None, against=""):
@@ -721,7 +707,7 @@ def build_surface(payload, declared=None, against=""):
     came from.  ``prototype`` members are read from each prototype object and ``interface`` members
     from each interface object, which is where a namespace keeps its own.
 
-    ``array_protos`` states, in the vocabulary ``template.array`` and ``IdlSpec.array`` share,
+    ``iteration_methods`` states, in the vocabulary ``template.array`` and ``IdlSpec.array`` share,
     what each interface borrows from ``Array.prototype`` in this release -- measured rather than
     assumed, so a document that is wider than the release stays narrow here.
     """
@@ -733,7 +719,7 @@ def build_surface(payload, declared=None, against=""):
             "prototype": _gaps_for(payload.get("prototypes"), declared, "prototype"),
             "interface": _gaps_for(payload.get("objects"), declared, "interface"),
         },
-        "array_protos": _array_protos(payload.get("iterators"), set(declared)),
+        "iteration_methods": _iteration_methods(payload.get("iterators"), set(declared)),
         "against": str(against or ""),
     }
 
@@ -805,7 +791,7 @@ def main(argv=None):
         f"wrote {arguments.out}: {len(surface['exposed'])} exposed names,"
         f" {len(surface['omits']['prototype'])} interfaces with prototype gaps,"
         f" {len(surface['omits']['interface'])} with interface-object gaps,"
-        f" {len(surface['array_protos'])} with an array value,"
+        f" {len(surface['iteration_methods'])} with an array value,"
         f" {len(surface['keys'])} keys, {len(payload['extensions'])} extensions,"
         f" from {source.get('browser', 'unknown')}",
         file=sys.stderr,

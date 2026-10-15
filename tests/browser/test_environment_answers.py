@@ -29,7 +29,7 @@ def test_each_collected_fact_reaches_the_page():
             inset: [outerWidth - innerWidth, outerHeight - innerHeight],
             constraints: Object.keys(navigator.mediaDevices.getSupportedConstraints()),
             wgsl: navigator.gpu ? [navigator.gpu.wgslLanguageFeatures.size,
-                                    navigator.gpu.wgslLanguageFeatures[0]] : null,
+                                    Array.from(navigator.gpu.wgslLanguageFeatures)[0]] : null,
         }))()""") == {
             "inset": [4, 30],
             "constraints": ["width", "height"],

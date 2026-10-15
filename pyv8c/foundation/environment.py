@@ -31,8 +31,9 @@ def environment_of(services):
 ENVELOPE_KEYS = ("schema", "source", "bindings")
 PROFILE = Path(__file__).parents[1] / "data" / "chrome-environment.json"
 
-#: The version Chrome's frozen "Not A(Brand" entry carries.
-_NOT_A_BRAND_VERSION = "99"
+#: The brands whose version is the browser's own major version; the rest are GREASE entries Chrome
+#: renames each release, so they are read from the profile rather than spelled here.
+_VERSIONED_BRANDS = ("Google Chrome", "Chromium")
 
 
 def _text(value):
@@ -613,8 +614,9 @@ def _derive(values):
     version = re.search(r"Chrome/(\d+)", user_agent)
     major = version.group(1) if version is not None else ""
     brands = tuple(
-        {"brand": brand, "version": _NOT_A_BRAND_VERSION if brand == "Not A(Brand" else major}
-        for brand in ("Chromium", "Google Chrome", "Not A(Brand")
+        {"brand": str(entry["brand"]),
+         "version": major if str(entry["brand"]) in _VERSIONED_BRANDS else str(entry["version"])}
+        for entry in values["client_hints.brands"]
     )
     return {
         "app_version": user_agent.removeprefix("Mozilla/"),

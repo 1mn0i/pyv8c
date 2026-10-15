@@ -34,17 +34,17 @@ def test_a_measured_value_overrides_the_baselines(baseline):
     iterator for one of them records nothing, which is how the value in force becomes *narrower*
     than the baseline's rather than wider.
     """
-    assert collection(baseline).interface("NodeList").array == ArrayProto.iterable
-    assert collection(baseline).interface("HTMLCollection").array == ArrayProto.iterator
+    assert collection(baseline).interface("NodeList").iteration_mask == ArrayProto.iterable
+    assert collection(baseline).interface("HTMLCollection").iteration_mask == ArrayProto.iterator
 
     surface = Profile(browser="test", exposed=frozenset(),
-                            array_protos={"NodeList": ArrayProto.iterator,
+                            iteration_methods={"NodeList": ArrayProto.iterator,
                                           "Unknown": ArrayProto.iterable})
     table = collection(baseline, surface=surface)
 
-    assert table.interface("NodeList").array == ArrayProto.iterator
+    assert table.interface("NodeList").iteration_mask == ArrayProto.iterator
     # An interface the profile says nothing about keeps the baseline's word鈥?
-    assert table.interface("HTMLCollection").array == ArrayProto.iterator
+    assert table.interface("HTMLCollection").iteration_mask == ArrayProto.iterator
     # 鈥nd a name the baseline never declared has no interface to give a word to.
     assert "Unknown" not in table.names()
 
@@ -52,11 +52,11 @@ def test_a_measured_value_overrides_the_baselines(baseline):
 def test_a_profile_of_another_release_does_not_apply_its_values(baseline):
     """A measurement describes one release, so a digest that does not match says nothing."""
     surface = Profile(browser="test", exposed=frozenset(),
-                            array_protos={"NodeList": ArrayProto.iterator},
+                            iteration_methods={"NodeList": ArrayProto.iterator},
                             against="another-release")
     table = collection(baseline, surface=surface)
 
-    assert table.interface("NodeList").array == ArrayProto.iterable
+    assert table.interface("NodeList").iteration_mask == ArrayProto.iterable
 
 
 def test_a_surface_without_prototype_readings_leaves_other_interfaces_whole(baseline):
@@ -203,9 +203,9 @@ def test_the_surface_is_a_section_of_the_profile_the_environment_reads():
                                          for name, names in (omits.get("prototype") or {}).items()}
     assert surface.omitted_interface == {name: frozenset(names)
                                          for name, names in (omits.get("interface") or {}).items()}
-    assert surface.array_protos == {name: bits
-                                    for name, bits in (section.get("array_protos") or {}).items()
-                                    if bits in ARRAY_PROTOS}
+    assert surface.iteration_methods == {name: bits
+                                    for name, bits in (section.get("iteration_methods") or {}).items()
+                                    if type(bits) is int and 0 <= bits <= 31}
     assert surface.against == section.get("against", "")
 
 

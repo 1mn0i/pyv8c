@@ -107,7 +107,7 @@ def test_a_run_writes_the_environment_and_the_surface_together():
         {"keys": ["a"], "own": ["a", "b"],
          "prototypes": {"Node": ["appendChild", "cloneNode"], "Event": []},
          "objects": {"CSS": ["escape", "supports"], "Node": ["Node"]},
-         "iterators": {"Node": {"iterator": 1, "four": 4}, "CSS": {"iterator": 0, "four": 0}}},
+         "iterators": {"Node": {"iterator": 1, "methods": ["entries", "keys", "values", "forEach"]}, "CSS": {"iterator": 0, "methods": []}}},
         {"Node": {"prototype": {"appendChild", "append", "cloneNode"},
                   "interface": {"Node", "ELEMENT_NODE"}},
          "CSS": {"prototype": set(), "interface": {"escape", "supports", "animationWorklet"}}},
@@ -126,7 +126,7 @@ def test_a_run_writes_the_environment_and_the_surface_together():
             # An interface object answers for its own members, where a namespace keeps them.
             "interface": {"CSS": ["animationWorklet"], "Node": ["ELEMENT_NODE"]}},
         # What each interface borrows from Array.prototype, in the field's own vocabulary.
-        "array_protos": {"Node": ArrayProto.iterable},
+        "iteration_methods": {"Node": ArrayProto.iterable},
         "against": "digest-of-the-baseline"}
     assert document["source"]["browser"] == "Chrome/154.0.8037.95"
     assert set(document) == {"schema", "source", "fonts.records", "bindings", *COLLECTED_KEYS}
@@ -147,7 +147,7 @@ def test_a_surface_without_gap_readings_writes_empty_sections():
 
     assert surface["omits"]["prototype"] == {}
     assert surface["omits"]["interface"] == {}
-    assert surface["array_protos"] == {}
+    assert surface["iteration_methods"] == {}
     assert surface["against"] == ""
 
 
@@ -184,31 +184,24 @@ def test_the_array_value_is_the_shape_the_browser_publishes():
     """
     declared = {"NodeList": {"prototype": set()}, "HTMLCollection": {"prototype": set()},
                 "Cache": {"prototype": set()}}
-    protos = collector._array_protos(
-        {"NodeList": {"iterator": 1, "four": 4},
-         "HTMLCollection": {"iterator": 1, "four": 0},
-         "Cache": {"iterator": 0, "four": 1},
-         "Unknown": {"iterator": 1, "four": 4}},
+    protos = collector._iteration_methods(
+        {"NodeList": {"iterator": 1, "methods": ["entries", "keys", "values", "forEach"]},
+         "HTMLCollection": {"iterator": 1, "methods": []},
+         "Cache": {"iterator": 0, "methods": ["keys"]},
+         "Unknown": {"iterator": 1, "methods": ["entries", "keys", "values", "forEach"]}},
         set(declared))
 
     assert protos == {"NodeList": ArrayProto.iterable, "HTMLCollection": ArrayProto.iterator}
 
 
-def test_a_shape_no_word_carries_stops_the_run():
-    """The iterator with *some* of the four is not a shape ``array`` can state, so say so.
-
-    Measured against Chrome 154 on 2026-10-07 no interface the baseline declares is in that
-    position -- ``Iterator.prototype`` answers ``@@iterator`` with only ``forEach``, and it is a
-    V8 built-in the baseline does not declare -- so this is the guard that keeps the two words
-    honest if a release adds such an interface, not a case to paper over.
-    """
-    reading = {"iterators": {"NodeList": {"iterator": 1, "four": 2}}}
-    with pytest.raises(collector.CollectionError, match="@@iterator together with 2 of"):
-        collector.build_surface(dict(reading, keys=[], own=[]),
-                                {"NodeList": {"prototype": set()}})
-    # …and it is not raised for an interface the baseline does not know.
+def test_partial_method_exposure_is_recorded_without_changing_semantics():
+    reading = {"iterators": {"NodeList": {"iterator": 1, "methods": ["keys", "values"]}}}
+    surface = collector.build_surface(dict(reading, keys=[], own=[]), {"NodeList": {"prototype": set()}})
+    assert surface["iteration_methods"] == {"NodeList": 13}
     surface = collector.build_surface(dict(reading, keys=[], own=[]), {})
-    assert surface["array_protos"] == {}
+    assert surface["iteration_methods"] == {}
+    with pytest.raises(collector.CollectionError, match="invalid iteration methods"):
+        collector._iteration_methods({"NodeList": {"iterator":1,"methods":["unknown"]}}, {"NodeList"})
 
 
 def test_a_non_finite_number_is_written_as_its_name():

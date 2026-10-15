@@ -7,7 +7,7 @@ import re
 
 import pyv8
 from ...idl import interface
-from ...foundation.arguments import MISSING, callback_value, dom_string, missing_error
+from ...foundation.arguments import MISSING, dom_string, missing_error
 from ..page_errors import PageTypeError
 from . import css
 from .utils import dash_name
@@ -56,10 +56,6 @@ def _declaration(name, value, method):
     return str(declarations[0][1])
 
 
-def _js_call(callback, this, *args):
-    if hasattr(callback, "call"):
-        return callback.call(this, *args)
-    return callback(*args)
 
 
 @interface('CSSStyleValue', None)
@@ -133,7 +129,7 @@ class StylePropertyMapReadOnly:
     #: ``keys``/``values``/``entries`` and ``Symbol.iterator`` hand out pairs from here.
     __idl_overrides__ = {
         "interface": {
-            "iterate": "__v8_iterate__",
+
             "length": 0,
         }
     }
@@ -174,26 +170,17 @@ class StylePropertyMapReadOnly:
         text = self._entry(_property(property, 'getAll', 'StylePropertyMapReadOnly'))
         return [] if text is None else [_value(text)]
 
-    def fn_forEach(self, callback=MISSING, this_arg=pyv8.Undefined, *_extra):
-        if callback is MISSING:
-            raise missing_error('StylePropertyMapReadOnly', 'forEach', 1, 0, constructor=False)
-        callback = callback_value(callback)
-        for name, text, _priority in list(self._declarations()):
-            _js_call(callback, this_arg, _value(text), name, self)
+    def __v8_iteration_source__(self):
+        items = iter(tuple((name, [_value(text)]) for name, text, _priority in self._declarations()))
+        return lambda: next(items, None)
 
-    def __v8_iterate__(self, index):
-        declarations = self._declarations()
-        if index >= len(declarations):
-            return None
-        name, text, _priority = declarations[index]
-        return (name, _value(text))
 
 
 @interface('StylePropertyMap', 'StylePropertyMapReadOnly')
 class StylePropertyMap(StylePropertyMapReadOnly):
     __idl_overrides__ = {
         "interface": {
-            "iterate": "__v8_iterate__",
+
             "length": 0,
         }
     }

@@ -1856,7 +1856,7 @@ CASES = (
                     data.toJSON().brands === data.toJSON().brands,
                     String(data), data instanceof NavigatorUAData];
         })()""",
-        expected=["object", "NavigatorUAData", "Chromium,Google Chrome,Not A(Brand",
+        expected=["object", "NavigatorUAData", "Google Chrome,Chromium,Not(A:Brand",
                   True, "boolean", "string", True, False, False,
                   "brands,mobile,platform", False, "[object NavigatorUAData]", True],
     ),

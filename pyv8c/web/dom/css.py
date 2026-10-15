@@ -4,7 +4,7 @@ import re
 from urllib.parse import urljoin
 
 import pyv8
-from pyv8.flag import ArrayProto, V8Attribute
+from pyv8.flag import V8Attribute
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, missing_error
 from ..page_errors import IndexSizeError, PageTypeError
@@ -209,6 +209,7 @@ def supported(name):
 INHERITED_PROPERTIES = frozenset((
     "color", "font-family", "font-size", "font-style", "font-weight",
     "line-height", "letter-spacing", "word-spacing", "visibility", "white-space",
+    "word-break", "overflow-wrap", "text-align",
 ))
 
 
@@ -219,6 +220,7 @@ INITIAL_VALUES = {
     "font-style": "normal", "line-height": "normal", "letter-spacing": "normal",
     "word-spacing": "normal", "box-sizing": "content-box",
     "color": "rgb(0, 0, 0)", "white-space": "normal",
+    "word-break": "normal", "overflow-wrap": "normal", "text-align": "start",
 }
 
 
@@ -304,11 +306,9 @@ def parse_declarations(raw):
 
 @interface("CSSStyleDeclaration", None)
 class CSSStyleDeclaration:
-    #: ``ArrayProto.iterator`` rather than the document's ``iterable``: the four named methods are
-    #: absent, and this declaration is what says so.
+    #: Indexed handlers describe host data; iteration exposure belongs to the IDL baseline.
     __idl_overrides__ = {
         "interface": {
-            "array": ArrayProto.iterator,
             "index_del": "__v8_index_del__",
             "index_enum": "__v8_index_enum__",
             "index_get": "__v8_index_get__",

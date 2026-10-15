@@ -450,6 +450,8 @@ class Binder:
                             del _COMPILED[stale]
                     _COMPILED[key] = compiled
                     self.compiled_misses += 1
+            if getattr(compiled.spec.iteration_source, "__v8_iteration_unimplemented__", False):
+                self.bindings.record_unimplemented_iteration_source(name)
             self._compiled[name] = compiled
             return compiled
 
@@ -493,6 +495,9 @@ class Binder:
             if not public_name or kind not in ("operation", "attribute") or (kind, public_name) in seen:
                 continue
             seen.add((kind, public_name))
+            if interface.iteration and kind == "operation" and public_name in interface.iteration["methods"]:
+                declared_methods.pop(public_name, None)
+                continue
             common = member_flags(member)
             prefix, setter_prefix = CONVENTION[kind]
             override = overrides.for_member(name, public_name) if overrides is not None else None
@@ -635,10 +640,20 @@ class Binder:
         #: builds a namespace from an ``ObjectTemplate`` (``SetupIDLNamespaceTemplate``) and gives
         #: a callback interface no prototype (``SetupIDLCallbackInterfaceTemplate``).
 
-        if source.array:
-            options["array"] = source.array
-        elif interface.array:
-            options["array"] = interface.array
+        iteration = interface.iteration
+        if iteration:
+            options["iteration_kind"] = {"indexed": 1, "pair": 2, "set": 3}[iteration["kind"]]
+            if iteration["kind"] == "indexed":
+                options["array_methods"] = interface.iteration_mask
+            else:
+                options["iteration_methods"] = interface.iteration_mask
+                callback = self.wrappers.find_callback(cls, "__v8_iteration_source__")
+                if callback is None:
+                    def callback(*_args, _name=name, _stubs=self.stubs):
+                        _stubs._log("pyv8c: {} iteration source 待实现", _name)
+                        raise NotImplementedError(f"{_name} iteration source is not implemented")
+                    callback.__v8_iteration_unimplemented__ = True
+                options["iteration_source"] = callback
         if interface.constructor_stated and not interface.constructor_new:
             #: An interface object with no constructor has length 0, whatever a stated arity
             #: says: 548 of 548 in the reference reading, which is where SnapEvent and

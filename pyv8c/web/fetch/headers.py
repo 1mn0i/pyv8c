@@ -14,27 +14,31 @@ from ...foundation.arguments import (
     sequence,
 )
 from ..page_errors import PageTypeError
-from ..dom.mixins import ReadOnlyIndexedPropertyMixin
 
 
 @interface('Headers', None)
-class Headers(ReadOnlyIndexedPropertyMixin):
+class Headers:
 
     def _indexed_items(self):
         return [(name, self._data[name]) for name in self._sorted_names()]
+
+    def __v8_iteration_source__(self):
+        index = 0
+        def next_pair():
+            nonlocal index
+            items = self._indexed_items()
+            if index >= len(items): return None
+            pair = items[index]
+            index += 1
+            return pair
+        return next_pair
 
     def _sorted_names(self):
         """Header names in the order Chromium iterates them: sorted by name."""
         return sorted(self._data)
 
-    def fn_keys(self, *_extra):
-        return self._sorted_names()
 
-    def fn_values(self, *_extra):
-        return [self._data[name] for name in self._sorted_names()]
 
-    def fn_entries(self, *_extra):
-        return [(name, self._data[name]) for name in self._sorted_names()]
 
     def __init__(self, init=pyv8.Undefined, *_extra, **_):
         self._data = {}

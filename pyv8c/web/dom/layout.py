@@ -8,15 +8,10 @@ inside its containing block, ``position: relative`` slides it afterwards, and
 ``position: absolute`` takes it out of flow and measures it against the padding box
 of the nearest positioned ancestor.
 """
-import os
 import re
 from dataclasses import dataclass, field
 
-try:
-    from PIL import ImageFont
-except Exception:  # optional dependency  # pragma: no cover
-    ImageFont = None
-
+from ...foundation import text as text_engine
 from ...foundation.environment import environment_of
 from ...foundation.system_fonts import file_for, normalize, table_of
 from ..page_errors import PageSyntaxError
@@ -173,8 +168,19 @@ _GENERIC_FAMILIES = {
 #: serif family and not the sans-serif one -- Chrome measures such a family with Times.
 _DEFAULT_FAMILIES = _GENERIC_FAMILIES["serif"]
 
-#: One handle per file, face and size: what Pillow needs, and what a page asks for most.
-_FONT_HANDLES: dict[tuple, object] = {}
+#: The families a character the page's own ones do not have is drawn by, in the order this
+#: platform would look for them.  A CJK character in an Arial run is the case that matters:
+#: without these the character would be measured as a missing-glyph box.
+_FALLBACK_FAMILIES = (
+    "Microsoft YaHei", "Malgun Gothic", "Meiryo", "SimSun", "MS Gothic",
+    "Noto Sans CJK SC", "PingFang SC", "Hiragino Sans", "Apple SD Gothic Neo",
+    "DejaVu Sans", "Segoe UI Symbol",
+)
+
+#: What ``line-height: normal`` falls back to when no face can be read, and the weight CSS
+#: starts calling bold at.
+_LINE_HEIGHT_FALLBACK = 1.2
+_BOLD_WEIGHT = 600
 
 
 def _environment_for(element):
@@ -182,67 +188,189 @@ def _environment_for(element):
     return environment_of(getattr(element, "_services", None))
 
 
-def _first_family(table, name):
-    """The first face of a family, or ``None``: what a whole family resolves to for text."""
-    key = normalize(name)
-    for record in table:
-        if normalize(record.family) == key:
-            return record
-    return None
+def _families(style):
+    """The family list a style asks for, with any quoting taken off."""
+    return [name.strip().strip('"\'')
+            for name in str(style.get("font-family", "sans-serif")).split(",")]
 
 
-def _face_for(families, environment=None):
+def _wants_bold(weight):
+    """Whether a ``font-weight`` asks for a bold face."""
+    text = str(weight).strip().lower()
+    if text in ("bold", "bolder"):
+        return True
+    if text in ("normal", "lighter", ""):
+        return False
+    return _number(text, 400.0) >= _BOLD_WEIGHT
+
+
+def _face_in(table, family, weight, style):
+    """A family's face at one weight and slant, chosen by subfamily; a match beats none."""
+    key = normalize(family)
+    faces = [record for record in table if normalize(record.family) == key]
+    if not faces:
+        return None
+    slant_wanted = str(style).strip().lower() in ("italic", "oblique")
+    bold_wanted = _wants_bold(weight)
+
+    def score(record):
+        name = normalize(record.style)
+        slant = "italic" in name or "oblique" in name
+        heavy = any(word in name for word in ("bold", "black", "heavy"))
+        return ((slant == slant_wanted) + (heavy == bold_wanted), len(name))
+
+    return max(faces, key=score)
+
+
+def _face_for(families, environment=None, weight="400", style="normal"):
     """The face a family list resolves to: the first family known here, then the default.
 
-    An uninstalled family is not a failure -- CSS walks the list and then falls back to the
-    platform's own default -- so a name the machine does not have still measures with the
-    face the browser would have used for it.
-
-    The table is the same one ``FontFace`` asks whether a ``local()`` name exists, which is
-    what keeps "the page said this font is here" and "measuring text works" in step.
+    It is the table ``FontFace`` answers ``local()`` from, so "the page said this font is
+    here" and "measuring text works" stay in step.
     """
     table = table_of(environment)
     for family in families:
         for name in _GENERIC_FAMILIES.get(normalize(family), (family,)):
-            record = _first_family(table, name)
+            record = _face_in(table, name, weight, style)
             if record is not None:
                 return record
     for name in _DEFAULT_FAMILIES:
-        record = _first_family(table, name)
+        record = _face_in(table, name, weight, style)
         if record is not None:
             return record
     return None
 
 
-def _font(record, size):
-    if ImageFont is None or record is None:
-        return None
-    # A profile names the file, not where it is: the roots decide, and a face this machine
-    # does not have measures with the default instead, which is what a missing font does.
-    path = file_for(record)
-    if path is None:
-        return None
-    key = (path, record.index, max(1, int(round(size))))
-    handle = _FONT_HANDLES.get(key)
-    if handle is None:
-        try:
-            handle = _FONT_HANDLES[key] = ImageFont.truetype(path, key[2], index=record.index)
-        except Exception:
-            return None
-    return handle
+def _font_size(style):
+    """The size a style asks for, absolute by the time the cascade is through with it."""
+    return _px(style.get("font-size", "16px"), 16) or 16
+
+
+def _face_path(record):
+    """The file a record's face lives in here, or ``None`` when this machine lacks it."""
+    return None if record is None else file_for(record)
+
+
+def _face_chain(families, environment, weight, style):
+    """The faces a family list names, then this platform's fallbacks, in tried order."""
+    table = table_of(environment)
+    chain = []
+    for family in families:
+        for name in _GENERIC_FAMILIES.get(normalize(family), (family,)):
+            record = _face_in(table, name, weight, style)
+            if record is not None and record not in chain:
+                chain.append(record)
+    for name in _DEFAULT_FAMILIES + _FALLBACK_FAMILIES:
+        record = _face_in(table, name, weight, style)
+        if record is not None and record not in chain:
+            chain.append(record)
+    return chain
+
+
+def _shaped(text, style, environment=None):
+    """``(run, record)`` for one string; ``None`` when no face here has a file for it."""
+    chain = _face_chain(_families(style), environment, style.get("font-weight", "400"),
+                        style.get("font-style", "normal"))
+    faces = []
+    for record in chain:
+        path = _face_path(record)
+        if path is not None:
+            faces.append((path, getattr(record, "index", 0)))
+    if not faces:
+        return None, (chain[0] if chain else None)
+    run = text_engine.shape_selection(text, faces, size=_font_size(style))
+    return (run if run.width else None), chain[0]
+
+
+def _run_metrics(run, style):
+    """The extents a shaped run asks a line box for: those of the tallest face it used."""
+    best = None
+    for path, index in getattr(run, "faces", ()):
+        found = text_engine.metrics(path, index=index, size=_font_size(style))
+        if found.height and (best is None or found.height > best.height):
+            best = found
+    return best
+
+
+def _spacing(text, style, size):
+    """What letter and word spacing add: every character, and every space.
+
+    Chrome reads 25.797 + 3 x 2 = 31.797 for ``abc`` at 2px, and the flow charges the same
+    way line by line, so a line's width is what a box reports.
+    """
+    extra = 0.0
+    letter = str(style.get("letter-spacing", "normal")).strip().lower()
+    if letter not in ("", "normal"):
+        extra += len(text) * _px(letter, size)
+    word = str(style.get("word-spacing", "normal")).strip().lower()
+    if word not in ("", "normal"):
+        extra += text.count(" ") * _px(word, size)
+    return extra
 
 
 def text_width(text, style, environment=None):
-    size = _px(style.get("font-size", "16px"), 16) or 16
-    families = [x.strip().strip('"\'') for x in style.get("font-family", "sans-serif").split(",")]
-    font = _font(_face_for(families, environment), size)
-    if font is not None:
-        try: width = font.getlength(text)
-        except AttributeError: width = font.getbbox(text)[2]
+    """The advance width of *text* in *style*: shaped, then spaced the way CSS spaces it.
+
+    A box and a canvas both measure through here, so ``measureText`` and a box agree by
+    construction; text no face can be found for is estimated, which is the only fallback.
+    """
+    text = "" if text is None else str(text)
+    size = _font_size(style)
+    run, _record = _shaped(text, style, environment)
+    width = run.width if run is not None else text_engine.estimate(text, size)
+    return width + _spacing(text, style, size)
+
+
+@dataclass(frozen=True)
+class _LineStyle:
+    """One line box: how tall it is, and where its baseline sits inside it."""
+
+    height: float
+    ascent: float
+    descent: float
+
+
+def _font_metrics(style, environment=None):
+    """The face's own extents for a style, or ``None`` when no face can be read."""
+    record = _face_for(_families(style), environment, style.get("font-weight", "400"),
+                       style.get("font-style", "normal"))
+    path = _face_path(record)
+    if path is None:
+        return None
+    found = text_engine.metrics(path, index=getattr(record, "index", 0), size=_font_size(style))
+    return found if found.height else None
+
+
+def _line_style(style, environment=None, root=16.0, found=None):
+    """The line box a style asks for, and the baseline inside it.
+
+    ``normal`` is the face's extents, a unitless number is a multiple of the font size, a
+    percentage is one of it too, and a length is itself; the leading splits evenly above and
+    below, which is where the baseline comes from.  *found* is the face the run really used.
+    """
+    size = _font_size(style)
+    if found is None:
+        found = _font_metrics(style, environment)
+    ascent = found.ascent if found else size * 0.8
+    descent = found.descent if found else size * 0.2
+    gap = found.line_gap if found else 0.0
+    content = ascent + descent + gap
+    declared = str(style.get("line-height", "normal")).strip().lower()
+    value = None
+    if declared in ("", "normal"):
+        value = content
+    elif re.fullmatch(r"[+-]?(?:\d+\.?\d*|\.\d+)", declared):
+        value = float(declared) * size
     else:
-        width = sum(size * (0.34 if ch in "ilI.,' !" else 0.56 if ord(ch) < 128 else 1.0) for ch in text)
-    if style.get("letter-spacing", "normal") != "normal": width += max(0, len(text) - 1) * _px(style["letter-spacing"])
-    return width
+        value = _font_size_term(declared, size, root)
+    if value is None or value <= 0:
+        # A line height CSS could not parse is a declaration it dropped, so what is left is
+        # the face's own spacing -- and only a face that cannot be read falls back further.
+        height = content if content > 0 else size * _LINE_HEIGHT_FALLBACK
+    else:
+        height = value
+    baseline = ascent + (height - content) / 2.0
+    return _LineStyle(height, baseline, height - baseline)
 
 
 def _inline_declarations(element):
@@ -356,6 +484,9 @@ class Box:
     padding: dict = field(default_factory=dict)
     border: dict = field(default_factory=dict)
     margin: dict = field(default_factory=dict)
+    #: How far the content reaches past the border box's left and top edges.
+    overflow_right: float = 0.0
+    overflow_bottom: float = 0.0
 
     @property
     def padding_box_left(self): return self.left + self.border.get("left", 0)
@@ -433,10 +564,14 @@ class _Containing:
 
 @dataclass(frozen=True)
 class _Walk:
-    """One layout pass: the rules to cascade, where boxes go, and the viewport."""
+    """One layout pass: the rules to cascade, where boxes go, the viewport, and what is filled
+    in as it runs -- ``baselines`` per element, ``overflows`` for ``scrollWidth``.
+    """
     rules: tuple
     collected: dict | None
     viewport: tuple
+    baselines: dict = field(default_factory=dict)
+    overflows: dict = field(default_factory=dict)
 
 
 def _viewport_width(element):
@@ -488,7 +623,7 @@ def _place(element, style, walk, containing, positioned):
         else:
             # An inline-level box shrinks around its content and an empty one stays
             # empty; a block-level box fills what is left of its containing block.
-            content_width = (min(_intrinsic_width(element, style, walk.rules), available)
+            content_width = (_shrink_to_fit(element, style, walk.rules, available)
                              if style.get("display", "block") in _INLINE else available)
     else:
         width = _px(declared_width, containing.width)
@@ -544,6 +679,10 @@ def _place(element, style, walk, containing, positioned):
             max(0.0, border_width - horizontal),
             content_height + vertical if content_height is not None else 0.0)
     used_height = _children(element, style, walk, inner, child_positioned)
+    recorded = walk.baselines.get(element)
+    if recorded is not None:
+        # The flow measures from the content's top; a box on a line from its border box.
+        walk.baselines[element] = recorded + (content_top - top)
     if content_height is None:
         content_height = used_height
     border_height = content_height + vertical
@@ -556,8 +695,13 @@ def _place(element, style, walk, containing, positioned):
             top += offset_y
             _shift(element, walk, offset_x, offset_y)
 
+    overflow = walk.overflows.get(element, (0.0, 0.0))
     return record(Box(width=border_width, height=border_height, left=left, top=top,
-                      padding=padding, border=border, margin=margin))
+                      padding=padding, border=border, margin=margin,
+                      overflow_right=(border["left"] + padding["left"]
+                                      + max(content_width, overflow[0])),
+                      overflow_bottom=(border["top"] + padding["top"]
+                                       + max(content_height, overflow[1]))))
 
 
 def _shift(element, walk, x, y):
@@ -594,15 +738,75 @@ def _child_elements(element):
             if isinstance(child, (Element, Text))]
 
 
-def _intrinsic_width(element, style, rules, depth=0):
-    """The width a shrink-to-fit box would take: the widest line of its content."""
+def _text_points(content, white_space, word_break, overflow_wrap):
+    """``(points, loose)`` for the line ends of *content*.
+
+    ``points`` are UAX#14's opportunities, which ``nowrap`` and ``pre`` cut back to the
+    newlines alone.  ``loose`` are grapheme boundaries, offered only on an empty line, which
+    is where ``break-word`` cuts a word that does not fit even on one.
+    """
+    points = text_engine.breaks(content)
+    if white_space in ("nowrap", "pre"):
+        return tuple(point for point in points if point.forced), ()
+    if word_break == "break-all" or overflow_wrap == "anywhere":
+        loose = tuple(text_engine.BreakPoint(offset) for offset in text_engine.graphemes(content))
+        return points + loose, ()
+    if overflow_wrap == "break-word":
+        return points, tuple(text_engine.BreakPoint(offset)
+                             for offset in text_engine.graphemes(content))
+    return points, ()
+
+
+def _collapse(content, white_space):
+    """A text node's content after ``white-space``: pre keeps all, pre-line keeps newlines."""
+    if white_space in ("pre", "pre-wrap"):
+        return content
+    if white_space == "pre-line":
+        return re.sub(r"[^\S\n]+", " ", content)
+    return re.sub(r"\s+", " ", content)
+
+
+def _box_content_widths(element, style, rules, depth):
+    """The content widths one child asks for: what it declares, its object size, or its content."""
+    declared = style.get("width", "auto")
+    if not _auto(declared):
+        return _px(declared, 0.0), _px(declared, 0.0)
+    intrinsic = _DEFAULT_OBJECT_SIZE.get(str(getattr(element, "localName", "")).lower())
+    if intrinsic is not None:
+        return intrinsic[0], intrinsic[0]
+    return _content_widths(element, style, rules, depth + 1)
+
+
+def _content_widths(element, style, rules, depth=0):
+    """``(min, max)`` content widths: the widest unbreakable run, and one line's worth.
+
+    Inline-level pieces have no opportunity between them, so their minima add up; a
+    block-level child stands on its own line and asks for its own content instead.
+    """
     if depth > 32:
-        return 0.0
-    inline = 0.0
-    widest = 0.0
+        return 0.0, 0.0
+    white_space = style.get("white-space", "normal")
+    word_break = str(style.get("word-break", "normal")).strip().lower()
+    overflow_wrap = str(style.get("overflow-wrap", "normal")).strip().lower()
+    environment = _environment_for(element)
+    inline_min = inline_max = 0.0
+    widest_min = widest_max = 0.0
     for child in _child_elements(element):
         if isinstance(child, Text):
-            inline += text_width(child.get_textContent() or "", style, _environment_for(element))
+            content = _collapse(child.get_textContent() or "", white_space)
+            if not content.strip():
+                continue
+            run, _record = _shaped(content, style, environment)
+            if run is None:
+                # No face to shape with: the estimate stands in, unbroken.
+                width = text_engine.estimate(content, _font_size(style))
+                inline_min += width
+                inline_max += width
+                continue
+            inline_max += run.width + _spacing(content, style, _font_size(style))
+            points, _loose = _text_points(content, white_space, word_break, overflow_wrap)
+            pieces = text_engine.wrap(run, 0.0, points)
+            inline_min += max((piece.advance for piece in pieces), default=run.width)
             continue
         child_style = _style_of(child, rules)
         if child_style.get("display") == "none":
@@ -611,52 +815,169 @@ def _intrinsic_width(element, style, rules, depth=0):
         edges.update(_sides(child_style, "padding", 0.0))
         edges.update(_sides(child_style, "border-width", 0.0))
         extra = sum(edges.values())
-        declared = child_style.get("width", "auto")
-        width = (_px(declared, 0.0) if not _auto(declared)
-                 else _intrinsic_width(child, child_style, rules, depth + 1))
+        minimum, maximum = _box_content_widths(child, child_style, rules, depth)
         if child_style.get("display", "block") in _INLINE:
-            inline += width + extra
+            inline_min += minimum + extra
+            inline_max += maximum + extra
         else:
-            inline = 0.0
-            widest = max(widest, width + extra)
-    return max(inline, widest)
+            widest_min = max(widest_min, minimum + extra)
+            widest_max = max(widest_max, maximum + extra)
+    return max(inline_min, widest_min), max(inline_max, widest_max)
 
 
-def _line_height(style):
-    return (_px(style.get("line-height", "normal"), 0)
-            or _px(style.get("font-size", "16px"), 16) * 1.2)
+def _shrink_to_fit(element, style, rules, available, depth=0):
+    """CSS's ``min(max(min_content, available), max_content)``."""
+    minimum, maximum = _content_widths(element, style, rules, depth)
+    return min(max(minimum, available), maximum)
+
+
+class _Line:
+    """A line box while it is being filled: what is on it, and how far the text has run."""
+
+    __slots__ = ("width", "ascent", "descent", "items", "pending")
+
+    def __init__(self):
+        self.width = 0.0
+        self.ascent = 0.0
+        self.descent = 0.0
+        self.items: list = []
+        #: Collapsible spaces before the next opportunity: they count once something follows.
+        self.pending = 0.0
+
+    @property
+    def started(self):
+        return bool(self.items) or self.width > 0 or self.ascent > 0
+
+    @property
+    def height(self):
+        return self.ascent + self.descent
+
+    def add(self, width, ascent, descent):
+        """Put a piece on the line: its width, and how far it reaches above and below."""
+        self.width += self.pending + width
+        self.pending = 0.0
+        self.ascent = max(self.ascent, ascent)
+        self.descent = max(self.descent, descent)
+
+    def hang(self, width):
+        """Leave spaces at the end of the line: they count only if something follows."""
+        self.pending += width
 
 
 def _flow_children(element, style, walk, containing, positioned):
-    """Block boxes stacked and inline-level ones laid along a line."""
-    cursor = 0.0
-    line_x = 0.0
-    line_height = 0.0
+    """Block boxes stacked, and inline-level content wrapped into line boxes.
 
-    def end_line():
-        nonlocal cursor, line_x, line_height
-        if line_height:
-            cursor += line_height
-        line_x = 0.0
-        line_height = 0.0
+    A line ends where the next piece would not fit or where the text forces it, and is as
+    tall as the tallest thing on it; its baseline follows from its items, which is what puts
+    an inline block and the text beside it on one line of type.
+    """
+    environment = _environment_for(element)
+    root = _root_font_size(element)
+    white_space = style.get("white-space", "normal")
+    word_break = str(style.get("word-break", "normal")).strip().lower()
+    overflow_wrap = str(style.get("overflow-wrap", "normal")).strip().lower()
+    text_size = _font_size(style)
+    cursor = 0.0
+    line = _Line()
+    first_baseline = None
+    widest = 0.0
+    leftmost = 0.0
+    deepest = 0.0
+
+    def flush():
+        """End the line: put its items where its baseline and ``text-align`` say they go."""
+        nonlocal cursor, line, first_baseline, widest
+        if not line.started:
+            return
+        if first_baseline is None:
+            first_baseline = cursor + line.ascent
+        baseline = containing.top + cursor + line.ascent
+        free = max(0.0, containing.width - line.width)
+        align = str(style.get("text-align", "start")).strip().lower()
+        shift = free / 2.0 if align == "center" else free if align in ("right", "end") else 0.0
+        for child, box, item_ascent in line.items:
+            _shift(child, walk, shift, baseline - item_ascent - box.top)
+        widest = max(widest, line.width + shift)
+        cursor += line.height
+        line = _Line()
+
+    def break_line(br_style=None):
+        """End the current line; a break with nothing before it leaves an empty one behind."""
+        nonlocal cursor
+        if line.started:
+            flush()
+        else:
+            cursor += _line_style(br_style or style, environment, root).height
+
+    def add_text(content, text_style, points, loose=()):
+        """Wrap one text node into the current line, ending lines as they fill."""
+        nonlocal line
+        if not content:
+            return
+        run, _record = _shaped(content, text_style, environment)
+        line_style = _line_style(text_style, environment, root,
+                                 None if run is None else _run_metrics(run, text_style))
+        if run is None:
+            # No face to shape with: the estimate stands in, unbroken.
+            if content.strip() or line.started:
+                line.add(text_engine.estimate(content, text_size),
+                         line_style.ascent, line_style.descent)
+            return
+        start = 0
+        while start < len(content):
+            available = max(0.0, containing.width - line.width)
+            span = text_engine.next_line(run, start, available, points)
+            if span is not None and span.advance > available and not line.started and loose:
+                # Only a word that does not fit on a line of its own may be cut inside.
+                span = text_engine.next_line(run, start, available, points + loose)
+            if span is None:
+                break
+            if span.end == span.start:
+                if "\n" in content[span.start:span.resume]:
+                    # A line the text asked for and left empty, which ``pre`` keeps.
+                    break_line(text_style)
+                elif line.started:
+                    # Spaces only: they widen a line that has begun, and never make one.
+                    line.add(run.advance_between(span.start, span.resume), 0.0, 0.0)
+                start = span.resume
+                continue
+            piece = content[span.start:span.end]
+            last = span.end >= len(content)
+            advance = span.advance + _spacing(piece, text_style, text_size)
+            if line.started and span.start == start and advance > available:
+                # No room for this piece here: try it on a line of its own.
+                flush()
+                continue
+            line.add(advance, line_style.ascent, line_style.descent)
+            if last:
+                break
+            rest = content[span.resume:]
+            if not rest.strip() and "\n" not in rest:
+                # Only spaces are left: they hang here and the line goes on.
+                line.hang(run.advance_between(span.end, span.resume))
+                break
+            flush()
+            start = span.resume if span.resume > span.start else span.end
 
     for child in _child_elements(element):
         if isinstance(child, Text):
-            content = child.get_textContent() or ""
-            if not content.strip() and not line_x:
-                # Collapsible whitespace with nothing before it makes no line box,
-                # which is what keeps the newlines between blocks out of the flow.
+            content = _collapse(child.get_textContent() or "", white_space)
+            if not content.strip() and not line.started:
+                # Whitespace with nothing before it makes no line box.
                 continue
-            line_x += text_width(content, style, _environment_for(element))
-            line_height = max(line_height, _line_height(style))
+            points, loose = _text_points(content, white_space, word_break, overflow_wrap)
+            add_text(content, style, points, loose)
+            continue
+        if str(getattr(child, "localName", "")).lower() == "br":
+            # A line break of its own: it ends the current line, and makes one when empty.
+            break_line()
             continue
         child_style = _style_of(child, walk.rules)
         if child_style.get("display") == "none":
             continue
         if child_style.get("position", "static") in ("absolute", "fixed"):
-            # Out of flow: it keeps where the cursor is as its static position and
-            # leaves the cursor alone.
-            end_line()
+            # Out of flow: it keeps the cursor as its static position and leaves it alone.
+            flush()
             _place(child, child_style, walk,
                    _Containing(containing.left, containing.top + cursor, containing.width,
                                containing.height),
@@ -664,24 +985,45 @@ def _flow_children(element, style, walk, containing, positioned):
             continue
         child_margin = _sides(child_style, "margin", containing.width)
         if child_style.get("display", "block") in _INLINE:
-            outer = (_intrinsic_width(child, child_style, walk.rules)
-                     + child_margin["left"] + child_margin["right"])
-            if line_x and outer and line_x + outer > containing.width:
-                end_line()
             placed = _place(child, child_style, walk,
-                            _Containing(containing.left + line_x, containing.top + cursor,
-                                        containing.width - line_x, containing.height),
+                            _Containing(containing.left + line.width, containing.top + cursor,
+                                        containing.width, containing.height),
                             positioned)
-            line_x += placed.width + child_margin["left"] + child_margin["right"]
-            line_height = max(line_height, placed.height + child_margin["top"] + child_margin["bottom"])
+            outer = placed.width + child_margin["left"] + child_margin["right"]
+            if line.started and line.width and line.width + outer > containing.width:
+                # It does not fit after what is on the line, so the line ends first.
+                flush()
+                placed = _place(child, child_style, walk,
+                                _Containing(containing.left, containing.top + cursor,
+                                            containing.width, containing.height),
+                                positioned)
+                outer = placed.width + child_margin["left"] + child_margin["right"]
+            leftmost = max(leftmost, (placed.left - containing.left)
+                           + max(placed.width, placed.overflow_right) + child_margin["right"])
+            height = placed.height + child_margin["top"] + child_margin["bottom"]
+            recorded = walk.baselines.get(child)
+            item_ascent = height if recorded is None else recorded + child_margin["top"]
+            line.add(outer, item_ascent, max(0.0, height - item_ascent))
+            line.items.append((child, placed, item_ascent))
             continue
-        end_line()
+        flush()
         placed = _place(child, child_style, walk,
                         _Containing(containing.left, containing.top + cursor, containing.width,
                                     containing.height),
                         positioned)
+        recorded = walk.baselines.get(child)
+        if first_baseline is None and recorded is not None:
+            # A block's baseline is the one its first line box has, wherever that line is.
+            first_baseline = cursor + child_margin["top"] + recorded
+        leftmost = max(leftmost, (placed.left - containing.left)
+                       + max(placed.width, placed.overflow_right) + child_margin["right"])
+        deepest = max(deepest, (placed.top - containing.top)
+                      + max(placed.height, placed.overflow_bottom))
         cursor += child_margin["top"] + placed.height + child_margin["bottom"]
-    end_line()
+    flush()
+    if first_baseline is not None:
+        walk.baselines[element] = first_baseline
+    walk.overflows[element] = (max(widest, leftmost), max(cursor, deepest))
     return cursor
 
 
@@ -691,6 +1033,7 @@ def _flex_children(element, style, walk, containing, positioned):
     if row:
         cursor = 0.0
         tallest = 0.0
+        widest = 0.0
         for child in children:
             child_style = _style_of(child, walk.rules)
             placed = _place(child, child_style, walk,
@@ -699,8 +1042,13 @@ def _flex_children(element, style, walk, containing, positioned):
                             positioned)
             cursor += placed.width
             tallest = max(tallest, placed.height)
+            widest = max(widest, (placed.left - containing.left)
+                         + max(placed.width, placed.overflow_right))
+        walk.overflows[element] = (widest, tallest)
         return tallest
     cursor = 0.0
+    widest = 0.0
+    deepest = 0.0
     for child in children:
         child_style = _style_of(child, walk.rules)
         placed = _place(child, child_style, walk,
@@ -708,6 +1056,11 @@ def _flex_children(element, style, walk, containing, positioned):
                                     max(0.0, containing.height - cursor)),
                         positioned)
         cursor += placed.height
+        widest = max(widest, (placed.left - containing.left)
+                     + max(placed.width, placed.overflow_right))
+        deepest = max(deepest, (placed.top - containing.top)
+                     + max(placed.height, placed.overflow_bottom))
+    walk.overflows[element] = (widest, max(cursor, deepest))
     return cursor
 
 
@@ -717,6 +1070,7 @@ def _grid_children(element, style, walk, containing, positioned):
     children = [child for child in _child_elements(element) if isinstance(child, Element)]
     cursor = 0.0
     row_height = 0.0
+    widest = 0.0
     for index, child in enumerate(children):
         column = index % columns
         if column == 0 and index:
@@ -728,6 +1082,9 @@ def _grid_children(element, style, walk, containing, positioned):
                                     cell, containing.height),
                         positioned)
         row_height = max(row_height, placed.height)
+        widest = max(widest, (placed.left - containing.left)
+                     + max(placed.width, placed.overflow_right))
+    walk.overflows[element] = (widest, cursor + row_height)
     return cursor + row_height
 
 

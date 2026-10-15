@@ -1,10 +1,10 @@
 {
   "schema": 3,
   "source": {
-    "browser": "Chrome/154.0.8037.95",
+    "browser": "Chrome/155.0.8059.40",
     "executable": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "platform": "win32",
-    "collected": "2026-10-07T14:44:01+00:00",
+    "collected": "2026-10-15T04:33:12+00:00",
     "arguments": [
       "--remote-debugging-port=0",
       "--remote-allow-origins=*",
@@ -15,10 +15,11 @@
       "--disable-sync",
       "--disable-blink-features=AutomationControlled",
       "--window-size=1920,1080"
-    ]
+    ],
+    "extensions": "C:\\Users\\huangconghua\\AppData\\Local\\Google\\Chrome\\User Data"
   },
-  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
-  "app_version": "5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+  "app_version": "5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
   "vendor": "Google Inc.",
   "platform": "Win32",
   "language": "zh-CN",
@@ -27,8 +28,8 @@
     "zh"
   ],
   "on_line": true,
-  "hardware_concurrency": 8,
-  "device_memory": 4.0,
+  "hardware_concurrency": 16,
+  "device_memory": 16.0,
   "max_touch_points": 0,
   "webdriver": false,
   "timezone": "Asia/Shanghai",
@@ -37,15 +38,15 @@
   "viewport.device_scale_factor": 1.0,
   "viewport.outer_inset_width": 16,
   "viewport.outer_inset_height": 151,
-  "screen.width": 1920,
+  "screen.width": 2560,
   "screen.height": 1080,
-  "screen.avail_width": 1920,
-  "screen.avail_height": 1032,
+  "screen.avail_width": 2560,
+  "screen.avail_height": 1040,
   "screen.color_depth": 24,
   "screen.pixel_depth": 24,
-  "connection.effective_type": "3g",
-  "connection.rtt": 350,
-  "connection.downlink": 1.4,
+  "connection.effective_type": "4g",
+  "connection.rtt": 250,
+  "connection.downlink": 1.75,
   "connection.save_data": false,
   "battery.charging": true,
   "battery.charging_time": 0.0,
@@ -55,35 +56,35 @@
   "storage.temporary.quota": 10737418240,
   "client_hints.brands": [
     {
-      "brand": "Chromium",
-      "version": "154"
-    },
-    {
       "brand": "Google Chrome",
-      "version": "154"
+      "version": "155"
     },
     {
-      "brand": "Not A(Brand",
-      "version": "99"
+      "brand": "Chromium",
+      "version": "155"
+    },
+    {
+      "brand": "Not(A:Brand",
+      "version": "24"
     }
   ],
   "client_hints.full_version_list": [
     {
-      "brand": "Chromium",
-      "version": "154.0.8037.95"
-    },
-    {
       "brand": "Google Chrome",
-      "version": "154.0.8037.95"
+      "version": "155.0.8059.40"
     },
     {
-      "brand": "Not A(Brand",
-      "version": "99.0.0.0"
+      "brand": "Chromium",
+      "version": "155.0.8059.40"
+    },
+    {
+      "brand": "Not(A:Brand",
+      "version": "24.0.0.0"
     }
   ],
   "client_hints.mobile": false,
   "client_hints.platform": "Windows",
-  "client_hints.platform_version": "15.0.0",
+  "client_hints.platform_version": "10.0.0",
   "client_hints.architecture": "x86",
   "client_hints.bitness": "64",
   "client_hints.wow64": false,
@@ -178,8 +179,8 @@
       ]
     }
   ],
-  "webgl.vendor": "Google Inc. (AMD)",
-  "webgl.renderer": "ANGLE (AMD, AMD Radeon(TM) Vega 8 Graphics (0x000015D8) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "webgl.vendor": "Google Inc. (NVIDIA)",
+  "webgl.renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 (0x00002503) Direct3D11 vs_5_0 ps_5_0, D3D11)",
   "keyboard.layout": {
     "KeyK": "k",
     "KeyG": "g",
@@ -282,7 +283,8 @@
     "avc3",
     "hvc1",
     "hev1",
-    "vp09"
+    "vp09",
+    "av01"
   ],
   "media.webrtc": {
     "decode": [
@@ -309,10 +311,10 @@
     ]
   },
   "media.hardware_encode": [
+    "vp09",
     "hvc1"
   ],
   "media.devices": [
-    "audioinput",
     "audiooutput"
   ],
   "media.constraints": [
@@ -4069,13 +4071,6 @@
         "ServiceWorkerRegistration": [
           "index"
         ],
-        "SubtleCrypto": [
-          "decapsulateBits",
-          "decapsulateKey",
-          "encapsulateBits",
-          "encapsulateKey",
-          "getPublicKey"
-        ],
         "VideoEncoder": [
           "getAllFrameBuffers"
         ],
@@ -4202,9 +4197,6 @@
           "animationWorklet",
           "layoutWorklet"
         ],
-        "SubtleCrypto": [
-          "supports"
-        ],
         "IdentityProvider": [
           "register",
           "unregister"
@@ -4217,7 +4209,7 @@
         ]
       }
     },
-    "array_protos": {
+    "iteration_methods": {
       "ViewTransitionTypeSet": 31,
       "URLSearchParams": 31,
       "TouchList": 1,
@@ -4281,6 +4273,6 @@
       "SpeechGrammarList": 1,
       "TimelineTriggerRangeList": 31
     },
-    "against": "dc70596be109fc04ee7c603cf74c05d539fe2f3b052a43e82e6770c2eb60ece4"
+    "against": "83ae31c697ff02fcb52ac5739cbcbae88d7e8ddf9924d49cf2e500eab9f348de"
   }
 }

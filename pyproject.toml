@@ -7,7 +7,9 @@ name = "pyv8c"
 version = "0.1.0"
 description = "A deterministic Chromium-like BOM/DOM environment on pyv8"
 requires-python = ">=3.12"
-dependencies = ["loguru>=0.7", "websockets>=14"]
+# ``uharfbuzz`` shapes text and ``uniseg`` finds where lines may break; both are hard
+# dependencies, because a page's geometry is only right if the text is measured for real.
+dependencies = ["loguru>=0.7", "websockets>=14", "uharfbuzz>=0.56", "uniseg>=0.9"]
 
 [project.optional-dependencies]
 # The default engines: curl_cffi performs requests, websockets opens sockets.

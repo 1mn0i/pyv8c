@@ -49,7 +49,7 @@ class _ListItems:
     It is a mixin rather than a base an interface inherits, because the *interface* graph is not
     the implementation graph: ``HTMLCollection`` and ``NamedNodeMap`` are **not** ``NodeList``
     subclasses (their baseline parent is ``None``, measured against Chrome 154 on 2026-10-07),
-    and what an interface publishes through ``IdlSpec(array=...)`` is per interface.  Inheriting
+    and what an interface publishes through ``IdlSpec(iteration_kind=..., array_methods=...)`` is per interface.  Inheriting
     ``NodeList`` carried its iterator flags into both, so their prototypes answered
     ``entries``/``keys``/``values``/``forEach`` like a ``NodeList`` when Chrome publishes only
     ``Symbol.iterator`` there (``examples/5s/script/iterable_probe.py``).  ``RadioNodeList``

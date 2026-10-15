@@ -13,7 +13,7 @@
 | `pyv8c/idl/idl.json`（边车，首次加载展开） | 2,645,068 | 与归档成员逐字节相同，`Idl.digest` 覆盖的就是这些字节 |
 | `pyv8c/idl/idl.pyv8ccache`（本机二进制缓存） | 1,157,559 | pickle 载荷，跳过 JSON 解析与结构校验 |
 
-内容：`interfaces` 1,254 个、成员 10,636 条、常量 2,223 条；metadata 为 `version` 7、
+历史默认 154 快照：`interfaces` 1,254 个、成员 10,636 条、常量 2,223 条。新的文档格式 metadata 为 `version` 8、
 `source`、`chromium_version`（这份文档读自哪个 release）、`report`。边车与二进制缓存是**缓存**，不进版本库也不进包
 （`.gitignore` 里写着"Releases only contain the ZIP artifact"）。
 
@@ -38,7 +38,7 @@ python tools/extract_idl.py pyv8c/idl/idl.json --report   # 明文一份，并�
 ```json
 {
   "idl": {
-    "version": 7,
+    "version": 8,
     "source": "tools/extract_idl.py",
     "chromium_version": "154.0.8030.0",
     "report": {}
@@ -59,13 +59,13 @@ python tools/extract_idl.py pyv8c/idl/idl.json --report   # 明文一份，并�
 
 接口名就是 `interfaces` 的键，不另设 identity 对象。成员分组是列表，成员自身通过 kind 区分
 attribute/operation。加载时拒绝的错误都在读入或编译前点名：版本不是 `7`（指出用 `tools/extract_idl.py`
-重生）、`interfaces` 缺席或为空、条目形状不对、父接口不存在或继承成环、`template.array` 不是
+重生）、`interfaces` 缺席或为空、条目形状不对、父接口不存在或继承成环、`iteration` 不是
 `1`/`31`/缺席、`template.definition_kind` 不是 `0`/`1`/`2`/缺席；`.zip` 里不是恰好一个 JSON 成员、
 成员路径不安全（绝对路径或含 `..`）、或文件后缀不是 `.zip`/`.json`，同样当场拒绝。
 
 本文件与 profile 决定了绑定实际读取的一切：成员的位置、property flags、`side_effect`、cross-origin
 检查、`constructor.exposed`（暴露成 `has_constructor`）、`constructor.length`、`tag`（`to_string_tag`）与
-`template.array`。因此 `__idl_overrides__` 里写这些字段绑定**不会读**，成员的可写性也以成员记录为准；
+`iteration`。因此 `__idl_overrides__` 里写这些字段绑定**不会读**，成员的可写性也以成员记录为准；
 只有"要与 IDL 不同"时才写那几项（`setter`、`replaceable`、IDL 沉默时的 `length`、改名回调）。2026-10-07
 实测：删掉 955 处这类接口级字段声明，编译结果逐项不变（判据见 `examples/5s/README.md`）。
 
@@ -77,7 +77,7 @@ attribute/operation。加载时拒绝的错误都在读入或编译前点名：�
 | constructor.exposed | 是否允许暴露接口对象，与是否能 new 不相同 |
 | constructor.allow_new / allow_call / length | 构造/普通调用许可与 JS Function.length |
 | template | immutable_proto、undetectable、global_this、definition_kind、unconstructable 等模板信息 |
-| template.array | 该接口从 `Array.prototype` 借了什么：`1` = `pyv8.ArrayProto.iterator`（只借 `@@iterator`）、`31` = `.iterable`（再加 `entries`/`keys`/`values`/`forEach`）或缺席；抽取器从生成的绑定与 IDL 算出（`iterable<>`/`maplike<>`/`setlike<>`，或那四个是 operation），`pyv8c/engine/idl.py` 的 `ArrayProto` 收同一套数 |
+| iteration | 同步迭代记录：kind 为 indexed/pair/set；default 为 values/entries；methods 记录命名视图，iterator 记录 Symbol.iterator。来自生成绑定和源 IDL 的合并证据，不由同名 operation 推断。 |
 | template.definition_kind | 接口对象是三者中的哪一种：`1` = `pyv8.DefinitionKind.kIdlNamespace`（纯对象）、`2` = `kWrapperTypeNoPrototype`（没有原型的函数）或**缺席**（`0`，普通接口）；名字取自 `WrapperTypeInfo` 的 `kIdlNamespace` 与原型形状 `kWrapperTypeNoPrototype`，三者互斥 |
 | template.call_handler / access_check | 可调用对象与访问检查元数据 |
 | template.handlers | named、indexed、cross_origin.named/indexed 的角色声明 |
@@ -135,21 +135,16 @@ cross_origin、side_effect、main_world。
   `TrustedHTML.fromLiteral` 等，参照浏览器并不装；2026-10-07 加这一节之前，`CSS.animationWorklet`
   会被装出来，而它是页面读得到的多余表面（判据见 `examples/5s/README.md`）。命名空间不是函数，
   所以采集脚本对 `typeof window[X] === 'object'` 的名字同样读一次；
-- `array_protos`：`{接口: 数}`，数就是 `template.array` 那套——`1`（参照浏览器在这个接口上只发布
-  `@@iterator`）、`31`（还发布 `entries`/`keys`/`values`/`forEach`）。测量沿原型链找**自有 descriptor**
-  （`Object.getOwnPropertyDescriptor` 逐层上溯），**不读值**：`CSSMathMax.prototype.values` 是 getter（长度）、
-  `Cache.prototype.keys` 是异步方法，按名字读值既会答错问题也会跑页面代码，只有 `typeof d.value === 'function'`
-  才算迭代器成员。只对文档声明过的接口记录（与缺口同一条规则）；没有 `@@iterator` 的接口**不记录**——
-  那正是该字段的第三种取值。若某接口有 `@@iterator` 却只有部分具名方法，采集器**直接报错**而不是二选一
-  （2026-10-07 实测：文档声明过的接口里没有这种形状；`Iterator.prototype` 是 `@@iterator` + 仅 `forEach`，
-  但它是 V8 内建、文档并不声明）。取值时**实测优先**，其次才用文档自己的；
+- `iteration_methods`：`{接口: mask}`，iterator=1、entries=2、keys=4、values=8、forEach=16。
+  测量沿原型链读取 descriptor 中的函数成员，不执行 getter；支持部分方法组合。
+  掩码与文档声明取交集，只收窄方法暴露，不能改变 kind 或 default。
 - `against`：这些缺口是相对哪份文档测出来的（`Idl.digest`）。
 
 `engine/idl.py` 读这一段，`Idl` 用它收窄：`Window` 用窗口面（覆盖它承载的全部位置），
 其他接口把缺口里的成员按**位置**去掉——`omits.prototype` 只作用于 `location == "prototype"`，
 `omits.interface` 只作用于 `location == "interface"`（原型上有没有某个名字，不能说明接口对象上有没有），
-`instance` 位置的成员仍不在测量范围内：它们不在页面对每个接口都拿得到的那种对象上。`array_protos` 不删成员，
-只改该接口的 `array` 取值，装配层据此决定向 `Array.prototype` 借哪几个内建。缺口里没有的接口整份保留；
+`instance` 位置的成员仍不在测量范围内：它们不在页面对每个接口都拿得到的那种对象上。`iteration_methods` 不删成员，
+只限制该接口发布的迭代方法；indexed 使用数组内建，pair/set 使用宿主数据源。缺口里没有的接口整份保留；
 段缺席（旧 profile）或形状不对时按"没测过"处理，行为与不传 profile 时相同；`against` 与当前文档的
 `Idl.digest` 不符时画像**整体不启用**并报一次警告，说明要重跑 `tools/collect_environment.py`——
 半应用（名字收窄生效、成员省略丢掉）是它要避免的那件事。`Idl.member()` 在祖先链上找不到某名字、
@@ -202,3 +197,34 @@ python tools/extract_idl.py --chromium-root .chromium-build/chromium --report
 命名属性可用 `named_properties_non_masking=True` 声明不得遮蔽真实属性或原型成员。
 该字段对应原生 IdlSpec/V8 handler 规则，默认为 False，已有调用无需迁移。
 LegacyNamedPropertyMixin 的声明经过 Binder 继承；此规则不代替 LegacyOverrideBuiltIns 接口的规则。
+
+## 格式 8 迭代迁移
+
+原生 `IdlSpec.array` 改为 `array_methods`，仅用于 indexed；`iterate` 改为
+`iteration_source`，并由返回第 N 项改为创建独立游标。宿主约定为
+`__v8_iteration_source__(self)`，返回无参数 callable，每次返回二元组或 None。
+绑定依据 iteration.kind 连接宿主，不再要求接口手写迭代类型 override。
+
+URLSearchParams/FormData 是实时游标，完成后追加仍可能继续产出；FontFaceSet 和
+StylePropertyMap 使用创建时快照。这些差异来自 Chromium 145 实现及本机 Chrome 对照。
+
+本次仅重新生成 `idls/145.0.7632.162.zip`，包含 1,224 个接口，其中 indexed 45、pair 16、set 8。随包默认 154 基线暂未重生，仍为旧格式；
+格式 8 加载器会明确拒绝它。验证或使用请显式指定：
+
+```python
+browser = Browser(idl_path=r"D:\src\pyv8env\pyv8c\idls\145.0.7632.162.zip")
+```
+
+旧缓存因格式版本和内容摘要失效。profile 的 iteration_methods 只限制方法暴露，
+不能改变迭代类型与默认方法；不同 IDL 摘要的 profile 仍整体忽略。
+
+显式基线的测试命令：
+
+```powershell
+python -m pytest --idl-path=idls/145.0.7632.162.zip
+```
+
+测试选项会通过 PYV8C_TEST_IDL_PATH 传递给生命周期和延迟导入测试的子进程。
+这不是运行时默认值或旧格式兼容入口。默认归档身份与 154 profile 专属测试仍需对应的
+新格式 154 文件才能完成验收。已编译但缺少数据源的接口可通过
+`browser.bindings.unimplemented_iteration_sources` 查询；调用其迭代方法会明确报错。

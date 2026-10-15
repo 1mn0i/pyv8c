@@ -32,14 +32,14 @@ __all__ = ["INTERFACE_FIELDS", "InterfaceSpec", "idl_spec", "members_of",
 
 #: What a class may state about the interface itself, keyed as the native builder spells them.
 INTERFACE_FIELDS = (
-    "array", "call", "code_like", "constants_value", "constructor_adapter",
+    "array_methods", "iteration_kind", "iteration_methods", "call", "code_like", "constants_value", "constructor_adapter",
     "constructor_behavior", "cross_origin_check", "cross_origin_index_del",
     "cross_origin_index_enum", "cross_origin_index_get", "cross_origin_index_query",
     "cross_origin_index_set", "cross_origin_name_del", "cross_origin_name_enum",
     "cross_origin_name_get", "cross_origin_name_query", "cross_origin_name_set",
     "definition_kind", "has_constructor",
     "hidden", "immutable", "index_del", "index_enum", "index_get", "index_query", "index_set",
-    "iterate", "length", "name", "name_del", "name_enum", "name_get", "name_query", "name_set",
+    "iteration_source", "length", "name", "name_del", "name_enum", "name_get", "name_query", "name_set",
     "named_properties_object", "named_properties_non_masking", "parent_class", "skip_inherit", "to_string_tag", "undetectable",
     "unconstructable", "global_this",
 )

@@ -1,85 +1,104 @@
-"""Throwaway: what the engine trace says the page touched, and where it got nothing.
+"""Group trace candidates by Realm; no return value proves a defect on its own."""
 
-A trace line is ``[REALM] kind: NAME(args) -> VALUE``.  A read that answered ``undefined`` is
-the sharpest divergence signal there is: a real browser has a value there, and the page is
-asking for it on purpose.
-"""
+import argparse
 import collections
-import pathlib
+import json
+from pathlib import Path
 import re
-import sys
 
-LINE = re.compile(r"\[([A-Z0-9_]+)\]\s+(getter|method|setter):\s+(.*)$")
-
-#: Methods whose ``undefined`` is correct and therefore dull.
-VOID = {
-    "addEventListener", "removeEventListener", "dispatchEvent", "observe", "disconnect",
-    "appendChild", "removeChild", "append", "prepend", "insertBefore", "replaceChild",
-    "setAttribute", "removeAttribute", "add", "remove", "toggle", "replace", "forEach",
-    "postMessage", "close", "focus", "blur", "preventDefault", "stopPropagation",
-    "stopImmediatePropagation", "clearTimeout", "setTimeout", "setInterval", "clearInterval",
-    "then", "catch", "finally", "resolve", "reject", "write", "writeln",
-}
+LINE = re.compile(r"\[([^\]]+)\]\s+(getter|method|setter):\s+(.*)")
 
 
-def main(path):
-    realms = collections.Counter()
-    kinds = collections.Counter()
-    reads_undefined = collections.Counter()
-    calls_undefined = collections.Counter()
-    errors = collections.Counter()
-    samples = {}
-    for line in pathlib.Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
-        match = LINE.search(line)
-        if match is None:
-            for needle in ("ReferenceError", "TypeError", "SyntaxError", "is not a function",
-                           "dispatch error"):
-                if needle in line and "engine.trace" not in line:
-                    errors[f"{needle}: {line.strip()[-90:]}"] += 1
-            continue
-        realm, kind, rest = match.groups()
-        realms[realm] += 1
-        kinds[kind] += 1
-        #: Only a line with ``->`` answered anything: a setter line never has one, and reading
-        #: its empty value as "undefined" is what made the first pass report 413 fake reads.
-        if " -> " not in rest:
-            continue
-        name, _, value = rest.partition(" -> ")
-        value = value.strip()
-        if kind == "method":
-            name = name.split("(")[0].strip()
+def analyze(path):
+    groups = collections.defaultdict(lambda: {"count": 0, "samples": []})
+    unmatched = 0
+    for number, raw in enumerate(
+        Path(path).read_text(encoding="utf-8", errors="replace").splitlines(), 1
+    ):
+        text = raw
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            event = None
+        if isinstance(event, dict):
+            if event.get("kind") != "trace":
+                continue
+            if all(
+                key in event for key in ("realm", "access", "member", "value", "error")
+            ):
+                realm, kind, name = event["realm"], event["access"], event["member"]
+                value, error = event["value"], event["error"]
+                signal = (
+                    "exception"
+                    if error != {"type": "undefined"}
+                    else "undefined"
+                    if value == {"type": "undefined"}
+                    else "access"
+                )
+                item = groups[(realm, kind, name, signal)]
+                item["count"] += 1
+                if len(item["samples"]) < 3:
+                    item["samples"].append({"line": number, "raw": raw})
+                continue
+            # Keep native structured payloads intact when format cannot be parsed.
+            text = json.dumps(event, ensure_ascii=False)
+        match = LINE.search(text)
+        if match:
+            realm, kind, rest = match.groups()
+            name, arrow, value = rest.partition(" -> ")
+            if kind == "method":
+                name = name.split("(")[0].strip()
+            signal = (
+                "exception"
+                if ", error:" in rest
+                else (
+                    "undefined" if arrow and value.startswith("undefined") else "access"
+                )
+            )
+        elif isinstance(event, dict):
+            realm, kind, name, signal = (
+                "unparsed",
+                "trace",
+                "structured",
+                "unclassified",
+            )
+            unmatched += 1
+        elif any(token in text for token in ("Error", "Exception", "dispatch error")):
+            realm, kind, name, signal = (
+                "unknown",
+                "log",
+                "error-looking line",
+                "unconfirmed_exception",
+            )
         else:
-            name = name.split(" = ")[0].strip()
-        if value.startswith("undefined"):
-            bucket = reads_undefined if kind != "method" else calls_undefined
-            bucket[name] += 1
-            samples.setdefault(name, line.strip()[-140:])
-
-    print(f"--- {sum(realms.values())} traced accesses")
-    print(f"  realms {dict(realms)}")
-    print(f"  kinds  {dict(kinds)}")
-    print(f"--- reads that answered undefined: {sum(reads_undefined.values())}"
-          f" over {len(reads_undefined)} names")
-    for name, count in reads_undefined.most_common(30):
-        print(f"  {count:5}  {name}")
-        print(f"         {samples[name]}")
-    #: The trace names a call after its interface too (``DOMTokenList.add``), so the void list
-    #: has to be matched against the last segment or every setter looks like a divergence.
-    def void(name):
-        return name.rsplit(".", 1)[-1] in VOID
-
-    print(f"--- calls that answered undefined (void ones removed): "
-          f"{sum(count for name, count in calls_undefined.items() if not void(name))}")
-    for name, count in calls_undefined.most_common(40):
-        if void(name):
             continue
-        print(f"  {count:5}  {name}")
-        print(f"         {samples[name]}")
-    if errors:
-        print(f"--- error-looking lines: {sum(errors.values())}")
-        for text, count in errors.most_common(10):
-            print(f"  {count:5}  {text}")
+        item = groups[(realm, kind, name, signal)]
+        item["count"] += 1
+        if len(item["samples"]) < 3:
+            item["samples"].append({"line": number, "raw": raw})
+    return {
+        "source": str(Path(path).resolve()),
+        "meaning": "candidates, not confirmed Chrome differences",
+        "unparsed_trace_events": unmatched,
+        "groups": [
+            dict(realm=k[0], kind=k[1], name=k[2], signal=k[3], **v)
+            for k, v in sorted(groups.items())
+        ],
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("path")
+    parser.add_argument("--out")
+    args = parser.parse_args()
+    result = analyze(args.path)
+    text = json.dumps(result, ensure_ascii=False, indent=2)
+    if args.out:
+        Path(args.out).write_text(text + "\n", encoding="utf-8")
+    else:
+        print(text)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "5s.log")
+    main()

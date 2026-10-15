@@ -59,7 +59,7 @@ DEFINITION_KINDS = (DefinitionKind.kInterface, DefinitionKind.kIdlNamespace,
 
 #: The version of the document this build reads and writes; another is refused by name rather
 #: than read half-way.  Regenerate with ``tools/extract_idl.py``.
-IDL_VERSION = 7
+IDL_VERSION = 8
 
 
 #: The exposure labels the IDL words worker realms with.
@@ -86,7 +86,7 @@ class Profile:
     #: The same, for members the document puts on the interface object itself.
     omitted_interface: Mapping[str, frozenset] = MappingProxyType({})
     #: ``interface -> the bits this release publishes``; nothing recorded borrows nothing.
-    array_protos: Mapping[str, int] = MappingProxyType({})
+    iteration_methods: Mapping[str, int] = MappingProxyType({})
     #: The document those omissions were measured against; empty when the writer did not say.
     against: str = ""
 
@@ -120,7 +120,7 @@ class Profile:
         """A hashable identity for this profile: its content, not its object."""
         return (self.browser, tuple(sorted(self.exposed)),
                 _name_groups(self.omitted_prototype), _name_groups(self.omitted_interface),
-                tuple(sorted(self.array_protos.items())))
+                tuple(sorted(self.iteration_methods.items())))
 
 
 def _name_groups(mapping) -> tuple:
@@ -137,12 +137,12 @@ def _omitted(omits, place) -> Mapping:
     return MappingProxyType(found)
 
 
-def _array_protos(section) -> Mapping:
+def _iteration_methods(section) -> Mapping:
     """``interface -> bits`` from the profile; only the two the field states are kept."""
     found = {}
-    for name, bits in ((section or {}).get("array_protos") or {}).items():
-        if bits in ARRAY_PROTOS:
-            found[str(name)] = int(bits)
+    for name, bits in ((section or {}).get("iteration_methods") or {}).items():
+        if type(bits) is int and 0 <= bits <= 31:
+            found[str(name)] = bits
     return MappingProxyType(found)
 
 
@@ -165,7 +165,7 @@ def _read_profile(target) -> "Profile | None":
         exposed=frozenset(str(name) for name in names),
         omitted_prototype=_omitted(omits, "prototype"),
         omitted_interface=_omitted(omits, "interface"),
-        array_protos=_array_protos(section),
+        iteration_methods=_iteration_methods(section),
         against=str((section or {}).get("against") or ""),
     )
 
@@ -373,11 +373,16 @@ def _read_document(document) -> tuple:
         parent = spec.get("parent")
         if parent is not None and (not isinstance(parent, str) or parent not in interfaces):
             raise ValueError(f"interface {name!r} refers to unknown parent {parent!r}")
-        array = (spec.get("template") or {}).get("array")
-        if array is not None and array not in ARRAY_PROTOS:
-            raise ValueError(f"interface {name!r} states array={array!r}; this version states one of"
-                             f" {ARRAY_PROTOS} or nothing -- regenerate it"
-                             " (tools/extract_idl.py)")
+        iteration = spec.get("iteration")
+        if iteration is not None:
+            if (not isinstance(iteration, dict) or iteration.get("kind") not in ("indexed", "pair", "set") or
+                iteration.get("default") != ("entries" if iteration.get("kind") == "pair" else "values") or
+                not isinstance(iteration.get("methods"), list) or
+                any(method not in ("entries", "keys", "values", "forEach") for method in iteration["methods"]) or
+                not isinstance(iteration.get("iterator"), bool)):
+                raise ValueError(f"invalid iteration metadata for {name!r}")
+        if "array" in (spec.get("template") or {}):
+            raise ValueError(f"legacy array metadata for {name!r}; regenerate the IDL")
         kind = (spec.get("template") or {}).get("definition_kind")
         if kind is not None and kind not in DEFINITION_KINDS:
             raise ValueError(f"interface {name!r} states definition_kind={kind!r}; this version"
@@ -472,7 +477,8 @@ class IdlInterface:
     constructor_call: bool
     constructor_stated: bool
     #: The bits in force: this release's measured ones, else the document's.  ``None``: nothing.
-    array: int | None
+    iteration: Mapping | None
+    iteration_mask: int
     raw: Mapping
 
     def own_members(self, location) -> tuple:
@@ -505,7 +511,7 @@ class Idl:
                                    else MappingProxyType({}))
         self._omitted_interface = (profile.omitted_interface if profile is not None
                                    else MappingProxyType({}))
-        self._array_protos = profile.array_protos if profile is not None else MappingProxyType({})
+        self._iteration_methods = profile.iteration_methods if profile is not None else MappingProxyType({})
         self._interfaces: dict[str, IdlInterface] = {}
         self._positions: dict[str, int] | None = None
         self._children: dict[str, tuple] | None = None
@@ -524,7 +530,7 @@ class Idl:
         """The document at *path*, narrowed by *profile*: the shipped one unless told otherwise."""
         if path is None:
             target = DEFAULT_IDL_PATH
-            label = f"pyv8c:{target.relative_to(PACKAGE_ROOT).as_posix()}"
+            label = f"pyv8c:{target.relative_to(PACKAGE_ROOT).as_posix()}" if target.is_relative_to(PACKAGE_ROOT) else str(target)
         else:
             target = Path(path).expanduser().resolve()
             label = str(target)
@@ -574,16 +580,17 @@ class Idl:
             self._interfaces[name] = cached
         return cached
 
-    def _array_proto(self, name, entry):
+    def _iteration_mask(self, name, entry):
         """The bits in force: the measured release first, then the document's.
 
         The profile applies only when it was taken against this document, as the omissions do.
         """
-        measured = self._array_protos.get(name)
-        if measured:
-            return measured
-        bits = (entry.get("template") or {}).get("array")
-        return bits if bits in ARRAY_PROTOS else None
+        iteration = entry.get("iteration")
+        if not iteration: return 0
+        bits = {"entries": 2, "keys": 4, "values": 8, "forEach": 16}
+        declared = (1 if iteration["iterator"] else 0) | sum(bits[method] for method in set(iteration["methods"]))
+        measured = self._iteration_methods.get(name)
+        return declared & measured if measured is not None else declared
 
     def _build(self, name, entry) -> IdlInterface:
         members = entry.get("members") or {}
@@ -605,7 +612,8 @@ class Idl:
             constructor_new=bool(constructor.get("allow_new")),
             constructor_call=bool(constructor.get("allow_call")),
             constructor_stated=("allow_new" in constructor or "allow_call" in constructor),
-            array=self._array_proto(name, entry),
+            iteration=MappingProxyType(entry["iteration"]) if entry.get("iteration") else None,
+            iteration_mask=self._iteration_mask(name, entry),
             raw=entry,
         )
 

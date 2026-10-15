@@ -52,6 +52,7 @@ class Bindings:
             raise ValueError("baseline_mismatch must be 'error' or 'warn'")
         #: Reported mismatches, so each difference warns once.
         self._mismatches = set()
+        self._unimplemented_iteration_sources: set[str] = set()
         self.staged_interfaces = runtime.catalog.skeleton()
         self._validated = False
         # One re-entrant lock guards every read-modify-write cache so concurrent realms never see a torn cache.
@@ -73,6 +74,15 @@ class Bindings:
             if self.stub_logging != "off":
                 logger.warning("pyv8c: {}", message)
         return True
+
+    def record_unimplemented_iteration_source(self, name):
+        """Record a missing host capability without labelling the baseline inconsistent."""
+        self._unimplemented_iteration_sources.add(str(name))
+
+    @property
+    def unimplemented_iteration_sources(self) -> tuple:
+        """Iterables whose host data source is missing, independent of baseline mismatches."""
+        return tuple(sorted(self._unimplemented_iteration_sources))
 
     @property
     def discrepancies(self) -> tuple:

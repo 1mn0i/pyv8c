@@ -6,22 +6,22 @@ No keyboard layout is modelled here, so the map is empty rather than fifty inven
 import pyv8
 
 from ...idl import interface
-from ...foundation.arguments import MISSING, callback_value, dom_string, missing_error
+from ...foundation.arguments import MISSING, dom_string, missing_error
 from .utils import settled
 
 __all__ = ["Keyboard", "KeyboardLayoutMap"]
 
 
-def _js_call(fn, this, *args):
-    if hasattr(fn, "call"):
-        return fn.call(this, *args)
-    return fn(*args)
 
 
 @interface('KeyboardLayoutMap', None)
 class KeyboardLayoutMap:
     def __init__(self, entries=None, **_):
         self._entries = dict(entries or {})
+
+    def __v8_iteration_source__(self):
+        items = iter(tuple(self._entries.items()))
+        return lambda: next(items, None)
 
     def get_size(self): return len(self._entries)
     def fn_get(self, key=MISSING, *_extra):
@@ -32,17 +32,6 @@ class KeyboardLayoutMap:
         if key is MISSING:
             raise missing_error('KeyboardLayoutMap', 'has', 1, 0, constructor=False)
         return dom_string(key) in self._entries
-    def fn_keys(self, *_extra): return list(self._entries)
-    def fn_values(self, *_extra): return list(self._entries.values())
-    def fn_entries(self, *_extra):
-        return [[key, value] for key, value in self._entries.items()]
-    def fn_forEach(self, callback=MISSING, this_arg=pyv8.Undefined, *_extra):
-        if callback is MISSING:
-            raise missing_error('KeyboardLayoutMap', 'forEach', 1, 0, constructor=False)
-        callback = callback_value(callback)
-        for key, value in list(self._entries.items()):
-            _js_call(callback, this_arg, value, key, self)
-        return pyv8.Undefined
 
 
 @interface('Keyboard', None)

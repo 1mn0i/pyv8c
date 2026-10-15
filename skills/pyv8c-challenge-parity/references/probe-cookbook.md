@@ -1,224 +1,86 @@
-# 探针与骨架
+# 运行与本地复现
 
-## 0. 加一个探针（最常用）
+## 前置条件
 
-探针 = 一个 JavaScript 表达式，返回 JSON 安全的数据。加进 `scripts/probes.py` 的 `PROBES`：
+在 pyv8c 仓库根运行命令，使用项目的 Python 3.12 环境。源码开发时令 PYTHONPATH 指向本仓库及相邻 `_pyv8`。先验证 import 路径，不让已安装旧包替代开发树。
 
-```python
-SOMEPAGE = """<!doctype html><html><body>…</body></html>"""
+```powershell
+$env:PYTHONPATH="$PWD;$PWD/../_pyv8"
+python skills/pyv8c-challenge-parity/scripts/harness.py --list
+python skills/pyv8c-challenge-parity/scripts/harness.py --help
+```
 
-PROBES = {
-    # … 已有的 …
-    "myname": {
-        "note": "一句话：这个探针回答什么",
-        "fixture": (SOMEPAGE, 0.6),      # 有 fixture 就能离线跑；不需要站点
-        "probe": _probe("""
-  var out = {};
-  // _probe() 已经把 __view / __tags / __pick（元素读数工具）放进作用域
-  out.body = __view(document.body);
-  return out;
-"""),
+显式选择可读的 IDL。当前用户保留默认 154 压缩包，若其格式与新读取器不匹配，指定已生成的 `idls/145.0.7632.162.zip`，不要修改默认包；以后目录变化应重新检查。
+
+Chrome 必须用 `--chrome-path` 或 `PYV8C_CHROME` 指定现有可执行文件。默认 headed、Playwright 默认参数，不增加隐藏自动化的开关；`--headless` 是另一个需记录的实验条件。若自动化 Chrome 和人工访问本身就不同，记录此边界，用可用的人工 DevTools 证据补充，不冒充普通浏览器会话。
+
+## 在线基线与局部观测
+
+```powershell
+python skills/pyv8c-challenge-parity/scripts/harness.py --url https://example.com/ --idl-path idls/145.0.7632.162.zip --chrome-path 'C:/Program Files/Google/Chrome/Application/chrome.exe' --seconds 5 --timeout 45 --out evidence/baseline.json
+```
+
+不传 probe/trace：页面脚本执行期间不注入 JS，结束后读取状态和环境。运行器仍有自动化及事件监听影响，绝不是无观察者的人工会话。
+
+第二轮按假设增加 `--probe-file probe.js`、`--wait-for 'Boolean(window.appReady)'` 或 `--trace`。表达式应同步返回可序列化的观测对象；不要返回 Promise（两侧桥接等待语义不相同）、DOM 对象或带副作用的 getter。保存观察者效应；不要默认 `--probe all`。
+
+`--seconds` 是导航返回后的观测/就绪预算；`--timeout` 是每侧进程总预算，含 import、导航、执行和关闭。`--navigation-timeout` 约束 Chrome 导航；pyv8c 阻塞由进程总超时兜底。两侧串行。没有就绪表达式时 `ok` 只代表工具完成，不代表网站成功。
+
+两侧视口配置均为 1280×720，结果另记录实际宽高；布局对照先核对实际值、字体与缩放。不要将设备或字体未匹配的布局结果直接称为缺陷。代理、Cookie、权限等复杂实验需基于现有测试/独立案例程序明确配置，运行器不自动迁移会话。
+
+## 显式离线资源表
+
+创建 `fixture.json`：
+
+```json
+{
+  "url": "https://local.test/",
+  "resources": {
+    "https://local.test/": {
+      "body": "<!doctype html><script src='/app.js'></script>",
+      "headers": {"content-type": "text/html"}
     },
+    "https://local.test/app.js": {
+      "body": "window.order=['script'];Promise.resolve().then(()=>order.push('microtask'));setTimeout(()=>{order.push('timer');window.ready=true},0)",
+      "headers": {"content-type": "application/javascript"}
+    }
+  },
+  "ready": "window.ready===true",
+  "probe": "({order:window.order,missing:!('notHere' in window),u:undefined,n:null})"
 }
 ```
 
-- `_probe(body)` 会把共享的元素读数工具（`__view`、`__tags`、`__pick`）铺在前面，并整体包成
-  一个表达式——`page.evaluate` 只接受表达式，不要写两条语句。
-- 探针必须**容错**：被页面藏起来的节点上 `getBoundingClientRect()`、`attributes`、`children`
-  可能不是对象；所有读取都 `try/catch`，失败给一个字符串标记（`'threw'`/`'missing'`）。
-- 探针必须**可复现**：不要用 `Math.random()`、不要依赖当前时间（除 `timing` 那种本来就测时间的）。
-- 用 `String()` 收口：pyv8c 会把 JS 的 `null` 交回成 pyv8 的 `Null`，直接 `json.dumps` 会失败。
-
-跑它：`python scripts/harness.py --probe myname`（两引擎）或 `--side here`（只看 pyv8c）。
-
-## 1. 直接对某个站点写临时探针
-
-```python
-"""一个页面、一个探针，两侧并排比。"""
-import sys
-sys.path.insert(0, r"<本 skill>\scripts")
-from harness import chrome_path, diff, run_chrome, run_here
-
-URL = "https://example.com/somewhere"
-PROBE = """(function () {
-  var node = document.querySelector('#app') || document.body;
-  var rect = node.getBoundingClientRect() || { width: 0, height: 0 };
-  return { box: Math.round(rect.width) + 'x' + Math.round(rect.height),
-           children: node.children ? node.children.length : 'no-children',
-           style: getComputedStyle(node).display };
-})()"""
-
-mine, viewport = run_here(URL, None, PROBE, 20, None)
-theirs = run_chrome(URL, None, PROBE, 20, None, viewport)
-diff(mine, theirs)
+```powershell
+python skills/pyv8c-challenge-parity/scripts/harness.py --fixture fixture.json --idl-path idls/145.0.7632.162.zip --chrome-path 'C:/Program Files/Google/Chrome/Application/chrome.exe' --out evidence/fixture.json
 ```
 
-`run_here` / `run_chrome` 已经把"同一页面、同一视口、同一等待"处理好了：
-先跑 pyv8c 拿到它报的 `innerWidth/innerHeight`，再用同一个视口开 Chrome。
+资源键是绝对 HTTP(S) URL，匹配去掉 fragment 后的完整 URL，查询参数不忽略。每项支持 `status`（默认 200）、`headers`、`body` 或相对清单的 UTF-8 `body_file`。资源表按 URL 匹配，不区分请求方法和请求体；需要验证这些条件时使用真实本地服务器。未登记请求明确返回 404；本地 data/blob/about 由各引擎处理，不能统一替换成 HTML。
 
-## 2. 注入钩子（在页面脚本之前）
+该工具适合文本 HTTP fixture；不用于二进制媒体、真实 TLS、缓存、Service Worker、WebSocket、Cookie 重定向端到端验收。Chrome fixture 阻止 Service Worker，以避免绕过路由；此条件写入配置。上述能力使用仓库现有本地 HTTP 测试服务器和相关对照测试，保留真实头和状态，不用路由模拟替代。
 
-要观察页面自己做了什么，就在页面脚本前插一段。pyv8c 侧用 `resource_interceptor`
-换掉主文档正文；Chrome 侧用 `page.add_init_script`。
+`--probe events` 等内置 fixture 在不传 `--url` 时运行；传 URL 时对该页面运行探针，不悄悄换成 fixture。旧 `_ask_page/run_here/run_chrome/pump` 导入接口已移除，调用方应迁移到 CLI 或 JSON fixture。仓库正式回归仍使用 `tests/repros` 的现有 harness，不导入 skill 私有工具。
 
-```python
-import curl_cffi.requests
-from pyv8c import Browser
-from harness import pump
+## 结果解释
 
-HOOK = r"""
-window.__watch = { seen: [] };
-(function () {
-  var probe = function (where) {
-    try {
-      var node = document.querySelector('#target');
-      window.__watch.seen.push(where + ' ' + (node ? String(node.tagName) : 'absent'));
-    } catch (e) { }
-  };
-  var wrap = function (proto, name) {
-    var original = proto && proto[name];
-    if (typeof original !== 'function') { return; }
-    proto[name] = function () {
-      var result = original.apply(this, arguments); probe(name); return result;
-    };
-  };
-  wrap(Node.prototype, 'appendChild');
-  wrap(Element.prototype, 'setAttribute');
-  setInterval(function () { probe('timer'); }, 500);
-})();
-"""
+主结果关联每侧目录中的配置、增量 `result.json`、`events.jsonl`、stdout/stderr。配置保存资源正文；清单来源文件内容已在运行前读入，足以复查同一资源表。保留敏感信息的证据只在本地存放。
 
-done = {"document": False}
-def intercept(url, request):
-    if done["document"] or request.get("destination") != "document":
-        return None
-    done["document"] = True
-    answer = curl_cffi.requests.get(str(url), impersonate="chrome")   # 以 Chrome 指纹取原文
-    html = answer.text.replace("<head>", "<head><script>" + HOOK + "</script>", 1)
-    return {"status": answer.status_code, "body": html, "url": str(url),
-            "headers": dict(answer.headers)}
-
-browser = Browser(stub_logging="off", resource_interceptor=intercept, threaded_loaders=True)
-page = browser.new_profile().new_page()
-page.goto(URL)
-pump(page, 30)
-print(page.evaluate("({seen: window.__watch.seen})"))
-```
-
-钩子必须**原样转发返回值**，钩子内的异常一律吞掉，否则会把页面弄坏。
-
-## 3. 引擎侧追踪（pyv8c 独有）
-
-pyv8c 是 Python：直接包住内部方法就能看到"引擎以为发生了什么"。
-
-```python
-from pyv8c.platform.sessions import BindingSession      # 接口物化
-from pyv8c.platform.resources.documents import DocumentResourceController  # 资源与 iframe 上下文
-
-log = []
-for attribute in ("materialize", "_stage"):
-    original = getattr(BindingSession, attribute)
-    def traced(self, name, _original=original, _attribute=attribute):
-        log.append((_attribute, str(name)[:40]))
-        return _original(self, name)
-    setattr(BindingSession, attribute, traced)
-```
-
-常用观察点：
-
-| 想回答 | 包住 |
+| 字段 | 含义 |
 | --- | --- |
-| 哪个资源被取、有没有用上 | `ResourceController.discover_element_resource`、`complete_document_resource` |
-| iframe 有没有自己的浏览上下文 | `ensure_iframe_context`、`discard_iframe_context` |
-| 哪个接口在哪次调用里被物化 | `BindingSession.materialize` / `_stage` / `class_config_for` |
-| 某个节点在宿主侧到底是什么状态 | 直接读 Python 对象：`node.attributes`、`node.parentNode`、`node.ownerDocument`、`node._child_services` |
+| `status=ok` | 工具正常完成；有 ready 时要求其达到 |
+| `not_ready` | 已观察但未达到就绪条件 |
+| `error` | 执行、桥接、关闭或进程监管失败 |
+| `timeout` | 总预算耗尽，父进程回收拥有的进程树 |
+| `comparison=equal/different` | 仅指该 probe 的类型化观测 |
+| `inconclusive` | 至少一侧执行失败，不能宣布一致 |
+| `target_not_reached` | 至少一侧未就绪 |
+| `not_observed` | 未选择/未完成 probe，不是读取到 undefined |
 
-包法必须 `setattr` 成方法并用默认参数捕获 `original`（闭包陷阱）。
+返回值按 `{type, value}` 递归编码；undefined、null、数组空位 missing、循环引用各有标签。对象中属性是否缺失请显式观测 `in`/`Object.hasOwn`/descriptor：直接读缺失属性本来就是 undefined，工具不能替你推断属性存在性。异常保存类和消息，不将异常等同普通返回值；需比较 DOMException 的 JS name 时在 probe 内显式捕获并返回结构。
 
-## 4. 读 `--trace` 日志
+CLI 退出码：0 为工具正常且没有已观测差异，1 为失败/未就绪/差异，2 为参数错误。无 probe 的 0 不表示网站验收通过。超时中的未完成阶段从增量结果读取，未出现的阶段属于未观测。
 
-`python px3.py --trace`（案例里的 runner）或自己开 `trace=True` 会把每个 IDL 调用记进日志：
-`[TOP] <getter|setter|method|descriptor|has>: Interface.member(args) -> value`。
+## 资源释放与复现升级
 
-- `待实现` 命中 = 页面撞到了未实现的成员（**这是最直接的"缺实现"证据**）；
-- `has:` 表示页面在做特性探测（`'x' in y`），**不是调用**，别当成调用；
-- `descriptor: … -> False` 表示宿主没有该自有属性；
-- 用"某成员最后一次成功调用前后 N 行"来定位"何时开始出错"，比通读日志有效得多。
+Windows 父进程先将受门控的子进程加入 Job Object，再允许其创建浏览器；超时只清理该 job。正常关闭在创建线程执行。无法建立所有权时失败退出，不降级为按进程名杀 Chrome。正常退出仍有后代需强制回收时报告错误，不伪装释放成功。
 
-## 5. 网络/载荷对照（站点有 API 时）
-
-先比**请求集合与顺序**，再比**体量与共同前缀**，最后才逐字段。两条经验：
-
-- 体量差异要先排除"等待时长/采样次数不同"——同一条件各跑两次，看是否稳定；
-- 载荷往往是站点自己的编码。定位编码器最省事的路径是**在页面里钩住发送前的明文**
-  （钩 `JSON.stringify` / `Array.prototype.join` / `XMLHttpRequest.send` 并留一份快照），
-  而不是去读混淆后的源码。
-
-## 6. 结论模板（写进记录）
-
-```markdown
-### 症状短语
-
-症状：一句话 + 两侧数字（哪条命令得到的）。
-
-根因：哪一层、哪个函数、哪一行；用一句话说清机制。
-
-修法：改了什么（文件 + 一句话），新加的常量/表放哪。
-
-验证：最小探针两侧对齐的数字；真站上随之变化的量；回归结果。
-```
-
-## 7. 已知的坑
-
-1. **页面忙时不能阻塞等待**：`run_until_idle(timeout=N)` 抛 `RealmBusyError`，用 `pump()`。
-2. **无头 Chrome 不是参照**：UA、可见性、指纹项都不同。
-3. **采样时间不同不是差异**：控件几何、载荷长度会随时间变，先在同条件下各跑两次。
-4. **页面会隐藏自己的东西**：读不出来先做两侧同样的观测；`Chrome 也一样` 就不是缺陷。
-5. **`evaluate` 只接受表达式**；**`Null` 不能直接 JSON 序列化**。
-6. **资源 kind 要对齐**：登记资源用的 `kind` 与消费处认的 `kind` 必须一致
-   （`<link rel=stylesheet>` 的 CSS 曾因两边不一致而从未被保存）。
-7. **读 blob 源码**：`page.services.context_services.resolve_blob_url(url)` 返回
-   `(源码字节, content-type)`；它**只在它自己的 V8 context 里**认识 blob（`create_blob_url(blob, realm=…)`
-   按 realm 登记），所以别的 realm 造的 blob 要么找该 realm 的 context services，要么进不了。
-   用 `page.v8_context`/`realm.v8_context` 这类**原生 V8 context** 调不到它（没有该方法）。
-8. **进 worker realm**：`worker._runtime._realm.evaluate_script(...)`（`worker` 取 `page._owned.workers` 的成员）。
-   `worker.services.realm_services.evaluate_script` 会答出**页面的**数据，是错误的一层；`worker._realm` 不存在。
-   worker 里没有同步 `XMLHttpRequest`（Chrome 的 worker 有），所以别指望在 worker 里同步取自己的 blob。
-9. **trace 要显式开、且走日志**：`Browser(trace=True, traceable=True)` 之外还要
-   `profile.trace = True`（`traceable` 是为"稍后再开"准备的）；`trace_callback=` 收不到事件，
-   用 `logger.add(...)` 读 `pyv8c.engine.trace:log_trace` 的行。事件**带 realm 标签**
-   （`[TOP]`/`[FRAME]`），成员名、参数和返回值都在里面——定位"哪一行/哪个成员"最快的就是它。
-   拿它和钩子里记的 `Date.now()` 对齐，就能只读报错前那一小段。
-10. **别包装 `window.Function` / `window.eval`**：在 pyv8c 的页面里包装 `Function` 会让
-   `page.goto` 卡住（`RealmBusyError: realm executor did not complete 'goto' within 30s`）；
-   包装 `eval` 会改变失败形态（异常从"`Cannot read properties of undefined`"变成页面侧的
-   `ErrorEvent.message -> 'Error'`），也就是钩子干扰了被测对象。
-11. **包 pyv8c 的内部方法比包 JS 稳**：想在"页面造东西"时记录，直接包它的 Python 回调
-   （例如 `TrustedTypePolicy.fn_createScript/fn_createScriptURL/fn_createHTML`）——不改 JS 行为、
-   任何 realm 的策略都看得见；包 `window.eval`/`Function` 则会干扰被测对象（见第 10 条）。
-12. **blob 要"它自己的 realm"才读得到，而且层级会往下掉**：`resolve_blob_url` 只在对应 V8 context
-   里认识 blob；页面造的 blob 页面能读，**frame 的 worker、worker 里的 worker 造的**就只能由那一层读
-   （主文档 / frame / 两者的 worker 都不行，会 `DOMException` 或返回错的东西）。
-   枚举层级：主文档 `services.context_services` → `page._owned.frames`（是子 `Page`）→
-   `page._owned.workers` 与 `frame._owned.workers`（取 `worker._runtime._realm`）。再深就只能靠钩子。
-13. **想读混淆代码时，有 AST 可用**：Node 24 自带，`acorn` 装到仓库外
-   （`%TEMP%\<dir>` + `NODE_PATH` 指过去）即可，不必往仓库塞 `node_modules`。
-   挑战脚本的混淆形状是"**数字键表 + 运行时绑定的解码器**"（`X[dec(table.key)]`），
-   解码器常在形参上再赋一次（`dd = Q2`）并带自解码启动代码，**静态推不出来**；
-   可行的办法是：用 AST 找到"表赋值"与"解码器绑定"的**精确范围**，各包一层"捕获后原样返回"，
-   在 `vm` 里配吞掉一切的 DOM 假对象跑一遍，再用抓到的解码器逐键求值。
-   两个坑：假 Proxy 对不存在的键会返回它自己（捕获要写进**沙箱里的真实对象**）；
-   表与解码器要用**同一个标签**配对。
-14. **反爬站点每次给的页面可能不是同一份**：Cloudflare 会换 ray id / widget id，
-   偶尔连挑战样式都换（同一 URL 实测过 `45 对 29` 个元素）。比结构前先确认两侧元素数一致，
-   否则比的是两份不同页面；要重复复现就抓一份标记做夹具，两侧喂同一份字节
-   （`examples/5s/script/parity_dom.py fixture_diff`），这样差异只剩解析器。
-8. **`待实现` 清单是一把梯子**：修掉一项，页面的脚本往往就往下走一步，清单里换成下一项
-   （5s 案例：5 → 2 → 1 → 0，最后一项从 `createOffer()` 变成 `setLocalDescription()` 再清零）。
-   所以"清单没清零"不等于没进展，要看**脚本走到哪一步**；反过来，清零也不等于通过。
-9. **参照浏览器不能带自动化标记**：Playwright 默认传 `--enable-automation`，真 Chrome 也会被
-   Cloudflare 拦住；去掉后同一台机器就能过关。任何"两边都过不去"的结论，先确认参照不是被自己的
-   驱动标记拖住的（见 SKILL.md 的先决条件）。
-10. **"看起来没反应"先看连接性判断**：ShadowRoot 的 `parentNode` 是 null，任何沿 `parentNode`
-    上溯到 Document 的"是否已插入文档"判断，都会把影子树里的节点判成未连接——iframe 于是不导航。
-    这类判断要用含影子树的根（`isConnected`），不要去数父链。
+进程清理不是句柄/线程无泄漏的证明。涉及生命周期的生产修复，应追加仓库的慢速和竞态测试，观察同进程关闭后的资源计数。不要把 skill 的超时杀进程用作生产修复。

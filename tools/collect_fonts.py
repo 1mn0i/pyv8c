@@ -3,12 +3,9 @@
 A page can ask two things of a font, and an engine that answers differently is visible to
 it: whether ``local()`` finds a name, and which platform font a family actually resolves
 to.  This reads both from Chrome over DevTools -- the same launcher and session the
-environment collector uses -- and writes them to ``data/chrome-fonts.json``, which is the
-baseline ``--compare`` measures this engine against.
-
-That file is a reading of one machine, not a shipped input: the engine never reads it, the
-profile carries the font table a page is actually answered with, and this file is written
-on demand and kept out of the tree.
+environment collector uses -- and writes them to ``tools/fonts-baseline.json``, the baseline
+``--compare`` measures this engine against.  That file is one machine's reading, not a shipped
+input, and it stays out of the tree.
 
 The names probed are fixed rather than taken from a machine, so two runs on two machines
 stay comparable: they cover the three desktop font sets a challenge would use to tell
@@ -38,7 +35,7 @@ from pyv8c.tools.collect_environment import (  # noqa: E402
     read_devtools_port,
 )
 
-DEFAULT_OUTPUT = PACKAGE_ROOT / "pyv8c" / "data" / "chrome-fonts.json"
+DEFAULT_OUTPUT = PACKAGE_ROOT / "tools" / "fonts-baseline.json"
 
 #: One name per interesting answer: installed everywhere, installed on one platform only,
 #: a PostScript spelling and a full-name spelling of one face, and two nobody has.

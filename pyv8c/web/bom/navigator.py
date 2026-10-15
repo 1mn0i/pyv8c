@@ -1138,12 +1138,10 @@ class Navigator:
 
 
 @interface('WGSLLanguageFeatures', None)
-class WGSLLanguageFeatures(ReadOnlyIndexedPropertyMixin):
+class WGSLLanguageFeatures:
     """The WGSL extensions this build understands, measured from Chrome.
 
-    The iterable methods come from the indexed interceptor, which is how pyv8c serves
-    every ``array=`` collection: ``values`` hands out the names, ``keys`` hands out
-    positions where Chrome's setlike hands out the names again.
+    Set iteration publishes each extension name as both key and value.
     """
 
     def __init__(self, names=_WGSL_LANGUAGE_FEATURES, **_):
@@ -1156,7 +1154,10 @@ class WGSLLanguageFeatures(ReadOnlyIndexedPropertyMixin):
             raise missing_error('WGSLLanguageFeatures', 'has', 1, 0, constructor=False)
         return str(dom_string(name)) in self._names
 
-    def _indexed_items(self): return list(self._names)
+    def __v8_iteration_source__(self):
+        items = iter(tuple((name, name) for name in self._names))
+        return lambda: next(items, None)
+
 
 
 @interface('GPU', None)

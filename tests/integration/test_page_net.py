@@ -107,7 +107,7 @@ def test_page_net_sends_the_environment_headers_and_the_jar(page, origin):
     assert payload["destination"] == "empty"
     assert payload["mode"] == "cors"
     assert payload["site"] == "same-origin"
-    assert payload["hints"] == '"Chromium";v="154", "Google Chrome";v="154", "Not A(Brand";v="99"'
+    assert payload["hints"] == '"Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"'
 
 
 def test_headers_override_in_three_layers(page):

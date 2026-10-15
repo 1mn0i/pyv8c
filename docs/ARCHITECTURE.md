@@ -151,7 +151,7 @@ Python 类 → 一份 JS 配置；桩、包装、签名都在这里，且都是�
 | `BaselineSnapshot` | `Idl` 本身（集合就是快照） |
 | `InterfaceTable` / `Interface` | `Idl` 的查询面 / `IdlInterface` |
 | `Member` / `LOCATIONS` | `IdlMember`（自带位置与标志解码） |
-| `WindowSurface` / gaps / array_protos | `Profile` |
+| `WindowSurface` / gaps / iteration_methods | `Profile` |
 | `universe.py` / `InterfaceUniverse` | `bindings.py` / `Bindings` |
 | `_GENERATED` + `class_for` | `Bindings.class_for`（桩类是其私有缓存） |
 | `RealmPlan` / `build_plan` / `plan()` | `Bindings.plan()` 返回 `Realm`：`installs`（该装的）与 `eager`（首屏先装的） |
@@ -167,7 +167,7 @@ Python 类 → 一份 JS 配置；桩、包装、签名都在这里，且都是�
 成员项可写 `callback`/`getter`/`setter`（谁回答）、`length`、`side_effect`、`location`
 （`"instance"`/`"prototype"`/`"interface"`）与标志 `property_flags`（`"read_only"`/`"dont_enum"`/
 `"dont_delete"`）、`receiver_check`、`cross_origin_check`、`cross_origin_get_check`/
-`cross_origin_set_check`（`"check"`/`"do_not_check"`）；接口项除拦截器钩子外还有 `iterate`、
+`cross_origin_set_check`（`"check"`/`"do_not_check"`）；接口项除拦截器钩子外还有 `iteration_kind`、`iteration_methods`、`iteration_source`、
 `array`、`to_string_tag`、`length` 等。字段名与原生一致，取值用词，web 侧不导入任何 `pyv8.*Spec`。
 
 声明里出现文档根本没有的成员时，判定交给 `baseline_mismatch`：`error` 让页面建不起来，
@@ -233,12 +233,12 @@ kind 9` ✗，其中 1227 项来自持有者 `0` —— fixture 里 `<iframe>` �
 与 `tests/unit/test_idl_extractor.py::test_the_definition_kind_decides_the_interface_object` ✓。
 
 **重抽要连带重采画像** ✓：画像的一致性门按整份文件的 sha256 判 ✓ ⇒ 文档字节一变就得重采
-（`python -m pyv8c.tools.collect_environment --headed --window-size 1920,1080` ✓，同一台 Chrome
-154.0.8037.95 重采的 `bindings` 段与旧画像**逐项相同** ✓ —— `keys` 237、`exposed` 1234、
-`omits.prototype` 92、`omits.interface` 9、`array_protos` 62 ✓ —— 只有 `connection.downlink`/`rtt`
-随采集时刻浮动 ✓）。
+（`python -m pyv8c.tools.collect_environment --headed --window-size 1920,1080` ✓ —— **必须 headed** ✓，
+无头跑会改掉 `user_agent`/`viewport`/`screen` ✓；同一台 Chrome 155.0.8059.40 重采的 `bindings` 段
+与上一次**逐项相同** ✓ —— `keys` 237、`exposed` 1234、`omits.prototype` 91、`omits.interface` 8、
+`iteration_methods` 62 ✓ —— 只有 `connection.downlink`/`rtt` 随采集时刻浮动 ✓）。
 
-余下两族是既有差异 ✓（成员总数 10361 与全量测试未变 ✓ 印证）：常量落位 ✓（legacy 工厂类上多出
+余下两族是既有差异 ✓（成员总数 10367 与全量测试未变 ✓ 印证）：常量落位 ✓（legacy 工厂类上多出
 `*_NODE` ✓）、以及 `only-chrome 72` ✓。
 
 ResourceOwnership 强引用活动票据并通过一个 ResourceScope 清理入口释放。结果交付与登记释放分别记账；Fetcher 负责登记，ResourceServices 只路由。文档发现、条目登记与身份校验、完成事件分别由 discovery、tracker、completion 负责。tracker 的节点索引只经 add/take/clear 修改。

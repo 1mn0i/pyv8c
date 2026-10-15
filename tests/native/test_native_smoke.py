@@ -13,10 +13,11 @@ def _run(case):
     env["PYTHONPATH"] = os.pathsep.join(paths + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
     code = f"""
 import faulthandler
+import os
 faulthandler.enable()
 from pyv8c import Browser
 print('before-browser', flush=True)
-b = Browser()
+b = Browser(idl_path=os.environ.get("PYV8C_TEST_IDL_PATH"))
 c = b.new_profile()
 p = c.new_page()
 print('before-content', flush=True)

@@ -69,7 +69,8 @@ def test_environment_drives_the_client_hints():
             const data = navigator.userAgentData;
             return [data.platform, data.mobile,
                     data.brands.map(brand => brand.brand + '/' + brand.version)];
-        })()""") == ["Linux", False, ["Chromium/120", "Google Chrome/120", "Not A(Brand/99"]]
+        })()""") == ["Linux", False,
+                    ["Google Chrome/120", "Chromium/120", "Not(A:Brand/24"]]
 
         # The hints are derived from the user agent, and an explicit member wins.
         page.evaluate("""(() => {

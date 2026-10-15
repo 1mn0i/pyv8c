@@ -224,7 +224,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         if not self._response:
             return ""
         lines = []
-        for name, value in self._response.headers.fn_entries():
+        for name, value in self._response.headers._indexed_items():
             if name == "set-cookie":
                 continue
             if isinstance(value, (list, tuple)):

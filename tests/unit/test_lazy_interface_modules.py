@@ -16,6 +16,7 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
     """Use a child process because module imports are process-global caches."""
     code = textwrap.dedent("""
         import json
+        import os
         import sys
         from pyv8c import Browser
 
@@ -26,7 +27,7 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
             "worker": "pyv8c.web.workers.api",
             "filesystem": "pyv8c.web.bom.filesystem",
         }
-        browser = Browser(stub_logging="off")
+        browser = Browser(stub_logging="off", idl_path=os.environ.get("PYV8C_TEST_IDL_PATH"))
         try:
             page = browser.new_profile().new_page()
             output = {"startup": {key: module in sys.modules for key, module in modules.items()}}

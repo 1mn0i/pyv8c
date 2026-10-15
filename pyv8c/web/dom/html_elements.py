@@ -258,8 +258,17 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
     def get_clientHeight(self):
         from .layout import layout
         return int(round(layout(self).padding_box_height))
-    def get_scrollWidth(self): return self.get_clientWidth()
-    def get_scrollHeight(self): return self.get_clientHeight()
+    def get_scrollWidth(self):
+        """Everything inside the box, overflow included, never less than the client box."""
+        from .layout import layout
+        box = layout(self)
+        inside = box.overflow_right - box.border.get("left", 0.0) - box.border.get("right", 0.0)
+        return max(self.get_clientWidth(), int(round(inside)))
+    def get_scrollHeight(self):
+        from .layout import layout
+        box = layout(self)
+        inside = box.overflow_bottom - box.border.get("top", 0.0) - box.border.get("bottom", 0.0)
+        return max(self.get_clientHeight(), int(round(inside)))
     def fn_getBoundingClientRect(self, *_extra):
         from .layout import positioned_box
         from .rect import DOMRect

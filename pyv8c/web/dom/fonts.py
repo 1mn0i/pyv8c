@@ -375,7 +375,6 @@ class FontFaceSet(EventTarget):
     #: ``keys``/``values``/``entries`` and ``Symbol.iterator`` hand out pairs from here.
     __idl_overrides__ = {
         "interface": {
-            "iterate": "__v8_iterate__",
             "length": 0,
         }
     }
@@ -458,6 +457,7 @@ class FontFaceSet(EventTarget):
         face = self._face_argument(face, 'add')
         if face not in self._faces:
             self._faces.append(face)
+        return self
 
     def fn_delete(self, face=MISSING, *_extra):
         if face is MISSING:
@@ -513,18 +513,9 @@ class FontFaceSet(EventTarget):
             face.fn_load()
         return self._services.realm_services.promise_resolve(faces)
 
-    def fn_forEach(self, callback=MISSING, *_extra):
-        if callback is MISSING:
-            raise missing_error('FontFaceSet', 'forEach', 1, 0, constructor=False)
-        for face in self._all_faces():
-            callback(face, face, self)
-
-    def __v8_iterate__(self, index):
-        faces = self._all_faces()
-        if not 0 <= index < len(faces):
-            return None
-        face = faces[index]
-        return (face, face)
+    def __v8_iteration_source__(self):
+        items = iter(tuple((face, face) for face in self._all_faces()))
+        return lambda: next(items, None)
 
 
 def font_entries(environment=None, selected=None):

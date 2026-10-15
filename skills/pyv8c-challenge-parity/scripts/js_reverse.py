@@ -12,11 +12,11 @@ in pyv8c's own V8.
     python js_reverse.py diff    a.js b.js
     python js_reverse.py run     bundle.js --prelude table.js --snippet "JSON.stringify(names)"
 
-Every command is read-only and bounded; ``run`` needs pyv8c on ``PYTHONPATH`` and never touches
-the network.
+Static commands only read files; ``run`` uses an offline worker with a process timeout.
+It writes a JSON observation and adjacent evidence, and needs pyv8c on ``PYTHONPATH``.
 """
+
 import argparse
-import collections
 import pathlib
 import re
 import sys
@@ -29,9 +29,13 @@ SHORT = 40
 _QUOTED = r"(?:'(?:[^'\\]|\\.){1,%d}'|\"(?:[^\"\\]|\\.){1,%d}\")" % (SHORT, SHORT)
 
 #: ``['a','b','c','d','e','f']`` -- a table big enough to be worth reading.
-ARRAY_TABLE = re.compile(r"\[\s*(?:%s\s*,\s*){6,}(?:%s)?\s*,?\s*\]" % (_QUOTED, _QUOTED))
-OBJECT_TABLE = re.compile(r"\{\s*(?:[A-Za-z_$][\w$]*\s*:\s*%s\s*,\s*){6,}"
-                          r"(?:[A-Za-z_$][\w$]*\s*:\s*%s)?\s*,?\s*\}" % (_QUOTED, _QUOTED))
+ARRAY_TABLE = re.compile(
+    r"\[\s*(?:%s\s*,\s*){6,}(?:%s)?\s*,?\s*\]" % (_QUOTED, _QUOTED)
+)
+OBJECT_TABLE = re.compile(
+    r"\{\s*(?:[A-Za-z_$][\w$]*\s*:\s*%s\s*,\s*){6,}"
+    r"(?:[A-Za-z_$][\w$]*\s*:\s*%s)?\s*,?\s*\}" % (_QUOTED, _QUOTED)
+)
 
 #: Both quote styles, no lower bound here: the caller decides how long is interesting.  (A
 #: ``%d`` left unapplied in the pattern made the first version match nothing at all.)
@@ -58,7 +62,9 @@ def cmd_tables(arguments):
             members = [part for _offset, part in _literal_strings(body)]
             found.append((len(members), label, match.start(), members))
     if not found:
-        print("no candidate table found (try a smaller --min, or the table may be computed)")
+        print(
+            "no candidate table found (try a smaller --min, or the table may be computed)"
+        )
         return 0
     for count, label, offset, members in sorted(found, reverse=True)[: arguments.limit]:
         print(f"--- {label} table at {offset} with {count} members")
@@ -80,13 +86,15 @@ def cmd_calls(arguments):
         end = min(len(text), match.end() + arguments.context)
         snippet = " ".join(text[start:end].split())
         print(f"--- at {match.start()}")
-        print(f"    {snippet[:arguments.context * 2]}")
+        print(f"    {snippet[: arguments.context * 2]}")
         seen += 1
         if seen >= arguments.limit:
             break
     if not seen:
-        print(f"{arguments.symbol!r} never appears literally -- it may be computed "
-              f"(see 'tables') or spelled differently")
+        print(
+            f"{arguments.symbol!r} never appears literally -- it may be computed "
+            f"(see 'tables') or spelled differently"
+        )
     return 0
 
 
@@ -102,8 +110,9 @@ def cmd_pool(arguments):
     for _offset, value in _literal_strings(text):
         for separator in ("!", "|", "\x01", "~"):
             parts = [part for part in value.split(separator) if part]
-            if len(parts) >= arguments.min_members and \
-                    len(parts) >= 0.6 * (value.count(separator) + 1):
+            if len(parts) >= arguments.min_members and len(parts) >= 0.6 * (
+                value.count(separator) + 1
+            ):
                 pools.append((len(parts), separator, parts))
                 break
     if not pools:
@@ -134,16 +143,22 @@ def cmd_diff(arguments):
     """What strings and identifiers one bundle has that the other does not."""
     left, right = _read(arguments.left), _read(arguments.right)
     for label, pattern in (("strings", None), ("identifiers", IDENTIFIER)):
+
         def collect(text):
             if pattern is None:
-                return {value for _offset, value in _literal_strings(text)
-                        if len(value) >= arguments.min}
+                return {
+                    value
+                    for _offset, value in _literal_strings(text)
+                    if len(value) >= arguments.min
+                }
             return set(pattern.findall(text))
 
         only_left = sorted(collect(left) - collect(right))
         only_right = sorted(collect(right) - collect(left))
-        print(f"--- {label}: {len(only_left)} only in {pathlib.Path(arguments.left).name}, "
-              f"{len(only_right)} only in {pathlib.Path(arguments.right).name}")
+        print(
+            f"--- {label}: {len(only_left)} only in {pathlib.Path(arguments.left).name}, "
+            f"{len(only_right)} only in {pathlib.Path(arguments.right).name}"
+        )
         for value in only_left[:20]:
             print(f"    - {value[:110]}")
         for value in only_right[:20]:
@@ -152,56 +167,71 @@ def cmd_diff(arguments):
 
 
 def cmd_run(arguments):
-    """Let a real engine compute: a prelude (the table and its decoder) plus your snippet."""
-    import os
-    import threading
-    import time
+    """Execute a small offline expression with the bounded parity runner."""
+    import tempfile
+    from harness import main as run_parity
 
-    from pyv8c import Browser
-
-    #: A prelude is either a file with the table and its decoder, or that code inline.  Testing
-    #: for the file keeps both readings of the same flag without a second one to remember.
     prelude = ""
     if arguments.prelude == "-":
         prelude = sys.stdin.read()
     elif arguments.prelude:
         candidate = pathlib.Path(arguments.prelude)
-        prelude = candidate.read_text(encoding="utf-8") if candidate.is_file() \
-            else arguments.prelude
+        try:
+            is_file = candidate.is_file()
+        except OSError:
+            is_file = False
+        prelude = (
+            candidate.read_text(encoding="utf-8") if is_file else arguments.prelude
+        )
+    # No Browser/JS objects cross threads; even a synchronous infinite loop is bounded.
+    with tempfile.TemporaryDirectory(prefix="pyv8c-expression-") as temporary:
+        folder = pathlib.Path(temporary)
+        fixture = folder / "fixture.json"
+        import json
 
-    def load(url, request):
-        if not str(url).startswith(("http://", "https://")):
-            return None
-        return {"body": "<!doctype html><body>", "headers": {"content-type": "text/html"}}
-
-    browser = Browser(stub_logging="off", threaded_loaders=True, real_network=False,
-                      resource_loader=load)
-    try:
-        page = browser.new_profile().new_page()
-        page.set_content("<!doctype html><body>", url="https://reverse.test/")
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            try:
-                page.run_until_idle(timeout=0)
-            except BaseException:  # noqa: BLE001
-                pass
-            time.sleep(0.02)
-        result = page.evaluate(
-            "(function () { " + prelude + "\n; return (" + arguments.snippet + "); })()")
-        print(f"  result: {result}")
-    finally:
-        closer = threading.Thread(target=browser.close, daemon=True)
-        closer.start()
-        closer.join(10.0)
-        sys.stdout.flush()
-        os._exit(0)
+        fixture.write_text(
+            json.dumps(
+                {
+                    "url": "https://expression.test/",
+                    "resources": {
+                        "https://expression.test/": {
+                            "body": "<!doctype html><body>",
+                            "headers": {"content-type": "text/html"},
+                        }
+                    },
+                    "probe": "(function(){"
+                    + prelude
+                    + "\n;return ("
+                    + arguments.snippet
+                    + ");})()",
+                }
+            ),
+            encoding="utf-8",
+        )
+        argv = [
+            "--fixture",
+            str(fixture),
+            "--side",
+            "here",
+            "--seconds",
+            "0",
+            "--timeout",
+            str(arguments.timeout),
+            "--out",
+            arguments.out,
+        ]
+        if arguments.idl_path:
+            argv += ["--idl-path", arguments.idl_path]
+        return run_parity(argv)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
 
-    tables = sub.add_parser("tables", help="candidate lookup tables (arrays/objects of names)")
+    tables = sub.add_parser(
+        "tables", help="candidate lookup tables (arrays/objects of names)"
+    )
     tables.add_argument("path")
     tables.add_argument("--limit", type=int, default=4)
     tables.set_defaults(handler=cmd_tables)
@@ -213,7 +243,9 @@ def main(argv=None):
     calls.add_argument("--limit", type=int, default=8)
     calls.set_defaults(handler=cmd_calls)
 
-    pool = sub.add_parser("pool", help="packed string pools (one literal, split at run time)")
+    pool = sub.add_parser(
+        "pool", help="packed string pools (one literal, split at run time)"
+    )
     pool.add_argument("path")
     pool.add_argument("--min-members", type=int, default=8)
     pool.add_argument("--limit", type=int, default=3)
@@ -237,6 +269,9 @@ def main(argv=None):
     run.add_argument("path", nargs="?", default="")
     run.add_argument("--prelude", default="")
     run.add_argument("--snippet", required=True)
+    run.add_argument("--timeout", type=float, default=20)
+    run.add_argument("--idl-path")
+    run.add_argument("--out", default="expression-result.json")
     run.set_defaults(handler=cmd_run)
 
     arguments = parser.parse_args(argv)

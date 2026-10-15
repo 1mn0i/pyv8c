@@ -1,290 +1,616 @@
-"""Run one page in pyv8c and in headed Chrome, and diff what a probe answers.
+"""Serial Chrome/pyv8c evidence; each side owns an independently bounded process."""
 
-    python harness.py --list                          # the probes that ship here
-    python harness.py --probe ua --probe rect         # built-in fixtures, no site needed
-    python harness.py --url https://example.com --probe layout --probe style
-    python harness.py --url https://example.com --probe all --seconds 25
-    python harness.py --url https://example.com --probe layout --side here   # pyv8c only
-    python harness.py --url https://example.com --probe style \
-        --wait-for "!!document.querySelector('#app')"
-
-A probe is one JavaScript expression (see ``probes.py``). Both engines get the same
-page, the same viewport and the same settling time, so a difference in the answers is
-a difference in behaviour rather than in conditions. A probe that carries a fixture
-runs offline against it, which is how a finding on a live site becomes a permanent
-regression case that needs no access to that site.
-"""
+from __future__ import annotations
 import argparse
+import hashlib
 import json
-import logging
+import math
 import os
+from pathlib import Path
+import platform
+import subprocess
 import sys
-import threading
 import time
+import traceback
+from urllib.parse import urldefrag
+from process_runner import run_worker
+from probes import PROBES
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from probes import PROBES  # noqa: E402
-
-FIXTURE_URL = "https://probe.test/{}.html"
-VIEWPORT = {"width": 1920, "height": 1080}
-
-#: Where a real Chrome is, in the order worth trying. ``CHROME_PATH`` wins.
-CHROME_CANDIDATES = (
-    os.environ.get("CHROME_PATH"),
-    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-)
-
-
-def chrome_path():
-    for candidate in CHROME_CANDIDATES:
-        if candidate and os.path.exists(candidate):
-            return candidate
-    return None
+ENCODE = r"""(function(value) {
+ const seen=new Set();
+ function enc(v) {
+  if(v===undefined)return {type:'undefined'};
+  if(v===null)return {type:'null'};
+  const t=typeof v;
+  if(t==='number')return {type:t,value:Number.isFinite(v)?(Object.is(v,-0)?'-0':v):String(v)};
+  if(t==='string'||t==='boolean')return {type:t,value:v};
+  if(t==='bigint'||t==='symbol'||t==='function')return {type:t,value:String(v)};
+  if(Object.prototype.toString.call(v)==='[object Promise]')throw new TypeError('probe must return synchronously');
+  if(seen.has(v))return {type:'cycle'};
+  seen.add(v);let out;
+  if(Array.isArray(v))out={type:'array',value:Array.from({length:v.length},(_,i)=>
+    Object.prototype.hasOwnProperty.call(v,i)?enc(v[i]):{type:'missing'})};
+  else out={type:'object',value:Object.fromEntries(Object.keys(v).map(k=>[k,enc(v[k])]))};
+  seen.delete(v);return out;
+ }
+ return JSON.stringify(enc(value));
+})"""
+STATE = "({url:location.href,readyState:document.readyState,title:document.title,frames:frames.length})"
 
 
-def pump(page, seconds=0.0, until=None):
-    """Let the queue turn, for *seconds* or until *until* answers true.
+def write_json(path, value):
+    path = Path(path)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    temporary.replace(path)
 
-    ``run_until_idle(timeout=N)`` raises while a long page task runs, so the pump
-    never blocks: it asks for no waiting, sleeps a little, and checks the deadline.
-    pyv8c's JS errors derive from ``BaseException``, so both are caught here.
-    """
-    deadline = time.time() + seconds
-    while True:
-        try:
-            page.run_until_idle(timeout=0)
-        except BaseException:  # noqa: BLE001
-            pass
-        if until is not None:
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def source_state():
+    roots = []
+    for folder in Path(__file__).resolve().parents:
+        if (folder / "pyproject.toml").is_file():
+            roots = [folder, folder.parent / "_pyv8"]
+            break
+    output = []
+    for root in roots:
+        if not root.exists():
+            continue
+        entry = {"root": str(root)}
+        for key, args in [
+            ("head", ["rev-parse", "HEAD"]),
+            ("status", ["status", "--short"]),
+            ("diff", ["diff", "--binary"]),
+        ]:
             try:
-                if page.evaluate(until):
-                    return True
-            except BaseException:  # noqa: BLE001
-                pass
-        if time.time() >= deadline:
-            return until is None
-        time.sleep(0.2)
+                run = subprocess.run(
+                    ["git", "-C", str(root), *args], capture_output=True, timeout=10
+                )
+                entry[key if key != "diff" else "diff_sha256"] = (
+                    hashlib.sha256(run.stdout).hexdigest()
+                    if key == "diff"
+                    else run.stdout.decode("utf-8", errors="replace").strip()
+                )
+                if run.returncode:
+                    entry[key + "_error"] = run.stderr.decode("utf-8", errors="replace")
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                entry[key + "_error"] = str(exc)
+        output.append(entry)
+    return output
 
 
-def snapshot(page, probe):
-    """The probe's answer, or the error it raised, as plain data."""
+def observe(page, expression):
     try:
-        return page.evaluate(probe)
-    except BaseException as error:  # noqa: BLE001
-        return {"__error": f"{type(error).__name__}: {str(error)[:220]}"}
+        return {
+            "status": "value",
+            "value": json.loads(page.evaluate(f"{ENCODE}(({expression}))")),
+        }
+    except BaseException as exc:
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        return {
+            "status": "error",
+            "error": {"class": type(exc).__name__, "message": str(exc)},
+        }
 
 
-def target(name, spec, arguments):
-    """``(url, page_html)``: a probe with a fixture serves itself, else ``--url``."""
-    fixture = spec.get("fixture")
-    if fixture is not None:
-        return FIXTURE_URL.format(name), fixture[0]
-    if not arguments.url:
-        raise SystemExit(f"probe {name!r} has no fixture: pass --url <page>")
-    return arguments.url, None
+def worker(config, result_path):
+    side = config["side"]
+    start = time.monotonic()
+    events_path = Path(result_path).with_name("events.jsonl")
+    result = {
+        "schema": 1,
+        "side": side,
+        "status": "running",
+        "conditions": config,
+        "stages": {},
+        "observation": {"status": "not_observed"},
+        "errors": [],
+        "cleanup": {"status": "not_started"},
+        "evidence": {"events": str(events_path)},
+        "runtime": {"python": sys.version, "platform": platform.platform()},
+    }
+    browser = playwright = None
+    events = events_path.open("w", encoding="utf-8")
 
+    def record(kind, **data):
+        events.write(
+            json.dumps(
+                {"elapsed": time.monotonic() - start, "kind": kind, **data},
+                ensure_ascii=False,
+                default=repr,
+            )
+            + "\n"
+        )
+        events.flush()
 
-def run_here(url, page_html, probe, settle, wait_for):
-    """pyv8c's answer, with the viewport it reported (Chrome is matched to that)."""
-    from pyv8c import Browser
+    def save():
+        write_json(result_path, result)
 
-    #: A probe measures answers, not noise.  The engine logs through loguru, so ``disable`` is
-    #: what silences it -- ``logging.getLogger`` does nothing here.
+    def error(phase, exc):
+        result["errors"].append(
+            {
+                "phase": phase,
+                "class": type(exc).__name__,
+                "message": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+        )
+        record("error", phase=phase, error=str(exc))
+        result["status"] = "error"
+
+    def fixture_response(url):
+        return config["resources"].get(urldefrag(str(url))[0])
+
+    save()
     try:
-        from loguru import logger as _loguru
+        if side == "here":
+            from pyv8c import Browser
+            import pyv8
+            import pyv8._pyv8 as native
 
-        _loguru.disable("pyv8c")
-    except ImportError:  # a browser that never logs does not need loguru
-        logging.getLogger("pyv8c").setLevel(logging.WARNING)
-    options = {"stub_logging": "off", "threaded_loaders": True}
-    if page_html is not None:
-        def load(url, request):
-            """Serve the probe page, and only for a fetchable scheme.
+            result["runtime"].update(
+                native_binary=native.__file__,
+                native_sha256=sha(native.__file__),
+                pyv8_version=getattr(pyv8, "__version__", "unavailable"),
+                v8_version=native.v8_version(),
+            )
 
-            Answering ``data:`` (or any other non-http URL) with the page itself would feed a
-            frame the page that created it, so the probe would recurse: that looked exactly
-            like a wedge caused by the engine until it was bisected (2026-10-06).
-            """
-            if not str(url).startswith(("http://", "https://")):
-                return None
-            return {"body": page_html, "headers": {"content-type": "text/html"}}
+            def loader(url, request):
+                entry = fixture_response(url)
+                record(
+                    "fixture_request",
+                    url=str(url),
+                    method=request.get("method"),
+                    matched=entry is not None,
+                )
+                return (
+                    entry
+                    if entry is not None
+                    else {
+                        "status": 404,
+                        "body": "",
+                        "headers": {"content-type": "text/plain"},
+                    }
+                )
 
-        options.update(real_network=False, resource_loader=load)
-    browser = Browser(**options)
-    try:
-        page = browser.new_profile().new_page()
-        page.goto(url)
-        pump(page, settle, wait_for)
-        answer = snapshot(page, probe)
-        try:
-            viewport = {"width": int(page.evaluate("window.innerWidth")),
-                        "height": int(page.evaluate("window.innerHeight"))}
-        except Exception:  # noqa: BLE001
-            viewport = None
-        return answer, viewport
-    finally:
-        browser.close()
+            options = {
+                "real_network": config["mode"] == "online",
+                "stub_logging": "off",
+                "trace": config["trace"],
+                "threaded_loaders": False,
+                "environment": {
+                    "viewport.width": config["viewport"]["width"],
+                    "viewport.height": config["viewport"]["height"],
+                },
+            }
+            if config.get("idl_path"):
+                options["idl_path"] = config["idl_path"]
+            if config["mode"] == "fixture":
+                options["resource_loader"] = loader
+            if config["trace"]:
 
+                def trace_value(value):
+                    if value is pyv8.Undefined:
+                        return {"type": "undefined"}
+                    if value is pyv8.Null or value is None:
+                        return {"type": "null"}
+                    if isinstance(value, (str, int, float, bool)):
+                        return {"type": type(value).__name__, "value": value}
+                    if isinstance(value, (tuple, list)):
+                        return [trace_value(v) for v in value]
+                    return {
+                        "type": type(value).__module__ + "." + type(value).__qualname__
+                    }
 
-#: Wait this long for a close handshake, then leave that Chrome to the OS and carry on.
-CLOSE_SECONDS = 10.0
+                def trace(
+                    access,
+                    receiver,
+                    member,
+                    arguments,
+                    value,
+                    failure,
+                    construct,
+                    realm,
+                ):
+                    record(
+                        "trace",
+                        realm=str(realm),
+                        access=str(access),
+                        member=str(member),
+                        receiver_type=type(receiver).__qualname__,
+                        arguments=trace_value(arguments),
+                        value=trace_value(value),
+                        error=trace_value(failure),
+                        construct=bool(construct),
+                    )
 
-
-def _bounded(action, what, seconds=CLOSE_SECONDS):
-    """Run *action* on a daemon thread, giving up when it does not finish in time."""
-    done = threading.Event()
-
-    def run():
-        try:
-            action()
-        except BaseException:  # noqa: BLE001 - a browser already gone is not a failure
-            pass
-        finally:
-            done.set()
-
-    threading.Thread(target=run, daemon=True).start()
-    if not done.wait(seconds):
-        print(f"! {what} did not finish in {seconds:g}s; leaving that Chrome to the OS",
-              file=sys.stderr)
-
-
-def _ask_page(url, page_html, probe="window.__out", seconds=3.0, wait_for=None):
-    """Both answers for one page in one call: ``(pyv8c, Chrome)``.
-
-    The smallest thing that can support a conclusion: the same bytes asked the same question
-    on both sides, with no third-party traffic in the way.
-    """
-    mine, viewport = run_here(url, page_html, probe, seconds, wait_for)
-    theirs = run_chrome(url, page_html, probe, seconds, wait_for, viewport)
-    return mine, theirs
-
-
-def run_chrome(url, page_html, probe, settle, wait_for, viewport):
-    """Chrome's answer, on the viewport pyv8c reported when there is one."""
-    from playwright.sync_api import sync_playwright
-
-    playwright = sync_playwright().start()
-    try:
-        path = chrome_path()
-        #: With ``--enable-automation`` on, Cloudflare refuses SteamDB in real Chrome too,
-        #: which makes it useless as a reference.
-        options = {"headless": False,
-                   "ignore_default_args": ["--enable-automation"],
-                   "args": ["--disable-blink-features=AutomationControlled"]}
-        if path:
-            options["executable_path"] = path
+                options["trace_callback"] = trace
+            browser = Browser(**options)
+            result["runtime"].update(
+                idl_path=str(browser.idl_path), idl_sha256=sha(browser.idl_path)
+            )
+            profile_path = (
+                Path(__file__).resolve().parents[3]
+                / "pyv8c/data/chrome-environment.json"
+            )
+            if profile_path.is_file():
+                result["runtime"]["profile_sha256"] = sha(profile_path)
+            page = browser.new_profile().new_page()
         else:
-            print("! no system Chrome found: falling back to Playwright's chromium, "
-                  "whose user agent and fingerprints differ", file=sys.stderr)
-        browser = playwright.chromium.launch(**options)
-        try:
-            page = browser.new_page(viewport=viewport or VIEWPORT)
-            if page_html is not None:
-                page.route("**/*", lambda route: route.fulfill(
-                    status=200, body=page_html, headers={"content-type": "text/html"}))
-            page.goto(url, wait_until="load", timeout=60000)
-            if wait_for:
-                deadline = time.time() + settle
-                while time.time() < deadline:
+            from playwright.sync_api import sync_playwright
+
+            playwright = sync_playwright().start()
+            launch = {
+                "executable_path": config["chrome_path"],
+                "headless": config["headless"],
+            }
+            result["runtime"].update(
+                launch=launch,
+                automation_defaults="Playwright defaults; not hidden",
+                service_workers="block" if config["mode"] == "fixture" else "allow",
+            )
+            browser = playwright.chromium.launch(**launch)
+            result["runtime"]["chrome_version"] = browser.version
+            session = browser.new_browser_cdp_session()
+            try:
+                result["runtime"]["chrome_build"] = session.send("Browser.getVersion")
+                try:
+                    result["runtime"]["command_line"] = session.send(
+                        "Browser.getBrowserCommandLine"
+                    )
+                except Exception as exc:
+                    # This CDP method requires --enable-automation, which a locally
+                    # configured Playwright may omit. Never alter launch flags to
+                    # make metadata collection succeed. Inspect only owned children.
+                    result["runtime"]["command_line"] = {
+                        "status": "unavailable",
+                        "cdp_error": str(exc),
+                    }
                     try:
-                        if page.evaluate(wait_for):
-                            break
-                    except Exception:  # noqa: BLE001
-                        pass
-                    page.wait_for_timeout(200)
+                        import psutil
+
+                        candidates = [
+                            child.cmdline()
+                            for child in psutil.Process().children(recursive=True)
+                            if Path(child.exe()).resolve()
+                            == Path(config["chrome_path"]).resolve()
+                        ]
+                        result["runtime"]["command_line"]["owned_processes"] = (
+                            candidates
+                        )
+                        result["runtime"]["command_line"]["status"] = (
+                            "process_inspection" if candidates else "unavailable"
+                        )
+                    except Exception as failure:
+                        result["runtime"]["command_line"]["inspection_error"] = str(
+                            failure
+                        )
+            finally:
+                session.detach()
+            page = browser.new_page(
+                viewport=config["viewport"],
+                service_workers="block" if config["mode"] == "fixture" else "allow",
+            )
+            page.on(
+                "request",
+                lambda req: record(
+                    "request",
+                    url=req.url,
+                    method=req.method,
+                    resource_type=req.resource_type,
+                ),
+            )
+            page.on(
+                "response",
+                lambda resp: record("response", url=resp.url, status=resp.status),
+            )
+            page.on(
+                "requestfailed",
+                lambda req: record("request_failed", url=req.url, failure=req.failure),
+            )
+            page.on("pageerror", lambda exc: record("page_error", error=str(exc)))
+            page.on(
+                "console", lambda msg: record("console", level=msg.type, text=msg.text)
+            )
+            for event in ("domcontentloaded", "load"):
+                page.on(event, lambda event=event: record(event))
+            page.on(
+                "framenavigated",
+                lambda frame: record("frame_navigation", url=frame.url),
+            )
+            page.on("worker", lambda obj: record("worker", url=obj.url))
+            if config["mode"] == "fixture":
+
+                def route_request(route):
+                    entry = fixture_response(route.request.url)
+                    record(
+                        "fixture_request",
+                        url=route.request.url,
+                        matched=entry is not None,
+                    )
+                    if entry is None:
+                        route.fulfill(status=404, body="", content_type="text/plain")
+                    else:
+                        route.fulfill(
+                            status=entry.get("status", 200),
+                            body=entry.get("body", ""),
+                            headers=entry.get("headers", {}),
+                        )
+
+                page.route("**/*", route_request)
+        result["stages"]["navigation"] = {"status": "started"}
+        save()
+        record("navigation_start", url=config["url"])
+        if side == "chrome":
+            page.goto(
+                config["url"],
+                wait_until="commit",
+                timeout=config["navigation_timeout"] * 1000,
+            )
+        else:
+            page.goto(config["url"])
+        result["stages"]["navigation"] = {
+            "status": "returned",
+            "state": observe(page, STATE),
+        }
+        save()
+        record("navigation_returned")
+        deadline = time.monotonic() + config["seconds"]
+        ready = config.get("wait_for")
+        last_ready = {"status": "not_observed"}
+        while True:
+            if side == "here":
+                page.run_until_idle(timeout=0)
+            if ready:
+                last_ready = observe(page, f"Boolean(({ready}))")
+                if last_ready == {
+                    "status": "value",
+                    "value": {"type": "boolean", "value": True},
+                }:
+                    break
+                if last_ready["status"] == "error":
+                    record("ready_error", observation=last_ready)
+            if time.monotonic() >= deadline:
+                break
+            if side == "chrome":
+                page.wait_for_timeout(50)
             else:
-                page.wait_for_timeout(settle * 1000)
-            return snapshot(page, probe)
-        finally:
-            _bounded(browser.close, "browser.close()")
+                time.sleep(0.05)
+        passed = last_ready == {
+            "status": "value",
+            "value": {"type": "boolean", "value": True},
+        }
+        result["stages"]["ready"] = {
+            "status": ("reached" if passed else "not_reached")
+            if ready
+            else "not_requested",
+            "last": last_ready,
+        }
+        result["stages"]["final"] = observe(page, STATE)
+        result["runtime"]["environment"] = observe(
+            page,
+            "({ua:navigator.userAgent,language:navigator.language,"
+            "width:innerWidth,height:innerHeight,secure:isSecureContext})",
+        )
+        if config.get("probe"):
+            result["observation"] = observe(page, config["probe"])
+        result["status"] = "ok" if not ready or passed else "not_ready"
+        if any(
+            item["status"] == "error"
+            for item in (
+                result["observation"],
+                result["stages"]["final"],
+                result["runtime"]["environment"],
+                last_ready,
+            )
+        ):
+            result["status"] = "error"
+        save()
+    except BaseException as exc:
+        error("execution", exc)
+        save()
     finally:
-        _bounded(playwright.stop, "playwright.stop()")
+        result["cleanup"] = {"status": "running"}
+        save()
+        for label, action in [
+            ("browser", browser.close if browser else None),
+            ("playwright", playwright.stop if playwright else None),
+        ]:
+            if action:
+                try:
+                    action()
+                except BaseException as exc:
+                    error("cleanup." + label, exc)
+        result["cleanup"] = {
+            "status": "error"
+            if any(e["phase"].startswith("cleanup.") for e in result["errors"])
+            else "ok"
+        }
+        result["elapsed"] = time.monotonic() - start
+        save()
+        events.close()
 
 
-def diff(mine, theirs):
-    """Field by field, marking what differs; answers the differing keys."""
-    if not isinstance(mine, dict) or not isinstance(theirs, dict):
-        if mine == theirs:
-            print("    identical")
-            return []
-        print(f"    here   {json.dumps(mine, ensure_ascii=False)[:160]}")
-        print(f"    chrome {json.dumps(theirs, ensure_ascii=False)[:160]}")
-        return ["<scalar>"]
-    differing = []
-    for key in sorted(set(mine) | set(theirs)):
-        left, right = mine.get(key), theirs.get(key)
-        if left == right:
-            continue
-        differing.append(key)
-        print(f"!= {key:22} here {json.dumps(left, ensure_ascii=False)[:120]}")
-        print(f"   {'':22} chr  {json.dumps(right, ensure_ascii=False)[:120]}")
-    if not differing:
-        print("    no differences")
-    return differing
+def compare(left, right):
+    if any(item["status"] not in ("ok", "not_ready") for item in (left, right)):
+        return "inconclusive"
+    if any(item["status"] == "not_ready" for item in (left, right)):
+        return "target_not_reached"
+    if any(item["observation"]["status"] == "not_observed" for item in (left, right)):
+        return "not_observed"
+    return "equal" if left["observation"] == right["observation"] else "different"
 
 
-def describe():
-    print("probes:")
-    for name, spec in PROBES.items():
-        needs = "fixture" if spec.get("fixture") else "needs --url"
-        print(f"  {name:10} {needs:10} {spec['note']}")
+def load_fixture(path):
+    path = Path(path).resolve()
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    resources = manifest["resources"]
+    if urldefrag(manifest["url"])[0] not in resources:
+        raise ValueError("fixture must explicitly include its navigation URL")
+    for url, entry in resources.items():
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("fixture keys must be HTTP(S) URLs")
+        if "body_file" in entry:
+            entry["body"] = (path.parent / entry.pop("body_file")).read_text(
+                encoding="utf-8"
+            )
+    return manifest
 
 
-def main(argv):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--url", help="the page to run (probes with a fixture ignore it)")
-    parser.add_argument("--probe", action="append", default=[],
-                        help="probe name (repeatable, or `all`)")
-    parser.add_argument("--side", choices=("here", "chrome", "both"), default="both")
-    parser.add_argument("--seconds", type=float, default=6.0,
-                        help="how long to let the page settle (a fixture uses its own)")
-    parser.add_argument("--wait-for", help="a JS expression to wait for, instead of a fixed time")
-    parser.add_argument("--out", help="write every answer to this JSON file")
-    parser.add_argument("--list", action="store_true", help="list the probes and exit")
-    arguments = parser.parse_args(argv)
-
-    if arguments.list or not arguments.probe:
-        describe()
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--url")
+    target.add_argument("--fixture")
+    parser.add_argument("--probe", action="append", default=[])
+    parser.add_argument("--probe-file", help="UTF-8 JS expression")
+    parser.add_argument("--wait-for", help="JS expression that must become true")
+    parser.add_argument("--seconds", type=float, default=5)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=45,
+        help="total seconds per side, including close",
+    )
+    parser.add_argument("--navigation-timeout", type=float, default=15)
+    parser.add_argument("--idl-path", default=os.environ.get("PYV8C_TEST_IDL_PATH"))
+    parser.add_argument(
+        "--chrome-path",
+        default=os.environ.get("PYV8C_CHROME") or os.environ.get("CHROME_PATH"),
+    )
+    parser.add_argument(
+        "--headless", action="store_true", help="recorded variant; default headed"
+    )
+    parser.add_argument(
+        "--trace", action="store_true", help="pyv8c instrumentation variant"
+    )
+    parser.add_argument("--side", choices=["here", "chrome", "both"], default="both")
+    parser.add_argument("--out", default="parity-result.json")
+    parser.add_argument("--list", action="store_true")
+    args = parser.parse_args(argv)
+    if args.list:
+        for name, spec in PROBES.items():
+            print(
+                name,
+                "(fixture)" if spec.get("fixture") else "(needs URL)",
+                spec["note"],
+            )
         return 0
-
-    names = list(PROBES) if "all" in arguments.probe else arguments.probe
-    answers, differences = {}, 0
-    for name in names:
-        spec = PROBES.get(name)
-        if spec is None:
-            print(f"=== {name}: unknown probe (try --list)")
-            continue
-        url, page_html = target(name, spec, arguments)
-        settle = spec["fixture"][1] if spec.get("fixture") else arguments.seconds
-        print(f"=== {name}: {spec['note']}")
-        entry = answers.setdefault(name, {})
-        viewport = None
-        if arguments.side in ("here", "both"):
-            mine, viewport = run_here(url, page_html, spec["probe"], settle, arguments.wait_for)
-            entry["here"] = mine
-            entry["viewport"] = viewport
-            print(f"    here   {json.dumps(mine, ensure_ascii=False)[:150]}")
-        if arguments.side in ("chrome", "both"):
-            theirs = run_chrome(url, page_html, spec["probe"], settle,
-                                arguments.wait_for, viewport)
-            entry["chrome"] = theirs
-            print(f"    chrome {json.dumps(theirs, ensure_ascii=False)[:150]}")
-        if arguments.side == "both" and diff(entry["here"], entry["chrome"]):
-            differences += 1
-
-    if arguments.out:
-        with open(arguments.out, "w", encoding="utf-8") as handle:
-            json.dump(answers, handle, ensure_ascii=False, indent=1)
-        print("->", arguments.out)
-    print(f"== probes with differences: {differences}/{len(names)}")
-    return 0
+    if not (args.url or args.fixture or args.probe):
+        parser.error("select --url, --fixture or --probe")
+    if (
+        not all(
+            math.isfinite(v)
+            for v in (args.seconds, args.timeout, args.navigation_timeout)
+        )
+        or args.seconds < 0
+        or min(args.timeout, args.navigation_timeout) <= 0
+    ):
+        parser.error("invalid time budget")
+    if args.side != "here" and (
+        not args.chrome_path or not Path(args.chrome_path).is_file()
+    ):
+        parser.error("provide an existing --chrome-path; no browser fallback is used")
+    if args.fixture and args.probe:
+        parser.error("--fixture uses its own probe or --probe-file")
+    names = list(PROBES) if "all" in args.probe else args.probe or ["page"]
+    unknown = set(names) - set(PROBES) - {"page"}
+    if unknown:
+        parser.error("unknown probes: " + ", ".join(sorted(unknown)))
+    output = Path(args.out).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    evidence = output.parent / (output.stem + "-" + str(time.time_ns()))
+    evidence.mkdir()
+    summary = {
+        "schema": 1,
+        "source": source_state(),
+        "evidence": str(evidence),
+        "cases": {},
+    }
+    failed = False
+    for index, name in enumerate(names):
+        spec = PROBES.get(name, {})
+        config = {
+            "url": args.url,
+            "mode": "online",
+            "resources": {},
+            "probe": spec.get("probe"),
+            "seconds": args.seconds,
+            "wait_for": args.wait_for,
+            "trace": args.trace,
+            "timeout": args.timeout,
+            "navigation_timeout": args.navigation_timeout,
+            "viewport": {"width": 1280, "height": 720},
+            "headless": args.headless,
+            "idl_path": str(Path(args.idl_path).resolve()) if args.idl_path else None,
+            "chrome_path": str(Path(args.chrome_path).resolve())
+            if args.chrome_path
+            else None,
+        }
+        if args.fixture:
+            manifest = load_fixture(args.fixture)
+            config.update(
+                url=manifest["url"],
+                resources=manifest["resources"],
+                mode="fixture",
+                probe=manifest.get("probe"),
+                wait_for=args.wait_for or manifest.get("ready"),
+            )
+        elif not args.url and spec.get("fixture"):
+            url = "https://probe.test/" + name + ".html"
+            config.update(
+                url=url,
+                mode="fixture",
+                resources={
+                    url: {
+                        "body": spec["fixture"][0],
+                        "headers": {"content-type": "text/html"},
+                    }
+                },
+            )
+        if not config["url"]:
+            parser.error(f"{name} requires --url")
+        if args.probe_file:
+            config["probe"] = Path(args.probe_file).read_text(encoding="utf-8")
+        entry = summary["cases"][name] = {}
+        for side in ["here", "chrome"] if args.side == "both" else [args.side]:
+            directory = evidence / f"{index}-{side}"
+            directory.mkdir()
+            entry[side] = run_worker(
+                Path(__file__), dict(config, side=side), directory, args.timeout
+            )
+            failed |= entry[side]["status"] != "ok"
+            write_json(output, summary)
+        if args.side == "both":
+            entry["comparison"] = compare(entry["here"], entry["chrome"])
+            failed |= entry["comparison"] == "different"
+        print(
+            name,
+            {
+                side: entry[side]["status"]
+                for side in ("here", "chrome")
+                if side in entry
+            },
+            entry.get("comparison", "single-side"),
+        )
+    write_json(output, summary)
+    print("Evidence:", output)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    if len(sys.argv) == 3 and sys.argv[1] == "--worker":
+        if sys.stdin.readline().strip() != "start":
+            raise SystemExit(2)
+        cfg = Path(sys.argv[2])
+        worker(
+            json.loads(cfg.read_text(encoding="utf-8")), cfg.with_name("result.json")
+        )
+    else:
+        raise SystemExit(main())

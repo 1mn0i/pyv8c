@@ -127,3 +127,21 @@ def thread_leak_check():
 
 
 
+
+
+def pytest_addoption(parser):
+    """Select a generated baseline explicitly without replacing the shipped archive."""
+    import os
+    parser.addoption("--idl-path", default=os.environ.get("PYV8C_TEST_IDL_PATH"),
+                     help="IDL document used by runtime tests and their subprocesses")
+
+
+def pytest_configure(config):
+    selected = config.getoption("--idl-path")
+    if selected:
+        import os
+        from pathlib import Path
+        from pyv8c.engine import idl
+        target = Path(selected).resolve()
+        idl.DEFAULT_IDL_PATH = target
+        os.environ["PYV8C_TEST_IDL_PATH"] = str(target)

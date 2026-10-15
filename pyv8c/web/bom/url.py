@@ -11,7 +11,6 @@ from ...engine.features import LazyValueStore
 from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
-    callback_value,
     dictionary,
     dom_string,
     interface_value,
@@ -40,17 +39,12 @@ def _optional_value(value):
     return str(dom_string(value))
 
 
-def _js_call(fn, this, *args):
-    if hasattr(fn, "call"):
-        return fn.call(this, *args)
-    return fn(*args)
 
 
 @interface('URLSearchParams', None)
 class URLSearchParams:
 
     #: ``keys``/``values``/``entries`` and ``Symbol.iterator`` hand out pairs from here.
-    __idl_overrides__ = {"interface": {"iterate": "__v8_iterate__"}}
 
     def __init__(self, init='', *_extra, _url=None, **_):
         if init is pyv8.Undefined:
@@ -167,30 +161,21 @@ class URLSearchParams:
     def get_size(self):
         self._refresh(); return len(self._items)
 
-    def __v8_iterate__(self, index):
-        """The pair at *index*, re-read so a view stays live; None ends the walk."""
-        self._refresh()
-        if index >= len(self._items):
-            return None
-        return self._items[index]
+    def __v8_iteration_source__(self):
+        index = 0
+        def next_pair():
+            nonlocal index
+            self._refresh()
+            if index >= len(self._items): return None
+            pair = self._items[index]
+            index += 1
+            return pair
+        return next_pair
 
     def fn_toString(self, *_extra):
         self._refresh()
         return form_urlencoded(self._items)
 
-    def fn_forEach(self, callback=MISSING, this_arg=pyv8.Undefined, *_extra):
-        if callback is MISSING:
-            raise missing_error('URLSearchParams', 'forEach', 1, 0, constructor=False)
-        callback = callback_value(callback)
-        # Indexed, not over a copy: a removal skips the entry that takes its place.
-        index = 0
-        while True:
-            self._refresh()
-            if index >= len(self._items):
-                return
-            name, value = self._items[index]
-            _js_call(callback, this_arg, value, name, self)
-            index += 1
 
 
 def _url_values(url):

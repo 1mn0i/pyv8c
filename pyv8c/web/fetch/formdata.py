@@ -9,20 +9,15 @@ build does not implement yet, so the blob is stored as it is.
 import pyv8
 
 from ...idl import interface
-from ...foundation.arguments import (MISSING, callback_value, dom_string, missing_error,
+from ...foundation.arguments import (MISSING, dom_string, missing_error,
                                      usv_string)
-from ..dom.mixins import ReadOnlyIndexedPropertyMixin
 from ..fileapi.blob import Blob
 
 
-def _js_call(fn, this, *args):
-    if hasattr(fn, "call"):
-        return fn.call(this, *args)
-    return fn(*args)
 
 
 @interface('FormData', None)
-class FormData(ReadOnlyIndexedPropertyMixin):
+class FormData:
     def __init__(self, *_extra, **_):
         self._items = []
 
@@ -84,29 +79,23 @@ class FormData(ReadOnlyIndexedPropertyMixin):
         key = self._name(name)
         return [value for item_name, value in self._items if item_name == key]
 
+    def __v8_iteration_source__(self):
+        index = 0
+        def next_pair():
+            nonlocal index
+            if index >= len(self._items): return None
+            pair = self._items[index]
+            index += 1
+            return pair
+        return next_pair
+
     def fn_has(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('FormData', 'has', 1, 0, constructor=False)
         return bool(self._indices(self._name(name)))
 
-    def fn_keys(self, *_extra):
-        return [name for name, _ in self._items]
 
-    def fn_values(self, *_extra):
-        return [value for _, value in self._items]
 
-    def fn_entries(self, *_extra):
-        return [(name, value) for name, value in self._items]
 
-    def fn_forEach(self, callback=MISSING, this_arg=pyv8.Undefined, *_extra):
-        if callback is MISSING:
-            raise missing_error('FormData', 'forEach', 1, 0, constructor=False)
-        callback = callback_value(callback)
-        index = 0
-        while index < len(self._items):
-            name, value = self._items[index]
-            _js_call(callback, this_arg, value, name, self)
-            index += 1
-        return pyv8.Undefined
 
 __all__ = ["FormData"]

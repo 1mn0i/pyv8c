@@ -392,7 +392,7 @@ page.evaluate("chrome.csi()")
 - 构造可以是字符串（按 URL 标准解析：只去掉**一个**前导 `?`，`+` 是空格，非法的百分号序列原样保留）、另一个 `URLSearchParams`（复制它**当前**的列表）、`[name, value]` 对的序列或记录对象；序列里有非二元组抛 `TypeError`。
 - 编码与表单同一套（`application/x-www-form-urlencoded`）：只保留字母数字与 `*-._`，空格写 `+`，其余按 UTF-8 百分号编码，所以 `~` 写成 `%7E`。
 - `sort()` 稳定地按 **UTF-16 码元**比较名字；`forEach(callback, thisArg)` 的实参是 `(value, name, params)`、`this` 是 `thisArg`，并且和标准一样按索引遍历**活列表**——回调里删掉的条目会被跳过。
-- `keys()`/`values()`/`entries()` 返回真正的迭代器：`next()`、`[Symbol.iterator]()` 返回自身、每次 `next()` 重读列表（所以是活的），`[Symbol.iterator]` 就是 `entries` 本身，`for..of`、展开与 `Array.from` 都按 Chrome 的行为工作。视图由绑定按 `iterate="__v8_iterate__"` 声明的**迭代源**安装（`IdlSpec.iterate`，宿主只回答"第 N 项是什么"），所以它们是 `[native code]` 的原生函数，Worker 全局同样有。
+- `keys()`/`values()`/`entries()` 返回真正的迭代器：`next()`、`[Symbol.iterator]()` 返回自身、每次 `next()` 重读列表（所以是活的），`[Symbol.iterator]` 就是 `entries` 本身，`for..of`、展开与 `Array.from` 都按 Chrome 的行为工作。视图由绑定按 `iteration_source="__v8_iteration_source__"` 声明的**迭代源**安装（`IdlSpec.iteration_source`，宿主为每个迭代器创建独立的无参数游标），所以它们是 `[native code]` 的原生函数，Worker 全局同样有。
 
 已知缺口：`new URL('http://h/p?')` 会丢掉空查询串的 `?`（URL 解析器不保留"有查询串但为空"的状态，与这里的视图行为无关）。
 

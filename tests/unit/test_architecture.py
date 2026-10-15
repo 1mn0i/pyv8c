@@ -165,7 +165,7 @@ def test_the_idl_and_the_binder_each_have_one_home():
     # The offline extractor writes documents, so the writer, the version it writes and the two
     # value vocabularies it states have to stay reachable there -- one statement, so what the
     # document and the engine agree on changes in one place.
-    assert "from ..engine.idl import ArrayProto, DefinitionKind, IDL_VERSION, write_idl" in (
+    assert "from ..engine.idl import DefinitionKind, IDL_VERSION, write_idl" in (
         extractor_source)
 
 

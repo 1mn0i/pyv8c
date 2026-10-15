@@ -66,11 +66,13 @@ def test_the_relative_sizes_of_a_real_tree_match_the_computed_value(page):
       return { em: read('em'), pct: read('pct'), smaller: read('smaller'),
                inner: read('inner') };
     })()""")
-    # Chrome on the same machine: 32px/38, 24px/29, 13.3333px/16, 36px/43.
-    assert answer["em"] == ["32px", 38], answer
-    assert answer["pct"] == ["24px", 29], answer
-    assert answer["smaller"] == ["13.3333px", 16], answer
-    assert answer["inner"] == ["36px", 43], answer
+    # Chrome 155 on the same machine, reading the same page: the line box is the face's own
+    # metrics rounded to whole pixels and added up, so 32px Arial is 29 + 7 + 1 = 37, 24px is
+    # 22 + 5 + 1 = 28, 13.3333px is 12 + 3 + 0 = 15 and 36px is 33 + 8 + 1 = 42.
+    assert answer["em"] == ["32px", 37], answer
+    assert answer["pct"] == ["24px", 28], answer
+    assert answer["smaller"] == ["13.3333px", 15], answer
+    assert answer["inner"] == ["36px", 42], answer
 
 
 def test_a_rem_size_reads_the_root_not_the_parent(page):
@@ -81,4 +83,5 @@ def test_a_rem_size_reads_the_root_not_the_parent(page):
       const el = document.getElementById('rem');
       return [getComputedStyle(el).fontSize, el.offsetHeight];
     })()""")
-    assert answer == ["30px", 36], answer
+    # 30px of the default serif face: 27 + 6 + 1, the same three numbers a real Chrome adds.
+    assert answer == ["30px", 34], answer

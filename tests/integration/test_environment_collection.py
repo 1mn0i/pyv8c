@@ -46,7 +46,7 @@ def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, c
     assert "animationWorklet" in objects["CSS"]
     assert "supports" not in objects["CSS"]
     # 鈥nd the array word each interface is measured to have in this release.
-    protos = surface["array_protos"]
+    protos = surface["iteration_methods"]
     assert protos, "no array value was measured"
     assert protos["NodeList"] == ArrayProto.iterable
     assert protos["HTMLCollection"] == ArrayProto.iterator

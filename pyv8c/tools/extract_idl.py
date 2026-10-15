@@ -8,7 +8,7 @@ import os
 import re
 from pathlib import Path
 
-from ..engine.idl import ArrayProto, DefinitionKind, IDL_VERSION, write_idl
+from ..engine.idl import DefinitionKind, IDL_VERSION, write_idl
 
 INTERFACE_DECL = re.compile(r"const\s+WrapperTypeInfo\s+V8(?P<binding>[A-Za-z0-9_]+)::wrapper_type_info_\s*\{")
 FUNCTION_DECL = re.compile(r"(?:void|v8::Local\s*<\s*v8::Value\s*>)\s+(?P<name>[A-Za-z0-9_]+Callback)\s*\([^)]*\)\s*\{")
@@ -430,6 +430,19 @@ def _cross_origin_handler_names(text):
     return found
 
 
+ITERATION_BITS = {"iterator": 1, "entries": 2, "keys": 4, "values": 8, "forEach": 16}
+
+
+def _generated_iteration(text):
+    """Keep implementation evidence until fragments and source IDL are reconciled."""
+    intrinsic = re.findall(r"SetIntrinsicDataProperty\s*\([\s\S]*?v8::kArrayProto_(values|entries|keys|forEach)[^;]*;", text)
+    aliases = re.findall(r'prototype_object->Get\(\s*context,\s*V8(?:Atomic)?String\(isolate,\s*"(entries|values)"\)\)[\s\S]*?prototype_object->DefineOwnProperty\(\s*context,\s*v8::Symbol::GetIterator', text)
+    # Read the actual alias assignment rather than inferring it from member names.
+    aliases = aliases if 'Symbol::GetIterator' in text and 'DefineOwnProperty' in text else []
+    return {"indexed": bool(intrinsic), "methods": sorted(set(re.findall(r'SetIntrinsicDataProperty\s*\(\s*V8(?:Atomic)?String\([^;]*?"(entries|keys|values|forEach)"[^;]*kArrayProto_', text))),
+            "sync": bool(re.search(r"IsReturnTypeCompatible\s*<\s*SyncIterator\s*<", text)), "defaults": sorted(set(aliases))}
+
+
 def extract_template(text):
     """Extract V8 template switches and interceptor callback names.
 
@@ -458,7 +471,7 @@ def extract_template(text):
         "unconstructable": bool(re.search(r"(?:Set(?:Call|Construct)Handler|Unconstructable)[^;]*kDontAll", text)),
         #: The generated tables install the iterator; the four named methods come from the IDL
         #: (``iterable<>``/``maplike<>``/``setlike<>``) or from members the tables declare.
-        "array": ArrayProto.iterator if re.search(r"SetIntrinsicDataProperty[^;]*Array|ArrayPrototype", text) else None,
+        "_iteration_evidence": _generated_iteration(text),
         "call_handler": None,
         "access_check": None,
     }
@@ -515,11 +528,12 @@ def _merge_template(current, incoming):
     """Merge template evidence from split generated binding fragments."""
     result = dict(current or {})
     for key, value in (incoming or {}).items():
-        if key == "array":
-            #: Fragments may disagree; the fuller shape wins -- a fact about the interface.
-            strength = {ArrayProto.iterable: 2, ArrayProto.iterator: 1}
-            if strength.get(value, 0) > strength.get(result.get(key), 0):
-                result[key] = value
+        if key == "_iteration_evidence":
+            previous = result.get(key) or {}
+            result[key] = {"indexed": bool(previous.get("indexed") or value.get("indexed")),
+                           "sync": bool(previous.get("sync") or value.get("sync")),
+                           "methods": sorted(set(previous.get("methods", ())) | set(value.get("methods", ()))),
+                           "defaults": sorted(set(previous.get("defaults", ())) | set(value.get("defaults", ())))}
             continue
         if key == "handlers":
             handlers = result.setdefault("handlers", {})
@@ -552,46 +566,45 @@ def _exposure(text):
     return result
 
 
-#: The IDL declarations that publish the iterator **and** the four named methods.  ``async
-#: iterable<T>`` publishes ``@@asyncIterator`` alone, which no word here states.
-_IDL_ITERABLE = re.compile(r"\b(?:iterable|maplike|setlike)\s*<")
+def _idl_iteration(body):
+    body = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", "", body)
+    declarations = []
+    pattern = re.compile(r"\b(?:(async)\s+)?(iterable|maplike|setlike)\s*<")
+    for match in pattern.finditer(body):
+        closing = balanced_end(body, match.end()-1, "<", ">")
+        types = split_top_level(body[match.end():closing-1])
+        kind = ("async" if match[1] else "set" if match[2] == "setlike" else
+                "pair" if match[2] == "maplike" or len(types) == 2 else "indexed")
+        declarations.append(kind)
+    if len(set(declarations)) > 1:
+        raise ValueError(f"conflicting iteration declarations: {declarations}")
+    return declarations[0] if declarations else None
 
-
-def _idl_array_shape(body):
-    """``ArrayProto.iterable`` when the IDL publishes the four named methods, else ``None``.
-
-    This is the reading the generated tables cannot give: ``NodeList``'s binding installs the
-    iterator intrinsic but never lists ``entries``/``keys``/``values``/``forEach``, so without
-    the IDL it reads as the iterator alone.  Measured against Chrome on 2026-10-07, 12 of the
-    908 interfaces a window exposes were misread that way.
-    """
-    for match in _IDL_ITERABLE.finditer(body):
-        before = body[:match.start()].rstrip().split()[-1:]
-        if before == ["async"]:
-            continue
-        return ArrayProto.iterable
-    return None
 
 
 def _idl_metadata(root):
     """Read Blink IDL extended attributes needed by V8 template setup."""
     metadata = {}
+    iteration_declarations = {}
     for path in sorted(root.rglob("*.idl")):
         text = path.read_text(encoding="utf-8", errors="ignore")
         for match in IDL_INTERFACE_DECL.finditer(text):
-            if match.group("partial"):
-                # A partial declaration adds members to an interface another file owns.
-                # Its body must not decide the interface's exposure, constructor or
-                # constants: reading it as the interface's own replaced URL's
-                # ``[Exposed=(Window,Worker,ShadowRealm)] constructor(...)`` with a
-                # partial's silence, which is why ``new URL()`` was refused.
-                continue
             try:
                 end = balanced_end(text, text.find("{", match.start()))
             except ValueError:
                 continue
             attrs, body = match.group("attrs"), text[text.find("{", match.start()) + 1:end - 1]
             attrs = attrs or ""
+            iteration = _idl_iteration(body)
+            name = match.group("name")
+            if iteration:
+                previous_kind = iteration_declarations.get(name)
+                if previous_kind and previous_kind != iteration:
+                    raise ValueError(f"conflicting iteration for {name} in {path}")
+                iteration_declarations[name] = iteration
+            if match.group("partial"):
+                # Partial iteration evidence is merged without replacing exposure or constructors.
+                continue
             exposure_match = re.search(
                 r"\bExposed\s*=\s*(?:\(([^)]*)\)|(\*)|([A-Za-z_][A-Za-z0-9_]*))", attrs)
             exposed_in = []
@@ -608,6 +621,10 @@ def _idl_metadata(root):
                 constants[constant.group(1)] = {"expression": expression,
                                                 "value": _primitive_constant(expression),
                                                 "resolved": _primitive_constant(expression) is not None}
+            previous = metadata.get(match.group("name"), {})
+            iteration = _idl_iteration(body)
+            if previous.get("iteration") and iteration and previous["iteration"] != iteration:
+                raise ValueError(f"conflicting iteration for {match.group('name')} in {path}")
             metadata[match.group("name")] = {
                 "parent": match.group("parent"),
                 "properties": _idl_property_families(body),
@@ -618,8 +635,10 @@ def _idl_metadata(root):
                 "allow_call": bool(re.search(r"\bLegacyCallAsFunction\b", attrs)),
                 "constants": constants,
                 "aliases": re.findall(r"\bLegacyWindowAlias\s*=\s*([A-Za-z_][A-Za-z0-9_]*)", attrs),
-                "array": _idl_array_shape(body),
+                "iteration": iteration or previous.get("iteration"),
             }
+    for name, kind in iteration_declarations.items():
+        if name in metadata: metadata[name]["iteration"] = kind
     return metadata
 
 
@@ -681,32 +700,46 @@ def _apply_idl_metadata(extracted, metadata):
                     member.update(info["constants"][member["name"]])
 
 
-def _publishes_the_four(item):
-    """Whether the generated tables declare the four named iterator methods as operations."""
-    names = {member.get("name")
-             for member in (item.get("members") or {}).get("prototype") or []
-             if member.get("kind") == "operation"}
-    return {"entries", "keys", "values", "forEach"} <= names
 
-
-def _apply_array_shape(extracted, metadata):
-    """State what each interface borrows from ``Array.prototype``, as the bits ``array`` carries.
-
-    Three readings, strongest first: the interface's IDL (``iterable<>``, ``maplike<>`` or
-    ``setlike<>`` publishes the four named methods as well as the iterator), the four operations
-    the generated tables declare, and the intrinsic those tables install (the iterator alone).
-    A run without ``--idl-root`` still has the last two, and an interface that borrows nothing
-    carries no key at all rather than a false one.
-    """
+def _apply_iteration(extracted, metadata):
     for name, item in extracted.items():
-        if name.startswith("_") or not isinstance(item, dict):
-            continue
+        if name.startswith("_") or not isinstance(item, dict): continue
         template = item.setdefault("template", {})
-        info = metadata.get(name) or {}
-        if info.get("array") == ArrayProto.iterable or _publishes_the_four(item):
-            template["array"] = ArrayProto.iterable
-        elif not template.get("array"):
-            template.pop("array", None)
+        evidence = template.pop("_iteration_evidence", {})
+        template.pop("array", None)
+        declared = (metadata.get(name) or {}).get("iteration")
+        if declared == "async":
+            item["async_iteration"] = {"supported": False}
+            continue
+        defaults = evidence.get("defaults", ())
+        if len(defaults) > 1 or (evidence.get("indexed") and evidence.get("sync")):
+            raise ValueError(f"conflicting iteration evidence for {name}: {item.get('sources')}")
+        if evidence.get("indexed"):
+            kind, default = "indexed", "values"
+        elif evidence.get("sync"):
+            if declared in ("pair", "set"):
+                kind = declared
+            elif len(defaults) == 1:
+                kind = "pair" if defaults[0] == "entries" else "set"
+            else:
+                raise ValueError(f"unresolved sync iteration for {name}: {item.get('sources')}")
+            default = "entries" if kind == "pair" else "values"
+        else:
+            # Source-only fragments must not fabricate installation absent from generated code.
+            if declared and not item.get("parent"):
+                raise ValueError(f"missing generated iteration evidence for {name}: {item.get('sources')}")
+            continue
+        if declared and declared != kind:
+            raise ValueError(f"IDL/generated iteration conflict for {name}: {declared}/{kind}, {item.get('sources')}")
+        if defaults and defaults[0] != default:
+            raise ValueError(f"default iterator conflict for {name}: {defaults}/{default}")
+        if kind == "indexed":
+            methods = evidence.get("methods", ())
+        else:
+            methods = sorted({member["name"] for entries in item.get("members", {}).values()
+                              for member in entries if member.get("name") in ITERATION_BITS and member.get("kind") == "operation"})
+        item["iteration"] = {"kind": kind, "default": default, "methods": methods, "iterator": True}
+
 
 
 def _filename_interface(path, text):
@@ -787,7 +820,7 @@ def extract(root, idl_root=None):
         _apply_idl_metadata(result, metadata)
         findings = _idl_handler_findings(result, metadata)
     #: The IDL raises the reading to ``"iterable"`` where the tables never list the four.
-    _apply_array_shape(result, metadata)
+    _apply_iteration(result, metadata)
     result["_report"] = _report(result, duplicate_sources, parse_failures, findings)
     return result
 
@@ -858,8 +891,7 @@ def _compact_member_callback_metadata(member):
 def idl_interfaces(extracted):
     """The interfaces a binding reads, and nothing a reviewer would.
 
-    ``array`` is stated as the bits the interface borrows (``pyv8.ArrayProto.iterator`` or
-    ``pyv8.ArrayProto.iterable``, absent when it borrows nothing).
+    ``iteration`` records synchronous data semantics, installed views and the default alias.
     """
     output = {}
     for name, source in extracted.items():
