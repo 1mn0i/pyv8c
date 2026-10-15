@@ -18,15 +18,6 @@
 using namespace v8;
 
 
-enum FlagIterator {
-    iterator = 1 << 0,
-    entries = 1 << 1,
-    keys = 1 << 2,
-    values = 1 << 3,
-    forEach = 1 << 4,
-};
-
-
 enum FlagImmutable {
     instance = 1 << 0,
     prototype = 1 << 1,
@@ -306,7 +297,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     }
 
     // After the declared methods, so an iteration source replaces their views.
-    if (!install_pair_iterable(isolate, self, js_self, templ, sig))
+    if (!install_sync_iterable(isolate, self, js_self, templ, sig))
     {
         Py_DECREF((PyObject*)self);
         return NULL;
@@ -343,22 +334,6 @@ py_class_new(PyObject *cls, context_c * py_ctx)
         templ->InstanceTemplate()->SetCodeLike();
     }
         
-    if (config.array != 0)
-    {
-        int flag = (int)config.array;
-
-        if ((flag & FlagIterator::iterator) != 0)
-            templ->PrototypeTemplate()->SetIntrinsicDataProperty(v8::Symbol::GetIterator(isolate), v8::kArrayProto_values, v8::DontEnum);
-        if ((flag & FlagIterator::entries) != 0)
-            templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "entries"), v8::kArrayProto_entries, v8::None);
-        if ((flag & FlagIterator::keys) != 0)
-            templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "keys"), v8::kArrayProto_keys, v8::None);
-        if ((flag & FlagIterator::values) != 0)
-            templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "values"), v8::kArrayProto_values, v8::None);
-        if ((flag & FlagIterator::forEach) != 0)
-            templ->PrototypeTemplate()->SetIntrinsicDataProperty(V8String(isolate, "forEach"), v8::kArrayProto_forEach, v8::None);
-    }
-
     if (config.immutable != 0)
     {
         int flag = (int)config.immutable;
@@ -809,7 +784,7 @@ delete_constructor(py_class* self, Local<Context> context)
     // above does not always reach; finished before a page can look at either.
     if (self->iterator_prototype == 0) {
         self->iterator_prototype = 1;
-        install_pair_iterator_prototype(self, context);
+        install_sync_iterator_prototype(self, context);
     }
 
     if (self->parent != NULL) {

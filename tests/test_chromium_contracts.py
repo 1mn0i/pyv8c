@@ -291,14 +291,16 @@ class TestChromiumContracts(unittest.TestCase):
             __v8_idl_spec__ = IdlSpec(
                 constructor_behavior=pyv8.FlagConstructor.kAll,
                 has_constructor=1,
-                iterate="__v8_iterate__",
+                iteration_kind=pyv8.IterationKind.pair,
+                iteration_source="__v8_iteration_source__",
             )
 
             def __init__(self, win=None):
                 self.items = [("a", "1"), ("b", "2")]
 
-            def __v8_iterate__(self, index):
-                return self.items[index] if index < len(self.items) else None
+            def __v8_iteration_source__(self):
+                items = iter(tuple(self.items))
+                return lambda: next(items, None)
 
         self.context.expose(PairSource)
         result = snapshot(self.context.exec_js(
@@ -347,7 +349,8 @@ class TestChromiumContracts(unittest.TestCase):
             __v8_idl_spec__ = IdlSpec(
                 name_get="__v8_name_get__",
                 index_get="__v8_index_get__",
-                array=pyv8.ArrayProto.iterable,
+                iteration_kind=pyv8.IterationKind.indexed,
+                array_methods=pyv8.ArrayProto.iterable,
             )
 
             def __init__(self):
@@ -385,7 +388,7 @@ class TestChromiumContracts(unittest.TestCase):
         )
 
     def test_the_two_array_values_are_the_two_shapes_chrome_has(self):
-        """``array=pyv8.ArrayProto.iterator`` borrows the iterator alone; ``.iterable`` borrows five.
+        """``array_methods=pyv8.ArrayProto.iterator`` borrows the iterator alone; ``.iterable`` borrows five.
 
         Measured against Chrome (2026-10-07): an interface publishes one of these two shapes and
         never a mix -- ``HTMLCollection`` has the iterator without the named methods, a
@@ -404,11 +407,13 @@ class TestChromiumContracts(unittest.TestCase):
 
         class IteratorOnly(Collection):
             __v8_idl_spec__ = IdlSpec(name_get="__v8_name_get__", index_get="__v8_index_get__",
-                                      array=pyv8.ArrayProto.iterator)
+                                      iteration_kind=pyv8.IterationKind.indexed,
+                                      array_methods=pyv8.ArrayProto.iterator)
 
         class FullIterable(Collection):
             __v8_idl_spec__ = IdlSpec(name_get="__v8_name_get__", index_get="__v8_index_get__",
-                                      array=pyv8.ArrayProto.iterable)
+                                      iteration_kind=pyv8.IterationKind.indexed,
+                                      array_methods=pyv8.ArrayProto.iterable)
 
         self.context.expose(one=IteratorOnly(), all=FullIterable())
         result = snapshot(self.context.exec_js(

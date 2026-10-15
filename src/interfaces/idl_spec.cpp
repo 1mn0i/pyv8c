@@ -35,7 +35,9 @@ struct Field
 //: ``pyv8.DefinitionKind`` name the numbers a caller means, and the binding installs from them.
 static Field IdlSpec_fields[] = {
     {"length", Kind::Int, offsetof(IdlSpec, length), 0, 2147483647},
-    {"array", Kind::Int, offsetof(IdlSpec, array), 0, 31},
+    {"array_methods", Kind::Int, offsetof(IdlSpec, array_methods), 0, 31},
+    {"iteration_kind", Kind::Int, offsetof(IdlSpec, iteration_kind), 0, 3},
+    {"iteration_methods", Kind::Int, offsetof(IdlSpec, iteration_methods), 31, 31},
     {"immutable", Kind::Int, offsetof(IdlSpec, immutable), 0, 3},
     {"has_constructor", Kind::Int, offsetof(IdlSpec, has_constructor), 0, 1},
     {"constructor_behavior", Kind::Int, offsetof(IdlSpec, constructor_behavior), 0, 3},
@@ -300,6 +302,13 @@ static int apply_fields(PyObject *self, PyObject *changes)
     {
         auto &spec = *(IdlSpec *)self;
         spec.callbacks_resolved = callbacks_resolved;
+        if ((spec.iteration_kind >= kIterationPair && (spec.iteration_source == nullptr || spec.array_methods != 0)) ||
+            (spec.iteration_kind < kIterationPair && spec.iteration_source != nullptr) ||
+            (spec.iteration_kind != kIterationIndexed && spec.array_methods != 0))
+        {
+            PyErr_SetString(PyExc_TypeError, "invalid IdlSpec iteration kind, array methods or source combination");
+            return -1;
+        }
         if (spec.undetectable && spec.call == nullptr)
         {
             PyErr_SetString(PyExc_TypeError, "IdlSpec.undetectable requires a call callback");

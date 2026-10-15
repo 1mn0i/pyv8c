@@ -81,9 +81,11 @@ def test_handler_constructor_default_replace_and_immutability(name):
     spec = pyv8.IdlSpec()
     assert getattr(spec, name) is None
     callback = lambda *args: None
-    changed = spec.replace(**{name: callback})
+    fields = {name: callback}
+    if name == "iteration_source": fields["iteration_kind"] = pyv8.IterationKind.pair
+    changed = spec.replace(**fields)
     assert getattr(changed, name) is callback
-    assert getattr(pyv8.IdlSpec(**{name: callback}), name) is callback
+    assert getattr(pyv8.IdlSpec(**fields), name) is callback
     assert getattr(spec, name) is None
     with pytest.raises(AttributeError):
         setattr(changed, name, callback)

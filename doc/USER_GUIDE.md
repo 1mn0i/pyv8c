@@ -620,7 +620,10 @@ Python 构造器会额外收到 `win=<当前 Context 的 Python global_this>` �
 | `IdlSpec.undetectable` | 使用 V8 undetectable object 行为 |
 | `IdlSpec.code_like` | `eval`/`Function` 会把该类的实例字符串化后编译（Blink 的 `TrustedScript` 用这个），其他对象仍原样返回 |
 | `IdlSpec.unconstructable` | 构造时抛出“不是构造器”错误 |
-| `IdlSpec.array` | 向 `Array.prototype` 借哪些 intrinsic：`"iterator"`（只装 `@@iterator`）、`"iterable"`（再加 `entries`/`keys`/`values`/`forEach`）或 `None`；取值见 `pyv8.ArrayProto` |
+| `IdlSpec.iteration_kind` | `IterationKind.none/indexed/pair/set`，选择数据语义 |
+| `IdlSpec.array_methods` | indexed 的数组方法掩码：`ArrayProto.iterator`=1、`.iterable`=31 |
+| `IdlSpec.iteration_methods` | pair/set 视图掩码，默认 31；iterator=1、entries=2、keys=4、values=8、forEach=16 |
+| `IdlSpec.iteration_source` | 宿主工厂；接收 receiver，返回无参数 cursor，每次返回 `(key, value)` 或 None |
 | `IdlSpec.immutable` | 将实例或 prototype 的原型标记为 immutable |
 | `IdlSpec.call` | 让实例在 JavaScript 中可以作为函数调用 |
 

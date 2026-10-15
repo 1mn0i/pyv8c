@@ -15,12 +15,22 @@ enum IdlDefinitionKind
     kWrapperTypeNoPrototype = 2,  // a function with no prototype at all
 };
 
+enum IdlIterationKind : int64_t
+{
+    kIterationNone = 0,
+    kIterationIndexed = 1,
+    kIterationPair = 2,
+    kIterationSet = 3,
+};
+
 struct IdlSpec
 {
     PyObject_HEAD
     bool callbacks_resolved = true;
     int64_t length = 0;
-    int64_t array = 0;
+    int64_t array_methods = 0;
+    int64_t iteration_kind = kIterationNone;
+    int64_t iteration_methods = 31;
     int64_t immutable = 0;
     int64_t has_constructor = 0;
     int64_t constructor_behavior = 0;

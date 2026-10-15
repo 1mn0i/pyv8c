@@ -56,17 +56,17 @@ class TestIdlSpec(unittest.TestCase):
         Maplike); both shapes were measured against Chrome.  The intrinsics behind the bits belong
         to the binding, and ``0`` -- what an unset field holds -- borrows nothing.
         """
-        self.assertEqual(IdlSpec(array=pyv8.ArrayProto.iterator).array, 1)
-        self.assertEqual(IdlSpec(array=pyv8.ArrayProto.iterable).array, 31)
-        self.assertEqual(IdlSpec().array, 0)
-        self.assertEqual(IdlSpec(array=pyv8.ArrayProto.iterable).replace(length=3).array, 31)
+        self.assertEqual(IdlSpec(iteration_kind=pyv8.IterationKind.indexed, array_methods=pyv8.ArrayProto.iterator).array_methods, 1)
+        self.assertEqual(IdlSpec(iteration_kind=pyv8.IterationKind.indexed, array_methods=pyv8.ArrayProto.iterable).array_methods, 31)
+        self.assertEqual(IdlSpec().array_methods, 0)
+        self.assertEqual(IdlSpec(iteration_kind=pyv8.IterationKind.indexed, array_methods=pyv8.ArrayProto.iterable).replace(length=3).array_methods, 31)
 
     def test_an_array_value_outside_the_two_shapes_is_told_the_range(self):
         """One vocabulary, so one answer: the two bits a shape names, and nothing else."""
         for value in ("iterable", "", -1, 32, b"iterable", 1.5, 2 ** 32):
             with self.subTest(value=value):
                 with self.assertRaises(TypeError) as caught:
-                    IdlSpec(array=value)
+                    IdlSpec(iteration_kind=pyv8.IterationKind.indexed, array_methods=value)
                 self.assertIn("0..31", str(caught.exception))
 
     def test_definition_kind_takes_the_number_the_kind_names(self):

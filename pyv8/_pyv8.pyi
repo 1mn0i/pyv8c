@@ -6,7 +6,9 @@ class IdlSpec:
         # What this interface borrows from Array.prototype, as bits: pyv8.ArrayProto.iterator
         # (@@iterator alone) or .iterable (adding entries/keys/values/forEach).  0 borrows nothing,
         # which is what an unset field holds.
-        array: int = ...,
+        array_methods: int = ...,
+        iteration_kind: int = ...,
+        iteration_methods: int = ...,
         immutable: int = ...,
         has_constructor: int = ...,
         constructor_behavior: int = ...,
@@ -39,7 +41,7 @@ class IdlSpec:
         index_query: str | Callable[..., Any] | None = ...,
         index_enum: str | Callable[..., Any] | None = ...,
         index_del: str | Callable[..., Any] | None = ...,
-        iterate: str | Callable[..., Any] | None = ...,
+        iteration_source: str | Callable[..., Any] | None = ...,
         cross_origin_check: str | Callable[..., Any] | None = ...,
         cross_origin_name_get: str | Callable[..., Any] | None = ...,
         cross_origin_name_set: str | Callable[..., Any] | None = ...,
@@ -55,7 +57,11 @@ class IdlSpec:
     @property
     def length(self) -> int: ...
     @property
-    def array(self) -> int: ...
+    def array_methods(self) -> int: ...
+    @property
+    def iteration_kind(self) -> int: ...
+    @property
+    def iteration_methods(self) -> int: ...
     @property
     def immutable(self) -> int: ...
     @property
@@ -117,7 +123,7 @@ class IdlSpec:
     @property
     def index_del(self) -> str | Callable[..., Any] | None: ...
     @property
-    def iterate(self) -> str | Callable[..., Any] | None: ...
+    def iteration_source(self) -> str | Callable[..., Any] | None: ...
     @property
     def cross_origin_check(self) -> str | Callable[..., Any] | None: ...
     @property

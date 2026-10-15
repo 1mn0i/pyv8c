@@ -47,21 +47,22 @@ class SideEffectType:
 
 
 class ArrayProto:
-    """What an interface borrows from ``Array.prototype``, for ``IdlSpec.array``.
+    """Array intrinsics for indexed iteration, accepted by IdlSpec.array_methods.
 
-    Two shapes cover every interface Chrome was measured to have (2026-10-07): ``iterator``
-    installs ``Array.prototype.values`` behind ``@@iterator`` and nothing else -- what
-    ``HTMLCollection``, the plugin collections and ``CSSStyleDeclaration`` answer -- while
-    ``iterable`` installs that iterator together with ``entries``/``keys``/``values``/``forEach``,
-    which is what a ``NodeList``, ``Headers``, ``FormData`` or a Maplike answers.
-
-    The values are the bits ``pyclass.cpp`` installs.  The intrinsics behind them are the
-    binding's business, not a caller's: this class is the whole vocabulary the field takes, so a
-    caller cannot spell a shape the engine cannot install.
+    iterator installs only Symbol.iterator; iterable also installs entries, keys,
+    values and forEach. Pair and set iteration use iteration_methods instead.
     """
 
     iterator = 1
     iterable = 31
+
+
+class IterationKind:
+    """Data semantics for IdlSpec.iteration_kind."""
+    none = 0
+    indexed = 1
+    pair = 2
+    set = 3
 
 
 class DefinitionKind:
@@ -87,5 +88,5 @@ class DefinitionKind:
 __all__ = [
     "FlagImmutable", "V8Attribute", "FlagLocation",
     "FlagReceiverCheck", "FlagCrossOriginCheck", "FlagExposed",
-    "FlagConstructor", "SideEffectType", "ArrayProto", "DefinitionKind",
+    "FlagConstructor", "SideEffectType", "ArrayProto", "IterationKind", "DefinitionKind",
 ]

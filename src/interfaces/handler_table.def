@@ -25,7 +25,7 @@ PYV8_HANDLER(IndexEnum, "__v8_index_enum__", index_enum)
 PYV8_HANDLER(IndexDel, "__v8_index_del__", index_del)
 
 // A pair-iterable's iteration source: the pair at an index, or None at the end.
-PYV8_HANDLER(Iterate, "__v8_iterate__", iterate)
+PYV8_HANDLER(IterationSource, "__v8_iteration_source__", iteration_source)
 
 PYV8_HANDLER(CrossOriginCheck, "__v8_cross_origin_check__", cross_origin_check)
 PYV8_HANDLER(CrossOriginNameGet, "__v8_cross_origin_name_get__", cross_origin_name_get)
