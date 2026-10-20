@@ -101,6 +101,20 @@ class DocumentResourceController:
         page.tasks.post(lambda: page.lifecycle.dispatch_progress_event(node, "loadstart"))
         return handle
 
+    def begin_frame_document(self, node, child):
+        """A carried document has a load barrier even without a transport."""
+        page = self.page
+        handle = LoadHandle()
+        item = DocumentResource(page.navigation.generation, node, 'iframe', handle,
+                                transfer_finished=True, child_services=child.services)
+        token = self.tracker.add(item)
+        page.resource_ownership.track(handle)
+        def terminal(completed):
+            if completed.cancelled:
+                page.tasks.post(lambda: self._release_cancelled(token, item))
+        handle.add_done_callback(terminal)
+        return token, item
+
     def _release_cancelled(self, token, item):
         if self.tracker.get(token) is not item:
             return

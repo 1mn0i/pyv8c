@@ -1,300 +1,61 @@
-# 任务调度与事件循环
+# 任务调度
 
-本文描述当前源码已经实现的任务模型：一个 realm 的队列、车道、轮次配额，网络回调 / 定时器 / 事件 / JS 执行各自落在哪里，它们之间如何互相影响；末尾给出与 Chromium 调度模型的对照。行为以 `tests/` 为最终事实来源。
+[文档索引](README.md)
 
-## 1. 模型总览
+## 执行所有权
 
-### 1.1 单位：一个 realm 一个队列
+独立 `new_page()` 创建 WindowExecutionGroup，独占 owner 线程和 Isolate。iframe 使用同一执行组；同有效 origin 的 Realm 共享 Agent，其他 Agent 独立排队但仍在该 owner 线程运行。opaque origin 按身份 token 区分，初始 about:blank、srcdoc 和 Blob 的来源按创建关系继承。
 
-页面 realm 与 worker realm 各有一个 `TaskQueue`，各有自己的 owner 线程与 V8 context；队列同时记账"还在路上的工作"，它是 idle 判定的依据。
+每个 Agent 持有任务源队列与显式 V8 微任务队列，Dedicated Worker 使用独立线程、Isolate、Agent 和事件循环。同步 iframe 访问无需跨线程等待；不相关执行组之间不允许直接传递活 JS 对象。
 
-```63:79:pyv8c/foundation/tasks.py
-class TaskQueue:
-    """One realm's task sources, timers and pending-work counters."""
+## 任务源与执行入口
 
-    def __init__(self, host=None, *, error_sink: Callable[[BaseException], None] | None = None):
-        self._host = host if host is not None else _NullTaskHost()
-        self._error_sink = error_sink
-        self.timers: list[tuple[float, int, Callable[..., object], float | None]] = []
-        self.counter = itertools.count(1)
-        self.cancelled: set[int] = set()
-        # Single-threaded pop with append-only producers; ``_signal`` fences a sleep.
-        self.posted: deque[Callable[..., object]] = deque()
-        self.errors: list[BaseException] = []
-        # Guards the errors and the in-flight counters, which other threads touch.
-        self._lock = threading.Lock()
-        self.network_pending = 0
-        self.worker_pending = 0
-        self.loader_pending = 0
-```
+任务记录包含来源、所属 Realm/文档、代次、顺序和取消信息。任务源包括 parser、navigation、networking、timer、posted-message、user-interaction、DOM manipulation 和 embedder。
 
-### 1.2 车道：两条任务源 + 一个死线堆 + V8 微任务
+普通宿主命令进入 embedder 来源，不无限优先清空。调度公平选择可运行来源，并保持来源内要求的 FIFO；parser 阻塞只影响对应文档。关闭、终止和 Inspector 唤醒使用受限控制入口，不能借该入口执行任意页面 JS。
 
-队列里没有"网络源 / 定时源 / 事件源"的区分，只有 parser 与 posted 两个 task source；timer 是死线堆而不是任务源，微任务归 V8 context 所有。
+跨来源不存在一条应被固定的 Chrome 全序，测试约束必要因果顺序和不饥饿。当前不实现完整加载提级、后台预算或动态输入优先级。
 
-```30:39:pyv8c/foundation/tasks.py
-class TaskSource(enum.Enum):
-    """Task queues drained by one realm event-loop turn, in priority order.
+## 微任务与拒绝通知
 
-    Only sources callers post into are listed: timers live in this queue's own
-    deadline-ordered heap and microtasks belong to V8.  Embedder commands travel on
-    the executor's own queue, drained before any turn, so page work cannot starve them.
-    """
+Promise、queueMicrotask 和 MutationObserver 使用所属 Agent 的显式微任务队列。普通属性读取、对象转换和嵌套跨 Realm 调用不应意外启动检查点；脚本与回调清理在 JS 栈条件允许时检查，任务结束兜底，并防止重入。
 
-    PARSER = "parser"         # parser resumption, gated by the parser-blocking state
-    POSTED = "posted"         # network / worker / iframe completion callbacks
-```
+检查点排空至稳定，不用人为微任务配额改变顺序。无限微任务由操作预算和终止机制处理。Promise 拒绝在检查点收集候选，再通过任务通知 `unhandledrejection`、`rejectionhandled`，不在任意属性调用结束时直接派发。
 
-### 1.3 一个轮次的配额
+导航代次失效只取消相应文档的操作，不能清空整个 Agent 队列并误伤兄弟 Realm。
 
-这是整个调度公平性的根：每个轮次跑一个 parser 任务（未被 parser-blocking 挡住时）、一个 posted 任务、**至多一个**到期 timer。
+## 网络、导航与等待
 
-```268:285:pyv8c/foundation/tasks.py
-    def run_turn(self, *, allow_parser: bool = True) -> bool:
-        """Perform one event-loop turn; return ``True`` when work happened.
+外部网络完成投递所属 networking 任务；返回 owner 后的响应转换、跳转和内部 continuation 可在该任务内继续。缓存、本地 URL 和 inline loader 的异步最终结果同样通过队列交付，不因当前在 owner 上就同步调用最终用户回调。
 
-        Must be called from the realm owner thread; the executor interleaves these
-        turns with its own commands so a long page never starves ``evaluate``/``close``.
-        """
-        if self.closed:
-            return False
-        worked = False
-        # Only ask about parser-blocking when there is parser work to gate: it is the
-        # most expensive check in a turn.
-        if allow_parser and self._parser and not self._host.parser_blocked():
-            self.run_callback(self._parser.popleft())
-            worked = True
-        if self.posted:
-            self.run_callback(self.posted.popleft())
-            worked = True
-        return self._run_due_timers() or worked
-```
+导航不在 owner 阻塞等待主文档网络。同步宿主 `goto()` 等待操作 Future，owner 继续处理可运行工作；owner 内部不能同步等待尚未完成的操作，也不能嵌套驱动事件循环完成等待。
 
-同一批注释还说明了重复 timer 只允许一个事件循环轮次跑一次：`One timer per turn: a repeating zero-delay timer must not monopolise the realm.`（`pyv8c/foundation/tasks.py:251`）
+| 等待入口 | 判断条件 |
+| --- | --- |
+| `goto(..., wait_until="commit")` | 当前导航提交 |
+| `wait_for_load_state("domcontentloaded")` | 目标文档的 DOMContentLoaded 状态 |
+| `wait_for_load_state("load")` | 加载完成流程正常结束 |
+| `wait_for(expression)` | 只读 JS 条件成立 |
+| `run_until_idle(timeout)` | 目标 Agent 可运行任务排空并完成检查点 |
 
-### 1.4 驱动者：owner 线程上的 executor
+远期 timer、在途网络、长连接和 Worker 存活不直接阻止可运行队列空闲。`timeout=0` 的空闲调用只查询当前状态；网络或应用就绪必须使用对应等待入口。
 
-`RealmExecutor` 独占一个线程；每个轮次之前先清空宿主命令，所以宿主命令永远排在页面任务之前。没有工作可做时按下一个定时器死线睡眠，而不是轮询。
+## 定时器与渲染机会
 
-```336:346:pyv8c/foundation/executor.py
-    def _pump(self):
-        """Drain the commands, then run one turn, then sleep until something arrives."""
-        self._drain_commands()
-        if self._closed.is_set():
-            return
-        if self._run_turn():
-            # A turn ends its task, which is where the specification puts the
-            # rejection events for anything that task rejected.
-            self._settle_rejections()
-            return
-        self._sleep(self._next_deadline())
-```
+定时器堆管理截止时间，到期后进入 timer 来源。取消的堆顶条目必须跳过，不能遮挡后续到期工作。定时器具有嵌套层级和相应最小延迟规则；interval 不是固定最低 1ms 的独立模型。
 
-```348:353:pyv8c/foundation/executor.py
-    def _drain_commands(self):
-        # Commands first: evaluate/goto/close must never queue behind page work.
-        while not self._closed.is_set():
-            command = self._next_command()
-            if command is None:
-                return
-```
+rAF 属于独立渲染机会，页面树共享帧时钟，默认虚拟 60Hz，可用 Browser 的 `frame_rate` 设置。同一帧使用统一时间基准，回调中新增或取消的 rAF 按当前批次规则处理，隐藏状态影响帧机会。Worker 有独立渲染调度设施，不与页面共享线程。
 
-### 1.5 投递：任何线程都能投，只有 owner 线程执行
+虚拟帧时钟不代表真实屏幕刷新、绘制或完整 Chromium 渲染流水线。
 
-投递只往 `deque` 上 append，然后叫醒 owner 线程；唤醒走 event（空闲停放）或 asyncio loop（朝死线等待时）。
+## 预算、取消与关闭
 
-```191:204:pyv8c/foundation/tasks.py
-    def post(self, callback, source: TaskSource = TaskSource.POSTED):
-        """Queue *callback* on the given task source.
+宿主操作使用提交时计算的绝对截止时间，排队、执行及检查点共享预算。`evaluate(timeout=30)` 默认有限预算；执行器的普通调用默认预算由 `PYV8C_CALL_TIMEOUT` 控制，未设置时为 60 秒，非正配置表示不设置该默认期限。
 
-        Parser work is held separately so a parser-blocking script can gate resumption
-        without freezing network delivery or timers.
-        """
-        if self.closed:
-            return False
-        if source is TaskSource.PARSER:
-            self._parser.append(callback)
-        else:
-            self.posted.append(callback)
-        self._signal()
-        return True
-```
+原生操作用身份票据绑定 watchdog。排队任务可取消；已经开始的工作不能承诺回滚副作用。Isolate 终止作用于整个活跃调用栈，不保证只停止跨 Realm 栈中的一个 Context。纯 Python 阻塞不能靠 V8 watchdog 中断，应移出 owner。
 
-```142:154:pyv8c/foundation/executor.py
-    def wakeup(self):
-        """Rouse a sleeping owner thread: the event for an idle park, the loop for a deadline."""
-        self._wake.set()
-        if not self._timed:
-            # The single-attribute read may be stale, and then the park's own re-check
-            # sees the event instead: the flag only avoids the loop hop.
-            return
-        loop = self._loop
-        try:
-            loop.call_soon_threadsafe(loop.stop)
-        except RuntimeError:
-            # The loop is closed: the thread is gone or on its way out.
-            pass
-```
+执行终止向外展开时，事件状态和资源登记仍需复位，但不得再运行页面 JS、错误事件或微任务检查点。只有原生接受且匹配当前票据的关闭请求才能被归为预期取消；其他终止仍报告失败。
 
-### 1.6 "空闲"的定义：队列空 **且** 没有在途工作
+load 开始与完成分别记录。加载事件中断后，不继续发送后续 pageshow、pagereveal 或成功回调，load 等待者收到失败；文档替换重置旧状态。每次调用页面代码后检查关闭、文档代次和身份。
 
-```332:337:pyv8c/foundation/tasks.py
-            deadline_hint = self.next_deadline()
-            if deadline_hint is None and not (
-                self.network_pending or self.worker_pending or self.loader_pending
-            ):
-                return
-```
-
-因此 worker 存活期间 `worker_pending > 0`，即使队列里没有任何任务，`run_until_idle()` 也不会认为空闲。
-
-### 1.7 宿主命令是唯一会阻塞调用者的入口
-
-```156:189:pyv8c/foundation/executor.py
-    def call(self, callback, *args, timeout=_UNSET, **kwargs):
-        """Run *callback* on the owner thread and return or raise its result.
-
-        Raises :class:`RealmBusyError` when the owner thread does not pick the
-        command up within *timeout*: a wedged realm surfaces as an error.
-        """
-        if self.is_owner_thread():
-            return callback(*args, **kwargs)
-        if timeout is _UNSET:
-            timeout = self.default_timeout
-        future: Future[object] = Future()
-        with self._submit_lock:
-            if self.closed:
-                raise RuntimeError("realm executor is closed")
-            self._commands.put((future, callback, args, kwargs))
-        self.wakeup()
-        name = getattr(callback, "__name__", callback)
-        submitted = time.perf_counter()
-        try:
-            return future.result(timeout=timeout)
-        except FutureTimeoutError:
-            if future.done():
-                return future.result()
-            # A queued command cancels safely; a running one was already preempted
-            # by the realm's deadline, and what it ends with is logged, not awaited.
-            cancelled = future.cancel()
-            if not cancelled:
-                future.add_done_callback(
-                    lambda done: _report_late(done, name, submitted, timeout))
-            raise RealmBusyError(
-                f"realm executor did not complete {name!r} within {timeout}s"
-                + (" (command cancelled)" if cancelled else
-                   " (already running; its outcome is logged when it ends)")
-            ) from None
-```
-
-命令执行期间还会把 60 s 预算挂到原生 V8Context 上，用来抢占卡死的脚本（`pyv8c/foundation/executor.py:206-238`）。
-
-## 2. 各类任务的落点
-
-| 类别 | 入口 | 落点 / 车道 | 执行线程 |
-| --- | --- | --- | --- |
-| `setTimeout` / `setInterval` | `_SchedulingMixin._schedule` → `task_services.schedule` | `timers` 死线堆（heapq，`perf_counter` 计时） | owner |
-| `requestAnimationFrame` | 同一个 mixin，一帧只排一个 timer | `timers` 死线堆，60 Hz 网格 | owner |
-| 事件 `dispatchEvent` | `fn_dispatchEvent` 在当前轮次内**同步**派发 | 不产生新任务；宿主 `page.dispatch_event` 走 `executor.call` | owner |
-| 重复定时器 | `_run_due_timers` 跑完后重新入堆 | 同一死线堆，间隔下限被钳到 1 ms | owner |
-| 网络完成（引擎） | 引擎线程池 → `TaskDelivery` → `post_task` | `posted` | 引擎池 → owner |
-| 网络完成（回到 realm） | `_HopReply.enqueue` → `post(receive)` → `landed` → `deliver` → `post(settle)` | `posted`，**连投三跳** | owner |
-| `resource_interceptor`（宿主回调） | `CallbackRunner.dispatch` | loader 池线程执行，回来 `post_task`；`loader_pending` 计数 | loader 池 → owner |
-| `postMessage` / worker 完成 | 目标 realm 的 `post` | 目标 realm 的 `posted` | 各自 owner |
-| `MutationObserver` | `enqueue_microtask` | V8 微任务队列 | owner |
-| promise 反应 / `queueMicrotask` | `context.enqueue_microtask` | V8 微任务队列 | owner |
-
-关键引文：
-
-```496:497:pyv8c/platform/resources/fetcher.py
-                transport = self.source.request_async(self.fetcher.page.services.task_services,
-                                                      request, reply.enqueue)
-```
-
-```40:43:pyv8c/network/backend.py
-            tasks.post_task(
-                lambda: (tasks.complete_network(), callback(result, error))
-                if not handle.cancelled else tasks.complete_network()
-            )
-```
-
-```406:408:pyv8c/platform/resources/fetcher.py
-    def deliver(self, response, error):
-        from functools import partial
-        self.tasks.post(partial(self.settle, response, error))
-```
-
-```529:531:pyv8c/platform/resources/fetcher.py
-    def enqueue(self, value, error):
-        from functools import partial
-        self.owner.tasks.post(partial(self.receive, value, error))
-```
-
-## 3. 它们之间如何互相影响
-
-1. **同类之间只有到达顺序。** 网络完成、`postMessage`、iframe 完成、frame 收尾回调全部落在同一条 `posted` FIFO 上，没有任何优先级：网络回调不可能插队到事件之前，反之亦然。
-
-2. **跨类之间有不饿死的配额。** 每个轮次必跑一个到期 timer、必跑一个 posted 任务，所以：
-   - 大量网络回调不会把 `setTimeout` 饿死；
-   - timer 也不会淹没网络；
-   - 代价是**吞吐被均分**：两类同时积压时，每类每轮次各走一个。
-
-3. **宿主命令（JS 执行）优先级最高，且是唯一同步阻塞调用者的东西。** `page.evaluate` / `goto` / `close` 走 `executor.call`，`_drain_commands` 保证它们不排在页面任务之后。副作用：一次 `evaluate` 自身就是一个任务边界，命令是插在轮次之间执行的。
-
-4. **真正会咬人的是跨线程锁，而不是排队。** 仓库里有四处注释在防同一族死锁：
-
-   ```235:237:pyv8c/platform/services.py
-           # Cross-window access is synchronous and can start inside a V8 callback
-           # holding the shared isolate lock: posting to another executor deadlocks.
-           return apply()
-   ```
-
-   ```18:21:pyv8c/platform/resources/frames.py
-               # Removal can happen while the parent realm executes; closing the
-               # child synchronously would wait on an executor that script can
-               # reach, so the teardown is dispatched after the parent turn.
-               page.tasks.post(page.close)
-   ```
-
-   另外两处是 `pyv8c/platform/realms.py:182-189`（运行中的脚本里等自己的线程会死锁）与 `pyv8c/foundation/executor.py:101-103`（`Browser` 与 realm 共享 GIL 时不能在构造里阻塞等待线程被调度）。外显形式就是 `RealmBusyError: ... (already running ...)`。
-
-5. **一次网络完成被拆成三个轮次。** 交付之间可以插入页面任务；代价是两个并发请求的 settle 可以互相穿插，**交付顺序不等于完成顺序**。
-
-6. **worker 与页面只通过两条路交互**：目标 realm 的 `posted` 队列，以及 `worker_pending` 计数。worker 活着时"空闲"永不成立。
-
-7. **没有节流或预算。** 自续的 `setTimeout(…, 0)` 会让 loop 一直转（`run_turn` 返回 `True` 就不睡），`run_until_idle` 只会撞超时。
-
-## 4. 与 Chromium 的对照
-
-以下为 Chromium 侧的背景模型，用于说明 pyv8c 的选择与取舍。
-
-### 4.1 Chromium 的做法
-
-- **线程层**：渲染器主线程由 `base::SingleThreadTaskRunner` 驱动（一组 `TaskQueue` + `TaskQueueSelector`）；网络在 Network Service 进程 / IO 线程，合成在 compositor 线程，worker 各自线程。跨线程一律 `PostTask`，主线程不阻塞等待网络或 worker。
-- **任务源到优先级**：HTML 规范的多个 task source（DOM manipulation、user interaction、networking、navigation、timer、posted message…）映射为 `TaskType` 优先级阶梯，`kControlPriority` / `kHighestPriority` 高于输入相关队列，默认是 `kNormalPriority`，下面是 `kLowPriority`、`kBestEffortPriority`。规范只要求同一 source 内保序，优先级用来决定不同 source 之间的先后。
-- **调度器层**：`RendererSchedulerImpl` / `MainThreadSchedulerImpl` 负责同优先级队列间的轮转（饥饿避免）、页面隐藏时的 timer 节流、低优先级任务的预算，以及输入到来或加载期对相关队列的提级。
-- **延迟任务**：timer 经 `TaskRunnerTimer` 投递，延迟任务由时间域与延迟任务堆管理，对齐与节流在调度器层。
-- **帧**：`requestAnimationFrame` 由合成器 BeginFrame 驱动，与主线程任务队列分开。
-- **微任务**：每个任务返回时执行一次 `MicrotaskQueue::PerformCheckpoint`；`queueMicrotask` 与 promise 反应共用一条 FIFO。
-- **嵌套与阻塞**：允许嵌套循环但被严格审计，主线程卡住会触发 hang 检测。
-
-### 4.2 差异对照
-
-| 维度 | pyv8c | Chromium |
-| --- | --- | --- |
-| 队列粒度 | realm 一个队列，三条车道 | 每线程多队列 × 任务类型，按优先级选择 |
-| 任务源 | 两个（parser / posted），timer 是堆不是源 | 十几种 task source 映射到优先级 |
-| 调度策略 | 固定配额：每轮 1 posted + 1 timer（+1 parser） | 优先级 + 同优先级轮转 + 饥饿避免 |
-| 网络交付 | 跨三个轮次，多跳 | 通常一个任务内交付 |
-| 宿主命令 | `executor.call`，插在轮次前，最高优先，阻塞调用者，超时 `RealmBusyError` | 无对应物（宿主即浏览器），主线程不等待 |
-| 节流与预算 | 无 | timer 节流、唤醒预算、低优先级预算 |
-| `requestAnimationFrame` | 与 timer 同一个死线堆 | 合成器 BeginFrame，独立于任务队列 |
-| 微任务 | V8 context 自管，轮次/命令后结算 rejection | 每个任务后 `PerformCheckpoint` |
-| 死锁面 | owner 线程 + isolate 锁 + 同步 `call` | 跨进程/线程 `PostTask` + hang 检测 |
-
-## 5. 结论与最小改进方向
-
-- 四类任务**确实互相影响，但影响是排队式的，不是抢占式的**：pyv8c 用"每轮每类一个"的固定配额代替了 Chromium 的优先级与节流，结果是不会饿死、也没有优先级，吞吐被均分。
-- **JS 执行在 pyv8c 里是最高优先级且唯一同步阻塞的东西**，这是与 Chromium 差别最大的一处：每一个 `evaluate` / `goto` / 网络等待都是一个可能超时并抛 `RealmBusyError` 的同步等待。
-- **最容易出问题的是跨线程锁序**，不是任务排队：owner 线程、isolate 锁、`executor.call` 三者叠加时才会真正卡死；第 3 节第 4 点的那四处注释就是在防它。
-- 若要更贴近 Chromium，最小的一步是给 `TaskQueue` 引入真正的 task source 枚举（network / timer / posted-message / user-interaction）并按源轮转，而不是把四类都塞进一条 `posted`。这既不动线程模型，也不碰上述几处锁。
+Inspector 暂停不消耗 JS 执行预算，宿主等待期限仍有效。关闭先唤醒暂停/启动门，再在 owner 完成释放。窗口关闭、Worker 终止和资源过期分别处理，不混同为清空共享队列。

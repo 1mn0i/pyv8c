@@ -12,6 +12,44 @@ from pyv8c.foundation.host_errors import RealmBusyError
 from pyv8c.foundation.executor import RealmExecutor
 
 
+def test_close_settles_waiters_without_holding_submission_lock():
+    from concurrent.futures import Future
+    from pyv8c.foundation.executor import Command
+
+    executor = RealmExecutor(name="test-close-callback")
+    entered, release = threading.Event(), threading.Event()
+    checked, acquired = threading.Event(), threading.Event()
+
+    def block():
+        entered.set()
+        assert release.wait(5)
+
+    def inspect_lock():
+        with executor._submit_lock:
+            acquired.set()
+
+    def completed(_):
+        thread = threading.Thread(target=inspect_lock)
+        thread.start()
+        if acquired.wait(1):
+            checked.set()
+        thread.join(1)
+
+    try:
+        assert executor.post(block)
+        assert entered.wait(2)
+        future = Future()
+        future.add_done_callback(completed)
+        executor._submit_command(Command(future, lambda: None, (), {}, time.perf_counter(), None, 999), None)
+        executor.close(timeout=0)
+        assert checked.is_set(), 'Future callbacks ran while the submission lock was held'
+        with pytest.raises(RuntimeError, match='closed'):
+            future.result()
+    finally:
+        release.set()
+        executor.close()
+
+
 def _late_failure():
     time.sleep(0.3)
     raise RuntimeError("late failure")

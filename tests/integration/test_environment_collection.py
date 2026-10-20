@@ -1,5 +1,6 @@
 """Collecting a profile from a browser that is actually installed."""
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ pytest.importorskip("pyv8")
 from pyv8c import Browser, BrowserEnvironment  # noqa: E402
 from pyv8c.engine.idl import ArrayProto, Idl  # noqa: E402
 from pyv8c.foundation.environment import COLLECTED_KEYS  # noqa: E402
+from pyv8c.foundation.system_fonts import records as font_records  # noqa: E402
 from pyv8c.tools import collect_environment as collector  # noqa: E402
 
 # Both cases drive the installed Chrome through CDP.
@@ -29,7 +31,11 @@ def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, c
 
     document = json.loads(path.read_text(encoding="utf-8"))
     assert document["source"]["browser"].startswith(("Chrome", "Chromium", "HeadlessChrome"))
-    assert set(document) == {"schema", "source", "bindings", *COLLECTED_KEYS}
+    assert set(document) == {"schema", "source", "bindings", "fonts.records", *COLLECTED_KEYS}
+    # The collector serializes the host font table beside Chrome's collected
+    # values. Check every field and portable file name, not merely its presence.
+    expected_fonts = [{**asdict(face), "path": Path(face.path).name} for face in font_records()]
+    assert document["fonts.records"] == expected_fonts
     # The same session that answered the keys named what it installs on ``window``.
     assert "Object" in document["bindings"]["exposed"]
     assert "innerWidth" in document["bindings"]["keys"]
@@ -55,6 +61,7 @@ def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, c
 
     profile = BrowserEnvironment.from_file(path)
     collected = profile.resolved()
+    assert [asdict(face) for face in profile.fonts.records] == expected_fonts
     browser = Browser(environment=profile, stub_logging="off")
     try:
         page = browser.new_profile().new_page()

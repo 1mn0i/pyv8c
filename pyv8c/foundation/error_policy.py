@@ -8,8 +8,17 @@ before a realm runs.  What this module keeps is the classification both directio
 out of a script's hands (:func:`host_boundary`).
 """
 from contextlib import contextmanager
+import sys
 
 from .logging import logger
+
+
+def control_exceptions():
+    """Execution control must unwind without making offline imports load V8."""
+    native = sys.modules.get('pyv8')
+    terminated = getattr(native, 'JavaScriptTerminated', None)
+    controls = (KeyboardInterrupt, SystemExit)
+    return controls if terminated is None else (*controls, terminated)
 
 
 def is_declared(error) -> bool:
@@ -65,6 +74,8 @@ def host_boundary(what, *, from_script=None):
     """
     try:
         yield
+    except control_exceptions():
+        raise
     except BaseException as error:
         answered = script_on_the_stack() if from_script is None else from_script
         if not is_host_failure(error) or not answered:
@@ -72,4 +83,4 @@ def host_boundary(what, *, from_script=None):
         logger.warning("{} could not finish: {}", what, error)
 
 
-__all__ = ["is_declared", "is_host_failure", "script_on_the_stack", "host_boundary"]
+__all__ = ["control_exceptions", "is_declared", "is_host_failure", "script_on_the_stack", "host_boundary"]

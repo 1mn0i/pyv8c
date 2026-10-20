@@ -127,7 +127,7 @@ def test_a_worker_realm_iterates_url_search_params_too():
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("const worker = new Worker('https://example.test/worker.js');"
                       " worker.onmessage = event => globalThis.workerParams = event.data;")
-        page.run_until_idle(2)
+        page.wait_for("typeof workerParams !== 'undefined'", timeout=10)
         assert page.evaluate("workerParams") == ["a=2", [["a", "2"]], "function", True, True]
     finally:
         browser.close()

@@ -21,7 +21,11 @@ class Clock:
 
     def now_ms(self):
         """Milliseconds since :meth:`time_origin`, at the resolution the platform has."""
-        elapsed = (time.perf_counter() - self._monotonic) * 1000.0
+        return self.at(time.perf_counter())
+
+    def at(self, monotonic):
+        """Convert a shared rendering instant to this document's timeline."""
+        elapsed = (monotonic - self._monotonic) * 1000.0
         # Rounding is monotonic, so readings still never run backwards.
         return round(elapsed / self.RESOLUTION_MS) * self.RESOLUTION_MS
 

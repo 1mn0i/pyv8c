@@ -90,7 +90,7 @@ def test_a_timeout_drops_the_request_and_reports_loadend_alone():
             }, 400);
             return 'asked';
         })()""")
-        page.run_until_idle(timeout=10)
+        page.wait_for("window.__log !== null", timeout=10)
         assert page.evaluate("window.__log") == [["loadend"], 4, 0, 50, ""]
     finally:
         released.set()
@@ -114,7 +114,7 @@ def test_abort_drops_a_request_that_is_still_running():
             setTimeout(() => { window.__log = [log, xhr.readyState]; }, 300);
             return 'asked';
         })()""")
-        page.run_until_idle(timeout=10)
+        page.wait_for("window.__log !== null", timeout=10)
         # abort() disarms the deadline and cancels the load, so the response that
         # arrives afterwards is dropped with the request rather than reported.
         assert page.evaluate("window.__log") == [["loadend"], 0]

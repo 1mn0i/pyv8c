@@ -186,7 +186,7 @@ def compare(baseline):
         # The evaluation does not wait for a promise, so the answer is left on the window.
         page.evaluate("window.__fonts = null; (" + ANSWER % json.dumps(list(PROBE_NAMES)) +
                       ").then(text => { window.__fonts = text; });")
-        page.run_until_idle(timeout=5)
+        page.wait_for("window.__fonts !== null", timeout=5)
         ours = json.loads(page.evaluate("window.__fonts"))
     finally:
         browser.close()

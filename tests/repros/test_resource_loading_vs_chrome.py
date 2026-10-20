@@ -76,11 +76,8 @@ def test_source_and_mode_match_chrome(reference, origins, transport, source, mod
     try:
         page = browser.new_profile().new_page(same + "/page")
         page.evaluate(script)
-        for _ in range(10):
-            page.run_until_idle(1)
-            result = page.evaluate("JSON.stringify(window.__answer)")
-            if result != "null":
-                break
+        page.wait_for("window.__answer !== null")
+        result = page.evaluate("JSON.stringify(window.__answer)")
         assert json.loads(result) == expected
     finally:
         browser.close()
@@ -115,7 +112,7 @@ def test_blob_fetch_checks_creator_origin(reference, origins, mode, cross_origin
         reader.set_content("<body></body>", url=reader_origin + "/page")
         url = creator.evaluate("URL.createObjectURL(new Blob(['secret']))")
         reader.evaluate(script % (json.dumps(url), json.dumps(mode)))
-        reader.run_until_idle(2)
+        reader.wait_for("window.__answer !== null")
         assert json.loads(reader.evaluate("JSON.stringify(window.__answer)")) == expected
     finally:
         browser.close()

@@ -11,9 +11,8 @@ from .models import NetworkUnavailableError, RequestHandle
 class RequestDelivery:
     """The delivery an engine with a pool performs for a host request.
 
-    The engines run the request on their own pool and answer on the realm's
-    queue, so the closed check, the in-flight counters and the hop back to the
-    owner thread live here once.
+    Engines produce transport-neutral results. The caller queues them on the
+    owner; this layer owns only pool work, cancellation and in-flight counts.
     """
 
     def request_sync(self, request):
@@ -21,26 +20,45 @@ class RequestDelivery:
 
     def request_async(self, tasks, request, callback):
         handle = RequestHandle()
+        submission_error = None
         with self._lock:
             if self._closed:
-                tasks.post_task(lambda: callback(None, RuntimeError("network backend is closed")))
-                return handle
-            tasks.begin_network()
-            future = self.executor.submit(self._call, request)
-            handle.future = future
+                closed = True
+            else:
+                closed = False
+                tasks.begin_network()
+                try:
+                    future = self.executor.submit(self._call, request)
+                except BaseException as exc:
+                    submission_error = exc
+                else:
+                    handle.future = future
+
+        # Never invoke a caller while holding the engine's lifecycle lock.
+        if closed:
+            callback(None, RuntimeError("network backend is closed"))
+            return handle
+
+        if submission_error is not None:
+            try:
+                if not handle.cancelled and not tasks.closed:
+                    callback(None, submission_error)
+            finally:
+                tasks.complete_network()
+            return handle
 
         def complete(done):
             try:
                 result, error = done.result(), None
             except BaseException as exc:  # delivered to the caller, not raised here
                 result, error = None, exc
-            if handle.cancelled or tasks.closed:
+            try:
+                if not handle.cancelled and not tasks.closed:
+                    callback(result, error)
+            finally:
+                # Transport accounting must not depend on the owner accepting
+                # or eventually executing a completion task.
                 tasks.complete_network()
-                return
-            tasks.post_task(
-                lambda: (tasks.complete_network(), callback(result, error))
-                if not handle.cancelled else tasks.complete_network()
-            )
         future.add_done_callback(complete)
         return handle
 

@@ -6,6 +6,38 @@ from pyv8.devtools.scheduler import Host
 __all__ = ["DevToolsHandle", "DevToolsOptions"]
 
 
+class _InspectorExecutor:
+    """Mailbox-only control adapter; independent of document task acceptance."""
+    def __init__(self, window):
+        self._window = window
+
+    @property
+    def closed(self):
+        return self._window.closed
+
+    def is_owner_thread(self):
+        return self._window.is_owner_thread()
+
+    def post(self, callback, *args):
+        return self._window.group.executor.post(self._window.invoke, callback, *args)
+
+
+class _WorkerInspectorExecutor:
+    """Only the Inspector mailbox may bypass normal Worker task sources."""
+    def __init__(self, executor):
+        self._executor = executor
+
+    @property
+    def closed(self):
+        return self._executor.closed
+
+    def is_owner_thread(self):
+        return self._executor.is_owner_thread()
+
+    def post(self, callback, *args):
+        return self._executor.post(callback, *args, _task_lane=None)
+
+
 class BrowserDebugging:
     def __init__(self, profile, page, options):
         self.profile = profile
@@ -19,7 +51,7 @@ class BrowserDebugging:
 
     @staticmethod
     def page_host(page, kind="page"):
-        return Host(page.v8_context, page.realm.executor, lambda: page.url, page.close, kind)
+        return Host(page.v8_context, _InspectorExecutor(page.realm.executor), lambda: page.url, page.close, kind)
 
     def _register_descendants(self, page):
         for child in tuple(page._owned.frames):
@@ -47,7 +79,7 @@ class BrowserDebugging:
         if parent is None or parent.closed or runtime._context is None:
             return None
         target = self.router.register(Host(
-            runtime._context, runtime.executor, lambda: runtime.script_url,
+            runtime._context, _WorkerInspectorExecutor(runtime.executor), lambda: runtime.script_url,
             runtime.stop, "worker",
         ), parent, started=started)
         self.targets[runtime] = target

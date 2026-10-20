@@ -25,7 +25,7 @@ def test_a_shared_worker_answers_on_the_port_it_hands_out():
             window.__port = worker.port;
             worker.port.onmessage = (event) => window.__seen.push(event.data);
             worker.port.postMessage('hi');""")
-        page.run_until_idle(timeout=3)
+        page.wait_for("window.__seen.length >= 2", timeout=10)
         seen = page.evaluate("window.__seen")
         shape = page.evaluate(
             "[typeof SharedWorker, SharedWorker.length,"

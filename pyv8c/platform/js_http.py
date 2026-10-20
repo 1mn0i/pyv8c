@@ -8,10 +8,11 @@ resource interceptor, the cache.
 from __future__ import annotations
 
 import json
-from concurrent.futures import Future
+import time
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 
-from ..foundation.host_errors import LoadFailure
+from ..foundation.host_errors import LoadFailure, HostStateError
 
 
 @dataclass
@@ -170,19 +171,18 @@ class JsHttpController:
     def _await(self, kind, url, options, timeout):
         """The snippet's answer, after turning this realm's loop until it arrives."""
         page = self._page
-        answer = {}
+        if page.executor.is_owner_thread():
+            raise HostStateError('synchronous host HTTP cannot wait on the owner thread')
+        deadline = None if timeout is None else time.perf_counter() + max(0.0, float(timeout))
+        remaining = lambda: None if deadline is None else max(0.0, deadline-time.perf_counter())
+        future = self._future(kind, url, options, timeout=remaining())
+        try:
+            return future.result(timeout=remaining())
+        except FutureTimeoutError:
+            future.cancel()
+            raise TimeoutError(f"the page's {kind}({url}) did not settle in {timeout} seconds") from None
 
-        def run():
-            self._start(_source(kind, url, options),
-                        lambda payload: answer.update(payload=payload))
-            page.tasks.pump_until(lambda: "payload" in answer, timeout=timeout)
-
-        page.realm.executor.call(run)
-        if "payload" not in answer:
-            raise TimeoutError(f"the page's {kind}({url}) did not settle in {timeout} seconds")
-        return self._response(url, answer["payload"])
-
-    def _future(self, kind, url, options):
+    def _future(self, kind, url, options, timeout=30):
         """A ``Future`` the realm queue settles when the snippet answers."""
         page = self._page
         future = Future()
@@ -196,9 +196,10 @@ class JsHttpController:
                 future.set_exception(exc)
 
         try:
-            page.realm.executor.call(lambda: self._start(_source(kind, url, options), deliver))
+            page.realm.executor.call(lambda: self._start(_source(kind, url, options), deliver), timeout=timeout)
         except BaseException as exc:
-            future.set_exception(exc)
+            if not future.done():
+                future.set_exception(exc)
         return future
 
     @staticmethod

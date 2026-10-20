@@ -11,7 +11,7 @@ def test_evaluate_data_and_handle_boundaries():
         assert page.evaluate("({items: [1, 2]})") == {"items": [1, 2]}
         value = page.evaluate_handle("({items: [1, 2]})")
         assert isinstance(value, pyv8.JSObject)
-        assert value.to_python() == {"items": [1, 2]}
+        assert page.executor.call(value.to_python) == {"items": [1, 2]}
         page.close()
         with pytest.raises(RuntimeError):
             value.to_python()

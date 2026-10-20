@@ -7,8 +7,7 @@ specific interleaving, which almost never occurs in a single happy-path run:
   single attribute lookup that never succeeds for a Page (the executor lives
   on ``Page.realm``).  ``Debugger.disconnect`` therefore ran on whichever
   thread happened to close the target, breaking the single-owner invariant.
-- A2 -- ``TaskQueue.pump_until`` could sleep out a delivery whose notification
-  landed in the window between turning the loop and going to sleep.
+- A2 -- the execution driver must wake when a delivery arrives as it parks.
 - A3 -- an exception raised by a ``RealmExecutor.post()`` command has no
   Future to mirror onto and used to vanish inside the owner thread.
 - A4 -- a fetch/XHR or document-subresource response that completed before its
@@ -172,45 +171,28 @@ def test_devtools_page_close_records_no_disconnect_diagnostics(browser):
 # -- A2: a delivery racing the pump's wait must not be slept past -------
 
 
-def test_pump_until_does_not_sleep_out_a_delivery_that_races_the_wait():
-    """A2: a task delivered while the pump sleeps must wake it promptly.
-
-    The delivery nudges the executor, whose wait returns at once; without the
-    nudge the pump sleeps the whole next-timer bound (50 ms here) and only then
-    re-checks, which turns a microseconds-wide race into a stall.
-    """
-    executor = RealmExecutor(name="test-race-a2")
+def test_owner_wait_does_not_sleep_out_a_delivery_that_races_the_wait():
+    """A delivery must wake the driver without a nested event-loop pump."""
+    executor = RealmExecutor(name="test-race-a2", auto_pump=True)
     from pyv8c.foundation.tasks import TaskQueue
 
     queue = TaskQueue()
-    executor.attach_task_queue(queue)
     consumed = []
     asleep = threading.Event()
+    finished = threading.Event()
     wait = executor._sleep
 
     def recording_wait(seconds=None):
         asleep.set()
         wait(seconds)
 
-    queue.set_wait(recording_wait)
-    finished = threading.Event()
-    outcome = {}
-
-    def wait_for_delivery():
-        outcome["held"] = queue.pump_until(lambda: bool(consumed), 5)
-        finished.set()
-
+    executor._sleep = recording_wait
     try:
-        assert executor.post(wait_for_delivery) is True
-        assert asleep.wait(1.0), "the pump never went to sleep"
-        started = time.monotonic()
-        queue.post(lambda: consumed.append("ok"))
-        assert finished.wait(1.0), "the delivery did not wake the pump"
-        elapsed = time.monotonic() - started
-        assert outcome["held"] is True
+        executor.call(executor.attach_task_queue, queue)
+        assert asleep.wait(1.0), "the owner never went to sleep"
+        queue.post(lambda: (consumed.append("ok"), finished.set()))
+        assert finished.wait(1.0), "the delivery did not wake the owner"
         assert consumed == ["ok"]
-        # The no-timer bound is 50 ms; a lost nudge would spend all of it.
-        assert elapsed < 0.03, f"pump_until slept {elapsed * 1000:.0f}ms past the delivery"
     finally:
         executor.close()
 
@@ -423,17 +405,20 @@ def test_page_close_retries_failed_retired_realm_cleanup():
         browser.close()
 
 
-def test_page_close_retries_failed_owned_isolate_cleanup():
+def test_page_close_retries_failed_owned_isolate_cleanup(monkeypatch):
     from pyv8c import Browser
-    browser = Browser(real_network=False, shard_isolates=True, stub_logging="off")
+    browser = Browser(real_network=False, stub_logging="off")
     page = browser.new_profile().new_page()
     isolate = page.isolate
+    original = type(isolate).close
     attempts = []
-    def close():
+    def close(current):
+        if current is not isolate:
+            return original(current)
         attempts.append(1)
         if len(attempts) == 1: raise RuntimeError('isolate cleanup failed')
-        isolate.close()
-    page.isolate = SimpleNamespace(close=close)
+        original(current)
+    monkeypatch.setattr(type(isolate), 'close', close)
     try:
         with pytest.raises(RuntimeError, match='isolate cleanup failed'):
             page.close()

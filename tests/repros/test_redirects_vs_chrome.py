@@ -253,10 +253,7 @@ def compared(reference):
             page = browser.new_profile().new_page()
             page.goto(SAME["origin"] + "/page", wait_until="load")
             page.evaluate(script)
-            for _ in range(40):
-                page.run_until_idle(timeout=1)
-                if page.evaluate("window.__done"):
-                    break
+            page.wait_for("window.__done")
             mine = _values(page.evaluate("JSON.stringify(window.__obs)"))
             mine_wire = _requests()
             mine_navigation = _navigation(browser, SAME["origin"])

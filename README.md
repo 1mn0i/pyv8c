@@ -1,108 +1,71 @@
 # pyv8c
 
-## Native Bridge Protocol
+pyv8c 是基于 V8 和 Python 的浏览器脚本运行框架。原生桥接由相邻仓库 `_pyv8` 提供，Python 实现页面、DOM、Web API、资源加载、任务调度和调试接入。适合运行页面脚本、构造可重复的浏览器行为测试，以及通过本地 Chrome 对照完善 Web 能力。
 
-Python 3.12+ is required. `Page.evaluate()` returns materialized data;
-`Page.evaluate_handle()` returns primitives or live JS handles. Call
-`handle.to_python()` explicitly for arrays and plain objects. Handles are
-invalid after their V8Context closes. Internal bindings use the handle protocol
-without implicit object enumeration.
+框架提供常用 DOM 与事件、导航、iframe、Worker、Fetch、XMLHttpRequest、WebSocket、存储、部分样式与几何计算，以及 V8 Inspector。接口暴露由 Chromium IDL 和浏览器环境档案共同决定；**接口存在不代表功能完整实现**。
 
-`pyv8c` 是一个运行在相邻 `_pyv8` 原生扩展之上的、可控且可测试的 Chromium-like JavaScript 页面环境。
-V8 负责执行 JavaScript；Python 负责页面、DOM/BOM、资源、事件循环、Worker、WebSocket、IndexedDB 和 DevTools 宿主行为。
+## 安装
 
-它不是 Chromium 内核，也不承诺完整 Chrome 兼容性。当前实现重点是确定性的页面脚本执行、常用 Web API、独立 Realm、资源注入和可调试性。
+要求 Python 3.12 及以上，并能导入与当前解释器匹配的 `pyv8` 原生扩展。本轮主要验证环境为 Windows、Python 3.12 和本机 Chrome；其他平台及解释器版本需要分别验证。
 
-## 快速开始
-
-要求 Python 3.12+，并且运行环境能导入相邻仓库构建的 `pyv8` 扩展：
+以下命令在 pyv8c 仓库根目录执行，假设 `_pyv8` 位于相邻目录：
 
 ```powershell
-Set-Location <pyv8c 仓库根>                        # 例如 D:\code\pyv8env\pyv8c
-$env:PYTHONPATH = "$PWD;$PWD\..\_pyv8"            # 本仓库，加上相邻的原生仓库
-python -m pip install -e .
+$env:PYTHONPATH = "$PWD;$PWD\..\_pyv8"
+python -m pip install -e ".[network,dev,reference]"
 python -c "import pyv8; print(pyv8.__file__)"
 ```
 
-最小示例：
+`network` 安装默认 HTTP 引擎，`dev` 安装测试工具，`reference` 安装驱动本机 Chrome 的工具，不下载浏览器。原生扩展的构建要求见相邻 `_pyv8` 仓库文档。
+
+## 快速开始
 
 ```python
 from pyv8c import Browser
 
-browser = Browser(real_network=False, stub_logging="off")
+browser = Browser(real_network=False)
 try:
     page = browser.new_profile().new_page()
-    page.set_content("<main id='app'>ready</main>", url="https://example.test/")
-    assert page.evaluate("document.querySelector('#app').textContent") == "ready"
+    page.set_content("<main id='app'>就绪</main>", url="https://example.test/")
+    assert page.evaluate("document.querySelector('#app').textContent") == "就绪"
     page.evaluate("globalThis.answer = 0; setTimeout(() => answer = 42, 0)")
-    page.run_until_idle(timeout=1)
+    page.wait_for("answer === 42", timeout=1)
     assert page.evaluate("answer") == 42
 finally:
     browser.close()
 ```
 
-默认 `real_network=True`，导航或资源请求会使用真实网络。离线场景使用 `Browser(real_network=False)`，配合 `resource_loader` 或 `set_content()`。
+默认 `Browser()` 开启真实网络，HTTP 使用 `curl_cffi`，WebSocket 使用 `websockets`。离线运行应显式设置 `real_network=False`，使用 `set_content()` 或资源加载器提供页面。
 
-请显式关闭 Page、Profile 或 Browser。关闭的 Page 会从所属 profile 移除，
-关闭的 Profile 会从 Browser 移除；页面返回的原生 JS 对象和函数随页面关闭
-失效，后续访问会报错。关闭某个页面不影响其他页面的错误钩子。
-独立资源清理失败时会报告异常，保留失败资源以便再次调用 `close()` 重试。
+访问网站时，使用 `page.goto(url, wait_until="load", timeout=30)` 等待指定加载阶段。`run_until_idle()` 只等待当前可运行工作排空，不等待未来网络、定时器或 Worker 结果。`evaluate()` 不自动等待 Promise。
 
-## 运行模型
+## 对象与执行模型
 
 ```text
-Browser
-└── Profile
-    └── Page
-        ├── PageServices       窄能力接口：Realm、任务、资源、文档、Worker、V8 上下文
-        ├── PageRealm           一个 V8Context、BindingSession、owner executor
-        ├── Window/Document     页面对象与 DOM 状态
-        ├── Navigation/Lifecycle/Scripting/ResourceController
-        ├── iframe Page         独立 Realm，通过 WindowProxy 访问
-        └── WorkerRuntime       独立执行器和 Worker Realm
+Browser                         框架配置、接口装配和回调线程池
+└─ Profile                      Cookie、网络后端、存储和 Blob URL
+   └─ Page                      文档、导航、服务和资源所有权
+      ├─ WindowExecutionGroup   owner 线程、Isolate 和帧时钟
+      │  └─ Agent               任务源队列、显式微任务队列
+      ├─ iframe Page            与所属页面共享执行组，使用独立 Realm
+      └─ Worker                 独立线程、Isolate、Agent 和 Realm
 ```
 
-所有需要宿主能力的 Web API 只接收 `PageServices` 的窄 capability，不直接引用 `Page`、`Browser` 或平台控制器。
+独立 `new_page()` 创建独立执行组。同步跨 iframe 访问在同一 owner 线程切换 Context。活 JS 句柄只能在所属 owner 线程使用，原 Context 关闭后失效。关闭 Browser 会释放其 Profile、页面及相关资源；调用方应始终显式关闭。
 
-## Feature 架构
+## 文档
 
-Web API 的装配只有一个概念：Feature。
+- [使用指南](docs/usage.md)：页面 API、等待、环境、网络入口与关闭。
+- [架构设计](docs/architecture.md)：模块职责、执行所有权、绑定和生命周期。
+- [开发指南](docs/development.md)：开发约定、测试、Chrome 对照和性能验证。
+- [任务调度](docs/task-scheduling.md)、[资源加载](docs/resource-loading.md)、[网络传输](docs/network-transports.md)。
+- [请求头](docs/request-headers.md)、[窗口与同源访问](docs/window-security.md)、[IDL 格式](docs/idl-format.md)。
+- [调试器](docs/devtools.md)、[运行跟踪](docs/tracing.md)。
 
-- `FeatureSpec` 是不导入实现源码的静态声明，记录接口组、Window 槽位、依赖和实现模块。
-- `FeatureCatalog` 在启动时建立不可变索引。
-- `FeatureRuntime` 每个 Browser 独立，负责依赖解析、实现模块导入、接口类缓存、Realm 物化和 Window 值缓存。
-- 实现模块显式导出 `FEATURE = FeatureImplementation(...)`，禁止通过 `vars(module)` 扫描注册。
-- Core Feature 先加载源码，基础接口按 Realm 需要物化；IndexedDB、Navigator、WebSocket、Worker 等 Optional Feature 首次使用时才导入。
-- 每个 Window 的 `navigator`、Storage、History、IndexedDB 等值由统一槽位缓存创建；`location` 是页面创建期值。
+完整导航见 [文档索引](docs/README.md)。
 
-Feature 相关代码位于 `pyv8c/engine/features.py` 和 `pyv8c/web/features/`。接口基线只描述结构和绑定元数据，参数语义由具体 Web API 实现负责。
+## 能力边界
 
-## 当前能力与边界
+pyv8c 不包含 Chromium 的完整渲染、进程和安全沙箱体系。样式、布局、图形、媒体、权限及设备 API 存在实现范围和环境差异；部分成员按基线暴露但使用占位实现。网络栈不是完整的 Fetch、HTTP 缓存或 Chrome 网络服务。
 
-已覆盖：常用 DOM/BOM、URL、事件与集合、页面导航、资源 loader/interceptor、事件循环、Dedicated Worker、WebSocket、IndexedDB、V8 Inspector/DevTools、trace。
-
-明确不覆盖：完整 CSSOM/布局/渲染、完整 Chrome 多进程模型、全部 Web API、完整 CDP Page/Network/DOM 域、多客户端协作和浏览器级安全沙箱。
-
-## 测试与开发
-
-```powershell
-# 在 pyv8c 仓库根目录执行
-$env:PYTHONPATH = "$PWD;$PWD\..\_pyv8"
-python -m pytest -q
-```
-
-运行时架构和不变量见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，使用配置见 [docs/USAGE.md](docs/USAGE.md)，开发和验证流程见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
-
-专题文档：
-
-- [DevTools](docs/DEVTOOLS.md)
-- [Trace](docs/TRACE.md)
-- [资源加载与拦截](docs/resource-interception.md)
-- [网络引擎与参数](docs/network-engines.md)
-- [Window、iframe 与同源边界](docs/WINDOW_SECURITY.md)
-- [IDL document](docs/idl-fields.md)
-- [AI 接手开发规范](docs/AI_DEVELOPMENT.md)
-
-## 相邻仓库
-
-`_pyv8` 提供 Python/V8 原生桥接、V8Context/Isolate、Inspector 和 trace 原语。修改原生行为时，需要在 `_pyv8` 仓库单独运行其测试；本仓库只负责浏览器宿主和 Web API 实现。
+当前没有实现 OOPIF、完整 COOP/COEP、Origin-Agent-Cluster 和 `document.domain` 模型，也不提供完整 CDP Page、Network、DOM 域。不能以单个网站加载成功或接口数量衡量 Chrome 兼容程度。

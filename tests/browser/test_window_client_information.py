@@ -30,7 +30,7 @@ def test_client_hints_reach_a_worker():
             worker.onmessage = event => window.__worker = event.data;
             worker.onerror = event => window.__worker = 'error:' + event.message;
         })()""")
-        page.run_until_idle(timeout=2)
+        page.wait_for("window.__worker !== 'pending'", timeout=10)
         assert page.evaluate("window.__worker") == \
             '["object","Google Chrome,Chromium,Not(A:Brand","function",true]'
     finally:

@@ -1,4 +1,4 @@
-"""Host callback execution and owner-queue delivery."""
+"""Host callback execution; Fetcher queues the raw result on its owner."""
 import threading
 
 
@@ -7,8 +7,8 @@ class CallbackRunner:
         self.browser = page.profile.browser
         self.tasks = page.services.task_services
 
-    def dispatch(self, call, tail):
-        """Run the host callback inline or on the pool; return to its owner.
+    def dispatch(self, call, tail, *, force_pool=False):
+        """Run the host callback and raw-result tail inline or on the pool.
 
         A cancelled queued Future never enters the worker, so its done callback
         also releases the loader count. A running callback cannot be interrupted.
@@ -19,22 +19,24 @@ class CallbackRunner:
                 return call(), None
             except BaseException as exc:
                 return None, exc
-        if not browser.threaded_loaders:
+        if not browser.threaded_loaders and not force_pool:
             value, error = gather()
             tail(value, error)
             return None
         def pool_side():
             try:
                 value, error = gather()
-                tasks.post_task(lambda: tail(value, error))
+                tail(value, error)
             finally:
                 tasks.complete_loader()
         tasks.begin_loader()
         try:
             future = browser.loader_pool.submit(pool_side)
         except BaseException as exc:
-            tasks.post_task(lambda exc=exc: tail(None, exc))
-            tasks.complete_loader()
+            try:
+                tail(None, exc)
+            finally:
+                tasks.complete_loader()
             return None
         future.add_done_callback(lambda done: tasks.complete_loader() if done.cancelled() else None)
         return future

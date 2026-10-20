@@ -110,6 +110,7 @@ class _SocketServer(threading.Thread):
         self.socket.bind(("127.0.0.1", 0))
         self.socket.listen(4)
         self.port = self.socket.getsockname()[1]
+        self.received = threading.Event()
 
     def run(self):
         while True:
@@ -118,6 +119,7 @@ class _SocketServer(threading.Thread):
             except OSError:
                 return
             try:
+                connection.settimeout(5)
                 raw = b""
                 while b"\r\n\r\n" not in raw:
                     chunk = connection.recv(4096)
@@ -141,6 +143,7 @@ class _SocketServer(threading.Thread):
                     "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                     f"Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
                 ).encode())
+                self.received.set()
                 connection.close()
             except Exception:
                 try:
@@ -173,7 +176,7 @@ def wire():
             page.net.fetch(f"{cross_origin}/js/cross-simple")
             page.net.xhr("/js/xhr-get")
             page.evaluate(f"new WebSocket('{ws}')")
-            page.run_until_idle(timeout=5)
+            assert sockets.received.wait(5), "the WebSocket handshake did not arrive"
         finally:
             browser.close()
         with LOCK:
@@ -182,7 +185,13 @@ def wire():
         for server in servers:
             server.shutdown()
             server.server_close()
+        try:
+            sockets.socket.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         sockets.socket.close()
+        sockets.join(3)
+        assert not sockets.is_alive()
     yield {"records": records, "http": same_origin, "cross": cross_origin}
 
 

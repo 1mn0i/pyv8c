@@ -6,18 +6,21 @@ from pyv8c.foundation.executor import RealmExecutor
 from pyv8c.foundation.tasks import TaskQueue
 
 
-def test_a_distant_timer_is_waited_for_in_one_sleep():
+def test_a_distant_timer_is_waited_for_in_one_sleep(monkeypatch):
     executor = RealmExecutor(name="test-sleep")
     queue = TaskQueue()
     executor.attach_task_queue(queue)
     sleeps = []
-    sleep = executor._sleep
+    loop = executor.call(lambda: executor._loop)
+    call_later = loop.call_later
 
-    def recording_sleep(seconds=None):
+    def recording_sleep(seconds, callback, *args, **kwargs):
         sleeps.append(seconds)
-        sleep(seconds)
+        return call_later(seconds, callback, *args, **kwargs)
 
-    executor._sleep = recording_sleep
+    # Observe the actual timed wait, not the driver's pre-sleep hint: deadlines
+    # are now refreshed after clearing wakeups to avoid losing a new timer.
+    monkeypatch.setattr(loop, 'call_later', recording_sleep)
     try:
         queue.schedule(lambda: None, 60)
         deadline = time.monotonic() + 1.0

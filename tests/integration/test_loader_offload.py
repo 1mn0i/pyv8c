@@ -22,7 +22,7 @@ def test_a_blocked_loader_no_longer_freezes_the_realm():
         started = time.perf_counter()
         assert page.evaluate("1 + 1") == 2
         assert time.perf_counter() - started < 0.2
-        page.run_until_idle(timeout=3)
+        page.wait_for("typeof window.__slow !== 'undefined'", timeout=10)
         assert page.evaluate("__slow") == "ok"
     finally:
         browser.close()

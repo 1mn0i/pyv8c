@@ -531,7 +531,7 @@ def test_a_posted_message_is_a_copy_taken_when_it_is_posted(page):
     assert page.evaluate("window.__seen") == [1, "1,2", 7]
 
 
-def test_a_port_that_outlives_its_worker_still_delivers():
+def test_a_port_that_outlives_its_worker_still_delivers(monkeypatch):
     """A message a worker posted through a port arrives after that worker is gone.
 
     The page holds its own queue shut for the moment the worker needs to post and
@@ -553,19 +553,32 @@ def test_a_port_that_outlives_its_worker_still_delivers():
             "};"
             "var worker = new Worker(URL.createObjectURL("
             "new Blob([__SOURCE__], {type: 'text/javascript'})));"
-            "worker.postMessage('go', [channel.port2]);"
-            "var until = Date.now() + 600; while (Date.now() < until) {}"
             "</script></body>")
     body = body.replace("__SOURCE__", json.dumps(worker_source).replace("</", "<\\/"))
 
     def loader(url, request):
         return {"body": body, "headers": {"content-type": "text/html"}}
 
+    import threading
+    from pyv8c.web.workers.runtime import WorkerRuntime
+    ready, closed = threading.Event(), threading.Event()
+    original_cleanup = WorkerRuntime._cleanup_owner
+    monkeypatch.setattr(WorkerRuntime, '_started', lambda runtime: ready.set())
+    def cleanup(runtime):
+        original_cleanup(runtime)
+        assert runtime._realm is None
+        closed.set()
+    monkeypatch.setattr(WorkerRuntime, '_cleanup_owner', cleanup)
     browser = Browser(stub_logging="off", real_network=False, resource_loader=loader)
     try:
         page = browser.new_profile().new_page()
         page.goto("http://port.test/")
-        page.run_until_idle(timeout=1)
+        assert ready.wait(2)
+        def post_while_parent_queue_is_blocked():
+            page.evaluate("worker.postMessage('go', [channel.port2])")
+            assert closed.wait(2), "worker realm must close before parent delivery"
+        page.executor.call(post_while_parent_queue_is_blocked)
+        page.wait_for("window.__seen.length===2 || window.__error!==''", timeout=2)
         assert page.evaluate("window.__error") == ""
         assert page.evaluate("window.__seen") == [7, "1,2"]
     finally:

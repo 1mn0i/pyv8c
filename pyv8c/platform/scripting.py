@@ -8,6 +8,7 @@ import pyv8
 
 from ..foundation.host_errors import HostStateError
 from ..foundation.tasks import TaskSource
+from ..foundation.error_policy import control_exceptions
 
 
 class ScriptController:
@@ -73,6 +74,7 @@ class ScriptController:
         finally:
             if target is not None:
                 target.after_script()
+            self.page.executor.after_callback()
 
     def _compiled_script(self, script, filename):
         key = (str(script), filename)
@@ -102,6 +104,8 @@ class ScriptController:
             else:
                 self.evaluate(source, filename=filename or self.page.url)
             return True
+        except control_exceptions():
+            raise
         except BaseException as exc:
             document.current_script = previous
             # The exception carries the position, so the page gets the throw site.
@@ -114,6 +118,7 @@ class ScriptController:
             return False
         finally:
             document.current_script = previous
+            self.page.executor.after_callback()
 
     def execute_module(self, source, filename, trail):
         """Execute static module imports in dependency-first order.
@@ -225,6 +230,8 @@ class ScriptController:
         try:
             fn = self.page.v8_context.exec_js("(function(event){" + str(source) + "})")
             node._handlers[str(name).lower()] = fn
+        except control_exceptions():
+            raise
         except BaseException as exc:
             self.page.lifecycle.dispatch_script_error(node, exc)
 

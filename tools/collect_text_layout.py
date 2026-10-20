@@ -241,11 +241,11 @@ def _run_here(cases, idl_path=None):
     try:
         page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://text-layout.test/")
-        page.run_until_idle(timeout=2)
+        page.wait_for_load_state('load', timeout=2)
         answers = {}
         for name, html, readout in cases:
             page.set_content("<body></body>", url="https://text-layout.test/")
-            page.run_until_idle(timeout=2)
+            page.wait_for_load_state('load', timeout=2)
             answers[name] = page.evaluate(_script(html, readout))
         page.set_content("<body></body>", url="https://text-layout.test/")
         answers["line-heights"] = page.evaluate(FACE_SCRIPT % (json.dumps(list(FACES)),

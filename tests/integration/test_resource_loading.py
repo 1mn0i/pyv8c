@@ -16,27 +16,35 @@ from pyv8c.web.fetch.response import Response
 
 
 def test_inline_interceptor_return_does_not_replace_new_transport(monkeypatch):
-    """The outer dispatch returns after its callback starts a pending transport."""
+    """Interceptor results advance asynchronously without losing the transport."""
     transport = SimpleNamespace(cancel_calls=0)
     def cancel():
         transport.cancel_calls += 1
     transport.cancel = cancel
     calls = []
-    def dispatch(call, tail):
+    started = threading.Event()
+    def dispatch(call, tail, *, force_pool=False):
+        assert not force_pool
         calls.append(call)
         if len(calls) == 1:
             tail(call(), None)
             return None
+        started.set()
         return transport
     with closing(Browser(real_network=False, stub_logging="off",
                          resource_interceptor=lambda url, request: None,
                          resource_loader=lambda url, request: "ok")) as browser:
         page = browser.new_profile().new_page()
         monkeypatch.setattr(page.resource_fetcher, "callbacks", SimpleNamespace(dispatch=dispatch))
-        handle = page.resource_fetcher.load_resource_async("http://local.test/", {},
-                                                          lambda *args: pytest.fail("cancelled delivery"))
+        def issue():
+            handle = page.resource_fetcher.load_resource_async(
+                "http://local.test/", {}, lambda *args: pytest.fail("cancelled delivery"))
+            assert len(calls) == 1, "interceptor must not advance in the issuing stack"
+            return handle
+        handle = page.executor.call(issue)
+        assert started.wait(3)
+        page.executor.call(handle.cancel)
         assert len(calls) == 2
-        handle.cancel()
         assert transport.cancel_calls == 1
         assert page.resource_ownership.active_count == 0
 
@@ -45,14 +53,16 @@ def ask(page, url, options, asynchronous):
     if not asynchronous:
         return page.resource_fetcher.load_resource(url, options)
     answers = []
+    arrived = threading.Event()
     def complete(response, error):
         assert page.realm.executor.is_owner_thread()
         answers.append((response, error))
+        arrived.set()
     def issue():
         page.resource_fetcher.load_resource_async(url, options, complete)
         assert not answers, "async completion must not run in the issuing turn"
     page.realm.executor.call(issue)
-    page.run_until_idle(timeout=3)
+    assert arrived.wait(3), "resource did not deliver before its deadline"
     assert len(answers) == 1
     response, error = answers[0]
     if error:
@@ -329,7 +339,8 @@ def test_direct_document_handle_cancel_releases_load_barrier():
             assert started.wait(3)
             handle.cancel()
             # The owner queue releases document records, including direct cancellation.
-            assert page.tasks.pump_until(lambda: not page.document_resources.has_pending, timeout=3)
+            assert page.run_until_idle(timeout=3)
+            assert page.executor.call(lambda: not page.document_resources.has_pending)
             assert not page.services._registrations
         finally:
             release.set()

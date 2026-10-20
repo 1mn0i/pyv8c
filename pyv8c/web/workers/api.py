@@ -100,8 +100,8 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
     def fn_fetch(self, request=MISSING, options=None, *_extra):
         """``fetch`` for a worker global: the same steps a window runs.
 
-        A worker's own realm services carry no resource capability, so the load goes through
-        the services of the page that owns it -- which is where every other worker load goes.
+        The worker resource capability snapshots the request and routes it through
+        the parent owner; its result is rebuilt on the worker's own networking queue.
         ``initiator_url`` is this worker's own script URL, so the request is attributed to the
         worker: a worker started from a ``blob:`` sends no ``Referer`` and says
         ``Sec-Fetch-Site: same-origin``, where the owner page's URL said otherwise.
@@ -109,7 +109,6 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
         from ..bom.window import fetch_like
 
         return fetch_like(self._services, "WorkerGlobalScope", request, options,
-                          resources=getattr(self._runtime, "services", None),
                           initiator_url=self.script_url())
 
     def get_self(self): return self

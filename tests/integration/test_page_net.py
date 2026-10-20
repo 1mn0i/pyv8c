@@ -148,7 +148,7 @@ def test_cookies_are_shared_with_the_page_in_both_directions(page):
 
     # ...a page fetch sends them through the same transport...
     page.evaluate("fetch('/echo').then(r => r.json()).then(v => window.__fromPage = v)")
-    page.run_until_idle(timeout=5)
+    page.wait_for("typeof window.__fromPage !== 'undefined'", timeout=10)
     assert page.evaluate("__fromPage")["cookie"] == "a=1; b=2"
 
     # ...and a cookie a page script sets is sent by the next host request.

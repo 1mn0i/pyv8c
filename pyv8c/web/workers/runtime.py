@@ -1,24 +1,26 @@
 """Worker thread and message-loop implementation."""
 
 import threading
+import sys
+from collections import deque
+from functools import partial
 
 import pyv8
 from loguru import logger
 
 from ...foundation.arguments import is_nullish
-from ...foundation.error_policy import is_host_failure
+from ...foundation.agent_tasks import AgentTaskQueue, TaskContext
+from ...foundation.error_policy import control_exceptions, is_host_failure
 from ...foundation.executor import RealmExecutor
 from ...foundation.lifecycle import ResourceScope
+from ...foundation.host_errors import RealmBusyError
 from ...foundation.rejections import RejectionTracker
+from ...foundation.rejection_state import WeakPromiseState
+from ...foundation.tasks import TaskSource
 from ..dom.events import PromiseRejectionEvent
 from ..page_errors import PageError
 from ..clone import structured_clone, transfer_ports
 from ..fetch.events import ErrorEvent, MessageEvent
-
-#: Schemes whose source belongs to the page: reading one is a lookup, not a load, so it can
-#: happen on the thread that is constructing the worker.
-_LOCAL_SOURCE_SCHEMES = ("blob:", "data:")
-
 
 class WorkerRuntime:
     def __init__(self, owner, script_url):
@@ -26,55 +28,70 @@ class WorkerRuntime:
         self.services = owner._services
         self.script_url = str(script_url)
         self._stop = threading.Event()
+        self._message_lock = threading.RLock()
+        self._pending_messages = deque()
+        self._operation_lock = threading.RLock()
+        self._operation = None
+        self._stopped_operations = set()
         self._lifecycle_scope = ResourceScope()
-        self.executor = RealmExecutor(name="pyv8c-worker")
+        self.executor = RealmExecutor(name="pyv8c-worker", auto_pump=True)
         # V8 reports a rejection before the turn that caused it ends, so the
         # candidates wait for this realm's own executor boundary to be
         # published; see foundation.rejections.
-        self.rejections = RejectionTracker(self._dispatch_rejection)
+        self.rejections = None
         self._realm = None
         self._context = None
         self._scope = None
+        self._agent_tasks = None
+        self._message_lane = None
         self._devtools = None
         self.debug_target = None
-        # A source the page made itself is read here, on the thread that is making the
-        # worker, rather than on the worker's own thread where ``_run`` reads everything
-        # else: an inlined worker is handed over as a ``blob:`` URL and the page revokes
-        # that URL in the same turn, while a browser takes the script before the revoke
-        # can land.  Nothing here does I/O, so the page's realm waits on nothing; a
-        # failure is kept and reported where a worker's failures go, by ``_run``.
+        # Capture parent configuration and initiate loading on its owner. The
+        # worker executor stays available for termination while I/O is pending.
+        self._config = None
         self._source = None
         self._source_error = None
-        if self.services is not None and self.script_url.startswith(_LOCAL_SOURCE_SCHEMES):
-            try:
-                self._source = self.services.resource_services.resolve_worker_source(
-                    self.script_url)
-            except BaseException as exc:
-                self._source_error = exc
-        # Start asynchronously (``new Worker()`` does not wait for the script):
-        # ``_run`` is posted first, so every later ``_dispatch_message`` runs after
-        # the scope exists, and messages stay ordered.
-        self.executor.post(self._run)
+        try:
+            self._config = self.services.worker_services.worker_configuration()
+            handle = self.services.resource_services.load_worker_source_async(
+                self.script_url, self._source_ready)
+            self._lifecycle_scope.add(handle.cancel)
+            handle.add_done_callback(self._source_finished)
+        except BaseException as exc:
+            self._source_ready(None, exc)
+
+    def _source_finished(self, handle):
+        # Owner invalidation suppresses delivery. It must still wake teardown
+        # for a worker whose realm has never been initialized.
+        if handle.cancelled and not self._stop.is_set():
+            self.stop()
+
+    def _source_ready(self, source, error):
+        with self._message_lock:
+            if self._stop.is_set():
+                return
+            self._source, self._source_error = source, error
+            self.executor.post(self._run, _task_lane=None)
 
     def _source_of_worker(self):
-        """The worker's script, read where it belongs.
-
-        A source the page made itself was read while the worker was constructed, so that
-        a revoke in the same turn cannot take it (see ``__init__``); everything else -- a
-        network fetch above all -- is read here, on the worker's own thread, so no realm
-        ever waits for a load.
-        """
+        """Read only the source handed off by the parent's networking task."""
         if self._source_error is not None:
             raise self._source_error
-        if self._source is not None:
-            return self._source
-        return self.services.resource_services.resolve_worker_source(self.script_url)
+        return self._source
 
     def _run(self):
+        if self._stop.is_set():
+            return
         try:
-            config = self.services.worker_services.worker_configuration()
+            config = self._config
+            self._config = None
+            if config is None and self._source_error is not None:
+                # Configuration failures remain host startup failures, rather
+                # than being misreported as a site's unavailable script.
+                raise self._source_error
             try:
                 source = self._source_of_worker()
+                self._source = None
             except BaseException as exc:  # a script that never arrives
                 #: A worker whose script cannot be fetched is still an ``error`` on the
                 #: Worker, as it is in a browser; why it could not be fetched is the
@@ -83,13 +100,13 @@ class WorkerRuntime:
                 self.services.task_services.post_task(
                     lambda: self.owner._receive_error(
                         PageError("Failed to load the worker's script")))
+                self._stop.set()
+                self._teardown_owner()
                 return
             self._realm = self.services.worker_services.create_worker_realm(config)
             self._realm.script_url = self.script_url
             # The worker drives its own task queue from this thread, so timers
             # and microtasks progress while the parent page is idle.
-            self.executor.attach_task_queue(self._realm.tasks)
-            self.executor.attach_rejection_tracker(self.rejections)
             self._realm.tasks.set_error_sink(self._report_error)
             self._scope = self._scope_class()(
                 runtime=self,
@@ -97,6 +114,19 @@ class WorkerRuntime:
                 services=self._realm.services,
             )
             self._context = self._realm.initialize(self._scope)
+            self._realm.attach_rendering(self.executor, partial(self._invoke, _background=True))
+            self._agent_tasks = AgentTaskQueue()
+            self._realm.tasks.bind_scheduler(self._agent_tasks, partial(self._invoke, _background=True), TaskContext(self._realm))
+            self.executor.attach_task_queue(self._agent_tasks, owns_checkpoint=True)
+            self.executor.bind_command_queue(self._realm.tasks, self._invoke, owns_checkpoint=True)
+            with self._message_lock:
+                self._message_lane = self._realm.tasks
+                while self._pending_messages:
+                    self._enqueue_parent_message(self._pending_messages.popleft())
+            self.rejections = RejectionTracker(
+                self._dispatch_rejection, self._realm.tasks.post, WeakPromiseState(self._context))
+            self._realm.callback_boundary = self._checkpoint
+            self.executor.attach_checkpoint(self._checkpoint)
             self.executor.attach_deadline_source(self._context)
             # A worker global schedules its own work, so the failures V8 raises
             # on its own are reported from this realm, not the page's.
@@ -111,11 +141,12 @@ class WorkerRuntime:
                     self.debug_target.before_script()
             if source:
                 try:
-                    self._context.exec_js(source, filename=self.script_url)
+                    self._invoke(self._context.exec_js, source, filename=self.script_url, _background=True)
                 finally:
                     if self.debug_target is not None:
                         self.debug_target.after_script()
-            self._started()
+            if not self._stop.is_set():
+                self._started()
         except BaseException as exc:  # a worker's failure is reported, not raised
             self._report_error(exc)
             self._stop.set()
@@ -128,6 +159,53 @@ class WorkerRuntime:
         from .api import DedicatedWorkerGlobalScope
         return DedicatedWorkerGlobalScope
 
+    def _invoke(self, callback, *args, _background=False, **kwargs):
+        """One worker task owns its budget through callback cleanup/checkpoint."""
+        if self._stop.is_set():
+            return None
+        context = self._context
+        operation = previous = None
+        if context is not None and pyv8.current_context(self._realm.isolate) is None:
+            budget = (self.executor.remaining_budget() if self.executor.has_operation
+                      else self.executor.default_timeout)
+            if budget is not None and budget <= 0:
+                raise RealmBusyError('worker operation deadline expired before execution')
+            ticket = context.begin_operation(budget or 0)
+            operation = (context, ticket)
+            with self._operation_lock:
+                previous = self._operation
+                self._operation = operation
+                # Stop may have arrived between the first state check and binding.
+                if self._stop.is_set():
+                    if context.terminate_operation(ticket):
+                        self._stopped_operations.add(ticket)
+        try:
+            try:
+                if not self._stop.is_set():
+                    return callback(*args, **kwargs)
+            finally:
+                if not isinstance(sys.exception(), control_exceptions()):
+                    self._checkpoint()
+        except pyv8.JavaScriptTerminated:
+            with self._operation_lock:
+                stopped = operation is not None and operation[1] in self._stopped_operations
+            if not _background or not stopped:
+                raise
+        finally:
+            if operation is not None:
+                with self._operation_lock:
+                    self._operation = previous
+                    context.end_operation(operation[1])
+                    self._stopped_operations.discard(operation[1])
+
+    def _checkpoint(self):
+        realm = self._realm
+        if (not self._stop.is_set() and realm is not None and realm.v8_context is not None
+                and pyv8.current_context(realm.isolate) is None):
+            realm.microtasks.checkpoint(timeout=self.executor.remaining_budget() or 0)
+            if self.rejections is not None:
+                self.rejections.flush()
+
     def _started(self):
         """What a worker of this kind does once its script has run."""
 
@@ -139,10 +217,18 @@ class WorkerRuntime:
             self._scope.fn_dispatchEvent(MessageEvent("message", {
                 "data": value, "origin": "", "ports": ports, "isTrusted": True,
             }, services=self._realm.services if self._realm is not None else None))
+        except control_exceptions():
+            raise
         except BaseException as exc:  # a message error is reported, not raised
             self._report_error(exc)
 
     def _cleanup_owner(self):
+        self._source = self._source_error = None
+        self._config = None
+        with self._message_lock:
+            self._message_lane = None
+            pending, self._pending_messages = self._pending_messages, deque()
+        pending.clear()
         first_error = None
         devtools = self._devtools
         if devtools is not None:
@@ -151,7 +237,8 @@ class WorkerRuntime:
                 self._devtools = None
             except BaseException as exc:
                 first_error = exc
-        self.rejections.close()
+        if self.rejections is not None:
+            self.rejections.close()
         if self._realm is not None:
             try:
                 self._realm.close()
@@ -162,6 +249,10 @@ class WorkerRuntime:
         if self._realm is None:
             self._context = None
             self._scope = None
+            if self._agent_tasks is not None:
+                self.executor.detach_task_queue(self._agent_tasks)
+                self._agent_tasks.close()
+                self._agent_tasks = None
         if first_error is not None:
             raise first_error
         self.services.task_services.post_task(self.owner._finish_lifecycle)
@@ -185,6 +276,8 @@ class WorkerRuntime:
                     "colno": column,
                     "error": error,
                 }))
+            except control_exceptions():
+                raise
             except BaseException:  # reporting must not break the worker
                 logger.debug("failed to report a worker error", exc_info=True)
         self.services.task_services.post_task(
@@ -197,9 +290,14 @@ class WorkerRuntime:
         if scope is None or self._stop.is_set():
             return
         try:
-            scope.fn_dispatchEvent(PromiseRejectionEvent(event_type, {
+            event = PromiseRejectionEvent(event_type, {
                 "promise": promise, "reason": reason,
-            }))
+                "cancelable": event_type == "unhandledrejection",
+            }, services=self._realm.services)
+            event._trusted = True
+            scope.fn_dispatchEvent(event)
+        except control_exceptions():
+            raise
         except BaseException:  # reporting must not break the worker
             logger.debug("failed to report a worker rejection", exc_info=True)
 
@@ -221,7 +319,22 @@ class WorkerRuntime:
             #: than element by element.
             data = structured_clone(value, context=pyv8.current_context())
             ports = transfer_ports(transfer, services=self.services, caller='Worker')
-            self.executor.post(self._dispatch_from_parent, (data, ports))
+            with self._message_lock:
+                if self._stop.is_set():
+                    return
+                if self._message_lane is None:
+                    self._pending_messages.append((data, ports))
+                else:
+                    self._enqueue_parent_message((data, ports))
+
+    def _enqueue_parent_message(self, payload):
+        # Caller holds the publication lock, including while draining startup
+        # messages. A post after publication cannot overtake that backlog.
+        lane = self._message_lane
+        if self._stop.is_set() or lane is None:
+            return
+        lane.post_task(lambda: self._dispatch_from_parent(payload), TaskSource.POSTED_MESSAGE,
+                       label='Worker message from parent')
 
     def _dispatch_from_parent(self, payload):
         value, ports = payload
@@ -235,7 +348,8 @@ class WorkerRuntime:
         data = structured_clone(value, context=self._context)
         ports = transfer_ports(transfer, services=self.services, caller='WorkerGlobalScope')
         self.services.task_services.post_task(
-            lambda: self.owner._receive_message(data, ports))
+            lambda: self.owner._receive_message(data, ports), TaskSource.POSTED_MESSAGE,
+            label='Worker message to parent', document_bound=True)
 
     def stop(self):
         """Ask the worker to take itself down, and return without waiting for it.
@@ -244,19 +358,27 @@ class WorkerRuntime:
         worker's delay in the *caller's* realm, and a page's own teardown calls this from
         inside the page realm -- which is how a page ends up with its timers, port
         deliveries and pending callbacks held for as long as a worker takes to answer.
-        ``RealmExecutor.call``'s budget exists to report a wedged realm, not to make one
-        realm wait on another.  A worker that is mid-script finishes its command first,
-        which is also what a browser's ``terminate()`` looks like from the page.
+        External termination interrupts the current native operation ticket. A worker
+        closing itself finishes its current callback without another checkpoint.
+        Python callbacks executing on this owner must still return before cleanup;
+        source loaders run separately and do not delay owner teardown.
         """
         if self.executor.closed and self._realm is None:
             return
         self._stop.set()
+        self._lifecycle_scope.close()
+        if not self.executor.is_owner_thread():
+            with self._operation_lock:
+                if self._operation is not None:
+                    context, ticket = self._operation
+                    if context.terminate_operation(ticket):
+                        self._stopped_operations.add(ticket)
         target = self.debug_target
         if target is not None:
             target.wake_waiting_owner()
         # Posted, not called: the command is served once whatever the worker is doing
         # ends, and the two steps below run on the worker's thread, where they belong.
-        self.executor.post(self._teardown_owner)
+        self.executor.post(self._teardown_owner, _task_lane=None)
 
     def _teardown_owner(self):
         """The teardown itself, on the worker's own thread.

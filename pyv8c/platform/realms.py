@@ -8,8 +8,13 @@ from pyv8.flag import V8Attribute
 
 from ..engine.trace import log_trace
 from ..foundation import promises
-from ..foundation.executor import RealmExecutor
-from ..foundation.tasks import TaskQueue
+from ..foundation.lifecycle import ResourceScope
+from .resources.ownership import ResourceOwnership
+from ..foundation.tasks import TaskQueue, TaskSource
+from ..foundation.agent_tasks import TaskContext
+from ..foundation.rejections import RejectionTracker
+from ..foundation.rejection_state import WeakPromiseState
+from ..foundation.tracing import silent_trace
 from ..web.bom.chrome import install_window_chrome
 from ..web.bom.legacy_factories import install_legacy_factories
 from .services import WorkerRealmServices
@@ -56,14 +61,8 @@ class _RealmTaskHost:
 
 def _publish_window_name(context, page):
     """Write the window's name as host work, so no trace event reports it."""
-    tracing = bool(getattr(context, "trace", False))
-    if tracing:
-        context.trace = False
-    try:
+    with silent_trace(context):
         page.window._publish_name()
-    finally:
-        if tracing:
-            context.trace = True
 
 
 #: Names Chrome hides in a realm that is not cross-origin isolated: the engine hands
@@ -76,10 +75,14 @@ def _declare_realm_interfaces(context, *, context_type, bindings):
     plan = bindings.plan(context_type)
     declared = context.install(plan.installs)
     if context_type == "Window":
-        for alias, target in bindings.idl.window_aliases().items():
-            if target in plan.installs:
-                context.define_global(alias, context.glob[target],
-                                      attributes=V8Attribute.DontEnum)
+        # Reading a target is what hands the alias its value, and that read is host
+        # work: Chromium installs a legacy alias with no script-visible lookup of the
+        # interface it points at, so no probe is reported for one.
+        with silent_trace(context):
+            for alias, target in bindings.idl.window_aliases().items():
+                if target in plan.installs:
+                    context.define_global(alias, context.glob[target],
+                                          attributes=V8Attribute.DontEnum)
     for name in _NON_ISOLATED_HIDDEN:
         context.hide_global(name)
     return declared
@@ -100,10 +103,27 @@ class WorkerRealm:
         # A worker global owns its task queue and drives it from its own owner
         # thread, so timers, microtasks and posted messages run there.
         self.tasks = TaskQueue(_RealmTaskHost(self))
+        self.tasks.set_task_context(TaskContext(self))
+        self._resource_scope = ResourceScope()
+        self.resource_ownership = ResourceOwnership(self._resource_scope)
         self.services = WorkerRealmServices(self.tasks, self)
+        self.callback_boundary = None
 
     def is_closed(self):
         return self.isolate is None
+
+    def attach_rendering(self, executor, invoke):
+        from ..foundation.rendering import RenderingScheduler
+        self._rendering = RenderingScheduler(frame_rate=self.config.browser.frame_rate)
+        self._frame_invoke = invoke
+        executor.attach_rendering(self._rendering)
+        self._resource_scope.add(self._rendering.close)
+
+    def animation_frame_lane(self):
+        return self._rendering.add(
+            invoke=self._frame_invoke, active=lambda: not self.tasks.closed,
+            timestamp=self.services.realm_services.performance.clock.at,
+            report_error=self.services.realm_services.report_exception)
 
     def initialize(self, scope):
         self.scope = scope
@@ -111,8 +131,9 @@ class WorkerRealm:
         session = config.session
         session.prepare("Worker")
         self.isolate = pyv8.Isolate()
+        self.microtasks = pyv8.MicrotaskQueue(self.isolate)
         self.v8_context = self.isolate.context(
-            scope, **_v8_context_kwargs(session, "Worker", config.trace,
+            scope, microtask_queue=self.microtasks, **_v8_context_kwargs(session, "Worker", config.trace,
                                      trace_callback=config.browser.trace_callback,
                                      traceable=config.browser.traceable),
         )
@@ -128,7 +149,16 @@ class WorkerRealm:
     # it is also what decides how a promise behaves once that context is gone.
 
     def evaluate_script(self, source):
-        return self.v8_context.exec_js(source)
+        try:
+            return self.v8_context.exec_js(source)
+        finally:
+            self.cleanup_after_callback()
+
+    def cleanup_after_callback(self):
+        if self.callback_boundary is not None:
+            self.callback_boundary()
+        elif self.v8_context is not None and pyv8.current_context(self.isolate) is None:
+            self.microtasks.checkpoint()
 
     def enqueue_microtask(self, callback):
         return promises.enqueue_microtask(self.v8_context, callback)
@@ -152,12 +182,16 @@ class WorkerRealm:
                     first_error = exc
                 return False
 
+        attempt(self._resource_scope.close)
         attempt(self.tasks.close)
         if self.v8_context is not None and attempt(self.v8_context.close):
             self.v8_context = None
         attempt(self.config.session.detach)
         if self.v8_context is None:
             self.scope = None
+        if self.v8_context is None and getattr(self, "microtasks", None) is not None:
+            if attempt(self.microtasks.close):
+                self.microtasks = None
         if self.isolate is not None and attempt(self.isolate.close):
             self.isolate = None
         if first_error is not None:
@@ -167,26 +201,18 @@ class WorkerRealm:
 class PageRealm:
     """Own the V8 context and binding session for one page."""
 
-    def __init__(self, page, executor=None):
+    def __init__(self, page, executor):
         self.page = page
         self.v8_context = None
-        self.executor = executor if executor is not None else RealmExecutor(name="pyv8c-page")
-        #: False when the page owns the thread and hands it across navigations.
-        self._owns_executor = executor is None
+        self.rejections = None
+        self.executor = executor
         browser = page.profile.browser
         # Web objects built through this session receive PageServices, not the
         # platform Page.
         self.binding_session = BindingSession(browser.bindings, page.services)
         page.services.bind_realm(self)
         try:
-            # Inside a running script, waiting on the realm's own thread would deadlock.
-            # Ask about *this realm's* isolate -- for a sharded page the default one would
-            # answer "not running", sending the frame's realm to a thread that cannot enter
-            # the isolate the inserting script still holds.
-            if pyv8.current_context(page.realm_isolate()) is not None:
-                self._initialize()
-            else:
-                self.executor.call(self._initialize)
+            self.executor.call(self._initialize)
         except BaseException:
             self.close()
             raise
@@ -199,18 +225,22 @@ class PageRealm:
         binding_prepared = time.perf_counter_ns()
         #: A frame's realm is not the top page's: the label says which it is.
         context_type = "FRAME" if page.parent_page is not None else "TOP"
+        self.agent = page.execution_group.agent(page.origin)
+        page.services.task_services.prepare_animation_frames()
+        self.executor.agent = self.agent
         self.v8_context = pyv8.V8Context(page.window, **_v8_context_kwargs(
             self.binding_session, context_type, page.trace,
             exposure_type="Window",
             on_materialize=self._record_deferred_materialized,
             trace_callback=page.profile.trace_callback,
             traceable=page.profile.traceable,
-            isolate=page.realm_isolate(),
+            isolate=page.execution_group.isolate,
             reuse_global=page.global_proxy,
-        ))
+        ), microtask_queue=self.agent.microtasks)
         #: Kept so the next document is handed the same window object.
         page.global_proxy = self.v8_context.glob
         self.executor.attach_deadline_source(self.v8_context)
+        self.executor.bind_agent(self.agent, TaskContext(self, page.document, page.navigation.generation))
         context_created = time.perf_counter_ns()
         deferred_globals = _declare_realm_interfaces(
             self.v8_context,
@@ -229,8 +259,14 @@ class PageRealm:
         # The realm owns the context and the page's script controller borrows it,
         # so the isolate's error hooks and every Web API promise share one realm;
         # the hooks route exceptions V8 raises on its own.
+        self.rejections = RejectionTracker(
+            page.report_rejection,
+            lambda callback: page.tasks.post(callback, TaskSource.DOM),
+            WeakPromiseState(self.v8_context),
+        )
+        self.executor.attach_rejection_tracker(self.rejections)
         self.v8_context.set_error_hooks(
-            page.report_uncaught_message, page.rejections.record,
+            page.report_uncaught_message, self.rejections.record,
         )
         plan = self.binding_session.bindings.plan("Window")
         browser._record_startup(
@@ -252,11 +288,6 @@ class PageRealm:
             - len(self.binding_session.bindings.plan("Window").ready),
         )
 
-    def close(self):
-        self.close_context()
-        if self._owns_executor:
-            self.executor.close()
-
     def enqueue_microtask(self, callback):
         return promises.enqueue_microtask(self.v8_context, callback)
 
@@ -266,7 +297,7 @@ class PageRealm:
     def promise_resolve(self, value):
         return promises.promise_resolve(self.v8_context, value)
 
-    def close_context(self):
+    def close(self):
         """Close the document-scoped parts: the context and the binding session.
 
         ``self.v8_context`` going to ``None`` is what tells a late caller -- a promise of the
@@ -276,10 +307,13 @@ class PageRealm:
             return
 
         def close_context():
+            if self.rejections is not None:
+                self.rejections.close()
             v8_context = self.v8_context
             close = getattr(v8_context, "close", None)
             if callable(close):
                 close()
+            self.executor.detach_deadline_source(v8_context)
             self.v8_context = None
             self.binding_session.detach()
 

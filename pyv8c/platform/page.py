@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import threading
+import time
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from typing import Literal
 
 import pyv8
@@ -12,7 +14,6 @@ from ..foundation.arguments import is_nullish
 from ..foundation.host_errors import HostStateError
 from ..foundation.error_policy import is_host_failure
 from ..foundation.lifecycle import ResourceScope
-from ..foundation.rejections import RejectionTracker
 from ..foundation.tasks import TaskQueue
 from ..foundation.urls import origin_tuple
 from ..web.bom.window import Window
@@ -20,9 +21,10 @@ from ..web.dom.document import Document, HTMLDocument
 from ..web.dom.nodes import Node
 from ..web.fetch.response import Response
 from .lifecycle import DocumentLifecycle
-from .navigation import NAVIGATION_GRACE, NavigationController
+from .navigation import NavigationController
 from .net import PageNet
-from .realms import PageRealm, RealmExecutor
+from .realms import PageRealm
+from .execution import WindowExecutionGroup
 from .resources.fetcher import ResourceFetchController
 from .resources.frames import FrameResourceController
 from .resources.documents import DocumentResourceController
@@ -33,6 +35,23 @@ from .state import Ownership
 
 
 EMPTY_DOCUMENT = "<!DOCTYPE html><html><head></head><body></body></html>"
+
+
+def _snapshot_data(value, seen):
+    """Detach binary views before returning Python data across the owner boundary."""
+    if type(value).__name__ in ('TypedArray', 'JSTypeArray'):
+        return bytes(value._bytes())
+    if isinstance(value, (dict, list, tuple)):
+        if id(value) in seen:
+            return seen[id(value)]
+        result = {} if isinstance(value, dict) else []
+        seen[id(value)] = result
+        if isinstance(value, dict):
+            result.update((key, _snapshot_data(item, seen)) for key, item in value.items())
+        else:
+            result.extend(_snapshot_data(item, seen) for item in value)
+        return result
+    return value
 
 
 class _TaskHostAdapter:
@@ -46,7 +65,7 @@ class _TaskHostAdapter:
         self._page = page
 
     def is_closed(self):
-        return self._page.closed
+        return self._page.closed or bool(getattr(getattr(self._page, 'execution_group', None), 'stopping', False))
 
     def parser_blocked(self):
         return self._page.navigation.parser_is_blocked()
@@ -86,15 +105,15 @@ class Page:
 
     These methods marshal onto the realm's owner thread, so they may be called
     from another thread; the JS objects they return may not (see
-    ``docs/USAGE.md``).
+    ``docs/usage.md``).
     """
 
     def __init__(self, profile, url="about:blank", *, trace=None, environment=None, parent=None, origin=None):
         self.profile = profile
         self.parent_page = parent
         self.top_page = parent.top_page if parent is not None else self
-        #: The frame tree's isolate, owned by the page that started the tree and shared by
-        #: its frames; ``None`` means the process default (see :meth:`realm_isolate`).
+        #: The frame tree's execution-group Isolate, shared by its frames.
+        #: None is used only before group initialization and after release.
         self.isolate = None
         #: The window object of this browsing context, the same one across navigations.
         self.global_proxy = None
@@ -124,9 +143,6 @@ class Page:
         # An uncaught exception must surface as an ErrorEvent on the window.
         self._reporting_error = False
         self.tasks.set_error_sink(self.report_exception)
-        # V8 reports a rejection before the turn that caused it ends, so the
-        # candidates wait for the executor's next boundary.
-        self.rejections = RejectionTracker(self.report_rejection)
         self._owned = Ownership()
         # Web-facing objects see this narrow surface, never the Page itself.
         self.services = PageServices(
@@ -157,13 +173,22 @@ class Page:
         self._devtools_target = None
         #: One owner thread for the page's lifetime; navigations hand it to the
         #: next realm instead of starting another.
-        self.executor = RealmExecutor(name="pyv8c-page")
-        self.realm = PageRealm(self, executor=self.executor)
+        self.execution_group = (parent.execution_group if parent is not None else
+                                WindowExecutionGroup(frame_rate=profile.browser.frame_rate))
+        self.isolate = self.execution_group.isolate
+        self.executor = self.execution_group.endpoint(self.tasks)
+        try:
+            self.realm = PageRealm(self, executor=self.executor)
+        except BaseException:
+            self.tasks.close()
+            self.execution_group.executor.call(self.executor.close)
+            raise
         self.services.bind_realm(self.realm)
-        self.realm.executor.attach_task_queue(self.tasks)
-        self.realm.executor.attach_rejection_tracker(self.rejections)
+        self.realm.executor.attach_rejection_tracker(self.realm.rejections)
         self.v8_context = self.realm.v8_context
         Window._bind_context(self.v8_context, self.window)
+        if parent is None:
+            self.executor.call(self.navigation.initialize_empty_document)
 
     @property
     def trace(self) -> bool:
@@ -194,6 +219,8 @@ class Page:
     def _update_origin(self, url):
         if self._opaque_origin:
             return
+        if str(url) == self.url and self.origin[0] == "opaque":
+            return
         self.origin = origin_tuple(url, inherited=getattr(self.parent_page, "origin", None))
         self.origin = self.profile._blob_origins.get(str(url), self.origin)
         self.services._origin = self.origin
@@ -218,6 +245,10 @@ class Page:
         The guard keeps a page handler that throws while handling this from
         re-entering the reporter.
         """
+        executor = getattr(self, 'executor', None)
+        if executor is not None and not executor.is_owner_thread():
+            return executor.call(self.report_exception, error, message=message,
+                                 filename=filename, line=line, column=column, value=value)
         if self.closed or self._reporting_error:
             return
         #: A script error is the page's; a failure of the host's own scheduling is
@@ -252,15 +283,12 @@ class Page:
 
     def report_rejection(self, event_type, promise, reason):
         """Mirror a rejection notice onto the window's rejection events."""
-        if self.closed or self._reporting_error:
+        if self.closed:
             return
-        self._reporting_error = True
         try:
             self.lifecycle.dispatch_rejection(event_type, promise, reason)
         except BaseException:  # reporting a rejection must not raise
             logger.debug("failed to report a rejection", exc_info=True)
-        finally:
-            self._reporting_error = False
 
     @property
     def binding_session(self):
@@ -289,23 +317,6 @@ class Page:
                 pass
         return getattr(previous_window, "_window_name", "")
 
-    def realm_isolate(self):
-        """The isolate this page's realm belongs to, or ``None`` for the process default.
-
-        A document and its frames must share one -- their scripts reach each other's
-        objects directly -- so a frame answers with its top page's.  Pages get their own
-        under ``Browser(shard_isolates=True)``, which is what lets them run at once; the
-        isolate is built on first use, outlives navigation like :attr:`executor`, and its
-        owner closes it.
-        """
-        if self.parent_page is not None:
-            return self.top_page.realm_isolate()
-        if not self.profile.browser.shard_isolates:
-            return None
-        if self.isolate is None:
-            self.isolate = pyv8.Isolate()
-        return self.isolate
-
     def _renew_document_realm(self, url):
         """Give the page the Window and realm a new document comes with.
 
@@ -313,6 +324,11 @@ class Page:
         object, so the last document's properties go with the last document.
         """
         previous_window, previous_realm = self.window, self.realm
+        # Workers belong to the document being retired. A pending source load
+        # may never deliver after this generation changes, so stop it explicitly.
+        for worker in tuple(self._owned.workers):
+            worker.fn_terminate()
+        previous_realm.rejections.close()
         window = Window(
             services=self.services,
             feature_runtime=self.profile.browser.bindings.runtime,
@@ -320,15 +336,17 @@ class Page:
         window._frame_element = previous_window._frame_element
         window._window_name = self._window_name_of(previous_window, previous_realm)
         for slot in ("history", "localStorage", "sessionStorage"):
-            window._features._cache(slot, previous_window._features.value(slot))
+            if slot in previous_window._features.cached_names:
+                window._features._cache(slot, previous_window._features.value(slot))
         self.window = window
         self.services.window = window
         self.realm = PageRealm(self, executor=self.executor)
         self.services.bind_realm(self.realm)
-        self.realm.executor.attach_task_queue(self.tasks)
-        self.realm.executor.attach_rejection_tracker(self.rejections)
+        self.realm.executor.attach_rejection_tracker(self.realm.rejections)
         self.v8_context = self.realm.v8_context
         Window._bind_context(self.v8_context, window)
+        if self._devtools_target is not None:
+            self._devtools_target.rebind_context(self.v8_context)
         Window._unbind_context(previous_realm.v8_context)
         #: Kept for the references a page holds; retired with the page (``_close_owner``).
         if previous_realm.v8_context is not None:
@@ -367,11 +385,6 @@ class Page:
         :returns: this page.
         :raises InvalidStateError: the page or its V8 context is closed.
         """
-        if pyv8.current_context() is not None:
-            #: Asked for from inside a running script, so waiting on this page's thread would
-            #: deadlock: the caller holds the isolate the commit's own parse needs.
-            #: ``PageRealm`` answers the same way for a realm created inside a script.
-            return self.navigation.set_content(html, url)
         return self.realm.executor.call(self.navigation.set_content, html, url)
 
     def goto(self,
@@ -401,23 +414,56 @@ class Page:
         :raises ValueError: *wait_until* is not one of the accepted values.
         :raises InvalidStateError: the page or its V8 context is closed.
         """
-        grace = None if timeout is None else max(0.0, float(timeout)) + NAVIGATION_GRACE
-        return self.realm.executor.call(
-            self._goto, url, timeout, wait_until, timeout=grace,
-        )
+        if self.executor.is_owner_thread():
+            raise HostStateError('goto cannot synchronously wait on the owner thread; use request_navigation')
+        deadline = None if timeout is None else time.perf_counter() + max(0.0, float(timeout))
+        remaining = lambda: None if deadline is None else max(0.0, deadline - time.perf_counter())
+        operation = self.realm.executor.call(self._goto, url, timeout, wait_until, timeout=remaining())
+        if not isinstance(operation, Future):
+            return operation
+        try:
+            return operation.result(timeout=remaining())
+        except FutureTimeoutError:
+            self.executor.post(self.navigation.cancel, operation)
+            raise HostStateError(operation.navigation_operation.diagnostics) from None
 
     def _goto(self, url, timeout, wait_until):
         """The navigation itself, named so a timeout says which call it was."""
         return self.navigation.goto(url, timeout=timeout, wait_until=wait_until)
 
+    def wait_for_load_state(self, state='load', timeout=30):
+        if self.executor.is_owner_thread():
+            raise HostStateError('cannot synchronously wait on the owner thread')
+        deadline = None if timeout is None else time.perf_counter() + max(0.0, float(timeout))
+        remaining = lambda: None if deadline is None else max(0.0, deadline - time.perf_counter())
+        future = self.executor.call(self.lifecycle.wait_for_state, state, timeout=remaining())
+        try:
+            future.result(timeout=remaining())
+        except FutureTimeoutError:
+            future.cancel()
+            raise TimeoutError(f'document did not reach {state} within {timeout}s') from None
+
+    def wait_for(self, expression, timeout=30):
+        """Wait for a read-only JavaScript condition on the current document."""
+        if self.executor.is_owner_thread():
+            raise HostStateError('cannot synchronously wait on the owner thread')
+        deadline = None if timeout is None else time.perf_counter() + max(0.0, float(timeout))
+        while True:
+            remaining = None if deadline is None else max(0.0, deadline - time.perf_counter())
+            if self.evaluate(f'Boolean(({expression}))', timeout=remaining):
+                return
+            if deadline is not None and time.perf_counter() >= deadline:
+                raise TimeoutError(f'condition did not become true within {timeout}s')
+            time.sleep(min(0.01, remaining) if remaining is not None else 0.01)
+
     def evaluate(self,
                  script: str,
-                 filename: str | None = None) -> object:
+                 filename: str | None = None, *, timeout: float | None = 30) -> object:
         """Run *script* in the page's realm and return its result as Python.
 
         *script* is source, not an expression only: ``"1 + 1"`` works, and so does
         a statement list that ends in a value.  A promise is **not** awaited --
-        wait with :meth:`run_until_idle` and read the settled result.
+        wait with :meth:`wait_for` for the expected condition.
 
         :param script: JavaScript source.
         :param filename: name this script appears under in stack traces.
@@ -428,8 +474,9 @@ class Page:
         """
         def evaluate_data():
             value = self.scripts.evaluate(script, filename=filename)
-            return value.to_python() if isinstance(value, pyv8.JSObject) else value
-        return self.realm.executor.call(evaluate_data)
+            value = value.to_python() if isinstance(value, pyv8.JSObject) else value
+            return _snapshot_data(value, {})
+        return self.realm.executor.call(evaluate_data, timeout=timeout)
 
     def evaluate_handle(self,
                         script: str,
@@ -451,20 +498,34 @@ class Page:
             self.scripts.evaluate, script, filename=filename,
         )
 
-    def run_until_idle(self, timeout: float = 0) -> None:
-        """Turn the realm's event loop until it has no ready work left.
+    def run_until_idle(self, timeout: float = 1.0) -> bool:
+        """Wait for this Agent's runnable work and checkpoints, excluding future I/O.
 
-        A waiting helper for host code and tests rather than a loop of its own:
-        the realm executor already runs the loop, and this blocks while tasks,
-        timers and in-flight network, worker or loader work is still arriving.
-
-        :param timeout: seconds to allow for work that is not ready yet (timers,
-            in-flight requests).  ``0`` drains what is queued and returns at once.
-            A positive value returns when the deadline passes without promising
-            that everything finished; a never-ending script cannot be drained.
-        :returns: ``None``.
+        Zero only queries current state. Future timers, network requests and live
+        workers are not runnable work; use wait_for/load-state for those goals.
         """
-        self.realm.executor.call(self.tasks.run_until_idle, timeout)
+        if self.closed:
+            raise HostStateError('Page is closed')
+        deadline = time.perf_counter() + max(0.0, float(timeout))
+        def idle():
+            group, agent = self.execution_group, self.realm.agent
+            if agent.checkpointing or agent in group._dirty:
+                return False
+            operation = group._operation
+            if operation is not None and operation[0].agent is agent:
+                return False
+            lanes = {lane for lane in tuple(group.members) if lane.agent is agent and not lane.closed}
+            return (not group.executor.has_pending_for(lanes)
+                    and not any(lane.tasks.has_runnable_tasks() for lane in lanes)
+                    and not group.rendering.has_runnable_tasks(lanes))
+        while True:
+            if idle():
+                return True
+            if not timeout or time.perf_counter() >= deadline:
+                return False
+            if self.executor.is_owner_thread():
+                raise HostStateError('cannot synchronously wait for idle on the owner thread')
+            time.sleep(min(0.001, max(0.0, deadline-time.perf_counter())))
 
     def dispatch_event(self,
                        event_type: str,
@@ -608,8 +669,9 @@ class Page:
             target = self._devtools_target
             if target is not None:
                 target.wake_waiting_owner()
+            self.execution_group.request_stop(None if self.parent_page is None else self.executor)
         try:
-            return self.realm.executor.call(self._close_owner)
+            return self.realm.executor.close_page(self._close_owner)
         finally:
             with self._close_lock:
                 self._closing = False
@@ -617,6 +679,8 @@ class Page:
             # timed out before starting leaves it OPEN for a later close().
             if self.closed:
                 self._resource_scope.close()
+                if self.execution_group.closed:
+                    self.execution_group.executor.close()
 
     def _close_owner(self):
         if self.closed:
@@ -642,11 +706,13 @@ class Page:
         # Drop cached JS scripts before the V8 context goes away.
         self.scripts.clear_js_helpers()
         self.scripts.reset()
+        attempt(self.services.task_services.cancel_animation_frames)
         attempt(self.net.close)
         attempt(self.tasks.close)
+        attempt(self.executor.cancel_pending)
         attempt(self.document_resources.reset)
         attempt(self.document._invalidate_tree)
-        self.rejections.close()
+        self.realm.rejections.close()
         self.lifecycle.load_waiters.clear()
         for frame in self._owned.drain("frames"):
             if attempt(frame.close):
@@ -684,17 +750,9 @@ class Page:
             raise first_error
         Window._unbind_context(self.v8_context)
         self.realm.close()
-        if self.isolate is not None:
-            #: Last of the tree: every context built on it is closed by now -- the frames
-            #: above, this page's realm just now -- and V8 refuses to close an isolate that
-            #: still carries persistent handles.  A frame never reaches this: only the page
-            #: that created the tree's isolate holds one.
-            if not attempt(self.isolate.close):
-                # Keep the executor alive for a host-resource cleanup retry.
-                raise first_error
-            self.isolate = None
         self.document._invalidate_tree()
         self.executor.close()
+        self.isolate = None
         self.v8_context = None
         self.global_proxy = None
         self.closed = True

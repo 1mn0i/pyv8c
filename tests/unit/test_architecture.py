@@ -90,7 +90,7 @@ def test_optional_features_build_only_on_shared_layers():
     """Loading one optional feature must not drag in another one.
 
     A module-body import of a sibling feature would defeat the on-demand
-    contract in docs/ARCHITECTURE.md; its runtime half is the ``sys.modules``
+    contract in docs/architecture.md; its runtime half is the ``sys.modules``
     probe in tests/unit/test_lazy_interface_modules.py.  Only import-time
     imports are inspected: a call body may reach a sibling feature lazily.
 
@@ -285,7 +285,7 @@ def test_foundation_and_services_have_no_owner_backdoors():
 def test_task_queue_exposes_event_loop_and_error_contract():
     from pyv8c.foundation.tasks import TaskQueue, TaskSource
 
-    for member in ("run_turn", "next_deadline", "drain_task_errors", "pump_until"):
+    for member in ("run_turn", "next_deadline", "drain_task_errors"):
         assert hasattr(TaskQueue, member), member
     assert TaskSource.PARSER.value == "parser"
 
@@ -341,7 +341,7 @@ def test_page_keeps_only_user_facing_api():
         "post_task", "schedule", "cancel", "begin_network", "complete_network",
         "begin_worker", "complete_worker", "make_promise",
         "promise_resolve", "install_inline_handler", "load_resource",
-        "load_resource_async", "load_iframe", "resolve_worker_source",
+        "load_resource_async", "load_iframe", "load_worker_source_async",
         "websocket", "close_websocket", "network_available", "cookie_jar",
         "context_services", "binding_services", "devtools_server",
         "worker_configuration", "create_worker_realm", "new_child_page",

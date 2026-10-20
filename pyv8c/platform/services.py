@@ -5,10 +5,12 @@ packages reach platform functionality only through them, never through the Page.
 """
 
 import threading
+from functools import partial
 from dataclasses import dataclass
 from typing import Any
 
 from ..foundation.clock import Clock
+from ..foundation.tasks import TaskSource
 from ..foundation.urls import origin_string, serialize_origin
 from .resources.request_headers import ACCEPT_ENCODING, accept_language
 from .sessions import BindingSession
@@ -28,6 +30,8 @@ class WorkerContext:
     stub_logging: str
     devtools: Any | None
     debug_parent: Any | None
+    creator_origin: tuple
+    owner_realm: Any
 
 
 class _TaskSource:
@@ -43,8 +47,8 @@ class _TaskSource:
     def closed(self):
         return self._tasks.closed
 
-    def post_task(self, callback):
-        self._tasks.post(callback)
+    def post_task(self, callback, source=TaskSource.DOM, *, label=None, document_bound=False):
+        self._tasks.post_task(callback, source, label=label, document_bound=document_bound)
 
 
 class _PerformanceCapability:
@@ -160,6 +164,9 @@ class _RealmCapability(_TaskSource):
         """
         return self._owner._scripts.enqueue_microtask(callback)
 
+    def cleanup_after_callback(self):
+        self._owner._page_realm.executor.after_callback()
+
     def evaluate_script(self, source):
         return self._owner._scripts.evaluate(source)
 
@@ -232,16 +239,39 @@ class _RealmCapability(_TaskSource):
                 del target[name]
             elif operation == "query":
                 return 0 if name in dir(target) else None
-        # Cross-window access is synchronous and can start inside a V8 callback
-        # holding the shared isolate lock: posting to another executor deadlocks.
-        return apply()
+        return realm.executor.call(apply)
 
 
 class _TaskCapability(_TaskSource):
     """Event-loop task sources (implements TaskServices)."""
 
+    def __init__(self, tasks, frame_factory):
+        super().__init__(tasks)
+        self._frame_factory = frame_factory
+        self._frames = None
+
+    def request_animation_frame(self, callback):
+        self.prepare_animation_frames()
+        return self._frames.request(callback)
+
+    def prepare_animation_frames(self):
+        if self._frames is None:
+            self._frames = self._frame_factory()
+
+    def cancel_animation_frame(self, ident):
+        if self._frames is not None:
+            self._frames.cancel(ident)
+
+    def cancel_animation_frames(self):
+        if self._frames is not None:
+            self._frames.close()
+            self._frames = None
+
     def schedule(self, callback, delay, repeat=False):
         return self._tasks.schedule(callback, delay, repeat)
+
+    def schedule_html_timer(self, callback, delay, repeat=False):
+        return self._tasks.schedule_html_timer(callback, delay, repeat)
 
     def cancel(self, ident):
         self._tasks.cancel(ident)
@@ -273,8 +303,11 @@ class WorkerRealmServices:
     """
 
     def __init__(self, tasks, runtime):
-        self.task_services = _TaskCapability(tasks)
+        from .resources.worker import WorkerResourceCapability
+        self.task_services = _TaskCapability(tasks, runtime.animation_frame_lane)
+        runtime._resource_scope.add(self.task_services.cancel_animation_frames)
         self.realm_services = _WorkerRealmCapability(tasks, runtime)
+        self.resource_services = WorkerResourceCapability(runtime)
 
 
 class _WorkerRealmCapability(_TaskSource):
@@ -283,6 +316,7 @@ class _WorkerRealmCapability(_TaskSource):
     def __init__(self, tasks, runtime):
         super().__init__(tasks)
         self._runtime = runtime
+        self.performance = _PerformanceCapability()
 
     @property
     def v8_context(self):
@@ -301,11 +335,18 @@ class _WorkerRealmCapability(_TaskSource):
     def url(self):
         return self._runtime.script_url
 
+    @property
+    def origin(self):
+        return self._runtime.services.resource_services.origin
+
     def evaluate_script(self, source):
         return self._runtime.evaluate_script(source)
 
     def enqueue_microtask(self, callback):
         return self._runtime.enqueue_microtask(callback)
+
+    def cleanup_after_callback(self):
+        self._runtime.cleanup_after_callback()
 
     def make_promise(self):
         return self._runtime.make_promise()
@@ -349,8 +390,8 @@ class _ResourceCapability:
     def load_iframe_markup(self, iframe, markup):
         return self._owner._frame_resources.load_iframe_markup(iframe, markup)
 
-    def resolve_worker_source(self, script_url):
-        return self._owner._resource_fetcher.resolve_worker_source(script_url)
+    def load_worker_source_async(self, script_url, callback):
+        return self._owner._resource_fetcher.load_worker_source_async(script_url, callback)
 
     def discover_element_resource(self, node):
         return self._owner._document_resources.discover_element_resource(node)
@@ -444,6 +485,8 @@ class _WorkerCapability:
             stub_logging=browser.stub_logging,
             devtools=self._owner._profile._devtools,
             debug_parent=self._owner._page_realm.page._devtools_target,
+            creator_origin=tuple(self._owner._origin),
+            owner_realm=self._owner._page_realm,
         )
 
     def create_worker_realm(self, config):
@@ -586,7 +629,8 @@ class PageServices:
 
         # Narrow capabilities handed to web packages.
         self.realm_services = _RealmCapability(self)
-        self.task_services = _TaskCapability(tasks)
+        self.task_services = _TaskCapability(tasks, self._animation_frame_lane)
+        scope.add(self.task_services.cancel_animation_frames)
         self.resource_services = _ResourceCapability(self)
         self.document_services = _DocumentCapability(self)
         self.worker_services = _WorkerCapability(self)
@@ -609,6 +653,38 @@ class PageServices:
 
     def bind_realm(self, page_realm):
         self._page_realm = page_realm
+
+    def _animation_frame_lane(self):
+        realm = self._page_realm
+        page = realm.page
+        def active():
+            current = page
+            while current is not None:
+                if current.closed or current.document.hidden:
+                    return False
+                frame = current.window._frame_element
+                if frame is not None and (not frame._is_connected()
+                                          or frame._child_services is not current.services):
+                    return False
+                current = current.parent_page
+            return self._page_realm is realm
+        def order():
+            branches = []
+            current = page
+            while current.parent_page is not None:
+                node = current.window._frame_element
+                path = []
+                while node is not None and node.parentNode is not None:
+                    path.append(node.parentNode._children.index(node))
+                    node = node.parentNode
+                branches.append(tuple(reversed(path)))
+                current = current.parent_page
+            return tuple(reversed(branches))
+        return page.execution_group.rendering.add(
+            invoke=partial(realm.executor.invoke, _background=True), active=active,
+            timestamp=self.realm_services.performance.clock.at,
+            report_error=self.realm_services.report_exception,
+            order=order, owner=realm.executor)
 
     def parent_window(self):
         """The window of the page this one is framed by; ``None`` at the top."""

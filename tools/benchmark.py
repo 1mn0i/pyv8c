@@ -321,8 +321,10 @@ def case_resource_batch():
     try:
         def operation():
             page.set_content(markup, url="http://benchmark.test/")
-            page.run_until_idle(timeout=30)
-        return _sample(_seconds_per(operation, 1) * 1000, "ms", f"{RESOURCE_COUNT} images")
+            page.wait_for_load_state('load', timeout=30)
+        result = _sample(_seconds_per(operation, 1) * 1000, "ms", f"{RESOURCE_COUNT} images")
+        result['workload'] = 'document-load-resource-batch-v2'
+        return result
     finally:
         browser.close()
 

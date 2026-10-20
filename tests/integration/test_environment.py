@@ -198,8 +198,10 @@ def test_resource_interceptor_filters_images_and_styles_and_cache_reuses_loader(
     try:
         page = browser.new_profile().new_page()
         page.set_content("<body><img src='/a.png'><link rel='stylesheet' href='/a.css'></body>", url="http://example.test/")
-        page.evaluate("fetch('/app.js').then(r => r.text()).then(v => window.__one=v); fetch('/app.js').then(r => r.text()).then(v => window.__two=v)")
-        page.run_until_idle(timeout=2)
+        # Cache reuse starts after the first response is delivered. Concurrent
+        # cache misses do not imply transport coalescing.
+        page.evaluate("fetch('/app.js').then(r => r.text()).then(v => {window.__one=v; return fetch('/app.js')}).then(r => r.text()).then(v => window.__two=v)")
+        page.wait_for("window.__one === 'cached' && window.__two === 'cached'", timeout=2)
         assert page.evaluate("[__one, __two]") == ["cached", "cached"]
         assert [kind for _url, kind in calls].count("fetch") == 1
         assert all(kind not in {"image", "style"} for _url, kind in calls)
@@ -297,7 +299,7 @@ def test_worker_inherits_page_environment_snapshot():
         page = browser.new_profile().new_page(environment={"user_agent": "Worker UA", "languages": ["ja-JP"], "max_touch_points": 2})
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("const worker = new Worker('https://example.test/worker.js'); worker.onmessage = event => globalThis.workerEnvironment = event.data; worker.postMessage(null);")
-        page.run_until_idle(2)
+        page.wait_for("typeof workerEnvironment !== 'undefined'", timeout=10)
         assert page.evaluate("workerEnvironment") == ["Worker UA", "ja-JP", 2]
     finally:
         browser.close()
@@ -310,7 +312,7 @@ def test_worker_navigator_does_not_expose_window_only_surfaces():
         page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("const worker = new Worker('https://example.test/worker.js'); worker.onmessage = event => globalThis.workerSurfaces = event.data;")
-        page.run_until_idle(1)
+        page.wait_for("typeof workerSurfaces !== 'undefined'", timeout=10)
         assert page.evaluate("workerSurfaces") == ["undefined", "undefined", "undefined"]
     finally:
         browser.close()

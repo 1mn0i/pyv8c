@@ -49,7 +49,7 @@ def test_new_page_url_and_location_assignment_navigate_automatically():
         "http://example.test/first", "first",
     ]
     page.evaluate("location.href = '/next'")
-    page.run_until_idle(timeout=1)
+    page.wait_for("location.href === 'http://example.test/next' && document.readyState === 'complete'", timeout=10)
     assert page.evaluate("[location.href, document.querySelector('h1').textContent]") == [
         "http://example.test/next", "next",
     ]
@@ -72,7 +72,7 @@ def test_document_location_is_the_windows_and_assigning_it_navigates():
     try:
         assert page.evaluate("document.location === location") is True
         page.evaluate("document.location = '/next'")
-        page.run_until_idle(timeout=1)
+        page.wait_for("location.href === 'http://example.test/next' && document.readyState === 'complete'")
         assert page.evaluate("[location.href, document.location.href, "
                              "document.querySelector('h1').textContent]") == [
             "http://example.test/next", "http://example.test/next", "next",

@@ -14,7 +14,7 @@ def windows():
     browser = Browser(resource_loader=loader, cache=False)
     page = browser.new_profile().new_page()
     page.set_content('<iframe src="http://b.test/child"></iframe>', url='http://a.test/main')
-    page.run_until_idle(timeout=1)
+    page.wait_for_load_state('load')
     child = next(iter(page._owned.frames))
     try:
         yield page, child
@@ -80,7 +80,7 @@ def test_same_origin_reads_real_child_and_custom_properties(windows):
 def test_nested_frame_top_and_numeric_index_identity(windows):
     page, child = windows
     child.set_content('<iframe src="http://a.test/nested"></iframe>', url='http://a.test/outer')
-    child.run_until_idle(timeout=1)
+    child.wait_for_load_state('load', timeout=1)
     nested = next(iter(child._owned.frames))
     assert page.evaluate('''[window.length, window[0].length,
         window[0][0].top === window,
@@ -104,7 +104,7 @@ def test_proxy_rechecks_origin_after_navigation(windows):
 def test_cross_origin_location_write_queues_navigation(windows, assignment):
     page, child = windows
     assert caught(page, assignment) == ['allowed']
-    child.run_until_idle(timeout=1)
+    child.wait_for("location.href === 'http://b.test/next' && document.readyState === 'complete'", timeout=1)
     assert child.url == 'http://b.test/next'
     assert caught(page, 'w.location.href') == ['SecurityError', 18, True]
 
@@ -150,7 +150,7 @@ def test_origin_variants(windows, url, allowed):
 
 def test_native_window_access_handler_is_automatically_installed(windows):
     page, child = windows
-    page.v8_context.expose(nativeChild=child.v8_context.js_obj(child.window))
+    page.executor.call(lambda: page.v8_context.expose(nativeChild=child.v8_context.js_obj(child.window)))
     assert page.evaluate('try { nativeChild.document; } catch(e) { [e.name,e.code,e instanceof DOMException]; }') == ['SecurityError', 18, True]
     assert page.evaluate('[nativeChild.closed,nativeChild.top===window,nativeChild.self===window[0]]') == [False, True, True]
 
@@ -169,7 +169,7 @@ def test_context_entries_are_released_on_close():
 def test_iframe_src_navigation_retains_proxy(windows):
     page, child = windows
     page.evaluate('window.savedFrame = window[0]; document.querySelector("iframe").src = "http://a.test/new"')
-    page.run_until_idle(timeout=1)
+    child.wait_for("document.URL === 'http://a.test/new' && document.readyState === 'complete'")
     assert page.evaluate('[savedFrame === window[0], savedFrame.document.URL]') == [True, 'http://a.test/new']
     assert len(page._owned.frames) == 1
     assert child.url == 'http://a.test/new'

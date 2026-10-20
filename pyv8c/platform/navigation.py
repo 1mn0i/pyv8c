@@ -2,20 +2,18 @@
 
 import re
 import time
+from concurrent.futures import Future
+from dataclasses import dataclass
 
 from ..foundation.host_errors import HostStateError
 from ..foundation.tasks import TaskSource
+from ..foundation.error_policy import control_exceptions
 from ..foundation.urls import absolute_url
 from ..network.redirects import reportable_hops
 from ..web.bom.utils import page_base_url, page_secure_context
 from ..web.dom.document import Document, HTMLDocument
 from ..web.dom.motion import INSECURE_ORIGIN_INTERFACES
 from ..web.dom.parser import IncrementalDOMParser
-
-
-#: How much longer than the navigation's own budget the executor waits: the
-#: navigation knows what it was waiting for, so it must be the one that gives up.
-NAVIGATION_GRACE = 5.0
 
 
 def hide_insecure_origin_interfaces(page):
@@ -25,6 +23,14 @@ def hide_insecure_origin_interfaces(page):
         return
     for name in INSECURE_ORIGIN_INTERFACES:
         v8_context.hide_global(name)
+
+
+@dataclass(slots=True)
+class NavigationOperation:
+    future: Future
+    handle: object = None
+    timer: int = 0
+    diagnostics: str = ''
 
 
 class NavigationController:
@@ -39,6 +45,8 @@ class NavigationController:
         self.parser_generation = 0
         self.parsing = False
         self.parser_done = False
+        self.operation = None
+        page._resource_scope.add(self.close)
 
     def navigation_allowed(self):
         return not self.has_navigation or self.page.lifecycle.dispatch_beforeunload()
@@ -54,7 +62,7 @@ class NavigationController:
         self.page.lifecycle.dom_content_loaded = True
         self.page.lifecycle.document_load_fired = True
 
-    def commit_content(self, html, url, response=None):
+    def commit_content(self, html, url, response=None, *, replace_initial=False):
         lifecycle = self.page.lifecycle
         if self.has_navigation:
             # Chrome's order for the document being replaced: pageswap, pagehide, the
@@ -64,10 +72,24 @@ class NavigationController:
             lifecycle.dispatch_visibility_hidden()
             lifecycle.dispatch_unload()
         self.generation += 1
+        self.page.services.task_services.cancel_animation_frames()
+        lifecycle.cancel_state_waiters()
         # A later document replaces the realm; the first one is the page's own.
-        renew_realm = self.has_navigation
+        previous_origin = self.page.origin
+        self.page._update_origin(url)
+        renew_realm = self.has_navigation or replace_initial
+        if not renew_realm and previous_origin != self.page.origin:
+            # Initial host content injection keeps installed globals/listeners.
+            # Its explicit origin must still select the correct agent queue.
+            page = self.page
+            page.executor.after_callback()
+            agent = page.execution_group.agent(page.origin)
+            page.v8_context.set_microtask_queue(agent.microtasks)
+            page.realm.agent = page.executor.agent = agent
         self.has_navigation = True
         self.parser_done = lifecycle.dom_content_loaded = lifecycle.document_load_fired = False
+        lifecycle._load_started = False
+        lifecycle._load_error = None
         self.page.document_resources.reset()
         self.page.scripts.reset()
         if renew_realm:
@@ -75,7 +97,6 @@ class NavigationController:
             # and outlives the document.
             self.page.tasks.cancel_timers()
             self.page._renew_document_realm(str(url))
-        self.page._update_origin(url)
         if not page_secure_context(self.page, url):
             # Chrome exposes these only on a secure origin; a frame commits while its
             # parent's realm runs, so the names leave on a task of their own.
@@ -100,6 +121,12 @@ class NavigationController:
             # A chain that reports nothing reports no window either, as Chrome does.
             redirects_span=float(getattr(response, "_redirect_span", 0.0) or 0.0) if counted else 0.0)
         self.page.services.document = self.page.document
+        self.page.services.task_services.prepare_animation_frames()
+        # The new document is created after retiring the old Realm. Publish its
+        # identity before parser callbacks or Web APIs can post document work.
+        from ..foundation.agent_tasks import TaskContext
+        self.page.executor.bind_agent(self.page.realm.agent, TaskContext(
+            self.page.realm, self.page.document, self.generation))
         target = self.page._devtools_target
         if target is not None:
             target.wait_for_startup()
@@ -111,12 +138,12 @@ class NavigationController:
         self.resume_parser(self.parser_generation)
         return self.page
 
-    def set_content(self, html, url="about:blank"):
+    def set_content(self, html, url="about:blank", *, replace_initial=False):
         if self.page.closed or self.page.profile.closed:
             raise HostStateError("Page is closed")
         if not self.navigation_allowed():
             return self.page
-        return self.commit_content(html, url)
+        return self.commit_content(html, url, replace_initial=replace_initial)
 
     @staticmethod
     def decode_html(response):
@@ -167,29 +194,77 @@ class NavigationController:
             request["body"] = body
         if content_type:
             request["content_type"] = content_type
+        self.cancel()
+        operation = NavigationOperation(Future())
+        operation.future.navigation_operation = operation
         started = time.perf_counter()
-        response = self.page.resource_fetcher.load_resource(target, request)
-        document_seconds = time.perf_counter() - started
-        final_url = response.url or target
-        self.commit_content(self.decode_html(response), final_url, response)
-        ready = states[wait_until]
-        if ready is not None:
-            # Wait on the lifecycle state, not a fixed-interval poll: the pump
-            # sleeps on the realm executor and the advancing delivery wakes it.
-            # The document and this wait share one budget, so ``timeout`` bounds
-            # the navigation rather than each half of it.
-            limit = 30.0 if timeout_value is None else timeout_value
-            remaining = limit - document_seconds
-            if remaining > 0 and self.page.tasks.pump_until(ready, timeout=remaining):
-                return response
+        def timeout_message():
             outstanding = self.page.document_resources.outstanding()
-            waiting = ", ".join(f"{count} {kind}" for kind, count in sorted(outstanding.items()))
-            raise HostStateError(
-                f"Navigation to {target} timed out after {limit:g}s waiting for {wait_until}"
-                + (f"; still loading {waiting}" if waiting else "")
-                + f" (the document request took {document_seconds:.1f}s)"
-            )
-        return response
+            waiting = ', '.join(f'{count} {kind}' for kind, count in sorted(outstanding.items()))
+            return (f'Navigation to {target} timed out after {timeout_value:g}s waiting for {wait_until}'
+                    + (f'; still loading {waiting}' if waiting else '')
+                    + f' (the document request took {time.perf_counter()-started:.1f}s)')
+        operation.diagnostics = timeout_message() if timeout_value is not None else ''
+        self.operation = operation
+        def finish(response=None, error=None):
+            if operation.future.done():
+                return
+            self.page.tasks.cancel(operation.timer)
+            if error is not None:
+                operation.future.set_exception(error)
+            else:
+                operation.future.set_result(response)
+        def received(response, error):
+            if operation.future.done() or self.operation is not operation:
+                return
+            if error is not None:
+                finish(error=error)
+                return
+            try:
+                self.commit_content(self.decode_html(response), response.url or target, response, replace_initial=True)
+                if timeout_value is not None:
+                    operation.diagnostics = timeout_message()
+                state = self.page.lifecycle.wait_for_state(wait_until or 'commit', self.generation)
+                def ready(done):
+                    try:
+                        done.result()
+                    except BaseException as exc:
+                        finish(error=exc)
+                    else:
+                        finish(response=response)
+                state.add_done_callback(ready)
+            except control_exceptions() as exc:
+                finish(error=exc)
+                raise
+            except BaseException as exc:
+                finish(error=exc)
+        if timeout_value is not None:
+            def expired():
+                if not operation.future.done():
+                    if operation.handle is not None:
+                        operation.handle.cancel()
+                    finish(error=HostStateError(timeout_message()))
+            operation.timer = self.page.tasks.schedule(expired, timeout_value)
+        try:
+            operation.handle = self.page.resource_fetcher.load_resource_async(target, request, received)
+        except BaseException as exc:
+            finish(error=exc)
+        return operation.future
+
+    def cancel(self, expected=None):
+        operation = self.operation
+        if expected is not None and (operation is None or operation.future is not expected):
+            return
+        if operation is None or operation.future.done():
+            return
+        if operation.handle is not None:
+            operation.handle.cancel()
+        self.page.tasks.cancel(operation.timer)
+        operation.future.set_exception(HostStateError('navigation was superseded or closed'))
+
+    def close(self):
+        self.cancel()
+        self.page.lifecycle.cancel_state_waiters()
 
     def request_navigation(self, url, *, method="GET", body=None,
                            content_type=None, user_activated=False):
@@ -207,7 +282,7 @@ class NavigationController:
                            content_type=content_type,
                            user_activated=user_activated)
 
-        self.page.tasks.post(navigate)
+        self.page.tasks.post(navigate, TaskSource.NAVIGATION)
         return target
 
     def parser_is_blocked(self):
@@ -288,6 +363,9 @@ class NavigationController:
         self.parsing = True
         try:
             complete = self.parser.run()
+        except control_exceptions():
+            self.parsing = False
+            raise
         except BaseException as exc:  # a script error is dispatched, not raised
             self.parsing = False
             self.page.lifecycle.dispatch_script_error(None, exc)

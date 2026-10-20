@@ -107,7 +107,7 @@ def submissions():
                 RECORDS.clear()
             page.goto(f"{origin}{path}", wait_until="load")
             drive(page)
-            page.run_until_idle(timeout=5)
+            page.wait_for("location.pathname === '/echo' && document.readyState === 'complete'", timeout=5)
             with LOCK:
                 records = list(RECORDS)
             collected[name] = next((record for record in records

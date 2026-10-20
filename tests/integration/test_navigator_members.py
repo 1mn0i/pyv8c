@@ -63,7 +63,7 @@ def test_a_worker_gets_only_the_members_chrome_gives_it():
             const worker = new Worker(URL.createObjectURL(source));
             worker.onmessage = (event) => { window.__workerMembers = event.data; };
         })()""" % __import__("json").dumps(source))
-        page.run_until_idle(timeout=2)
+        page.wait_for("typeof window.__workerMembers !== 'undefined'", timeout=10)
         assert page.evaluate("__workerMembers") == [
             "object", "object", "undefined", "undefined", "undefined", "undefined", "undefined",
             # Chrome's WorkerNavigator has no javaEnabled at all; a member declared

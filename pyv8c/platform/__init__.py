@@ -2,17 +2,17 @@
 
 from importlib import import_module
 
-from .browser import Browser, Profile
-from .page import Page
-from .realms import PageRealm, WorkerRealm
-
 __all__ = ["Browser", "Profile", "Page", "PageRealm", "WorkerRealm",
            "DevToolsHandle", "DevToolsOptions"]
 
 # DevTools is re-exported, not imported: pyv8's DevTools service brings a
 # websocket server and asyncio with it, which a browser that never debugs should
 # not pay for at import.
-_LAZY_EXPORTS = {"DevToolsHandle": ".devtools", "DevToolsOptions": ".devtools"}
+_LAZY_EXPORTS = {
+    "Browser": ".browser", "Profile": ".browser", "Page": ".page",
+    "PageRealm": ".realms", "WorkerRealm": ".realms",
+    "DevToolsHandle": ".devtools", "DevToolsOptions": ".devtools",
+}
 
 
 def __getattr__(name):

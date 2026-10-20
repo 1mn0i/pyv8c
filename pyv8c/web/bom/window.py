@@ -205,20 +205,19 @@ def _fetch_failure(error):
     return error
 
 
-def fetch_like(services, interface_name, request, options, resources=None, initiator_url=None):
+def fetch_like(services, interface_name, request, options, initiator_url=None):
     """``fetch`` as a window and a worker global both run it: a promise either way.
 
     The two globals differ only in the interface they name in an argument error, so the steps
     live here rather than in either of them -- a worker whose ``fetch`` were missing entirely
     is a realm the page cannot be told about, which is what it used to be.
 
-    *resources* is where the load is handed to: a worker's realm services carry no resource
-    capability (the worker fetches through the page that owns it, as every other load does).
-    *initiator_url* is that worker's own URL, so the request the load builds is attributed to
+    The realm's resource capability owns any cross-thread handoff. *initiator_url*
+    is the worker's own URL, so the request the load builds is attributed to
     the realm that asked rather than to the page that owns it.
     """
     realm = services.realm_services
-    loader = (resources or services).resource_services
+    loader = services.resource_services
     promise, resolve, reject = realm.make_promise()
     try:
         if request is MISSING:
@@ -231,6 +230,10 @@ def fetch_like(services, interface_name, request, options, resources=None, initi
         req = Request(request, options, services=services)
     except BaseException as exc:
         realm.post_task(lambda exc=exc: reject(js_error_value(exc)))
+        return promise
+    if req._signal is not None and req._signal.get_aborted():
+        reason = req._signal._reason
+        reject(js_error_value(reason) if isinstance(reason, BaseException) else reason)
         return promise
     def deliver(response, error):
         """Hand the answer to the realm that asked, which is not always the one that built it.
@@ -266,7 +269,7 @@ def fetch_like(services, interface_name, request, options, resources=None, initi
         reason = req._signal._reason
         if isinstance(reason, BaseException):
             reason = js_error_value(reason)
-        realm.post_task(lambda reason=reason: reject(reason))
+        reject(reason)
 
     if req._signal is not None:
         req._signal._subscribe(abort)
@@ -354,6 +357,11 @@ class Window(_SchedulingMixin, WindowProperties):
 
     def __v8_cross_origin_check__(self, accessor):
         return accessor is self or getattr(accessor, "_origin", None) == self._origin
+
+    def _event_target_view(self):
+        # Another Realm must see the browsing context's WindowProxy, rather
+        # than materializing a second wrapper for this Python Window.
+        return getattr(self._services, "global_proxy", None) or self
 
     def _location_view(self):
         """The Location this window hands out: tied to the document it was made with,
@@ -848,4 +856,6 @@ class Window(_SchedulingMixin, WindowProperties):
                                            "source": self._view(source), "ports": ports,
                                            "isTrusted": True})
             self.fn_dispatchEvent(event)
-        self._services.realm_services.post_task(deliver)
+        from ...foundation.tasks import TaskSource
+        self._services.realm_services.post_task(deliver, TaskSource.POSTED_MESSAGE,
+                                                label='Window.postMessage', document_bound=True)

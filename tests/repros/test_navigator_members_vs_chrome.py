@@ -193,7 +193,7 @@ def compared():
             page.goto(url, wait_until="load")
             page.evaluate("(() => { " + PROBE + ".then((value) => { window.__probe = value; },"
                           " (error) => { window.__probe = {rejected: String(error.name)}; }); })()")
-            page.run_until_idle(timeout=5)
+            page.wait_for("typeof window.__probe !== 'undefined'", timeout=5)
             mine = normalize(page.evaluate("window.__probe") or {})
         finally:
             browser.close()

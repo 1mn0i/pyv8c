@@ -1,80 +1,50 @@
-# 请求头与 Chromium 对齐
+# 请求头
 
-[返回文档索引](README.md)。实现入口：[resources/request_headers.py](../pyv8c/platform/resources/request_headers.py)（唯一真源）、三个接入点 [resources/fetcher.py](../pyv8c/platform/resources/fetcher.py)（导航/子资源/fetch/XHR）、[net.py](../pyv8c/platform/net.py)（`page.net`）、[services.py](../pyv8c/platform/services.py)（WebSocket 握手）。
+[文档索引](README.md)
 
-显式 Fetch mode 保留 `same-origin`、`no-cors` 或 `cors`；导航使用 `navigate`。资源管线同时传入真实 Realm origin，避免继承或 sandbox origin 被页面 URL 覆盖。
+## 生成入口
 
-pyv8c 发出的请求头在**名称、取值与排列顺序**上与 Chromium 一致。取值全部来自 pyv8c 自己的 environment（`user_agent`、`languages`、`client_hints.*`），因此与页面报告的 `navigator.userAgent`、`navigator.userAgentData` 自洽——不借用任何第三方静态指纹。
+请求头规则集中在 `pyv8c/platform/resources/request_headers.py`，资源请求、宿主 page.net 和 WebSocket 握手通过对应适配器使用。User-Agent、语言及 Client Hints 来自 BrowserEnvironment，应与页面 navigator 的报告保持一致。
 
-基线是本机 Chrome 154.0.8037.95：用本地回声服务记录 `self.headers.items()` 的**到达顺序**，两侧跑同一页面与同一段脚本。对照用例是 `tests/repros/test_request_headers_vs_chrome.py`，顺序基线由 `tests/integration/test_request_headers_on_the_wire.py` 逐场景钉住。
+请求模式和来源是头生成输入，不仅由目标 URL 决定。发起 origin 使用 Realm 的有效身份，保留继承及 opaque origin 语义。实际线路头仍会被传输引擎和 HTTP 协议影响，不能宣称名称、取值和顺序与所有 Chrome 版本完全一致。
 
-## 按场景的头
+## 场景规则
 
-每种场景一套：`Sec-Fetch-Mode` 与 `Accept` 由 destination 决定，`Sec-Fetch-Site` 由发起方与目标的 origin/site 关系决定。
+| 请求 | destination | 典型 mode |
+| --- | --- | --- |
+| 主文档导航 | document | navigate |
+| iframe 导航 | iframe | navigate |
+| 经典脚本 | script | no-cors |
+| 模块导入 | script | cors |
+| 样式、图片、音视频 | style、image、audio、video | no-cors，具体请求配置可调整 |
+| Fetch、XMLHttpRequest | empty | cors 或显式请求模式 |
 
-| 场景 | destination | Mode | Accept |
-| --- | --- | --- | --- |
-| 顶层导航 | `document` | `navigate` | `text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7` |
-| iframe | `iframe` | `navigate` | 同导航 |
-| script | `script` | `no-cors` | `*/*` |
-| stylesheet | `style` | `no-cors` | `text/css,*/*;q=0.1` |
-| image | `image` | `no-cors` | `image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8` |
-| audio / video | `audio` / `video` | `no-cors` | `*/*` |
-| fetch / XHR | `empty` | `cors` | `*/*` |
+Accept 随资源类型选择；Accept-Language 从语言列表生成。Sec-Fetch-Mode、Sec-Fetch-Dest 记录请求语境，Sec-Fetch-Site 根据发起与目标关系生成。
 
-无条件出现的：`User-Agent`、`Accept-Language`、`Accept-Encoding`、`Sec-Fetch-Site`、`Sec-Fetch-Mode`、`Sec-Fetch-Dest`，以及三个低熵 client hint `sec-ch-ua` / `sec-ch-ua-mobile` / `sec-ch-ua-platform`。
+导航可包含 Upgrade-Insecure-Requests。浏览器或用户动作发起的导航可以带 Sec-Fetch-User，脚本设置 location 或调用元素方法不能直接当作真实用户激活。Referer 按当前引用策略生成，常规默认采用 strict-origin-when-cross-origin；Origin 依方法、模式和跨源关系决定。
 
-按条件出现的：
+Host、Content-Length 及 HTTP 连接信息部分属于传输层。调用方自定义头按适配规则替换或插入，不应在业务实现中重复拼接环境头。
 
-- `Upgrade-Insecure-Requests: 1`：导航（含 iframe）。
-- `Sec-Fetch-User: ?1`：**浏览器发起**或**用户手势发起**的导航。`page.goto()` 是，`page.click()` 触发的提交也是；页面里 `location.assign()` 与脚本 `form.submit()`、`element.click()` 不是。
-- `Referer`：非浏览器发起的请求，默认策略 `strict-origin-when-cross-origin`——同源给完整 URL，跨源只给 origin（带尾斜杠）。
-- `Origin`：非 GET/HEAD 总是带；GET/HEAD 只在 CORS 且跨源时带。实测：同源 GET fetch 不带、同源 POST 带、跨源 GET 带、表单 POST 导航带。取的是**发起文档**的 origin，跨源提交也给自己的。
-- `Content-Type`：带 body 的导航（表单提交）按 `enctype` 声明，位置在 `Upgrade-Insecure-Requests` 之后、`User-Agent` 之前。
-- `Cache-Control: max-age=0`：非 GET/HEAD 的导航（表单提交）。
-- `Connection: keep-alive`：仅 HTTP/1.x。HTTPS 默认协商 h2，因此不发。
-- `Range: bytes=0-` 与 `Accept-Encoding: identity;q=1, *;q=0`：媒体元素，一次取回可 seek 的字节。
+## 排列与协议
 
-`Accept-Language` 按 Chromium 的规则生成：首项隐含 q=1.0，其后 0.9/0.8…，逗号后不留空格（`net/http/http_util.cc:788`）。`languages` 为 `["zh-CN", "zh"]` 时即 `zh-CN,zh;q=0.9`。
+框架保留头字典顺序，导航、普通资源、媒体和 WebSocket 使用相应排列。底层引擎可能移动 Host、Connection、Content-Length，HTTP/2 也不等同于 HTTP/1 的文本头排列。
 
-`Host` 与 `Content-Length` 属于传输层，真源不产出它们。
+不要用一个传输或 Chrome 版本上的线路记录作为所有环境的固定答案。需要比较时记录客户端版本、TLS/HTTP 协议、页面 origin、方法、body、默认头和用户自定义头，并使用本地回声服务器观察实际到达的请求。
 
-## 顺序
+## 实现边界
 
-顺序不是装饰：能按名称集合与值比对，也能按行比对。真源返回**保序 dict**，传输层按插入序生成 `HTTPHEADER`，因此自定义头的顺序就是线上顺序（已由集成用例逐场景断言）。
+- site 判断不含完整 Public Suffix List，部分公共后缀域名关系可能与 Chrome 不同；same-origin 应按精确 origin 判断。
+- 完整 CORS OPTIONS 预检尚未覆盖，不能仅因请求头正确就认为 Fetch 安全模型完整。
+- 部分 Connection 决策使用 URL scheme 近似，实际协商协议可能不同。
+- 媒体请求的 Range、Accept-Encoding 与头顺序存在版本及实现差异。
+- WebSocket 握手顺序取决于所选实现；压缩声明与解码能力依赖传输构建。
+- 环境 UA、IDL 和 HTTP 引擎标识分别配置，版本不一致时必须单独解释，不能靠覆盖某个头掩盖语义差异。
 
-Chromium 用两套顺序，加上媒体与 WebSocket 各一套：
+## 本地验证
 
-- 导航族（`document`、`iframe`）：`Cache-Control` → `sec-ch-ua` → `sec-ch-ua-mobile` → `sec-ch-ua-platform` → `Upgrade-Insecure-Requests` → `Content-Type` → `User-Agent` → `Origin` → `Accept` → `Sec-Fetch-Site` → `Sec-Fetch-Mode` → `Sec-Fetch-User` → `Sec-Fetch-Dest` → `Referer` → `Accept-Encoding` → `Accept-Language`。`Cache-Control`、`Content-Type` 与 `Origin` 只在表单提交这类请求上出现，位置就是 Chrome 放它们的位置（实测 Chrome 153）。
-- 资源族（子资源、fetch、XHR）：`sec-ch-ua-platform` → `User-Agent` → `sec-ch-ua` → **调用方自己的头** → `sec-ch-ua-mobile` → `Accept` → `Origin` → `Sec-Fetch-Site` → `Sec-Fetch-Mode` → `Sec-Fetch-Dest` → `Referer` → `Accept-Encoding` → `Accept-Language`。
-- 媒体族：`sec-ch-ua-platform` → `Accept-Encoding`（identity 那份）→ `User-Agent` → `sec-ch-ua` → `sec-ch-ua-mobile` → `Accept` → `Sec-Fetch-*` → `Referer` → `Accept-Language` → `Range`。
-- WebSocket 握手：`Host` → `Connection: Upgrade` → `Pragma: no-cache` → `Cache-Control: no-cache` → `User-Agent` → `Upgrade: websocket` → `Origin` → `Sec-WebSocket-Version` → `Accept-Encoding` → `Accept-Language` → `Sec-WebSocket-Key` → `Sec-WebSocket-Extensions`。
-
-调用方自己设的头（`fetch({headers})`、`setRequestHeader`、`page.net(headers=...)`）替换同名默认头，并按上表资源族的位置插入——这是 Chrome 放下 JS 提供头的位置。
-
-## 已知差异
-
-无法逐字节复刻的项，逐条给出原因：
-
-1. **`Host` / `Connection` / `Content-Length` 的位置由 libcurl 决定**。`Host` 在最前（与 Chrome 一致）；调用方给的 `Connection: keep-alive` 与 body 的 `Content-Length` 会被 libcurl 移到末尾，而 Chrome 把它们放在第 2、3 位。名称与值都正确，只有位置不同，且不由 pyv8c 决定。
-2. **HTTPS 一律不发 `Connection`**。真实判定取决于协商到的协议版本，而 pyv8c 在发请求前不知道：用 scheme 近似（https → 按 h2）。若某个 https 站点最终停在 HTTP/1.1，Chrome 会发 `Connection: keep-alive` 而 pyv8c 不发。
-3. **不请求 `/favicon.ico`**，也不发跨源 CORS 预检（`OPTIONS`）。这两项是"少一个请求"而不是"少一个头"，按约定不在范围内。
-4. **`sec-fetch-site` 的 site 判定不含 Public Suffix List**：用 scheme + 末两级标签近似，因此 `a.co.uk` 与 `b.co.uk` 会被判成 `same-site`。`same-origin` 的判定是精确的。
-5. **WebSocket 握手的顺序由 `websockets` 库决定**：头名与取值齐备，顺序与 Chrome 不同。
-6. **`Accept-Encoding` 声明 `zstd` 依赖传输层的解压器**。本机 curl_cffi 自带 libcurl 8.21.0，含 zlib / brotli 1.2.0 / zstd 1.5.7，四种都能解；换成不含 zstd 的构建时，声明照发（以"像 Chrome"为准），此时 zstd 响应可能未解压。
-7. **module script 的静态 import 是 `Sec-Fetch-Mode: cors`**（与 Chrome 一致），但 pyv8c 只为模块导入传了 `destination="script"`；`page.net` 则没有"被浏览器发起"这一事实，建模为 fetch（`empty` + `cors`）。
-8. **`page.net(cookies=False)` 会发一个没有 Cookie 的请求**，真实浏览器不存在这种请求。
-9. **`Accept-Language` 只有 environment 给的语种**：`Browser(environment={"user_agent": "Async UA"})` 这类自定义 UA 不含 `Chrome/<版本>` 时，派生出的 client hint 版本号为空字符串，与页面 `navigator.userAgentData` 报告的一致（两者同源）。
-
-## 复现对照
-
-```bash
-python -m pytest tests/unit/test_request_headers.py -q                  # 真头表单测
-python -m pytest tests/integration/test_request_headers_on_the_wire.py -q  # 线上顺序
-python -m pytest tests/repros/test_request_headers_vs_chrome.py -q      # 与真 Chrome 对照
-python -m pytest tests/unit/test_form_submission.py -q                  # 表单条目与编码表测
-python -m pytest tests/integration/test_form_submission_on_the_wire.py -q  # 提交的请求行/body/头
-python -m pytest tests/repros/test_form_submission_vs_chrome.py -q      # 表单提交与真 Chrome 对照
+```powershell
+python -m pytest tests/unit/test_request_headers.py tests/integration/test_request_headers_on_the_wire.py -q
+python -m pytest tests/repros/test_request_headers_vs_chrome.py -q
 ```
 
-对照用例需要本机装有 Chrome（`PYV8C_CHROME` 可另指一个 `chrome.exe`）与 `playwright`（`reference` extra）；两者缺一即 skip。
+Chrome 对照使用本机浏览器；用 `PYV8C_CHROME` 指定可执行文件。对照失败应判断是框架缺陷、传输差异还是版本变化，不通过放宽断言或修改基线直接消除差异。

@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -140,6 +141,9 @@ def observe_here(case: Repro) -> Observation:
     try:
         page = context.new_page()
         page.set_content(case.html, url=case.url)
+        page.wait_for_load_state("load")
+        if case.settle:
+            time.sleep(case.settle)
         page.run_until_idle(timeout=1)
         try:
             return Observation(value=normalize(page.evaluate(case.script)))
@@ -175,8 +179,7 @@ class ChromeReference:
             )
             page.goto(case.url)
             if case.settle:
-                # Chrome may deliver what the page waits for on a task after load;
-                # this side is synchronous and has already run to idle by now.
+                # Both sides allow the case's declared settling time after load.
                 page.wait_for_timeout(int(case.settle * 1000))
             try:
                 return Observation(value=normalize(page.evaluate(case.script)))

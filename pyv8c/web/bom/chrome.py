@@ -13,6 +13,7 @@ import pyv8
 
 from ...foundation.arguments import IdlArgumentError
 from ...foundation.clock import clock_of
+from ...foundation.tracing import silent_trace
 from .performance import navigation_record
 
 __all__ = ["ChromeBindings", "install_window_chrome"]
@@ -192,13 +193,7 @@ def install_window_chrome(context, services=None):
     bridge = {name: getattr(bindings, name) for name in ("loadTimes", "csi", *_APP_FUNCTIONS)}
     # Installing the object is host work: no trace event may be reported for the
     # bridge global or the descriptor, matching Chromium's own V8 extras.
-    tracing = bool(getattr(context, "trace", False))
-    if tracing:
-        context.trace = False
-    try:
+    with silent_trace(context):
         context.glob[_BRIDGE_GLOBAL] = bridge
         builder = context.exec_js(_BOOTSTRAP, filename="chrome.js")
-    finally:
-        if tracing:
-            context.trace = True
     bindings.bind_fields(builder)

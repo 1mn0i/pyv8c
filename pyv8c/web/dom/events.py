@@ -38,6 +38,8 @@ _GONE_REALM = ("no active V8 isolate", "belongs to is closed")
 def _js_call(fn, this, *args):
     if isinstance(fn, pyv8.JSObject):
         try:
+            if isinstance(this, EventTarget):
+                this = this._event_target_view()
             return fn.call(this, *args)
         except RuntimeError as error:
             if not any(phrase in str(error) for phrase in _GONE_REALM):
@@ -48,7 +50,7 @@ def _js_call(fn, this, *args):
 
 
 #: Exceptions that must interrupt the process rather than become a page's error.
-_CONTROL_EXCEPTIONS = (KeyboardInterrupt, SystemExit)
+from ...foundation.error_policy import control_exceptions as _control_exceptions
 
 
 def _same_listener(left, right):
@@ -68,6 +70,16 @@ def _report_listener_exception(target, exc):
     reporter = getattr(realm, "report_exception", None) if realm is not None else None
     if reporter is not None:
         reporter(exc)
+
+
+def _cleanup_listener(target):
+    import sys
+    if isinstance(sys.exception(), _control_exceptions()):
+        return
+    realm = getattr(target._services, 'realm_services', None)
+    cleanup = getattr(realm, 'cleanup_after_callback', None)
+    if cleanup is not None:
+        cleanup()
 
 
 def _modifier_state(event, key):
@@ -127,8 +139,10 @@ class Event:
         # Enter and leave events reach their target alone (see fn_dispatchEvent).
         self._non_propagating = False
     def get_type(self): return self.type
-    def get_target(self): return self.target or pyv8.Null
-    def get_currentTarget(self): return self.currentTarget or pyv8.Null
+    def get_target(self):
+        return self.target._event_target_view() if self.target is not None else pyv8.Null
+    def get_currentTarget(self):
+        return self.currentTarget._event_target_view() if self.currentTarget is not None else pyv8.Null
     def get_bubbles(self): return self.bubbles
     def get_cancelable(self): return self.cancelable
     def get_defaultPrevented(self): return self.defaultPrevented
@@ -156,7 +170,7 @@ class Event:
     def fn_stopImmediatePropagation(self, *_extra):
         self._stop = self._immediate = True
     def fn_composedPath(self, *_extra):
-        return list(self._path)
+        return [target._event_target_view() for target in self._path]
     def fn_initEvent(self, event_type=MISSING, bubbles=False, cancelable=False, *_extra):
         if self._dispatching:
             return
@@ -693,6 +707,10 @@ class TouchEvent(UIEvent):
 class EventTarget:
     # Every ``on*`` slot is generated from ``_HANDLER_SLOTS`` at module bottom.
 
+    def _event_target_view(self):
+        """The JavaScript identity exposed by event attributes and callbacks."""
+        return self
+
     def __init__(self, *_extra, services=None, **_):
         if services is pyv8.Undefined:
             services = None
@@ -857,13 +875,14 @@ class EventTarget:
                 else:
                     callback = listener._get("handleEvent") if isinstance(listener, pyv8.JSObject) else listener.get("handleEvent")
                     _js_call(callback_value(callback), listener, event)
-            except _CONTROL_EXCEPTIONS:
+            except _control_exceptions():
                 raise
             except BaseException as exc:  # reported, then dispatching continues
                 # Escaping here would make dispatchEvent throw and skip later listeners.
                 _report_listener_exception(self, exc)
             finally:
                 event._passive = False
+                _cleanup_listener(self)
             if event._immediate:
                 return
         # EventHandler slots may hold non-callable objects; Blink invokes their function.
@@ -877,11 +896,14 @@ class EventTarget:
                     result = _js_call(handler, self, event)
                     if event.type == "beforeunload" and result not in (None, pyv8.Null, pyv8.Undefined, ""):
                         event.defaultPrevented = True
-            except _CONTROL_EXCEPTIONS:
+            except _control_exceptions():
                 raise
             except BaseException as exc:  # reported, not propagated
                 # The handler slot is a listener with a shorter spelling: report the same way.
                 _report_listener_exception(self, exc)
+
+            finally:
+                _cleanup_listener(self)
 
     def __getattr__(self, name):
         if name.startswith("on"):

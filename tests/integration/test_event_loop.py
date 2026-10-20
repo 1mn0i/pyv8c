@@ -6,9 +6,8 @@ process only issues ordinary ``evaluate`` calls.  ``run_until_idle`` is a test
 driver that blocks until the realm is idle; it never has to be called for a
 page to run.
 
-``PYV8C_AUTO_PUMP=0`` restores the legacy behaviour: the owner loop no longer
-runs task turns on its own and a page only advances while ``run_until_idle``
-is executing.
+Window execution groups always drive themselves; the legacy auto-pump environment
+variable cannot disable a browser group's event loop.
 """
 import statistics
 import time
@@ -314,7 +313,7 @@ def test_timer_fires_after_its_delay(page):
     assert 15 <= elapsed < 500, f"timer fired after {elapsed}ms instead of ~30ms"
 
 
-def test_auto_pump_disabled_keeps_legacy_wait_semantics(page, monkeypatch):
+def test_legacy_environment_cannot_disable_execution_group_loop(page, monkeypatch):
     monkeypatch.setenv("PYV8C_AUTO_PUMP", "0")
     browser = Browser(resource_loader=_loader, stub_logging="off")
     context = browser.new_profile()
@@ -325,8 +324,6 @@ def test_auto_pump_disabled_keeps_legacy_wait_semantics(page, monkeypatch):
             setTimeout(function () { window.__count += 1; }, 5);
         """)
         time.sleep(0.25)
-        assert quiet.evaluate("window.__count") == 0
-        quiet.run_until_idle(timeout=1.0)
         assert quiet.evaluate("window.__count") == 1
     finally:
         quiet.close()

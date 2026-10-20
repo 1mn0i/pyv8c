@@ -69,7 +69,7 @@ def test_an_interface_level_member_is_reported_with_its_interface_name():
         page = browser.new_profile().new_page()
         page.set_content("<body></body>", url="https://example.test/")
         page.evaluate("Notification.permission")
-        messages = _messages(events)
+        messages = page.executor.call(_messages, events)
         assert "[TOP] getter: Notification.permission -> 'default'" in messages
         assert not any(message.startswith("[TOP] getter: NoneType.") for message in messages)
     finally:
@@ -93,7 +93,7 @@ def test_an_object_read_stays_on_one_bounded_line():
             window.big = new Array(400).fill('line\\nline\\nline');
             return [window.cyclic, window.big].length;
         })()""")
-        messages = _messages(events)
+        messages = page.executor.call(_messages, events)
     finally:
         browser.close()
 
@@ -113,11 +113,11 @@ def test_declined_reads_are_reported_with_the_value_they_resolve_to():
         page.set_content("<body></body>", url="https://example.test/")
         events.clear()
         assert page.evaluate("eval") is not None
-        assert _messages(events) == ["[TOP] getter: Window.eval -> function eval() { [native code] }"]
+        assert page.executor.call(_messages, events) == ["[TOP] getter: Window.eval -> function eval() { [native code] }"]
         events.clear()
         # A name no property provides has no value to show, so it stays silent.
         assert page.evaluate("window.notThere") is pyv8.Undefined
-        assert _messages(events) == []
+        assert page.executor.call(_messages, events) == []
     finally:
         browser.close()
 
@@ -134,7 +134,7 @@ def test_probes_are_reported_separately_from_reads():
         assert page.evaluate("'eval' in window") is True
         assert page.evaluate("'notThere' in window") is False
         assert page.evaluate("Object.getOwnPropertyDescriptor(window, 'eval') === undefined") is False
-        probes = [message for message in _messages(events) if " has: " in message or " descriptor: " in message]
+        probes = [message for message in page.executor.call(_messages, events) if " has: " in message or " descriptor: " in message]
         assert probes == [
             "[TOP] has: Window.eval -> True",
             "[TOP] has: Window.notThere -> False",
@@ -144,8 +144,32 @@ def test_probes_are_reported_separately_from_reads():
         events.clear()
         assert page.evaluate("typeof window.eval") == 'function'
         assert [event for event in events if event[0] in ("has", "descriptor")] == []
-        assert [message for message in _messages(events) if "eval" in message] == [
+        assert [message for message in page.executor.call(_messages, events) if "eval" in message] == [
             "[TOP] getter: Window.eval -> function eval() { [native code] }"]
+    finally:
+        browser.close()
+
+
+def test_assembling_a_realm_is_not_reported_as_page_behaviour():
+    """Installing the realm is the host's own work, so it reports nothing.
+
+    Defining ``webkitURL`` and its ten siblings reads the interface each one points
+    at, and that read is the host's: Chromium installs a legacy alias with no
+    script-visible lookup of its target, so a realm that has not run a page script
+    yet has an empty trace -- probes included.
+    """
+    events = []
+    browser = Browser(trace=True, traceable=True,
+                      trace_callback=lambda *event: events.append(event), stub_logging="off")
+    try:
+        page = browser.new_profile().new_page()
+        messages = page.executor.call(_messages, events)
+        assert [message for message in messages if " has: " in message] == []
+        assert messages == []
+        # The aliases are still installed, and still point at their interfaces.
+        assert page.evaluate("""[typeof webkitURL, webkitURL === URL, typeof WebKitCSSMatrix,
+            FeaturePolicy === PermissionsPolicy]""") == [
+            "function", True, "function", True]
     finally:
         browser.close()
 
@@ -159,7 +183,7 @@ def test_declared_getters_are_reported_once_with_their_value():
         page.set_content("<body></body>", url="https://example.test/")
         events.clear()
         page.evaluate("navigator.userAgent")
-        messages = _messages(events)
+        messages = page.executor.call(_messages, events)
         assert [message.split(" -> ")[0] for message in messages] == [
             "[TOP] getter: Window.navigator",
             "[TOP] getter: Navigator.userAgent",
@@ -182,7 +206,7 @@ def test_a_frames_realm_is_labelled_apart_from_the_pages_own():
         # srcdoc commits after insertion, as in Chrome; the assertion is about
         # the realm label, not whether the parser completed the child already.
         page.run_until_idle(timeout=1)
-        messages = _messages(events)
+        messages = page.executor.call(_messages, events)
         assert any(message.startswith("[FRAME] ") and "userAgent" in message for message in messages)
         assert not any(message.startswith("[TOP] ") and "userAgent" in message for message in messages)
     finally:
@@ -199,7 +223,7 @@ def test_worker_inherits_context_sink_without_faker_switch():
             const worker = new Worker(URL.createObjectURL(source));
             worker.onmessage = event => window.workerResult = event.data;
         })()""")
-        page.run_until_idle(timeout=5)
+        page.wait_for("typeof workerResult !== 'undefined'", timeout=10)
         assert page.evaluate("workerResult") == 'worker-trace'
         assert any(event[7] == 'Worker' and event[0] == 'construct' and event[2] == 'Event' for event in events)
     finally:

@@ -4,7 +4,7 @@ from loguru import logger
 from pyv8c import Browser
 
 PAGE = ("<body><script>"
-        "function tick() {}"
+        "function tick() {globalThis.__ticked=true}"
         "const first = setTimeout(tick, 30);"
         "const repeat = setInterval('void 0', 500);"
         "const third = setTimeout(tick, 10);"
@@ -22,7 +22,7 @@ def test_timers_report_themselves():
         try:
             page = browser.new_profile().new_page()
             page.set_content(PAGE, url="https://repro.test/index.html")
-            page.run_until_idle(timeout=2)
+            page.wait_for('globalThis.__ticked === true', timeout=2)
         finally:
             browser.close()
     finally:

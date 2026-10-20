@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import math
 import threading
 import time
 import uuid
@@ -144,7 +145,7 @@ class Profile:
         """Attach a DevTools server to *page* and return its handle.
 
         One server per profile, driving a single debugger client; the supported
-        protocol domains and the startup handshake are in ``docs/DEVTOOLS.md``.
+        protocol domains and the startup handshake are in ``docs/devtools.md``.
 
         :param page: a page of this profile that is still open.
         :param options: :class:`pyv8.DevToolsOptions`; the defaults bind
@@ -209,7 +210,7 @@ class Browser:
     isolated session and :meth:`close` closes every session it handed out; the
     engines a profile needs are built when that profile is created.
 
-    JS objects belong to the thread that owns their realm (see ``docs/USAGE.md``).
+    JS objects belong to the thread that owns their realm (see ``docs/usage.md``).
     """
 
     def __init__(self, *,
@@ -218,6 +219,7 @@ class Browser:
                  resource_loader: Callable | None = None,
                  resource_interceptor: Callable | None = None,
                  threaded_loaders: bool = False,
+                 frame_rate: float = 60.0,
                  http_engine: Literal["cronet", "curl_cffi"] | HttpTransport | Callable | None = "curl_cffi",
                  http_options: dict | None = None,
                  ws_engine: Literal["cronet", "websockets"] | WebSocketTransport | Callable | None = "websockets",
@@ -233,8 +235,7 @@ class Browser:
                  stub_logging: Literal["on", "verbose", "off"] = "off",
                  interface_overrides: dict | None = None,
                  idl_path: str | os.PathLike | None = None,
-                 baseline_mismatch: Literal["error", "warn"] = "warn",
-                 shard_isolates: bool = False):
+                 baseline_mismatch: Literal["error", "warn"] = "warn"):
         """Configure one browser.
 
         Every value is read here: native templates and the interface baseline are
@@ -261,6 +262,8 @@ class Browser:
             owner thread, so a callback blocked on its own I/O does not freeze the
             realm.  A callback running there may not touch the page, ``page.evaluate``
             and this host's own cache included.
+        :param frame_rate: virtual rendering clock frequency in Hz; defaults to
+            60. Iframes share their page tree's clock; workers drive their own.
         :param http_engine: the HTTP engine -- a registered name (built with
             ``http_options``), a ready object with ``request_sync``, or a factory
             called once per profile; ``None`` leaves the role empty.  Further
@@ -315,9 +318,6 @@ class Browser:
             skips it, which is how another Chromium version's baseline is run;
             ``"error"`` fails at assembly instead, which is what keeps a mistake in
             one's own implementation from passing silently.
-        :param shard_isolates: give each page tree its own V8 isolate, so its scripts
-            can run while another page's do; ``False`` (the default) shares the
-            process default.
         """
         if trace_callback is not None and not callable(trace_callback):
             raise TypeError("trace_callback must be callable or None")
@@ -332,8 +332,9 @@ class Browser:
         self.resource_loader = resource_loader
         self.resource_interceptor = resource_interceptor
         self.threaded_loaders = bool(threaded_loaders)
-        #: Whether a page tree builds an isolate of its own (see ``Page.realm_isolate``).
-        self.shard_isolates = bool(shard_isolates)
+        self.frame_rate = float(frame_rate)
+        if not math.isfinite(self.frame_rate) or self.frame_rate <= 0:
+            raise ValueError('frame_rate must be finite and positive')
         self._loader_pool = None
         self._loader_lock = threading.Lock()
         self.cache_enabled = bool(cache)

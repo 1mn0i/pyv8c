@@ -24,7 +24,12 @@ def loader(url, request):
 browser = Browser(resource_loader=loader, stub_logging="off")
 try:
     page = browser.new_profile().new_page()
-    page.set_content(HTML, url="http://example.test/")
+    try:
+        page.set_content(HTML, url="http://example.test/")
+    except pyv8.JavaScriptTerminated:
+        print("terminated")
+    else:
+        raise AssertionError("heap termination was swallowed by script execution")
     print("readyState", page.evaluate("document.readyState"))
     print("terminations", page.v8_context.heap_terminations)
 finally:
@@ -35,14 +40,14 @@ print("closed")
 
 @pytest.mark.slow  # a V8 heap limit takes the process down, not just the test
 def test_a_page_that_outgrows_the_heap_is_stopped_and_the_host_survives():
-    """The runaway script ends as a terminated crossing: the document reaches an end,
-    the stop is reported, and the host closes on its own terms."""
+    """The host receives heap termination and can still inspect and close the page."""
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(SCRIPT)],
         capture_output=True, text=True, timeout=120,
     )
     assert result.returncode == 0, result.stderr
     tokens = result.stdout.split()
-    assert tokens[0] == "readyState" and tokens[1] in ("loading", "interactive", "complete")
-    assert tokens[2] == "terminations" and int(tokens[3]) >= 1
-    assert tokens[4:] == ["closed"]
+    assert tokens[0] == "terminated"
+    assert tokens[1] == "readyState" and tokens[2] in ("loading", "interactive", "complete")
+    assert tokens[3] == "terminations" and int(tokens[4]) >= 1
+    assert tokens[5:] == ["closed"]

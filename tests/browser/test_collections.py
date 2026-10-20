@@ -551,6 +551,7 @@ def test_document_all_for_in_only_yields_indices_and_prototype_members(document_
 
 def test_document_all_empty_document_has_an_empty_collection(browser):
     empty = browser.new_profile().new_page()
+    empty.evaluate('document.documentElement.remove()')
     assert empty.evaluate("document.all.length") == 0
     assert empty.evaluate("typeof document.all") == "undefined"
     assert empty.evaluate("document.all[0]") is pyv8.Undefined

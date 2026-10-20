@@ -1,5 +1,6 @@
 """Child document creation, commit and completion, owned by the parent Page."""
 from urllib.parse import urljoin
+from ...foundation.error_policy import control_exceptions
 from ...web.bom.utils import page_base_url
 
 
@@ -52,6 +53,7 @@ class FrameResourceController:
         child.navigation.initialize_empty_document()
         markup = iframe.attributes.get("srcdoc")
         if markup is not None:
+            self.page.document_resources.begin_frame_document(iframe, child)
             # A srcdoc script must not run before appendChild returns. Keep the
             # initial window available while that document is waiting to commit.
             def commit_markup():
@@ -75,13 +77,15 @@ class FrameResourceController:
         page = self.page
         self.page.document_resources.cancel_node(iframe)
         child = self._child_frame_page(iframe, "about:srcdoc")
-        child.set_content(markup, url="about:srcdoc")
+        child.executor.call(child.navigation.set_content, markup, url="about:srcdoc", replace_initial=True)
+        token, item = page.document_resources.begin_frame_document(iframe, child)
+        item.child_generation = child.navigation.generation
         generation, child_generation = page.navigation.generation, child.navigation.generation
         def complete(ok):
             if (not page.closed and page.navigation.generation == generation
                     and iframe._child_services is child.services and not child.closed
                     and child.navigation.generation == child_generation):
-                self.dispatch_frame_completion(iframe, ok)
+                page.document_resources.finish_iframe_resource(token, generation, iframe, ok)
         child.lifecycle.when_loaded(lambda ok: page.tasks.post(lambda: complete(ok)))
         return child
 
@@ -111,8 +115,10 @@ class FrameResourceController:
         target = response.url or urljoin(page_base_url(page), iframe.get_src() or "about:blank")
         child = self._child_frame_page(iframe, target)
         try:
-            child.set_content(response.body_text(), url=target)
+            child.executor.call(child.navigation.set_content, response.body_text(), url=target, replace_initial=True)
             child.lifecycle.when_loaded(callback)
+        except control_exceptions():
+            raise
         except BaseException:  # a failed document load is reported as False
             callback(False)
         return child
@@ -130,7 +136,7 @@ class FrameResourceController:
         child = self._child_frame_page(iframe, target)
         response = self.controller.load_resource(
             target, {"method": "GET", "mode": "navigate", "destination": "iframe", "resource_type": "iframe"})
-        child.set_content(response.body_text(), url=target)
+        child.executor.call(child.navigation.set_content, response.body_text(), url=target, replace_initial=True)
         return child
 
 

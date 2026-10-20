@@ -11,6 +11,7 @@ from threading import RLock
 from ..foundation.logging import logger  # patch target for cookie-change logging tests
 
 from ..foundation.host_errors import HostStateError
+from ..foundation.tasks import TaskSource
 from .backend import RequestDelivery
 from .cookies import CookieJar
 from .models import (
@@ -49,7 +50,7 @@ class CronetTransport(RequestDelivery):
     """
 
     #: cycronet follows redirects itself and names no way to stop it, so the hop-by-hop
-    #: modes are refused for it instead of being obeyed quietly (docs/network-engines.md).
+    #: modes are refused for it instead of being obeyed quietly (docs/network-transports.md).
     FOLLOWS_ITSELF = True
 
     @classmethod
@@ -169,10 +170,15 @@ class CronetTransport(RequestDelivery):
         if factory is None:
             raise NetworkUnavailableError("installed cycronet does not expose websocket callback API")
         callbacks = dict(callbacks)
-        kwargs = {"on_open": lambda ws: page.post_task(lambda: callbacks.get("open", lambda *_: None)(ws)),
-                  "on_message": lambda ws, message, is_text=True: page.post_task(lambda: callbacks.get("message", lambda *_: None)(ws, message, is_text)),
-                  "on_close": lambda ws, code, reason, was_clean=True: page.post_task(lambda: callbacks.get("close", lambda *_: None)(ws, code, reason, was_clean)),
-                  "on_error": lambda ws, error, net_error=None: page.post_task(lambda: callbacks.get("error", lambda *_: None)(ws, error, net_error))}
+        def deliver(name, *arguments):
+            handler = callbacks.get(name)
+            if handler is not None:
+                page.post_task(lambda: handler(*arguments), TaskSource.NETWORKING)
+
+        kwargs = {"on_open": lambda ws: deliver("open", ws),
+                  "on_message": lambda ws, message, is_text=True: deliver("message", ws, message, is_text),
+                  "on_close": lambda ws, code, reason, was_clean=True: deliver("close", ws, code, reason, was_clean),
+                  "on_error": lambda ws, error, net_error=None: deliver("error", ws, error, net_error)}
         try:
             ws = factory(url, protocols=protocols or [], **kwargs)
         except TypeError:

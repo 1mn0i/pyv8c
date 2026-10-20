@@ -200,7 +200,7 @@ def test_real_network_fetch_is_delivered_on_page_queue(monkeypatch):
     assert page.evaluate(
         "fetch('/data').then(r => r.text()).then(v => window.__result = v), typeof window.__result"
     ) == "undefined"
-    page.run_until_idle(timeout=2)
+    page.wait_for("typeof __result !== 'undefined'", timeout=2)
     assert page.evaluate("window.__result") == "cronet-ok"
     browser.close()
 
@@ -241,7 +241,7 @@ def test_an_engine_that_cannot_stop_following_refuses_a_manual_redirect(monkeypa
             "fetch('/x', {redirect: 'manual'}).then(() => { window.__m = 'resolved'; })"
             ".catch((e) => { window.__m = e.name + ': ' + e.message; });"
         )
-        page.run_until_idle(timeout=3)
+        page.wait_for("window.__m !== null", timeout=3)
         # A page hears Chrome's wording for any network failure, and nothing else.
         assert page.evaluate("window.__m") == "TypeError: Failed to fetch"
 
@@ -265,8 +265,8 @@ def test_network_download_url_is_logged_at_debug_level(monkeypatch):
     browser = Browser(real_network=True)
     page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
-    page.evaluate("fetch('/download').then(r => r.text())")
-    page.run_until_idle(timeout=2)
+    page.evaluate("window.__downloadFinished=false; fetch('/download').then(r => r.text()).then(() => window.__downloadFinished=true)")
+    page.wait_for("window.__downloadFinished", timeout=2)
     assert ("network download: {} {}", ("GET", "http://example.test/download")) in messages
     browser.close()
 
@@ -277,7 +277,7 @@ def test_resource_loader_takes_precedence_over_real_network(monkeypatch):
     page = browser.new_profile().new_page()
     page.set_content("<body></body>", url="http://example.test/")
     assert page.evaluate("fetch('/data').then(r => r.text()).then(v => window.__result = v)") is not None
-    page.run_until_idle()
+    page.wait_for("typeof __result !== 'undefined'", timeout=2)
     assert page.evaluate("window.__result") == "fixture"
     browser.close()
 
@@ -349,13 +349,13 @@ def test_header_deduped_cookies_are_restored_from_the_client_jar(monkeypatch):
     context = browser.new_profile()
     page = context.new_page()
     page.set_content("<body></body>", url="http://example.test/")
-    page.evaluate("fetch('/page').then(r => r.text())")
-    page.run_until_idle(timeout=2)
+    page.evaluate("window.__downloadFinished=false; fetch('/page').then(r => r.text()).then(() => window.__downloadFinished=true)")
+    page.wait_for("window.__downloadFinished", timeout=2)
     header = context.network_backend.cookies.header_for("http://example.test/page")
     assert "FSSBBIl1UgzbN7N80T=first" in header
     assert "FSSBBIl1UgzbN7N80S=second" in header
-    page.evaluate("fetch('/page2').then(r => r.text())")
-    page.run_until_idle(timeout=2)
+    page.evaluate("window.__downloadFinished=false; fetch('/page2').then(r => r.text()).then(() => window.__downloadFinished=true)")
+    page.wait_for("window.__downloadFinished", timeout=2)
     cookie = DedupedClient.requests_sent[-1].get("Cookie", "")
     assert "FSSBBIl1UgzbN7N80T=first" in cookie
     assert "FSSBBIl1UgzbN7N80S=second" in cookie
@@ -373,10 +373,10 @@ def test_cross_origin_cors_and_no_cors(monkeypatch):
     browser = Browser(real_network=True, http_engine="cronet")
     page = browser.new_profile().new_page(); page.set_content("<body></body>", url="http://example.test/")
     page.evaluate("fetch('http://other.test/data').then(r => r.text()).then(v => window.__cors = v)")
-    page.run_until_idle(timeout=2)
+    page.wait_for("typeof __cors !== 'undefined'", timeout=2)
     assert page.evaluate("__cors") == "cronet-ok"
     page.evaluate("fetch('http://other.test/data', {mode:'no-cors'}).then(r => window.__opaque = [r.type, r.status])")
-    page.run_until_idle(timeout=2)
+    page.wait_for("typeof __opaque !== 'undefined'", timeout=2)
     assert page.evaluate("__opaque") == ["opaque", 0]
     browser.close()
 
@@ -394,7 +394,7 @@ def test_a_worker_navigator_comes_from_its_feature():
             const worker = new Worker(URL.createObjectURL(source));
             worker.onmessage = event => window.__workerNavigator = event.data;
         })()""")
-        page.run_until_idle(timeout=2)
+        page.wait_for("typeof __workerNavigator !== 'undefined'", timeout=2)
         assert page.evaluate("__workerNavigator") == [True, True]
         assert "navigator" in browser.bindings.runtime.loaded_features
     finally:
@@ -407,7 +407,7 @@ def test_worker_executes_blob_script_and_uses_independent_queue():
     page.set_content("<body></body>", url="http://example.test/")
     result = page.evaluate("(() => { const src = new Blob([\"self.onmessage = e => self.postMessage({value:e.data.value + 1, bytes:e.data.bytes, helper:typeof __pyv8c_worker_value, windowProps:typeof WindowProperties});\"], {type:'text/javascript'}); const url=URL.createObjectURL(src); const w=new Worker(url); window.__workerInstance=w; w.onmessage=e=>window.__worker=e.data; w.onerror=e=>window.__workerError=e.message; w.postMessage({value:4, bytes:new Uint8Array([1,2,3])}); return [url.startsWith('blob:'), w instanceof Worker]; })()")
     assert result == [True, True]
-    page.run_until_idle(timeout=2)
+    page.wait_for("typeof __worker !== 'undefined' || typeof __workerError !== 'undefined'", timeout=2)
     assert page.evaluate("[typeof __worker, typeof __workerError]") == ["object", "undefined"]
     assert page.evaluate("__worker.value") == 5
     assert page.evaluate("[__worker.helper, __worker.windowProps]") == ["undefined", "undefined"]
@@ -430,7 +430,7 @@ def test_worker_self_is_the_context_global_without_explicit_expose():
       const worker = new Worker(URL.createObjectURL(source));
       worker.onmessage = event => window.__workerGlobals = event.data;
     })()""")
-    page.run_until_idle(timeout=2)
+    page.wait_for("typeof __workerGlobals !== 'undefined'", timeout=2)
     assert page.evaluate("__workerGlobals") == [True, "object", "object", "undefined", False]
     browser.close()
 
@@ -617,7 +617,7 @@ def test_curl_cffi_transport_forwards_options_and_keeps_every_cookie(monkeypatch
         page = context.new_page()
         page.set_content("<body></body>", url="http://example.test/")
         page.evaluate("fetch('/data').then(r => r.text()).then(v => window.__body = v)")
-        page.run_until_idle(timeout=2)
+        page.wait_for("typeof __body !== 'undefined'", timeout=2)
 
         assert page.evaluate("__body") == "curl-ok"
         method, url, kwargs = session.calls[-1]
@@ -630,8 +630,8 @@ def test_curl_cffi_transport_forwards_options_and_keeps_every_cookie(monkeypatch
         jar = context.network_backend.cookies.header_for("http://example.test/data")
         assert "first=1" in jar and "second=2" in jar
 
-        page.evaluate("fetch('/again').then(r => r.text())")
-        page.run_until_idle(timeout=2)
+        page.evaluate("window.__downloadFinished=false; fetch('/again').then(r => r.text()).then(() => window.__downloadFinished=true)")
+        page.wait_for("window.__downloadFinished", timeout=2)
         sent = session.calls[-1][2]["headers"]
         assert "first=1" in sent["Cookie"] and "second=2" in sent["Cookie"]
     finally:

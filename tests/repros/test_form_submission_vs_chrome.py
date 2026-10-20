@@ -171,10 +171,10 @@ def _chrome_submissions(reference, origin):
             RECORDS.clear()
         page = reference.browser.new_page()
         try:
-            page.goto(f"{origin}{path}", wait_until="load")
+            page.goto(f"{origin}{path}", wait_until="commit" if driver == "page" else "load")
             if driver == "host":
                 page.click("form button")
-            page.wait_for_timeout(500)
+            page.wait_for_function("location.pathname === '/echo' && document.readyState === 'complete'")
         finally:
             page.close()
         with LOCK:
@@ -189,10 +189,10 @@ def _pyv8c_submissions(browser, origin):
         for name, path, driver in CASES:
             with LOCK:
                 RECORDS.clear()
-            page.goto(f"{origin}{path}", wait_until="load")
+            page.goto(f"{origin}{path}", wait_until="commit" if driver == "page" else "load")
             if driver == "host":
                 page.click("form button")
-            page.run_until_idle(timeout=5)
+            page.wait_for("location.pathname === '/echo' && document.readyState === 'complete'", timeout=5)
             with LOCK:
                 collected[name] = _taken(list(RECORDS))
     finally:

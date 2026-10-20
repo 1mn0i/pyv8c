@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-pytest.importorskip("pyv8")
+pyv8 = pytest.importorskip("pyv8")
 pytestmark = [pytest.mark.race, pytest.mark.slow]
 from websockets.asyncio.client import connect
 
@@ -213,7 +213,10 @@ def test_devtools_pause_supports_cdp_attach_evaluate_detach_and_close():
         probe_thread.join(6)
         assert not nav_thread.is_alive(), "navigation wedged during close"
         assert not probe_thread.is_alive(), "CDP probe wedged during close"
-        assert errors == []
+        # Closing interrupts the already-running synchronous host operation;
+        # the caller must observe cancellation rather than a false success.
+        assert len(errors) == 1
+        assert type(errors[0]) is pyv8.JavaScriptTerminated
         assert page.closed
         page.close()  # idempotent after teardown
     finally:
@@ -233,7 +236,7 @@ async def _cdp_request(ws, payload):
 
 def test_page_trees_release_native_handles_and_threads_after_close():
     import pyv8
-    browser = Browser(real_network=False, shard_isolates=True, stub_logging="off")
+    browser = Browser(real_network=False, stub_logging="off")
     owner = browser.new_profile()
     warm = owner.new_page()
     warm.close()

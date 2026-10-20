@@ -41,6 +41,7 @@ PROBE = """(async () => {
     const x = new XMLHttpRequest(); x.open('GET', '/js/xhr-get');
     x.onloadend = r; x.onerror = r; x.send();
   });
+  window.__requestsDone = true;
   return 'done';
 })()"""
 
@@ -133,7 +134,7 @@ def compared(reference):
         try:
             chrome_page.goto(url, wait_until="load")
             chrome_page.evaluate(script)
-            chrome_page.wait_for_timeout(500)
+            chrome_page.wait_for_function("window.__requestsDone === true")
         finally:
             chrome_page.close()
         with LOCK:
@@ -148,7 +149,7 @@ def compared(reference):
             page = browser.new_profile().new_page()
             page.goto(url, wait_until="load")
             page.evaluate(script)
-            page.run_until_idle(timeout=5)
+            page.wait_for("window.__requestsDone === true", timeout=5)
         finally:
             browser.close()
         with LOCK:

@@ -1,6 +1,8 @@
 """Document lifecycle events and ready-state transitions for a Page."""
 
 import pyv8
+from concurrent.futures import Future
+from threading import RLock
 
 
 from ..foundation.host_errors import HostStateError
@@ -76,7 +78,11 @@ class DocumentLifecycle:
         self.page = page
         self.dom_content_loaded = False
         self.document_load_fired = False
+        self._load_started = False
+        self._load_error = None
         self.load_waiters = []
+        self._state_waiters = {}
+        self._state_lock = RLock()
         self._event_classes = {}
         self._event_session = None
 
@@ -264,12 +270,12 @@ class DocumentLifecycle:
     def dispatch_rejection(self, event_type, promise, reason):
         """Fire ``unhandledrejection`` or ``rejectionhandled`` on the window.
 
-        The environment cannot see the handlers attached to a rejected promise,
-        so the event is built from what V8 named; a ``rejectionhandled`` carries
-        no reason.
+        Both events carry the original promise and rejection reason. Delivery is
+        a DOM task after the owning Agent's microtask checkpoint.
         """
         event = self.materialize_event_class(EVENT_CLASS_BY_TYPE[event_type])(
-            event_type, {"promise": promise, "reason": reason},
+            event_type, {"promise": promise, "reason": reason,
+                         "cancelable": event_type == "unhandledrejection"},
         )
         event._trusted = True
         self.page.window.fn_dispatchEvent(event)
@@ -285,6 +291,7 @@ class DocumentLifecycle:
         if bool(page.document.hidden) == hidden:
             return False
         page.document.hidden = hidden
+        page.execution_group.rendering.changed()
         self.dispatch_page_event("visibilitychange", page.document, {"bubbles": True})
         self.dispatch_page_event("freeze" if hidden else "resume", page.document, {"bubbles": False})
         return True
@@ -328,27 +335,48 @@ class DocumentLifecycle:
     def maybe_fire_dom_content_loaded(self):
         page = self.page
         if (
-            page.closed
+            page.closed or page._closing
             or not page.navigation.parser_done
             or self.dom_content_loaded
             or page.scripts.dom_blocking_scripts
         ):
             return
         self.dom_content_loaded = True
-        self.set_ready_state("interactive")
+        identity = (page.navigation.generation, page.document)
+        try:
+            self.set_ready_state("interactive")
+        except pyv8.JavaScriptTerminated as error:
+            self._fail_load(identity, error)
+            raise
+        if not self._current_document(identity):
+            return
         performance = page.services.realm_services.performance
         clock = performance.clock
         performance.note(domInteractive=clock.now_ms(), domContentLoadedEventStart=clock.now_ms())
-        self.dispatch_page_event("DOMContentLoaded", page.document, {"bubbles": True})
+        try:
+            self.dispatch_page_event("DOMContentLoaded", page.document, {"bubbles": True})
+        except pyv8.JavaScriptTerminated as error:
+            self._fail_load(identity, error)
+            raise
+        if not self._current_document(identity):
+            return
         performance.note(domContentLoadedEventEnd=clock.now_ms())
+        self.notify_state_waiters()
         self.maybe_fire_document_load()
 
     def maybe_fire_document_load(self):
         page = self.page
-        if page.closed or not self.dom_content_loaded or page.document_resources.has_pending or self.document_load_fired:
+        identity = (page.navigation.generation, page.document)
+        if not self._current_document(identity) or not self.dom_content_loaded or page.document_resources.has_pending or self._load_started or self.document_load_fired:
             return
-        self.document_load_fired = True
-        self.set_ready_state("complete")
+        self._load_started = True
+        try:
+            self.set_ready_state("complete")
+        except pyv8.JavaScriptTerminated as error:
+            self._fail_load(identity, error)
+            raise
+        if not self._current_document(identity):
+            return
         performance = page.services.realm_services.performance
         clock = performance.clock
         performance.note(domComplete=clock.now_ms(), loadEventStart=clock.now_ms())
@@ -356,17 +384,91 @@ class DocumentLifecycle:
         event = self.event_class("load")("load", {"bubbles": False})
         event._trusted = True
         event._legacy_target_override = page.document
-        page.window.fn_dispatchEvent(event)
-        performance.note(loadEventEnd=clock.now_ms())
-        self.dispatch_page_show(False)
-        self.dispatch_page_reveal()
-        self.deliver_motion_events()
+        try:
+            page.window.fn_dispatchEvent(event)
+            if not self._current_document(identity):
+                return
+            performance.note(loadEventEnd=clock.now_ms())
+            self.dispatch_page_show(False)
+            if not self._current_document(identity):
+                return
+            self.dispatch_page_reveal()
+            if not self._current_document(identity):
+                return
+            self.deliver_motion_events()
+            if not self._current_document(identity):
+                return
+            self.document_load_fired = True
+            waiters, self.load_waiters = self.load_waiters, []
+            for callback in waiters:
+                callback(True)
+                if not self._current_document(identity):
+                    return
+            self.notify_state_waiters()
+        except pyv8.JavaScriptTerminated as error:
+            self._fail_load(identity, error)
+            raise
+
+    def _fail_load(self, identity, error):
+        page = self.page
+        if identity != (page.navigation.generation, page.document):
+            return
+        self.document_load_fired = False
+        self._load_error = error
+        self.notify_state_waiters()
         waiters, self.load_waiters = self.load_waiters, []
         for callback in waiters:
-            callback(True)
+            page.tasks.post(lambda callback=callback: callback(False))
+
+    def _current_document(self, identity):
+        page = self.page
+        return (not page.closed and not page._closing
+                and identity == (page.navigation.generation, page.document))
+
+    def wait_for_state(self, state, generation=None):
+        if state not in ('commit', 'domcontentloaded', 'load'):
+            raise ValueError('state must be commit, domcontentloaded, or load')
+        future = Future()
+        generation = self.page.navigation.generation if generation is None else generation
+        with self._state_lock:
+            self._state_waiters[future] = (state, generation)
+        future.add_done_callback(self._release_state_waiter)
+        self.notify_state_waiters()
+        return future
+
+    def _release_state_waiter(self, future):
+        with self._state_lock:
+            self._state_waiters.pop(future, None)
+
+    def notify_state_waiters(self):
+        with self._state_lock:
+            for future, (state, generation) in tuple(self._state_waiters.items()):
+                invalid = self.page.closed or generation != self.page.navigation.generation
+                ready = state == 'commit' or (self.dom_content_loaded if state == 'domcontentloaded' else self.document_load_fired)
+                error = self._load_error if state == 'load' else None
+                if not invalid and not ready and error is None:
+                    continue
+                self._state_waiters.pop(future, None)
+                if not future.set_running_or_notify_cancel():
+                    continue
+                if invalid:
+                    future.set_exception(HostStateError('document was replaced or closed while waiting'))
+                elif error is not None:
+                    future.set_exception(error)
+                else:
+                    future.set_result(None)
+
+    def cancel_state_waiters(self):
+        with self._state_lock:
+            pending, self._state_waiters = self._state_waiters, {}
+            for future in pending:
+                if future.set_running_or_notify_cancel():
+                    future.set_exception(HostStateError('document was replaced or closed while waiting'))
 
     def when_loaded(self, callback):
-        if self.document_load_fired:
+        if self._load_error is not None:
+            self.page.tasks.post(lambda: callback(False))
+        elif self.document_load_fired:
             self.page.tasks.post(lambda: callback(True))
         else:
             self.load_waiters.append(callback)

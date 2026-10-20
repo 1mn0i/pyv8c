@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from functools import cached_property
 import time
 from urllib.parse import urlsplit
+from ...foundation.error_policy import control_exceptions
 import pyv8
 from ...foundation.host_errors import LoadFailure
 from ...foundation.urls import absolute_url, origin_tuple, serialize_origin, unloadable_scheme
@@ -26,6 +27,14 @@ class LoadRequest:
     origin: tuple
     generation: int
     cache_key: object
+    owner_realm: object = None
+
+
+@dataclass(frozen=True, slots=True)
+class LoadContext:
+    origin: tuple
+    owner_realm: object
+    force_pool: bool = False
 
 
 @dataclass(slots=True)
@@ -198,11 +207,25 @@ class ResourceFetchController:
             return str(request.get("redirect", "follow"))
         return "manual"
 
-    def resolve_worker_source(self, script_url):
-        response = self.load_resource(script_url, {
+    def load_worker_source_async(self, script_url, callback):
+        def complete(response, error):
+            source = None
+            if error is None:
+                try:
+                    source = self.worker_source(response, script_url)
+                except control_exceptions():
+                    raise
+                except BaseException as exc:
+                    error = exc
+            callback(source, error)
+        return self.load_resource_async(script_url, {
             "method": "GET", "mode": "same-origin", "destination": "worker",
             "resource_type": "script",
-        })
+        }, complete, context=LoadContext(origin=tuple(self.page.origin),
+                                        owner_realm=self.page.realm, force_pool=True))
+
+    @staticmethod
+    def worker_source(response, script_url):
         if response.status and not 200 <= response.status < 300:
             #: A worker whose script does not arrive is a failed load, the way a browser
             #: reads it; the web layer turns that into the Worker's ``error``.  A script
@@ -211,7 +234,7 @@ class ResourceFetchController:
             raise LoadFailure(f"the worker script {script_url} answered {response.status}")
         return response.body_text()
 
-    def prepare(self, url, options):
+    def prepare(self, url, options, *, context=None):
         page = self.page
         if page.closed or page.profile.closed:
             raise LoadFailure("Page is closed")
@@ -221,13 +244,18 @@ class ResourceFetchController:
         origin = tuple(page.origin)
         if given.get("initiator_url") and urlsplit(initiator).scheme in ("http", "https", "blob"):
             origin = tuple(page.profile._blob_origins.get(initiator, origin_tuple(initiator)))
+        if context is not None:
+            origin = context.origin
         prepared = self._request_with_environment_headers(given, page, target, initiator, origin)
         key = self.cache.key(target, prepared, enabled=page.cache_enabled, origin=serialize_origin(origin))
-        return LoadRequest(target, given, prepared, initiator, origin, page.navigation.generation, key)
+        return LoadRequest(target=target, options=given, prepared=prepared, initiator_url=initiator,
+                           origin=origin, generation=page.navigation.generation, cache_key=key,
+                           owner_realm=None if context is None else context.owner_realm)
 
     def active(self, load, handle=None):
         return (not self.page.closed and not self.page.profile.closed
-                and load.generation == self.page.navigation.generation
+                and (load.owner_realm is self.page.realm if load.owner_realm is not None
+                     else load.generation == self.page.navigation.generation)
                 and (handle is None or not handle.done))
 
     def select_source(self, load):
@@ -376,26 +404,59 @@ class ResourceFetchController:
                 return delivered
         raise LoadFailure("Resource owner changed while loading")
 
-    def load_resource_async(self, url, request, callback):
-        return self.page.resource_ownership.issue(self._start_async, url, request, callback)
+    def load_resource_async(self, url, request, callback, *, context=None):
+        from functools import partial
+        start = self._start_async if context is None else partial(self._start_async, context=context)
+        return self.page.resource_ownership.issue(start, url, request, callback)
 
-    def _start_async(self, url, request, callback):
-        return _AsyncLoad(self, callback).start(url, request)
+    def _start_async(self, url, request, callback, *, context=None):
+        return _AsyncLoad(self, callback, context=context).start(url, request)
 
 
 class _AsyncLoad:
     """One request owns its stages; each hop owns its reply guard."""
     __slots__ = ("fetcher", "callback", "handle", "tasks", "load", "carrier",
-                 "kind", "source", "follows", "stage")
+                 "kind", "source", "follows", "stage", "_in_completion",
+                 "_interception_finished", "_local_source", "_local_error", "context")
 
-    def __init__(self, fetcher, callback):
+    def __init__(self, fetcher, callback, *, context=None):
         self.fetcher, self.callback = fetcher, callback
+        self.context = context
         self.handle = LoadHandle()
         self.tasks = fetcher.page.tasks
         self.load = self.carrier = self.source = None
         self.kind = None
         self.follows = False
         self.stage = 0
+        self._in_completion = False
+        self._interception_finished = False
+        self._local_source = self._local_error = None
+
+    def enqueue(self, callback, *args):
+        """The sole boundary from raw results to owner-side processing."""
+        from functools import partial
+        from ...foundation.tasks import TaskSource
+        if self.handle.done:
+            return
+        try:
+            ticket = self.tasks.post_task(
+                partial(self._run_completion, callback, args), TaskSource.NETWORKING,
+                label="resource-completion")
+        except BaseException:
+            self.handle.cancel()
+            raise
+        if ticket is None:
+            self.handle.cancel()
+
+    def _run_completion(self, callback, args):
+        if self.handle.done:
+            return
+        previous = self._in_completion
+        self._in_completion = True
+        try:
+            callback(*args)
+        finally:
+            self._in_completion = previous
 
     def active(self):
         if not self.fetcher.active(self.load, self.handle):
@@ -404,20 +465,21 @@ class _AsyncLoad:
         return True
 
     def deliver(self, response, error):
-        from functools import partial
-        self.tasks.post(partial(self.settle, response, error))
+        if self._in_completion:
+            self.settle(response, error)
+        else:
+            self.enqueue(self.settle, response, error)
 
     def settle(self, response, error):
         page = self.fetcher.page
         if (page.closed or page.profile.closed or
-                (self.load is not None and self.load.generation != page.navigation.generation)):
+                (self.load is not None and not self.fetcher.active(self.load))):
             self.handle.cancel()
         if self.handle.finish():
             self.callback(response, error)
 
     def fail(self, error):
-        from functools import partial
-        self.tasks.post(partial(self.deliver, None, error))
+        self.deliver(None, error)
 
     def bind(self, transport, stage):
         # Inline callbacks can advance before the previous dispatch returns.
@@ -427,7 +489,10 @@ class _AsyncLoad:
     def start(self, url, request):
         from functools import partial
         try:
-            self.load = self.fetcher.prepare(url, request)
+            self.load = (self.fetcher.prepare(url, request) if self.context is None else
+                         self.fetcher.prepare(url, request, context=self.context))
+        except control_exceptions():
+            raise
         except BaseException as error:
             if self.fetcher.page.closed or self.fetcher.page.profile.closed:
                 self.handle.cancel()
@@ -435,16 +500,36 @@ class _AsyncLoad:
                 self.fail(error)
             return self.handle
         interceptor = self.fetcher.page.resource_interceptor
+        # Capture page-owned URLs before a same-turn revoke. Only local lookup
+        # happens here; host interception and delivery remain asynchronous.
+        if (self.load.prepared.get('destination') == 'worker' and
+                self.load.target.startswith(('blob:', 'data:'))):
+            try:
+                self._local_source = self.fetcher.select_source(self.load)
+            except control_exceptions():
+                raise
+            except BaseException as error:
+                self._local_error = error
         if callable(interceptor):
             stage = self.stage
             transport = self.fetcher.callbacks.dispatch(
-                partial(interceptor, self.load.target, dict(self.load.prepared)), self.intercepted)
+                partial(interceptor, self.load.target, dict(self.load.prepared)),
+                partial(self.enqueue, self.intercepted),
+                force_pool=self.force_pool())
             self.bind(transport, stage)
         else:
             self.begin()
         return self.handle
 
+    def force_pool(self):
+        return ((self.context is not None and self.context.force_pool) or
+                self.load.prepared.get('mode') == 'navigate' or
+                self.load.prepared.get('destination') == 'worker')
+
     def intercepted(self, decision, error):
+        if self._interception_finished:
+            return
+        self._interception_finished = True
         if not self.active():
             return
         if error is not None:
@@ -454,6 +539,8 @@ class _AsyncLoad:
         else:
             try:
                 response = self.fetcher._intercepted_response(decision, self.load.target)
+            except control_exceptions():
+                raise
             except BaseException as error:
                 self.deliver(None, error)
             else:
@@ -464,17 +551,23 @@ class _AsyncLoad:
             self.deliver(response, None)
 
     def begin(self):
-        from functools import partial
         if not self.active():
             return
         try:
-            self.kind, self.source = self.fetcher.select_source(self.load)
+            if self._local_error is not None:
+                raise self._local_error
+            self.kind, self.source = self._local_source or self.fetcher.select_source(self.load)
             if self.kind == "response":
-                self.tasks.post(partial(self.immediate, self.source))
+                if self._in_completion:
+                    self.immediate(self.source)
+                else:
+                    self.enqueue(self.immediate, self.source)
                 return
             self.carrier = self.fetcher.hop_carrier(self.load)
             self.follows = self.kind == "engine" and bool(getattr(self.source.http, "FOLLOWS_ITSELF", False))
             self.send()
+        except control_exceptions():
+            raise
         except BaseException as error:
             self.fail(error)
 
@@ -490,12 +583,15 @@ class _AsyncLoad:
             reply = _HopReply(self, self.carrier.url, stage)
             if self.kind == "loader":
                 transport = self.fetcher.callbacks.dispatch(
-                    partial(self.source, self.carrier.url, prepared), reply.receive)
+                    partial(self.source, self.carrier.url, prepared), reply.enqueue,
+                    force_pool=self.force_pool())
             else:
                 request = self.fetcher.network_request(self.carrier.url, prepared, self.load, self.source)
                 transport = self.source.request_async(self.fetcher.page.services.task_services,
                                                       request, reply.enqueue)
             self.bind(transport, stage)
+        except control_exceptions():
+            raise
         except BaseException as error:
             self.fail(error)
 
@@ -513,6 +609,8 @@ class _AsyncLoad:
             if not self.active():
                 return
             self.fetcher.store(self.load, delivered)
+        except control_exceptions():
+            raise
         except BaseException as error:
             self.deliver(None, error)
         else:
@@ -527,8 +625,7 @@ class _HopReply:
         self.answered = False
 
     def enqueue(self, value, error):
-        from functools import partial
-        self.owner.tasks.post(partial(self.receive, value, error))
+        self.owner.enqueue(self.receive, value, error)
 
     def receive(self, value, error):
         owner = self.owner
@@ -540,6 +637,8 @@ class _HopReply:
         try:
             response = None if error else owner.fetcher.convert_response(
                 value, self.target, loader=owner.kind == "loader")
+        except control_exceptions():
+            raise
         except BaseException as error:
             owner.landed(None, error)
         else:

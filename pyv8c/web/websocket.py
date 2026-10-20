@@ -97,7 +97,8 @@ class WebSocket(EventTarget):
         if value in ("blob", "arraybuffer"):
             self._binary_type = value
 
-    def get_bufferedAmount(self): return self._buffered
+    def get_bufferedAmount(self):
+        return self._buffered + getattr(self._ws, "buffered_amount", 0)
     def get_onopen(self): return self._get_handler("onopen")
     def set_onopen(self, value):
         if not is_nullish(value):
@@ -122,13 +123,17 @@ class WebSocket(EventTarget):
     def fn_send(self, value=MISSING, *_extra):
         if value is MISSING:
             raise missing_error('WebSocket', 'send', 1, 0, constructor=False)
-        if self._state_value != self.OPEN:
+        if self._state_value == self.CONNECTING:
             raise InvalidStateError("WebSocket is not open")
         binary = bytes_from_value(value)
+        payload = binary if binary is not None and not isinstance(value, str) else usv_string(value)
+        if self._state_value != self.OPEN:
+            self._buffered += len(payload.encode('utf-8')) if isinstance(payload, str) else len(payload)
+            return
         if binary is not None and not isinstance(value, str) and hasattr(self._ws, "send_bytes"):
             self._ws.send_bytes(binary)
         else:
-            self._ws.send(str(value))
+            self._ws.send(payload if isinstance(payload, str) else usv_string(value))
 
     def fn_close(self, code=1000, reason='', *_extra):
         if code is pyv8.Undefined:
@@ -150,6 +155,8 @@ class WebSocket(EventTarget):
             self._ws.close(int(code), str(reason))
 
     def _on_open(self, ws):
+        if self._state_value != self.CONNECTING:
+            return
         self._state_value = self.OPEN
         self._protocol = getattr(ws, "protocol", "") or ""
         self.fn_dispatchEvent(Event("open"))
@@ -171,6 +178,7 @@ class WebSocket(EventTarget):
         #: ``error`` with nothing in it, so the page is not handed the transport's own
         #: words; why it failed is the host's to read.
         logger.debug("websocket error: {}", error)
+        self._state_value = self.CLOSED
         self.fn_dispatchEvent(Event("error", {"isTrusted": True}))
 
     def _on_close(self, ws, code, reason, was_clean=True):

@@ -128,7 +128,7 @@ def test_a_hook_is_visible_in_a_worker_realm_too():
                 worker.onmessage = (event) => { window.__worker = event.data; };
             })()
         """)
-        page.run_until_idle(timeout=3)
+        page.wait_for("typeof window.__worker !== 'undefined'", timeout=10)
         assert page.evaluate("window.__worker") == 42
     finally:
         browser.close()

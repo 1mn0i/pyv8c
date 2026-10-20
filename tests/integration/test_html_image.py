@@ -69,7 +69,7 @@ def test_complete_is_false_while_a_load_is_in_flight_and_true_once_it_settles():
         assert page.evaluate("window.__inFlight") is False
         assert started.wait(5), "the loader never ran"
         released.set()
-        page.run_until_idle(timeout=5)
+        page.wait_for("window.__seen.length > 0", timeout=10)
         assert page.evaluate("window.__seen") == [True]
         assert page.evaluate("window.__image.complete") is True
     finally:

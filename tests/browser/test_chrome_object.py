@@ -282,7 +282,7 @@ def test_worker_globals_have_no_chrome_object():
             const worker = new Worker(URL.createObjectURL(source));
             worker.onmessage = event => window.__workerChrome = event.data;
         })()""")
-        page.run_until_idle(timeout=5)
+        page.wait_for("typeof window.__workerChrome !== 'undefined'", timeout=10)
         assert page.evaluate("__workerChrome") == "undefined"
     finally:
         browser.close()

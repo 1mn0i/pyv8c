@@ -225,7 +225,7 @@ def test_worker_and_iframe_reuse_their_browser_bindings(tmp_path):
           const worker = new Worker(URL.createObjectURL(source));
           worker.onmessage = event => window.__baselineFromWorker = event.data;
         })()""")
-        page.run_until_idle(timeout=2)
+        page.wait_for("typeof window.__baselineFromWorker !== 'undefined'", timeout=10)
         assert page.evaluate("__baselineFromWorker") == ["undefined", "function"]
     finally:
         browser.close()

@@ -11,6 +11,7 @@ from ...idl import interface
 from ...foundation.arguments import MISSING, is_nullish, missing_error
 from ..dom.events import EventTarget
 from ...foundation.realm import realm_of
+from ...foundation.tasks import TaskSource
 from ..clone import message_transfer, structured_clone, transfer_ports
 from ..fetch.events import MessageEvent
 
@@ -99,7 +100,9 @@ class MessagePort(EventTarget):
             return
         services = twin._services
         if services is not None:
-            services.realm_services.post_task(lambda: twin._deliver(message, ports))
+            services.realm_services.post_task(lambda: twin._deliver(message, ports),
+                                             TaskSource.POSTED_MESSAGE, label='MessagePort delivery',
+                                             document_bound=True)
 
     def fn_start(self, *_extra):
         if self._enabled:

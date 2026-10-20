@@ -149,7 +149,7 @@ def test_a_deadline_fires_with_chromes_timeout_reason():
             };
             return 'armed';
         })()""")
-        page.run_until_idle(timeout=5)
+        page.wait_for("window.__timeout !== null", timeout=10)
         assert page.evaluate("window.__timeout") == [True, "TimeoutError", "signal timed out",
                                                     23, True]
     finally:

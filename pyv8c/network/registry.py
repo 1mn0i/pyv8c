@@ -37,8 +37,11 @@ class HttpTransport(Protocol):
         """
 
     def request_async(self, tasks, request: NetworkRequest, callback) -> RequestHandle:
-        """Perform *request* off-thread, delivering ``callback(response, error)``
-        on the realm's task queue."""
+        """Perform *request* off-thread and report a transport-neutral result.
+
+        ``callback(response, error)`` may run inline or on a worker thread.
+        It must only hand off data; Fetcher owns asynchronous owner delivery.
+        """
 
     def close(self) -> None:
         """Release every resource this engine owns."""

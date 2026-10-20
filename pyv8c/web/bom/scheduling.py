@@ -14,12 +14,7 @@ from ...foundation.arguments import (
     integer,
     missing_error,
 )
-from ...foundation.clock import clock_of
 from ...foundation.logging import logger
-
-
-#: A frame falls due one display refresh after the last, as a compositor paces it.
-ANIMATION_FRAME_MS = 1000.0 / 60.0
 
 
 class _SchedulingMixin:
@@ -63,7 +58,7 @@ class _SchedulingMixin:
             logger.debug("{} {} runs", name, ident)
             return body()
 
-        ident = self._services.task_services.schedule(run, milliseconds / 1000.0, repeat=repeat)
+        ident = self._services.task_services.schedule_html_timer(run, milliseconds / 1000.0, repeat=repeat)
         logger.debug("{} {} scheduled in {} ms ({})", name, ident, milliseconds,
                      "string" if source is not None else "function")
         return ident
@@ -77,64 +72,11 @@ class _SchedulingMixin:
     def fn_requestAnimationFrame(self, callback=MISSING, *_extra):
         if callback is MISSING:
             raise missing_error(self._scheduling_interface, 'requestAnimationFrame', 1, 0, constructor=False)
-        frames = self._animation_frames()
-        ident = frames["ident"]
-        frames["ident"] = ident + 1
-        frames["callbacks"][ident] = callback_value(callback)
-        if frames["timer"] is None:
-            # One timer per frame, not per callback: a frame is a turn every
-            # request made before it shares, which is how a compositor paces them.
-            frames["timer"] = self._services.task_services.schedule(
-                self._run_frame, self._frame_delay(frames), repeat=False)
-        logger.debug("requestAnimationFrame {} queued for frame {}", ident, frames["timer"])
-        return ident
+        return self._services.task_services.request_animation_frame(callback_value(callback))
 
     def fn_cancelAnimationFrame(self, ident=0, *_extra):
         value = int(integer(ident, signed=True))
-        logger.debug("cancelAnimationFrame {}", value)
-        frames = self._animation_frames()
-        if frames["callbacks"].pop(value, None) is None:
-            return
-        if not frames["callbacks"] and frames["timer"] is not None:
-            self._services.task_services.cancel(frames["timer"])
-            frames["timer"] = None
-
-    def _animation_frames(self):
-        frames = getattr(self, "_frames", None)
-        if frames is None:
-            frames = self._frames = {"callbacks": {}, "timer": None, "ident": 1, "due": None}
-        return frames
-
-    def _frame_delay(self, frames):
-        """Seconds until the next frame falls due.
-
-        The frame grid outlives a single turn, so a late one shifts no later frame.
-        """
-        now = clock_of(self._services).now_ms()
-        due = frames["due"]
-        if due is None or due < now:
-            due = frames["due"] = now + ANIMATION_FRAME_MS
-        return max(0.0, (due - now) / 1000.0)
-
-    def _run_frame(self):
-        """Every callback asked for since the last frame, on the frame's own reading."""
-        frames = self._animation_frames()
-        frames["timer"] = None
-        callbacks = list(frames["callbacks"].values())
-        frames["callbacks"].clear()
-        if not callbacks:
-            return
-        now = clock_of(self._services).now_ms()
-        # The frame's start rather than the moment it ran: callbacks asked for before
-        # it agree on the reading, and one asked for inside it lands on the next frame.
-        timestamp = min(frames["due"] or now, now)
-        # A frame that overran its slot is counted out rather than replayed.
-        frames["due"] = max(timestamp + ANIMATION_FRAME_MS, now)
-        for callback in callbacks:
-            try:
-                callback(timestamp)
-            except BaseException as error:  # one faulty frame must not stop the rest
-                self._services.realm_services.report_exception(error)
+        self._services.task_services.cancel_animation_frame(value)
 
     def fn_queueMicrotask(self, callback=MISSING, *_extra):
         if callback is MISSING:

@@ -19,8 +19,7 @@ import pytest
 from pyv8c import Browser
 
 
-@pytest.mark.parametrize("shard_isolates", [False, True])
-def test_initial_frame_window_does_not_wait_for_its_network_document(shard_isolates):
+def test_initial_frame_window_does_not_wait_for_its_network_document():
     """The insertion can return while the child document is blocked in a loader.
 
     The corpus guards the initial window's shape; this guards thread ownership,
@@ -35,7 +34,7 @@ def test_initial_frame_window_does_not_wait_for_its_network_document(shard_isola
         return {"body": "<body>remote</body>", "headers": {"content-type": "text/html"}}
 
     browser = Browser(real_network=False, resource_loader=loader, threaded_loaders=True,
-                      shard_isolates=shard_isolates, stub_logging="off")
+                      stub_logging="off")
     try:
         page = browser.new_profile().new_page()
         page.set_content("""<body><script>
@@ -50,7 +49,7 @@ def test_initial_frame_window_does_not_wait_for_its_network_document(shard_isola
         assert requested.wait(1)
         assert page.evaluate("__initial") == ["about:blank", "complete", True]
         release.set()
-        page.run_until_idle(timeout=2)
+        page.wait_for("document.querySelector('iframe').contentDocument === null", timeout=2)
         assert page.evaluate("""(() => {
             const frame = document.querySelector('iframe');
             let name = '';
@@ -159,7 +158,7 @@ def frame_page():
     page = browser.new_profile().new_page()
     try:
         page.set_content(PAGE_HTML, url="https://frames.test/")
-        _pump(page)
+        page.wait_for(f"Object.keys(__out).length === {len(REPORTING) * 2 + 1}")
         yield page
     finally:
         _bounded(browser.close)
