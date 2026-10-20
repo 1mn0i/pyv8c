@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <limits>
 
 #include "context.h"
 #include "isolate_state.h"
@@ -18,6 +19,13 @@ Watchdog* watchdog_for(Isolate* isolate)
 {
     IsolateState* state = runtime_manager.find_isolate(isolate);
     return state == nullptr ? nullptr : &state->watchdog();
+}
+
+std::size_t recovery_ceiling(std::size_t used, std::size_t budget)
+{
+    const auto slack = std::max<std::size_t>(4096, budget / 256);
+    return used > std::numeric_limits<std::size_t>::max() - slack
+        ? std::numeric_limits<std::size_t>::max() : used + slack;
 }
 }
 
@@ -35,7 +43,8 @@ void Watchdog::refresh_deadline_locked()
 {
     Clock::time_point earliest = Clock::time_point::max();
     for (const auto& deadline : deadlines_)
-        earliest = std::min(earliest, deadline.expires);
+        if (deadline.suspended == Clock::time_point{})
+            earliest = std::min(earliest, deadline.expires);
     deadline_ = earliest;
     armed_ = earliest != Clock::time_point::max();
 }
@@ -48,7 +57,7 @@ void Watchdog::start_thread_locked()
     thread_ = std::thread(&Watchdog::run, this);
 }
 
-Watchdog::Ticket Watchdog::add_deadline_locked(double seconds, const void* owner)
+Watchdog::Ticket Watchdog::add_deadline_locked(double seconds, const void* owner, bool operation)
 {
     start_thread_locked();
     const bool was_idle = deadlines_.empty();
@@ -57,7 +66,7 @@ Watchdog::Ticket Watchdog::add_deadline_locked(double seconds, const void* owner
     const auto ticket = next_ticket_++;
     deadlines_.push_back({ticket, seconds > 0
         ? Clock::now() + std::chrono::microseconds(static_cast<long long>(seconds * 1e6))
-        : Clock::time_point::max(), owner});
+        : Clock::time_point::max(), owner, operation});
     refresh_deadline_locked();
     if (was_idle || !was_armed || (armed_ && deadline_ < previous))
         wake_.notify_all();
@@ -69,9 +78,62 @@ bool Watchdog::has_crossing_locked() const {
                        [](const Deadline& entry) { return entry.owner == nullptr; });
 }
 
-void Watchdog::arm(double seconds, const void* owner) {
+Watchdog::Ticket Watchdog::arm(double seconds, const void* owner, bool operation) {
     std::lock_guard<std::mutex> lock(mutex_);
-    add_deadline_locked(seconds, owner);
+    return add_deadline_locked(seconds, owner, operation);
+}
+
+void Watchdog::disarm_ticket(Ticket ticket, const void* owner) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    wait_transition_locked(lock);
+    auto found = std::find_if(deadlines_.begin(), deadlines_.end(), [=](const Deadline& entry) {
+        return entry.ticket == ticket && entry.owner == owner;
+    });
+    if (found == deadlines_.end()) return;
+    deadlines_.erase(found);
+    if (termination_ == Termination::AbortPending && abort_ticket_ == ticket) resume_locked(lock);
+    refresh_deadline_locked();
+    wake_.notify_all();
+}
+
+bool Watchdog::terminate_ticket(Ticket ticket, const void* owner) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    wait_transition_locked(lock);
+    if (termination_ != Termination::Ready) return false;
+    const bool live = std::any_of(deadlines_.begin(), deadlines_.end(), [=](const Deadline& entry) {
+        return entry.ticket == ticket && entry.owner == owner;
+    });
+    if (!live) return false;
+    issue_termination_locked(lock, !has_crossing_locked(), ticket);
+    return true;
+}
+
+Watchdog::Suspension Watchdog::suspend_deadlines() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    wait_transition_locked(lock);
+    Suspension tickets;
+    const auto now = Clock::now();
+    for (auto& entry : deadlines_) {
+        if (entry.suspended != Clock::time_point{}) continue;
+        entry.suspended = now;
+        tickets.push_back(entry.ticket);
+    }
+    refresh_deadline_locked();
+    wake_.notify_all();
+    return tickets;
+}
+
+void Watchdog::resume_deadlines(const Suspension& tickets) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto now = Clock::now();
+    for (auto& entry : deadlines_) {
+        if (entry.suspended == Clock::time_point{} ||
+            std::find(tickets.begin(), tickets.end(), entry.ticket) == tickets.end()) continue;
+        if (entry.expires != Clock::time_point::max()) entry.expires += now - entry.suspended;
+        entry.suspended = Clock::time_point{};
+    }
+    refresh_deadline_locked();
+    wake_.notify_all();
 }
 
 void Watchdog::disarm(const void* owner) {
@@ -89,14 +151,17 @@ void Watchdog::disarm(const void* owner) {
     wake_.notify_all();
 }
 
-void Watchdog::release_owner(const void* owner) {
+void Watchdog::release_owner(const void* owner, bool preserve_operations) {
     std::unique_lock<std::mutex> lock(mutex_);
     wait_transition_locked(lock);
     const bool cancels_abort = termination_ == Termination::AbortPending &&
-        std::any_of(deadlines_.begin(), deadlines_.end(), [this, owner](const Deadline& entry) {
-            return entry.owner == owner && entry.ticket == abort_ticket_;
+        std::any_of(deadlines_.begin(), deadlines_.end(), [this, owner, preserve_operations](const Deadline& entry) {
+            return entry.owner == owner && entry.ticket == abort_ticket_ &&
+                !(preserve_operations && entry.operation);
         });
-    std::erase_if(deadlines_, [owner](const Deadline& entry) { return entry.owner == owner; });
+    std::erase_if(deadlines_, [owner, preserve_operations](const Deadline& entry) {
+        return entry.owner == owner && !(preserve_operations && entry.operation);
+    });
     if (cancels_abort) resume_locked(lock);
     refresh_deadline_locked();
     wake_.notify_all();
@@ -126,6 +191,7 @@ void Watchdog::resume_locked(std::unique_lock<std::mutex>& lock) {
     isolate_->CancelTerminateExecution();
     lock.lock();
     termination_ = Termination::Ready;
+    heap_stop_active_ = false;
     wake_.notify_all();
 }
 
@@ -137,14 +203,40 @@ Watchdog::Ticket Watchdog::begin_crossing(double seconds) {
     return add_deadline_locked(seconds, nullptr);
 }
 
-void Watchdog::end_crossing(Ticket ticket) {
+bool Watchdog::end_crossing(Ticket ticket) {
     std::unique_lock<std::mutex> lock(mutex_);
     wait_transition_locked(lock);
+    // Compilation may finish without observing a V8 interrupt, and the watchdog
+    // may not have been scheduled yet. A completed native phase must still pay
+    // its original deadline rather than silently passing it to the next call.
+    const auto found = std::find_if(deadlines_.begin(), deadlines_.end(),
+        [ticket](const Deadline& entry) { return entry.ticket == ticket; });
+    if (found != deadlines_.end() && found->suspended == Clock::time_point{} &&
+        found->expires <= Clock::now() && termination_ == Termination::Ready)
+        issue_termination_locked(lock, false, ticket);
+    const bool terminated = termination_ != Termination::Ready;
+    if (terminated && heap_stop_active_) {
+        // The script can allocate between the pressure observation and its
+        // actual stop. Recovery starts from the heap that survived unwind, not
+        // from the earlier sample; otherwise a harmless next compile is stopped
+        // for allocations made by the already-terminated operation.
+        lock.unlock();
+        HeapStatistics statistics;
+        isolate_->GetHeapStatistics(&statistics);
+        lock.lock();
+        const auto budget = heap_budget_bytes();
+        heap_recovery_limit_ = budget != 0 &&
+            static_cast<double>(statistics.used_heap_size()) >=
+                static_cast<double>(budget) * kHeapTerminationRatio
+            ? recovery_ceiling(statistics.used_heap_size(), budget) : 0;
+        heap_pressure_ = false;
+    }
     std::erase_if(deadlines_, [ticket](const Deadline& entry) { return entry.ticket == ticket; });
     if (termination_ == Termination::Terminating && !has_crossing_locked())
         termination_ = Termination::Completed;
     refresh_deadline_locked();
     wake_.notify_all();
+    return terminated;
 }
 
 void Watchdog::terminate_now() {
@@ -154,15 +246,46 @@ void Watchdog::terminate_now() {
     issue_termination_locked(lock, !has_crossing_locked());
 }
 
-void Watchdog::cancel_termination() {
-    std::unique_lock<std::mutex> lock(mutex_);
-    wait_transition_locked(lock);
-    if (termination_ != Termination::Ready) resume_locked(lock);
+void Watchdog::check_near_heap_limit(std::size_t initial_limit)
+{
+    HeapStatistics statistics;
+    isolate_->GetHeapStatistics(&statistics);
+    const auto budget = heap_budget_bytes() != 0 ? heap_budget_bytes() : initial_limit;
+    if (budget != 0)
+        observe_heap_pressure(statistics.used_heap_size(), budget, true);
 }
 
-void Watchdog::flag_heap_pressure()
+void Watchdog::check_collected_heap()
+{
+    const auto budget = heap_budget_bytes();
+    if (budget == 0) return;
+    v8::HeapStatistics statistics;
+    isolate_->GetHeapStatistics(&statistics);
+    // GC can occur between API-interrupt safepoints. Wake the existing watchdog
+    // before another large backing-store growth consumes the unwind allowance.
+    // Do not collect recursively or wait for termination while inside V8's GC.
+    observe_heap_pressure(statistics.used_heap_size(), budget);
+}
+
+void Watchdog::observe_heap_pressure(std::size_t used, std::size_t budget, bool at_limit)
 {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!at_limit && static_cast<double>(used) <
+        static_cast<double>(budget) * kHeapTerminationRatio) {
+        heap_recovery_limit_ = 0;
+        return;
+    }
+    if (stopping_ || termination_ != Termination::Ready || heap_pressure_ ||
+        !has_crossing_locked()) return;
+    // A heap stop leaves live objects rooted. Permit bounded diagnostic/cleanup
+    // work rather than repeatedly terminating it for the very same live bytes.
+    // Renew pressure on growth; a collection below the threshold resets it.
+    const auto next_limit = recovery_ceiling(used, budget);
+    if (heap_recovery_limit_ != 0 && used <= heap_recovery_limit_) {
+        heap_recovery_limit_ = std::min(heap_recovery_limit_, next_limit);
+        return;
+    }
+    heap_recovery_limit_ = next_limit;
     heap_pressure_ = true;
     wake_.notify_all();
 }
@@ -187,12 +310,12 @@ void Watchdog::heap_check(v8::Isolate* isolate, void* data)
                                                         : statistics.heap_size_limit();
     if (budget == 0)
         return;
+    self->observe_heap_pressure(statistics.used_heap_size(), budget);
     const double used = static_cast<double>(statistics.used_heap_size());
     if (used < static_cast<double>(budget) * kHeapCollectionRatio)
         return;
     if (used >= static_cast<double>(budget) * kHeapTerminationRatio)
     {
-        self->flag_heap_pressure();
         return;
     }
 
@@ -226,12 +349,6 @@ bool Watchdog::terminated() const
     return termination_ != Termination::Ready;
 }
 
-bool Watchdog::abort_pending() const
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    return termination_ == Termination::AbortPending || termination_ == Termination::IssuingNext;
-}
-
 void Watchdog::run()
 {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -242,6 +359,7 @@ void Watchdog::run()
         if (heap_pressure_) {
             heap_pressure_ = false;
             if (termination_ == Termination::Ready) {
+                heap_stop_active_ = true;
                 ++heap_terminations_;
                 issue_termination_locked(lock, !has_crossing_locked());
             }
@@ -281,8 +399,9 @@ void Watchdog::run()
         // still acknowledges its own ticket during unwind.
         Ticket cause = 0;
         for (const auto& entry : deadlines_)
-            if (entry.expires == deadline_) { cause = entry.ticket; break; }
-        for (auto& entry : deadlines_) entry.expires = Clock::time_point::max();
+            if (entry.suspended == Clock::time_point{} && entry.expires == deadline_) { cause = entry.ticket; break; }
+        for (auto& entry : deadlines_)
+            if (entry.suspended == Clock::time_point{}) entry.expires = Clock::time_point::max();
         refresh_deadline_locked();
         issue_termination_locked(lock, !has_crossing_locked(), cause);
     }
@@ -319,14 +438,16 @@ DeadlineScope::~DeadlineScope()
 }
 
 void DeadlineScope::start() {
-    if (watchdog_ != nullptr && ticket_ == 0)
+    if (watchdog_ != nullptr && ticket_ == 0) {
+        terminated_ = false;
         ticket_ = watchdog_->begin_crossing(seconds_);
+    }
 }
 
 void DeadlineScope::stop() {
     if (ticket_ != 0) {
         auto ticket = ticket_;
         ticket_ = 0;
-        watchdog_->end_crossing(ticket);
+        terminated_ = watchdog_->end_crossing(ticket);
     }
 }

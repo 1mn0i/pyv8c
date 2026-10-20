@@ -43,7 +43,14 @@ private:
     PyObject* python_owner = nullptr; // borrowed from the Python Isolate owner
     std::vector<PyObject*> inspector_waiters;
     context_c* pending_context_closes = nullptr;
+    struct PendingCleanup {
+        PyObject* object;
+        int (*clear)(PyObject*);
+    };
+    // GIL protected: a collector must never wait for an executing isolate.
+    std::vector<PendingCleanup> pending_cleanups;
 public:
+    void defer_cleanup(PyObject* object, int (*clear)(PyObject*));
     void bind_python_owner(PyObject* owner) { python_owner = owner; }
     bool register_inspector_waiter(PyObject* callback);
     bool defer_context_close(context_c* context);
@@ -112,13 +119,13 @@ public:
 private:
     static PythonObjectOwner* find_python_owner(context_c* context, PyObject* py_object);
 
-    // Growth near the heap limit: one step per call, capped.  Both are fractions of
-    // the limit V8 started with, so --max-old-space-size still decides the scale.
-    static constexpr std::size_t kHeapGrowthStepDivisor = 8;
-    static constexpr std::size_t kHeapGrowthCapDivisor = 2;
+    // The existing maximum unwind allowance, as an absolute multiple of V8's
+    // initial limit. Repeated callbacks cannot accumulate a larger ceiling.
+    static constexpr std::size_t kHeapUnwindLimitFactor = 2;
     static std::size_t near_heap_limit_callback(void* data, std::size_t current_limit,
                                                 std::size_t initial_limit);
-    std::size_t heap_growth_granted_;
+    static void collected_heap_callback(v8::Isolate*, v8::GCType,
+                                        v8::GCCallbackFlags, void* data);
 
     v8::ExternalMemoryAccounter external_memory_;
     int64_t external_memory_bytes_;

@@ -12,12 +12,12 @@
 
 #include <cassert>
 #include <new>
+#include <limits>
 
 using namespace v8;
 
 IsolateState::IsolateState()
-    : heap_growth_granted_(0),
-      external_memory_bytes_(0),
+    : external_memory_bytes_(0),
       isolate_(nullptr),
       live_v8_handles_(0),
       error_hooks_installed_(false),
@@ -89,20 +89,19 @@ IsolateState::near_heap_limit_callback(void* data, std::size_t current_limit,
     // own collection a few retries later, and by then nothing can be said.  The
     // watchdog thread makes the call, where V8 can hear it.
     if (state->watchdog_ != nullptr)
-        state->watchdog_->flag_heap_pressure();
+        state->watchdog_->check_near_heap_limit(initial_limit);
 
-    const std::size_t step = initial_limit / kHeapGrowthStepDivisor;
-    // A pending termination only needs room to return to JavaScript, where it takes
-    // effect, so it may spend twice the ordinary growth budget.
-    const std::size_t bound = state->watchdog_ != nullptr && state->watchdog_->terminated()
-        ? initial_limit
-        : initial_limit / kHeapGrowthCapDivisor;
-    if (step == 0 || state->heap_growth_granted_ + step > bound)
-        return current_limit; // at the bound V8 reports OOM as it always did
-
-    state->heap_growth_granted_ += step;
-    // Only the limit grows: reporting the grant as external memory would double it.
-    return current_limit + step;
+    // V8 checks the limit immediately after this callback and can abort without
+    // another retry. Small incremental grants may remain below a large live
+    // backing store even though most of the allowed reserve is still unused.
+    // The stop is already pending, so grant the existing full unwind allowance
+    // now; do not depend on whether the watchdog thread has run yet.
+    if (initial_limit > std::numeric_limits<std::size_t>::max() / kHeapUnwindLimitFactor)
+        return current_limit;
+    const std::size_t ceiling = initial_limit * kHeapUnwindLimitFactor;
+    // Only the actual ceiling matters, not the lifetime sum of prior grants:
+    // V8 may shrink its limit after collection. Never grow beyond this bound.
+    return current_limit < ceiling ? ceiling : current_limit;
 }
 
 void
@@ -114,6 +113,13 @@ IsolateState::account_external_memory(int64_t delta)
     if (external_memory_bytes_ < 0)
         external_memory_bytes_ = 0;
     external_memory_.Update(isolate_, delta);
+}
+
+void IsolateState::collected_heap_callback(Isolate*, GCType, GCCallbackFlags, void* data)
+{
+    auto* state = static_cast<IsolateState*>(data);
+    if (state != nullptr && state->watchdog_ != nullptr)
+        state->watchdog_->check_collected_heap();
 }
 
 bool
@@ -151,6 +157,7 @@ IsolateState::initialize()
     isolate_->SetIsJSApiWrapperNativeErrorCallback(
         CallbackBoundary<error_family::is_native_error_wrapper>::call);
     watchdog_ = std::make_unique<Watchdog>(isolate_);
+    isolate_->AddGCEpilogueCallback(&IsolateState::collected_heap_callback, this);
     isolate_->SetCaptureStackTraceForUncaughtExceptions(
         true, 100,
         static_cast<StackTrace::StackTraceOptions>(
@@ -273,6 +280,7 @@ IsolateState::shutdown(bool report_error)
         external_memory_.Update(isolate_, -external_memory_bytes_);
     external_memory_bytes_ = 0;
     isolate_->RemoveNearHeapLimitCallback(&IsolateState::near_heap_limit_callback, 0);
+    isolate_->RemoveGCEpilogueCallback(&IsolateState::collected_heap_callback, this);
     isolate_->Dispose();
     isolate_ = nullptr;
     allocator_.reset();

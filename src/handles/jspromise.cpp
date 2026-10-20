@@ -204,8 +204,8 @@ static int js_promise_resolver_traverse(js_promise_resolver* self, visitproc vis
 }
 
 int js_promise_resolver_clear(js_promise_resolver* self) {
-    std::unique_ptr<IsolateLockScope> lock;
-    if (self->isolate_state) lock.reset(new IsolateLockScope(self->isolate_state));
+    IsolateCleanupScope cleanup(self->isolate_state, (PyObject*)self, (int (*)(PyObject*))js_promise_resolver_clear);
+    if (!cleanup.ready()) return 0;
     self->registration.detach();
     self->resolver.Reset();
     self->isolate_state = nullptr;
@@ -384,6 +384,7 @@ js_promise_resolver_dealloc(js_promise_resolver *self)
 {
     PyObject_GC_UnTrack(self);
     js_promise_resolver_clear(self);
+    if (Py_REFCNT((PyObject*)self) != 0) return;
     TP_FREE_ABI3(js_promise_resolver_type, self);
 }
 

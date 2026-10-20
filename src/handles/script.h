@@ -20,6 +20,11 @@ extern PyTypeObject* script_type;
 
 int script_type_init();
 PyObject *script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs);
+class DeadlineScope;
+// The optional borrowed budget must cover the caller's entire operation.
+PyObject* script_from_source(PyTypeObject* type, context_c* context,
+                             PyObject* source, PyObject* filename,
+                             DeadlineScope* inherited_budget = nullptr);
 void script_dealloc(script_c *self);
 
 v8::MaybeLocal<v8::UnboundScript> script_compile(v8::Local<v8::Context> context, PyObject *source, PyObject *filename);

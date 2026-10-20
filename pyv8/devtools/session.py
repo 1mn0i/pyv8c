@@ -120,6 +120,12 @@ class Target:
             "browserContextId": "pyv8",
         }
 
+    def rebind_context(self, context):
+        native = next((entry.native for entry in self.sessions if entry.native is not None), None)
+        if native is not None:
+            native.rebind_context(context)
+        self.host.context = context
+
     def submit(self, callback):
         future = self.mailbox.submit(self, callback)
         return future
@@ -146,10 +152,14 @@ class Target:
         return self.ready.is_set() and not self.closed
 
     def wait_for_startup(self):
-        if self.closed:
+        if self.closed or not self.waiting:
             return
-        if not self.mailbox.wait(self, lambda: not self.waiting or self.closed, self.options.startup_timeout):
-            raise TimeoutError("DevTools startup timed out before the first script")
+        suspended = self.host.context._suspend_deadlines()
+        try:
+            if not self.mailbox.wait(self, lambda: not self.waiting or self.closed, self.options.startup_timeout):
+                raise TimeoutError("DevTools startup timed out before the first script")
+        finally:
+            self.host.context._resume_deadlines(suspended)
 
     def before_script(self):
         self.wait_for_startup()

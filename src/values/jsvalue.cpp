@@ -30,8 +30,8 @@ static int value_traverse(js_value* self, visitproc visit, void* arg) {
 
 static int value_clear(js_value* self) {
     auto* state = self->isolate_state;
-    std::unique_ptr<IsolateLockScope> lock;
-    if (state) lock.reset(new IsolateLockScope(state));
+    IsolateCleanupScope cleanup(state, (PyObject*)self, (int (*)(PyObject*))value_clear);
+    if (!cleanup.ready()) return 0;
     self->registration.detach();
     self->value.Reset();
     self->isolate_state = nullptr;
@@ -183,5 +183,6 @@ js_value_dealloc(js_value *self)
 {
     PyObject_GC_UnTrack(self);
     value_clear(self);
+    if (Py_REFCNT((PyObject*)self) != 0) return;
     TP_FREE_ABI3(js_value_type, self);
 }

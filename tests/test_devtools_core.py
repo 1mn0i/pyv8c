@@ -75,6 +75,49 @@ def test_startup_wait_processes_mailbox_until_ready():
     assert not mailbox.wait(endpoint, lambda: False, 0)
 
 
+def test_pause_exit_before_wait_does_not_lose_notification():
+    mailbox = Mailbox()
+    entering_wait = threading.Event()
+    proceed = threading.Event()
+    errors = []
+
+    class GatedCondition(threading.Condition):
+        def __enter__(self):
+            if threading.current_thread() is owner:
+                self.entries += 1
+                if self.entries == 3:
+                    entering_wait.set()
+                    if not proceed.wait(2):
+                        raise AssertionError("pause test gate timed out")
+            return super().__enter__()
+
+    mailbox.condition = GatedCondition(threading.RLock())
+    mailbox.condition.entries = 0
+
+    def run():
+        try:
+            mailbox.prepare_pause()
+            mailbox.run_pause()
+        except BaseException as error:
+            errors.append(error)
+
+    owner = threading.Thread(target=run, daemon=True)
+    owner.start()
+    try:
+        assert entering_wait.wait(2)
+        mailbox.quit_pause()
+        proceed.set()
+        owner.join(0.5)
+        assert not owner.is_alive(), "pause exit notification was lost"
+        assert not errors
+        assert mailbox.pause_thread is None
+        assert mailbox.pause_frames == []
+    finally:
+        proceed.set()
+        mailbox.quit_pause()
+        owner.join(2)
+
+
 def test_options_are_explicit_and_immutable():
     options = DevToolsOptions()
     assert options.pause_on_start

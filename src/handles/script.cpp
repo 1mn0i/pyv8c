@@ -9,6 +9,7 @@
 #include "convert.h"
 #include "context.h"
 #include "script.h"
+#include "watchdog.h"
 
 using namespace v8;
 
@@ -35,8 +36,8 @@ static int script_traverse(script_c* self, visitproc visit, void* arg) {
 }
 
 static int script_clear(script_c* self) {
-    std::unique_ptr<IsolateLockScope> lock;
-    if (self->isolate_state) lock.reset(new IsolateLockScope(self->isolate_state));
+    IsolateCleanupScope cleanup(self->isolate_state, (PyObject*)self, (int (*)(PyObject*))script_clear);
+    if (!cleanup.ready()) return 0;
     self->registration.detach();
     self->script.Reset();
     if (self->isolate_state != nullptr && self->source != nullptr)
@@ -91,6 +92,13 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         PyErr_SetString(PyExc_TypeError, "context must be an active Context instance");
         return NULL;
     }
+    return script_from_source(type, py_ctx, source, filename);
+}
+
+PyObject*
+script_from_source(PyTypeObject* type, context_c* py_ctx, PyObject* source,
+                   PyObject* filename, DeadlineScope* inherited_budget)
+{
     ExecutionScope execution(py_ctx);
     if (!execution) return nullptr;
     auto* isolate_state = py_ctx->isolate_state;
@@ -108,7 +116,15 @@ script_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         PyErr_SetString(PyExc_TypeError, "filename must be a string or None");
         return NULL;
     }
+    DeadlineScope timeout_guard(py_ctx->timeout, isolate);
+    if (inherited_budget == nullptr) timeout_guard.start();
     MaybeLocal<UnboundScript> maybe_script = script_compile(context, source, filename);
+    timeout_guard.stop();
+    PY_PROPAGATE_JS;
+    if (timeout_guard.terminated()) {
+        PyErr_SetNone((PyObject*)js_terminated_type);
+        return nullptr;
+    }
     Local<UnboundScript> script;
     if (!maybe_script.ToLocal(&script))
     {
@@ -161,5 +177,6 @@ script_dealloc(script_c *self)
 {
     PyObject_GC_UnTrack(self);
     script_clear(self);
+    if (Py_REFCNT((PyObject*)self) != 0) return;
     TP_FREE_ABI3(script_type, self);
 }

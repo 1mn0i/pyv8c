@@ -33,4 +33,14 @@ private:
     PyObject* python_owner_;
 };
 
+// tp_clear/tp_dealloc may run on any Python thread, including the Inspector
+// transport. Keep the object alive until the active entry can clear it safely.
+class IsolateCleanupScope {
+public:
+    IsolateCleanupScope(IsolateState* state, PyObject* object, int (*clear)(PyObject*));
+    bool ready() const { return !lock_ || lock_->entered(); }
+private:
+    std::unique_ptr<IsolateLockScope> lock_;
+};
+
 #endif

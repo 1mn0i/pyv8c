@@ -154,8 +154,12 @@ class Mailbox:
         with self.condition:
             self.pause_frames.append(frame)
         try:
-            while not frame.is_set():
+            while True:
                 with self.condition:
+                    # Check under the same lock used by quit_pause so an exit
+                    # notification cannot arrive between the check and wait.
+                    if frame.is_set():
+                        break
                     work = self._take()
                     if work is None:
                         self.condition.wait()

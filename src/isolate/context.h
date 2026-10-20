@@ -32,11 +32,14 @@ private:
     friend class IsolateState;
     friend PyObject* context_new(PyTypeObject*, PyObject*, PyObject*);
     friend void context_finish_close(context_c*);
+    friend PyObject* context_promise_rejection_state(context_c*, PyObject*);
     friend void context_register_handle(context_c*, PyObject*, int (*)(PyObject*));
     friend void context_unregister_handle(context_c*, PyObject*);
     friend bool context_retain_dependency(v8::Local<v8::Context>, PyObject*);
     void drop_dependency(context_c* owner, context_c* origin);
     void unlink_dependencies(context_c* owner);
+    V8HandleSlot<v8::Private> rejection_key;
+    uint64_t next_rejection_id = 0;
     std::shared_ptr<ContextLifetime> lifetime;
     std::unordered_set<PythonObjectOwner*> python_owners;
     std::unordered_set<void*> callbacks;
@@ -54,6 +57,7 @@ struct PythonObjectOwner;
 // walk all read this one list, so a field cannot be added without being visited.
 #define CONTEXT_PY_FIELDS(X) \
     X(py_isolate)            \
+    X(microtask_queue)       \
     X(registry)              \
     X(function_template_cache) \
     X(callback_targets)      \
@@ -72,6 +76,7 @@ typedef struct context_c
 
     IsolateState* isolate_state;
     PyObject* py_isolate;
+    PyObject* microtask_queue;
     V8HandleSlot<v8::Context> js_context;
     //: What this realm knows about each interface name it has met: name -> entry.
     PyObject* registry;

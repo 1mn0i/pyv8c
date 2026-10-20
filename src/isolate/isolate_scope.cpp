@@ -11,6 +11,13 @@
 
 static thread_local IsolateState* active_isolate_state = nullptr;
 
+IsolateCleanupScope::IsolateCleanupScope(IsolateState* state, PyObject* object,
+                                       int (*clear)(PyObject*)) {
+    if (!state) return;
+    lock_.reset(new IsolateLockScope(state, true));
+    if (!lock_->entered()) state->defer_cleanup(object, clear);
+}
+
 IsolateState*
 current_isolate_state()
 {

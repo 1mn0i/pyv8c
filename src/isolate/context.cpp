@@ -7,6 +7,7 @@
 #include "crossing.h"
 #include <v8.h>
 #include <algorithm>
+#include <limits>
 
 #include "context.h"
 #include "debugger.h"
@@ -20,12 +21,20 @@
 #include "v8tools.h"
 #include "isolate.h"
 #include "watchdog.h"
+#include "microtask_queue.h"
 
 using namespace v8;
 
+PyObject* context_promise_rejection_state(context_c* self, PyObject* args);
 static PyObject* context_try_inspector(context_c* self, PyObject* args);
 static PyObject* context_to_js(context_c* self, PyObject* value);
 static PyObject* context_import_handle(context_c* self, PyObject* handle);
+static PyObject* context_set_microtask_queue(context_c* self, PyObject* queue);
+static PyObject* context_begin_operation(context_c*, PyObject*);
+static PyObject* context_end_operation(context_c*, PyObject*);
+static PyObject* context_terminate_operation(context_c*, PyObject*);
+static PyObject* context_suspend_deadlines(context_c*, PyObject*);
+static PyObject* context_resume_deadlines(context_c*, PyObject*);
 static PyObject* context_set_deadline(context_c* self, PyObject* args, PyObject* kwargs);
 static PyObject* context_clear_deadline(context_c* self, PyObject* ignored);
 static PyObject* context_terminate(context_c* self, PyObject* ignored);
@@ -191,6 +200,14 @@ PyMethodDef context_methods[] = {
     {"heap_statistics", (PyCFunction)PythonBoundary<context_heap_statistics>::call, METH_NOARGS,
      "bytes of this isolate's heap in use, committed, and its ceiling, as a dict"},
     {"enqueue_microtask", (PyCFunction)PythonBoundary<context_enqueue_microtask>::call, METH_O, NULL},
+    {"set_microtask_queue", (PyCFunction)PythonBoundary<context_set_microtask_queue>::call, METH_O, NULL},
+    {"begin_operation", (PyCFunction)PythonBoundary<context_begin_operation>::call, METH_O, NULL},
+    {"end_operation", (PyCFunction)PythonBoundary<context_end_operation>::call, METH_O, NULL},
+    {"terminate_operation", (PyCFunction)PythonBoundary<context_terminate_operation>::call, METH_O, NULL},
+    {"_suspend_deadlines", (PyCFunction)PythonBoundary<context_suspend_deadlines>::call, METH_NOARGS, NULL},
+    {"_resume_deadlines", (PyCFunction)PythonBoundary<context_resume_deadlines>::call, METH_O, NULL},
+    {"_promise_rejection_state", (PyCFunction)PythonBoundary<context_promise_rejection_state>::call,
+     METH_VARARGS, "private, non-executing promise identity/notification bookkeeping"},
     {"set_error_hooks", (PyCFunction)PythonBoundary<context_set_error_hooks>::call,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"close", (PyCFunction)PythonBoundary<context_close>::call, METH_NOARGS, NULL},
@@ -214,6 +231,90 @@ context_require_isolate(context_c* self)
     }
     return self->isolate_state;
 }
+// Promise rejection hooks must not re-enter JavaScript. A private property on
+// the actual promise provides identity and notification state without a strong
+// promise registry, user accessors, microtasks or another execution crossing.
+PyObject* context_promise_rejection_state(context_c* self, PyObject* args) {
+    PyObject* object;
+    int action;
+    if (!PyArg_ParseTuple(args, "Oi", &object, &action)) return nullptr;
+    if (action < 0 || action > 2) {
+        PyErr_SetString(PyExc_ValueError, "invalid promise rejection state action");
+        return nullptr;
+    }
+    if (!PyObject_TypeCheck(object, js_object_type)) {
+        PyErr_SetString(PyExc_TypeError, "expected a JavaScript Promise");
+        return nullptr;
+    }
+    auto* wrapper = (js_object*)object;
+    ExecutionScope execution(self, object);
+    if (!execution || !js_object_require_active(wrapper)) return nullptr;
+    auto* isolate = execution.isolate();
+    auto context = execution.context();
+    if (wrapper->isolate_state != self->isolate_state) {
+        PyErr_SetString(PyExc_ValueError, "promise belongs to another isolate");
+        return nullptr;
+    }
+    auto value = wrapper->object.Get(isolate);
+    if (!value->IsPromise()) {
+        PyErr_SetString(PyExc_TypeError, "expected a JavaScript Promise");
+        return nullptr;
+    }
+    auto promise = value.As<Promise>();
+    Local<Context> origin;
+    if (!promise->GetCreationContext().ToLocal(&origin) || context_from_v8(origin) != self) {
+        PyErr_SetString(PyExc_ValueError, "promise belongs to another context");
+        return nullptr;
+    }
+    auto failed = [&]() -> PyObject* {
+        if (isolate->IsExecutionTerminating()) { Py_RETURN_NONE; }
+        PyErr_SetString(PyExc_RuntimeError, "could not access promise rejection state");
+        return nullptr;
+    };
+    // None is an interrupted bookkeeping operation, not a promise identity.
+    if (isolate->IsExecutionTerminating()) { Py_RETURN_NONE; }
+    if (!self->resources) self->resources = new ContextResources();
+    auto* resources = self->resources;
+    if (resources->rejection_key.IsEmpty())
+        resources->rejection_key.Set(self->isolate_state, isolate, Private::New(isolate));
+    auto key = resources->rejection_key.Get(isolate);
+    Local<Value> stored;
+    if (!promise->GetPrivate(context, key).ToLocal(&stored)) return failed();
+    Local<Array> entry;
+    if (stored->IsUndefined()) {
+        if (resources->next_rejection_id == std::numeric_limits<uint64_t>::max()) {
+            PyErr_SetString(PyExc_OverflowError, "promise rejection identities exhausted");
+            return nullptr;
+        }
+        Local<Value> fields[] = {BigInt::NewFromUnsigned(isolate, ++resources->next_rejection_id), False(isolate)};
+        entry = Array::New(isolate, fields, 2);
+        if (!promise->SetPrivate(context, key, entry).FromMaybe(false)) return failed();
+    } else {
+        if (!stored->IsArray()) return failed();
+        entry = stored.As<Array>();
+    }
+    if (action == 0) {
+        Local<Value> identity;
+        if (!entry->Get(context, 0).ToLocal(&identity)) return failed();
+        return PyLong_FromUnsignedLongLong(identity.As<BigInt>()->Uint64Value());
+    }
+    if (action == 1) {
+        if (promise->State() != Promise::kRejected) {
+            PyErr_SetString(PyExc_ValueError, "only rejected promises may be notified");
+            return nullptr;
+        }
+        if (!entry->Set(context, 1, True(isolate)).FromMaybe(false)) return failed();
+        Py_RETURN_NONE;
+    }
+    Local<Value> notified;
+    if (!entry->Get(context, 1).ToLocal(&notified)) return failed();
+    if (!notified->IsTrue()) return PyTuple_Pack(2, Py_False, Py_None);
+    if (!entry->Set(context, 1, False(isolate)).FromMaybe(false)) return failed();
+    PyOwnedRef reason(py_from_js(promise->Result(), context));
+    if (!reason.get()) return nullptr;
+    return PyTuple_Pack(2, Py_True, reason.get());
+}
+
 static PyObject* context_try_inspector(context_c* self, PyObject* args) {
     PyObject *callback, *wake;
     if (!PyArg_ParseTuple(args, "OO", &callback, &wake)) return nullptr;
@@ -330,12 +431,13 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* trace_callback = Py_None;
     PyObject* traceable = Py_False;
     PyObject* reuse_global = Py_None;
-    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", "reuse_global", NULL};
+    PyObject* py_microtasks = Py_None;
+    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", "reuse_global", "microtask_queue", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOOOOOOO", (char **) keywords,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOOOOOOOO", (char **) keywords,
                                     &global, &trace, &ctx_type, &py_timeout, &py_isolate,
                                     &lazy_factory, &trace_callback, &traceable,
-                                    &reuse_global)) {
+                                    &reuse_global, &py_microtasks)) {
         return NULL;
     }
 
@@ -354,6 +456,8 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     IsolateState* isolate_state = isolate_state_from_python(py_isolate, true);
     if (isolate_state == nullptr)
         return NULL;
+    auto* microtasks = microtask_queue_get(py_microtasks, isolate_state);
+    if (PyErr_Occurred()) return nullptr;
     IN_ISOLATE(isolate_state);
 
     // The frame's window again, which V8 accepts from the same template.
@@ -442,7 +546,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         Py_DECREF((PyObject*)self);
         return NULL;
     }
-    
+
     if (self->trace_callback != nullptr) {
         // Event names indexed by the kind passed to TraceEvent::emit: 0 get,
         // 1 set, 2 method, 3 construct, 4 has, 5 descriptor.
@@ -487,7 +591,12 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 
     }
 
-    IN_CONTEXT(Context::New(isolate, NULL, global_template, reused));
+    IN_CONTEXT(Context::New(isolate, NULL, global_template, reused,
+                           DeserializeInternalFieldsCallback(), microtasks));
+    if (py_microtasks != Py_None) {
+        self->microtask_queue = PyV8_NewRef(py_microtasks);
+        ++((microtask_queue_c*)py_microtasks)->contexts;
+    }
     self->js_context.Set(isolate_state, isolate, context);
     self->has_done = true;
 
@@ -549,6 +658,11 @@ context_finish_close(context_c *self)
     // The V8 side goes first: the references below are Python's, and dropping
     // them while the realm they came from is still standing is exactly what
     // closing is meant to avoid.
+    if (self->microtask_queue) {
+        if (!self->js_context.IsEmpty())
+            self->js_context.Get(self->isolate_state->isolate())->SetMicrotaskQueue(nullptr);
+        microtask_queue_detach(self->microtask_queue);
+    }
     self->js_context.Reset();
     context_clear_python_fields(self);
     self->isolate_state = nullptr;
@@ -568,9 +682,14 @@ static int context_clear(context_c* self) {
     if (self->state != ContextState::Active) return 0;
     auto* state = self->isolate_state;
     if (state == nullptr) { context_finish_close(self); return 0; }
-    IN_ISOLATE(state);
+    IsolateCleanupScope cleanup(state, (PyObject*)self, (int (*)(PyObject*))context_clear);
+    if (!cleanup.ready()) return 0;
+    auto* isolate = state->isolate();
+    USING_V8;
     self->state = ContextState::Closing;
-    state->watchdog().release_owner(self);
+    // Legacy context deadlines end at logical close; active operation tickets
+    // remain cancellable until their stack exits and actual disposal completes.
+    state->watchdog().release_owner(self, true);
     // Callback frames still borrow binding metadata until the outer entry exits.
     if (!state->defer_context_close(self))
         context_finish_close(self);
@@ -581,7 +700,14 @@ PyObject*
 context_close(context_c *self, PyObject* ignored)
 {
     (void)ignored;
+    if (!microtask_queue_check(self->microtask_queue)) return nullptr;
     if (!debugger_context_can_close(self)) return nullptr;
+    // Explicit close keeps its synchronous contract; only GC cleanup is deferred.
+    std::unique_ptr<IsolateLockScope> lock;
+    if (self->isolate_state) {
+        lock.reset(new IsolateLockScope(self->isolate_state));
+        if (!lock->entered()) return nullptr;
+    }
     context_clear(self);
     PYV8_RETURN_NONE;
 }
@@ -599,6 +725,7 @@ context_dealloc(context_c *self)
 PyObject*
 context_js_obj(context_c* self, PyObject* py_object)
 {
+    if (!microtask_queue_check(self->microtask_queue)) return nullptr;
     // A pair that already has a handle is answered from the table alone; only
     // building the first one enters the isolate.
     if (!context_is_active(self)) {
@@ -631,33 +758,46 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     }
     if (py_timeout != Py_None) timeout = PyFloat_AsDouble(py_timeout);
     if (PyErr_Occurred() || !valid_timeout(timeout)) return nullptr;
-    if (!PyUnicode_Check(program) && !PyObject_IsInstance(program, (PyObject *)script_type))
+    const bool source_program = PyUnicode_Check(program);
+    if (!source_program && !PyObject_TypeCheck(program, script_type))
     {
         PyErr_SetString(PyExc_TypeError, "program must be a string or Script");
         return NULL;
     }
-    if (PyUnicode_Check(program))
+    // Reject malformed or foreign programs before consuming an idle termination
+    // request: only a valid execution may begin the next crossing.
+    if (source_program) {
+        if (filename != Py_None && !PyUnicode_Check(filename)) {
+            PyErr_SetString(PyExc_TypeError, "filename must be a string or None");
+            return nullptr;
+        }
+    } else {
+        auto* candidate = (script_c*)program;
+        if (candidate->script.IsEmpty()) {
+            PyErr_SetString(PyExc_RuntimeError, "V8 script context is closed");
+            return nullptr;
+        }
+        if (candidate->isolate_state != isolate_state) {
+            PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
+            return nullptr;
+        }
+    }
+    // Compilation and execution spend the same deadline. The internal factory
+    // borrows this scope without registering another crossing; the public constructor
+    // instead applies the Context default when called independently.
+    DeadlineScope timeout_guard(timeout, isolate);
+    timeout_guard.start();
+    if (source_program)
     {
-        program = PyObject_CallFunctionObjArgs((PyObject *)script_type, (PyObject*)self, program, filename, NULL);
+        program = script_from_source(script_type, self, program, filename, &timeout_guard);
         PyErr_PROPAGATE(program);
     }
     else
     {
         Py_INCREF((PyObject*)program);
     }
-    assert(PyObject_IsInstance(program, (PyObject*)script_type));
+    assert(PyObject_TypeCheck(program, script_type));
     script_c *py_script = (script_c *) program;
-
-    if (py_script->script.IsEmpty()) {
-        Py_DECREF((PyObject*)program);
-        PyErr_SetString(PyExc_RuntimeError, "V8 script context is closed");
-        return nullptr;
-    }
-    if (py_script->isolate_state != isolate_state) {
-        Py_DECREF((PyObject*)program);
-        PyErr_SetString(PyExc_RuntimeError, "JavaScript value belongs to another isolate");
-        return NULL;
-    }
 
     IN_CONTEXT(self->js_context.Get(isolate));
     JS_TRY
@@ -666,13 +806,15 @@ context_run(context_c *self, PyObject *args, PyObject *kwargs)
     Py_XDECREF((PyObject*)program);
     Local<Script> script = unbound_script->BindToCurrentContext();
 
-    DeadlineScope timeout_guard(timeout, isolate);
-    timeout_guard.start();
     debugger_prepare_script(self);
     MaybeLocal<Value> result = without_gil([&] { return script->Run(context); });
 
     timeout_guard.stop();
     PY_PROPAGATE_JS;
+    if (timeout_guard.terminated()) {
+        PyErr_SetNone((PyObject*)js_terminated_type);
+        return nullptr;
+    }
     Local<Value> js_result;
     if (!result.ToLocal(&js_result)) {
         PY_PROPAGATE_JS;
@@ -764,7 +906,7 @@ context_getitem(context_c *self, PyObject *name)
     return result;
 }
 
-int 
+int
 context_setattro(context_c *self, PyObject *name, PyObject *value)
 {
     // use GenericGetAttr to find out if Context defines the property
@@ -780,7 +922,7 @@ context_setattro(context_c *self, PyObject *name, PyObject *value)
     return PyObject_GenericSetAttr((PyObject *) self, name, value);
 }
 
-int 
+int
 context_setitem(context_c *self, PyObject *name, PyObject *value)
 {
     PyObject *global = context_get_global(self, NULL);
@@ -791,7 +933,7 @@ context_setitem(context_c *self, PyObject *name, PyObject *value)
 }
 
 PyObject *
-context_gc(context_c *self) 
+context_gc(context_c *self)
 {
     ExecutionScope execution(self);
     if (!execution) return nullptr;
@@ -830,6 +972,31 @@ context_enqueue_microtask(context_c *self, PyObject *function)
     queue->EnqueueMicrotask(isolate, microtask.As<Function>());
     PYV8_RETURN_NONE;
 #endif
+}
+
+static PyObject* context_set_microtask_queue(context_c* self, PyObject* queue) {
+    auto* state = context_require_isolate(self);
+    if (!state || !microtask_queue_check(self->microtask_queue)) return nullptr;
+    if (queue == Py_None) {
+        PyErr_SetString(PyExc_TypeError, "queue must be a MicrotaskQueue"); return nullptr;
+    }
+    auto* native = microtask_queue_get(queue, state);
+    if (PyErr_Occurred()) return nullptr;
+    if (queue == self->microtask_queue) PYV8_RETURN_NONE;
+    IN_ISOLATE(state);
+    auto context = self->js_context.Get(isolate);
+    auto* previous_queue = context->GetMicrotaskQueue();
+    if (!isolate->GetEnteredOrMicrotaskContext().IsEmpty() ||
+        previous_queue->IsRunningMicrotasks() || previous_queue->GetMicrotasksScopeDepth()) {
+        PyErr_SetString(PyExc_RuntimeError, "cannot change queue while a context or microtask is entered"); return nullptr;
+    }
+    context->SetMicrotaskQueue(native);
+    if (self->microtask_queue) microtask_queue_detach(self->microtask_queue);
+    PyObject* previous = self->microtask_queue;
+    self->microtask_queue = PyV8_NewRef(queue);
+    ++((microtask_queue_c*)queue)->contexts;
+    Py_XDECREF(previous);
+    PYV8_RETURN_NONE;
 }
 
 PyObject *
@@ -942,6 +1109,59 @@ context_set_deadline(context_c* self, PyObject* args, PyObject* kwargs)
     PYV8_RETURN_NONE;
 }
 
+static PyObject* context_begin_operation(context_c* self, PyObject* seconds) {
+    auto* state = context_require_isolate(self);
+    if (!state || !microtask_queue_check(self->microtask_queue)) return nullptr;
+    const double value = PyFloat_AsDouble(seconds);
+    if (PyErr_Occurred() || !valid_timeout(value)) return nullptr;
+    if (value < 0) { PyErr_SetString(PyExc_ValueError, "timeout must be non-negative"); return nullptr; }
+    return PyLong_FromUnsignedLongLong(state->watchdog().arm(value, self, true));
+}
+
+static PyObject* context_end_operation(context_c* self, PyObject* value) {
+    const auto ticket = PyLong_AsUnsignedLongLong(value);
+    if (PyErr_Occurred() || !microtask_queue_check(self->microtask_queue)) return nullptr;
+    if (self->isolate_state) self->isolate_state->watchdog().disarm_ticket(ticket, self);
+    PYV8_RETURN_NONE;
+}
+
+static PyObject* context_terminate_operation(context_c* self, PyObject* value) {
+    const auto ticket = PyLong_AsUnsignedLongLong(value);
+    if (PyErr_Occurred()) return nullptr;
+    auto* state = self->isolate_state;
+    return PyBool_FromLong(state && state->watchdog().terminate_ticket(ticket, self));
+}
+
+static PyObject* context_suspend_deadlines(context_c* self, PyObject*) {
+    auto* state = context_require_isolate(self);
+    if (!state || !microtask_queue_check(self->microtask_queue)) return nullptr;
+    const auto tickets = state->watchdog().suspend_deadlines();
+    PyObject* result = PyList_New(tickets.size());
+    if (!result) { state->watchdog().resume_deadlines(tickets); return nullptr; }
+    for (size_t index = 0; index < tickets.size(); ++index) {
+        PyObject* ticket = PyLong_FromUnsignedLongLong(tickets[index]);
+        if (!ticket) { Py_DECREF(result); state->watchdog().resume_deadlines(tickets); return nullptr; }
+        PyList_SetItem(result, index, ticket);
+    }
+    return result;
+}
+
+static PyObject* context_resume_deadlines(context_c* self, PyObject* values) {
+    if (!microtask_queue_check(self->microtask_queue)) return nullptr;
+    Watchdog::Suspension tickets;
+    PyOwnedRef iterator(PyObject_GetIter(values));
+    if (!iterator.get()) return nullptr;
+    while (PyObject* item = PyIter_Next(iterator.get())) {
+        const auto ticket = PyLong_AsUnsignedLongLong(item);
+        Py_DECREF(item);
+        if (PyErr_Occurred()) return nullptr;
+        tickets.push_back(ticket);
+    }
+    if (PyErr_Occurred()) return nullptr;
+    if (self->isolate_state) self->isolate_state->watchdog().resume_deadlines(tickets);
+    PYV8_RETURN_NONE;
+}
+
 PyObject*
 context_clear_deadline(context_c* self, PyObject* ignored)
 {
@@ -966,4 +1186,24 @@ context_terminate(context_c* self, PyObject* ignored)
         return NULL;
     state->watchdog().terminate_now();
     PYV8_RETURN_NONE;
+}
+
+// The Context boundary owns JavaScript exception conversion for checkpoints.
+PyObject* microtask_queue_checkpoint(microtask_queue_c* self, PyObject* args, PyObject* kwargs) {
+    double timeout = 0;
+    static const char* names[] = {"timeout", nullptr};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|d", (char**)names, &timeout)) return nullptr;
+    if (!std::isfinite(timeout) || timeout < 0 || timeout > 1e9) {
+        PyErr_SetString(PyExc_ValueError, "timeout must be finite and in 0..1e9"); return nullptr;
+    }
+    auto* queue = microtask_queue_get((PyObject*)self, self->state);
+    if (!queue) return nullptr;
+    IN_ISOLATE(self->state);
+    JS_TRY;
+    DeadlineScope budget(timeout, isolate);
+    budget.start();
+    without_gil([&] { queue->PerformCheckpoint(isolate); });
+    budget.stop();
+    PY_PROPAGATE_JS;
+    Py_RETURN_NONE;
 }

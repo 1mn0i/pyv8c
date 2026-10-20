@@ -14,7 +14,7 @@ and the handle types hold each other up, and what each layer is for -- see
 | group | layer | owns | files |
 | --- | --- | --- | --- |
 | `src/` | 0 | portability shims and the private module entry point | `pyv8.h` `pyv8.cpp` `polyfill.h` `abi3.h/.cpp` `v8_compat.h` `boundary.h` `callback_boundary.h` `bridge_base.h` |
-| `src/isolate/` | 1 | the V8 platform, the isolate, the realm and their lifetimes | `platform_state.*` `v8_string_cache.*` `isolate.*` `isolate_state.*` `isolate_scope.*` `entry.h` `execution.*` `runtime.*` `context.*` `context_names.cpp` `context_resources.cpp` `watchdog.*` `error_hooks.*` |
+| `src/isolate/` | 1 | the V8 platform, the isolate, the realm and their lifetimes | `platform_state.*` `v8_string_cache.*` `isolate.*` `isolate_state.*` `isolate_scope.*` `entry.h` `execution.*` `runtime.*` `context.*` `context_names.cpp` `context_resources.cpp` `watchdog.*` `error_hooks.*` `microtask_queue.*` |
 | `src/values/` | 2 | values crossing the boundary, error mapping, handle registration | `convert.h` `convert_to_python.cpp` `convert_to_javascript.cpp` `error_family.*` `serialization.h` `js_exception.*` `jsvalue.*` `jsnull.*` `jsundefined.*` `handle_resource.h` |
 | `src/handles/` | 3 | the Python types that stand for JavaScript values | `jsobject.*` `jsfunction.*` `jspromise.*` `jstypedarray.*` `script.*` `serialization.cpp` |
 | `src/tools/` | 3 | tracing -- the hook the interface layer wraps its entry points in -- and the devtools bridge | `trace.h` `debugger.*` |
@@ -40,7 +40,7 @@ exact permitted source/target pairs, rather than exempting entire files:
 | --- | --- | --- |
 | `pyv8.h` | exact declared edges | private module composition; not a dependency of lower units |
 | `pyv8.cpp` | exact module registration edges | the module entry point registers every type |
-| `context.cpp` | declared edges through layer 4 | the realm owner builds the interface templates, creates the realm's handles and wires the devtools bridge |
+| `context.cpp` | declared edges through layer 4 | the realm owner builds the interface templates, creates the realm's handles, converts explicit-checkpoint exceptions and wires the devtools bridge |
 | `context_names.cpp` | 1-4 | installing names into a realm and keeping the registry behind them is what `install`, `expose` and the lazy factory protocol do, so this is the part of a context's life that knows the interface layer; it also provides registered constructors to error conversion and installs the failed-access callback at realm entry |
 | `context_resources.cpp` | 1-3 | the pair table materialises a Python handle for a JavaScript object |
 | `convert_to_python.cpp` | 1-3 | one direction of the converter: it builds handles for objects coming in, which the handles layer defines |

@@ -3,6 +3,8 @@
 #include "entry.h"
 #include "context.h"
 #include "debugger.h"
+#include "microtask_queue.h"
+#include "watchdog.h"
 #include <v8-inspector.h>
 #include <algorithm>
 #include <map>
@@ -84,7 +86,10 @@ struct InspectorHub : V8InspectorClient {
         debugger_c* owner = *found;
         Py_INCREF((PyObject*)owner);
         pause_stack.push_back(owner);
+        auto& watchdog = owner->context->isolate_state->watchdog();
+        auto suspended = watchdog.suspend_deadlines();
         call_callback(owner, "run_loop");
+        watchdog.resume_deadlines(suspended);
         pause_stack.pop_back();
         Py_DECREF((PyObject*)owner);
     }
@@ -138,6 +143,37 @@ static bool require_session(debugger_c* self) {
     if (self->state && self->state->session && self->context && self->context->isolate_state && !self->context->js_context.IsEmpty()) return true;
     PyErr_SetString(PyExc_RuntimeError, "Debugger is closed");
     return false;
+}
+static PyObject* debugger_rebind_context(debugger_c* self, PyObject* object) {
+    if (!require_session(self)) return nullptr;
+    if (!PyObject_TypeCheck(object, context_type)) {
+        PyErr_SetString(PyExc_TypeError, "context must be an active Context"); return nullptr;
+    }
+    auto* next = (context_c*)object;
+    auto* previous = self->context;
+    if (next == previous) PYV8_RETURN_NONE;
+    if (!next->isolate_state || next->isolate_state != previous->isolate_state || next->js_context.IsEmpty()) {
+        PyErr_SetString(PyExc_ValueError, "replacement context must belong to the same isolate"); return nullptr;
+    }
+    if (!microtask_queue_check(next->microtask_queue) || !microtask_queue_check(previous->microtask_queue)) return nullptr;
+    PyOwnedRef previous_owner(PyV8_NewRef((PyObject*)previous));
+    IN_ISOLATE(next->isolate_state);
+    auto hub = self->state->hub;
+    if (!hub->pause_stack.empty() || hub->groups.count(next)) {
+        PyErr_SetString(PyExc_RuntimeError, "cannot replace a paused or already registered context"); return nullptr;
+    }
+    const int group = self->state->group;
+    hub->inspector->contextDestroyed(previous->js_context.Get(isolate));
+    hub->groups.erase(previous);
+    hub->groups[next] = group;
+    for (auto* session : hub->sessions) {
+        if (session->context != previous) continue;
+        Py_INCREF(object);
+        session->context = next;
+        Py_DECREF((PyObject*)previous);
+    }
+    hub->inspector->contextCreated(V8ContextInfo(next->js_context.Get(isolate), group, StringView()));
+    PYV8_RETURN_NONE;
 }
 static PyObject* debugger_send(debugger_c* self, PyObject* message) {
     if (!require_session(self)) return nullptr;
@@ -279,6 +315,7 @@ static void debugger_dealloc(debugger_c* self) {
     TP_FREE_ABI3(debugger_type, self);
 }
 static PyMethodDef debugger_methods[] = {
+    {"rebind_context", (PyCFunction)PythonBoundary<debugger_rebind_context>::call, METH_O, nullptr},
     {"send", (PyCFunction)PythonBoundary<debugger_send>::call, METH_O, nullptr},
     {"schedule_pause_on_next_statement", (PyCFunction)PythonBoundary<debugger_schedule_pause>::call, METH_VARARGS | METH_KEYWORDS, nullptr},
     {"cancel_pause_on_next_statement", (PyCFunction)PythonBoundary<debugger_cancel_pause>::call, METH_NOARGS, nullptr},

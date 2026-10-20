@@ -701,8 +701,8 @@ int js_object_traverse(js_object* self, visitproc visit, void* arg) {
 int js_object_clear(js_object* self)
 {
     auto* state = self->isolate_state;
-    std::unique_ptr<IsolateLockScope> lock;
-    if (state != nullptr) lock.reset(new IsolateLockScope(state));
+    IsolateCleanupScope cleanup(state, (PyObject*)self, (int (*)(PyObject*))js_object_clear);
+    if (!cleanup.ready()) return 0;
     self->registration.detach();
     if (PyObject_TypeCheck((PyObject*)self, js_function_type))
         ((js_function*)self)->js_this.Reset();
@@ -721,5 +721,6 @@ void js_object_dealloc(js_object *self)
 {
     PyObject_GC_UnTrack(self);
     js_object_clear(self);
+    if (Py_REFCNT((PyObject*)self) != 0) return;
     TP_FREE_ABI3(js_object_type, self);
 }

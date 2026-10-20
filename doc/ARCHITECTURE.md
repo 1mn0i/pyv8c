@@ -168,3 +168,15 @@ The extension declares every .h/.def as a build dependency. Its manifest records
 source-content identity, ABI, compiler inputs, actual compiler and binary digest;
 failed builds do not publish a new manifest. Rebuilding unchanged sources must
 skip compilation. Architecture negative tests must reject new composition edges.
+
+
+## 显式微任务队列
+
+`MicrotaskQueue` 属于 Isolate 层，记录创建线程并持有计数的 V8 根。
+Context 通过 `microtask_queue=` 关联队列，多个 Context 可以共享同一个队列。
+省略参数的独立调用仍走原来的自动模式，因此不能把 Context 身份等同于微任务队列身份。
+显式模式的普通 V8 入口不自动执行检查点；HTML 清理边界需要宿主调度层接入。
+
+队列存储、线程检查及释放放在 `microtask_queue.*`，类型注册通过 Isolate 接口完成。
+检查点的异常转换保留在 `context.cpp` 的组合边界，避免 Isolate 层反向依赖上层 crossing 异常转换。
+详见 [显式微任务队列](MICROTASK_QUEUE.md)。

@@ -76,10 +76,23 @@ bool IsolateState::defer_context_close(context_c* context) {
     return true;
 }
 
+void IsolateState::defer_cleanup(PyObject* object, int (*clear)(PyObject*)) {
+    for (const auto& pending : pending_cleanups)
+        if (pending.object == object) return;
+    pending_cleanups.push_back({object, clear});
+    Py_INCREF(object);
+}
+
 void IsolateState::drain_deferred() {
     PyObject *type, *value, *traceback;
     PyErr_Fetch(&type, &value, &traceback);
-    while (pending_wrappers_ || pending_owners_ || pending_context_closes) {
+    while (pending_wrappers_ || pending_owners_ || pending_context_closes || !pending_cleanups.empty()) {
+        while (!pending_cleanups.empty()) {
+            const auto pending = pending_cleanups.back();
+            pending_cleanups.pop_back();
+            if (pending.clear(pending.object) < 0) PyErr_WriteUnraisable(pending.object);
+            Py_DECREF(pending.object);
+        }
         while (pending_wrappers_) {
             auto* record = pending_wrappers_;
             pending_wrappers_ = record->next;

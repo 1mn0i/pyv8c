@@ -14,6 +14,7 @@ typedef struct
 extern PyTypeObject* isolate_type;
 
 int isolate_type_init();
+int isolate_register_microtask_queue(PyObject* module);
 IsolateState* isolate_state_from_python(PyObject* object, bool allow_none = false);
 
 #endif

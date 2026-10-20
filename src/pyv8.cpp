@@ -378,6 +378,8 @@ pyv8_module_exec(PyObject* module)
     if (PyModule_AddObject(module, "Isolate", (PyObject*)isolate_type) < 0)
         return -1;
 
+    if (isolate_register_microtask_queue(module) < 0)
+        return -1;
     if (context_type_init() < 0)
         return -1;
     if (PyModule_AddObject(module, "Context", (PyObject *)context_type) < 0)

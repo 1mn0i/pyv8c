@@ -1,9 +1,11 @@
 #include "execution.h"
 #include "isolate_state.h"
+#include "microtask_queue.h"
 
 ExecutionScope::ExecutionScope(context_c* owner, PyObject* subject) noexcept
     : owner_(owner ? PyV8_NewRef((PyObject*)owner) : nullptr),
       subject_(subject ? PyV8_NewRef(subject) : nullptr) {
+    if (owner && !microtask_queue_check(owner->microtask_queue)) return;
     if (!context_is_active(owner)) {
         PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
         return;

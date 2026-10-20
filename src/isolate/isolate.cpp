@@ -4,6 +4,7 @@
 
 #include "context.h"
 #include "isolate.h"
+#include "microtask_queue.h"
 
 using namespace v8;
 
@@ -177,4 +178,9 @@ isolate_get_live_v8_handles(isolate_c* self, void* closure)
 {
     const std::size_t live = self->state == nullptr ? 0 : self->state->live_v8_handles();
     return PyLong_FromSize_t(live);
+}
+
+int isolate_register_microtask_queue(PyObject* module) {
+    if (microtask_queue_type_init() < 0) return -1;
+    return PyModule_AddObject(module, "MicrotaskQueue", (PyObject*)microtask_queue_type);
 }
