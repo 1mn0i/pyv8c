@@ -96,6 +96,9 @@ class WorkerRealm:
         self.config = config
         #: Written by the runtime that starts the worker; the realm only reads it.
         self.script_url = ""
+        self.execution_deadline = None
+        self.execution_ticket = None
+        self.stop_event = None
         self.isolate = None
         self.v8_context = None
         self.scope = None

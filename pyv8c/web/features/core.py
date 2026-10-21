@@ -87,7 +87,7 @@ FEATURE = FeatureImplementation(
         webrtc.RTCPeerConnectionIceEvent,
         matrix.DOMMatrixReadOnly, matrix.DOMMatrix,
         point.DOMPointReadOnly, point.DOMPoint,
-        rect.DOMRectReadOnly, rect.DOMRect,
+        rect.DOMRectReadOnly, rect.DOMRect, rect.DOMRectList,
         motion.DeviceMotionEvent, motion.DeviceMotionEventAcceleration,
         motion.DeviceMotionEventRotationRate, motion.DeviceOrientationEvent,
         nodes.Node, nodes.DocumentFragment, nodes.ShadowRoot, nodes.Attr,
@@ -184,6 +184,7 @@ FEATURE = FeatureImplementation(
         html_svg.SVGElement, html_svg.SVGGraphicsElement,
         html_svg.SVGGeometryElement, html_svg.SVGRectElement,
         html_svg.SVGLength, html_svg.SVGAnimatedLength,
+        html_svg.SVGMatrix, html_svg.SVGPoint, html_svg.SVGRect, html_svg.SVGSVGElement,
     ),
     {
         "location": lambda owner: navigation.Location(services=owner._services, window=owner),

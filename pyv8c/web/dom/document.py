@@ -7,8 +7,8 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import (MISSING, dom_string, interface_value, is_nullish, missing_error,
-                                     number)
-from ..page_errors import (InvalidCharacterError, NotSupportedError, SecurityError, PageTypeError,
+                                     number, boolean)
+from ..page_errors import (InvalidStateError, InvalidCharacterError, NotSupportedError, SecurityError, PageTypeError,
                            dom_exception)
 from .animation import DocumentTimeline
 from .character_data import Comment, DocumentType, Text
@@ -179,19 +179,32 @@ class Document(_ParentNodeMixin, Node):
         return create_expression(expression).fn_evaluate(context, type, result)
 
     def fn_importNode(self, node=MISSING, deep=False, *_extra):
-        """A node cloned for this document; a document or shadow root is refused."""
+        """Copy a detached tree into this document, leaving the source untouched.
+
+        The destination services must be assigned before building the subtree: its
+        ownerDocument and any later insertion hooks belong to the importing document.
+        """
         if node is MISSING:
             raise missing_error('Document', 'importNode', 1, 0, constructor=False)
         node = interface_value(node, 'Node', 'Document', 'importNode', 1, nullable=False)
-        if isinstance(node, Document):
-            raise NotSupportedError(
-                "Failed to execute 'importNode' on 'Document':"
-                " The node provided is a document, which may not be imported.")
+        if node.nodeType == Node.DOCUMENT_NODE:
+            raise NotSupportedError("Failed to execute 'importNode' on 'Document': "
+                                    "The node provided is a document, which may not be imported.")
         if isinstance(node, ShadowRoot):
-            raise NotSupportedError(
-                "Failed to execute 'importNode' on 'Document':"
-                " The node provided is a shadow root, which may not be imported.")
-        return node.fn_cloneNode(bool(deep))
+            raise NotSupportedError("Failed to execute 'importNode' on 'Document': "
+                                    "The provided node cannot be imported.")
+        include_children = False if deep is pyv8.Undefined else boolean(deep)
+
+        def copy(source):
+            clone = source._clone_shallow()
+            clone._services = self._services
+            if include_children:
+                for child in source._children:
+                    clone.append_child(copy(child))
+            return clone
+
+        return copy(node)
+
 
     def fn_createEvent(self, type=MISSING, *_extra):
         """An uninitialised event of the legacy interface name asked for."""
@@ -630,6 +643,26 @@ class Document(_ParentNodeMixin, Node):
         tmp = Document(services=self._services, url=self.url)
         self._parse_fragment(html, tmp)
         return next(iter(tmp._children), Text("", services=self._services))
+
+    def fn_hasStorageAccess(self, *_extra):
+        """Answer asynchronously, rather than an undefined placeholder.
+
+        A detached document has no browsing context to query; rejection remains
+        a Promise rejection, so callers can safely attach their handlers.
+        """
+        from ..bom.utils import settled
+
+        if self._browsing_window() is None:
+            return settled(self._services, error=InvalidStateError("The document is not fully active."))
+        promise, resolve, _reject = self._services.realm_services.make_promise()
+        access = self._services.document_services.has_storage_access()
+        self._services.realm_services.post_task(lambda: resolve(access))
+        return promise
+
+
+    def fn_hasUnpartitionedCookieAccess(self, *_extra):
+        return self.fn_hasStorageAccess()
+
 
 
 class _DetachedDocumentServices:

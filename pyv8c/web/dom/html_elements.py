@@ -579,7 +579,17 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if self.localName in _VOID_ELEMENTS:
             return f"<{self.localName}{attrs}>"
         return f"<{self.localName}{attrs}>{self.get_innerHTML()}</{self.localName}>"
-    def _clone_shallow(self): return type(self)(self.localName, services=self._services, attributes=self.attributes.copy(),)
+    def _clone_shallow(self):
+        options = dict(services=self._services, attributes=self.attributes.copy(),
+                       namespace=self._namespace, prefix=self._prefix, local_name=self.localName)
+        # Baseline-only SVG classes have a placeholder constructor. As in
+        # Document.createElementNS, initialize their inherited Element model directly.
+        if getattr(type(self), '__v8_idl_stub__', False):
+            clone = type(self).__new__(type(self))
+            Element.__init__(clone, self.nodeName, **options)
+            return clone
+        return type(self)(self.nodeName, **options)
+
 
     # A click runs the behavior of the nearest ancestor that has one (see
     # dom.activation); most elements have none, hence the default pair below.
@@ -591,6 +601,19 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
     def _run_activation(self, event=None):
         """What a click does to this element beyond dispatching the event."""
         return None
+
+    def fn_getClientRects(self, *_extra):
+        from .rect import DOMRectList
+        if not self.isConnected:
+            return DOMRectList(values=())
+        node = self
+        while isinstance(node, Element):
+            if _unrendered(node):
+                return DOMRectList(values=())
+            node = node.parentElement
+        # Layout currently provides a single border box, without line fragments.
+        return DOMRectList(values=(self.fn_getBoundingClientRect(),))
+
 
 
 #: The clipboard handlers belong to Element, not to HTMLElement, and the ARIA members
@@ -1158,6 +1181,13 @@ class HTMLScriptElement(HTMLElement):
         value = boolean(value)
         if value: self.attributes["defer"] = ""
         else: self.attributes.pop("defer", None)
+
+    def _clone_shallow(self):
+        clone = super()._clone_shallow()
+        # HTML script cloning carries its already executed state to the clone.
+        clone._script_executed = getattr(self, "_script_executed", False)
+        return clone
+
 
 
 #: The destinations ``link.as`` may report; anything else reads back as empty.

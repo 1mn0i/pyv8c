@@ -17,9 +17,8 @@ from ...foundation.arguments import (
     missing_error,
     usv_string,
 )
-from ...foundation.base64 import forgiving_base64_decode, forgiving_base64_encode
 from ...foundation.environment import BrowserEnvironment
-from ..page_errors import DOMException, InvalidCharacterError, LegacyPropertyError, SecurityError, PageTypeError
+from ..page_errors import DOMException, LegacyPropertyError, SecurityError, PageTypeError
 from ..page_errors import js_error_value
 from ...foundation.urls import origin_tuple, serialize_origin
 from ...foundation.environment import environment_of
@@ -49,27 +48,6 @@ from .scheduling import _SchedulingMixin
 from .utils import deny_cross_origin, is_secure_context, window_secure_context
 
 __all__ = ["BarProp", "Window", "WindowProperties"]
-
-
-#: The two ways V8 words a failed string conversion, which a method prefixes.
-_CONVERSION_FAILURES = frozenset({
-    "Cannot convert a Symbol value to a string",
-    "Cannot convert object to primitive value",
-})
-
-
-def _string_argument(value, member):
-    """A ``DOMString`` argument worded as WebIDL words it; an exception a
-    caller's own ``toString`` threw is passed through untouched.
-    """
-    try:
-        return dom_string(value)
-    except pyv8.JSException as error:
-        original = getattr(error, "original", None)
-        reason = str(original._get("message")) if isinstance(original, pyv8.JSObject) else ""
-        if reason not in _CONVERSION_FAILURES:
-            raise
-        raise PageTypeError(f"Failed to execute '{member}' on 'Window': {reason}") from None
 
 
 #: The names a cross-origin caller may reach; the window's own access check answers.
@@ -690,20 +668,8 @@ class Window(_SchedulingMixin, WindowProperties):
         return fetch_like(self._services, "Window", request, options)
 
     def fn_atob(self, data=MISSING, *_extra):
-        if data is MISSING:
-            raise missing_error("Window", "atob", 1, 0, constructor=False)
-        # Chrome takes the argument as Latin1 before it decodes anything, and says so.
-        text = _string_argument(data, "atob")
-        if any(ord(character) > 0xFF for character in text):
-            raise InvalidCharacterError(
-                "Failed to execute 'atob' on 'Window': The string to be decoded contains"
-                " characters outside of the Latin1 range.")
-        decoded = forgiving_base64_decode(text)
-        if decoded is None:
-            raise InvalidCharacterError(
-                "Failed to execute 'atob' on 'Window': The string to be decoded is not"
-                " correctly encoded.")
-        return decoded
+        from .utils import base64_like
+        return base64_like('Window', 'atob', data)
 
     def fn_structuredClone(self, value=MISSING, options=None, *_extra):
         """``structuredClone``: the value serialized here and deserialized here.
@@ -713,27 +679,12 @@ class Window(_SchedulingMixin, WindowProperties):
         list is applied between the two, which is what leaves the buffers it names detached on
         this side while their bytes travel in the wire.
         """
-        from ..clone import (message_transfer, rebuild_clone, structured_clone,
-                                   transfer_ports)
-
-        if value is MISSING:
-            raise missing_error("Window", "structuredClone", 1, 0, constructor=False)
-        context = pyv8.current_context()
-        data = structured_clone(value, context=context)
-        transfer = message_transfer(options)
-        if transfer:
-            transfer_ports(transfer, services=self._services, caller="Window")
-        return rebuild_clone(data, context=context)
+        from ..clone import clone_value
+        return clone_value(self._services, 'Window', value, options)
 
     def fn_btoa(self, data=MISSING, *_extra):
-        if data is MISSING:
-            raise missing_error("Window", "btoa", 1, 0, constructor=False)
-        text = _string_argument(data, "btoa")
-        if any(ord(character) > 0xFF for character in text):
-            raise InvalidCharacterError(
-                "Failed to execute 'btoa' on 'Window': The string to be encoded contains"
-                " characters outside of the Latin1 range.")
-        return forgiving_base64_encode(text)
+        from .utils import base64_like
+        return base64_like('Window', 'btoa', data)
 
     def fn_queryLocalFonts(self, options=None, *_extra):
         """The machine's fonts, behind the gates Chromium puts in front of them.
@@ -818,7 +769,7 @@ class Window(_SchedulingMixin, WindowProperties):
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
         from ..page_errors import PageSyntaxError
-        from ..clone import structured_clone, transfer_ports
+        from ..clone import structured_clone, TransferPlan
         from ..fetch.events import MessageEvent
 
         # Null is an empty WindowPostMessageOptions dictionary.
@@ -844,8 +795,9 @@ class Window(_SchedulingMixin, WindowProperties):
         #: about to detach still carries its bytes; the sender's own context turns
         #: binary data into bytes rather than into an object with nothing enumerable on
         #: it, which is how an ArrayBuffer used to arrive as ``{}``.
-        data = structured_clone(message, context=pyv8.current_context())
-        ports = transfer_ports(transfer, services=self._services)
+        plan = TransferPlan(transfer)
+        data = structured_clone(message, context=pyv8.current_context(), caller="Window", transfer=plan)
+        ports = plan.commit(self._services)
         serialized = serialize_origin(source._origin)
 
         def deliver():

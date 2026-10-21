@@ -9,6 +9,7 @@ from ...foundation.arguments import IdlArgumentError
 from ..page_errors import PageTypeError
 from ..bom.abort import AbortSignal
 from .headers import Headers
+from ..fileapi.blob import _array_buffer_bytes
 
 
 @interface('Request', None)
@@ -53,6 +54,9 @@ class Request:
             raise PageTypeError("Failed to construct 'Request': Unsupported method in no-cors mode")
         if upper in ("GET", "HEAD") and not is_nullish(self._body):
             raise PageTypeError("Failed to construct 'Request': Request with GET/HEAD method cannot have body.")
+        binary = _array_buffer_bytes(self._body)
+        if binary is not None:
+            self._body = binary
 
     def get_url(self): return self._url
     def _read_signal(self, options, original):

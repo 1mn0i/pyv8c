@@ -6,7 +6,8 @@ from urllib.parse import urlsplit
 from ...foundation.error_policy import control_exceptions
 import pyv8
 from ...foundation.host_errors import LoadFailure
-from ...foundation.urls import absolute_url, origin_tuple, serialize_origin, unloadable_scheme
+from ...foundation.realm import WorkerSource
+from ...foundation.urls import absolute_url, origin_tuple, serialize_origin
 from ...web.bom.utils import page_base_url
 from ...web.fetch.headers import Headers
 from ...web.fetch.response import Response
@@ -15,7 +16,7 @@ from ...network.redirects import Deliver, RedirectFailure, next_hop
 from .request_headers import browser_headers, fetch_mode
 from .callbacks import CallbackRunner
 from .handles import LoadHandle
-from .local import data_url_response, extension_response
+from .session import select_source as select_request_source, check_cors as validate_cors, check_origin
 
 
 @dataclass(slots=True)
@@ -149,15 +150,16 @@ class ResourceFetchController:
             services=self.page.services,
         )
 
-    def _request_mode(self, request):
+    @staticmethod
+    def _request_mode(request):
         """The mode a request stands for: what it states, else what its destination makes
         it, which is how the request's own headers were built."""
-        if self._destination(request) in ("document", "iframe"):
+        if ResourceFetchController._destination(request) in ("document", "iframe"):
             return "navigate"
         stated = request.get("mode")
         if stated is not None:
             return str(stated)
-        if self._destination(request) in ResourceFetchController._NO_CORS_DESTINATIONS:
+        if ResourceFetchController._destination(request) in ResourceFetchController._NO_CORS_DESTINATIONS:
             return "no-cors"
         return "cors"
 
@@ -212,7 +214,8 @@ class ResourceFetchController:
             source = None
             if error is None:
                 try:
-                    source = self.worker_source(response, script_url)
+                    source = WorkerSource(self.worker_source(response, script_url),
+                                          response.url or script_url)
                 except control_exceptions():
                     raise
                 except BaseException as exc:
@@ -259,32 +262,13 @@ class ResourceFetchController:
                 and (handle is None or not handle.done))
 
     def select_source(self, load):
-        """One source precedence for both execution drivers, after interception."""
-        cached = self.cache.get(load.cache_key)
-        if cached is not None:
-            return "response", Response(cached["body"], cached, services=self.page.services)
-        target = load.target
-        if target.split("#", 1)[0].lower() == "about:blank":
-            return "response", Response("", {"url": target}, services=self.page.services)
-        if target.startswith("blob:"):
-            if self._request_mode(load.options) != "navigate" and not self.same_origin_response(target, load):
-                raise LoadFailure("Blob URL belongs to another origin")
-            body, content_type = self.page.profile.resolve_blob_url(target)
-            return "response", Response(body, {"url": target, "headers": {"content-type": content_type}}, services=self.page.services)
-        if target[:5].lower() == "data:":
-            return "response", data_url_response(target, self.page.services)
-        extension = extension_response(self.page, target, load.options)
-        if extension is not None:
-            return "response", extension
-        if self.page.resource_loader:
-            return "loader", self.page.resource_loader
-        blocked = unloadable_scheme(target)
-        if blocked is not None:
-            raise LoadFailure(blocked)
-        backend = self.page.network_backend
-        if backend is not None and backend.http_available:
-            return "engine", backend
-        raise LoadFailure("Network access requires an explicit resource_loader or real_network=True")
+        page = self.page
+        kind, value = select_request_source(
+            profile=page.profile, environment=page.environment, initiator=load.initiator_url,
+            target=load.target, options={**load.options, 'mode': self._request_mode(load.options)},
+            origin=load.origin, cache_key=load.cache_key, loader=page.resource_loader,
+            backend=page.network_backend)
+        return ('response', self.response_object(value)) if kind == 'payload' else (kind, value)
 
     def store(self, load, response):
         if load.cache_key is None:
@@ -320,18 +304,11 @@ class ResourceFetchController:
         return load.origin == (tuple(inherited) if inherited is not None else origin_tuple(url))
 
     def check_cors(self, response, load):
-        allowed = response.headers.fn_get("access-control-allow-origin")
-        allowed = "" if allowed is None or allowed is pyv8.Null else str(allowed)
-        if allowed not in ("*", serialize_origin(load.origin)):
-            raise LoadFailure("CORS check failed")
-        if load.options.get("credentials") == "include":
-            credentials = response.headers.fn_get("access-control-allow-credentials")
-            if allowed == "*" or str(credentials).lower() != "true":
-                raise LoadFailure("credentialed CORS request was not allowed")
+        validate_cors(response.headers._data, load.origin, load.options.get('credentials'))
 
     def check_request_origin(self, target, load):
-        if self._request_mode(load.options) == "same-origin" and not self.same_origin_response(target, load):
-            raise LoadFailure("same-origin request crossed an origin")
+        target_origin = tuple(self.page.profile._blob_origins.get(str(target), origin_tuple(target)))
+        check_origin(load.origin, target_origin, self._request_mode(load.options))
 
     def apply_response_policy(self, response, load):
         mode = self._request_mode(load.options)

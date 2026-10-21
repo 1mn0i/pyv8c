@@ -74,7 +74,7 @@ def _simple(text):
             if not m: raise SyntaxError("Invalid pseudo-class")
             name, i = m.group(1).lower(), i + m.end(); arg = None
             if i < len(text) and text[i] == "(": arg, i = _balanced(text, i)
-            if name not in {"first-child", "last-child", "nth-child", "first-of-type", "last-of-type", "nth-of-type", "not", "is", "where", "empty", "root", "checked", "enabled", "disabled"}: raise SyntaxError("Unsupported pseudo-class: " + name)
+            if name not in {"first-child", "last-child", "nth-child", "first-of-type", "last-of-type", "nth-of-type", "only-child", "only-of-type", "not", "is", "where", "empty", "root", "checked", "enabled", "disabled"}: raise SyntaxError("Unsupported pseudo-class: " + name)
             if name in {"checked", "enabled", "disabled"} and arg is not None: raise SyntaxError(f":{name} does not accept an argument")
             pseudos.append((name, arg)); continue
         raise SyntaxError("Invalid selector token")
@@ -225,8 +225,9 @@ def _simple_match(node, simple):
         if actual is None: return False
         if op and not _matches_attribute(actual, op, wanted): return False
     for name, arg in simple.pseudos:
-        if name in {"first-child", "last-child", "nth-child", "first-of-type", "last-of-type", "nth-of-type"}:
+        if name in {"first-child", "last-child", "nth-child", "first-of-type", "last-of-type", "nth-of-type", "only-child", "only-of-type"}:
             pos, sibling_count = _sibling_position(node, name.endswith("of-type"))
+        if name in {"only-child", "only-of-type"} and sibling_count != 1: return False
         if name == "first-child" and pos != 1 or name == "last-child" and pos != sibling_count: return False
         if name in ("nth-child", "nth-of-type") and not _nth(pos, arg): return False
         if name in ("first-of-type", "last-of-type") and (pos != 1 if name.startswith("first") else pos != sibling_count): return False

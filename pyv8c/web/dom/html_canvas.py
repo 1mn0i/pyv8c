@@ -13,7 +13,8 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import (MISSING, IdlArgumentError, dictionary, dom_string, integer,
-                                     is_nullish, missing_error)
+                                     is_nullish, missing_error, number)
+from ..page_errors import IndexSizeError, PageTypeError
 from .events import EventTarget
 from .html_elements import HTMLElement
 from .webgl import WebGL2RenderingContext, WebGLRenderingContext
@@ -374,8 +375,9 @@ def _cubic(start, first, second, end, steps=24):
 class CanvasGradient:
     """What ``createRadialGradient`` and ``createLinearGradient`` hand back."""
 
-    def __init__(self, stops=None, **_):
-        self._stops = list(stops or ())
+    def __init__(self, kind, coordinates, **_):
+        self._kind, self._coordinates = kind, coordinates
+        self._stops = []
 
     def fn_addColorStop(self, offset=MISSING, color=MISSING, *_extra):
         """Record one stop, or refuse the value the way Chromium's parser does."""
@@ -393,7 +395,59 @@ class CanvasGradient:
                 "SyntaxError",
                 "Failed to execute 'addColorStop' on 'CanvasGradient':"
                 f" The value provided ('{color}') could not be parsed as a color.")
-        self._stops.append((value, str(color)))
+        self._stops.append((value, _canvas_color(color)))
+        self._stops.sort(key=lambda stop: stop[0])
+
+    def _surface(self, size):
+        from PIL import Image
+        image = Image.new('RGBA', size)
+        if not self._stops:
+            return image
+        stops = self._stops
+        x0, y0, *rest = self._coordinates
+        if self._kind == 'linear':
+            x1, y1 = rest
+            dx, dy = x1 - x0, y1 - y0
+            denominator = dx * dx + dy * dy
+            if not denominator:
+                return image
+            def parameter(x, y):
+                return ((x - x0) * dx + (y - y0) * dy) / denominator
+        else:
+            r0, x1, y1, r1 = rest
+            dx, dy, dr = x1 - x0, y1 - y0, r1 - r0
+            a = dx * dx + dy * dy - dr * dr
+            if not a and not dx and not dy and not dr:
+                return image
+            def parameter(x, y):
+                px, py = x - x0, y - y0
+                b = -2 * (px * dx + py * dy + r0 * dr)
+                c = px * px + py * py - r0 * r0
+                if abs(a) < 1e-12:
+                    roots = [-c / b] if b else []
+                elif b * b - 4 * a * c >= 0:
+                    root = math.sqrt(b * b - 4 * a * c)
+                    roots = [(-b + root) / (2 * a), (-b - root) / (2 * a)]
+                else:
+                    roots = []
+                return max((t for t in roots if r0 + t * dr >= 0), default=None)
+        def color_at(t):
+            if t is None:
+                return (0, 0, 0, 0)
+            if t <= stops[0][0]:
+                return stops[0][1]
+            for (left, first), (right, second) in zip(stops, stops[1:]):
+                if t < right:
+                    ratio = (t - left) / (right - left)
+                    alpha = first[3] * (1 - ratio) + second[3] * ratio
+                    rgb = [round((first[i]*first[3]*(1-ratio) + second[i]*second[3]*ratio)/alpha)
+                           if alpha else 0 for i in range(3)]
+                    return (*rgb, round(alpha))
+            return stops[-1][1]
+        image.putdata([color_at(parameter(x + .5, y + .5))
+                       for y in range(size[1]) for x in range(size[0])])
+        return image
+
 
 
 @interface('CanvasRenderingContext2D', None)
@@ -420,15 +474,14 @@ class CanvasRenderingContext2D:
             self._draw = ImageDraw.Draw(self._image)
         except ImportError: self._image = self._draw = None
     def _reset(self):
-        if self._image is not None:
-            from PIL import Image, ImageDraw
-            self._image = Image.new("RGBA", (self._canvas._width, self._canvas._height), (0, 0, 0, 0))
-            self._draw = ImageDraw.Draw(self._image)
+        creation = self._creation
+        self.__init__(self._canvas)
+        self._creation = creation
     def get_canvas(self): return self._canvas
     def get_fillStyle(self): return self._fill
-    def set_fillStyle(self, v): self._fill = str(v)
+    def set_fillStyle(self, v): self._fill = v if isinstance(v, CanvasGradient) else str(v)
     def get_strokeStyle(self): return self._stroke
-    def set_strokeStyle(self, v): self._stroke = str(v)
+    def set_strokeStyle(self, v): self._stroke = v if isinstance(v, CanvasGradient) else str(v)
     def get_font(self): return self._font
     def set_font(self, v): self._font = str(v)
     def get_textBaseline(self): return self._baseline
@@ -514,14 +567,15 @@ class CanvasRenderingContext2D:
 
     def _paint_path(self):
         """Fill every subpath with the current fillStyle.  Windings are not distinguished."""
-        if self._draw is None: return
-        for subpath in self._path:
-            points = [self._device(x, y) for x, y in subpath]
-            if len(points) >= 3: self._draw.polygon(points, fill=_canvas_color(self._fill))
+        def polygons(draw):
+            for subpath in self._path:
+                points = [self._device(x, y) for x, y in subpath]
+                if len(points) >= 3:
+                    draw.polygon(points, fill=255)
+        self._paint(self._fill, polygons)
 
     def fn_fillRect(self, x=0, y=0, w=0, h=0, *_):
-        if self._draw:
-            self._draw.rectangle(self._rect(x, y, w, h), fill=_canvas_color(self._fill))
+        self._paint(self._fill, lambda draw: draw.rectangle(self._rect(x, y, w, h), fill=255))
     def fn_clearRect(self, x=0, y=0, w=0, h=0, *_):
         if self._draw: self._draw.rectangle(self._rect(x, y, w, h), fill=(0,0,0,0))
     def fn_fillText(self, text='', x=0, y=0, *_):
@@ -536,6 +590,15 @@ class CanvasRenderingContext2D:
                 self._device(x, y), str(text), font=self._font_obj(),
                 fill=None, stroke_width=1, stroke_fill=_canvas_color(self._stroke), anchor='ls',
             )
+    def fn_rect(self, x=MISSING, y=MISSING, width=MISSING, height=MISSING, *_extra):
+        for index, value in enumerate((x, y, width, height)):
+            if value is MISSING:
+                raise missing_error(type(self).__name__, 'rect', 4, index, constructor=False)
+        x, y, width, height = (float(number(value)) for value in (x, y, width, height))
+        if not all(math.isfinite(value) for value in (x, y, width, height)):
+            return
+        self._path.append([(x,y), (x+width,y), (x+width,y+height), (x,y+height), (x,y)])
+
     def fn_beginPath(self, *_): self._path = []
     def fn_moveTo(self, x=0, y=0, *_):
         if math.isfinite(float(x)) and math.isfinite(float(y)):
@@ -634,24 +697,10 @@ class CanvasRenderingContext2D:
         if not (math.isfinite(sx) and math.isfinite(sy)): return
         a, b, c, d, e, f = self._transform
         self._transform = (a * sx, b * sx, c * sy, d * sy, e, f)
-    def fn_createRadialGradient(self, x0=MISSING, y0=MISSING, r0=MISSING, x1=MISSING, y1=MISSING,
-                                r1=MISSING, *_extra):
-        """A radial gradient, or ``null`` for the values Blink answers that way."""
-        from ..page_errors import IndexSizeError
-        interface = type(self).__name__
-        values = (x0, y0, r0, x1, y1, r1)
-        for position, value in enumerate(values):
-            if value is MISSING:
-                raise missing_error(interface, 'createRadialGradient', 6, position, constructor=False)
-        x0, y0, r0, x1, y1, r1 = (float(value) for value in values)
-        for name, radius in (("r0", r0), ("r1", r1)):
-            if radius < 0:
-                raise IndexSizeError(
-                    f"Failed to execute 'createRadialGradient' on '{interface}':"
-                    f" The {name} provided is less than 0.")
-        if not all(math.isfinite(value) for value in (x0, y0, r0, x1, y1, r1)):
-            return pyv8.Null
-        return CanvasGradient()
+    def fn_createRadialGradient(self, x0=MISSING, y0=MISSING, r0=MISSING,
+                              x1=MISSING, y1=MISSING, r1=MISSING, *_extra):
+        return self._gradient('radial', (x0, y0, r0, x1, y1, r1))
+
     def fn_drawImage(self, *args):
         """Draw a source onto this surface, with Blink's overloads and its silences."""
         from ..page_errors import InvalidStateError
@@ -702,7 +751,8 @@ class CanvasRenderingContext2D:
             "alpha": bool(self._creation.get("alpha", True)),
             "desynchronized": bool(self._creation.get("desynchronized", False)),
             "colorSpace": str(self._creation.get("colorSpace", "srgb")),
-            "toneMapping": {},
+            "colorType": "unorm8",
+            "toneMapping": {"mode": "standard"},
             "willReadFrequently": bool(self._creation.get("willReadFrequently", False)),
         }
     def get_globalCompositeOperation(self): return self._composite
@@ -766,19 +816,65 @@ class CanvasRenderingContext2D:
             (self._fill, self._stroke, self._font, self._baseline,
              self._composite, self._filter, self._transform, self._shadow) = self._stack.pop()
 
+    def _gradient(self, kind, values):
+        interface = type(self).__name__
+        member = 'createLinearGradient' if kind == 'linear' else 'createRadialGradient'
+        for index, value in enumerate(values):
+            if value is MISSING:
+                raise missing_error(interface, member, len(values), index, constructor=False)
+        values = tuple(float(number(value)) for value in values)
+        if not all(math.isfinite(value) for value in values):
+            raise PageTypeError(f"Failed to execute '{member}' on '{interface}': "
+                                "The provided double value is non-finite.")
+        if kind == 'radial':
+            for index in (2, 5):
+                if values[index] < 0:
+                    radius = 'r0' if index == 2 else 'r1'
+                    raise IndexSizeError(f"Failed to execute '{member}' on '{interface}': "
+                                         f"The {radius} provided is less than 0.")
+        return CanvasGradient(kind, values)
+
+
+    def _paint(self, style, draw_mask):
+        if self._image is None:
+            return
+        from PIL import Image, ImageDraw, ImageChops
+        mask = Image.new('L', self._image.size)
+        draw_mask(ImageDraw.Draw(mask))
+        layer = (style._surface(self._image.size) if isinstance(style, CanvasGradient)
+                 else Image.new('RGBA', self._image.size, _canvas_color(style)))
+        layer.putalpha(ImageChops.multiply(layer.getchannel('A'), mask))
+        self._image.alpha_composite(layer)
+
+
+    def fn_createLinearGradient(self, x0=MISSING, y0=MISSING, x1=MISSING, y1=MISSING, *_extra):
+        return self._gradient('linear', (x0, y0, x1, y1))
+
+
 
 @interface('HTMLCanvasElement', 'HTMLElement')
 class HTMLCanvasElement(HTMLElement):
     def __init__(self, tag_name="canvas", services=None, **kw):
-        super().__init__(tag_name, services=services, **kw); self._width=300; self._height=150; self._context2d=None
+        super().__init__(tag_name, services=services, **kw)
+        self._width = self._dimension(self.attributes.get('width'), 300)
+        self._height = self._dimension(self.attributes.get('height'), 150)
+        self._context2d=None
         self._context_kind=None; self._webgl=None; self._webgl2=None
+
     def _resize(self):
         if self._context2d: self._context2d._reset()
     def get_width(self): return self._width
-    def set_width(self, v): self._width=max(0, int(float(v))); self.attributes['width']=str(self._width); self._resize()
+    def set_width(self, v):
+        self.attributes['width'] = str(integer(v))
+        self._width = self._dimension(self.attributes['width'], 300)
+        self._resize()
+
     def get_height(self): return self._height
     def set_height(self, v):
-        self._height=max(0, int(float(v))); self.attributes['height']=str(self._height); self._resize()
+        self.attributes['height'] = str(integer(v))
+        self._height = self._dimension(self.attributes['height'], 150)
+        self._resize()
+
     def fn_getContext(self, kind='', options=None, *_):
         requested = _requested_context(kind)
         if requested is None: return pyv8.Null
@@ -806,6 +902,28 @@ class HTMLCanvasElement(HTMLElement):
                 self.fn_getContext('2d'); surface = self._context2d
         out=io.BytesIO(); surface._image.save(out, format='PNG')
         return 'data:image/png;base64,'+base64.b64encode(out.getvalue()).decode('ascii')
+
+    @staticmethod
+    def _dimension(value, default):
+        match = re.match(r'^[\t\n\f\r ]*\+?(\d+)', str(value or ''))
+        if match is None:
+            return default
+        value = int(match[1])
+        return value if value < 2**31 else default
+
+
+    def _attribute_changed(self, name, old, new):
+        if name in ('width', 'height'):
+            setattr(self, '_' + name, self._dimension(new, 300 if name == 'width' else 150))
+            self._resize()
+
+
+    def _attribute_changed_here(self, name, old, new):
+        if name in ('width', 'height'):
+            self._attribute_changed(name, old, new)
+        else:
+            super()._attribute_changed_here(name, old, new)
+
 
 
 @interface('OffscreenCanvasRenderingContext2D', 'CanvasRenderingContext2D')

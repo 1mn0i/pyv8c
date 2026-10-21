@@ -28,8 +28,10 @@ def _property_name(value):
 
 def _normalize_value(value):
     value = str(dom_string(value)).strip()
-    if not value or any(ch in value for ch in "{};\x00"): return ""
+    if not value or '\x00' in value or any(True for _ in _top_level_delimiters(value, '{};')):
+        return ""
     return re.sub(r"[ \t\r\n]+", " ", value)
+
 
 
 def _split_priority(value):
@@ -285,7 +287,9 @@ def parse_declarations(raw):
     of its last; this is the single parser for ``cssText`` and the cascade reader.
     """
     declarations, positions = [], {}
-    for chunk in str(raw).split(";"):
+    raw, start = str(raw), 0
+    for end in (*_top_level_delimiters(raw, ';'), len(raw)):
+        chunk, start = raw[start:end], end + 1
         if ":" not in chunk:
             continue
         name, value = chunk.split(":", 1)
@@ -302,6 +306,7 @@ def parse_declarations(raw):
             positions[name] = len(declarations)
             declarations.append(item)
     return declarations
+
 
 
 @interface("CSSStyleDeclaration", None)
@@ -592,3 +597,49 @@ class StyleSheetList(ReadOnlyIndexedPropertyMixin, LegacyNamedPropertyMixin):
 
 __all__ = ["CSS", "CSSStyleDeclaration", "CSSStyleSheet", "StyleSheet", "StyleSheetList",
            "SUPPORTED_NAMES", "parse_declarations", "stylesheet_source", "supported"]
+
+
+def _top_level_delimiters(text, delimiters):
+    """CSS separators outside strings, escapes, comments and functions."""
+    quote, depth, escaped, comment = None, 0, False, False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if comment:
+            if text[index:index+2] == '*/':
+                comment = False
+                index += 1
+        elif escaped:
+            escaped = False
+        elif char == '\\':
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in ('"', "'"):
+            quote = char
+        elif text[index:index+2] == '/*':
+            comment = True
+            index += 1
+        elif char in '([':
+            depth += 1
+        elif char in ')]':
+            depth = max(0, depth - 1)
+        elif not depth and char in delimiters:
+            yield index
+        index += 1
+
+
+
+SYSTEM_COLORS = {
+    'accentcolor': 'rgb(0, 117, 255)', 'accentcolortext': 'rgb(255, 255, 255)',
+    'activetext': 'rgb(0, 102, 204)', 'buttonborder': 'rgb(0, 0, 0)',
+    'buttonface': 'rgb(240, 240, 240)', 'buttontext': 'rgb(0, 0, 0)',
+    'canvas': 'rgb(255, 255, 255)', 'canvastext': 'rgb(0, 0, 0)',
+    'field': 'rgb(255, 255, 255)', 'fieldtext': 'rgb(0, 0, 0)',
+    'graytext': 'rgb(109, 109, 109)', 'highlight': 'rgb(0, 120, 215)',
+    'highlighttext': 'rgb(255, 255, 255)', 'linktext': 'rgb(0, 102, 204)',
+    'mark': 'rgb(255, 255, 0)', 'marktext': 'rgb(0, 0, 0)',
+    'selecteditem': 'rgb(25, 103, 210)', 'selecteditemtext': 'rgb(255, 255, 255)',
+    'visitedtext': 'rgb(0, 102, 204)',
+}

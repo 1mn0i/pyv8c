@@ -21,6 +21,7 @@ from ..page_errors import PageSyntaxError
 from .character_data import Text
 from .css import (
     INHERITED_PROPERTIES,
+    SYSTEM_COLORS,
     CSSStyleDeclaration,
     initial_values_for,
     parse_declarations,
@@ -28,6 +29,7 @@ from .css import (
 )
 from .html_elements import Element
 from .selectors import matches
+from .css_computed import resolve as resolve_computed_values, length_math
 
 
 def _number(value, base=0.0):
@@ -37,6 +39,10 @@ def _number(value, base=0.0):
 
 def _px(value, reference=0.0):
     value = str(value).strip().lower()
+    if value.startswith(("calc(", "min(", "max(", "clamp(")):
+        computed = length_math(value, reference)
+        if computed is not None:
+            return computed
     if value.endswith("px"): return _number(value)
     if value.endswith("%"): return reference * _number(value) / 100.0
     if value in ("0", "0px"): return 0.0
@@ -111,10 +117,18 @@ def _wants_bold(weight):
     return _number(text, 400.0) >= _BOLD_WEIGHT
 
 
-def _face_in(table, family, weight, style):
+def _family_index(table):
+    families = {}
+    for record in table:
+        families.setdefault(normalize(record.family), []).append(record)
+    return families
+
+
+def _face_in(table, family, weight, style, families=None):
     """A family's face at one weight and slant, chosen by subfamily; a match beats none."""
     key = normalize(family)
-    faces = [record for record in table if normalize(record.family) == key]
+    faces = (families.get(key, ()) if families is not None else
+             [record for record in table if normalize(record.family) == key])
     if not faces:
         return None
     slant_wanted = str(style).strip().lower() in ("italic", "oblique")
@@ -161,14 +175,15 @@ def _face_path(record):
 def _face_chain(families, environment, weight, style):
     """The faces a family list names, then this platform's fallbacks, in tried order."""
     table = table_of(environment)
+    index = _family_index(table)
     chain = []
     for family in families:
         for name in _GENERIC_FAMILIES.get(normalize(family), (family,)):
-            record = _face_in(table, name, weight, style)
+            record = _face_in(table, name, weight, style, index)
             if record is not None and record not in chain:
                 chain.append(record)
     for name in _DEFAULT_FAMILIES + _FALLBACK_FAMILIES:
-        record = _face_in(table, name, weight, style)
+        record = _face_in(table, name, weight, style, index)
         if record is not None and record not in chain:
             chain.append(record)
     return chain
@@ -312,6 +327,7 @@ def _cascade(element, rules):
             name: inherited.get(name, values.get(name, ""))
             for name in INHERITED_PROPERTIES
         })
+        values.update({name: value for name, value in inherited.items() if name.startswith("--")})
         parent_size = _px(inherited.get("font-size", "16px"), 16) or 16
     # Last applied wins, so the order is CSS's: important, inline, specificity, source.
     matched = []
@@ -333,6 +349,15 @@ def _cascade(element, rules):
         values[name] = value
     # A computed size is absolute in every browser, so a relative one is resolved here,
     # where the parent's own computed size -- and the root's -- are at hand.
+    # Initial values and inherited computed values are already resolved. Only
+    # declarations applied here need conversion, with the full map as var input.
+    if matched:
+        values = resolve_computed_values(values, {item[-2] for item in matched})
+    for name in ("color", "background-color", "border-top-color", "border-right-color",
+                 "border-bottom-color", "border-left-color", "outline-color", "caret-color"):
+        value = values.get(name)
+        if isinstance(value, str) and value.lower() in SYSTEM_COLORS:
+            values[name] = SYSTEM_COLORS[value.lower()]
     values["font-size"] = _px_text(_font_size_px(values.get("font-size", "16px"),
                                                  parent_size, _root_font_size(element)))
     return values
@@ -522,6 +547,8 @@ def _place(element, style, walk, containing, positioned):
     declared_width = style.get("width", "auto")
     available = max(0.0, containing.width - margin["left"] - margin["right"] - horizontal)
     default_size = _DEFAULT_OBJECT_SIZE.get(str(getattr(element, "localName", "")).lower())
+    if str(getattr(element, "localName", "")).lower() == "canvas":
+        default_size = (element.get_width(), element.get_height())
     if _auto(declared_width):
         if default_size is not None:
             # A replaced element with no intrinsic size of its own takes the default
@@ -537,6 +564,7 @@ def _place(element, style, walk, containing, positioned):
         content_width = max(0.0, width - horizontal
                             if style.get("box-sizing", "content-box") == "border-box"
                             else width)
+    content_width = _constrain_width(content_width, style, containing.width, horizontal)
     border_width = content_width + horizontal
     if not _auto(declared_width) and style.get("display", "block") not in _INLINE:
         # ``auto`` shares the free space; a side with a length keeps it.
@@ -718,11 +746,17 @@ def _content_widths(element, style, rules, depth=0):
         child_style = _style_of(child, rules)
         if child_style.get("display") == "none":
             continue
-        edges = _sides(child_style, "margin", 0.0)
-        edges.update(_sides(child_style, "padding", 0.0))
-        edges.update(_sides(child_style, "border-width", 0.0))
-        extra = sum(edges.values())
+        edges = {side: sum(_sides(child_style, name, 0.0)[side]
+                           for name in ("margin", "padding", "border-width"))
+                 for side in _SIDES}
+        extra = edges["left"] + edges["right"]
         minimum, maximum = _box_content_widths(child, child_style, rules, depth)
+        horizontal = sum(_sides(child_style, name, 0.0)[side]
+                         for name in ("padding", "border-width") for side in ("left", "right"))
+        if not _auto(child_style.get("width")) and child_style.get("box-sizing") == "border-box":
+            minimum, maximum = max(0, minimum-horizontal), max(0, maximum-horizontal)
+        minimum, maximum = (_constrain_width(value, child_style, 0.0, horizontal)
+                            for value in (minimum, maximum))
         if child_style.get("display", "block") in _INLINE:
             inline_min += minimum + extra
             inline_max += maximum + extra
@@ -1055,3 +1089,17 @@ __all__ = [
     "Box", "computed_style", "computed_style_object", "document_rules", "layout",
     "offset_parent", "positioned_box", "text_width",
 ]
+
+
+def _constrain_width(width, style, reference, edges):
+    """Constrain the content width; a minimum wins over a smaller maximum."""
+    border_box = style.get('box-sizing') == 'border-box'
+    for name, constrain in (('max-width', min), ('min-width', max)):
+        limit = style.get(name)
+        if limit is None or str(limit).strip().lower() in ('', 'auto', 'none'):
+            continue
+        used = _px(limit, reference)
+        if border_box:
+            used -= edges
+        width = constrain(width, max(0.0, used))
+    return max(0.0, width)

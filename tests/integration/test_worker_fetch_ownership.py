@@ -36,7 +36,7 @@ def running_worker(monkeypatch, source, loader, *, data=False):
             assert not runtime.executor._thread.is_alive()
 
 
-def test_worker_fetch_preparation_belongs_to_parent_owner(monkeypatch):
+def test_worker_fetch_preparation_is_independent_of_parent_owner(monkeypatch):
     browser = Browser(real_network=False, stub_logging='off', resource_loader=lambda url, request:
         "fetch('/value').then(r=>r.text()).then(v=>postMessage(v))" if url.endswith('/worker.js') else 'value')
     try:
@@ -51,7 +51,7 @@ def test_worker_fetch_preparation_belongs_to_parent_owner(monkeypatch):
         page.evaluate("globalThis.answer=null;globalThis.worker=new Worker('/worker.js');"
                       "worker.onmessage=e=>answer=e.data")
         page.wait_for("answer==='value'", timeout=3)
-        assert prepared == [True, True]
+        assert prepared == [True]  # Only entry loading belongs to the creator owner.
     finally:
         browser.close()
 
@@ -139,7 +139,9 @@ def test_pending_request_follows_worker_lifetime(monkeypatch, action):
 
 
 @pytest.mark.parametrize('body', ["'AB'", "new Uint8Array([65,66])", "new Uint8Array([65,66]).buffer",
-                                  "new Blob(['AB'])", "({toString(){return 'AB'}})"])
+                                  "new Blob(['AB'])", "({toString(){return 'AB'}})",
+                                  "new DataView(new Uint8Array([99,65,66,88]).buffer,1,2)",
+                                  "new DataView(new ArrayBuffer(4),4,0)"])
 def test_request_is_snapshotted_and_response_is_rebuilt_in_worker(monkeypatch, body):
     seen = []
     def loader(url, request):
@@ -168,7 +170,8 @@ def test_request_is_snapshotted_and_response_is_rebuilt_in_worker(monkeypatch, b
         assert seen[0]['headers']['x-test'] == 'before'
         value = seen[0]['body']
         assert isinstance(value, (str,bytes))
-        assert (value.encode() if isinstance(value,str) else value) == b'AB'
+        expected = b'' if body == 'new DataView(new ArrayBuffer(4),4,0)' else b'AB'
+        assert (value.encode() if isinstance(value,str) else value) == expected
         assert runtime._realm.resource_ownership.active_count == 0
 
 
@@ -241,12 +244,9 @@ def test_failed_handoff_releases_both_owners(monkeypatch, stage):
             ownership = runtime._realm.resource_ownership
             rejected = threading.Event()
             if stage == 'submit':
-                original = page.tasks.post_task
-                def post(callback, *args, **kwargs):
-                    if kwargs.get('label') == 'Worker fetch request':
-                        raise RuntimeError('fixture submission failure')
-                    return original(callback, *args, **kwargs)
-                monkeypatch.setattr(page.tasks, 'post_task', post)
+                def submit(*args, **kwargs):
+                    raise RuntimeError('fixture submission failure')
+                monkeypatch.setattr(runtime._realm.config.browser.loader_pool, 'submit', submit)
             elif stage == 'response-reject':
                 original = runtime._realm.tasks.post_task
                 def post(callback, *args, **kwargs):
@@ -258,7 +258,7 @@ def test_failed_handoff_releases_both_owners(monkeypatch, stage):
             page.evaluate("worker.postMessage('start')")
             if stage == 'source-cancel':
                 assert entered.wait(2)
-                page.executor.call(page.resource_ownership.close)
+                runtime.executor.call(ownership.close)
                 runtime.executor.call(lambda: None, _task_lane=None)
             elif stage == 'response-reject':
                 assert rejected.wait(2)
@@ -277,12 +277,12 @@ def test_worker_callbacks_are_released_on_worker_before_context_close(monkeypatc
     entered, release = threading.Event(), threading.Event()
     observed, calls = [], []
     try:
-        with running_worker(monkeypatch, '0', lambda *args: calls.append(args) or 'unused') as (page, runtime):
-            def hold_parent():
-                entered.set()
-                assert release.wait(5)
-            page.tasks.post_task(hold_parent)
-            assert entered.wait(2)
+        def loader(*args):
+            calls.append(args)
+            entered.set()
+            assert release.wait(5)
+            return 'unused'
+        with running_worker(monkeypatch, '0', loader) as (page, runtime):
             class Callback:
                 def __init__(self):
                     self.native = runtime._context.exec_js('(value)=>value')
@@ -295,6 +295,7 @@ def test_worker_callbacks_are_released_on_worker_before_context_close(monkeypatc
                 return runtime._realm.services.resource_services.load_resource_async(
                     'http://fixture.test/value', {}, Callback())
             handle = runtime.executor.call(issue)
+            assert entered.wait(2)
             ownership = runtime._realm.resource_ownership
             runtime.stop()
             runtime.executor._thread.join(1)
@@ -304,6 +305,6 @@ def test_worker_callbacks_are_released_on_worker_before_context_close(monkeypatc
             assert observed == [(True, True)]
             release.set()
             assert page.run_until_idle(timeout=2)
-            assert not calls
+            assert len(calls) == 1
     finally:
         release.set()

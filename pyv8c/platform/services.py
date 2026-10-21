@@ -12,6 +12,7 @@ from typing import Any
 from ..foundation.clock import Clock
 from ..foundation.tasks import TaskSource
 from ..foundation.urls import origin_string, serialize_origin
+from .resources.request_headers import same_site
 from .resources.request_headers import ACCEPT_ENCODING, accept_language
 from .sessions import BindingSession
 from .state import Ownership
@@ -31,7 +32,7 @@ class WorkerContext:
     devtools: Any | None
     debug_parent: Any | None
     creator_origin: tuple
-    owner_realm: Any
+    resource_session: Any
 
 
 class _TaskSource:
@@ -465,6 +466,22 @@ class _DocumentCapability:
     def parsing(self):
         return self._owner._navigation.parsing
 
+    def has_storage_access(self):
+        """Default, ungranted access: a secure first-party ancestry has access.
+
+        Cross-site documents have no Storage Access permission grant in this
+        runtime. Use the same site calculation as the network request headers.
+        """
+        from ..web.bom.utils import page_secure_context
+
+        page = self._owner._page_realm.page
+        origin = serialize_origin(page.origin)
+        if origin == "null" or not page_secure_context(page):
+            return False
+        return all(same_site(origin, ancestor)
+                   for ancestor in self._owner.realm_services.ancestor_origins())
+
+
 
 class _WorkerCapability:
     """Worker spawning and tracking (implements WorkerServices)."""
@@ -473,6 +490,7 @@ class _WorkerCapability:
         self._owner = owner
 
     def worker_configuration(self):
+        from .resources.session import ResourceRequestSession
         browser = self._owner._profile.browser
         session = BindingSession(browser.bindings, self._owner)
         return WorkerContext(
@@ -486,7 +504,11 @@ class _WorkerCapability:
             devtools=self._owner._profile._devtools,
             debug_parent=self._owner._page_realm.page._devtools_target,
             creator_origin=tuple(self._owner._origin),
-            owner_realm=self._owner._page_realm,
+            resource_session=ResourceRequestSession(
+                profile=self._owner._profile, environment=self._owner.environment,
+                origin=tuple(self._owner._origin), base_url=self._owner.realm_services.url,
+                loader=browser.resource_loader, interceptor=browser.resource_interceptor,
+                backend=self._owner._profile.network_backend, cache_enabled=browser.cache_enabled),
         )
 
     def create_worker_realm(self, config):

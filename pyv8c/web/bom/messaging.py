@@ -12,7 +12,7 @@ from ...foundation.arguments import MISSING, is_nullish, missing_error
 from ..dom.events import EventTarget
 from ...foundation.realm import realm_of
 from ...foundation.tasks import TaskSource
-from ..clone import message_transfer, structured_clone, transfer_ports
+from ..clone import message_transfer, structured_clone, TransferPlan
 from ..fetch.events import MessageEvent
 
 __all__ = ["MessageChannel", "MessagePort"]
@@ -67,12 +67,12 @@ class MessagePort(EventTarget):
         #: its own data, so what the sender does to its object afterwards is not seen
         #: on the other side, and a port that outlives its realm still delivers plain
         #: values rather than objects of an isolate that is gone.
-        data = structured_clone(message, context=_posting_realm(self))
+        plan = TransferPlan(transfer, caller="MessagePort")
+        data = structured_clone(message, context=_posting_realm(self), transfer=plan)
         twin = self._twin
         # The ports travel into the realm the twin dispatches in, which is why the
         # transfer is read here and not where the twin receives it.
-        ports = transfer_ports(transfer, services=twin._services if twin else None,
-                               caller='MessagePort')
+        ports = plan.commit(twin._services if twin else None)
         if twin is None:
             self._outbox.append((data, ports))
             return None
@@ -84,15 +84,6 @@ class MessagePort(EventTarget):
         twin, self._twin = self._twin, None
         self._detached = True
         return twin
-
-    def _moved_view(self, services):
-        """The port as the realm it was moved into sees it, entangled with the twin."""
-        twin = self._detach()
-        view = MessagePort(services=services)
-        view._twin = twin
-        if twin is not None:
-            twin._twin = view
-        return view
 
     def _send(self, message, ports=()):
         twin = self._twin

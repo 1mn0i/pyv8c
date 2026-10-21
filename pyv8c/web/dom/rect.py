@@ -3,6 +3,8 @@ import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, is_nullish
 from .point import double
+from .collections import _ListItems
+from .mixins import ReadOnlyIndexedPropertyMixin
 
 
 def rect_values(value):
@@ -58,4 +60,9 @@ class DOMRect(DOMRectReadOnly):
     def set_width(self, value): self._width = double(value)
     def set_height(self, value): self._height = double(value)
 
-__all__ = ["DOMRect", "DOMRectReadOnly", "rect_values"]
+@interface('DOMRectList', None)
+class DOMRectList(_ListItems, ReadOnlyIndexedPropertyMixin):
+    """当前布局提供的边框矩形快照，不包含行内碎片。"""
+
+
+__all__ = ["DOMRect", "DOMRectReadOnly", "DOMRectList", "rect_values"]

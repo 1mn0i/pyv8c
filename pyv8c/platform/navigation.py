@@ -2,6 +2,8 @@
 
 import re
 import time
+
+import pyv8
 from concurrent.futures import Future
 from dataclasses import dataclass
 
@@ -339,7 +341,14 @@ class NavigationController:
     def finish_document_parse(self):
         self.parser_done = True
         self.parsing = False
-        self.page.tasks.post(self.page.scripts.run_deferred_scripts, TaskSource.PARSER)
+        identity = (self.generation, self.page.document)
+        try:
+            self.page.lifecycle.set_ready_state("interactive")
+        except pyv8.JavaScriptTerminated as error:
+            self.page.lifecycle._fail_load(identity, error)
+            raise
+        if self.page.lifecycle._current_document(identity):
+            self.page.tasks.post(self.page.scripts.run_deferred_scripts, TaskSource.PARSER)
 
     def close_document(self):
         """The document close steps: stop the parser where it stands.

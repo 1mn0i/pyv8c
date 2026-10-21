@@ -60,7 +60,7 @@ CORE_INTERFACES = (
     "RTCSessionDescription",
     "RTCPeerConnectionIceEvent",
     "DOMMatrix", "DOMMatrixReadOnly", "DOMPoint", "DOMPointReadOnly",
-    "DOMRect", "DOMRectReadOnly",
+    "DOMRect", "DOMRectReadOnly", "DOMRectList",
     "NodeFilter", "NodeIterator", "TreeWalker",
     "DOMParser", "HTMLDocument", "XMLDocument",
     "MediaList", "ScreenOrientation", "PerformanceTiming", "PerformanceNavigation",
@@ -87,7 +87,7 @@ CORE_INTERFACES = (
     "PerformanceObserverEntryList",
     "Lock", "LockManager",
     "SVGElement", "SVGGraphicsElement", "SVGGeometryElement", "SVGRectElement",
-    "SVGLength", "SVGAnimatedLength",
+    "SVGLength", "SVGAnimatedLength", "SVGMatrix", "SVGPoint", "SVGRect", "SVGSVGElement",
     "DOMStringList",
     "AbortController", "AbortSignal",
 )

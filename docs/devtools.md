@@ -13,7 +13,7 @@ browser = Browser(real_network=False)
 try:
     profile = browser.new_profile()
     page = profile.new_page()
-    handle = profile.start_devtools(page, options=DevToolsOptions(pause_on_start=False))
+    handle = profile.start_devtools(page, options=DevToolsOptions(pause_on_start=True, wait_for_debugger=True, port=9005))
     print(handle.url)
     page.evaluate("globalThis.answer = 42", filename="example.js")
     input("连接调试器后，按回车结束：")

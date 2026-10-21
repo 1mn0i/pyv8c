@@ -101,7 +101,7 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
         """``fetch`` for a worker global: the same steps a window runs.
 
         The worker resource capability snapshots the request and routes it through
-        the parent owner; its result is rebuilt on the worker's own networking queue.
+        a realm-free request session; its result is rebuilt on the worker's own networking queue.
         ``initiator_url`` is this worker's own script URL, so the request is attributed to the
         worker: a worker started from a ``blob:`` sends no ``Referer`` and says
         ``Sec-Fetch-Site: same-origin``, where the owner page's URL said otherwise.
@@ -110,6 +110,21 @@ class WorkerGlobalScope(_SchedulingMixin, EventTarget):
 
         return fetch_like(self._services, "WorkerGlobalScope", request, options,
                           initiator_url=self.script_url())
+
+    def fn_importScripts(self, *urls):
+        self._runtime.import_scripts([usv_string(url) for url in urls])
+
+    def fn_atob(self, data=MISSING, *_extra):
+        from ..bom.utils import base64_like
+        return base64_like('WorkerGlobalScope', 'atob', data)
+
+    def fn_btoa(self, data=MISSING, *_extra):
+        from ..bom.utils import base64_like
+        return base64_like('WorkerGlobalScope', 'btoa', data)
+
+    def fn_structuredClone(self, value=MISSING, options=None, *_extra):
+        from ..clone import clone_value
+        return clone_value(self._services, 'WorkerGlobalScope', value, options)
 
     def get_self(self): return self
     def get_navigator(self): return self._values.value("navigator")

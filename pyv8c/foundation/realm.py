@@ -5,8 +5,16 @@ of importing ``platform`` or reaching into Page privates; each of the other prot
 covers one slice of the realm a page exposes.
 """
 
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 from .tasks import TaskSource
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerSource:
+    """Plain source and its final response URL; no Realm crosses the boundary."""
+    text: str
+    url: str
 
 
 @runtime_checkable
@@ -75,6 +83,8 @@ class DocumentServices(Protocol):
     window: Any
     document: Any
     parsing: bool
+
+    def has_storage_access(self) -> bool: ...
 
     def element_class(self, tag: str) -> type: ...
     def install_inline_handler(self, node, name, source) -> None: ...

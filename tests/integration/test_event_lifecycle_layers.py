@@ -42,7 +42,7 @@ def test_deferred_scripts_run_before_dom_content_loaded_and_after_ready_state():
         """, url="https://example.test/")
         page.run_until_idle()
         assert page.evaluate("__order") == [
-            "deferred", "rs:interactive", "domcontentloaded", "rs:complete", "load",
+            "rs:interactive", "deferred", "domcontentloaded", "rs:complete", "load",
         ]
     finally:
         browser.close()

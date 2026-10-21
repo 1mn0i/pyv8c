@@ -63,13 +63,15 @@ def intercept(url, request):
 
 ## 线程与生命周期
 
-`threaded_loaders=False` 时，普通宿主回调可在页面 owner 上运行，阻塞会阻止该线程推进。`threaded_loaders=True` 使用 Browser 有界线程池；Worker 源加载等路径还会强制离开 owner。池回调只处理输入和普通数据，不访问页面、Realm 或活 JS 句柄，不通过 `page.evaluate()` 反向等待 owner。
+`threaded_loaders=False` 时，普通宿主回调可在页面 owner 上运行，阻塞会阻止该线程推进。`threaded_loaders=True` 使用 Browser 有界线程池；Worker 源加载、Fetch 与 importScripts 的宿主回调强制在线程池执行。池回调只处理输入和普通数据，不访问页面、Realm 或活 JS 句柄，不通过 `page.evaluate()` 反向等待 owner。
 
 LoadHandle 管理请求原子终态和传输迟绑定；ResourceOwnership 统一登记并接入 ResourceScope，回调先于句柄返回也必须释放一次。请求取消后可以允许无法中断的底层 Python 工作结束，但不能再跳转、写缓存或交付页面结果。
 
 文档资源协调器使用类型化条目、token、导航代次和子文档身份维护加载屏障。iframe 传输完成后仍需等待有效子文档完成；移除、重插、导航或 srcdoc 替换后的旧回调不能释放新屏障或发送旧 load 事件。
 
-实现集中于 `pyv8c/platform/resources/`：fetcher 处理请求，callbacks 执行宿主回调，cache 存普通载荷，ownership/handles 管登记与终态，discovery/tracker/completion/documents 管文档资源，frames 管 iframe 生命周期。
+Worker 的 ResourceRequestSession 冻结资源配置及有效 origin。importScripts 阻塞 Worker 当前调用，等待普通传输结果，不等待父页面 owner，也不嵌套驱动事件循环。等待沿用当前操作剩余期限；终止或关闭唤醒等待，迟到结果不再执行脚本。
+
+实现集中于 `pyv8c/platform/resources/`：session 提供共用来源、安全策略及 Worker 普通数据请求，worker 管理 Worker 请求快照、等待和 networking 交付，fetcher 处理页面请求，callbacks 执行宿主回调，cache 存普通载荷，ownership/handles 管登记与终态，discovery/tracker/completion/documents 管文档资源，frames 管 iframe 生命周期。
 
 ## 来源、跳转与安全策略
 

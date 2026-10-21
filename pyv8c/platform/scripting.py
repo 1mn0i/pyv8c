@@ -95,6 +95,9 @@ class ScriptController:
         """
         if self._sandboxed("allow-scripts"):
             return False
+        if getattr(node, "_script_executed", False):
+            return True
+        node._script_executed = True
         document = self.page.document
         previous = document.current_script
         document.current_script = node
@@ -180,7 +183,7 @@ class ScriptController:
 
     def dynamic_script_updated(self, node):
         page = self.page
-        if page.closed or getattr(node, "_resource_started", False) and getattr(node, "_dynamic_started", False):
+        if page.closed or getattr(node, "_script_executed", False) or (getattr(node, "_resource_started", False) and getattr(node, "_dynamic_started", False)):
             return
         if self._sandboxed("allow-scripts"):
             return
@@ -262,7 +265,10 @@ class ScriptController:
         page = self.page
         if page.closed or not page.navigation.parser_done:
             return
+        identity = (page.navigation.generation, page.document)
         while self.defer:
+            if not page.lifecycle._current_document(identity):
+                return
             node = self.defer[0]
             if not getattr(node, "_resource_done", False):
                 return
@@ -275,6 +281,8 @@ class ScriptController:
                 if response is not None:
                     source = response.body_text()
                 self.execute_script(node, source, (response.url if response is not None else page.url) or page.url)
+                if not page.lifecycle._current_document(identity):
+                    return
                 if response is not None:
                     page.lifecycle.dispatch_page_event("load", node, {"bubbles": False})
                     page.lifecycle.dispatch_progress_event(node, "loadend")

@@ -165,6 +165,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         #: against ``None`` made this always true, and every body came back untyped.
         if not is_nullish(self._request_headers.fn_get("content-type")):
             return None
+        if isinstance(body, (bytes, bytearray, memoryview)):
+            return None
         if isinstance(body, Blob):
             return body.get_type() or None
         return "text/plain;charset=UTF-8"
@@ -174,6 +176,10 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             body = None
         if self.readyState != self.OPENED:
             raise InvalidStateError("XMLHttpRequest is not in the OPENED state")
+        from ..fileapi.blob import _array_buffer_bytes
+        binary = _array_buffer_bytes(body)
+        if binary is not None:
+            body = binary
         request = {
             "method": self._method, "headers": self._request_headers, "body": body,
             "timeout": self.timeout / 1000 if self.timeout else None,

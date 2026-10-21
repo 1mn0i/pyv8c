@@ -2,6 +2,7 @@
 
 import threading
 import sys
+import time
 from collections import deque
 from functools import partial
 
@@ -19,7 +20,7 @@ from ...foundation.rejection_state import WeakPromiseState
 from ...foundation.tasks import TaskSource
 from ..dom.events import PromiseRejectionEvent
 from ..page_errors import PageError
-from ..clone import structured_clone, transfer_ports
+from ..clone import structured_clone, TransferPlan
 from ..fetch.events import ErrorEvent, MessageEvent
 
 class WorkerRuntime:
@@ -70,6 +71,9 @@ class WorkerRuntime:
         with self._message_lock:
             if self._stop.is_set():
                 return
+            if error is None:
+                self.script_url = source.url
+                source = source.text
             self._source, self._source_error = source, error
             self.executor.post(self._run, _task_lane=None)
 
@@ -105,6 +109,7 @@ class WorkerRuntime:
                 return
             self._realm = self.services.worker_services.create_worker_realm(config)
             self._realm.script_url = self.script_url
+            self._realm.stop_event = self._stop
             # The worker drives its own task queue from this thread, so timers
             # and microtasks progress while the parent page is idle.
             self._realm.tasks.set_error_sink(self._report_error)
@@ -165,6 +170,8 @@ class WorkerRuntime:
             return None
         context = self._context
         operation = previous = None
+        realm = self._realm
+        previous_deadline, previous_ticket = realm.execution_deadline, realm.execution_ticket
         if context is not None and pyv8.current_context(self._realm.isolate) is None:
             budget = (self.executor.remaining_budget() if self.executor.has_operation
                       else self.executor.default_timeout)
@@ -172,6 +179,8 @@ class WorkerRuntime:
                 raise RealmBusyError('worker operation deadline expired before execution')
             ticket = context.begin_operation(budget or 0)
             operation = (context, ticket)
+            realm.execution_ticket = ticket
+            realm.execution_deadline = time.perf_counter() + budget if budget else None
             with self._operation_lock:
                 previous = self._operation
                 self._operation = operation
@@ -197,6 +206,37 @@ class WorkerRuntime:
                     self._operation = previous
                     context.end_operation(operation[1])
                     self._stopped_operations.discard(operation[1])
+                realm.execution_deadline, realm.execution_ticket = previous_deadline, previous_ticket
+
+    def import_scripts(self, urls):
+        from urllib.parse import urljoin, urlsplit
+        from ..page_errors import PageTypeError, NetworkError, dom_exception
+        from ...foundation.host_errors import LoadFailure
+        if self.owner._worker_type == 'module':
+            raise PageTypeError('Module scripts do not support importScripts().')
+        targets = []
+        for url in urls:
+            try:
+                target = urljoin(self.script_url, url)
+                parts = urlsplit(target)
+                if not parts.scheme:
+                    raise ValueError('relative URL has no base')
+                parts.port
+            except ValueError as error:
+                raise dom_exception("SyntaxError", str(error)) from error
+            targets.append(target)
+        for target in targets:
+            try:
+                response = self._realm.services.resource_services.load_resource(target, {
+                    'method': 'GET', 'resource_type': 'script', 'destination': 'script',
+                    'initiator_url': self.script_url, 'credentials': 'same-origin'})
+            except LoadFailure as error:
+                raise NetworkError(str(error)) from error
+            if not 200 <= response.status < 300:
+                raise NetworkError('Worker script could not be fetched.')
+            body = response.body
+            source = body.decode('utf-8-sig', errors='replace') if isinstance(body, bytes) else str(body or '')
+            self._context.exec_js(source, filename=response.url or target)
 
     def _checkpoint(self):
         realm = self._realm
@@ -317,8 +357,9 @@ class WorkerRuntime:
             # posted ahead of.
             #: The page's context, so binary data is read as the bytes it holds rather
             #: than element by element.
-            data = structured_clone(value, context=pyv8.current_context())
-            ports = transfer_ports(transfer, services=self.services, caller='Worker')
+            plan = TransferPlan(transfer, caller='Worker')
+            data = structured_clone(value, context=pyv8.current_context(), transfer=plan)
+            ports = plan.commit(self.services)
             with self._message_lock:
                 if self._stop.is_set():
                     return
@@ -345,8 +386,9 @@ class WorkerRuntime:
 
     def post_to_parent(self, value, transfer=()):
         # Cloned first: the list is about to detach whatever buffer it names.
-        data = structured_clone(value, context=self._context)
-        ports = transfer_ports(transfer, services=self.services, caller='WorkerGlobalScope')
+        plan = TransferPlan(transfer, caller='WorkerGlobalScope')
+        data = structured_clone(value, context=self._context, transfer=plan)
+        ports = plan.commit(self.services)
         self.services.task_services.post_task(
             lambda: self.owner._receive_message(data, ports), TaskSource.POSTED_MESSAGE,
             label='Worker message to parent', document_bound=True)

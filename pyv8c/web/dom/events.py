@@ -184,6 +184,9 @@ class Event:
         self.bubbles = boolean(bubbles)
         self.cancelable = boolean(cancelable)
 
+    def get_srcElement(self): return self.get_target()
+
+
 
 @interface('UIEvent', 'Event')
 class UIEvent(Event):
@@ -259,6 +262,27 @@ class MouseEvent(UIEvent):
         if key is MISSING:
             raise missing_error('MouseEvent', 'getModifierState', 1, 0, constructor=False)
         return _modifier_state(self, key)
+
+    def _layer_coordinates(self):
+        """Layer-relative coordinates use the nearest positioned ancestor's origin."""
+        from .layout import computed_style, positioned_box
+        node = self.target
+        while node is not None:
+            if getattr(node, 'nodeType', None) == 1:
+                style = computed_style(node)
+                if style.get('position', 'static') != 'static':
+                    box = positioned_box(node)
+                    return int(self.clientX-box.left), int(self.clientY-box.top)
+            parent = getattr(node, 'parentNode', None)
+            node = parent if parent is not None else getattr(node, '_host', None)
+        return int(self._document_x), int(self._document_y)
+
+
+    def get_layerX(self): return self._layer_coordinates()[0]
+
+
+    def get_layerY(self): return self._layer_coordinates()[1]
+
 
 
 @interface('KeyboardEvent', 'UIEvent')

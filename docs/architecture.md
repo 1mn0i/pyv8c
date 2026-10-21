@@ -40,6 +40,8 @@ FeatureSpec 描述接口组、依赖及实现模块；FeatureCatalog 建立静�
 
 Page 直接组合 `ResourceFetchController`、`DocumentResourceController` 和 `FrameResourceController`，分别承担请求管线、文档资源协调和 iframe 文档生命周期。
 
+Worker 使用同一资源目录中的 ResourceRequestSession，冻结资源配置与有效 origin，共用来源、安全和跳转规则；传输线程只交付普通数据，不调用父 Page。入口源码通过 WorkerSource 携带最终响应 URL，供 Worker location 与相对导入共同使用。
+
 请求状态由 Fetcher 的请求对象保存；ResourceOwnership 统一登记活动请求并接入现有 ResourceScope。传输完成与文档资源完成分别处理：iframe 的网络返回不意味着子文档 load 已完成。
 
 文档资源模块由 discovery、tracker、completion 和协调器分工。发现阶段处理节点快照，tracker 管理 token、代次、条目和索引，completion 处理固定资源种类的完成规则。其他生命周期代码通过公开查询和完成入口协作，不读取内部记录表。

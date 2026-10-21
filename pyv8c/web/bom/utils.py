@@ -116,4 +116,29 @@ def settled(services, *, value=None, error=None):
     return promise
 
 
-
+def base64_like(interface, member, data):
+    """Shared WebIDL conversion and forgiving Base64 for Window and Workers."""
+    import pyv8
+    from ...foundation.arguments import MISSING, missing_error, dom_string
+    from ...foundation.base64 import forgiving_base64_decode, forgiving_base64_encode
+    from ..page_errors import InvalidCharacterError, PageTypeError
+    if data is MISSING:
+        raise missing_error(interface, member, 1, 0, constructor=False)
+    try:
+        text = dom_string(data)
+    except pyv8.JSException as error:
+        original = getattr(error, 'original', None)
+        reason = str(original._get('message')) if isinstance(original, pyv8.JSObject) else ''
+        if reason not in ('Cannot convert a Symbol value to a string',
+                          'Cannot convert object to primitive value'):
+            raise
+        raise PageTypeError(f"Failed to execute '{member}' on '{interface}': {reason}") from None
+    action = 'decoded' if member == 'atob' else 'encoded'
+    if any(ord(character) > 255 for character in text):
+        raise InvalidCharacterError(f"Failed to execute '{member}' on '{interface}':"
+                                    f" The string to be {action} contains characters outside of the Latin1 range.")
+    result = forgiving_base64_decode(text) if member == 'atob' else forgiving_base64_encode(text)
+    if result is None:
+        raise InvalidCharacterError(f"Failed to execute '{member}' on '{interface}':"
+                                    " The string to be decoded is not correctly encoded.")
+    return result

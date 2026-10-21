@@ -22,7 +22,7 @@ from ..foundation.logging import logger
 from .page_errors import DataCloneError, DOMException
 
 __all__ = ["Wire", "js_helper", "message_transfer", "rebuild_clone", "structured_clone",
-           "transfer_ports", "unread"]
+           "TransferPlan", "clone_value", "unread"]
 
 #: What a reader has not been handed yet.  A message and a stored value hold this until the
 #: realm reading them asks once, so what that realm was handed is what it keeps.
@@ -41,29 +41,11 @@ class Wire(bytes):
 _TAG_BLOB = 0x62
 _TAG_FILE = 0x66
 _TAG_DOM_EXCEPTION = 0x78
-
-#: What V8 writes by itself, named by constructor.  A value whose constructor is none of these
-#: is the host's -- the question Blink's ``V8ScriptValueSerializer::IsHostObject`` asks of its
-#: wrappables -- so a DOMException or a Blob reaches the callbacks below instead of being
-#: written as an object with no properties.
-_V8_VALUE_NAMES = frozenset({
-    "Object", "Array", "Map", "Set", "Date", "RegExp", "Error", "EvalError", "RangeError",
-    "ReferenceError", "SyntaxError", "TypeError", "URIError", "AggregateError", "ArrayBuffer",
-    "SharedArrayBuffer", "DataView", "Boolean", "Number", "String", "BigInt", "Symbol",
-    "Uint8Array", "Int8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array",
-    "Uint32Array", "Float16Array", "Float32Array", "Float64Array", "BigInt64Array",
-    "BigUint64Array",
-})
-
+_TAG_MESSAGE_PORT = 0x4d
 
 def _is_host(value):
-    """Whether V8 should hand this object to the host rather than write it itself."""
-    try:
-        name = value._get("constructor")._get("name")
-    except BaseException as exc:  # a value with no readable constructor is not a plain one
-        logger.debug("a value could not be asked what it is: {}", exc)
-        return False
-    return str(name) not in _V8_VALUE_NAMES
+    """Native wrapper identity; never run page getters to classify a value."""
+    return not isinstance(value._host_value(), pyv8.JSObject)
 
 
 def _write_text(writer, text):
@@ -85,12 +67,18 @@ def _read_bytes(reader):
     return reader.read_raw_bytes(reader.read_uint32())
 
 
-def _write_host(value, writer):
+def _write_host(value, writer, transfer=None):
     """A host object the serializer met, written as its own bytes (Blink's ``WriteDOMObject``)."""
     from .bom.filesystem import File
     from .fileapi.blob import Blob
 
-    item = materialize(value)
+    item = value._host_value() if isinstance(value, pyv8.JSObject) else value
+    if transfer is not None:
+        for index, (port, _view) in enumerate(transfer.ports):
+            if item is port:
+                writer.write_tag(_TAG_MESSAGE_PORT)
+                writer.write_uint32(index)
+                return True
     if isinstance(item, File):
         #: A ``File`` is a ``Blob`` that remembers its name and timestamp, so it crosses as one
         #: instead of as the blob it is made of.
@@ -112,10 +100,10 @@ def _write_host(value, writer):
         #: Blink writes the stack field and never fills it, so its scheme can grow one.
         _write_text(writer, "")
         return True
-    raise DataCloneError(f"The object of type {type(item).__name__!r} could not be cloned")
+    raise DataCloneError(f"{type(item).__name__} object could not be cloned.")
 
 
-def _read_host(reader):
+def _read_host(reader, ports=()):
     """The host object a stream describes, as the host's value for the realm reading it.
 
     The callback returns the host object for the binding to wrap in the reading
@@ -126,6 +114,11 @@ def _read_host(reader):
     from .fileapi.blob import Blob
 
     tag = reader.read_tag()
+    if tag == _TAG_MESSAGE_PORT:
+        index = reader.read_uint32()
+        if index >= len(ports):
+            raise DataCloneError("Invalid transferred MessagePort index.")
+        return ports[index]
     if tag == _TAG_BLOB:
         type_ = _read_text(reader)
         return Blob([_read_bytes(reader)], {"type": type_})
@@ -196,10 +189,10 @@ def _host_copy(value, active):
             return [_host_copy(child, active) for child in item]
         finally:
             active.discard(marker)
-    raise DataCloneError(f"The object of type {type(item).__name__!r} could not be cloned")
+    raise DataCloneError(f"{type(item).__name__} object could not be cloned.")
 
 
-def structured_clone(value, context=None):
+def structured_clone(value, context=None, *, caller=None, transfer=None):
     """The wire a message carries: *value* serialized where it is.
 
     Without a realm there is nothing to serialize in, so the host's own copy is what comes out
@@ -208,10 +201,17 @@ def structured_clone(value, context=None):
     if context is None:
         return _host_copy(value, set())
     try:
-        return Wire(pyv8.Serializer(context).serialize(
-            value, host_check=_is_host, host_writer=_write_host))
+        result = Wire(pyv8.Serializer(context).serialize(
+            value, host_check=_is_host,
+            host_writer=lambda value, writer: _write_host(value, writer, transfer)))
+        result.ports = tuple(view for _port, view in transfer.ports) if transfer else ()
+        return result
     except pyv8.JSException as error:
         raise DataCloneError(_refusal(error)) from None
+    except DOMException as error:
+        if caller is None or error.get_name() != "DataCloneError":
+            raise
+        raise DataCloneError(f"Failed to execute 'postMessage' on '{caller}': {error.get_message()}") from None
 
 
 def rebuild_clone(value, context=None):
@@ -227,14 +227,15 @@ def rebuild_clone(value, context=None):
     if context is None:
         return bytes(value)
     try:
-        return pyv8.Serializer(context).deserialize(bytes(value), host_reader=_read_host)
+        return pyv8.Serializer(context).deserialize(
+            bytes(value), host_reader=lambda reader: _read_host(reader, getattr(value, "ports", ())))
     except pyv8.JSException as error:
         raise DataCloneError(_refusal(error)) from None
 
 
 
 
-#: The helpers the transfer list asks a realm to run, one compilation per realm: a realm that
+#: Shared JS helpers, compiled once per realm: a realm that
 #: cannot be referenced is compiled per call, which costs time and nothing else.
 _HELPERS = weakref.WeakKeyDictionary()
 
@@ -253,40 +254,8 @@ def js_helper(context, source):
     return compiled
 
 
-#: What a transfer list may name besides a port, asked of the realm that holds the value: a
-#: detached buffer has nothing left in it, and the realm's own ``detached`` is what tells that
-#: from a buffer that was always empty.
-_BINARY_KIND = """value => {
-  if (Object.prototype.toString.call(value) === '[object ArrayBuffer]')
-    return value.detached ? 'detached' : 'buffer';
-  if (ArrayBuffer.isView(value)) return 'view';
-  return null;
-}"""
-
-#: Taking the bytes away from the sender: ``transfer()`` empties the buffer it is called on,
-#: which is how a page hands one over.
-_DETACH = """buffer => {
-  if (typeof buffer.transfer === 'function') buffer.transfer();
-  else structuredClone(buffer, {transfer: [buffer]});
-}"""
-
-
 def _binary_kind(value, context):
-    """``'buffer'``/``'view'``/``'detached'`` for a value shaped like a transferable."""
-    if context is None:
-        return None
-    try:
-        answer = js_helper(context, _BINARY_KIND).call(None, value)
-    except BaseException as exc:  # a value the realm cannot describe is simply not one
-        logger.debug("a transfer list value could not be classified: {}", exc)
-        return None
-    #: The realm answers in a string, and answers ``null`` for everything else.
-    return answer if isinstance(answer, str) else None
-
-
-def _detach_buffer(value, context):
-    if context is not None:
-        js_helper(context, _DETACH).call(None, value)
+    return value._buffer_kind() if isinstance(value, pyv8.JSObject) else None
 
 
 def message_transfer(value):
@@ -300,47 +269,71 @@ def message_transfer(value):
     return sequence(options.get("transfer", ()))
 
 
-def transfer_ports(transfer=(), services=None, caller="Window"):
-    """The ports a transfer list moves, once everything it named has been checked.
+class TransferPlan:
+    """Validate once before serialization; mutate ownership only on commit."""
+    __slots__ = ('items', 'ports', 'context', 'committed')
 
-    A ``MessagePort`` moves: the reference left behind is neutered while the port itself
-    arrives in the message event's ``ports``.  An ``ArrayBuffer`` is handed over as well -- its
-    bytes travelled in the wire already, and taking them away now is what leaves the sender
-    with nothing.  A view of a buffer is not transferable, and neither is a buffer that was
-    already detached; Chrome names the index it refuses, so the wording says which index and
-    which way it failed.
-    """
-    from .bom.messaging import MessagePort
+    def __init__(self, transfer=(), *, caller="Window"):
+        from .bom.messaging import MessagePort
+        self.context = pyv8.current_context()
+        self.items = []
+        self.ports = []
+        self.committed = False
+        listed = [] if is_nullish(transfer) else list(transfer)
+        seen = []
+        for index, raw in enumerate(listed):
+            item = raw._host_value() if isinstance(raw, pyv8.JSObject) else raw
+            if any(raw is previous or (isinstance(raw, pyv8.JSObject)
+                   and isinstance(previous, pyv8.JSObject) and raw == previous)
+                   or item is (previous._host_value() if isinstance(previous, pyv8.JSObject) else previous)
+                   for previous in seen):
+                raise DataCloneError(f"Failed to execute 'postMessage' on '{caller}':"
+                                     " Transfer list contains a duplicate object.")
+            seen.append(raw)
+            kind = _binary_kind(raw, self.context)
+            if kind == 'buffer':
+                self.items.append(('buffer', raw))
+            elif isinstance(item, MessagePort) and not item._detached:
+                self.items.append(('port', item))
+                self.ports.append((item, MessagePort()))
+            else:
+                if kind == 'detached':
+                    reason = f"ArrayBuffer at index {index} is already detached."
+                elif isinstance(item, MessagePort):
+                    reason = f"Port at index {index} is already neutered."
+                else:
+                    reason = f"Value at index {index} does not have a transferable type."
+                raise DataCloneError(f"Failed to execute 'postMessage' on '{caller}':"
+                                     f" {reason}")
 
-    if is_nullish(transfer):
-        return []
-    listed = list(transfer)
+    def commit(self, services=None):
+        if self.committed:
+            raise RuntimeError('transfer already committed')
+        for kind, item in self.items:
+            if (kind == 'buffer' and item._buffer_kind() != 'buffer') or (kind == 'port' and item._detached):
+                raise DataCloneError('A transferable was detached during serialization.')
+        self.committed = True
+        for port, view in self.ports:
+            view._services = services
+            twin = port._detach()
+            view._pending, port._pending = port._pending, []
+            view._outbox, port._outbox = port._outbox, []
+            view._twin = twin
+            if twin is not None:
+                twin._twin = view
+        for kind, item in self.items:
+            if kind == 'buffer':
+                item._detach_buffer()
+        return [view for _port, view in self.ports]
+
+
+def clone_value(services, interface, value, options):
+    from ..foundation.arguments import MISSING, missing_error
+    if value is MISSING:
+        raise missing_error(interface, 'structuredClone', 1, 0, constructor=False)
+    plan = TransferPlan(message_transfer(options), caller=interface)
     context = pyv8.current_context()
-    planned = []
-    for index, raw in enumerate(listed):
-        kind = _binary_kind(raw, context)
-        if kind == "buffer":
-            planned.append(("buffer", raw))
-            continue
-        if kind == "detached":
-            raise DataCloneError(f"Failed to execute 'postMessage' on '{caller}':"
-                                 f" ArrayBuffer at index {index} is already detached.")
-        if kind == "view":
-            raise DataCloneError(f"Failed to execute 'postMessage' on '{caller}':"
-                                 f" Value at index {index} does not have a transferable type.")
-        item = materialize(raw)
-        if not isinstance(item, MessagePort):
-            raise DataCloneError(f"Failed to execute 'postMessage' on '{caller}':"
-                                 f" Value at index {index} does not have a transferable type.")
-        if item._detached:
-            raise DataCloneError(f"Failed to execute 'postMessage' on '{caller}':"
-                                 f" Port at index {index} is already neutered.")
-        planned.append(("port", item))
-
-    moved = []
-    for kind, item in planned:
-        if kind == "port":
-            moved.append(item._moved_view(services))
-        else:
-            _detach_buffer(item, context)
-    return moved
+    data = structured_clone(value, context=context, transfer=plan)
+    result = rebuild_clone(data, context=context)
+    plan.commit(services)
+    return result

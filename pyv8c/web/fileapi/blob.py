@@ -26,27 +26,16 @@ def bytes_from_value(value):
         return None
 
 
-#: The names a buffer or a view answers with.  A ``DataView`` is a view, so it belongs here;
-#: a typed array never reaches this reader, because ``_part_value`` takes those as they are.
-_BUFFER_NAMES = ("ArrayBuffer", "SharedArrayBuffer", "DataView")
-
-
 def _array_buffer_bytes(value):
-    """The bytes a buffer or a view holds, in one native read.
-
-    The gate stays on this side: the native reader answers ``b""`` for a value that is
-    neither a buffer nor a view, and such a part has to fall back to its string form
-    instead (see ``_part_value``).
-    """
+    """Snapshot native BufferSource bytes without page property access."""
     if not isinstance(value, pyv8.JSObject):
         return None
-    name = getattr(value._get("constructor"), "name", None)
-    if name not in _BUFFER_NAMES:
+    kind = value._buffer_kind()
+    if kind is None:
         return None
-    try:
-        return value._bytes()
-    except BaseException:
-        return None
+    if kind == 'detached':
+        raise PageTypeError('The ArrayBuffer is detached.')
+    return bytes(value)
 
 
 def _part_value(part):

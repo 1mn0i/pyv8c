@@ -66,14 +66,15 @@ def test_the_eight_members_the_log_reported_answer_like_chromium():
         browser.close()
 
     assert value == [
-        ["alpha", "desynchronized", "colorSpace", "toneMapping", "willReadFrequently"],
+        ["alpha", "desynchronized", "colorSpace", "colorType", "toneMapping", "willReadFrequently"],
         False, "srgb", "source-over", "none",
         "TypeError: Failed to execute 'fill' on 'OffscreenCanvasRenderingContext2D':"
         " The provided value 'bogus' is not a valid enum value of type CanvasFillRule.",
         "ok:filled", "ok:closed", "ok:scaled",
         "IndexSizeError: Failed to execute 'createRadialGradient' on"
         " 'OffscreenCanvasRenderingContext2D': The r0 provided is less than 0.",
-        "ok:null", "ok:CanvasGradient",
+        "TypeError: Failed to execute 'createRadialGradient' on 'OffscreenCanvasRenderingContext2D':"
+        " The provided double value is non-finite.", "ok:CanvasGradient",
         "TypeError: Failed to execute 'drawImage' on 'OffscreenCanvasRenderingContext2D':"
         " 3 arguments required, but only 0 present.",
         "ok:drawn",
