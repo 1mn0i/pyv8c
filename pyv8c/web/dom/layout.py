@@ -316,12 +316,14 @@ def _specificity(selector):
     return tuple(counts)
 
 
-def _cascade(element, rules):
+def _cascade(element, rules, cache=None):
+    if cache is not None and element in cache:
+        return cache[element]
     values = initial_values_for(element)
     parent = getattr(element, "parentElement", None)
     parent_size = 16.0
     if parent is not None:
-        inherited = _cascade(parent, rules)
+        inherited = _cascade(parent, rules, cache)
         # Inherit every inherited property, not only those with an initial value here.
         values.update({
             name: inherited.get(name, values.get(name, ""))
@@ -360,6 +362,8 @@ def _cascade(element, rules):
             values[name] = SYSTEM_COLORS[value.lower()]
     values["font-size"] = _px_text(_font_size_px(values.get("font-size", "16px"),
                                                  parent_size, _root_font_size(element)))
+    if cache is not None:
+        cache[element] = values
     return values
 
 
@@ -481,8 +485,8 @@ def _margin_is_auto(style, side):
     return _auto(declared)
 
 
-def _style_of(element, rules):
-    return _cascade(element, rules)
+def _style_of(element, rules, cache=None):
+    return _cascade(element, rules, cache)
 
 
 @dataclass(frozen=True)
@@ -504,6 +508,7 @@ class _Walk:
     viewport: tuple
     baselines: dict = field(default_factory=dict)
     overflows: dict = field(default_factory=dict)
+    styles: dict = field(default_factory=dict)
 
 
 def _viewport_width(element):
@@ -557,7 +562,7 @@ def _place(element, style, walk, containing, positioned):
         else:
             # An inline-level box shrinks around its content and an empty one stays
             # empty; a block-level box fills what is left of its containing block.
-            content_width = (_shrink_to_fit(element, style, walk.rules, available)
+            content_width = (_shrink_to_fit(element, style, walk.rules, available, cache=walk.styles)
                              if style.get("display", "block") in _INLINE else available)
     else:
         width = _px(declared_width, containing.width)
@@ -701,7 +706,7 @@ def _collapse(content, white_space):
     return re.sub(r"\s+", " ", content)
 
 
-def _box_content_widths(element, style, rules, depth):
+def _box_content_widths(element, style, rules, depth, cache=None):
     """The content widths one child asks for: what it declares, its object size, or its content."""
     declared = style.get("width", "auto")
     if not _auto(declared):
@@ -709,10 +714,10 @@ def _box_content_widths(element, style, rules, depth):
     intrinsic = _DEFAULT_OBJECT_SIZE.get(str(getattr(element, "localName", "")).lower())
     if intrinsic is not None:
         return intrinsic[0], intrinsic[0]
-    return _content_widths(element, style, rules, depth + 1)
+    return _content_widths(element, style, rules, depth + 1, cache)
 
 
-def _content_widths(element, style, rules, depth=0):
+def _content_widths(element, style, rules, depth=0, cache=None):
     """``(min, max)`` content widths: the widest unbreakable run, and one line's worth.
 
     Inline-level pieces have no opportunity between them, so their minima add up; a
@@ -743,14 +748,14 @@ def _content_widths(element, style, rules, depth=0):
             pieces = text_engine.wrap(run, 0.0, points)
             inline_min += max((piece.advance for piece in pieces), default=run.width)
             continue
-        child_style = _style_of(child, rules)
+        child_style = _style_of(child, rules, cache)
         if child_style.get("display") == "none":
             continue
         edges = {side: sum(_sides(child_style, name, 0.0)[side]
                            for name in ("margin", "padding", "border-width"))
                  for side in _SIDES}
         extra = edges["left"] + edges["right"]
-        minimum, maximum = _box_content_widths(child, child_style, rules, depth)
+        minimum, maximum = _box_content_widths(child, child_style, rules, depth, cache)
         horizontal = sum(_sides(child_style, name, 0.0)[side]
                          for name in ("padding", "border-width") for side in ("left", "right"))
         if not _auto(child_style.get("width")) and child_style.get("box-sizing") == "border-box":
@@ -766,9 +771,9 @@ def _content_widths(element, style, rules, depth=0):
     return max(inline_min, widest_min), max(inline_max, widest_max)
 
 
-def _shrink_to_fit(element, style, rules, available, depth=0):
+def _shrink_to_fit(element, style, rules, available, depth=0, cache=None):
     """CSS's ``min(max(min_content, available), max_content)``."""
-    minimum, maximum = _content_widths(element, style, rules, depth)
+    minimum, maximum = _content_widths(element, style, rules, depth, cache)
     return min(max(minimum, available), maximum)
 
 
@@ -913,7 +918,7 @@ def _flow_children(element, style, walk, containing, positioned):
             # A line break of its own: it ends the current line, and makes one when empty.
             break_line()
             continue
-        child_style = _style_of(child, walk.rules)
+        child_style = _style_of(child, walk.rules, walk.styles)
         if child_style.get("display") == "none":
             continue
         if child_style.get("position", "static") in ("absolute", "fixed"):
@@ -976,7 +981,7 @@ def _flex_children(element, style, walk, containing, positioned):
         tallest = 0.0
         widest = 0.0
         for child in children:
-            child_style = _style_of(child, walk.rules)
+            child_style = _style_of(child, walk.rules, walk.styles)
             placed = _place(child, child_style, walk,
                             _Containing(containing.left + cursor, containing.top,
                                         max(0.0, containing.width - cursor), containing.height),
@@ -991,7 +996,7 @@ def _flex_children(element, style, walk, containing, positioned):
     widest = 0.0
     deepest = 0.0
     for child in children:
-        child_style = _style_of(child, walk.rules)
+        child_style = _style_of(child, walk.rules, walk.styles)
         placed = _place(child, child_style, walk,
                         _Containing(containing.left, containing.top + cursor, containing.width,
                                     max(0.0, containing.height - cursor)),
@@ -1017,7 +1022,7 @@ def _grid_children(element, style, walk, containing, positioned):
         if column == 0 and index:
             cursor += row_height
             row_height = 0.0
-        child_style = _style_of(child, walk.rules)
+        child_style = _style_of(child, walk.rules, walk.styles)
         placed = _place(child, child_style, walk,
                         _Containing(containing.left + column * cell, containing.top + cursor,
                                     cell, containing.height),
@@ -1044,7 +1049,7 @@ def layout(element, containing_width=None, top=0.0, rules=None, style=None, coll
     width, height = _viewport_width(element)
     if isinstance(root, Element):
         walk = _Walk(rules or document_rules(document), boxes, (width, height))
-        _place(root, _style_of(root, walk.rules), walk,
+        _place(root, _style_of(root, walk.rules, walk.styles), walk,
                _Containing(0.0, 0.0, width, height), None)
     return boxes.get(element, Box())
 

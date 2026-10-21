@@ -49,6 +49,29 @@ def test_an_uninstalled_family_falls_back_instead_of_failing():
     assert layout.text_width("abc", {"font-family": "Definitely Not A Font 123"}) > 0
 
 
+def test_nested_layout_reuses_cascade_within_one_pass_and_recomputes_after_change(page, monkeypatch):
+    original = layout._selector_matches
+    calls = 0
+
+    def counted(element, selector):
+        nonlocal calls
+        calls += 1
+        return original(element, selector)
+
+    monkeypatch.setattr(layout, "_selector_matches", counted)
+    page.set_content("<style>div { color: red } .box { padding: 1px }</style>"
+                     + "<div class='box'>" * 35 + "x" + "</div>" * 35,
+                     url="http://layout.test/")
+    calls = 0
+    assert page.evaluate("document.querySelector('.box').offsetWidth > 0")
+    assert calls < 300  # linear passes rather than every ancestor per element
+    assert page.evaluate("""(() => {
+        const node = document.querySelector('.box');
+        node.style.width = '123px';
+        return node.offsetWidth >= 123;
+    })()""")
+
+
 def test_hidden_element_keeps_layout_and_font_size_changes_height(page):
     # The height of one 114px line of the fallback face a family this machine does not have
     # resolves to (Times New Roman here): 102 + 25 + 5, the face's own metrics rounded as
