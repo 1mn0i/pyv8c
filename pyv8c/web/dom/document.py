@@ -64,6 +64,8 @@ class Document(_ParentNodeMixin, Node):
         self.current_script = None
         #: Bumped when a ``<style>`` changes; layout keys its sheet cache on it.
         self.style_version = 0
+        self.layout_version = 0
+        self._layout_snapshot = None
     def get_URL(self): return self.url
     def get_domain(self):
         domain = getattr(self, "_domain", None)

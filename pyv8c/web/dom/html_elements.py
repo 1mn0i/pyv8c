@@ -50,7 +50,16 @@ class _AttributeMap(dict):
         super().__init__(values)
         self._owner = owner
 
+    def _changed(self, key):
+        self._owner._invalidate_layout()
+        if (getattr(self._owner, "localName", "") in ("style", "link")
+                and key in ("rel", "href", "media", "disabled")):
+            document = self._owner.ownerDocument
+            if document is not None:
+                document.style_version += 1
+
     def __setitem__(self, key, value):
+        if self.get(key) != value: self._changed(key)
         if key == 'id' and self.get(key) != value:
             self._owner._invalidate_id_index()
         super().__setitem__(key, value)
@@ -66,6 +75,7 @@ class _AttributeMap(dict):
             if cached is not None: cached.ownerElement = None
 
     def __delitem__(self, key):
+        self._changed(key)
         if key == 'id': self._owner._invalidate_id_index()
         super().__delitem__(key)
         self._detach_node(key)
@@ -78,18 +88,23 @@ class _AttributeMap(dict):
         return self[key]
 
     def pop(self, key, *default):
+        if key in self: self._changed(key)
         if key == 'id' and key in self: self._owner._invalidate_id_index()
         value = super().pop(key, *default)
         self._detach_node(key)
         return value
 
     def popitem(self):
+        if self:
+            self._changed(next(reversed(self)))
         key, value = super().popitem()
         if key == 'id': self._owner._invalidate_id_index()
         self._detach_node(key)
         return key, value
 
     def clear(self):
+        for key in self:
+            self._changed(key)
         if 'id' in self: self._owner._invalidate_id_index()
         super().clear()
         cached = self._owner.__dict__.get('_attribute_nodes')
@@ -184,6 +199,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
     @attributes.setter
     def attributes(self, values):
         self._invalidate_id_index()
+        self._invalidate_layout()
         cached = self.__dict__.get('_attribute_nodes')
         if cached:
             for node in cached.values(): node.ownerElement = None
@@ -263,12 +279,12 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         from .layout import layout
         box = layout(self)
         inside = box.overflow_right - box.border.get("left", 0.0) - box.border.get("right", 0.0)
-        return max(self.get_clientWidth(), int(round(inside)))
+        return max(int(round(box.padding_box_width)), int(round(inside)))
     def get_scrollHeight(self):
         from .layout import layout
         box = layout(self)
         inside = box.overflow_bottom - box.border.get("top", 0.0) - box.border.get("bottom", 0.0)
-        return max(self.get_clientHeight(), int(round(inside)))
+        return max(int(round(box.padding_box_height)), int(round(inside)))
     def fn_getBoundingClientRect(self, *_extra):
         from .layout import positioned_box
         from .rect import DOMRect
@@ -352,13 +368,8 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         attributes = self.attributes
         previous = attributes.get(lowered)
         written = str(value)
-        # Avoid a Python dictionary callback when there is no ID index or Attr
-        # view to maintain; notifications below still follow the same path.
         if previous != written:
-            if lowered != 'id' and not self.__dict__.get('_attribute_nodes'):
-                dict.__setitem__(attributes, lowered, written)
-            else:
-                attributes[lowered] = written
+            attributes[lowered] = written
         record_mutation(self, "attributes", attribute_name=lowered,
                         old_value=previous)
         self._attribute_changed_here(lowered, previous, written)
@@ -814,12 +825,18 @@ class HTMLElement(Element):
         return offset_parent(self) or pyv8.Null
     def _offset_box(self):
         """This element's box, and where its ``offsetParent`` measures from."""
-        from .layout import layout, offset_parent
-        parent = offset_parent(self)
-        box = layout(self)
+        from .layout import layout, layout_snapshot, offset_parent
+        document = self.ownerDocument
+        boxes, styles = layout_snapshot(document) if document is not None else ({}, {})
+        parent = offset_parent(self, styles=styles)
+        box = boxes.get(self)
+        if box is None:
+            box = layout(self)
         if parent is None:
             return box, 0.0, 0.0
-        parent_box = layout(parent)
+        parent_box = boxes.get(parent)
+        if parent_box is None:
+            parent_box = layout(parent)
         return box, parent_box.padding_box_left, parent_box.padding_box_top
     def get_offsetTop(self):
         box, _left, top = self._offset_box()

@@ -10,7 +10,7 @@ deepest first.  Measured against Chrome 153.
 import pyv8
 
 from .html_elements import Element
-from .layout import Box, computed_style, layout, positioned_box
+from .layout import Box, layout_snapshot, positioned_box
 
 
 #: Viewport used when a document has no environment to ask, matching ``dom.layout``.
@@ -54,16 +54,16 @@ def _hit_testable(style):
     )
 
 
-def _collect(element, boxes, x, y, found):
+def _collect(element, boxes, styles, x, y, found):
     """Append the elements under the point in *element*'s subtree, deepest first.
     Children are walked last-to-first so a later sibling stacks above an earlier."""
     box = boxes.get(element)
     if box is None:
         return
-    hit = _hit_testable(computed_style(element)) and _inside(box, x, y)
+    hit = _hit_testable(styles.get(element, {})) and _inside(box, x, y)
     for child in reversed(list(getattr(element, "_children", ()))):
-        if isinstance(child, Element) and computed_style(child).get("display") != "none":
-            _collect(child, boxes, x, y, found)
+        if isinstance(child, Element) and styles.get(child, {}).get("display") != "none":
+            _collect(child, boxes, styles, x, y, found)
     if hit:
         found.append(element)
 
@@ -76,10 +76,9 @@ def elements_from_point(document, x, y):
     root = document.get_documentElement()
     if root is None or root is pyv8.Null:
         return []
-    boxes = {}
-    layout(root, collected=boxes)
+    boxes, styles = layout_snapshot(document)
     found = []
-    _collect(root, boxes, x, y, found)
+    _collect(root, boxes, styles, x, y, found)
     if not any(node is root for node in found):
         # Chromium reports the root for every point in the viewport, whatever
         # its content box measured.

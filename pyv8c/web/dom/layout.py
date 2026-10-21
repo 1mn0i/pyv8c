@@ -9,6 +9,7 @@ inside its containing block, ``position: relative`` slides it afterwards, and
 of the nearest positioned ancestor.
 """
 import re
+from functools import lru_cache
 from dataclasses import dataclass, field
 
 from ...foundation import text as text_engine
@@ -37,6 +38,7 @@ def _number(value, base=0.0):
     return float(match.group(1)) if match else base
 
 
+@lru_cache(maxsize=4096)
 def _px(value, reference=0.0):
     value = str(value).strip().lower()
     if value.startswith(("calc(", "min(", "max(", "clamp(")):
@@ -49,13 +51,15 @@ def _px(value, reference=0.0):
     return _number(value, 0.0)
 
 
-def _root_font_size(element):
+def _root_font_size(element, cache=None):
     """The root element's computed size, which is what ``rem`` is relative to."""
     document = getattr(element, "ownerDocument", None)
     get_root = getattr(document, "get_documentElement", None) if document is not None else None
     root = get_root() if get_root is not None else None
     if root is None or root is element:
         return 16.0
+    if cache is not None and root in cache:
+        return _px(cache[root].get("font-size", "16px"), 16) or 16
     return _px(computed_style(root).get("font-size", "16px"), 16) or 16
 
 #: What CSS's generic families mean here: the platform's own default for each, in the
@@ -124,6 +128,25 @@ def _family_index(table):
     return families
 
 
+# Check the table object as well as its id: Python may reuse an evicted id.
+_FONT_INDEX_CACHE = {}
+_FONT_INDEX_LIMIT = 16
+
+
+def _indexed_font_table(environment):
+    """Keep the family index for an immutable font table across layout passes."""
+    table = table_of(environment)
+    key = id(table)
+    cached = _FONT_INDEX_CACHE.get(key)
+    if cached is not None and cached[0] is table:
+        return cached
+    indexed = (table, _family_index(table), {})
+    if len(_FONT_INDEX_CACHE) >= _FONT_INDEX_LIMIT:
+        _FONT_INDEX_CACHE.pop(next(iter(_FONT_INDEX_CACHE)))
+    _FONT_INDEX_CACHE[key] = indexed
+    return indexed
+
+
 def _face_in(table, family, weight, style, families=None):
     """A family's face at one weight and slant, chosen by subfamily; a match beats none."""
     key = normalize(family)
@@ -149,14 +172,14 @@ def _face_for(families, environment=None, weight="400", style="normal"):
     It is the table ``FontFace`` answers ``local()`` from, so "the page said this font is
     here" and "measuring text works" stay in step.
     """
-    table = table_of(environment)
+    table, index, _chains = _indexed_font_table(environment)
     for family in families:
         for name in _GENERIC_FAMILIES.get(normalize(family), (family,)):
-            record = _face_in(table, name, weight, style)
+            record = _face_in(table, name, weight, style, index)
             if record is not None:
                 return record
     for name in _DEFAULT_FAMILIES:
-        record = _face_in(table, name, weight, style)
+        record = _face_in(table, name, weight, style, index)
         if record is not None:
             return record
     return None
@@ -169,13 +192,21 @@ def _font_size(style):
 
 def _face_path(record):
     """The file a record's face lives in here, or ``None`` when this machine lacks it."""
-    return None if record is None else file_for(record)
+    return None if record is None else _cached_face_path(record)
+
+
+@lru_cache(maxsize=512)
+def _cached_face_path(record):
+    return file_for(record)
 
 
 def _face_chain(families, environment, weight, style):
     """The faces a family list names, then this platform's fallbacks, in tried order."""
-    table = table_of(environment)
-    index = _family_index(table)
+    table, index, chains = _indexed_font_table(environment)
+    key = (tuple(families), str(weight), str(style))
+    known = chains.get(key)
+    if known is not None:
+        return known
     chain = []
     for family in families:
         for name in _GENERIC_FAMILIES.get(normalize(family), (family,)):
@@ -186,7 +217,11 @@ def _face_chain(families, environment, weight, style):
         record = _face_in(table, name, weight, style, index)
         if record is not None and record not in chain:
             chain.append(record)
-    return chain
+    found = tuple(chain)
+    if len(chains) >= 128:
+        chains.pop(next(iter(chains)))
+    chains[key] = found
+    return found
 
 
 def _shaped(text, style, environment=None):
@@ -296,7 +331,12 @@ def _line_style(style, environment=None, root=16.0, found=None):
 
 
 def _inline_declarations(element):
-    return tuple(CSSStyleDeclaration(element=element)._declarations())
+    return _parsed_inline(str(element.attributes.get("style", "")))
+
+
+@lru_cache(maxsize=2048)
+def _parsed_inline(raw):
+    return tuple(parse_declarations(raw))
 
 
 #: How CSS counts a selector: ids, then classes and attributes, then types.
@@ -361,7 +401,7 @@ def _cascade(element, rules, cache=None):
         if isinstance(value, str) and value.lower() in SYSTEM_COLORS:
             values[name] = SYSTEM_COLORS[value.lower()]
     values["font-size"] = _px_text(_font_size_px(values.get("font-size", "16px"),
-                                                 parent_size, _root_font_size(element)))
+                                                 parent_size, _root_font_size(element, cache)))
     if cache is not None:
         cache[element] = values
     return values
@@ -648,19 +688,15 @@ def _shift(element, walk, x, y):
     """Move everything the subtree recorded, for a relative offset applied afterwards."""
     if walk.collected is None or (not x and not y):
         return
-    for node, box in list(walk.collected.items()):
-        if node is element or _contains(element, node):
+    pending = [element]
+    while pending:
+        node = pending.pop()
+        box = walk.collected.get(node)
+        if box is not None:
             box.left += x
             box.top += y
-
-
-def _contains(ancestor, node):
-    current = getattr(node, "parentElement", None)
-    while current is not None:
-        if current is ancestor:
-            return True
-        current = getattr(current, "parentElement", None)
-    return False
+        pending.extend(child for child in getattr(node, "_children", ())
+                       if isinstance(child, Element))
 
 
 def _children(element, style, walk, containing, positioned):
@@ -818,7 +854,7 @@ def _flow_children(element, style, walk, containing, positioned):
     an inline block and the text beside it on one line of type.
     """
     environment = _environment_for(element)
-    root = _root_font_size(element)
+    root = _root_font_size(element, walk.styles)
     white_space = style.get("white-space", "normal")
     word_break = str(style.get("word-break", "normal")).strip().lower()
     overflow_wrap = str(style.get("overflow-wrap", "normal")).strip().lower()
@@ -1034,7 +1070,8 @@ def _grid_children(element, style, walk, containing, positioned):
     return cursor + row_height
 
 
-def layout(element, containing_width=None, top=0.0, rules=None, style=None, collected=None):
+def layout(element, containing_width=None, top=0.0, rules=None, style=None, collected=None,
+           styles=None):
     """*element*'s border box in viewport coordinates, laying the document out.
 
     The document is walked once per call: a box only knows where it sits after its
@@ -1044,14 +1081,35 @@ def layout(element, containing_width=None, top=0.0, rules=None, style=None, coll
     document = getattr(element, "ownerDocument", None)
     if document is None:
         return Box()
+    if (rules is None and style is None and collected is None and styles is None
+            and containing_width is None and top == 0.0):
+        return layout_snapshot(document)[0].get(element, Box())
     boxes = {} if collected is None else collected
     root = document.get_documentElement()
     width, height = _viewport_width(element)
     if isinstance(root, Element):
-        walk = _Walk(rules or document_rules(document), boxes, (width, height))
+        walk = _Walk(document_rules(document) if rules is None else rules,
+                     boxes, (width, height), styles=styles if styles is not None else {})
         _place(root, _style_of(root, walk.rules, walk.styles), walk,
                _Containing(0.0, 0.0, width, height), None)
     return boxes.get(element, Box())
+
+
+def layout_snapshot(document):
+    """The current document's boxes and styles, shared by geometry and hit testing."""
+    root = document.get_documentElement()
+    if not isinstance(root, Element):
+        return {}, {}
+    viewport = _viewport_width(root)
+    version = (document.layout_version, document.style_version, viewport)
+    cached = document._layout_snapshot
+    if cached is not None and cached[0] == version:
+        return cached[1], cached[2]
+    boxes, styles = {}, {}
+    layout(root, collected=boxes, styles=styles)
+    if (document.layout_version, document.style_version, _viewport_width(root)) == version:
+        document._layout_snapshot = (version, boxes, styles)
+    return boxes, styles
 
 
 def positioned_box(element):
@@ -1059,11 +1117,13 @@ def positioned_box(element):
     return layout(element)
 
 
-def offset_parent(element):
+def offset_parent(element, styles=None):
     """The box an element's ``offsetLeft`` is measured against, or ``None``."""
     if not getattr(element, "isConnected", False):
         return None
-    own = computed_style(element)
+    own = styles.get(element) if styles is not None else None
+    if own is None:
+        own = computed_style(element)
     if own.get("position", "static") == "fixed":
         # Chrome answers no offset parent for a fixed box, nor for one with no box at all.
         return None
@@ -1074,7 +1134,9 @@ def offset_parent(element):
         return None
     current = getattr(element, "parentElement", None)
     while current is not None:
-        style = computed_style(current)
+        style = styles.get(current) if styles is not None else None
+        if style is None:
+            style = computed_style(current)
         if style.get("position", "static") != "static":
             return current
         if getattr(current, "localName", "") in ("body", "td", "th", "table"):

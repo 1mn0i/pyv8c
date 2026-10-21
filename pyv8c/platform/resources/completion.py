@@ -66,6 +66,8 @@ class ResourceCompletion:
                 document = getattr(node, "ownerDocument", None)
                 if document is not None:
                     document.style_version = getattr(document, "style_version", 0) + 1
+                    document.layout_version += 1
+                    document._layout_snapshot = None
             # The transfer is complete: one progress event carries the whole body.
             length = response_length(response)
             page.lifecycle.dispatch_progress_event(

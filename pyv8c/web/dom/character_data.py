@@ -29,6 +29,7 @@ class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
     def get_data(self): return self.nodeValue or ""
     def set_data(self, value):
         self.nodeValue = str(value)
+        self._invalidate_layout()
         _bump_style_version(self)
     def get_length(self): return len(self.nodeValue or "")
     def fn_substringData(self, offset=MISSING, count=MISSING, *_extra):
@@ -45,6 +46,7 @@ class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
             raise missing_error('CharacterData', 'appendData', 1, 0, constructor=False)
         value = dom_string(value)
         self.nodeValue = (self.nodeValue or '') + str(value)
+        self._invalidate_layout()
         _bump_style_version(self)
     def fn_insertData(self, offset=MISSING, value=MISSING, *_extra):
         if offset is MISSING:
@@ -55,6 +57,7 @@ class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
         value = dom_string(value)
         data, start = self.nodeValue or "", int(offset)
         self.nodeValue = data[:start] + str(value) + data[start:]
+        self._invalidate_layout()
         _bump_style_version(self)
     def fn_deleteData(self, offset=MISSING, count=MISSING, *_extra):
         if offset is MISSING:
@@ -65,6 +68,7 @@ class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
         count = integer(count)
         data, start = self.nodeValue or "", int(offset)
         self.nodeValue = data[:start] + data[start + int(count):]
+        self._invalidate_layout()
         _bump_style_version(self)
     def fn_replaceData(self, offset=MISSING, count=MISSING, value=MISSING, *_extra):
         if offset is MISSING:
@@ -78,6 +82,7 @@ class CharacterData(_ChildNodeMixin, _NonDocumentTypeChildNodeMixin, Node):
         value = dom_string(value)
         data, start = self.nodeValue or "", int(offset)
         self.nodeValue = data[:start] + str(value) + data[start + int(count):]
+        self._invalidate_layout()
         _bump_style_version(self)
     def _clone_shallow(self):
         # Keep the concrete flavour so clones expose ``data`` and the right node type.

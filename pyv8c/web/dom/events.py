@@ -837,6 +837,13 @@ class EventTarget:
                      len(self._listeners.get(event.type, ())))
         if event._dispatching:
             raise dom_exception("InvalidStateError", "The event is already being dispatched.")
+        # An event begins a new script observation boundary. Host-backed state may
+        # have changed since the preceding event without a DOM mutation; keep
+        # repeated reads within this dispatch cheap, but start it with fresh boxes.
+        document = getattr(getattr(self, "_services", None), "document_services", None)
+        document = getattr(document, "document", None)
+        if document is not None:
+            document._layout_snapshot = None
         event._dispatching = True
         try:
             event.target = event._legacy_target_override or self

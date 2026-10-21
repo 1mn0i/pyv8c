@@ -24,17 +24,22 @@ from .utils import XHTML_NAMESPACE, is_element
 
 
 def _is_style_element(node):
-    """Whether *node* is a ``<style>`` element.
+    """Whether *node* supplies a stylesheet to the document.
 
     ``nodeType`` is checked first: it is a plain attribute on every node, while
     ``localName`` on a text node falls through to a raising ``__getattr__``.  Runs
     once per DOM mutation, so it must stay this cheap.
     """
-    return getattr(node, "nodeType", None) == Node.ELEMENT_NODE and node.localName == "style"
+    if getattr(node, "nodeType", None) != Node.ELEMENT_NODE:
+        return False
+    if node.localName == "style":
+        return True
+    return (node.localName == "link" and
+            "stylesheet" in str(node.attributes.get("rel", "")).lower().split())
 
 
 def _contains_style(node):
-    """Whether *node* is a ``<style>`` element or holds one.
+    """Whether *node* supplies or contains a stylesheet.
 
     Iterative to keep a deep subtree off the stack; on the parse path (elements
     adopted before their children) the walk is a single step.
@@ -272,12 +277,19 @@ class Node(EventTarget):
             node.__dict__.pop('_descendants_cache', None)
             node.__dict__.pop('_id_index', None)
             node = node.parentNode
+        self._invalidate_layout()
 
     def _invalidate_id_index(self):
         node = self
         while node is not None:
             node.__dict__.pop('_id_index', None)
             node = node.parentNode
+
+    def _invalidate_layout(self):
+        document = self if self.nodeType == Node.DOCUMENT_NODE else self.ownerDocument
+        if document is not None and hasattr(document, "layout_version"):
+            document.layout_version += 1
+            document._layout_snapshot = None
 
     def _find_element_by_id(self, value):
         if not value:
@@ -327,6 +339,7 @@ class Node(EventTarget):
             value = dom_string(value)
         previous = self.nodeValue
         self.nodeValue = value
+        self._invalidate_layout()
         _bump_style_version(self)
         if previous != value:
             _record_mutation(self, "characterData", old_value=previous)

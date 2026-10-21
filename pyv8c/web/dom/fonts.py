@@ -295,22 +295,28 @@ class FontFace:
 
     def get_family(self): return self._family
     def get_style(self): return self._style
-    def set_style(self, value): self._style = str(dom_string(value))
+    def _touch_layout(self):
+        document = getattr(self, "_layout_document", None)
+        if document is not None:
+            document._invalidate_layout()
+
+    def set_style(self, value): self._style = str(dom_string(value)); self._touch_layout()
     def get_weight(self): return self._weight
-    def set_weight(self, value): self._weight = str(dom_string(value))
+    def set_weight(self, value): self._weight = str(dom_string(value)); self._touch_layout()
     def get_stretch(self): return self._stretch
-    def set_stretch(self, value): self._stretch = str(dom_string(value))
+    def set_stretch(self, value): self._stretch = str(dom_string(value)); self._touch_layout()
     def get_ascentOverride(self): return self._ascent_override
     def set_ascentOverride(self, value):
         self._ascent_override = str(dom_string(value))
+        self._touch_layout()
     def get_unicodeRange(self): return self._unicode_range
-    def set_unicodeRange(self, value): self._unicode_range = str(dom_string(value))
+    def set_unicodeRange(self, value): self._unicode_range = str(dom_string(value)); self._touch_layout()
     def get_featureSettings(self): return self._feature_settings
-    def set_featureSettings(self, value): self._feature_settings = str(dom_string(value))
+    def set_featureSettings(self, value): self._feature_settings = str(dom_string(value)); self._touch_layout()
     def get_variationSettings(self): return self._variation_settings
-    def set_variationSettings(self, value): self._variation_settings = str(dom_string(value))
+    def set_variationSettings(self, value): self._variation_settings = str(dom_string(value)); self._touch_layout()
     def get_display(self): return self._display
-    def set_display(self, value): self._display = str(dom_string(value))
+    def set_display(self, value): self._display = str(dom_string(value)); self._touch_layout()
     def get_status(self): return self._status
 
     def _table(self):
@@ -338,6 +344,9 @@ class FontFace:
             self._status = "error"
         else:
             self._status = "loaded"
+        document = getattr(self, "_layout_document", None)
+        if document is not None:
+            document._invalidate_layout()
         if self._resolve is None:
             return
         post = getattr(self._services, "post_task", None)
@@ -457,6 +466,9 @@ class FontFaceSet(EventTarget):
         face = self._face_argument(face, 'add')
         if face not in self._faces:
             self._faces.append(face)
+            face._layout_document = self._document
+            if self._document is not None:
+                self._document._invalidate_layout()
         return self
 
     def fn_delete(self, face=MISSING, *_extra):
@@ -465,10 +477,17 @@ class FontFaceSet(EventTarget):
         face = self._face_argument(face, 'delete')
         if face in self._faces:
             self._faces.remove(face)
+            face._layout_document = None
+            if self._document is not None:
+                self._document._invalidate_layout()
             return True
         return False
 
     def fn_clear(self, *_extra):
+        for face in self._faces:
+            face._layout_document = None
+        if self._faces and self._document is not None:
+            self._document._invalidate_layout()
         self._faces.clear()
 
     def fn_has(self, face=MISSING, *_extra):
