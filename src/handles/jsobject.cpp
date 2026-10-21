@@ -56,6 +56,12 @@ static PyObject* js_object_read(js_object* self, PyObject* name) {
     return py_from_js(value, context);
 }
 
+static PyObject* js_object_host_value(js_object* self, PyObject*) {
+    JS_OBJECT_ENTER(self, isolate, object);
+    IN_CONTEXT(object->GetCreationContextChecked());
+    return py_from_js(object, context);
+}
+
 static PyObject* js_object_to_python(js_object* self, PyObject*) {
     JS_OBJECT_ENTER(self, isolate, object);
     IN_CONTEXT(object->GetCreationContextChecked());
@@ -95,6 +101,38 @@ static PyObject* js_object_as_bytes(js_object* self, PyObject* unused) {
         return nullptr;
     }
     return js_object_bytes(self, unused);
+}
+
+static PyObject* js_object_buffer_kind(js_object* self, PyObject*) {
+    JS_OBJECT_ENTER(self, isolate, object);
+    if (object->IsArrayBuffer()) {
+        auto buffer = object.As<ArrayBuffer>();
+        return PyUnicode_FromString(buffer->WasDetached() ? "detached" :
+                                    buffer->IsDetachable() ? "buffer" : "nontransferable");
+    }
+    if (object->IsSharedArrayBuffer()) return PyUnicode_FromString("shared");
+    if (object->IsArrayBufferView()) {
+        auto buffer = object.As<ArrayBufferView>()->Buffer();
+        if (buffer->IsSharedArrayBuffer()) return PyUnicode_FromString("shared-view");
+        return PyUnicode_FromString(buffer->WasDetached() ? "detached" : "view");
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject* js_object_detach_buffer(js_object* self, PyObject*) {
+    JS_OBJECT_ENTER(self, isolate, object);
+    if (!object->IsArrayBuffer() || !object.As<ArrayBuffer>()->IsDetachable()) {
+        PyErr_SetString(PyExc_TypeError, "value is not a detachable ArrayBuffer");
+        return nullptr;
+    }
+    JS_TRY
+    auto detached = object.As<ArrayBuffer>()->Detach(Local<Value>());
+    PY_PROPAGATE_JS;
+    if (detached.IsNothing() || !detached.FromJust()) {
+        PyErr_SetString(PyExc_TypeError, "ArrayBuffer could not be detached");
+        return nullptr;
+    }
+    Py_RETURN_NONE;
 }
 
 static PyObject* js_object_string(js_object* self, PyObject*) {
@@ -202,8 +240,11 @@ PyMethodDef js_object_methods[] = {
     {"_to_string", (PyCFunction)PythonBoundary<js_object_string>::call, METH_NOARGS, nullptr},
     {"_to_number", (PyCFunction)PythonBoundary<js_object_number>::call, METH_NOARGS, nullptr},
     {"_get", (PyCFunction)PythonBoundary<js_object_read>::call, METH_O, "Read one property without eagerly converting objects."},
+    {"_host_value", (PyCFunction)PythonBoundary<js_object_host_value>::call, METH_NOARGS, "Unwrap host identity without reading properties."},
     {"to_python", (PyCFunction)PythonBoundary<js_object_to_python>::call, METH_NOARGS, "Explicitly materialize arrays and plain objects."},
     {"_bytes", (PyCFunction)PythonBoundary<js_object_bytes>::call, METH_NOARGS, "The bytes a buffer holds or a view looks at, in one read."},
+    {"_buffer_kind", (PyCFunction)PythonBoundary<js_object_buffer_kind>::call, METH_NOARGS, "Native buffer brand and detached state without property access."},
+    {"_detach_buffer", (PyCFunction)PythonBoundary<js_object_detach_buffer>::call, METH_NOARGS, "Detach an ArrayBuffer without calling page code."},
     {"__bytes__", (PyCFunction)PythonBoundary<js_object_as_bytes>::call, METH_NOARGS, "The bytes a buffer or a view holds; anything else holds none."},
     {"_buffer_view", (PyCFunction)PythonBoundary<js_object_buffer>::call, METH_NOARGS, "**Experimental**. Return a python buffer(memoryview) object pointing to the underlying V8 ArrayBuffer data.  Underscore-prefixed because instance lookup only reaches those."},
     {"__dir__", (PyCFunction)PythonBoundary<js_object_dir>::call, METH_NOARGS, NULL},
