@@ -426,6 +426,20 @@ class Window(_SchedulingMixin, WindowProperties):
         entry = cls._context_origins.get(id(pyv8.current_context()))
         return entry[0] if entry is not None else fallback
 
+    @classmethod
+    def _calling_window(cls, fallback=None):
+        """The window whose script made the call, not the one the call entered.
+
+        A method reached across realms runs with the *callee's* context entered, so
+        ``current_context`` reports the receiver.  V8 keeps the caller as the
+        incumbent, and a message's source is the caller: ``parent.postMessage``
+        called from a frame must name that frame, and Chrome's ``event.source`` is
+        the same object the parent reads from ``iframe.contentWindow``.
+        """
+        context = pyv8.incumbent_context()
+        entry = cls._context_origins.get(id(context)) if context is not None else None
+        return entry[0] if entry is not None else fallback
+
     def _accessor_origin(self):
         current = pyv8.current_context()
         entry = self._context_origins.get(id(current))
@@ -741,7 +755,7 @@ class Window(_SchedulingMixin, WindowProperties):
         else:
             transfer = ()
         # The sender is the window that called, which need not be this one.
-        self._post_message(Window._accessor_window(self) or self, message, target_origin, transfer)
+        self._post_message(Window._calling_window(self) or self, message, target_origin, transfer)
 
     def fn_webkitRequestFileSystem(self, type=MISSING, size=MISSING, success=MISSING, error=pyv8.Undefined, *_extra):
         if type is MISSING: raise missing_error("Window", "webkitRequestFileSystem", 4, 0, constructor=False)
