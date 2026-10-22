@@ -57,7 +57,7 @@ _FONT_PREFIX = re.compile(
 
 
 def _descriptor(options, name, default):
-    value = options.get(name, default) if options else default
+    value = options.get(name, default) if options is not None else default
     return default if is_nullish(value) else str(value)
 
 
@@ -276,12 +276,19 @@ class FontFace:
         self._services = services if services is not pyv8.Undefined else _realm
         self._family = str(dom_string(family))
         self._source = str(source)
-        options = dictionary(descriptors, name="FontFaceDescriptors") if descriptors else None
+        options = dictionary(descriptors, name="FontFaceDescriptors") if not is_nullish(descriptors) else None
         self._style = _descriptor(options, "style", "normal")
         self._weight = _descriptor(options, "weight", "normal")
-        self._stretch = _descriptor(options, "stretch", "normal")
+        # Blink exposes width and stretch as aliases of the same descriptor.
+        self._stretch = (_descriptor(options, "width", "normal")
+                         if options is not None and "width" in options else
+                         _descriptor(options, "stretch", "normal"))
+        self._variant = _descriptor(options, "variant", "normal")
         self._unicode_range = _descriptor(options, "unicodeRange", "U+0-10FFFF")
         self._ascent_override = _descriptor(options, "ascentOverride", "normal")
+        self._descent_override = _descriptor(options, "descentOverride", "normal")
+        self._line_gap_override = _descriptor(options, "lineGapOverride", "normal")
+        self._size_adjust = _descriptor(options, "sizeAdjust", "100%")
         self._feature_settings = _descriptor(options, "featureSettings", "normal")
         self._variation_settings = _descriptor(options, "variationSettings", "normal")
         self._display = _descriptor(options, "display", "auto")
@@ -305,9 +312,25 @@ class FontFace:
     def set_weight(self, value): self._weight = str(dom_string(value)); self._touch_layout()
     def get_stretch(self): return self._stretch
     def set_stretch(self, value): self._stretch = str(dom_string(value)); self._touch_layout()
+    def get_width(self): return self._stretch
+    def set_width(self, value): self.set_stretch(value)
+    def get_variant(self): return self._variant
+    def set_variant(self, value): self._variant = str(dom_string(value)); self._touch_layout()
     def get_ascentOverride(self): return self._ascent_override
     def set_ascentOverride(self, value):
         self._ascent_override = str(dom_string(value))
+        self._touch_layout()
+    def get_descentOverride(self): return self._descent_override
+    def set_descentOverride(self, value):
+        self._descent_override = str(dom_string(value))
+        self._touch_layout()
+    def get_lineGapOverride(self): return self._line_gap_override
+    def set_lineGapOverride(self, value):
+        self._line_gap_override = str(dom_string(value))
+        self._touch_layout()
+    def get_sizeAdjust(self): return self._size_adjust
+    def set_sizeAdjust(self, value):
+        self._size_adjust = str(dom_string(value))
         self._touch_layout()
     def get_unicodeRange(self): return self._unicode_range
     def set_unicodeRange(self, value): self._unicode_range = str(dom_string(value)); self._touch_layout()

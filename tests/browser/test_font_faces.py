@@ -99,6 +99,24 @@ def test_the_constructor_asks_for_two_arguments(page):
                                  "but only 0 present."}, answer
 
 
+def test_descriptors_from_js_dictionary_and_width_alias_match_chrome(page):
+    answer = page.evaluate('''(() => {
+      const names = ['width', 'stretch', 'variant', 'descentOverride',
+                     'lineGapOverride', 'sizeAdjust'];
+      const plain = new FontFace('Probe', 'local(Arial)');
+      const configured = new FontFace('Probe', 'local(Arial)', {
+        width: 'condensed', stretch: 'expanded', variant: 'small-caps',
+        descentOverride: '20%', lineGapOverride: '30%', sizeAdjust: '80%'
+      });
+      const before = [plain, configured].map(face => names.map(name => face[name]));
+      for (const name of names) plain[name] = configured[name];
+      return {before, after: names.map(name => plain[name])};
+    })()''')
+    defaults = ['normal', 'normal', 'normal', 'normal', 'normal', '100%']
+    configured = ['condensed', 'condensed', 'small-caps', '20%', '30%', '80%']
+    assert answer == {'before': [defaults, configured], 'after': configured}
+
+
 def test_check_answers_true_for_a_family_no_face_and_no_platform_knows(page):
     """Chromium's rule, which its name does not suggest: this is not a false."""
     answer = page.evaluate("""(() => ({

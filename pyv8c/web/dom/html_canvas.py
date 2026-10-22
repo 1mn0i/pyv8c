@@ -56,6 +56,14 @@ _CANVAS_IMAGE_SOURCE = ("CSSImageValue or HTMLImageElement or SVGImageElement or
 _IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
 
+def _multiply_2d(left, right):
+    """Postmultiply Canvas's affine transform, in (a, b, c, d, e, f) order."""
+    a, b, c, d, e, f = left
+    x, y, z, w, tx, ty = right
+    return (a*x + c*y, b*x + d*y, a*z + c*w, b*z + d*w,
+            a*tx + c*ty + e, b*tx + d*ty + f)
+
+
 def _enum_error(interface, member, value, enum_name):
     """What the bindings raise for a value outside a WebIDL enum."""
     return IdlArgumentError(
@@ -556,14 +564,78 @@ class CanvasRenderingContext2D:
                   self._image.crop((left, top, left + width, top + height)).tobytes())
         return ImageData(pixels, width, height)
 
+    def fn_createImageData(self, width=MISSING, height=MISSING, *_extra):
+        interface = 'CanvasRenderingContext2D'
+        if width is MISSING:
+            raise missing_error(interface, 'createImageData', 1, 0, constructor=False)
+        if isinstance(width, ImageData):
+            w, h = width._width, width._height
+        else:
+            if height is MISSING:
+                raise missing_error(interface, 'createImageData', 2, 1, constructor=False)
+            w, h = abs(int(float(number(width)))), abs(int(float(number(height))))
+        if w == 0 or h == 0:
+            raise IndexSizeError(
+                "Failed to execute 'createImageData' on 'CanvasRenderingContext2D':"
+                " The source width or height is 0.")
+        return ImageData(bytes(4 * w * h), w, h)
+
+    def fn_putImageData(self, data=MISSING, dx=MISSING, dy=MISSING, *dirty):
+        interface = 'CanvasRenderingContext2D'
+        for index, value in enumerate((data, dx, dy)):
+            if value is MISSING:
+                raise missing_error(interface, 'putImageData', 3, index, constructor=False)
+        if not isinstance(data, ImageData):
+            raise IdlArgumentError(
+                "Failed to execute 'putImageData' on 'CanvasRenderingContext2D':"
+                " parameter 1 is not of type 'ImageData'.")
+        if self._image is None:
+            return
+        from PIL import Image
+        width, height = data._width, data._height
+        pixels = bytes(int(data._data[index]) for index in range(4 * width * height))
+        source = Image.frombytes('RGBA', (width, height), pixels)
+        x, y = int(float(number(dx))), int(float(number(dy)))
+        if len(dirty) >= 4:
+            sx, sy, sw, sh = (int(float(number(value))) for value in dirty[:4])
+            if sw < 0: sx, sw = sx + sw, -sw
+            if sh < 0: sy, sh = sy + sh, -sh
+            left, top = max(0, sx), max(0, sy)
+            right, bottom = min(width, sx + sw), min(height, sy + sh)
+            if right <= left or bottom <= top:
+                return
+            source = source.crop((left, top, right, bottom))
+            x += left; y += top
+        # putImageData deliberately ignores the current transform and compositing state.
+        self._image.paste(source, (x, y))
+
     def _device(self, x, y):
         """A user-space point in device space, through the current transform."""
         a, b, c, d, e, f = self._transform
         return (a * float(x) + c * float(y) + e, b * float(x) + d * float(y) + f)
 
     def _rect(self, x, y, w, h):
-        (x0, y0), (x1, y1) = self._device(x, y), self._device(float(x) + float(w), float(y) + float(h))
-        return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+        x, y, w, h = float(x), float(y), float(w), float(h)
+        points = (self._device(x, y), self._device(x+w, y),
+                  self._device(x+w, y+h), self._device(x, y+h))
+        return (min(point[0] for point in points), min(point[1] for point in points),
+                max(point[0] for point in points), max(point[1] for point in points))
+
+    def _draw_rect_mask(self, draw, x, y, w, h):
+        if float(w) == 0 or float(h) == 0:
+            return
+        box = self._rect(x, y, w, h)
+        a, b, c, d, _e, _f = self._transform
+        if (abs(b) < 1e-12 and abs(c) < 1e-12) or (abs(a) < 1e-12 and abs(d) < 1e-12):
+            # ImageDraw's right/bottom endpoints are inclusive. Canvas rectangles
+            # are half-open, so an integral 1x1 rectangle covers exactly one pixel.
+            left, top, right, bottom = box
+            if all(abs(value - round(value)) < 1e-9 for value in box):
+                draw.rectangle((round(left), round(top), round(right)-1, round(bottom)-1), fill=255)
+                return
+        x, y, w, h = float(x), float(y), float(w), float(h)
+        draw.polygon((self._device(x, y), self._device(x+w, y),
+                      self._device(x+w, y+h), self._device(x, y+h)), fill=255)
 
     def _paint_path(self):
         """Fill every subpath with the current fillStyle.  Windings are not distinguished."""
@@ -575,9 +647,13 @@ class CanvasRenderingContext2D:
         self._paint(self._fill, polygons)
 
     def fn_fillRect(self, x=0, y=0, w=0, h=0, *_):
-        self._paint(self._fill, lambda draw: draw.rectangle(self._rect(x, y, w, h), fill=255))
+        self._paint(self._fill, lambda draw: self._draw_rect_mask(draw, x, y, w, h))
     def fn_clearRect(self, x=0, y=0, w=0, h=0, *_):
-        if self._draw: self._draw.rectangle(self._rect(x, y, w, h), fill=(0,0,0,0))
+        if self._image is not None:
+            from PIL import Image, ImageDraw
+            mask = Image.new('L', self._image.size)
+            self._draw_rect_mask(ImageDraw.Draw(mask), x, y, w, h)
+            self._image.paste((0, 0, 0, 0), mask=mask)
     def fn_fillText(self, text='', x=0, y=0, *_):
         if self._draw:
             self._draw.text(
@@ -697,6 +773,50 @@ class CanvasRenderingContext2D:
         if not (math.isfinite(sx) and math.isfinite(sy)): return
         a, b, c, d, e, f = self._transform
         self._transform = (a * sx, b * sx, c * sy, d * sy, e, f)
+    def fn_translate(self, x=MISSING, y=MISSING, *_extra):
+        for index, value in enumerate((x, y)):
+            if value is MISSING:
+                raise missing_error('CanvasRenderingContext2D', 'translate', 2, index,
+                                    constructor=False)
+        self.fn_transform(1, 0, 0, 1, x, y)
+    def fn_rotate(self, angle=MISSING, *_extra):
+        if angle is MISSING:
+            raise missing_error('CanvasRenderingContext2D', 'rotate', 1, 0,
+                                constructor=False)
+        angle = float(number(angle))
+        if not math.isfinite(angle): return
+        cosine, sine = math.cos(angle), math.sin(angle)
+        self._transform = _multiply_2d(self._transform,
+                                       (cosine, sine, -sine, cosine, 0, 0))
+    def fn_transform(self, a=MISSING, b=MISSING, c=MISSING, d=MISSING,
+                     e=MISSING, f=MISSING, *_extra):
+        values = (a, b, c, d, e, f)
+        for index, value in enumerate(values):
+            if value is MISSING:
+                raise missing_error('CanvasRenderingContext2D', 'transform', 6, index,
+                                    constructor=False)
+        values = tuple(float(number(value)) for value in values)
+        if all(math.isfinite(value) for value in values):
+            self._transform = _multiply_2d(self._transform, values)
+    def fn_setTransform(self, *args):
+        if not args:
+            self._transform = _IDENTITY
+            return
+        if len(args) == 1:
+            from .matrix import _init_values
+            matrix, _ = _init_values(args[0])
+            values = (matrix[0], matrix[1], matrix[4], matrix[5], matrix[12], matrix[13])
+        else:
+            if len(args) < 6:
+                raise _signature_error('CanvasRenderingContext2D', 'setTransform')
+            values = tuple(float(number(value)) for value in args[:6])
+        if all(math.isfinite(value) for value in values):
+            self._transform = values
+    def fn_resetTransform(self, *_extra):
+        self._transform = _IDENTITY
+    def fn_getTransform(self, *_extra):
+        from .matrix import DOMMatrix
+        return DOMMatrix(list(self._transform))
     def fn_createRadialGradient(self, x0=MISSING, y0=MISSING, r0=MISSING,
                               x1=MISSING, y1=MISSING, r1=MISSING, *_extra):
         return self._gradient('radial', (x0, y0, r0, x1, y1, r1))
