@@ -324,6 +324,7 @@ class Page:
         object, so the last document's properties go with the last document.
         """
         previous_window, previous_realm = self.window, self.realm
+        previous_proxy = self.global_proxy
         # Workers belong to the document being retired. A pending source load
         # may never deliver after this generation changes, so stop it explicitly.
         for worker in tuple(self._owned.workers):
@@ -340,7 +341,15 @@ class Page:
                 window._features._cache(slot, previous_window._features.value(slot))
         self.window = window
         self.services.window = window
-        self.realm = PageRealm(self, executor=self.executor)
+        try:
+            new_realm = PageRealm(self, executor=self.executor)
+        except BaseException:
+            self.window = previous_window
+            self.services.window = previous_window
+            self.services.bind_realm(previous_realm)
+            self.global_proxy = previous_proxy
+            raise
+        self.realm = new_realm
         self.services.bind_realm(self.realm)
         self.realm.executor.attach_rejection_tracker(self.realm.rejections)
         self.v8_context = self.realm.v8_context

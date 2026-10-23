@@ -2,6 +2,7 @@
 from urllib.parse import urljoin
 from ...foundation.error_policy import control_exceptions
 from ...web.bom.utils import page_base_url
+from ..execution import NavigationCancelled
 
 
 class FrameResourceController:
@@ -57,7 +58,8 @@ class FrameResourceController:
             # A srcdoc script must not run before appendChild returns. Keep the
             # initial window available while that document is waiting to commit.
             def commit_markup():
-                if (not page.closed and page.navigation.generation == generation
+                if (not page.tasks.closed and not child.tasks.closed
+                        and page.navigation.generation == generation
                         and iframe._child_services is child.services and iframe.isConnected
                         and iframe.attributes.get("srcdoc") == markup):
                     self.load_iframe_markup(iframe, str(markup))
@@ -77,7 +79,11 @@ class FrameResourceController:
         page = self.page
         self.page.document_resources.cancel_node(iframe)
         child = self._child_frame_page(iframe, "about:srcdoc")
-        child.executor.call(child.navigation.set_content, markup, url="about:srcdoc", replace_initial=True)
+        try:
+            child.executor.call(child.navigation.set_content, markup, url="about:srcdoc", replace_initial=True)
+        except NavigationCancelled:
+            # The parent close will release the initial about:blank child realm.
+            return child
         token, item = page.document_resources.begin_frame_document(iframe, child)
         item.child_generation = child.navigation.generation
         generation, child_generation = page.navigation.generation, child.navigation.generation
@@ -117,6 +123,8 @@ class FrameResourceController:
         try:
             child.executor.call(child.navigation.set_content, response.body_text(), url=target, replace_initial=True)
             child.lifecycle.when_loaded(callback)
+        except NavigationCancelled:
+            return child
         except control_exceptions():
             raise
         except BaseException:  # a failed document load is reported as False
@@ -136,7 +144,10 @@ class FrameResourceController:
         child = self._child_frame_page(iframe, target)
         response = self.controller.load_resource(
             target, {"method": "GET", "mode": "navigate", "destination": "iframe", "resource_type": "iframe"})
-        child.executor.call(child.navigation.set_content, response.body_text(), url=target, replace_initial=True)
+        try:
+            child.executor.call(child.navigation.set_content, response.body_text(), url=target, replace_initial=True)
+        except NavigationCancelled:
+            return child
         return child
 
 

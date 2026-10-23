@@ -217,7 +217,9 @@ class PageRealm:
         try:
             self.executor.call(self._initialize)
         except BaseException:
-            self.close()
+            # A stopped lane's invoke() may decline new work. Cleanup must still
+            # run on the owner thread after a partially constructed V8 context.
+            self.executor.group.executor.call(self._close_context)
             raise
 
     def _initialize(self):
@@ -230,7 +232,6 @@ class PageRealm:
         context_type = "FRAME" if page.parent_page is not None else "TOP"
         self.agent = page.execution_group.agent(page.origin)
         page.services.task_services.prepare_animation_frames()
-        self.executor.agent = self.agent
         self.v8_context = pyv8.V8Context(page.window, **_v8_context_kwargs(
             self.binding_session, context_type, page.trace,
             exposure_type="Window",
@@ -308,19 +309,20 @@ class PageRealm:
         """
         if self.executor.closed:
             return
+        self.executor.call(self._close_context)
 
-        def close_context():
-            if self.rejections is not None:
-                self.rejections.close()
-            v8_context = self.v8_context
+    def _close_context(self):
+        if self.rejections is not None:
+            self.rejections.close()
+        v8_context = self.v8_context
+        try:
             close = getattr(v8_context, "close", None)
             if callable(close):
                 close()
+        finally:
             self.executor.detach_deadline_source(v8_context)
             self.v8_context = None
             self.binding_session.detach()
-
-        self.executor.call(close_context)
 
 
 __all__ = ["PageRealm", "WorkerRealm"]

@@ -10,6 +10,10 @@ from ..foundation.rendering import RenderingScheduler
 from ..foundation.error_policy import control_exceptions
 
 
+class NavigationCancelled(RuntimeError):
+    """A document commit lost its execution lane to page teardown."""
+
+
 class Agent:
     __slots__ = ('origin', 'microtasks', 'checkpointing', 'tasks')
 
@@ -206,8 +210,16 @@ class WindowExecutor:
             self.tasks.report_error(error)
 
     def bind_agent(self, agent, context):
+        if self.tasks.closed:
+            raise NavigationCancelled('navigation cancelled while closing the page')
+        try:
+            self.tasks.bind_scheduler(agent.tasks, partial(self.invoke, _background=True), context)
+        except RuntimeError as error:
+            # request_stop() may flip the host's closed state after the check.
+            if self.tasks.closed and str(error) == 'cannot bind a closed task queue':
+                raise NavigationCancelled('navigation cancelled while closing the page') from None
+            raise
         self.agent = agent
-        self.tasks.bind_scheduler(agent.tasks, partial(self.invoke, _background=True), context)
 
     def attach_rejection_tracker(self, tracker):
         if self.rejections is not None:

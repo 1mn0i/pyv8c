@@ -17,6 +17,145 @@ import time
 import pytest
 
 from pyv8c import Browser
+from pyv8c.platform.execution import WindowExecutor
+
+
+def test_window_document_getter_accepts_same_origin_frame_receiver():
+    browser = Browser(stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://example.test/')
+        assert page.evaluate("""
+            (() => {
+              const getter = Object.getOwnPropertyDescriptor(window, 'document').get;
+              const frame = document.createElement('iframe');
+              document.body.appendChild(frame);
+              let illegal;
+              try { getter.call({}); } catch (error) {
+                illegal = [error.name, error.message];
+              }
+              return [getter.call(frame.contentWindow) === frame.contentDocument,
+                      getter.call(window) === document,
+                      getter.call(null) === document,
+                      illegal];
+            })()
+        """) == [True, True, True, ['TypeError', 'Illegal invocation']]
+    finally:
+        browser.close()
+
+
+def test_event_target_methods_accept_same_origin_frame_document():
+    browser = Browser(stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://example.test/')
+        assert page.evaluate("""
+            (() => {
+              const frame = document.createElement('iframe');
+              document.body.appendChild(frame);
+              const target = frame.contentDocument;
+              let calls = 0;
+              const listener = () => calls++;
+              EventTarget.prototype.addEventListener.call(target, 'sample', listener);
+              EventTarget.prototype.dispatchEvent.call(target, new Event('sample'));
+              EventTarget.prototype.removeEventListener.call(target, 'sample', listener);
+              EventTarget.prototype.dispatchEvent.call(target, new Event('sample'));
+              return calls;
+            })()
+        """) == 1
+    finally:
+        browser.close()
+
+
+def test_node_owner_document_getter_accepts_same_origin_frame_node():
+    browser = Browser(stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://example.test/')
+        assert page.evaluate("""
+            (() => {
+              const frame = document.createElement('iframe');
+              document.body.appendChild(frame);
+              const getter = Object.getOwnPropertyDescriptor(
+                  Node.prototype, 'ownerDocument').get;
+              return getter.call(frame.contentDocument.body) === frame.contentDocument;
+            })()
+        """) is True
+    finally:
+        browser.close()
+
+
+def test_node_namespace_lookup_accepts_same_origin_frame_node():
+    browser = Browser(stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://example.test/')
+        assert page.evaluate("""
+            (() => {
+              const frame = document.createElement('iframe');
+              document.body.appendChild(frame);
+              return Node.prototype.lookupNamespaceURI.call(
+                  frame.contentDocument.body, null);
+            })()
+        """) == 'http://www.w3.org/1999/xhtml'
+    finally:
+        browser.close()
+
+
+def test_close_cancels_srcdoc_realm_while_it_is_binding(monkeypatch):
+    """A stop racing frame navigation disposes the new context and closes both pages."""
+    reached_bind = threading.Event()
+    release_bind = threading.Event()
+    original_bind = WindowExecutor.bind_agent
+
+    def pause_frame_rebind(self, agent, context):
+        page = self.tasks._host._page
+        if page.parent_page is not None and self.agent is not None and not reached_bind.is_set():
+            reached_bind.set()
+            assert release_bind.wait(5)
+        return original_bind(self, agent, context)
+
+    monkeypatch.setattr(WindowExecutor, "bind_agent", pause_frame_rebind)
+    browser = Browser(cache=False, real_network=False, stub_logging="off")
+    page = browser.new_profile().new_page()
+    group = page.execution_group
+    close_errors = []
+    closer = None
+    try:
+        page.set_content("<body></body>", url="https://example.test/")
+        page.evaluate("""(() => {
+            const frame = document.createElement('iframe');
+            frame.srcdoc = '<body>x</body>';
+            document.body.appendChild(frame);
+        })()""")
+        assert reached_bind.wait(5)
+        child = next(iter(page._owned.frames))
+
+        def close_browser():
+            try:
+                browser.close()
+            except BaseException as error:
+                close_errors.append(error)
+
+        closer = threading.Thread(target=close_browser)
+        closer.start()
+        deadline = time.monotonic() + 5
+        while not group.stopping and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert group.stopping
+        release_bind.set()
+        closer.join(5)
+        assert not closer.is_alive()
+        assert not close_errors
+        assert page.closed and child.closed and group.closed
+        assert not group.members
+        assert not page.tasks.drain_task_errors()
+        assert not child.tasks.drain_task_errors()
+    finally:
+        release_bind.set()
+        if closer is not None:
+            closer.join(5)
+        browser.close()
 
 
 def test_initial_frame_window_does_not_wait_for_its_network_document():
