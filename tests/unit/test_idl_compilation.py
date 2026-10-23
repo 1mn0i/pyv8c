@@ -132,6 +132,20 @@ def test_realm_dependent_callbacks_are_isolated_and_released(bindings):
     assert reference() is None
 
 
+def test_lazy_factory_marks_each_ancestor_from_its_own_spec(bindings):
+    session = BindingSession(bindings, object())
+    cls, specs, shared = session.lazy_factory()("AnimationEvent")
+    assert cls is bindings.class_for("AnimationEvent")
+    assert set(specs) == set(shared)
+    assert shared["AnimationEvent"] is False
+    # Event has a realm-bound constructor. Its child inherits that template.
+    assert shared["Event"] is False
+
+    _, _, collection_shared = session.lazy_factory()("HTMLCollection")
+    # Its Python mixin is the native template parent but has no staged IDL spec.
+    assert collection_shared["HTMLCollection"] is False
+
+
 def test_strict_validation_is_a_single_cached_audit(bindings, monkeypatch):
     bindings.validate()
     before = dict(bindings._binder._compiled)

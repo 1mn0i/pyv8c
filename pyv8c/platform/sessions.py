@@ -84,8 +84,37 @@ class BindingSession:
             chain = self._stage((name,))
             if on_materialize is not None:
                 on_materialize(name)
-            return cls, {interface_name: self._configs[self.class_for(interface_name)]
-                         for interface_name in chain}
+            # Each ancestor has its own spec. A plain child may inherit a realm-bound
+            # constructor or method, so sharing the child's decision is insufficient.
+            specs = {interface_name: self._configs[self.class_for(interface_name)]
+                     for interface_name in chain}
+            plain = {}
+            for interface_name, realm_spec in specs.items():
+                plain_spec = self.bindings.class_config_for(interface_name, None)
+                plain[interface_name] = (realm_spec is plain_spec
+                                         and getattr(plain_spec, "iteration_source", None) is None)
+            # py_class_new inherits parent_class or the Python class's last base.
+            # Follow that exact chain: a plain child cannot retain a realm-bound
+            # parent template, including an internal base absent from the IDL.
+            names_by_class = {self.class_for(interface_name): interface_name
+                              for interface_name in specs}
+            shared = {}
+
+            def can_share(interface_name):
+                if interface_name not in shared:
+                    cls = self.class_for(interface_name)
+                    parent = specs[interface_name].parent_class or cls.__bases__[-1]
+                    parent_name = names_by_class.get(parent)
+                    shared[interface_name] = (plain[interface_name]
+                                              and (parent is object or
+                                                   (parent_name is not None and can_share(parent_name))))
+                return shared[interface_name]
+
+            for interface_name in specs:
+                can_share(interface_name)
+            return (cls,
+                    specs,
+                    shared)
 
         answer.__name__ = "__pyv8c_lazy_interface"
         return answer

@@ -428,14 +428,7 @@ class Window(_SchedulingMixin, WindowProperties):
 
     @classmethod
     def _calling_window(cls, fallback=None):
-        """The window whose script made the call, not the one the call entered.
-
-        A method reached across realms runs with the *callee's* context entered, so
-        ``current_context`` reports the receiver.  V8 keeps the caller as the
-        incumbent, and a message's source is the caller: ``parent.postMessage``
-        called from a frame must name that frame, and Chrome's ``event.source`` is
-        the same object the parent reads from ``iframe.contentWindow``.
-        """
+        """The caller's window: the incumbent context, not the one the call entered."""
         context = pyv8.incumbent_context()
         entry = cls._context_origins.get(id(context)) if context is not None else None
         return entry[0] if entry is not None else fallback
