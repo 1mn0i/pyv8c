@@ -286,7 +286,8 @@ class Window(_SchedulingMixin, WindowProperties):
         #: Set for a window a frame owns; the element is what survives navigation.
         self._frame_element = None
         environment = getattr(getattr(services, "realm_services", None), "environment", None)
-        viewport = BrowserEnvironment.from_dict(environment).viewport
+        self._environment = BrowserEnvironment.from_dict(environment)
+        viewport = self._environment.viewport
         if feature_runtime is None:
             raise RuntimeError("Window requires the Browser FeatureRuntime")
         self._features = _WindowFeatureValues(feature_runtime, self)
@@ -666,7 +667,10 @@ class Window(_SchedulingMixin, WindowProperties):
         if query is MISSING:
             raise missing_error('Window', 'matchMedia', 1, 0, constructor=False)
         self._require_same_origin()
-        return MediaQueryList(dom_string(query), self.innerWidth, self.innerHeight)
+        screen = self._environment.screen
+        return MediaQueryList(dom_string(query), self.innerWidth, self.innerHeight,
+                              screen_width=screen.width, screen_height=screen.height,
+                              dpr=self.devicePixelRatio, color_depth=screen.color_depth)
     def fn_createImageBitmap(self, image=MISSING, *arguments):
         from ..dom.html_canvas import create_image_bitmap
         return create_image_bitmap('Window', image, arguments, getattr(self, '_services', None))

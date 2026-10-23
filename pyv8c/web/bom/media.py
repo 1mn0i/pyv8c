@@ -1,7 +1,7 @@
 """``window.matchMedia`` and the list it hands back.
 
-Only viewport features are resolved; anything else answers from desktop
-defaults.  A viewport that never resizes never fires a change.
+Viewport, screen and resolution features read the same environment as Window and
+Screen.  A viewport that never resizes never fires a change.
 """
 
 import re
@@ -12,8 +12,11 @@ from ...foundation.arguments import MISSING, missing_error
 from ..dom.events import EventTarget
 
 
-#: ``(min-width: 40em)``: one feature per match.
-_FEATURE_RE = re.compile(r"\(\s*([a-z-]+)\s*:\s*([^)]*)\)", re.I)
+#: ``(min-width: 40em)`` and the Media Queries 4 equality form ``(width = 0px)``.
+_FEATURE_RE = re.compile(r"\(\s*([a-z-]+)\s*(:|=)\s*([^)]*)\)", re.I)
+_NUMBER_RE = r"(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?"
+_RESOLUTION_RE = re.compile(rf"^\s*({_NUMBER_RE})\s*(dppx|dpi|dpcm)\s*$", re.I)
+_RATIO_RE = re.compile(rf"^\s*({_NUMBER_RE})(?:\s*/\s*({_NUMBER_RE}))?\s*$", re.I)
 
 
 #: What a desktop browser reports for the features this one does not model.
@@ -32,6 +35,9 @@ _DEFAULT_FEATURES = {
     "overflow-inline": "scroll",
     "color-gamut": "srgb",
     "forced-colors": "none",
+    "dynamic-range": "standard",
+    "prefers-reduced-transparency": "no-preference",
+    "device-posture": "continuous",
 }
 
 
@@ -44,30 +50,68 @@ def _pixels(text):
     return value * 16.0 if (match.group(2) or "px").lower() in ("em", "rem") else value
 
 
-def _matches_feature(name, value, width, height):
+def _resolution(value):
+    match = _RESOLUTION_RE.fullmatch(value)
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    return amount * {"dppx": 1, "dpi": 1 / 96, "dpcm": 2.54 / 96}[match.group(2).lower()]
+
+
+def _ratio(value):
+    match = _RATIO_RE.fullmatch(value)
+    if match is None:
+        return None
+    denominator = float(match.group(2)) if match.group(2) else 1.0
+    return float(match.group(1)) / denominator if denominator else None
+
+
+def _compare(name, actual, wanted):
+    if wanted is None:
+        return False
+    if name.startswith("min-"):
+        return actual >= wanted
+    if name.startswith("max-"):
+        return actual <= wanted
+    return abs(actual - wanted) < 1e-9
+
+
+def _matches_feature(name, value, width, height, screen_width, screen_height,
+                     dpr, color_depth):
     name, value = name.lower(), value.strip().lower()
-    if name in ("min-width", "max-width", "width"):
-        limit = _pixels(value)
-        if limit is None:
+    base = name.removeprefix("min-").removeprefix("max-")
+    dimensions = {"width": width, "height": height,
+                  "device-width": screen_width, "device-height": screen_height}
+    if base in dimensions:
+        return _compare(name, dimensions[base], _pixels(value))
+    if base == "resolution":
+        return _compare(name, dpr, _resolution(value))
+    if base in ("aspect-ratio", "device-aspect-ratio"):
+        numerator, denominator = ((width, height) if base == "aspect-ratio"
+                                  else (screen_width, screen_height))
+        return denominator > 0 and _compare(name, numerator / denominator, _ratio(value))
+    if base == "color":
+        try:
+            return _compare(name, color_depth // 3, float(value))
+        except ValueError:
             return False
-        return {"min-width": width >= limit, "max-width": width <= limit}.get(name, width == limit)
-    if name in ("min-height", "max-height", "height"):
-        limit = _pixels(value)
-        if limit is None:
+    if base == "color-index":
+        try:
+            return _compare(name, 0, float(value))
+        except ValueError:
             return False
-        return {"min-height": height >= limit, "max-height": height <= limit}.get(name, height == limit)
     if name == "orientation":
         return value == ("landscape" if width >= height else "portrait")
-    if name == "aspect-ratio":
-        limit = _pixels(value)
-        return limit is not None and abs((width / height if height else 0) - limit) < 1e-9
     return _DEFAULT_FEATURES.get(name) == value
 
 
-def evaluate(query, width, height):
+def evaluate(query, width, height, *, screen_width=None, screen_height=None,
+             dpr=1.0, color_depth=24):
     """Whether *query* holds for a viewport of this size; an unknown feature
     answers false, as a browser answers an unsupported feature.
     """
+    screen_width = width if screen_width is None else screen_width
+    screen_height = height if screen_height is None else screen_height
     for alternative in str(query).split(","):
         alternative = alternative.strip().lower()
         if not alternative:
@@ -77,9 +121,11 @@ def evaluate(query, width, height):
             alternative = alternative[4:].strip()
         head = alternative.split(" and ", 1)[0].strip()
         matches = head in ("", "all", "screen") if not head.startswith("(") else True
-        matches = matches and all(
-            _matches_feature(name, value, width, height)
-            for name, value in _FEATURE_RE.findall(alternative)
+        features = _FEATURE_RE.findall(alternative)
+        matches = matches and bool(features or not head.startswith("(")) and all(
+            _matches_feature(name, value, width, height, screen_width,
+                             screen_height, dpr, color_depth)
+            for name, _operator, value in features
         )
         if matches != negated:
             return True
@@ -90,9 +136,13 @@ def evaluate(query, width, height):
 class MediaQueryList(EventTarget):
     """``matchMedia``'s answer: the query and whether it holds right now."""
 
-    def __init__(self, query="", width=0, height=0, **_):
+    def __init__(self, query="", width=0, height=0, *, screen_width=None,
+                 screen_height=None, dpr=1.0, color_depth=24, **_):
+        super().__init__()
         self._query = str(query)
-        self._matches = evaluate(self._query, width, height)
+        self._matches = evaluate(self._query, width, height,
+                                 screen_width=screen_width, screen_height=screen_height,
+                                 dpr=dpr, color_depth=color_depth)
 
     def get_media(self): return self._query
     def get_matches(self): return bool(self._matches)
