@@ -559,12 +559,13 @@ class StyleSheetList(ReadOnlyIndexedPropertyMixin, LegacyNamedPropertyMixin):
     """The document's sheets, live: ``<style>`` elements and the ``<link>`` elements
     that are stylesheets, in document order."""
 
-    def __init__(self, document=None, **_):
+    def __init__(self, document=None, root=None, **_):
         self._document = document
+        self._root = document if root is None else root
 
     def _owners(self):
         owners = []
-        for node in self._document._descendants():
+        for node in self._root._descendants():
             name = str(getattr(node, "localName", "") or "").lower()
             rel = str(getattr(node, "attributes", {}).get("rel", "")).lower().split()
             if name == "style" or (name == "link" and "stylesheet" in rel):

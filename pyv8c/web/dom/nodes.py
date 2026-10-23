@@ -679,6 +679,12 @@ class ShadowRoot(DocumentFragment):
             node = getattr(node, "parentNode", None)
         return pyv8.Null
     def get_host(self): return pyv8.Null if self._host is None else self._host
+    def get_styleSheets(self):
+        from .css import StyleSheetList
+        view = getattr(self, "_style_sheets", None)
+        if view is None:
+            view = self._style_sheets = StyleSheetList(self._document(), root=self)
+        return view
     def get_innerHTML(self): return "".join(child.outer_html() for child in self._children)
     def set_innerHTML(self, value):
         self._replace_children(())
