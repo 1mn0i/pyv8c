@@ -310,3 +310,17 @@ def test_a_script_processor_gets_one_block_and_stays_silent():
     assert _close(playback, 384 / RATE)
     # Chrome runs the callback after the samples it was given, so its output never lands.
     assert samples == [0.0, 0.0, 0.0]
+
+
+def test_a_live_context_reports_chromes_base_latency():
+    browser, page = _open()
+    try:
+        assert page.evaluate("""(() => {
+            const context = new AudioContext();
+            const value = [context.sampleRate, context.baseLatency,
+                           context.destination.maxChannelCount];
+            context.close();
+            return value;
+        })()""") == [48000, 0.01, 2]
+    finally:
+        browser.close()

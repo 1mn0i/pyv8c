@@ -95,7 +95,7 @@ assert values["viewport.width"] == 1280
 | `threaded_loaders` | False；是否将宿主回调放入有界线程池 |
 | `cache` / `cache_dir` | True / None；只有指定目录才有持久资源响应缓存 |
 | `frame_rate` | 60.0；页面树的虚拟帧时钟频率，必须为有限正数 |
-| `trace` / `traceable` / `trace_callback` | False / False / None；跟踪配置 |
+| `trace` / `traceable` / `trace_callback` / `trace_scripts` | False / False / None / None；跟踪配置与脚本 URL 筛选 |
 | `expose_unimplemented` | True；是否暴露基线中的未实现接口 |
 | `stub_logging` | `off`；也可为 `on` 或 `verbose`，控制未实现成员日志 |
 | `interface_overrides` | None；接口成员实验性替代回调 |

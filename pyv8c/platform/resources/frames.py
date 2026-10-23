@@ -1,5 +1,5 @@
 """Child document creation, commit and completion, owned by the parent Page."""
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin
 from ...foundation.error_policy import control_exceptions
 from ...web.bom.utils import page_base_url
 from ..execution import NavigationCancelled
@@ -66,12 +66,53 @@ class FrameResourceController:
             page.tasks.post(commit_markup)
             return child
         target = urljoin(page_base_url(page), iframe.get_src() or "about:blank")
+        if target.lower().startswith("javascript:"):
+            self._load_javascript_url(iframe, target, child)
+            return child
         if target != "about:blank":
             return child
         # Chrome fires the initial empty-document load before insertion returns.
         # It is not a navigation: writes from that turn keep this document.
         iframe._resource_started = True
         self.dispatch_frame_completion(iframe, True)
+        return child
+
+    def _load_javascript_url(self, iframe, target, child=None):
+        """Run a javascript: navigation in its frame, not through the resource loader."""
+        page = self.page
+        child = child or self._child_frame_page(iframe, "about:blank")
+        iframe._resource_started = True
+        generation = page.navigation.generation
+        source = unquote(target[len("javascript:"):])
+
+        def run():
+            if (page.closed or child.closed or page.navigation.generation != generation
+                    or iframe._child_services is not child.services or not iframe.isConnected
+                    or iframe.get_src() != target):
+                return
+            try:
+                result = child.evaluate(source, filename=target)
+            except control_exceptions():
+                raise
+            except BaseException:
+                # The navigation does not replace the initial document when its
+                # script throws; the frame still finishes its initial load.
+                self.dispatch_frame_completion(iframe, True)
+                return
+            if not isinstance(result, str):
+                self.dispatch_frame_completion(iframe, True)
+                return
+            try:
+                child.executor.call(child.navigation.set_content, result,
+                                    url="about:blank", replace_initial=True)
+            except NavigationCancelled:
+                return
+            child.lifecycle.when_loaded(lambda ok: page.tasks.post(
+                lambda: self.dispatch_frame_completion(iframe, ok)
+                if not page.closed and not child.closed and iframe._child_services is child.services
+                and page.navigation.generation == generation else None))
+
+        page.tasks.post(run)
         return child
 
     def load_iframe_markup(self, iframe, markup):
@@ -104,6 +145,7 @@ class FrameResourceController:
         child = child_services._page_realm.page if child_services is not None else None
         if child is None or child.closed:
             child = Page(page.profile, url=target, environment=page.environment, parent=page,
+                         trace_scripts=page.trace_scripts,
                          origin=self._frame_origin(iframe))
             iframe._child_services = child.services
             page.services.context_services.track_frame(child)
@@ -138,6 +180,9 @@ class FrameResourceController:
         if markup is not None:
             return self.load_iframe_markup(iframe, str(markup))
         target = urljoin(page_base_url(page), iframe.get_src() or "about:blank")
+        if target.lower().startswith("javascript:"):
+            self.page.document_resources.cancel_node(iframe)
+            return self._load_javascript_url(iframe, target)
         if page.navigation.has_navigation and not page.navigation.parsing:
             self.page.document_resources.discover_element_resource(iframe)
             return getattr(iframe, "_child_services", None)

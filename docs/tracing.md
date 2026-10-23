@@ -23,6 +23,24 @@ finally:
 
 Profile 和 Page 可以设置各自初始 trace，Browser 上的配置不广播改变已有页面。iframe 及 Worker 的初始跟踪由各自创建路径决定；修改父页面开关不能当作全页面树同步开关。
 
+## 按脚本 URL 筛选
+
+`trace_scripts` 接受一个 Glob 模式字符串或非空模式列表。模式对**完整的脚本 URL**做区分大小写的匹配，`*` 匹配任意长度、`?` 匹配单个字符；查询参数参与匹配。筛选发生在原生 trace 入口，未匹配的操作不会转换 trace 参数或进入回调。
+
+```python
+browser = Browser(trace=True, trace_scripts="https://cdn.example.test/sdk/p.js*")
+
+# 可同时观察多个文件，包括查询参数不断变化的版本。
+browser = Browser(trace=True, trace_scripts=[
+    "https://cdn.example.test/sdk/p.js?*",
+    "https://cdn.example.test/sdk/ips.js?*",
+])
+```
+
+`new_profile(trace_scripts=...)` 和 `new_page(trace_scripts=...)` 可覆盖上层配置；省略时继承，显式传入 `None` 时清除上层筛选并跟踪所有脚本。iframe 继承父页面的模式，Worker 继承创建它的页面的模式；导航后的新 Realm 保留本页面配置。`page.trace` 仍只负责开启或关闭跟踪。
+
+归属依据是操作发生时 JS 栈中最近的具名脚本，不是发出资源请求的 URL 或 TOP/FRAME/Worker 标签。目标脚本注册的定时器、事件和 Promise 回调在执行时也会被筛中。内联脚本目前使用文档 URL 作为编译文件名；没有可归属脚本名的宿主操作在启用筛选后不记录。未设置 `trace_scripts` 时维持原有 trace 行为。
+
 ## 事件回调
 
 默认使用 Loguru。自定义 trace_callback 接收八个参数：

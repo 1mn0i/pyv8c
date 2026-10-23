@@ -29,6 +29,23 @@ from .resources.cache import ResourceCache
 #: With ``threaded_loaders``, loader and interceptor callbacks run here instead of on
 #: the page's owner thread, or a slow one would freeze the realm.
 _LOADER_WORKERS = 4
+_TRACE_SCRIPTS_INHERIT = object()
+
+
+def _trace_script_patterns(value):
+    """Freeze a source-URL filter without treating a string as characters."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        patterns = (value,)
+    else:
+        try:
+            patterns = tuple(value)
+        except TypeError as exc:
+            raise TypeError("trace_scripts must be a string or iterable of strings") from exc
+    if not patterns or any(not isinstance(pattern, str) or not pattern for pattern in patterns):
+        raise ValueError("trace_scripts must contain non-empty string patterns")
+    return patterns
 
 
 class Profile:
@@ -42,7 +59,8 @@ class Profile:
     except for a disk cache directory when one was configured.
     """
 
-    def __init__(self, browser, *, proxy=None, trace=None, traceable=None, trace_callback=None):
+    def __init__(self, browser, *, proxy=None, trace=None, traceable=None, trace_callback=None,
+                 trace_scripts=_TRACE_SCRIPTS_INHERIT):
         self.browser, self.pages = browser, []
         self.cookies = CookieJar()
         #: Its own proxy setting, or the browser's while it was given none.
@@ -51,6 +69,8 @@ class Profile:
         self.trace = browser.trace if trace is None else bool(trace)
         self.traceable = (browser.traceable if traceable is None else bool(traceable)) or self.trace
         self.trace_callback = browser.trace_callback if trace_callback is None else trace_callback
+        self.trace_scripts = (browser.trace_scripts if trace_scripts is _TRACE_SCRIPTS_INHERIT
+                              else _trace_script_patterns(trace_scripts))
         self.resource_cache_dir = browser.cache_dir if browser.cache_enabled else None
         self.resource_cache_lock = threading.RLock()
         self.resource_cache = ResourceCache(self)
@@ -103,6 +123,7 @@ class Profile:
                  url: str = "about:blank",
                  *,
                  trace: bool | None = None,
+                 trace_scripts=_TRACE_SCRIPTS_INHERIT,
                  environment: dict | BrowserEnvironment | None = None) -> Page:
         """Create a page in this profile and return it.
 
@@ -115,6 +136,8 @@ class Profile:
             touching the loader.
         :param trace: start this page traced; ``None`` inherits the Browser
             setting.
+        :param trace_scripts: source-URL Glob patterns for this page; omitted
+            inherits the profile, while ``None`` removes its filter.
         :param environment: keys overlaying the Browser environment for this page
             only.
         :returns: the new :class:`Page <pyv8c.platform.page.Page>`, appended to
@@ -122,7 +145,10 @@ class Profile:
         :raises InvalidStateError: the profile or its browser is closed.
         """
         self._ensure_open()
-        page = Page(self, trace=trace, environment=environment)
+        selected_scripts = (self.trace_scripts if trace_scripts is _TRACE_SCRIPTS_INHERIT
+                            else _trace_script_patterns(trace_scripts))
+        page = Page(self, trace=trace, trace_scripts=selected_scripts,
+                    environment=environment)
         self.pages.append(page)
         if str(url) != "about:blank":
             try:
@@ -229,6 +255,7 @@ class Browser:
                  traceable: bool = False,
                  trace: bool = False,
                  trace_callback: Callable | None = None,
+                 trace_scripts=None,
                  cache: bool = True,
                  cache_dir: str | os.PathLike | None = None,
                  expose_unimplemented: bool = True,
@@ -286,6 +313,8 @@ class Browser:
         :param default_headers: headers every ``page.net`` request starts from.
         :param trace: start each page with tracing on.
         :param trace_callback: receives trace events instead of Loguru.
+        :param trace_scripts: one or more full script-URL Glob patterns.  ``None``
+            reports all scripts; ``*`` and ``?`` are wildcards.
         :param traceable: allow a page to switch tracing on later (see
             :attr:`Page.trace <pyv8c.platform.page.Page.trace>`); ``trace=True``
             implies it.
@@ -322,6 +351,7 @@ class Browser:
         if trace_callback is not None and not callable(trace_callback):
             raise TypeError("trace_callback must be callable or None")
         self.trace_callback = trace_callback
+        self.trace_scripts = _trace_script_patterns(trace_scripts)
         started = time.perf_counter_ns()
         self._closed = False
         self._closing = False
@@ -404,7 +434,8 @@ class Browser:
 
     def new_profile(self, *, proxy: str | None = None, trace: bool | None = None,
                     traceable: bool | None = None,
-                    trace_callback: Callable | None = None) -> Profile:
+                    trace_callback: Callable | None = None,
+                    trace_scripts=_TRACE_SCRIPTS_INHERIT) -> Profile:
         """Create an isolated profile: its own cookies, blobs and network stack.
 
         :param proxy: where this profile's traffic goes, overriding
@@ -417,6 +448,8 @@ class Browser:
         :param traceable: let its pages switch tracing on later, same defaulting.
         :param trace_callback: receive this profile's events instead of the
             browser's callback.
+        :param trace_scripts: override the browser's source-URL patterns;
+            omitted inherits them, while ``None`` removes the filter.
         :returns: the new :class:`Profile`, appended to :attr:`profiles`.
         :raises InvalidStateError: the browser is closed.
         :raises ValueError: the proxy value is not an ``http``/``https`` URL.
@@ -427,7 +460,8 @@ class Browser:
         if trace_callback is not None and not callable(trace_callback):
             raise TypeError("trace_callback must be callable or None")
         profile = Profile(self, proxy=None if proxy is None else normalize_proxy(proxy),
-                          trace=trace, traceable=traceable, trace_callback=trace_callback)
+                          trace=trace, traceable=traceable, trace_callback=trace_callback,
+                          trace_scripts=trace_scripts)
         with self._state_lock:
             accepted = not (self._closed or self._closing)
             if accepted:

@@ -108,7 +108,8 @@ class Page:
     ``docs/usage.md``).
     """
 
-    def __init__(self, profile, url="about:blank", *, trace=None, environment=None, parent=None, origin=None):
+    def __init__(self, profile, url="about:blank", *, trace=None, trace_scripts=None,
+                 environment=None, parent=None, origin=None):
         self.profile = profile
         self.parent_page = parent
         self.top_page = parent.top_page if parent is not None else self
@@ -128,6 +129,7 @@ class Page:
         self.resource_interceptor = profile.browser.resource_interceptor
         # Overriding the browser default here leaves the other pages' setting alone.
         self._trace = profile.trace if trace is None else bool(trace)
+        self.trace_scripts = trace_scripts
         self.closed = False
         self._resource_scope = ResourceScope()
         self.resource_ownership = ResourceOwnership(self._resource_scope)

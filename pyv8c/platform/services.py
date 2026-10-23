@@ -27,6 +27,7 @@ class WorkerContext:
     bindings: Any
     environment: Any
     trace: bool
+    trace_scripts: tuple[str, ...] | None
     expose_unimplemented: bool
     stub_logging: str
     devtools: Any | None
@@ -501,6 +502,7 @@ class _WorkerCapability:
             bindings=browser.bindings,
             environment=self._owner.environment,
             trace=bool(self._owner.trace),
+            trace_scripts=self._owner._page_realm.page.trace_scripts,
             expose_unimplemented=browser.expose_unimplemented,
             stub_logging=browser.stub_logging,
             devtools=self._owner._profile._devtools,

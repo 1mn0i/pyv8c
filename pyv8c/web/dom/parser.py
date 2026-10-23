@@ -112,7 +112,7 @@ class DOMParser(_TreeBuilderMixin, HTMLParser):
         tag = tag.lower()
         self._pop_auto_closing(tag)
         node = self._create_element(tag, attrs)
-        if tag not in self.raw_text_tags:
+        if tag not in self.raw_text_tags and (tag != "iframe" or node.isConnected):
             self.services.resource_services.discover_element_resource(node)
         if tag not in self.void: self.stack.append(node)
 

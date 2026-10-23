@@ -9,6 +9,7 @@ inside its containing block, ``position: relative`` slides it afterwards, and
 of the nearest positioned ancestor.
 """
 import re
+import math
 from functools import lru_cache
 from dataclasses import dataclass, field
 
@@ -30,7 +31,7 @@ from .css import (
 )
 from .html_elements import Element
 from .selectors import matches
-from .css_computed import resolve as resolve_computed_values, length_math
+from .css_computed import resolve as resolve_computed_values, length_math, absolute_length_px
 
 
 def _number(value, base=0.0):
@@ -45,9 +46,12 @@ def _px(value, reference=0.0):
         computed = length_math(value, reference)
         if computed is not None:
             return computed
-    if value.endswith("px"): return _number(value)
+    if value.endswith("px"): return math.trunc(_number(value) * 64) / 64
     if value.endswith("%"): return reference * _number(value) / 100.0
     if value in ("0", "0px"): return 0.0
+    absolute = absolute_length_px(value)
+    if absolute is not None:
+        return math.trunc(absolute * 64) / 64
     return _number(value, 0.0)
 
 

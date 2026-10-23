@@ -23,14 +23,14 @@ def _baseline_document():
 def _custom_baseline(path):
     document = _document()
     interfaces = document["interfaces"]
-    interfaces["ReadableStream"]["parent"] = "EventTarget"
-    interfaces["ReadableStream"]["tag"] = "VersionedReadableStream"
-    interfaces["ReadableStream"]["constructor"]["length"] = 2
-    members = interfaces["ReadableStream"]["members"]["prototype"]
-    reader = next(member for member in members if member["name"] == "getReader")
-    members.remove(reader)
-    replacement = copy.deepcopy(reader)
-    replacement["name"] = "alternateGetReader"
+    interfaces["DOMQuad"]["parent"] = "EventTarget"
+    interfaces["DOMQuad"]["tag"] = "VersionedDOMQuad"
+    interfaces["DOMQuad"]["constructor"]["length"] = 2
+    members = interfaces["DOMQuad"]["members"]["prototype"]
+    bounds = next(member for member in members if member["name"] == "getBounds")
+    members.remove(bounds)
+    replacement = copy.deepcopy(bounds)
+    replacement["name"] = "alternateGetBounds"
     members.append(replacement)
     path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     return document
@@ -59,9 +59,9 @@ def test_custom_baseline_path_is_absolute_and_snapshot_is_frozen(tmp_path, monke
         document["idl"]["note"] = "changed-after-browser-creation"
         baseline.write_text(json.dumps(document), encoding="utf-8")
         assert browser.idl_info["sha256"] == original_hash
-        assert "alternateGetReader" in {
+        assert "alternateGetBounds" in {
             member["name"]
-            for member in browser.bindings.idl.interfaces["ReadableStream"]["members"]["prototype"]
+            for member in browser.bindings.idl.interfaces["DOMQuad"]["members"]["prototype"]
         }
         newer = Browser(idl_path=baseline, stub_logging="off")
         try:
@@ -122,21 +122,25 @@ def test_two_browsers_keep_generated_classes_and_templates_isolated(tmp_path):
     default_browser = Browser(stub_logging="off")
     custom_browser = Browser(idl_path=custom, stub_logging="off")
     try:
-        assert default_browser.bindings.class_for("ReadableStream") is not custom_browser.bindings.class_for("ReadableStream")
+        assert default_browser.bindings.class_for("DOMQuad") is not custom_browser.bindings.class_for("DOMQuad")
+        # A hand-written implementation remains shared; this test isolates the
+        # generated class and its per-baseline V8 template instead.
+        assert default_browser.bindings.class_for("ReadableStream") is custom_browser.bindings.class_for("ReadableStream")
         default_page = default_browser.new_profile().new_page()
         custom_page = custom_browser.new_profile().new_page()
-        assert default_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["function", "undefined"]
-        assert custom_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["undefined", "function"]
-        assert default_page.evaluate("Object.getPrototypeOf(ReadableStream.prototype) === Object.prototype") is True
-        assert custom_page.evaluate("Object.getPrototypeOf(ReadableStream.prototype) === EventTarget.prototype") is True
-        assert default_page.evaluate("[ReadableStream.length, Object.prototype.toString.call(new ReadableStream())]") == [0, "[object ReadableStream]"]
-        assert custom_page.evaluate("[ReadableStream.length, Object.prototype.toString.call(new ReadableStream())]") == [2, "[object VersionedReadableStream]"]
+        assert default_page.evaluate("(() => { const stream = new ReadableStream(); const reader = stream.getReader(); return [stream.locked, reader instanceof ReadableStreamDefaultReader]; })()") == [True, True]
+        assert default_page.evaluate("[typeof DOMQuad.prototype.getBounds, typeof DOMQuad.prototype.alternateGetBounds]") == ["function", "undefined"]
+        assert custom_page.evaluate("[typeof DOMQuad.prototype.getBounds, typeof DOMQuad.prototype.alternateGetBounds]") == ["undefined", "function"]
+        assert default_page.evaluate("Object.getPrototypeOf(DOMQuad.prototype) === Object.prototype") is True
+        assert custom_page.evaluate("Object.getPrototypeOf(DOMQuad.prototype) === EventTarget.prototype") is True
+        assert default_page.evaluate("[DOMQuad.length, Object.prototype.toString.call(new DOMQuad())]") == [0, "[object DOMQuad]"]
+        assert custom_page.evaluate("[DOMQuad.length, Object.prototype.toString.call(new DOMQuad())]") == [2, "[object VersionedDOMQuad]"]
 
         custom_page.set_content("<main><div id='value'></div></main>")
         assert custom_page.evaluate("(() => { const node=document.querySelector('#value'); return [node instanceof Node, node instanceof Element, document instanceof Document, document.querySelector('#value') === node]; })()") == [True, True, True, True]
 
         default_browser.close()
-        assert custom_page.evaluate("new ReadableStream().alternateGetReader()") is pyv8.Undefined
+        assert custom_page.evaluate("new DOMQuad().alternateGetBounds()") is pyv8.Undefined
         assert custom_page.evaluate("typeof URL === 'function'") is True
     finally:
         default_browser.close()
@@ -185,17 +189,17 @@ def test_unresolved_signatures_do_not_prevent_structurally_valid_bindings(tmp_pa
         browser.close()
 
     document = _document()
-    parse = next(
-        member for member in document["interfaces"]["ReadableStream"]["members"]["prototype"]
-        if member["name"] == "getReader"
+    bounds = next(
+        member for member in document["interfaces"]["DOMQuad"]["members"]["prototype"]
+        if member["name"] == "getBounds"
     )
-    parse.setdefault("signature", {})["status"] = "unresolved"
+    bounds.setdefault("signature", {})["status"] = "unresolved"
     path = tmp_path / "unresolved-stub.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     browser = Browser(idl_path=path, stub_logging="off")
     try:
         page = browser.new_profile().new_page()
-        assert page.evaluate("new ReadableStream().getReader(1, 2, 3)") is pyv8.Undefined
+        assert page.evaluate("new DOMQuad().getBounds(1, 2, 3)") is pyv8.Undefined
     finally:
         browser.close()
 
@@ -216,11 +220,11 @@ def test_worker_and_iframe_reuse_their_browser_bindings(tmp_path):
         page.run_until_idle(timeout=1)
         frame_page = next(iter(page._owned.frames))
         assert frame_page.profile.browser.bindings is browser.bindings
-        assert frame_page.evaluate("[typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]") == ["undefined", "function"]
+        assert frame_page.evaluate("[typeof DOMQuad.prototype.getBounds, typeof DOMQuad.prototype.alternateGetBounds]") == ["undefined", "function"]
 
         page.evaluate("""(() => {
           const source = new Blob([
-            "postMessage([typeof ReadableStream.prototype.getReader, typeof ReadableStream.prototype.alternateGetReader]);"
+            "postMessage([typeof DOMQuad.prototype.getBounds, typeof DOMQuad.prototype.alternateGetBounds]);"
           ], {type: "text/javascript"});
           const worker = new Worker(URL.createObjectURL(source));
           worker.onmessage = event => window.__baselineFromWorker = event.data;

@@ -21,7 +21,9 @@ from .services import WorkerRealmServices
 from .sessions import BindingSession
 
 
-def _v8_context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None, traceable=False, exposure_type=None, isolate=None, reuse_global=None):
+def _v8_context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None,
+                       traceable=False, trace_scripts=None, exposure_type=None, isolate=None,
+                       reuse_global=None):
     """Shared native V8Context arguments assembled from one binding session.
 
     ``isolate`` and ``reuse_global`` go in only when the caller has one: the worker
@@ -31,6 +33,7 @@ def _v8_context_kwargs(session, context_type, trace, on_materialize=None, trace_
     kwargs = {
         "trace": trace,
         "traceable": traceable,
+        "trace_scripts": trace_scripts,
         "trace_callback": (log_trace if trace_callback is None else trace_callback) if trace or traceable else None,
         "ctx_type": context_type,
         "lazy_factory": session.lazy_factory(exposure_type or context_type, on_materialize=on_materialize),
@@ -138,7 +141,8 @@ class WorkerRealm:
         self.v8_context = self.isolate.context(
             scope, microtask_queue=self.microtasks, **_v8_context_kwargs(session, "Worker", config.trace,
                                      trace_callback=config.browser.trace_callback,
-                                     traceable=config.browser.traceable),
+                                     traceable=config.browser.traceable,
+                                     trace_scripts=config.trace_scripts),
         )
         _declare_realm_interfaces(
             self.v8_context,
@@ -238,6 +242,7 @@ class PageRealm:
             on_materialize=self._record_deferred_materialized,
             trace_callback=page.profile.trace_callback,
             traceable=page.profile.traceable,
+            trace_scripts=page.trace_scripts,
             isolate=page.execution_group.isolate,
             reuse_global=page.global_proxy,
         ), microtask_queue=self.agent.microtasks)

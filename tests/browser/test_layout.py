@@ -283,3 +283,60 @@ def test_style_rules_and_basic_flex_grid_geometry(page):
         return [flex.offsetHeight, getComputedStyle(span).color,
             span.offsetHeight, flex.clientWidth === flex.offsetWidth];
     })()""") == [10, "red", 18, True]
+
+
+def test_absolute_css_units_have_chrome_used_pixel_sizes(page):
+    assert page.evaluate("""(() => {
+      const parent = document.createElement('div');
+      parent.style.cssText = 'position:fixed;left:-99999px;top:0;width:0;height:0;'
+          + 'visibility:hidden;pointer-events:none;contain:strict';
+      document.body.appendChild(parent);
+      return ['1.03in', '2.6162cm', '74.16pt', '1.0053in'].map(value => {
+        const box = document.createElement('div');
+        box.style.cssText = `position:absolute;width:${value};height:${value}`;
+        parent.appendChild(box);
+        return [box.style.width, getComputedStyle(box).width,
+                box.getBoundingClientRect().width, box.offsetWidth];
+      });
+    })()""") == [
+        ['1.03in', '98.875px', 98.875, 99],
+        ['2.6162cm', '98.875px', 98.875, 99],
+        ['74.16pt', '98.875px', 98.875, 99],
+        ['1.0053in', '96.5px', 96.5, 97],
+    ]
+
+
+def test_css_math_functions_produce_used_widths(page):
+    assert page.evaluate("""(() => {
+      return ['calc(1px * pi)', 'calc(1px * e)',
+              'calc(1px * (1 + sin(0)))', 'calc(1px * tan(0.5))'].map(value => {
+        const box = document.createElement('div');
+        box.style.width = value;
+        document.body.appendChild(box);
+        return [box.style.width, getComputedStyle(box).width,
+                box.getBoundingClientRect().width];
+      });
+    })()""") == [
+        ['calc(3.14159px)', '3.14062px', 3.140625],
+        ['calc(2.71828px)', '2.70312px', 2.703125],
+        ['calc(1px)', '1px', 1],
+        ['calc(0.546302px)', '0.53125px', 0.53125],
+    ]
+
+
+def test_root_client_box_uses_viewport_even_with_empty_body(page):
+    assert page.evaluate("""[document.documentElement.clientWidth === innerWidth,
+      document.documentElement.clientHeight === innerHeight,
+      document.body.clientHeight]""") == [True, True, 0]
+
+
+def test_negative_absolute_positions_keep_computed_precision_and_quantize_geometry(page):
+    assert page.evaluate("""(() => {
+      const box = document.createElement('div');
+      box.style.cssText = 'position:fixed;left:-1.0053in;top:-1.03in;'
+          + 'width:1in;height:1in';
+      document.body.appendChild(box);
+      const style = getComputedStyle(box);
+      const rect = box.getBoundingClientRect();
+      return [style.left, style.top, rect.left, rect.top];
+    })()""") == ['-96.5088px', '-98.88px', -96.5, -98.875]

@@ -44,6 +44,7 @@ from .navigation import Navigation
 from .trusted_types import TrustedTypePolicyFactory
 from .visual_viewport import VisualViewport
 from .performance import Performance
+from .picture_in_picture import DocumentPictureInPicture
 from .scheduling import _SchedulingMixin
 from .utils import deny_cross_origin, is_secure_context, window_secure_context
 
@@ -155,6 +156,8 @@ def _singleton_values(window):
         "crashReport": CrashReportContext,
         "launchQueue": LaunchQueue,
         "speechSynthesis": lambda: SpeechSynthesis(services=window._services),
+        "documentPictureInPicture": lambda: DocumentPictureInPicture(
+            services=window._services),
         "styleMedia": lambda: StyleMedia(window),
         "scheduler": lambda: Scheduler(services=window._services),
         "cookieStore": lambda: CookieStore(services=window._services),
@@ -537,7 +540,7 @@ class Window(_SchedulingMixin, WindowProperties):
 
     def get_origin(self):
         self._require_same_origin()
-        return self.location.get_origin()
+        return serialize_origin(self._origin)
 
     def get_scrollX(self):
         """How far the view has scrolled: nothing here scrolls one."""
@@ -618,6 +621,13 @@ class Window(_SchedulingMixin, WindowProperties):
     def get_launchQueue(self): self._require_same_origin(); return self._window_value("launchQueue")
     def get_speechSynthesis(self): self._require_same_origin(); return self._window_value("speechSynthesis")
 
+    def get_documentPictureInPicture(self):
+        """Picture-in-picture is secure-context only: an insecure page has none."""
+        self._require_same_origin()
+        if not window_secure_context(self):
+            return pyv8.Undefined
+        return self._window_value("documentPictureInPicture")
+
     def get_styleMedia(self):
         self._require_same_origin()
         return self._window_value("styleMedia")
@@ -653,7 +663,6 @@ class Window(_SchedulingMixin, WindowProperties):
         if not window_secure_context(self):
             return pyv8.Undefined
         return self._window_value("cookieStore")
-    def get_documentPictureInPicture(self): self._require_same_origin(); return pyv8.Undefined
 
     def get_locationbar(self): self._require_same_origin(); return self._window_value("locationbar")
     def get_menubar(self): self._require_same_origin(); return self._window_value("menubar")

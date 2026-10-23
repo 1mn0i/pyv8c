@@ -8,6 +8,59 @@ import math
 import operator
 import re
 
+
+_ABSOLUTE_LENGTH = re.compile(
+    r'^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(px|in|cm|mm|q|pt|pc)$', re.I)
+_ABSOLUTE_FACTORS = {
+    'px': 1.0, 'in': 96.0, 'cm': 96.0 / 2.54,
+    'mm': 96.0 / 25.4, 'q': 96.0 / 101.6,
+    'pt': 96.0 / 72.0, 'pc': 16.0,
+}
+_ABSOLUTE_LENGTH_PROPERTIES = frozenset({
+    'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
+    'left', 'right', 'top', 'bottom', 'flex-basis', 'column-width',
+    'letter-spacing', 'word-spacing', 'line-height', 'text-indent',
+    'outline-width',
+    *(f'{kind}-{side}' for kind in ('margin', 'padding')
+      for side in ('top', 'right', 'bottom', 'left')),
+    *(f'border-{side}-width' for side in ('top', 'right', 'bottom', 'left')),
+})
+
+
+def absolute_length_px(value):
+    """An absolute CSS length in px; unrelated values stay with their own parser."""
+    match = _ABSOLUTE_LENGTH.fullmatch(str(value).strip())
+    if match is None:
+        return None
+    return float(match[1]) * _ABSOLUTE_FACTORS[match[2].lower()]
+
+
+def _layout_px(value):
+    # Blink stores used geometry in 1/64 CSS-pixel units, truncated toward zero.
+    return math.trunc(value * 64) / 64
+
+
+def _computed_absolute_length(name, value):
+    pixels = absolute_length_px(value)
+    if pixels is None and str(value).strip().lower().startswith('calc(') and '%' not in value:
+        pixels = length_math(value)
+    if pixels is None or str(value).strip().lower().endswith('px'):
+        return value
+    if name in ('width', 'height'):
+        pixels = _layout_px(pixels)
+    return f'{pixels}px'
+
+
+def serialize_computed_length(name, value):
+    """Expose Blink's four-decimal CSSOM text without losing layout precision."""
+    if name not in _ABSOLUTE_LENGTH_PROPERTIES or not str(value).endswith('px'):
+        return value
+    match = _ABSOLUTE_LENGTH.fullmatch(str(value))
+    if match is None:
+        return value
+    text = f'{float(match[1]):.6g}'
+    return f'{text}px'
+
 from .matrix import identity, _float32, _multiply, _rotation, _scaling, _translation, _is_2d, _TWO_D
 
 
@@ -66,6 +119,8 @@ def _arithmetic(text):
             return value(node.body)
         if isinstance(node, ast.Constant) and type(node.value) in (int, float):
             return float(node.value)
+        if isinstance(node, ast.Name) and node.id in ('pi', 'e'):
+            return getattr(math, node.id)
         if isinstance(node, ast.BinOp) and type(node.op) in _BINARY:
             return _BINARY[type(node.op)](value(node.left), value(node.right))
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
@@ -77,6 +132,9 @@ def _arithmetic(text):
             if node.func.id == 'clamp' and len(arguments) == 3:
                 low, preferred, high = arguments
                 return max(low, min(preferred, high))
+            unary = {'sin': math.sin, 'cos': math.cos, 'tan': math.tan}
+            if node.func.id in unary and len(arguments) == 1:
+                return unary[node.func.id](arguments[0])
         raise ValueError('not a numeric expression')
     result = value(tree)
     if not math.isfinite(result):
@@ -223,5 +281,7 @@ def resolve(values, properties=None):
             value = numeric_color(value)
         elif name == 'transform':
             value = transform(value)
+        elif name in _ABSOLUTE_LENGTH_PROPERTIES:
+            value = _computed_absolute_length(name, value)
         result[name] = value
     return result

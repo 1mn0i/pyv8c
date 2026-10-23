@@ -20,6 +20,79 @@ from pyv8c import Browser
 from pyv8c.platform.execution import WindowExecutor
 
 
+def test_javascript_iframe_uses_its_inherited_document_without_a_resource_request():
+    requests = []
+
+    def intercept(url, request):
+        requests.append((url, request.get('destination')))
+        return None
+
+    browser = Browser(real_network=False, resource_interceptor=intercept, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://example.test/')
+        before = page.evaluate("""(() => {
+          const div = document.createElement('div');
+          div.innerHTML = '<iframe src="javascript:;"></iframe>';
+          window.frame = div.children[0];
+          window.frameEvents = [];
+          frame.addEventListener('load', () => frameEvents.push('load'));
+          frame.addEventListener('error', () => frameEvents.push('error'));
+          const detached = [frame.isConnected, frame.contentWindow === null];
+          document.body.appendChild(div);
+          return detached;
+        })()""")
+        assert before == [False, True]
+        page.run_until_idle(timeout=3)
+        assert page.evaluate("""({url: frame.contentDocument.URL,
+          href: frame.contentWindow.location.href,
+          origin: frame.contentWindow.origin,
+          events: frameEvents})""") == {
+            'url': 'about:blank', 'href': 'about:blank',
+            'origin': 'https://example.test', 'events': ['load'],
+        }
+        assert requests == []
+    finally:
+        browser.close()
+
+
+def test_javascript_iframe_string_result_replaces_inherited_document():
+    browser = Browser(real_network=False, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body><iframe src="javascript:&#39;&lt;p&gt;ok&lt;/p&gt;&#39;"></iframe></body>',
+                         url='https://example.test/')
+        page.run_until_idle(timeout=3)
+        assert page.evaluate("""(() => {
+          const frame = document.querySelector('iframe');
+          return [frame.contentDocument.URL, frame.contentDocument.body.textContent,
+                  frame.contentWindow.location.href];
+        })()""") == ['about:blank', 'ok', 'about:blank']
+    finally:
+        browser.close()
+
+
+def test_connected_iframe_javascript_src_does_not_duplicate_load():
+    browser = Browser(real_network=False, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://example.test/')
+        page.evaluate("""(() => {
+          window.events = [];
+          const frame = document.createElement('iframe');
+          window.frame = frame;
+          frame.addEventListener('load', () => events.push('load'));
+          document.body.appendChild(frame);
+        })()""")
+        page.run_until_idle(timeout=3)
+        assert page.evaluate('events') == ['load']
+        page.evaluate("frame.src = 'javascript:;' ")
+        page.run_until_idle(timeout=3)
+        assert page.evaluate("[events.length, frame.contentDocument.URL]") == [1, 'about:blank']
+    finally:
+        browser.close()
+
+
 def test_window_document_getter_accepts_same_origin_frame_receiver():
     browser = Browser(stub_logging='off')
     try:

@@ -1,6 +1,7 @@
 """HTML element implementations: the tag-specific interfaces and the tag-to-class
 factory."""
 import re
+import math
 from html import escape
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -282,9 +283,17 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         if value is None: value = self._attributes_view = NamedNodeMap(self)
         return value
     def get_clientWidth(self):
+        document = self.ownerDocument
+        if (self.localName == 'html' and self.isConnected and document is not None
+                and document.get_documentElement() is self):
+            return document.get_defaultView().get_innerWidth()
         from .layout import layout
         return int(round(layout(self).padding_box_width))
     def get_clientHeight(self):
+        document = self.ownerDocument
+        if (self.localName == 'html' and self.isConnected and document is not None
+                and document.get_documentElement() is self):
+            return document.get_defaultView().get_innerHeight()
         from .layout import layout
         return int(round(layout(self).padding_box_height))
     def get_scrollWidth(self):
@@ -859,10 +868,10 @@ class HTMLElement(Element):
         return int(round(box.left - left))
     def get_offsetWidth(self):
         from .layout import layout
-        return int(round(layout(self).width))
+        return math.floor(layout(self).width + 0.5)
     def get_offsetHeight(self):
         from .layout import layout
-        return int(round(layout(self).height))
+        return math.floor(layout(self).height + 0.5)
 
     def get_tabIndex(self):
         """The element's tab index: the attribute when present, else Chromium's default
