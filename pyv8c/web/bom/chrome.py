@@ -9,6 +9,8 @@ The global is writable and enumerable but non-configurable, and its members are 
 functions (``String(chrome.csi)`` reports native code).  It is built by :data:`_BOOTSTRAP`
 in JavaScript rather than by a host class, so its prototype stays ``Object.prototype``.
 """
+import math
+
 import pyv8
 
 from ...foundation.arguments import IdlArgumentError
@@ -118,6 +120,7 @@ class ChromeBindings:
     def _now(self):
         """The document's origin, how far it has come, and its navigation record."""
         clock = clock_of(self._services)
+        #: ``csi.startE`` is ``performance.timeOrigin`` exactly, fraction included.
         return clock.time_origin(), clock.now_ms(), (navigation_record(self._services) or {})
 
     def _milestone(self, record, name, origin, elapsed):
@@ -132,10 +135,15 @@ class ChromeBindings:
         if offset is None:
             return 0.0
         offset = float(offset)
-        return origin + offset if offset <= elapsed else 0.0
+        if offset > elapsed:
+            return 0.0
+        #: Read on the same whole-millisecond clock ``performance.timing`` uses.
+        return float(math.floor(origin) + math.floor(offset))
 
     def loadTimes(self, *_arguments):
         origin, elapsed, record = self._now()
+        #: The legacy whole-millisecond clock, so ``requestTime`` matches ``navigationStart``.
+        origin = float(math.floor(origin))
         values = {
             "requestTime": origin,
             "startLoadTime": origin,

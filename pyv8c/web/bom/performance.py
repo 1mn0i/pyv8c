@@ -1,5 +1,7 @@
 """``window.performance``: the clock, and the entries this document measured."""
 
+import math
+
 import pyv8
 from pyv8 import AttributeSpec
 
@@ -68,15 +70,15 @@ def navigation_record(services):
 
 def _timing_reader(field):
     def read(self):
-        #: Legacy ``PerformanceTiming`` reports epoch milliseconds; the record keeps
-        #: offsets from the origin.  A field it lacks was never reached and reads 0 --
-        #: asked by membership, since a milestone reached at offset 0 is still reached.
+        #: Legacy ``PerformanceTiming`` is whole epoch milliseconds; a field it lacks
+        #: was never reached and reads 0.
+        origin = math.floor(self._clock.time_origin())
         if field == "navigationStart":
-            return self._clock.time_origin()
+            return float(origin)
         record = navigation_record(self._services)
         if record is None or field not in record:
             return 0.0
-        return self._clock.time_origin() + float(record[field])
+        return float(origin + math.floor(float(record[field])))
     return read
 
 for _field in _TIMING_FIELDS:
@@ -338,7 +340,8 @@ class Performance(EventTarget):
     _navigation_id = 1
 
     def __init__(self, *_extra, services=pyv8.Undefined, _realm=None, **_):
-        self._services = None if services is pyv8.Undefined else (services or _realm)
+        resolved_services = _realm if services is pyv8.Undefined else (services or _realm)
+        super().__init__(services=resolved_services)
         self._entries = []
         self._record_entries = {}
         self._observers = []
@@ -353,6 +356,7 @@ class Performance(EventTarget):
         return entry
 
     def get_timeOrigin(self):
+        """Epoch milliseconds at high resolution: Chrome reports a fraction here too."""
         return clock_of(self._services).time_origin()
 
     def get_timing(self):
