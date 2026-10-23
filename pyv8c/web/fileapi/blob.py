@@ -2,7 +2,7 @@
 import pyv8
 
 from ...idl import interface
-from ...foundation.arguments import dictionary, dom_string, enum_value, integer, is_nullish, sequence, usv_string
+from ...foundation.arguments import IdlArgumentError, dictionary, dom_string, enum_value, integer, is_nullish, sequence, usv_string
 from ..clone import js_helper
 from ..page_errors import PageTypeError
 
@@ -60,7 +60,10 @@ class Blob:
         elif is_nullish(parts) or isinstance(parts, (int, float, bool, str)):
             raise PageTypeError("Failed to construct 'Blob': The provided value cannot be converted to a sequence.")
         else:
-            parts = sequence(parts, _part_value)
+            try:
+                parts = sequence(parts, _part_value)
+            except IdlArgumentError as error:
+                raise PageTypeError(f"Failed to construct 'Blob': {error}") from None
         if not is_nullish(options):
             options = dictionary(options)
         self._realm = _realm

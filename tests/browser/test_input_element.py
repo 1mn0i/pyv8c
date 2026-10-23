@@ -133,3 +133,13 @@ def test_labels_and_form_owner(page):
         return [inside.form.id, inside.labels.length, inside.labels[0].textContent,
             wrapped.labels.length, wrapped.form];
     })()""") == ["f", 1, "L", 1, pyv8.Null]
+
+
+def test_webkit_entries_is_a_fresh_frozen_array(page):
+    assert page.evaluate("""(() => {
+        const input = document.getElementById('file');
+        const first = input.webkitEntries;
+        return [first === input.webkitEntries, Array.isArray(first),
+                Object.isFrozen(first), first.length,
+                Object.prototype.toString.call(first)];
+    })()""") == [False, True, True, 0, "[object Array]"]

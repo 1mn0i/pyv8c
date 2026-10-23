@@ -565,8 +565,30 @@ class Permissions:
 
     def fn_query(self, descriptor=MISSING, *_extra):
         if descriptor is MISSING:
-            raise missing_error('Permissions', 'query', 1, 0, constructor=False)
-        name = dictionary(descriptor).get("name")
+            return _settled(self._services, error=missing_error(
+                'Permissions', 'query', 1, 0, constructor=False))
+        if is_nullish(descriptor) or not isinstance(descriptor, (pyv8.JSObject, dict)):
+            return _settled(self._services, error=PageTypeError(
+                "Failed to execute 'query' on 'Permissions': parameter 1 is not of type 'object'."))
+        try:
+            name = dictionary(descriptor).get("name")
+        except pyv8.JSException as error:
+            return _settled(self._services, error=error)
+        if name is None or name is pyv8.Undefined:
+            return _settled(self._services, error=PageTypeError(
+                "Failed to execute 'query' on 'Permissions': Failed to read the 'name' property "
+                "from 'PermissionDescriptor': Required member is undefined."))
+        try:
+            name = dom_string(name)
+        except pyv8.JSException as error:
+            original = getattr(error, "original", None)
+            reason = (str(original._get("message"))
+                      if isinstance(original, pyv8.JSObject) else "")
+            if reason == "Cannot convert a Symbol value to a string":
+                error = PageTypeError(
+                    "Failed to execute 'query' on 'Permissions': Failed to read the 'name' "
+                    "property from 'PermissionDescriptor': " + reason)
+            return _settled(self._services, error=error)
         names = self._environment.permissions.names or PERMISSION_NAMES
         if name not in names:
             # The enum check rejects the promise rather than throwing at the call.

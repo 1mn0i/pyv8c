@@ -88,6 +88,14 @@ def test_sequence_converts_before_next_without_iterator_close(argument_page):
     })()""") == ["iterator", "next", "convert"]
 
 
+def test_blob_sequence_error_has_the_constructor_context(argument_page):
+    assert argument_page.evaluate("""(() => {
+        try { new Blob(() => {}, () => {}); }
+        catch (error) { return [error.name, error.message]; }
+    })()""") == ["TypeError", "Failed to construct 'Blob': The object must have a "
+                  "callable @@iterator property."]
+
+
 def test_a_blob_part_that_is_a_buffer_contributes_its_bytes(argument_page):
     """A ``BufferSource`` part is the bytes it holds, not the text it reads as.
 

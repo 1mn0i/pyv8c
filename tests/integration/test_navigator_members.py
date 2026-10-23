@@ -88,6 +88,40 @@ def test_the_environment_answers_bluetooth_and_the_geolocation_permission():
         browser.close()
 
 
+def test_permissions_query_validation_rejects_a_promise_like_chrome():
+    browser = Browser(real_network=False, stub_logging="off")
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content("<body></body>", url="https://secure.test/")
+        cases = (
+            ("", "1 argument required, but only 0 present."),
+            ("null", "parameter 1 is not of type 'object'."),
+            ("{}", "Failed to read the 'name' property from 'PermissionDescriptor': "
+                   "Required member is undefined."),
+            ("1", "parameter 1 is not of type 'object'."),
+        )
+        for index, (argument, message) in enumerate(cases):
+            expression = f"navigator.permissions.query({argument})"
+            assert page.evaluate(
+                "(() => { try { const pending = " + expression + ";"
+                "return [pending instanceof Promise, typeof pending.then]; }"
+                "catch (error) { return [false, error.name]; } })()"
+            ) == [True, "function"]
+            result = _settled(page, expression, name=f"__permissionValidation{index}")
+            assert result == ["error", "TypeError",
+                              "Failed to execute 'query' on 'Permissions': " + message]
+        assert _settled(page, "navigator.permissions.query({name: Symbol()})",
+                        name="__permissionSymbol") == [
+            "error", "TypeError",
+            "Failed to execute 'query' on 'Permissions': Failed to read the 'name' "
+            "property from 'PermissionDescriptor': Cannot convert a Symbol value to a string"]
+        assert _settled(page, "navigator.permissions.query({get name() {"
+                        " throw new Error('sentinel'); }})",
+                        name="__permissionGetter") == ["error", "Error", "sentinel"]
+    finally:
+        browser.close()
+
+
 def test_the_calls_that_need_a_chooser_or_a_registration_refuse():
     def loader(url, _request):
         return {"body": "self.onmessage = () => {};", "url": url,

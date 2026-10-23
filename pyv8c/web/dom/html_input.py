@@ -474,7 +474,12 @@ class HTMLInputElement(HTMLElement):
         value = self._attr("popovertargetaction")
         return value if value in ("click", "hide", "show", "toggle") else "click"
     def set_popoverTargetAction(self, value): self._set_string("popovertargetaction", value)
-    def get_webkitEntries(self): return []
+    def get_webkitEntries(self):
+        if self._services is None:
+            return []
+        # Chrome exposes a fresh frozen array for each read, including when no
+        # directory has been selected.
+        return self._services.realm_services.evaluate_script("Object.freeze([])")
 
     def get_willValidate(self):
         if self.get_type() in _BARRED_INPUT_TYPES: return False
