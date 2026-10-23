@@ -31,7 +31,10 @@ typedef struct {
 int py_class_type_init();
 extern PyTypeObject* py_class_type;
 
-PyObject* py_class_new(PyObject* cls, context_c *py_ctx);
+PyObject* py_class_new(PyObject* cls, context_c *py_ctx, bool shared = false);
+// Release the persistent V8 handles a shared template holds, so the isolate can close
+// even while the Python object is still referenced by realm registries.
+void py_class_release_handles(PyObject* templ);
 void py_class_dealloc(py_class* self);
 // Returns a reference of its own; the realm's cache keeps the template alive.
 PyObject* py_class_to_template(PyObject* cls, context_c *py_ctx);

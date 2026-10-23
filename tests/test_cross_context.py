@@ -11,6 +11,77 @@ class Window:
     pass
 
 
+def test_shared_member_callbacks_survive_the_creating_realm():
+    class Interface:
+        def read(self):
+            return 42
+
+        def get_value(self):
+            return 17
+
+    spec = pyv8.IdlSpec(
+        methods=(pyv8.MethodSpec(name="read", callback="read"),),
+        attributes=(pyv8.AttributeSpec(name="value", getter="get_value"),),
+    )
+
+    def factory(name):
+        if name == "Interface":
+            return Interface, {name: spec}, {name: True}
+        return None
+
+    isolate = pyv8.Isolate()
+    source = isolate.context(Window, lazy_factory=factory)
+    target = isolate.context(Window, lazy_factory=factory)
+    try:
+        source.expose(item=Interface())
+        target.expose(item=Interface())
+        assert source.exec_js("JSON.stringify([item.read(), item.value])") == "[42,17]"
+        source.close()
+        assert target.exec_js("JSON.stringify([item.read(), item.value])") == "[42,17]"
+    finally:
+        source.close()
+        target.close()
+        isolate.close()
+
+
+def test_a_shared_child_does_not_share_a_realm_bound_ancestor():
+    class Base:
+        pass
+
+    class Child(Base):
+        pass
+
+    child_spec = pyv8.IdlSpec(parent_class=Base)
+
+    def factory(label):
+        base_spec = pyv8.IdlSpec(methods=(pyv8.MethodSpec(
+            name="realmName", callback=lambda receiver: label,
+        ),))
+
+        def answer(name):
+            if name == "Child":
+                return (Child, {"Base": base_spec, "Child": child_spec},
+                        {"Base": False, "Child": False})
+            if name == "Base":
+                return Base, {"Base": base_spec}, {"Base": False}
+            return None
+
+        return answer
+
+    isolate = pyv8.Isolate()
+    first = isolate.context(Window, lazy_factory=factory("first"))
+    second = isolate.context(Window, lazy_factory=factory("second"))
+    try:
+        first.expose(item=Child())
+        second.expose(item=Child())
+        assert first.exec_js("item.realmName()") == "first"
+        assert second.exec_js("item.realmName()") == "second"
+    finally:
+        first.close()
+        second.close()
+        isolate.close()
+
+
 def test_a_handle_from_another_realm_of_the_same_isolate_is_usable():
     isolate = pyv8.Isolate()
     source = isolate.context(Window)

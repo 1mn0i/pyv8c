@@ -117,7 +117,7 @@ inline PyObject* owned_template(PyObject* templ)
 
 // A realm keeps one entry per interface name it has met: the template it built,
 // the spec that built it, and where the name is in the ask-the-factory protocol.
-enum RegistrySlot { REGISTRY_TEMPLATE, REGISTRY_SPEC, REGISTRY_STATE, REGISTRY_SLOTS };
+enum RegistrySlot { REGISTRY_TEMPLATE, REGISTRY_SPEC, REGISTRY_STATE, REGISTRY_SHARED, REGISTRY_SLOTS };
 enum RegistryState { REGISTRY_IDLE, REGISTRY_RESOLVING, REGISTRY_ASKED };
 
 //: What one name holds in one slot, or NULL when the name has no entry yet.

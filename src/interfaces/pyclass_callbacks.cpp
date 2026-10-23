@@ -34,6 +34,34 @@ static PyObject* constructor_window_keyword()
     return cached;
 }
 
+// The Web IDL receiver, resolved in its own realm: a member installed on one realm's
+// template is also reached through another realm's WindowProxy.
+static PyObject* resolve_receiver(const FunctionCallbackInfo<Value>& info)
+{
+    Local<Object> js_self = info.This();
+    Local<Context> receiver_context;
+    if (!js_self->GetCreationContext().ToLocal(&receiver_context))
+        return Py_None;
+    if (js_self->Equals(receiver_context, receiver_context->Global()).FromMaybe(false))
+        js_self = v8_compat::global_template_object(receiver_context);
+    if (js_self->InternalFieldCount() != OBJECT_INTERNAL_FIELDS)
+        return Py_None;
+    IsolateState* isolate_state = runtime_manager.find_isolate(info.GetIsolate());
+    if (isolate_state == nullptr ||
+        js_self->GetInternalField(PYTHON_MAGIC_FIELD) !=
+            isolate_state->v8_string(V8StringId::PythonObjectMagic))
+        return Py_None;
+    return IsolateState::python_object(js_self);
+}
+
+// An object read through this receiver belongs to the receiver's realm.
+static Local<Context> receiver_realm(const FunctionCallbackInfo<Value>& info,
+                                     Local<Context> fallback)
+{
+    Local<Context> realm;
+    return info.This()->GetCreationContext().ToLocal(&realm) ? realm : fallback;
+}
+
 static void
 py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
                         Local<Context> context,
@@ -207,7 +235,7 @@ static void py_class_method_impl(const FunctionCallbackInfo<Value> &info, Local<
         js_throw_py();
         return;
     }
-    Local<Value> converted = js_from_py(result, context);
+    Local<Value> converted = js_from_py(result, receiver_realm(info, context));
     Py_DECREF((PyObject*)result);
     if (converted.IsEmpty() || PyErr_Occurred())
     {
@@ -223,12 +251,14 @@ void py_class_method_callback(const FunctionCallbackInfo<Value> &info)
     if (!context_check_callback(context)) return;
     auto *binding = (MethodSpec *)IsolateState::callback_target(info.Data());
     if (binding == nullptr) { js_throw_py(); return; }
-    PyObject *receiver = binding->pass_receiver ? get_self(info) : Py_None;
+    PyObject *receiver = binding->pass_receiver ? resolve_receiver(info) : Py_None;
     if (receiver == nullptr)
     {
         js_throw_py();
         return;
     }
+    // A kCheck member was already filtered by its V8 signature; the receiver here is
+    // whatever that signature accepted, as in Blink.
     context_c *owner = context_from_v8(context);
     if (owner == nullptr)
         return;
@@ -260,15 +290,16 @@ static void attribute_get_impl(const FunctionCallbackInfo<Value>& info) {
     if (!context_check_callback(context)) return;
     auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
     if (binding == nullptr) { js_throw_py(); return; }
-    PyObject* self = binding->getter_receiver ? get_self(info) : Py_None;
+    PyObject* self = binding->getter_receiver ? resolve_receiver(info) : Py_None;
     if (!self) { js_throw_py(); return; }
+
     PyOwnedRef keep_self(PyV8_NewRef(self));
     // No reference is taken on binding: nothing reads it after the call below,
     // and the callback it runs may close the context, which is what releases it.
     PyObject* argv[] = {self};
     PyObject* result = PyObject_Vectorcall(binding->getter, argv, self == Py_None ? 0 : 1, nullptr);
     JS_PROPAGATE_PY(result);
-    auto value = js_from_py(result, context);
+    auto value = js_from_py(result, receiver_realm(info, context));
     Py_DECREF((PyObject*)result);
     if (value.IsEmpty() || PyErr_Occurred()) { js_throw_py(); return; }
     info.GetReturnValue().Set(value);
@@ -281,7 +312,7 @@ void py_attribute_for_get(const FunctionCallbackInfo<Value>& info) {
     if (!context_trace_enabled(owner)) { attribute_get_impl(info); return; }
     auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
     if (binding == nullptr) { js_throw_py(); return; }
-    PyObject* receiver = binding->getter_receiver ? get_self(info) : Py_None;
+    PyObject* receiver = binding->getter_receiver ? resolve_receiver(info) : Py_None;
     const bool named = receiver == Py_None;
     if (named)
         receiver = trace_interface_name(info);
@@ -300,8 +331,9 @@ static void attribute_set_impl(const FunctionCallbackInfo<Value>& info, bool ins
     }
     auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
     if (binding == nullptr) { js_throw_py(); return; }
-    PyObject* self = binding->setter_receiver ? get_self(info) : Py_None;
+    PyObject* self = binding->setter_receiver ? resolve_receiver(info) : Py_None;
     if (!self) { js_throw_py(); return; }
+
     PyOwnedRef keep_self(PyV8_NewRef(self));
     // This one is load-bearing: replaceable is read off binding *after* the
     // setter runs, and a setter that closes its context drops the reference the
@@ -330,7 +362,7 @@ static void attribute_set(const FunctionCallbackInfo<Value>& info, bool instance
     if (!context_trace_enabled(owner)) { attribute_set_impl(info, instance); return; }
     auto* binding = (AttributeSpec*)IsolateState::callback_target(info.Data());
     if (binding == nullptr) { js_throw_py(); return; }
-    PyObject* receiver = binding->setter_receiver ? get_self(info) : Py_None;
+    PyObject* receiver = binding->setter_receiver ? resolve_receiver(info) : Py_None;
     const bool named = receiver == Py_None;
     if (named)
         receiver = trace_interface_name(info);

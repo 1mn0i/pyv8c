@@ -138,9 +138,12 @@ context_ask_factory(context_c *self, PyObject *name)
     }
     PyObject* cls = answer;
     PyObject* specs = NULL;
-    if (PyTuple_Check(answer) && PyTuple_Size(answer) == 2) {
+    PyObject* shared = Py_False;
+    if (PyTuple_Check(answer) && (PyTuple_Size(answer) == 2 || PyTuple_Size(answer) == 3)) {
         cls = PyTuple_GetItem(answer, 0);
         specs = PyTuple_GetItem(answer, 1);
+        if (PyTuple_Size(answer) == 3)
+            shared = PyTuple_GetItem(answer, 2);
     }
     if (cls != Py_None && !PyType_Check(cls)) {
         PyErr_SetString(PyExc_TypeError,
@@ -152,6 +155,41 @@ context_ask_factory(context_c *self, PyObject *name)
     if (cls == Py_None)
         specs = NULL;
     if (specs != NULL && record_specs(self, specs) < 0) {
+        Py_DECREF((PyObject*)answer);
+        name_state(self, name, REGISTRY_IDLE);
+        return NULL;
+    }
+    // A factory may answer a per-interface sharing map: ancestors can have
+    // realm-bound specs even when the requested child is realm-independent.
+    if (specs != NULL && PyDict_Check(specs)) {
+        PyObject *key = nullptr;
+        PyObject *value = nullptr;
+        Py_ssize_t position = 0;
+        while (PyDict_Next(specs, &position, &key, &value)) {
+            PyObject* share_key = PyDict_Check(shared)
+                ? PyDict_GetItemWithError(shared, key) : shared;
+            if (share_key == nullptr && PyErr_Occurred()) {
+                Py_DECREF((PyObject*)answer);
+                name_state(self, name, REGISTRY_IDLE);
+                return NULL;
+            }
+            if (context_registry_set(self, key, REGISTRY_SHARED,
+                                     share_key == Py_True ? Py_True : Py_False) < 0) {
+                Py_DECREF((PyObject*)answer);
+                name_state(self, name, REGISTRY_IDLE);
+                return NULL;
+            }
+        }
+    }
+    PyObject* share_name = PyDict_Check(shared)
+        ? PyDict_GetItemWithError(shared, name) : shared;
+    if (share_name == nullptr && PyErr_Occurred()) {
+        Py_DECREF((PyObject*)answer);
+        name_state(self, name, REGISTRY_IDLE);
+        return NULL;
+    }
+    if (context_registry_set(self, name, REGISTRY_SHARED,
+                             share_name == Py_True ? Py_True : Py_False) < 0) {
         Py_DECREF((PyObject*)answer);
         name_state(self, name, REGISTRY_IDLE);
         return NULL;

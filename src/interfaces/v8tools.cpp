@@ -217,6 +217,8 @@ namespace bindings {
 
         FlagLocation location =
             static_cast<FlagLocation>(config.location);
+        // As Blink's IDLMemberInstaller: kCheck keeps the interface signature, which
+        // V8 accepts from any realm the shared template reaches.
         if (static_cast<FlagReceiverCheck>(
             config.receiver_check) == FlagReceiverCheck::kDoNotCheck ||
             location == FlagLocation::kInterface)
@@ -255,7 +257,8 @@ namespace bindings {
 
     bool InstallAttributes(v8::Isolate* isolate, const char* world,
         v8::Local<v8::FunctionTemplate> interface_template, v8::Local<v8::Signature> signature,
-        PyObject* cls, PyObject* configs, PyObject* callback_data_owner, context_c* owner) {
+        PyObject* cls, PyObject* configs, PyObject* callback_data_owner, context_c* owner,
+        bool shared) {
         if (configs == nullptr) return true;
         for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
             PyObject* resolved = idl_spec_resolve(PyTuple_GetItem(configs, index), cls);
@@ -270,7 +273,9 @@ namespace bindings {
             config.cross_origin_check_for_get = (unsigned)spec->cross_origin_get_check;
             config.cross_origin_check_for_set = (unsigned)spec->cross_origin_set_check;
             config.v8_side_effect = (unsigned)spec->side_effect;
-            config.get_method = owner->isolate_state->callback_data(owner, resolved);
+            config.get_method = shared
+                ? owner->isolate_state->shared_callback_data(resolved)
+                : owner->isolate_state->callback_data(owner, resolved);
             if (config.get_method.IsEmpty()) { Py_DECREF(resolved); return false; }
             config.callback_for_get = CallbackBoundary<py_attribute_for_get>::call;
             if (spec->setter != nullptr) {
@@ -292,6 +297,8 @@ namespace bindings {
         const OperationConfig& config) {
 
         FlagLocation location = static_cast<FlagLocation>(config.location);
+        // As Blink's IDLMemberInstaller: kCheck keeps the interface signature, which
+        // V8 accepts from any realm the shared template reaches.
         if (static_cast<FlagReceiverCheck>(
             config.receiver_check) == FlagReceiverCheck::kDoNotCheck ||
             location == FlagLocation::kInterface)
@@ -322,7 +329,8 @@ namespace bindings {
 
     bool InstallOperations(v8::Isolate* isolate, const char* world,
         v8::Local<v8::FunctionTemplate> interface_template, v8::Local<v8::Signature> signature,
-        PyObject* cls, PyObject* configs, PyObject* callback_data_owner, context_c* owner) {
+        PyObject* cls, PyObject* configs, PyObject* callback_data_owner, context_c* owner,
+        bool shared) {
         if (configs == nullptr) return true;
         for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
             PyObject* resolved = idl_spec_resolve(PyTuple_GetItem(configs, index), cls);
@@ -337,7 +345,9 @@ namespace bindings {
             config.receiver_check = (unsigned)spec->receiver_check;
             config.cross_origin_check = (unsigned)spec->cross_origin_check;
             config.v8_side_effect = (unsigned)spec->side_effect;
-            config.callback_data = owner->isolate_state->callback_data(owner, resolved);
+            config.callback_data = shared
+                ? owner->isolate_state->shared_callback_data(resolved)
+                : owner->isolate_state->callback_data(owner, resolved);
             if (config.callback_data.IsEmpty()) { Py_DECREF(resolved); return false; }
             config.callback = CallbackBoundary<py_class_method_callback>::call;
             bool valid = config.name != nullptr;

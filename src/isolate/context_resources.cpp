@@ -6,6 +6,8 @@
 #include "v8_compat.h"
 #include <cassert>
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <new>
 using namespace v8;
 
@@ -161,6 +163,56 @@ void IsolateState::callback_data_collected(const WeakCallbackInfo<CallbackData>&
     delete data;
 }
 
+bool IsolateState::shared_templates_enabled() const {
+    static const bool enabled = [] {
+        const char* flag = getenv("PYV8C_SHARED_TEMPLATES");
+        return flag == nullptr || strcmp(flag, "0") != 0;
+    }();
+    return enabled;
+}
+
+Local<External> IsolateState::shared_callback_data(PyObject* target) {
+    if (target == nullptr) return {};
+    CallbackData* data = nullptr;
+    try {
+        // No ContextLifetime: the interface template that holds this callback lives
+        // as long as the isolate, not as long as the realm that made it first.
+        data = new CallbackData{this, nullptr, -1, PyV8_NewRef(target), {}};
+        callback_data_.insert(data);
+        auto external = v8_compat::external_new(isolate_, data);
+        data->external.Reset(isolate_, external);
+        data->external.SetWeak(data, shared_callback_collected, WeakCallbackType::kParameter);
+        return external;
+    } catch (const std::bad_alloc&) {
+        if (data != nullptr) {
+            callback_data_.erase(data);
+            Py_XDECREF(data->owned_target);
+            delete data;
+        }
+        PyErr_NoMemory();
+        return {};
+    }
+}
+
+void IsolateState::shared_callback_collected(const WeakCallbackInfo<CallbackData>& info) {
+    auto* data = info.GetParameter();
+    data->external.Reset();
+    data->state->callback_data_.erase(data);
+    Py_XDECREF(data->owned_target);
+    delete data;
+}
+
+PyObject* IsolateState::shared_interface(PyObject* cls) {
+    auto found = shared_interfaces_.find(cls);
+    return found == shared_interfaces_.end() ? nullptr : found->second;
+}
+
+void IsolateState::remember_shared_interface(PyObject* cls, PyObject* templ) {
+    Py_INCREF(cls);
+    Py_INCREF(templ);
+    shared_interfaces_[cls] = templ;
+}
+
 void IsolateState::invalidate_callbacks(context_c* context) {
     if (context->resources && context->resources->lifetime)
         context->resources->lifetime->owner = nullptr;
@@ -168,6 +220,8 @@ void IsolateState::invalidate_callbacks(context_c* context) {
 
 PyObject* IsolateState::callback_target(Local<Value> value) {
     auto* data = static_cast<CallbackData*>(v8_compat::external_value(value));
+    if (data != nullptr && data->owned_target != nullptr)
+        return data->owned_target;
     auto* owner = data ? data->lifetime->owner : nullptr;
     if (!context_is_active(owner)) {
         PyErr_SetString(PyExc_RuntimeError, "V8 context is closed");
@@ -240,6 +294,10 @@ IsolateState::track_python_object(Local<Object> object, PyObject* py_object, con
     {
         // Same as an entry that was never written.
     }
+    // The first wrapper for this host object answers from any realm; later realms
+    // read the cache instead of wrapping it again.
+    if (shared_owner(py_object) == nullptr)
+        remember_shared_owner(py_object, owner);
     // Counted last: the paths above that fail take the owner with them.
     account_external_memory(kHostObjectExternalBytes);
     return true;
@@ -295,9 +353,34 @@ IsolateState::find_python_owner(context_c* context, PyObject* py_object)
     return item->second;
 }
 
+PythonObjectOwner* IsolateState::shared_owner(PyObject* py_object) {
+    auto found = shared_wrappers_.find(py_object);
+    return found == shared_wrappers_.end() ? nullptr : found->second;
+}
+
+void IsolateState::remember_shared_owner(PyObject* py_object, PythonObjectOwner* owner) {
+    try {
+        shared_wrappers_[py_object] = owner;
+    } catch (const std::bad_alloc&) {
+        // An entry that was never written: the pair still works, identity just
+        // stays realm-local for this object.
+    }
+}
+
+void IsolateState::forget_shared_owner(PythonObjectOwner* owner) {
+    auto found = shared_wrappers_.find(owner->py_object);
+    if (found != shared_wrappers_.end() && found->second == owner)
+        shared_wrappers_.erase(found);
+}
+
 v8::Local<v8::Object>
 IsolateState::cached_js_object(context_c* context, PyObject* py_object)
 {
+    if (PythonObjectOwner* shared = shared_owner(py_object)) {
+        if (!shared->object.IsEmpty())
+            return shared->object.Get(isolate_);
+        forget_shared_owner(shared);
+    }
     auto* owner = find_python_owner(context, py_object);
     if (owner == nullptr || owner->object.IsEmpty())
         return v8::Local<v8::Object>();
@@ -372,6 +455,7 @@ void IsolateState::restore_python_exception(Local<Object> object) {
 void
 IsolateState::release_python_owner(PythonObjectOwner* owner)
 {
+    forget_shared_owner(owner);
     if (owner->lifetime != nullptr && owner->py_object != nullptr)
     {
         auto& cache = owner->lifetime->js_object_cache;

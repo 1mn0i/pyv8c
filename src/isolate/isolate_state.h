@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -90,6 +91,11 @@ public:
     // wrapping one Python object twice would give JavaScript two objects where it
     // can only tell one apart.  Empty means "not wrapped here yet".
     v8::Local<v8::Object> cached_js_object(context_c* context, PyObject* py_object);
+    // One wrapper per host object for the isolate, as Blink keeps one per world: the
+    // same node read from two same-origin frames is the same JavaScript object.
+    PythonObjectOwner* shared_owner(PyObject* py_object);
+    void remember_shared_owner(PyObject* py_object, PythonObjectOwner* owner);
+    void forget_shared_owner(PythonObjectOwner* owner);
     // The Python handle for that same pair, built on first use: a new reference, or
     // null with no error set when the pair is not known here.
     PyObject* cached_js_wrapper(context_c* context, PyObject* py_object);
@@ -101,11 +107,21 @@ public:
         IsolateState* state;
         std::shared_ptr<ContextLifetime> lifetime;
         Py_ssize_t target_index;
+        // A shared template outlives any one Context: its callback keeps its own
+        // reference instead of indexing a realm's target list.
+        PyObject* owned_target = nullptr;
         // The Context owns target. This weak anchor may outlive its close, so it
         // is uncounted for the same reason PythonObjectOwner's object is.
         v8::Global<v8::External> external;
     };
     v8::Local<v8::External> callback_data(context_c* context, PyObject* target);
+    // One interface FunctionTemplate per isolate, as Blink's V8PerIsolateData keeps
+    // one per (world, interface); sharing it is what lets a V8 signature accept a
+    // same-origin receiver from another realm.
+    v8::Local<v8::External> shared_callback_data(PyObject* target);
+    PyObject* shared_interface(PyObject* cls);
+    void remember_shared_interface(PyObject* cls, PyObject* templ);
+    bool shared_templates_enabled() const;
     void invalidate_callbacks(context_c* context);
     static PyObject* callback_target(v8::Local<v8::Value> data);
 
@@ -117,6 +133,8 @@ public:
     void clear_aborted_failure();
 
 private:
+    std::unordered_map<PyObject*, PyObject*> shared_interfaces_;
+    std::unordered_map<PyObject*, PythonObjectOwner*> shared_wrappers_;
     static PythonObjectOwner* find_python_owner(context_c* context, PyObject* py_object);
 
     // The existing maximum unwind allowance, as an absolute multiple of V8's
@@ -149,6 +167,7 @@ private:
     std::unordered_set<PythonObjectOwner*> python_owners_;
     std::unordered_set<CallbackData*> callback_data_;
     static void callback_data_collected(const v8::WeakCallbackInfo<CallbackData>& info);
+    static void shared_callback_collected(const v8::WeakCallbackInfo<CallbackData>& info);
     bool disposed_;
 };
 

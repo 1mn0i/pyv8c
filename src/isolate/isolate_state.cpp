@@ -8,6 +8,7 @@
 #include "isolate_scope.h"
 #include "callback_boundary.h"
 #include "context.h"
+#include "pyclass.h"
 #include "v8_compat.h"
 
 #include <cassert>
@@ -231,6 +232,22 @@ IsolateState::shutdown(bool report_error)
     // A failure no boundary collected would otherwise outlive the isolate holding it.
     clear_aborted_failure();
 
+    // Shared interface templates hold persistent handles for the isolate's lifetime;
+    // release them before the teardown counts what is left.
+    if (!shared_interfaces_.empty())
+    {
+        IsolateLockScope scope(this);
+        HandleScope handle_scope(isolate_);
+        for (auto& entry : shared_interfaces_)
+        {
+            py_class_release_handles(entry.second);
+            Py_DECREF(entry.first);
+            Py_DECREF(entry.second);
+        }
+        shared_interfaces_.clear();
+        drain_deferred();
+    }
+
     if (live_v8_handles_ != 0)
     {
         IsolateLockScope scope(this);
@@ -259,9 +276,11 @@ IsolateState::shutdown(bool report_error)
         // point at which that is still true.
         debugger_isolate_closed(isolate_);
         clear_python_owners();
+        shared_wrappers_.clear();
         drain_deferred();
         for (auto* data : callback_data_) {
             data->external.Reset();
+            Py_XDECREF(data->owned_target);
             delete data;
         }
         callback_data_.clear();

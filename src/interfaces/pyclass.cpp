@@ -136,12 +136,36 @@ PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
             return templ;
         }
     }
-    templ = py_class_new(cls, py_ctx);
+    // The factory above records what this realm's spec is; a realm-independent one
+    // keeps a single template for the isolate, as Blink's one-per-world does, so a
+    // V8 signature made from it accepts a same-origin receiver from any realm.
+    const bool shared = py_ctx->isolate_state != nullptr
+        && py_ctx->isolate_state->shared_templates_enabled()
+        && context_registry_get(py_ctx, name, REGISTRY_SHARED) == Py_True;
+    if (shared)
+    {
+        PyObject *existing = py_ctx->isolate_state->shared_interface(cls);
+        if (existing != nullptr)
+        {
+            PyObject *owned = owned_template(existing);
+            if (context_registry_set(py_ctx, name, REGISTRY_TEMPLATE, owned) < 0)
+            {
+                Py_DECREF(owned);
+                Py_DECREF((PyObject*)name);
+                return nullptr;
+            }
+            Py_DECREF((PyObject*)name);
+            return owned;
+        }
+    }
+    templ = py_class_new(cls, py_ctx, shared);
     if (templ == nullptr)
     {
         Py_DECREF((PyObject*)name);
         return nullptr;
     }
+    if (shared)
+        py_ctx->isolate_state->remember_shared_interface(cls, templ);
     if (context_registry_set(py_ctx, name, REGISTRY_TEMPLATE, templ) < 0)
     {
         Py_DECREF((PyObject*)templ);
@@ -153,11 +177,20 @@ PyObject *py_class_to_template(PyObject *cls, context_c *py_ctx)
     Py_DECREF((PyObject*)name);
     return installed;
 }
+void py_class_release_handles(PyObject* templ)
+{
+    if (templ == nullptr)
+        return;
+    auto* self = (py_class*)templ;
+    self->templ.Reset();
+    self->iterator_templ.Reset();
+}
+
 int add_to_template(PyObject* cls, context_c* py_ctx, PyObject* member_name, PyObject* member_value, Local<FunctionTemplate> templ, Local<Signature> sig, const char* world);
 
 
 PyObject *
-py_class_new(PyObject *cls, context_c * py_ctx)
+py_class_new(PyObject *cls, context_c * py_ctx, bool shared)
 {
     IsolateState* isolate_state = py_ctx->isolate_state;
     if (isolate_state == nullptr || !isolate_state->require_active())
@@ -211,7 +244,9 @@ py_class_new(PyObject *cls, context_c * py_ctx)
     if (PyErr_Occurred()) { Py_DECREF((PyObject*)self); return nullptr; }
     IdlSpec defaults;
     const IdlSpec& config = self->idl_spec == nullptr ? defaults : *(IdlSpec*)self->idl_spec;
-    Local<External> js_self = isolate_state->callback_data(py_ctx, (PyObject*)self);
+    Local<External> js_self = shared
+        ? isolate_state->shared_callback_data((PyObject*)self)
+        : isolate_state->callback_data(py_ctx, (PyObject*)self);
     if (js_self.IsEmpty()) { Py_DECREF((PyObject*)self); return nullptr; }
     int templ_length = (int)config.length;
     self->constructor_behavior = (int)config.constructor_behavior;
@@ -270,7 +305,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
                 isolate, world, templ, sig,
                 cls,
                 config.attributes,
-                self->operation_callback_data, py_ctx)) {
+                self->operation_callback_data, py_ctx, shared)) {
             Py_DECREF((PyObject*)self);
             return NULL;
         }
@@ -282,7 +317,7 @@ py_class_new(PyObject *cls, context_c * py_ctx)
                 isolate, world, templ, sig,
                 cls,
                 config.methods,
-                self->operation_callback_data, py_ctx)) {
+                self->operation_callback_data, py_ctx, shared)) {
             Py_DECREF((PyObject*)self);
             return NULL;
         }
@@ -315,7 +350,9 @@ py_class_new(PyObject *cls, context_c * py_ctx)
             Py_DECREF((PyObject*)self);
             return nullptr;
         }
-        auto anchor = isolate_state->callback_data(py_ctx, data);
+        auto anchor = shared
+            ? isolate_state->shared_callback_data(data)
+            : isolate_state->callback_data(py_ctx, data);
         if (anchor.IsEmpty()) { Py_DECREF(data); Py_DECREF((PyObject*)self); return nullptr; }
         templ->InstanceTemplate()->SetCallAsFunctionHandler(CallbackBoundary<py_class_method_callback>::call, anchor);
         Py_DECREF((PyObject*)data);
