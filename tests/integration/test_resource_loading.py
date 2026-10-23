@@ -102,6 +102,42 @@ def test_loader_has_identical_response_policy(asynchronous, threaded, mode, allo
         assert calls == ([] if mode == "same-origin" else ["http://other.test/x"])
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("allowed", [False, True])
+def test_interceptor_response_obeys_cross_origin_policy(asynchronous, allowed):
+    def interceptor(url, request):
+        if url == "http://other.test/x":
+            return {"body": "cross", "headers":
+                    {"access-control-allow-origin": "http://site.test"} if allowed else {}}
+        return None
+
+    with closing(Browser(real_network=False, stub_logging="off",
+                         resource_interceptor=interceptor)) as browser:
+        page = browser.new_profile().new_page()
+        page.set_content("<body></body>", url="http://site.test/")
+        if allowed:
+            response = ask(page, "http://other.test/x", {"mode": "cors"}, asynchronous)
+            assert response.body_text() == "cross"
+        else:
+            with pytest.raises(LoadFailure):
+                ask(page, "http://other.test/x", {"mode": "cors"}, asynchronous)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_interceptor_keeps_cross_origin_script_bytes_but_hides_no_cors_fetch(asynchronous):
+    with closing(Browser(real_network=False, stub_logging="off",
+                         resource_interceptor=lambda url, request: {"body": "window.loaded=true"})) as browser:
+        page = browser.new_profile().new_page()
+        page.set_content("<body></body>", url="http://site.test/")
+        script = ask(page, "http://other.test/x.js",
+                     {"mode": "no-cors", "resource_type": "script"}, asynchronous)
+        assert script.body_text() == "window.loaded=true"
+        fetched = ask(page, "http://other.test/x.js",
+                      {"mode": "no-cors", "resource_type": "fetch"}, asynchronous)
+        assert fetched.status == 0
+        assert fetched.body_text() == ""
+
+
 @pytest.mark.parametrize("cancel_first", [False, True])
 def test_cancel_and_transport_binding_converge(cancel_first):
     cancelled = []

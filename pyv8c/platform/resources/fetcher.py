@@ -315,7 +315,10 @@ class ResourceFetchController:
         if mode == "navigate" or self.same_origin_response(response.url, load):
             return response
         self.check_request_origin(response.url, load)
-        if load.options.get("mode") == "no-cors":
+        if mode == "no-cors" and self._destination(load.options) == "empty":
+            # A script, style or image loader still consumes the bytes of a
+            # cross-origin no-CORS response.  Only a script-visible fetch gets
+            # the opaque view.
             response.status, response.body, response.headers, response.type = 0, "", Headers(), "opaque"
         elif mode == "cors":
             self.check_cors(response, load)
@@ -365,7 +368,8 @@ class ResourceFetchController:
             if not self.active(load):
                 raise LoadFailure("Resource owner changed while intercepting")
             if decision is not None and decision is not True:
-                return self._intercepted_response(decision, load.target)
+                return self.apply_response_policy(
+                    self._intercepted_response(decision, load.target), load)
         kind, source = self.select_source(load)
         if kind == "response":
             return source
@@ -515,7 +519,8 @@ class _AsyncLoad:
             self.begin()
         else:
             try:
-                response = self.fetcher._intercepted_response(decision, self.load.target)
+                response = self.fetcher.apply_response_policy(
+                    self.fetcher._intercepted_response(decision, self.load.target), self.load)
             except control_exceptions():
                 raise
             except BaseException as error:
