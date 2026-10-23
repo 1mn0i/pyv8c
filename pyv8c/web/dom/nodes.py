@@ -147,6 +147,28 @@ def _bump_style_version(node):
         document.style_version = getattr(document, "style_version", 0) + 1
 
 
+def _adopt_subtree(node, services):
+    """DOM's adopt: *node* and its shadow-including descendants join *services*.
+
+    ``ownerDocument``, ``baseURI`` and every task the subtree schedules follow the
+    services, so a node created in one document and inserted into another answers as
+    Chrome's does.  A node already in that document -- the common case -- costs one
+    identity test.
+    """
+    if services is None or getattr(node, "_services", None) is services:
+        return
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if getattr(current, "_services", None) is not services:
+            current._services = services
+            _bump_style_version(current)
+        stack.extend(current._children)
+        shadow = getattr(current, "_shadow_root", None)
+        if shadow is not None:
+            stack.append(shadow)
+
+
 @interface('Node', 'EventTarget')
 class Node(EventTarget):
     #: ``nodeType`` reads as a constant: it is not enumerated on an instance.
@@ -379,6 +401,7 @@ class Node(EventTarget):
     def _adopt_child(self, node, index=None):
         self._ensure_adoptable(node)
         self._detach_from_parent(node)
+        _adopt_subtree(node, getattr(self, "_services", None))
         node.parentNode = self
         if index is None:
             self._children.append(node)
@@ -602,6 +625,13 @@ class DocumentFragment(_ParentNodeMixin, Node):
         if services is pyv8.Undefined:
             services = None
         super().__init__(services=services, node_type=Node.DOCUMENT_FRAGMENT_NODE, node_name="#document-fragment", **kw)
+    def get_children(self):
+        from .collections import HTMLCollection
+        collection = self.__dict__.get('_children_collection')
+        if collection is None:
+            collection = self._children_collection = HTMLCollection(
+                owner=self, getter=self._element_children)
+        return collection
     def fn_getElementById(self, value=MISSING, *_extra):
         if value is MISSING:
             raise missing_error('DocumentFragment', 'getElementById', 1, 0, constructor=False)
