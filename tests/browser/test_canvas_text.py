@@ -146,3 +146,81 @@ def test_the_baselines_are_the_known_zero():
     # 155 answers undefined for it as well -- so the reading is not a number, here or there.
     assert not isinstance(answer["emAscent"], (int, float)), answer
     assert not isinstance(answer["emDescent"], (int, float)), answer
+
+
+INK = """
+(() => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 80; canvas.height = 40;
+  const ctx = canvas.getContext('2d');
+  ctx.font = '14px "Arial"';
+  ctx.textBaseline = %s;
+  ctx.textAlign = %s;
+  ctx.fillStyle = '#000';
+  ctx.fillText('Hxg', %d, 20);
+  const data = ctx.getImageData(0, 0, 80, 40).data;
+  let minX = 999, minY = 999, maxX = -1, maxY = -1;
+  for (let y = 0; y < 40; y++) {
+    for (let x = 0; x < 80; x++) {
+      if (data[(y * 80 + x) * 4 + 3] > 32) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return [minX, minY, maxX, maxY];
+})()
+"""
+
+
+def _ink(baseline="alphabetic", align="left", x=4):
+    import json
+
+    browser = Browser(cache=False, stub_logging="off", real_network=False)
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content("<body></body>", url="http://canvas.test/")
+        return page.evaluate(INK % (json.dumps(baseline), json.dumps(align), x))
+    finally:
+        browser.close()
+
+
+def test_text_baseline_names_where_the_run_sits():
+    """``top`` puts the em box's top at *y*; ``alphabetic`` puts the baseline there."""
+    alphabetic = _ink("alphabetic")
+    top = _ink("top")
+    assert 5 <= alphabetic[1] <= 16, alphabetic
+    assert 17 <= top[1] <= 23, top
+    assert top[1] - alphabetic[1] >= 6, (alphabetic, top)
+
+
+def test_text_align_names_where_the_run_ends():
+    left = _ink("alphabetic", "left", 4)
+    right = _ink("alphabetic", "right", 60)
+    center = _ink("alphabetic", "center", 40)
+    assert abs(left[0] - 4) <= 2, left
+    assert abs(right[2] - 60) <= 2, right
+    assert abs((center[0] + center[2]) / 2 - 40) <= 3, center
+
+
+def test_a_canvas_font_reads_back_serialized():
+    """``ctx.font`` answers the shorthand Chrome would print, not what was assigned."""
+    script = """(() => {
+      const ctx = document.createElement('canvas').getContext('2d');
+      const out = [];
+      for (const font of ['14px "Arial"', 'bold 14px "Times New Roman"', '10px sans-serif']) {
+        ctx.font = font;
+        out.push(ctx.font);
+      }
+      return out;
+    })()"""
+    browser = Browser(cache=False, stub_logging="off", real_network=False)
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content("<body></body>", url="http://canvas.test/")
+        assert page.evaluate(script) == [
+            "14px Arial", 'bold 14px "Times New Roman"', "10px sans-serif"]
+    finally:
+        browser.close()

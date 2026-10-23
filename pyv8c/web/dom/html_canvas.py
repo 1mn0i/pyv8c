@@ -23,6 +23,28 @@ from .webgl import WebGL2RenderingContext, WebGLRenderingContext
 #: ``textBaseline`` accepts these spellings; any other value leaves the state untouched.
 _TEXT_BASELINES = frozenset(("alphabetic", "bottom", "hanging", "ideographic", "middle", "top"))
 
+#: ``textAlign`` accepts these spellings, likewise.
+_TEXT_ALIGNS = frozenset(("center", "end", "left", "right", "start"))
+
+#: Canvas baselines as Pillow anchor letters; ``top``/``hanging`` map to the ascender.
+_BASELINE_ANCHORS = {
+    "alphabetic": "s",
+    "bottom": "d",
+    "hanging": "a",
+    "ideographic": "d",
+    "middle": "m",
+    "top": "a",
+}
+
+#: ``textAlign`` as Pillow anchor letters (``start``/``end`` assume LTR).
+_ALIGN_ANCHORS = {"center": "m", "end": "r", "left": "l", "right": "r", "start": "l"}
+
+#: Family names CSS serializes without quotes; anything else is quoted.
+_GENERIC_FAMILIES = frozenset((
+    "cursive", "emoji", "fangsong", "fantasy", "math", "monospace", "sans-serif",
+    "serif", "system-ui", "ui-monospace", "ui-rounded", "ui-sans-serif", "ui-serif",
+))
+
 
 #: The context kinds a canvas can answer for; ``experimental-webgl`` is the older spelling.
 _CONTEXT_KINDS = ("2d", "webgl", "webgl2")
@@ -468,6 +490,7 @@ class CanvasRenderingContext2D:
     def __init__(self, canvas):
         self._canvas = canvas; self._fill = "#000000"; self._stroke = "#000000"; self._font = "10px sans-serif"
         self._baseline = "alphabetic"
+        self._align = "start"
         #: The faces this context has already opened for drawing, by file, face and size.
         self._font_handles = {}
         self._path = []; self._stack = []
@@ -490,13 +513,40 @@ class CanvasRenderingContext2D:
     def set_fillStyle(self, v): self._fill = v if isinstance(v, CanvasGradient) else str(v)
     def get_strokeStyle(self): return self._stroke
     def set_strokeStyle(self, v): self._stroke = v if isinstance(v, CanvasGradient) else str(v)
-    def get_font(self): return self._font
+    def get_font(self):
+        """Chrome's serialization: ``14px "Arial"`` reads back as ``14px Arial``."""
+        style = self._font_style()
+        parts = []
+        if style["font-style"] != "normal":
+            parts.append(style["font-style"])
+        if style["font-weight"] != "400":
+            parts.append("bold" if style["font-weight"] == "700" else style["font-weight"])
+        parts.append(style["font-size"])
+        families = []
+        for name in str(style["font-family"]).split(","):
+            name = name.strip()
+            if not name:
+                continue
+            named = name.lower() in _GENERIC_FAMILIES
+            plain = re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", name) is not None
+            families.append(name if named or plain else '"%s"' % name)
+        parts.append(", ".join(families) or "sans-serif")
+        return " ".join(parts)
     def set_font(self, v): self._font = str(v)
     def get_textBaseline(self): return self._baseline
     def set_textBaseline(self, value):
         value = str(dom_string(value))
         if value in _TEXT_BASELINES:
             self._baseline = value
+    def get_textAlign(self): return self._align
+    def set_textAlign(self, value):
+        value = str(dom_string(value))
+        if value in _TEXT_ALIGNS:
+            self._align = value
+    def _text_anchor(self):
+        """The Pillow anchor this context's baseline and alignment name."""
+        return (_ALIGN_ANCHORS.get(self._align, "l")
+                + _BASELINE_ANCHORS.get(self._baseline, "s"))
     def _font_style(self):
         """The style this context's ``font`` asks for, as the layout layer reads one.
 
@@ -512,8 +562,10 @@ class CanvasRenderingContext2D:
         families = [name.strip().strip('"\'') for name in names.split(",")]
         heavy = "bold" in words or any(
             word.replace(".", "", 1).isdigit() and float(word) >= 600 for word in words)
+        # CSS prints an integral size without a fractional part: 14px, not 14.0px.
+        number = f"{size:.6f}".rstrip("0").rstrip(".") or "0"
         return {
-            "font-size": f"{size}px",
+            "font-size": f"{number}px",
             "font-family": ", ".join([name for name in families if name] or ["sans-serif"]),
             "font-weight": "700" if heavy else "400",
             "font-style": "italic" if ("italic" in words or "oblique" in words) else "normal",
@@ -654,18 +706,35 @@ class CanvasRenderingContext2D:
             mask = Image.new('L', self._image.size)
             self._draw_rect_mask(ImageDraw.Draw(mask), x, y, w, h)
             self._image.paste((0, 0, 0, 0), mask=mask)
+    def _draw_text(self, text, x, y, *, fill, stroke=None):
+        """Draw one run at *x*/*y* on the named baseline; the bitmap face has no anchors."""
+        font = self._font_obj()
+        if font is None:
+            return
+        point = self._device(x, y)
+        anchor = self._text_anchor()
+        try:
+            if stroke is None:
+                self._draw.text(point, text, font=font, fill=fill, anchor=anchor)
+            else:
+                self._draw.text(point, text, font=font, fill=None, stroke_width=1,
+                                stroke_fill=stroke, anchor=anchor)
+        except ValueError:
+            left, top, right, bottom = font.getbbox(text)
+            offset_x = {"l": 0, "m": -(right - left) / 2, "r": -(right - left)}[anchor[0]]
+            offset_y = -bottom if anchor[1] == "s" else 0
+            corner = (point[0] + offset_x, point[1] + offset_y)
+            if stroke is None:
+                self._draw.text(corner, text, font=font, fill=fill)
+            else:
+                self._draw.text(corner, text, font=font, fill=None,
+                                stroke_width=1, stroke_fill=stroke)
     def fn_fillText(self, text='', x=0, y=0, *_):
         if self._draw:
-            self._draw.text(
-                self._device(x, y), str(text), font=self._font_obj(),
-                fill=_canvas_color(self._fill), anchor='ls',
-            )
+            self._draw_text(str(text), x, y, fill=_canvas_color(self._fill))
     def fn_strokeText(self, text='', x=0, y=0, *_):
         if self._draw:
-            self._draw.text(
-                self._device(x, y), str(text), font=self._font_obj(),
-                fill=None, stroke_width=1, stroke_fill=_canvas_color(self._stroke), anchor='ls',
-            )
+            self._draw_text(str(text), x, y, fill=None, stroke=_canvas_color(self._stroke))
     def fn_rect(self, x=MISSING, y=MISSING, width=MISSING, height=MISSING, *_extra):
         for index, value in enumerate((x, y, width, height)):
             if value is MISSING:
