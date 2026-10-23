@@ -85,6 +85,52 @@ def test_parser_and_create_element_agree_on_every_local_name(document_page):
     """) == []
 
 
+def test_create_element_accepts_chrome_html_names(document_page):
+    assert document_page.evaluate("""
+        ['_', 'äx', 'a=b', ':foo', 'foo:bar', '😀'].map(name => {
+          const element = document.createElement(name);
+          return [element.localName, element.tagName];
+        })
+    """) == [['_', '_'], ['äx', 'äX'], ['a=b', 'A=B'],
+              [':foo', ':FOO'], ['foo:bar', 'FOO:BAR'], ['😀', '😀']]
+
+
+def test_create_element_rejects_invalid_html_names(document_page):
+    assert document_page.evaluate("""
+        ['1x', 'a b', 'a/b', 'a>b', ''].map(name => {
+          try { document.createElement(name); return 'accepted'; }
+          catch (error) { return [error.name, error.message]; }
+        })
+    """) == [
+        ['InvalidCharacterError', "Failed to execute 'createElement' on 'Document': The tag name provided ('1x') is not a valid name."],
+        ['InvalidCharacterError', "Failed to execute 'createElement' on 'Document': The tag name provided ('a b') is not a valid name."],
+        ['InvalidCharacterError', "Failed to execute 'createElement' on 'Document': The tag name provided ('a/b') is not a valid name."],
+        ['InvalidCharacterError', "Failed to execute 'createElement' on 'Document': The tag name provided ('a>b') is not a valid name."],
+        ['InvalidCharacterError', "Failed to execute 'createElement' on 'Document': The tag name provided ('') is not a valid name."],
+    ]
+
+
+def test_document_fragment_children_is_live_collection(document_page):
+    assert document_page.evaluate("""
+        (() => {
+          const fragment = document.createDocumentFragment();
+          const children = fragment.children;
+          fragment.append(document.createTextNode('text'), document.createElement('_'));
+          return [Object.prototype.toString.call(children),
+                  typeof children[Symbol.iterator], children === fragment.children,
+                  children.length,
+                  [...children].map(element => element.localName)];
+        })()
+    """) == ['[object HTMLCollection]', 'function', True, 1, ['_']]
+
+
+def test_document_and_element_children_keep_identity(document_page):
+    assert document_page.evaluate("""
+        [document.children === document.children,
+         document.body.children === document.body.children]
+    """) == [True, True]
+
+
 def test_modelled_tags_resolve_to_their_interface(document_page):
     assert document_page.evaluate("""
         ['img', 'td', 'tr', 'textarea', 'iframe', 'canvas', 'input', 'script', 'template',

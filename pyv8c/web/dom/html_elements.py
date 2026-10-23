@@ -36,6 +36,14 @@ from .utils import _VALID_NAME_RE, XHTML_NAMESPACE
 _ADJACENT_POSITIONS = ("beforebegin", "afterbegin", "beforeend", "afterend")
 
 
+def _ascii_upper(value):
+    return value.translate(str.maketrans("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+
+
+def _ascii_lower(value):
+    return value.translate(str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"))
+
+
 # HTML void elements serialize without children or an end tag, programmatic nodes too.
 _VOID_ELEMENTS = frozenset({
     "area", "base", "br", "col", "embed", "hr", "img", "input",
@@ -179,12 +187,12 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
         """
         qualified = str(tag_name)
         if namespace is None:
-            local = (qualified if local_name is None else str(local_name)).lower()
-            node_name = local.upper()
+            local = _ascii_lower(qualified if local_name is None else str(local_name))
+            node_name = _ascii_upper(local)
             self._namespace, self._prefix = XHTML_NAMESPACE, None
         else:
             local = qualified if local_name is None else str(local_name)
-            node_name = qualified.upper() if namespace == XHTML_NAMESPACE else qualified
+            node_name = _ascii_upper(qualified) if namespace == XHTML_NAMESPACE else qualified
             self._namespace = None if is_nullish(namespace) else str(namespace)
             self._prefix = None if is_nullish(prefix) else str(prefix)
         super().__init__(services=services, node_type=Node.ELEMENT_NODE, node_name=node_name, **kw)
@@ -227,7 +235,12 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
     def set_outerHTML(self, value):
         value = dom_string(value)
         if self.parentNode: self.parentNode.fn_replaceChild(self._services.document_services.document._parse_one(str(value)), self)
-    def get_children(self): return HTMLCollection(owner=self, getter=lambda: [c for c in self._children if isinstance(c, Element)])
+    def get_children(self):
+        collection = self.__dict__.get('_children_collection')
+        if collection is None:
+            collection = self._children_collection = HTMLCollection(
+                owner=self, getter=lambda: [c for c in self._children if isinstance(c, Element)])
+        return collection
     def get_slot(self): return str(self.attributes.get("slot", ""))
     def set_slot(self, value): self.attributes["slot"] = str(dom_string(value))
     def get_part(self):

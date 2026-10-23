@@ -20,7 +20,7 @@ from .html_elements import Element
 from .mixins import _ParentNodeMixin
 from .nodes import Attr, DocumentFragment, Node, ShadowRoot
 from .permissions_policy import PermissionsPolicy
-from .utils import MATHML_NAMESPACE, SVG_NAMESPACE, XHTML_NAMESPACE, _VALID_NAME_RE, name_fault
+from .utils import MATHML_NAMESPACE, SVG_NAMESPACE, XHTML_NAMESPACE, name_fault
 
 
 @interface('FragmentDirective', None)
@@ -311,8 +311,11 @@ class Document(_ParentNodeMixin, Node):
     def get_visibilityState(self): return "hidden" if self.hidden else "visible"
     def get_prerendering(self): return False
     def get_children(self):
-        return HTMLCollection(owner=self, getter=lambda: [
-            node for node in self._children if isinstance(node, Element)])
+        collection = self.__dict__.get('_children_collection')
+        if collection is None:
+            collection = self._children_collection = HTMLCollection(owner=self, getter=lambda: [
+                node for node in self._children if isinstance(node, Element)])
+        return collection
     def get_customElementRegistry(self):
         """The window's registry: the two reads are the same object in Chrome."""
         from ..bom.window import Window
@@ -547,8 +550,14 @@ class Document(_ParentNodeMixin, Node):
         return None
     def _validate_name(self, name):
         value = str(name)
-        if not _VALID_NAME_RE.match(value):
-            raise InvalidCharacterError("The qualified name provided is invalid.")
+        # HTML createElement uses the HTML name rule, which accepts names such
+        # as "_", ":foo" and non-ASCII letters.  XML qualified-name validation
+        # for createElementNS is handled separately below.
+        fault = name_fault(value)
+        if fault is not None and not (value.startswith(":") and name_fault("a" + value) is None):
+            raise InvalidCharacterError(
+                "Failed to execute 'createElement' on 'Document': The tag name"
+                f" provided ('{value}') is not a valid name.")
         return value
     def _new_element(self, tag):
         tag = self._validate_name(tag)
