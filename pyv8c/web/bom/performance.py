@@ -41,6 +41,52 @@ def _double(value, message):
         raise PageTypeError(message) from exc
 
 
+# Chrome 155's Event Timing map contains these event types even before any input.
+# Its order is observable through keys(), entries() and Symbol.iterator.
+EVENT_COUNT_TYPES = (
+    "pointerdown", "touchend", "input", "keydown", "mouseleave", "mouseenter",
+    "drop", "beforeinput", "pointerenter", "dragend", "pointercancel",
+    "compositionupdate", "mousedown", "dragleave", "dragover", "mouseup",
+    "pointerover", "lostpointercapture", "mouseover", "gotpointercapture",
+    "dblclick", "keyup", "keypress", "pointerup", "compositionstart", "auxclick",
+    "dragstart", "touchstart", "compositionend", "pointerout", "dragenter",
+    "touchcancel", "click", "contextmenu", "mouseout", "pointerleave",
+)
+EVENT_COUNT_NAMES = frozenset(EVENT_COUNT_TYPES)
+
+
+@interface('EventCounts', None)
+class EventCounts:
+    """A live, read-only Event Timing map for one document timeline."""
+
+    def __init__(self, counts=None, **_):
+        self._counts = counts if counts is not None else {}
+
+    def get_size(self): return len(EVENT_COUNT_TYPES)
+
+    def fn_get(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('EventCounts', 'get', 1, 0, constructor=False)
+        name = dom_string(name)
+        return self._counts.get(name, 0) if name in EVENT_COUNT_NAMES else pyv8.Undefined
+
+    def fn_has(self, name=MISSING, *_extra):
+        if name is MISSING:
+            raise missing_error('EventCounts', 'has', 1, 0, constructor=False)
+        return dom_string(name) in EVENT_COUNT_NAMES
+
+    def __v8_iteration_source__(self):
+        index = 0
+        def next_pair():
+            nonlocal index
+            if index >= len(EVENT_COUNT_TYPES):
+                return None
+            name = EVENT_COUNT_TYPES[index]
+            index += 1
+            return name, self._counts.get(name, 0)
+        return next_pair
+
+
 @interface('PerformanceTiming', None)
 class PerformanceTiming:
     """Navigation timings: when the clock started, and nothing measured after it."""
@@ -374,6 +420,14 @@ class Performance(EventTarget):
         from .window import Window
         window = Window._accessor_window()
         return MemoryInfo(services=getattr(window, "_services", None))
+
+    def get_eventCounts(self):
+        view = getattr(self, "_event_counts", None)
+        if view is None:
+            timeline = self._timeline()
+            view = self._event_counts = EventCounts(
+                None if timeline is None else timeline.event_counts)
+        return view
 
     # -- the timeline the platform keeps ------------------------------------------
 

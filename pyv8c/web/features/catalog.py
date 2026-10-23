@@ -82,7 +82,7 @@ CORE_INTERFACES = (
     "TrustedTypePolicyFactory", "XPathEvaluator", "XPathExpression", "XPathResult",
     "Notification", "MessageChannel", "MessagePort", "BroadcastChannel",
     "FontFace", "FontFaceSet", "FontData", "CookieStore",
-    "MemoryInfo", "PerformanceObserver", "PerformanceEntry", "PerformanceMark",
+    "EventCounts", "MemoryInfo", "PerformanceObserver", "PerformanceEntry", "PerformanceMark",
     "PerformanceMeasure", "PerformanceResourceTiming", "PerformanceNavigationTiming",
     "PerformanceObserverEntryList",
     "Lock", "LockManager",

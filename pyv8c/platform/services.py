@@ -63,6 +63,7 @@ class _PerformanceCapability:
     def __init__(self):
         self._records = []
         self._listeners = []
+        self.event_counts = {}
         self.clock = Clock()
 
     def begin_navigation(self, url, redirects=0, redirects_span=0.0):
@@ -81,6 +82,7 @@ class _PerformanceCapability:
     def reset(self):
         del self._records[:]
         del self._listeners[:]
+        self.event_counts.clear()
 
     def record(self, kind, **facts):
         record = {"kind": kind, **facts}

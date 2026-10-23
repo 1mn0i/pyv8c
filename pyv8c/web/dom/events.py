@@ -837,6 +837,14 @@ class EventTarget:
                      len(self._listeners.get(event.type, ())))
         if event._dispatching:
             raise dom_exception("InvalidStateError", "The event is already being dispatched.")
+        if event._trusted:
+            from ..bom.performance import EVENT_COUNT_NAMES
+            if event.type in EVENT_COUNT_NAMES:
+                timeline = getattr(getattr(self._services, "realm_services", None),
+                                   "performance", None)
+                if timeline is not None:
+                    counts = timeline.event_counts
+                    counts[event.type] = counts.get(event.type, 0) + 1
         # An event begins a new script observation boundary. Host-backed state may
         # have changed since the preceding event without a DOM mutation; keep
         # repeated reads within this dispatch cheap, but start it with fresh boxes.
