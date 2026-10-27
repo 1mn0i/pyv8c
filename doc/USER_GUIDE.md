@@ -309,6 +309,7 @@ context = pyv8.Context(
 | `trace` | 是否立即开启原生绑定观察 |
 | `traceable` | 初始关闭时是否配置后续开启观察的能力 |
 | `trace_callback` | Context 级事件回调，省略时使用默认日志 |
+| `trace_scripts` | 非空脚本 URL Glob 模式元组；仅记录当前 JS 栈来源匹配的绑定事件，省略则记录所有来源 |
 | `ctx_type` | 传给 trace 的上下文标签，例如 `Top`、`Iframe` |
 | `timeout` | 默认脚本超时秒数，`0` 表示不限制 |
 | `isolate` | 指定自定义 `pyv8.Isolate`，省略时使用默认 Isolate |
@@ -898,6 +899,8 @@ Attribute 和 operation 配置中的 `FlagCrossOriginCheck` 决定对应 functio
 Trace 是原生绑定边界上的 RAII 观察作用域：业务回调仍只执行一次，退出时读取已有参数、返回值和异常。
 
 `trace` 控制当前观察状态；`traceable` 保留为创建时配置观察回调的显式选项，不再表示安装拦截器：
+
+`trace_scripts=("https://example.test/sdk/*.js*",)` 可在原生事件参数转换前按当前执行脚本的完整 URL 筛选。模式支持 `*` 和 `?`，查询参数也参与匹配；异步回调按执行时的 JS 函数来源归属。没有具名脚本栈的宿主操作在启用筛选后不记录。回调参数格式不变。
 
 - `trace=True`：立即观察，之后可以暂停/恢复。
 - `trace=False, traceable=True`：初始关闭，之后可以开启。

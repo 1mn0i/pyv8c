@@ -6,6 +6,7 @@
 #include "runtime.h"
 #include "crossing.h"
 #include <v8.h>
+#include <v8-debug.h>
 #include <algorithm>
 #include <limits>
 
@@ -24,6 +25,63 @@
 #include "microtask_queue.h"
 
 using namespace v8;
+
+static std::size_t trace_next_utf8(const std::string& text, std::size_t index)
+{
+    if (index >= text.size()) return index;
+    auto first = static_cast<unsigned char>(text[index]);
+    std::size_t width = first < 0x80 ? 1 : first < 0xe0 ? 2 : first < 0xf0 ? 3 : 4;
+    return std::min(index + width, text.size());
+}
+
+static bool trace_glob_matches(const std::string& pattern, const std::string& source)
+{
+    std::size_t p = 0, s = 0, star = std::string::npos, retry = 0;
+    while (s < source.size()) {
+        if (p < pattern.size() && pattern[p] == '?') {
+            ++p;
+            s = trace_next_utf8(source, s);
+        } else if (p < pattern.size() && pattern[p] == source[s]) {
+            ++p;
+            ++s;
+        } else if (p < pattern.size() && pattern[p] == '*') {
+            star = p++;
+            retry = s;
+        } else if (star != std::string::npos) {
+            p = star + 1;
+            retry = trace_next_utf8(source, retry);
+            s = retry;
+        } else {
+            return false;
+        }
+    }
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+
+bool context_trace_source_matches(context_c* context)
+{
+    auto* filter = context->trace_source_filter;
+    if (filter == nullptr) return true;
+    auto* isolate = v8::Isolate::GetCurrent();
+    if (isolate == nullptr) return false;
+    auto script = v8::StackTrace::CurrentScriptNameOrSourceURL(isolate);
+    if (script.IsEmpty() || script->Length() == 0) return false;
+    v8::String::Utf8Value name(isolate, script);
+    if (*name == nullptr) return false;
+    std::string source(*name, name.length());
+    auto cached = filter->matches.find(source);
+    if (cached != filter->matches.end()) return cached->second;
+    bool match = false;
+    for (const auto& pattern : filter->patterns) {
+        if (trace_glob_matches(pattern, source)) {
+            match = true;
+            break;
+        }
+    }
+    filter->matches.emplace(std::move(source), match);
+    return match;
+}
 
 PyObject* context_promise_rejection_state(context_c* self, PyObject* args);
 static PyObject* context_try_inspector(context_c* self, PyObject* args);
@@ -432,12 +490,13 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* traceable = Py_False;
     PyObject* reuse_global = Py_None;
     PyObject* py_microtasks = Py_None;
-    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", "reuse_global", "microtask_queue", NULL};
+    PyObject* trace_scripts = Py_None;
+    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", "reuse_global", "microtask_queue", "trace_scripts", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOOOOOOOO", (char **) keywords,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOOOOOOOOO", (char **) keywords,
                                     &global, &trace, &ctx_type, &py_timeout, &py_isolate,
                                     &lazy_factory, &trace_callback, &traceable,
-                                    &reuse_global, &py_microtasks)) {
+                                    &reuse_global, &py_microtasks, &trace_scripts)) {
         return NULL;
     }
 
@@ -452,6 +511,24 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     if (trace_callback != Py_None && !PyCallable_Check(trace_callback)) {
         PyErr_SetString(PyExc_TypeError, "trace_callback must be callable or None");
         return nullptr;
+    }
+    std::vector<std::string> trace_patterns;
+    if (trace_scripts != Py_None) {
+        if (!PyTuple_Check(trace_scripts) || PyTuple_Size(trace_scripts) == 0) {
+            PyErr_SetString(PyExc_ValueError, "trace_scripts must be a non-empty tuple of strings or None");
+            return nullptr;
+        }
+        for (Py_ssize_t index = 0; index < PyTuple_Size(trace_scripts); ++index) {
+            PyObject* pattern = PyTuple_GetItem(trace_scripts, index);
+            if (!PyUnicode_Check(pattern) || PyUnicode_GetLength(pattern) == 0) {
+                PyErr_SetString(PyExc_ValueError, "trace_scripts must contain non-empty strings");
+                return nullptr;
+            }
+            Py_ssize_t size = 0;
+            const char* text = PyUnicode_AsUTF8AndSize(pattern, &size);
+            if (text == nullptr) return nullptr;
+            trace_patterns.emplace_back(text, static_cast<std::size_t>(size));
+        }
     }
     IsolateState* isolate_state = isolate_state_from_python(py_isolate, true);
     if (isolate_state == nullptr)
@@ -521,6 +598,9 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     self->trace = trace == Py_True;
     self->traceable = self->trace || traceable == Py_True;
     self->trace_depth = 0;
+    self->trace_source_filter = trace_scripts == Py_None ? nullptr : new TraceSourceFilter();
+    if (self->trace_source_filter != nullptr)
+        self->trace_source_filter->patterns = std::move(trace_patterns);
     if (trace_callback != Py_None) {
         Py_INCREF((PyObject*)trace_callback);
         self->trace_callback = trace_callback;
@@ -664,6 +744,8 @@ context_finish_close(context_c *self)
         microtask_queue_detach(self->microtask_queue);
     }
     self->js_context.Reset();
+    delete self->trace_source_filter;
+    self->trace_source_filter = nullptr;
     context_clear_python_fields(self);
     self->isolate_state = nullptr;
     self->state = ContextState::Closed;

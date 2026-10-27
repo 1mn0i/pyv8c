@@ -8,6 +8,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "v8_handle_slot.h"
 
@@ -52,6 +54,11 @@ private:
 };
 
 struct PythonObjectOwner;
+
+struct TraceSourceFilter {
+    std::vector<std::string> patterns;
+    std::unordered_map<std::string, bool> matches;
+};
 
 // Every Python reference a realm owns.  The struct, the traversal and the close
 // walk all read this one list, so a field cannot be added without being visited.
@@ -99,6 +106,7 @@ typedef struct context_c
     bool trace;
     bool traceable;
     unsigned int trace_depth;
+    TraceSourceFilter* trace_source_filter;
 
     PyObject* trace_callback;
     PyObject* trace_context_type;
@@ -148,8 +156,10 @@ void context_register_handle(context_c* self, PyObject* handle, int (*clear)(PyO
 void context_unregister_handle(context_c* self, PyObject* handle);
 bool context_retain_dependency(v8::Local<v8::Context> target, PyObject* source);
 
+bool context_trace_source_matches(context_c* context);
 inline bool context_trace_enabled(context_c* context) {
-    return context != nullptr && context->trace && context->trace_callback != nullptr && context->trace_depth == 0;
+    return context != nullptr && context->trace && context->trace_callback != nullptr &&
+           context->trace_depth == 0 && context_trace_source_matches(context);
 }
 
 extern PyTypeObject* context_type;

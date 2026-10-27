@@ -5,6 +5,7 @@
 #include "handle_resource.h"
 #include "js_exception.h"
 #include "runtime.h"
+#include "trace.h"
 
 #include <cstdarg>
 #include <cstring>
@@ -336,6 +337,7 @@ void attach_stack(Local<Context> context, Local<Object> error)
 {
     if (context.IsEmpty() || error.IsEmpty())
         return;
+    trace::TraceSilence silence(context_from_v8(context));
     Exception::CaptureStackTrace(context, error).FromMaybe(false);
 }
 
@@ -394,6 +396,9 @@ void report_piece(const char* what, const char* name)
 Local<Object> build(Isolate* isolate, Local<Context> context, const char* name,
                     PyObject* exc_value, const char* message)
 {
+    // This is the host's conversion of a Python failure into a realm error.
+    // Constructing it and attaching its fields/stack is not a page operation.
+    trace::TraceSilence silence(context_from_v8(context));
     // A detached realm builds nothing new: its own error class would run the embedder
     // side inside a realm whose document is gone, so the message rides a plain error.
     if (context_is_detached(context))

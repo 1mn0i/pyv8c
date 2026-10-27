@@ -1,4 +1,4 @@
-from typing import ClassVar, Iterator, Mapping, Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
+from typing import ClassVar, Iterator, Mapping, Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 class IdlSpec:
     def __init__(self, *,
@@ -244,6 +244,7 @@ class Isolate:
         traceable: bool = False,
         reuse_global: Optional[JSObject] = None,
         microtask_queue: Optional[MicrotaskQueue] = None,
+        trace_scripts: Optional[Tuple[str, ...]] = None,
     ) -> Context: ...
     def gc(self) -> None: ...
     @property
@@ -258,7 +259,7 @@ class Isolate:
 # 基本类型
 class Context:
     """V8 JavaScript执行上下文"""
-    def __init__(self, global_this: Any, trace: bool = False, ctx_type: Optional[str] = None, timeout: Optional[float] = None, isolate: Optional[Isolate] = None, lazy_factory: Optional[Callable[[str], Any]] = None, trace_callback: Optional[Callable[..., Any]] = None, traceable: bool = False, reuse_global: Optional[JSObject] = None, microtask_queue: Optional[MicrotaskQueue] = None) -> None:
+    def __init__(self, global_this: Any, trace: bool = False, ctx_type: Optional[str] = None, timeout: Optional[float] = None, isolate: Optional[Isolate] = None, lazy_factory: Optional[Callable[[str], Any]] = None, trace_callback: Optional[Callable[..., Any]] = None, traceable: bool = False, reuse_global: Optional[JSObject] = None, microtask_queue: Optional[MicrotaskQueue] = None, trace_scripts: Optional[Tuple[str, ...]] = None) -> None:
         """Create a realm.
 
         *lazy_factory* answers what a name means here: it takes an interface name and

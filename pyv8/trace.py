@@ -7,7 +7,7 @@ from . import JSFunction, JSObject, Null, Undefined
 #: bounded on its own.  An object graph is the older of the two hazards (a page global
 #: held 439 KB of it) and a string is the other: an ``atob`` argument, an XHR body and
 #: the script text a Trusted Types policy builds are each megabytes on one line.
-_MAX_DISPLAY = 160
+_MAX_DISPLAY = 160000
 
 
 _EXCLUDED_GETTERS = frozenset((
@@ -17,7 +17,7 @@ _EXCLUDED_GETTERS = frozenset((
     "Date", "Object", "window", "Symbol", "Number", "Function", "parseFloat", "parseInt",
     "Math", "BigInt", "RegExp", "console", "isNaN", "Boolean", "NaN", "Infinity",
     "Symbol.toPrimitive", "Symbol.toStringTag", "unescape", "decodeURIComponent",
-    "Map", "Set", "Proxy", "Reflect"
+    "Map", "Set", "Proxy", "Reflect", "JSON"
 ))
 
 
@@ -67,6 +67,7 @@ def _display(value, _depth=0):
         # The raw event still carries the handle. Formatting must not enumerate
         # a Proxy, run accessors, or materialize the graph behind that handle.
         return f"<{type(value).__name__}>..."
+        # return value.to_python()
     return f"<{type(value).__name__}>"
 
 

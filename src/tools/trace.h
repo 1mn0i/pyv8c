@@ -14,8 +14,12 @@ namespace trace {
 
 class TraceSilence {
 public:
-    explicit TraceSilence(context_c* owner) : owner(owner) { ++owner->trace_depth; }
-    ~TraceSilence() { --owner->trace_depth; }
+    explicit TraceSilence(context_c* owner) : owner(owner) {
+        if (owner != nullptr) ++owner->trace_depth;
+    }
+    ~TraceSilence() {
+        if (owner != nullptr) --owner->trace_depth;
+    }
     TraceSilence(const TraceSilence&) = delete;
     TraceSilence& operator=(const TraceSilence&) = delete;
 private:
