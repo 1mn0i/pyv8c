@@ -7,7 +7,7 @@ mutation back with ``_set_search_from_params``.
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pyv8
-from ...engine.features import LazyValueStore
+from ...features.runtime import LazyValueStore
 from ...idl import interface
 from ...foundation.arguments import (
     MISSING,

@@ -48,5 +48,5 @@ def test_a_rem_size_reads_the_root_not_the_parent(page):
       const el = document.getElementById('rem');
       return [getComputedStyle(el).fontSize, el.offsetHeight];
     })()""")
-    # 30px of the default serif face: 27 + 6 + 1, the same three numbers a real Chrome adds.
-    assert answer == ["30px", 34], answer
+    # The profile's Noto Sans SC default produces the same 44px line box as Chrome.
+    assert answer == ["30px", 44], answer

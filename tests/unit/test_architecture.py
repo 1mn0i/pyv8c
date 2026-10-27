@@ -15,7 +15,8 @@ import pytest
 import pyv8c
 
 ROOT = Path(__file__).resolve().parents[2] / "pyv8c"
-DOMAIN_PACKAGES = {"web", "web/dom", "web/bom", "web/fetch", "web/fileapi", "web/workers"}
+DOMAIN_PACKAGES = {"web", "web/dom", "web/css", "web/html", "web/svg", "web/mathml", "web/media", "web/graphics",
+                   "web/bom", "web/fetch", "web/fileapi", "web/workers"}
 
 
 def _imports(path):
@@ -57,6 +58,40 @@ def test_core_has_no_relative_dependency_on_higher_layers():
             assert not (level > 1 or module.startswith(("engine", "web", "platform"))), path
 
 
+def test_builtin_feature_composition_has_one_home():
+    features = ROOT / "features"
+    for name in ("__init__", "catalog", "core", "runtime"):
+        assert (features / f"{name}.py").is_file()
+        assert not (ROOT / "web" / "features" / f"{name}.py").exists()
+    assert not (ROOT / "engine" / "features.py").exists()
+    runtime = features / "runtime.py"
+    assert not list(_imports(runtime)), "the runtime must not depend on project layers"
+    tree = ast.parse(runtime.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert all(not name.name.startswith("pyv8c") for name in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith("pyv8c")
+    for path in features.glob("*.py"):
+        for level, module in _imports(path):
+            assert not (level == 2 and module.split('.')[0] == 'platform'), path
+    catalog_source = (features / "catalog.py").read_text(encoding="utf-8")
+    assert '"pyv8c.features.core"' in catalog_source
+    assert "pyv8c.web.features" not in catalog_source
+
+
+@pytest.mark.parametrize("module", ["pyv8c.features.runtime", "pyv8c.features.catalog"])
+def test_feature_catalog_import_does_not_load_web_implementations(module):
+    import subprocess
+    import sys
+
+    script = (f"import sys; import {module}; "
+              "assert not any(n == 'pyv8c.web' or n.startswith('pyv8c.web.') "
+              "for n in sys.modules)")
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+
+
 def test_domain_packages_do_not_depend_on_runtime_or_offline_tools():
     for package in DOMAIN_PACKAGES:
         for path in (ROOT / package).glob("*.py"):
@@ -72,7 +107,7 @@ OPTIONAL_FEATURES = {
     "web/bom/indexeddb.py": ("bom", 2),
     "web/bom/filesystem.py": ("bom", 2),
     "web/websocket.py": ("web", 1),
-    "web/workers/api.py": ("workers", 2),
+    "web/workers/worker.py": ("workers", 2),
     "web/workers/runtime.py": ("workers", 2),
 }
 
@@ -80,7 +115,81 @@ OPTIONAL_FEATURES = {
 #: that owns the error vocabulary, ``clone`` the value every channel and store crosses, and
 #: ``fileapi`` the blob a navigator, a socket or a store hands back, so every feature may
 #: name them.
-SHARED_WEB_PACKAGES = ("clone", "dom", "fetch", "fileapi", "page_errors")
+SHARED_WEB_PACKAGES = ("clone", "css", "dom", "html", "svg", "mathml", "fetch", "fileapi",
+                       "media", "graphics", "page_errors")
+
+
+def test_non_dom_web_apis_have_their_own_modules():
+    web = ROOT / "web"
+    for name in ("ai", "encoding", "permissions_policy"):
+        assert (web / f"{name}.py").is_file(), name
+        assert not (web / "dom" / f"{name}.py").exists(), name
+    for package, module, old in (("media", "source", "media_source"), ("graphics", "webgl", "webgl")):
+        assert (web / package / f"{module}.py").is_file()
+        assert not (web / f"{old}.py").exists()
+        assert not (web / "dom" / f"{old}.py").exists()
+    assert (web / "bom" / "motion.py").is_file()
+    assert not (web / "dom" / "motion.py").exists()
+
+
+def test_canvas_interfaces_live_in_graphics_without_html_dependency():
+    web = ROOT / "web"
+    tag = (web / "html" / "canvas.py").read_text(encoding="utf-8")
+    graphics = (web / "graphics" / "canvas.py").read_text(encoding="utf-8")
+    assert "class HTMLCanvasElement(" in tag
+    for name in ("CanvasRenderingContext2D", "OffscreenCanvas", "ImageBitmap", "ImageData"):
+        assert f"class {name}(" in graphics or f"class {name}:" in graphics
+        assert f"class {name}(" not in tag and f"class {name}:" not in tag
+    for path in (web / "graphics").glob("*.py"):
+        for level, module in _imports(path):
+            assert not (level == 2 and (module == "html" or module.startswith("html."))), path
+
+
+def test_css_has_one_home_and_no_layout_dependency():
+    css = ROOT / "web" / "css"
+    for name in ("parser", "properties", "values", "cascade", "selectors", "cssom",
+                 "stylesheet", "supports", "rules", "typed", "colors"):
+        assert (css / f"{name}.py").is_file(), name
+    for name in ("css", "css_computed", "css_rules", "css_typed", "named_colors", "selectors"):
+        assert not (ROOT / "web" / "dom" / f"{name}.py").exists(), name
+    for path in css.glob("*.py"):
+        for level, module in _imports(path):
+            assert not (level == 2 and (module == "dom.layout" or module.startswith("dom.layout."))), path
+    layout = ast.parse((ROOT / "web" / "dom" / "layout.py").read_text(encoding="utf-8"))
+    definitions = {node.name for node in layout.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
+    assert not definitions.intersection({"_cascade", "_specificity", "document_rules", "computed_style"})
+
+
+def test_html_and_foreign_elements_have_separate_homes():
+    web = ROOT / "web"
+    for name in ("elements", "registry", "parser", "attributes", "forms", "inputs",
+                 "iframe", "media", "canvas", "tag_interfaces"):
+        assert (web / "html" / f"{name}.py").is_file(), name
+    for name in ("html_elements", "html_classes", "html_form", "html_input", "html_iframe",
+                 "html_canvas", "html_media", "html_props", "html_tag_interfaces", "html_svg",
+                 "html_math", "parser"):
+        assert not (web / "dom" / f"{name}.py").exists(), name
+    assert "class Element(" in (web / "dom" / "element.py").read_text(encoding="utf-8")
+    assert "class HTMLElement(" in (web / "html" / "elements.py").read_text(encoding="utf-8")
+    for package in ("svg", "mathml"):
+        assert (web / package / "elements.py").is_file()
+        for path in (web / package).glob("*.py"):
+            for level, module in _imports(path):
+                assert not (level == 2 and (module == "html" or module.startswith("html."))), path
+
+
+@pytest.mark.parametrize("module", ["pyv8c.web.html.forms", "pyv8c.web.html.registry",
+                                    "pyv8c.web.html.parser", "pyv8c.web.css.selectors",
+                                    "pyv8c.web.svg.elements", "pyv8c.web.mathml.elements",
+                                    "pyv8c.web.graphics.canvas", "pyv8c.web.graphics.webgl",
+                                    "pyv8c.web.media.source", "pyv8c.web.html.canvas"])
+def test_web_element_modules_import_independently(module):
+    import subprocess
+    import sys
+
+    result = subprocess.run([sys.executable, "-c", f"import {module}"],
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
 
 #: ``bom`` helper modules that hold no interface behind them.
 SHARED_BOM_MODULES = ("bom.scheduling", "bom.utils")
@@ -367,8 +476,8 @@ def test_page_net_exposes_both_http_flavours():
 def test_web_capability_split_has_no_legacy_mixed_modules():
     assert not (ROOT / "web" / "fetch" / "backend.py").exists()
     assert not (ROOT / "web" / "fetch" / "api.py").exists()
-    # The HTTP and socket engines are assembled per context; the module that
-    # used to answer one role's gap from the other role's engine is gone.
+    assert (ROOT / "web" / "workers" / "worker.py").is_file()
+    assert not (ROOT / "web" / "workers" / "api.py").exists()
     assert not (ROOT / "network" / "composite.py").exists()
     assert "class CookieJar" in (ROOT / "network" / "cookies.py").read_text(encoding="utf-8")
     assert "class CronetTransport" in (ROOT / "network" / "cronet.py").read_text(encoding="utf-8")
@@ -376,9 +485,8 @@ def test_web_capability_split_has_no_legacy_mixed_modules():
     assert "def assemble_backend" in (ROOT / "network" / "assembly.py").read_text(encoding="utf-8")
     assert "class WebSocketsTransport" in (ROOT / "network" / "websockets.py").read_text(encoding="utf-8")
     assert "class WorkerRuntime" in (ROOT / "web" / "workers" / "runtime.py").read_text(encoding="utf-8")
-    # The media classes own their module; the tag classes keep theirs.
-    assert "class HTMLMediaElement" in (ROOT / "web" / "dom" / "html_media.py").read_text(encoding="utf-8")
-    assert "class HTMLMediaElement" not in (ROOT / "web" / "dom" / "html_elements.py").read_text(encoding="utf-8")
+    assert "class HTMLMediaElement" in (ROOT / "web" / "html" / "media.py").read_text(encoding="utf-8")
+    assert "class HTMLMediaElement" not in (ROOT / "web" / "html" / "elements.py").read_text(encoding="utf-8")
 
 
 def test_the_two_network_roles_stay_separate_contracts():

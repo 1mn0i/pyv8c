@@ -3,7 +3,6 @@
 The tables are what Chrome reports on a desktop build, which is the reference the
 rest of the profile is read from; a different build answers with its own list.
 """
-import re
 
 import base64
 import os

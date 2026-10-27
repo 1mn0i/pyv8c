@@ -68,15 +68,25 @@ def test_a_canvas_follows_a_profile_that_carries_its_own_fonts():
     assert _measure(font='16px "FakeOnly"') != pytest.approx(measured, abs=0.5)
 
 
-def test_a_family_no_table_knows_measures_like_the_standard_font():
-    """CSS falls back to the standard font, which is the serif family and not the sans one.
-
-    Chrome measures a family nothing knows with Times New Roman for that reason; measuring
-    it with Arial instead was the difference this test exists to notice.
-    """
+def test_a_family_no_table_knows_uses_the_environment_default():
+    """The configured browser default supplies the fallback for an unknown family."""
     unknown = _measure(font='16px "Definitely Not A Font 123"')
-    standard = _measure(font='16px serif')
-    assert unknown == pytest.approx(standard, abs=0.5)
+    standard = _measure(font='16px sans-serif')
+    assert unknown == pytest.approx(standard, abs=1e-9)
+
+
+def test_canvas_default_font_uses_chrome_fractional_advance_precision():
+    if not any(record.family == 'Noto Sans SC' and record.path for record in system_fonts.records()):
+        pytest.skip('Noto Sans SC is not installed')
+    browser = Browser(real_network=False, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        assert page.evaluate('''(() => {
+          const ctx = document.createElement('canvas').getContext('2d');
+          return ['', ' ', 'm', 'mm'].map(value => ctx.measureText(value).width);
+        })()''') == [0, 2.239990234375, 9.259994506835938, 18.519989013671875]
+    finally:
+        browser.close()
 
 
 def test_a_point_size_is_read_as_pixels_at_96_dpi():

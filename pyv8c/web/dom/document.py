@@ -13,13 +13,14 @@ from ..page_errors import (InvalidStateError, InvalidCharacterError, NotSupporte
 from .animation import DocumentTimeline
 from .character_data import Comment, DocumentType, Text
 from .collections import HTMLAllCollection, HTMLCollection, NodeList, tag_name_ns_collection
-from .css import StyleSheetList
+from ..css.stylesheet import StyleSheetList
 from .fonts import FontFaceSet
-from .html_classes import class_for_local_name, class_for_tag, svg_interface_name
-from .html_elements import Element
+from ..html.registry import class_for_local_name, class_for_tag
+from ..svg.registry import svg_interface_name
+from .element import Element
 from .mixins import _ParentNodeMixin
 from .nodes import Attr, DocumentFragment, Node, ShadowRoot
-from .permissions_policy import PermissionsPolicy
+from ..permissions_policy import PermissionsPolicy
 from .utils import MATHML_NAMESPACE, SVG_NAMESPACE, XHTML_NAMESPACE, name_fault
 
 
@@ -639,16 +640,16 @@ class Document(_ParentNodeMixin, Node):
         realm = getattr(getattr(self, "_services", None), "realm_services", None)
         return None if realm is None else realm.interface_class(name)
     def query_selector(self, selector, root):
-        from .selectors import select
+        from ..css.selectors import select
         return select(root, selector, first=True) or pyv8.Null
     def query_selector_all(self, selector, root):
-        from .selectors import select
+        from ..css.selectors import select
         return list(select(root, selector))
     def matches(self, node, selector):
-        from .selectors import matches
+        from ..css.selectors import matches
         return matches(node, selector)
     def _parse_fragment(self, html, parent):
-        from .parser import parse_fragment
+        from ..html.parser import parse_fragment
         parse_fragment(html, self._services, parent)
     def _parse_one(self, html):
         tmp = Document(services=self._services, url=self.url)

@@ -1,7 +1,6 @@
 import pytest
 
 from pyv8c import Browser
-from pyv8c.web.bom.window import Window
 
 
 @pytest.fixture

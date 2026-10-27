@@ -7,7 +7,7 @@ read/write, while dropEffect and effectAllowed stay at their initial ``none``.
 import json
 import pyv8
 
-from ...engine.features import FeatureImplementation
+from ...features.runtime import FeatureImplementation
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
 from ...idl import interface
 from ..page_errors import NotSupportedError

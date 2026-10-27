@@ -25,7 +25,8 @@ from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish,
 from ...foundation.environment import environment_of
 from ...foundation.system_fonts import lookup_in, normalize, table_of
 from ..page_errors import NetworkError, PageTypeError, dom_exception, js_error_value
-from .css import parse_declarations, stylesheet_source
+from ..css.parser import parse_declarations
+from ..css.stylesheet import stylesheet_source
 from .events import EventTarget
 
 __all__ = ["FontFace", "FontFaceSet", "FontData"]
@@ -38,6 +39,24 @@ _GENERIC_FAMILIES = frozenset((
     "serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif",
     "ui-sans-serif", "ui-monospace", "ui-rounded", "emoji", "math", "fangsong",
 ))
+
+_FAMILY_KEYWORDS = _GENERIC_FAMILIES | frozenset((
+    "inherit", "initial", "unset", "revert", "revert-layer", "default"))
+_SINGLE_FAMILY_IDENT = re.compile(r'-?(?:[_A-Za-z\u0080-\U0010ffff])'
+                                  r'[_A-Za-z0-9\-\u0080-\U0010ffff]*\Z')
+
+
+def _serialize_family(value):
+    """Serialize the constructor's family as one CSS font-family name."""
+    if _SINGLE_FAMILY_IDENT.fullmatch(value) and value.casefold() not in _FAMILY_KEYWORDS:
+        return value
+    def escape(char):
+        if char in ('"', '\\'):
+            return '\\' + char
+        if ord(char) < 32 or ord(char) == 127:
+            return '\\' + format(ord(char), 'x') + ' '
+        return char
+    return '"' + ''.join(escape(char) for char in value) + '"'
 
 #: One word of an unquoted ``local()`` name: a CSS identifier, which may not carry ``:``.
 _IDENTIFIER = re.compile(r"[A-Za-z0-9_\u0080-\U0010ffff-]+\Z")
@@ -300,7 +319,8 @@ class FontFace:
         self._resolve = None
         self._reject = None
 
-    def get_family(self): return self._family
+    def get_family(self):
+        return self._family if getattr(self, '_css_connected', False) else _serialize_family(self._family)
     def get_style(self): return self._style
     def _touch_layout(self):
         document = getattr(self, "_layout_document", None)
@@ -436,6 +456,7 @@ class FontFaceSet(EventTarget):
         faces = []
         for family, source, style, weight, unicode_range in _font_face_rules(self._document):
             face = FontFace(family, source, services=self._services)
+            face._css_connected = True
             if style:
                 face.set_style(style)
             if weight:
@@ -465,7 +486,7 @@ class FontFaceSet(EventTarget):
 
     def _matching(self, family):
         key = normalize(family)
-        return tuple(face for face in self._all_faces() if normalize(face.get_family()) == key)
+        return tuple(face for face in self._all_faces() if normalize(face._family) == key)
 
     def get_status(self):
         return "loading" if any(face.get_status() == "loading" for face in self._all_faces()) \

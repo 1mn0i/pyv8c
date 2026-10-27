@@ -18,7 +18,6 @@ import json
 from pathlib import Path
 
 
-from ..engine.binder import cross_origin_check, member_flags
 from ..idl import idl_spec, members_of
 
 

@@ -3,7 +3,7 @@ from loguru import logger
 
 from pyv8c import Browser
 from pyv8c.engine.binder import CROSS_ORIGIN_FAMILIES, HANDLER_FAMILIES
-from pyv8c.web.features.catalog import CATALOG
+from pyv8c.features.catalog import CATALOG
 
 
 def test_baseline_only_interface_is_generated_and_keeps_metadata():

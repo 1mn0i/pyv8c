@@ -8,9 +8,9 @@ import pytest
 pytest.importorskip("pyv8")
 pytestmark = pytest.mark.native
 
-from pyv8c.engine.features import LazyValueStore  # noqa: E402
+from pyv8c.features.runtime import LazyValueStore  # noqa: E402
 from pyv8c.web.bom import navigation, navigator, screen, url, window  # noqa: E402
-from pyv8c.web.workers import api as workers  # noqa: E402
+from pyv8c.web.workers import worker as workers  # noqa: E402
 
 #: ``(module, factory, owner class, how the module reads a value)``
 TABLES = (

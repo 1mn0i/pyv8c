@@ -13,9 +13,9 @@ from ..foundation.error_policy import control_exceptions
 from ..foundation.urls import absolute_url
 from ..network.redirects import reportable_hops
 from ..web.bom.utils import page_base_url, page_secure_context
-from ..web.dom.document import Document, HTMLDocument
-from ..web.dom.motion import INSECURE_ORIGIN_INTERFACES
-from ..web.dom.parser import IncrementalDOMParser
+from ..web.dom.document import HTMLDocument
+from ..web.bom.motion import INSECURE_ORIGIN_INTERFACES
+from ..web.html.parser import IncrementalDOMParser
 
 
 def hide_insecure_origin_interfaces(page):
@@ -427,5 +427,5 @@ class NavigationController:
                 scripts.execute_script(node, source, self.page.url)
 
     def element_class(self, tag):
-        from ..web.dom.html_classes import class_for_tag
+        from ..web.html.registry import class_for_tag
         return class_for_tag(tag)

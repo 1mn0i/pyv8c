@@ -680,7 +680,7 @@ class ShadowRoot(DocumentFragment):
         return pyv8.Null
     def get_host(self): return pyv8.Null if self._host is None else self._host
     def get_styleSheets(self):
-        from .css import StyleSheetList
+        from ..css.stylesheet import StyleSheetList
         view = getattr(self, "_style_sheets", None)
         if view is None:
             view = self._style_sheets = StyleSheetList(self._document(), root=self)

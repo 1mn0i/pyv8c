@@ -13,7 +13,7 @@ from ...foundation.arguments import MISSING, dom_string, missing_error
 from ..page_errors import PageTypeError
 from .character_data import Comment, Text
 from .document import HTMLDocument, XMLDocument, detached_services
-from .parser import IncrementalDOMParser
+from ..html.parser import IncrementalDOMParser
 from .utils import XHTML_NAMESPACE
 
 

@@ -567,6 +567,7 @@
       }
     ]
   },
+  "fonts.default_family": "Noto Sans SC",
   "fonts.records": [
     {
       "postscript_name": "yyb-Regular",

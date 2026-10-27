@@ -10,7 +10,7 @@ import pytest
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.native
 
-from pyv8c.web.dom.html_form import Submission, entry_list, submission
+from pyv8c.web.html.forms import Submission, entry_list, submission
 from pyv8c.web.dom.utils import MULTIPART, TEXT_PLAIN, URLENCODED, encode_entries
 
 

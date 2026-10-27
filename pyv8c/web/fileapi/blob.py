@@ -3,7 +3,6 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import IdlArgumentError, dictionary, dom_string, enum_value, integer, is_nullish, sequence, usv_string
-from ..clone import js_helper
 from ..page_errors import PageTypeError
 
 

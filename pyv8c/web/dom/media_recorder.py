@@ -6,7 +6,7 @@ the local Chrome 155 build represented by the default environment profile.
 
 import re
 
-from ...engine.features import FeatureImplementation
+from ...features.runtime import FeatureImplementation
 from ...foundation.arguments import MISSING, dom_string, missing_error
 from ...idl import interface
 from .events import EventTarget

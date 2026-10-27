@@ -4,7 +4,6 @@
 packages reach platform functionality only through them, never through the Page.
 """
 
-import threading
 from functools import partial
 from dataclasses import dataclass
 from typing import Any

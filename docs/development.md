@@ -21,7 +21,7 @@ python -c "import pyv8; print(pyv8.__file__)"
 
 接口声明使用 `pyv8c.idl.interface`。方法常用 `fn_name`，属性常用 `get_name`、`set_name`；named/indexed 与跨源 handler 使用对应 `__v8_*__` 约定。成员表面与属性位以 IDL 为依据，Python 负责参数转换、状态及实际语义，不重复手写基线已经确定的形状。
 
-Feature 实现模块显式导出 FEATURE，并在 FeatureSpec 中声明依赖。新增可选功能不应使基础包导入时加载全部实现或原生运行时。纯元数据、提取器及基础资源记录仍需支持无原生环境导入。
+Feature 的通用运行机制位于 `pyv8c/features/runtime.py`，内置声明位于 `pyv8c/features/catalog.py`，核心接口组装位于 `pyv8c/features/core.py`。Feature 实现模块显式导出 FEATURE，并在 FeatureSpec 中声明依赖。新增可选功能不应使基础包导入时加载全部实现或原生运行时。纯元数据、提取器及基础资源记录仍需支持无原生环境导入。Web API 的目录归属见[架构设计](architecture.md#web-api-归属)。
 
 开发前先建立最小失败场景，再修复和添加回归测试。普通 JS 错误、宿主故障、执行终止与资源失败分别处理；宽泛捕获 BaseException 时必须确认是否需要传播执行控制信号，不能靠吞掉终止后继续页面流程保证宿主存活。
 
@@ -48,7 +48,7 @@ python tools/check_policy.py
 
 默认 pytest 配置排除 slow，所以 `-m slow` 同时覆盖 addopts，避免选择器冲突。竞态测试也可能标记 slow，重复运行时同样需要覆盖。不要默认并行运行 Chrome 对照。
 
-修改原生支持时，在 `_pyv8` 仓库运行构建和测试，再回到 pyv8c 验证受影响链路：
+修改原生支持时，在相邻 `_pyv8` 仓库运行构建、测试及该仓库的 `tools/check_layout.py`，再回到 pyv8c 验证受影响链路：
 
 ```powershell
 Push-Location ..\_pyv8

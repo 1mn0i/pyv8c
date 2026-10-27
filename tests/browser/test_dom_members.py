@@ -987,11 +987,11 @@ def test_an_xml_parse_keeps_namespaces_and_reports_its_own_error(page):
 
 def test_stylesheet_cascade_and_layout_still_apply(page):
     """The cascade reads the sheet once per entry point, not once per element."""
-    assert page.evaluate("getComputedStyle(document.querySelector('.item')).color") == "red"
+    assert page.evaluate("getComputedStyle(document.querySelector('.item')).color") == "rgb(255, 0, 0)"
     # Inherited through the parent chain.
     assert page.evaluate("getComputedStyle(document.getElementById('sized')).fontSize") == "20px"
     # An inline declaration outranks the sheet.
-    assert page.evaluate("getComputedStyle(document.querySelector('.item[style]')).color") == "blue"
+    assert page.evaluate("getComputedStyle(document.querySelector('.item[style]')).color") == "rgb(0, 0, 255)"
     assert page.evaluate("""
         (function () {
             const sized = document.getElementById('sized');
@@ -1071,14 +1071,14 @@ def style_page():
 
 def test_stylesheet_cache_follows_runtime_changes(style_page):
     """The sheet is parsed once per change, not once per measurement."""
-    from pyv8c.web.dom.layout import document_rules
+    from pyv8c.web.css.cascade import document_rules
 
     document = style_page.document
 
     def color():
         return style_page.evaluate("getComputedStyle(document.getElementById('target')).color")
 
-    assert color() == "red"
+    assert color() == "rgb(255, 0, 0)"
     cached = document_rules(document)
     assert document_rules(document) is cached, "an unchanged document reuses its sheet"
 
@@ -1092,17 +1092,17 @@ def test_stylesheet_cache_follows_runtime_changes(style_page):
         })()
     """)
     assert document_rules(document) is not cached
-    assert color() == "green"
+    assert color() == "rgb(0, 128, 0)"
 
     # Editing the rules the element holds, through the tree and through a text node.
     style_page.evaluate("window.__style.textContent = '#target { color: purple }'")
-    assert color() == "purple"
+    assert color() == "rgb(128, 0, 128)"
     style_page.evaluate("window.__style.firstChild.nodeValue = '#target { color: teal }'")
-    assert color() == "teal"
+    assert color() == "rgb(0, 128, 128)"
 
     # Removing it brings the original rule back.
     style_page.evaluate("window.__style.parentNode.removeChild(window.__style)")
-    assert color() == "red"
+    assert color() == "rgb(255, 0, 0)"
 
     # A subtree carrying a style element that is only inserted afterwards.
     style_page.evaluate("""
@@ -1112,4 +1112,4 @@ def test_stylesheet_cache_follows_runtime_changes(style_page):
             document.head.appendChild(holder);
         })()
     """)
-    assert color() == "blue"
+    assert color() == "rgb(0, 0, 255)"

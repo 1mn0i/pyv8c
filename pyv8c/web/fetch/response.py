@@ -6,7 +6,7 @@ import pyv8
 from ...idl import interface
 from ...foundation.arguments import byte_string, dictionary, integer, is_nullish, usv_string
 from ...foundation.arguments import IdlArgumentError
-from ..page_errors import PageRangeError, PageSyntaxError, PageTypeError
+from ..page_errors import PageRangeError, PageTypeError
 from ..page_errors import js_error_value
 from ..fileapi.blob import Blob
 from .headers import Headers

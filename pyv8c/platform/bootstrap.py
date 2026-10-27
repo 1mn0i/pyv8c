@@ -1,7 +1,7 @@
 """Create one Feature runtime per Browser."""
 
-from ..engine.features import FeatureRuntime
-from ..web.features.catalog import CATALOG
+from ..features.runtime import FeatureRuntime
+from ..features.catalog import CATALOG
 
 
 def bootstrap_runtime():

@@ -12,7 +12,7 @@ from ...foundation.arguments import (
 from ..page_errors import InvalidStateError, NotSupportedError, SecurityError, PageSyntaxError, PageTypeError
 from ..dom.events import Event, EventTarget
 from ..fileapi.blob import Blob
-from .events import ErrorEvent, ProgressEvent
+from .events import ProgressEvent
 from .headers import Headers
 
 

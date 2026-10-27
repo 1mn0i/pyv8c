@@ -28,7 +28,6 @@ import pytest
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.race
 
-from pyv8c.web.page_errors import PageError
 from pyv8c.foundation.executor import RealmExecutor
 from pyv8c.platform.resources.handles import LoadHandle
 
@@ -297,7 +296,6 @@ def test_document_resource_is_tracked_before_its_request_is_issued(browser, monk
     page = context.new_page()
     try:
         controller = page.document_resources
-        facet = page.services.resource_services
         order = []
         real_track = page.resource_ownership.track
 

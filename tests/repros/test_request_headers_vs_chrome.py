@@ -8,8 +8,6 @@ skips the module.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
 import http.server
 import re
 import threading
@@ -21,16 +19,7 @@ pytest.importorskip("pyv8", reason="the comparison runs in the native environmen
 
 from harness import ReferenceUnavailable, chrome_reference
 
-PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
-    "0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082"
-)
-PAGE = """<!doctype html><html><head><meta charset=utf-8><title>probe</title>
-<link rel=stylesheet href="/sub.css"></head><body>
-<img src="/img.png"><script src="/sub.js"></script>
-<video src="/clip.mp4" muted></video>
-<iframe src="/frame.html"></iframe>
-</body></html>"""
+from _shared_web_pages import PAGE, PNG
 
 PROBE = """(async () => {
   await fetch('/js/fetch-get');

@@ -20,7 +20,7 @@ field the member's kind cannot answer is refused here, before a page ever sees i
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Mapping
 
 from pyv8 import AttributeSpec, IdlSpec, MethodSpec
 from pyv8.flag import FlagLocation
@@ -80,29 +80,6 @@ def interface(name, parent=None):
         return cls
 
     return decorate
-
-
-def _overrides(cls) -> Mapping:
-    """The class's own overrides, refused when it is not the mapping this surface states."""
-    stated = cls.__dict__.get("__idl_overrides__")
-    if stated is None:
-        return {}
-    if not isinstance(stated, Mapping):
-        raise TypeError(f"{cls.__name__}.__idl_overrides__ must be a mapping")
-    unknown = sorted(set(stated) - ({"members", "interface"} | set(_member_names(cls))))
-    if unknown:
-        raise TypeError(
-            f"{cls.__name__}.__idl_overrides__ names {', '.join(unknown)}, which is neither a"
-            " member of this interface nor 'members'/'interface'")
-    return stated
-
-
-def _member_names(cls) -> tuple:
-    """The member names the class states overrides for, whichever shape it used."""
-    stated = cls.__dict__.get("__idl_overrides__") or {}
-    if "members" in stated or "interface" in stated:
-        return tuple(stated.get("members") or ())
-    return tuple(stated)
 
 
 def stated_fields(cls) -> dict:

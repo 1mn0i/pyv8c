@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import pyv8
 from ..foundation.logging import logger
@@ -17,7 +17,7 @@ from ..foundation.lifecycle import ResourceScope
 from ..foundation.tasks import TaskQueue
 from ..foundation.urls import origin_tuple
 from ..web.bom.window import Window
-from ..web.dom.document import Document, HTMLDocument
+from ..web.dom.document import HTMLDocument
 from ..web.dom.nodes import Node
 from ..web.fetch.response import Response
 from .lifecycle import DocumentLifecycle
@@ -32,6 +32,9 @@ from .resources.ownership import ResourceOwnership
 from .scripting import ScriptController
 from .services import PageServices
 from .state import Ownership
+
+if TYPE_CHECKING:
+    from .input import MouseInput
 
 
 EMPTY_DOCUMENT = "<!DOCTYPE html><html><head></head><body></body></html>"

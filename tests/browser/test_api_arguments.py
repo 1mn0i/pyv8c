@@ -40,6 +40,20 @@ def test_api_type_errors(argument_page, expression):
     )
 
 
+def test_request_special_scheme_requires_host(argument_page):
+    assert argument_page.evaluate("""(() => {
+        try { new Request('ftp:', function () {}); }
+        catch (error) {
+            return [error.name, error.message];
+        }
+    })()""") == [
+        "TypeError", "Failed to construct 'Request': Failed to parse URL from ftp:",
+    ]
+    assert argument_page.evaluate(
+        "new Request('ftp://example.test/a', function () {}).url"
+    ) == "ftp://example.test/a"
+
+
 @pytest.mark.parametrize("thrown", ["new Error('sentinel')", "42", "null", "Symbol('sentinel')"])
 def test_conversion_exception_identity(argument_page, thrown):
     assert argument_page.evaluate(

@@ -29,11 +29,11 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from ..engine.idl import ArrayProto, Idl
+from ..engine.idl import Idl
 from ..foundation import system_fonts
 from ..foundation.environment import COLLECTED_KEYS, SCHEMA_VERSION, BrowserEnvironment, json_value
 from ..web.bom.navigator import PERMISSION_NAMES
-from ..web.dom.media_source import WEBRTC_CONTENT_TYPES, WEBRTC_VIDEO_FAMILIES, probe_candidates
+from ..web.media.source import WEBRTC_CONTENT_TYPES, WEBRTC_VIDEO_FAMILIES, probe_candidates
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 #: Where a run writes unless told otherwise.

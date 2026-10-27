@@ -10,7 +10,7 @@ import zlib
 
 import pyv8
 
-from ...engine.features import FeatureImplementation
+from ...features.runtime import FeatureImplementation
 from ...foundation.arguments import MISSING, dom_string, missing_error
 from ...idl import interface
 from ..page_errors import PageTypeError, js_error_value

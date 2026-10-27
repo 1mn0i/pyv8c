@@ -235,7 +235,6 @@ async def _cdp_request(ws, payload):
 
 
 def test_page_trees_release_native_handles_and_threads_after_close():
-    import pyv8
     browser = Browser(real_network=False, stub_logging="off")
     owner = browser.new_profile()
     warm = owner.new_page()

@@ -177,6 +177,25 @@ def test_a_buffer_source_reads_faster_when_its_rate_says_so():
     assert rendered == [0.5, 0.125, 0.0, 0.0, 0.0, 0.0]
 
 
+def test_compressor_lookahead_matches_chrome_at_two_sample_rates():
+    browser, page = _open()
+    try:
+        for rate, first in [(44100, 265), (48000, 289)]:
+            result = _render(page, f'''
+                const context = new OfflineAudioContext(1, 1024, {rate});
+                const oscillator = context.createOscillator();
+                oscillator.frequency.value = 1000;
+                oscillator.connect(context.createDynamicsCompressor()).connect(context.destination);
+                oscillator.start(0);
+                const samples = (await context.startRendering()).getChannelData(0);
+                window.__rendered = [samples.findIndex(value => value !== 0),
+                                     Array.from(samples.slice(0, 16))];
+            ''')
+            assert result == [first, [0] * 16]
+    finally:
+        browser.close()
+
+
 def test_a_compressor_takes_a_full_scale_tone_down():
     """A full-scale sine through the defaults lands at -22 dB, which reduction reports."""
     browser, page = _open()

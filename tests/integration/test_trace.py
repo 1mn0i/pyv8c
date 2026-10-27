@@ -193,6 +193,38 @@ def test_declared_getters_are_reported_once_with_their_value():
         browser.close()
 
 
+def test_host_error_conversion_does_not_emit_internal_trace_events():
+    events = []
+    browser = Browser(trace=True, traceable=True,
+                      trace_callback=lambda *event: events.append(event), stub_logging="off")
+    try:
+        page = browser.new_profile().new_page()
+        events.clear()
+        assert page.evaluate("""(() => {
+          try { window.postMessage(navigator.plugins, '*'); }
+          catch (error) {
+            return ['stack' in error, error.name, error.code,
+                    error.stack.startsWith('DataCloneError:')];
+          }
+        })()""") == [True, 'DataCloneError', 25, True]
+        assert not any(event[0] == 'construct' and event[2] == 'DOMException'
+                       for event in events)
+        assert not any(event[0] == 'set' and event[2] == 'code'
+                       for event in events)
+        assert not any(event[0] == 'descriptor' and event[2] == 'stack'
+                       for event in events)
+        assert [(event[0], event[2]) for event in events if event[2] == 'stack'] == [
+            ('has', 'stack')]
+        assert any(event[0] == 'method' and event[2] == 'postMessage'
+                   for event in events)
+        events.clear()
+        assert page.evaluate("new DOMException('page', 'DataCloneError').name") == 'DataCloneError'
+        assert any(event[0] == 'construct' and event[2] == 'DOMException'
+                   for event in events)
+    finally:
+        browser.close()
+
+
 def test_a_frames_realm_is_labelled_apart_from_the_pages_own():
     """A frame's realm is not the page's: its events say FRAME, not TOP."""
     events = []

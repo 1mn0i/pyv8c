@@ -17,7 +17,7 @@ from .idl import (
     RealmPlan,
     build_plan,
 )
-from .features import FeatureRuntime
+from ..features.runtime import FeatureRuntime
 from ..idl.spec import InterfaceSpec
 from .overrides import MemberOverrides
 from ..foundation.logging import logger

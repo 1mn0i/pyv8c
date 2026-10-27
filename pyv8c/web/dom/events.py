@@ -265,7 +265,8 @@ class MouseEvent(UIEvent):
 
     def _layer_coordinates(self):
         """Layer-relative coordinates use the nearest positioned ancestor's origin."""
-        from .layout import computed_style, positioned_box
+        from ..css.cascade import computed_style
+        from .layout import positioned_box
         node = self.target
         while node is not None:
             if getattr(node, 'nodeType', None) == 1:

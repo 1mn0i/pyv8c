@@ -1,37 +1,5 @@
 """The flat DOM namespace: this package re-exports the sibling modules."""
 
-from .character_data import CharacterData, Comment, DocumentType, Text
-from .collections import (
-    DOMTokenList,
-    HTMLAllCollection,
-    HTMLCollection,
-    NamedNodeMap,
-    NodeList,
-)
-from .document import Document
-from .events import (
-    CustomEvent,
-    Event,
-    EventTarget,
-    KeyboardEvent,
-    MouseEvent,
-    UIEvent,
-)
-from .html_classes import HTML_CLASSES
-from .html_elements import (
-    Element,
-    HTMLElement,
-    HTMLImageElement,
-    HTMLLinkElement,
-    HTMLMetaElement,
-    HTMLScriptElement,
-    HTMLStyleElement,
-    HTMLTemplateElement,
-)
-from .html_iframe import HTMLIFrameElement
-from .html_media import HTMLAudioElement, HTMLMediaElement, HTMLVideoElement
-from .nodes import Attr, DocumentFragment, Node
-
 __all__ = [
     "NodeList", "HTMLCollection", "HTMLAllCollection", "DOMTokenList",
     "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "CustomEvent", "EventTarget",
@@ -41,3 +9,28 @@ __all__ = [
     "HTMLTemplateElement", "HTMLIFrameElement",
     "HTMLMediaElement", "HTMLAudioElement", "HTMLVideoElement", "Document",
 ]
+
+
+_EXPORTS = {
+    **{name: (".character_data", name) for name in ("CharacterData", "Comment", "DocumentType", "Text")},
+    **{name: (".collections", name) for name in ("DOMTokenList", "HTMLAllCollection", "HTMLCollection", "NamedNodeMap", "NodeList")},
+    **{name: (".events", name) for name in ("CustomEvent", "Event", "EventTarget", "KeyboardEvent", "MouseEvent", "UIEvent")},
+    **{name: (".nodes", name) for name in ("Attr", "DocumentFragment", "Node")},
+    "Document": (".document", "Document"),
+    "Element": (".element", "Element"),
+    "HTML_CLASSES": ("..html.registry", "HTML_CLASSES"),
+    **{name: ("..html.elements", name) for name in (
+        "HTMLElement", "HTMLImageElement", "HTMLLinkElement", "HTMLMetaElement",
+        "HTMLScriptElement", "HTMLStyleElement", "HTMLTemplateElement")},
+    "HTMLIFrameElement": ("..html.iframe", "HTMLIFrameElement"),
+    **{name: ("..html.media", name) for name in
+       ("HTMLAudioElement", "HTMLMediaElement", "HTMLVideoElement")},
+}
+def __getattr__(name):
+    from importlib import import_module
+    if name not in _EXPORTS:
+        raise AttributeError(name)
+    module, attribute = _EXPORTS[name]
+    value = getattr(import_module(module, __name__), attribute)
+    globals()[name] = value
+    return value

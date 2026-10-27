@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 
-from pyv8c.engine.idl import ARRAY_PROTOS, PROFILE_PATH, ArrayProto, Idl, Profile  # noqa: E402
+from pyv8c.engine.idl import PROFILE_PATH, ArrayProto, Idl, Profile  # noqa: E402
 
 
 def collection(baseline, surface=None):

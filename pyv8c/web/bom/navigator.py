@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlsplit
 
 import pyv8
 
-from ...engine.features import FeatureImplementation, LazyValueStore
+from ...features.runtime import FeatureImplementation, LazyValueStore
 from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
@@ -28,7 +28,7 @@ from ...foundation.realm import post_or_call
 from ...foundation.urls import origin_string
 from ..fileapi.blob import Blob
 from ..dom.events import EventTarget
-from ..dom.media_source import device_kinds, media_facts
+from ..media.source import device_kinds, media_facts
 from ..dom.mixins import LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin
 from .accessories import (DevicePosture, Ink, MediaCapabilities, NavigatorLogin,
                           NavigatorManagedData, Presentation, ProtectedAudience, Scheduling,
@@ -49,7 +49,7 @@ _WGSL_LANGUAGE_FEATURES = (
     "uniform_buffer_standard_layout", "unrestricted_pointer_parameters",
 )
 from .url import URLSearchParams
-from .utils import is_secure_context, window_secure_context
+from .utils import is_secure_context, settled as _settled, window_secure_context
 
 
 class _LegacyNamedCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
@@ -441,16 +441,6 @@ _SESSION_ACTIONS = frozenset((
 _PLAYBACK_STATES = frozenset(("none", "paused", "playing"))
 _SCRIPT_MIME_TYPES = ("application/ecmascript", "application/javascript",
                       "text/ecmascript", "text/javascript")
-
-
-def _settled(services, *, value=None, error=None):
-    """A promise in this realm, already settled."""
-    promise, resolve, reject = services.realm_services.make_promise()
-    if error is None:
-        resolve(value)
-    else:
-        reject(js_error_value(error))
-    return promise
 
 
 def _frozen(services, values):

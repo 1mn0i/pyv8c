@@ -6,6 +6,7 @@ from urllib.parse import urljoin, urlsplit
 from ...idl import interface
 from ...foundation.arguments import MISSING, abort_signal, byte_string, dictionary, enum_value, is_nullish, missing_error, usv_string
 from ...foundation.arguments import IdlArgumentError
+from ...foundation.urls import SPECIAL_SCHEMES
 from ..page_errors import PageTypeError
 from ..bom.abort import AbortSignal
 from .headers import Headers
@@ -34,13 +35,15 @@ class Request:
         self._signal = self._read_signal(options, original)
         try:
             parts = urlsplit(self._url)
-            valid_url = bool(parts.scheme) and not parts.username and not parts.password
+            valid_url = (bool(parts.scheme)
+                         and (parts.scheme not in SPECIAL_SCHEMES or bool(parts.hostname))
+                         and not parts.username and not parts.password)
             # Reading the port is what rejects a URL whose port cannot be one.
             _ = parts.port
         except ValueError:
             valid_url = False
         if not valid_url:
-            raise PageTypeError("Failed to construct 'Request': Failed to parse URL")
+            raise PageTypeError(f"Failed to construct 'Request': Failed to parse URL from {url}")
         if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", self._method):
             raise PageTypeError("Failed to construct 'Request': Invalid HTTP method")
         upper = self._method.upper()

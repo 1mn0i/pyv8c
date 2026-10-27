@@ -21,16 +21,7 @@ pytestmark = pytest.mark.native
 from pyv8c import Browser
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
-    "0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082"
-)
-PAGE = """<!doctype html><html><head><meta charset=utf-8><title>probe</title>
-<link rel=stylesheet href="/sub.css"></head><body>
-<img src="/img.png"><script src="/sub.js"></script>
-<video src="/clip.mp4" muted></video>
-<iframe src="/frame.html"></iframe>
-</body></html>"""
+from _shared_web_pages import PAGE, PNG
 
 NAVIGATION = ["host", "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
               "upgrade-insecure-requests", "user-agent", "accept", "sec-fetch-site",

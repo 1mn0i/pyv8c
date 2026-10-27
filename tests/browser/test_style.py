@@ -34,6 +34,23 @@ def test_style_identity_cssom_and_initial_parse(page):
     ]
 
 
+def test_color_keywords_serialize_and_invalid_assignments_are_ignored(page):
+    assert page.evaluate('''(() => {
+      const e = document.createElement('div'); document.body.appendChild(e);
+      e.style.color = 'AccentColor';
+      const accent = [e.style.color, getComputedStyle(e).color];
+      e.style.color = '-moz-ButtonDefault'; e.style.color = 'FakeColor';
+      const invalid = [e.style.color, getComputedStyle(e).color];
+      e.style.color = 'transparent';
+      const transparent = [e.style.color, getComputedStyle(e).color];
+      e.style.cssText = 'color: blue; color: invalid-name;';
+      return [accent, invalid, transparent, e.style.color, getComputedStyle(e).color];
+    })()''') == [
+        ['accentcolor', 'rgb(0, 117, 255)'], ['accentcolor', 'rgb(0, 117, 255)'],
+        ['transparent', 'rgba(0, 0, 0, 0)'], 'blue', 'rgb(0, 0, 255)',
+    ]
+
+
 def test_computed_style_inherits_and_starts_from_the_initial_value(page):
     """A declared colour reaches a child; the inline object still reads its own only."""
     assert page.evaluate("""(() => {
@@ -48,7 +65,7 @@ def test_computed_style_inherits_and_starts_from_the_initial_value(page):
         return [getComputedStyle(inner).color, getComputedStyle(inner).whiteSpace,
                 getComputedStyle(outer).color, getComputedStyle(target).color,
                 inner.style.color, outer.style.color];
-    })()""") == ["rgb(4, 5, 6)", "pre", "rgb(4, 5, 6)", "blue", "", ""]
+    })()""") == ["rgb(4, 5, 6)", "pre", "rgb(4, 5, 6)", "rgb(0, 0, 255)", "", ""]
 
 
 def test_style_named_properties_and_custom_properties(page):
@@ -132,6 +149,40 @@ def test_style_attribute_changes_refresh_existing_object(page):
     })()""") == [["padding: 1px; color: green;", "1px", "green"], "", 0, ""]
 
 
+def test_css_text_padding_shorthand_matches_chrome_cssom(page):
+    assert page.evaluate("""(() => {
+        const box = document.createElement('div');
+        box.style.cssText = `
+            container-type: inline-size;
+            padding: 10px;
+            text-align: center;
+            font-weight: 600;
+            width: invalid;
+        `;
+        document.body.appendChild(box);
+        const style = box.style;
+        return [style.cssText, style.length,
+            Array.from({length: style.length}, (_, i) => style.item(i)),
+            style.getPropertyValue('padding-top'),
+            getComputedStyle(box).paddingTop,
+            style.getPropertyValue('width')];
+    })()""") == [
+        "container-type: inline-size; padding: 10px; text-align: center; font-weight: 600;",
+        7,
+        ["container-type", "padding-top", "padding-right", "padding-bottom",
+         "padding-left", "text-align", "font-weight"],
+        "10px", "10px", "",
+    ]
+
+
+def test_chrome_rejects_unrecognized_single_font_keyword(page):
+    assert page.evaluate("""(() => {
+      const box = document.createElement('div');
+      box.style.cssText = 'font: -apple-system-body !important; color: red';
+      return [box.style.cssText, box.style.font, box.style.color];
+    })()""") == ['color: red;', '', 'red']
+
+
 def test_a_rule_answers_with_its_style_and_lets_the_page_restyle_it(page):
     """A rule's declaration block is the page's to edit, and the rule's own text follows
     what it holds."""
@@ -181,3 +232,42 @@ def test_a_grouping_rule_holds_rules_a_page_can_add_to(page):
         out.push([media.cssRules.length, media.cssRules[0].selectorText]);
         return out;
     })()""") == [4, "screen", 1, "p", True, True, 0, [2, "div"], [1, "p"]]
+
+
+def test_box_shorthand_conflicts_and_longhand_removal(page):
+    assert page.evaluate('''(() => {
+        const e = document.createElement('div'); document.body.appendChild(e);
+        const s = e.style;
+        s.cssText = 'margin-left: 1px; margin: 2px';
+        const before = [s.marginLeft, s.length, Array.from(s), getComputedStyle(e).marginLeft];
+        const removed = s.removeProperty('margin-left');
+        return [before, removed, s.marginLeft, s.margin, s.cssText];
+    })()''') == [
+        ['2px', 4, ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'], '2px'],
+        '2px', '', '', 'margin-top: 2px; margin-right: 2px; margin-bottom: 2px;',
+    ]
+
+
+def test_inline_computed_dimensions_and_inherited_monospace_size(page):
+    assert page.evaluate('''(() => {
+        const outer = document.createElement('div');
+        outer.style.fontSize = '30px';
+        outer.innerHTML = '<span style="font-family:monospace">hello</span>';
+        document.body.appendChild(outer);
+        const s = getComputedStyle(outer.firstChild);
+        return [s.fontSize, s.width, s.height];
+    })()''') == ['30px', 'auto', 'auto']
+
+
+def test_box_shorthands_follow_stylesheet_cascade_and_important(page):
+    assert page.evaluate('''(() => {
+        const sheet = document.createElement('style');
+        sheet.textContent = '.box { margin-left: 1px } .box { margin: 2px }';
+        document.head.appendChild(sheet);
+        const e = document.createElement('div'); e.className = 'box';
+        document.body.appendChild(e);
+        const cascade = getComputedStyle(e).marginLeft;
+        e.style.cssText = 'margin-left: 1px !important; margin: 2px; margin-right: 3px';
+        return [cascade, e.style.marginLeft, e.style.marginRight,
+                e.style.getPropertyPriority('margin-left'), getComputedStyle(e).marginLeft];
+    })()''') == ['2px', '1px', '3px', 'important', '1px']

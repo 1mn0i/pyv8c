@@ -11,7 +11,6 @@ from websockets.sync.client import connect
 
 from pyv8c import Browser, DevToolsOptions
 from pyv8c.foundation.host_errors import HostStateError
-from pyv8c.web.page_errors import DOMException
 
 #: How long a client waits for something the browser has to answer.  The answer is
 #: produced in-process, but it can still queue behind a busy realm or a machine

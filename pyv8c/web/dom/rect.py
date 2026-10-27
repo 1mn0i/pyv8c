@@ -1,5 +1,4 @@
 """``DOMRect``: the box ``getBoundingClientRect`` reports, and the edges read off it."""
-import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, is_nullish
 from .point import double

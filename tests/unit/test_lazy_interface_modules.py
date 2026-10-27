@@ -24,7 +24,7 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
             "idb": "pyv8c.web.bom.indexeddb",
             "navigator": "pyv8c.web.bom.navigator",
             "websocket": "pyv8c.web.websocket",
-            "worker": "pyv8c.web.workers.api",
+            "worker": "pyv8c.web.workers.worker",
             "filesystem": "pyv8c.web.bom.filesystem",
         }
         browser = Browser(stub_logging="off", idl_path=os.environ.get("PYV8C_TEST_IDL_PATH"))
@@ -81,7 +81,7 @@ def test_feature_runtime_loads_an_explicit_feature_once():
     pytest.importorskip("pyv8", reason="the interface decorator reaches the native extension")
     from types import SimpleNamespace
 
-    from pyv8c.engine.features import FeatureCatalog, FeatureImplementation, FeatureRuntime, FeatureSpec
+    from pyv8c.features.runtime import FeatureCatalog, FeatureImplementation, FeatureRuntime, FeatureSpec
     from pyv8c.idl import interface
 
     @interface("LazyUnitInterface", None)
@@ -107,7 +107,7 @@ def test_feature_runtime_loads_an_explicit_feature_once():
 def test_feature_runtime_rejects_partial_exports_without_caching_them():
     from types import SimpleNamespace
 
-    from pyv8c.engine.features import FeatureCatalog, FeatureImplementation, FeatureRuntime, FeatureSpec
+    from pyv8c.features.runtime import FeatureCatalog, FeatureImplementation, FeatureRuntime, FeatureSpec
 
     runtime = FeatureRuntime(
         FeatureCatalog((FeatureSpec("broken", "tests.broken_feature", ("Expected",)),)),
@@ -121,7 +121,7 @@ def test_feature_runtime_rejects_partial_exports_without_caching_them():
 
 
 def test_feature_runtime_reports_cycles_before_importing_a_module():
-    from pyv8c.engine.features import FeatureCatalog, FeatureRuntime, FeatureSpec
+    from pyv8c.features.runtime import FeatureCatalog, FeatureRuntime, FeatureSpec
 
     runtime = FeatureRuntime(
         FeatureCatalog((
@@ -136,7 +136,7 @@ def test_feature_runtime_reports_cycles_before_importing_a_module():
 
 
 def test_lazy_value_store_caches_none_and_retries_failed_creation():
-    from pyv8c.engine.features import LazyValueStore
+    from pyv8c.features.runtime import LazyValueStore
 
     class Values(LazyValueStore):
         def __init__(self):

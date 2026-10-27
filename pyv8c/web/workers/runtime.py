@@ -161,7 +161,7 @@ class WorkerRuntime:
 
     def _scope_class(self):
         """The global scope a worker of this kind runs its script in."""
-        from .api import DedicatedWorkerGlobalScope
+        from .worker import DedicatedWorkerGlobalScope
         return DedicatedWorkerGlobalScope
 
     def _invoke(self, callback, *args, _background=False, **kwargs):
@@ -439,7 +439,7 @@ class SharedWorkerRuntime(WorkerRuntime):
     """A shared worker: once its script has run it is handed the port it serves on."""
 
     def _scope_class(self):
-        from .api import SharedWorkerGlobalScope
+        from .worker import SharedWorkerGlobalScope
         return SharedWorkerGlobalScope
 
     def _started(self):

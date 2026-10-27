@@ -5,9 +5,9 @@ detached element.  One is built per realm -- a factory reaches its own window's 
 -- and installed only where the reference surface says the browser has the name.
 """
 from ...idl import standalone
-from ..dom.html_elements import HTMLImageElement
-from ..dom.html_input import HTMLOptionElement
-from ..dom.html_media import HTMLAudioElement
+from ..html.elements import HTMLImageElement
+from ..html.inputs import HTMLOptionElement
+from ..html.media import HTMLAudioElement
 
 FACTORY_TAG = {"Image": "img", "Option": "option", "Audio": "audio"}
 FACTORY_TYPE = {

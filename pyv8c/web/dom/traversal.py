@@ -6,8 +6,7 @@ children are still visited, and a node it *rejects* takes its whole subtree with
 """
 import pyv8
 from ...idl import interface
-from ...foundation.arguments import (MISSING, callback_value, integer, is_nullish,
-                                     missing_error)
+from ...foundation.arguments import (MISSING, callback_value, integer, is_nullish)
 from ..page_errors import PageTypeError
 
 

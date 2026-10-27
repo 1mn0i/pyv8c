@@ -4,7 +4,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pyv8
 
-from ..engine.features import FeatureImplementation
+from ..features.runtime import FeatureImplementation
 from ..idl import interface
 from ..foundation.arguments import (
     MISSING,
@@ -20,8 +20,7 @@ from .page_errors import InvalidStateError, PageSyntaxError, dom_exception
 from ..foundation.logging import logger
 from .dom.events import Event, EventTarget
 from .fileapi.blob import Blob, bytes_from_value
-from .fetch.events import CloseEvent, ErrorEvent, MessageEvent
-
+from .fetch.events import CloseEvent, MessageEvent
 
 
 @interface('WebSocket', 'EventTarget')

@@ -21,7 +21,6 @@ from functools import cached_property
 from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
 
 from ..foundation.logging import logger
 

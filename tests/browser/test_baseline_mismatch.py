@@ -5,7 +5,6 @@ what the baseline does not describe; ``"error"`` refuses it instead.
 """
 import copy
 import json
-from pathlib import Path
 
 import pytest
 from loguru import logger

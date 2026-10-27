@@ -4,7 +4,6 @@ import pytest
 
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 
-from pyv8 import IdlSpec  # noqa: E402
 
 
 def test_a_member_the_class_writes_is_bound_without_a_declaration(shared_page):

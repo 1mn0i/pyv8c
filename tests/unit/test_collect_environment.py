@@ -10,7 +10,7 @@ from pyv8c.engine.idl import ArrayProto  # noqa: E402
 from pyv8c.foundation.environment import COLLECTED_KEYS, BrowserEnvironment
 from pyv8c.foundation.system_fonts import FontRecord
 from pyv8c.tools import collect_environment as collector
-from pyv8c.web.dom.media_source import (families_in, parse_type, probe_candidates,
+from pyv8c.web.media.source import (families_in, parse_type, probe_candidates,
                                         probe_containers, probe_families)
 
 DOTTED_LITERAL = re.compile(r"'([a-z0-9_]+(?:\.[a-z0-9_]+)+)'")

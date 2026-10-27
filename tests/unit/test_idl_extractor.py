@@ -10,7 +10,6 @@ from pyv8c.tools.extract_idl import (
     _constant_definitions,
     _idl_handler_findings,
     _idl_property_families,
-    _property_mask,
     extract_constants,
     extract_template,
     write_idl,

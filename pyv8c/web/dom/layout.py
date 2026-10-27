@@ -1,6 +1,6 @@
-"""Small CSS cascade, font measurement and layout facade for DOM geometry.
+"""Font measurement and layout facade for DOM geometry.
 
-The property tables (initial values, inherited properties) live in :mod:`dom.css`.
+Style calculation is provided by :mod:`web.css.cascade`.
 
 Boxes are the *border* boxes in viewport coordinates, which is what
 ``getBoundingClientRect`` reports and what the hit test walks.  Margins place a box
@@ -15,56 +15,12 @@ from dataclasses import dataclass, field
 
 from ...foundation import text as text_engine
 from ...foundation.environment import environment_of
-from ...foundation.font_sizes import (
-    font_size_px as _font_size_px, font_size_term as _font_size_term, px_text as _px_text,
-)
+from ...foundation.font_sizes import font_size_term as _font_size_term
 from ...foundation.system_fonts import file_for, normalize, table_of
-from ..page_errors import PageSyntaxError
 from .character_data import Text
-from .css import (
-    INHERITED_PROPERTIES,
-    SYSTEM_COLORS,
-    CSSStyleDeclaration,
-    initial_values_for,
-    parse_declarations,
-    stylesheet_source,
-)
-from .html_elements import Element
-from .selectors import matches
-from .css_computed import resolve as resolve_computed_values, length_math, absolute_length_px
+from ..css.cascade import _cascade, _number, _px, _root_font_size, computed_style, document_rules
+from .element import Element
 
-
-def _number(value, base=0.0):
-    match = re.match(r"^(-?(?:\d+(?:\.\d*)?|\.\d+))", str(value).strip())
-    return float(match.group(1)) if match else base
-
-
-@lru_cache(maxsize=4096)
-def _px(value, reference=0.0):
-    value = str(value).strip().lower()
-    if value.startswith(("calc(", "min(", "max(", "clamp(")):
-        computed = length_math(value, reference)
-        if computed is not None:
-            return computed
-    if value.endswith("px"): return math.trunc(_number(value) * 64) / 64
-    if value.endswith("%"): return reference * _number(value) / 100.0
-    if value in ("0", "0px"): return 0.0
-    absolute = absolute_length_px(value)
-    if absolute is not None:
-        return math.trunc(absolute * 64) / 64
-    return _number(value, 0.0)
-
-
-def _root_font_size(element, cache=None):
-    """The root element's computed size, which is what ``rem`` is relative to."""
-    document = getattr(element, "ownerDocument", None)
-    get_root = getattr(document, "get_documentElement", None) if document is not None else None
-    root = get_root() if get_root is not None else None
-    if root is None or root is element:
-        return 16.0
-    if cache is not None and root in cache:
-        return _px(cache[root].get("font-size", "16px"), 16) or 16
-    return _px(computed_style(root).get("font-size", "16px"), 16) or 16
 
 #: What CSS's generic families mean here: the platform's own default for each, in the
 #: order a name would be tried, because a page asking for ``sans-serif`` is asking for
@@ -93,9 +49,10 @@ _DEFAULT_FAMILIES = _GENERIC_FAMILIES["serif"]
 #: platform would look for them.  A CJK character in an Arial run is the case that matters:
 #: without these the character would be measured as a missing-glyph box.
 _FALLBACK_FAMILIES = (
+    "Times New Roman", "Cambria Math",
     "Microsoft YaHei", "Malgun Gothic", "Meiryo", "SimSun", "MS Gothic",
     "Noto Sans CJK SC", "PingFang SC", "Hiragino Sans", "Apple SD Gothic Neo",
-    "DejaVu Sans", "Segoe UI Symbol",
+    "Segoe UI Emoji", "DejaVu Sans", "Segoe UI Symbol",
 )
 
 #: What ``line-height: normal`` falls back to when no face can be read, and the weight CSS
@@ -123,6 +80,17 @@ def _wants_bold(weight):
     if text in ("normal", "lighter", ""):
         return False
     return _number(text, 400.0) >= _BOLD_WEIGHT
+
+
+def _weight_axis(weight):
+    text = str(weight).strip().lower()
+    if text in ('bold', 'bolder'):
+        return 700.0
+    if text == 'lighter':
+        return 300.0
+    if text in ('', 'normal'):
+        return 400.0
+    return min(1000.0, max(1.0, _number(text, 400.0)))
 
 
 def _family_index(table):
@@ -170,6 +138,15 @@ def _face_in(table, family, weight, style, families=None):
     return max(faces, key=score)
 
 
+def _family_candidates(family, environment):
+    candidates = _GENERIC_FAMILIES.get(normalize(family), (family,))
+    if normalize(family) == 'sans-serif':
+        preferred = getattr(getattr(environment, 'fonts', None), 'default_family', None)
+        if preferred and normalize(preferred) != 'sans-serif':
+            return (preferred, *candidates)
+    return candidates
+
+
 def _face_for(families, environment=None, weight="400", style="normal"):
     """The face a family list resolves to: the first family known here, then the default.
 
@@ -178,11 +155,12 @@ def _face_for(families, environment=None, weight="400", style="normal"):
     """
     table, index, _chains = _indexed_font_table(environment)
     for family in families:
-        for name in _GENERIC_FAMILIES.get(normalize(family), (family,)):
+        for name in _family_candidates(family, environment):
             record = _face_in(table, name, weight, style, index)
             if record is not None:
                 return record
-    for name in _DEFAULT_FAMILIES:
+    preferred = getattr(getattr(environment, 'fonts', None), 'default_family', None)
+    for name in ((preferred,) if preferred else ()) + _DEFAULT_FAMILIES:
         record = _face_in(table, name, weight, style, index)
         if record is not None:
             return record
@@ -213,11 +191,17 @@ def _face_chain(families, environment, weight, style):
         return known
     chain = []
     for family in families:
-        for name in _GENERIC_FAMILIES.get(normalize(family), (family,)):
+        for name in _family_candidates(family, environment):
             record = _face_in(table, name, weight, style, index)
             if record is not None and record not in chain:
                 chain.append(record)
-    for name in _DEFAULT_FAMILIES + _FALLBACK_FAMILIES:
+    # A missing named family uses the standard serif face; a real selected
+    # family missing one glyph asks the platform fallback chain first.
+    preferred = getattr(getattr(environment, 'fonts', None), 'default_family', None)
+    default_names = ((preferred,) if preferred else ()) + _DEFAULT_FAMILIES
+    fallback_names = (_FALLBACK_FAMILIES + default_names if chain
+                      else default_names + _FALLBACK_FAMILIES)
+    for name in fallback_names:
         record = _face_in(table, name, weight, style, index)
         if record is not None and record not in chain:
             chain.append(record)
@@ -228,7 +212,7 @@ def _face_chain(families, environment, weight, style):
     return found
 
 
-def _shaped(text, style, environment=None):
+def _shaped(text, style, environment=None, *, layout_units=False):
     """``(run, record)`` for one string; ``None`` when no face here has a file for it."""
     chain = _face_chain(_families(style), environment, style.get("font-weight", "400"),
                         style.get("font-style", "normal"))
@@ -239,7 +223,9 @@ def _shaped(text, style, environment=None):
             faces.append((path, getattr(record, "index", 0)))
     if not faces:
         return None, (chain[0] if chain else None)
-    run = text_engine.shape_selection(text, faces, size=_font_size(style))
+    run = text_engine.shape_selection(text, faces, size=_font_size(style),
+                                      weight=_weight_axis(style.get('font-weight', '400')),
+                                      layout_units=layout_units)
     return (run if run.width else None), chain[0]
 
 
@@ -310,8 +296,11 @@ def _line_style(style, environment=None, root=16.0, found=None):
     below, which is where the baseline comes from.  *found* is the face the run really used.
     """
     size = _font_size(style)
-    if found is None:
-        found = _font_metrics(style, environment)
+    own = _font_metrics(style, environment)
+    if found is None or (own is not None and own.height > found.height):
+        # The font strut remains on the line when glyphs come from a shorter
+        # fallback face (for example emoji inside a taller document font).
+        found = own
     ascent = found.ascent if found else size * 0.8
     descent = found.descent if found else size * 0.2
     gap = found.line_gap if found else 0.0
@@ -332,122 +321,6 @@ def _line_style(style, environment=None, root=16.0, found=None):
         height = value
     baseline = ascent + (height - content) / 2.0
     return _LineStyle(height, baseline, height - baseline)
-
-
-def _inline_declarations(element):
-    return _parsed_inline(str(element.attributes.get("style", "")))
-
-
-@lru_cache(maxsize=2048)
-def _parsed_inline(raw):
-    return tuple(parse_declarations(raw))
-
-
-#: How CSS counts a selector: ids, then classes and attributes, then types.
-_SPECIFICITY_PATTERNS = (
-    (0, re.compile(r"#[\w-]+")),
-    (1, re.compile(r"\.[\w-]+|\[[^\]]*\]|::?[\w-]+(?:\([^)]*\))?")),
-    (2, re.compile(r"(?<![\w.#\[:-])[A-Za-z][\w-]*")),
-)
-
-
-def _specificity(selector):
-    """The three numbers CSS orders two rules by when both match."""
-    selector = re.sub(r":not\(([^)]*)\)", r"\1", str(selector))
-    counts = [0, 0, 0]
-    for slot, pattern in _SPECIFICITY_PATTERNS:
-        counts[slot] = len(pattern.findall(selector))
-    return tuple(counts)
-
-
-def _cascade(element, rules, cache=None):
-    if cache is not None and element in cache:
-        return cache[element]
-    values = initial_values_for(element)
-    parent = getattr(element, "parentElement", None)
-    parent_size = 16.0
-    if parent is not None:
-        inherited = _cascade(parent, rules, cache)
-        # Inherit every inherited property, not only those with an initial value here.
-        values.update({
-            name: inherited.get(name, values.get(name, ""))
-            for name in INHERITED_PROPERTIES
-        })
-        values.update({name: value for name, value in inherited.items() if name.startswith("--")})
-        parent_size = _px(inherited.get("font-size", "16px"), 16) or 16
-    # Last applied wins, so the order is CSS's: important, inline, specificity, source.
-    matched = []
-    order = 0
-    for selectors, declarations, counts in rules:
-        best = None
-        for part, count in zip(selectors, counts):
-            if (best is None or count > best) and _selector_matches(element, part):
-                best = count
-        if best is None:
-            continue
-        for name, value, priority in declarations:
-            matched.append(((priority == "important"), False, best, order, name, value))
-            order += 1
-    for name, value, priority in _inline_declarations(element):
-        matched.append(((priority == "important"), True, (0, 0, 0), order, name, value))
-        order += 1
-    for _important, _inline, _count, _order, name, value in sorted(matched, key=lambda item: item[:4]):
-        values[name] = value
-    # A computed size is absolute in every browser, so a relative one is resolved here,
-    # where the parent's own computed size -- and the root's -- are at hand.
-    # Initial values and inherited computed values are already resolved. Only
-    # declarations applied here need conversion, with the full map as var input.
-    if matched:
-        values = resolve_computed_values(values, {item[-2] for item in matched})
-    for name in ("color", "background-color", "border-top-color", "border-right-color",
-                 "border-bottom-color", "border-left-color", "outline-color", "caret-color"):
-        value = values.get(name)
-        if isinstance(value, str) and value.lower() in SYSTEM_COLORS:
-            values[name] = SYSTEM_COLORS[value.lower()]
-    values["font-size"] = _px_text(_font_size_px(values.get("font-size", "16px"),
-                                                 parent_size, _root_font_size(element, cache)))
-    if cache is not None:
-        cache[element] = values
-    return values
-
-
-def _selector_matches(element, selector):
-    """Match one stylesheet selector; unsupported syntax simply never matches."""
-    try:
-        return matches(element, selector)
-    except PageSyntaxError:
-        return False
-
-
-def document_rules(document):
-    """The document's ``<style>`` rules, cached on ``style_version`` as
-    ``(selectors, declarations, counts)`` -- the specificity counted once, not per node."""
-    if document is None:
-        return ()
-    version = getattr(document, "style_version", 0)
-    cached = getattr(document, "_rules_cache", None)
-    if cached is not None and cached[0] == version:
-        return cached[1]
-    rules = _parse_style_elements(document)
-    document._rules_cache = (version, rules)
-    return rules
-
-
-def _parse_style_elements(document):
-    rules = []
-    for node in document._descendants():
-        source = stylesheet_source(node)
-        if not source:
-            continue
-        for selector, block in re.findall(r"([^{}]+)\{([^{}]*)\}", source):
-            parts = selector.split(",")
-            rules.append((parts, parse_declarations(block),
-                          tuple(_specificity(part) for part in parts)))
-    return tuple(rules)
-
-
-def computed_style(element):
-    return _cascade(element, document_rules(getattr(element, "ownerDocument", None)))
 
 
 @dataclass
@@ -555,6 +428,15 @@ class _Walk:
     styles: dict = field(default_factory=dict)
 
 
+class _StyleCache(dict):
+    """Per-layout computed styles and inline run widths, discarded together."""
+
+    def __init__(self):
+        super().__init__()
+        self.inline_text_widths = {}
+        self.inline_siblings = {}
+
+
 def _viewport_width(element):
     realm = getattr(getattr(element, "_services", None), "realm_services", None)
     viewport = getattr(getattr(realm, "environment", None), "viewport", None)
@@ -594,6 +476,7 @@ def _place(element, style, walk, containing, positioned):
     vertical = padding["top"] + padding["bottom"] + border["top"] + border["bottom"]
 
     declared_width = style.get("width", "auto")
+    position = style.get("position", "static")
     available = max(0.0, containing.width - margin["left"] - margin["right"] - horizontal)
     default_size = _DEFAULT_OBJECT_SIZE.get(str(getattr(element, "localName", "")).lower())
     if str(getattr(element, "localName", "")).lower() == "canvas":
@@ -604,12 +487,29 @@ def _place(element, style, walk, containing, positioned):
             # object size rather than shrinking to a content it does not have.
             content_width = default_size[0]
         else:
+            joined_width = _inline_text_width(element, style, walk.rules, walk.styles)
             # An inline-level box shrinks around its content and an empty one stays
             # empty; a block-level box fills what is left of its containing block.
-            content_width = (_shrink_to_fit(element, style, walk.rules, available, cache=walk.styles)
-                             if style.get("display", "block") in _INLINE else available)
+            if joined_width is not None:
+                content_width = math.ceil(joined_width * 64) / 64
+            elif position in ("absolute", "fixed"):
+                content_width = _shrink_to_fit(element, style, walk.rules, available,
+                                               cache=walk.styles)
+            elif (style.get("display", "block") in _INLINE
+                  and style.get("white-space") in ("nowrap", "pre")):
+                # Inline boxes retain their max-content width when nowrap text
+                # extends past the containing block.
+                content_width = math.ceil(_content_widths(
+                    element, style, walk.rules, cache=walk.styles)[1] * 64) / 64
+            elif style.get("display", "block") in _INLINE:
+                content_width = _shrink_to_fit(element, style, walk.rules, available,
+                                               cache=walk.styles)
+            else:
+                content_width = available
     else:
-        width = _px(declared_width, containing.width)
+        width = (_number(declared_width) * _root_font_size(element, walk.styles)
+                 if str(declared_width).strip().lower().endswith('rem')
+                 else _px(declared_width, containing.width))
         content_width = max(0.0, width - horizontal
                             if style.get("box-sizing", "content-box") == "border-box"
                             else width)
@@ -625,7 +525,6 @@ def _place(element, style, walk, containing, positioned):
                 margin[side] = free / len(auto_sides)
             left = containing.left + margin["left"]
 
-    position = style.get("position", "static")
     left = containing.left + margin["left"]
     top = containing.top + margin["top"]
     declared_height = style.get("height", "auto")
@@ -751,10 +650,107 @@ def _box_content_widths(element, style, rules, depth, cache=None):
     declared = style.get("width", "auto")
     if not _auto(declared):
         return _px(declared, 0.0), _px(declared, 0.0)
+    joined = _inline_text_width(element, style, rules, cache)
+    if joined is not None:
+        return joined, joined
     intrinsic = _DEFAULT_OBJECT_SIZE.get(str(getattr(element, "localName", "")).lower())
     if intrinsic is not None:
         return intrinsic[0], intrinsic[0]
     return _content_widths(element, style, rules, depth + 1, cache)
+
+
+def _inline_text_width(element, style, rules, cache):
+    """Measure text across compatible adjacent inline elements as one shaped run.
+
+    Browsers preserve kerning across element boundaries when those boundaries do
+    not change the font.  Measuring each child on its own loses pairs such as
+    ``<span>υ</span><span>τ</span>``.
+    """
+    if style.get("display") != "inline" or not _auto(style.get("width")):
+        return None
+    widths = getattr(cache, "inline_text_widths", None)
+    if widths is not None and element in widths:
+        return widths[element]
+    parent = getattr(element, "parentElement", None)
+    if parent is None:
+        return None
+    groups = getattr(cache, 'inline_siblings', None)
+    if groups is not None:
+        if parent not in groups:
+            children = _child_elements(parent)
+            groups[parent] = children, {child: index for index, child in enumerate(children)}
+        siblings, indices = groups[parent]
+        index = indices.get(element)
+        if index is None:
+            return None
+    else:
+        siblings = _child_elements(parent)
+        try:
+            index = siblings.index(element)
+        except ValueError:
+            return None
+    font_keys = ("font-family", "font-size", "font-weight", "font-style",
+                 "font-stretch", "font-kerning", "font-feature-settings",
+                 "font-variation-settings", "letter-spacing", "word-spacing",
+                 "white-space", "text-transform", "direction", "unicode-bidi")
+    signature = tuple(style.get(key) for key in font_keys)
+
+    def segment(node):
+        if not isinstance(node, Element) or len(getattr(node, "_children", ())) != 1:
+            return None
+        child = node._children[0]
+        if not isinstance(child, Text):
+            return None
+        values = _style_of(node, rules, cache)
+        if (values.get("display") != "inline" or not _auto(values.get("width"))
+                or tuple(values.get(key) for key in font_keys) != signature):
+            return None
+        for name in ("margin", "padding", "border-width"):
+            if any(_sides(values, name, 0.0).values()):
+                return None
+        return child.get_textContent() or ""
+
+    own = segment(element)
+    if not own:
+        if widths is not None:
+            widths[element] = None
+        return None
+    start = index
+    while start and segment(siblings[start - 1]):
+        start -= 1
+    end = index + 1
+    while end < len(siblings) and segment(siblings[end]):
+        end += 1
+    if end - start < 2:
+        if widths is not None:
+            widths[element] = None
+        return None
+    parts = [segment(node) for node in siblings[start:end]]
+    joined = "".join(parts)
+    environment = _environment_for(element)
+    run, _ = _shaped(joined, style, environment)
+    if run is None:
+        return None
+    fixed_run, _ = _shaped(joined, style, environment, layout_units=True)
+    offset = 0
+    for node, part in zip(siblings[start:end], parts):
+        advance = run.advance_between(offset, offset + len(part))
+        fixed_advance = (fixed_run.advance_between(offset, offset + len(part))
+                         if fixed_run is not None else advance)
+        # HarfBuzz's 26.6 layout advance can differ slightly from its
+        # unrounded font-unit advance.  Preserve the snapped value for a
+        # kerned glyph when the difference is below a quarter layout unit.
+        isolated, _ = _shaped(part, style, environment)
+        kerned = isolated is not None and isolated.width - advance > 1 / 64
+        if kerned and abs(fixed_advance - advance) < 0.25 / 64:
+            advance = fixed_advance
+        result = math.ceil((advance + _spacing(part, style, _font_size(style))) * 64) / 64
+        if widths is not None:
+            widths[node] = result
+        if node is element:
+            own_width = result
+        offset += len(part)
+    return own_width
 
 
 def _content_widths(element, style, rules, depth=0, cache=None):
@@ -771,10 +767,24 @@ def _content_widths(element, style, rules, depth=0, cache=None):
     environment = _environment_for(element)
     inline_min = inline_max = 0.0
     widest_min = widest_max = 0.0
-    for child in _child_elements(element):
+    children = _child_elements(element)
+    for index, child in enumerate(children):
         if isinstance(child, Text):
             content = _collapse(child.get_textContent() or "", white_space)
             if not content.strip():
+                # Inter-element whitespace occupies an advance on the line.
+                # Dropping it from max-content makes nested inline boxes too
+                # narrow, even though flow lays the space out later.
+                if inline_max and any(
+                    (isinstance(later, Text) and (later.get_textContent() or '').strip())
+                    or (isinstance(later, Element)
+                        and _style_of(later, rules, cache).get('display') in _INLINE)
+                    for later in children[index + 1:]
+                ):
+                    advance = math.ceil(text_width(content, style, environment) * 64) / 64
+                    inline_max += advance
+                    if white_space in ('nowrap', 'pre'):
+                        inline_min += advance
                 continue
             run, _record = _shaped(content, style, environment)
             if run is None:
@@ -814,7 +824,10 @@ def _content_widths(element, style, rules, depth=0, cache=None):
 def _shrink_to_fit(element, style, rules, available, depth=0, cache=None):
     """CSS's ``min(max(min_content, available), max_content)``."""
     minimum, maximum = _content_widths(element, style, rules, depth, cache)
-    return min(max(minimum, available), maximum)
+    used = min(max(minimum, available), maximum)
+    # Text shaping keeps fractional advances, while Blink's used box sizes sit
+    # on the 1/64px LayoutUnit grid and round an intrinsic width upward.
+    return math.ceil(used * 64) / 64
 
 
 class _Line:
@@ -930,7 +943,8 @@ def _flow_children(element, style, walk, containing, positioned):
             piece = content[span.start:span.end]
             last = span.end >= len(content)
             advance = span.advance + _spacing(piece, text_style, text_size)
-            if line.started and span.start == start and advance > available:
+            if (white_space not in ('nowrap', 'pre') and line.started
+                    and span.start == start and advance > available):
                 # No room for this piece here: try it on a line of its own.
                 flush()
                 continue
@@ -976,7 +990,8 @@ def _flow_children(element, style, walk, containing, positioned):
                                         containing.width, containing.height),
                             positioned)
             outer = placed.width + child_margin["left"] + child_margin["right"]
-            if line.started and line.width and line.width + outer > containing.width:
+            if (white_space not in ('nowrap', 'pre') and line.started and line.width
+                    and line.width + outer > containing.width):
                 # It does not fit after what is on the line, so the line ends first.
                 flush()
                 placed = _place(child, child_style, walk,
@@ -1093,7 +1108,7 @@ def layout(element, containing_width=None, top=0.0, rules=None, style=None, coll
     width, height = _viewport_width(element)
     if isinstance(root, Element):
         walk = _Walk(document_rules(document) if rules is None else rules,
-                     boxes, (width, height), styles=styles if styles is not None else {})
+                     boxes, (width, height), styles=styles if styles is not None else _StyleCache())
         _place(root, _style_of(root, walk.rules, walk.styles), walk,
                _Containing(0.0, 0.0, width, height), None)
     return boxes.get(element, Box())
@@ -1109,7 +1124,7 @@ def layout_snapshot(document):
     cached = document._layout_snapshot
     if cached is not None and cached[0] == version:
         return cached[1], cached[2]
-    boxes, styles = {}, {}
+    boxes, styles = {}, _StyleCache()
     layout(root, collected=boxes, styles=styles)
     if (document.layout_version, document.style_version, _viewport_width(root)) == version:
         document._layout_snapshot = (version, boxes, styles)
@@ -1151,13 +1166,8 @@ def offset_parent(element, styles=None):
     return None
 
 
-def computed_style_object(element, *, rendered=True):
-    """The cascade as a declaration block: the same interface, and nothing may write it back."""
-    return CSSStyleDeclaration(element=element,
-                               computed=computed_style(element) if rendered else {})
-
 __all__ = [
-    "Box", "computed_style", "computed_style_object", "document_rules", "layout",
+    "Box", "computed_style", "document_rules", "layout",
     "offset_parent", "positioned_box", "text_width",
 ]
 

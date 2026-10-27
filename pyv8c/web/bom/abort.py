@@ -8,7 +8,7 @@ import math
 
 import pyv8
 from ...idl import interface
-from ...foundation.arguments import MISSING, abort_signal, is_nullish, missing_error, number, sequence
+from ...foundation.arguments import MISSING, abort_signal, missing_error, number, sequence
 from ...foundation.arguments import IdlArgumentError
 from ..page_errors import PageError, PageTypeError, dom_exception
 from ..dom.events import Event, EventTarget, _install_handler_slots

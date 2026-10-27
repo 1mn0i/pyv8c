@@ -1,5 +1,4 @@
 """Iteration metadata uses generated implementation evidence, not member names."""
-import copy
 from pathlib import Path
 import pytest
 from pyv8c.tools.extract_idl import _idl_iteration, _generated_iteration, _apply_iteration, _merge_template, _idl_metadata

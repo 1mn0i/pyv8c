@@ -5,13 +5,14 @@ shape of it, since there is no device to play it on.
 """
 
 import array
+from collections import deque
 import math
 import sys
 
 import pyv8
 from pyv8 import AttributeSpec
 
-from ...engine.features import FeatureImplementation
+from ...features.runtime import FeatureImplementation
 from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
@@ -511,6 +512,10 @@ class AudioDestinationNode(AudioNode):
 
     inputs, outputs = 1, 0
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._channel_count_mode = "explicit"
+
     def get_maxChannelCount(self): return 2
 
 
@@ -862,6 +867,9 @@ class DynamicsCompressorNode(AudioNode):
         self._release = AudioParam(0.25, minimum=0.0)
         self._envelope = -_SILENCE_DB
         self._reduction = 0.0
+        rate = self._context.get_sampleRate() if self._context is not None else SAMPLE_RATE
+        # Blink's compressor uses a 6ms lookahead, bounded by its 1024-frame ring.
+        self._delay = deque([0.0] * min(int(0.006 * rate), 1023))
 
     def get_threshold(self): return self._threshold
     def get_knee(self): return self._knee
@@ -883,6 +891,9 @@ class DynamicsCompressorNode(AudioNode):
         self._reduction = _compression_db(self._envelope, self._threshold.value_at(seconds),
                                           self._knee.value_at(seconds),
                                           self._ratio.value_at(seconds))
+        if self._delay:
+            self._delay.append(value)
+            value = self._delay.popleft()
         return value * 10.0 ** (self._reduction / 20.0)
 
 

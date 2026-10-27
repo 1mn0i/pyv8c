@@ -154,7 +154,7 @@ class DOMException(_NamedError, PageError):
     first, then the name.  The legacy numeric ``code`` is derived from
     :data:`DOM_EXCEPTION_CODES` rather than duplicated as class constants; scripts read
     it through the ``code`` accessor the document states, on the interface the core
-    feature declares (``web/features/core.py``).
+    feature declares (``features/core.py``).
     """
 
     __v8_error_shape__ = ("DOMException", ("_name",), (("_code", "code"),))

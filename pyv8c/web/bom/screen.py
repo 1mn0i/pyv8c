@@ -4,7 +4,7 @@ Every field is read from the browser environment's screen configuration.
 """
 
 
-from ...engine.features import LazyValueStore
+from ...features.runtime import LazyValueStore
 from ...idl import interface
 from ...foundation.environment import BrowserEnvironment
 from ..dom.events import EventTarget

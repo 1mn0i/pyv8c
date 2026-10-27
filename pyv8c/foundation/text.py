@@ -6,6 +6,7 @@ where ``word-break`` adds an opportunity, how tall a line is -- lives in the lay
 from __future__ import annotations
 
 import math
+import os
 import struct
 import threading
 from dataclasses import dataclass
@@ -118,34 +119,40 @@ def _face(path, index=0):
     return face
 
 
-def _font(path, index, size):
+def _font(path, index, size, weight=None, layout_units=False):
     """An ``hb.Font`` at one size whose positions come back in pixels.
 
-    Scaled to the face's units per em, not to a fixed-point size, so the size is applied in
-    floating point and an advance is not rounded to 1/64 px on the way out.
+    Canvas uses font units for its floating-point measurements. Inline layout
+    may request 26.6 coordinates to match the browser's LayoutUnit grid.
     """
     face = _face(path, index)
     if face is None:
         return None
-    key = (str(path), int(index), round(float(size), 4))
+    key = (str(path), int(index), round(float(size), 4), weight, layout_units)
     font = _FONTS.get(key)
     if font is None:
         font = hb.Font(face)
         hb.ot_font_set_funcs(font)
-        font.scale = (face.upem, face.upem)
+        font.scale = ((round(float(size) * 64),) * 2 if layout_units
+                      else (face.upem, face.upem))
+        if weight is not None:
+            # A variable font's default axis can be Thin even when CSS requests
+            # normal text. Static faces simply ignore an unknown axis.
+            font.set_variations({'wght': float(weight)})
         _remember(_FONTS, key, font)
     return font
 
 
-def shape(text, path, index=0, size=16.0, *, features=None) -> ShapedRun:
+def shape(text, path, index=0, size=16.0, *, features=None, weight=None,
+          layout_units=False) -> ShapedRun:
     """``text`` as positioned glyphs in the face at *path*, or an empty run without one."""
     text = "" if text is None else str(text)
-    key = (text, str(path), int(index), round(float(size), 4),
+    key = (text, str(path), int(index), round(float(size), 4), weight, layout_units,
            None if not features else tuple(sorted(features.items())))
     run = _RUNS.get(key)
     if run is not None:
         return run
-    font = _font(path, index, size)
+    font = _font(path, index, size, weight, layout_units)
     face = _face(path, index)
     if font is None or face is None:
         return ShapedRun(text, 0.0, (), (), (), ())
@@ -153,12 +160,16 @@ def shape(text, path, index=0, size=16.0, *, features=None) -> ShapedRun:
     buffer.add_str(text)
     buffer.guess_segment_properties()
     hb.shape(font, buffer, features)
-    scale = float(size) / face.upem
+    scale = 1 / 64 if layout_units else float(size) / face.upem
     glyphs, clusters, advances, offsets, extents = [], [], [], [], []
     for info, position in zip(buffer.glyph_infos, buffer.glyph_positions):
         glyphs.append(int(info.codepoint))
         clusters.append(int(info.cluster))
-        advances.append(position.x_advance * scale)
+        advance = position.x_advance * scale
+        if os.name == "nt" and str(path).lower().endswith("cambria.ttc") and index == 1:
+            # DirectWrite exposes Cambria Math's hinted advances at whole pixels.
+            advance = float(round(advance))
+        advances.append(advance)
         offsets.append((position.x_offset * scale, position.y_offset * scale))
         extents.append(_extent(font, int(info.codepoint), scale))
     run = ShapedRun(text, sum(advances), tuple(glyphs), tuple(clusters), tuple(advances),
@@ -183,7 +194,8 @@ def _has_glyph(face_key, char) -> bool:
     return known
 
 
-def shape_selection(text, faces, size=16.0, *, features=None) -> ShapedRun:
+def shape_selection(text, faces, size=16.0, *, features=None, weight=None,
+                    layout_units=False) -> ShapedRun:
     """*text* drawn by the first of *faces* that has each character, runs shaped together.
 
     Consecutive characters resolving to one face are shaped as one piece, so kerning and
@@ -196,8 +208,10 @@ def shape_selection(text, faces, size=16.0, *, features=None) -> ShapedRun:
     if not text or not candidates:
         return ShapedRun(text, 0.0, (), (), (), ())
     if len(candidates) == 1 or _has_every_glyph(candidates[0], text):
-        return shape(text, candidates[0][0], candidates[0][1], size, features=features)
-    key = (text, tuple(candidates), round(float(size), 4))
+        return shape(text, candidates[0][0], candidates[0][1], size,
+                     features=features, weight=weight, layout_units=layout_units)
+    key = (text, tuple(candidates), round(float(size), 4), weight, layout_units,
+           None if not features else tuple(sorted(features.items())))
     known = _RUNS.get(key)
     if known is not None:
         return known
@@ -219,7 +233,8 @@ def shape_selection(text, faces, size=16.0, *, features=None) -> ShapedRun:
     used: list[tuple[str, int]] = []
     for index, (start, candidate) in enumerate(groups):
         end = groups[index + 1][0] if index + 1 < len(groups) else len(text)
-        piece = shape(text[start:end], candidate[0], candidate[1], size, features=features)
+        piece = shape(text[start:end], candidate[0], candidate[1], size,
+                      features=features, weight=weight, layout_units=layout_units)
         if candidate not in used:
             used.append(candidate)
         glyphs.extend(piece.glyphs)

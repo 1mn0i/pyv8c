@@ -13,7 +13,7 @@ from ...foundation.arguments import IdlArgumentError
 from ..page_errors import PageTypeError, dom_exception
 from ..page_errors import js_error_value
 from ..dom.events import Event, EventTarget
-from ..dom.media_source import (families_in, hardware_codecs, hardware_encoders,
+from ..media.source import (families_in, hardware_codecs, hardware_encoders,
                                 is_type_supported, media_facts, webrtc_codec, webrtc_supported)
 from .media import evaluate
 from .utils import settled

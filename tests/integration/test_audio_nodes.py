@@ -1,5 +1,4 @@
 """The audio nodes render the samples a real Chrome renders for the same graph."""
-import math
 
 from pyv8c import Browser
 

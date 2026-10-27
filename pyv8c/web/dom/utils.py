@@ -92,10 +92,10 @@ _element_type = None
 
 def is_element(node):
     """Whether ``node`` is a DOM ``Element``; the class is resolved lazily because
-    ``html_elements`` sits above the node model."""
+    ``element`` sits above the node model."""
     global _element_type
     if _element_type is None:
-        from .html_elements import Element
+        from .element import Element
 
         _element_type = Element
     return isinstance(node, _element_type)

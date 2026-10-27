@@ -36,6 +36,16 @@ def _names():
     pytest.skip("this machine has no face with two distinct names")
 
 
+def test_font_face_family_serializes_as_a_single_css_family_name(page):
+    assert page.evaluate('''(() => [
+      new FontFace('Cambria Math', 'local(Arial)').family,
+      new FontFace('Arial', 'local(Arial)').family,
+      new FontFace('serif', 'local(Arial)').family,
+      new FontFace('a"b', 'local(Arial)').family,
+      new FontFace('123', 'local(Arial)').family
+    ])()''') == ['"Cambria Math"', 'Arial', '"serif"', '"a\\"b"', '"123"']
+
+
 def test_local_finds_a_face_by_postscript_name_and_by_full_name(page):
     record = _names()
     answer = _probe(page, """

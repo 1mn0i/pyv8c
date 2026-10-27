@@ -6,7 +6,7 @@ own access check decides what a cross-origin caller may reach.
 import pyv8
 
 
-from ...engine.features import LazyValueStore
+from ...features.runtime import LazyValueStore
 from ...idl import interface
 from ...foundation.arguments import (
     MISSING,
@@ -46,7 +46,7 @@ from .visual_viewport import VisualViewport
 from .performance import Performance
 from .picture_in_picture import DocumentPictureInPicture
 from .scheduling import _SchedulingMixin
-from .utils import deny_cross_origin, is_secure_context, window_secure_context
+from .utils import deny_cross_origin, window_secure_context
 
 __all__ = ["BarProp", "Window", "WindowProperties"]
 
@@ -681,7 +681,7 @@ class Window(_SchedulingMixin, WindowProperties):
                               screen_width=screen.width, screen_height=screen.height,
                               dpr=self.devicePixelRatio, color_depth=screen.color_depth)
     def fn_createImageBitmap(self, image=MISSING, *arguments):
-        from ..dom.html_canvas import create_image_bitmap
+        from ..graphics.canvas import create_image_bitmap
         return create_image_bitmap('Window', image, arguments, getattr(self, '_services', None))
 
     def fn_fetch(self, request=MISSING, options=None, *_extra):
@@ -777,15 +777,16 @@ class Window(_SchedulingMixin, WindowProperties):
     def fn_getComputedStyle(self, element=MISSING, pseudo=pyv8.Undefined, *_extra):
         if element is MISSING:
             raise missing_error("Window", "getComputedStyle", 1, 0, constructor=False)
-        from ..dom.html_elements import Element
+        from ..dom.element import Element
         if not isinstance(element, Element):
             raise TypeError("The provided value is not an Element")
-        from ..dom.layout import computed_style_object
+        from ..css.cascade import computed_style_object
+        from ..dom.layout import layout_snapshot
         document = getattr(element, "ownerDocument", None)
         # Nothing is rendered in a tree no window owns, and CSSOM answers empty
         # values for one: that is what a document built by ``DOMParser`` is.
         rendered = document is None or document.get_defaultView() is not pyv8.Null
-        return computed_style_object(element, rendered=rendered)
+        return computed_style_object(element, rendered=rendered, layout_snapshot=layout_snapshot)
 
     def _post_message(self, source, message, target_origin="/", transfer=()):
         from ..page_errors import PageSyntaxError

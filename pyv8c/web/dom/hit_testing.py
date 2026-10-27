@@ -9,7 +9,7 @@ deepest first.  Measured against Chrome 153.
 
 import pyv8
 
-from .html_elements import Element
+from .element import Element
 from .layout import Box, layout_snapshot, positioned_box
 
 

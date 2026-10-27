@@ -15,7 +15,7 @@ from datetime import datetime
 import pyv8
 from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
 
-from ...engine.features import FeatureImplementation
+from ...features.runtime import FeatureImplementation
 from ...idl import interface
 from ...foundation.arguments import (
     MISSING,

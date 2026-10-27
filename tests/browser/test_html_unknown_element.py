@@ -8,8 +8,8 @@ a valid custom element name, which Chromium answers with a plain ``HTMLElement``
 import pytest
 
 from pyv8c import Browser
-from pyv8c.web.dom.html_classes import HTML_CLASSES, TAG_CLASSES, class_for_tag
-from pyv8c.web.dom.html_elements import HTMLUnknownElement
+from pyv8c.web.html.registry import HTML_CLASSES, TAG_CLASSES, class_for_tag
+from pyv8c.web.html.elements import HTMLUnknownElement
 
 PAGE_HTML = ("<foo id='unknown'></foo><my-widget id='custom'></my-widget>"
              "<div id='known'></div>")

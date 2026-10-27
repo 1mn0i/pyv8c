@@ -408,6 +408,8 @@ FIELDS: tuple[Field, ...] = (
     Field("extensions", _extensions, True),
     #: The faces this profile stands in for; absent means "ask this machine".
     Field("fonts.records", _font_records, default=None),
+    #: The browser's configured default family for unstyled document text.
+    Field("fonts.default_family", _text, default="sans-serif"),
 )
 
 _BY_NAME = {field.name: field for field in FIELDS}
@@ -589,6 +591,7 @@ class FontsView:
     """The faces a page can see: the profile's own, or ``None`` for this machine's."""
 
     records: tuple[FontRecord, ...] | None
+    default_family: str
 
     def resolved(self):
         """The records to answer with, asking this machine when the profile named none."""
@@ -769,7 +772,8 @@ class BrowserEnvironment:
         ))
         object.__setattr__(self, "gpu", GpuView(
             tuple(values["gpu.wgsl_features"] or ())))
-        object.__setattr__(self, "fonts", FontsView(values["fonts.records"]))
+        object.__setattr__(self, "fonts", FontsView(
+            values["fonts.records"], values["fonts.default_family"]))
 
     def __setattr__(self, name, value):
         raise AttributeError("BrowserEnvironment is immutable")

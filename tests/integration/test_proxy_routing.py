@@ -22,7 +22,7 @@ import pytest
 pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
 
 from proxy_harness import RecordingProxy
-from pyv8c import Browser, DOMException, register_transport
+from pyv8c import Browser, register_transport
 
 PAGE = """<!doctype html><html><body>
 <img id=pixel src="/pixel.png">

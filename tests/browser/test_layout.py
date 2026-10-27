@@ -1,5 +1,7 @@
 """Layout and computed-style behavior needed by browser scripts."""
 
+import os
+
 import pytest
 
 from pyv8c import Browser
@@ -40,6 +42,30 @@ def test_a_collection_face_is_measured_at_its_own_index():
     assert text_engine.shape("A", path, index=record.index, size=16.0).width > 0
 
 
+def test_adjacent_inline_elements_keep_cross_element_kerning(page):
+    if not any(item.family == "Noto Sans SC" and system_fonts.file_for(item)
+               for item in system_fonts.records()):
+        pytest.skip("Noto Sans SC is not installed")
+    assert page.evaluate("""(() => {
+        const host = document.createElement('div');
+        host.style.cssText = 'white-space:nowrap;font-family:"Noto Sans SC"';
+        host.innerHTML = '<span>υ</span><span>τ</span>';
+        document.body.appendChild(host);
+        return [...host.children].map(child => child.getBoundingClientRect().width);
+    })()""") == [8.765625, 8.234375]
+
+
+def test_windows_cambria_math_uses_hinted_advance():
+    if os.name != "nt":
+        pytest.skip("Windows font metrics")
+    record = next((item for item in system_fonts.records()
+                   if item.family == "Cambria Math" and system_fonts.file_for(item)), None)
+    if record is None:
+        pytest.skip("Cambria Math is not installed")
+    assert text_engine.shape("𝔈", system_fonts.file_for(record),
+                             index=record.index, size=16).width == 11
+
+
 def test_an_uninstalled_family_falls_back_instead_of_failing():
     """CSS walks the family list and then uses the platform's default, so a name this
     machine does not have still measures -- which is what an uninstalled font looks like."""
@@ -50,7 +76,8 @@ def test_an_uninstalled_family_falls_back_instead_of_failing():
 
 
 def test_nested_layout_reuses_cascade_within_one_pass_and_recomputes_after_change(page, monkeypatch):
-    original = layout._selector_matches
+    from pyv8c.web.css import cascade
+    original = cascade._selector_matches
     calls = 0
 
     def counted(element, selector):
@@ -58,7 +85,7 @@ def test_nested_layout_reuses_cascade_within_one_pass_and_recomputes_after_chang
         calls += 1
         return original(element, selector)
 
-    monkeypatch.setattr(layout, "_selector_matches", counted)
+    monkeypatch.setattr(cascade, "_selector_matches", counted)
     page.set_content("<style>div { color: red } .box { padding: 1px }</style>"
                      + "<div class='box'>" * 35 + "x" + "</div>" * 35,
                      url="http://layout.test/")
@@ -223,9 +250,7 @@ def test_link_sheet_attribute_change_reparses_rules(page):
 
 
 def test_hidden_element_keeps_layout_and_font_size_changes_height(page):
-    # The height of one 114px line of the fallback face a family this machine does not have
-    # resolves to (Times New Roman here): 102 + 25 + 5, the face's own metrics rounded as
-    # the platform rounds them.  A real Chrome reports the same three numbers for that face.
+    # Chrome uses the profile's default font for the unknown family; its line is 165px.
     assert page.evaluate("""(() => {
         const div = document.createElement('div');
         div.style.visibility = 'hidden';
@@ -236,7 +261,7 @@ def test_hidden_element_keeps_layout_and_font_size_changes_height(page):
             getComputedStyle(div).fontFamily,
             getComputedStyle(div.firstElementChild).fontSize,
             div.getBoundingClientRect().height > 0];
-    })()""") == [True, 132, "DFPhelvetica", "114px", True]
+    })()""") == [True, 165, "DFPhelvetica", "114px", True]
 
 
 def test_the_cascade_orders_by_importance_and_specificity(page):
@@ -282,7 +307,29 @@ def test_style_rules_and_basic_flex_grid_geometry(page):
         const span = document.querySelector('span');
         return [flex.offsetHeight, getComputedStyle(span).color,
             span.offsetHeight, flex.clientWidth === flex.offsetWidth];
-    })()""") == [10, "red", 18, True]
+    })()""") == [10, "rgb(255, 0, 0)", 24, True]
+
+
+def test_nowrap_inline_width_includes_inter_element_space(page):
+    assert page.evaluate("""(() => {
+      document.body.innerHTML = '<span style="white-space:nowrap">'
+        + '<b>first</b> <b>second</b></span>';
+      const span = document.querySelector('span');
+      const children = span.querySelectorAll('b');
+      return span.getBoundingClientRect().width >
+        children[0].getBoundingClientRect().width +
+        children[1].getBoundingClientRect().width;
+    })()""") is True
+
+
+def test_css_rotation_changes_client_rect_but_not_offset_size(page):
+    assert page.evaluate("""(() => {
+      const box = document.createElement('div');
+      box.style.cssText = 'width:16px;height:15px;transform:rotate(13deg)';
+      document.body.appendChild(box);
+      const rect = box.getBoundingClientRect();
+      return [box.offsetWidth, box.offsetHeight, rect.width, rect.height];
+    })()""") == [16, 15, 18.964187622070312, 18.214767456054688]
 
 
 def test_absolute_css_units_have_chrome_used_pixel_sizes(page):
@@ -309,6 +356,7 @@ def test_absolute_css_units_have_chrome_used_pixel_sizes(page):
 def test_css_math_functions_produce_used_widths(page):
     assert page.evaluate("""(() => {
       return ['calc(1px * pi)', 'calc(1px * e)',
+              'calc(1px * sqrt(16))',
               'calc(1px * (1 + sin(0)))', 'calc(1px * tan(0.5))'].map(value => {
         const box = document.createElement('div');
         box.style.width = value;
@@ -319,8 +367,71 @@ def test_css_math_functions_produce_used_widths(page):
     })()""") == [
         ['calc(3.14159px)', '3.14062px', 3.140625],
         ['calc(2.71828px)', '2.70312px', 2.703125],
+        ['calc(4px)', '4px', 4],
         ['calc(1px)', '1px', 1],
         ['calc(0.546302px)', '0.53125px', 0.53125],
+    ]
+
+
+def test_css_math_keeps_used_precision_through_cssom_writes(page):
+    assert page.evaluate("""(() => {
+      const box = document.createElement('div');
+      box.style.width = 'calc(1px * (12345.678901234))';
+      document.body.appendChild(box);
+      const read = () => [box.style.width, getComputedStyle(box).width,
+                          box.getBoundingClientRect().width];
+      const result = [read()];
+      box.style.color = 'red';
+      result.push(read());
+      box.setAttribute('style', 'width:calc(2px)');
+      result.push(read());
+      return result;
+    })()""") == [
+        ['calc(12345.7px)', '12345.7px', 12345.671875],
+        ['calc(12345.7px)', '12345.7px', 12345.671875],
+        ['calc(2px)', '2px', 2],
+    ]
+
+
+def test_nested_css_math_keeps_blink_trigonometry_and_layout_units(page):
+    assert page.evaluate("""(() => {
+      const expressions = [
+        'calc( 1px * ( ( 2.71828 * 0.987654321 - 0.123456789 / ( 987654.321 * 12345.678 ) ) + 0.5555555 / sin( sin( 10000.1 * tan( 50000 ) / tan( 20000 ) + 1.0 / pi * 5.0 - 0.1111 ) / 100.0 + tan( 30000 + 40000 * 50000 + 0.0001 ) / 9999.9 * pi ) - 0.999999 * -100000.5 ) )',
+        'calc( 1px * ( ( 3.14159 * 0.543210987 - 0.987654321 / ( 123456.789 * 98765.432 ) ) + 0.8888888 / cos( cos( 12345.6 * tan( 65432.1 ) / tan( 10987.6 ) + 2.0 / pi * 7.0 - 0.2222 ) / 200.0 + sqrt( 50000 + 60000 * 70000 + 0.0002 ) / 8888.8 * pi ) - 0.777777 * -200000.7 ) )',
+      ];
+      return expressions.map(expression => {
+        const box = document.createElement('div');
+        box.style.cssText = 'container-type:inline-size;padding:10px;'
+            + 'text-align:center;font-weight:bold;box-sizing:content-box';
+        box.style.width = expression;
+        box.textContent = '$#QKmn__gabenforgiveme';
+        document.body.appendChild(box);
+        return [box.style.width, getComputedStyle(box).width,
+                box.getBoundingClientRect().width];
+      });
+    })()""") == [
+        ['calc(100075px)', '100075px', 100094.984375],
+        ['calc(155556px)', '155556px', 155576.203125],
+    ]
+
+
+def test_default_and_variable_font_weights_match_chrome_geometry(page):
+    assert page.evaluate("""(() => {
+      const result = [];
+      for (const weight of ['400', '700']) {
+        const box = document.createElement('div');
+        box.style.cssText = 'position:absolute;font-family:"Noto Sans SC";font-weight:'
+            + weight;
+        box.textContent = 'a';
+        document.body.appendChild(box);
+        result.push([getComputedStyle(box).fontWeight,
+                     getComputedStyle(box).width,
+                     box.getBoundingClientRect().width]);
+      }
+      return result;
+    })()""") == [
+        ['400', '9.01562px', 9.015625],
+        ['700', '9.46875px', 9.46875],
     ]
 
 
@@ -340,3 +451,15 @@ def test_negative_absolute_positions_keep_computed_precision_and_quantize_geomet
       const rect = box.getBoundingClientRect();
       return [style.left, style.top, rect.left, rect.top];
     })()""") == ['-96.5088px', '-98.88px', -96.5, -98.875]
+
+
+def test_rect_applies_transform_origin_and_ancestor_transform(page):
+    assert page.evaluate('''(() => {
+        const outer = document.createElement('div');
+        outer.style.cssText = 'position:absolute;left:0;top:0;transform:translateX(100px)';
+        const inner = document.createElement('div');
+        inner.style.cssText = 'width:100px;height:50px;transform:rotate(90deg);transform-origin:0 0';
+        outer.appendChild(inner); document.body.appendChild(outer);
+        const r = inner.getBoundingClientRect();
+        return [r.left, r.top, r.width, r.height];
+    })()''') == [50, 0, 50, 100]

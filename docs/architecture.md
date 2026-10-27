@@ -8,7 +8,8 @@
 | --- | --- |
 | `pyv8c/foundation/` | 配置、执行器、任务源、时钟、渲染机会、错误与基础值规则 |
 | `pyv8c/network/` | 传输注册、网络后端、Cookie、请求响应数据和跳转规则 |
-| `pyv8c/engine/` | IDL 解码、绑定编译、Feature 装配和跟踪 |
+| `pyv8c/engine/` | IDL 解码、绑定编译和跟踪 |
+| `pyv8c/features/` | Feature 通用运行机制、内置声明和 Web API 核心组装 |
 | `pyv8c/platform/` | Browser、Profile、Page、Realm、导航、宿主服务和生命周期组合 |
 | `pyv8c/platform/resources/` | 请求、缓存、资源所有权、文档资源与 iframe 加载 |
 | `pyv8c/web/` | DOM、BOM、Fetch、Worker 等 Web API 实现 |
@@ -17,6 +18,32 @@
 | 相邻 `_pyv8` 仓库 | Isolate、Context、绑定模板、句柄、微任务、watchdog 和 Inspector |
 
 基础层不依赖 Page；Web API 通过服务接口消费宿主能力，不直接依赖平台控制器。原生层提供执行和绑定原语，不实现页面资源或 DOM 业务。分层约束由架构测试与策略检查维护。
+
+## Web API 归属
+
+DOM 目录保存节点树与 DOM 接口。文本编码、权限策略与 AI 接口位于 `pyv8c/web/` 的相应模块；媒体能力位于 `web/media/`，Canvas 绘图接口和 WebGL 位于 `web/graphics/`；设备运动与方向事件位于 `pyv8c/web/bom/motion.py`。这些模块由 Feature 注册表组合，不因页面调用就归入 DOM。
+
+| 目录或模块 | 主要职责 |
+| --- | --- |
+| `web/dom/` | DOM 节点、文档、事件和布局 |
+| `web/html/` | HTML 标签、标签注册和 HTML 解析 |
+| `web/css/` | CSSOM、样式表、选择器和层叠计算 |
+| `web/svg/`、`web/mathml/` | SVG 和 MathML 元素 |
+| `web/graphics/` | Canvas 绘图接口、图像数据和 WebGL |
+| `web/media/` | 媒体格式判断和 MediaSource |
+| `web/workers/worker.py` | Worker、SharedWorker 和 Worker 全局作用域接口 |
+| `web/workers/runtime.py` | Worker 执行、消息传递和生命周期 |
+| `web/bom/`、`web/fetch/`、`web/fileapi/` | 浏览器对象、网络接口与文件接口 |
+
+这些模块路径是内部实现路径；Web API 的安装仍由 Feature 注册和 IDL 绑定共同决定。
+
+## HTML 与 DOM 元素
+
+通用 `Element` 位于 `pyv8c/web/dom/element.py`。HTML 标签接口、标签注册表和 HTML 文档及片段解析器位于 `pyv8c/web/html/`；文档创建元素和 HTML 解析共用注册表。`DOMParser` API 留在 DOM 层，根据文档类型调用对应解析器。SVG 和 MathML 元素分别位于 `pyv8c/web/svg/` 和 `pyv8c/web/mathml/`，继承通用 `Element`。HTML Canvas 标签位于 HTML 包，绘图上下文、ImageData、ImageBitmap 和 OffscreenCanvas 位于 graphics 包。
+
+## CSS 与布局
+
+CSS 的属性表、声明解析、值计算、选择器、层叠和 CSSOM 位于 `pyv8c/web/css/`。DOM 元素持有样式声明，文档管理样式表版本；布局模块读取计算样式并维护几何快照。`getComputedStyle()` 通过调用方提供的布局快照获取需要使用值的属性，CSS 子包本身不导入布局模块。节点、样式表和视口变化仍通过原有版本机制使快照失效。
 
 ## 对象与状态归属
 
@@ -32,7 +59,7 @@ Worker 拥有独立线程、Isolate 和事件循环。跨执行组或 Worker 交
 
 接口形状由 IDL 文档描述，环境档案中的 `bindings` 决定当前环境允许暴露的子集。Python 实现提供数据模型与业务行为，绑定编译器组合元数据和回调生成原生 IdlSpec，Realm 按装配计划安装接口。
 
-FeatureSpec 描述接口组、依赖及实现模块；FeatureCatalog 建立静态索引，FeatureRuntime 在 Browser 范围管理依赖、模块加载和接口缓存。实现模块显式导出 `FEATURE`，可选能力按需加载。不能通过扫描模块全部变量隐式注册接口。
+`pyv8c/features/runtime.py` 提供不依赖 Web 的通用机制，`pyv8c/features/catalog.py` 只声明内置 Feature，`pyv8c/features/core.py` 组装核心 Web API；FeatureSpec 描述接口组、依赖及实现模块；FeatureCatalog 建立静态索引，FeatureRuntime 在 Browser 范围管理依赖、模块加载和接口缓存。实现模块显式导出 `FEATURE`，可选能力按需加载。不能通过扫描模块全部变量隐式注册接口。
 
 接口表面、迭代语义和宿主数据源是独立职责。未实现接口可按配置暴露为占位成员；缺失 pair/set 迭代源必须作为实现缺口记录，不能假装成空集合。具体格式见 [IDL 格式](idl-format.md)。
 

@@ -17,7 +17,7 @@ pytest.importorskip("pyv8", reason="the module is built against the native exten
 import pyv8  # noqa: E402
 
 from pyv8c.foundation import promises  # noqa: E402
-from pyv8c.web.page_errors import PageError, PageTypeError  # noqa: E402
+from pyv8c.web.page_errors import PageError  # noqa: E402
 
 
 def test_a_realm_without_a_context_answers_instead_of_raising():
