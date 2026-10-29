@@ -4,6 +4,7 @@ Viewport, screen and resolution features read the same environment as Window and
 Screen.  A viewport that never resizes never fires a change.
 """
 
+import math
 import re
 
 
@@ -85,7 +86,12 @@ def _matches_feature(name, value, width, height, screen_width, screen_height,
     if base in dimensions:
         return _compare(name, dimensions[base], _pixels(value))
     if base == "resolution":
-        return _compare(name, dpr, _resolution(value))
+        wanted = _resolution(value)
+        if wanted is not None and value.endswith("dpcm"):
+            # Blink compares dpcm values at two decimal places in dppx.
+            return _compare(name, math.floor(0.5 + 100 * dpr) / 100,
+                            math.floor(0.5 + 100 * wanted) / 100)
+        return _compare(name, dpr, wanted)
     if base in ("aspect-ratio", "device-aspect-ratio"):
         numerator, denominator = ((width, height) if base == "aspect-ratio"
                                   else (screen_width, screen_height))

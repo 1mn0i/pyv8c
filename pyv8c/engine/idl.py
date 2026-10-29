@@ -382,6 +382,10 @@ def _read_document(document) -> tuple:
                 raise ValueError(f"invalid iteration metadata for {name!r}")
         if "array" in (spec.get("template") or {}):
             raise ValueError(f"legacy array metadata for {name!r}; regenerate the IDL")
+        for entries in (spec.get('members') or {}).values():
+            for member in entries:
+                if member.get('install_phase', 'template') not in ('template', 'template_late', 'object'):
+                    raise ValueError(f"invalid member installation phase for {name!r}.{member.get('name')}")
         kind = (spec.get("template") or {}).get("definition_kind")
         if kind is not None and kind not in DEFINITION_KINDS:
             raise ValueError(f"interface {name!r} states definition_kind={kind!r}; this version"
@@ -414,7 +418,8 @@ class IdlMember:
 
     ``flags``, ``receiver``, ``cross_origin`` and ``side_effect`` keep the shorthand the
     document writes; what they stand for is decided where the binding is built.
-    ``main_world`` is the one world fact a runtime document keeps.
+    ``main_world`` is the one world fact a runtime document keeps. ``install_phase``
+    distinguishes initial template, later template and context-dependent members.
     """
 
     name: str
@@ -430,6 +435,7 @@ class IdlMember:
     #: ``True``/``False`` when the document states the setter, ``None`` when it is silent.
     setter_state: bool | None
     main_world: bool
+    install_phase: str
 
     @property
     def is_static(self) -> bool:
@@ -454,6 +460,7 @@ def _member(location, entry) -> IdlMember:
         # A snapshot that predates the bit states no world name at all, which is itself
         # the main world: the omission meant exactly that.
         main_world=bool(entry.get("main_world", True)),
+        install_phase=str(entry.get("install_phase") or "template"),
     )
 
 

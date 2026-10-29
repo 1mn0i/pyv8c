@@ -23,6 +23,11 @@
   "vendor": "Google Inc.",
   "platform": "Win32",
   "language": "zh-CN",
+  "form_controls.submit_label": "提交",
+  "form_controls.reset_label": "重置",
+  "form_controls.file_button_label": "选择文件",
+  "form_controls.file_empty_label": "未选择任何文件",
+  "form_controls.time_font_family": "NSimSun",
   "languages": [
     "zh-CN",
     "zh"
@@ -4274,6 +4279,6 @@
       "SpeechGrammarList": 1,
       "TimelineTriggerRangeList": 31
     },
-    "against": "83ae31c697ff02fcb52ac5739cbcbae88d7e8ddf9924d49cf2e500eab9f348de"
+    "against": "3f67cb338c9e0447c1005b2e5e02588c2e82a48f6d17992383e427c9d5962034"
   }
 }

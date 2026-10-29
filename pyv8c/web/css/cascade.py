@@ -107,6 +107,23 @@ def _cascade(element, rules, cache=None):
         })
         values.update({name: value for name, value in inherited.items() if name.startswith("--")})
         parent_size = _px(inherited.get("font-size", "16px"), 16) or 16
+    if str(getattr(element, 'localName', '')).lower() == 'input':
+        input_type = getattr(element, 'get_type', lambda: '')()
+        if input_type in ('button', 'submit', 'reset', 'color', 'checkbox', 'radio', 'range', 'file',
+                          'text', 'search', 'password', 'tel', 'email', 'url', 'time'):
+            values.update({'font-family': 'Arial', 'font-size': '13.3333px',
+                           'box-sizing': 'border-box'})
+            if input_type in ('button', 'submit', 'reset'):
+                values.update({'padding': '1px 6px', 'border-width': '2px'})
+            elif input_type == 'color':
+                values.update({'padding': '1px 2px', 'border-width': '1px'})
+            elif input_type in ('text', 'search', 'password', 'tel', 'email', 'url'):
+                values.update({'padding': '1px 2px', 'border-width': '2px'})
+            elif input_type == 'time':
+                values.update({'font-family': 'monospace', 'padding': '0px',
+                               'padding-left': '1px', 'border-width': '2px'})
+            else:
+                values.update({'padding': '0px', 'border-width': '0px'})
     # MathML's presentational hint has lower priority than author CSS.
     math_color = (element.attributes.get('mathcolor')
                   if getattr(element, '_namespace', None) == MATHML_NAMESPACE else None)

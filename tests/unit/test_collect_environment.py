@@ -100,6 +100,16 @@ def test_a_profile_has_to_be_complete_before_it_is_written():
         collector.build_environment(payload(**{"timezone": None}))
 
 
+def test_surface_preserves_observed_global_insertion_order():
+    surface = collector.build_surface({
+        "keys": ["alpha", "zeta"],
+        "own": ["alpha", "middle", "zeta"],
+        "own_order": ["zeta", "alpha", "middle"],
+    })
+    assert surface["exposed"] == ["alpha", "middle", "zeta"]
+    assert surface["own_order"] == ["zeta", "alpha", "middle"]
+
+
 def test_a_run_writes_the_environment_and_the_surface_together():
     """Both facts are read from one session, so they land in one document."""
     collected = payload()

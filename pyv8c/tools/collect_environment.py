@@ -253,6 +253,9 @@ COLLECT_SCRIPT = (_COLLECT_TEMPLATE
 #: own members (where ``CSS.animationWorklet`` lives), and the iterator machinery per prototype.
 SURFACE_SCRIPT = """
 (() => {
+    // Preserve insertion order before reading any globals: the inspection below can
+    // materialize browser interfaces and must not change the order being measured.
+    const ownOrder = Object.getOwnPropertyNames(window);
     const prototypes = {};
     const objects = {};
     const iterators = {};
@@ -313,7 +316,8 @@ SURFACE_SCRIPT = """
     }
     return JSON.stringify({
         keys: Object.keys(window).sort(),
-        own: Object.getOwnPropertyNames(window).sort(),
+        own: ownOrder.slice().sort(),
+        own_order: ownOrder,
         prototypes,
         objects,
         iterators});
@@ -712,7 +716,7 @@ def build_surface(payload, declared=None, against=""):
     assumed, so a document that is wider than the release stays narrow here.
     """
     declared = declared or {}
-    return {
+    surface = {
         "keys": list(payload["keys"]),
         "exposed": list(payload["own"]),
         "omits": {
@@ -722,6 +726,9 @@ def build_surface(payload, declared=None, against=""):
         "iteration_methods": _iteration_methods(payload.get("iterators"), set(declared)),
         "against": str(against or ""),
     }
+    if "own_order" in payload:
+        surface["own_order"] = list(payload["own_order"])
+    return surface
 
 
 def build_profile(payload, surface, source, fonts=None):

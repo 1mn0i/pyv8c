@@ -5,7 +5,7 @@ is a lazy accessor, and a timing object's fields are accessors with an empty set
 write is ignored and a read keeps the value the call captured.  The values come from the
 realm's timeline -- the records ``performance.timing`` reports -- as they do in Chromium.
 
-The global is writable and enumerable but non-configurable, and its members are native
+The global is writable, enumerable and configurable, and its members are native
 functions (``String(chrome.csi)`` reports native code).  It is built by :data:`_BOOTSTRAP`
 in JavaScript rather than by a host class, so its prototype stays ``Object.prototype``.
 """
@@ -75,7 +75,7 @@ _BOOTSTRAP = """
     if (!chrome || (typeof chrome !== 'object' && typeof chrome !== 'function')) {
         chrome = {};
         Object.defineProperty(globalThis, 'chrome', {
-            value: chrome, writable: true, enumerable: true, configurable: false,
+            value: chrome, writable: true, enumerable: true, configurable: true,
         });
     }
     chrome.loadTimes = host.loadTimes;

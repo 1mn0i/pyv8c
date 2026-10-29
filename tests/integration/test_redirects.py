@@ -187,9 +187,12 @@ def test_a_navigation_counts_its_redirects(page):
     reported = page.evaluate("[location.href, performance.navigation.redirectCount,"
                              " performance.getEntriesByType('navigation')[0].redirectCount]")
     assert list(reported) == [ORIGIN + "/nav/three", 2, 2]
+    assert page.evaluate("performance.timing.redirectStart >= performance.timing.navigationStart"
+                         " && performance.timing.redirectEnd >= performance.timing.redirectStart")
     page.goto(ORIGIN + "/nav/cross")
     # A hop that crosses origins reports no count at all, as Chrome does.
     assert page.evaluate("performance.navigation.redirectCount") == 0
+    assert page.evaluate("[performance.timing.redirectStart, performance.timing.redirectEnd]") == [0, 0]
     assert page.evaluate("location.href") == OTHER + "/nav-page"
 
 

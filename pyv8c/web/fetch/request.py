@@ -2,6 +2,7 @@
 import re
 from urllib.parse import urljoin, urlsplit
 
+import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, abort_signal, byte_string, dictionary, enum_value, is_nullish, missing_error, usv_string
@@ -13,6 +14,37 @@ from .headers import Headers
 from ..fileapi.blob import _array_buffer_bytes
 
 
+# Web IDL dictionary members are read in lexicographic order, including members
+# this implementation does not otherwise use.  Their getters are observable.
+_REQUEST_INIT_MEMBERS = (
+    'adAuctionHeaders', 'body', 'cache', 'credentials', 'duplex', 'headers',
+    'integrity', 'keepalive', 'method', 'mode', 'priority', 'privateToken',
+    'redirect', 'referrer', 'referrerPolicy', 'signal', 'targetAddressSpace',
+)
+_REQUEST_ENUMS = {
+    'credentials': ('omit', 'same-origin', 'include'),
+    'mode': ('navigate', 'same-origin', 'no-cors', 'cors'),
+    'redirect': ('follow', 'error', 'manual'),
+}
+
+
+def _request_init(options):
+    source = dictionary(options, name='RequestInit', prefix="Failed to construct 'Request': ")
+    values = {}
+    for name in _REQUEST_INIT_MEMBERS:
+        value = source.get(name, pyv8.Undefined)
+        if value is pyv8.Undefined:
+            continue
+        if name in _REQUEST_ENUMS:
+            value = enum_value(value, _REQUEST_ENUMS[name])
+        elif name == 'method':
+            value = byte_string(value)
+        elif name == 'headers':
+            value = Headers(value)
+        values[name] = value
+    return values
+
+
 @interface('Request', None)
 class Request:
     def __init__(self, url=MISSING, options=None, *_extra, services=None, _realm=None, **_):
@@ -21,7 +53,7 @@ class Request:
         original = url if isinstance(url, Request) else None
         if original is None:
             url = usv_string(url)
-        options = dictionary(options, name="RequestInit", prefix="Failed to construct 'Request': ")
+        options = _request_init(options)
         self._services = services or _realm
         base = self._services.realm_services.url if self._services else "about:blank"
         self._url = original._url if original else urljoin(base, url)
@@ -31,7 +63,7 @@ class Request:
         self._method = byte_string(options.get("method", original._method if original else "GET"))
         self._mode = enum_value(options.get("mode", original._mode if original else "cors"), ("navigate", "same-origin", "no-cors", "cors"))
         self._redirect = enum_value(options.get("redirect", original._redirect if original else "follow"), ("follow", "error", "manual"))
-        self._timeout = options.get("timeout")
+        self._timeout = None
         self._signal = self._read_signal(options, original)
         try:
             parts = urlsplit(self._url)

@@ -19,6 +19,7 @@ from ...foundation.arguments import (
     is_nullish,
     missing_error,
     number,
+    sequence,
 )
 from ...foundation.clock import clock_of
 from ...foundation.arguments import IdlArgumentError
@@ -95,6 +96,17 @@ def _modifier_state(event, key):
 def _nullable_string(value):
     """Web IDL ``DOMString?``: ``null``/``undefined`` are preserved as null."""
     return pyv8.Null if is_nullish(value) else dom_string(value)
+
+
+def _nullable_event_init_interface(value, expected, constructor, dictionary_name, member):
+    if is_nullish(value):
+        return pyv8.Null
+    try:
+        return interface_value(value, expected, constructor, 'constructor', 2)
+    except (IdlArgumentError, PageTypeError) as error:
+        raise PageTypeError(f"Failed to construct '{constructor}': Failed to read the "
+                            f"'{member}' property from '{dictionary_name}': "
+                            f"Failed to convert value to '{expected}'.") from error
 
 
 def _event_clock(services):
@@ -195,9 +207,13 @@ class UIEvent(Event):
         super().__init__(event_type, options, **kw)
         init = event_init(options)
         self.detail = integer(init.get("detail", 0), signed=True)
+        self.sourceCapabilities = _nullable_event_init_interface(
+            init.get("sourceCapabilities", pyv8.Null), 'InputDeviceCapabilities',
+            type(self).__name__, 'UIEventInit', 'sourceCapabilities')
         self.view = init.get("view", pyv8.Null)
     def get_view(self): return self.view
     def get_detail(self): return self.detail
+    def get_sourceCapabilities(self): return self.sourceCapabilities
     def get_which(self): return self.detail
 
 
@@ -366,16 +382,30 @@ class InputEvent(UIEvent):
         super().__init__(event_type, options, **kw)
         init = event_init(options)
         self.data = _nullable_string(init.get("data", pyv8.Null))
-        self.isComposing = boolean(init.get("isComposing", False))
+        self.dataTransfer = _nullable_event_init_interface(
+            init.get("dataTransfer", pyv8.Null), 'DataTransfer',
+            'InputEvent', 'InputEventInit', 'dataTransfer')
         self.inputType = dom_string(init.get("inputType", ""))
-        self.dataTransfer = init.get("dataTransfer", pyv8.Null)
+        self.isComposing = boolean(init.get("isComposing", False))
+        ranges = init.get('targetRanges', pyv8.Undefined)
+        if ranges is pyv8.Undefined:
+            self._target_ranges = ()
+        else:
+            try:
+                self._target_ranges = tuple(sequence(ranges, lambda value: interface_value(
+                    value, 'StaticRange', 'InputEvent', 'constructor', 2)))
+            except (IdlArgumentError, PageTypeError) as error:
+                reason = ("Failed to convert value to 'StaticRange'."
+                          if 'StaticRange' in str(error) else
+                          'The provided value cannot be converted to a sequence.')
+                raise PageTypeError("Failed to construct 'InputEvent': Failed to read the "
+                                    "'targetRanges' property from 'InputEventInit': " + reason) from error
 
     def get_data(self): return self.data
     def get_isComposing(self): return self.isComposing
     def get_inputType(self): return self.inputType
     def get_dataTransfer(self): return self.dataTransfer
-    # No editing pipeline exists to report target ranges for.
-    def fn_getTargetRanges(self, *_extra): return []
+    def fn_getTargetRanges(self, *_extra): return list(self._target_ranges)
 
 
 @interface('CompositionEvent', 'UIEvent')

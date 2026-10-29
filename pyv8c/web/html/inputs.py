@@ -284,11 +284,13 @@ class HTMLInputElement(HTMLElement):
     def get_value(self):
         if self._dirty_value: return self._raw_value
         if self.get_type() in ("checkbox", "radio") and "value" not in self.attributes: return "on"
+        if self.get_type() == "color": return self._sanitize_value(self._attr("value"))
         return self._attr("value")
     def set_value(self, value):
         value = dom_string(value)
         self._dirty_value = True
         self._raw_value = self._sanitize_value(str(value))
+        self._invalidate_layout()
     def get_defaultValue(self): return self._attr("value")
     def set_defaultValue(self, value):
         value = dom_string(value)
@@ -305,7 +307,7 @@ class HTMLInputElement(HTMLElement):
                 return ",".join(part.strip() for part in value.split(","))
             return value.strip()
         if kind == "color":
-            return value if _COLOR_PATTERN.match(value) else "#000000"
+            return value.lower() if _COLOR_PATTERN.match(value) else "#000000"
         return value.replace("\r", "").replace("\n", "")
 
     def get_valueAsNumber(self):

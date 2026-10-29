@@ -122,6 +122,73 @@ def test_permissions_query_validation_rejects_a_promise_like_chrome():
         browser.close()
 
 
+def test_frame_permissions_differ_from_top_level_like_chrome():
+    browser = Browser(real_network=False, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://secure.test/')
+        page.evaluate("window.__frame = document.createElement('iframe'); document.body.appendChild(__frame)")
+        for name in ('background-fetch', 'storage-access'):
+            assert _settled(page, f"navigator.permissions.query({{name: '{name}'}}).then(s => s.state)") == [
+                'value', 'granted']
+            assert _settled(page, f"__frame.contentWindow.navigator.permissions.query({{name: '{name}'}})"
+                            ".then(s => s.state)") == ['value', 'prompt']
+    finally:
+        browser.close()
+
+
+def test_push_permission_converts_the_derived_descriptor_like_chrome():
+    browser = Browser(real_network=False, stub_logging="off")
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content("<body></body>", url="https://secure.test/")
+        for value in ("true", "1", "'false'"):
+            assert _settled(page, "navigator.permissions.query({name: 'push', "
+                            f"userVisibleOnly: {value}" + "}).then(s => [s.name, s.state])") == [
+                "value", ["notifications", "prompt"]]
+        for value in ("false", "undefined", "null"):
+            assert _settled(page, "navigator.permissions.query({name: 'push', "
+                            f"userVisibleOnly: {value}" + "})")[1] == "NotSupportedError"
+        page.evaluate("window.__permissionReads = []")
+        assert _settled(page, "navigator.permissions.query({"
+                        "get name() { __permissionReads.push('name'); return 'push'; },"
+                        "get userVisibleOnly() { __permissionReads.push('userVisibleOnly'); return true; }"
+                        "}).then(s => s.name)") == ["value", "notifications"]
+        assert page.evaluate("__permissionReads") == ["name", "name", "userVisibleOnly"]
+        assert _settled(page, "(() => { let i = 0; return navigator.permissions.query({"
+                        "get name() { return i++ ? 'unknown' : 'push'; },"
+                        "get userVisibleOnly() { throw new Error('must not read'); } }); })()")[:2] == [
+            "error", "TypeError"]
+    finally:
+        browser.close()
+
+
+@pytest.mark.parametrize('first', ['clipboard-read', 'clipboard-write'])
+def test_clipboard_permission_descriptor_and_shared_status(first):
+    browser = Browser(real_network=False, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body></body>', url='https://secure.test/')
+        assert _settled(page, "navigator.permissions.query({name: 'clipboard-write'})"
+                        ".then(s => [s.name, s.state])") == ['value', ['clipboard_write', 'granted']]
+        expression = ("navigator.permissions.query({name: '" + first + "', allowWithoutGesture: true})"
+                      ".then(s => [s.name, s.state])")
+        expected_name = 'clipboard_read' if first == 'clipboard-read' else 'clipboard_write'
+        assert _settled(page, expression) == ['value', [expected_name, 'prompt']]
+        other = 'clipboard-write' if first == 'clipboard-read' else 'clipboard-read'
+        expression = ("navigator.permissions.query({name: '" + other + "', allowWithoutGesture: true})"
+                      ".then(s => [s.name, s.state])")
+        assert _settled(page, expression) == ['value', [expected_name, 'prompt']]
+        page.evaluate('window.__clipboardReads = []')
+        assert _settled(page, "navigator.permissions.query({"
+                        "get name() { __clipboardReads.push('name'); return 'clipboard-write'; },"
+                        "get allowWithoutGesture() { __clipboardReads.push('allowWithoutGesture'); return true; }"
+                        "}).then(s => s.state)") == ['value', 'prompt']
+        assert page.evaluate('__clipboardReads') == ['name', 'name', 'allowWithoutGesture']
+    finally:
+        browser.close()
+
+
 def test_the_calls_that_need_a_chooser_or_a_registration_refuse():
     def loader(url, _request):
         return {"body": "self.onmessage = () => {};", "url": url,

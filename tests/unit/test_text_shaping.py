@@ -59,6 +59,20 @@ def test_a_combining_mark_stays_with_its_letter(face):
     assert len(run.glyphs) <= 2
 
 
+def test_text_presentation_fallback_keeps_explicit_family_first():
+    from pyv8c.foundation.environment import BrowserEnvironment
+    from pyv8c.web.dom.layout import _shaped
+
+    if system_fonts.match_family('Cambria Math') is None:
+        pytest.skip('Cambria Math is not installed')
+    run, _ = _shaped('\u2b06\ufe0e', {
+        'font-family': 'Cambria Math, Arial', 'font-size': '100px',
+        'font-weight': '400', 'font-style': 'normal',
+    }, BrowserEnvironment.from_dict(None))
+    assert run.faces
+    assert run.faces[0][0].lower().endswith('cambria.ttc')
+
+
 def test_a_missing_face_measures_nothing_and_says_so(face):
     missing = r"C:\no-such-directory\none.ttf"
     assert T.shape("abc", missing).width == 0.0

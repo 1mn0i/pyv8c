@@ -747,7 +747,7 @@ class AudioContext(BaseAudioContext):
         super().__init__(sample_rate=sample_rate, _realm=_realm, **kwargs)
 
     def get_baseLatency(self): return 0.01
-    def get_outputLatency(self): return 0.01
+    def get_outputLatency(self): return 0.0
     def get_onerror(self): return self._get_handler("onerror")
     def set_onerror(self, value): self._set_handler("onerror", value)
 

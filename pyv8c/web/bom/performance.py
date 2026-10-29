@@ -124,6 +124,8 @@ def _timing_reader(field):
         record = navigation_record(self._services)
         if record is None or field not in record:
             return 0.0
+        if field in ('redirectStart', 'redirectEnd') and not record.get('redirectCount', 0):
+            return 0.0
         return float(origin + math.floor(float(record[field])))
     return read
 

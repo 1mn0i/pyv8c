@@ -37,6 +37,8 @@ IDL 描述接口形状和绑定元数据，不包含完整方法实现。接口�
 
 成员包含名称、kind、length、property_flags 或 flags、setter、receiver、cross_origin、side_effect、main_world 等实际绑定所需信息。property_flags 是属性位的整数表示；不能从普通同名操作推导接口迭代能力。
 
+可选的 `install_phase` 区分初始模板安装（省略或 `template`）、后期模板安装（`template_late`）和上下文对象安装（`object`）。提取器从 Chromium 生成的安装函数中记录该信息，原生层据此在每个 Realm 保持原型属性及 `constructor` 的相对顺序。未携带该字段的旧文档按初始模板处理。
+
 template.handlers 分别记录 named、indexed 和 cross_origin 的角色。它们是提取证据，不是 Python callable；绑定编译器再解析到实际宿主处理器。
 
 ## 同步迭代
@@ -85,5 +87,7 @@ python tools/extract_idl.py .\idl-output.zip --chromium-root D:\src\chromium --b
 ```powershell
 python tools/collect_environment.py --chrome "C:\Program Files\Google\Chrome\Application\chrome.exe" --out .\environment.json
 ```
+
+采集结果的 `bindings.own_order` 保存检查接口之前的 Window 自有属性枚举顺序；`bindings.exposed` 仍按名称排序，用于判断是否暴露。`own_order` 目前用于对照分析，不改变运行时安装顺序。旧档案可以没有该字段。
 
 先输出到独立文件核对 source、启动参数和能力来源，再决定是否更新随包档案。不要默认覆盖基线；采集到的设备、驱动和权限状态不等于框架已经实现了对应硬件能力。

@@ -334,6 +334,15 @@ def _efficient(content_type, drawn, hardware):
     return True if kind == "audio" else family in tuple(hardware)
 
 
+def _invalid_media_capabilities_receiver(method):
+    """Promise-returning WebIDL methods reject an incompatible receiver."""
+    resolver = pyv8.PromiseResolver(pyv8.current_context())
+    promise = resolver.promise()
+    resolver.reject(PageTypeError(
+        f"Failed to execute '{method}' on 'MediaCapabilities': Illegal invocation"))
+    return promise
+
+
 @interface('MediaCapabilities', None)
 class MediaCapabilities:
     """``decodingInfo.supported`` reads the same codec table ``MediaSource.isTypeSupported``
@@ -372,8 +381,12 @@ class MediaCapabilities:
         return settled(self._services, value=self._answers(type_name, media, method))
 
     def fn_decodingInfo(self, configuration=MISSING, *_extra):
+        if not isinstance(self, MediaCapabilities):
+            return _invalid_media_capabilities_receiver("decodingInfo")
         return self._capability(configuration, "decodingInfo")
     def fn_encodingInfo(self, configuration=MISSING, *_extra):
+        if not isinstance(self, MediaCapabilities):
+            return _invalid_media_capabilities_receiver("encodingInfo")
         return self._capability(configuration, "encodingInfo")
 
 

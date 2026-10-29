@@ -334,6 +334,12 @@ FIELDS: tuple[Field, ...] = (
     Field("platform", _text, True),
     Field("language", _text, True),
     Field("languages", _tokens, True),
+    #: Browser UI strings can differ from navigator.languages.
+    Field("form_controls.submit_label", _text, default="Submit"),
+    Field("form_controls.reset_label", _text, default="Reset"),
+    Field("form_controls.file_button_label", _text, default="Choose File"),
+    Field("form_controls.file_empty_label", _text, default="No file chosen"),
+    Field("form_controls.time_font_family", _text, default="monospace"),
     Field("on_line", bool, True),
     Field("hardware_concurrency", _integer, True),
     Field("device_memory", _number, True),

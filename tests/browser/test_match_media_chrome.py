@@ -55,3 +55,19 @@ def test_media_query_list_initializes_event_target_and_uses_dpr():
         })()""") == [True, "(min-resolution:2dppx)", True, False, True]
     finally:
         browser.close()
+
+
+def test_dpcm_rounds_to_hundredths_of_dppx():
+    browser = Browser(real_network=False, stub_logging="off", environment={
+        "viewport.device_scale_factor": 1,
+    })
+    try:
+        page = browser.new_profile().new_page()
+        assert page.evaluate("""[
+            matchMedia('(min-resolution:37.89dpcm)').matches,
+            matchMedia('(min-resolution:37.99dpcm)').matches,
+            matchMedia('(max-resolution:37.89dpcm)').matches,
+            matchMedia('(min-resolution:96.1dpi)').matches
+        ]""") == [True, False, True, False]
+    finally:
+        browser.close()

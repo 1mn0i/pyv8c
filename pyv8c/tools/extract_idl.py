@@ -260,13 +260,34 @@ def _member_from_table(kind, fields, signatures):
 
 def extract_members(text):
     signatures = extract_callback_signatures(text); members = {"instance": [], "prototype": [], "interface": []}
+    installers = []
+    for entry in re.finditer(
+        r'\bvoid\s+V8[A-Za-z0-9_]+::(?:Impl::)?Install(?P<stage>Unconditional|ContextIndependent|ContextDependent)Properties\s*\([^)]*\)\s*\{',
+        text):
+        try:
+            end = balanced_end(text, text.find('{', entry.start()))
+        except ValueError:
+            continue
+        installers.append((entry.start(), end, entry.group('stage')))
+    installer_index = 0
     for match in TABLE_DECL.finditer(text):
+        while installer_index < len(installers) and installers[installer_index][1] <= match.start():
+            installer_index += 1
+        stage = (installers[installer_index][2]
+                 if installer_index < len(installers)
+                 and installers[installer_index][0] <= match.start() < installers[installer_index][1]
+                 else None)
         try: entries = _table_entries(text, text.find("{", match.start()))
         except ValueError: continue
         kind = OPERATION_TABLE_KINDS.get(match.group("kind"), match.group("kind"))
         for fields in entries:
             member = _member_from_table(kind, fields, signatures)
-            if member is not None: members.setdefault(member.get("location", "interface"), []).append(member)
+            if member is not None:
+                if stage == 'ContextDependent':
+                    member['install_phase'] = 'object'
+                elif stage == 'ContextIndependent':
+                    member['install_phase'] = 'template_late'
+                members.setdefault(member.get("location", "interface"), []).append(member)
     return members
 
 

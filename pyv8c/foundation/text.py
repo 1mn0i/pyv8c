@@ -195,7 +195,7 @@ def _has_glyph(face_key, char) -> bool:
 
 
 def shape_selection(text, faces, size=16.0, *, features=None, weight=None,
-                    layout_units=False) -> ShapedRun:
+                    layout_units=False, text_presentation_faces=None) -> ShapedRun:
     """*text* drawn by the first of *faces* that has each character, runs shaped together.
 
     Consecutive characters resolving to one face are shaped as one piece, so kerning and
@@ -205,23 +205,45 @@ def shape_selection(text, faces, size=16.0, *, features=None, weight=None,
     """
     text = "" if text is None else str(text)
     candidates = [(str(path), int(index)) for path, index in faces if path]
+    text_candidates = ([(str(path), int(index)) for path, index in text_presentation_faces if path]
+                       if text_presentation_faces is not None else candidates)
     if not text or not candidates:
         return ShapedRun(text, 0.0, (), (), (), ())
-    if len(candidates) == 1 or _has_every_glyph(candidates[0], text):
+    variation = '\ufe0e' in text or '\ufe0f' in text
+    if len(candidates) == 1 or (not variation and _has_every_glyph(candidates[0], text)):
         return shape(text, candidates[0][0], candidates[0][1], size,
                      features=features, weight=weight, layout_units=layout_units)
-    key = (text, tuple(candidates), round(float(size), 4), weight, layout_units,
+    key = (text, tuple(candidates), tuple(text_candidates), round(float(size), 4), weight, layout_units,
            None if not features else tuple(sorted(features.items())))
     known = _RUNS.get(key)
     if known is not None:
         return known
     groups: list[list] = []
-    for position, char in enumerate(text):
+    units = ((position, char) for position, char in enumerate(text))
+    if variation:
+        def clusters():
+            position = 0
+            for cluster in grapheme_clusters(text):
+                yield position, cluster
+                position += len(cluster)
+        units = clusters()
+    for position, char in units:
         chosen = candidates[0]
-        for candidate in candidates:
-            if _has_glyph(candidate, char):
-                chosen = candidate
-                break
+        base = next((value for value in char if value not in ('\ufe0e', '\ufe0f', '\u200d')), char[0])
+        if '\ufe0f' in char:
+            for candidate in candidates:
+                face = _face(*candidate)
+                if (face is not None and _has_glyph(candidate, base)
+                        and any(_table(face, tag) for tag in ('COLR', 'CBDT', 'sbix', 'SVG '))):
+                    chosen = candidate
+                    break
+            else:
+                chosen = None
+        else:
+            chosen = None
+        if chosen is None:
+            choices = text_candidates if '\ufe0e' in char else candidates
+            chosen = next((candidate for candidate in choices if _has_glyph(candidate, base)), candidates[0])
         if groups and groups[-1][1] == chosen:
             continue
         groups.append([position, chosen])
@@ -273,6 +295,23 @@ def _table(face, name):
     if data is None:
         return b""
     return data if isinstance(data, bytes) else bytes(data)
+
+
+def text_control_width(path, index=0, size=16.0, columns=20):
+    """Estimate Blink's text-field intrinsic width from a face's glyph metrics."""
+    face = _face(path, index)
+    if face is None or not face.upem:
+        return None
+    head = _table(face, "head")
+    if len(head) < 44:
+        return None
+    x_min, x_max = struct.unpack_from(">hh", head, 36)[0], struct.unpack_from(">hh", head, 40)[0]
+    average = shape('x', path, index, size).width
+    if average <= 0:
+        return None
+    average = max(average, _rounded(average))
+    maximum = _rounded(max(0, x_max - x_min) * float(size) / face.upem)
+    return math.ceil(average * max(1, int(columns)) + max(0.0, maximum - average))
 
 
 def metrics(path, index=0, size=16.0) -> FontMetrics:

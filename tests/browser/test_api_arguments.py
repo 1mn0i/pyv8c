@@ -18,6 +18,65 @@ def argument_page():
         browser.close()
 
 
+def test_request_init_reads_members_in_chrome_order(argument_page):
+    expected = ['adAuctionHeaders', 'body', 'cache', 'credentials', 'duplex',
+                'headers', 'integrity', 'keepalive', 'method', 'mode', 'priority',
+                'privateToken', 'redirect', 'referrer', 'referrerPolicy', 'signal',
+                'targetAddressSpace']
+    assert argument_page.evaluate('''(() => {
+        const results = [];
+        for (const url of ['https://example.test/', 'ftp:']) {
+            const keys = [];
+            const init = new Proxy({}, {get(target, name) {
+                if (typeof name === 'string') keys.push(name);
+                return undefined;
+            }});
+            try { new Request(url, init); } catch (_) {}
+            results.push(keys);
+        }
+        return results;
+    })()''') == [expected, expected]
+
+
+def test_request_init_stops_when_an_enum_conversion_throws(argument_page):
+    assert argument_page.evaluate('''(() => {
+        const keys = [];
+        const init = new Proxy({}, {get(target, name) {
+            if (typeof name === 'string') keys.push(name);
+            return name === 'credentials' ? 'invalid' : undefined;
+        }});
+        try { new Request('https://example.test/', init); } catch (_) {}
+        return keys;
+    })()''') == ['adAuctionHeaders', 'body', 'cache', 'credentials']
+
+
+def test_input_event_init_reads_dictionary_members_in_chrome_order(argument_page):
+    assert argument_page.evaluate('''(() => {
+        const keys = [];
+        const init = new Proxy({}, {get(target, name) {
+            if (typeof name === 'string') keys.push(name);
+            return undefined;
+        }});
+        new InputEvent('input', init);
+        return keys;
+    })()''') == ['bubbles', 'cancelable', 'composed', 'detail', 'sourceCapabilities',
+                 'view', 'data', 'dataTransfer', 'inputType', 'isComposing', 'targetRanges']
+
+
+def test_input_event_init_validates_and_preserves_target_ranges(argument_page):
+    assert argument_page.evaluate('''(() => {
+        const range = new StaticRange({startContainer: document.body, startOffset: 0,
+                                       endContainer: document.body, endOffset: 0});
+        const event = new InputEvent('input', {targetRanges: [range]});
+        const first = event.getTargetRanges(), second = event.getTargetRanges();
+        const errors = [null, [{}]].map(targetRanges => {
+            try { new InputEvent('input', {targetRanges}); return null; }
+            catch (error) { return error.name; }
+        });
+        return [first.length, first[0] === range, first !== second, errors];
+    })()''') == [1, True, True, ['TypeError', 'TypeError']]
+
+
 @pytest.mark.parametrize(
     "expression",
     [

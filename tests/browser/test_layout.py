@@ -463,3 +463,217 @@ def test_rect_applies_transform_origin_and_ancestor_transform(page):
         const r = inner.getBoundingClientRect();
         return [r.left, r.top, r.width, r.height];
     })()''') == [50, 0, 50, 100]
+
+
+def test_button_intrinsic_size_tracks_value_and_variation_presentation(page):
+    from pyv8c.foundation import system_fonts
+    available = {record.family.lower() for record in system_fonts.records()}
+    if not {'arial', 'segoe ui emoji', 'noto sans sc'} <= available:
+        pytest.skip('the Chrome comparison uses Arial, Segoe UI Emoji and Noto Sans SC')
+    page.set_content('<body></body>', url='https://example.test/')
+    assert page.evaluate('''(() => {
+        const input = document.createElement('input');
+        input.type = 'button'; input.style.all = 'revert';
+        input.style.fontSize = '100px'; input.style.margin = '-9999px';
+        document.body.appendChild(input);
+        return ['‼︎', '‼️', '〰︎', '〰️', 'abc', ''].map(value => {
+            input.value = value;
+            const rect = input.getBoundingClientRect();
+            return [input.clientWidth, input.clientHeight, rect.width, rect.height];
+        });
+    })()''') == [
+        [62, 117, 66, 121], [93, 135, 97.15625, 139],
+        [112, 147, 116, 151], [146, 135, 149.796875, 139],
+        [173, 117, 177.234375, 121], [12, 117, 16, 121],
+    ]
+
+
+def test_button_text_presentation_uses_monochrome_fallback(page):
+    import os
+    from pyv8c.foundation import system_fonts
+    available = {record.family.lower() for record in system_fonts.records()}
+    if os.name != 'nt' or not {'arial', 'segoe ui emoji', 'segoe ui symbol', 'noto sans sc'} <= available:
+        pytest.skip('the Chrome comparison uses Windows Arial, Noto Sans SC and Segoe UI')
+    page.set_content('<body></body>', url='https://example.test/')
+    assert page.evaluate(r'''(() => {
+        const input = document.createElement('input');
+        input.type = 'button';
+        input.style.cssText = 'all: revert; font-size: 100px; margin: -9999px';
+        document.body.appendChild(input);
+        return ['\u2b06\ufe0e', '\u2b06\ufe0f', '\u26aa\ufe0e', '\u26aa\ufe0f'].map(value => {
+            input.value = value;
+            return [input.clientWidth, input.clientHeight];
+        });
+    })()''') == [[112, 147], [149, 135], [96, 135], [149, 135]]
+
+
+def test_button_explicit_border_box_size(page):
+    assert page.evaluate('''(() => {
+        const input = document.createElement('input');
+        input.type = 'button';
+        input.style.cssText = 'width:100px;height:80px';
+        document.body.appendChild(input);
+        const rect = input.getBoundingClientRect();
+        return [rect.width, rect.height, input.clientWidth, input.clientHeight];
+    })()''') == [100, 80, 96, 76]
+
+
+def test_native_input_intrinsic_sizes_and_explicit_dimensions(page):
+    assert page.evaluate('''(() => {
+        return ['color', 'checkbox', 'radio', 'range'].map(type => {
+            const input = document.createElement('input');
+            input.type = type;
+            input.style.cssText = 'all: revert; margin: -9999px';
+            document.body.appendChild(input);
+            const rect = input.getBoundingClientRect();
+            const initial = [rect.width, rect.height, input.clientWidth, input.clientHeight];
+            input.style.width = '80px'; input.style.height = '40px';
+            const sized = input.getBoundingClientRect();
+            input.remove();
+            return [...initial, sized.width, sized.height];
+        });
+    })()''') == [[50, 27, 48, 25, 80, 40], [13, 13, 13, 13, 80, 40],
+                 [13, 13, 13, 13, 80, 40], [129, 16, 129, 16, 80, 40]]
+
+
+def test_checkbox_without_native_appearance_has_no_intrinsic_size(page):
+    assert page.evaluate('''(() => {
+        const input = document.createElement('input');
+        input.type = 'checkbox'; input.style.appearance = 'none';
+        document.body.appendChild(input);
+        const rect = input.getBoundingClientRect();
+        return [rect.width, rect.height];
+    })()''') == [0, 0]
+
+
+def test_text_input_intrinsic_width_uses_size_and_font(page):
+    from pyv8c.foundation import system_fonts
+    if 'arial' not in {record.family.lower() for record in system_fonts.records()}:
+        pytest.skip('the Chrome comparison uses Arial')
+    assert page.evaluate('''(() => {
+        const result = [];
+        for (const columns of [1, 5, 10, 20, 30]) {
+            for (const fontSize of [13.3333, 20]) {
+                const input = document.createElement('input');
+                input.type = 'text'; input.size = columns;
+                input.style.fontSize = fontSize + 'px';
+                document.body.appendChild(input);
+                const rect = input.getBoundingClientRect();
+                result.push([rect.width, rect.height]); input.remove();
+            }
+        }
+        return result;
+    })()''') == [[44, 21], [61, 29], [72, 21], [101, 29], [107, 21],
+                 [151, 29], [177, 21], [251, 29], [247, 21], [351, 29]]
+
+
+def test_text_like_input_types_have_intrinsic_dimensions(page):
+    from pyv8c.foundation import system_fonts
+    if 'arial' not in {record.family.lower() for record in system_fonts.records()}:
+        pytest.skip('the Chrome comparison uses Arial')
+    assert page.evaluate('''(() => ['text', 'search', 'password', 'tel', 'email', 'url'].map(type => {
+        const input = document.createElement('input'); input.type = type;
+        document.body.appendChild(input); const rect = input.getBoundingClientRect();
+        const result = [rect.width, rect.height, input.clientWidth, input.clientHeight];
+        input.remove(); return result;
+    }))()''') == [[177, 21, 173, 17]] * 6
+
+
+def test_submit_and_reset_with_explicit_labels_use_button_metrics(page):
+    from pyv8c.foundation import system_fonts
+    if 'arial' not in {record.family.lower() for record in system_fonts.records()}:
+        pytest.skip('the Chrome comparison uses Arial')
+    assert page.evaluate('''(() => ['submit', 'reset'].flatMap(type => ['', 'OK'].map(label => {
+        const input = document.createElement('input'); input.type = type;
+        input.value = label; document.body.appendChild(input);
+        const rect = input.getBoundingClientRect();
+        const result = [rect.width, rect.height, input.clientWidth, input.clientHeight];
+        input.remove(); return result;
+    })))()''') == [[16, 21, 12, 17], [35.265625, 21, 31, 17]] * 2
+
+
+def test_submit_and_reset_default_labels_use_browser_ui_profile(page):
+    from pyv8c.foundation import system_fonts
+    families = {record.family.lower() for record in system_fonts.records()}
+    if not {'arial', 'noto sans sc'} <= families:
+        pytest.skip('the Chrome comparison uses Arial and Noto Sans SC')
+    results = page.evaluate('''(() => ['submit', 'reset'].map(type => {
+        const input = document.createElement('input'); input.type = type;
+        document.body.appendChild(input); const rect = input.getBoundingClientRect();
+        const result = [input.value, rect.width, rect.height, input.clientWidth, input.clientHeight];
+        input.remove(); return result;
+    }))()''')
+    for value, width, height, client_width, client_height in results:
+        assert value == ''
+        assert width == 42.671875
+        assert [height, client_width, client_height] == [25, 39, 21]
+
+
+def test_submit_ui_label_is_separate_from_navigator_language():
+    browser = Browser(real_network=False, stub_logging='off', environment={
+        'form_controls.submit_label': 'OK', 'languages': ['zh-CN'],
+    })
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body><input type="submit"></body>')
+        assert page.evaluate('''(() => {
+            const input = document.querySelector('input');
+            return [navigator.language, input.value, input.getBoundingClientRect().width];
+        })()''') == ['zh-CN', '', 35.265625]
+    finally:
+        browser.close()
+
+
+def test_file_input_intrinsic_size_uses_font_and_ui_labels(page):
+    from pyv8c.foundation import system_fonts
+    families = {record.family.lower() for record in system_fonts.records()}
+    if not {'arial', 'noto sans sc'} <= families:
+        pytest.skip('the Chrome comparison uses Arial and Noto Sans SC')
+    assert page.evaluate('''(() => {
+        const input = document.createElement('input'); input.type = 'file';
+        document.body.appendChild(input);
+        const measure = () => {
+            const rect = input.getBoundingClientRect();
+            return [rect.width, rect.height, input.clientWidth, input.clientHeight];
+        };
+        const normal = measure();
+        input.style.fontSize = '20px'; const larger = measure();
+        input.style.width = '80px'; input.style.height = '40px';
+        return [normal, larger, measure()];
+    })()''') == [[253, 25, 253, 25], [379, 35, 379, 35], [80, 40, 80, 40]]
+
+
+def test_time_input_fields_and_picker_dimensions(page):
+    from pyv8c.foundation import system_fonts
+    if 'nsimsun' not in {record.family.lower() for record in system_fonts.records()}:
+        pytest.skip('the Chrome comparison uses NSimSun')
+    assert page.evaluate('''(() => {
+        const input = document.createElement('input'); input.type = 'time';
+        document.body.appendChild(input);
+        const measure = () => {
+            const r = input.getBoundingClientRect();
+            return [r.width, r.height, input.clientWidth, input.clientHeight];
+        };
+        const normal = measure(); input.step = '1'; const seconds = measure();
+        input.step = '0.001'; const milliseconds = measure();
+        input.step = '60'; input.style.fontSize = '20px'; const larger = measure();
+        input.style.width = '80px'; input.style.height = '40px';
+        return [normal, seconds, milliseconds, larger, measure()];
+    })()''') == [[72, 24, 68, 20], [95, 24, 91, 20], [125, 24, 121, 20],
+                 [94, 31, 90, 27], [80, 40, 76, 36]]
+
+
+def test_time_input_seconds_follow_value_and_minimum(page):
+    from pyv8c.foundation import system_fonts
+    if 'nsimsun' not in {record.family.lower() for record in system_fonts.records()}:
+        pytest.skip('the Chrome comparison uses NSimSun')
+    assert page.evaluate('''(() => {
+        const input = document.createElement('input'); input.type = 'time';
+        document.body.appendChild(input); const widths = [];
+        for (const value of ['12:34:00', '12:34:01', '12:34:00.001']) {
+            input.value = value; widths.push(input.getBoundingClientRect().width);
+        }
+        input.value = ''; input.min = '00:00:03'; widths.push(input.getBoundingClientRect().width);
+        input.min = '00:00:00.123'; widths.push(input.getBoundingClientRect().width);
+        return widths;
+    })()''') == [72, 95, 125, 95, 125]

@@ -32,5 +32,7 @@ def test_the_origin_is_an_epoch_instant_and_navigation_start_agrees():
             "Math.abs(performance.timeOrigin + performance.now() - Date.now()) < 50")
         assert page.evaluate(
             "Math.abs(performance.timing.navigationStart - performance.timeOrigin) < 50")
+        assert page.evaluate(
+            "[performance.timing.redirectStart, performance.timing.redirectEnd]") == [0, 0]
     finally:
         browser.close()

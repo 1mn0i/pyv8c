@@ -59,6 +59,18 @@ def test_checkbox_click_toggles_and_fires_activation_events(page):
     })()""") == [True, False, True, ["input", "change"]]
 
 
+def test_color_input_sanitizes_default_attribute_and_assigned_value(page):
+    assert page.evaluate("""(() => {
+        const input = document.createElement('input');
+        input.type = 'color';
+        const values = [input.value];
+        input.setAttribute('value', '#ABCDEF'); values.push(input.value);
+        input.value = '#Ff0012'; values.push(input.value);
+        input.value = 'invalid'; values.push(input.value);
+        return values;
+    })()""") == ['#000000', '#abcdef', '#ff0012', '#000000']
+
+
 def test_number_input_steps_and_sanitizes(page):
     assert page.evaluate("""(() => {
         const number = document.getElementById('number');

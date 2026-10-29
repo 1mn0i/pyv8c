@@ -316,10 +316,10 @@ def test_a_live_context_reports_chromes_base_latency():
     try:
         assert page.evaluate("""(() => {
             const context = new AudioContext();
-            const value = [context.sampleRate, context.baseLatency,
+            const value = [context.sampleRate, context.baseLatency, context.outputLatency,
                            context.destination.maxChannelCount];
             context.close();
             return value;
-        })()""") == [48000, 0.01, 2]
+        })()""") == [48000, 0.01, 0, 2]
     finally:
         browser.close()

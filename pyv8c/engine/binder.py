@@ -387,6 +387,18 @@ class Binder:
         """
         return callback_name in HANDLER_CALLBACKS or registration is None
 
+    @staticmethod
+    def _late_prototype_members(entries):
+        before, after = [], []
+        for location, member in entries:
+            if location != 'prototype' or member.kind not in ('attribute', 'operation') or not member.name:
+                continue
+            if member.install_phase == 'template_late':
+                before.append(member.name)
+            elif member.install_phase == 'object':
+                after.append(member.name)
+        return tuple(dict.fromkeys(before + ['constructor'] + after)) if before or after else ()
+
     def _members(self, cls, name, parent, field, public_names):
         """What the class and its bases state for one kind of member, nearest base winning."""
         members = {}
@@ -620,6 +632,7 @@ class Binder:
             methods=tuple(methods),
             attributes=tuple(attributes),
             constants_value=tuple(constants.values()),
+            prototype_late_members=self._late_prototype_members(entries),
             to_string_tag=interface.tag or source.to_string_tag or name,
             #: Exposure belongs to the baseline, as ``FeatureImplementation`` says: a class that
             #: stated ``has_constructor=0`` used to lose ``X.prototype.constructor``, so the page

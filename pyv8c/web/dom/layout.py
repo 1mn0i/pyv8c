@@ -10,6 +10,7 @@ of the nearest positioned ancestor.
 """
 import re
 import math
+import os
 from functools import lru_cache
 from dataclasses import dataclass, field
 
@@ -182,10 +183,10 @@ def _cached_face_path(record):
     return file_for(record)
 
 
-def _face_chain(families, environment, weight, style):
+def _face_chain(families, environment, weight, style, *, text_presentation=False):
     """The faces a family list names, then this platform's fallbacks, in tried order."""
     table, index, chains = _indexed_font_table(environment)
-    key = (tuple(families), str(weight), str(style))
+    key = (tuple(families), str(weight), str(style), text_presentation)
     known = chains.get(key)
     if known is not None:
         return known
@@ -199,8 +200,14 @@ def _face_chain(families, environment, weight, style):
     # family missing one glyph asks the platform fallback chain first.
     preferred = getattr(getattr(environment, 'fonts', None), 'default_family', None)
     default_names = ((preferred,) if preferred else ()) + _DEFAULT_FAMILIES
-    fallback_names = (_FALLBACK_FAMILIES + default_names if chain
+    fallback_names = (_FALLBACK_FAMILIES[:2] + ((preferred,) if preferred else ())
+                      + _FALLBACK_FAMILIES[2:] + default_names if chain
                       else default_names + _FALLBACK_FAMILIES)
+    if text_presentation and os.name == "nt":
+        # Windows' text-presentation fallback favours monochrome faces. Keep
+        # explicitly requested families above this platform fallback list.
+        priority = ((preferred,) if preferred else ()) + ("Segoe UI Symbol",)
+        fallback_names = priority + tuple(name for name in fallback_names if name not in priority)
     for name in fallback_names:
         record = _face_in(table, name, weight, style, index)
         if record is not None and record not in chain:
@@ -212,7 +219,7 @@ def _face_chain(families, environment, weight, style):
     return found
 
 
-def _shaped(text, style, environment=None, *, layout_units=False):
+def _shaped(text, style, environment=None, *, layout_units=False, size=None):
     """``(run, record)`` for one string; ``None`` when no face here has a file for it."""
     chain = _face_chain(_families(style), environment, style.get("font-weight", "400"),
                         style.get("font-style", "normal"))
@@ -223,9 +230,15 @@ def _shaped(text, style, environment=None, *, layout_units=False):
             faces.append((path, getattr(record, "index", 0)))
     if not faces:
         return None, (chain[0] if chain else None)
-    run = text_engine.shape_selection(text, faces, size=_font_size(style),
+    text_faces = None
+    if '\ufe0e' in text:
+        text_chain = _face_chain(_families(style), environment, style.get("font-weight", "400"),
+                                 style.get("font-style", "normal"), text_presentation=True)
+        text_faces = [(_face_path(record), getattr(record, "index", 0)) for record in text_chain
+                      if _face_path(record) is not None]
+    run = text_engine.shape_selection(text, faces, size=_font_size(style) if size is None else size,
                                       weight=_weight_axis(style.get('font-weight', '400')),
-                                      layout_units=layout_units)
+                                      layout_units=layout_units, text_presentation_faces=text_faces)
     return (run if run.width else None), chain[0]
 
 
@@ -481,6 +494,89 @@ def _place(element, style, walk, containing, positioned):
     default_size = _DEFAULT_OBJECT_SIZE.get(str(getattr(element, "localName", "")).lower())
     if str(getattr(element, "localName", "")).lower() == "canvas":
         default_size = (element.get_width(), element.get_height())
+    elif (str(getattr(element, "localName", "")).lower() == "input"
+          and element.get_type() in ("button", "submit", "reset")):
+        value = element.get_value()
+        environment = _environment_for(element)
+        if (element.get_type() in ("submit", "reset") and
+                "value" not in element.attributes and not getattr(element, "_dirty_value", False)):
+            label_key = f"form_controls.{element.get_type()}_label"
+            value = (getattr(environment, label_key) if environment is not None
+                     else {"submit": "Submit", "reset": "Reset"}[element.get_type()])
+        font_size = style.get('font-size', '16px')
+        size = _number(font_size, 16) if str(font_size).strip().lower().endswith('px') else _font_size(style)
+        run, _ = _shaped(value, style, environment, size=size)
+        metrics = _run_metrics(run, style) if run is not None else None
+        advance = (run.width if run is not None else text_engine.estimate(value, size))
+        advance += _spacing(value, style, size)
+        default_size = (math.ceil(advance * 64) / 64,
+                        _line_style(style, environment, found=metrics).height)
+    elif str(getattr(element, "localName", "")).lower() == "input":
+        input_type = element.get_type()
+        if input_type == "color":
+            default_size = (44.0, 23.0)
+        elif input_type in ("checkbox", "radio"):
+            default_size = ((0.0, 0.0) if style.get("appearance") == "none"
+                            else (13.0, 13.0))
+        elif input_type == "range":
+            default_size = (129.0, 16.0)
+        elif input_type == "file":
+            environment = _environment_for(element)
+            button_label = (getattr(environment, "form_controls.file_button_label")
+                            if environment is not None else "Choose File")
+            empty_label = (getattr(environment, "form_controls.file_empty_label")
+                           if environment is not None else "No file chosen")
+            run, _ = _shaped(button_label, style, environment)
+            metrics = _run_metrics(run, style) if run is not None else None
+            button_height = _line_style(style, environment, found=metrics).height + 6.0
+            content_width = max(34 * text_width("0", style, environment),
+                                text_width(button_label, style, environment) + 20
+                                + text_width(empty_label, style, environment))
+            default_size = (math.ceil(content_width), button_height)
+        elif input_type == "time":
+            environment = _environment_for(element)
+            time_style = dict(style)
+            if str(style.get('font-family', '')).strip().lower() == 'monospace' and environment is not None:
+                time_style['font-family'] = getattr(environment, 'form_controls.time_font_family')
+            seconds = milliseconds = False
+            for candidate in (element.get_value(), element._attr('min')):
+                match = re.fullmatch(r'\d{2}:\d{2}(?::(\d{2})(?:\.(\d{1,3}))?)?', str(candidate))
+                if match:
+                    fraction = match.group(2) or ''
+                    milliseconds |= bool(fraction and int(fraction))
+                    seconds |= bool((match.group(1) and int(match.group(1))) or milliseconds)
+            step = element._attr('step')
+            if step and step.lower() != 'any':
+                try:
+                    number = float(step)
+                    if math.isfinite(number) and number > 0:
+                        seconds |= number % 60 != 0
+                        milliseconds |= not number.is_integer()
+                except ValueError:
+                    pass
+            seconds |= milliseconds
+            digit_width = math.ceil(text_width('0', time_style, environment))
+            digit_pair = 2 * digit_width + 2
+            separator = math.ceil(text_width(':', time_style, environment))
+            fields = 2 + int(seconds)
+            editor_width = digit_pair * fields + separator * (fields - 1)
+            if milliseconds:
+                editor_width += 3 * digit_width + 2 + separator
+            font_size = _font_size(style)
+            picker = math.ceil(font_size * 1.05) + 6
+            default_size = (editor_width + 8 + picker,
+                            max(_line_style(time_style, environment).height + 2, picker))
+        elif input_type in ("text", "search", "password", "tel", "email", "url"):
+            environment = _environment_for(element)
+            chain = _face_chain(_families(style), environment, style.get("font-weight", "400"),
+                                style.get("font-style", "normal"))
+            font_record = chain[0] if chain else None
+            path = _face_path(font_record) if font_record is not None else None
+            width = (text_engine.text_control_width(path, getattr(font_record, "index", 0),
+                                                    _font_size(style), element.get_size())
+                     if path else None)
+            if width is not None:
+                default_size = (width, _line_style(style, environment).height)
     if _auto(declared_width):
         if default_size is not None:
             # A replaced element with no intrinsic size of its own takes the default
@@ -529,7 +625,10 @@ def _place(element, style, walk, containing, positioned):
     top = containing.top + margin["top"]
     declared_height = style.get("height", "auto")
     if not _auto(declared_height):
-        content_height = max(0.0, _px(declared_height, containing.height))
+        height = _px(declared_height, containing.height)
+        content_height = max(0.0, height - vertical
+                             if style.get("box-sizing", "content-box") == "border-box"
+                             else height)
     elif default_size is not None:
         content_height = default_size[1]
     else:

@@ -82,6 +82,13 @@ assert values["viewport.width"] == 1280
 
 `to_dict()` 返回显式配置，`resolved()` 返回解析后的完整值；`overlay()` 创建覆盖后的新环境，`from_file()`、`to_file()` 用于 JSON 文件。修改环境值不会自动提供真实硬件、权限或媒体解码能力。
 
+`form_controls.submit_label` 和 `form_controls.reset_label` 分别配置提交与重置按钮未显式指定 `value` 时的浏览器界面文字，用于计算按钮尺寸。这些文字由浏览器界面语言决定，可以不同于 `navigator.language`；随包档案使用本机 Chrome 的中文标签。它们不会改变输入元素的 `value` 属性。
+
+`form_controls.file_button_label` 和 `form_controls.file_empty_label` 分别用于估算文件选择控件的按钮及未选择文件时的提示文字尺寸，也应按浏览器界面语言配置。
+
+`form_controls.time_font_family` 指定时间控件默认 `monospace` 字体使用的实际字体家族，供内部字段尺寸计算；页面显式设置的其他字体不受该项影响。
+当前时间控件按 24 小时制估算内部字段尺寸，其他界面格式、自定义字体和控件伪元素样式尚不保证与 Chrome 完全一致。
+
 ## 浏览器选项
 
 | 选项 | 默认值及含义 |

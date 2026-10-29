@@ -552,6 +552,7 @@ class Permissions:
     def __init__(self, services=None, environment=None, **_):
         self._services = services
         self._environment = BrowserEnvironment.from_dict(environment)
+        self._clipboard_read_status_name = None
 
     def fn_query(self, descriptor=MISSING, *_extra):
         if descriptor is MISSING:
@@ -560,14 +561,51 @@ class Permissions:
         if is_nullish(descriptor) or not isinstance(descriptor, (pyv8.JSObject, dict)):
             return _settled(self._services, error=PageTypeError(
                 "Failed to execute 'query' on 'Permissions': parameter 1 is not of type 'object'."))
+        names = self._environment.permissions.names or PERMISSION_NAMES
+        clipboard_read_status = False
         try:
-            name = dictionary(descriptor).get("name")
+            values = dictionary(descriptor)
+            name = self._permission_name(values, names)
+            if name == "push":
+                # Blink converts the derived PushPermissionDescriptor after the
+                # initial PermissionDescriptor, reading its inherited name again.
+                self._permission_name(values, names)
+                if not boolean(values.get("userVisibleOnly")):
+                    return _settled(self._services, error=dom_exception(
+                        "NotSupportedError",
+                        "Failed to execute 'query' on 'Permissions': Push Permission without "
+                        "userVisibleOnly:true isn't supported yet."))
+                name = "notifications"
+            elif name in ("clipboard-read", "clipboard-write"):
+                # The derived ClipboardPermissionDescriptor repeats its inherited
+                # name before reading allowWithoutGesture.
+                self._permission_name(values, names)
+                without_gesture = boolean(values.get("allowWithoutGesture"))
+                clipboard_read_status = name == "clipboard-read" or without_gesture
         except pyv8.JSException as error:
             return _settled(self._services, error=error)
+        except PageTypeError as error:
+            return _settled(self._services, error=error)
+        spec_names = self._environment.permissions.spec_names or _PERMISSION_SPEC_NAMES
+        status_name = spec_names.get(name, name)
+        state_name = name
+        if clipboard_read_status:
+            # Chrome shares the status backing the read permission and an
+            # unsanitized write, retaining the name from the first query.
+            if self._clipboard_read_status_name is None:
+                self._clipboard_read_status_name = status_name
+            status_name = self._clipboard_read_status_name
+            state_name = "clipboard-read"
+        return _settled(self._services, value=PermissionStatus(
+            status_name, self._state(state_name), services=self._services))
+
+    @staticmethod
+    def _permission_name(values, names):
+        name = values.get("name")
         if name is None or name is pyv8.Undefined:
-            return _settled(self._services, error=PageTypeError(
+            raise PageTypeError(
                 "Failed to execute 'query' on 'Permissions': Failed to read the 'name' property "
-                "from 'PermissionDescriptor': Required member is undefined."))
+                "from 'PermissionDescriptor': Required member is undefined.")
         try:
             name = dom_string(name)
         except pyv8.JSException as error:
@@ -578,27 +616,23 @@ class Permissions:
                 error = PageTypeError(
                     "Failed to execute 'query' on 'Permissions': Failed to read the 'name' "
                     "property from 'PermissionDescriptor': " + reason)
-            return _settled(self._services, error=error)
-        names = self._environment.permissions.names or PERMISSION_NAMES
+            raise error
         if name not in names:
             # The enum check rejects the promise rather than throwing at the call.
-            return _settled(self._services, error=PageTypeError(
+            raise PageTypeError(
                 "Failed to execute 'query' on 'Permissions': Failed to read the 'name' property "
                 "from 'PermissionDescriptor': The provided value "
-                f"'{name}' is not a valid enum value of type PermissionName."))
-        if name == "push":
-            return _settled(self._services, error=dom_exception(
-                "NotSupportedError",
-                "Failed to execute 'query' on 'Permissions': Push Permission without "
-                "userVisibleOnly:true isn't supported yet."))
-        spec_names = self._environment.permissions.spec_names or _PERMISSION_SPEC_NAMES
-        return _settled(self._services, value=PermissionStatus(
-            spec_names.get(name, name), self._state(name), services=self._services))
+                f"'{name}' is not a valid enum value of type PermissionName.")
+        return name
 
     def _state(self, name):
         if name == "geolocation":
             granted = self._environment.geolocation.permission == "granted"
             return "granted" if granted else "prompt"
+        if name in ("background-fetch", "storage-access"):
+            parent_window = getattr(self._services, "parent_window", None)
+            if callable(parent_window) and parent_window() is not None:
+                return "prompt"
         if name in (self._environment.permissions.granted or _PERMISSION_GRANTED):
             return "granted"
         return "denied" if name == "periodic-background-sync" else "prompt"

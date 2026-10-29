@@ -49,13 +49,12 @@ def test_chrome_global_property_keeps_chromium_attributes():
             const descriptor = Object.getOwnPropertyDescriptor(window, 'chrome');
             return [descriptor.writable, descriptor.enumerable, descriptor.configurable,
                 'get' in descriptor, 'set' in descriptor];
-        })()""") == [True, True, False, False, False]
-        # Writable without being configurable: assignment replaces the value,
-        # deletion does not remove the slot.
+        })()""") == [True, True, True, False, False]
+        # Assignment replaces the value and deletion removes the property.
         assert page.evaluate("""(() => {
             window.chrome = 1;
             return [typeof window.chrome, delete window.chrome, typeof window.chrome];
-        })()""") == ["number", False, "number"]
+        })()""") == ["number", True, "undefined"]
     finally:
         browser.close()
 

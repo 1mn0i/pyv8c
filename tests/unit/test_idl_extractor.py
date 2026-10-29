@@ -21,6 +21,31 @@ def _bundled_baseline_document():
     return {"idl": dict(idl.metadata), "interfaces": copy.deepcopy(dict(idl.interfaces))}
 
 
+def test_generated_installation_phases_are_preserved():
+    table = '''static const IDLMemberInstaller::AttributeConfig kAttributeTable[] = {
+      {"%s", GetterCallback, nullptr, unsigned(v8::None),
+       unsigned(IDLMemberInstaller::FlagLocation::kPrototype),
+       unsigned(IDLMemberInstaller::FlagWorld::kAllWorlds),
+       unsigned(IDLMemberInstaller::FlagReceiverCheck::kCheck),
+       unsigned(IDLMemberInstaller::FlagCrossOriginCheck::kCheck)}
+    };'''
+    text = ('void V8Fixture::InstallUnconditionalProperties() {' + table % 'early' + '}'
+            + 'void V8Fixture::Impl::InstallContextIndependentProperties() {' + table % 'later' + '}'
+            + 'void V8Fixture::InstallContextDependentProperties() {' + table % 'context' + '}')
+    members = extract_idl.extract_members(text)['prototype']
+    assert [(m['name'], m.get('install_phase', 'template')) for m in members] == [
+        ('early', 'template'), ('later', 'template_late'), ('context', 'object')]
+
+
+def test_invalid_member_installation_phase_is_rejected():
+    from pyv8c.engine.idl import IDL_VERSION, _read_document
+    document = {'idl': {'version': IDL_VERSION}, 'interfaces': {
+        'Fixture': {'members': {'prototype': [{'name': 'x', 'install_phase': 'unknown'}]}}
+    }}
+    with pytest.raises(ValueError, match='installation phase'):
+        _read_document(document)
+
+
 def test_balanced_binding_tables_extract_all_locations_and_descriptors():
     text = r'''
 const WrapperTypeInfo V8Fixture::wrapper_type_info_{

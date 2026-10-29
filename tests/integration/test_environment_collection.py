@@ -41,6 +41,8 @@ def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, c
     assert "innerWidth" in document["bindings"]["keys"]
     # 鈥nd which of the members the baseline declares it leaves out.
     surface = document["bindings"]
+    assert sorted(surface["own_order"]) == surface["exposed"]
+    assert surface["own_order"].index("Object") < surface["own_order"].index("Function")
     gaps = surface["omits"]["prototype"]
     assert len(gaps) > 20
     assert "computedRole" in gaps["Element"]
