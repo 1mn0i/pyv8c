@@ -4,6 +4,7 @@
 #include "runtime.h"
 #include "error_family.h"
 #include <v8.h>
+#include <vector>
 
 #include "convert.h"
 #include "jsobject.h"
@@ -695,6 +696,72 @@ py_class_namespace_object(Local<Context> context, py_class* self, Local<Function
     return object;
 }
 
+// Blink installs later template members after the initial members, and context-
+// dependent members after the constructor. Preserve their original descriptors.
+static bool install_object_member_order(Local<Context> context, py_class* self,
+                                        Local<Function> function) {
+    if (self->idl_spec == nullptr) return true;
+    PyObject* members = ((IdlSpec*)self->idl_spec)->prototype_late_members;
+    if (members == nullptr || PyTuple_Size(members) == 0) return true;
+    Isolate* isolate = v8_compat::context_isolate(context);
+    Local<Value> prototype_value;
+    if (!function->Get(context, V8String(isolate, "prototype")).ToLocal(&prototype_value)) return false;
+    if (!prototype_value->IsObject()) return true;
+    Local<Object> prototype = prototype_value.As<Object>();
+    Local<Private> marker = Private::ForApi(isolate, V8String(isolate, "pyv8.prototype_late_members"));
+    Local<Value> done;
+    if (!prototype->GetPrivate(context, marker).ToLocal(&done)) return false;
+    if (done->IsTrue()) return true;
+    std::vector<Local<String>> names;
+    std::vector<Local<Object>> descriptors;
+    for (Py_ssize_t i = 0; i < PyTuple_Size(members); ++i) {
+        const char* name = PyUnicode_AsUTF8_abi3(PyTuple_GetItem(members, i));
+        if (name == nullptr) return false;
+        Local<String> key = V8String(isolate, name);
+        Local<Value> value;
+        if (!prototype->GetOwnPropertyDescriptor(context, key).ToLocal(&value)) return false;
+        if (value->IsUndefined()) continue;
+        if (!value->IsObject()) return false;
+        Local<Object> desc = value.As<Object>();
+        Local<Value> configurable;
+        if (!desc->Get(context, V8String(isolate, "configurable")).ToLocal(&configurable)) return false;
+        // A non-configurable member cannot be moved without changing its semantics.
+        if (!configurable->BooleanValue(isolate)) return true;
+        names.push_back(key);
+        descriptors.push_back(desc);
+    }
+    for (size_t i = 0; i < names.size(); ++i) {
+        bool removed;
+        if (!prototype->Delete(context, names[i]).To(&removed) || !removed) return false;
+    }
+    for (size_t i = 0; i < names.size(); ++i) {
+        Local<Object> desc = descriptors[i];
+        Local<Value> enumerable, configurable, getter, setter, value, writable;
+        if (!desc->Get(context, V8String(isolate, "enumerable")).ToLocal(&enumerable) ||
+            !desc->Get(context, V8String(isolate, "configurable")).ToLocal(&configurable)) return false;
+        bool accessor;
+        if (!desc->HasOwnProperty(context, V8String(isolate, "get")).To(&accessor)) return false;
+        if (accessor) {
+            if (!desc->Get(context, V8String(isolate, "get")).ToLocal(&getter) ||
+                !desc->Get(context, V8String(isolate, "set")).ToLocal(&setter)) return false;
+            PropertyDescriptor property(getter, setter);
+            property.set_enumerable(enumerable->BooleanValue(isolate));
+            property.set_configurable(configurable->BooleanValue(isolate));
+            bool defined;
+            if (!prototype->DefineProperty(context, names[i], property).To(&defined) || !defined) return false;
+        } else {
+            if (!desc->Get(context, V8String(isolate, "value")).ToLocal(&value) ||
+                !desc->Get(context, V8String(isolate, "writable")).ToLocal(&writable)) return false;
+            PropertyDescriptor property(value, writable->BooleanValue(isolate));
+            property.set_enumerable(enumerable->BooleanValue(isolate));
+            property.set_configurable(configurable->BooleanValue(isolate));
+            bool defined;
+            if (!prototype->DefineProperty(context, names[i], property).To(&defined) || !defined) return false;
+        }
+    }
+    return prototype->SetPrivate(context, marker, True(isolate)).FromMaybe(false);
+}
+
 Local<Value>
 py_class_get_constructor(Local<Context> context, py_class* self, py_class* parent)
 {
@@ -729,6 +796,10 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
     }
     if (self->to_obj) {
         return py_class_namespace_object(context, self, function);
+    }
+    if (!install_object_member_order(context, self, function)) {
+        if (!PyErr_Occurred()) PyErr_SetString(PyExc_RuntimeError, "failed to order prototype members");
+        return Local<Value>();
     }
     if (!js_parent.IsEmpty()) {
         bool set_worked;
@@ -786,6 +857,15 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
         return Local<Object>();
     }
     delete_constructor(self, context);
+    if (self->idl_spec != nullptr && ((IdlSpec*)self->idl_spec)->prototype_late_members != nullptr &&
+        PyTuple_Size(((IdlSpec*)self->idl_spec)->prototype_late_members) > 0) {
+        Local<Function> function;
+        if (!without_gil([&] { return self->templ.Get(isolate)->GetFunction(context).ToLocal(&function); }) ||
+            !install_object_member_order(context, self, function)) {
+            if (!PyErr_Occurred()) PyErr_SetString(PyExc_RuntimeError, "failed to order instance prototype members");
+            return Local<Object>();
+        }
+    }
     if (!py_class_init_js_object(object, py_object, context)) {
         return Local<Object>();
     }

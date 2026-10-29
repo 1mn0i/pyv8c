@@ -88,6 +88,7 @@ assert updated.attributes is original.attributes
 | `attributes` | `()` | `AttributeSpec` 元组 |
 | `methods` | `()` | `MethodSpec` 元组 |
 | `constants_value` | `()` | `ConstantSpec` 元组 |
+| `prototype_late_members` | `()` | 按顺序移到原型末尾的成员名元组，用于体现后期模板成员、`constructor` 与上下文成员的安装顺序；不更改成员描述符 |
 | `call` | `None` | 将实例配置为可调用对象的回调 |
 | `immutable` | `0` | 原型不可变标志；不是冻结对象属性 |
 | `undetectable` | `False` | V8 undetectable 行为，必须同时提供 `call` |

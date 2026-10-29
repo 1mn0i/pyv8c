@@ -49,6 +49,7 @@ struct IdlSpec
     PyObject *attributes = nullptr;
     PyObject *methods = nullptr;
     PyObject *constants_value = nullptr;
+    PyObject *prototype_late_members = nullptr;
     PyObject *call = nullptr;
     PyObject *constructor_adapter = nullptr;
     PyObject *parent_class = nullptr;

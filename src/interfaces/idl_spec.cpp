@@ -21,7 +21,8 @@ enum class Kind
     Type,
     Attributes,
     Methods,
-    Constants
+    Constants,
+    Strings
 };
 struct Field
 {
@@ -53,6 +54,7 @@ static Field IdlSpec_fields[] = {
     {"attributes", Kind::Attributes, offsetof(IdlSpec, attributes), 0, 0},
     {"methods", Kind::Methods, offsetof(IdlSpec, methods), 0, 0},
     {"constants_value", Kind::Constants, offsetof(IdlSpec, constants_value), 0, 0},
+    {"prototype_late_members", Kind::Strings, offsetof(IdlSpec, prototype_late_members), 0, 0},
     {"call", Kind::Callback, offsetof(IdlSpec, call), 0, 0},
     {"constructor_adapter", Kind::Callback, offsetof(IdlSpec, constructor_adapter), 0, 0},
     {"parent_class", Kind::Type, offsetof(IdlSpec, parent_class), 0, 0},
@@ -222,6 +224,15 @@ static int assign_field(PyObject *self, const Field &field, PyObject *value)
                 goto invalid;
         break;
     }
+    case Kind::Strings:
+        if (!PyTuple_Check(value))
+            goto invalid;
+        for (Py_ssize_t index = 0; index < PyTuple_Size(value); ++index)
+            if (!PyUnicode_Check(PyTuple_GetItem(value, index)) ||
+                PyUnicode_FindChar(PyTuple_GetItem(value, index), 0, 0,
+                                   PyUnicode_GetLength(PyTuple_GetItem(value, index)), 1) >= 0)
+                goto invalid;
+        break;
     default:
         break;
     }

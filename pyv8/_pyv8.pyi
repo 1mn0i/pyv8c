@@ -26,6 +26,7 @@ class IdlSpec:
         attributes: tuple[AttributeSpec, ...] = ...,
         methods: tuple[MethodSpec, ...] = ...,
         constants_value: tuple[ConstantSpec, ...] = ...,
+        prototype_late_members: tuple[str, ...] = ...,
         call: str | Callable[..., Any] | None = ...,
         constructor_adapter: str | Callable[..., Any] | None = ...,
         parent_class: type | None = ...,
