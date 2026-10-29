@@ -34,6 +34,8 @@ struct IdlSpec
     int64_t immutable = 0;
     int64_t has_constructor = 0;
     int64_t constructor_behavior = 0;
+    //: A legacy factory (``Option``, ``Image``, ``Audio``) reuses its interface's prototype.
+    int64_t shares_parent_prototype = 0;
     bool global_this = false;
     bool undetectable = false;
     //: One of ``IdlDefinitionKind``; the field takes those words and reads back as the one it was

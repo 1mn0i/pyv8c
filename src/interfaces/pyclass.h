@@ -23,6 +23,9 @@ typedef struct {
     int error_class;
     // 0 until an iteration source's iterator prototype is finished, 1 afterwards.
     int iterator_prototype;
+    // 1 for a legacy factory (Option/Image/Audio): its ``prototype`` is the interface's own
+    // prototype object, as Blink installs them, not a fresh object of its own.
+    int shares_parent_prototype;
     V8HandleSlot<v8::FunctionTemplate> templ;
     // The iterator an interface with an iteration source hands out; empty otherwise.
     V8HandleSlot<v8::FunctionTemplate> iterator_templ;

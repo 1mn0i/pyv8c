@@ -42,6 +42,7 @@ static Field IdlSpec_fields[] = {
     {"immutable", Kind::Int, offsetof(IdlSpec, immutable), 0, 3},
     {"has_constructor", Kind::Int, offsetof(IdlSpec, has_constructor), 0, 1},
     {"constructor_behavior", Kind::Int, offsetof(IdlSpec, constructor_behavior), 0, 3},
+    {"shares_parent_prototype", Kind::Int, offsetof(IdlSpec, shares_parent_prototype), 0, 1},
     {"global_this", Kind::Bool, offsetof(IdlSpec, global_this), 0, 1},
     {"undetectable", Kind::Bool, offsetof(IdlSpec, undetectable), 0, 1},
     {"definition_kind", Kind::Int, offsetof(IdlSpec, definition_kind), 0, 2},

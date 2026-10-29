@@ -219,6 +219,7 @@ py_class_new(PyObject *cls, context_c * py_ctx, bool shared)
     self->to_obj = 0;
     self->error_class = 0;
     self->iterator_prototype = 0;
+    self->shares_parent_prototype = 0;
     self->templ.Reset();
 
     self->operation_callback_data = PyList_New(0);
@@ -251,13 +252,14 @@ py_class_new(PyObject *cls, context_c * py_ctx, bool shared)
     if (js_self.IsEmpty()) { Py_DECREF((PyObject*)self); return nullptr; }
     int templ_length = (int)config.length;
     self->constructor_behavior = (int)config.constructor_behavior;
+    self->shares_parent_prototype = config.shares_parent_prototype != 0;
     self->unconstructable = config.unconstructable;
     self->constructor_adapter = config.constructor_adapter;
     Py_XINCREF(self->constructor_adapter);
 
     Local<FunctionTemplate> templ = FunctionTemplate::New(isolate, CallbackBoundary<py_class_construct_callback>::call, js_self,
             Local<Signature>(), templ_length, ConstructorBehavior::kAllow);
-    
+
     const char* world = PyUnicode_AsUTF8_abi3(self->cls_name);
     if (world == NULL) {
         Py_DECREF((PyObject*)self);
@@ -536,7 +538,10 @@ py_class_new(PyObject *cls, context_c * py_ctx, bool shared)
     else
     {
         self->to_obj = 0;
-        templ->ReadOnlyPrototype();
+        // A legacy factory's ``prototype`` is the interface's own object, so it must stay
+        // writable until py_class_get_constructor points it there.
+        if (!self->shares_parent_prototype)
+            templ->ReadOnlyPrototype();
         templ->SetClassName(v8_name);
         templ->PrototypeTemplate()->Set(Symbol::GetToStringTag(isolate), v8_tag, PropertyAttribute(v8::ReadOnly | v8::DontEnum));
     }
@@ -800,6 +805,25 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
     if (!install_object_member_order(context, self, function)) {
         if (!PyErr_Occurred()) PyErr_SetString(PyExc_RuntimeError, "failed to order prototype members");
         return Local<Value>();
+    }
+    // A legacy factory shares its interface's prototype object: Option.prototype IS
+    // HTMLOptionElement.prototype, the way Blink installs ``Option``/``Image``/``Audio``
+    // (CreateLegacyFactoryFunctionFunction in generated_code_helper.cc).
+    if (self->shares_parent_prototype && !js_parent.IsEmpty()) {
+        Local<Value> parent_prototype;
+        if (!js_parent->Get(context, V8String(isolate, "prototype")).ToLocal(&parent_prototype) ||
+            !parent_prototype->IsObject()) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to read the interface prototype for a legacy factory");
+            return Local<Value>();
+        }
+        bool defined = false;
+        if (!function->DefineOwnProperty(
+                context, V8String(isolate, "prototype"), parent_prototype,
+                PropertyAttribute(v8::ReadOnly | v8::DontEnum | v8::DontDelete)).To(&defined) ||
+            !defined) {
+            PyErr_SetString(PyExc_RuntimeError, "failed to share the interface prototype with a legacy factory");
+            return Local<Value>();
+        }
     }
     if (!js_parent.IsEmpty()) {
         bool set_worked;
