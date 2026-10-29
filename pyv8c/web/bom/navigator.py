@@ -1177,7 +1177,13 @@ class Navigator:
         return self._features.value("managed") if self._secure() else pyv8.Undefined
     def fn_javaEnabled(self, *_extra):
         return pyv8.Undefined if self._worker else False
-    def fn_getBattery(self, *_extra):
+    def fn_getBattery(self=None, *_extra):
+        if not isinstance(self, Navigator):
+            resolver = pyv8.PromiseResolver(pyv8.current_context())
+            promise = resolver.promise()
+            resolver.reject(PageTypeError(
+                "Failed to execute 'getBattery' on 'Navigator': Illegal invocation"))
+            return promise
         battery = self._features.value("battery")
         realm = getattr(self._services, "realm_services", None)
         return realm.promise_resolve(battery) if realm is not None else battery

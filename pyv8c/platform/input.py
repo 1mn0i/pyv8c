@@ -33,7 +33,7 @@ import pyv8
 from ..foundation.host_errors import HostStateError
 from ..web.dom.activation import accepts_mouse_events, prepare_activation, complete_activation
 from ..web.dom.focus import focus_on_mousedown
-from ..web.dom.hit_testing import border_box, element_from_point
+from ..web.dom.hit_testing import border_box, deep_element_from_point as element_from_point
 
 #: The DOM's button index and the ``buttons`` mask bit, per button name.
 BUTTON_INDEX = {"left": 0, "middle": 1, "right": 2}

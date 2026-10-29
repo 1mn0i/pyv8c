@@ -93,13 +93,17 @@ def _cascade(element, rules, cache=None):
     values = initial_values_for(element)
     parent = getattr(element, "parentElement", None)
     if parent is None:
+        root = element.root_node()
+        parent = getattr(root, '_host', None)
+    if parent is None:
         environment = _environment_for(element)
         family = getattr(getattr(environment, 'fonts', None), 'default_family', None)
         if family:
             values['font-family'] = f'"{family}"' if ' ' in family else family
     parent_size = 16.0
     if parent is not None:
-        inherited = _cascade(parent, rules, cache)
+        parent_rules = rules if parent.root_node() is element.root_node() else rules_for(parent)
+        inherited = _cascade(parent, parent_rules, cache)
         # Inherit every inherited property, not only those with an initial value here.
         values.update({
             name: inherited.get(name, values.get(name, ""))
@@ -219,6 +223,20 @@ def document_rules(document):
     return rules
 
 
+def rules_for(element, fallback=None):
+    """Style rules for the element's tree, without crossing a shadow boundary."""
+    root = element.root_node()
+    if getattr(root, '_host', None) is not None:
+        document = getattr(element, 'ownerDocument', None)
+        version = getattr(document, 'style_version', 0)
+        cached = getattr(root, '_rules_cache', None)
+        if cached is None or cached[0] != version:
+            cached = (version, _parse_style_elements(root))
+            root._rules_cache = cached
+        return cached[1]
+    return fallback if fallback is not None else document_rules(getattr(element, 'ownerDocument', None))
+
+
 def _parse_style_elements(document):
     rules = []
     for node in document._descendants():
@@ -233,7 +251,7 @@ def _parse_style_elements(document):
 
 
 def computed_style(element):
-    return _cascade(element, document_rules(getattr(element, "ownerDocument", None)))
+    return _cascade(element, rules_for(element))
 
 
 def computed_style_object(element, *, rendered=True, layout_snapshot):

@@ -221,6 +221,53 @@ def test_navigator_runtime_surfaces_match_chrome_shapes_and_identity():
         browser.close()
 
 
+def test_get_battery_invalid_receiver_rejects_instead_of_throwing():
+    browser, page = new_page()
+    try:
+        page.evaluate('''(() => {
+            window.batteryReceiverResults = [];
+            const method = navigator.getBattery;
+            for (const receiver of [window, {}, null, document.body]) {
+                try {
+                    const promise = method.call(receiver);
+                    batteryReceiverResults.push(['returned', promise instanceof Promise]);
+                    promise.then(() => batteryReceiverResults.push(['resolved']),
+                        e => batteryReceiverResults.push(['rejected', e.name, e.message]));
+                } catch (error) {
+                    batteryReceiverResults.push(['thrown', error.name, error.message]);
+                }
+            }
+        })()''')
+        page.wait_for('batteryReceiverResults.length === 8', timeout=2)
+        results = page.evaluate('batteryReceiverResults')
+        assert results[:4] == [['returned', True]] * 4
+        assert results[4:] == [['rejected', 'TypeError',
+                               "Failed to execute 'getBattery' on 'Navigator': Illegal invocation"]] * 4
+    finally:
+        browser.close()
+
+
+def test_get_battery_invalid_receiver_uses_method_realm():
+    browser, page = new_page()
+    try:
+        page.evaluate('''(() => {
+            const frame = document.createElement('iframe'); document.body.appendChild(frame);
+            const child = frame.contentWindow;
+            const promise = child.navigator.getBattery.call({});
+            window.batteryRealm = {parent: promise instanceof Promise, child: promise instanceof child.Promise};
+            promise.catch(error => { batteryRealm.error = [error instanceof TypeError,
+                error instanceof child.TypeError, error.name, error.message]; });
+        })()''')
+        page.wait_for('batteryRealm.error', timeout=2)
+        assert page.evaluate('batteryRealm') == {
+            'parent': False, 'child': True,
+            'error': [False, True, 'TypeError',
+                      "Failed to execute 'getBattery' on 'Navigator': Illegal invocation"],
+        }
+    finally:
+        browser.close()
+
+
 def test_navigator_subobjects_are_created_only_on_first_access():
     browser, page = new_page()
     try:

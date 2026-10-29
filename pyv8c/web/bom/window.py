@@ -308,6 +308,26 @@ class Window(_SchedulingMixin, WindowProperties):
     def navigator(self):
         return self._features.value("navigator")
 
+    def _viewport_dimension(self, axis):
+        frame = self._frame_element
+        if frame is None:
+            return self._inner_width if axis == 'width' else self._inner_height
+        from ..dom.layout import positioned_box
+        box = positioned_box(frame)
+        sides = ('left', 'right') if axis == 'width' else ('top', 'bottom')
+        extent = box.width if axis == 'width' else box.height
+        return max(0, int(round(extent - sum(box.border.get(side, 0) + box.padding.get(side, 0)
+                                           for side in sides))))
+
+    @property
+    def innerWidth(self): return self._viewport_dimension('width')
+    @innerWidth.setter
+    def innerWidth(self, value): self._inner_width = value
+    @property
+    def innerHeight(self): return self._viewport_dimension('height')
+    @innerHeight.setter
+    def innerHeight(self, value): self._inner_height = value
+
     @property
     def screen(self):
         return self._features.value("screen")

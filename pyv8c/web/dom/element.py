@@ -166,6 +166,7 @@ class Element(_ParentNodeMixin, _ChildNodeMixin, _NonDocumentTypeChildNodeMixin,
             raise NotSupportedError("Failed to execute 'attachShadow' on 'Element': This"
                                     " element does not support attachShadow")
         root = self._shadow_root = ShadowRoot(mode, self, services=self._services)
+        self._invalidate_layout()
         return root
 
     def __init__(self, tag_name="div", services=None, attributes=None, namespace=None,

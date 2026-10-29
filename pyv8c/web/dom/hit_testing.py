@@ -10,7 +10,7 @@ deepest first.  Measured against Chrome 153.
 import pyv8
 
 from .element import Element
-from .layout import Box, layout_snapshot, positioned_box
+from .layout import Box, _child_elements, layout_snapshot, positioned_box
 
 
 #: Viewport used when a document has no environment to ask, matching ``dom.layout``.
@@ -38,6 +38,9 @@ def contains(element, x, y):
 def viewport_size(document):
     """``(width, height)`` of the document's viewport."""
     services = getattr(document, "_services", None)
+    window = getattr(getattr(services, 'document_services', None), 'window', None)
+    if window is not None:
+        return window.innerWidth, window.innerHeight
     realm = getattr(services, "realm_services", None)
     viewport = getattr(getattr(realm, "environment", None), "viewport", None)
     return (
@@ -61,14 +64,14 @@ def _collect(element, boxes, styles, x, y, found):
     if box is None:
         return
     hit = _hit_testable(styles.get(element, {})) and _inside(box, x, y)
-    for child in reversed(list(getattr(element, "_children", ()))):
+    for child in reversed(_child_elements(element)):
         if isinstance(child, Element) and styles.get(child, {}).get("display") != "none":
             _collect(child, boxes, styles, x, y, found)
     if hit:
         found.append(element)
 
 
-def elements_from_point(document, x, y):
+def elements_from_point(document, x, y, *, deep=False):
     """The elements under a point, topmost first, as ``elementsFromPoint`` reports them."""
     width, height = viewport_size(document)
     if not (0 <= x < width and 0 <= y < height):
@@ -83,12 +86,28 @@ def elements_from_point(document, x, y):
         # Chromium reports the root for every point in the viewport, whatever
         # its content box measured.
         found.append(root)
+    if not deep:
+        retargeted = []
+        for node in found:
+            tree = node.root_node()
+            while getattr(tree, '_host', None) is not None:
+                node = tree._host
+                tree = node.root_node()
+            if node not in retargeted:
+                retargeted.append(node)
+        return retargeted
     return found
 
 
 def element_from_point(document, x, y):
     """The topmost element under a point, or ``None`` when the point is outside."""
     stack = elements_from_point(document, x, y)
+    return stack[0] if stack else None
+
+
+def deep_element_from_point(document, x, y):
+    """The internal event target before document-level shadow retargeting."""
+    stack = elements_from_point(document, x, y, deep=True)
     return stack[0] if stack else None
 
 __all__ = [

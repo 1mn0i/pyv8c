@@ -11,7 +11,7 @@ import pyv8
 from ...idl import interface
 from ...foundation.arguments import (MISSING, dictionary, dom_string, integer, is_nullish,
                                      missing_error)
-from ..page_errors import InvalidStateError, dom_exception
+from ..page_errors import InvalidStateError, PageTypeError, dom_exception
 from ..page_errors import js_error_value
 from ..dom.events import (Event, EventTarget, _install_handler_slots,
                           event_constructor_arguments, event_init)
@@ -142,6 +142,14 @@ def _rejected_promise(services, error):
         return error
     promise, _resolve, reject = realm.make_promise()
     reject(js_error_value(error))
+    return promise
+
+
+def _invalid_peer_receiver(method):
+    resolver = pyv8.PromiseResolver(pyv8.current_context())
+    promise = resolver.promise()
+    resolver.reject(PageTypeError(
+        f"Failed to execute '{method}' on 'RTCPeerConnection': Illegal invocation"))
     return promise
 
 
@@ -308,24 +316,30 @@ class RTCPeerConnection(EventTarget):
                                 constructor=False)
         return RTCDataChannel(label=str(dom_string(label)), services=self._services)
 
-    def fn_createOffer(self, options=MISSING, *_extra):
+    def fn_createOffer(self=None, options=MISSING, *_extra):
         """Offering does not move the connection on its own, as Chrome's state shows."""
+        if not isinstance(self, RTCPeerConnection):
+            return _invalid_peer_receiver('createOffer')
         return _settled_promise(self._services,
                                 RTCSessionDescription({"type": "offer", "sdp": _offer_sdp()}))
 
-    def fn_createAnswer(self, options=MISSING, *_extra):
+    def fn_createAnswer(self=None, options=MISSING, *_extra):
         """There is no remote offer to answer, which Chrome reports the same way."""
+        if not isinstance(self, RTCPeerConnection):
+            return _invalid_peer_receiver('createAnswer')
         return _rejected_promise(self._services, dom_exception(
             "InvalidStateError",
             "Failed to execute 'createAnswer' on 'RTCPeerConnection': "
             "Cannot create an answer in the 'stable' state."))
 
-    def fn_setLocalDescription(self, description=MISSING, *_extra):
+    def fn_setLocalDescription(self=None, description=MISSING, *_extra):
         """Applying a description moves the state, then gathering starts and ends.
 
         There is no transport, so gathering completes with no candidates: what a browser
         with interfaces adds here is the one part pyv8c cannot report.
         """
+        if not isinstance(self, RTCPeerConnection):
+            return _invalid_peer_receiver('setLocalDescription')
         applied = _applied_description(description)
         self._local_description = applied
         self._pending_local_description = applied

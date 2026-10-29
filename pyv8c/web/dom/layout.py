@@ -19,7 +19,7 @@ from ...foundation.environment import environment_of
 from ...foundation.font_sizes import font_size_term as _font_size_term
 from ...foundation.system_fonts import file_for, normalize, table_of
 from .character_data import Text
-from ..css.cascade import _cascade, _number, _px, _root_font_size, computed_style, document_rules
+from ..css.cascade import _cascade, _number, _px, _root_font_size, computed_style, document_rules, rules_for
 from .element import Element
 
 
@@ -416,6 +416,8 @@ def _margin_is_auto(style, side):
 
 
 def _style_of(element, rules, cache=None):
+    if getattr(cache, 'scoped_rules', False):
+        rules = rules_for(element, rules)
     return _cascade(element, rules, cache)
 
 
@@ -444,13 +446,19 @@ class _Walk:
 class _StyleCache(dict):
     """Per-layout computed styles and inline run widths, discarded together."""
 
-    def __init__(self):
+    def __init__(self, scoped_rules=True):
         super().__init__()
+        self.scoped_rules = scoped_rules
         self.inline_text_widths = {}
         self.inline_siblings = {}
 
 
 def _viewport_width(element):
+    services = getattr(element, '_services', None)
+    document_services = getattr(services, 'document_services', None)
+    window = getattr(document_services, 'window', None)
+    if window is not None:
+        return float(window.innerWidth), float(window.innerHeight)
     realm = getattr(getattr(element, "_services", None), "realm_services", None)
     viewport = getattr(getattr(realm, "environment", None), "viewport", None)
     width = getattr(viewport, "width", None) or 1280
@@ -633,6 +641,7 @@ def _place(element, style, walk, containing, positioned):
         content_height = default_size[1]
     else:
         content_height = None
+    auto_height = content_height is None
     if position in ("absolute", "fixed"):
         # A fixed box measures against the viewport, an absolute one against its ancestor.
         block = (_Containing(0.0, 0.0, *walk.viewport) if position == "fixed"
@@ -669,6 +678,28 @@ def _place(element, style, walk, containing, positioned):
         content_height = used_height
     border_height = content_height + vertical
 
+    if position != 'static' and auto_height and walk.collected is not None:
+        # The padding box's height becomes known only after in-flow children.
+        # Resolve its absolutely positioned descendants again against that height.
+        final_block = _Containing(left + border['left'], top + border['top'],
+                                  max(0.0, border_width - horizontal),
+                                  content_height + padding['top'] + padding['bottom'])
+        pending = list(_child_elements(element))
+        while pending:
+            child = pending.pop()
+            if not isinstance(child, Element):
+                continue
+            child_style = _style_of(child, walk.rules, walk.styles)
+            child_position = child_style.get('position', 'static')
+            if child_position == 'absolute':
+                old = walk.collected.get(child)
+                if old is not None:
+                    _place(child, child_style, walk,
+                           _Containing(old.left, old.top, final_block.width, final_block.height),
+                           final_block)
+            elif child_position == 'static':
+                pending.extend(_child_elements(child))
+
     if position == "relative":
         offset_x = _offset(style, "left", "right", containing.width)
         offset_y = _offset(style, "top", "bottom", containing.height)
@@ -697,7 +728,7 @@ def _shift(element, walk, x, y):
         if box is not None:
             box.left += x
             box.top += y
-        pending.extend(child for child in getattr(node, "_children", ())
+        pending.extend(child for child in _child_elements(node)
                        if isinstance(child, Element))
 
 
@@ -712,7 +743,9 @@ def _children(element, style, walk, containing, positioned):
 
 
 def _child_elements(element):
-    return [child for child in getattr(element, "_children", ())
+    root = getattr(element, '_shadow_root', None)
+    parent = root if root is not None else element
+    return [child for child in getattr(parent, "_children", ())
             if isinstance(child, (Element, Text))]
 
 
@@ -860,6 +893,11 @@ def _content_widths(element, style, rules, depth=0, cache=None):
     """
     if depth > 32:
         return 0.0, 0.0
+    if style.get('display') in ('grid', 'inline-grid'):
+        placement = _implicit_grid_items(element, rules, cache)
+        if placement is not None:
+            minima, maxima = _implicit_grid_widths(placement, rules, depth, cache)
+            return sum(minima), sum(maxima)
     white_space = style.get("white-space", "normal")
     word_break = str(style.get("word-break", "normal")).strip().lower()
     overflow_wrap = str(style.get("overflow-wrap", "normal")).strip().lower()
@@ -898,7 +936,8 @@ def _content_widths(element, style, rules, depth=0, cache=None):
             inline_min += max((piece.advance for piece in pieces), default=run.width)
             continue
         child_style = _style_of(child, rules, cache)
-        if child_style.get("display") == "none":
+        if (child_style.get("display") == "none"
+                or child_style.get('position') in ('absolute', 'fixed')):
             continue
         edges = {side: sum(_sides(child_style, name, 0.0)[side]
                            for name in ("margin", "padding", "border-width"))
@@ -1136,6 +1175,13 @@ def _flex_children(element, style, walk, containing, positioned):
         widest = 0.0
         for child in children:
             child_style = _style_of(child, walk.rules, walk.styles)
+            flex = str(child_style.get('flex', '')).strip().lower()
+            grows = (flex not in ('', 'none', '0', '0 1 auto')
+                     or _number(child_style.get('flex-grow', '0')) > 0)
+            if _auto(child_style.get('width')) and not grows:
+                available = max(0.0, containing.width - cursor)
+                width = _shrink_to_fit(child, child_style, walk.rules, available, cache=walk.styles)
+                child_style = dict(child_style, width=f'{width}px')
             placed = _place(child, child_style, walk,
                             _Containing(containing.left + cursor, containing.top,
                                         max(0.0, containing.width - cursor), containing.height),
@@ -1164,7 +1210,67 @@ def _flex_children(element, style, walk, containing, positioned):
     return cursor
 
 
+def _implicit_grid_items(element, rules, cache):
+    """Simple explicit numeric placement in an otherwise implicit grid."""
+    children = [child for child in _child_elements(element) if isinstance(child, Element)]
+    placements, explicit, occupied = [], False, set()
+    for child in children:
+        style = _style_of(child, rules, cache)
+        if style.get('display') == 'none' or style.get('position') in ('absolute', 'fixed'):
+            continue
+        area = str(style.get('grid-area', '')).split('/')
+        column = str(style.get('grid-column-start') or style.get('grid-column') or '').split('/')[0].strip()
+        row = str(style.get('grid-row-start') or style.get('grid-row') or '').split('/')[0].strip()
+        if len(area) >= 2:
+            row, column = area[0].strip(), area[1].strip()
+        col = int(column) if column.isdigit() and int(column) > 0 else None
+        row_num = int(row) if row.isdigit() and int(row) > 0 else None
+        explicit |= col is not None or row_num is not None
+        col = col or 1
+        row_num = row_num or 1
+        while (row_num, col) in occupied:
+            row_num += 1
+        occupied.add((row_num, col))
+        placements.append((child, style, row_num - 1, col - 1))
+    return placements if explicit else None
+
+
+def _implicit_grid_widths(placements, rules, depth, cache):
+    count = max((col for _, _, _, col in placements), default=0) + 1
+    minima, maxima = [0.0] * count, [0.0] * count
+    for child, style, _row, col in placements:
+        minimum, maximum = _box_content_widths(child, style, rules, depth, cache)
+        edges = sum(_sides(style, name, 0.0)[side]
+                    for name in ('margin', 'padding', 'border-width') for side in ('left', 'right'))
+        minima[col] = max(minima[col], minimum + edges)
+        maxima[col] = max(maxima[col], maximum + edges)
+    return minima, maxima
+
+
 def _grid_children(element, style, walk, containing, positioned):
+    if _auto(style.get('grid-template-columns')):
+        placement = _implicit_grid_items(element, walk.rules, walk.styles)
+        if placement is not None:
+            _minima, tracks = _implicit_grid_widths(placement, walk.rules, 0, walk.styles)
+            extra = max(0.0, containing.width - sum(tracks)) / len(tracks)
+            tracks = [width + extra for width in tracks]
+            row_heights = {}
+            for child, child_style, row, col in placement:
+                top = containing.top + sum(row_heights.get(i, 0.0) for i in range(row))
+                placed = _place(child, child_style, walk,
+                                _Containing(containing.left + sum(tracks[:col]), top,
+                                            tracks[col], containing.height), positioned)
+                margins = _sides(child_style, 'margin', containing.width)
+                row_heights[row] = max(row_heights.get(row, 0.0),
+                                       placed.height + margins['top'] + margins['bottom'])
+            for child in _child_elements(element):
+                if isinstance(child, Element):
+                    child_style = _style_of(child, walk.rules, walk.styles)
+                    if child_style.get('position') in ('absolute', 'fixed'):
+                        _place(child, child_style, walk, containing, positioned)
+            height = sum(row_heights.values())
+            walk.overflows[element] = (sum(tracks), height)
+            return height
     columns = max(1, len(str(style.get("grid-template-columns", "1fr")).split()))
     cell = containing.width / columns
     children = [child for child in _child_elements(element) if isinstance(child, Element)]
@@ -1207,7 +1313,7 @@ def layout(element, containing_width=None, top=0.0, rules=None, style=None, coll
     width, height = _viewport_width(element)
     if isinstance(root, Element):
         walk = _Walk(document_rules(document) if rules is None else rules,
-                     boxes, (width, height), styles=styles if styles is not None else _StyleCache())
+                     boxes, (width, height), styles=styles if styles is not None else _StyleCache(rules is None))
         _place(root, _style_of(root, walk.rules, walk.styles), walk,
                _Containing(0.0, 0.0, width, height), None)
     return boxes.get(element, Box())

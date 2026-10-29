@@ -26,7 +26,9 @@ def _fill(name, element, arguments):
     elif name == "Option":
         text, value, default_selected, selected = (list(arguments) + [None] * 4)[:4]
         if text is not None:
-            element.textContent = text
+            # ``element.textContent = ...`` would only set a Python attribute; the DOM
+            # setter is the method the binding exposes.
+            element.set_textContent(text)
         if value is not None:
             element.set_value(value)
         if default_selected:
@@ -47,6 +49,9 @@ def factory_class(name, document):
                 "constructor_behavior": 1,
                 "has_constructor": 1,
                 "length": 0,
+                # Chromium's factory shares the interface prototype: Option.prototype is
+                # HTMLOptionElement.prototype, so member reads and instanceof agree.
+                "shares_parent_prototype": 1,
                 "to_string_tag": FACTORY_TYPE[name].__name__,
             }
         }
