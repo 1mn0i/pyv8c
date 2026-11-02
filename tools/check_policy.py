@@ -161,7 +161,8 @@ def _squeeze(text):
 
 def _script_literals(path):
     """``(test name, line, [scripts])`` for *path*; short strings are not scripts."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    #: A test file may carry a UTF-8 BOM; ``utf-8-sig`` reads it and plain UTF-8 alike.
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"))
     found = []
     for node in tree.body:
         if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test_"):

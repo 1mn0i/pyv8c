@@ -18,6 +18,7 @@ from ...foundation.host_errors import RealmBusyError
 from ...foundation.rejections import RejectionTracker
 from ...foundation.rejection_state import WeakPromiseState
 from ...foundation.tasks import TaskSource
+from ...foundation.foreground import ForegroundSource
 from ..dom.events import PromiseRejectionEvent
 from ..page_errors import PageError
 from ..clone import structured_clone, TransferPlan
@@ -44,6 +45,7 @@ class WorkerRuntime:
         self._context = None
         self._scope = None
         self._agent_tasks = None
+        self._foreground = None
         self._message_lane = None
         self._devtools = None
         self.debug_target = None
@@ -119,6 +121,8 @@ class WorkerRuntime:
                 services=self._realm.services,
             )
             self._context = self._realm.initialize(self._scope)
+            self._foreground = ForegroundSource(self._realm.isolate, self._run_foreground)
+            self.executor.attach_foreground(self._foreground)
             self._realm.attach_rendering(self.executor, partial(self._invoke, _background=True))
             self._agent_tasks = AgentTaskQueue()
             self._realm.tasks.bind_scheduler(self._agent_tasks, partial(self._invoke, _background=True), TaskContext(self._realm))
@@ -270,6 +274,9 @@ class WorkerRuntime:
             pending, self._pending_messages = self._pending_messages, deque()
         pending.clear()
         first_error = None
+        if self._foreground is not None:
+            self.executor.detach_foreground(self._foreground)
+            self._foreground = None
         devtools = self._devtools
         if devtools is not None:
             try:
@@ -296,6 +303,13 @@ class WorkerRuntime:
         if first_error is not None:
             raise first_error
         self.services.task_services.post_task(self.owner._finish_lifecycle)
+
+    def _run_foreground(self):
+        try:
+            return self._invoke(self._context._run_foreground_task, _background=True)
+        finally:
+            if not self._stop.is_set():
+                self._checkpoint()
 
     def _report_uncaught(self, message, source, line, column, error):
         """Report an exception V8 raised inside this worker's realm.

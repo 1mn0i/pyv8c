@@ -876,6 +876,21 @@ class EventTarget:
                 if timeline is not None:
                     counts = timeline.event_counts
                     counts[event.type] = counts.get(event.type, 0) + 1
+        if event._trusted:
+            kind = event.type
+            activation_input = (
+                kind in ("mousedown", "touchend")
+                or (kind == "pointerdown" and getattr(event, "pointerType", "") == "mouse")
+                or (kind == "pointerup" and getattr(event, "pointerType", "") != "mouse")
+                or (kind == "keydown" and getattr(event, "key", "") != "Escape"
+                    and not any(getattr(event, name, False)
+                                for name in ("ctrlKey", "altKey", "metaKey")))
+            )
+            if activation_input:
+                facet = getattr(self._services, "document_services", None)
+                notify = getattr(facet, "notify_user_activation", None)
+                if notify is not None:
+                    notify()
         # An event begins a new script observation boundary. Host-backed state may
         # have changed since the preceding event without a DOM mutation; keep
         # repeated reads within this dispatch cheap, but start it with fresh boxes.

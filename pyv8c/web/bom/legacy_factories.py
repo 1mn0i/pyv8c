@@ -65,12 +65,27 @@ def factory_class(name, document):
     return standalone(LegacyFactory)
 
 
-def install_legacy_factories(context, *, session, table, document):
-    """Declare every legacy factory the reference browser has, built on first read."""
+def register_legacy_factories(session, *, table, document):
+    """Register every legacy factory this browser has, before a context is built.
+
+    A factory installed through the realm's preinstall phase is looked up by the
+    session's lazy factory while the global template is being created, so the
+    class has to exist by then.
+    """
     names = [name for name in FACTORY_TAG if table.installs("Window", name)]
+    for name in names:
+        session.add_extra_class(name, factory_class(name, document))
+    return tuple(names)
+
+
+def install_legacy_factories(context, *, session, table, document, skip=()):
+    """Declare every legacy factory the reference browser has, built on first read."""
+    skipped = set(skip)
+    names = [name for name in FACTORY_TAG
+             if table.installs("Window", name) and name not in skipped]
     for name in names:
         session.add_extra_class(name, factory_class(name, document))
     if names:
         context.install(names)
 
-__all__ = ["FACTORY_TAG", "factory_class", "install_legacy_factories"]
+__all__ = ["FACTORY_TAG", "factory_class", "install_legacy_factories", "register_legacy_factories"]

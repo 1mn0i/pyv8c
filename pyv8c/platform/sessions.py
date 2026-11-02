@@ -19,6 +19,8 @@ class BindingSession:
         self.realm = realm
         self._configs: dict[type, IdlSpec] = {}
         self._materialized: set[str] = set()
+        #: Legacy Window aliases: the name Blink installs, and the interface it names.
+        self._aliases: dict[str, str] = {}
 
     def detach(self):
         """Let go of everything this realm built, so a closed realm keeps nothing."""
@@ -63,6 +65,15 @@ class BindingSession:
             self._extras = {}
         self._extras[str(name)] = cls
 
+    def add_alias(self, alias, target):
+        """Answer *alias* with the interface *target*, specs and all.
+
+        A legacy alias is the interface's constructor under another name, not a
+        class of its own; answering with a bare class would leave the realm
+        without the specs the target's template needs.
+        """
+        self._aliases[str(alias)] = str(target)
+
     def lazy_factory(self, context_type="Window", on_materialize=None):
         """The realm's one source of specs, in the shape the native V8Context calls.
 
@@ -72,7 +83,7 @@ class BindingSession:
         """
 
         def answer(name):
-            name = str(name)
+            name = self._aliases.get(str(name), str(name))
             extra = getattr(self, "_extras", {}).get(name)
             if extra is not None:
                 if on_materialize is not None:

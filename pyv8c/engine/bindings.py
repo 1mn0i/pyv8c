@@ -52,6 +52,12 @@ class Bindings:
             raise ValueError("baseline_mismatch must be 'error' or 'warn'")
         #: Reported mismatches, so each difference warns once.
         self._mismatches = set()
+        #: An order document from another release is a baseline difference like any other.
+        if idl.window_order_problem:
+            if not self.report_mismatch(idl.window_order_problem):
+                raise ValueError(idl.window_order_problem)
+            if self.stub_logging == "off":
+                logger.warning("pyv8c: {}", idl.window_order_problem)
         self._unimplemented_iteration_sources: set[str] = set()
         self.staged_interfaces = runtime.catalog.skeleton()
         self._validated = False

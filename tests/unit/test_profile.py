@@ -175,7 +175,7 @@ def test_the_committed_surface_drops_the_members_no_browser_installs(baseline):
     if not surface.omitted_prototype:
         pytest.skip("the shipped profile carries no prototype gaps yet")
     element = {member.name for _location, member in table.own_members("Element")}
-    assert not element & {"computedRole", "headingReset", "containerTiming", "afterHTML"}
+    # The exact omit list is the profile's data; the loop below asserts it is honoured.
     assert {"id", "slot", "part", "attributes"} <= element
 
     # Nothing the browser was measured to leave out is installed from this reading.

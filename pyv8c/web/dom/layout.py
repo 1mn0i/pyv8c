@@ -399,6 +399,13 @@ def _expand(value):
 def _sides(style, name, reference, default="0"):
     """Per-side lengths, the shorthand standing in for whatever is not set."""
     values = _expand(style.get(name, default))
+    if name == 'border-width':
+        result = {}
+        for index, side in enumerate(_SIDES):
+            border_style = style.get(f'border-{side}-style', style.get('border-style'))
+            result[side] = (0.0 if border_style in ('none', 'hidden') else
+                            _px(style.get(f'border-{side}-width', values[index]), reference))
+        return result
     return {side: _px(style.get(f"{name}-{side}", values[index]), reference)
             for index, side in enumerate(_SIDES)}
 
@@ -497,8 +504,22 @@ def _place(element, style, walk, containing, positioned):
     vertical = padding["top"] + padding["bottom"] + border["top"] + border["bottom"]
 
     declared_width = style.get("width", "auto")
+    declared_height = style.get("height", "auto")
     position = style.get("position", "static")
     available = max(0.0, containing.width - margin["left"] - margin["right"] - horizontal)
+    image_size = (element._natural_size()
+                  if str(getattr(element, "localName", "")).lower() == "img"
+                  else None)
+    if image_size is not None:
+        # HTML dimensions are presentational hints, below the CSS cascade.
+        if _auto(declared_width) and "width" in element.attributes:
+            match = re.match(r"\s*(\d+)", element.attributes["width"])
+            if match:
+                declared_width = match[1] + "px"
+        if _auto(declared_height) and "height" in element.attributes:
+            match = re.match(r"\s*(\d+)", element.attributes["height"])
+            if match:
+                declared_height = match[1] + "px"
     default_size = _DEFAULT_OBJECT_SIZE.get(str(getattr(element, "localName", "")).lower())
     if str(getattr(element, "localName", "")).lower() == "canvas":
         default_size = (element.get_width(), element.get_height())
@@ -585,11 +606,17 @@ def _place(element, style, walk, containing, positioned):
                      if path else None)
             if width is not None:
                 default_size = (width, _line_style(style, environment).height)
+    if image_size is not None:
+        default_size = image_size
     if _auto(declared_width):
         if default_size is not None:
             # A replaced element with no intrinsic size of its own takes the default
             # object size rather than shrinking to a content it does not have.
             content_width = default_size[0]
+            if image_size and all(image_size) and not _auto(declared_height):
+                reference = (positioned.height if positioned is not None and
+                             style.get("position") == "absolute" else containing.height)
+                content_width = _px(declared_height, reference) * image_size[0] / image_size[1]
         else:
             joined_width = _inline_text_width(element, style, walk.rules, walk.styles)
             # An inline-level box shrinks around its content and an empty one stays
@@ -631,12 +658,13 @@ def _place(element, style, walk, containing, positioned):
 
     left = containing.left + margin["left"]
     top = containing.top + margin["top"]
-    declared_height = style.get("height", "auto")
     if not _auto(declared_height):
         height = _px(declared_height, containing.height)
         content_height = max(0.0, height - vertical
                              if style.get("box-sizing", "content-box") == "border-box"
                              else height)
+    elif image_size and all(image_size):
+        content_height = content_width * image_size[1] / image_size[0]
     elif default_size is not None:
         content_height = default_size[1]
     else:
@@ -786,6 +814,8 @@ def _box_content_widths(element, style, rules, depth, cache=None):
     if joined is not None:
         return joined, joined
     intrinsic = _DEFAULT_OBJECT_SIZE.get(str(getattr(element, "localName", "")).lower())
+    if str(getattr(element, "localName", "")).lower() == "img":
+        intrinsic = element._natural_size()
     if intrinsic is not None:
         return intrinsic[0], intrinsic[0]
     return _content_widths(element, style, rules, depth + 1, cache)
@@ -1173,6 +1203,7 @@ def _flex_children(element, style, walk, containing, positioned):
         cursor = 0.0
         tallest = 0.0
         widest = 0.0
+        placed_items = []
         for child in children:
             child_style = _style_of(child, walk.rules, walk.styles)
             flex = str(child_style.get('flex', '')).strip().lower()
@@ -1186,10 +1217,22 @@ def _flex_children(element, style, walk, containing, positioned):
                             _Containing(containing.left + cursor, containing.top,
                                         max(0.0, containing.width - cursor), containing.height),
                             positioned)
+            placed_items.append((child, child_style, placed))
             cursor += placed.width
             tallest = max(tallest, placed.height)
             widest = max(widest, (placed.left - containing.left)
                          + max(placed.width, placed.overflow_right))
+        line_height = max(tallest, containing.height)
+        for child, child_style, placed in placed_items:
+            align = str(child_style.get('align-self', 'auto')).strip().lower()
+            if align in ('', 'auto'):
+                align = str(style.get('align-items', 'stretch')).strip().lower()
+            margin = _sides(child_style, 'margin', containing.width)
+            remaining = line_height - placed.height - margin['top'] - margin['bottom']
+            shift = (remaining / 2 if align == 'center' else
+                     remaining if align in ('end', 'flex-end') else 0.0)
+            if shift:
+                _shift(child, walk, 0.0, shift)
         walk.overflows[element] = (widest, tallest)
         return tallest
     cursor = 0.0
@@ -1242,6 +1285,10 @@ def _implicit_grid_widths(placements, rules, depth, cache):
         minimum, maximum = _box_content_widths(child, style, rules, depth, cache)
         edges = sum(_sides(style, name, 0.0)[side]
                     for name in ('margin', 'padding', 'border-width') for side in ('left', 'right'))
+        if not _auto(style.get('width')) and style.get('box-sizing') == 'border-box':
+            inside = sum(_sides(style, name, 0.0)[side]
+                         for name in ('padding', 'border-width') for side in ('left', 'right'))
+            minimum, maximum = max(0.0, minimum - inside), max(0.0, maximum - inside)
         minima[col] = max(minima[col], minimum + edges)
         maxima[col] = max(maxima[col], maximum + edges)
     return minima, maxima

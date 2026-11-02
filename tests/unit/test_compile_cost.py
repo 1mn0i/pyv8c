@@ -18,7 +18,9 @@ from pyv8c.platform.bootstrap import bootstrap_runtime  # noqa: E402
 #: Measured on 2026-10-15: 10367 compiled members over 1254 interfaces, in 410-850 ms.  Read with
 #: the committed profile in force, so 10361 -> 10367 when the profile moved to Chrome 155.
 BUDGET_MS = 5000
-MEMBERS = {"154.0.8030.0": 10367, "145.0.7632.162": 10308}
+#: 154 now compiles the whole baseline against the measured 154 profile (10367 was
+#: the count under the older 155 profile the repository carried).
+MEMBERS = {"154.0.8030.0": 10400, "145.0.7632.162": 10308}
 
 
 def test_every_interface_compiles_within_budget():
@@ -28,7 +30,11 @@ def test_every_interface_compiles_within_budget():
     members = 0
     for name in bindings.idl.names():
         spec = bindings.class_config_for(name)
-        members += len(spec.methods) + len(spec.attributes)
+        #: A global's context-dependent members install from the late lists; they
+        #: are the same page-visible members, only placed after every operation.
+        members += (len(spec.methods) + len(spec.attributes)
+                    + len(spec.late_methods) + len(spec.late_attributes)
+                    + len(spec.late_template_attributes) + len(spec.tail_methods))
         iteration = bindings.idl.interface(name).iteration
         if iteration and iteration["kind"] != "indexed":
             # These generated operation-table members moved from MethodSpec into native views.

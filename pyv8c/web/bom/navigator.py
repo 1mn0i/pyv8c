@@ -958,7 +958,7 @@ def _navigator_values(navigator):
         "bluetooth": lambda: Bluetooth(services=services, environment=environment),
         "storage": lambda: StorageManager(services=services, environment=environment),
         "serial": lambda: Serial(services=services),
-        "userActivation": lambda: UserActivation(),
+        "userActivation": lambda: UserActivation(services=services),
         "devicePosture": lambda: DevicePosture(services=services),
         "protectedAudience": lambda: ProtectedAudience(),
         "presentation": lambda: Presentation(),

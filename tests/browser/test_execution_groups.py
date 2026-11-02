@@ -63,3 +63,47 @@ def test_external_close_joins_the_last_group_owner():
         assert not thread.is_alive()
     finally:
         browser.close()
+
+
+def test_evaluate_function_result_can_be_printed_outside_the_realm():
+    from pyv8c import Browser
+    browser = Browser(real_network=False)
+    try:
+        page = browser.new_profile().new_page()
+        result = page.evaluate("window.AbsoluteOrientationSensor")
+        assert isinstance(result, str)
+        assert "AbsoluteOrientationSensor" in result
+        assert str(result) == result
+        nested = page.evaluate("({fn: function example(){}, values: [() => 1]})")
+        assert isinstance(nested["fn"], str) and "example" in nested["fn"]
+        assert isinstance(nested["values"][0], str)
+        handle = page.evaluate_handle("window.AbsoluteOrientationSensor")
+        import pyv8
+        assert isinstance(handle, pyv8.JSFunction)
+        assert "AbsoluteOrientationSensor" in page.executor.call(repr, handle)
+    finally:
+        browser.close()
+
+
+def test_evaluate_noncopyable_objects_are_safe_to_print():
+    import pyv8
+    from pyv8c import Browser
+
+    browser = Browser(real_network=False)
+    try:
+        page = browser.new_profile().new_page()
+        if page.evaluate("typeof Temporal !== 'undefined'"):
+            assert page.evaluate("window.Temporal") == "[object Temporal]"
+        for expression in ("new Map([[1, 2]])", "new Set([1])", "Promise.resolve(1)",
+                           "Object.create({[Symbol.toStringTag]: 'Temporal'})"):
+            result = page.evaluate(expression)
+            assert isinstance(result, str)
+            assert str(result) == result
+        nested = page.evaluate("({map: new Map(), items: [new Set()]})")
+        assert isinstance(nested["map"], str)
+        assert isinstance(nested["items"][0], str)
+        handle = page.evaluate_handle("new Map()")
+        assert isinstance(handle, pyv8.JSObject)
+        assert page.executor.call(repr, handle) == "[object Map]"
+    finally:
+        browser.close()

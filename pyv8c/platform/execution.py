@@ -8,6 +8,7 @@ from ..foundation.executor import RealmExecutor
 from ..foundation.agent_tasks import AgentTaskQueue
 from ..foundation.rendering import RenderingScheduler
 from ..foundation.error_policy import control_exceptions
+from ..foundation.foreground import ForegroundSource
 
 
 class NavigationCancelled(RuntimeError):
@@ -30,6 +31,11 @@ class WindowExecutionGroup:
         self.executor = RealmExecutor(name='pyv8c-window-group', auto_pump=True)
         self.executor.call(self.executor.attach_rendering, self.rendering)
         self.isolate = self.executor.call(pyv8.Isolate)
+        from ..web.fetch.response import wasm_response_payload
+        self.executor.call(self.isolate._set_wasm_response_handler, wasm_response_payload)
+        self.foreground = ForegroundSource(self.isolate, self._run_foreground,
+                                           self._has_foreground_context)
+        self._foreground_attached = False
         self.agents = {}
         self.members = set()
         self._dirty = {}
@@ -40,6 +46,22 @@ class WindowExecutionGroup:
         self._operation = None
         self._stopped_operations = set()
         self.stopping = False
+
+    def _has_foreground_context(self):
+        return any(not member.closed and member.context is not None for member in tuple(self.members))
+
+    def _run_foreground(self):
+        endpoint = next((member for member in self.members
+                         if not member.closed and member.context is not None), None)
+        if endpoint is None:
+            return False
+        try:
+            return endpoint.invoke(endpoint.context._run_foreground_task, _background=True)
+        finally:
+            if not self.closed and not self.stopping:
+                for agent in self.agents.values():
+                    self._dirty[agent] = None
+                self.checkpoint()
 
     def agent(self, origin):
         if not self.executor.is_owner_thread():
@@ -106,6 +128,9 @@ class WindowExecutionGroup:
             endpoint._closed = True
             return
         self.rendering.close()
+        if self._foreground_attached:
+            self.executor.detach_foreground(self.foreground)
+            self._foreground_attached = False
         for agent in self.agents.values():
             self.executor.detach_task_queue(agent.tasks)
             agent.tasks.close()
@@ -220,6 +245,11 @@ class WindowExecutor:
                 raise NavigationCancelled('navigation cancelled while closing the page') from None
             raise
         self.agent = agent
+        if not self.group._foreground_attached:
+            self.group.executor.attach_foreground(self.group.foreground)
+            self.group._foreground_attached = True
+        else:
+            self.group.executor.wakeup()
 
     def attach_rejection_tracker(self, tracker):
         if self.rejections is not None:

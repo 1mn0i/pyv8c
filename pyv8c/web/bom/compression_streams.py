@@ -11,9 +11,9 @@ import zlib
 import pyv8
 
 from ...features.runtime import FeatureImplementation
-from ...foundation.arguments import MISSING, dom_string, missing_error
+from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error
 from ...idl import interface
-from ..page_errors import PageTypeError, js_error_value
+from ..page_errors import PageRangeError, PageTypeError, js_error_value
 
 
 _FORMATS = {'gzip': 31, 'deflate': 15, 'deflate-raw': -15}
@@ -36,6 +36,163 @@ def _bytes(value):
         raise PageTypeError('A chunk must be a BufferSource.') from None
 
 
+class _SourcePipe:
+    """A user-provided default stream source and its pending reads."""
+    def __init__(self, source, services):
+        self.services = services
+        self.source = source
+        self.members = dictionary(source) if not is_nullish(source) else {}
+        self.queue = deque()
+        self.readers = deque()
+        self.finished = False
+        self.disturbed = False
+        self.failed = MISSING
+        self.pulling = False
+        self.pull_again = False
+        self.started = False
+        self.pull_scheduled = False
+        self.controller = ReadableStreamDefaultController(self)
+        stream_type = self.members.get('type', pyv8.Undefined)
+        self.pull = self.members.get('pull')
+        self.cancel = self.members.get('cancel')
+        start = self.members.get('start')
+        if stream_type is not pyv8.Undefined and dom_string(stream_type) != 'bytes':
+            raise PageRangeError("The provided value is not a valid enum value of type ReadableStreamType.")
+        for name, callback in (('start', start), ('pull', self.pull), ('cancel', self.cancel)):
+            if callback is not None and callback is not pyv8.Undefined and not callable(callback):
+                raise PageTypeError(f'The provided {name} callback is not a function.')
+        if start is not None and start is not pyv8.Undefined:
+            result = self._call(start)
+            self._settle(result, self._started, self.error)
+        else:
+            self._started()
+
+    def _call(self, callback):
+        if isinstance(callback, pyv8.JSObject):
+            return callback.call(self.source, self.controller)
+        return callback(self.controller)
+
+    def _settle(self, result, fulfilled, rejected):
+        if isinstance(result, pyv8.JSPromise):
+            result._get('then')._invoke(result, fulfilled, rejected)
+        else:
+            fulfilled()
+
+    def _started(self, *_):
+        self.started = True
+        self._schedule_pull()
+
+    def _schedule_pull(self):
+        if (not self.started or self.pull_scheduled or (not self.readers and len(self.queue) >= 1)
+                or self.finished or self.failed is not MISSING):
+            return
+        if self.pulling:
+            self.pull_again = True
+            return
+        pull = self.pull
+        if pull is None or pull is pyv8.Undefined:
+            return
+        self.pull_scheduled = True
+        self.services.realm_services.enqueue_microtask(self._pull)
+
+    def _pull(self):
+        self.pull_scheduled = False
+        if (not self.started or self.pulling or (not self.readers and len(self.queue) >= 1)
+                or self.finished or self.failed is not MISSING):
+            return
+        self.pulling = True
+        try:
+            result = self._call(self.pull)
+            self._settle(result, self._pulled, self._pull_failed)
+        except (pyv8.JSException, PageTypeError) as error:
+            self._pull_failed(js_error_value(error))
+
+    def _pulled(self, *_):
+        self.pulling = False
+        if self.pull_again:
+            self.pull_again = False
+            self._schedule_pull()
+
+    def _pull_failed(self, error):
+        self.pulling = False
+        self.error(error)
+
+    def enqueue(self, value):
+        if self.finished or self.failed is not MISSING:
+            raise PageTypeError('Cannot enqueue into a closing or closed stream.')
+        if self.readers:
+            _reader, resolve, _reject = self.readers.popleft()
+            resolve({'value': value, 'done': False})
+        else:
+            self.queue.append(value)
+        self._schedule_pull()
+
+    def close(self):
+        if self.finished or self.failed is not MISSING:
+            raise PageTypeError('Cannot close a closing or closed stream.')
+        self.finished = True
+        if not self.queue:
+            while self.readers:
+                _reader, resolve, _reject = self.readers.popleft()
+                resolve({'value': pyv8.Undefined, 'done': True})
+
+    def error(self, error):
+        if self.finished or self.failed is not MISSING:
+            return
+        self.failed = error
+        self.queue.clear()
+        while self.readers:
+            _reader, _resolve, reject = self.readers.popleft()
+            reject(error)
+
+    def release(self, reader):
+        remaining = deque()
+        while self.readers:
+            owner, resolve, reject = self.readers.popleft()
+            if owner is reader:
+                reject(js_error_value(PageTypeError('Releasing reader')))
+            else:
+                remaining.append((owner, resolve, reject))
+        self.readers = remaining
+
+    def read(self, reader):
+        self.disturbed = True
+        promise, resolve, reject = _promise(self.services)
+        if self.queue:
+            resolve({'value': self.queue.popleft(), 'done': False})
+            self._schedule_pull()
+        elif self.failed is not MISSING:
+            reject(self.failed)
+        elif self.finished:
+            resolve({'value': pyv8.Undefined, 'done': True})
+        else:
+            self.readers.append((reader, resolve, reject))
+            self._schedule_pull()
+        return promise
+
+
+@interface('ReadableStreamDefaultController', None)
+class ReadableStreamDefaultController:
+    def __init__(self, pipe):
+        self._pipe = pipe
+
+    def get_desiredSize(self):
+        if self._pipe.failed is not MISSING:
+            return pyv8.Null
+        if self._pipe.finished:
+            return 0
+        return 1 - len(self._pipe.queue)
+
+    def fn_enqueue(self, chunk=pyv8.Undefined, *_extra):
+        self._pipe.enqueue(chunk)
+
+    def fn_close(self, *_extra):
+        self._pipe.close()
+
+    def fn_error(self, error=pyv8.Undefined, *_extra):
+        self._pipe.error(error)
+
+
 class _BytePipe:
     def __init__(self, fmt, decompress, services):
         self.services = services
@@ -46,6 +203,7 @@ class _BytePipe:
         self.queue = deque()
         self.readers = deque()
         self.finished = False
+        self.disturbed = False
         self.failed = None
 
     def _fail(self, error):
@@ -78,6 +236,7 @@ class _BytePipe:
             self.queue.append(item)
 
     def read(self):
+        self.disturbed = True
         promise, resolve, reject = _promise(self.services)
         if self.queue:
             value, ack = self.queue.popleft()
@@ -125,8 +284,8 @@ class _BytePipe:
 @interface('ReadableStream', None)
 class ReadableStream:
     def __init__(self, source=None, *_extra, services=None, _realm=None, **_):
-        self._pipe = source if isinstance(source, _BytePipe) else None
         self._services = services or _realm
+        self._pipe = source if isinstance(source, _BytePipe) else _SourcePipe(source, self._services)
         self._reader = None
 
     def get_locked(self): return self._reader is not None
@@ -169,10 +328,13 @@ class ReadableStreamDefaultReader:
     def fn_read(self, *_extra):
         if self._stream is None:
             raise PageTypeError('Reader has been released')
-        return self._stream._pipe.read() if self._stream._pipe is not None else _promise(self._stream._services)[0]
+        pipe = self._stream._pipe
+        return pipe.read(self) if isinstance(pipe, _SourcePipe) else pipe.read()
 
     def fn_releaseLock(self, *_extra):
         if self._stream is not None:
+            if isinstance(self._stream._pipe, _SourcePipe):
+                self._stream._pipe.release(self)
             self._stream._reader = None
             self._stream = None
 
@@ -242,6 +404,7 @@ FEATURE = FeatureImplementation({
     'CompressionStream': CompressionStream,
     'DecompressionStream': DecompressionStream,
     'ReadableStream': ReadableStream,
+    'ReadableStreamDefaultController': ReadableStreamDefaultController,
     'WritableStream': WritableStream,
     'ReadableStreamDefaultReader': ReadableStreamDefaultReader,
     'WritableStreamDefaultWriter': WritableStreamDefaultWriter,

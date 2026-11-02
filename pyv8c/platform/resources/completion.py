@@ -44,6 +44,11 @@ class ResourceCompletion:
                 #: A loader may answer with text, and a header parser reads bytes.
                 node._image_bytes = body.encode("utf-8") if isinstance(body, str) else body
                 node._image_type = str(response.headers.fn_get("content-type") or "")
+                node.__dict__.pop("_natural_cache", None)
+                document = getattr(node, "ownerDocument", None)
+                if document is not None:
+                    document.layout_version += 1
+                    document._layout_snapshot = None
         self.common(node, kind, response, error, response_length)
 
     def common(self, node, kind, response, error, response_length):

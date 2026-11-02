@@ -55,6 +55,12 @@ Page 组合导航、生命周期、脚本、文档和资源组件，通过 PageS
 
 Worker 拥有独立线程、Isolate 和事件循环。跨执行组或 Worker 交付普通数据及 structured clone 结果，不共享活 JS 句柄。同步跨 iframe 调用在所属执行组的同一线程切换 Context。
 
+V8 前台任务由执行组或 Worker 的 owner 线程自动执行；V8 后台线程只修改原生通知状态，由进程共享的等待线程唤醒执行器。任务结束后检查该 Isolate 的存活 Agent 微任务队列。执行器通过内部接口 `Context._run_foreground_task()` 运行任务，页面代码无需调用。`run_until_idle()` 会等待已就绪的前台任务，但不等待尚未投递完成任务的后台编译或未来网络 I/O，需等待具体结果时使用 `wait_for()`。
+
+`compileStreaming` 和 `instantiateStreaming` 检查 Response 的状态、MIME 和已消费状态，并将数据交给 V8 的 streaming 编译器。用户构造的默认 ReadableStream 按读取到达的顺序逐块交付；Realm 导航或关闭时中止其未完成的原生编译会话。网络 Fetch 目前仍先缓冲响应体；ReadableStream 的 BYOB 和完整背压语义也尚未实现。
+
+在本机 Chromium 154.0.8030.0 的 20 次离线小模块探针中，同步代码和微任务均先执行，定时器均先于 WASM 完成；pyv8c 同条件探针中这两种异步回调的先后次序有变化。定时器与后台编译完成没有固定相对次序，这个样本不能证明顺序错误，也不能替代更多时序和负载验证。
+
 ## 接口装配
 
 接口形状由 IDL 文档描述，环境档案中的 `bindings` 决定当前环境允许暴露的子集。Python 实现提供数据模型与业务行为，绑定编译器组合元数据和回调生成原生 IdlSpec，Realm 按装配计划安装接口。
@@ -62,6 +68,12 @@ Worker 拥有独立线程、Isolate 和事件循环。跨执行组或 Worker 交
 `pyv8c/features/runtime.py` 提供不依赖 Web 的通用机制，`pyv8c/features/catalog.py` 只声明内置 Feature，`pyv8c/features/core.py` 组装核心 Web API；FeatureSpec 描述接口组、依赖及实现模块；FeatureCatalog 建立静态索引，FeatureRuntime 在 Browser 范围管理依赖、模块加载和接口缓存。实现模块显式导出 `FEATURE`，可选能力按需加载。不能通过扫描模块全部变量隐式注册接口。
 
 接口表面、迭代语义和宿主数据源是独立职责。未实现接口可按配置暴露为占位成员；缺失 pair/set 迭代源必须作为实现缺口记录，不能假装成空集合。具体格式见 [IDL 格式](idl-format.md)。
+
+## 全局属性安装顺序
+
+Window 的 `Object.getOwnPropertyNames(window)` 顺序由 Blink 的安装阶段决定，不是按名字排序。`pyv8c/data/window-order.json` 记录一个 Chromium 版本的顺序：legacy factories、模板阶段的接口构造器（降序）、context 阶段的接口构造器（升序），以及 Window 成员的四个安装组（普通 attributes、后置 template attributes、operations、context-dependent 成员）。该文件由 `pyv8c/tools/extract_window_order.py` 从与 `idl.json` 同一版本的 IDL 源生成，版本不一致时按 `baseline_mismatch` 报告或失败。
+
+`RealmPlan` 把顺序分成 `preinstall`、`postinstall`、`legacy_factories` 和 `member_groups`。`preinstall` 在 `pyv8.V8Context` 创建前写入 global 模板，因此接口构造器排在 Window 成员之前；`IdlSpec` 的 `late_attributes`/`late_methods` 由 `context.install_late()` 在宿主 `chrome` 之后、条件接口之前安装，对应 Blink 的 context-dependent 阶段。顺序数据缺失时回退到按名字排序。V8 内置全局段由相邻 `_pyv8` 使用的 V8 版本决定，不在该数据范围内。
 
 ## 资源组件
 
@@ -86,3 +98,5 @@ JS 终止必须穿透监听器、脚本、资源交付与任务包装，在持�
 ## 当前边界
 
 框架没有完整 Chromium 渲染和多进程体系。虚拟渲染机会、文本测量及部分几何计算不能替代合成器；origin 与 Agent 模型不覆盖完整 COOP/COEP、Origin-Agent-Cluster、OOPIF 和 `document.domain`。任何能力声明都应由对应测试及本地对照支持。
+
+Window ?????????????????????????????????????????? baseline_mismatch ????????????????

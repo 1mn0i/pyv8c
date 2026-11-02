@@ -105,6 +105,7 @@ class RealmExecutor:
         self._task_queues = {}
         self._queue_cursor = 0
         self._rendering = None
+        self._foreground = None
         self._command_route_state = (None, None, False)
         self.auto_pump = bool(auto_pump)
         self.default_timeout = _default_call_timeout() if default_timeout is _UNSET else default_timeout
@@ -176,6 +177,29 @@ class RealmExecutor:
         self._rendering = rendering
         rendering.set_wakeup(self.wakeup)
         self.wakeup()
+
+    def attach_foreground(self, source):
+        """Attach an owner-thread foreground task source to the driver.
+
+        The source supplies ``has_runnable_tasks``, ``next_deadline``,
+        ``run_turn`` and ``set_wakeup`` with the same contracts as task queues.
+        Posting may happen on other threads; running and detaching stay on the
+        owner thread.  One foreground turn is interleaved with other work.
+        """
+        if not self.is_owner_thread():
+            raise RuntimeError('foreground binding requires the owner thread')
+        if self._foreground is not None:
+            raise RuntimeError('a foreground source is already bound')
+        source.set_wakeup(self.wakeup)
+        self._foreground = source
+        self.wakeup()
+
+    def detach_foreground(self, source):
+        if not self.is_owner_thread():
+            raise RuntimeError('foreground unbinding requires the owner thread')
+        if self._foreground is source:
+            self._foreground = None
+            source.set_wakeup(None)
 
     def detach_deadline_source(self, source):
         if self._deadline_source is source:
@@ -423,6 +447,10 @@ class RealmExecutor:
             value = self._rendering.next_deadline()
             if value is not None:
                 deadlines.append(value)
+        if self._foreground is not None:
+            value = self._foreground.next_deadline()
+            if value is not None:
+                deadlines.append(value)
         return min(deadlines) if deadlines else None
 
     def _run_turn(self):
@@ -458,6 +486,8 @@ class RealmExecutor:
             return True
         return self.auto_pump and (any(tasks.has_runnable_tasks()
                                       for tasks in tuple(self._task_queues))
+                                  or (self._foreground is not None
+                                      and self._foreground.has_runnable_tasks())
                                   or (self._rendering is not None
                                       and self._rendering.has_runnable_tasks()))
 
@@ -515,6 +545,16 @@ class RealmExecutor:
         if self._closed.is_set():
             return
         worked = self._run_turn()
+        foreground = False
+        if (self.auto_pump and not self.closed and self._foreground is not None
+                and self._foreground.has_runnable_tasks()):
+            try:
+                foreground = self._foreground.run_turn()
+            except _CONTROL_EXCEPTIONS:
+                raise
+            except BaseException as error:
+                self._report_exception(error)
+                foreground = True
         rendered = False
         if self.auto_pump and not self.closed and self._rendering is not None:
             try:
@@ -524,7 +564,7 @@ class RealmExecutor:
             except BaseException as error:
                 self._report_exception(error)
                 rendered = True
-        if worked or rendered:
+        if worked or foreground or rendered:
             return
         if commanded:
             return

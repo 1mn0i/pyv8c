@@ -486,6 +486,7 @@ class HTMLImageElement(HTMLElement):
         self._image_complete = False
         self._image_bytes = None
         self._image_type = ""
+        self.__dict__.pop("_natural_cache", None)
     def _attribute_changed_here(self, name, old, new):
         super()._attribute_changed_here(name, old, new)
         if name == "src":
@@ -496,14 +497,23 @@ class HTMLImageElement(HTMLElement):
         value = dom_string(value)
         self.attributes['alt'] = str(value)
     def _dimension(self, name):
-        """One image dimension: the number the attribute starts with, else 0 --
-        Chromium parses ``12px``/``12%`` as 12."""
+        """Rendered content size, or the dimension attribute/intrinsic fallback."""
+        if self.isConnected:
+            from ..dom.layout import layout_snapshot
+
+            boxes, styles = layout_snapshot(self.ownerDocument)
+            box = boxes.get(self)
+            if box is not None and styles.get(self, {}).get("display") != "none":
+                sides = ("left", "right") if name == "width" else ("top", "bottom")
+                content = getattr(box, name) - sum(
+                    box.padding.get(side, 0) + box.border.get(side, 0) for side in sides)
+                return max(0, int(content + 0.5))
         digits = ""
         for character in str(self.attributes.get(name, "")).strip():
             if character not in "0123456789":
                 break
             digits += character
-        return int(digits) if digits else 0
+        return int(digits) if digits else self._natural_size()[name == "height"]
     def _set_dimension(self, name, value):
         # Not an unsigned long: a negative dimension stores as 0 rather than wrapping.
         self.attributes[name] = str(max(0, integer(value, signed=True)))

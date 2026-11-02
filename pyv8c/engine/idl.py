@@ -23,6 +23,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from ..foundation.logging import logger
+from .window_order import load as load_window_order
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 #: The one artifact this build reads: a compressed document (a single JSON member) written by the
@@ -530,6 +531,30 @@ class Idl:
         self._declared: dict[tuple, bool] = {}
         self._exposed: dict[tuple, tuple] = {}
         self._aliases: dict[str, str] | None = None
+        #: The Window installation order that goes with this document, or ``None`` when no
+        #: order document was written for it.  ``window_order_problem`` says why a document
+        #: from another release is carried rather than refused; the Bindings decide whether
+        #: that is reported or fatal.
+        self.window_order, self.window_order_problem = self._load_window_order()
+
+    def _load_window_order(self):
+        """The order document that goes with this collection, and a mismatch to report."""
+        try:
+            order = load_window_order()
+        except (OSError, ValueError) as error:
+            return None, f"the Window order document cannot be read: {error}"
+        if order is None:
+            return None, ""
+        stated = self.metadata.get("chromium_version")
+        if stated and order.chromium_version != stated:
+            return None, (f"the Window order document is for Chromium {order.chromium_version},"
+                           f" this collection is {stated}")
+        recorded = set(order.constructors_before) | set(order.constructors_after) | set(order.constructors_after_late)
+        missing = set(self.exposed("Window")) - recorded
+        if missing:
+            logger.warning("pyv8c: the Window order document omits {} exposed interfaces; they will be installed after the recorded group: {}",
+                           len(missing), sorted(missing)[:10])
+        return order, ""
 
     @classmethod
     def load(cls, path=None, profile=_SHIPPED) -> "Idl":
@@ -783,6 +808,16 @@ class RealmPlan:
     eager: tuple[str, ...]
     #: Built by the time the realm is ready: the eager set, its ancestors and the alias targets.
     ready: tuple[str, ...] = ()
+    #: The global members installed before the interface constructors, in install order.
+    preinstall: tuple[str, ...] = ()
+    #: The interface constructors installed after every global member group.
+    postinstall: tuple[str, ...] = ()
+    #: The conditional constructors Blink resumes after the conditional operations.
+    postinstall_late: tuple[str, ...] = ()
+    #: The legacy factory functions and aliases Blink installs before the constructors.
+    legacy_factories: tuple[str, ...] = ()
+    #: The global interface's member groups, in installation order.
+    member_groups: tuple[str, ...] = ()
 
     @property
     def lazy(self) -> tuple[str, ...]:
@@ -795,14 +830,34 @@ def build_plan(idl, context_type, *, implements=(), expose_unimplemented=True, e
     """Plan one realm class from a collection.
 
     The names a realm installs and the skeleton it builds first are one object, so a realm and
-    its statistics read the same plan.
+    its statistics read the same plan.  A Window plan also carries the order Blink installs
+    its global in, when the IDL collection was opened beside a Window order document; a
+    collection without one keeps the order the document implies.
     """
     installs = tuple(sorted(
         name for name in idl.exposed(context_type)
         if expose_unimplemented or name in implements
     ))
+    preinstall = postinstall = postinstall_late = legacy_factories = member_groups = ()
+    order = getattr(idl, "window_order", None)
+    if context_type == "Window" and order is not None:
+        known = set(installs)
+        preinstall = tuple(name for name in order.constructors_before if name in known)
+        ordered = set(order.constructors_before) | set(order.constructors_after) | set(order.constructors_after_late)
+        # Unrecorded interfaces remain available even when the order baseline is stale.
+        postinstall = tuple(name for name in order.constructors_after if name in known) + tuple(
+            name for name in installs if name not in ordered)
+        postinstall_late = tuple(name for name in order.constructors_after_late
+                                 if name in known)
+        legacy_factories = order.legacy_factories
+        member_groups = tuple(order.members)
     return RealmPlan(
         context_type=context_type,
         installs=installs,
         eager=tuple(name for name in installs if name in set(eager) or name == "Window"),
+        preinstall=preinstall,
+        postinstall=postinstall,
+        postinstall_late=postinstall_late,
+        legacy_factories=legacy_factories,
+        member_groups=member_groups,
     )

@@ -4,6 +4,7 @@
 packages reach platform functionality only through them, never through the Page.
 """
 
+import time
 from functools import partial
 from dataclasses import dataclass
 from typing import Any
@@ -446,6 +447,26 @@ class _DocumentCapability:
         page = getattr(getattr(self._owner, "_page_realm", None), "page", None)
         if page is not None:
             page.lifecycle.motion_listener_added(str(event_type))
+
+    def notify_user_activation(self):
+        """Notify the active window, ancestors and same-origin descendants."""
+        page = getattr(getattr(self._owner, "_page_realm", None), "page", None)
+        if (page is None or page.closed or page.window is not self.window
+                or page.document is not self.document):
+            return
+        now = time.monotonic()
+        current = page
+        while current is not None:
+            current.window._last_activation_time = now
+            current = current.parent_page
+        pending = list(page._owned.frames)
+        while pending:
+            child = pending.pop()
+            if child.closed:
+                continue
+            pending.extend(child._owned.frames)
+            if child.origin == page.origin:
+                child.window._last_activation_time = now
 
     def node_adopted(self, node):
         if getattr(node, "localName", "") == "iframe":

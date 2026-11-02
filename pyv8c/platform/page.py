@@ -41,9 +41,14 @@ EMPTY_DOCUMENT = "<!DOCTYPE html><html><head></head><body></body></html>"
 
 
 def _snapshot_data(value, seen):
-    """Detach binary views before returning Python data across the owner boundary."""
+    """Detach values before returning Python data across the owner boundary."""
     if type(value).__name__ in ('TypedArray', 'JSTypeArray'):
         return bytes(value._bytes())
+    if isinstance(value, pyv8.JSObject):
+        # Non-copyable JS values remain live handles after to_python(). Capture
+        # their representation on the owner thread; evaluate_handle() preserves
+        # the handle for callers that need to operate on it.
+        return repr(value)
     if isinstance(value, (dict, list, tuple)):
         if id(value) in seen:
             return seen[id(value)]
@@ -482,7 +487,8 @@ class Page:
         :param script: JavaScript source.
         :param filename: name this script appears under in stack traces.
         :returns: the result converted to Python; a JS object becomes a ``dict``.
-            Use :meth:`evaluate_handle` to keep a live object instead.
+            Non-copyable JavaScript objects become their string representation. Use
+            :meth:`evaluate_handle` to keep a live object instead.
         :raises pyv8.JSException: the script threw.
         :raises RuntimeError: the page is closed.
         """
@@ -517,6 +523,8 @@ class Page:
 
         Zero only queries current state. Future timers, network requests and live
         workers are not runnable work; use wait_for/load-state for those goals.
+        Ready V8 foreground tasks in the shared execution group count as work;
+        background compilation that has not posted its completion does not.
         """
         if self.closed:
             raise HostStateError('Page is closed')
@@ -530,6 +538,7 @@ class Page:
                 return False
             lanes = {lane for lane in tuple(group.members) if lane.agent is agent and not lane.closed}
             return (not group.executor.has_pending_for(lanes)
+                    and not group.foreground.has_runnable_tasks()
                     and not any(lane.tasks.has_runnable_tasks() for lane in lanes)
                     and not group.rendering.has_runnable_tasks(lanes))
         while True:

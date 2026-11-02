@@ -3,6 +3,7 @@ page starts in.
 """
 
 import re
+import time
 
 import pyv8
 from ...idl import interface
@@ -190,10 +191,22 @@ def _empty_rect(owner):
 
 @interface('UserActivation', None)
 class UserActivation:
-    """A freshly loaded page has had no gesture, so both flags are false."""
+    """A live view of the owning Window's sticky and transient activation."""
 
-    def get_isActive(self): return False
-    def get_hasBeenActive(self): return False
+    def __init__(self, services=None, **_):
+        self._services = services
+
+    def _last_activation(self):
+        document = getattr(self._services, "document_services", None)
+        window = getattr(document, "window", None)
+        return getattr(window, "_last_activation_time", float("inf"))
+
+    def get_isActive(self):
+        elapsed = time.monotonic() - self._last_activation()
+        return 0 <= elapsed < 5.0
+
+    def get_hasBeenActive(self):
+        return time.monotonic() >= self._last_activation()
 
 
 @interface('DevicePosture', 'EventTarget')

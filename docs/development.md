@@ -80,6 +80,14 @@ python -m pytest tests/repros/test_execution_model_vs_chrome.py -q
 
 IDL 和环境采集命令见 [IDL 格式](idl-format.md)。生成产物前核对来源版本，先写独立输出验证；不要无授权覆盖 Chromium/V8/profile 基线。
 
+Window 自有属性顺序由 `pyv8c/data/window-order.json` 描述，重新生成需要同一版本的 Chromium IDL 源：
+
+```powershell
+python -m pyv8c.tools.extract_window_order --chromium-root D:\src\chromium --reference pyv8c/data/window-order-conditional-reference.json
+```
+
+产物必须与 `idl.json` 的 `chromium_version` 一致；升级 IDL 基线时一并重新生成。运行时读取随包 JSON，不依赖 Chromium 源码。
+
 性能先剖析再优化，同机同解释器、同源码/二进制标识和同工作负载串行交替测量至少五轮，记录中位数、最小值、波动和关闭后回收。无稳定收益或引入行为回退的改动不保留。
 
 ```powershell
@@ -94,3 +102,5 @@ python tools/measure_startup.py
 说明具体问题、触发条件、所属层修复、回归测试与实际验证结果。区分已通过、未验证、跳过和已知失败；保存竞态失败原始证据，不靠复跑成功宣称根因消失。不放宽断言、扩大排除或更新基线掩盖失败。
 
 文档只维护当前可用接口与已知限制。命令、链接和示例变更后需验证；专题文件统一使用小写短横线命名，索引使用 README.md，正文统一中文。
+
+????????????????????? `pyv8c/data/window-order-conditional-reference.json`??????????? Chrome ??????????? IDL ?????????? IDL ??????????

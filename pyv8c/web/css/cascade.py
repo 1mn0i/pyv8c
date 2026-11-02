@@ -156,6 +156,27 @@ def _cascade(element, rules, cache=None):
             if parts is not None:
                 for side, part in zip(('top', 'right', 'bottom', 'left'), parts):
                     values[name + '-' + side] = part
+        elif name in ('border-width', 'border-style'):
+            parts = _box_values(value)
+            if parts is not None:
+                suffix = name.split('-', 1)[1]
+                for side, part in zip(('top', 'right', 'bottom', 'left'), parts):
+                    values[f'border-{side}-{suffix}'] = part
+        elif name == 'border' or name in ('border-top', 'border-right', 'border-bottom', 'border-left'):
+            # Border's omitted style is none; its omitted width is medium (3px).
+            tokens = str(value).lower().split()
+            styles = {'none', 'hidden', 'dotted', 'dashed', 'solid', 'double',
+                      'groove', 'ridge', 'inset', 'outset'}
+            border_style = next((token for token in tokens if token in styles), 'none')
+            width = next((token for token in tokens if re.fullmatch(
+                r'(?:0|(?:\d+(?:\.\d*)?|\.\d+)(?:px|em|rem|pt|pc|in|cm|mm|q))', token)), None)
+            if width is None:
+                width = next(({'thin': '1px', 'medium': '3px', 'thick': '5px'}[token]
+                              for token in tokens if token in ('thin', 'medium', 'thick')), '3px')
+            sides = ('top', 'right', 'bottom', 'left') if name == 'border' else (name.split('-')[1],)
+            for side in sides:
+                values[f'border-{side}-width'] = width
+                values[f'border-{side}-style'] = border_style
     # Chrome's default fixed font is 13px, even when the surrounding text is 16px.
     # An explicit font-size declaration still wins over this UA default.
     changed = {item[-2] for item in matched}

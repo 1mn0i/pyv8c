@@ -16,14 +16,14 @@ from ..foundation.rejections import RejectionTracker
 from ..foundation.rejection_state import WeakPromiseState
 from ..foundation.tracing import silent_trace
 from ..web.bom.chrome import install_window_chrome
-from ..web.bom.legacy_factories import install_legacy_factories
+from ..web.bom.legacy_factories import install_legacy_factories, register_legacy_factories
 from .services import WorkerRealmServices
 from .sessions import BindingSession
 
 
 def _v8_context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None,
                        traceable=False, trace_scripts=None, exposure_type=None, isolate=None,
-                       reuse_global=None):
+                       reuse_global=None, preinstall=()):
     """Shared native V8Context arguments assembled from one binding session.
 
     ``isolate`` and ``reuse_global`` go in only when the caller has one: the worker
@@ -42,6 +42,10 @@ def _v8_context_kwargs(session, context_type, trace, on_materialize=None, trace_
         kwargs["isolate"] = isolate
     if reuse_global is not None:
         kwargs["reuse_global"] = reuse_global
+    if preinstall:
+        # V8 prepends a lazy template property, so reading the instance answers in
+        # the reverse of the order the template was handed the names in.
+        kwargs["preinstall"] = tuple(reversed(preinstall))
     return kwargs
 
 
@@ -76,19 +80,36 @@ _NON_ISOLATED_HIDDEN = ("SharedArrayBuffer",)
 def _declare_realm_interfaces(context, *, context_type, bindings):
     """Declare the realm's plan; the realm answers each name itself."""
     plan = bindings.plan(context_type)
-    declared = context.install(plan.installs)
-    if context_type == "Window":
-        # Reading a target is what hands the alias its value, and that read is host
-        # work: Chromium installs a legacy alias with no script-visible lookup of the
-        # interface it points at, so no probe is reported for one.
-        with silent_trace(context):
-            for alias, target in bindings.idl.window_aliases().items():
-                if target in plan.installs:
-                    context.define_global(alias, context.glob[target],
-                                          attributes=V8Attribute.DontEnum)
+    #: The context installs ``preinstall`` names while its global template is built,
+    #: so installing them again here would only move them behind the Window members.
+    installed = set(plan.preinstall) | set(plan.legacy_factories)
+    #: The conditional block keeps the document's install order; a document
+    #: without one keeps the order its own names imply.
+    pending = (plan.postinstall if plan.member_groups else
+               tuple(name for name in plan.installs if name not in installed))
+    context.install(pending)
     for name in _NON_ISOLATED_HIDDEN:
         context.hide_global(name)
-    return declared
+    #: Every interface is still a lazy constructor after startup, including the
+    #: ones the context installed while its template was built.
+    return len(plan.installs)
+
+
+def _publish_aliases(context, *, bindings, plan):
+    """Define the legacy aliases whose target constructors are now installed.
+
+    Reading a target is what hands the alias its value, and that read is host
+    work: Chromium installs a legacy alias with no script-visible lookup of the
+    interface it points at, so no probe is reported for one.
+    """
+    if plan.context_type != "Window":
+        return
+    installed = set(plan.preinstall) | set(plan.legacy_factories)
+    with silent_trace(context):
+        for alias, target in bindings.idl.window_aliases().items():
+            if target in plan.installs and alias not in installed:
+                context.define_global(alias, context.glob[target],
+                                      attributes=V8Attribute.DontEnum)
 
 
 class WorkerRealm:
@@ -135,8 +156,13 @@ class WorkerRealm:
         self.scope = scope
         config = self.config
         session = config.session
+        # Worker constructors and static operations must use the worker's own
+        # services, including its microtask queue, not the creator page's.
+        session.realm = self.services
         session.prepare("Worker")
         self.isolate = pyv8.Isolate()
+        from ..web.fetch.response import wasm_response_payload
+        self.isolate._set_wasm_response_handler(wasm_response_payload)
         self.microtasks = pyv8.MicrotaskQueue(self.isolate)
         self.v8_context = self.isolate.context(
             scope, microtask_queue=self.microtasks, **_v8_context_kwargs(session, "Worker", config.trace,
@@ -231,6 +257,28 @@ class PageRealm:
         browser = page.profile.browser
         binding_started = time.perf_counter_ns()
         self.binding_session.prepare("Window")
+        plan = self.binding_session.bindings.plan("Window")
+        #: A legacy factory is looked up while the global template is being built, so
+        #: its class is registered before the context exists; Blink installs these
+        #: before the interface constructors, which is why they lead ``preinstall``.
+        factory_names = register_legacy_factories(
+            self.binding_session, table=browser.bindings.idl, document=page.document)
+        aliases = browser.bindings.idl.window_aliases()
+        alias_names = tuple(
+            alias for alias, target in aliases.items()
+            if alias in plan.legacy_factories and target in plan.installs)
+        for alias in alias_names:
+            self.binding_session.add_alias(alias, aliases[alias])
+        #: Every alias target is built with the skeleton, as the old eager alias
+        #: value was; only the alias name itself is now lazy.
+        for target in aliases.values():
+            if browser.bindings.describes(target):
+                self.binding_session.materialize(target)
+        #: Blink installs the aliases with the factory functions, ahead of the
+        #: interface constructors, so both lead the realm's preinstall names.
+        available = set(factory_names) | set(alias_names)
+        preinstall = tuple(name for name in plan.legacy_factories if name in available)
+        preinstall += plan.preinstall
         binding_prepared = time.perf_counter_ns()
         #: A frame's realm is not the top page's: the label says which it is.
         context_type = "FRAME" if page.parent_page is not None else "TOP"
@@ -245,24 +293,34 @@ class PageRealm:
             trace_scripts=page.trace_scripts,
             isolate=page.execution_group.isolate,
             reuse_global=page.global_proxy,
+            preinstall=preinstall,
         ), microtask_queue=self.agent.microtasks)
         #: Kept so the next document is handed the same window object.
         page.global_proxy = self.v8_context.glob
         self.executor.attach_deadline_source(self.v8_context)
         self.executor.bind_agent(self.agent, TaskContext(self, page.document, page.navigation.generation))
         context_created = time.perf_counter_ns()
+        #: Chromium installs window.chrome before the Window's conditional
+        #: members and before any page script runs.
+        install_window_chrome(self.v8_context, page.services)
+        with silent_trace(self.v8_context):
+            self.v8_context.install_late()
         deferred_globals = _declare_realm_interfaces(
             self.v8_context,
             context_type="Window",
             bindings=browser.bindings,
         )
+        self.v8_context.install_late_methods()
+        if plan.postinstall_late:
+            self.v8_context.install(plan.postinstall_late)
+        _publish_aliases(self.v8_context, bindings=browser.bindings, plan=plan)
+        self.v8_context.install_tail()
         deferred_declared_at = time.perf_counter_ns()
-        # Chromium installs window.chrome before any page script runs.
-        install_window_chrome(self.v8_context, page.services)
         _publish_window_name(self.v8_context, page)
         install_legacy_factories(
             self.v8_context, session=self.binding_session,
             table=browser.bindings.idl, document=page.document,
+            skip=tuple(name for name in factory_names if name in preinstall),
         )
         chrome_installed_at = time.perf_counter_ns()
         # The realm owns the context and the page's script controller borrows it,
@@ -277,7 +335,6 @@ class PageRealm:
         self.v8_context.set_error_hooks(
             page.report_uncaught_message, self.rejections.record,
         )
-        plan = self.binding_session.bindings.plan("Window")
         browser._record_startup(
             binding_binder_ms=(binding_prepared - binding_started) / 1_000_000,
             profile_create_ms=(context_created - binding_prepared) / 1_000_000,

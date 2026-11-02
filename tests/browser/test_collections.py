@@ -111,6 +111,14 @@ def test_node_list_strict_mutations_use_chromium_error_context(page):
     ]
 
 
+def test_legacy_readonly_property_reflect_set_reports_failure(page):
+    assert page.evaluate("""(() => {
+      const root = document.getElementById('root');
+      return [Reflect.set(root.childNodes, '0', 1),
+              Reflect.set(root.children, 'first', 1)];
+    })()""") == [False, False]
+
+
 def test_node_list_exposes_web_idl_iterable_helpers(page):
     result = page.evaluate("""
 (() => {

@@ -6,7 +6,8 @@ The clone is the one a browser has: the value is **serialized where it is sent**
 ``Deserialize``, in ``UniversalGlobalScope::structuredClone`` -- so what crosses is what a
 browser crosses: objects, arrays, ``Map``/``Set``/``Date``/``RegExp``, an ``Error`` with its
 name, message, cause and stack, buffers and views, cycles, and transferred buffers whose bytes
-the sender gives up.
+the sender gives up. Compiled WebAssembly modules travel alongside their wire by V8's
+transfer-id delegate and can be reconstructed in a different Isolate.
 
 What V8 cannot know is the host.  A Blob, a File or a DOMException is written as its own bytes
 by :func:`_write_host` and built back in the reading realm by :func:`_read_host` -- Blink's
@@ -201,9 +202,12 @@ def structured_clone(value, context=None, *, caller=None, transfer=None):
     if context is None:
         return _host_copy(value, set())
     try:
+        wasm_modules = []
         result = Wire(pyv8.Serializer(context).serialize(
             value, host_check=_is_host,
-            host_writer=lambda value, writer: _write_host(value, writer, transfer)))
+            host_writer=lambda value, writer: _write_host(value, writer, transfer),
+            wasm_modules=wasm_modules))
+        result.wasm_modules = wasm_modules
         result.ports = tuple(view for _port, view in transfer.ports) if transfer else ()
         return result
     except pyv8.JSException as error:
@@ -228,7 +232,8 @@ def rebuild_clone(value, context=None):
         return bytes(value)
     try:
         return pyv8.Serializer(context).deserialize(
-            bytes(value), host_reader=lambda reader: _read_host(reader, getattr(value, "ports", ())))
+            bytes(value), host_reader=lambda reader: _read_host(reader, getattr(value, "ports", ())),
+            wasm_modules=getattr(value, "wasm_modules", None))
     except pyv8.JSException as error:
         raise DataCloneError(_refusal(error)) from None
 
@@ -333,7 +338,15 @@ def clone_value(services, interface, value, options):
         raise missing_error(interface, 'structuredClone', 1, 0, constructor=False)
     plan = TransferPlan(message_transfer(options), caller=interface)
     context = pyv8.current_context()
-    data = structured_clone(value, context=context, transfer=plan)
-    result = rebuild_clone(data, context=context)
+    try:
+        data = structured_clone(value, context=context, transfer=plan)
+        result = rebuild_clone(data, context=context)
+    except DOMException as error:
+        if error.get_name() != 'DataCloneError':
+            raise
+        detail = error.get_message()
+        if detail == '#<SharedArrayBuffer> could not be cloned.':
+            detail = 'SharedArrayBuffer transfer requires self.crossOriginIsolated.'
+        raise DataCloneError(f"Failed to execute 'structuredClone' on '{interface}': {detail}") from None
     plan.commit(services)
     return result

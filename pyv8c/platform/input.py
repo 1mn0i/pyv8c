@@ -294,12 +294,27 @@ class MouseInput:
         """The element the mouse is over, or the root when it is outside the viewport."""
         return self._hit(self._x, self._y)[1]
 
+    def _screen_position(self):
+        """Translate frame-local coordinates to the top-level viewport origin."""
+        x, y = self._x, self._y
+        page = self._page
+        while page.parent_page is not None:
+            frame = page.window._frame_element
+            if frame is None:
+                break
+            box = border_box(frame)
+            x += box.left + box.border.get('left', 0.0) + box.padding.get('left', 0.0)
+            y += box.top + box.border.get('top', 0.0) + box.padding.get('top', 0.0)
+            page = page.parent_page
+        return x, y
+
     def _emit(self, event_type, target, *, button=0, detail=0, related=None,
               bubbles=True, cancelable=True, event_class=None, propagates=True,
               coalesced=()):
         """Dispatch one event and hand it back, or ``None`` when there is no target."""
         if target is None:
             return None
+        screen_x, screen_y = self._screen_position()
         options = {
             #: A pointer or mouse event from real input crosses shadow boundaries in Chrome,
             #: which a driven-input probe measured (``composed`` true for every one of them).
@@ -307,9 +322,8 @@ class MouseInput:
             "bubbles": bubbles, "cancelable": cancelable, "detail": detail,
             "button": button, "buttons": self._bits,
             "clientX": self._x, "clientY": self._y,
-            # Nothing scrolls and no window position is modelled, so the screen pair is
-            # the viewport pair, as it is for a window at the screen's own corner.
-            "screenX": self._x, "screenY": self._y,
+            # The top-level viewport has no native window offset in this host.
+            "screenX": screen_x, "screenY": screen_y,
             "movementX": self._movement_x if event_type.endswith("move") else 0,
             "movementY": self._movement_y if event_type.endswith("move") else 0,
         }
@@ -324,11 +338,11 @@ class MouseInput:
                 # No button transition is -1 on a pointer event; the mouse event
                 # beside it keeps the 0 Chromium gives it.
                 options["button"] = -1
-        else:
+        if interface != "PointerEvent" or event_type == "click":
             # A mouse event reports whole pixels; the pointer event beside it keeps
             # the fraction the layout measured.
             for name in ("clientX", "clientY", "screenX", "screenY"):
-                options[name] = _pixel(options[name])
+                options[name] = math.floor(options[name])
         return self._page.lifecycle.dispatch_page_event(
             event_type, target, options, event_class=interface, propagates=propagates,
         )

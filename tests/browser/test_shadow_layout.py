@@ -94,7 +94,7 @@ def test_flex_item_with_implicit_grid_tracks_uses_content_width():
         page.set_content('''<body><div style="display:flex;width:300px"><div style="display:grid">
             <div style="display:flex"><label style="display:grid;position:relative">
             <input type="checkbox" style="position:absolute;width:100%;height:100%;margin:0">
-            <span style="grid-area:1/1;width:24px;height:24px"></span>
+            <span style="grid-area:1/1;width:24px;height:24px;box-sizing:border-box;border:2px solid"></span>
             <span style="grid-column:2;margin-left:8px;width:98px;height:18px"></span>
             </label></div></div></div></body>''', url='https://example.test/')
         assert page.evaluate('''(() => {
@@ -102,5 +102,60 @@ def test_flex_item_with_implicit_grid_tracks_uses_content_width():
             const b = document.querySelector('label').getBoundingClientRect();
             return [a.width, a.height, b.width, b.height];
         })()''') == [130, 24, 130, 24]
+    finally:
+        browser.close()
+
+
+def test_flex_cross_axis_center_moves_descendant_boxes():
+    browser = Browser(real_network=False, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('''<body style="margin:0"><div style="display:flex;width:300px;
+                          height:65px;align-items:center"><div style="width:130px;height:24px">
+                          <input type="checkbox" style="margin:0"></div></div></body>''',
+                         url='https://example.test/')
+        assert page.evaluate('''(() => {
+            const parent = document.querySelector('div div').getBoundingClientRect();
+            const input = document.querySelector('input').getBoundingClientRect();
+            return [parent.y, parent.height, input.y];
+        })()''') == [20.5, 24, 20.5]
+    finally:
+        browser.close()
+
+
+def test_iframe_border_shorthand_and_frame_pointer_screen_coordinates():
+    browser = Browser(real_network=False, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('''<body style="margin:0"><iframe style="position:absolute;left:100px;
+                          top:80px;width:300px;height:65px;border:0"></iframe></body>''',
+                         url='https://example.test/')
+        page.evaluate('''(() => {
+            const frame = document.querySelector('iframe');
+            const doc = frame.contentDocument;
+            doc.body.style.margin = '0';
+            const root = doc.body.attachShadow({mode:'closed'});
+            root.innerHTML = '<div style="display:flex;height:65px;align-items:center">' +
+                '<input type="checkbox" style="width:130px;height:24px;margin:0"></div>';
+            frame.contentWindow.coords = [];
+            for (const type of ['pointerdown','mousedown','click'])
+                root.querySelector('input').addEventListener(type, e =>
+                    frame.contentWindow.coords.push([type,e.clientX,e.clientY,e.screenX,e.screenY]));
+        })()''')
+        def target():
+            frame = page.document.fn_querySelector('iframe')
+            child = frame._child_services._page_realm.page
+            return child, child.document.get_body()._shadow_root.fn_querySelector('input')
+        child, node = page.realm.executor.call(target)
+        child.mouse.click_element(node)
+        assert child.evaluate('coords') == [
+            ['pointerdown', 65, 32.5, 165, 112.5],
+            ['mousedown', 65, 32, 165, 112],
+            ['click', 65, 32, 165, 112],
+        ]
+        assert page.evaluate('''(() => {
+            const r = document.querySelector('iframe').getBoundingClientRect();
+            return [r.width, r.height];
+        })()''') == [300, 65]
     finally:
         browser.close()
