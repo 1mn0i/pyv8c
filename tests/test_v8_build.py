@@ -221,7 +221,7 @@ class TestV8BuildConfiguration(unittest.TestCase):
         self.assertIn("v8_monolithic=true", config.gn_args)
         self.assertIn("v8_enable_pointer_compression=false", config.gn_args)
         self.assertIn("v8_enable_sandbox=false", config.gn_args)
-        self.assertIn("v8_enable_temporal_support=false", config.gn_args)
+        self.assertIn("v8_enable_temporal_support=true", config.gn_args)
         expected_cpu = "arm64" if platform.machine().lower() in {"arm64", "aarch64"} else "x64"
         self.assertIn(f'target_cpu="{expected_cpu}"', config.gn_args)
 
@@ -614,6 +614,29 @@ class TestV8BuildConfiguration(unittest.TestCase):
         self.assertEqual(atomics_header.read_bytes(), atomics_original)
         for path, content in extended_map_sources.items():
             self.assertEqual(path.read_bytes(), content)
+
+
+    def test_new_extended_map_layout_patch_is_temporary(self):
+        config = v8_build.V8BuildConfig.from_environment(
+            self.root, {"PYV8_V8_VERSION": "15.4.68", "PYV8_BUILD_V8": "1"})
+        root = config.v8_home / "src" / "objects"
+        root.mkdir(parents=True)
+        sources = {
+            "map.h": b"  std::atomic<uint8_t> bit_field_ex_;\n  // Leaves kTaggedSize-1 unused bytes, they will be used by subclasses.\n",
+            "map.tq": b"  bit_field_ex: ExtendedMapBitFields;\n  // Leaves kTaggedSize-1 unused bytes, they will be used by subclasses.\n",
+            "js-interceptor-map.h": b"  uint8_t flags_;\n  uint8_t extended_padding_[kTaggedSize - 2];\n",
+            "js-interceptor-map.tq": b"  @ifnot(TAGGED_SIZE_8_BYTES) extended_padding[2]: uint8;\n  @if(TAGGED_SIZE_8_BYTES) extended_padding[6]: uint8;\n",
+            "js-interceptor-map-inl.h": b"void JSInterceptorMap::init_flags_and_clear_extended_padding() {\n  flags_ = 0;\n  memset(extended_padding_, 0, sizeof(extended_padding_));\n}\n",
+        }
+        for name, contents in sources.items():
+            (root / name).write_bytes(contents)
+        with config._source_compatibility_patches():
+            self.assertIn(b"extended_map_padding_[3]", (root / "map.h").read_bytes())
+            self.assertIn(b"extended_padding_[3]", (root / "js-interceptor-map.h").read_bytes())
+            self.assertIn(b"extended_padding[3]", (root / "js-interceptor-map.tq").read_bytes())
+            self.assertIn(b"memset(extended_map_padding_", (root / "js-interceptor-map-inl.h").read_bytes())
+        for name, contents in sources.items():
+            self.assertEqual((root / name).read_bytes(), contents)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 #include "bridge_base.h"
+#include "wasm_streaming.h"
 #include <cmath>
 #include <Python.h>
 #include "entry.h"
@@ -88,6 +89,7 @@ static PyObject* context_try_inspector(context_c* self, PyObject* args);
 static PyObject* context_to_js(context_c* self, PyObject* value);
 static PyObject* context_import_handle(context_c* self, PyObject* handle);
 static PyObject* context_set_microtask_queue(context_c* self, PyObject* queue);
+static PyObject* context_run_foreground_task(context_c*, PyObject*);
 static PyObject* context_begin_operation(context_c*, PyObject*);
 static PyObject* context_end_operation(context_c*, PyObject*);
 static PyObject* context_terminate_operation(context_c*, PyObject*);
@@ -128,6 +130,11 @@ bool context_is_detached(Local<Context> context) {
 
 PyObject* context_detach(context_c* self, PyObject* ignored) {
     (void)ignored;
+    if (self->resources && !self->resources->wasm_streams.empty()) {
+        ExecutionScope execution(self);
+        if (!execution) return nullptr;
+        wasm_stream_cancel_context(self);
+    }
     //: Left behind: still readable, but nothing new is built inside it.
     self->detached = true;
     // Nothing new is asked of the embedder for a realm that no longer has a document.
@@ -254,11 +261,22 @@ PyMethodDef context_methods[] = {
      "install one global value with the property attributes the caller names"},
     {"install", (PyCFunction)PythonBoundary<context_install>::call, METH_O,
      "install each name as a non-enumerable lazy constructor"},
+    {"install_late", (PyCFunction)PythonBoundary<context_install_late>::call, METH_NOARGS,
+     "install the global interface's context-dependent attributes"},
+    {"install_late_methods", (PyCFunction)PythonBoundary<context_install_late_methods>::call, METH_NOARGS,
+     "install the conditional operations and template-late attributes"},
+    {"install_tail", (PyCFunction)PythonBoundary<context_install_tail>::call, METH_NOARGS,
+     "install the conditional operations that follow the conditional constructors"},
     {"gc", (PyCFunction)PythonBoundary<context_gc>::call, METH_NOARGS, NULL},
     {"heap_statistics", (PyCFunction)PythonBoundary<context_heap_statistics>::call, METH_NOARGS,
      "bytes of this isolate's heap in use, committed, and its ceiling, as a dict"},
     {"enqueue_microtask", (PyCFunction)PythonBoundary<context_enqueue_microtask>::call, METH_O, NULL},
     {"set_microtask_queue", (PyCFunction)PythonBoundary<context_set_microtask_queue>::call, METH_O, NULL},
+    {"_run_foreground_task", (PyCFunction)PythonBoundary<context_run_foreground_task>::call, METH_NOARGS,
+     "run at most one ready V8 foreground task without waiting or a microtask checkpoint"},
+    {"_wasm_stream_feed", (PyCFunction)PythonBoundary<wasm_stream_feed>::call, METH_VARARGS, NULL},
+    {"_wasm_stream_finish", (PyCFunction)PythonBoundary<wasm_stream_finish>::call, METH_O, NULL},
+    {"_wasm_stream_abort", (PyCFunction)PythonBoundary<wasm_stream_abort>::call, METH_VARARGS, NULL},
     {"begin_operation", (PyCFunction)PythonBoundary<context_begin_operation>::call, METH_O, NULL},
     {"end_operation", (PyCFunction)PythonBoundary<context_end_operation>::call, METH_O, NULL},
     {"terminate_operation", (PyCFunction)PythonBoundary<context_terminate_operation>::call, METH_O, NULL},
@@ -491,12 +509,14 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* reuse_global = Py_None;
     PyObject* py_microtasks = Py_None;
     PyObject* trace_scripts = Py_None;
-    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", "reuse_global", "microtask_queue", "trace_scripts", NULL};
+    PyObject* preinstall = Py_None;
+    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", "reuse_global", "microtask_queue", "trace_scripts", "preinstall", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOOOOOOOOO", (char **) keywords,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOOOOOOOOOO", (char **) keywords,
                                     &global, &trace, &ctx_type, &py_timeout, &py_isolate,
                                     &lazy_factory, &trace_callback, &traceable,
-                                    &reuse_global, &py_microtasks, &trace_scripts)) {
+                                    &reuse_global, &py_microtasks, &trace_scripts,
+                                    &preinstall)) {
         return NULL;
     }
 
@@ -511,6 +531,19 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     if (trace_callback != Py_None && !PyCallable_Check(trace_callback)) {
         PyErr_SetString(PyExc_TypeError, "trace_callback must be callable or None");
         return nullptr;
+    }
+    if (preinstall != Py_None) {
+        if (!PyTuple_Check(preinstall)) {
+            PyErr_SetString(PyExc_TypeError, "preinstall must be a tuple of names or None");
+            return nullptr;
+        }
+        for (Py_ssize_t index = 0; index < PyTuple_Size(preinstall); ++index) {
+            PyObject* item = PyTuple_GetItem(preinstall, index);
+            if (!PyUnicode_Check(item) || PyUnicode_GetLength(item) == 0) {
+                PyErr_SetString(PyExc_ValueError, "preinstall must contain non-empty strings");
+                return nullptr;
+            }
+        }
     }
     std::vector<std::string> trace_patterns;
     if (trace_scripts != Py_None) {
@@ -584,12 +617,18 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         self->py_isolate = py_isolate;
     }
     self->lazy_factory = NULL;
+    self->preinstall = NULL;
+    self->global_template = NULL;
     self->py_global = NULL;
     self->registry = PyDict_New();
     self->function_template_cache = PyDict_New();
     if (lazy_factory != Py_None) {
         Py_INCREF((PyObject*)lazy_factory);
         self->lazy_factory = lazy_factory;
+    }
+    if (preinstall != Py_None) {
+        Py_INCREF((PyObject*)preinstall);
+        self->preinstall = preinstall;
     }
     self->py_global = global;
     self->has_done = false;
@@ -667,7 +706,9 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         }
         Local<FunctionTemplate> global_inteface_template = templ->templ.Get(isolate);
         global_template = global_inteface_template->InstanceTemplate();
-        Py_DECREF((PyObject*)templ);
+        //: The class is kept so ``install_late`` can run the conditional phase
+        //: after the host globals exist.
+        self->global_template = (PyObject*)templ;
 
     }
 
@@ -712,6 +753,7 @@ void
 context_finish_close(context_c *self)
 {
     self->state = ContextState::Closing;
+    wasm_stream_cancel_context(self);
     if (self->isolate_state && self->isolate_state->is_active())
         self->isolate_state->watchdog().release_owner(self);
     debugger_context_closed(self);
@@ -1270,7 +1312,23 @@ context_terminate(context_c* self, PyObject* ignored)
     PYV8_RETURN_NONE;
 }
 
-// The Context boundary owns JavaScript exception conversion for checkpoints.
+// The Context boundary owns JavaScript exception conversion for this task.
+static PyObject* context_run_foreground_task(context_c* self, PyObject*) {
+    auto* active = v8::Isolate::GetCurrent();
+    if (active && active->InContext()) {
+        PyErr_SetString(PyExc_RuntimeError, "cannot pump V8 foreground tasks during a Context entry");
+        return nullptr;
+    }
+    ExecutionScope entry(self);
+    if (!entry) return nullptr;
+    auto* isolate = entry.isolate();
+    JS_TRY;
+    bool worked = false;
+    without_gil([&] { worked = runtime_manager.pump_foreground_task(isolate); });
+    PY_PROPAGATE_JS;
+    return PyBool_FromLong(worked);
+}
+
 PyObject* microtask_queue_checkpoint(microtask_queue_c* self, PyObject* args, PyObject* kwargs) {
     double timeout = 0;
     static const char* names[] = {"timeout", nullptr};

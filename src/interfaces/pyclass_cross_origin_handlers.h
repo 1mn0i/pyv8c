@@ -20,7 +20,7 @@ v8::Intercepted cross_origin_named_getter(
 v8::Intercepted cross_origin_named_setter(
     v8::Local<v8::Name> name,
     v8::Local<v8::Value> value,
-    const v8::PropertyCallbackInfo<void>& info);
+    const v8::PropertyCallbackInfo<v8_compat::PropertySetterResult>& info);
 v8::Intercepted cross_origin_named_query(
     v8::Local<v8::Name> name,
     const v8::PropertyCallbackInfo<v8::Integer>& info);
@@ -36,7 +36,7 @@ v8::Intercepted cross_origin_indexed_getter(
 v8::Intercepted cross_origin_indexed_setter(
     uint32_t index,
     v8::Local<v8::Value> value,
-    const v8::PropertyCallbackInfo<void>& info);
+    const v8::PropertyCallbackInfo<v8_compat::PropertySetterResult>& info);
 v8::Intercepted cross_origin_indexed_query(
     uint32_t index,
     const v8::PropertyCallbackInfo<v8::Integer>& info);

@@ -15,6 +15,7 @@
 #include <v8.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 // The old-space budget the host asked for with --max-old-space-size, in bytes, or
@@ -22,6 +23,8 @@
 // number back, and its heap limit covers the other spaces too, so the flag the host
 // passed is the only place the intended budget is written down.
 std::size_t heap_budget_bytes();
+class ForegroundPlatform;
+class ForegroundNotifications;
 
 class PlatformState
 {
@@ -39,8 +42,14 @@ public:
     bool is_initialized() const { return initialized_; }
     bool is_disposed() const { return disposed_; }
 
+    bool pump_foreground_task(v8::Isolate* isolate);
+    void notify_isolate_shutdown(v8::Isolate* isolate);
+    std::shared_ptr<ForegroundNotifications> foreground_notifications();
+    std::uint64_t foreground_token(v8::Isolate* isolate);
+
 private:
     std::unique_ptr<v8::Platform> platform_;
+    std::unique_ptr<ForegroundPlatform> foreground_platform_;
     bool initialized_;
     bool disposed_;
 };

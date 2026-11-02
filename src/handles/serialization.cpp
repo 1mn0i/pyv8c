@@ -18,6 +18,8 @@
 //: parse -- with errors pointing inside V8 rather than here.
 #include "runtime.h"
 #include <v8.h>
+#include <v8-wasm.h>
+#include <atomic>
 
 #include <utility>
 #include <vector>
@@ -288,6 +290,17 @@ PyType_Spec js_serialization_reader_spec = {
 
 // ---------------------------------------------------------------- delegates
 
+namespace {
+constexpr const char* kWasmModuleCapsule = "pyv8.compiled_wasm_module";
+std::atomic<std::size_t> g_live_compiled_wasm_modules{0};
+void destroy_compiled_wasm_module(PyObject* capsule) {
+    auto* module = static_cast<v8::CompiledWasmModule*>(PyCapsule_GetPointer(capsule, kWasmModuleCapsule));
+    if (!module) { PyErr_Clear(); return; }
+    delete module;
+    --g_live_compiled_wasm_modules;
+}
+}
+
 //: The Python callbacks one call carries.  A failure is never swallowed: a Python exception
 //: stays set for the caller of ``serialize``/``deserialize``, and V8's own failure is
 //: propagated by the caller through ``PY_PROPAGATE_JS``.
@@ -295,21 +308,42 @@ class ValueWriterDelegate : public v8::ValueSerializer::Delegate
 {
 public:
     ValueWriterDelegate(v8::Isolate* isolate, v8::Local<v8::Context> context, PyObject* host_writer,
-                        PyObject* host_check)
+                        PyObject* host_check, PyObject* wasm_modules)
         : isolate_(isolate), context_(context),
           //: ``None`` is how Python spells "no callback", and the two mean the same thing here.
           host_writer_(host_writer != nullptr && host_writer != Py_None ? PyV8_NewRef(host_writer)
                                                                         : nullptr),
           host_check_(host_check != nullptr && host_check != Py_None ? PyV8_NewRef(host_check)
-                                                                     : nullptr) {}
+                                                                     : nullptr),
+          wasm_modules_(wasm_modules && wasm_modules != Py_None ? PyV8_NewRef(wasm_modules) : nullptr) {}
 
     ~ValueWriterDelegate() override
     {
         Py_XDECREF(host_writer_);
         Py_XDECREF(host_check_);
+        Py_XDECREF(wasm_modules_);
     }
 
     void set_serializer(v8::ValueSerializer* serializer) { serializer_ = serializer; }
+
+    v8::Maybe<uint32_t> GetWasmModuleTransferId(v8::Isolate* isolate,
+                                                 v8::Local<v8::WasmModuleObject> module) override {
+        if (!wasm_modules_) {
+            ThrowDataCloneError(v8::String::NewFromUtf8Literal(isolate, "WebAssembly.Module could not be cloned."));
+            return v8::Nothing<uint32_t>();
+        }
+        const Py_ssize_t index = PyList_Size(wasm_modules_);
+        if (index < 0 || static_cast<unsigned long long>(index) > UINT32_MAX) {
+            PyErr_SetString(PyExc_OverflowError, "too many WebAssembly modules");
+            return v8::Nothing<uint32_t>();
+        }
+        auto* compiled = new v8::CompiledWasmModule(module->GetCompiledModule());
+        PyOwnedRef capsule(PyCapsule_New(compiled, kWasmModuleCapsule, destroy_compiled_wasm_module));
+        if (!capsule.get()) { delete compiled; return v8::Nothing<uint32_t>(); }
+        ++g_live_compiled_wasm_modules;
+        if (PyList_Append(wasm_modules_, capsule.get()) < 0) return v8::Nothing<uint32_t>();
+        return v8::Just(static_cast<uint32_t>(index));
+    }
 
     //: V8 requires this override: it is where a DataCloneError belongs.  The message is V8's
     //: own ("... could not be cloned."), which is the wording Chrome shows; the host turns it
@@ -397,18 +431,31 @@ private:
     v8::Local<v8::Context> context_;
     PyObject* host_writer_;
     PyObject* host_check_;
+    PyObject* wasm_modules_;
     v8::ValueSerializer* serializer_ = nullptr;
 };
 
 class ValueReaderDelegate : public v8::ValueDeserializer::Delegate
 {
 public:
-    ValueReaderDelegate(v8::Local<v8::Context> context, PyObject* host_reader)
-        : context_(context), host_reader_(host_reader && host_reader != Py_None ? PyV8_NewRef(host_reader) : nullptr) {}
+    ValueReaderDelegate(v8::Local<v8::Context> context, PyObject* host_reader, PyObject* wasm_modules)
+        : context_(context), host_reader_(host_reader && host_reader != Py_None ? PyV8_NewRef(host_reader) : nullptr),
+          wasm_modules_(wasm_modules && wasm_modules != Py_None ? PyV8_NewRef(wasm_modules) : nullptr) {}
 
-    ~ValueReaderDelegate() override { Py_XDECREF(host_reader_); }
+    ~ValueReaderDelegate() override { Py_XDECREF(host_reader_); Py_XDECREF(wasm_modules_); }
 
     void set_deserializer(v8::ValueDeserializer* deserializer) { deserializer_ = deserializer; }
+
+    v8::MaybeLocal<v8::WasmModuleObject> GetWasmModuleFromId(v8::Isolate* isolate, uint32_t id) override {
+        if (!wasm_modules_ || id >= static_cast<uint64_t>(PyList_Size(wasm_modules_))) {
+            isolate->ThrowException(v8::Exception::Error(v8::String::NewFromUtf8Literal(isolate, "Unable to deserialize cloned data.")));
+            return {};
+        }
+        auto* module = static_cast<v8::CompiledWasmModule*>(
+            PyCapsule_GetPointer(PyList_GetItem(wasm_modules_, id), kWasmModuleCapsule));
+        if (!module) return {};
+        return v8::WasmModuleObject::FromCompiledModule(isolate, *module);
+    }
 
     v8::MaybeLocal<v8::Object> ReadHostObject(v8::Isolate* isolate) override
     {
@@ -438,6 +485,7 @@ public:
 private:
     v8::Local<v8::Context> context_;
     PyObject* host_reader_;
+    PyObject* wasm_modules_;
     v8::ValueDeserializer* deserializer_ = nullptr;
 };
 
@@ -486,14 +534,18 @@ bool apply_transfer(v8::ValueSerializer& serializer, PyObject* listed, v8::Local
 
 PyObject* js_serializer_serialize(js_serializer* self, PyObject* args, PyObject* kwargs)
 {
-    static const char* keywords[] = {"value", "transfer", "host_writer", "host_check", NULL};
+    static const char* keywords[] = {"value", "transfer", "host_writer", "host_check", "wasm_modules", NULL};
     PyObject* py_value = nullptr;
     PyObject* py_transfer = nullptr;
     PyObject* py_writer = nullptr;
     PyObject* py_check = nullptr;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOO", (char**)keywords, &py_value, &py_transfer,
-                                     &py_writer, &py_check))
+    PyObject* py_modules = nullptr;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOOO", (char**)keywords, &py_value, &py_transfer,
+                                     &py_writer, &py_check, &py_modules))
         return nullptr;
+    if (py_modules && py_modules != Py_None && !PyList_Check(py_modules)) {
+        PyErr_SetString(PyExc_TypeError, "wasm_modules must be a list"); return nullptr;
+    }
 
     ExecutionScope execution((context_c*)self->py_context, (PyObject*)self);
     if (!execution)
@@ -506,7 +558,7 @@ PyObject* js_serializer_serialize(js_serializer* self, PyObject* args, PyObject*
     if (value.IsEmpty())
         return nullptr;
 
-    ValueWriterDelegate delegate(isolate, context, py_writer, py_check);
+    ValueWriterDelegate delegate(isolate, context, py_writer, py_check, py_modules);
     v8::ValueSerializer serializer(isolate, &delegate);
     delegate.set_serializer(&serializer);
 
@@ -552,13 +604,17 @@ PyObject* js_serializer_serialize(js_serializer* self, PyObject* args, PyObject*
 
 PyObject* js_serializer_deserialize(js_serializer* self, PyObject* args, PyObject* kwargs)
 {
-    static const char* keywords[] = {"data", "transfer", "host_reader", NULL};
+    static const char* keywords[] = {"data", "transfer", "host_reader", "wasm_modules", NULL};
     PyObject* py_data = nullptr;
     PyObject* py_transfer = nullptr;
     PyObject* py_reader = nullptr;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OO", (char**)keywords, &py_data, &py_transfer,
-                                     &py_reader))
+    PyObject* py_modules = nullptr;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOO", (char**)keywords, &py_data, &py_transfer,
+                                     &py_reader, &py_modules))
         return nullptr;
+    if (py_modules && py_modules != Py_None && !PyList_Check(py_modules)) {
+        PyErr_SetString(PyExc_TypeError, "wasm_modules must be a list"); return nullptr;
+    }
 
     Py_buffer view;
     if (PyObject_GetBuffer(py_data, &view, PyBUF_SIMPLE) < 0)
@@ -574,7 +630,7 @@ PyObject* js_serializer_deserialize(js_serializer* self, PyObject* args, PyObjec
     v8::Local<v8::Context> context = execution.context();
     JS_TRY
 
-    ValueReaderDelegate delegate(context, py_reader);
+    ValueReaderDelegate delegate(context, py_reader, py_modules);
     v8::ValueDeserializer deserializer(isolate, (const uint8_t*)view.buf, (size_t)view.len, &delegate);
     delegate.set_deserializer(&deserializer);
     deserializer.SetSupportsLegacyWireFormat(true);
@@ -718,6 +774,8 @@ PyObject* js_serializer_new(PyTypeObject* type, PyObject* args, PyObject* kwargs
 }
 
 }  // namespace
+
+std::size_t live_compiled_wasm_modules() { return g_live_compiled_wasm_modules.load(); }
 
 PyTypeObject* serialization_type = nullptr;
 PyTypeObject* serialization_writer_type = nullptr;

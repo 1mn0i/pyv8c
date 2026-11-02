@@ -2,6 +2,7 @@
 #include "platform_state.h"
 
 #include "abi3.h"
+#include "foreground_platform.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -146,7 +147,38 @@ PlatformState::~PlatformState()
 {
     // Explicit shutdown_v8() owns deterministic process-level V8 teardown.
     if (initialized_)
+    {
+        foreground_platform_.release();
         platform_.release();
+    }
+}
+
+bool PlatformState::pump_foreground_task(v8::Isolate* isolate)
+{
+    return initialized_ && platform::PumpMessageLoop(
+        platform_.get(), isolate, platform::MessageLoopBehavior::kDoNotWait);
+}
+
+std::shared_ptr<ForegroundNotifications> PlatformState::foreground_notifications()
+{
+    return foreground_platform_ ? foreground_platform_->notifications() : nullptr;
+}
+
+std::uint64_t PlatformState::foreground_token(v8::Isolate* isolate)
+{
+    return foreground_platform_ ? foreground_platform_->token(isolate) : 0;
+}
+
+void PlatformState::notify_isolate_shutdown(v8::Isolate* isolate)
+{
+    if (!initialized_ || isolate == nullptr)
+        return;
+    // NotifyIsolateShutdown in V8 15.4 assumes a runner exists. An isolate
+    // which has never requested one still needs a safe shutdown notification.
+    platform_->GetForegroundTaskRunner(isolate);
+    if (foreground_platform_)
+        foreground_platform_->forget(isolate);
+    platform::NotifyIsolateShutdown(platform_.get(), isolate);
 }
 
 bool
@@ -246,10 +278,12 @@ PlatformState::initialize(PyObject* icu, PyObject* params)
         PyErr_SetString(PyExc_RuntimeError, "failed to create V8 platform");
         return false;
     }
-    V8::InitializePlatform(platform_.get());
+    foreground_platform_ = std::make_unique<ForegroundPlatform>(platform_.get());
+    V8::InitializePlatform(foreground_platform_.get());
     if (!V8::Initialize())
     {
         V8::DisposePlatform();
+        foreground_platform_.reset();
         platform_.reset();
         PyErr_SetString(PyExc_RuntimeError, "failed to initialize V8");
         return false;
@@ -266,6 +300,8 @@ PlatformState::shutdown()
         return;
     V8::Dispose();
     V8::DisposePlatform();
+    foreground_platform_->notifications()->shutdown();
+    foreground_platform_.reset();
     platform_.reset();
     initialized_ = false;
     disposed_ = true;

@@ -54,6 +54,18 @@ public:
 
     bool is_initialized() const;
     bool is_disposed() const { return platform_.is_disposed(); }
+    bool pump_foreground_task(v8::Isolate* isolate) {
+        return platform_.pump_foreground_task(isolate);
+    }
+    void notify_isolate_shutdown(v8::Isolate* isolate) {
+        platform_.notify_isolate_shutdown(isolate);
+    }
+    std::shared_ptr<ForegroundNotifications> foreground_notifications() {
+        return platform_.foreground_notifications();
+    }
+    std::uint64_t foreground_token(v8::Isolate* isolate) {
+        return platform_.foreground_token(isolate);
+    }
 
     IsolateState* default_isolate() const { return default_isolate_.get(); }
     IsolateState* create_isolate();

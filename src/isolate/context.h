@@ -14,6 +14,7 @@
 #include "v8_handle_slot.h"
 
 class IsolateState;
+class WasmStreamSession;
 struct context_c;
 enum class ContextState { Active, Closing, Closed };
 struct ContextLifetime {
@@ -30,6 +31,7 @@ struct ContextLifetime {
 
 struct ContextResources {
     std::size_t handle_count() const { return handles.size(); }
+    std::vector<std::shared_ptr<WasmStreamSession>> wasm_streams;
 private:
     friend class IsolateState;
     friend PyObject* context_new(PyTypeObject*, PyObject*, PyObject*);
@@ -69,6 +71,8 @@ struct TraceSourceFilter {
     X(function_template_cache) \
     X(callback_targets)      \
     X(lazy_factory)          \
+    X(preinstall)            \
+    X(global_template)       \
     X(py_global)             \
     X(trace_callback)        \
     X(trace_context_type)    \
@@ -98,6 +102,10 @@ typedef struct context_c
     // Optional callable used to materialise a class the realm holds no config for.
     // Called with an interface name, it answers the Python class, or (class, specs).
     PyObject* lazy_factory;
+    //: Interface constructors installed before the global's own members, in order.
+    PyObject* preinstall;
+    //: The global class's template, kept for the context-dependent member phase.
+    PyObject* global_template;
     PyObject* py_global;
     bool has_done;
     //: Left behind by a navigation; see ``context_is_detached``.
@@ -174,6 +182,9 @@ PyObject* context_expose(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_hide_global(context_c* self, PyObject* name);
 PyObject* context_js_obj(context_c* self, PyObject* py_object);
 PyObject* context_install(context_c* self, PyObject* names);
+PyObject* context_install_late(context_c* self, PyObject* ignored);
+PyObject* context_install_late_methods(context_c* self, PyObject* ignored);
+PyObject* context_install_tail(context_c* self, PyObject* ignored);
 PyObject* context_define_global(context_c* self, PyObject* args, PyObject* kwargs);
 PyObject* context_gc(context_c* self);
 PyObject* context_close(context_c* self, PyObject* ignored);

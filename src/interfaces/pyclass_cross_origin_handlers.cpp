@@ -24,7 +24,7 @@ Intercepted cross_origin_named_getter(Local<Name> js_name, Info(Value)) {
 Intercepted cross_origin_named_setter(
     Local<Name> js_name,
     Local<Value> js_value,
-    Info(void)) {
+    Info(v8_compat::PropertySetterResult)) {
     SETUP;
     if (!context_check_callback(context)) return Intercepted::kYes;
 
@@ -76,7 +76,7 @@ Intercepted cross_origin_indexed_getter(uint32_t index, Info(Value)) {
 Intercepted cross_origin_indexed_setter(
     uint32_t index,
     Local<Value> js_value,
-    Info(void)) {
+    Info(v8_compat::PropertySetterResult)) {
     SETUP;
     if (!context_check_callback(context)) return Intercepted::kYes;
 

@@ -2,6 +2,7 @@
 #define PYV8_SERIALIZATION_H
 
 #include <Python.h>
+#include <cstddef>
 
 //: One realm's serializer/deserializer pair (``pyv8.Serializer``).  Chromium's structured
 //: clone is a serialization round trip -- ``UniversalGlobalScope::structuredClone`` calls
@@ -14,5 +15,6 @@ extern PyTypeObject* serialization_writer_type;
 extern PyTypeObject* serialization_reader_type;
 
 int serialization_type_init();
+std::size_t live_compiled_wasm_modules();
 
 #endif

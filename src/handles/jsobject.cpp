@@ -119,6 +119,11 @@ static PyObject* js_object_buffer_kind(js_object* self, PyObject*) {
     Py_RETURN_NONE;
 }
 
+static PyObject* js_object_is_uint8_array(js_object* self, PyObject*) {
+    JS_OBJECT_ENTER(self, isolate, object);
+    return PyBool_FromLong(object->IsUint8Array());
+}
+
 static PyObject* js_object_detach_buffer(js_object* self, PyObject*) {
     JS_OBJECT_ENTER(self, isolate, object);
     if (!object->IsArrayBuffer() || !object.As<ArrayBuffer>()->IsDetachable()) {
@@ -244,6 +249,7 @@ PyMethodDef js_object_methods[] = {
     {"to_python", (PyCFunction)PythonBoundary<js_object_to_python>::call, METH_NOARGS, "Explicitly materialize arrays and plain objects."},
     {"_bytes", (PyCFunction)PythonBoundary<js_object_bytes>::call, METH_NOARGS, "The bytes a buffer holds or a view looks at, in one read."},
     {"_buffer_kind", (PyCFunction)PythonBoundary<js_object_buffer_kind>::call, METH_NOARGS, "Native buffer brand and detached state without property access."},
+    {"_is_uint8_array", (PyCFunction)PythonBoundary<js_object_is_uint8_array>::call, METH_NOARGS, "Check the native Uint8Array brand without property access."},
     {"_detach_buffer", (PyCFunction)PythonBoundary<js_object_detach_buffer>::call, METH_NOARGS, "Detach an ArrayBuffer without calling page code."},
     {"__bytes__", (PyCFunction)PythonBoundary<js_object_as_bytes>::call, METH_NOARGS, "The bytes a buffer or a view holds; anything else holds none."},
     {"_buffer_view", (PyCFunction)PythonBoundary<js_object_buffer>::call, METH_NOARGS, "**Experimental**. Return a python buffer(memoryview) object pointing to the underlying V8 ArrayBuffer data.  Underscore-prefixed because instance lookup only reaches those."},

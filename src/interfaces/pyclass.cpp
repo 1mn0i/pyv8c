@@ -302,6 +302,22 @@ py_class_new(PyObject *cls, context_c * py_ctx, bool shared)
         Py_DECREF((PyObject*)items);
     }
 
+    // Blink installs a global interface's exposed constructors before its own
+    // members; the realm states which names those are, in installation order.
+    if (config.global_this && py_ctx->preinstall != nullptr)
+    {
+        for (Py_ssize_t index = 0; index < PyTuple_Size(py_ctx->preinstall); ++index)
+        {
+            const char* installed = PyUnicode_AsUTF8_abi3(
+                PyTuple_GetItem(py_ctx->preinstall, index));
+            if (installed == nullptr) {
+                Py_DECREF((PyObject*)self);
+                return nullptr;
+            }
+            bindings::InstallExposedConstruct(isolate, templ->InstanceTemplate(), installed);
+        }
+    }
+
     if (config.attributes != NULL)
     {
         if (!bindings::InstallAttributes(
@@ -325,6 +341,10 @@ py_class_new(PyObject *cls, context_c * py_ctx, bool shared)
             return NULL;
         }
     }
+
+    // The context-dependent phase of a global interface is installed by
+    // ``context.install_late`` after the host globals (``chrome``) exist, which
+    // is the order Blink builds a Window's own keys in.
 
     if (config.constants_value != NULL &&
         !bindings::InstallConstantValues(

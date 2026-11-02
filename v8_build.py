@@ -510,7 +510,9 @@ class V8BuildConfig:
             "v8_enable_i18n_support": "true",
             "v8_enable_pointer_compression": "false",
             "v8_enable_sandbox": "false",
-            "v8_enable_temporal_support": "false",
+            #: Chrome 154's V8 ships Temporal; the 15.2 tag implements it behind
+            #: this build switch, so the library must be built with it on.
+            "v8_enable_temporal_support": "true",
             "v8_monolithic": "true",
             "v8_use_external_startup_data": "false",
         }
@@ -585,7 +587,14 @@ class V8BuildConfig:
 
         self._ensure_depot_tools()
         self._bootstrap_depot_tools()
-        self._checkout_v8()
+        try:
+            self._checkout_v8()
+        except V8BuildError:
+            #: A sync needs the network; an existing checkout is enough to rebuild,
+            #: which is all a local build-switch change asks for.
+            if not (self.v8_home / "src" / "objects" / "js-temporal-objects.cc").is_file():
+                raise
+            print("Using the existing V8 checkout; gclient sync failed")
         self._build_v8()
         self.validate()
         if self.icu_data_file() is None:
@@ -1135,7 +1144,8 @@ class V8BuildConfig:
                 b"  uint32_t no_pointer_compression_padding_;\n"
                 b"#endif\n"
             )
-            if implicit_tail_padding in original:
+            if (implicit_tail_padding in original
+                    and b"no_pointer_compression_padding_" not in original):
                 originals[atomics_header] = original
                 atomics_header.write_bytes(
                     original.replace(
@@ -1185,6 +1195,26 @@ class V8BuildConfig:
                 b"}\n",
             ),
         }
+        # Newer V8 revisions add a flags byte to JSInterceptorMap; its
+        # padding must shrink when the base gains explicit C++ tail padding.
+        newer_interceptor = self.v8_home / "src" / "objects" / "js-interceptor-map.h"
+        if newer_interceptor.is_file() and b"  uint8_t flags_;\n  uint8_t extended_padding_[kTaggedSize - 2];\n" in newer_interceptor.read_bytes():
+            extended_map_replacements[newer_interceptor] = (
+                b"  uint8_t flags_;\n  uint8_t extended_padding_[kTaggedSize - 2];\n",
+                b"  uint8_t flags_;\n  uint8_t extended_padding_[3];\n",
+            )
+            extended_map_replacements[self.v8_home / "src" / "objects" / "js-interceptor-map.tq"] = (
+                b"  @ifnot(TAGGED_SIZE_8_BYTES) extended_padding[2]: uint8;\n"
+                b"  @if(TAGGED_SIZE_8_BYTES) extended_padding[6]: uint8;\n",
+                b"  extended_padding[3]: uint8;\n",
+            )
+            extended_map_replacements[self.v8_home / "src" / "objects" / "js-interceptor-map-inl.h"] = (
+                b"void JSInterceptorMap::init_flags_and_clear_extended_padding() {\n"
+                b"  flags_ = 0;\n  memset(extended_padding_, 0, sizeof(extended_padding_));\n}\n",
+                b"void JSInterceptorMap::init_flags_and_clear_extended_padding() {\n"
+                b"  flags_ = 0;\n  memset(extended_map_padding_, 0, sizeof(extended_map_padding_));\n"
+                b"  memset(extended_padding_, 0, sizeof(extended_padding_));\n}\n",
+            )
         extended_map_sources = {
             path: path.read_bytes()
             for path in extended_map_replacements

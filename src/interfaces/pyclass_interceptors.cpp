@@ -150,7 +150,7 @@ Intercepted properties_indexed_definer(uint32_t index, const PropertyDescriptor&
 }
 
 
-Intercepted named_setter(Local<Name> js_name, Local<Value> js_value, Info(void)) {
+Intercepted named_setter(Local<Name> js_name, Local<Value> js_value, Info(v8_compat::PropertySetterResult)) {
     SETUP
     if (!context_check_callback(context)) return Intercepted::kYes;
 
@@ -213,7 +213,7 @@ Intercepted indexed_getter(uint32_t index, Info(Value)) {
     return property_getter_handler(PyLong_FromSize_t(index), info, context, self, HandlerId::IndexGet);
 }
 
-Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(void)) {
+Intercepted indexed_setter(uint32_t index, Local<Value> js_value, Info(v8_compat::PropertySetterResult)) {
     SETUP;
     if (!context_check_callback(context)) return Intercepted::kYes;
 

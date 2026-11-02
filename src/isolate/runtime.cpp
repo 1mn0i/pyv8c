@@ -5,6 +5,7 @@
 #include "isolate_state.h"
 #include "isolate_scope.h"
 #include "isolate.h"
+#include "serialization.h"
 
 #include <new>
 
@@ -209,6 +210,14 @@ RuntimeManager::shutdown(bool report_error)
                          "cannot shut down V8 while %zu custom isolate(s) are active",
                          custom_isolates_.size());
         }
+        return false;
+    }
+    const auto compiled_modules = live_compiled_wasm_modules();
+    if (compiled_modules != 0) {
+        if (report_error)
+            PyErr_Format(PyExc_RuntimeError,
+                         "cannot shut down V8 while %zu serialized WebAssembly module(s) are alive",
+                         compiled_modules);
         return false;
     }
     if (!default_isolate_->shutdown(report_error))

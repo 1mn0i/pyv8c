@@ -240,7 +240,7 @@ property_getter_handler_impl(PyObject* key,
 Intercepted
 property_setter_handler_impl(PyObject* key,
                         Local<Value> js_value,
-                        const PropertyCallbackInfo<void>& info,
+                        const PropertyCallbackInfo<v8_compat::PropertySetterResult>& info,
                         Local<Context> context,
                         PyObject* self,
                         HandlerId which)
@@ -269,8 +269,10 @@ property_setter_handler_impl(PyObject* key,
     Py_DECREF((PyObject*)key);
     Py_DECREF((PyObject*)value);
     if (result == NULL) {
-        if (consume_legacy_property_error(info.ShouldThrowOnError()))
+        if (consume_legacy_property_error(info.ShouldThrowOnError())) {
+            v8_compat::setter_rejected(info);
             return Intercepted::kYes;
+        }
         js_throw_py();
         return Intercepted::kNo;
     }
@@ -376,7 +378,7 @@ Intercepted property_getter_handler(PyObject* key, const PropertyCallbackInfo<Va
     return result;
 }
 
-Intercepted property_setter_handler(PyObject* key, Local<Value> value, const PropertyCallbackInfo<void>& info,
+Intercepted property_setter_handler(PyObject* key, Local<Value> value, const PropertyCallbackInfo<v8_compat::PropertySetterResult>& info,
                                     Local<Context> context, PyObject* self, HandlerId which,
                                     bool report_declined) {
     auto* owner = context_from_v8(context);

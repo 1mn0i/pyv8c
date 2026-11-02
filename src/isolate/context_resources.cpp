@@ -437,6 +437,17 @@ PyObject* IsolateState::python_object(Local<Object> object) {
     return owner->py_object;
 }
 
+PyObject* IsolateState::python_object_if_owned(Local<Object> object) {
+    // An arbitrary V8 object may have internal fields of unrelated types.
+    // Compare known handles before reading one as our PythonOwner pointer.
+    for (auto* owner : python_owners_) {
+        if (!owner->object.IsEmpty() && owner->object.Get(isolate_) == object &&
+            context_is_active(owner->context))
+            return owner->py_object;
+    }
+    return nullptr;
+}
+
 void IsolateState::restore_python_exception(Local<Object> object) {
     auto* value = python_object(object);
     if (!value) return;

@@ -57,7 +57,7 @@ v8::Intercepted properties_named_descriptor(v8::Local<v8::Name>, const v8::Prope
 v8::Intercepted properties_named_definer(v8::Local<v8::Name>, const v8::PropertyDescriptor&, const v8::PropertyCallbackInfo<v8::Boolean>&);
 
 v8::Intercepted named_getter(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info);
-v8::Intercepted named_setter(v8::Local<v8::Name> name, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void>& info);
+v8::Intercepted named_setter(v8::Local<v8::Name> name, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<v8_compat::PropertySetterResult>& info);
 v8::Intercepted named_query(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Integer>& info);
 v8::Intercepted named_deleter(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Boolean>& info);
 void named_enumerator(const v8::PropertyCallbackInfo<v8::Array>& info);
@@ -65,7 +65,7 @@ v8::Intercepted named_definer(v8::Local<v8::Name> name, const v8::PropertyDescri
 v8::Intercepted named_descriptor(v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info);
 
 v8::Intercepted indexed_getter(uint32_t index, const v8::PropertyCallbackInfo<v8::Value>& info);
-v8::Intercepted indexed_setter(uint32_t index, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void>& info);
+v8::Intercepted indexed_setter(uint32_t index, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<v8_compat::PropertySetterResult>& info);
 v8::Intercepted indexed_query(uint32_t index, const v8::PropertyCallbackInfo<v8::Integer>& info);
 v8::Intercepted indexed_deleter(uint32_t index, const v8::PropertyCallbackInfo<v8::Boolean>& info);
 void indexed_enumerator(const v8::PropertyCallbackInfo<v8::Array>& info);
@@ -196,7 +196,7 @@ v8::Intercepted property_getter_handler(
 v8::Intercepted property_setter_handler(
     PyObject* key,
     v8::Local<v8::Value> js_value,
-    const v8::PropertyCallbackInfo<void>& info,
+    const v8::PropertyCallbackInfo<v8_compat::PropertySetterResult>& info,
     v8::Local<v8::Context> context,
     PyObject* self,
     HandlerId which,

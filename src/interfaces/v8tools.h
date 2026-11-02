@@ -102,6 +102,17 @@ namespace bindings {
         PyObject* configs,
         PyObject* callback_data_owner, context_c* owner, bool shared = false);
 
+    //: The context-dependent phase: same members, installed on an already built
+    //: global object instead of on its template.
+    bool InstallAttributes(v8::Isolate* isolate,
+        const char* world,
+        v8::Local<v8::Context> context,
+        v8::Local<v8::Object> instance_object,
+        v8::Local<v8::Signature> signature,
+        PyObject* cls,
+        PyObject* configs,
+        PyObject* callback_data_owner, context_c* owner, bool shared = false);
+
     void InstallOperation(v8::Isolate* isolate,
         const char* world,
         v8::Local<v8::FunctionTemplate> interface_template,
@@ -111,6 +122,15 @@ namespace bindings {
     bool InstallOperations(v8::Isolate* isolate,
         const char* world,
         v8::Local<v8::FunctionTemplate> interface_template,
+        v8::Local<v8::Signature> signature,
+        PyObject* cls,
+        PyObject* configs,
+        PyObject* callback_data_owner, context_c* owner, bool shared = false);
+
+    bool InstallOperations(v8::Isolate* isolate,
+        const char* world,
+        v8::Local<v8::Context> context,
+        v8::Local<v8::Object> instance_object,
         v8::Local<v8::Signature> signature,
         PyObject* cls,
         PyObject* configs,

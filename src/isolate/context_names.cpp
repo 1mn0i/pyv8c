@@ -372,6 +372,107 @@ context_install(context_c *self, PyObject *names)
     return PyLong_FromSsize_t(declared);
 }
 
+//: Install the global interface's context-dependent members on the built global.
+//: This is Blink's conditional phase: it runs after the host globals (``chrome``)
+//: so those stay ahead of ``caches`` and the rest of the Window tail.
+PyObject *
+context_install_late(context_c *self, PyObject *ignored)
+{
+    (void)ignored;
+    py_class* klass = self->global_template == nullptr
+        ? nullptr : (py_class*)self->global_template;
+    if (klass == nullptr || klass->idl_spec == nullptr)
+        return PyLong_FromLong(0);
+    //: Assembling the realm is host work, like installing a global value.
+    trace::TraceSilence silence(self);
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Context> context = self->js_context.Get(isolate);
+    Local<Object> global = v8_compat::global_template_object(context);
+    IdlSpec* spec = (IdlSpec*)klass->idl_spec;
+    const char* world = klass->cls_name == nullptr
+        ? "" : PyUnicode_AsUTF8_abi3(klass->cls_name);
+    if (world == nullptr) return nullptr;
+    Local<Signature> signature;
+    Py_ssize_t installed = 0;
+    if (spec->late_attributes != nullptr) {
+        if (!bindings::InstallAttributes(isolate, world, context, global, signature,
+                                         klass->cls, spec->late_attributes,
+                                         klass->operation_callback_data, self, false))
+            return nullptr;
+        installed += PyTuple_Size(spec->late_attributes);
+    }
+    return PyLong_FromSsize_t(installed);
+}
+
+//: The conditional operations and the template-late attributes follow the
+//: conditional constructors, which the realm installs between the two calls.
+PyObject *
+context_install_late_methods(context_c *self, PyObject *ignored)
+{
+    (void)ignored;
+    py_class* klass = self->global_template == nullptr
+        ? nullptr : (py_class*)self->global_template;
+    if (klass == nullptr || klass->idl_spec == nullptr)
+        return PyLong_FromLong(0);
+    trace::TraceSilence silence(self);
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Context> context = self->js_context.Get(isolate);
+    Local<Object> global = v8_compat::global_template_object(context);
+    IdlSpec* spec = (IdlSpec*)klass->idl_spec;
+    const char* world = klass->cls_name == nullptr
+        ? "" : PyUnicode_AsUTF8_abi3(klass->cls_name);
+    if (world == nullptr) return nullptr;
+    Local<Signature> signature;
+    Py_ssize_t installed = 0;
+    if (spec->late_methods != nullptr) {
+        if (!bindings::InstallOperations(isolate, world, context, global, signature,
+                                         klass->cls, spec->late_methods,
+                                         klass->operation_callback_data, self, false))
+            return nullptr;
+        installed += PyTuple_Size(spec->late_methods);
+    }
+    if (spec->late_template_attributes != nullptr) {
+        if (!bindings::InstallAttributes(isolate, world, context, global, signature,
+                                         klass->cls, spec->late_template_attributes,
+                                         klass->operation_callback_data, self, false))
+            return nullptr;
+        installed += PyTuple_Size(spec->late_template_attributes);
+    }
+    return PyLong_FromSsize_t(installed);
+}
+
+PyObject *
+context_install_tail(context_c *self, PyObject *ignored)
+{
+    (void)ignored;
+    py_class* klass = self->global_template == nullptr
+        ? nullptr : (py_class*)self->global_template;
+    if (klass == nullptr || klass->idl_spec == nullptr)
+        return PyLong_FromLong(0);
+    IdlSpec* spec = (IdlSpec*)klass->idl_spec;
+    if (spec->tail_methods == nullptr || PyTuple_Size(spec->tail_methods) == 0)
+        return PyLong_FromLong(0);
+    trace::TraceSilence silence(self);
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Context> context = self->js_context.Get(isolate);
+    Local<Object> global = v8_compat::global_template_object(context);
+    const char* world = klass->cls_name == nullptr
+        ? "" : PyUnicode_AsUTF8_abi3(klass->cls_name);
+    if (world == nullptr) return nullptr;
+    Local<Signature> signature;
+    if (!bindings::InstallOperations(isolate, world, context, global, signature,
+                                     klass->cls, spec->tail_methods,
+                                     klass->operation_callback_data, self, false))
+        return nullptr;
+    return PyLong_FromSsize_t(PyTuple_Size(spec->tail_methods));
+}
+
 PyObject *
 context_hide_global(context_c *self, PyObject *name)
 {

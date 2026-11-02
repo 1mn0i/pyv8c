@@ -5,6 +5,7 @@
 #include "context.h"
 #include "isolate.h"
 #include "microtask_queue.h"
+#include "foreground_notification.h"
 
 using namespace v8;
 
@@ -16,14 +17,56 @@ static PyObject* isolate_gc(isolate_c* self, PyObject* args);
 static PyObject* isolate_get_closed(isolate_c* self, void* closure);
 static PyObject* isolate_get_external_memory(isolate_c* self, void* closure);
 static PyObject* isolate_get_live_v8_handles(isolate_c* self, void* closure);
+static PyObject* isolate_foreground_version(isolate_c* self, PyObject*);
+static PyObject* isolate_foreground_wait(isolate_c* self, PyObject*);
+static PyObject* isolate_foreground_deadline(isolate_c* self, PyObject*);
+static PyObject* isolate_set_wasm_response_handler(isolate_c* self, PyObject*);
 
 static PyMethodDef isolate_methods[] = {
     {"close", (PyCFunction)PythonBoundary<isolate_close>::call, METH_NOARGS, "close this V8 isolate"},
     {"context", (PyCFunction)PythonBoundary<isolate_context>::call, METH_VARARGS | METH_KEYWORDS,
      "create a Context owned by this isolate"},
     {"gc", (PyCFunction)PythonBoundary<isolate_gc>::call, METH_NOARGS, "request a full V8 garbage collection"},
+    {"_foreground_version", (PyCFunction)PythonBoundary<isolate_foreground_version>::call, METH_NOARGS, nullptr},
+    {"_foreground_wait", (PyCFunction)PythonBoundary<isolate_foreground_wait>::call, METH_O, nullptr},
+    {"_foreground_deadline", (PyCFunction)PythonBoundary<isolate_foreground_deadline>::call, METH_NOARGS, nullptr},
+    {"_set_wasm_response_handler", (PyCFunction)PythonBoundary<isolate_set_wasm_response_handler>::call, METH_O, nullptr},
     {nullptr},
 };
+
+static PyObject* isolate_set_wasm_response_handler(isolate_c* self, PyObject* handler) {
+    auto* state = isolate_state_from_python((PyObject*)self);
+    if (!state || !state->set_wasm_response_handler(handler)) return nullptr;
+    Py_RETURN_NONE;
+}
+
+static PyObject* isolate_foreground_version(isolate_c* self, PyObject*) {
+    if (!isolate_state_from_python((PyObject*)self)) return nullptr;
+    auto notifications = runtime_manager.foreground_notifications();
+    if (!notifications) { PyErr_SetString(PyExc_RuntimeError, "V8 platform is closed"); return nullptr; }
+    return PyLong_FromUnsignedLongLong(notifications->version());
+}
+
+static PyObject* isolate_foreground_wait(isolate_c* self, PyObject* arg) {
+    if (!isolate_state_from_python((PyObject*)self)) return nullptr;
+    auto version = PyLong_AsUnsignedLongLong(arg);
+    if (PyErr_Occurred()) return nullptr;
+    auto notifications = runtime_manager.foreground_notifications();
+    if (!notifications) { PyErr_SetString(PyExc_RuntimeError, "V8 platform is closed"); return nullptr; }
+    auto next = without_gil([&] { return notifications->wait(version); });
+    return PyLong_FromUnsignedLongLong(next);
+}
+
+static PyObject* isolate_foreground_deadline(isolate_c* self, PyObject*) {
+    auto* state = isolate_state_from_python((PyObject*)self);
+    if (!state) return nullptr;
+    auto notifications = runtime_manager.foreground_notifications();
+    if (!notifications) { PyErr_SetString(PyExc_RuntimeError, "V8 platform is closed"); return nullptr; }
+    auto token = runtime_manager.foreground_token(state->isolate());
+    ForegroundNotifications::Clock::duration remaining;
+    if (!notifications->next_deadline(token, remaining)) Py_RETURN_NONE;
+    return PyFloat_FromDouble(std::chrono::duration<double>(remaining).count());
+}
 
 static PyGetSetDef isolate_getset[] = {
     {(char*)"closed", (getter)PythonBoundary<isolate_get_closed>::call, nullptr, nullptr, nullptr},

@@ -3,7 +3,7 @@
 The bridge requires the CPython 3.12 Stable ABI. A wheel built on 3.12 is
 intended for regular GIL-enabled CPython 3.12, 3.13 and 3.14 on the same OS
 and architecture. Free-threaded Python and subinterpreters are not supported.
-V8 remains 15.2.20.1.
+The selected V8 version is 15.4.68.
 
 ## Values
 

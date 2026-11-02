@@ -67,6 +67,8 @@ public:
     bool is_active() const { return isolate_ != nullptr; }
     bool is_disposed() const { return disposed_; }
     v8::Isolate* isolate() const { return isolate_; }
+    bool set_wasm_response_handler(PyObject* handler);
+    PyObject* wasm_response_handler() const { return wasm_response_handler_; }
 
     void retain_v8_handle();
     void release_v8_handle();
@@ -100,6 +102,7 @@ public:
     // null with no error set when the pair is not known here.
     PyObject* cached_js_wrapper(context_c* context, PyObject* py_object);
     static PyObject* python_object(v8::Local<v8::Object> object);
+    PyObject* python_object_if_owned(v8::Local<v8::Object> object);
     static void restore_python_exception(v8::Local<v8::Object> object);
     int traverse_context_owners(context_c* context, visitproc visit, void* arg);
     void release_context_owners(context_c* context);
@@ -156,6 +159,7 @@ private:
     void clear_python_owners();
 
     std::unique_ptr<v8::ArrayBuffer::Allocator> allocator_;
+    PyObject* wasm_response_handler_ = nullptr;
     std::unique_ptr<V8StringCache> v8_strings_;
     std::unique_ptr<Watchdog> watchdog_;
     v8::Isolate* isolate_;

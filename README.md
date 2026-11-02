@@ -10,8 +10,8 @@ pyv8 是一个基于 Google V8 的 CPython C++ 扩展，用于在 Python 中执�
 pyv8 更关注 Chromium-like 构造器、原型链、属性描述符、interceptor、cross-origin
 检查和调用追踪（trace），为批量模拟浏览器内置对象提供底层 API。
 
-当前项目版本为 **2.1.2**，默认验证的 V8 版本记录在 `V8_VERSION`，当前为
-**15.2.20.1**。
+当前项目版本为 **2.1.2**，默认 V8 版本记录在 `V8_VERSION`，当前为
+**15.4.68**，对应 Chromium 154.0.8030.0 使用的 V8 修订。
 
 ## 核心能力
 
@@ -34,15 +34,21 @@ pyv8 更关注 Chromium-like 构造器、原型链、属性描述符、intercept
 | --- | --- |
 | CPython | 3.12 至 3.14 |
 | Python ABI | `cp312-abi3` |
-| 默认 V8 | `15.2.20.1` |
+| 默认 V8 | `15.4.68`（Windows 构建及相关回归已验证） |
+| Temporal | 随 V8 构建启用（`v8_enable_temporal_support=true`） |
 | Windows | 主要开发和完整测试平台 |
 | Linux/macOS | 包含构建分支，需要在目标平台编译并验证 V8 产物 |
 | 多 Isolate | 支持，JS 句柄不能跨 Isolate 使用 |
 | subinterpreter | 不支持 |
 | free-threaded CPython | 不支持 |
 
-V8 的 C++ API 会随版本变化。构建器可以下载任意正式数字 tag，但只有
-`V8_VERSION` 中的版本经过当前源码验证。升级 V8 后若出现编译错误，需要同步适配绑定代码。
+V8 的 C++ API 会随版本变化。构建器可以下载正式数字 tag，但升级后需要重新验证
+构建和绑定代码；`15.4.68` 已完成 Windows 构建和相关回归，其他平台仍需验证。若存在本地
+`.pyv8-version`，它会覆盖 `V8_VERSION` 中的默认值。
+
+Windows 上启用 Temporal 时，扩展用 V8 自带的 `clang-cl`/`lld-link` 构建，并按
+`mksnapshot.ninja` 链接 `temporal_capi`/`temporal_rs` 的 Rust rlib；MSVC `link.exe`
+无法读取这些 LLVM bitcode。
 
 ## 快速开始
 
@@ -163,10 +169,10 @@ python setup.py build_v8 --select --proxy=http://127.0.0.1:7890
 python312 -m build --wheel
 ```
 
-Windows 构建 V8 `15.2.20.1` 时，建议显式设置工具链路径：
+Windows 构建 V8 `15.4.68` 时，可以显式设置工具链路径：
 
 ```powershell
-$env:PYV8_V8_VERSION = "15.2.20.1"
+$env:PYV8_V8_VERSION = "15.4.68"
 $env:PYV8_VS_HOME = "D:\soft\Microsoft\vs2026"
 $env:PYV8_VS_VERSION = "2026"
 $env:PYV8_WINDOWS_SDK = "D:\Windows Kits\10"

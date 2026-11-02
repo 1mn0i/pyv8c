@@ -11,6 +11,16 @@
 
 namespace v8_compat {
 
+#if V8_MAJOR_VERSION > 15 || (V8_MAJOR_VERSION == 15 && V8_MINOR_VERSION >= 4)
+using PropertySetterResult = v8::Boolean;
+inline void setter_rejected(const v8::PropertyCallbackInfo<PropertySetterResult>& info) {
+    info.GetReturnValue().Set(false);
+}
+#else
+using PropertySetterResult = void;
+inline void setter_rejected(const v8::PropertyCallbackInfo<PropertySetterResult>&) {}
+#endif
+
 inline v8::Local<v8::External> external_new(v8::Isolate* isolate, void* value)
 {
 #if V8_MAJOR_VERSION >= 15

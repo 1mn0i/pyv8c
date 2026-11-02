@@ -10,6 +10,8 @@
 #include "context.h"
 #include "pyclass.h"
 #include "v8_compat.h"
+#include "runtime.h"
+#include "wasm_streaming.h"
 
 #include <cassert>
 #include <new>
@@ -31,6 +33,7 @@ IsolateState::IsolateState()
 
 IsolateState::~IsolateState()
 {
+    Py_CLEAR(wasm_response_handler_);
     clear_aborted_failure();
     // Avoid V8 teardown during arbitrary extension-module unloading.
     if (isolate_ != nullptr)
@@ -152,6 +155,7 @@ IsolateState::initialize()
     }
 
     isolate_->SetData(0, this);
+    isolate_->SetWasmStreamingCallback(CallbackBoundary<wasm_streaming_callback>::call);
     isolate_->AddNearHeapLimitCallback(&IsolateState::near_heap_limit_callback, this);
     // What ``Error.isError`` hears about this binding's API objects; Blink answers the same
     // for its DOMExceptions (v8_initializer.cc, IsDOMExceptionWrapper).
@@ -170,6 +174,7 @@ IsolateState::initialize()
     }
     catch (const std::bad_alloc&)
     {
+        runtime_manager.notify_isolate_shutdown(isolate_);
         isolate_->Dispose();
         isolate_ = nullptr;
         allocator_.reset();
@@ -186,6 +191,7 @@ IsolateState::initialize()
     if (!strings_initialized)
     {
         v8_strings_.reset();
+        runtime_manager.notify_isolate_shutdown(isolate_);
         isolate_->Dispose();
         isolate_ = nullptr;
         allocator_.reset();
@@ -293,6 +299,8 @@ IsolateState::shutdown(bool report_error)
     if (watchdog_ != nullptr)
         watchdog_->shutdown();
 
+    Py_CLEAR(wasm_response_handler_);
+
     v8_strings_.reset();
     // The accounter's invariant: what it reported goes back to zero before disposal.
     if (external_memory_bytes_ != 0)
@@ -300,9 +308,23 @@ IsolateState::shutdown(bool report_error)
     external_memory_bytes_ = 0;
     isolate_->RemoveNearHeapLimitCallback(&IsolateState::near_heap_limit_callback, 0);
     isolate_->RemoveGCEpilogueCallback(&IsolateState::collected_heap_callback, this);
+    runtime_manager.notify_isolate_shutdown(isolate_);
     isolate_->Dispose();
     isolate_ = nullptr;
     allocator_.reset();
     disposed_ = true;
+    return true;
+}
+
+bool IsolateState::set_wasm_response_handler(PyObject* handler)
+{
+    if (handler != Py_None && !PyCallable_Check(handler)) {
+        PyErr_SetString(PyExc_TypeError, "WASM response handler must be callable or None");
+        return false;
+    }
+    if (handler == Py_None) handler = nullptr;
+    Py_XINCREF(handler);
+    Py_XDECREF(wasm_response_handler_);
+    wasm_response_handler_ = handler;
     return true;
 }

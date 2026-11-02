@@ -10,6 +10,58 @@ def child(program):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_serialized_wasm_module_keeps_runtime_alive_until_released():
+    child("""
+import gc
+import pyv8
+isolate = pyv8.Isolate()
+context = isolate.context(object())
+serializer = pyv8.Serializer(context)
+module = context.exec_js('new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0]))')
+modules = []
+wire = serializer.serialize(module, wasm_modules=modules)
+assert len(modules) == 1
+del module, serializer
+context.close()
+isolate.close()
+try:
+    pyv8.shutdown_v8()
+except RuntimeError as error:
+    assert 'serialized WebAssembly module' in str(error)
+else:
+    raise AssertionError('live compiled module must keep the V8 runtime alive')
+modules.clear()
+gc.collect()
+assert pyv8.shutdown_v8() is True
+""")
+
+
+def test_wasm_module_survives_source_isolate_close():
+    child("""
+import pyv8
+source_isolate = pyv8.Isolate()
+source = source_isolate.context(object())
+module = source.exec_js('new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0]))')
+serializer = pyv8.Serializer(source)
+modules = []
+wire = serializer.serialize(module, wasm_modules=modules)
+del module, serializer
+source.close()
+source_isolate.close()
+target_isolate = pyv8.Isolate()
+target = target_isolate.context(object())
+serializer = pyv8.Serializer(target)
+clone = serializer.deserialize(wire, wasm_modules=modules)
+target.expose(clone=clone)
+assert target.exec_js('clone instanceof WebAssembly.Module && new WebAssembly.Instance(clone) instanceof WebAssembly.Instance')
+del clone, serializer
+target.close()
+target_isolate.close()
+modules.clear()
+assert pyv8.shutdown_v8() is True
+""")
+
+
 def test_escaped_streams_reject_every_operation_after_the_callback():
     child("""
 import pyv8

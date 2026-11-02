@@ -49,7 +49,11 @@ libraries = ["v8_monolith"]
 if os.name == 'nt':
     extra_compile_args = ["/O2", "/GL", "/MT", "/EHsc", "/Gy", "/Zi", "/std:c++20", "/Zc:__cplusplus"]
     extra_link_args = []
-    libraries.extend(['Dbghelp', 'Shlwapi', 'Winmm', 'Advapi32'])
+    libraries.extend(['Dbghelp', 'Shlwapi', 'Winmm', 'Advapi32',
+                      #: Rust std's Windows imports, linked in for Temporal.
+                      'Ntdll', 'Ws2_32', 'Userenv', 'Bcrypt', 'Crypt32',
+                      'Secur32', 'Iphlpapi', 'Netapi32', 'User32', 'Gdi32',
+                      'PowrProf', 'Setupapi', 'Cfgmgr32', 'Ole32', 'OleAut32'])
 else:
     extra_compile_args = ['-std=c++20', '-fpermissive', '-Wunused-variable']
     extra_link_args = []
@@ -137,6 +141,35 @@ class PyV8BuildExt(build_ext):
             extension.library_dirs = list(extension.library_dirs or []) + [
                 str(config.library_dir)
             ]
+            #: Temporal's implementation lives in the Rust temporal_capi/temporal_rs
+            #: rlibs; lld-link consumes their LLVM bitcode directly.  V8's own
+            #: mksnapshot link line states the exact set and order, including the
+            #: allocator shim rlibs that no module-level scan would find.
+            mksnapshot = config.output_dir / "obj" / "mksnapshot.ninja"
+            rust_libraries = []
+            extra_builtins = []
+            if mksnapshot.is_file():
+                text = mksnapshot.read_text(encoding="utf-8", errors="replace")
+                line = next(line for line in text.splitlines()
+                            if line.startswith("build ./mksnapshot.exe"))
+                for token in line.split():
+                    if token.endswith(".rlib"):
+                        path = config.output_dir / token
+                        if path.is_file():
+                            rust_libraries.append(path)
+                    elif token.endswith(".lib") and "clang_rt.builtins" in token:
+                        path = (config.output_dir / token).resolve()
+                        if path.is_file():
+                            extra_builtins.append(path)
+            seen = set()
+            rust_libraries = [path for path in rust_libraries
+                              if not (str(path) in seen or seen.add(str(path)))]
+            extension.extra_link_args = (
+                [str(path) for path in rust_libraries]
+                + [str(path) for path in extra_builtins]
+                + list(extension.extra_link_args or [])
+            )
+
             extension.define_macros = [
                 macro
                 for macro in (extension.define_macros or [])
@@ -233,6 +266,30 @@ class PyV8BuildExt(build_ext):
 
     def build_extensions(self):
         # build_ext has selected/customized the actual compiler by this point.
+        if hasattr(self.compiler, "initialize") and not getattr(self.compiler, "initialized", False):
+            self.compiler.initialize()
+        v8_bin = (self._v8_config.v8_home / "third_party" / "llvm-build"
+                  / "Release+Asserts" / "bin")
+        clang_cl = v8_bin / "clang-cl.exe"
+        lld_link = v8_bin / "lld-link.exe"
+        if clang_cl.is_file() and lld_link.is_file():
+            #: Temporal's Rust rlibs are LLVM bitcode: link.exe cannot read them,
+            #: lld-link can.  clang-cl's /GL keeps the extension objects in the
+            #: same bitcode form, so one toolchain links the whole extension.
+            self.compiler.cc = str(clang_cl)
+            self.compiler.compiler = [str(clang_cl)]
+            self.compiler.compiler_so = [str(clang_cl)]
+            self.compiler.compiler_cxx = [str(clang_cl)]
+            self.compiler.linker = str(lld_link)
+            self.compiler.linker_so = [str(lld_link)]
+            #: lld-link has no manifest step and treats /LTCG itself.
+            ldflags = getattr(self.compiler, "_ldflags", None)
+            if isinstance(ldflags, dict):
+                for key, flags in list(ldflags.items()):
+                    ldflags[key] = [
+                        flag for flag in flags
+                        if not flag.upper().startswith(("/MANIFEST", "/LTCG"))
+                    ]
         # MSVC still needs initialization to resolve its automatically chosen tools.
         self._fingerprint_file, self._extension_fingerprint = self._require_rebuild_for_changed_v8(self._v8_config)
         super().build_extensions()
