@@ -4,7 +4,6 @@ A script-constructed DataTransfer has no active drag operation. Its data store i
 read/write, while dropEffect and effectAllowed stay at their initial ``none``.
 """
 
-import json
 import pyv8
 
 from ...features.runtime import FeatureImplementation
@@ -99,8 +98,7 @@ class DataTransfer:
             types = [record['type'] for record in self._records if record['kind'] == 'string']
             if any(record['kind'] == 'file' for record in self._records):
                 types.append('Files')
-            self._types = pyv8.current_context().exec_js(
-                'Object.freeze(' + json.dumps(types) + ')')
+            self._types = pyv8.current_context().freeze(types)
         return self._types
     def get_files(self):
         from ..fileapi.file_list import FileList

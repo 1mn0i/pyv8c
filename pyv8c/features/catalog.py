@@ -13,7 +13,7 @@ CORE_INTERFACES = (
     "DeviceOrientationEvent",
     "Node", "DocumentFragment", "ShadowRoot", "Attr", "CharacterData", "Text", "Comment", "DocumentType", "Document",
     "AnimationTimeline", "DocumentTimeline", "FragmentDirective",
-    "CSSStyleDeclaration", "Element", "HTMLElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLLinkElement", "HTMLMetaElement", "CanvasRenderingContext2D",
+    "CSSStyleDeclaration", "Element", "HTMLElement", "HTMLIFrameElement", "HTMLImageElement", "HTMLLinkElement", "HTMLMetaElement", "CanvasRenderingContext2D", "ImageBitmapRenderingContext", "GPUCanvasContext",
     "OffscreenCanvas", "OffscreenCanvasRenderingContext2D",
     "WebGLRenderingContext", "WebGLObject", "WebGLBuffer", "WebGLFramebuffer", "WebGLProgram",
     "WebGLRenderbuffer", "WebGLShader", "WebGLTexture", "WebGLUniformLocation", "WebGLActiveInfo",

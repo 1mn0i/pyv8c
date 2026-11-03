@@ -481,7 +481,7 @@ class HTMLInputElement(HTMLElement):
             return []
         # Chrome exposes a fresh frozen array for each read, including when no
         # directory has been selected.
-        return self._services.realm_services.evaluate_script("Object.freeze([])")
+        return self._services.realm_services.v8_context.freeze([])
 
     def get_willValidate(self):
         if self.get_type() in _BARRED_INPUT_TYPES: return False

@@ -107,15 +107,35 @@ def accept_language(languages) -> str:
     return ",".join(parts)
 
 
-def client_hint_headers(client_hints) -> dict:
-    """The three low-entropy hints Chrome sends by default, as headers."""
-    return {
+def client_hint_headers(client_hints, accepted=()) -> dict:
+    """The three low-entropy hints Chrome sends by default, plus the ones a server asked for.
+
+    Chrome adds a high-entropy hint to later requests to an origin only after that
+    origin names it in ``Accept-CH``; ``accepted`` carries the names seen so far.
+    """
+    headers = {
         "sec-ch-ua": ", ".join(
             f'"{brand.brand}";v="{brand.version}"' for brand in client_hints.brands
         ),
         "sec-ch-ua-mobile": "?1" if client_hints.mobile else "?0",
         "sec-ch-ua-platform": f'"{client_hints.platform}"',
     }
+    wanted = {str(name).lower() for name in accepted}
+    full = getattr(client_hints, "full_version_list", None) or ()
+    if "sec-ch-ua-full-version-list" in wanted and full:
+        headers["sec-ch-ua-full-version-list"] = ", ".join(
+            f'"{brand.brand}";v="{brand.version}"' for brand in full
+        )
+    for name, attribute in (("sec-ch-ua-arch", "architecture"),
+                            ("sec-ch-ua-bitness", "bitness"),
+                            ("sec-ch-ua-model", "model"),
+                            ("sec-ch-ua-platform-version", "platform_version")):
+        value = getattr(client_hints, attribute, None)
+        if name in wanted and value is not None:
+            headers[name] = f'"{value}"'
+    if "sec-ch-ua-wow64" in wanted:
+        headers["sec-ch-ua-wow64"] = "?1" if getattr(client_hints, "wow64", False) else "?0"
+    return headers
 
 
 def fetch_mode(destination, request_mode=None) -> str:
@@ -191,7 +211,7 @@ def include_origin(url, current_url, mode, method, current_origin=None) -> bool:
 def browser_headers(environment, *, destination="empty", mode=None, method="GET",
                     url="", current_url="", browser_initiated=False,
                     user_activated=False, content_type=None, http_version=1,
-                    extra=None, current_origin=None) -> dict:
+                    extra=None, current_origin=None, accepted_hints=()) -> dict:
     """The headers Chromium would send for one request, in Chromium's order.
 
     ``browser_initiated`` marks a browser-started navigation, which has no
@@ -201,7 +221,7 @@ def browser_headers(environment, *, destination="empty", mode=None, method="GET"
     ``extra`` replaces defaults and is spliced where Chrome puts a script-set
     header.
     """
-    hints = client_hint_headers(environment.client_hints)
+    hints = client_hint_headers(environment.client_hints, accepted_hints)
     referer = "" if browser_initiated else referer_for(url, current_url)
     origin = origin_string(current_url) if current_origin is None else current_origin
     site = "none" if browser_initiated else site_relation(url, origin if current_origin is not None else current_url)

@@ -178,7 +178,7 @@ def _fetch_failure(error):
 
     if is_host_failure(error) or (isinstance(error, DOMException)
                                   and error.get_name() == "NetworkError"):
-        from loguru import logger
+        from ...foundation.logging import logger
 
         # The reason stays in the log; the page hears only Chrome's wording.
         logger.debug("fetch failed: {}", error)

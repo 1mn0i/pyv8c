@@ -14,8 +14,4 @@ def bootstrap_runtime():
     return runtime
 
 
-def validate_feature_catalog():
-    """Development-time full validation without a Browser constructor flag."""
-    runtime = bootstrap_runtime()
-    runtime.validate()
-    return runtime
+

@@ -154,8 +154,8 @@ def test_iframe_border_shorthand_and_frame_pointer_screen_coordinates():
             ['click', 65, 32, 165, 112],
         ]
         assert page.evaluate('''(() => {
-            const r = document.querySelector('iframe').getBoundingClientRect();
-            return [r.width, r.height];
+            const frame = document.querySelector('iframe');
+            return [frame.offsetWidth, frame.offsetHeight];
         })()''') == [300, 65]
     finally:
         browser.close()

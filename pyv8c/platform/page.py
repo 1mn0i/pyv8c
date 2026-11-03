@@ -40,6 +40,14 @@ if TYPE_CHECKING:
 EMPTY_DOCUMENT = "<!DOCTYPE html><html><head></head><body></body></html>"
 
 
+def _deadline(timeout):
+    return None if timeout is None else time.perf_counter() + max(0.0, float(timeout))
+
+
+def _remaining(deadline):
+    return None if deadline is None else max(0.0, deadline - time.perf_counter())
+
+
 def _snapshot_data(value, seen):
     """Detach values before returning Python data across the owner boundary."""
     if type(value).__name__ in ('TypedArray', 'JSTypeArray'):
@@ -453,11 +461,10 @@ class Page:
     def wait_for_load_state(self, state='load', timeout=30):
         if self.executor.is_owner_thread():
             raise HostStateError('cannot synchronously wait on the owner thread')
-        deadline = None if timeout is None else time.perf_counter() + max(0.0, float(timeout))
-        remaining = lambda: None if deadline is None else max(0.0, deadline - time.perf_counter())
-        future = self.executor.call(self.lifecycle.wait_for_state, state, timeout=remaining())
+        deadline = _deadline(timeout)
+        future = self.executor.call(self.lifecycle.wait_for_state, state, timeout=_remaining(deadline))
         try:
-            future.result(timeout=remaining())
+            future.result(timeout=_remaining(deadline))
         except FutureTimeoutError:
             future.cancel()
             raise TimeoutError(f'document did not reach {state} within {timeout}s') from None
@@ -466,9 +473,9 @@ class Page:
         """Wait for a read-only JavaScript condition on the current document."""
         if self.executor.is_owner_thread():
             raise HostStateError('cannot synchronously wait on the owner thread')
-        deadline = None if timeout is None else time.perf_counter() + max(0.0, float(timeout))
+        deadline = _deadline(timeout)
         while True:
-            remaining = None if deadline is None else max(0.0, deadline - time.perf_counter())
+            remaining = _remaining(deadline)
             if self.evaluate(f'Boolean(({expression}))', timeout=remaining):
                 return
             if deadline is not None and time.perf_counter() >= deadline:
@@ -529,20 +536,8 @@ class Page:
         if self.closed:
             raise HostStateError('Page is closed')
         deadline = time.perf_counter() + max(0.0, float(timeout))
-        def idle():
-            group, agent = self.execution_group, self.realm.agent
-            if agent.checkpointing or agent in group._dirty:
-                return False
-            operation = group._operation
-            if operation is not None and operation[0].agent is agent:
-                return False
-            lanes = {lane for lane in tuple(group.members) if lane.agent is agent and not lane.closed}
-            return (not group.executor.has_pending_for(lanes)
-                    and not group.foreground.has_runnable_tasks()
-                    and not any(lane.tasks.has_runnable_tasks() for lane in lanes)
-                    and not group.rendering.has_runnable_tasks(lanes))
         while True:
-            if idle():
+            if self.execution_group.is_idle(self.realm.agent):
                 return True
             if not timeout or time.perf_counter() >= deadline:
                 return False

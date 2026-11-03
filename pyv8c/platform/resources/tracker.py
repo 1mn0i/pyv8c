@@ -9,7 +9,6 @@ class DocumentResource:
     node: object
     kind: str
     handle: LoadHandle
-    transfer_finished: bool = False
     child_services: object = None
     child_generation: int | None = None
 

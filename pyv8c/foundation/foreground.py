@@ -4,6 +4,9 @@ One daemon waits on the native process-wide condition; posting never calls
 Python. Source methods other than wakeup run on the isolate owner thread.
 """
 import threading
+import time
+
+from .logging import logger
 
 
 class _Notifications:
@@ -39,11 +42,21 @@ class _Notifications:
             except RuntimeError:
                 # The selected isolate can close while the wait is being
                 # entered. Another live isolate may still share the hub.
+                time.sleep(0.001)
+                continue
+            except Exception:
+                # A broken notification must not take the whole hub down:
+                # every executor registered here would stop waking.
+                logger.exception('foreground notification wait failed')
+                time.sleep(0.01)
                 continue
             with self.lock:
                 sources = tuple(self.sources)
             for source in sources:
-                source.notify()
+                try:
+                    source.notify()
+                except Exception:
+                    logger.exception('foreground notification delivery failed')
 
 
 _notifications = _Notifications()
@@ -71,9 +84,14 @@ class ForegroundSource:
             wakeup()
 
     def next_deadline(self):
-        if not self.enabled():
+        if (not self.enabled() or getattr(self.isolate, 'closed', False)):
             return None
-        deadline = self.isolate._foreground_deadline()
+        try:
+            deadline = self.isolate._foreground_deadline()
+        except RuntimeError:
+            # The isolate can close between the enabled check and the native
+            # query; an idle source is the safe answer for that race.
+            return None
         return None if deadline is None else max(0.0, deadline)
 
     def has_runnable_tasks(self):

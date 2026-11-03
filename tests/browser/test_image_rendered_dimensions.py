@@ -38,6 +38,30 @@ def test_image_width_and_height_follow_the_rendered_box():
         browser.close()
 
 
+def test_absolute_image_height_percentage_uses_its_containing_block():
+    browser = Browser(
+        real_network=False,
+        resource_loader=lambda url, request: {
+            "body": PNG, "headers": {"content-type": "image/png"},
+        },
+    )
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content(
+            '<div style="position:relative;width:200px;height:100px">'
+            '<img id="a" src="https://img.test/a.png" '
+            'style="position:absolute;height:50%">'
+            '</div>',
+            url="https://example.test/",
+        )
+        page.wait_for("document.getElementById('a').complete", timeout=2)
+        assert page.evaluate(
+            "[document.getElementById('a').width, document.getElementById('a').height]"
+        ) == [50, 50]
+    finally:
+        browser.close()
+
+
 def test_image_load_invalidates_existing_layout_snapshot():
     import threading
     ready = threading.Event()

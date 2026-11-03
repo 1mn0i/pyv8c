@@ -25,7 +25,11 @@ class RealmServices(Protocol):
     origin: Any
     closed: bool
     v8_context: Any
+    performance: Any
 
+    def materialize_interface(self, name: str) -> Any:
+        """Load a lazily declared interface into this realm."""
+        ...
     def post_task(self, callback, source: TaskSource = TaskSource.DOM, *,
                   label: str | None = None, document_bound: bool = False) -> None: ...
     def enqueue_microtask(self, callback) -> None: ...

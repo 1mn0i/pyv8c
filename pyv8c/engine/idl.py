@@ -513,11 +513,6 @@ class Idl:
             _report_stale_profile(profile, digest)
             profile = None
         self.profile = profile
-        # A profile that records nothing leaves every member whole, and so does no profile.
-        self._omitted_prototype = (profile.omitted_prototype if profile is not None
-                                   else MappingProxyType({}))
-        self._omitted_interface = (profile.omitted_interface if profile is not None
-                                   else MappingProxyType({}))
         self._iteration_methods = profile.iteration_methods if profile is not None else MappingProxyType({})
         self._interfaces: dict[str, IdlInterface] = {}
         self._positions: dict[str, int] | None = None

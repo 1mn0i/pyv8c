@@ -86,6 +86,32 @@ def test_the_eight_members_the_log_reported_answer_like_chromium():
     ]
 
 
+def test_a_worker_webgl_extension_uses_the_worker_realm():
+    """A worker's WebGL extension is materialized through its own realm services."""
+    browser = Browser(real_network=False, stub_logging="off")
+    try:
+        page = browser.new_profile().new_page()
+        page.evaluate("""window.result = 'pending';
+          const source = `
+            try {
+              const canvas = new OffscreenCanvas(8, 8);
+              const gl = canvas.getContext('webgl');
+              const extension = gl && gl.getExtension('WEBGL_debug_renderer_info');
+              postMessage(gl && extension ? 'ok' : 'missing');
+            } catch (error) {
+              postMessage('error:' + error.name + ':' + error.message);
+            }`;
+          const worker = new Worker(URL.createObjectURL(
+            new Blob([source], {type: 'text/javascript'})));
+          worker.onmessage = event => { window.result = event.data; };
+          worker.onerror = event => { window.result = 'worker-error:' + event.message; };
+        """)
+        page.wait_for("result !== 'pending'", timeout=5)
+        assert page.evaluate("result") == 'ok'
+    finally:
+        browser.close()
+
+
 def test_no_offscreen_2d_member_reports_itself_as_unimplemented():
     """Driving every member the log reported leaves the stub reporter silent."""
     messages = []

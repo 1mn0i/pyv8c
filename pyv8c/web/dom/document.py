@@ -452,9 +452,8 @@ class Document(_ParentNodeMixin, Node):
         """Build a lazily declared interface before handing out one of its objects;
         ``document.all`` needs the native template of an eagerly-deferred interface."""
         realm = getattr(getattr(self, "_services", None), "realm_services", None)
-        if realm is None or realm.interface_materialized(name):
-            return
-        realm.materialize_interface(name)
+        if realm is not None:
+            realm.materialize_interface(name)
     def fn_createElement(self, name=MISSING, *_extra):
         if name is MISSING:
             raise missing_error('Document', 'createElement', 1, 0, constructor=False)

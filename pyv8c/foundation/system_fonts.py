@@ -72,9 +72,7 @@ class FontRecord:
     path: str
     index: int = 0
 
-    def local_names(self) -> tuple[str, ...]:
-        """The names ``local()`` matches, in the order the lookup tries them."""
-        return (self.postscript_name, self.full_name)
+
 
 
 def normalize(value):

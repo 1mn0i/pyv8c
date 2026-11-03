@@ -116,6 +116,7 @@ class ResourceFetchController:
             content_type=request.get("content_type"),
             http_version=http_version,
             extra=ResourceFetchController.header_dict(request.get("headers")),
+            accepted_hints=getattr(getattr(page, "profile", None), "_accept_ch_hints", ()),
         )
         return request
 
@@ -271,6 +272,24 @@ class ResourceFetchController:
         return ('response', self.response_object(value)) if kind == 'payload' else (kind, value)
 
     def store(self, load, response):
+        # A response may ask for high-entropy client hints; Chrome adds them to later
+        # requests to that origin, so the profile remembers what was asked for.
+        try:
+            headers = getattr(getattr(response, "headers", None), "_data", None) or {}
+            asked = next((str(value) for key, value in headers.items()
+                          if str(key).lower() == "accept-ch"), "")
+            if asked:
+                profile = getattr(self.page, "profile", None)
+                if profile is not None:
+                    hints = getattr(profile, "_accept_ch_hints", None)
+                    if hints is None:
+                        hints = set()
+                        profile.__dict__["_accept_ch_hints"] = hints
+                    hints.update(name.strip().lower()
+                                 for name in asked.split(",") if name.strip())
+        except Exception:
+            # Header bookkeeping must never fail a load.
+            pass
         if load.cache_key is None:
             return
         payload = {"body": response.body, "status": response.status,

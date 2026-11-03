@@ -7,9 +7,9 @@ from collections import deque
 from functools import partial
 
 import pyv8
-from loguru import logger
 
 from ...foundation.arguments import is_nullish
+from ...foundation.logging import logger
 from ...foundation.agent_tasks import AgentTaskQueue, TaskContext
 from ...foundation.error_policy import control_exceptions, is_host_failure
 from ...foundation.executor import RealmExecutor

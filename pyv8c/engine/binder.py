@@ -373,8 +373,6 @@ class Binder:
         self._compiled = {}
         #: How many interfaces this bindings built itself, the rest coming from ``_COMPILED``.
         self.compiled_misses = 0
-        #: Members answered by the convention rather than by a declaration, for reporting.
-        self.convention_hits = 0
         # The bindings shares its lock: a compile reaches back into it for classes.
         self._lock = lock or threading.RLock()
 
@@ -547,7 +545,6 @@ class Binder:
                     if raw is None:
                         callback = self.stubs.method(name, public_name, static=static)
                     else:
-                        self.convention_hits += 1
                         callback = self.wrappers.method(cls, name, public_name, raw, static=static)
                         if static and _parameters_for(raw)[:1] == ("_realm",) and public_name not in late_operation_names and public_name not in tail_names:
                             realm_methods.append((len(methods), raw))
@@ -573,8 +570,6 @@ class Binder:
                     getter = self.wrappers.find_callback(cls, f"{prefix}_{public_name}")
                     if getter is None:
                         getter = self.stubs.getter(name, public_name)
-                    else:
-                        self.convention_hits += 1
                 setter = None
                 if override is not None and override.set is not None:
                     # A hook that answers the write is what makes the member writable.

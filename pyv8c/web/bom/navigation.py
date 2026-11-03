@@ -72,7 +72,27 @@ class Location:
         if self._is_same_document(target):
             self._navigate_within_document(target, replace=False)
             return
+        if self._load_frame_target(target):
+            return
         self._services.document_services.request_navigation(target)
+    def _load_frame_target(self, target):
+        """A frame navigates by loading that frame again; a top window has no frame."""
+        frame = getattr(self._window, "_frame_element", None)
+        if frame is None:
+            return False
+        # The iframe belongs to its parent document. Reloading it through the
+        # child's resource controller would discover the frame in the wrong
+        # document and never ask the parent to load it.
+        resources = getattr(getattr(frame, "_services", None), "resource_services", None)
+        if resources is None:
+            resources = getattr(self._services, "resource_services", None)
+        if resources is None:
+            return False
+        frame.attributes["src"] = target
+        frame._resource_started = False
+        resources.load_iframe(frame)
+        return True
+
     def _is_same_document(self, target):
         return target != self.href and document_key(target) == document_key(self.href)
     def _navigate_within_document(self, target, replace):
@@ -117,10 +137,14 @@ class Location:
         if self._is_same_document(target):
             self._navigate_within_document(target, replace=True)
             return
+        if self._load_frame_target(target):
+            return
         self._services.document_services.request_navigation(target)
     def fn_reload(self, *_extra):
         #: Cross-origin like ``assign``: a page may not reload a window it cannot read.
         self._require_access()
+        if self._load_frame_target(self.href):
+            return
         if self._services is not None:
             self._services.document_services.request_navigation(self.href)
     def get_origin(self):

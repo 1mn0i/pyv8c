@@ -277,6 +277,23 @@ def _voice(entry):
     }
 
 
+
+def _json_object(value):
+    """A JSON object kept as text in the file, as the dict it holds."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return dict(value) if isinstance(value, dict) else None
+
+
 def _text_mapping(value):
     """``name -> text``: a table a browser reports, such as the permission spec names."""
     if value is None:
@@ -410,6 +427,7 @@ FIELDS: tuple[Field, ...] = (
     #: The name ``PermissionStatus.name`` reports, which is not the one queried.
     Field("permissions.spec_names", _text_mapping, True),
     Field("gpu.wgsl_features", _tokens, True),
+    Field("gpu.adapter", _json_object, True),
     #: The installed extensions a page can read out of: ``id -> declared resources``.
     Field("extensions", _extensions, True),
     #: The faces this profile stands in for; absent means "ask this machine".
@@ -587,9 +605,11 @@ class PermissionsView:
 
 @dataclass(frozen=True)
 class GpuView:
-    """``navigator.gpu.wgslLanguageFeatures`` as the reference browser reports it."""
+    """``navigator.gpu`` as the reference browser reports it."""
 
     wgsl_features: tuple
+    #: The adapter ``requestAdapter()`` answers with: ``features``/``limits``/``info``.
+    adapter: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -777,7 +797,7 @@ class BrowserEnvironment:
             else values["permissions.spec_names"],
         ))
         object.__setattr__(self, "gpu", GpuView(
-            tuple(values["gpu.wgsl_features"] or ())))
+            tuple(values["gpu.wgsl_features"] or ()), values["gpu.adapter"]))
         object.__setattr__(self, "fonts", FontsView(
             values["fonts.records"], values["fonts.default_family"]))
 

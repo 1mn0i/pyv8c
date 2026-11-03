@@ -82,7 +82,6 @@ class DocumentResourceController:
         handle.add_done_callback(terminal)
 
         def done(response, error):
-            item.transfer_finished = True
             if error is not None and not handle.cancelled:
                 # The page only ever hears Chrome's wording, so the reason lands here.
                 logger.debug("resource failed: {} ({})", url, error)
@@ -106,7 +105,7 @@ class DocumentResourceController:
         page = self.page
         handle = LoadHandle()
         item = DocumentResource(page.navigation.generation, node, 'iframe', handle,
-                                transfer_finished=True, child_services=child.services)
+                                child_services=child.services)
         token = self.tracker.add(item)
         page.resource_ownership.track(handle)
         def terminal(completed):

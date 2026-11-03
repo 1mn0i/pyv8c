@@ -132,14 +132,104 @@ def parse_json_in(context, window, text):
     return json_object["parse"]._invoke(json_object, text)
 
 
-class _RealmCapability(_TaskSource):
+class _RealmCapabilityBase(_TaskSource):
+    """Scripting and interface staging shared by page and worker realms."""
+
+    def __init__(self, tasks, performance):
+        super().__init__(tasks)
+        #: The realm's timeline: what the platform timed for this document.
+        self.performance = performance
+
+    @property
+    def _binding_session(self):
+        raise NotImplementedError
+
+    @property
+    def _scripting(self):
+        raise NotImplementedError
+
+    @property
+    def _json_window(self):
+        return None
+
+    @property
+    def v8_context(self):
+        raise NotImplementedError
+
+    @property
+    def url(self):
+        raise NotImplementedError
+
+    @property
+    def origin(self):
+        raise NotImplementedError
+
+    def materialize_interface(self, name):
+        return self._binding_session.materialize(name)
+
+    def make_promise(self):
+        return self._scripting.make_promise()
+
+    def enqueue_microtask(self, callback):
+        """Queue *callback* on the realm's V8 microtask queue.
+
+        Promise reactions share it, which gives the one FIFO order the HTML
+        specification asks for.
+        """
+        return self._scripting.enqueue_microtask(callback)
+
+    def cleanup_after_callback(self):
+        return self._cleanup_after_callback()
+
+    def evaluate_script(self, source):
+        return self._evaluate_script(source)
+
+    def _evaluate_script(self, source):
+        raise NotImplementedError
+
+    def _cleanup_after_callback(self):
+        raise NotImplementedError
+
+    def promise_resolve(self, value):
+        return self._scripting.promise_resolve(value)
+
+    def parse_json(self, text):
+        return parse_json_in(self.v8_context, self._json_window, text)
+
+    def report_exception(self, exc):
+        """Report an uncaught exception through this realm's task queue."""
+        self._tasks.report_error(exc)
+
+    def heap_statistics(self):
+        """V8's heap numbers for this realm's isolate, in bytes."""
+        v8_context = self.v8_context
+        return v8_context.heap_statistics() if v8_context is not None else {}
+
+
+class _RealmCapability(_RealmCapabilityBase):
     """Realm identity, scripting and task posting (implements RealmServices)."""
 
     def __init__(self, owner):
-        super().__init__(owner._tasks)
+        super().__init__(owner._tasks, _PerformanceCapability())
         self._owner = owner
-        #: The realm's timeline: what the platform timed for this document.
-        self.performance = _PerformanceCapability()
+
+    @property
+    def _binding_session(self):
+        return self._owner._page_realm.binding_session
+
+    @property
+    def _scripting(self):
+        return self._owner._scripts
+
+    @property
+    def _json_window(self):
+        return self._owner.window
+
+    def _evaluate_script(self, source):
+        return self._owner._scripts.evaluate(source)
+
+    def _cleanup_after_callback(self):
+        self._owner._page_realm.executor.after_callback()
 
     @property
     def url(self):
@@ -156,41 +246,6 @@ class _RealmCapability(_TaskSource):
     @property
     def v8_context(self):
         return getattr(self._owner._page_realm, "v8_context", None)
-
-    def make_promise(self):
-        return self._owner._scripts.make_promise()
-
-    def enqueue_microtask(self, callback):
-        """Queue *callback* on the realm's V8 microtask queue.
-
-        Promise reactions share it, which gives the one FIFO order the HTML
-        specification asks for.
-        """
-        return self._owner._scripts.enqueue_microtask(callback)
-
-    def cleanup_after_callback(self):
-        self._owner._page_realm.executor.after_callback()
-
-    def evaluate_script(self, source):
-        return self._owner._scripts.evaluate(source)
-
-    def promise_resolve(self, value):
-        return self._owner._scripts.promise_resolve(value)
-
-    def parse_json(self, text):
-        return parse_json_in(self.v8_context, self._owner.window, text)
-
-    def report_exception(self, exc):
-        """Report an uncaught exception through this realm's error reporting.
-
-        The DOM calls page code, so an exception raised in a listener has no
-        caller left to catch it: this is the specification's "report the
-        exception", and the task queue's sink turns it into the ``error`` event.
-        """
-        self._tasks.report_error(exc)
-
-    def materialize_interface(self, name):
-        return self._owner._page_realm.binding_session.materialize(name)
 
     def ancestor_origins(self):
         """The origins of this realm's ancestors, nearest first.
@@ -215,14 +270,6 @@ class _RealmCapability(_TaskSource):
         if name not in session.bindings.idl.interfaces:
             return None
         return session.materialize(name)
-
-    def heap_statistics(self):
-        """V8's heap numbers for this realm's isolate, in bytes."""
-        v8_context = getattr(self._owner._page_realm, "v8_context", None)
-        return v8_context.heap_statistics() if v8_context is not None else {}
-
-    def interface_materialized(self, name):
-        return name in self._owner._page_realm.binding_session.materialized_interfaces
 
     def window_property(self, operation, name, value=None):
         """Operate on a same-origin Window in its owning realm."""
@@ -314,26 +361,30 @@ class WorkerRealmServices:
         self.resource_services = WorkerResourceCapability(runtime)
 
 
-class _WorkerRealmCapability(_TaskSource):
+class _WorkerRealmCapability(_RealmCapabilityBase):
     """Worker scripting: the worker's own context, with no page behind it."""
 
     def __init__(self, tasks, runtime):
-        super().__init__(tasks)
+        super().__init__(tasks, _PerformanceCapability())
         self._runtime = runtime
-        self.performance = _PerformanceCapability()
+
+    @property
+    def _binding_session(self):
+        return self._runtime.config.session
+
+    @property
+    def _scripting(self):
+        return self._runtime
+
+    def _evaluate_script(self, source):
+        return self._runtime.evaluate_script(source)
+
+    def _cleanup_after_callback(self):
+        self._runtime.cleanup_after_callback()
 
     @property
     def v8_context(self):
         return self._runtime.v8_context
-
-    def heap_statistics(self):
-        """V8's heap numbers for this realm's isolate, in bytes."""
-        v8_context = self.v8_context
-        return v8_context.heap_statistics() if v8_context is not None else {}
-
-    def materialize_interface(self, name):
-        """Load the interface's feature and commit its config to this realm."""
-        return self._runtime.config.session.materialize(name)
 
     @property
     def url(self):
@@ -342,32 +393,6 @@ class _WorkerRealmCapability(_TaskSource):
     @property
     def origin(self):
         return self._runtime.services.resource_services.origin
-
-    def evaluate_script(self, source):
-        return self._runtime.evaluate_script(source)
-
-    def enqueue_microtask(self, callback):
-        return self._runtime.enqueue_microtask(callback)
-
-    def cleanup_after_callback(self):
-        self._runtime.cleanup_after_callback()
-
-    def make_promise(self):
-        return self._runtime.make_promise()
-
-    def promise_resolve(self, value):
-        return self._runtime.promise_resolve(value)
-
-    def parse_json(self, text):
-        return parse_json_in(self.v8_context, getattr(self._runtime, "window", None), text)
-
-    def report_exception(self, exc):
-        """Route a listener exception to the worker's error reporting.
-
-        A worker global has no window to report onto: the task queue forwards it
-        to the parent page as the worker's ``error`` event.
-        """
-        self._tasks.report_error(exc)
 
 
 class _ResourceCapability:

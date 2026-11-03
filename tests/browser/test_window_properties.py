@@ -97,16 +97,18 @@ def test_numeric_names_and_prototype_invariants(page):
 def test_borrowed_prototype_uses_owning_document(page):
     child = next(iter(page._owned.frames))
     child.set_content('<div id="childOnly"></div>', url='http://example.test/child')
-    props = child.evaluate('Object.getPrototypeOf(Window.prototype)')
+    props = child.evaluate_handle('Object.getPrototypeOf(Window.prototype)')
     page.executor.call(page.v8_context.expose, childProperties=props)
-    page.executor.call(page.v8_context.expose, childElement=child.evaluate("document.getElementById('childOnly')"))
+    page.executor.call(page.v8_context.expose,
+                        childElement=child.evaluate_handle("document.getElementById('childOnly')"))
     #: Each realm has its own wrapper, so identity is asked of the owning realm.
     assert page.evaluate('''[childProperties.childOnly === childElement,
         childProperties.childOnly.id,
         childProperties.unique === undefined, 'childOnly' in childProperties,
         'unique' in childProperties]''') == [True, 'childOnly', True, True, False]
     child.set_content('<div id="childOnly"></div>', url='http://other.test/child')
-    page.executor.call(page.v8_context.expose, childProperties=child.evaluate('Object.getPrototypeOf(Window.prototype)'))
+    page.executor.call(page.v8_context.expose,
+                        childProperties=child.evaluate_handle('Object.getPrototypeOf(Window.prototype)'))
     assert page.evaluate('try { childProperties.childOnly; } catch (e) { [e.name, e.code]; }') == ['SecurityError', 18]
 
 

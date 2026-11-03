@@ -71,9 +71,9 @@ V8 前台任务由执行组或 Worker 的 owner 线程自动执行；V8 后台�
 
 ## 全局属性安装顺序
 
-Window 的 `Object.getOwnPropertyNames(window)` 顺序由 Blink 的安装阶段决定，不是按名字排序。`pyv8c/data/window-order.json` 记录一个 Chromium 版本的顺序：legacy factories、模板阶段的接口构造器（降序）、context 阶段的接口构造器（升序），以及 Window 成员的四个安装组（普通 attributes、后置 template attributes、operations、context-dependent 成员）。该文件由 `pyv8c/tools/extract_window_order.py` 从与 `idl.json` 同一版本的 IDL 源生成，版本不一致时按 `baseline_mismatch` 报告或失败。
+Window 的 `Object.getOwnPropertyNames(window)` 顺序由 Blink 的安装阶段决定，不是按名字排序。`pyv8c/data/window-order.json` 记录一个 Chromium 版本的顺序：legacy factories、模板阶段的接口构造器（降序）、context 阶段的接口构造器，以及 Window 成员组。成员组按安装先后为 `early`（普通 attributes）、`operations`、`late_attributes`、`late_operations`、`late_template`、`tail`，条件构造器则分为 `postinstall` 与 `postinstall_late`。该文件由 `pyv8c/tools/extract_window_order.py` 从与 `idl.json` 同一版本的 IDL 源生成，版本不一致时按 `baseline_mismatch` 报告或失败。
 
-`RealmPlan` 把顺序分成 `preinstall`、`postinstall`、`legacy_factories` 和 `member_groups`。`preinstall` 在 `pyv8.V8Context` 创建前写入 global 模板，因此接口构造器排在 Window 成员之前；`IdlSpec` 的 `late_attributes`/`late_methods` 由 `context.install_late()` 在宿主 `chrome` 之后、条件接口之前安装，对应 Blink 的 context-dependent 阶段。顺序数据缺失时回退到按名字排序。V8 内置全局段由相邻 `_pyv8` 使用的 V8 版本决定，不在该数据范围内。
+`RealmPlan` 把顺序分成 `preinstall`、`postinstall`、`postinstall_late`、`legacy_factories` 和 `member_groups`。`preinstall` 在 `pyv8.V8Context` 创建前写入 global 模板，因此接口构造器排在 Window 成员之前；`IdlSpec` 的 `late_attributes` 由 `context.install_late()` 在宿主 `chrome` 之后安装，`late_methods` 与 `late_template_attributes` 由 `install_late_methods()` 在条件构造器之后安装，`tail_methods` 最后安装。顺序数据缺失时回退到按名字排序。V8 内置全局段由相邻 `_pyv8` 使用的 V8 版本决定，不在该数据范围内。
 
 ## 资源组件
 
@@ -99,4 +99,4 @@ JS 终止必须穿透监听器、脚本、资源交付与任务包装，在持�
 
 框架没有完整 Chromium 渲染和多进程体系。虚拟渲染机会、文本测量及部分几何计算不能替代合成器；origin 与 Agent 模型不覆盖完整 COOP/COEP、Origin-Agent-Cluster、OOPIF 和 `document.domain`。任何能力声明都应由对应测试及本地对照支持。
 
-Window ?????????????????????????????????????????? baseline_mismatch ????????????????
+Window 顺序数据与当前 IDL/环境档案版本不一致时，由 `baseline_mismatch` 报告或直接失败，不会静默混用不同版本的安装顺序。

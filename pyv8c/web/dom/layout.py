@@ -382,6 +382,13 @@ _DEFAULT_OBJECT_SIZE = {
 }
 
 
+def _image_intrinsic_size(element):
+    """An image's decoded size, or ``None`` for every other replaced element."""
+    if str(getattr(element, "localName", "")).lower() == "img":
+        return element._natural_size()
+    return None
+
+
 def _expand(value):
     """The four lengths a CSS shorthand holds."""
     parts = str(value).split()
@@ -507,9 +514,7 @@ def _place(element, style, walk, containing, positioned):
     declared_height = style.get("height", "auto")
     position = style.get("position", "static")
     available = max(0.0, containing.width - margin["left"] - margin["right"] - horizontal)
-    image_size = (element._natural_size()
-                  if str(getattr(element, "localName", "")).lower() == "img"
-                  else None)
+    image_size = _image_intrinsic_size(element)
     if image_size is not None:
         # HTML dimensions are presentational hints, below the CSS cascade.
         if _auto(declared_width) and "width" in element.attributes:
@@ -659,7 +664,9 @@ def _place(element, style, walk, containing, positioned):
     left = containing.left + margin["left"]
     top = containing.top + margin["top"]
     if not _auto(declared_height):
-        height = _px(declared_height, containing.height)
+        reference = (positioned.height if positioned is not None and
+                     style.get("position") == "absolute" else containing.height)
+        height = _px(declared_height, reference)
         content_height = max(0.0, height - vertical
                              if style.get("box-sizing", "content-box") == "border-box"
                              else height)
@@ -813,9 +820,9 @@ def _box_content_widths(element, style, rules, depth, cache=None):
     joined = _inline_text_width(element, style, rules, cache)
     if joined is not None:
         return joined, joined
-    intrinsic = _DEFAULT_OBJECT_SIZE.get(str(getattr(element, "localName", "")).lower())
-    if str(getattr(element, "localName", "")).lower() == "img":
-        intrinsic = element._natural_size()
+    intrinsic = _image_intrinsic_size(element)
+    if intrinsic is None:
+        intrinsic = _DEFAULT_OBJECT_SIZE.get(str(getattr(element, "localName", "")).lower())
     if intrinsic is not None:
         return intrinsic[0], intrinsic[0]
     return _content_widths(element, style, rules, depth + 1, cache)

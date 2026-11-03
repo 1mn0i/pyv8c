@@ -375,7 +375,6 @@ def test_page_exposes_narrow_realm_services():
                          DocumentServices, WorkerServices):
             assert not isinstance(page.services, protocol)
         assert page.services.context_services.network_available is False
-        assert page.services.realm_services.interface_materialized("Document")
     finally:
         browser.close()
 
@@ -454,7 +453,7 @@ def test_page_keeps_only_user_facing_api():
         "websocket", "close_websocket", "network_available", "cookie_jar",
         "context_services", "binding_services", "devtools_server",
         "worker_configuration", "create_worker_realm", "new_child_page",
-        "materialize_interface", "interface_materialized", "request_navigation",
+        "materialize_interface", "request_navigation",
         "element_class", "_node_adopted", "_parser_script_start",
     ):
         assert not hasattr(Page, name), name

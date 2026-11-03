@@ -164,6 +164,35 @@ _COLLECT_TEMPLATE = """
     })();
     const wgslFeatures = navigator.gpu && navigator.gpu.wgslLanguageFeatures
         ? Array.from(navigator.gpu.wgslLanguageFeatures) : [];
+    const gpuAdapter = await (async () => {
+        if (!navigator.gpu || typeof navigator.gpu.requestAdapter !== 'function') return null;
+        try {
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) return null;
+            const limits = {};
+            const source = adapter.limits;
+            if (source) {
+                for (const name of Object.getOwnPropertyNames(Object.getPrototypeOf(source))) {
+                    if (name !== 'constructor' && typeof source[name] === 'number')
+                        limits[name] = source[name];
+                }
+                for (const name of Object.keys(source)) {
+                    if (typeof source[name] === 'number') limits[name] = source[name];
+                }
+            }
+            const raw = adapter.info;
+            const info = raw ? {
+                vendor: raw.vendor || '', architecture: raw.architecture || '',
+                device: raw.device || '', description: raw.description || '',
+                subgroupMinSize: raw.subgroupMinSize || 0,
+                subgroupMaxSize: raw.subgroupMaxSize || 0,
+                isFallbackAdapter: !!raw.isFallbackAdapter,
+            } : {};
+            return {features: Array.from(adapter.features || []), limits, info};
+        } catch (_) {
+            return null;
+        }
+    })();
     const brands = list => list.map(entry => ({brand: entry.brand, version: entry.version}));
     const gl = document.createElement('canvas').getContext('webgl');
     const rendererInfo = gl === null ? null : gl.getExtension('WEBGL_debug_renderer_info');
@@ -226,6 +255,7 @@ _COLLECT_TEMPLATE = """
         'permissions.granted': permissionGranted,
         'permissions.spec_names': permissionSpecNames,
         'gpu.wgsl_features': wgslFeatures,
+        'gpu.adapter': gpuAdapter,
         'plugins': Array.from(navigator.plugins).map(plugin => ({
             'name': plugin.name,
             'filename': plugin.filename,

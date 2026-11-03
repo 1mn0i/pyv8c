@@ -199,10 +199,10 @@ def test_iframe_completion_needs_live_resource_and_child_identity(missing, repla
     assert not events
 
 
-def test_transfer_end_does_not_release_document_load_barrier():
+def test_unfinished_document_does_not_release_its_load_barrier():
     page = SimpleNamespace()
     tracker = DocumentResourceController(page, None, None)
-    item = DocumentResource(1, object(), "iframe", LoadHandle(), transfer_finished=True)
+    item = DocumentResource(1, object(), "iframe", LoadHandle())
     tracker.tracker.add(item)
     assert tracker.has_pending and tracker.outstanding() == {"iframe": 1}
 

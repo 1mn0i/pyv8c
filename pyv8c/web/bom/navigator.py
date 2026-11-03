@@ -1,5 +1,4 @@
 """Navigator, geolocation, and browser-compatible plugin collections."""
-import json
 import time
 from urllib.parse import urljoin, urlsplit
 
@@ -383,9 +382,13 @@ class NavigatorUAData:
                 if name in requested or name in _LOW_ENTROPY_HINTS}
 
     def _full_version(self):
-        """The build's own version, from the brand list's Google Chrome entry."""
-        return next((entry.version for entry in self._data.full_version_list
-                     if entry.brand == "Google Chrome"), "")
+        """The build's own version: Google Chrome's entry, or Chromium's on a Chromium build."""
+        for brand in ("Google Chrome", "Chromium"):
+            version = next((entry.version for entry in self._data.full_version_list
+                            if entry.brand == brand), "")
+            if version:
+                return version
+        return ""
 
     def _pairs(self, entries):
         return [{"brand": entry.brand, "version": entry.version} for entry in entries]
@@ -445,7 +448,7 @@ _SCRIPT_MIME_TYPES = ("application/ecmascript", "application/javascript",
 
 def _frozen(services, values):
     """A fresh frozen array, the way a sequence member hands one out."""
-    return services.realm_services.evaluate_script("Object.freeze(" + json.dumps(values) + ")")
+    return services.realm_services.v8_context.freeze(list(values))
 
 
 def _number_or_none(value):
@@ -1233,9 +1236,60 @@ class GPU:
         return "bgra8unorm"
 
     def fn_requestAdapter(self, *_extra):
-        """A browser with no backend has no adapter, which the API allows for."""
+        """The adapter the reference machine reports, shaped as the API describes one."""
         realm = getattr(self._services, "realm_services", None)
-        return realm.promise_resolve(pyv8.Null) if realm is not None else pyv8.Null
+        if realm is None:
+            return pyv8.Null
+        environment = environment_of(self._services)
+        gpu = getattr(environment, "gpu", None) if environment is not None else None
+        adapter_data = getattr(gpu, "adapter", None) or {}
+        features = adapter_data.get("features") or _GPU_ADAPTER_FEATURES
+        limits = adapter_data.get("limits") or _GPU_ADAPTER_LIMITS
+        info = adapter_data.get("info") or _GPU_ADAPTER_INFO
+        context = realm.v8_context
+        adapter = context.freeze({
+            "features": set(features),
+            "limits": context.freeze(dict(limits)),
+            "info": context.freeze(dict(info)),
+            "isFallbackAdapter": False,
+        })
+        return realm.promise_resolve(adapter)
+
+
+#: What chrome-win64 154's adapter reports; captured from a real context.
+_GPU_ADAPTER_FEATURES = (
+    "depth32float-stencil8", "rg11b10ufloat-renderable", "texture-formats-tier1",
+    "bgra8unorm-storage", "texture-compression-bc", "dual-source-blending",
+    "core-features-and-limits", "float32-filterable", "indirect-first-instance",
+    "float32-blendable", "depth-clip-control", "texture-compression-bc-sliced-3d",
+    "shader-f16", "texture-formats-tier2", "timestamp-query", "clip-distances",
+    "primitive-index", "texture-component-swizzle", "subgroups",
+)
+_GPU_ADAPTER_LIMITS = {
+    "maxTextureDimension1D": 16384, "maxTextureDimension2D": 16384,
+    "maxTextureDimension3D": 2048, "maxTextureArrayLayers": 2048, "maxBindGroups": 4,
+    "maxBindGroupsPlusVertexBuffers": 24, "maxBindingsPerBindGroup": 1000,
+    "maxDynamicUniformBuffersPerPipelineLayout": 10,
+    "maxDynamicStorageBuffersPerPipelineLayout": 8,
+    "maxSampledTexturesPerShaderStage": 48, "maxSamplersPerShaderStage": 16,
+    "maxStorageBuffersPerShaderStage": 16, "maxStorageTexturesPerShaderStage": 8,
+    "maxUniformBuffersPerShaderStage": 12, "maxUniformBufferBindingSize": 65536,
+    "maxStorageBufferBindingSize": 2147483644, "minUniformBufferOffsetAlignment": 256,
+    "minStorageBufferOffsetAlignment": 256, "maxVertexBuffers": 8,
+    "maxBufferSize": 2147483648, "maxVertexAttributes": 30,
+    "maxVertexBufferArrayStride": 2048, "maxInterStageShaderVariables": 28,
+    "maxColorAttachments": 8, "maxColorAttachmentBytesPerSample": 128,
+    "maxComputeWorkgroupStorageSize": 32768, "maxComputeInvocationsPerWorkgroup": 1024,
+    "maxComputeWorkgroupSizeX": 1024, "maxComputeWorkgroupSizeY": 1024,
+    "maxComputeWorkgroupSizeZ": 64, "maxComputeWorkgroupsPerDimension": 65535,
+    "maxImmediateSize": 64, "maxStorageBuffersInFragmentStage": 16,
+    "maxStorageTexturesInFragmentStage": 8, "maxStorageBuffersInVertexStage": 16,
+    "maxStorageTexturesInVertexStage": 8,
+}
+_GPU_ADAPTER_INFO = {
+    "vendor": "nvidia", "architecture": "ampere", "device": "", "description": "",
+    "subgroupMinSize": 32, "subgroupMaxSize": 32, "isFallbackAdapter": False,
+}
 
 __all__ = [
     "Navigator", "NavigatorUAData", "Geolocation", "Plugin", "PluginArray", "MimeType",

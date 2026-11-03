@@ -48,23 +48,18 @@ class ResourceScope:
             return True
 
     def begin_close(self):
+        """Claim the close transition and return its callbacks once."""
         with self._lock:
             if self._state is not LifecycleState.OPEN:
                 return None
             self._state = LifecycleState.CLOSING
-            return tuple(reversed(self._callbacks))
-
-    def close(self):
-        with self._lock:
-            if self._state is LifecycleState.CLOSED:
-                return
-            if self._state is LifecycleState.OPEN:
-                self._state = LifecycleState.CLOSING
             callbacks = tuple(reversed(self._callbacks))
             self._callbacks.clear()
-        if not callbacks and self.state is LifecycleState.CLOSING:
-            with self._lock:
-                self._state = LifecycleState.CLOSED
+            return callbacks
+
+    def close(self):
+        callbacks = self.begin_close()
+        if callbacks is None:
             return
         for callback in callbacks:
             try:

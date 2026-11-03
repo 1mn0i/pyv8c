@@ -22,6 +22,9 @@ from ..page_errors import js_error_value
 
 #: The digest names the standard library backs, and the HMAC hash names as well.
 _HASHES = {"SHA-1": "sha1", "SHA-256": "sha256", "SHA-384": "sha384", "SHA-512": "sha512"}
+
+#: One ``getRandomValues`` call may ask for at most this many bytes.
+_RANDOM_QUOTA = 65536
 #: The symmetric algorithms whose keys are raw bytes.
 _RAW_ALGORITHMS = ("HMAC", "AES-CBC", "AES-CTR", "AES-GCM", "AES-KW")
 #: The derivation algorithms whose key *is* its material, such as a password.
@@ -395,6 +398,13 @@ class Crypto:
         if array is MISSING:
             raise missing_error('Crypto', 'getRandomValues', 1, 0, constructor=False)
         length = int(getattr(array, "length", 0) or 0)
+        if length > _RANDOM_QUOTA:
+            # Chrome caps one call at the entropy it is willing to hand out.
+            raise dom_exception(
+                "QuotaExceededError",
+                "Failed to execute 'getRandomValues' on 'Crypto': The ArrayBufferView's byte"
+                f" length ({length}) exceeds the number of bytes of entropy available via"
+                f" this API ({_RANDOM_QUOTA}).")
         for index, byte in enumerate(os.urandom(length)):
             array[index] = byte
         return array

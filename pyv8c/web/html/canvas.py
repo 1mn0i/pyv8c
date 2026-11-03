@@ -5,8 +5,10 @@ import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, integer
 from .elements import HTMLElement
-from ..graphics.canvas import (CanvasRenderingContext2D, _requested_context, _creation_settings,
-                               _canvas_encoding_type, _canvas_quality, _encode_canvas)
+from ..graphics.canvas import (CanvasRenderingContext2D, GPUCanvasContext,
+                               ImageBitmapRenderingContext, _requested_context,
+                               _creation_settings, _canvas_encoding_type, _canvas_quality,
+                               _encode_canvas)
 from ..graphics.webgl import WebGL2RenderingContext, WebGLRenderingContext
 
 
@@ -17,7 +19,7 @@ class HTMLCanvasElement(HTMLElement):
         self._width = self._dimension(self.attributes.get('width'), 300)
         self._height = self._dimension(self.attributes.get('height'), 150)
         self._context2d=None
-        self._context_kind=None; self._webgl=None; self._webgl2=None
+        self._context_kind=None; self._webgl=None; self._webgl2=None; self._bitmap=None; self._gpu=None
 
     def _resize(self):
         if self._context2d: self._context2d._reset()
@@ -48,6 +50,12 @@ class HTMLCanvasElement(HTMLElement):
         if requested == 'webgl2':
             if self._webgl2 is None: self._webgl2=WebGL2RenderingContext(self)
             return self._webgl2
+        if requested == 'bitmaprenderer':
+            if self._bitmap is None: self._bitmap=ImageBitmapRenderingContext(self)
+            return self._bitmap
+        if requested == 'webgpu':
+            if self._gpu is None: self._gpu=GPUCanvasContext(self)
+            return self._gpu
         if self._webgl is None: self._webgl=WebGLRenderingContext(self)
         return self._webgl
     def fn_toDataURL(self, kind=MISSING, quality=MISSING, *_):

@@ -47,7 +47,17 @@ _GENERIC_FAMILIES = frozenset((
 
 
 #: The context kinds a canvas can answer for; ``experimental-webgl`` is the older spelling.
-_CONTEXT_KINDS = ("2d", "webgl", "webgl2")
+_CONTEXT_KINDS = ("2d", "webgl", "webgl2", "bitmaprenderer", "webgpu")
+
+#: CSS's system font keywords, as Chrome on Windows resolves them.
+_SYSTEM_FONTS = {
+    "caption": "16px Arial",
+    "icon": "16px Arial",
+    "message-box": "16px Arial",
+    "menu": '12px "Microsoft YaHei UI"',
+    "small-caption": '12px "Microsoft YaHei UI"',
+    "status-bar": '12px "Microsoft YaHei UI"',
+}
 
 
 def _png_chunk(kind, data):
@@ -139,6 +149,51 @@ def _requested_context(kind):
     requested = str(kind).lower()
     if requested == "experimental-webgl": return "webgl"
     return requested if requested in _CONTEXT_KINDS else None
+
+
+@interface('ImageBitmapRenderingContext', None)
+class ImageBitmapRenderingContext:
+    """What ``getContext('bitmaprenderer')`` hands out: a canvas showing one bitmap."""
+
+    def __init__(self, canvas=None, **_):
+        self._canvas = canvas
+        self._bitmap = None
+
+    def get_canvas(self):
+        return self._canvas
+
+    def fn_transferFromImageBitmap(self, bitmap=None, *_):
+        """Show *bitmap*; a null clears whatever the canvas was showing."""
+        self._bitmap = None if is_nullish(bitmap) else bitmap
+        return None
+
+
+@interface('GPUCanvasContext', None)
+class GPUCanvasContext:
+    """What ``getContext('webgpu')`` hands out; it shows nothing until configured."""
+
+    def __init__(self, canvas=None, **_):
+        self._canvas = canvas
+        self._configuration = None
+
+    def get_canvas(self):
+        return self._canvas
+
+    def fn_configure(self, configuration=None, *_):
+        """Record the configuration; a context without a device draws nothing."""
+        self._configuration = {} if is_nullish(configuration) else dict(configuration)
+
+    def fn_unconfigure(self, *_):
+        self._configuration = None
+
+    def fn_getCurrentTexture(self, *_):
+        if self._configuration is None:
+            from ..page_errors import dom_exception
+            raise dom_exception(
+                "InvalidStateError",
+                "Failed to execute 'getCurrentTexture' on 'GPUCanvasContext':"
+                " Canvas is not configured.")
+        return None
 
 
 #: ``globalCompositeOperation``'s names, from Blink: twelve composite, then sixteen blend.
@@ -616,7 +671,17 @@ class CanvasRenderingContext2D:
             families.append(name if named or plain else '"%s"' % name)
         parts.append(", ".join(families) or "sans-serif")
         return " ".join(parts)
-    def set_font(self, v): self._font = str(v)
+    def set_font(self, v):
+        """CSS's font shorthand: system keywords resolve, unparseable values are ignored."""
+        text = str(v).strip()
+        keyword = text.lower()
+        if keyword in _SYSTEM_FONTS:
+            self._font = _SYSTEM_FONTS[keyword]
+            return
+        if not re.search(r"[0-9]*\.?[0-9]+\s*(px|pt|em|rem|%)", text, re.I):
+            # Chrome keeps the previous font when the value is not a valid shorthand.
+            return
+        self._font = text
     def get_textBaseline(self): return self._baseline
     def set_textBaseline(self, value):
         value = str(dom_string(value))
@@ -644,14 +709,16 @@ class CanvasRenderingContext2D:
         words = [word.lower() for word in (text[:match.start()] if match else "").split()]
         names = text[match.end():] if match else ""
         families = [name.strip().strip('"\'') for name in names.split(",")]
-        heavy = "bold" in words or any(
-            word.replace(".", "", 1).isdigit() and float(word) >= 600 for word in words)
+        # Chrome serializes the weight it was given: ``900`` stays ``900``, ``bold`` is 700.
+        numeric = next((int(word) for word in words
+                        if word.isdigit() and 1 <= int(word) <= 1000), None)
         # CSS prints an integral size without a fractional part: 14px, not 14.0px.
         number = f"{size:.6f}".rstrip("0").rstrip(".") or "0"
         return {
             "font-size": f"{number}px",
             "font-family": ", ".join([name for name in families if name] or ["sans-serif"]),
-            "font-weight": "700" if heavy else "400",
+            "font-weight": (str(numeric) if numeric is not None
+                            else ("700" if "bold" in words or "bolder" in words else "400")),
             "font-style": "italic" if ("italic" in words or "oblique" in words) else "normal",
         }
 
@@ -1181,6 +1248,14 @@ class OffscreenCanvas(EventTarget):
         if requested == 'webgl2':
             if self._webgl2 is None: self._webgl2 = WebGL2RenderingContext(self)
             return self._webgl2
+        if requested == 'bitmaprenderer':
+            if getattr(self, '_bitmap', None) is None:
+                self._bitmap = ImageBitmapRenderingContext(self)
+            return self._bitmap
+        if requested == 'webgpu':
+            if getattr(self, '_gpu', None) is None:
+                self._gpu = GPUCanvasContext(self)
+            return self._gpu
         if self._webgl is None: self._webgl = WebGLRenderingContext(self)
         return self._webgl
 

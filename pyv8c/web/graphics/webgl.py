@@ -770,11 +770,10 @@ class WebGLRenderingContext:
             return existing
         # This interface is not a global, so nothing materialises it: a Python-built
         # instance has to be committed to the realm before it can become a JS object.
-        # The guard is the one ``document.all`` uses: materialising a template that is
-        # already installed is refused, and a second canvas asks for it again.
+        # Staging is idempotent, so a second canvas asks for it again safely.
         services = getattr(self._canvas, "_services", None)
         realm = getattr(services, "realm_services", None)
-        if realm is not None and not realm.interface_materialized(interface_name):
+        if realm is not None:
             realm.materialize_interface(interface_name)
         value = EXTENSION_INTERFACES[interface_name](context=self)
         self._extension_objects[interface_name] = value

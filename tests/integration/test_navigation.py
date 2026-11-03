@@ -37,6 +37,40 @@ def test_goto_downloads_html_and_waits_for_document_load():
     browser.close()
 
 
+def test_an_iframe_reload_uses_the_parent_resource_controller(monkeypatch):
+    """A child reloads through the frame owner, not through its own controller."""
+    from pyv8c.platform.resources.frames import FrameResourceController
+
+    controllers = []
+    original = FrameResourceController.load_iframe
+
+    def load_iframe(self, iframe):
+        controllers.append(self.page)
+        return original(self, iframe)
+
+    monkeypatch.setattr(FrameResourceController, 'load_iframe', load_iframe)
+    browser = Browser(
+        real_network=False,
+        resource_loader=lambda url, _request: Response(
+            '<html><body>child</body></html>',
+            {'url': url, 'headers': {'content-type': 'text/html'}},
+        ),
+        cache=False,
+    )
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<iframe src="/child"></iframe>', url='https://example.test/')
+        page.run_until_idle(timeout=1)
+        child = next(iter(page._owned.frames))
+        controllers.clear()
+        child.evaluate('location.reload()')
+        page.run_until_idle(timeout=1)
+        assert controllers and all(owner is page for owner in controllers)
+        assert child.url == 'https://example.test/child'
+    finally:
+        browser.close()
+
+
 def test_new_page_url_and_location_assignment_navigate_automatically():
     pages = {
         "http://example.test/first": "<html><body><h1>first</h1></body></html>",

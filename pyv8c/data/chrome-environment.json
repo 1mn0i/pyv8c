@@ -23,10 +23,10 @@
   "vendor": "Google Inc.",
   "platform": "Win32",
   "language": "zh-CN",
-  "form_controls.submit_label": "\u63d0\u4ea4",
-  "form_controls.reset_label": "\u91cd\u7f6e",
-  "form_controls.file_button_label": "\u9009\u62e9\u6587\u4ef6",
-  "form_controls.file_empty_label": "\u672a\u9009\u62e9\u4efb\u4f55\u6587\u4ef6",
+  "form_controls.submit_label": "提交",
+  "form_controls.reset_label": "重置",
+  "form_controls.file_button_label": "选择文件",
+  "form_controls.file_empty_label": "未选择任何文件",
   "form_controls.time_font_family": "NSimSun",
   "languages": [
     "zh-CN",
@@ -386,25 +386,25 @@
       "default": false
     },
     {
-      "name": "Google espa\u00f1ol",
+      "name": "Google español",
       "lang": "es-ES",
       "local_service": false,
       "default": false
     },
     {
-      "name": "Google espa\u00f1ol de Estados Unidos",
+      "name": "Google español de Estados Unidos",
       "lang": "es-US",
       "local_service": false,
       "default": false
     },
     {
-      "name": "Google fran\u00e7ais",
+      "name": "Google français",
       "lang": "fr-FR",
       "local_service": false,
       "default": false
     },
     {
-      "name": "Google \u0939\u093f\u0928\u094d\u0926\u0940",
+      "name": "Google हिन्दी",
       "lang": "hi-IN",
       "local_service": false,
       "default": false
@@ -422,13 +422,13 @@
       "default": false
     },
     {
-      "name": "Google \u65e5\u672c\u8a9e",
+      "name": "Google 日本語",
       "lang": "ja-JP",
       "local_service": false,
       "default": false
     },
     {
-      "name": "Google \ud55c\uad6d\uc758",
+      "name": "Google 한국의",
       "lang": "ko-KR",
       "local_service": false,
       "default": false
@@ -446,31 +446,31 @@
       "default": false
     },
     {
-      "name": "Google portugu\u00eas do Brasil",
+      "name": "Google português do Brasil",
       "lang": "pt-BR",
       "local_service": false,
       "default": false
     },
     {
-      "name": "Google \u0440\u0443\u0441\u0441\u043a\u0438\u0439",
+      "name": "Google русский",
       "lang": "ru-RU",
       "local_service": false,
       "default": false
     },
     {
-      "name": "Google\u00a0\u666e\u901a\u8bdd\uff08\u4e2d\u56fd\u5927\u9646\uff09",
+      "name": "Google 普通话（中国大陆）",
       "lang": "zh-CN",
       "local_service": false,
       "default": false
     },
     {
-      "name": "Google\u00a0\u7ca4\u8a9e\uff08\u9999\u6e2f\uff09",
+      "name": "Google 粤語（香港）",
       "lang": "zh-HK",
       "local_service": false,
       "default": false
     },
     {
-      "name": "Google \u570b\u8a9e\uff08\u81fa\u7063\uff09",
+      "name": "Google 國語（臺灣）",
       "lang": "zh-TW",
       "local_service": false,
       "default": false
@@ -501,7 +501,10 @@
     "push",
     "screen-wake-lock",
     "storage-access",
-    "window-management"
+    "window-management",
+    "local-network",
+    "local-network-access",
+    "loopback-network"
   ],
   "permissions.granted": [
     "accelerometer",
@@ -5484,5 +5487,75 @@
       "webkitRequestFileSystem",
       "webkitResolveLocalFileSystemURL"
     ]
+  },
+  "gpu.adapter": {
+    "features": [
+      "depth32float-stencil8",
+      "rg11b10ufloat-renderable",
+      "texture-formats-tier1",
+      "bgra8unorm-storage",
+      "texture-compression-bc",
+      "dual-source-blending",
+      "core-features-and-limits",
+      "float32-filterable",
+      "indirect-first-instance",
+      "float32-blendable",
+      "depth-clip-control",
+      "texture-compression-bc-sliced-3d",
+      "shader-f16",
+      "texture-formats-tier2",
+      "timestamp-query",
+      "clip-distances",
+      "primitive-index",
+      "texture-component-swizzle",
+      "subgroups"
+    ],
+    "limits": {
+      "maxTextureDimension1D": 16384,
+      "maxTextureDimension2D": 16384,
+      "maxTextureDimension3D": 2048,
+      "maxTextureArrayLayers": 2048,
+      "maxBindGroups": 4,
+      "maxBindGroupsPlusVertexBuffers": 24,
+      "maxBindingsPerBindGroup": 1000,
+      "maxDynamicUniformBuffersPerPipelineLayout": 10,
+      "maxDynamicStorageBuffersPerPipelineLayout": 8,
+      "maxSampledTexturesPerShaderStage": 48,
+      "maxSamplersPerShaderStage": 16,
+      "maxStorageBuffersPerShaderStage": 16,
+      "maxStorageTexturesPerShaderStage": 8,
+      "maxUniformBuffersPerShaderStage": 12,
+      "maxUniformBufferBindingSize": 65536,
+      "maxStorageBufferBindingSize": 2147483644,
+      "minUniformBufferOffsetAlignment": 256,
+      "minStorageBufferOffsetAlignment": 256,
+      "maxVertexBuffers": 8,
+      "maxBufferSize": 2147483648,
+      "maxVertexAttributes": 30,
+      "maxVertexBufferArrayStride": 2048,
+      "maxInterStageShaderVariables": 28,
+      "maxColorAttachments": 8,
+      "maxColorAttachmentBytesPerSample": 128,
+      "maxComputeWorkgroupStorageSize": 32768,
+      "maxComputeInvocationsPerWorkgroup": 1024,
+      "maxComputeWorkgroupSizeX": 1024,
+      "maxComputeWorkgroupSizeY": 1024,
+      "maxComputeWorkgroupSizeZ": 64,
+      "maxComputeWorkgroupsPerDimension": 65535,
+      "maxImmediateSize": 64,
+      "maxStorageBuffersInFragmentStage": 16,
+      "maxStorageTexturesInFragmentStage": 8,
+      "maxStorageBuffersInVertexStage": 16,
+      "maxStorageTexturesInVertexStage": 8
+    },
+    "info": {
+      "vendor": "nvidia",
+      "architecture": "ampere",
+      "device": "",
+      "description": "",
+      "subgroupMinSize": 32,
+      "subgroupMaxSize": 32,
+      "isFallbackAdapter": false
+    }
   }
 }

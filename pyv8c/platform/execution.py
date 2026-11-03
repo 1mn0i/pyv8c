@@ -48,20 +48,49 @@ class WindowExecutionGroup:
         self.stopping = False
 
     def _has_foreground_context(self):
-        return any(not member.closed and member.context is not None for member in tuple(self.members))
+        return any(not member.closed and member.context is not None
+                   for member in tuple(self.members))
+
+    def _foreground_endpoint(self):
+        for member in tuple(self.members):
+            context = member.context
+            if (not member.closed and context is not None
+                    and not getattr(context, 'closed', False)):
+                return member, context
+        return None, None
 
     def _run_foreground(self):
-        endpoint = next((member for member in self.members
-                         if not member.closed and member.context is not None), None)
+        endpoint, context = self._foreground_endpoint()
         if endpoint is None:
             return False
         try:
-            return endpoint.invoke(endpoint.context._run_foreground_task, _background=True)
+            return endpoint.invoke(context._run_foreground_task, _background=True)
+        except RuntimeError:
+            # A navigation can close the context between selection and entry.
+            # Treat that as this turn's end; the executor will retry only if a
+            # live endpoint remains runnable.
+            if getattr(context, 'closed', False) or endpoint.closed:
+                return False
+            raise
         finally:
             if not self.closed and not self.stopping:
                 for agent in self.agents.values():
                     self._dirty[agent] = None
                 self.checkpoint()
+
+    def is_idle(self, agent):
+        """Whether *agent* has no ready command, task, frame, or foreground work."""
+        if agent.checkpointing or agent in self._dirty:
+            return False
+        operation = self._operation
+        if operation is not None and operation[0].agent is agent:
+            return False
+        lanes = {lane for lane in tuple(self.members)
+                 if lane.agent is agent and not lane.closed}
+        return (not self.executor.has_pending_for(lanes)
+                and not self.foreground.has_runnable_tasks()
+                and not any(lane.tasks.has_runnable_tasks() for lane in lanes)
+                and not self.rendering.has_runnable_tasks(lanes))
 
     def agent(self, origin):
         if not self.executor.is_owner_thread():
