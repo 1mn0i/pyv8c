@@ -326,6 +326,44 @@ js_from_py_impl(PyObject *value,
         }
         return array;
     }
+    if (PySet_Check(value) || PyFrozenSet_Check(value))
+    {
+        PyToJsConversionContext local_conversion(isolate);
+        if (conversion == nullptr)
+            conversion = &local_conversion;
+
+        Local<Value> existing;
+        if (conversion->find(value, &existing))
+            return existing;
+
+        Local<Set> js_set = Set::New(isolate);
+        if (!conversion->remember(value, js_set))
+            return Local<Value>();
+
+        PyObject* iterator = PyObject_GetIter(value);
+        if (iterator == nullptr)
+            return Local<Value>();
+        while (PyObject* item = PyIter_Next(iterator))
+        {
+            Local<Value> js_item = js_from_py_impl(item, context, conversion, isolate);
+            Py_DECREF(item);
+            if (js_item.IsEmpty() || PyErr_Occurred())
+            {
+                Py_DECREF(iterator);
+                return Local<Value>();
+            }
+            if (js_set->Add(context, js_item).IsEmpty())
+            {
+                Py_DECREF(iterator);
+                PyErr_SetString(PyExc_RuntimeError, "failed to add JavaScript set item");
+                return Local<Value>();
+            }
+        }
+        Py_DECREF(iterator);
+        if (PyErr_Occurred())
+            return Local<Value>();
+        return js_set;
+    }
     if (PyFunction_Check_abi3(value) || PyMethod_Check_abi3(value))
     {
         auto* owner = context_from_v8(context);

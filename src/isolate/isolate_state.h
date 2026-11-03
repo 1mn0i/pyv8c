@@ -86,15 +86,17 @@ public:
 
     v8::Local<v8::String> v8_string(V8StringId id) const;
 
-    bool track_python_object(v8::Local<v8::Object> object, PyObject* py_object, context_c* context);
+    bool track_python_object(v8::Local<v8::Object> object, PyObject* py_object,
+                             context_c* context, bool share_wrapper = false);
     // Release the owner the old realm published; the object is left standing.
     bool transfer_python_object(v8::Local<v8::Object> object);
     // The JavaScript object that already stands for *py_object* in *context*;
     // wrapping one Python object twice would give JavaScript two objects where it
     // can only tell one apart.  Empty means "not wrapped here yet".
     v8::Local<v8::Object> cached_js_object(context_c* context, PyObject* py_object);
-    // One wrapper per host object for the isolate, as Blink keeps one per world: the
-    // same node read from two same-origin frames is the same JavaScript object.
+    // One wrapper per IDL host object for the isolate, as Blink keeps one per world:
+    // the same node read from two same-origin frames is the same JavaScript object.
+    // Plain Python objects stay realm-local.
     PythonObjectOwner* shared_owner(PyObject* py_object);
     void remember_shared_owner(PyObject* py_object, PythonObjectOwner* owner);
     void forget_shared_owner(PythonObjectOwner* owner);

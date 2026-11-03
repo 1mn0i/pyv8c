@@ -241,7 +241,8 @@ IsolateState::v8_string(V8StringId id) const
 }
 
 bool
-IsolateState::track_python_object(Local<Object> object, PyObject* py_object, context_c* context)
+IsolateState::track_python_object(Local<Object> object, PyObject* py_object,
+                                  context_c* context, bool share_wrapper)
 {
     if (object->InternalFieldCount() <= PYTHON_OWNER_FIELD)
     {
@@ -294,9 +295,10 @@ IsolateState::track_python_object(Local<Object> object, PyObject* py_object, con
     {
         // Same as an entry that was never written.
     }
-    // The first wrapper for this host object answers from any realm; later realms
-    // read the cache instead of wrapping it again.
-    if (shared_owner(py_object) == nullptr)
+    // An IDL host object keeps its wrapper when the same node is read from another
+    // same-origin realm. A plain Python object stays realm-local: sharing it would
+    // carry JavaScript properties, and their writes, across unrelated realms.
+    if (share_wrapper && shared_owner(py_object) == nullptr)
         remember_shared_owner(py_object, owner);
     // Counted last: the paths above that fail take the owner with them.
     account_external_memory(kHostObjectExternalBytes);

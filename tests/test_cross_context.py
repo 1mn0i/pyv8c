@@ -44,6 +44,33 @@ def test_shared_member_callbacks_survive_the_creating_realm():
         isolate.close()
 
 
+def test_an_idl_host_object_keeps_its_wrapper_across_realms():
+    class Interface:
+        pass
+
+    spec = pyv8.IdlSpec()
+
+    def factory(name):
+        if name == "Interface":
+            return Interface, {name: spec}, {name: True}
+        return None
+
+    isolate = pyv8.Isolate()
+    source = isolate.context(Window, lazy_factory=factory)
+    target = isolate.context(Window, lazy_factory=factory)
+    try:
+        item = Interface()
+        source.expose(item=item)
+        target.expose(item=item)
+        from_target = target.exec_js("item")
+        source.expose(other=from_target)
+        assert source.exec_js("item === other") is True
+    finally:
+        source.close()
+        target.close()
+        isolate.close()
+
+
 def test_a_shared_child_does_not_share_a_realm_bound_ancestor():
     class Base:
         pass

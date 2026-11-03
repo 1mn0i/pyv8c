@@ -189,7 +189,8 @@ py_class_construct_impl(const FunctionCallbackInfo<Value>& info,
         return;
     }
     if (!py_class_init_js_object(
-            v8_compat::callback_holder(info), new_object, context)) {
+            v8_compat::callback_holder(info), new_object, context,
+            py_class_shares_wrapper(self))) {
         Py_DECREF((PyObject*)new_object);
         js_throw_py();
         return;

@@ -88,6 +88,7 @@ PyObject* context_promise_rejection_state(context_c* self, PyObject* args);
 static PyObject* context_try_inspector(context_c* self, PyObject* args);
 static PyObject* context_to_js(context_c* self, PyObject* value);
 static PyObject* context_import_handle(context_c* self, PyObject* handle);
+static PyObject* context_freeze(context_c* self, PyObject* value);
 static PyObject* context_set_microtask_queue(context_c* self, PyObject* queue);
 static PyObject* context_run_foreground_task(context_c*, PyObject*);
 static PyObject* context_begin_operation(context_c*, PyObject*);
@@ -254,6 +255,8 @@ PyMethodDef context_methods[] = {
     {"_try_inspector", (PyCFunction)PythonBoundary<context_try_inspector>::call, METH_VARARGS, NULL},
     {"exec_js", (PyCFunction)PythonBoundary<context_run>::call, METH_VARARGS | METH_KEYWORDS, NULL},
     {"js_obj", (PyCFunction)PythonBoundary<context_js_obj>::call, METH_O, NULL},
+    {"freeze", (PyCFunction)PythonBoundary<context_freeze>::call, METH_O,
+     "convert a Python value to V8 and freeze it in this realm"},
     {"expose", (PyCFunction)PythonBoundary<context_expose>::call, METH_VARARGS | METH_KEYWORDS, NULL},
     {"hide_global", (PyCFunction)PythonBoundary<context_hide_global>::call, METH_O,
      "remove a name this realm exposed, as if it had never been installed"},
@@ -845,6 +848,34 @@ context_dealloc(context_c *self)
     TP_FREE_ABI3(context_type, self);
 }
 
+
+static PyObject*
+context_freeze(context_c* self, PyObject* value)
+{
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Context> context = self->js_context.Get(isolate);
+    Local<Value> js_value = js_from_py(value, context);
+    if (js_value.IsEmpty() || PyErr_Occurred())
+        return nullptr;
+    if (!js_value->IsObject())
+        return py_from_js(js_value, context);
+    Local<Object> object = js_value.As<Object>();
+    JS_TRY
+    DeadlineScope guard(context);
+    guard.start();
+    bool frozen = without_gil([&] {
+        return object->SetIntegrityLevel(context, IntegrityLevel::kFrozen).FromMaybe(false);
+    });
+    guard.stop();
+    PY_PROPAGATE_JS;
+    if (!frozen) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to freeze JavaScript object");
+        return nullptr;
+    }
+    return py_from_js(object, context);
+}
 
 PyObject*
 context_js_obj(context_c* self, PyObject* py_object)

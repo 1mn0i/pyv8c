@@ -863,12 +863,13 @@ py_class_get_constructor(Local<Context> context, py_class* self, py_class* paren
 }
 
 bool
-py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context)
+py_class_init_js_object(Local<Object> js_object, PyObject *py_object, Local<Context> context,
+                        bool share_wrapper)
 {
     Isolate* isolate = v8_compat::context_isolate(context);
     IsolateState* isolate_state = runtime_manager.find_isolate(isolate);
     auto* owner = context_from_v8(context);
-    if (!isolate_state->track_python_object(js_object, py_object, owner)) {
+    if (!isolate_state->track_python_object(js_object, py_object, owner, share_wrapper)) {
         return false;
     }
     js_object->SetInternalField(
@@ -910,7 +911,8 @@ py_class_create_js_object(py_class *self, PyObject *py_object, Local<Context> co
             return Local<Object>();
         }
     }
-    if (!py_class_init_js_object(object, py_object, context)) {
+    if (!py_class_init_js_object(object, py_object, context,
+                                 py_class_shares_wrapper(self))) {
         return Local<Object>();
     }
     if (self->error_class) {

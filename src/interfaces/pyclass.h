@@ -31,6 +31,13 @@ typedef struct {
     V8HandleSlot<v8::FunctionTemplate> iterator_templ;
 } py_class;
 
+// Only IDL interface instances need cross-realm wrapper identity. Namespaces,
+// error wrappers, and plain Python classes stay owned by the realm that built them.
+inline bool py_class_shares_wrapper(const py_class* self)
+{
+    return self->idl_spec != nullptr && !self->to_obj && !self->error_class;
+}
+
 int py_class_type_init();
 extern PyTypeObject* py_class_type;
 
@@ -45,8 +52,11 @@ PyObject* py_class_to_template(PyObject* cls, context_c *py_ctx);
 v8::Local<v8::Value> py_class_get_constructor(v8::Local<v8::Context> context, py_class* self, py_class* parent);
 v8::Local<v8::Object> py_class_create_js_object(py_class *self, PyObject *py_object, v8::Local<v8::Context> context);
 // Publishes the object/instance pair and stamps the marker the conversion reads back.
+// Only IDL host objects share one wrapper across realms; a plain Python object owns
+// one wrapper per realm.
 bool py_class_init_js_object(v8::Local<v8::Object> js_object, PyObject *py_object,
-                             v8::Local<v8::Context> context);
+                             v8::Local<v8::Context> context,
+                             bool share_wrapper = false);
 // The interceptor entry points are declared in pyclass_handlers.h, beside the
 // handlers they look up, because they are reached only from there: a class hands
 // them to V8 when it installs its templates.

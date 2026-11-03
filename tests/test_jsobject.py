@@ -263,5 +263,23 @@ class TestJSObject(unittest.TestCase):
             _ = js_obj["missing"]
         self.assertEqual(caught.exception.args[0], "missing")
 
+    def test_context_freeze_builds_a_frozen_array(self):
+        frozen = self.context.freeze([1, 2])
+        self.assertIsInstance(frozen, pyv8.JSObject)
+        self.context.expose(frozen=frozen)
+        self.assertTrue(self.context.exec_js("Object.isFrozen(frozen)"))
+        self.assertFalse(self.context.exec_js("Object.isExtensible(frozen)"))
+        self.assertEqual(frozen.length, 2)
+        self.assertEqual(frozen[0], 1)
+
+    def test_context_freeze_converts_python_sets(self):
+        frozen = self.context.freeze({"items": {1, 2}})
+        self.context.expose(frozen=frozen)
+        self.assertTrue(self.context.exec_js("frozen.items instanceof Set"))
+        self.assertEqual(self.context.exec_js("frozen.items.size"), 2)
+        self.assertTrue(self.context.exec_js("frozen.items.has(1)"))
+        self.assertTrue(self.context.exec_js("Object.isFrozen(frozen)"))
+
+
 if __name__ == "__main__":
     unittest.main()

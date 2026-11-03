@@ -45,8 +45,11 @@ exact permitted source/target pairs, rather than exempting entire files:
 | `context_resources.cpp` | 1-3 | the pair table materialises a Python handle for a JavaScript object |
 | `convert_to_python.cpp` | 1-3 | one direction of the converter: it builds handles for objects coming in, which the handles layer defines |
 | `convert_to_javascript.cpp` | 1-4 | the other direction, which additionally has to know the class and function machinery |
-| `isolate_state.cpp` | 1-3 | disposal is where what was built on an isolate is taken apart, and an inspector belongs to the isolate it was created against, so it has to go before `Isolate::Dispose` |
+| `isolate_state.cpp` | 1-4 | disposal is where what was built on an isolate is taken apart, including the shared interface templates, and an inspector belongs to the isolate it was created against, so it has to go before `Isolate::Dispose` |
+| `runtime.cpp` | 1-2 | shutdown refuses to dispose V8 while serialized WebAssembly modules are still alive |
+| `wasm_streaming.cpp` | 1-2 | aborting a streaming compile converts its Python reason into a JavaScript value or error |
 | `error_hooks.cpp` | 1-2 | reporting an isolate's errors means handing JavaScript values to Python, which is conversion |
+| `error_family.cpp` | 2-3 | constructing an error silences tracing, which the tracing hook owns |
 
 Everything else, headers included, follows the plain rule. Two facts the checker
 reports rather than hides:

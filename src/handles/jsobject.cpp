@@ -124,6 +124,25 @@ static PyObject* js_object_is_uint8_array(js_object* self, PyObject*) {
     return PyBool_FromLong(object->IsUint8Array());
 }
 
+static PyObject* js_object_freeze(js_object* self, PyObject*) {
+    JS_OBJECT_ENTER(self, isolate, object);
+    IN_CONTEXT(object->GetCreationContextChecked());
+    JS_TRY
+    DeadlineScope guard(context);
+    guard.start();
+    bool frozen = without_gil([&] {
+        return object->SetIntegrityLevel(context, IntegrityLevel::kFrozen).FromMaybe(false);
+    });
+    guard.stop();
+    PY_PROPAGATE_JS;
+    if (!frozen) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to freeze JavaScript object");
+        return nullptr;
+    }
+    Py_INCREF((PyObject*)self);
+    return (PyObject*)self;
+}
+
 static PyObject* js_object_detach_buffer(js_object* self, PyObject*) {
     JS_OBJECT_ENTER(self, isolate, object);
     if (!object->IsArrayBuffer() || !object.As<ArrayBuffer>()->IsDetachable()) {
@@ -250,6 +269,7 @@ PyMethodDef js_object_methods[] = {
     {"_bytes", (PyCFunction)PythonBoundary<js_object_bytes>::call, METH_NOARGS, "The bytes a buffer holds or a view looks at, in one read."},
     {"_buffer_kind", (PyCFunction)PythonBoundary<js_object_buffer_kind>::call, METH_NOARGS, "Native buffer brand and detached state without property access."},
     {"_is_uint8_array", (PyCFunction)PythonBoundary<js_object_is_uint8_array>::call, METH_NOARGS, "Check the native Uint8Array brand without property access."},
+    {"freeze", (PyCFunction)PythonBoundary<js_object_freeze>::call, METH_NOARGS, "Freeze this object in its owning V8 context."},
     {"_detach_buffer", (PyCFunction)PythonBoundary<js_object_detach_buffer>::call, METH_NOARGS, "Detach an ArrayBuffer without calling page code."},
     {"__bytes__", (PyCFunction)PythonBoundary<js_object_as_bytes>::call, METH_NOARGS, "The bytes a buffer or a view holds; anything else holds none."},
     {"_buffer_view", (PyCFunction)PythonBoundary<js_object_buffer>::call, METH_NOARGS, "**Experimental**. Return a python buffer(memoryview) object pointing to the underlying V8 ArrayBuffer data.  Underscore-prefixed because instance lookup only reaches those."},

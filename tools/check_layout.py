@@ -81,8 +81,17 @@ COMPOSITION_EDGES = {
         'values/convert.h',
     }),
     'isolate/isolate_state.cpp': frozenset({
+        'interfaces/pyclass.h',
         'tools/debugger.h',
         'values/error_family.h',
+    }),
+    'isolate/runtime.cpp': frozenset({
+        'values/serialization.h',
+    }),
+    'isolate/wasm_streaming.cpp': frozenset({
+        'values/convert.h',
+        'values/error_family.h',
+        'values/handle_resource.h',
     }),
     'pyv8.cpp': frozenset({
         'handles/jsbuffer.h',
@@ -121,6 +130,9 @@ COMPOSITION_EDGES = {
     }),
     'values/convert_to_python.cpp': frozenset({
         'handles/jsobject.h',
+    }),
+    'values/error_family.cpp': frozenset({
+        'tools/trace.h',
     }),
 }
 
