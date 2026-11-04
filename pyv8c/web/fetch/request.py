@@ -10,8 +10,10 @@ from ...foundation.arguments import IdlArgumentError
 from ...foundation.urls import SPECIAL_SCHEMES
 from ..page_errors import PageTypeError
 from ..bom.abort import AbortSignal
+from ..bom.url import URLSearchParams
+from .formdata import FormData
 from .headers import Headers
-from ..fileapi.blob import _array_buffer_bytes
+from ..fileapi.blob import Blob, _array_buffer_bytes
 
 
 # Web IDL dictionary members are read in lexicographic order, including members
@@ -92,6 +94,40 @@ class Request:
         binary = _array_buffer_bytes(self._body)
         if binary is not None:
             self._body = binary
+        self._type_the_body()
+
+    def _type_the_body(self):
+        """Give the body's own type to ``Content-Type`` when the author named none.
+
+        This is Fetch's "extract a body": a string travels as
+        ``text/plain;charset=UTF-8``, ``URLSearchParams`` as urlencoded text, and a
+        ``Blob`` with the type it was built with.  Chrome sends the string type on
+        the Cloudflare challenge's submit POST -- its answer carries the widget's
+        result -- and a submit arriving without it is answered ``400`` instead, which
+        is where the managed challenge stopped one step before ``cf_clearance``
+        (measured against Chrome 150/155, 2026-11-03).  ``XMLHttpRequest`` has the
+        same rule in ``xhr._default_content_type`` because ``send`` applies it there.
+        """
+        if is_nullish(self._body):
+            return
+        #: ``fn_get`` answers ``Null`` for a header it does not hold, not ``None``.
+        if not is_nullish(self._headers.fn_get("content-type")):
+            return
+        body = self._body
+        if isinstance(body, Blob):
+            declared = body.get_type()
+            if declared:
+                self._headers.fn_set("Content-Type", declared)
+            return
+        if isinstance(body, (bytes, bytearray, memoryview)):
+            return
+        if isinstance(body, URLSearchParams):
+            self._headers.fn_set("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+            return
+        if isinstance(body, FormData):
+            #: The multipart boundary is chosen when the body is serialized.
+            return
+        self._headers.fn_set("Content-Type", "text/plain;charset=UTF-8")
 
     def get_url(self): return self._url
     def _read_signal(self, options, original):

@@ -42,3 +42,28 @@ def test_jar_still_accepts_single_and_list_forms():
     jar.add_from_response(URL, "A=1; Path=/")
     jar.add_from_response(URL, ["B=2", "C=3"])
     assert {cookie.split("=", 1)[0] for cookie in jar.header_for(URL).split("; ")} == {"A", "B", "C"}
+
+
+def test_a_cookie_with_a_partitioned_attribute_is_kept():
+    """``Partitioned`` (CHIPS) must not make the whole line unparsable.
+
+    Cloudflare's ``cf_clearance`` arrives as
+    ``cf_clearance=...; HttpOnly; SameSite=None; Partitioned; Secure; Path=/; Domain=...;
+    Expires=Wed, 03 Nov 2027 ...``.  ``http.cookies.SimpleCookie`` answered an empty
+    morsel set for exactly that shape and the jar stored nothing, silently, which cost
+    a challenge its clearance (measured 2026-11-03).
+    """
+    header = ("cf_clearance=abc123-1793687011-1.2.1.1-XyZ; HttpOnly; SameSite=None; "
+              "Partitioned; Secure; Path=/; Domain=www.cde.org.cn; "
+              "Expires=Wed, 03 Nov 2027 06:42:09 GMT")
+    jar = CookieJar()
+    jar.add_from_response(URL, header)
+    assert "cf_clearance=" in jar.header_for(URL)
+    #: HttpOnly: the wire sends it, a script may not read it.
+    assert "cf_clearance=" not in jar.document_for(URL)
+
+
+def test_a_value_with_spaces_is_kept_instead_of_dropping_the_line():
+    jar = CookieJar()
+    jar.add_from_response(URL, "A=one two; Path=/")
+    assert "A=one two" in jar.header_for(URL)

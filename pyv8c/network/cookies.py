@@ -9,7 +9,6 @@ import time
 from dataclasses import dataclass
 from datetime import timezone
 from email.utils import parsedate_to_datetime
-from http.cookies import SimpleCookie
 from threading import RLock
 from urllib.parse import urlsplit
 
@@ -60,19 +59,56 @@ class CookieJar:
             self._add_one_from_response(parsed_url, value)
 
     def _add_one_from_response(self, parsed_url, header):
-        cookie = SimpleCookie()
-        try: cookie.load(header)
-        except Exception: return
-        for morsel in cookie.values():
-            domain = (morsel["domain"] or parsed_url.hostname or "").lower().lstrip(".")
-            path = morsel["path"] if morsel["path"].startswith("/") else self._default_path(parsed_url.path)
-            self._store(
-                parsed_url, morsel.key, morsel.value, domain=domain, path=path,
-                secure=bool(morsel["secure"]), host_only=not bool(morsel["domain"]),
-                http_only=bool(morsel["httponly"]), same_site=str(morsel["samesite"] or "").lower(),
-                expires=self._parse_expires(morsel["expires"]),
-                max_age=self._parse_max_age(morsel["max-age"]), source="network",
-            )
+        """Store one ``Set-Cookie`` value.
+
+        The attributes are read here rather than handed to
+        ``http.cookies.SimpleCookie``: that parser is written for a ``Cookie:``
+        *request* header, and a ``Set-Cookie`` whose attribute shape it does not
+        anticipate makes it stop early, dropping every cookie in the line without a
+        word.  A Cloudflare challenge's ``cf_clearance`` was lost that way
+        (``Expires=Wed, 03 Nov 2027 ...`` , measured 2026-11-03) while the header
+        itself was well formed.  The grammar below is the one
+        :meth:`set_from_document` already reads, except that ``HttpOnly`` is allowed
+        here -- a script may not read it, the wire still sends it.  ``Partitioned``
+        (CHIPS) is read and ignored rather than dropped: it narrows a cookie's
+        visibility, it does not make the line unreadable.
+        """
+        pieces = str(header).split(";")
+        pair = pieces[0]
+        if "=" not in pair:
+            return
+        name, value = (part.strip() for part in pair.split("=", 1))
+        if not name or any(char in _INVALID_COOKIE_NAME_CHARS for char in name):
+            return
+        if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+            value = value[1:-1]
+        options = {
+            "domain": (parsed_url.hostname or "").lower(),
+            "path": self._default_path(parsed_url.path),
+            "secure": False, "host_only": True, "http_only": False,
+            "same_site": "", "expires": None, "max_age": None,
+        }
+        for attribute in pieces[1:]:
+            key, separator, raw_value = attribute.strip().partition("=")
+            key, raw_value = key.lower(), raw_value.strip()
+            if key == "domain" and separator:
+                domain = raw_value.lower().lstrip(".")
+                if not domain:
+                    return
+                options["domain"], options["host_only"] = domain, False
+            elif key == "path" and separator and raw_value.startswith("/"):
+                options["path"] = raw_value
+            elif key == "secure":
+                options["secure"] = True
+            elif key == "httponly":
+                options["http_only"] = True
+            elif key == "samesite" and separator:
+                options["same_site"] = raw_value.lower()
+            elif key == "expires" and separator:
+                options["expires"] = self._parse_expires(raw_value)
+            elif key == "max-age" and separator:
+                options["max_age"] = self._parse_max_age(raw_value)
+        self._store(parsed_url, name, value, **options, source="network")
 
     @staticmethod
     def _default_path(path):
