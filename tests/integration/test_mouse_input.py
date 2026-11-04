@@ -18,14 +18,14 @@ from pyv8c.foundation.host_errors import HostStateError
 #: inline and positioned boxes, and this file is about the event sequence.
 RECORDER = """
 globalThis.log = [];
-const record = (type) => (e) => log.push([type, e.target.id || e.target.localName,
+const record = (type) => (e) => log.push([type, e.target.id || e.target.localName || '#document',
     String(e.detail), String(e.isTrusted), String(e.button), String(e.buttons)]);
 for (const type of ['pointerover', 'pointerout', 'pointerenter', 'pointerleave', 'pointermove',
                     'pointerdown', 'pointerup', 'mouseover', 'mouseout', 'mouseenter',
                     'mouseleave', 'mousemove', 'mousedown', 'mouseup', 'click', 'dblclick',
                     'auxclick', 'contextmenu', 'focus', 'focusin', 'blur', 'focusout',
                     'input', 'change', 'submit'])
-  addEventListener(type, record(type), true);
+  document.addEventListener(type, record(type), true);
 """
 
 HTML = """
@@ -93,7 +93,11 @@ def test_a_first_move_reports_both_over_events_then_both_move_events(page):
         # A pointer event that reports no button transition carries -1, and the
         # mouse event beside it the 0 Chromium gives that one.
         ["pointerover", "a", "0", "true", "-1", "0"],
+        *[["pointerenter", node, "0", "true", "-1", "0"]
+          for node in ['#document', 'html', 'body', 'a']],
         ["mouseover", "a", "0", "true", "0", "0"],
+        *[["mouseenter", node, "0", "true", "0", "0"]
+          for node in ['#document', 'html', 'body', 'a']],
         ["pointermove", "a", "0", "true", "-1", "0"],
         ["mousemove", "a", "0", "true", "0", "0"],
     ]
@@ -143,10 +147,11 @@ def test_the_page_reports_the_cursor_arriving_in_it_once(page):
     assert page.evaluate("page_log") == []
     page.mouse.move(*centre(page, "#a"))
     assert page.evaluate("page_log") == ["pointerover:a", "pointerenter:#document",
-                                         "mouseover:a", "mouseenter:#document"]
+        "pointerenter:html", "pointerenter:body", "pointerenter:a",
+        "mouseover:a", "mouseenter:#document", "mouseenter:html", "mouseenter:body", "mouseenter:a"]
     page.evaluate("page_log.length = 0")
     page.mouse.move(*centre(page, "#b"))
-    assert page.evaluate("page_log") == ["pointerover:b", "mouseover:b"]
+    assert page.evaluate("page_log") == ["pointerover:b", "pointerenter:b", "mouseover:b", "mouseenter:b"]
 
 
 def test_crossing_into_another_element_reports_out_then_over(page):
@@ -155,9 +160,13 @@ def test_crossing_into_another_element_reports_out_then_over(page):
     page.mouse.move(*centre(page, "#b"))
     assert page.evaluate("log") == [
         ["pointerout", "a", "0", "true", "-1", "0"],
+        ["pointerleave", "a", "0", "true", "-1", "0"],
         ["pointerover", "b", "0", "true", "-1", "0"],
+        ["pointerenter", "b", "0", "true", "-1", "0"],
         ["mouseout", "a", "0", "true", "0", "0"],
+        ["mouseleave", "a", "0", "true", "0", "0"],
         ["mouseover", "b", "0", "true", "0", "0"],
+        ["mouseenter", "b", "0", "true", "0", "0"],
         ["pointermove", "b", "0", "true", "-1", "0"],
         ["mousemove", "b", "0", "true", "0", "0"],
     ]
@@ -171,9 +180,8 @@ def test_a_move_inside_one_element_reports_only_the_move_events(page):
     assert events(page) == ["pointermove", "mousemove"]
 
 
-def test_enter_and_leave_reach_the_element_and_not_its_ancestors(page):
-    """Chromium dispatches them with a propagation path of just the target, and the
-    document's own enter -- the cursor arriving in the page -- is a separate one."""
+def test_enter_reaches_capture_ancestors_and_the_element(page):
+    """Non-bubbling enter events still visit capturing listeners on ancestors."""
     page.evaluate("""
         globalThis.enters = [];
         document.addEventListener('mouseenter', () => enters.push('document'), true);
@@ -181,7 +189,7 @@ def test_enter_and_leave_reach_the_element_and_not_its_ancestors(page):
     """)
     page.mouse.move(*centre(page, "#a"))
     page.mouse.move(*centre(page, "#b"))
-    assert page.evaluate("enters") == ["document", "a"]
+    assert page.evaluate("enters") == ["document"] * 4 + ["a", "document"]
 
 
 def test_steps_report_each_intermediate_position(page):
@@ -311,7 +319,9 @@ def test_a_cancelled_mousedown_still_runs_the_click_activation(page):
 def test_a_disabled_control_receives_pointer_events_only(page):
     page.mouse.click(*centre(page, "#disabled"))
     assert events(page) == [
-        "pointerover", "mouseover", "pointermove", "mousemove", "pointerdown", "pointerup",
+        "pointerover", *["pointerenter"] * 4,
+        "mouseover", *["mouseenter"] * 4,
+        "pointermove", "mousemove", "pointerdown", "pointerup",
     ]
     assert active_element(page) == "body"
 
@@ -520,7 +530,8 @@ def test_page_click_refuses_a_selector_that_matches_nothing(page):
 
 def test_page_hover_leaves_the_element_hovered(page):
     page.hover("#btn")
-    assert events(page) == ["pointerover", "mouseover", "pointermove", "mousemove"]
+    assert events(page) == ["pointerover", *["pointerenter"] * 4,
+        "mouseover", *["mouseenter"] * 4, "pointermove", "mousemove"]
     assert page.mouse.position == centre(page, "#btn")
 
 

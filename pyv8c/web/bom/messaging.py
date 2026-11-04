@@ -118,7 +118,7 @@ class MessagePort(EventTarget):
         services = self._services
         if services is not None:
             services.realm_services.materialize_interface("MessageEvent")
-        self.fn_dispatchEvent(MessageEvent("message", {"data": data, "origin": "",
+        self._dispatch_event(MessageEvent("message", {"data": data, "origin": "",
                                                        "ports": ports, "isTrusted": True},
                                            services=services))
 

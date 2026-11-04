@@ -356,7 +356,7 @@ class AudioScheduledSourceNode(AudioNode):
         if self._ended_reported or self._start is None:
             return
         self._ended_reported = True
-        self.fn_dispatchEvent(Event("ended", {"isTrusted": True}))
+        self._dispatch_event(Event("ended", {"isTrusted": True}))
 
 
 @interface('OscillatorNode', 'AudioScheduledSourceNode')
@@ -833,8 +833,26 @@ class OfflineAudioContext(BaseAudioContext):
         for node in self._order():
             if getattr(node, "_finished", False):
                 node._notify_finished()
-        return self._promise(AudioBuffer(length=self._length, sample_rate=self._sample_rate,
-                                         channels=self._channels, samples=samples))
+        buffer = AudioBuffer(length=self._length, sample_rate=self._sample_rate,
+                             channels=self._channels, samples=samples)
+        if self._services is None:
+            return None
+        realm = getattr(self._services, "realm_services", self._services)
+        promise, resolve, _reject = realm.make_promise()
+
+        def complete():
+            #: Chrome delivers both the legacy event and the promise result, and the
+            #: event's buffer is the very one the promise resolves with.  Completion is
+            #: a queued task, so a handler installed after this call still replaces the
+            #: one that was there when it was made.
+            event = OfflineAudioCompletionEvent("complete", {
+                "renderedBuffer": buffer, "bubbles": True, "isTrusted": True,
+            }, services=self._services)
+            self._dispatch_event(event)
+            resolve(buffer)
+
+        realm.post_task(complete, label="offline-audio-complete", document_bound=True)
+        return promise
     def fn_resume(self, *_extra): return self._promise()
     def fn_suspend(self, *_extra): return self._promise()
 
@@ -1873,7 +1891,7 @@ class ScriptProcessorNode(AudioNode):
             "outputBuffer": AudioBuffer(length=size, sample_rate=rate,
                                         channels=max(self._output_channels, 1)),
         })
-        self.fn_dispatchEvent(event)
+        self._dispatch_event(event)
 
 
 @interface('AudioProcessingEvent', 'Event')
@@ -1890,6 +1908,31 @@ class AudioProcessingEvent(Event):
     def get_playbackTime(self): return self._playback_time
     def get_inputBuffer(self): return self._input_buffer
     def get_outputBuffer(self): return self._output_buffer
+
+
+@interface('OfflineAudioCompletionEvent', 'Event')
+class OfflineAudioCompletionEvent(Event):
+    """The rendered output an offline context hands to its ``complete`` listeners."""
+
+    def __init__(self, type=MISSING, init=None, *_extra, **kwargs):
+        if type is MISSING:
+            raise missing_error('OfflineAudioCompletionEvent', '', 2, 0, constructor=True)
+        if init is MISSING or is_nullish(init):
+            init = {}
+        init = dictionary(init,
+                          name="OfflineAudioCompletionEventInit",
+                          prefix="Failed to construct 'OfflineAudioCompletionEvent': ")
+        if "renderedBuffer" not in init:
+            raise PageTypeError("Failed to construct 'OfflineAudioCompletionEvent': "
+                                "Required member renderedBuffer is undefined.")
+        buffer = init["renderedBuffer"]
+        if not isinstance(buffer, AudioBuffer):
+            raise PageTypeError("Failed to construct 'OfflineAudioCompletionEvent': "
+                                "renderedBuffer is not of type 'AudioBuffer'.")
+        super().__init__(type, init, **kwargs)
+        self._rendered_buffer = buffer
+
+    def get_renderedBuffer(self): return self._rendered_buffer
 
 
 def _channel_count(value, what):
@@ -1934,6 +1977,7 @@ FEATURE = FeatureImplementation({
     "DynamicsCompressorNode": DynamicsCompressorNode,
     "ScriptProcessorNode": ScriptProcessorNode,
     "AudioProcessingEvent": AudioProcessingEvent,
+    "OfflineAudioCompletionEvent": OfflineAudioCompletionEvent,
     "PeriodicWave": PeriodicWave,
     "AudioDestinationNode": AudioDestinationNode,
     "BaseAudioContext": BaseAudioContext,
@@ -1947,6 +1991,7 @@ __all__ = [
     "AudioProcessingEvent", "AudioScheduledSourceNode", "BaseAudioContext",
     "BiquadFilterNode", "ChannelMergerNode", "ChannelSplitterNode", "ConstantSourceNode",
     "ConvolverNode", "DelayNode", "DynamicsCompressorNode", "GainNode", "IIRFilterNode",
-    "OfflineAudioContext", "OscillatorNode", "PannerNode", "PeriodicWave",
+    "OfflineAudioCompletionEvent", "OfflineAudioContext", "OscillatorNode", "PannerNode",
+    "PeriodicWave",
     "ScriptProcessorNode", "StereoPannerNode", "WaveShaperNode",
 ]

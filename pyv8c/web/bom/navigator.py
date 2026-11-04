@@ -21,7 +21,7 @@ from ...foundation.arguments import (
 )
 from ...foundation.environment import BrowserEnvironment, MimeTypeView, environment_of
 from ...foundation.arguments import IdlArgumentError
-from ..page_errors import PageTypeError, dom_exception
+from ..page_errors import DOMException, PageTypeError, dom_exception
 from ..page_errors import js_error_value
 from ...foundation.realm import post_or_call
 from ...foundation.urls import origin_string
@@ -48,7 +48,9 @@ _WGSL_LANGUAGE_FEATURES = (
     "uniform_buffer_standard_layout", "unrestricted_pointer_parameters",
 )
 from .url import URLSearchParams
-from .utils import is_secure_context, settled as _settled, window_secure_context
+from .utils import (is_secure_context, promise_receiver_error,
+                    promise_rejected_in_caller_realm, settled as _settled,
+                    window_secure_context)
 
 
 class _LegacyNamedCollection(LegacyNamedPropertyMixin, ReadOnlyIndexedPropertyMixin):
@@ -346,6 +348,9 @@ class NavigatorUAData:
 
     def fn_getHighEntropyValues(self, hints=MISSING, *_extra):
         """The hints asked for, and the low-entropy three either way."""
+        invalid = promise_receiver_error(self, NavigatorUAData, 'getHighEntropyValues')
+        if invalid is not None:
+            return invalid
         services = self._services
         promise, resolve, reject = services.realm_services.make_promise()
 
@@ -558,37 +563,45 @@ class Permissions:
         self._clipboard_read_status_name = None
 
     def fn_query(self, descriptor=MISSING, *_extra):
+        invalid = promise_receiver_error(self, Permissions, 'query')
+        if invalid is not None:
+            return invalid
+        try:
+            status = self._query(descriptor)
+        except (PageTypeError, IdlArgumentError, pyv8.JSException, DOMException) as error:
+            #: A conversion or descriptor failure rejects in the realm of the function
+            #: that was called -- a borrowed operation answers in the realm it came from.
+            return promise_rejected_in_caller_realm(error, self._services)
+        return _settled(self._services, value=status)
+
+    def _query(self, descriptor):
         if descriptor is MISSING:
-            return _settled(self._services, error=missing_error(
-                'Permissions', 'query', 1, 0, constructor=False))
-        if is_nullish(descriptor) or not isinstance(descriptor, (pyv8.JSObject, dict)):
-            return _settled(self._services, error=PageTypeError(
-                "Failed to execute 'query' on 'Permissions': parameter 1 is not of type 'object'."))
+            raise missing_error('Permissions', 'query', 1, 0, constructor=False)
+        if (is_nullish(descriptor)
+                or not (isinstance(descriptor, (pyv8.JSObject, dict, list, tuple))
+                        or callable(descriptor))):
+            raise PageTypeError(
+                "Failed to execute 'query' on 'Permissions': parameter 1 is not of type 'object'.")
         names = self._environment.permissions.names or PERMISSION_NAMES
         clipboard_read_status = False
-        try:
-            values = dictionary(descriptor)
-            name = self._permission_name(values, names)
-            if name == "push":
-                # Blink converts the derived PushPermissionDescriptor after the
-                # initial PermissionDescriptor, reading its inherited name again.
-                self._permission_name(values, names)
-                if not boolean(values.get("userVisibleOnly")):
-                    return _settled(self._services, error=dom_exception(
-                        "NotSupportedError",
-                        "Failed to execute 'query' on 'Permissions': Push Permission without "
-                        "userVisibleOnly:true isn't supported yet."))
-                name = "notifications"
-            elif name in ("clipboard-read", "clipboard-write"):
-                # The derived ClipboardPermissionDescriptor repeats its inherited
-                # name before reading allowWithoutGesture.
-                self._permission_name(values, names)
-                without_gesture = boolean(values.get("allowWithoutGesture"))
-                clipboard_read_status = name == "clipboard-read" or without_gesture
-        except pyv8.JSException as error:
-            return _settled(self._services, error=error)
-        except PageTypeError as error:
-            return _settled(self._services, error=error)
+        values = dictionary(descriptor)
+        name = self._permission_name(values, names)
+        if name == "push":
+            # Blink converts the derived PushPermissionDescriptor after the initial
+            # PermissionDescriptor, reading its inherited name again.
+            self._permission_name(values, names)
+            if not boolean(values.get("userVisibleOnly")):
+                raise dom_exception(
+                    "NotSupportedError",
+                    "Failed to execute 'query' on 'Permissions': Push Permission without "
+                    "userVisibleOnly:true isn't supported yet.")
+            name = "notifications"
+        elif name in ("clipboard-read", "clipboard-write"):
+            # The derived ClipboardPermissionDescriptor repeats its inherited name
+            # before reading allowWithoutGesture.
+            self._permission_name(values, names)
+            without_gesture = boolean(values.get("allowWithoutGesture"))
+            clipboard_read_status = name == "clipboard-read" or without_gesture
         spec_names = self._environment.permissions.spec_names or _PERMISSION_SPEC_NAMES
         status_name = spec_names.get(name, name)
         state_name = name
@@ -599,8 +612,8 @@ class Permissions:
                 self._clipboard_read_status_name = status_name
             status_name = self._clipboard_read_status_name
             state_name = "clipboard-read"
-        return _settled(self._services, value=PermissionStatus(
-            status_name, self._state(state_name), services=self._services))
+        return PermissionStatus(
+            status_name, self._state(state_name), services=self._services)
 
     @staticmethod
     def _permission_name(values, names):

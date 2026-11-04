@@ -600,13 +600,13 @@ class _RequestMixin:
         self._result_ready = False
 
     def _dispatch(self, event_type, options=None):
-        return self.fn_dispatchEvent(Event(event_type, options or {"isTrusted": True}))
+        return self._dispatch_event(Event(event_type, options or {"isTrusted": True}))
 
     def _dispatch_version_change(self, event_type, old_version, new_version):
         event = IDBVersionChangeEvent(
             event_type, {"oldVersion": old_version, "newVersion": new_version, "isTrusted": True}
         )
-        return self.fn_dispatchEvent(event)
+        return self._dispatch_event(event)
 
     def _mark_done(self):
         self._done = True
@@ -1053,7 +1053,7 @@ class IDBTransaction(EventTarget):
             hook(error)
 
     def _dispatch(self, event_type):
-        return self.fn_dispatchEvent(Event(event_type, {"isTrusted": True}))
+        return self._dispatch_event(Event(event_type, {"isTrusted": True}))
 
     def _run(self, request, operation):
         self._pending += 1
@@ -1847,7 +1847,7 @@ class IDBDatabase(EventTarget):
         event = IDBVersionChangeEvent(
             "versionchange", {"oldVersion": self._version, "newVersion": None}
         )
-        self.fn_dispatchEvent(event)
+        self._dispatch_event(event)
 
 
 @interface('IDBFactory', None)

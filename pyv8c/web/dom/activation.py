@@ -69,7 +69,7 @@ def click_element(element):
         "pointerId": -1, "pointerType": "", "isPrimary": False, "pressure": 0,
     })
     prepared = prepare_activation(element)
-    element.fn_dispatchEvent(event)
+    element._dispatch_event(event)
     complete_activation(element, event, prepared)
     return True
 
@@ -97,7 +97,7 @@ def repeat_click(element, source):
     })
     repeated._trusted = bool(getattr(source, "_trusted", False))
     prepared = prepare_activation(element)
-    element.fn_dispatchEvent(repeated)
+    element._dispatch_event(repeated)
     complete_activation(element, repeated, prepared)
     return True
 

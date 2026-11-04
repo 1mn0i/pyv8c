@@ -46,7 +46,10 @@ def _contains_style(node):
     """
     if _is_style_element(node):
         return True
-    children = getattr(node, "_children", ())
+    children = list(getattr(node, "_children", ()))
+    shadow = getattr(node, '_shadow_root', None)
+    if shadow is not None:
+        children.append(shadow)
     if not children:
         return False
     pending = list(children)
@@ -55,6 +58,9 @@ def _contains_style(node):
         if _is_style_element(current):
             return True
         pending.extend(getattr(current, "_children", ()))
+        shadow = getattr(current, '_shadow_root', None)
+        if shadow is not None:
+            pending.append(shadow)
     return False
 
 
@@ -142,6 +148,17 @@ def _bump_style_version(node):
     parent = getattr(node, "parentNode", None)
     if not (_is_style_element(parent) or _contains_style(node)):
         return
+    #: A sheet is bound to the markup it was made from.  Rewriting the owner's text or
+    #: moving it out of the document detaches the sheet -- it keeps the rules it already
+    #: answered -- and the owner gets a new sheet the next time one is asked for.
+    owners = (parent,) if _is_style_element(parent) else (node, *_subtree_nodes(node))
+    for owner in owners:
+        if not _is_style_element(owner):
+            continue
+        sheet = getattr(owner, "_style_sheet", None)
+        if sheet is not None:
+            sheet._detach()
+            owner._style_sheet = None
     document = getattr(node, "ownerDocument", None)
     if document is not None:
         document.style_version = getattr(document, "style_version", 0) + 1

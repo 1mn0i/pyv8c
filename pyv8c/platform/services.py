@@ -67,7 +67,7 @@ class _PerformanceCapability:
         self.event_counts = {}
         self.clock = Clock()
 
-    def begin_navigation(self, url, redirects=0, redirects_span=0.0):
+    def begin_navigation(self, url, redirects=0, redirects_span=0.0, *, started_at=None):
         """Start a new document's timeline: its navigation record, and nothing else.
 
         *redirects* is how many hops the document's own request followed and
@@ -75,8 +75,15 @@ class _PerformanceCapability:
         before the document starts; the hops lie before this timeline's origin.
         """
         self.reset()
-        self.clock.reset()
-        return self.record("navigation", name=str(url), start=self.clock.now_ms(),
+        self.clock.reset(monotonic=started_at)
+        received_at = self.clock.now_ms()
+        #: The request was issued when the timeline began, and the response was read by
+        #: the time this document commits: the phases in between are the network's.
+        return self.record("navigation", name=str(url), start=0.0,
+                           fetchStart=0.0, domainLookupStart=0.0, domainLookupEnd=0.0,
+                           connectStart=0.0, connectEnd=0.0, requestStart=0.0,
+                           responseStart=received_at, responseEnd=received_at,
+                           domLoading=received_at,
                            redirectCount=int(redirects),
                            redirectStart=0.0, redirectEnd=round(float(redirects_span), 3))
 

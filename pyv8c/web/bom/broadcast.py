@@ -85,5 +85,5 @@ class BroadcastChannel(EventTarget):
         services = self._services
         if services is not None:
             services.realm_services.materialize_interface("MessageEvent")
-        self.fn_dispatchEvent(MessageEvent("message", {"data": data, "origin": origin,
+        self._dispatch_event(MessageEvent("message", {"data": data, "origin": origin,
                                                        "ports": (), "isTrusted": True}))

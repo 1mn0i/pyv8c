@@ -258,7 +258,7 @@ class WorkerRuntime:
             return
         try:
             #: A message delivered to a worker carries no origin and is a real event.
-            self._scope.fn_dispatchEvent(MessageEvent("message", {
+            self._scope._dispatch_event(MessageEvent("message", {
                 "data": value, "origin": "", "ports": ports, "isTrusted": True,
             }, services=self._realm.services if self._realm is not None else None))
         except control_exceptions():
@@ -323,7 +323,7 @@ class WorkerRuntime:
         scope = self._scope
         if scope is not None:
             try:
-                scope.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, 
+                scope._dispatch_event(ErrorEvent("error", {"isTrusted": True, 
                     "message": message,
                     "filename": filename,
                     "lineno": line,
@@ -349,7 +349,7 @@ class WorkerRuntime:
                 "cancelable": event_type == "unhandledrejection",
             }, services=self._realm.services)
             event._trusted = True
-            scope.fn_dispatchEvent(event)
+            scope._dispatch_event(event)
         except control_exceptions():
             raise
         except BaseException:  # reporting must not break the worker
@@ -465,6 +465,6 @@ class SharedWorkerRuntime(WorkerRuntime):
         port._services = self._realm.services
         port._entangle(self.owner._port)
         self.owner._port._entangle(port)
-        self._scope.fn_dispatchEvent(MessageEvent("connect", {"isTrusted": True, "ports": [port]}))
+        self._scope._dispatch_event(MessageEvent("connect", {"isTrusted": True, "ports": [port]}))
 
 __all__ = ["WorkerRuntime", "SharedWorkerRuntime"]

@@ -113,7 +113,7 @@ class Location:
             self._services.realm_services.materialize_interface("HashChangeEvent")
             event = HashChangeEvent("hashchange", {"oldURL": previous, "newURL": target})
             event._trusted = True
-            window.fn_dispatchEvent(event)
+            window._dispatch_event(event)
     def _set_component(self, **changes):
         self._require_access()
         self.set_href(urlunsplit(urlsplit(self.href)._replace(**changes)))
@@ -232,14 +232,14 @@ class History:
         self._services.realm_services.materialize_interface("PopStateEvent")
         event = PopStateEvent("popstate", {"state": entry[1]})
         event._trusted = True
-        window.fn_dispatchEvent(event)
+        window._dispatch_event(event)
         # Crossing entries whose fragments differ is also a fragment navigation,
         # so ``hashchange`` follows ``popstate`` for that step.
         if urlsplit(previous).fragment != urlsplit(str(entry[0])).fragment:
             self._services.realm_services.materialize_interface("HashChangeEvent")
             change = HashChangeEvent("hashchange", {"oldURL": previous, "newURL": str(entry[0])})
             change._trusted = True
-            window.fn_dispatchEvent(change)
+            window._dispatch_event(change)
 
 
 #: The Navigation API's handler slots.

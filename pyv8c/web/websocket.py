@@ -81,8 +81,8 @@ class WebSocket(EventTarget):
 
     def _fail_without_engine(self):
         """What a socket that cannot be opened reports, without saying why."""
-        self.fn_dispatchEvent(Event("error", {"isTrusted": True}))
-        self.fn_dispatchEvent(CloseEvent("close", {
+        self._dispatch_event(Event("error", {"isTrusted": True}))
+        self._dispatch_event(CloseEvent("close", {
             "isTrusted": True, "code": 1006, "reason": "", "wasClean": False}))
 
     def get_url(self): return self._url
@@ -158,7 +158,7 @@ class WebSocket(EventTarget):
             return
         self._state_value = self.OPEN
         self._protocol = getattr(ws, "protocol", "") or ""
-        self.fn_dispatchEvent(Event("open"))
+        self._dispatch_event(Event("open"))
 
     def _on_message(self, ws, data, is_text=True):
         if is_text:
@@ -167,7 +167,7 @@ class WebSocket(EventTarget):
             value = Blob([bytes_from_value(data) or b""])
         else:
             value = bytes_from_value(data) or b""
-        self.fn_dispatchEvent(MessageEvent("message", {"isTrusted": True, 
+        self._dispatch_event(MessageEvent("message", {"isTrusted": True, 
             "data": value, "origin": self._services.realm_services.url,
             "source": self._services.document_services.window,
         }))
@@ -178,11 +178,11 @@ class WebSocket(EventTarget):
         #: words; why it failed is the host's to read.
         logger.debug("websocket error: {}", error)
         self._state_value = self.CLOSED
-        self.fn_dispatchEvent(Event("error", {"isTrusted": True}))
+        self._dispatch_event(Event("error", {"isTrusted": True}))
 
     def _on_close(self, ws, code, reason, was_clean=True):
         self._state_value = self.CLOSED
-        self.fn_dispatchEvent(CloseEvent("close", {"isTrusted": True, 
+        self._dispatch_event(CloseEvent("close", {"isTrusted": True, 
             "code": code, "reason": reason, "wasClean": was_clean,
         }))
         self._services.context_services.discard_websocket(ws)

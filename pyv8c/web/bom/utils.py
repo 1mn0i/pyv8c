@@ -142,3 +142,45 @@ def base64_like(interface, member, data):
         raise InvalidCharacterError(f"Failed to execute '{member}' on '{interface}':"
                                     " The string to be decoded is not correctly encoded.")
     return result
+
+
+def promise_receiver_error(receiver, cls, method):
+    """Reject a Promise operation called on an object without its WebIDL brand.
+
+    Blink leaves these operations' native receiver check off, so the binding can answer
+    a rejected Promise instead of throwing before the call returns.
+    """
+    if isinstance(receiver, cls):
+        return None
+    import pyv8
+    from ...foundation.promises import make_promise
+    from ..page_errors import PageTypeError
+
+    error = PageTypeError(f"Failed to execute '{method}' on '{cls.__name__}': Illegal invocation")
+    context = pyv8.current_context()
+    if context is None:
+        raise error
+    promise, _resolve, reject = make_promise(context)
+    reject(js_error_value(error))
+    return promise
+
+
+def promise_rejected_in_caller_realm(error, services=None):
+    """A rejected promise in the realm of the operation that is running.
+
+    A conversion failure belongs to the realm the call was made through, while a
+    successful result belongs to the receiver's realm; a borrowed operation shows both.
+    """
+    import pyv8
+    from ...foundation.promises import make_promise
+
+    context = pyv8.current_context()
+    if context is not None:
+        promise, _resolve, reject = make_promise(context)
+    else:
+        realm = getattr(services, 'realm_services', None)
+        if realm is None:
+            raise error
+        promise, _resolve, reject = realm.make_promise()
+    reject(js_error_value(error))
+    return promise

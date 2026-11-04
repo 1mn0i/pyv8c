@@ -848,7 +848,7 @@ class Window(_SchedulingMixin, WindowProperties):
             event = MessageEvent("message", {"data": data, "origin": serialized,
                                            "source": self._view(source), "ports": ports,
                                            "isTrusted": True})
-            self.fn_dispatchEvent(event)
+            self._dispatch_event(event)
         from ...foundation.tasks import TaskSource
         self._services.realm_services.post_task(deliver, TaskSource.POSTED_MESSAGE,
                                                 label='Window.postMessage', document_bound=True)

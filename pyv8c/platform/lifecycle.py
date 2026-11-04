@@ -128,8 +128,8 @@ class DocumentLifecycle:
                             propagates=True):
         """Dispatch one trusted event at *target* and return it.
 
-        *propagates* is ``False`` for the enter/leave pair: Chromium dispatches
-        ``mouseenter`` and relatives at the target alone.
+        *propagates* can restrict dispatch to the target.  Non-bubbling enter/leave
+        input events keep propagation enabled so ancestor capture listeners run.
         """
         cls = Event if event_class is None else self.materialize_event_class(event_class)
         event = cls(event_type, options or {})
@@ -137,7 +137,12 @@ class DocumentLifecycle:
         event._non_propagating = not propagates
         if event_type in ("pagehide", "pageshow"):
             event._persisted = bool((options or {}).get("persisted", False))
-        target.fn_dispatchEvent(event)
+        #: Host dispatches keep the trust they set, so they bypass the public
+        #: ``dispatchEvent``, which clears it.
+        dispatch = getattr(target, '_dispatch_event', None)
+        if dispatch is None:
+            dispatch = target.fn_dispatchEvent
+        dispatch(event)
         return event
 
     def dispatch_event(self, event_type, *, target="window", selector=None, event_class=None, init=None):
@@ -168,7 +173,8 @@ class DocumentLifecycle:
             return page.document
         if isinstance(target, str):
             raise ValueError("target must be 'window', 'document' or a DOM node")
-        if not callable(getattr(target, "fn_dispatchEvent", None)):
+        if not any(callable(getattr(target, name, None))
+                   for name in ("_dispatch_event", "fn_dispatchEvent")):
             raise TypeError("target must be an EventTarget")
         return target
 
@@ -264,7 +270,7 @@ class DocumentLifecycle:
             },
         )
         event._trusted = True
-        self.page.window.fn_dispatchEvent(event)
+        self.page.window._dispatch_event(event)
         return event
 
     def dispatch_rejection(self, event_type, promise, reason):
@@ -278,7 +284,7 @@ class DocumentLifecycle:
                          "cancelable": event_type == "unhandledrejection"},
         )
         event._trusted = True
-        self.page.window.fn_dispatchEvent(event)
+        self.page.window._dispatch_event(event)
         return event
 
     def set_visibility(self, hidden):
@@ -385,7 +391,7 @@ class DocumentLifecycle:
         event._trusted = True
         event._legacy_target_override = page.document
         try:
-            page.window.fn_dispatchEvent(event)
+            page.window._dispatch_event(event)
             if not self._current_document(identity):
                 return
             performance.note(loadEventEnd=clock.now_ms())

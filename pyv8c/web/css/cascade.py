@@ -3,7 +3,9 @@ import math
 import re
 from functools import lru_cache
 from ...foundation.environment import environment_of
-from ...foundation.font_sizes import font_size_px as _font_size_px, px_text as _px_text
+from ...foundation.font_sizes import (font_size_px as _font_size_px,
+                                     font_size_term as _font_size_term,
+                                     px_text as _px_text)
 from ...foundation.system_fonts import normalize
 from ..page_errors import PageSyntaxError
 from ..dom.utils import MATHML_NAMESPACE
@@ -217,9 +219,48 @@ def _cascade(element, rules, cache=None):
                 values[name] = f'rgb({(color >> 16) & 255}, {(color >> 8) & 255}, {color & 255})'
     values["font-size"] = _px_text(_font_size_px(values.get("font-size", "16px"),
                                                  parent_size, _root_font_size(element, cache)))
+    # A length that counts on the font is resolved here, where both sizes are known:
+    # ``10em`` under ``font-size: 20px`` is 200px, and a property left as "10em" would
+    # otherwise be read as 10.  Chrome's computed value is absolute for all of these.
+    font_size = _px(values["font-size"], 16)
+    root_size = _root_font_size(element, cache)
+    for name, value in tuple(values.items()):
+        if not _font_relative_property(name):
+            continue
+        terms = str(value).split()
+        resolved_any = False
+        for index, term in enumerate(terms):
+            if not _FONT_RELATIVE_TERM.fullmatch(term):
+                continue
+            resolved = _font_size_term(term, font_size, root_size)
+            if resolved is not None:
+                terms[index] = _px_text(resolved)
+                resolved_any = True
+        if resolved_any:
+            values[name] = ' '.join(terms)
     if cache is not None:
         cache[element] = values
     return values
+
+
+#: The properties whose values are read as lengths, so a font-relative term in them has
+#: to be resolved.  ``border-width`` covers the four sides through the prefix rule below.
+_FONT_RELATIVE_PROPERTIES = frozenset({
+    'width', 'height', 'min-width', 'max-width', 'min-height', 'max-height',
+    'top', 'right', 'bottom', 'left', 'letter-spacing', 'word-spacing', 'text-indent',
+    'line-height', 'margin', 'padding', 'border-width',
+})
+
+_FONT_RELATIVE_TERM = re.compile(r'-?(?:\d+(?:\.\d*)?|\.\d+)(?:rem|em|pt|pc|in|cm|mm|q)', re.I)
+
+
+def _font_relative_property(name):
+    """Whether a declaration of *name* carries lengths that ``em``/``rem`` can size."""
+    if name in _FONT_RELATIVE_PROPERTIES:
+        return True
+    if name.startswith(('margin-', 'padding-')):
+        return True
+    return name.startswith('border-') and name.endswith('-width')
 
 
 def _selector_matches(element, selector):

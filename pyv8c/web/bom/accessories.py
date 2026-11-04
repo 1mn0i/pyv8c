@@ -17,7 +17,7 @@ from ..dom.events import Event, EventTarget
 from ..media.source import (families_in, hardware_codecs, hardware_encoders,
                                 is_type_supported, media_facts, webrtc_codec, webrtc_supported)
 from .media import evaluate
-from .utils import settled
+from .utils import promise_receiver_error, settled
 
 
 @interface('External', None)
@@ -125,7 +125,7 @@ class SpeechSynthesis(EventTarget):
         self._voices = [SpeechSynthesisVoice(name=name, lang=lang, local_service=local,
                                              default=default, services=self._services)
                         for name, lang, local, default in _voice_entries(self._services)]
-        self.fn_dispatchEvent(Event("voiceschanged"))
+        self._dispatch_event(Event("voiceschanged"))
     def fn_getVoices(self, *_extra):
         return [] if self._voices is None else list(self._voices)
     def fn_pause(self, *_extra): return None
@@ -394,10 +394,16 @@ class MediaCapabilities:
         return settled(self._services, value=self._answers(type_name, media, method))
 
     def fn_decodingInfo(self, configuration=MISSING, *_extra):
+        invalid = promise_receiver_error(self, MediaCapabilities, 'decodingInfo')
+        if invalid is not None:
+            return invalid
         if not isinstance(self, MediaCapabilities):
             return _invalid_media_capabilities_receiver("decodingInfo")
         return self._capability(configuration, "decodingInfo")
     def fn_encodingInfo(self, configuration=MISSING, *_extra):
+        invalid = promise_receiver_error(self, MediaCapabilities, 'encodingInfo')
+        if invalid is not None:
+            return invalid
         if not isinstance(self, MediaCapabilities):
             return _invalid_media_capabilities_receiver("encodingInfo")
         return self._capability(configuration, "encodingInfo")

@@ -541,7 +541,7 @@ class HTMLInputElement(HTMLElement):
         return valid
     def _dispatch_invalid(self):
         from ..dom.events import Event
-        self.fn_dispatchEvent(Event("invalid", {"bubbles": False, "cancelable": True}))
+        self._dispatch_event(Event("invalid", {"bubbles": False, "cancelable": True}))
 
     def _require_selectable(self):
         if self.get_type() not in _SELECTABLE_INPUT_TYPES:
@@ -576,7 +576,7 @@ class HTMLInputElement(HTMLElement):
         self._require_selectable()
         self._selection_start, self._selection_end = 0, len(self.get_value())
         from ..dom.events import Event
-        self.fn_dispatchEvent(Event("select", {"bubbles": False, "cancelable": False}))
+        self._dispatch_event(Event("select", {"bubbles": False, "cancelable": False}))
     def fn_setSelectionRange(self, start=MISSING, end=MISSING, direction="none", *_extra):
         if start is MISSING or end is MISSING:
             raise missing_error('HTMLInputElement', 'setSelectionRange', 2, 0, constructor=False)
@@ -746,7 +746,7 @@ class HTMLInputElement(HTMLElement):
             for event_type, bubbles in (("input", False), ("change", True)):
                 event = Event(event_type, {"bubbles": bubbles, "cancelable": False})
                 event._trusted = True
-                self.fn_dispatchEvent(event)
+                self._dispatch_event(event)
             return
         form = self._form_owner()
         if form is None:

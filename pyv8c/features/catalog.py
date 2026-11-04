@@ -118,6 +118,7 @@ AUDIO_INTERFACES = (
     "BiquadFilterNode", "ChannelMergerNode", "ChannelSplitterNode", "ConvolverNode",
     "ConstantSourceNode", "DelayNode", "IIRFilterNode", "PannerNode", "StereoPannerNode",
     "WaveShaperNode", "ScriptProcessorNode", "AudioProcessingEvent",
+    "OfflineAudioCompletionEvent",
     "BaseAudioContext", "AudioContext", "OfflineAudioContext",
 )
 #: The realm stages these before its first script runs; a plan seeds from them.

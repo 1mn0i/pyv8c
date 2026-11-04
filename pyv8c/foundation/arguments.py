@@ -82,6 +82,16 @@ def dom_string(value):
             return "0"
         if value.is_integer():
             return str(int(value))
+    if getattr(type(value), "__idl_spec__", None) is not None:
+        #: A native callback unwraps a Web object to its Python owner, but IDL
+        #: conversion runs on the value the script passed -- the JS wrapper -- so an
+        #: overridden ``toString``/``Symbol.toPrimitive`` is honoured and its error
+        #: reaches the caller.  ``str(owner)`` would put a Python repr into the page.
+        context = pyv8.current_context()
+        if context is not None:
+            wrapper = context.js_obj(value)
+            if wrapper is not None:
+                return wrapper._to_string()
     return str(value)
 
 

@@ -2,6 +2,7 @@
 from urllib.parse import unquote, urljoin
 from ...foundation.error_policy import control_exceptions
 from ...web.bom.utils import page_base_url
+from .request_headers import referer_for
 from ..execution import NavigationCancelled
 
 
@@ -163,7 +164,11 @@ class FrameResourceController:
         target = response.url or urljoin(page_base_url(page), iframe.get_src() or "about:blank")
         child = self._child_frame_page(iframe, target)
         try:
-            child.executor.call(child.navigation.set_content, response.body_text(), url=target, replace_initial=True)
+            #: The frame's document reports the parent's URL as its referrer, and its
+            #: timeline begins where the frame's own request did.
+            response._document_referrer = referer_for(target, page.url)
+            child.executor.call(child.navigation.set_content, response.body_text(), url=target,
+                                replace_initial=True, response=response)
             child.lifecycle.when_loaded(callback)
         except NavigationCancelled:
             return child

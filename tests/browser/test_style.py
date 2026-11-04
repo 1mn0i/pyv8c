@@ -201,18 +201,19 @@ def test_a_rule_answers_with_its_style_and_lets_the_page_restyle_it(page):
                  "p { color: blue; }", "blue"]
 
 
-def test_the_rule_list_follows_the_sheet_text_the_page_rewrites(page):
-    """The parse is keyed on the owner's text, so rewriting a style element's markup
-    gives the page the rules that are there now."""
+def test_rewriting_style_text_replaces_the_sheet_and_preserves_old_rules(page):
+    """Chrome detaches the original sheet when the owner's text is replaced."""
     page.set_content('<style id="sheet">p { color: red }</style>', url="http://style.test/")
     assert page.evaluate("""(() => {
         const element = document.getElementById('sheet');
         const sheet = element.sheet;
         const before = [sheet.cssRules.length, sheet.cssRules[0].selectorText];
         element.textContent = 'div { color: green } span { color: blue }';
-        return [before, sheet.cssRules.length, sheet.cssRules[1].selectorText,
-                sheet.cssRules[1].style.color];
-    })()""") == [[1, "p"], 2, "span", "blue"]
+        return [before, sheet.cssRules.length, sheet.cssRules[0].selectorText,
+                sheet.ownerNode === null, sheet.title === null,
+                element.sheet !== sheet, element.sheet.cssRules.length,
+                element.sheet.cssRules[1].selectorText];
+    })()""") == [[1, "p"], 1, "p", True, True, True, 2, "span"]
 
 
 def test_a_grouping_rule_holds_rules_a_page_can_add_to(page):

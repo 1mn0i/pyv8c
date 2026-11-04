@@ -222,13 +222,13 @@ class Worker(EventTarget):
     def _receive_message(self, value, ports=()):
         if not self._terminated:
             #: A message from a worker carries no origin, and it is a real event (as in Chrome).
-            self.fn_dispatchEvent(MessageEvent("message", {
+            self._dispatch_event(MessageEvent("message", {
                 "data": value, "origin": "", "ports": ports, "isTrusted": True},
                 services=self._services))
 
     def _receive_error(self, error):
         if not self._terminated:
-            self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, "message": str(error), "error": error}))
+            self._dispatch_event(ErrorEvent("error", {"isTrusted": True, "message": str(error), "error": error}))
 
     def _receive_uncaught(self, message, filename, line, column):
         """Report an exception V8 raised inside the worker's own realm.
@@ -237,7 +237,7 @@ class Worker(EventTarget):
         text and position V8 captured.
         """
         if not self._terminated:
-            self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, 
+            self._dispatch_event(ErrorEvent("error", {"isTrusted": True, 
                 "message": message,
                 "filename": filename,
                 "lineno": line,
@@ -314,11 +314,11 @@ class SharedWorker(EventTarget):
 
     def _receive_error(self, error):
         if not self._terminated:
-            self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, "message": str(error), "error": error}))
+            self._dispatch_event(ErrorEvent("error", {"isTrusted": True, "message": str(error), "error": error}))
 
     def _receive_uncaught(self, message, filename, line, column):
         if not self._terminated:
-            self.fn_dispatchEvent(ErrorEvent("error", {"isTrusted": True, 
+            self._dispatch_event(ErrorEvent("error", {"isTrusted": True, 
                 "message": message, "filename": filename, "lineno": line, "colno": column,
             }))
 

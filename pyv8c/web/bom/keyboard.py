@@ -7,7 +7,7 @@ import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
-from .utils import settled
+from .utils import promise_receiver_error, settled
 
 __all__ = ["Keyboard", "KeyboardLayoutMap"]
 
@@ -42,6 +42,9 @@ class Keyboard:
 
     def fn_getLayoutMap(self, *_extra):
         """The machine's layout when the environment collected one, else an empty map."""
+        invalid = promise_receiver_error(self, Keyboard, 'getLayoutMap')
+        if invalid is not None:
+            return invalid
         entries = None
         view = getattr(self._environment, "keyboard", None)
         if view is not None:
@@ -49,5 +52,8 @@ class Keyboard:
         return settled(self._services, value=KeyboardLayoutMap(entries=entries))
     def fn_lock(self, keys=None, *_extra):
         """Nothing else can take the keyboard away from the page, so the lock is granted."""
+        invalid = promise_receiver_error(self, Keyboard, 'lock')
+        if invalid is not None:
+            return invalid
         return settled(self._services, value=None)
     def fn_unlock(self, *_extra): return pyv8.Undefined

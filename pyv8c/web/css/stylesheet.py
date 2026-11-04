@@ -26,6 +26,11 @@ def stylesheet_source(node):
     return None
 
 
+def _inline_owner(node):
+    """Whether *node* carries its CSS text rather than loading it from a URL."""
+    return str(getattr(node, "localName", "") or "").lower() == "style"
+
+
 @interface('StyleSheet', None)
 class StyleSheet:
     """One stylesheet as a page sees it: where it came from, and what it is for."""
@@ -64,18 +69,50 @@ class StyleSheet:
 class CSSStyleSheet(StyleSheet):
     """A sheet of CSS rules: the owner it came from, and the rules themselves."""
 
+    def __init__(self, owner=None, document=None, **_):
+        super().__init__(owner, document)
+        #: An inline sheet is bound to the markup it was made from.  Rewriting the
+        #: owner's text gives the owner a new sheet, and this one keeps answering the
+        #: rules it already parsed (see ``_detach``).
+        self._source = (stylesheet_source(owner)
+                        if owner is not None and _inline_owner(owner) else None)
+        self._detached = False
+
     def _owner_sheet(self): return self
 
-    def get_cssRules(self):
-        """The sheet's rules, read from the owner's text and then the page's own.
+    def _detach(self):
+        """Cut the sheet from its owner, keeping the rules it already answers.
 
-        The text is what the parse is keyed on, so a rule the page inserted survives
-        until the sheet's own text changes -- at which point Chrome re-parses too.
+        Chrome detaches the original sheet when its owner's text is replaced or the
+        owner leaves the document: ``ownerNode`` reads null, the rules stay, and the
+        element answers a different sheet the next time one is asked for.
         """
-        from .rules import CSSRuleList, build_rules
+        if self._detached:
+            return
+        if self._source is None:
+            owner = getattr(self, "_owner", None)
+            text = "" if owner is None else stylesheet_source(owner)
+            self._source = "" if text is None else text
+        self.get_cssRules()
+        self._owner, self._document = None, None
+        self._detached = True
+
+    def _text(self):
+        if self._source is not None:
+            return self._source
         owner = getattr(self, "_owner", None)
         text = "" if owner is None else stylesheet_source(owner)
-        text = "" if text is None else text
+        return "" if text is None else text
+
+    def get_cssRules(self):
+        """The sheet's rules, read from the text the sheet was built from.
+
+        A rule the page inserted survives until the sheet's own text changes -- at
+        which point the owner answers a new sheet (see ``_detach``), so a rule added
+        here stays with this object.
+        """
+        from .rules import CSSRuleList, build_rules
+        text = self._text()
         if getattr(self, "_rule_text", None) != text:
             self._rule_text = text
             self._rules = build_rules(text, self)
@@ -114,7 +151,10 @@ class StyleSheetList(ReadOnlyIndexedPropertyMixin, LegacyNamedPropertyMixin):
             name = str(getattr(node, "localName", "") or "").lower()
             rel = str(getattr(node, "attributes", {}).get("rel", "")).lower().split()
             if name == "style" or (name == "link" and "stylesheet" in rel):
-                owners.append(node)
+                #: A shadow root keeps its tree while its host is elsewhere; the list
+                #: only holds sheets whose owner hangs off a document.
+                if getattr(node, "isConnected", True):
+                    owners.append(node)
         return owners
     def _sheet_for(self, node):
         """The sheet for one owner, kept on the node so a second read is the same

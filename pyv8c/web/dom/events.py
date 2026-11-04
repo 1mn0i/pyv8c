@@ -30,6 +30,37 @@ from .collections import ReadOnlyIndexedPropertyMixin
 _DOCUMENT_NODE = 9  # DOM standard nodeType of Document; hardcoded to avoid a dom.nodes import cycle.
 
 
+def _event_tree_root(node):
+    """The root of *node*'s tree: a shadow root for shadow content, the document otherwise."""
+    root = getattr(node, 'root_node', None)
+    return root() if root is not None else node
+
+
+def _inside_event_tree(node, root):
+    """Whether *node* sits in *root*'s tree, following the host chain outwards."""
+    while node is not None:
+        current = _event_tree_root(node)
+        if current is root:
+            return True
+        node = getattr(current, '_host', None)
+    return False
+
+
+def _retarget_event(node, current):
+    """The target *current* may see for an event dispatched at *node*.
+
+    An event crossing a shadow boundary is retargeted to the host, which is what lets a
+    listener outside the tree learn that something in it was hit without learning what.
+    """
+    root = _event_tree_root(node)
+    while getattr(root, '_host', None) is not None:
+        if _inside_event_tree(current, root):
+            break
+        node = root._host
+        root = _event_tree_root(node)
+    return node
+
+
 #: What the binding answers when the realm a handler was built in is gone -- the
 #: document that owned it was replaced while its task was still queued.  Nobody is left
 #: to hear the call, which is the same silence a promise settling into a gone realm gets.
@@ -148,7 +179,7 @@ class Event:
         # Trust is host state, never an EventInit member.
         self._trusted = bool(init.get("isTrusted", False)) if type(options) is dict else False
         self._persisted = bool(init.get("persisted", False)) if type(options) is dict else False
-        # Enter and leave events reach their target alone (see fn_dispatchEvent).
+        # Enter and leave events reach their target alone (see _dispatch_event).
         self._non_propagating = False
     def get_type(self): return self.type
     def get_target(self):
@@ -182,7 +213,21 @@ class Event:
     def fn_stopImmediatePropagation(self, *_extra):
         self._stop = self._immediate = True
     def fn_composedPath(self, *_extra):
-        return [target._event_target_view() for target in self._path]
+        visible = []
+        for target in self._path:
+            root = _event_tree_root(target)
+            hidden = False
+            # A closed tree's internals stay hidden even from the path: a listener on the
+            # host reads the host, not the node inside it.
+            while getattr(root, '_host', None) is not None:
+                if (getattr(root, '_mode', None) == 'closed'
+                        and not _inside_event_tree(self.currentTarget, root)):
+                    hidden = True
+                    break
+                root = _event_tree_root(root._host)
+            if not hidden:
+                visible.append(target._event_target_view())
+        return visible
     def fn_initEvent(self, event_type=MISSING, bubbles=False, cancelable=False, *_extra):
         if self._dispatching:
             return
@@ -859,6 +904,22 @@ class EventTarget:
         event = interface_value(event, 'Event', 'EventTarget', 'dispatchEvent', 1, nullable=False)
         if not isinstance(event, Event):
             raise PageTypeError("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
+        if event._dispatching:
+            raise dom_exception("InvalidStateError", "The event is already being dispatched.")
+        #: The public DOM method always clears trust, including when script redispatches an
+        #: event that came from the input controller: ``isTrusted`` answers whether this
+        #: delivery came from the browser, and this one did not.  Host code keeps its own
+        #: deliveries trusted by calling ``_dispatch_event`` directly.
+        event._trusted = False
+        return self._dispatch_event(event)
+
+    def _dispatch_event(self, event=MISSING, *_extra):
+        """Deliver *event* as it stands, trust included; every host dispatch uses this."""
+        if event is MISSING:
+            raise missing_error('EventTarget', 'dispatchEvent', 1, 0, constructor=False)
+        event = interface_value(event, 'Event', 'EventTarget', 'dispatchEvent', 1, nullable=False)
+        if not isinstance(event, Event):
+            raise PageTypeError("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
         if event._services is None and self._services is not None:
             # A host-built event is stamped where it is delivered: its clock is the target's.
             event._services = self._services
@@ -900,14 +961,20 @@ class EventTarget:
             document._layout_snapshot = None
         event._dispatching = True
         try:
-            event.target = event._legacy_target_override or self
-            # A non-propagating event reaches its target alone: Chromium dispatches
-            # ``mouseenter``/``mouseleave`` (and pointer twins) with a path of just the node.
+            original_target = event._legacy_target_override or self
+            event.target = original_target
+            # A non-propagating event reaches its target alone: a host caller may restrict
+            # an event to its target, and a boundary event never bubbles.
             path = [self]
             if not event._non_propagating:
                 node = self
                 while node is not None:
+                    previous = node
                     node = getattr(node, "parentNode", None)
+                    if node is None and event._composed:
+                        #: A composed event leaves its tree through the host of the root it
+                        #: was dispatched in; a non-composed one stops at that root.
+                        node = getattr(previous, '_host', None)
                     if node is None and getattr(path[-1], "nodeType", None) == _DOCUMENT_NODE:
                         node = getattr(getattr(getattr(path[-1], "_services", None), "document_services", None), "window", None)
                     if node is not None:
@@ -915,15 +982,19 @@ class EventTarget:
             event._path = list(path)
             for target in reversed(path[1:]):
                 event.eventPhase, event.currentTarget = 1, target
+                #: Each ancestor sees the target its own tree is allowed to name.
+                event.target = _retarget_event(original_target, target)
                 target._invoke(event, capture=True)
                 if event._stop:
                     return not event.defaultPrevented
             event.eventPhase, event.currentTarget = 2, self
+            event.target = original_target
             self._invoke(event, capture=True)
             if not event._immediate: self._invoke(event, capture=False)
             if event.bubbles and not event._stop:
                 for target in path[1:]:
                     event.eventPhase, event.currentTarget = 3, target
+                    event.target = _retarget_event(original_target, target)
                     target._invoke(event, capture=False)
                     if event._stop: break
             event.eventPhase, event.currentTarget = 0, None

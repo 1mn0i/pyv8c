@@ -721,14 +721,16 @@ class HTMLAnchorElement(HTMLElement):
 @interface('HTMLStyleElement', 'HTMLElement')
 class HTMLStyleElement(HTMLElement):
     def get_sheet(self):
-        """The sheet this element owns, which is the one its document's list holds for
-        it, and null while it is in no document: the list is what owns a sheet."""
-        document = self.ownerDocument
-        if document is None:
+        """The sheet this element owns, which is the one the list of its own tree holds
+        for it -- the document's, or the shadow root's -- and null while nothing holds
+        one: a sheet belongs to a tree that is in a document."""
+        sheets_for = getattr(self.root_node(), "get_styleSheets", None)
+        if sheets_for is None:
             return pyv8.Null
-        for owner in document.get_styleSheets()._owners():
+        sheets = sheets_for()
+        for owner in sheets._owners():
             if owner is self:
-                return document.get_styleSheets()._sheet_for(owner)
+                return sheets._sheet_for(owner)
         return pyv8.Null
     def get_media(self): return self.attributes.get("media", "")
     def set_media(self, value):

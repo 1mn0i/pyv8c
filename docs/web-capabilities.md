@@ -41,3 +41,11 @@ V8 内置全局段（`Object`、`Function`、`SuppressedError` 等）由相邻 `
 Canvas/OffscreenCanvas 的 2D 上下文支持线性、径向渐变和颜色节点、rect 路径、尺寸重置及上下文属性。Pillow 提供绘制表面，字体测量使用现有文本能力。尺寸赋值重置像素与绘图状态，保留上下文对象和创建选项。框架绘制不等于 Chrome 完整光栅化、色彩管理或 GPU 渲染。
 
 SVGPoint、SVGRect 提供可变单精度数值，SVGMatrix 保留双精度；这些属性拒绝非有限值。getCTM 组合祖先 transform、viewBox 和已实现的 preserveAspectRatio 对齐。getBBox 与 isPointInFill 的验收范围为矩形及矩形后代，不代表完整 path/text 几何和滤镜效果。
+
+## 离线音频完成通知
+
+OfflineAudioContext.startRendering 提供 Promise 结果，并通过队列派发 complete 事件，
+支持 oncomplete 和 addEventListener。OfflineAudioCompletionEvent.renderedBuffer 与
+Promise 的结果保持同一 AudioBuffer 身份；事件构造器要求有效的 renderedBuffer。
+完成事件的顺序与标志已与 Chrome 156 对照，覆盖同步返回后替换 handler 的情形。
+底层渲染仍使用框架现有的 Python 音频图，不代表与 Chrome 完整音频实现逐样本一致。

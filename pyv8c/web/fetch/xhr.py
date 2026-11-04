@@ -96,7 +96,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
 
     def _state(self, value):
         self.readyState = value
-        self.fn_dispatchEvent(Event("readystatechange"))
+        self._dispatch_event(Event("readystatechange"))
 
     def fn_open(self, method=MISSING, url=MISSING, async_value=True, *args):
         if method is MISSING:
@@ -204,8 +204,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             self._state(self.DONE)
             # A ProgressEvent with nothing in it, as Chrome sends it: the reason a load
             # failed stays host-side.
-            self.fn_dispatchEvent(ProgressEvent("error", {"isTrusted": True}))
-            self.fn_dispatchEvent(ProgressEvent("loadend", {"isTrusted": True}))
+            self._dispatch_event(ProgressEvent("error", {"isTrusted": True}))
+            self._dispatch_event(ProgressEvent("loadend", {"isTrusted": True}))
             return
         self._response = response
         self.status = response.status
@@ -218,9 +218,9 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self._state(self.DONE)
         body = response.body
         loaded = len(body) if isinstance(body, (bytes, bytearray)) else len(str(body))
-        self.fn_dispatchEvent(ProgressEvent("load", {
+        self._dispatch_event(ProgressEvent("load", {
             "isTrusted": True, "lengthComputable": True, "loaded": loaded, "total": loaded}))
-        self.fn_dispatchEvent(ProgressEvent("loadend", {
+        self._dispatch_event(ProgressEvent("loadend", {
             "isTrusted": True, "lengthComputable": True, "loaded": loaded, "total": loaded}))
 
     def fn_getAllResponseHeaders(self, *_extra):
@@ -245,8 +245,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self._timer = self._stop_timer()
         self._response = None
         self.readyState = self.UNSENT
-        self.fn_dispatchEvent(ProgressEvent("abort", {"isTrusted": True}))
-        self.fn_dispatchEvent(ProgressEvent("loadend", {"isTrusted": True}))
+        self._dispatch_event(ProgressEvent("abort", {"isTrusted": True}))
+        self._dispatch_event(ProgressEvent("loadend", {"isTrusted": True}))
 
     def _stop_timer(self):
         """Disarm the timeout, answering with the ident so the caller can store it."""
@@ -268,6 +268,6 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self._response = None
         self.status = 0
         self._state(self.DONE)
-        self.fn_dispatchEvent(ProgressEvent("loadend", {"isTrusted": True}))
+        self._dispatch_event(ProgressEvent("loadend", {"isTrusted": True}))
 
 __all__ = ["XMLHttpRequestEventTarget", "XMLHttpRequest"]

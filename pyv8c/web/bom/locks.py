@@ -66,7 +66,7 @@ class WakeLockSentinel(EventTarget):
     def fn_release(self, *_extra):
         if not self._released:
             self._released = True
-            self.fn_dispatchEvent(Event("release"))
+            self._dispatch_event(Event("release"))
         return settled(self._services, value=None)
 
 

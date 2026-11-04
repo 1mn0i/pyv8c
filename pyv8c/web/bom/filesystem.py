@@ -88,7 +88,7 @@ class FileWriter(EventTarget):
             Event("writeend", {"isTrusted": True}),
         )
         for event in events:
-            _post(self._services, self.fn_dispatchEvent, event)
+            _post(self._services, self._dispatch_event, event)
 
 
 @interface("Entry", None)

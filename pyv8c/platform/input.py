@@ -15,8 +15,8 @@ the specification:
   enough in time and place reports ``detail`` 2 and is followed by ``dblclick``;
 * a disabled form control receives the pointer events and none of the others,
   which is how the mouse and ``click()`` both treat it;
-* ``mouseenter``/``mouseleave`` and their pointer twins do not propagate, so
-  only listeners on the element itself ever see them.
+* ``mouseenter``/``mouseleave`` and their pointer twins do not bubble or cross a
+  shadow root, but an ancestor can still observe them while capturing.
 
 The controller owns the position, the button mask and the click counter, and
 every entry point runs on the page's owner thread like the rest of the DOM
@@ -48,12 +48,13 @@ MULTI_CLICK_DISTANCE = 4.0
 
 
 def _ancestors(node):
-    """*node* and its ancestors, itself first."""
+    """*node* and its ancestors, itself first, walking out of a shadow tree."""
     chain = []
     current = node
     while current is not None:
         chain.append(current)
-        current = getattr(current, "parentElement", None)
+        parent = getattr(current, "parentElement", None)
+        current = parent if parent is not None else getattr(getattr(current, 'parentNode', None), '_host', None)
     return chain
 
 
@@ -310,15 +311,25 @@ class MouseInput:
 
     def _emit(self, event_type, target, *, button=0, detail=0, related=None,
               bubbles=True, cancelable=True, event_class=None, propagates=True,
-              coalesced=()):
+              coalesced=(), boundary_capture=False):
         """Dispatch one event and hand it back, or ``None`` when there is no target."""
         if target is None:
             return None
+        boundary = event_type in ('mouseenter', 'mouseleave', 'pointerenter', 'pointerleave')
+        if (event_type in ('mouseenter', 'mouseleave') and not boundary_capture
+                and not self._has_boundary_listener(target, event_type)):
+            #: Chromium does not create an unused mouse enter/leave event, which also
+            #: keeps them out of ``performance.eventCounts``; the pointer twins are
+            #: created whether or not anyone listens.
+            return None
+        if boundary:
+            propagates = boundary_capture or self._has_boundary_listener(
+                target, event_type, capture_only=True)
         screen_x, screen_y = self._screen_position()
         options = {
-            #: A pointer or mouse event from real input crosses shadow boundaries in Chrome,
-            #: which a driven-input probe measured (``composed`` true for every one of them).
-            "composed": True,
+            #: Enter/leave stay inside their tree; every other input event is composed
+            #: and therefore crosses shadow boundaries, as a driven-input probe measured.
+            "composed": not boundary,
             "bubbles": bubbles, "cancelable": cancelable, "detail": detail,
             "button": button, "buttons": self._bits,
             "clientX": self._x, "clientY": self._y,
@@ -346,6 +357,26 @@ class MouseInput:
         return self._page.lifecycle.dispatch_page_event(
             event_type, target, options, event_class=interface, propagates=propagates,
         )
+
+    def _has_boundary_listener(self, target, event_type, *, capture_only=False):
+        """Whether a boundary event at *target* would reach anyone.
+
+        Blink's fast path skips the ancestor walk when nothing can hear it: a capturing
+        registration on a DOM node enables the walk, while one on the Window alone does
+        not -- the Window can still observe the walk another listener enabled.
+        """
+        node = target
+        while node is not None:
+            for registration in getattr(node, '_listeners', {}).get(event_type, ()):
+                _listener, capture, _once, _passive, signal, _order = registration
+                if ((capture or (node is target and not capture_only))
+                        and (signal is None or not getattr(signal, 'aborted', False))):
+                    return True
+            if (not capture_only and node is target
+                    and callable(getattr(node, '_handlers', {}).get('on' + event_type))):
+                return True
+            node = getattr(node, 'parentNode', None)
+        return False
 
     def _move_to(self, x, y, steps, known=None, duration=None, curve=None, seed=None):
         """Move through *steps* positions, evenly spaced, or along *curve* when one is named."""
@@ -393,27 +424,34 @@ class MouseInput:
         self._inside_page = inside
         self._hovered = target
         for kind, interface in (("pointer", "PointerEvent"), ("mouse", "MouseEvent")):
+            #: Snapshot the capturing listeners for the whole boundary sequence: a once
+            #: listener may be removed by its first event, which must not truncate the rest.
+            leave_capture = self._has_boundary_listener(previous, f'{kind}leave', capture_only=True)
             if previous is not None and target is not previous:
                 self._emit(f"{kind}out", previous, related=target, event_class=interface)
                 for node in _leaving(previous, target):
                     self._emit(f"{kind}leave", node, related=target, event_class=interface,
-                               bubbles=False, cancelable=False, propagates=False)
+                               bubbles=False, cancelable=False, propagates=False,
+                               boundary_capture=leave_capture)
             if target is not None and target is not previous:
                 self._emit(f"{kind}over", target, related=previous, event_class=interface)
+            enter_capture = self._has_boundary_listener(target, f'{kind}enter', capture_only=True)
             # The document reports the cursor arriving in and leaving the page: its
             # enter is the outermost one, and its leave the last.
             if page_changed and inside:
-                self._page_event(kind, interface, "enter")
+                self._page_event(kind, interface, "enter", boundary_capture=enter_capture)
             if target is not None and target is not previous:
                 for node in _entering(previous, target):
                     self._emit(f"{kind}enter", node, related=previous, event_class=interface,
-                               bubbles=False, cancelable=False, propagates=False)
+                               bubbles=False, cancelable=False, propagates=False,
+                               boundary_capture=enter_capture)
             if page_changed and not inside:
-                self._page_event(kind, interface, "leave")
+                self._page_event(kind, interface, "leave", boundary_capture=leave_capture)
 
-    def _page_event(self, kind, interface, phase):
+    def _page_event(self, kind, interface, phase, *, boundary_capture=False):
         self._emit(f"{kind}{phase}", self._page.document, event_class=interface,
-                   bubbles=False, cancelable=False, propagates=False)
+                   bubbles=False, cancelable=False, propagates=False,
+                   boundary_capture=boundary_capture)
 
     def _count_for(self, target, click_count):
         """The ``detail`` this press reports, and the run it belongs to."""

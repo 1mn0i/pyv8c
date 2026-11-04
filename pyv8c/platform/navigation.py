@@ -121,7 +121,11 @@ class NavigationController:
         self.page.services.realm_services.performance.begin_navigation(
             url, redirects=counted,
             # A chain that reports nothing reports no window either, as Chrome does.
-            redirects_span=float(getattr(response, "_redirect_span", 0.0) or 0.0) if counted else 0.0)
+            redirects_span=float(getattr(response, "_redirect_span", 0.0) or 0.0) if counted else 0.0,
+            started_at=getattr(response, "_navigation_started", None))
+        #: A document's referrer is the URL that asked for it: the parent's for a frame,
+        #: and none for a navigation the host started.
+        self.page.document._referrer = str(getattr(response, "_document_referrer", "") or "")
         self.page.services.document = self.page.document
         self.page.services.task_services.prepare_animation_frames()
         # The new document is created after retiring the old Realm. Publish its
@@ -140,12 +144,12 @@ class NavigationController:
         self.resume_parser(self.parser_generation)
         return self.page
 
-    def set_content(self, html, url="about:blank", *, replace_initial=False):
+    def set_content(self, html, url="about:blank", *, replace_initial=False, response=None):
         if self.page.closed or self.page.profile.closed:
             raise HostStateError("Page is closed")
         if not self.navigation_allowed():
             return self.page
-        return self.commit_content(html, url, replace_initial=replace_initial)
+        return self.commit_content(html, url, response, replace_initial=replace_initial)
 
     @staticmethod
     def decode_html(response):
@@ -223,6 +227,9 @@ class NavigationController:
                 finish(error=error)
                 return
             try:
+                #: The document's timeline starts where its request did, not where the
+                #: body finished arriving.
+                response._navigation_started = started
                 self.commit_content(self.decode_html(response), response.url or target, response, replace_initial=True)
                 if timeout_value is not None:
                     operation.diagnostics = timeout_message()

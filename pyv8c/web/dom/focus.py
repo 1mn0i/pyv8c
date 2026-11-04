@@ -71,7 +71,7 @@ def _fire(target, event_type, *, bubbles, related):
     if related is not None and related is not pyv8.Null:
         event.relatedTarget = related
     event._trusted = True
-    target.fn_dispatchEvent(event)
+    target._dispatch_event(event)
 
 
 def _move_focus(document, element):

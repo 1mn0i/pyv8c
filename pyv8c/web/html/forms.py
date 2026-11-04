@@ -292,7 +292,7 @@ class HTMLFormElement(HTMLElement):
                 continue
             valid = False
             if report:
-                dispatch = getattr(control, "fn_dispatchEvent", None)
+                dispatch = getattr(control, "_dispatch_event", None)
                 if dispatch is not None:
                     from ..dom.events import Event
                     event = Event("invalid", {"bubbles": False, "cancelable": True})
@@ -328,7 +328,7 @@ class HTMLFormElement(HTMLElement):
             from ..dom.events import Event
             event = Event("submit", {"bubbles": True, "cancelable": True})
             event._trusted = True
-            if not self.fn_dispatchEvent(event):
+            if not self._dispatch_event(event):
                 return False
         services = self._services
         if services is None:
@@ -351,7 +351,7 @@ class HTMLFormElement(HTMLElement):
         from ..dom.events import Event
         event = Event("reset", {"bubbles": True, "cancelable": True})
         event._trusted = True
-        if not self.fn_dispatchEvent(event):
+        if not self._dispatch_event(event):
             return pyv8.Undefined
         for control in self._controls():
             if isinstance(control, HTMLInputElement):

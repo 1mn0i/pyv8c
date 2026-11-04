@@ -96,7 +96,7 @@ class AbortSignal(EventTarget):
         self._aborted = True
         self._reason = (dom_exception("AbortError", ABORT_MESSAGE)
                         if reason is pyv8.Undefined else reason)
-        self.fn_dispatchEvent(Event("abort"))
+        self._dispatch_event(Event("abort"))
         subscribers, self._subscribers = self._subscribers, []
         for callback in subscribers:
             callback()

@@ -29,10 +29,17 @@ class Clock:
         # Rounding is monotonic, so readings still never run backwards.
         return round(elapsed / self.RESOLUTION_MS) * self.RESOLUTION_MS
 
-    def reset(self, epoch_ms=None):
-        """Start a new timeline, as a document's navigation does."""
-        self._epoch = time.time() * 1000.0 if epoch_ms is None else float(epoch_ms)
-        self._monotonic = time.perf_counter()
+    def reset(self, epoch_ms=None, *, monotonic=None):
+        """Start a new timeline, as a document's navigation does.
+
+        *monotonic* is the instant the timeline begins, for a document whose request
+        was issued before it was committed: the epoch is shifted by the same amount, so
+        offsets from it still line up with ``Date.now()``.
+        """
+        now = time.perf_counter()
+        self._monotonic = now if monotonic is None else float(monotonic)
+        self._epoch = (time.time() * 1000.0 - (now - self._monotonic) * 1000.0
+                       if epoch_ms is None else float(epoch_ms))
 
 
 def clock_of(services):

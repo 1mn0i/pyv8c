@@ -1,5 +1,6 @@
 """Document resource ownership, readiness and element completion."""
 import pyv8
+import time
 from ...foundation.logging import logger
 from .handles import LoadHandle
 from .tracker import DocumentResource, DocumentResourceTracker
@@ -71,6 +72,9 @@ class DocumentResourceController:
         page = self.page
         # Where the entry's timing starts: the request is issued from here.
         node._resource_request_start = page.services.realm_services.performance.clock.now_ms()
+        #: The same instant on the shared clock, so the child document's own timeline can
+        #: start where its request did.
+        node._resource_monotonic_start = time.perf_counter()
         generation = page.navigation.generation
         handle = LoadHandle()
         item = DocumentResource(generation, node, kind, handle)
@@ -163,6 +167,7 @@ class DocumentResourceController:
         if error is None and response is not None:
             self.record_resource_timing(node, kind, response)
         if kind == "iframe" and not error:
+            response._navigation_started = getattr(node, "_resource_monotonic_start", None)
             # ``when_loaded`` resolves on the child realm's owner thread, and
             # touching page state must happen on this Page's owner thread.
             def child_loaded(ok):

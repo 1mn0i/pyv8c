@@ -13,6 +13,7 @@ from ...foundation.arguments import (MISSING, dictionary, dom_string, integer, i
                                      missing_error)
 from ..page_errors import InvalidStateError, PageTypeError, dom_exception
 from ..page_errors import js_error_value
+from .utils import promise_receiver_error
 from ..dom.events import (Event, EventTarget, _install_handler_slots,
                           event_constructor_arguments, event_init)
 
@@ -338,6 +339,9 @@ class RTCPeerConnection(EventTarget):
         There is no transport, so gathering completes with no candidates: what a browser
         with interfaces adds here is the one part pyv8c cannot report.
         """
+        invalid = promise_receiver_error(self, RTCPeerConnection, 'setLocalDescription')
+        if invalid is not None:
+            return invalid
         if not isinstance(self, RTCPeerConnection):
             return _invalid_peer_receiver('setLocalDescription')
         applied = _applied_description(description)
@@ -352,12 +356,12 @@ class RTCPeerConnection(EventTarget):
 
     def _gathering_steps(self):
         """The events Chrome fires once a description is in place, in its order."""
-        self.fn_dispatchEvent(Event("signalingstatechange"))
+        self._dispatch_event(Event("signalingstatechange"))
         self._ice_gathering_state = "gathering"
-        self.fn_dispatchEvent(Event("icegatheringstatechange"))
+        self._dispatch_event(Event("icegatheringstatechange"))
         self._ice_gathering_state = "complete"
-        self.fn_dispatchEvent(Event("icegatheringstatechange"))
-        self.fn_dispatchEvent(RTCPeerConnectionIceEvent("icecandidate",
+        self._dispatch_event(Event("icegatheringstatechange"))
+        self._dispatch_event(RTCPeerConnectionIceEvent("icecandidate",
                                                         {"isTrusted": True, "candidate": pyv8.Null}))
 
     def fn_close(self, *_extra):
