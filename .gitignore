@@ -24,8 +24,8 @@ dist/
 *.dll
 
 # Extracted bundled-IDL caches. Releases only contain the ZIP artifact.
-pyv8c/idl/*.json
-pyv8c/idl/*.pyv8ccache
+pyv8c/pyv8c/idl/*.json
+pyv8c/pyv8c/idl/*.pyv8ccache
 # The same, beside the version copies kept next to the package.
 idls/*.json
 idls/*.pyv8ccache

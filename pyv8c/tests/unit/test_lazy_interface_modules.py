@@ -51,7 +51,7 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
             browser.close()
     """)
     environment = dict(os.environ)
-    environment["PYTHONPATH"] = os.pathsep.join((str(ROOT.parent / "_pyv8"), str(ROOT)))
+    environment["PYTHONPATH"] = os.pathsep.join((str(ROOT.parent / "pyv8"), str(ROOT)))
     result = subprocess.run(
         [sys.executable, "-c", code], cwd=ROOT, env=environment,
         text=True, capture_output=True, timeout=30,

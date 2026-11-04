@@ -42,7 +42,7 @@ assert updated.attributes is original.attributes
 
 `replace(**changes)` 创建新对象，并重新校验字段及组合约束；未修改的成员可共享。不可变指描述符字段不能重新赋值，不代表回调捕获的数据或回调所属对象被冻结。
 
-不支持 `spec[key]`、`dict(spec)`、字段赋值、删除或位置参数。成员集合必须是对应描述符组成的 **tuple**，不能传 list 或旧式四元组。完整 Python 签名见 [类型声明](../pyv8/_pyv8.pyi)。
+不支持 `spec[key]`、`dict(spec)`、字段赋值、删除或位置参数。成员集合必须是对应描述符组成的 **tuple**，不能传 list 或旧式四元组。完整 Python 签名见 [类型声明](../../pyv8/pyv8/_pyv8.pyi)。
 
 ## 2. 接口字段
 
@@ -268,7 +268,7 @@ Python 异常沿既有桥接异常机制传播；普通 Python 异常不应假�
 
 `get/set/query/enum/del` 分别对应读取、写入、属性查询、枚举、删除入口；具体参数和返回约定由对应原生 handler 决定，不是普通 `MethodSpec` 协议。
 
-字段、handler 标识及 Python 协议名称由 [handler_table.def](../src/interfaces/handler_table.def) 统一声明。显式 IdlSpec 应直接填写回调字段；pyv8c 的绑定编译器可以按约定名称发现实现，再填入描述符。
+字段、handler 标识及 Python 协议名称由 [handler_table.def](../../pyv8/src/interfaces/handler_table.def) 统一声明。显式 IdlSpec 应直接填写回调字段；pyv8c 的绑定编译器可以按约定名称发现实现，再填入描述符。
 
 `named_properties_non_masking` 与 `named_properties_object` 是不同配置：前者调整命名 handler 的遮蔽规则，后者选择命名属性对象安装路径。
 
@@ -315,9 +315,9 @@ pyv8c 在上层汇总基线元数据、实现声明和 mixin，通过 binder 生
 
 ## 10. 实现入口
 
-- [字段结构](../src/interfaces/idl_spec.h)：描述符原生存储布局。
-- [字段注册与校验](../src/interfaces/idl_spec.cpp)：默认值、范围、replace、回调解析与 GC 遍历。
-- [枚举和标志](../pyv8/flag.py)：公开常量。
-- [同步迭代](../src/interfaces/iterable.cpp)：indexed、pair、set 安装及执行。
-- [模板安装](../src/interfaces/pyclass.cpp)：成员、继承和对象模板配置。
-- [Python 类型声明](../pyv8/_pyv8.pyi)：公开签名和只读字段。
+- [字段结构](../../pyv8/src/interfaces/idl_spec.h)：描述符原生存储布局。
+- [字段注册与校验](../../pyv8/src/interfaces/idl_spec.cpp)：默认值、范围、replace、回调解析与 GC 遍历。
+- [枚举和标志](../../pyv8/pyv8/flag.py)：公开常量。
+- [同步迭代](../../pyv8/src/interfaces/iterable.cpp)：indexed、pair、set 安装及执行。
+- [模板安装](../../pyv8/src/interfaces/pyclass.cpp)：成员、继承和对象模板配置。
+- [Python 类型声明](../../pyv8/pyv8/_pyv8.pyi)：公开签名和只读字段。

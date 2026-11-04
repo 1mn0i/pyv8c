@@ -6,22 +6,22 @@
 
 | 目录 | 职责 |
 | --- | --- |
-| `pyv8c/foundation/` | 配置、执行器、任务源、时钟、渲染机会、错误与基础值规则 |
-| `pyv8c/network/` | 传输注册、网络后端、Cookie、请求响应数据和跳转规则 |
-| `pyv8c/engine/` | IDL 解码、绑定编译和跟踪 |
-| `pyv8c/features/` | Feature 通用运行机制、内置声明和 Web API 核心组装 |
-| `pyv8c/platform/` | Browser、Profile、Page、Realm、导航、宿主服务和生命周期组合 |
-| `pyv8c/platform/resources/` | 请求、缓存、资源所有权、文档资源与 iframe 加载 |
-| `pyv8c/web/` | DOM、BOM、Fetch、Worker 等 Web API 实现 |
-| `pyv8c/idl/` | 接口声明入口及随包 IDL 基线 |
-| `pyv8c/tools/` 与 `tools/` | 离线提取、采集、检查及命令入口 |
-| 相邻 `_pyv8` 仓库 | Isolate、Context、绑定模板、句柄、微任务、watchdog 和 Inspector |
+| `pyv8c/pyv8c/foundation/` | 配置、执行器、任务源、时钟、渲染机会、错误与基础值规则 |
+| `pyv8c/pyv8c/network/` | 传输注册、网络后端、Cookie、请求响应数据和跳转规则 |
+| `pyv8c/pyv8c/engine/` | IDL 解码、绑定编译和跟踪 |
+| `pyv8c/pyv8c/features/` | Feature 通用运行机制、内置声明和 Web API 核心组装 |
+| `pyv8c/pyv8c/platform/` | Browser、Profile、Page、Realm、导航、宿主服务和生命周期组合 |
+| `pyv8c/pyv8c/platform/resources/` | 请求、缓存、资源所有权、文档资源与 iframe 加载 |
+| `pyv8c/pyv8c/web/` | DOM、BOM、Fetch、Worker 等 Web API 实现 |
+| `pyv8c/pyv8c/idl/` | 接口声明入口及随包 IDL 基线 |
+| `pyv8c/pyv8c/tools/` 与 `tools/` | 离线提取、采集、检查及命令入口 |
+| 本仓库 `pyv8/` 项目 | Isolate、Context、绑定模板、句柄、微任务、watchdog 和 Inspector |
 
 基础层不依赖 Page；Web API 通过服务接口消费宿主能力，不直接依赖平台控制器。原生层提供执行和绑定原语，不实现页面资源或 DOM 业务。分层约束由架构测试与策略检查维护。
 
 ## Web API 归属
 
-DOM 目录保存节点树与 DOM 接口。文本编码、权限策略与 AI 接口位于 `pyv8c/web/` 的相应模块；媒体能力位于 `web/media/`，Canvas 绘图接口和 WebGL 位于 `web/graphics/`；设备运动与方向事件位于 `pyv8c/web/bom/motion.py`。这些模块由 Feature 注册表组合，不因页面调用就归入 DOM。
+DOM 目录保存节点树与 DOM 接口。文本编码、权限策略与 AI 接口位于 `pyv8c/pyv8c/web/` 的相应模块；媒体能力位于 `web/media/`，Canvas 绘图接口和 WebGL 位于 `web/graphics/`；设备运动与方向事件位于 `pyv8c/pyv8c/web/bom/motion.py`。这些模块由 Feature 注册表组合，不因页面调用就归入 DOM。
 
 | 目录或模块 | 主要职责 |
 | --- | --- |
@@ -39,11 +39,11 @@ DOM 目录保存节点树与 DOM 接口。文本编码、权限策略与 AI 接�
 
 ## HTML 与 DOM 元素
 
-通用 `Element` 位于 `pyv8c/web/dom/element.py`。HTML 标签接口、标签注册表和 HTML 文档及片段解析器位于 `pyv8c/web/html/`；文档创建元素和 HTML 解析共用注册表。`DOMParser` API 留在 DOM 层，根据文档类型调用对应解析器。SVG 和 MathML 元素分别位于 `pyv8c/web/svg/` 和 `pyv8c/web/mathml/`，继承通用 `Element`。HTML Canvas 标签位于 HTML 包，绘图上下文、ImageData、ImageBitmap 和 OffscreenCanvas 位于 graphics 包。
+通用 `Element` 位于 `pyv8c/pyv8c/web/dom/element.py`。HTML 标签接口、标签注册表和 HTML 文档及片段解析器位于 `pyv8c/pyv8c/web/html/`；文档创建元素和 HTML 解析共用注册表。`DOMParser` API 留在 DOM 层，根据文档类型调用对应解析器。SVG 和 MathML 元素分别位于 `pyv8c/pyv8c/web/svg/` 和 `pyv8c/pyv8c/web/mathml/`，继承通用 `Element`。HTML Canvas 标签位于 HTML 包，绘图上下文、ImageData、ImageBitmap 和 OffscreenCanvas 位于 graphics 包。
 
 ## CSS 与布局
 
-CSS 的属性表、声明解析、值计算、选择器、层叠和 CSSOM 位于 `pyv8c/web/css/`。DOM 元素持有样式声明，文档管理样式表版本；布局模块读取计算样式并维护几何快照。`getComputedStyle()` 通过调用方提供的布局快照获取需要使用值的属性，CSS 子包本身不导入布局模块。节点、样式表和视口变化仍通过原有版本机制使快照失效。
+CSS 的属性表、声明解析、值计算、选择器、层叠和 CSSOM 位于 `pyv8c/pyv8c/web/css/`。DOM 元素持有样式声明，文档管理样式表版本；布局模块读取计算样式并维护几何快照。`getComputedStyle()` 通过调用方提供的布局快照获取需要使用值的属性，CSS 子包本身不导入布局模块。节点、样式表和视口变化仍通过原有版本机制使快照失效。
 
 ## 对象与状态归属
 
@@ -65,15 +65,15 @@ V8 前台任务由执行组或 Worker 的 owner 线程自动执行；V8 后台�
 
 接口形状由 IDL 文档描述，环境档案中的 `bindings` 决定当前环境允许暴露的子集。Python 实现提供数据模型与业务行为，绑定编译器组合元数据和回调生成原生 IdlSpec，Realm 按装配计划安装接口。
 
-`pyv8c/features/runtime.py` 提供不依赖 Web 的通用机制，`pyv8c/features/catalog.py` 只声明内置 Feature，`pyv8c/features/core.py` 组装核心 Web API；FeatureSpec 描述接口组、依赖及实现模块；FeatureCatalog 建立静态索引，FeatureRuntime 在 Browser 范围管理依赖、模块加载和接口缓存。实现模块显式导出 `FEATURE`，可选能力按需加载。不能通过扫描模块全部变量隐式注册接口。
+`pyv8c/pyv8c/features/runtime.py` 提供不依赖 Web 的通用机制，`pyv8c/pyv8c/features/catalog.py` 只声明内置 Feature，`pyv8c/pyv8c/features/core.py` 组装核心 Web API；FeatureSpec 描述接口组、依赖及实现模块；FeatureCatalog 建立静态索引，FeatureRuntime 在 Browser 范围管理依赖、模块加载和接口缓存。实现模块显式导出 `FEATURE`，可选能力按需加载。不能通过扫描模块全部变量隐式注册接口。
 
 接口表面、迭代语义和宿主数据源是独立职责。未实现接口可按配置暴露为占位成员；缺失 pair/set 迭代源必须作为实现缺口记录，不能假装成空集合。具体格式见 [IDL 格式](idl-format.md)。
 
 ## 全局属性安装顺序
 
-Window 的 `Object.getOwnPropertyNames(window)` 顺序由 Blink 的安装阶段决定，不是按名字排序。`pyv8c/data/window-order.json` 记录一个 Chromium 版本的顺序：legacy factories、模板阶段的接口构造器（降序）、context 阶段的接口构造器，以及 Window 成员组。成员组按安装先后为 `early`（普通 attributes）、`operations`、`late_attributes`、`late_operations`、`late_template`、`tail`，条件构造器则分为 `postinstall` 与 `postinstall_late`。该文件由 `pyv8c/tools/extract_window_order.py` 从与 `idl.json` 同一版本的 IDL 源生成，版本不一致时按 `baseline_mismatch` 报告或失败。
+Window 的 `Object.getOwnPropertyNames(window)` 顺序由 Blink 的安装阶段决定，不是按名字排序。`pyv8c/pyv8c/data/window-order.json` 记录一个 Chromium 版本的顺序：legacy factories、模板阶段的接口构造器（降序）、context 阶段的接口构造器，以及 Window 成员组。成员组按安装先后为 `early`（普通 attributes）、`operations`、`late_attributes`、`late_operations`、`late_template`、`tail`，条件构造器则分为 `postinstall` 与 `postinstall_late`。该文件由 `pyv8c/pyv8c/tools/extract_window_order.py` 从与 `idl.json` 同一版本的 IDL 源生成，版本不一致时按 `baseline_mismatch` 报告或失败。
 
-`RealmPlan` 把顺序分成 `preinstall`、`postinstall`、`postinstall_late`、`legacy_factories` 和 `member_groups`。`preinstall` 在 `pyv8.V8Context` 创建前写入 global 模板，因此接口构造器排在 Window 成员之前；`IdlSpec` 的 `late_attributes` 由 `context.install_late()` 在宿主 `chrome` 之后安装，`late_methods` 与 `late_template_attributes` 由 `install_late_methods()` 在条件构造器之后安装，`tail_methods` 最后安装。顺序数据缺失时回退到按名字排序。V8 内置全局段由相邻 `_pyv8` 使用的 V8 版本决定，不在该数据范围内。
+`RealmPlan` 把顺序分成 `preinstall`、`postinstall`、`postinstall_late`、`legacy_factories` 和 `member_groups`。`preinstall` 在 `pyv8.V8Context` 创建前写入 global 模板，因此接口构造器排在 Window 成员之前；`IdlSpec` 的 `late_attributes` 由 `context.install_late()` 在宿主 `chrome` 之后安装，`late_methods` 与 `late_template_attributes` 由 `install_late_methods()` 在条件构造器之后安装，`tail_methods` 最后安装。顺序数据缺失时回退到按名字排序。V8 内置全局段由本仓库 `pyv8/` 使用的 V8 版本决定，不在该数据范围内。
 
 ## 资源组件
 

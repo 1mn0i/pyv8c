@@ -32,9 +32,9 @@ hasStorageAccess 与 hasUnpartitionedCookieAccess 返回所属 Realm 的 Promise
 
 ## Window 自有属性顺序
 
-`Object.getOwnPropertyNames(window)` 的 Blink 安装段对齐到项目基线 Chromium 154.0.8030.0：legacy factories 在接口构造器之前，模板阶段构造器按接口名降序，Window 成员按 attributes、后置 template attributes、operations 的顺序排列；context 阶段先安装宿主 `chrome`，再安装 context-dependent 成员（`crashReport`、`cookieStore`、`caches` 等），最后安装条件接口构造器。顺序由随包的 `pyv8c/data/window-order.json` 描述，不依赖 Chromium 源码。
+`Object.getOwnPropertyNames(window)` 的 Blink 安装段对齐到项目基线 Chromium 154.0.8030.0：legacy factories 在接口构造器之前，模板阶段构造器按接口名降序，Window 成员按 attributes、后置 template attributes、operations 的顺序排列；context 阶段先安装宿主 `chrome`，再安装 context-dependent 成员（`crashReport`、`cookieStore`、`caches` 等），最后安装条件接口构造器。顺序由随包的 `pyv8c/pyv8c/data/window-order.json` 描述，不依赖 Chromium 源码。
 
-V8 内置全局段（`Object`、`Function`、`SuppressedError` 等）由相邻 `_pyv8` 使用的 V8 版本决定，不在该数据范围内；换 V8 或换 Chrome 版本时该段会偏移。当前 `_pyv8` 以 `v8_enable_temporal_support=true` 构建 V8 15.2.20.1，`Temporal` 及其 `PlainDate` 等可用；`SuppressedError` 在 V8 15.2 位于内置段末尾，Chrome 154 的 V8 15.4 在其第 23 位，这是版本差异，不是 Blink 顺序问题。runtime-enabled 接口的默认启用状态也可能随版本变化，跨版本对照只比较双方共同安装的名字及其相对顺序。
+V8 内置全局段（`Object`、`Function`、`SuppressedError` 等）由本仓库 `pyv8/` 使用的 V8 版本决定，不在该数据范围内；换 V8 或换 Chrome 版本时该段会偏移。当前 `_pyv8` 以 `v8_enable_temporal_support=true` 构建 V8 15.2.20.1，`Temporal` 及其 `PlainDate` 等可用；`SuppressedError` 在 V8 15.2 位于内置段末尾，Chrome 154 的 V8 15.4 在其第 23 位，这是版本差异，不是 Blink 顺序问题。runtime-enabled 接口的默认启用状态也可能随版本变化，跨版本对照只比较双方共同安装的名字及其相对顺序。
 
 ## Canvas 与 SVG
 

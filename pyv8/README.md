@@ -1,7 +1,7 @@
 # pyv8
 
-桥接内核重构后的接口和关闭语义见 [BRIDGE_KERNEL](doc/BRIDGE_KERNEL.md)，
-实测结果和待验收事项见 [重构报告](doc/BRIDGE_REFACTOR_RESULTS.md)。
+桥接内核重构后的接口和关闭语义见 [BRIDGE_KERNEL](../docs/pyv8/BRIDGE_KERNEL.md)，
+实测结果和待验收事项见 [重构报告](../docs/pyv8/BRIDGE_REFACTOR_RESULTS.md)。
 
 pyv8 是一个基于 Google V8 的 CPython C++ 扩展，用于在 Python 中执行 JavaScript，
 并在 Python 对象与 V8 对象之间建立双向桥接。
@@ -115,7 +115,7 @@ print(context.exec_js("navigator.userAgent"))
 print(context.exec_js("sha256('payload')"))
 ```
 
-IDL 映射统一使用 C++ 定义的 `pyv8.IdlSpec`，完整字段与 realm 装配契约见 [IDL_SPEC.md](doc/IDL_SPEC.md)。
+IDL 映射统一使用 C++ 定义的 `pyv8.IdlSpec`，完整字段与 realm 装配契约见 [IDL_SPEC.md](../docs/pyv8/IDL_SPEC.md)。
 
 ## 安装
 
@@ -183,7 +183,7 @@ python setup.py build_ext --inplace
 ```
 
 详细的编译器要求、环境变量、自定义 V8 路径和 ICU 数据约束见
-[完整使用指南](doc/USER_GUIDE.md#安装与构建)。
+[完整使用指南](../docs/pyv8/USER_GUIDE.md#安装与构建)。
 
 ## Chrome DevTools
 
@@ -221,19 +221,19 @@ finally:
 将打印的 `devtools://` URL 粘贴到 Chrome 地址栏。`start_devtools()` 只启动服务；
 `handle.run()` 在调用线程处理调试握手，然后执行回调。默认在下一段宿主脚本的首条语句暂停一次，
 不需要插入 `debugger;`。使用默认 `127.0.0.1`，不要向不可信网络暴露无认证的调试端口。
-配置、线程约束和旧接口迁移见 [DevTools 架构与迁移](doc/DEVTOOLS.md)。
+配置、线程约束和旧接口迁移见 [DevTools 架构与迁移](../docs/pyv8/DEVTOOLS.md)。
 
 ## 文档
 
-- [完整使用指南](doc/USER_GUIDE.md)
-- [Context 与脚本执行](doc/USER_GUIDE.md#context-与脚本执行)
-- [Python/JavaScript 类型转换](doc/USER_GUIDE.md#类型转换)
-- [Chromium-like 类与原型](doc/USER_GUIDE.md#chromium-like-类与原型)
-- [Property interceptor](doc/USER_GUIDE.md#property-interceptor)
-- [Cross-origin 与 trace](doc/USER_GUIDE.md#cross-origin-与-trace)
-- [多 Isolate 和生命周期](doc/USER_GUIDE.md#多-isolate-与生命周期)
-- [DevTools 调试](doc/USER_GUIDE.md#devtools-调试)
-- [常见问题](doc/USER_GUIDE.md#常见问题)
+- [完整使用指南](../docs/pyv8/USER_GUIDE.md)
+- [Context 与脚本执行](../docs/pyv8/USER_GUIDE.md#context-与脚本执行)
+- [Python/JavaScript 类型转换](../docs/pyv8/USER_GUIDE.md#类型转换)
+- [Chromium-like 类与原型](../docs/pyv8/USER_GUIDE.md#chromium-like-类与原型)
+- [Property interceptor](../docs/pyv8/USER_GUIDE.md#property-interceptor)
+- [Cross-origin 与 trace](../docs/pyv8/USER_GUIDE.md#cross-origin-与-trace)
+- [多 Isolate 和生命周期](../docs/pyv8/USER_GUIDE.md#多-isolate-与生命周期)
+- [DevTools 调试](../docs/pyv8/USER_GUIDE.md#devtools-调试)
+- [常见问题](../docs/pyv8/USER_GUIDE.md#常见问题)
 
 ## 测试
 

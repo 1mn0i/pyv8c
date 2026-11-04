@@ -1,6 +1,6 @@
 # pyv8c
 
-pyv8c 是基于 V8 和 Python 的浏览器脚本运行框架。原生桥接由相邻仓库 `_pyv8` 提供，Python 实现页面、DOM、Web API、资源加载、任务调度和调试接入。适合运行页面脚本、构造可重复的浏览器行为测试，以及通过本地 Chrome 对照完善 Web 能力。
+pyv8c 是基于 V8 和 Python 的浏览器脚本运行框架。原生桥接由本仓库中的 `pyv8` 项目提供，Python 实现页面、DOM、Web API、资源加载、任务调度和调试接入。适合运行页面脚本、构造可重复的浏览器行为测试，以及通过本地 Chrome 对照完善 Web 能力。
 
 框架提供常用 DOM 与事件、导航、iframe、Worker、Fetch、XMLHttpRequest、WebSocket、存储、部分样式与几何计算，以及 V8 Inspector。接口暴露由 Chromium IDL 和浏览器环境档案共同决定；**接口存在不代表功能完整实现**。
 
@@ -8,15 +8,17 @@ pyv8c 是基于 V8 和 Python 的浏览器脚本运行框架。原生桥接由�
 
 要求 Python 3.12 及以上，并能导入与当前解释器匹配的 `pyv8` 原生扩展。本轮主要验证环境为 Windows、Python 3.12 和本机 Chrome；其他平台及解释器版本需要分别验证。
 
-以下命令在 pyv8c 仓库根目录执行，假设 `_pyv8` 位于相邻目录：
+仓库包含 `pyv8/`（V8 绑定）和 `pyv8c/`（浏览器框架）两个独立包。以下命令在仓库根目录执行：
 
 ```powershell
-$env:PYTHONPATH = "$PWD;$PWD\..\_pyv8"
-python -m pip install -e ".[network,dev,reference]"
-python -c "import pyv8; print(pyv8.__file__)"
+python -m pip install --config-settings editable_mode=compat -e ./pyv8
+python -m pip install --config-settings editable_mode=compat -e "./pyv8c[network,dev,reference]"
+python -c "import pyv8, pyv8c; print(pyv8.__file__, pyv8c.__file__)"
 ```
 
-`network` 安装默认 HTTP 引擎，`dev` 安装测试工具，`reference` 安装驱动本机 Chrome 的工具，不下载浏览器。原生扩展的构建要求见相邻 `_pyv8` 仓库文档。
+在仓库根目录使用 setuptools 的普通 editable 安装时，同名项目目录可能遮蔽实际包；以上命令启用兼容模式。构建 pyv8 前须配置 V8 构建目录，详见原生项目文档。
+
+`network` 安装默认 HTTP 引擎，`dev` 安装测试工具，`reference` 安装驱动本机 Chrome 的工具，不下载浏览器。原生扩展构建要求见 [pyv8 文档](pyv8/README.md)。两个包可分别构建和发布；框架依赖兼容版本的 pyv8。
 
 ## 快速开始
 

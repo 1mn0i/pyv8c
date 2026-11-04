@@ -106,7 +106,7 @@ assert values["viewport.width"] == 1280
 | `expose_unimplemented` | True；是否暴露基线中的未实现接口 |
 | `stub_logging` | `off`；也可为 `on` 或 `verbose`，控制未实现成员日志 |
 | `interface_overrides` | None；接口成员实验性替代回调 |
-| `idl_path` | None；默认读取包内 `pyv8c/idl/idl.zip` |
+| `idl_path` | None；默认读取包内 `pyv8c/pyv8c/idl/idl.zip` |
 | `baseline_mismatch` | `warn`；实现与所选基线不匹配时警告，`error` 为严格校验 |
 
 `new_profile(proxy=..., trace=..., traceable=..., trace_callback=...)` 可设置相应会话选项。网络与资源回调的线程限制见[资源加载](resource-loading.md)。

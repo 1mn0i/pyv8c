@@ -54,8 +54,8 @@ def sha(path):
 def source_state():
     roots = []
     for folder in Path(__file__).resolve().parents:
-        if (folder / "pyproject.toml").is_file():
-            roots = [folder, folder.parent / "_pyv8"]
+        if (folder / "pyv8c" / "pyproject.toml").is_file():
+            roots = [folder]
             break
     output = []
     for root in roots:
@@ -237,7 +237,7 @@ def worker(config, result_path):
             )
             profile_path = (
                 Path(__file__).resolve().parents[3]
-                / "pyv8c/data/chrome-environment.json"
+                / "pyv8c/pyv8c/data/chrome-environment.json"
             )
             if profile_path.is_file():
                 result["runtime"]["profile_sha256"] = sha(profile_path)

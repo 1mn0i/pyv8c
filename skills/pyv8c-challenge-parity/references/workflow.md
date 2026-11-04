@@ -38,7 +38,7 @@
 | 导航、任务、Realm 生命周期 | `pyv8c/platform/page.py` 及其导航、调度与生命周期调用方 |
 | 接口暴露、成员、回调、身份 | `pyv8c/engine/idl.py`、`binder.py`、`bindings.py`、`pyv8c/platform/sessions.py` |
 | 浏览器 API | `pyv8c/web/`；继续通过 ResourceServices 等服务访问运行时 |
-| 原生模板、转换与生命周期 | 相邻 `_pyv8/src/interfaces/`、`values/`、`isolate/`、`handles/` |
+| 原生模板、转换与生命周期 | 本仓库 `pyv8/src/interfaces/`、`values/`、`isolate/`、`handles/` |
 
 不要直接访问 tracker 私有字典或假定资源记录是四元组。观测优先用现有事件/trace；必须临时包装内部方法时确认签名，原样转发并在 finally 恢复，记录其观察者效应。生产修复放在共享实现，而非 examples/skill 中 monkey patch。
 

@@ -126,6 +126,6 @@ def test_runtime_has_no_signature_driven_argument_validator():
 def test_legacy_stub_marker_is_absent_from_runtime_sources():
     workspace = Path(__file__).resolve().parents[3]
     sources = list((workspace / "pyv8c" / "pyv8c").glob("*.py"))
-    sources.extend((workspace / "_pyv8" / "src").glob("*.cpp"))
+    sources.extend((workspace / "pyv8" / "src").glob("*.cpp"))
     legacy_marker = "__idl_" + "stub__"
     assert all(legacy_marker not in path.read_text(encoding="utf-8") for path in sources)

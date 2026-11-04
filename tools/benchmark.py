@@ -24,7 +24,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 BASELINE_FILE = Path(__file__).resolve().parent / "perf_baseline.json"
-for _path in (REPO, REPO.parent / "_pyv8"):
+for _path in (REPO / "pyv8c", REPO / "pyv8"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 

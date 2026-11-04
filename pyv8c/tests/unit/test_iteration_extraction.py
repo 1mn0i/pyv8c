@@ -82,7 +82,7 @@ def test_unimplemented_sources_are_recorded_and_do_not_retain_bindings():
     import weakref, gc
     from pyv8c.engine.bindings import Bindings
     from pyv8c.platform.bootstrap import bootstrap_runtime
-    document=Idl.load(Path(__file__).resolve().parents[2]/'idls/145.0.7632.162.zip',profile=None)
+    document=Idl.load(Path(__file__).resolve().parents[3]/'idls/145.0.7632.162.zip',profile=None)
     for _ in range(2):
         bindings=Bindings(document,runtime=bootstrap_runtime(),stub_logging='off')
         spec=bindings.class_config_for('AudioParamMap')

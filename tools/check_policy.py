@@ -87,9 +87,9 @@ def changed_paths(base):
 
 def classify(path):
     """Which bucket a changed path falls into."""
-    if path.startswith("tests/"):
+    if path.startswith(("tests/", "pyv8c/tests/", "pyv8/tests/")):
         return "test"
-    if path.startswith("pyv8c/"):
+    if path.startswith("pyv8c/pyv8c/") or path.startswith("pyv8c/") and not path.startswith("pyv8c/tests/"):
         return "implementation" if path.endswith(".py") else "data"
     if path.startswith("docs/") or path.endswith(".md"):
         return "docs"
@@ -112,7 +112,7 @@ def startup_budget(baseline):
 def measure_startup(runs=3, timeout=300):
     """``(min_ms, median_ms, modules)``, or ``(None, None, reason)`` when unavailable."""
     environment = os.environ.copy()
-    search = [str(REPO), str(REPO.parent / "_pyv8")]
+    search = [str(REPO / "pyv8c"), str(REPO / "pyv8")]
     environment["PYTHONPATH"] = os.pathsep.join(
         [*search, environment.get("PYTHONPATH", "")]
     ).strip(os.pathsep)
@@ -138,7 +138,7 @@ def measure_startup(runs=3, timeout=300):
 def gate_layers():
     """Run the layering rules where they already live."""
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/unit/test_architecture.py", "-q"],
+        [sys.executable, "-m", "pytest", "pyv8c/tests/unit/test_architecture.py", "-q"],
         cwd=REPO,
         capture_output=True,
         text=True,
@@ -179,7 +179,7 @@ def _script_literals(path):
 
 def corpus_cases():
     """``(case name, line, script)`` for every case the corpus declares."""
-    tree = ast.parse((REPO / "tests" / "repros" / "corpus.py").read_text(encoding="utf-8"))
+    tree = ast.parse((REPO / "pyv8c" / "tests" / "repros" / "corpus.py").read_text(encoding="utf-8"))
     cases = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or getattr(node.func, "id", "") != "Repro":
@@ -195,7 +195,7 @@ def duplicate_findings():
     """``(ratio, path, line, test, case, case line)`` for near-identical scripts."""
     cases = [(name, line, _squeeze(script)) for name, line, script in corpus_cases()]
     findings = []
-    for path in sorted((REPO / "tests").rglob("test_*.py")):
+    for path in sorted((REPO / "pyv8c" / "tests").rglob("test_*.py")):
         if "repros" in path.parts or "__pycache__" in path.parts:
             continue
         for test, line, scripts in _script_literals(path):
@@ -238,10 +238,10 @@ def gate_offline():
     ``PYV8C_OFFLINE`` keeps this gate's own test from recursing.
     """
     environment = os.environ.copy()
-    environment["PYTHONPATH"] = str(REPO)
+    environment["PYTHONPATH"] = str(REPO / "pyv8c")
     environment["PYV8C_OFFLINE"] = "1"
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/unit", "-q"],
+        [sys.executable, "-m", "pytest", "pyv8c/tests/unit", "-q"],
         cwd=REPO,
         env=environment,
         capture_output=True,

@@ -2,10 +2,10 @@
 
 ## 前置条件
 
-在 pyv8c 仓库根运行命令，使用项目的 Python 3.12 环境。源码开发时令 PYTHONPATH 指向本仓库及相邻 `_pyv8`。先验证 import 路径，不让已安装旧包替代开发树。
+在 pyv8c 仓库根运行命令，使用项目的 Python 3.12 环境。源码开发时令 PYTHONPATH 指向本仓库中的两个项目。先验证 import 路径，不让已安装旧包替代开发树。
 
 ```powershell
-$env:PYTHONPATH="$PWD;$PWD/../_pyv8"
+$env:PYTHONPATH="$PWD/pyv8c;$PWD/pyv8;$PWD"
 python skills/pyv8c-challenge-parity/scripts/harness.py --list
 python skills/pyv8c-challenge-parity/scripts/harness.py --help
 ```

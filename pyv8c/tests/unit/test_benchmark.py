@@ -9,7 +9,7 @@ import pytest
 @pytest.fixture
 def benchmark(monkeypatch):
     monkeypatch.setattr(sys, "path", sys.path.copy())
-    path = Path(__file__).resolve().parents[2] / 'tools/benchmark.py'
+    path = Path(__file__).resolve().parents[3] / 'tools/benchmark.py'
     spec = importlib.util.spec_from_file_location('audit_benchmark', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

@@ -9,7 +9,7 @@ from pyv8c.platform.resources.frames import FrameResourceController
 
 
 def test_frame_and_style_trace_hooks_restore_their_methods(monkeypatch, capsys):
-    path = Path(__file__).parents[2] / "examples/px3/script/trace.py"
+    path = Path(__file__).parents[3] / "examples/px3/script/trace.py"
     monkeypatch.setitem(__import__("sys").modules, "common", SimpleNamespace(
         URL="http://trace.test/", here=None, launch=None, chrome_page=None,
         snapshot=lambda page, script: page.evaluate(script), there=None))

@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PYV8_ROOT = ROOT.parent / "_pyv8"
+PYV8_ROOT = ROOT.parent / "pyv8"
 
 
 def _run(case):

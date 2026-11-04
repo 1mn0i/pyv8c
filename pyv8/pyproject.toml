@@ -29,9 +29,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ConlinH/pyv8"
-Repository = "https://github.com/ConlinH/pyv8.git"
-Issues = "https://github.com/ConlinH/pyv8/issues"
+Homepage = "https://github.com/ConlinH/pyv8c"
+Repository = "https://github.com/ConlinH/pyv8c"
+Issues = "https://github.com/ConlinH/pyv8c/issues"
 
 [tool.setuptools]
 packages = ["pyv8", "pyv8.devtools"]

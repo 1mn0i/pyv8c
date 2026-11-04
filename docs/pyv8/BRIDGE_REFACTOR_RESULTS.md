@@ -87,8 +87,8 @@ case includes the existing error reporting overhead; it is not a pure throw benc
 Trace and DOM batches have 500 operations; other native batches have 2,000.
 Page lifecycle batches each create and close one page.
 
-Raw samples: [before.json](../benchmarks/before.json),
-[after.json](../benchmarks/after.json). The shared script works with both versions.
+Raw samples: [before.json](../../pyv8/benchmarks/before.json),
+[after.json](../../pyv8/benchmarks/after.json). The shared script works with both versions.
 
 ## Memory
 
@@ -107,10 +107,10 @@ about 7.4 KiB. These figures include the small accumulating report and runtime
 caches. This run demonstrates released page ownership and a flattening private
 memory curve; it does not assert that every byte or RSS returns to its initial value.
 
-Raw data: [lifecycle-after.json](../benchmarks/lifecycle-after.json).
+Raw data: [lifecycle-after.json](../../pyv8/benchmarks/lifecycle-after.json).
 The optional `benchmarks/plot_results.py` renders the memory curves with matplotlib.
 
-![Memory measurements](../benchmarks/lifecycle-after.png)
+![Memory measurements](../../pyv8/benchmarks/lifecycle-after.png)
 
 ## Remaining validation
 

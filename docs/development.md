@@ -4,16 +4,18 @@
 
 ## 环境与工作约定
 
-在 pyv8c 仓库根目录执行命令，先确认能导入相邻 `_pyv8` 构建的扩展：
+在仓库根目录依次安装两个包，并确认加载的是本仓库的代码：
 
 ```powershell
-$env:PYTHONPATH = "$PWD;$PWD\..\_pyv8"
 $env:PYTHONUTF8 = "1"
-python -m pip install -e ".[network,dev,reference]"
-python -c "import pyv8; print(pyv8.__file__)"
+python -m pip install --config-settings editable_mode=compat -e ./pyv8
+python -m pip install --config-settings editable_mode=compat -e "./pyv8c[network,dev,reference]"
+python -c "import pyv8, pyv8c; print(pyv8.__file__, pyv8c.__file__)"
 ```
 
-修改前记录两个仓库的工作区状态，保留已有修改。核对实际加载的原生二进制、解释器、IDL、环境档案和 Chrome；修改 C++ 后必须重建正在使用的扩展，不能只用旧二进制跑 Python 测试。
+在仓库根目录使用 setuptools 的普通 editable 安装时，同名项目目录可能遮蔽实际包；以上命令启用兼容模式。构建 pyv8 前须配置 V8 构建目录，详见原生项目文档。
+
+修改前记录仓库的工作区状态，保留已有修改。核对实际加载的原生二进制、解释器、IDL、环境档案和 Chrome；修改 C++ 后必须重建正在使用的扩展，不能只用旧二进制跑 Python 测试。
 
 核心规则见[架构设计](architecture.md)：修复进入实际拥有行为和状态的层，Web API 不直接依赖 Page 控制器；缓存明确所属实例、失效和释放条件，不建立进程全局的页面可变状态。
 
@@ -31,16 +33,16 @@ Feature 的通用运行机制位于 `pyv8c/features/runtime.py`，内置声明�
 
 ```powershell
 # 常规运行，不含 slow；包含可用的 Chrome 对照
-python -m pytest -q
+python -m pytest -c pyv8c/pyproject.toml pyv8c/tests -q
 
 # 不运行 Chrome 对照的常规主套件
-python -m pytest tests/unit tests/integration tests/browser -q
+python -m pytest -c pyv8c/pyproject.toml pyv8c/tests/unit pyv8c/tests/integration pyv8c/tests/browser -q
 
 # 慢速生命周期、堆预算及策略复查
-python -m pytest tests -o addopts=--strict-markers -m slow -q
+python -m pytest -c pyv8c/pyproject.toml pyv8c/tests -o addopts=--strict-markers -m slow -q
 
 # 标记竞态用例至少重复五轮
-python -m pytest tests -o addopts=--strict-markers -m race --count=5 -q
+python -m pytest -c pyv8c/pyproject.toml pyv8c/tests -o addopts=--strict-markers -m race --count=5 -q
 
 # 架构、改动配套、启动、离线导入和重复用例检查
 python tools/check_policy.py
@@ -48,10 +50,10 @@ python tools/check_policy.py
 
 默认 pytest 配置排除 slow，所以 `-m slow` 同时覆盖 addopts，避免选择器冲突。竞态测试也可能标记 slow，重复运行时同样需要覆盖。不要默认并行运行 Chrome 对照。
 
-修改原生支持时，在相邻 `_pyv8` 仓库运行构建、测试及该仓库的 `tools/check_layout.py`，再回到 pyv8c 验证受影响链路：
+修改原生支持时，在`pyv8/` 项目运行构建、测试及该仓库的 `tools/check_layout.py`，再回到 pyv8c 验证受影响链路：
 
 ```powershell
-Push-Location ..\_pyv8
+Push-Location pyv8
 try {
     python setup.py build_ext --inplace
     python -m pytest tests -q
@@ -67,7 +69,7 @@ try {
 
 ```powershell
 $env:PYV8C_CHROME = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-python -m pytest tests/repros/test_execution_model_vs_chrome.py -q
+python -m pytest -c pyv8c/pyproject.toml pyv8c/tests/repros/test_execution_model_vs_chrome.py -q
 ```
 
 对照工具使用本机可执行文件；缺失 Chrome 或 Playwright 的用例可能跳过，跳过不能算通过。记录实际版本和启动参数，不静默替换另一 Chromium 或修改自动化状态。
@@ -80,10 +82,10 @@ python -m pytest tests/repros/test_execution_model_vs_chrome.py -q
 
 IDL 和环境采集命令见 [IDL 格式](idl-format.md)。生成产物前核对来源版本，先写独立输出验证；不要无授权覆盖 Chromium/V8/profile 基线。
 
-Window 自有属性顺序由 `pyv8c/data/window-order.json` 描述，重新生成需要同一版本的 Chromium IDL 源：
+Window 自有属性顺序由 `pyv8c/pyv8c/data/window-order.json` 描述，重新生成需要同一版本的 Chromium IDL 源：
 
 ```powershell
-python -m pyv8c.tools.extract_window_order --chromium-root D:\src\chromium --reference pyv8c/data/window-order-conditional-reference.json
+python -m pyv8c.tools.extract_window_order --chromium-root D:\src\chromium --reference pyv8c/pyv8c/data/window-order-conditional-reference.json
 ```
 
 产物必须与 `idl.json` 的 `chromium_version` 一致；升级 IDL 基线时一并重新生成。运行时读取随包 JSON，不依赖 Chromium 源码。
@@ -103,4 +105,4 @@ python tools/measure_startup.py
 
 文档只维护当前可用接口与已知限制。命令、链接和示例变更后需验证；专题文件统一使用小写短横线命名，索引使用 README.md，正文统一中文。
 
-????????????????????? `pyv8c/data/window-order-conditional-reference.json`??????????? Chrome ??????????? IDL ?????????? IDL ??????????
+????????????????????? `pyv8c/pyv8c/data/window-order-conditional-reference.json`??????????? Chrome ??????????? IDL ?????????? IDL ??????????

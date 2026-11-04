@@ -283,7 +283,7 @@ def test_a_checkout_that_states_no_version_is_refused_by_name(tmp_path):
 
 
 def test_real_renderer_sources_have_members_for_core_interfaces():
-    root = Path(__file__).resolve().parents[3] / "_pyv8env" / "renderer"
+    root = Path(__file__).resolve().parents[4] / "_pyv8env" / "renderer"
     if not root.is_dir():
         pytest.skip(f"no generated Chromium sources at {root}")
     snapshot = extract_idl.extract(root)

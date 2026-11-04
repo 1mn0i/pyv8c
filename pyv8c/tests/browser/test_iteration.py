@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pyv8c import Browser
 
-IDL = Path(__file__).resolve().parents[2] / "idls" / "145.0.7632.162.zip"
+IDL = Path(__file__).resolve().parents[3] / "idls" / "145.0.7632.162.zip"
 
 CASES = [
     ("cross-realm-next", """() => {
