@@ -1,0 +1,572 @@
+#include "bridge_base.h"
+#include "crossing.h"
+#include "v8tools.h"
+#include "idl_spec.h"
+#include "convert.h"
+#include "pyclass_handlers.h"
+
+#include <climits>
+
+using namespace v8;
+
+
+namespace bindings {
+
+    static bool RetainCallbackData(PyObject* owner, PyObject* callback_data) {
+        return PyList_Append(owner, callback_data) == 0;
+    }
+
+
+    void ConstructAccessorNameGetterCallback(Local<Name> property, const PropertyCallbackInfo<Value>& info) {
+        v8::Isolate* isolate = info.GetIsolate();
+        // Reading child.Interface from a parent script must build the interface
+        // in the holder's realm, not cache the parent's constructor on the child.
+        Local<Context> context;
+        if (!v8_compat::callback_holder(info)->GetCreationContext().ToLocal(&context)) return;
+        Context::Scope scope(context);
+        if (!context_check_callback(context)) return;
+        context_c* py_ctx = context_from_v8(context);
+        if (py_ctx == nullptr) {
+            info.GetReturnValue().SetUndefined();
+            return;
+        }
+
+        String::Utf8Value property_name(isolate, property);
+        PyObject* name = PyUnicode_FromString(*property_name);
+        if (name == NULL) {
+            js_throw_py();
+            return;
+        }
+        PyObject* py_cls = context_registry_get(py_ctx, name, REGISTRY_TEMPLATE);
+        //: A legacy alias answers the template of the interface it names, which
+        //: py_class_to_template caches under that interface's own name.  Keep the
+        //: template alive for this read even when the alias has no registry entry.
+        PyObject* alias_template = NULL;
+        if (py_cls == NULL && context_registry_askable(py_ctx, name)) {
+            // Lazy materialisation: ask the realm for the class behind this name,
+            // build its template and remember it, so a later access answers from
+            // the registry without another Python round trip.
+            PyObject* cls = context_ask_factory(py_ctx, name);
+            if (cls == NULL) {
+                Py_DECREF((PyObject*)name);
+                js_throw_py();
+                return;
+            }
+            if (cls != Py_None) {
+                PyObject* owned = py_class_to_template(cls, py_ctx);
+                Py_DECREF((PyObject*)cls);
+                if (owned == NULL) {
+                    Py_DECREF((PyObject*)name);
+                    js_throw_py();
+                    return;
+                }
+                alias_template = owned;
+            }
+            else {
+                Py_DECREF((PyObject*)cls);
+            }
+            py_cls = context_registry_get(py_ctx, name, REGISTRY_TEMPLATE);
+            if (py_cls == NULL && alias_template != NULL)
+                py_cls = alias_template;
+        }
+        if (py_cls == NULL) {
+            Py_XDECREF(alias_template);
+            Py_DECREF((PyObject*)name);
+            info.GetReturnValue().SetUndefined();
+            return;
+        }
+        // Build the same constructor an exposure would: a lazily materialised name has
+        // to arrive finished, with no synthetic ``constructor`` and its iterator set up.
+        Py_XDECREF((PyObject*)name);
+        py_class* klass = (py_class*)py_cls;
+        Local<Value> interface_object =
+            py_class_get_constructor(context, klass, (py_class*)klass->parent);
+        Py_XDECREF(alias_template);
+        if (!interface_object.IsEmpty()) {
+            info.GetReturnValue().Set(interface_object);
+        }
+        else {
+            info.GetReturnValue().SetUndefined();
+        }
+    }
+
+    template <FunctionKind kind, typename Config>
+    v8::FunctionCallback GetConfigCallback(const Config& config);
+    template <>
+    v8::FunctionCallback GetConfigCallback<FunctionKind::kAttributeGet>(
+        const AttributeConfig& config) {
+        return config.callback_for_get;
+    }
+    template <>
+    v8::FunctionCallback GetConfigCallback<FunctionKind::kAttributeSet>(
+        const AttributeConfig& config) {
+        return config.callback_for_set;
+    }
+    template <>
+    v8::FunctionCallback GetConfigCallback<FunctionKind::kOperation>(
+        const OperationConfig& config) {
+        return config.callback;
+    }
+
+    template <FunctionKind kind, typename Config>
+    int GetConfigLength(const Config& config);
+    template <>
+    int GetConfigLength<FunctionKind::kAttributeGet>(
+        const AttributeConfig& config) {
+        return 0;
+    }
+    template <>
+    int GetConfigLength<FunctionKind::kAttributeSet>(
+        const AttributeConfig& config) {
+        return 1;
+    }
+    template <>
+    int GetConfigLength<FunctionKind::kOperation>(
+        const OperationConfig& config) {
+        return config.length;
+    }
+
+    template <FunctionKind kind, typename Config>
+    inline Local<Value> GetConfigCallbackName(const Config& config);
+    template <>
+    inline Local<Value> GetConfigCallbackName<FunctionKind::kAttributeGet>(
+        const AttributeConfig& config) {
+        return config.get_method;
+    }
+    template <>
+    inline Local<Value> GetConfigCallbackName<FunctionKind::kAttributeSet>(
+        const AttributeConfig& config) {
+        return config.set_method;
+    }
+    template <>
+    inline Local<Value> GetConfigCallbackName<FunctionKind::kOperation>(
+        const OperationConfig& config) {
+        return config.callback_data;
+    }
+
+
+    template <FunctionKind kind, typename Config>
+    v8::SideEffectType GetConfigSideEffect(const Config& config);
+    template <>
+    v8::SideEffectType GetConfigSideEffect<FunctionKind::kAttributeGet>(
+        const AttributeConfig& config) {
+        return static_cast<v8::SideEffectType>(config.v8_side_effect);
+    }
+    template <>
+    v8::SideEffectType GetConfigSideEffect<FunctionKind::kAttributeSet>(
+        const AttributeConfig& config) {
+        return v8::SideEffectType::kHasSideEffect;
+    }
+    template <>
+    v8::SideEffectType GetConfigSideEffect<FunctionKind::kOperation>(
+        const OperationConfig& config) {
+        return static_cast<v8::SideEffectType>(config.v8_side_effect);
+    }
+
+    template <FunctionKind kind, typename Config>
+    FlagCrossOriginCheck GetConfigCrossOriginCheck(
+        const Config& config);
+    template <>
+    FlagCrossOriginCheck
+        GetConfigCrossOriginCheck<FunctionKind::kAttributeGet>(
+            const AttributeConfig& config) {
+        return static_cast<FlagCrossOriginCheck>(
+            config.cross_origin_check_for_get);
+    }
+    template <>
+    FlagCrossOriginCheck
+        GetConfigCrossOriginCheck<FunctionKind::kAttributeSet>(
+            const AttributeConfig& config) {
+        return static_cast<FlagCrossOriginCheck>(
+            config.cross_origin_check_for_set);
+    }
+    template <>
+    FlagCrossOriginCheck
+        GetConfigCrossOriginCheck<FunctionKind::kOperation>(
+            const OperationConfig& config) {
+        return static_cast<FlagCrossOriginCheck>(
+            config.cross_origin_check);
+    }
+
+    template <FunctionKind kind, typename Config>
+    v8::Local<v8::FunctionTemplate> CreateFunctionTemplate(
+        v8::Isolate* isolate,
+        v8::Local<v8::Signature> signature,
+        v8::Local<v8::String> name,
+        const Config& config,
+        const v8::CFunction* v8_cfunction_table_data = nullptr,
+        uint32_t v8_cfunction_table_size = 0) {
+        v8::FunctionCallback callback = GetConfigCallback<kind>(config);
+        if (!callback)
+            return v8::Local<v8::FunctionTemplate>();
+
+        int length = GetConfigLength<kind>(config);
+        v8::SideEffectType v8_side_effect = GetConfigSideEffect<kind>(config);
+        v8::Local<v8::FunctionTemplate> function_template;
+        function_template = v8::FunctionTemplate::NewWithCFunctionOverloads(
+            isolate, callback, GetConfigCallbackName<kind>(config), signature, length,
+            v8::ConstructorBehavior::kThrow, v8_side_effect,
+            v8_compat::c_function_overloads(
+                v8_cfunction_table_data, v8_cfunction_table_size));
+
+        function_template->SetClassName(name);
+        function_template->SetAcceptAnyReceiver(
+            GetConfigCrossOriginCheck<kind>(config) == FlagCrossOriginCheck::kDoNotCheck);
+
+        return function_template;
+    }
+
+
+    void InstallAttribute(v8::Isolate* isolate,
+        const char* world,
+        v8::Local<v8::FunctionTemplate> interface_template,
+        v8::Local<v8::Signature> signature,
+        AttributeConfig& config) {
+
+        FlagLocation location =
+            static_cast<FlagLocation>(config.location);
+        // As Blink's IDLMemberInstaller: kCheck keeps the interface signature, which
+        // V8 accepts from any realm the shared template reaches.
+        if (static_cast<FlagReceiverCheck>(
+            config.receiver_check) == FlagReceiverCheck::kDoNotCheck ||
+            location == FlagLocation::kInterface)
+            signature = v8::Local<v8::Signature>();
+
+        // Two names and a get/set pair per member, per realm; what that costs is
+        // in benchmarks/bench_install.py.
+        std::string name_as_view = std::string(config.name);
+        v8::Local<v8::String> name = V8String(isolate, name_as_view.data());
+        v8::Local<v8::String> get_name = V8String(isolate, (std::string("get ", 4) + name_as_view).data());
+        v8::Local<v8::String> set_name = V8String(isolate, (std::string("set ", 4) + name_as_view).data());
+        v8::Local<v8::FunctionTemplate> get_func =
+            CreateFunctionTemplate<FunctionKind::kAttributeGet>(isolate, signature, get_name, config);
+        v8::Local<v8::FunctionTemplate> set_func =
+            CreateFunctionTemplate<FunctionKind::kAttributeSet>(isolate, signature, set_name, config);
+
+        v8::Local<v8::Template> target_template;
+        switch (location) {
+            case FlagLocation::kInstance:
+                target_template = interface_template->InstanceTemplate();
+                break;
+            case FlagLocation::kPrototype:
+                target_template = interface_template->PrototypeTemplate();
+                break;
+            case FlagLocation::kInterface:
+                target_template = interface_template;
+                break;
+            default:
+                return;
+        }
+        target_template->SetAccessorProperty(
+            name, get_func, set_func,
+            static_cast<v8::PropertyAttribute>(config.v8_property_attribute));
+    }
+
+
+    bool InstallAttribute(v8::Isolate* isolate,
+        v8::Local<v8::Context> context,
+        v8::Local<v8::Object> instance_object,
+        v8::Local<v8::Signature> signature,
+        AttributeConfig& config) {
+        if (static_cast<FlagReceiverCheck>(config.receiver_check)
+            == FlagReceiverCheck::kDoNotCheck)
+            signature = v8::Local<v8::Signature>();
+        std::string name_as_view = std::string(config.name);
+        v8::Local<v8::String> name = V8String(isolate, name_as_view.data());
+        v8::Local<v8::String> get_name = V8String(isolate, (std::string("get ", 4) + name_as_view).data());
+        v8::Local<v8::String> set_name = V8String(isolate, (std::string("set ", 4) + name_as_view).data());
+        v8::Local<v8::FunctionTemplate> get_template =
+            CreateFunctionTemplate<FunctionKind::kAttributeGet>(isolate, signature, get_name, config);
+        v8::Local<v8::Function> get_func;
+        if (get_template.IsEmpty() || !get_template->GetFunction(context).ToLocal(&get_func)) {
+            PyErr_SetString(PyExc_RuntimeError, "cannot create global attribute getter");
+            return false;
+        }
+        v8::Local<v8::Function> set_func;
+        if (config.callback_for_set != nullptr) {
+            v8::Local<v8::FunctionTemplate> set_template =
+                CreateFunctionTemplate<FunctionKind::kAttributeSet>(isolate, signature, set_name, config);
+            if (set_template.IsEmpty() || !set_template->GetFunction(context).ToLocal(&set_func)) {
+                PyErr_SetString(PyExc_RuntimeError, "cannot create global attribute setter");
+                return false;
+            }
+        }
+        v8::Local<v8::Value> setter = set_func.IsEmpty()
+            ? v8::Local<v8::Value>(v8::Undefined(isolate))
+            : v8::Local<v8::Value>(set_func);
+        v8::PropertyDescriptor descriptor(get_func, setter);
+        descriptor.set_enumerable(!(config.v8_property_attribute & v8::DontEnum));
+        descriptor.set_configurable(!(config.v8_property_attribute & v8::DontDelete));
+        if (!instance_object->DefineProperty(context, name, descriptor).FromMaybe(false)) {
+            PyErr_SetString(PyExc_RuntimeError, "cannot install global attribute");
+            return false;
+        }
+        return true;
+    }
+
+    bool InstallAttributes(v8::Isolate* isolate, const char* world,
+        v8::Local<v8::Context> context, v8::Local<v8::Object> instance_object,
+        v8::Local<v8::Signature> signature,
+        PyObject* cls, PyObject* configs, PyObject* callback_data_owner,
+        context_c* owner, bool shared) {
+        (void)world;
+        if (configs == nullptr) return true;
+        for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
+            PyObject* resolved = idl_spec_resolve(PyTuple_GetItem(configs, index), cls);
+            if (resolved == nullptr) return false;
+            if (!RetainCallbackData(callback_data_owner, resolved)) {
+                Py_DECREF((PyObject*)resolved);
+                return false;
+            }
+            auto* spec = (AttributeSpec*)resolved;
+            AttributeConfig config;
+            config.name = PyUnicode_AsUTF8_abi3(spec->name);
+            config.location = (unsigned)spec->location;
+            config.v8_property_attribute = (unsigned)spec->property_flags;
+            config.receiver_check = (unsigned)spec->receiver_check;
+            config.cross_origin_check_for_get = (unsigned)spec->cross_origin_get_check;
+            config.cross_origin_check_for_set = (unsigned)spec->cross_origin_set_check;
+            config.v8_side_effect = (unsigned)spec->side_effect;
+            config.get_method = shared
+                ? owner->isolate_state->shared_callback_data(resolved)
+                : owner->isolate_state->callback_data(owner, resolved);
+            if (config.get_method.IsEmpty()) { Py_DECREF(resolved); return false; }
+            config.callback_for_get = CallbackBoundary<py_attribute_for_get>::call;
+            if (spec->setter != nullptr) {
+                config.set_method = config.get_method;
+                config.callback_for_set = spec->location == 0
+                    ? CallbackBoundary<py_attribute_for_instance_set>::call
+                    : CallbackBoundary<py_attribute_for_property_set>::call;
+            }
+            bool valid = config.name != nullptr;
+            if (valid) valid = InstallAttribute(isolate, context, instance_object, signature, config);
+            Py_DECREF((PyObject*)resolved);
+            if (!valid) return false;
+        }
+        return true;
+    }
+
+    bool InstallAttributes(v8::Isolate* isolate, const char* world,
+        v8::Local<v8::FunctionTemplate> interface_template, v8::Local<v8::Signature> signature,
+        PyObject* cls, PyObject* configs, PyObject* callback_data_owner, context_c* owner,
+        bool shared) {
+        if (configs == nullptr) return true;
+        for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
+            PyObject* resolved = idl_spec_resolve(PyTuple_GetItem(configs, index), cls);
+            if (resolved == nullptr) return false;
+            if (!RetainCallbackData(callback_data_owner, resolved)) { Py_DECREF((PyObject*)resolved); return false; }
+            auto* spec = (AttributeSpec*)resolved;
+            AttributeConfig config;
+            config.name = PyUnicode_AsUTF8_abi3(spec->name);
+            config.location = (unsigned)spec->location;
+            config.v8_property_attribute = (unsigned)spec->property_flags;
+            config.receiver_check = (unsigned)spec->receiver_check;
+            config.cross_origin_check_for_get = (unsigned)spec->cross_origin_get_check;
+            config.cross_origin_check_for_set = (unsigned)spec->cross_origin_set_check;
+            config.v8_side_effect = (unsigned)spec->side_effect;
+            config.get_method = shared
+                ? owner->isolate_state->shared_callback_data(resolved)
+                : owner->isolate_state->callback_data(owner, resolved);
+            if (config.get_method.IsEmpty()) { Py_DECREF(resolved); return false; }
+            config.callback_for_get = CallbackBoundary<py_attribute_for_get>::call;
+            if (spec->setter != nullptr) {
+                config.set_method = config.get_method;
+                config.callback_for_set = spec->location == 0 ? CallbackBoundary<py_attribute_for_instance_set>::call : CallbackBoundary<py_attribute_for_property_set>::call;
+            }
+            bool valid = config.name != nullptr;
+            if (valid) InstallAttribute(isolate, world, interface_template, signature, config);
+            Py_DECREF((PyObject*)resolved);
+            if (!valid) return false;
+        }
+        return true;
+    }
+
+    void InstallOperation(v8::Isolate* isolate,
+        const char* world,
+        v8::Local<v8::FunctionTemplate> interface_template,
+        v8::Local<v8::Signature> signature,
+        const OperationConfig& config) {
+
+        FlagLocation location = static_cast<FlagLocation>(config.location);
+        // As Blink's IDLMemberInstaller: kCheck keeps the interface signature, which
+        // V8 accepts from any realm the shared template reaches.
+        if (static_cast<FlagReceiverCheck>(
+            config.receiver_check) == FlagReceiverCheck::kDoNotCheck ||
+            location == FlagLocation::kInterface)
+            signature = v8::Local<v8::Signature>();
+
+        v8::Local<v8::String> name = V8String(isolate, config.name);
+        v8::Local<v8::FunctionTemplate> func =
+            CreateFunctionTemplate<FunctionKind::kOperation>(isolate, signature, name, config);
+
+        v8::Local<v8::Template> target_template;
+        switch (location) {
+        case FlagLocation::kInstance:
+            target_template = interface_template->InstanceTemplate();
+            break;
+        case FlagLocation::kPrototype:
+            target_template = interface_template->PrototypeTemplate();
+            break;
+        case FlagLocation::kInterface:
+            target_template = interface_template;
+            break;
+        default:
+            return;
+        }
+        target_template->Set(
+            name, func,
+            static_cast<v8::PropertyAttribute>(config.v8_property_attribute));
+    }
+
+    bool InstallOperation(v8::Isolate* isolate,
+        v8::Local<v8::Context> context,
+        v8::Local<v8::Object> instance_object,
+        v8::Local<v8::Signature> signature,
+        const OperationConfig& config) {
+        if (static_cast<FlagReceiverCheck>(config.receiver_check)
+            == FlagReceiverCheck::kDoNotCheck)
+            signature = v8::Local<v8::Signature>();
+        v8::Local<v8::String> name = V8String(isolate, config.name);
+        v8::Local<v8::FunctionTemplate> func_template =
+            CreateFunctionTemplate<FunctionKind::kOperation>(isolate, signature, name, config);
+        v8::Local<v8::Function> func;
+        if (func_template.IsEmpty() || !func_template->GetFunction(context).ToLocal(&func)) {
+            PyErr_SetString(PyExc_RuntimeError, "cannot create global operation");
+            return false;
+        }
+        if (!instance_object->DefineOwnProperty(
+                context, name, func,
+                static_cast<v8::PropertyAttribute>(config.v8_property_attribute)).FromMaybe(false)) {
+            PyErr_SetString(PyExc_RuntimeError, "cannot install global operation");
+            return false;
+        }
+        return true;
+    }
+
+    bool InstallOperations(v8::Isolate* isolate, const char* world,
+        v8::Local<v8::Context> context, v8::Local<v8::Object> instance_object,
+        v8::Local<v8::Signature> signature,
+        PyObject* cls, PyObject* configs, PyObject* callback_data_owner,
+        context_c* owner, bool shared) {
+        (void)world;
+        if (configs == nullptr) return true;
+        for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
+            PyObject* resolved = idl_spec_resolve(PyTuple_GetItem(configs, index), cls);
+            if (resolved == nullptr) return false;
+            if (!RetainCallbackData(callback_data_owner, resolved)) {
+                Py_DECREF((PyObject*)resolved);
+                return false;
+            }
+            auto* spec = (MethodSpec*)resolved;
+            OperationConfig config;
+            config.name = PyUnicode_AsUTF8_abi3(spec->name);
+            config.length = (unsigned)spec->length;
+            config.location = (unsigned)spec->location;
+            config.v8_property_attribute = (unsigned)spec->property_flags;
+            config.receiver_check = (unsigned)spec->receiver_check;
+            config.cross_origin_check = (unsigned)spec->cross_origin_check;
+            config.v8_side_effect = (unsigned)spec->side_effect;
+            config.callback_data = shared
+                ? owner->isolate_state->shared_callback_data(resolved)
+                : owner->isolate_state->callback_data(owner, resolved);
+            if (config.callback_data.IsEmpty()) { Py_DECREF(resolved); return false; }
+            config.callback = CallbackBoundary<py_class_method_callback>::call;
+            bool valid = config.name != nullptr;
+            if (valid) valid = InstallOperation(isolate, context, instance_object, signature, config);
+            Py_DECREF((PyObject*)resolved);
+            if (!valid) return false;
+        }
+        return true;
+    }
+
+    bool InstallOperations(v8::Isolate* isolate, const char* world,
+        v8::Local<v8::FunctionTemplate> interface_template, v8::Local<v8::Signature> signature,
+        PyObject* cls, PyObject* configs, PyObject* callback_data_owner, context_c* owner,
+        bool shared) {
+        if (configs == nullptr) return true;
+        for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
+            PyObject* resolved = idl_spec_resolve(PyTuple_GetItem(configs, index), cls);
+            if (resolved == nullptr) return false;
+            if (!RetainCallbackData(callback_data_owner, resolved)) { Py_DECREF((PyObject*)resolved); return false; }
+            auto* spec = (MethodSpec*)resolved;
+            OperationConfig config;
+            config.name = PyUnicode_AsUTF8_abi3(spec->name);
+            config.length = (unsigned)spec->length;
+            config.location = (unsigned)spec->location;
+            config.v8_property_attribute = (unsigned)spec->property_flags;
+            config.receiver_check = (unsigned)spec->receiver_check;
+            config.cross_origin_check = (unsigned)spec->cross_origin_check;
+            config.v8_side_effect = (unsigned)spec->side_effect;
+            config.callback_data = shared
+                ? owner->isolate_state->shared_callback_data(resolved)
+                : owner->isolate_state->callback_data(owner, resolved);
+            if (config.callback_data.IsEmpty()) { Py_DECREF(resolved); return false; }
+            config.callback = CallbackBoundary<py_class_method_callback>::call;
+            bool valid = config.name != nullptr;
+            if (valid) InstallOperation(isolate, world, interface_template, signature, config);
+            Py_DECREF((PyObject*)resolved);
+            if (!valid) return false;
+        }
+        return true;
+    }
+
+    void InstallConstantValue(v8::Isolate* isolate,
+        const char* world,
+        v8::Local<v8::FunctionTemplate> interface_template,
+        v8::Local<v8::Signature> signature,
+        ConstantValueConfig& configs) {
+
+        const bool has_prototype_template = !interface_template->PrototypeTemplate().IsEmpty();
+        const v8::PropertyAttribute v8_property_attribute =
+            static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontDelete);
+
+
+        v8::Local<v8::String> name = V8String(isolate, configs.name);
+        v8::Local<v8::Integer> value;
+        if (configs.value < 0) {
+            int32_t i32_value = static_cast<int32_t>(configs.value);
+            value = v8::Integer::New(isolate, i32_value);
+        }
+        else {
+            uint32_t u32_value = static_cast<uint32_t>(configs.value);
+            value = v8::Integer::NewFromUnsigned(isolate, u32_value);
+        }
+        if (has_prototype_template) {
+            interface_template->PrototypeTemplate()->Set(name, value, v8_property_attribute);
+        }
+        interface_template->Set(name, value, v8_property_attribute);
+    }
+
+
+    bool InstallConstantValues(v8::Isolate* isolate, const char* world,
+        v8::Local<v8::FunctionTemplate> interface_template, v8::Local<v8::Signature> signature, PyObject* configs) {
+        if (configs == nullptr) return true;
+        for (Py_ssize_t index = 0; index < PyTuple_Size(configs); ++index) {
+            auto* spec = (ConstantSpec*)PyTuple_GetItem(configs, index);
+            ConstantValueConfig config;
+            config.name = PyUnicode_AsUTF8_abi3(spec->name);
+            config.value = spec->value;
+            if (config.name == nullptr) return false;
+            InstallConstantValue(isolate, world, interface_template, signature, config);
+        }
+        return true;
+    }
+
+    void InstallExposedConstruct(v8::Isolate* isolate, v8::Local<v8::ObjectTemplate> instance_template, const char* name) {
+            instance_template->SetLazyDataProperty(
+                V8String(isolate, name), CallbackBoundary<ConstructAccessorNameGetterCallback>::call, v8::Local<v8::Value>(), v8::DontEnum,
+                v8::SideEffectType::kHasNoSideEffect);
+    }
+
+
+    void InstallExposedConstruct(v8::Local<v8::Context> context, v8::Local<v8::Object> instance_object, const char* name) {
+        v8::Isolate* isolate = v8_compat::context_isolate(context);
+        instance_object
+            ->SetLazyDataProperty(context, V8String(isolate, name),
+                CallbackBoundary<ConstructAccessorNameGetterCallback>::call, v8::Local<v8::Value>(),
+                v8::DontEnum,
+                v8::SideEffectType::kHasNoSideEffect)
+            .ToChecked();
+    }
+
+} // namespace bindings

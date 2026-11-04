@@ -1,0 +1,72 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="isolate\context.cpp" />
+    <ClCompile Include="isolate\context_names.cpp" />
+    <ClCompile Include="values\convert_to_python.cpp" />
+    <ClCompile Include="values\convert_to_javascript.cpp" />
+    <ClCompile Include="tools\debugger.cpp" />
+    <ClCompile Include="values\js_exception.cpp" />
+    <ClCompile Include="values\crossing.cpp" />
+    <ClCompile Include="values\error_family.cpp" />
+    <ClCompile Include="isolate\isolate.cpp" />
+    <ClCompile Include="isolate\isolate_scope.cpp" />
+    <ClCompile Include="isolate\isolate_state.cpp" />
+    <ClCompile Include="handles\jsfunction.cpp" />
+    <ClCompile Include="handles\jsobject.cpp" />
+    <ClCompile Include="interfaces\pyclass.cpp" />
+    <ClCompile Include="interfaces\pyclass_handlers.cpp" />
+    <ClCompile Include="interfaces\pyclass_interceptors.cpp" />
+    <ClCompile Include="interfaces\pyclass_cross_origin_handlers.cpp" />
+    <ClCompile Include="interfaces\pyfunction.cpp" />
+    <ClCompile Include="pyv8.cpp" />
+    <ClCompile Include="isolate\platform_state.cpp" />
+    <ClCompile Include="isolate\runtime.cpp" />
+    <ClCompile Include="handles\script.cpp" />
+    <ClCompile Include="isolate\v8_string_cache.cpp" />
+
+    <ClCompile Include="interfaces\v8tools.cpp" />
+    <ClCompile Include="abi3.cpp" />
+    <ClCompile Include="handles\jspromise.cpp" />
+    <ClCompile Include="handles\jstypedarray.cpp" />
+    <ClCompile Include="values\jsnull.cpp" />
+    <ClCompile Include="values\jsundefined.cpp" />
+    <ClCompile Include="values\jsvalue.cpp" />
+    <ClCompile Include="isolate\watchdog.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="isolate\context.h" />
+    <ClInclude Include="values\convert.h" />
+    <ClInclude Include="values\js_exception.h" />
+    <ClInclude Include="values\crossing.h" />
+    <ClInclude Include="values\error_family.h" />
+    <ClInclude Include="tools\debugger.h" />
+    <ClInclude Include="isolate\isolate.h" />
+    <ClInclude Include="isolate\isolate_scope.h" />
+    <ClInclude Include="isolate\isolate_state.h" />
+    <ClInclude Include="handles\jsobject.h" />
+    <ClInclude Include="polyfill.h" />
+    <ClInclude Include="interfaces\pyclass.h" />
+    <ClInclude Include="interfaces\pyclass_cross_origin_handlers.h" />
+    <ClInclude Include="interfaces\handler_table.def" />
+    <ClInclude Include="interfaces\pyclass_handlers.h" />
+    <ClInclude Include="interfaces\pyfunction.h" />
+    <ClInclude Include="pyv8.h" />
+    <ClInclude Include="isolate\platform_state.h" />
+    <ClInclude Include="isolate\runtime.h" />
+    <ClInclude Include="handles\script.h" />
+    <ClInclude Include="isolate\v8_handle_slot.h" />
+    <ClInclude Include="isolate\v8_string_cache.h" />
+    <ClInclude Include="interfaces\v8tools.h" />
+    <ClInclude Include="tools\trace.h" />
+    <ClInclude Include="abi3.h" />
+    <ClInclude Include="handles\jsfunction.h" />
+    <ClInclude Include="handles\jspromise.h" />
+    <ClInclude Include="handles\jstypedarray.h" />
+    <ClInclude Include="values\jsnull.h" />
+    <ClInclude Include="values\jsundefined.h" />
+    <ClInclude Include="values\jsvalue.h" />
+    <ClInclude Include="isolate\watchdog.h" />
+    <ClInclude Include="gil_scope.h" />
+  </ItemGroup>
+</Project>

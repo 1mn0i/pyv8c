@@ -1,0 +1,74 @@
+#ifndef PYV8ENV_ABI3_H
+#define PYV8ENV_ABI3_H
+
+#include <Python.h>
+#include "boundary.h"
+
+class PyOwnedRef
+{
+public:
+    explicit PyOwnedRef(PyObject* value = nullptr)
+        : value_(value)
+    {
+    }
+
+    PyOwnedRef(const PyOwnedRef&) = delete;
+    PyOwnedRef& operator=(const PyOwnedRef&) = delete;
+
+    ~PyOwnedRef()
+    {
+        Py_XDECREF((PyObject*)value_);
+    }
+
+    PyObject* get() const { return value_; }
+
+private:
+    PyObject* value_;
+};
+
+
+// CPython 3.12 made Py_RETURN_* hand back borrowed singletons, which is unsafe
+// for an abi3 build loaded by 3.10 or 3.11: keep the new-reference contract here.
+static inline PyObject *
+PyV8_NewRef(PyObject *value)
+{
+    Py_IncRef(value);
+    return value;
+}
+
+#define PYV8_RETURN_TRUE return PyV8_NewRef(Py_True)
+#define PYV8_RETURN_FALSE return PyV8_NewRef(Py_False)
+#define PYV8_RETURN_NONE return PyV8_NewRef(Py_None)
+#define PYV8_RETURN_NOTIMPLEMENTED return PyV8_NewRef(Py_NotImplemented)
+
+
+#define TP_FREE_ABI3(type, self)                                            \
+    PyTypeObject* allocated_type = Py_TYPE((PyObject*)(self));              \
+    freefunc free_func = (freefunc)PyType_GetSlot(                          \
+        allocated_type, Py_tp_free);                                      \
+    if (free_func)                                                          \
+        free_func(self);                                                    \
+    else                                                                    \
+        PyObject_Del(self);                                                \
+    Py_DECREF((PyObject*)allocated_type);
+
+
+
+
+static inline const char* 
+PyUnicode_AsUTF8_abi3(PyObject* unicode) {
+    Py_ssize_t size;
+    return PyUnicode_AsUTF8AndSize(unicode, &size);
+}
+
+
+extern PyObject* g_func_type;
+extern PyObject* g_method_type;
+
+int cache_FunctionType_init();
+
+int PyFunction_Check_abi3(PyObject* op);
+int PyMethod_Check_abi3(PyObject* op);
+
+
+#endif
