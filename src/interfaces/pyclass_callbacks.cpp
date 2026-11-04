@@ -225,7 +225,9 @@ static void py_class_method_impl(const FunctionCallbackInfo<Value> &info, Local<
                                  PyObject *receiver, MethodSpec *binding)
 {
     PyOwnedRef callable(PyV8_NewRef(binding->callback));
-    int offset = binding->pass_receiver && receiver != Py_None ? 1 : 0;
+    // An unchecked operation still receives a receiver slot when this is not a
+    // host wrapper. Dropping that slot shifts its first argument into self.
+    int offset = binding->pass_receiver ? 1 : 0;
     PythonArguments args(info.Length() + offset);
     if (!args.valid() || !args.convert(info, context, offset ? receiver : nullptr)) {
         js_throw_py(); return;
