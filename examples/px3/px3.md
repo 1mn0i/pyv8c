@@ -210,9 +210,10 @@ python312 script/payload.py diff
 python312 script/trace.py log
 ```
 
-注意：挑战真正在跑时页面**不会进入空闲**，`run_until_idle(timeout=N)` 会抛
-`RealmBusyError`；`px3.py` 与脚本里的 `common.pump()` 都改成非阻塞泵 + 截止时间，
-探针要自带容错（`getBoundingClientRect` 等在被 PX 藏起来的节点上会返回 `undefined`）。
+`run_until_idle(timeout=N)` 只等待当前可运行任务和检查点，超时返回 False；
+它不等待未来 timer、网络或 Worker，也不驱动执行。等待业务条件使用 `wait_for`，
+文档阶段使用 `wait_for_load_state`。脚本执行预算与外部进程总超时分别生效。
+探针遇到 undefined 时应保留上下文和两侧原始结果，再判断原因。
 
 ## 附录 A：环境档案
 

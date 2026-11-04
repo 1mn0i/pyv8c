@@ -1,0 +1,9 @@
+output/
+ruishu/
+tencent/
+jd/
+ali/
+
+# Captured HAR archives: megabytes of a third party's traffic, useful only while
+# replaying a case by hand.
+*.har

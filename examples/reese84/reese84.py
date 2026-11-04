@@ -1,19 +1,13 @@
 """reese84：本地跑挑战脚本拿到 Cookie，再查一次业务接口。"""
-import json
 import time
-from html import escape
-from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-import pyv8
 from loguru import logger
 from pyv8c import Browser
-from pyv8c.web.bom.window import Window
-from pyv8c.web.dom.html_iframe import HTMLIFrameElement
-from pyv8c.web.page_errors import PageSyntaxError, PageTypeError, js_error_value
 
-logger.remove()  # 想让日志同时打到控制台，把这一行去掉
-logger.add("reese84.log", level="DEBUG", mode='w')
+# logger.remove()
+logger.add(Path(__file__).parent.joinpath("reese84.log"), level="DEBUG", mode='w')
 
 ORIGIN = 'https://orion.nv.gov'
 URL = ORIGIN + '/portal/public/#/public/nvsos/en/CaseXscreen?screen=external-GenericFilingsSearch&tabRoute=agent'
@@ -39,10 +33,10 @@ def intercept(url, request):
     print('✓', method, parsed.path)
 
 
-def wait_for_cookie(context, url, seconds=TIMEOUT):
+def wait_for_cookie(profile, url, seconds=TIMEOUT):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        header = context.cookies.header_for(url)
+        header = profile.cookies.header_for(url)
         for part in header.split('; '):
             if part.startswith('reese84=') and part[8:]:
                 return header
@@ -65,24 +59,16 @@ if "__main__" == __name__:
 
     browser = Browser(
         resource_interceptor=intercept,
-        # interface_overrides={'HTMLIFrameElement': {'contentWindow': content_window},
-        #                     #  'Response': {'json': response_json}
-        #                      },
         cache=False,
         http_engine='curl_cffi',
         http_options={'impersonate': 'chrome150', 'timeout': 20},
-        proxy="http://127.0.0.1:7890",
-        environment={'user_agent': USER_AGENT, 'languages': ['en-US', 'en'],
-                     'client_hints.full_version_list': [
-                         {'brand': 'Chromium', 'version': '150.0.0.0'},
-                         {'brand': 'Google Chrome', 'version': '150.0.0.0'},
-                         {'brand': 'Not A(Brand', 'version': '8.0.0.0'}]},
+        proxy="http://127.0.0.1:7890"
     )
-    context = browser.new_context()
-    page = context.new_page()
+    profile = browser.new_profile()
+    page = profile.new_page()
 
     page.goto(URL)
-    cookies = wait_for_cookie(context, API_URL)
+    cookies = wait_for_cookie(profile, API_URL)
 
     response = page.net.post(API_URL, json=search_body(KEYWORD), timeout=20)
     print(response.text)

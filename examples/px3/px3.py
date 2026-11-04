@@ -5,8 +5,9 @@
     python px3.py --timeout 120    # seconds before the child is killed
     python px3.py --hold 3.0       # seconds the challenge button is held down
 
-The page's challenge runs one long ``for`` loop inside a single task, so
-``run_until_idle`` cannot time it out: the work only ends when the script returns.
+``run_until_idle`` queries runnable work; it does not execute or interrupt scripts.
+JavaScript runs under the execution group's native operation budget. The process
+timeout also bounds work that cannot be interrupted by the V8 watchdog.
 """
 import argparse
 import json
@@ -124,7 +125,7 @@ def browse(stub_logging, trace, log, seconds):
     browser = Browser(stub_logging=stub_logging, trace=trace, traceable=trace,
                       threaded_loaders=True)
     try:
-        page = browser.new_context().new_page()
+        page = browser.new_profile().new_page()
         page.goto(URL)
         pump(page, 20)
         hold(page, seconds)
