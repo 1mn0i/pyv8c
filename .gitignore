@@ -25,6 +25,11 @@ dist/
 *.exp
 *.dll
 
+# Native extension and matching V8 runtime data are built into wheels.
+pyv8/pyv8/_pyv8*.pyd
+pyv8/pyv8/_pyv8*.so
+pyv8/pyv8/icudtl.dat
+
 # Extracted bundled-IDL caches. Releases only contain the ZIP artifact.
 pyv8c/pyv8c/idl/*.json
 pyv8c/pyv8c/idl/*.pyv8ccache

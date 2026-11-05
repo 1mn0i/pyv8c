@@ -1,0 +1,88 @@
+name: Windows wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the tested wheels to PyPI (requires trusted publishers)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    env:
+      DEPOT_TOOLS_WIN_TOOLCHAIN: '0'
+      PYV8_V8_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build twine
+      - name: Build V8
+        working-directory: pyv8
+        run: python setup.py build_v8
+      - name: Build both wheels
+        run: |
+          python -m build --wheel --outdir dist pyv8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m build --wheel --outdir dist pyv8c
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-wheels
+          path: dist/*.whl
+          if-no-files-found: error
+
+  test:
+    needs: build
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13', '3.14', '3.15']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: x64
+          allow-prereleases: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-wheels
+          path: dist
+      - name: Install wheels
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $wheels = Get-ChildItem dist/*.whl | ForEach-Object { $_.FullName }
+          python -m pip install $wheels
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip check
+      - name: Verify installed wheels outside checkout
+        working-directory: ${{ runner.temp }}
+        run: python -I "${{ github.workspace }}/tools/smoke_wheels.py"
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-wheels
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
