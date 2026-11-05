@@ -14,8 +14,8 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 import struct
 
-WORKSPACE = Path(__file__).resolve().parents[3]
-sys.path[:0] = [str(WORKSPACE / '_pyv8'), str(WORKSPACE / 'pyv8c')]
+WORKSPACE = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(WORKSPACE / 'pyv8'), str(WORKSPACE / 'pyv8c')]
 
 import moderngl
 from loguru import logger

@@ -199,7 +199,7 @@ PX 没调用任何未实现的成员。
 
 ```powershell
 cd <pyv8c 仓库根>\examples\px3
-$env:PYTHONPATH = "$PWD\..\..;$PWD\..\..\..\_pyv8"
+$env:PYTHONPATH = "$PWD\..\..\pyv8c;$PWD\..\..\pyv8"
 
 python312 px3.py --timeout 300            # 跑一遍挑战（等按钮→按住→松开→看结果）
 python312 script/parity.py                # 全部最小对照（两引擎）

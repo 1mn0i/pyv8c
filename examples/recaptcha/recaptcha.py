@@ -13,8 +13,8 @@ import time
 from urllib.parse import urljoin, urlsplit
 
 sys.dont_write_bytecode = True
-WORKSPACE = Path(__file__).resolve().parents[3]
-sys.path[:0] = [str(WORKSPACE / '_pyv8'), str(WORKSPACE / 'pyv8c')]
+WORKSPACE = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(WORKSPACE / 'pyv8'), str(WORKSPACE / 'pyv8c')]
 
 import pyv8
 from loguru import logger

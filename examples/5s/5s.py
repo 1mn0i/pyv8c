@@ -12,8 +12,8 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path[:0] = [str(ROOT / '_pyv8'), str(ROOT / 'pyv8c')]
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT / 'pyv8'), str(ROOT / 'pyv8c')]
 
 from loguru import logger
 from pyv8c import Browser, register_transport
@@ -117,7 +117,7 @@ def main():
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error('--timeout must be positive')
-    logger.remove()
+    # logger.remove()
     # logger.add(sys.stderr, level='WARNING')
     try:
         result = run(proxy=args.proxy, timeout=args.timeout)

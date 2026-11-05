@@ -7,7 +7,8 @@ from pyv8c import Browser
 logger.add(Path(__file__).parent.joinpath("akm.log"), level="DEBUG", mode='w')
 # logger.remove()
 
-PROXY = "http://127.0.0.1:7890"
+# PROXY = "http://127.0.0.1:7890"
+PROXY = None
 FRAME = 1 / 60
 
 
@@ -39,8 +40,7 @@ if "__main__" == __name__:
         # stub_logging="verbose",
         # trace=True, traceable=True,
         resource_interceptor=intercept,
-        # idl_path=Path(__file__).parent.parent.parent.joinpath("idls/145.0.7632.162.zip"),   # 换一份 IDL 文档；默认读包内 idl/idl.zip
-        proxy=PROXY,    
+        proxy=PROXY,
         http_engine='curl_cffi', http_options={"impersonate": "chrome150"},
         threaded_loaders=True,
     )
