@@ -123,7 +123,7 @@ Windows x64 的 wheel 由仓库的 `Windows wheels` GitHub Actions 工作流构�
 
 维护者可在 GitHub Actions 手动运行该工作流。仅在准备好发布时选择 `publish`：需要先为 `pyv8` 和 `pyv8c` 在 PyPI 配置对应仓库、工作流及 `pypi` 环境的 Trusted Publisher，并保证两个项目版本可发布。GitHub 环境的保护规则可用于发布审批。两个包分别上传，若其中一个上传失败，另一个可能已经发布；需要检查 PyPI 状态后处理。构建成功不代表工作流已经发布。
 
-仓库不跟踪 `_pyv8` 二进制和 `icudtl.dat`；后者仍随每个 wheel 提供，并须与构建所用 V8 匹配。首次从源码构建需要下载并编译 V8。工作流暂不缓存 V8，首次构建和后续每次构建都会消耗较多时间和磁盘空间。
+仓库不跟踪 `_pyv8` 二进制和 `icudtl.dat`；后者仍随每个 wheel 提供，并须与构建所用 V8 匹配。Windows 工作流缓存 V8 头文件、构建输出及配套 LLVM 工具链；首次运行、缓存失效或缓存被 GitHub 清理后仍需下载并编译 V8。缓存键包含 V8 版本、构建脚本、运行器镜像、CPU 架构和 Windows SDK 版本，改变这些输入会重新构建。缓存受 GitHub 的存储配额及保留策略限制，保存失败不会让已经完成的 wheel 构建失败。
 
 ### 安装 wheel
 

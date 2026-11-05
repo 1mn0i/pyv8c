@@ -18,6 +18,8 @@ jobs:
     env:
       DEPOT_TOOLS_WIN_TOOLCHAIN: '0'
       PYV8_V8_JOBS: '2'
+      PYV8_TARGET_CPU: x64
+      PYV8_GN_ARGS: ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,6 +29,7 @@ jobs:
       - name: Install build tools
         run: python -m pip install --upgrade pip build twine "setuptools>=77" wheel
       - name: Select a complete Windows SDK
+        id: sdk
         shell: pwsh
         run: |
           $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10'
@@ -44,10 +47,29 @@ jobs:
           if (-not $sdk) { throw 'No complete Windows SDK found' }
           "PYV8_WINDOWS_SDK=$sdkRoot" >> $env:GITHUB_ENV
           "PYV8_WINDOWS_SDK_VERSION=$($sdk.Name)" >> $env:GITHUB_ENV
-          Write-Host "Selected Windows SDK $($sdk.Name)"
+          $imageVersion = if ($env:ImageVersion) { $env:ImageVersion } else { 'unknown' }
+          if ($imageVersion -eq 'unknown') { throw 'Runner image version is required for the V8 cache key' }
+          "image-version=$imageVersion" >> $env:GITHUB_OUTPUT
+          "sdk-version=$($sdk.Name)" >> $env:GITHUB_OUTPUT
+          "v8-version=$((Get-Content pyv8/V8_VERSION -Raw).Trim())" >> $env:GITHUB_OUTPUT
+          Write-Host "Selected Windows SDK $($sdk.Name) on image $imageVersion"
+      # Restore only an exact match. The image and SDK are part of the key because
+      # V8's stamp records GN args and target, but not the Windows toolchain.
+      - name: Restore V8 build cache
+        id: v8-cache
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/include
+            pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/out/pyv8-*.release
+            pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/bin
+            pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/lib
+          key: v8-v2-${{ runner.os }}-x64-${{ steps.sdk.outputs.image-version }}-${{ steps.sdk.outputs.sdk-version }}-${{ hashFiles('pyv8/V8_VERSION', 'pyv8/v8_build.py', '.github/workflows/windows-wheels.yml') }}
       - name: Build V8
+        id: v8-build
         working-directory: pyv8
-        run: python setup.py build_v8
+        run: python -c "from v8_build import V8BuildConfig; V8BuildConfig.from_environment('.', download_and_build=True).prepare()"
       - name: Build both wheels
         run: |
           python -m build --wheel --outdir dist pyv8
@@ -55,6 +77,17 @@ jobs:
           python -m build --wheel --outdir dist pyv8c
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m twine check dist/*
+      - name: Save V8 build cache
+        if: ${{ steps.v8-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/include
+            pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/out/pyv8-*.release
+            pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/bin
+            pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/lib
+          key: ${{ steps.v8-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         with:
           name: windows-wheels
