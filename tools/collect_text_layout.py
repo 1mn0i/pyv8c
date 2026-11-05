@@ -221,15 +221,6 @@ def _run(session, cases):
     return answers
 
 
-def newest_idl():
-    """The newest IDL zip under ``idls/``, which is the one this checkout is built against."""
-    folder = PACKAGE_ROOT / "idls"
-    if not folder.is_dir():
-        return None
-    zips = sorted(folder.glob("*.zip"), key=lambda path: path.stat().st_mtime)
-    return zips[-1] if zips else None
-
-
 def _run_here(cases, idl_path=None):
     """The same readings from pyv8c, through the same scripts."""
     from loguru import logger
@@ -292,9 +283,9 @@ def main(argv=None):
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--headful", action="store_true", help="run Chrome with a window")
     parser.add_argument("--idl", type=Path, default=None,
-                        help="the IDL zip this engine reads (default: the newest under idls/)")
+                        help="the IDL zip this engine reads (default: the packaged baseline)")
     arguments = parser.parse_args(argv)
-    idl_path = arguments.idl if arguments.idl is not None else newest_idl()
+    idl_path = arguments.idl
 
     cases = list(CASES)
     reference = collect(cases, timeout=arguments.timeout, headless=not arguments.headful)

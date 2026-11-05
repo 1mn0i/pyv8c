@@ -62,14 +62,14 @@ def test_async_is_explicitly_unsupported():
 
 
 def test_legacy_format_is_refused(tmp_path):
-    p=write_idl(tmp_path/'old.json',{'idl':{'version':IDL_VERSION-1},'interfaces':{'Fixture':{}}})
+    p=write_idl(tmp_path/'old.json',{'idl':{'version':IDL_VERSION-3},'interfaces':{'Fixture':{}}})
     with pytest.raises(ValueError,match='unsupported IDL version'):Idl.load(p,profile=None)
 
 
 def test_profile_narrows_methods_without_changing_pair_semantics():
     from pyv8c.engine.idl import Profile
     interface={'parent':None,'iteration':{'kind':'pair','default':'entries','methods':['keys','values','entries','forEach'],'iterator':True}}
-    profile=Profile(browser='test',exposed=frozenset(),iteration_methods={'Fixture':13})
+    profile=Profile(browser='test',own_order=(),iteration_methods={'Fixture':13})
     table=Idl('test','',{}, {'Fixture':interface}, profile)
     item=table.interface('Fixture')
     assert item.iteration['kind']=='pair'
@@ -82,7 +82,7 @@ def test_unimplemented_sources_are_recorded_and_do_not_retain_bindings():
     import weakref, gc
     from pyv8c.engine.bindings import Bindings
     from pyv8c.platform.bootstrap import bootstrap_runtime
-    document=Idl.load(Path(__file__).resolve().parents[3]/'idls/145.0.7632.162.zip',profile=None)
+    document=Idl.load(Path(__file__).resolve().parents[2]/'idls/145.0.7632.162.zip',profile=None)
     for _ in range(2):
         bindings=Bindings(document,runtime=bootstrap_runtime(),stub_logging='off')
         spec=bindings.class_config_for('AudioParamMap')

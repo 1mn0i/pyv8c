@@ -9,6 +9,7 @@ This is a simplified setup.py that works with pyproject.toml.
 import os
 import json
 import hashlib
+import re
 import shutil
 import sys
 import sysconfig
@@ -73,6 +74,34 @@ if os.environ.get('PYV8_SANITIZERS'):
     flags = ['-fsanitize=' + ','.join(sanitizers), '-fno-omit-frame-pointer']
     extra_compile_args.extend(flags + ['-O1', '-g'])
     extra_link_args.extend(flags)
+
+
+def _snapshot_link_inputs(output_dir):
+    """Read the platform's mksnapshot link inputs from its Ninja build edge."""
+    output_dir = Path(output_dir)
+    ninja = output_dir / 'obj' / 'mksnapshot.ninja'
+    if not ninja.is_file():
+        return []
+    text = ninja.read_text(encoding='utf-8', errors='replace').replace('$\n', '').replace('$\r\n', '')
+    edge = next((line for line in text.splitlines()
+                 if re.match(r'^build\s+(?:\./)?mksnapshot(?:\.exe)?(?:\s|:)', line)), None)
+    if edge is None:
+        raise V8BuildError(f'cannot find mksnapshot link edge in {ninja}')
+    tokens = re.findall(r'(?:\$ |[^\s])+', edge)
+    paths = []
+    for token in tokens:
+        token = token.replace('$ ', ' ').replace('$:', ':')
+        if token.endswith('.rlib') or (token.endswith('.lib') and 'clang_rt.builtins' in token):
+            path = (output_dir / token).resolve()
+            if not path.is_file():
+                raise V8BuildError(f'mksnapshot link input was not found: {path}')
+            if path not in paths:
+                paths.append(path)
+    # The previous Windows linker configuration puts compiler builtins after
+    # the Rust archives; preserve that order while retaining each group's order.
+    return [path for path in paths if path.suffix == '.rlib'] + [
+        path for path in paths if path.suffix != '.rlib'
+    ]
 
 
 class PyV8BuildExt(build_ext):
@@ -145,28 +174,8 @@ class PyV8BuildExt(build_ext):
             #: rlibs; lld-link consumes their LLVM bitcode directly.  V8's own
             #: mksnapshot link line states the exact set and order, including the
             #: allocator shim rlibs that no module-level scan would find.
-            mksnapshot = config.output_dir / "obj" / "mksnapshot.ninja"
-            rust_libraries = []
-            extra_builtins = []
-            if mksnapshot.is_file():
-                text = mksnapshot.read_text(encoding="utf-8", errors="replace")
-                line = next(line for line in text.splitlines()
-                            if line.startswith("build ./mksnapshot.exe"))
-                for token in line.split():
-                    if token.endswith(".rlib"):
-                        path = config.output_dir / token
-                        if path.is_file():
-                            rust_libraries.append(path)
-                    elif token.endswith(".lib") and "clang_rt.builtins" in token:
-                        path = (config.output_dir / token).resolve()
-                        if path.is_file():
-                            extra_builtins.append(path)
-            seen = set()
-            rust_libraries = [path for path in rust_libraries
-                              if not (str(path) in seen or seen.add(str(path)))]
             extension.extra_link_args = (
-                [str(path) for path in rust_libraries]
-                + [str(path) for path in extra_builtins]
+                [str(path) for path in _snapshot_link_inputs(config.output_dir)]
                 + list(extension.extra_link_args or [])
             )
 
@@ -207,8 +216,19 @@ class PyV8BuildExt(build_ext):
         }
         for name in ("setup.py", "pyproject.toml", "v8_build.py"):
             source_hashes[name] = file_sha256(PROJECT_ROOT / name)
+        v8_headers = {
+            path.relative_to(config.v8_home).as_posix(): file_sha256(path)
+            for path in sorted((config.v8_home / 'include').rglob('*'))
+            if path.is_file()
+        }
+        link_inputs = _snapshot_link_inputs(config.output_dir)
+        ninja = config.output_dir / 'obj' / 'mksnapshot.ninja'
         return {
             'bridge_sources_sha256': hashlib.sha256(json.dumps(source_hashes, sort_keys=True).encode()).hexdigest(),
+            'v8_headers_sha256': hashlib.sha256(json.dumps(v8_headers, sort_keys=True).encode()).hexdigest(),
+            'v8_library_sha256': file_sha256(config.library_file),
+            'snapshot_ninja_sha256': file_sha256(ninja) if ninja.is_file() else None,
+            'link_inputs_sha256': {str(path): file_sha256(path) for path in link_inputs},
             'python_abi': sysconfig.get_config_var('SOABI'),
             'compile_args': extra_compile_args,
             'link_args': extra_link_args,
@@ -230,14 +250,17 @@ class PyV8BuildExt(build_ext):
         fingerprint = self._build_fingerprint(config)
         fingerprint['toolchain'] = self._toolchain_identity()
         fingerprint_file = PROJECT_ROOT / 'build' / 'pyv8-extension.json'
-        previous = None
+        previous = recorded = None
         if fingerprint_file.is_file():
             try:
                 recorded = json.loads(fingerprint_file.read_text(encoding='utf-8'))
-                previous = recorded.get('inputs', recorded)
+                previous = recorded.get('inputs', recorded) if isinstance(recorded, dict) else None
             except (OSError, ValueError):
                 pass
-        if previous != fingerprint:
+        expected_binary = recorded.get('binary_sha256') if isinstance(recorded, dict) else None
+        binary = Path(self.get_ext_fullpath('pyv8._pyv8'))
+        if (previous != fingerprint or
+                (expected_binary and binary.is_file() and file_sha256(binary) != expected_binary)):
             self.force = True
         return fingerprint_file, fingerprint
 

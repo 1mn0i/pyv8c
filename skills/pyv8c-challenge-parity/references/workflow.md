@@ -32,12 +32,12 @@
 
 | 领域 | 起点 |
 | --- | --- |
-| 请求准备、来源、逐跳策略 | `pyv8c/platform/resources/fetcher.py`、`request_headers.py`、`local.py`，以及 `pyv8c/network/` |
+| 请求准备、来源、逐跳策略 | `pyv8c/pyv8c/platform/resources/fetcher.py`、`request_headers.py`、`local.py`，以及 `pyv8c/pyv8c/network/` |
 | 所有权、取消、回投与缓存 | 同目录 `ownership.py`、`handles.py`、`callbacks.py`、`cache.py` |
 | 文档资源与 frame | 同目录 `documents.py`、`discovery.py`、`tracker.py`、`completion.py`、`frames.py` |
-| 导航、任务、Realm 生命周期 | `pyv8c/platform/page.py` 及其导航、调度与生命周期调用方 |
-| 接口暴露、成员、回调、身份 | `pyv8c/engine/idl.py`、`binder.py`、`bindings.py`、`pyv8c/platform/sessions.py` |
-| 浏览器 API | `pyv8c/web/`；继续通过 ResourceServices 等服务访问运行时 |
+| 导航、任务、Realm 生命周期 | `pyv8c/pyv8c/platform/page.py` 及其导航、调度与生命周期调用方 |
+| 接口暴露、成员、回调、身份 | `pyv8c/pyv8c/engine/idl.py`、`binder.py`、`bindings.py`、`pyv8c/pyv8c/platform/sessions.py` |
+| 浏览器 API | `pyv8c/pyv8c/web/`；继续通过 ResourceServices 等服务访问运行时 |
 | 原生模板、转换与生命周期 | 本仓库 `pyv8/src/interfaces/`、`values/`、`isolate/`、`handles/` |
 
 不要直接访问 tracker 私有字典或假定资源记录是四元组。观测优先用现有事件/trace；必须临时包装内部方法时确认签名，原样转发并在 finally 恢复，记录其观察者效应。生产修复放在共享实现，而非 examples/skill 中 monkey patch。

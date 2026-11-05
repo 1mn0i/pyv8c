@@ -433,6 +433,7 @@ def test_an_engine_that_cannot_be_proxied_is_refused():
 
 def test_cronet_carries_its_traffic_through_the_proxy(proxy, origin):
     """cycronet is handed the context's proxy at construction, so its loads leave by it."""
+    pytest.importorskip("cycronet", reason="the Cronet transport is optional")
     url, _hits = origin
     browser = Browser(stub_logging="off", http_engine="cronet", proxy=proxy.url)
     try:

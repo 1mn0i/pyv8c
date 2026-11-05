@@ -108,10 +108,10 @@ def test_derived_keys_follow_the_user_agent_they_came_from():
     })
     assert environment.app_version == LINUX_CHROME.removeprefix("Mozilla/")
     # The brand list is the profile's; only the two real brands' versions follow the user agent.
-    assert [brand.brand for brand in environment.client_hints.brands] == [
-        "Google Chrome", "Chromium", "Not(A:Brand",
-    ]
-    assert [brand.version for brand in environment.client_hints.brands] == ["120", "120", "24"]
+    reference = BrowserEnvironment().client_hints.brands
+    assert [brand.brand for brand in environment.client_hints.brands] == [brand.brand for brand in reference]
+    assert [brand.version for brand in environment.client_hints.brands] == [
+        "120" if brand.brand in ("Google Chrome", "Chromium") else brand.version for brand in reference]
     assert environment.client_hints.platform == "Linux"
     assert environment.client_hints.architecture == "x86"
     assert environment.client_hints.platform_version == "6.5.0"
@@ -121,7 +121,8 @@ def test_derived_keys_follow_the_user_agent_they_came_from():
     moved = environment.overlay({"user_agent": WINDOWS_CHROME})
     assert moved.client_hints.platform == "Windows"
     assert moved.client_hints.platform_version == "6.5.0"
-    assert [brand.version for brand in moved.client_hints.brands] == ["152", "152", "24"]
+    assert [brand.version for brand in moved.client_hints.brands] == [
+        "152" if brand.brand in ("Google Chrome", "Chromium") else brand.version for brand in reference]
 
 
 def test_group_views_read_the_values_the_table_holds():

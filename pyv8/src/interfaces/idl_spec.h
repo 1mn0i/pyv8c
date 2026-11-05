@@ -50,14 +50,6 @@ struct IdlSpec
     bool code_like = false;
     PyObject *attributes = nullptr;
     PyObject *methods = nullptr;
-    //: Global members installed after the methods, in the order Blink gives a
-    //: Window's context-dependent phase.  ``nullptr`` keeps the old two-list order.
-    PyObject *late_attributes = nullptr;
-    PyObject *late_methods = nullptr;
-    //: The template-late members, installed after everything above.
-    PyObject *late_template_attributes = nullptr;
-    //: Conditional operations Blink installs after the conditional constructors.
-    PyObject *tail_methods = nullptr;
     PyObject *constants_value = nullptr;
     PyObject *prototype_late_members = nullptr;
     PyObject *call = nullptr;

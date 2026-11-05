@@ -9,12 +9,18 @@ description = "A deterministic Chromium-like BOM/DOM environment on pyv8"
 requires-python = ">=3.12"
 # ``uharfbuzz`` shapes text and ``uniseg`` finds where lines may break; both are hard
 # dependencies, because a page's geometry is only right if the text is measured for real.
-dependencies = ["loguru>=0.7", "websockets>=14", "uharfbuzz>=0.56", "uniseg>=0.9", "pyv8>=2.1.2,<2.2"]
+dependencies = [
+    "pyv8>=2.1.2,<2.2",
+    "loguru>=0.7",
+    "curl_cffi>=0.7",
+    "websockets>=16",
+    "uharfbuzz>=0.56",
+    "uniseg>=0.9",
+]
 
 [project.optional-dependencies]
-# The default engines: curl_cffi performs requests, websockets opens sockets.
-# ``websockets`` is already a hard dependency; naming it here documents the pair.
-network = ["curl_cffi>=0.7", "websockets>=14"]
+# Compatibility alias: both default network engines are core dependencies.
+network = []
 # The cycronet engine is optional and serves either role when it is chosen.
 cronet = ["cycronet>=144.4.7,<151"]
 # The drawing surface behind CanvasRenderingContext2D and OffscreenCanvas pixels.
@@ -25,7 +31,10 @@ dev = [
     "pytest-repeat>=0.9",
     "pytest-xdist>=3.6",
     "Pillow>=10",
+    "cryptography>=42",
 ]
+# Process-memory measurements can use psutil; the benchmark also has a fallback.
+benchmark = ["psutil>=5.9"]
 # The reference browser for tests/repros.  It drives the Chrome already installed on
 # the machine (PYV8C_CHROME points it elsewhere); nothing else is downloaded.
 reference = ["playwright>=1.40"]

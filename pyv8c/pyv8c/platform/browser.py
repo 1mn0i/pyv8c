@@ -16,6 +16,7 @@ import pyv8  # patch target for native V8Context instrumentation
 
 from ..engine.bindings import Idl, Bindings
 from ..foundation.environment import BrowserEnvironment
+from ..foundation.error_policy import control_exceptions
 from ..foundation.host_errors import HostStateError, LoadFailure
 from ..foundation.urls import origin_string, origin_tuple
 from ..network.assembly import assemble_backend
@@ -171,7 +172,7 @@ class Profile:
         """Attach a DevTools server to *page* and return its handle.
 
         One server per profile, driving a single debugger client; the supported
-        protocol domains and the startup handshake are in ``docs/devtools.md``.
+        protocol domains and the startup handshake are in ``docs/pyv8c/devtools.md``.
 
         :param page: a page of this profile that is still open.
         :param options: :class:`pyv8.DevToolsOptions`; the defaults bind
@@ -195,37 +196,44 @@ class Profile:
 
         Best effort and idempotent: each part is close-attempted even when an
         earlier one raised, blob URLs are dropped, and the first error is
-        re-raised once the rest was attempted.
+        re-raised once the rest was attempted.  Execution control signals are
+        never treated as an ordinary cleanup failure; they unwind immediately.
         """
         if self.closed:
             return
         first_error = None
-        for page in list(self.pages):
-            try:
-                page.close()
-            except BaseException as exc:
-                # Teardown is best effort: one realm's error must not leave the
-                # later pages, DevTools or the network backend alive.
-                if first_error is None:
-                    first_error = exc
-        for name in ("_devtools", "network_backend"):
-            resource = getattr(self, name)
-            if resource is not None:
+        try:
+            for page in list(self.pages):
                 try:
-                    resource.close()
+                    page.close()
+                except control_exceptions():
+                    raise
                 except BaseException as exc:
+                    # Teardown is best effort: one realm's error must not leave the
+                    # later pages, DevTools or the network backend alive.
                     if first_error is None:
                         first_error = exc
-                else:
-                    setattr(self, name, None)
-        self._blob_urls.clear()
-        self._blob_origins.clear()
-        self._databases.clear()
-        if first_error is not None:
-            raise first_error
-        self.closed = True
-        if self in self.browser.profiles:
-            self.browser.profiles.remove(self)
+            for name in ("_devtools", "network_backend"):
+                resource = getattr(self, name)
+                if resource is not None:
+                    try:
+                        resource.close()
+                    except control_exceptions():
+                        raise
+                    except BaseException as exc:
+                        if first_error is None:
+                            first_error = exc
+                    else:
+                        setattr(self, name, None)
+            if first_error is not None:
+                raise first_error
+            self.closed = True
+            if self in self.browser.profiles:
+                self.browser.profiles.remove(self)
+        finally:
+            self._blob_urls.clear()
+            self._blob_origins.clear()
+            self._databases.clear()
 
 
 class Browser:
@@ -236,7 +244,7 @@ class Browser:
     isolated session and :meth:`close` closes every session it handed out; the
     engines a profile needs are built when that profile is created.
 
-    JS objects belong to the thread that owns their realm (see ``docs/usage.md``).
+    JS objects belong to the thread that owns their realm (see ``docs/pyv8c/usage.md``).
     """
 
     def __init__(self, *,
@@ -500,6 +508,8 @@ class Browser:
             for profile in profiles:
                 try:
                     profile.close()
+                except control_exceptions():
+                    raise
                 except BaseException as exc:
                     if first_error is None:
                         first_error = exc

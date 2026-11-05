@@ -1839,8 +1839,8 @@ CASES = (
     ),
     Repro(
         name="the_client_hints_report_the_browser_shape",
-        note="Brands, their frozen array and the object's own identity, none of "
-             "which depend on the build the way the version numbers do.",
+        note="Brands and their order follow the captured browser profile; the frozen array "
+             "and the object's identity are checked independently of version numbers.",
         url="https://repro.test/dir/page",
         html=page(body=""),
         script="""(() => {
@@ -1856,7 +1856,7 @@ CASES = (
                     data.toJSON().brands === data.toJSON().brands,
                     String(data), data instanceof NavigatorUAData];
         })()""",
-        expected=["object", "NavigatorUAData", "Google Chrome,Chromium,Not(A:Brand",
+        expected=["object", "NavigatorUAData", "Not:A-Brand,Chromium,Google Chrome",
                   True, "boolean", "string", True, False, False,
                   "brands,mobile,platform", False, "[object NavigatorUAData]", True],
     ),

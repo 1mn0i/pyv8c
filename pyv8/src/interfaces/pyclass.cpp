@@ -26,6 +26,25 @@ enum FlagImmutable {
 
 PyTypeObject* py_class_type = NULL;
 
+// In ordered-global mode instance members are installed after Context::New.
+// Prototype and interface members still belong on their original templates.
+static PyObject* non_instance_members(PyObject* configs, bool attributes) {
+    if (configs == nullptr) return PyTuple_New(0);
+    PyObject* result = PyList_New(0);
+    if (result == nullptr) return nullptr;
+    for (Py_ssize_t i = 0; i < PyTuple_Size(configs); ++i) {
+        PyObject* item = PyTuple_GetItem(configs, i);
+        int64_t location = attributes ? ((AttributeSpec*)item)->location : ((MethodSpec*)item)->location;
+        if (location != (int64_t)bindings::FlagLocation::kInstance && PyList_Append(result, item) < 0) {
+            Py_DECREF(result);
+            return nullptr;
+        }
+    }
+    PyObject* tuple = PyList_AsTuple(result);
+    Py_DECREF(result);
+    return tuple;
+}
+
 static int class_traverse(py_class* self, visitproc visit, void* arg) {
     Py_VISIT(self->cls);
     Py_VISIT(self->idl_spec);
@@ -302,49 +321,39 @@ py_class_new(PyObject *cls, context_c * py_ctx, bool shared)
         Py_DECREF((PyObject*)items);
     }
 
-    // Blink installs a global interface's exposed constructors before its own
-    // members; the realm states which names those are, in installation order.
-    if (config.global_this && py_ctx->preinstall != nullptr)
-    {
-        for (Py_ssize_t index = 0; index < PyTuple_Size(py_ctx->preinstall); ++index)
-        {
-            const char* installed = PyUnicode_AsUTF8_abi3(
-                PyTuple_GetItem(py_ctx->preinstall, index));
-            if (installed == nullptr) {
-                Py_DECREF((PyObject*)self);
-                return nullptr;
-            }
-            bindings::InstallExposedConstruct(isolate, templ->InstanceTemplate(), installed);
-        }
-    }
-
     if (config.attributes != NULL)
     {
+        PyObject* members = config.global_this && py_ctx->ordered_global
+            ? non_instance_members(config.attributes, true) : PyV8_NewRef(config.attributes);
+        if (members == nullptr) { Py_DECREF((PyObject*)self); return nullptr; }
         if (!bindings::InstallAttributes(
                 isolate, world, templ, sig,
                 cls,
-                config.attributes,
+                members,
                 self->operation_callback_data, py_ctx, shared)) {
+            Py_DECREF(members);
             Py_DECREF((PyObject*)self);
             return NULL;
         }
+        Py_DECREF(members);
     }
         
     if (config.methods != NULL)
     {
+        PyObject* members = config.global_this && py_ctx->ordered_global
+            ? non_instance_members(config.methods, false) : PyV8_NewRef(config.methods);
+        if (members == nullptr) { Py_DECREF((PyObject*)self); return nullptr; }
         if (!bindings::InstallOperations(
                 isolate, world, templ, sig,
                 cls,
-                config.methods,
+                members,
                 self->operation_callback_data, py_ctx, shared)) {
+            Py_DECREF(members);
             Py_DECREF((PyObject*)self);
             return NULL;
         }
+        Py_DECREF(members);
     }
-
-    // The context-dependent phase of a global interface is installed by
-    // ``context.install_late`` after the host globals (``chrome``) exist, which
-    // is the order Blink builds a Window's own keys in.
 
     if (config.constants_value != NULL &&
         !bindings::InstallConstantValues(

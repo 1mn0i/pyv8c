@@ -27,7 +27,7 @@ PAGES = {"/plain": FORM, "/script": FORM, "/get": GET_FORM, "/empty-get": EMPTY_
          "/kinds": KINDS, "/plain-enc": PLAIN_ENC, "/multi-enc": MULTIPART_ENC}
 
 #: Chrome's order for a form POST; ``host``, ``content-length`` and
-#: ``connection`` are the transport's to place (``docs/request-headers.md``).
+#: ``connection`` are the transport's to place (``docs/pyv8c/request-headers.md``).
 POSTED_NAVIGATION = [
     "host", "cache-control", "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
     "upgrade-insecure-requests", "content-type", "user-agent", "origin", "accept",

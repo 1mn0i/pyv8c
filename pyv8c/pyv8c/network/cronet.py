@@ -50,7 +50,7 @@ class CronetTransport(RequestDelivery):
     """
 
     #: cycronet follows redirects itself and names no way to stop it, so the hop-by-hop
-    #: modes are refused for it instead of being obeyed quietly (docs/network-transports.md).
+    #: modes are refused for it instead of being obeyed quietly (docs/pyv8c/network-transports.md).
     FOLLOWS_ITSELF = True
 
     @classmethod

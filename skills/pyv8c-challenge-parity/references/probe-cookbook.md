@@ -2,7 +2,7 @@
 
 ## 前置条件
 
-在 pyv8c 仓库根运行命令，使用项目的 Python 3.12 环境。源码开发时令 PYTHONPATH 指向本仓库中的两个项目。先验证 import 路径，不让已安装旧包替代开发树。
+在 pyv8c 仓库根运行命令，使用已安装项目依赖的 CPython 3.12 至 3.15（需启用 GIL）。源码开发时令 PYTHONPATH 指向本仓库中的两个项目。先验证 import 路径，不让已安装旧包替代开发树。
 
 ```powershell
 $env:PYTHONPATH="$PWD/pyv8c;$PWD/pyv8;$PWD"
@@ -10,14 +10,14 @@ python skills/pyv8c-challenge-parity/scripts/harness.py --list
 python skills/pyv8c-challenge-parity/scripts/harness.py --help
 ```
 
-显式选择可读的 IDL。当前用户保留默认 154 压缩包，若其格式与新读取器不匹配，指定已生成的 `idls/145.0.7632.162.zip`，不要修改默认包；以后目录变化应重新检查。
+默认使用框架随包 IDL（当前基线为 Chromium 154）；只有确实需要对照其他版本时才通过 `--idl-path` 指定归档，并记录版本及与 Chrome 的差异。格式不匹配时检查来源，不能静默换成另一版本。
 
 Chrome 必须用 `--chrome-path` 或 `PYV8C_CHROME` 指定现有可执行文件。默认 headed、Playwright 默认参数，不增加隐藏自动化的开关；`--headless` 是另一个需记录的实验条件。若自动化 Chrome 和人工访问本身就不同，记录此边界，用可用的人工 DevTools 证据补充，不冒充普通浏览器会话。
 
 ## 在线基线与局部观测
 
 ```powershell
-python skills/pyv8c-challenge-parity/scripts/harness.py --url https://example.com/ --idl-path idls/145.0.7632.162.zip --chrome-path 'C:/Program Files/Google/Chrome/Application/chrome.exe' --seconds 5 --timeout 45 --out evidence/baseline.json
+python skills/pyv8c-challenge-parity/scripts/harness.py --url https://example.com/ --chrome-path 'C:/Program Files/Google/Chrome/Application/chrome.exe' --seconds 5 --timeout 45 --out evidence/baseline.json
 ```
 
 不传 probe/trace：页面脚本执行期间不注入 JS，结束后读取状态和环境。运行器仍有自动化及事件监听影响，绝不是无观察者的人工会话。
@@ -51,14 +51,14 @@ python skills/pyv8c-challenge-parity/scripts/harness.py --url https://example.co
 ```
 
 ```powershell
-python skills/pyv8c-challenge-parity/scripts/harness.py --fixture fixture.json --idl-path idls/145.0.7632.162.zip --chrome-path 'C:/Program Files/Google/Chrome/Application/chrome.exe' --out evidence/fixture.json
+python skills/pyv8c-challenge-parity/scripts/harness.py --fixture fixture.json --chrome-path 'C:/Program Files/Google/Chrome/Application/chrome.exe' --out evidence/fixture.json
 ```
 
 资源键是绝对 HTTP(S) URL，匹配去掉 fragment 后的完整 URL，查询参数不忽略。每项支持 `status`（默认 200）、`headers`、`body` 或相对清单的 UTF-8 `body_file`。资源表按 URL 匹配，不区分请求方法和请求体；需要验证这些条件时使用真实本地服务器。未登记请求明确返回 404；本地 data/blob/about 由各引擎处理，不能统一替换成 HTML。
 
 该工具适合文本 HTTP fixture；不用于二进制媒体、真实 TLS、缓存、Service Worker、WebSocket、Cookie 重定向端到端验收。Chrome fixture 阻止 Service Worker，以避免绕过路由；此条件写入配置。上述能力使用仓库现有本地 HTTP 测试服务器和相关对照测试，保留真实头和状态，不用路由模拟替代。
 
-`--probe events` 等内置 fixture 在不传 `--url` 时运行；传 URL 时对该页面运行探针，不悄悄换成 fixture。旧 `_ask_page/run_here/run_chrome/pump` 导入接口已移除，调用方应迁移到 CLI 或 JSON fixture。仓库正式回归仍使用 `tests/repros` 的现有 harness，不导入 skill 私有工具。
+`--probe events` 等内置 fixture 在不传 `--url` 时运行；传 URL 时对该页面运行探针，不悄悄换成 fixture。旧 `_ask_page/run_here/run_chrome/pump` 导入接口已移除，调用方应迁移到 CLI 或 JSON fixture。仓库正式回归仍使用 `pyv8c/tests/repros` 的现有 harness，不导入 skill 私有工具。
 
 ## 结果解释
 

@@ -37,11 +37,12 @@ def test_a_collected_profile_drives_the_environment_it_was_read_from(tmp_path, c
     expected_fonts = [{**asdict(face), "path": Path(face.path).name} for face in font_records()]
     assert document["fonts.records"] == expected_fonts
     # The same session that answered the keys named what it installs on ``window``.
-    assert "Object" in document["bindings"]["exposed"]
+    assert "Object" in document["bindings"]["own_order"]
     assert "innerWidth" in document["bindings"]["keys"]
     # 鈥nd which of the members the baseline declares it leaves out.
     surface = document["bindings"]
-    assert sorted(surface["own_order"]) == surface["exposed"]
+    assert "exposed" not in surface
+    assert len(surface["own_order"]) == len(set(surface["own_order"]))
     assert surface["own_order"].index("Object") < surface["own_order"].index("Function")
     gaps = surface["omits"]["prototype"]
     assert len(gaps) > 20

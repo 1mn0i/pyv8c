@@ -286,6 +286,9 @@ def test_a_lock_request_runs_its_callback(page):
           window.__held.push(lock.name, lock.mode);
           return 'done';
         });""")
+    # Web Locks dispatches the callback as a task; another evaluation is not a
+    # guarantee that the task has run yet.
+    page.run_until_idle(timeout=1)
     assert page.evaluate("window.__held") == ["res", "exclusive"]
     assert page.evaluate("typeof navigator.locks.query") == "function"
 

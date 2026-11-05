@@ -103,18 +103,33 @@ def test_a_profile_has_to_be_complete_before_it_is_written():
 def test_surface_preserves_observed_global_insertion_order():
     surface = collector.build_surface({
         "keys": ["alpha", "zeta"],
-        "own": ["alpha", "middle", "zeta"],
         "own_order": ["zeta", "alpha", "middle"],
     })
-    assert surface["exposed"] == ["alpha", "middle", "zeta"]
+    assert "exposed" not in surface
     assert surface["own_order"] == ["zeta", "alpha", "middle"]
+
+
+def test_surface_script_reads_window_names_once():
+    assert collector.SURFACE_SCRIPT.count("Object.getOwnPropertyNames(window)") == 1
+    assert "for (const name of ownOrder)" in collector.SURFACE_SCRIPT
+
+
+@pytest.mark.parametrize("order", [None, [], ["alpha", "alpha"], [""], [1]])
+def test_surface_rejects_invalid_window_names(order):
+    with pytest.raises(collector.CollectionError, match="own_order"):
+        collector.build_surface({"keys": [], "own_order": order})
+
+
+def test_surface_rejects_removed_own_field():
+    with pytest.raises(collector.CollectionError, match="own is no longer supported"):
+        collector.build_surface({"keys": [], "own": ["Object"], "own_order": ["Object"]})
 
 
 def test_a_run_writes_the_environment_and_the_surface_together():
     """Both facts are read from one session, so they land in one document."""
     collected = payload()
     surface = collector.build_surface(
-        {"keys": ["a"], "own": ["a", "b"],
+        {"keys": ["a"], "own_order": ["a", "b"],
          "prototypes": {"Node": ["appendChild", "cloneNode"], "Event": []},
          "objects": {"CSS": ["escape", "supports"], "Node": ["Node"]},
          "iterators": {"Node": {"iterator": 1, "methods": ["entries", "keys", "values", "forEach"]}, "CSS": {"iterator": 0, "methods": []}}},
@@ -130,7 +145,7 @@ def test_a_run_writes_the_environment_and_the_surface_together():
                                        source={"browser": "Chrome/154.0.8037.95"}, fonts=fonts)
 
     assert document["bindings"] == {
-        "keys": ["a"], "exposed": ["a", "b"],
+        "keys": ["a"], "own_order": ["a", "b"],
         "omits": {
             "prototype": {"Node": ["append"]},
             # An interface object answers for its own members, where a namespace keeps them.
@@ -152,7 +167,7 @@ def test_a_run_writes_the_environment_and_the_surface_together():
 
 def test_a_surface_without_gap_readings_writes_empty_sections():
     """A browser that answered nothing about its prototypes narrows no interface."""
-    surface = collector.build_surface({"keys": ["a"], "own": ["a"]},
+    surface = collector.build_surface({"keys": ["a"], "own_order": ["a"]},
                                       {"Node": {"prototype": {"appendChild"}}})
 
     assert surface["omits"]["prototype"] == {}
@@ -163,7 +178,7 @@ def test_a_surface_without_gap_readings_writes_empty_sections():
 
 def test_only_a_declared_name_can_be_a_gap():
     """What the baseline does not declare is not a difference, so it is not recorded."""
-    surface = collector.build_surface({"keys": [], "own": [], "prototypes": {"Node": [],
+    surface = collector.build_surface({"keys": [], "own_order": ["Object"], "prototypes": {"Node": [],
                                                                             "Unknown": ["x"]},
                                        "objects": {"Unknown": ["x"]}},
                                       {"Node": {"prototype": {"appendChild"}}})
@@ -175,7 +190,7 @@ def test_only_a_declared_name_can_be_a_gap():
 def test_a_location_is_only_compared_with_its_own_reading():
     """A prototype name is not evidence about the interface object, or the other way round."""
     surface = collector.build_surface(
-        {"keys": [], "own": [],
+        {"keys": [], "own_order": ["Object"],
          "prototypes": {"CSS": ["animationWorklet"]},
          "objects": {"CSS": ["supports"]}},
         {"CSS": {"prototype": {"animationWorklet"}, "interface": {"supports", "escape"}}})
@@ -206,9 +221,9 @@ def test_the_array_value_is_the_shape_the_browser_publishes():
 
 def test_partial_method_exposure_is_recorded_without_changing_semantics():
     reading = {"iterators": {"NodeList": {"iterator": 1, "methods": ["keys", "values"]}}}
-    surface = collector.build_surface(dict(reading, keys=[], own=[]), {"NodeList": {"prototype": set()}})
+    surface = collector.build_surface(dict(reading, keys=[], own_order=["Object"]), {"NodeList": {"prototype": set()}})
     assert surface["iteration_methods"] == {"NodeList": 13}
-    surface = collector.build_surface(dict(reading, keys=[], own=[]), {})
+    surface = collector.build_surface(dict(reading, keys=[], own_order=["Object"]), {})
     assert surface["iteration_methods"] == {}
     with pytest.raises(collector.CollectionError, match="invalid iteration methods"):
         collector._iteration_methods({"NodeList": {"iterator":1,"methods":["unknown"]}}, {"NodeList"})
@@ -217,7 +232,7 @@ def test_partial_method_exposure_is_recorded_without_changing_semantics():
 def test_a_non_finite_number_is_written_as_its_name():
     """A bare ``Infinity`` is not JSON, so the profile spells it out."""
     collected = payload(**{"battery.discharging_time": float("inf")})
-    document = collector.build_profile(collected, collector.build_surface({"keys": [], "own": []}),
+    document = collector.build_profile(collected, collector.build_surface({"keys": [], "own_order": ["Object"]}),
                                        source={"browser": "Chrome/1"})
 
     assert document["battery.discharging_time"] == "Infinity"

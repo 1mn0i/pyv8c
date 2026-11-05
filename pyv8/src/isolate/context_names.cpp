@@ -372,105 +372,219 @@ context_install(context_c *self, PyObject *names)
     return PyLong_FromSsize_t(declared);
 }
 
-//: Install the global interface's context-dependent members on the built global.
-//: This is Blink's conditional phase: it runs after the host globals (``chrome``)
-//: so those stay ahead of ``caches`` and the rest of the Window tail.
-PyObject *
-context_install_late(context_c *self, PyObject *ignored)
+static PyObject* ordered_global_member(IdlSpec* spec, bool attribute, PyObject* name)
 {
-    (void)ignored;
-    py_class* klass = self->global_template == nullptr
-        ? nullptr : (py_class*)self->global_template;
-    if (klass == nullptr || klass->idl_spec == nullptr)
-        return PyLong_FromLong(0);
-    //: Assembling the realm is host work, like installing a global value.
-    trace::TraceSilence silence(self);
-    ExecutionScope execution(self);
-    if (!execution) return nullptr;
-    auto* isolate = execution.isolate();
-    Local<Context> context = self->js_context.Get(isolate);
-    Local<Object> global = v8_compat::global_template_object(context);
-    IdlSpec* spec = (IdlSpec*)klass->idl_spec;
-    const char* world = klass->cls_name == nullptr
-        ? "" : PyUnicode_AsUTF8_abi3(klass->cls_name);
-    if (world == nullptr) return nullptr;
-    Local<Signature> signature;
-    Py_ssize_t installed = 0;
-    if (spec->late_attributes != nullptr) {
-        if (!bindings::InstallAttributes(isolate, world, context, global, signature,
-                                         klass->cls, spec->late_attributes,
-                                         klass->operation_callback_data, self, false))
-            return nullptr;
-        installed += PyTuple_Size(spec->late_attributes);
+    PyObject* group = attribute ? spec->attributes : spec->methods;
+    if (group == nullptr) return nullptr;
+    for (Py_ssize_t j = 0; j < PyTuple_Size(group); ++j) {
+        PyObject* item = PyTuple_GetItem(group, j);
+        PyObject* member_name = attribute ? ((AttributeSpec*)item)->name : ((MethodSpec*)item)->name;
+        int64_t location = attribute ? ((AttributeSpec*)item)->location : ((MethodSpec*)item)->location;
+        if (location == (int64_t)bindings::FlagLocation::kInstance &&
+            PyUnicode_Compare(member_name, name) == 0)
+            return item;
     }
-    return PyLong_FromSsize_t(installed);
+    return nullptr;
 }
 
-//: The conditional operations and the template-late attributes follow the
-//: conditional constructors, which the realm installs between the two calls.
+// Install one named member at a time without materialising constructor values.
+// Callers explicitly distinguish member kinds from lazy interface constructors.
 PyObject *
-context_install_late_methods(context_c *self, PyObject *ignored)
+context_install_ordered(context_c *self, PyObject *items)
 {
-    (void)ignored;
-    py_class* klass = self->global_template == nullptr
-        ? nullptr : (py_class*)self->global_template;
-    if (klass == nullptr || klass->idl_spec == nullptr)
-        return PyLong_FromLong(0);
-    trace::TraceSilence silence(self);
-    ExecutionScope execution(self);
-    if (!execution) return nullptr;
-    auto* isolate = execution.isolate();
-    Local<Context> context = self->js_context.Get(isolate);
-    Local<Object> global = v8_compat::global_template_object(context);
-    IdlSpec* spec = (IdlSpec*)klass->idl_spec;
-    const char* world = klass->cls_name == nullptr
-        ? "" : PyUnicode_AsUTF8_abi3(klass->cls_name);
-    if (world == nullptr) return nullptr;
-    Local<Signature> signature;
-    Py_ssize_t installed = 0;
-    if (spec->late_methods != nullptr) {
-        if (!bindings::InstallOperations(isolate, world, context, global, signature,
-                                         klass->cls, spec->late_methods,
-                                         klass->operation_callback_data, self, false))
-            return nullptr;
-        installed += PyTuple_Size(spec->late_methods);
-    }
-    if (spec->late_template_attributes != nullptr) {
-        if (!bindings::InstallAttributes(isolate, world, context, global, signature,
-                                         klass->cls, spec->late_template_attributes,
-                                         klass->operation_callback_data, self, false))
-            return nullptr;
-        installed += PyTuple_Size(spec->late_template_attributes);
-    }
-    return PyLong_FromSsize_t(installed);
-}
-
-PyObject *
-context_install_tail(context_c *self, PyObject *ignored)
-{
-    (void)ignored;
-    py_class* klass = self->global_template == nullptr
-        ? nullptr : (py_class*)self->global_template;
-    if (klass == nullptr || klass->idl_spec == nullptr)
-        return PyLong_FromLong(0);
-    IdlSpec* spec = (IdlSpec*)klass->idl_spec;
-    if (spec->tail_methods == nullptr || PyTuple_Size(spec->tail_methods) == 0)
-        return PyLong_FromLong(0);
-    trace::TraceSilence silence(self);
-    ExecutionScope execution(self);
-    if (!execution) return nullptr;
-    auto* isolate = execution.isolate();
-    Local<Context> context = self->js_context.Get(isolate);
-    Local<Object> global = v8_compat::global_template_object(context);
-    const char* world = klass->cls_name == nullptr
-        ? "" : PyUnicode_AsUTF8_abi3(klass->cls_name);
-    if (world == nullptr) return nullptr;
-    Local<Signature> signature;
-    if (!bindings::InstallOperations(isolate, world, context, global, signature,
-                                     klass->cls, spec->tail_methods,
-                                     klass->operation_callback_data, self, false))
+    if (!self->ordered_global) {
+        PyErr_SetString(PyExc_RuntimeError, "install_ordered requires ordered_global=True");
         return nullptr;
-    return PyLong_FromSsize_t(PyTuple_Size(spec->tail_methods));
+    }
+    py_class* klass = self->global_template == nullptr ? nullptr : (py_class*)self->global_template;
+    if (klass == nullptr || klass->idl_spec == nullptr) {
+        PyErr_SetString(PyExc_RuntimeError, "ordered global requires an IDL global template");
+        return nullptr;
+    }
+    trace::TraceSilence silence(self);
+    ExecutionScope execution(self);
+    if (!execution) return nullptr;
+    auto* isolate = execution.isolate();
+    Local<Context> context = self->js_context.Get(isolate);
+    Local<Object> global = v8_compat::global_template_object(context);
+    IdlSpec* spec = (IdlSpec*)klass->idl_spec;
+    const char* world = klass->cls_name == nullptr ? "" : PyUnicode_AsUTF8_abi3(klass->cls_name);
+    if (world == nullptr) return nullptr;
+    PyObject* sequence = PySequence_Tuple(items);
+    if (sequence == nullptr) return nullptr;
+    struct BuiltinDescriptor {
+        Local<Value> value;
+        bool writable;
+        bool enumerable;
+        bool configurable;
+        bool pending = false;
+    };
+    std::unordered_map<std::string, BuiltinDescriptor> builtins;
+    std::unordered_set<std::string> names_seen;
+    std::unordered_set<std::string> immovable_builtins;
+    // Save configurable V8 data properties before adding any host properties.
+    // Locals remain rooted by the current execution scope until restored.
+    for (Py_ssize_t i = 0; i < PyTuple_Size(sequence); ++i) {
+        PyObject* pair = PyTuple_GetItem(sequence, i);
+        if (!PyTuple_Check(pair) || PyTuple_Size(pair) != 2 ||
+            !PyUnicode_Check(PyTuple_GetItem(pair, 0)) || !PyUnicode_Check(PyTuple_GetItem(pair, 1))) {
+            PyErr_SetString(PyExc_TypeError, "install_ordered items must be (kind, name) string pairs");
+            Py_DECREF(sequence); return nullptr;
+        }
+        const char* kind = PyUnicode_AsUTF8_abi3(PyTuple_GetItem(pair, 0));
+        const char* name = PyUnicode_AsUTF8_abi3(PyTuple_GetItem(pair, 1));
+        if (kind == nullptr || name == nullptr) { Py_DECREF(sequence); return nullptr; }
+        if (!*name || !names_seen.emplace(name).second) {
+            PyErr_Format(PyExc_ValueError, "empty or duplicate global name: %s", name);
+            Py_DECREF(sequence); return nullptr;
+        }
+        if (strcmp(kind, "builtin") != 0 && strcmp(kind, "host") != 0 &&
+            strcmp(kind, "constructor") != 0 && strcmp(kind, "attribute") != 0 &&
+            strcmp(kind, "method") != 0) {
+            PyErr_Format(PyExc_ValueError, "unknown global member kind: %s", kind);
+            Py_DECREF(sequence); return nullptr;
+        }
+        if (strcmp(kind, "attribute") == 0 || strcmp(kind, "method") == 0) {
+            if (ordered_global_member(spec, strcmp(kind, "attribute") == 0, PyTuple_GetItem(pair, 1)) == nullptr) {
+                PyErr_Format(PyExc_ValueError, "unknown global %s: %s", kind, name);
+                Py_DECREF(sequence); return nullptr;
+            }
+        }
+        if (strcmp(kind, "builtin") != 0) {
+            bool exists = false;
+            if (!global->HasOwnProperty(context, V8String(isolate, name)).To(&exists)) {
+                PyErr_SetString(PyExc_RuntimeError, "cannot inspect global property");
+                Py_DECREF(sequence); return nullptr;
+            }
+            if (exists) {
+                PyErr_Format(PyExc_ValueError, "global property already exists: %s", name);
+                Py_DECREF(sequence); return nullptr;
+            }
+        }
+        if (strcmp(kind, "builtin") != 0) continue;
+        Local<String> key = V8String(isolate, name);
+        Local<Value> raw;
+        if (!global->GetOwnPropertyDescriptor(context, key).ToLocal(&raw)) {
+            PyErr_Format(PyExc_ValueError, "cannot inspect built-in global: %s", name);
+            Py_DECREF(sequence); return nullptr;
+        }
+        if (!raw->IsObject()) {
+            immovable_builtins.emplace(name);
+            continue;
+        }
+        Local<Object> descriptor = raw.As<Object>();
+        Local<Value> value, writable, enumerable, configurable;
+        if (!descriptor->Get(context, V8String(isolate, "value")).ToLocal(&value) ||
+            !descriptor->Get(context, V8String(isolate, "writable")).ToLocal(&writable) ||
+            !descriptor->Get(context, V8String(isolate, "enumerable")).ToLocal(&enumerable) ||
+            !descriptor->Get(context, V8String(isolate, "configurable")).ToLocal(&configurable)) {
+            PyErr_Format(PyExc_ValueError, "cannot inspect built-in descriptor: %s", name);
+            Py_DECREF(sequence); return nullptr;
+        }
+        if (!writable->IsBoolean() || !configurable->BooleanValue(isolate)) {
+            immovable_builtins.emplace(name);
+            continue;
+        }
+        if (!builtins.emplace(name, BuiltinDescriptor{value, writable->BooleanValue(isolate),
+                                                      enumerable->BooleanValue(isolate), true, false}).second) {
+            PyErr_Format(PyExc_ValueError, "duplicate built-in global: %s", name);
+            Py_DECREF(sequence); return nullptr;
+        }
+    }
+    struct RestoreBuiltins {
+        std::unordered_map<std::string, BuiltinDescriptor>& items;
+        Isolate* isolate;
+        Local<Context> context;
+        Local<Object> global;
+        ~RestoreBuiltins() {
+            for (const auto& item : items) {
+                const auto& saved = item.second;
+                if (!saved.pending) continue;
+                PropertyDescriptor descriptor(saved.value, saved.writable);
+                descriptor.set_enumerable(saved.enumerable);
+                descriptor.set_configurable(saved.configurable);
+                (void)global->DefineProperty(context, V8String(isolate, item.first.c_str()), descriptor).FromMaybe(false);
+            }
+        }
+    } restore{builtins, isolate, context, global};
+    for (auto& item : builtins) {
+        if (!global->Delete(context, V8String(isolate, item.first.c_str())).FromMaybe(false)) {
+            PyErr_Format(PyExc_RuntimeError, "cannot move built-in global: %s", item.first.c_str());
+            Py_DECREF(sequence); return nullptr;
+        }
+        item.second.pending = true;
+    }
+    Py_ssize_t installed = 0;
+    for (Py_ssize_t i = 0; i < PyTuple_Size(sequence); ++i) {
+        PyObject* pair = PyTuple_GetItem(sequence, i);
+        if (!PyTuple_Check(pair) || PyTuple_Size(pair) != 2 ||
+            !PyUnicode_Check(PyTuple_GetItem(pair, 0)) || !PyUnicode_Check(PyTuple_GetItem(pair, 1))) {
+            PyErr_SetString(PyExc_TypeError, "install_ordered items must be (kind, name) string pairs");
+            Py_DECREF(sequence); return nullptr;
+        }
+        const char* kind = PyUnicode_AsUTF8_abi3(PyTuple_GetItem(pair, 0));
+        const char* name = PyUnicode_AsUTF8_abi3(PyTuple_GetItem(pair, 1));
+        if (kind == nullptr || name == nullptr) { Py_DECREF(sequence); return nullptr; }
+        if (!*name) {
+            PyErr_SetString(PyExc_ValueError, "global member name must not be empty");
+            Py_DECREF(sequence); return nullptr;
+        }
+        if (strcmp(kind, "builtin") == 0 && immovable_builtins.count(name)) {
+            ++installed;
+            continue;
+        }
+        bool exists = false;
+        if (!global->HasOwnProperty(context, V8String(isolate, name)).To(&exists)) {
+            PyErr_SetString(PyExc_RuntimeError, "cannot inspect global property");
+            Py_DECREF(sequence); return nullptr;
+        }
+        if (exists) {
+            PyErr_Format(PyExc_ValueError, "global property already exists: %s", name);
+            Py_DECREF(sequence); return nullptr;
+        }
+        if (strcmp(kind, "builtin") == 0) {
+            auto& saved = builtins.at(name);
+            PropertyDescriptor descriptor(saved.value, saved.writable);
+            descriptor.set_enumerable(saved.enumerable);
+            descriptor.set_configurable(saved.configurable);
+            if (!global->DefineProperty(context, V8String(isolate, name), descriptor).FromMaybe(false)) {
+                PyErr_Format(PyExc_RuntimeError, "cannot restore built-in global: %s", name);
+                Py_DECREF(sequence); return nullptr;
+            }
+            saved.pending = false;
+        } else if (strcmp(kind, "host") == 0) {
+            if (!global->DefineOwnProperty(context, V8String(isolate, name), Undefined(isolate)).FromMaybe(false)) {
+                PyErr_Format(PyExc_RuntimeError, "cannot reserve host global: %s", name);
+                Py_DECREF(sequence); return nullptr;
+            }
+        } else if (strcmp(kind, "constructor") == 0) {
+            bindings::InstallExposedConstruct(context, global, name);
+        } else {
+            bool attribute = strcmp(kind, "attribute") == 0;
+            if (!attribute && strcmp(kind, "method") != 0) {
+                PyErr_Format(PyExc_ValueError, "unknown global member kind: %s", kind);
+                Py_DECREF(sequence); return nullptr;
+            }
+            PyObject* found = ordered_global_member(spec, attribute, PyTuple_GetItem(pair, 1));
+            if (found == nullptr) {
+                PyErr_Format(PyExc_ValueError, "unknown global %s: %s", kind, name);
+                Py_DECREF(sequence); return nullptr;
+            }
+            PyObject* one = PyTuple_Pack(1, found);
+            if (one == nullptr) { Py_DECREF(sequence); return nullptr; }
+            Local<Signature> signature = Signature::New(isolate, klass->templ.Get(isolate));
+            bool ok = attribute
+                ? bindings::InstallAttributes(isolate, world, context, global, signature, klass->cls, one,
+                                              klass->operation_callback_data, self, false)
+                : bindings::InstallOperations(isolate, world, context, global, signature, klass->cls, one,
+                                              klass->operation_callback_data, self, false);
+            Py_DECREF(one);
+            if (!ok) { Py_DECREF(sequence); return nullptr; }
+        }
+        ++installed;
+    }
+    Py_DECREF(sequence);
+    return PyLong_FromSsize_t(installed);
 }
 
 PyObject *

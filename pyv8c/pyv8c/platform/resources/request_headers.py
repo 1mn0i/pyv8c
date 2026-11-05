@@ -1,6 +1,6 @@
 """The default headers Chromium puts on a request, in the order it sends them.
 
-Measured against Chrome 153 (``docs/request-headers.md``); ``Host`` and
+Measured against Chrome 153 (``docs/pyv8c/request-headers.md``); ``Host`` and
 ``Content-Length`` belong to the transport.
 """
 from __future__ import annotations

@@ -5,6 +5,8 @@ from __future__ import annotations
 import threading
 from enum import Enum
 
+from .error_policy import control_exceptions
+
 
 class LifecycleState(str, Enum):
     OPEN = "open"
@@ -61,14 +63,20 @@ class ResourceScope:
         callbacks = self.begin_close()
         if callbacks is None:
             return
-        for callback in callbacks:
-            try:
-                callback()
-            except BaseException:  # cleanup must continue
-                # Aborting teardown here would strand every resource below this one.
-                pass
-        with self._lock:
-            self._state = LifecycleState.CLOSED
+        try:
+            for callback in callbacks:
+                try:
+                    callback()
+                except control_exceptions():
+                    # An interrupt or termination belongs to the caller, not to
+                    # the cleanup list; still settle the scope's own state.
+                    raise
+                except BaseException:  # cleanup must continue
+                    # Aborting teardown here would strand every resource below this one.
+                    pass
+        finally:
+            with self._lock:
+                self._state = LifecycleState.CLOSED
 
 
 __all__ = ["LifecycleState", "ResourceScope"]

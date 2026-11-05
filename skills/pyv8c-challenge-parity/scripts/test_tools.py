@@ -14,6 +14,27 @@ from trace_analyze import analyze
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_source_digest_includes_staged_changes(self):
+        calls = []
+        def run(args, **kwargs):
+            calls.append(args)
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        with patch.object(harness.subprocess, "run", side_effect=run):
+            self.assertTrue(harness.source_state())
+        self.assertTrue(any(call[-3:] == ["diff", "--binary", "HEAD"] for call in calls))
+
+    def test_packaged_idl_label_hashes_resource_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            (package / "idl").mkdir()
+            (package / "idl" / "idl.zip").write_bytes(b"baseline")
+            browser = SimpleNamespace(idl_path="pyv8c:idl/idl.zip")
+            with patch.object(harness.resources, "files", return_value=package):
+                evidence = harness.idl_evidence(browser)
+            import hashlib
+            self.assertEqual(evidence["idl_sha256"], hashlib.sha256(b"baseline").hexdigest())
+            self.assertEqual(evidence["idl_path"], browser.idl_path)
+
     def test_browser_close_error_is_visible_and_on_creator_thread(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -61,7 +82,7 @@ class EvidenceTests(unittest.TestCase):
                 "url": "https://local.test/",
                 "seconds": 0,
             }
-            with patch.dict("sys.modules", modules):
+            with patch.dict("sys.modules", modules), patch.object(harness.resources, "files", return_value=root):
                 harness.worker(config, root / "result.json")
             result = json.loads((root / "result.json").read_text())
             self.assertEqual(result["status"], "error")

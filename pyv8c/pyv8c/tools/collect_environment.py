@@ -319,7 +319,7 @@ SURFACE_SCRIPT = """
                                methods: four};
         } catch (error) {}
     };
-    for (const name of Object.getOwnPropertyNames(window)) {
+    for (const name of ownOrder) {
         let value = null;
         try { value = window[name]; } catch (error) { value = null; }
         if (typeof value === 'function') {
@@ -346,7 +346,6 @@ SURFACE_SCRIPT = """
     }
     return JSON.stringify({
         keys: Object.keys(window).sort(),
-        own: ownOrder.slice().sort(),
         own_order: ownOrder,
         prototypes,
         objects,
@@ -736,7 +735,7 @@ def _iteration_methods(readings, known):
 def build_surface(payload, declared=None, against=""):
     """What the browser does not install, as the profile's ``bindings`` section.
 
-    ``exposed`` covers the globals; ``omits`` is measured against ``declared``
+    ``own_order`` covers the globals; ``omits`` is measured against ``declared``
     (``{interface: {location: {names}}}``), and ``against`` records which IDL document those names
     came from.  ``prototype`` members are read from each prototype object and ``interface`` members
     from each interface object, which is where a namespace keeps its own.
@@ -745,10 +744,16 @@ def build_surface(payload, declared=None, against=""):
     what each interface borrows from ``Array.prototype`` in this release -- measured rather than
     assumed, so a document that is wider than the release stays narrow here.
     """
+    if "own" in payload:
+        raise CollectionError("Window own is no longer supported; use own_order")
+    ordered = payload.get("own_order")
+    if (not isinstance(ordered, list) or not ordered
+            or any(not isinstance(name, str) or not name for name in ordered)
+            or len(set(ordered)) != len(ordered)):
+        raise CollectionError("Window own_order must contain unique non-empty names")
     declared = declared or {}
     surface = {
         "keys": list(payload["keys"]),
-        "exposed": list(payload["own"]),
         "omits": {
             "prototype": _gaps_for(payload.get("prototypes"), declared, "prototype"),
             "interface": _gaps_for(payload.get("objects"), declared, "interface"),
@@ -756,8 +761,7 @@ def build_surface(payload, declared=None, against=""):
         "iteration_methods": _iteration_methods(payload.get("iterators"), set(declared)),
         "against": str(against or ""),
     }
-    if "own_order" in payload:
-        surface["own_order"] = list(payload["own_order"])
+    surface["own_order"] = list(ordered)
     return surface
 
 
@@ -825,7 +829,7 @@ def main(argv=None):
     arguments.out.parent.mkdir(parents=True, exist_ok=True)
     arguments.out.write_text(text, encoding="utf-8")
     print(
-        f"wrote {arguments.out}: {len(surface['exposed'])} exposed names,"
+        f"wrote {arguments.out}: {len(surface['own_order'])} exposed names,"
         f" {len(surface['omits']['prototype'])} interfaces with prototype gaps,"
         f" {len(surface['omits']['interface'])} with interface-object gaps,"
         f" {len(surface['iteration_methods'])} with an array value,"

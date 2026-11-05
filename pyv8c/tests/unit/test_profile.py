@@ -13,13 +13,38 @@ def collection(baseline, surface=None):
     return Idl(baseline.path, baseline.digest, baseline.metadata, baseline.interfaces, surface)
 
 
+def test_order_supplies_both_exposure_and_sequence(tmp_path, baseline):
+    path = tmp_path / "environment.json"
+    path.write_text(json.dumps({"bindings": {"own_order": ["Node", "Window"]}}), encoding="utf-8")
+    profile = Profile.load(path)
+    table = Idl(baseline.path, baseline.digest, baseline.metadata, baseline.interfaces, profile)
+    assert table.profile is profile
+    assert table.observed_window_order == ("Node", "Window")
+    assert set(table.exposed("Window")) == {"Node", "Window"}
+
+
+def test_invalid_recorded_order_is_rejected(tmp_path):
+    path = tmp_path / "environment.json"
+    path.write_text(json.dumps({"bindings": {"own_order": ["Node", "Node"]}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="own_order"):
+        Profile.load(path)
+
+
+def test_profile_rejects_removed_exposed_field(tmp_path):
+    path = tmp_path / "mixed-environment.json"
+    path.write_text(json.dumps({"bindings": {"exposed": ["Node"], "own_order": ["Window"]}}),
+                    encoding="utf-8")
+    with pytest.raises(ValueError, match="exposed is no longer supported"):
+        Profile.load(path)
+
+
 @pytest.fixture(scope="module")
 def baseline():
     return Idl.load()
 
 
 def test_a_window_reading_narrows_window_members(baseline):
-    surface = Profile(browser="test", exposed=frozenset({"onclick"}))
+    surface = Profile(browser="test", own_order=tuple(sorted({"onclick"})))
     table = collection(baseline, surface=surface)
 
     assert {member.name for _location, member in table.own_members("Window")} == {"onclick"}
@@ -37,7 +62,7 @@ def test_a_measured_value_overrides_the_baselines(baseline):
     assert collection(baseline).interface("NodeList").iteration_mask == ArrayProto.iterable
     assert collection(baseline).interface("HTMLCollection").iteration_mask == ArrayProto.iterator
 
-    surface = Profile(browser="test", exposed=frozenset(),
+    surface = Profile(browser="test", own_order=(),
                             iteration_methods={"NodeList": ArrayProto.iterator,
                                           "Unknown": ArrayProto.iterable})
     table = collection(baseline, surface=surface)
@@ -51,7 +76,7 @@ def test_a_measured_value_overrides_the_baselines(baseline):
 
 def test_a_profile_of_another_release_does_not_apply_its_values(baseline):
     """A measurement describes one release, so a digest that does not match says nothing."""
-    surface = Profile(browser="test", exposed=frozenset(),
+    surface = Profile(browser="test", own_order=(),
                             iteration_methods={"NodeList": ArrayProto.iterator},
                             against="another-release")
     table = collection(baseline, surface=surface)
@@ -61,7 +86,7 @@ def test_a_profile_of_another_release_does_not_apply_its_values(baseline):
 
 def test_a_surface_without_prototype_readings_leaves_other_interfaces_whole(baseline):
     """A profile written before the prototype section existed must not lose any member."""
-    surface = Profile(browser="test", exposed=frozenset({"onclick"}))
+    surface = Profile(browser="test", own_order=tuple(sorted({"onclick"})))
     table = collection(baseline, surface=surface)
 
     assert len(table.own_members("Document")) == len(
@@ -77,7 +102,7 @@ def test_a_prototype_gap_narrows_only_that_location(baseline):
     assert prototype and other, "this test needs an interface with both kinds of member"
     omitted = sorted(prototype)[0]
 
-    surface = Profile(browser="test", exposed=frozenset({"onclick"}),
+    surface = Profile(browser="test", own_order=tuple(sorted({"onclick"})),
                             omitted_prototype={"Document": frozenset({omitted})})
     table = collection(baseline, surface=surface)
 
@@ -87,7 +112,7 @@ def test_a_prototype_gap_narrows_only_that_location(baseline):
 
 
 def test_an_interface_the_browser_was_not_asked_about_keeps_every_location(baseline):
-    surface = Profile(browser="test", exposed=frozenset({"onclick"}),
+    surface = Profile(browser="test", own_order=tuple(sorted({"onclick"})),
                             omitted_prototype={"Document": frozenset({"querySelector"})})
 
     assert len(collection(baseline, surface=surface).own_members("Node")) == len(
@@ -97,10 +122,10 @@ def test_an_interface_the_browser_was_not_asked_about_keeps_every_location(basel
 
 def test_a_gap_only_applies_to_the_baseline_it_was_measured_against(baseline):
     """The names mean nothing against another release, so they are dropped, not applied."""
-    elsewhere = Profile(browser="test", exposed=frozenset({"onclick"}),
+    elsewhere = Profile(browser="test", own_order=tuple(sorted({"onclick"})),
                               omitted_prototype={"Document": frozenset({"querySelector"})},
                               against="measured-against-another-release")
-    measured = Profile(browser="test", exposed=frozenset({"onclick"}),
+    measured = Profile(browser="test", own_order=tuple(sorted({"onclick"})),
                              omitted_prototype={"Document": frozenset({"querySelector"})},
                              against=baseline.digest)
 
@@ -118,7 +143,7 @@ def test_a_gap_stops_the_descendant_search():
         "Base": {"parent": None, "members": {"prototype": []}, "constants": []},
         "Child": {"parent": "Base", "members": members, "constants": []},
     })
-    surface = Profile("test", frozenset({"Base"}), omitted_prototype={"Base": frozenset({"omitted"})})
+    surface = Profile("test", tuple(sorted({"Base"})), omitted_prototype={"Base": frozenset({"omitted"})})
     table = collection(baseline, surface=surface)
 
     assert table.member("Child", "omitted", "attribute") is not None
@@ -143,7 +168,7 @@ def test_without_a_surface_every_baseline_member_stays(baseline):
 
 
 def test_a_surface_narrows_which_interfaces_a_window_installs(baseline):
-    surface = Profile(browser="test", exposed=frozenset({"EventTarget", "Node", "Event"}))
+    surface = Profile(browser="test", own_order=tuple(sorted({"EventTarget", "Node", "Event"})))
     table = collection(baseline, surface=surface)
 
     assert set(table.exposed("Window")) == {"EventTarget", "Node", "Event"}
@@ -155,8 +180,8 @@ def test_window_aliases_need_the_baseline_field_and_the_reference_alike():
         "URL": {"parent": None, "tag": "URL", "exposed_in": ["Window"], "aliases": ["webkitURL"],
                 "constructor": {"exposed": True}, "template": {}, "members": {}, "constants": []},
     })
-    both = collection(baseline, surface=Profile("test", frozenset({"URL", "webkitURL"})))
-    only_target = collection(baseline, surface=Profile("test", frozenset({"URL"})))
+    both = collection(baseline, surface=Profile("test", tuple(sorted({"URL", "webkitURL"}))))
+    only_target = collection(baseline, surface=Profile("test", tuple(sorted({"URL"}))))
 
     assert both.window_aliases() == {"webkitURL": "URL"}
     assert only_target.window_aliases() == {}
@@ -197,7 +222,8 @@ def test_the_surface_is_a_section_of_the_profile_the_environment_reads():
     assert surface is not None
     assert surface.browser == payload["source"]["browser"]
     section = payload["bindings"]
-    assert surface.exposed == frozenset(section["exposed"])
+    assert surface.exposed == frozenset(section["own_order"])
+    assert "exposed" not in section
     omits = section.get("omits") or {}
     assert surface.omitted_prototype == {name: frozenset(names)
                                          for name, names in (omits.get("prototype") or {}).items()}
@@ -210,11 +236,9 @@ def test_the_surface_is_a_section_of_the_profile_the_environment_reads():
 
 
 def test_a_profile_without_a_usable_section_reads_none(tmp_path):
-    names = ("absent", "empty", "wrongly shaped")
-    for label in names:
-        section = {"absent": None, "empty": {"exposed": []},
-                   "wrongly shaped": {"exposed": "Object"}}[label]
-        payload = {"schema": 1, "source": {"browser": "Chrome/1"}}
+    for label in ("absent", "empty"):
+        section = {"absent": None, "empty": {}}[label]
+        payload = {"schema": 4, "source": {"browser": "Chrome/1"}}
         if section is not None:
             payload["bindings"] = section
         path = tmp_path / f"{label.replace(' ', '-')}.json"
@@ -222,10 +246,18 @@ def test_a_profile_without_a_usable_section_reads_none(tmp_path):
         assert Profile.load(path) is None, label
 
 
+@pytest.mark.parametrize("order", [None, [], "Object"])
+def test_invalid_window_order_in_profile_is_rejected(tmp_path, order):
+    path = tmp_path / "invalid.json"
+    path.write_text(json.dumps({"schema": 4, "bindings": {"own_order": order}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="own_order"):
+        Profile.load(path)
+
+
 def test_a_section_without_gaps_reads_as_no_measurements(tmp_path):
     """An older profile keeps every interface whole, which is the behavior it was read for."""
-    payload = {"schema": 1, "source": {"browser": "Chrome/1"},
-               "bindings": {"keys": ["a"], "exposed": ["a"]}}
+    payload = {"schema": 4, "source": {"browser": "Chrome/1"},
+               "bindings": {"keys": ["a"], "own_order": ["a"]}}
     path = tmp_path / "no-gaps.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     surface = Profile.load(path)
@@ -245,7 +277,7 @@ def test_an_interface_gap_narrows_the_interface_object_only(baseline):
     assert "animationWorklet" in on_object, "this test needs the baseline as it is"
     assert on_object & {"supports", "escape"}, "and the members Chrome does install"
 
-    surface = Profile(browser="test", exposed=frozenset({"CSS"}),
+    surface = Profile(browser="test", own_order=tuple(sorted({"CSS"})),
                             omitted_interface={"CSS": frozenset({"animationWorklet"})})
     table = collection(baseline, surface=surface)
 
@@ -259,8 +291,8 @@ def test_an_interface_gap_narrows_the_interface_object_only(baseline):
 
 
 def test_a_wrongly_shaped_gap_entry_is_not_trusted(tmp_path):
-    payload = {"schema": 1, "source": {"browser": "Chrome/1"},
-               "bindings": {"keys": ["a"], "exposed": ["a"],
+    payload = {"schema": 4, "source": {"browser": "Chrome/1"},
+               "bindings": {"keys": ["a"], "own_order": ["a"],
                             "omits": {"prototype": {"Element": "slot", "Node": ["appendChild"]}}}}
     path = tmp_path / "broken-gaps.json"
     path.write_text(json.dumps(payload), encoding="utf-8")

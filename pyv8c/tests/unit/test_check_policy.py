@@ -28,12 +28,28 @@ def tool():
 
 
 def test_a_change_falls_into_the_bucket_that_decides_its_rule(tool):
+    assert tool.classify("pyv8/src/isolate/runtime.cpp") == "implementation"
+    assert tool.classify("pyv8/src/isolate/runtime.h") == "implementation"
+    assert tool.classify("pyv8/pyv8/__init__.py") == "implementation"
+    assert tool.classify("pyv8/tests/test_context.py") == "test"
+    assert tool.classify("pyv8c/tests/unit/test_check_policy.py") == "test"
     assert tool.classify("pyv8c/web/dom/document.py") == "implementation"
     assert tool.classify("pyv8c/idl/interfaces.zip") == "data"
     assert tool.classify("tests/unit/test_check_policy.py") == "test"
-    assert tool.classify("docs/architecture.md") == "docs"
+    assert tool.classify("docs/pyv8c/architecture.md") == "docs"
     assert tool.classify("README.md") == "docs"
     assert tool.classify("tools/check_policy.py") == "tooling"
+
+
+def test_changed_paths_keep_spaces_and_unicode(tool, monkeypatch):
+    from types import SimpleNamespace
+
+    responses = iter([
+        SimpleNamespace(returncode=0, stdout="pyv8c/pyv8c/with space.py\0", stderr=""),
+        SimpleNamespace(returncode=0, stdout="examples/中文 文件.py\0", stderr=""),
+    ])
+    monkeypatch.setattr(tool.subprocess, "run", lambda *args, **kwargs: next(responses))
+    assert tool.changed_paths("HEAD") == ["examples/中文 文件.py", "pyv8c/pyv8c/with space.py"]
 
 
 def test_an_implementation_change_without_a_test_is_reported(tool):
@@ -51,7 +67,7 @@ def test_a_test_alongside_silences_the_rule(tool):
 
 def test_data_and_documentation_changes_need_no_companion(tool):
     assert tool.companion_findings(["pyv8c/idl/interfaces.zip"]) == []
-    assert tool.companion_findings(["docs/architecture.md", "README.md"]) == []
+    assert tool.companion_findings(["docs/pyv8c/architecture.md", "README.md"]) == []
     assert tool.companion_findings([]) == []
 
 

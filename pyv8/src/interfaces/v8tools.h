@@ -149,9 +149,6 @@ namespace bindings {
         PyObject* configs);
 
 
-    void InstallExposedConstruct(v8::Isolate* isolate, v8::Local<v8::ObjectTemplate> instance_template, const char* name);
-
-
     void InstallExposedConstruct(v8::Local<v8::Context> context, v8::Local<v8::Object> instance_object, const char* name);
 
 } // namespace bindings

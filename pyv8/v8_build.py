@@ -334,19 +334,37 @@ def cppgc_microtask_queue_enabled(output_dir: str | Path) -> bool:
     always matches the library it links, whichever way the gn flag
     ``v8_cppgc_microtask_queue`` defaults in the selected V8 version.
     """
-    marker = "-DV8_CPPGC_MICROTASK_QUEUE"
+    override_value = os.environ.get("PYV8_CPPGC_MICROTASK_QUEUE")
+    override = _read_bool(override_value) if override_value is not None else None
+    marker = re.compile(r"(?:-D|/D)V8_CPPGC_MICROTASK_QUEUE(?:=[^\s]+)?(?:\s|$)")
     obj_dir = Path(output_dir) / "obj"
-    if not obj_dir.is_dir():
-        return False
-    for path in sorted(obj_dir.glob("*.ninja")):
+    found = None
+    for name in ("v8_base_without_compiler.ninja", "v8_base.ninja"):
+        path = obj_dir / name
+        if not path.is_file():
+            continue
         try:
-            with path.open("r", encoding="utf-8", errors="replace") as stream:
-                for line in stream:
-                    if marker in line:
-                        return True
+            text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-    return False
+        text = text.replace("$\r\n", "").replace("$\n", "")
+        definitions = [line for line in text.splitlines() if line.lstrip().startswith("defines =")]
+        if not definitions or not any(re.search(r"(?:-D|/D)V8_", line) for line in definitions):
+            continue
+        value = any(marker.search(line) for line in definitions)
+        if found is not None and found != value:
+            raise V8BuildError("conflicting V8 microtask queue ABI in build metadata")
+        found = value
+    if found is None:
+        if override is None:
+            raise V8BuildError(
+                f"cannot determine V8 microtask queue ABI from {obj_dir}; "
+                "set PYV8_CPPGC_MICROTASK_QUEUE=1 or 0 to match the V8 build"
+            )
+        return override
+    if override is not None and override != found:
+        raise V8BuildError("PYV8_CPPGC_MICROTASK_QUEUE conflicts with V8 build metadata")
+    return found
 
 
 @dataclass
@@ -587,14 +605,7 @@ class V8BuildConfig:
 
         self._ensure_depot_tools()
         self._bootstrap_depot_tools()
-        try:
-            self._checkout_v8()
-        except V8BuildError:
-            #: A sync needs the network; an existing checkout is enough to rebuild,
-            #: which is all a local build-switch change asks for.
-            if not (self.v8_home / "src" / "objects" / "js-temporal-objects.cc").is_file():
-                raise
-            print("Using the existing V8 checkout; gclient sync failed")
+        self._checkout_v8()
         self._build_v8()
         self.validate()
         if self.icu_data_file() is None:
@@ -1107,132 +1118,132 @@ class V8BuildConfig:
     @contextmanager
     def _source_compatibility_patches(self):
         originals: dict[Path, bytes] = {}
-        backing_store = self.v8_home / "src" / "objects" / "backing-store.cc"
-        if backing_store.is_file():
-            original = backing_store.read_bytes()
-            direct_function_ref = (
-                b"return isolate->heap()->allocator()->RetryCustomAllocate(\n"
-                b"        fn, internal::AllocationType::kOld,\n"
-            )
-            wrapped_function_ref = (
-                b"return isolate->heap()->allocator()->RetryCustomAllocate(\n"
-                b"        [&fn]() { return fn(); }, internal::AllocationType::kOld,\n"
-            )
-            if direct_function_ref in original:
-                originals[backing_store] = original
-                backing_store.write_bytes(
-                    original.replace(direct_function_ref, wrapped_function_ref, 1)
-                )
-                print(
-                    "Applying V8 std::function/FunctionRef compatibility patch "
-                    f"for {self.version}"
-                )
-
-        atomics_header = (
-            self.v8_home / "src" / "objects" / "js-atomics-synchronization.h"
-        )
-        if atomics_header.is_file():
-            original = atomics_header.read_bytes()
-            implicit_tail_padding = (
-                b"  ExternalPointerMember<kWaiterQueueNodeTag> waiter_queue_head_;\n"
-                b"  std::atomic<uint32_t> state_;\n"
-            )
-            explicit_tail_padding = (
-                b"  ExternalPointerMember<kWaiterQueueNodeTag> waiter_queue_head_;\n"
-                b"  std::atomic<uint32_t> state_;\n"
-                b"#if !V8_COMPRESS_POINTERS && TAGGED_SIZE_8_BYTES\n"
-                b"  uint32_t no_pointer_compression_padding_;\n"
-                b"#endif\n"
-            )
-            if (implicit_tail_padding in original
-                    and b"no_pointer_compression_padding_" not in original):
-                originals[atomics_header] = original
-                atomics_header.write_bytes(
-                    original.replace(
-                        implicit_tail_padding, explicit_tail_padding, 1
-                    )
-                )
-                print(
-                    "Applying V8 no-pointer-compression object layout patch "
-                    f"for {self.version}"
-                )
-
-        extended_map_replacements = {
-            self.v8_home / "src" / "objects" / "map.h": (
-                b"  std::atomic<uint8_t> bit_field_ex_;\n"
-                b"  // Leaves kTaggedSize-1 unused bytes, they will be used by subclasses.\n",
-                b"  std::atomic<uint8_t> bit_field_ex_;\n"
-                b"  uint8_t extended_map_padding_[3];\n"
-                b"  // Leaves the remaining bytes up to kTaggedSize for subclasses.\n",
-            ),
-            self.v8_home / "src" / "objects" / "map.tq": (
-                b"  bit_field_ex: ExtendedMapBitFields;\n"
-                b"  // Leaves kTaggedSize-1 unused bytes, they will be used by subclasses.\n",
-                b"  bit_field_ex: ExtendedMapBitFields;\n"
-                b"  extended_map_padding[3]: uint8;\n"
-                b"  // Leaves the remaining bytes up to kTaggedSize for subclasses.\n",
-            ),
-            self.v8_home / "src" / "objects" / "js-interceptor-map.h": (
-                b"  uint8_t extended_padding_[kTaggedSize - 1];\n",
-                b"#if TAGGED_SIZE_8_BYTES\n"
-                b"  uint8_t extended_padding_[kTaggedSize - 4];\n"
-                b"#endif\n",
-            ),
-            self.v8_home / "src" / "objects" / "js-interceptor-map.tq": (
-                b"  @ifnot(TAGGED_SIZE_8_BYTES) extended_padding[3]: uint8;\n"
-                b"  @if(TAGGED_SIZE_8_BYTES) extended_padding[7]: uint8;\n",
-                b"  @if(TAGGED_SIZE_8_BYTES) extended_padding[4]: uint8;\n",
-            ),
-            self.v8_home / "src" / "objects" / "js-interceptor-map-inl.h": (
-                b"void JSInterceptorMap::clear_extended_padding() {\n"
-                b"  memset(extended_padding_, 0, sizeof(extended_padding_));\n"
-                b"}\n",
-                b"void JSInterceptorMap::clear_extended_padding() {\n"
-                b"  memset(extended_map_padding_, 0, sizeof(extended_map_padding_));\n"
-                b"#if TAGGED_SIZE_8_BYTES\n"
-                b"  memset(extended_padding_, 0, sizeof(extended_padding_));\n"
-                b"#endif\n"
-                b"}\n",
-            ),
-        }
-        # Newer V8 revisions add a flags byte to JSInterceptorMap; its
-        # padding must shrink when the base gains explicit C++ tail padding.
-        newer_interceptor = self.v8_home / "src" / "objects" / "js-interceptor-map.h"
-        if newer_interceptor.is_file() and b"  uint8_t flags_;\n  uint8_t extended_padding_[kTaggedSize - 2];\n" in newer_interceptor.read_bytes():
-            extended_map_replacements[newer_interceptor] = (
-                b"  uint8_t flags_;\n  uint8_t extended_padding_[kTaggedSize - 2];\n",
-                b"  uint8_t flags_;\n  uint8_t extended_padding_[3];\n",
-            )
-            extended_map_replacements[self.v8_home / "src" / "objects" / "js-interceptor-map.tq"] = (
-                b"  @ifnot(TAGGED_SIZE_8_BYTES) extended_padding[2]: uint8;\n"
-                b"  @if(TAGGED_SIZE_8_BYTES) extended_padding[6]: uint8;\n",
-                b"  extended_padding[3]: uint8;\n",
-            )
-            extended_map_replacements[self.v8_home / "src" / "objects" / "js-interceptor-map-inl.h"] = (
-                b"void JSInterceptorMap::init_flags_and_clear_extended_padding() {\n"
-                b"  flags_ = 0;\n  memset(extended_padding_, 0, sizeof(extended_padding_));\n}\n",
-                b"void JSInterceptorMap::init_flags_and_clear_extended_padding() {\n"
-                b"  flags_ = 0;\n  memset(extended_map_padding_, 0, sizeof(extended_map_padding_));\n"
-                b"  memset(extended_padding_, 0, sizeof(extended_padding_));\n}\n",
-            )
-        extended_map_sources = {
-            path: path.read_bytes()
-            for path in extended_map_replacements
-            if path.is_file()
-        }
-        if len(extended_map_sources) == len(extended_map_replacements) and all(
-            old in extended_map_sources[path]
-            for path, (old, _new) in extended_map_replacements.items()
-        ):
-            for path, (old, new) in extended_map_replacements.items():
-                original = extended_map_sources[path]
-                originals[path] = original
-                path.write_bytes(original.replace(old, new, 1))
-            print(
-                "Applying V8 ExtendedMap object layout compatibility patch "
-                f"for {self.version}"
-            )
         try:
+            backing_store = self.v8_home / "src" / "objects" / "backing-store.cc"
+            if backing_store.is_file():
+                original = backing_store.read_bytes()
+                direct_function_ref = (
+                    b"return isolate->heap()->allocator()->RetryCustomAllocate(\n"
+                    b"        fn, internal::AllocationType::kOld,\n"
+                )
+                wrapped_function_ref = (
+                    b"return isolate->heap()->allocator()->RetryCustomAllocate(\n"
+                    b"        [&fn]() { return fn(); }, internal::AllocationType::kOld,\n"
+                )
+                if direct_function_ref in original:
+                    originals[backing_store] = original
+                    backing_store.write_bytes(
+                        original.replace(direct_function_ref, wrapped_function_ref, 1)
+                    )
+                    print(
+                        "Applying V8 std::function/FunctionRef compatibility patch "
+                        f"for {self.version}"
+                    )
+
+            atomics_header = (
+                self.v8_home / "src" / "objects" / "js-atomics-synchronization.h"
+            )
+            if atomics_header.is_file():
+                original = atomics_header.read_bytes()
+                implicit_tail_padding = (
+                    b"  ExternalPointerMember<kWaiterQueueNodeTag> waiter_queue_head_;\n"
+                    b"  std::atomic<uint32_t> state_;\n"
+                )
+                explicit_tail_padding = (
+                    b"  ExternalPointerMember<kWaiterQueueNodeTag> waiter_queue_head_;\n"
+                    b"  std::atomic<uint32_t> state_;\n"
+                    b"#if !V8_COMPRESS_POINTERS && TAGGED_SIZE_8_BYTES\n"
+                    b"  uint32_t no_pointer_compression_padding_;\n"
+                    b"#endif\n"
+                )
+                if (implicit_tail_padding in original
+                        and b"no_pointer_compression_padding_" not in original):
+                    originals[atomics_header] = original
+                    atomics_header.write_bytes(
+                        original.replace(
+                            implicit_tail_padding, explicit_tail_padding, 1
+                        )
+                    )
+                    print(
+                        "Applying V8 no-pointer-compression object layout patch "
+                        f"for {self.version}"
+                    )
+
+            extended_map_replacements = {
+                self.v8_home / "src" / "objects" / "map.h": (
+                    b"  std::atomic<uint8_t> bit_field_ex_;\n"
+                    b"  // Leaves kTaggedSize-1 unused bytes, they will be used by subclasses.\n",
+                    b"  std::atomic<uint8_t> bit_field_ex_;\n"
+                    b"  uint8_t extended_map_padding_[3];\n"
+                    b"  // Leaves the remaining bytes up to kTaggedSize for subclasses.\n",
+                ),
+                self.v8_home / "src" / "objects" / "map.tq": (
+                    b"  bit_field_ex: ExtendedMapBitFields;\n"
+                    b"  // Leaves kTaggedSize-1 unused bytes, they will be used by subclasses.\n",
+                    b"  bit_field_ex: ExtendedMapBitFields;\n"
+                    b"  extended_map_padding[3]: uint8;\n"
+                    b"  // Leaves the remaining bytes up to kTaggedSize for subclasses.\n",
+                ),
+                self.v8_home / "src" / "objects" / "js-interceptor-map.h": (
+                    b"  uint8_t extended_padding_[kTaggedSize - 1];\n",
+                    b"#if TAGGED_SIZE_8_BYTES\n"
+                    b"  uint8_t extended_padding_[kTaggedSize - 4];\n"
+                    b"#endif\n",
+                ),
+                self.v8_home / "src" / "objects" / "js-interceptor-map.tq": (
+                    b"  @ifnot(TAGGED_SIZE_8_BYTES) extended_padding[3]: uint8;\n"
+                    b"  @if(TAGGED_SIZE_8_BYTES) extended_padding[7]: uint8;\n",
+                    b"  @if(TAGGED_SIZE_8_BYTES) extended_padding[4]: uint8;\n",
+                ),
+                self.v8_home / "src" / "objects" / "js-interceptor-map-inl.h": (
+                    b"void JSInterceptorMap::clear_extended_padding() {\n"
+                    b"  memset(extended_padding_, 0, sizeof(extended_padding_));\n"
+                    b"}\n",
+                    b"void JSInterceptorMap::clear_extended_padding() {\n"
+                    b"  memset(extended_map_padding_, 0, sizeof(extended_map_padding_));\n"
+                    b"#if TAGGED_SIZE_8_BYTES\n"
+                    b"  memset(extended_padding_, 0, sizeof(extended_padding_));\n"
+                    b"#endif\n"
+                    b"}\n",
+                ),
+            }
+            # Newer V8 revisions add a flags byte to JSInterceptorMap; its
+            # padding must shrink when the base gains explicit C++ tail padding.
+            newer_interceptor = self.v8_home / "src" / "objects" / "js-interceptor-map.h"
+            if newer_interceptor.is_file() and b"  uint8_t flags_;\n  uint8_t extended_padding_[kTaggedSize - 2];\n" in newer_interceptor.read_bytes():
+                extended_map_replacements[newer_interceptor] = (
+                    b"  uint8_t flags_;\n  uint8_t extended_padding_[kTaggedSize - 2];\n",
+                    b"  uint8_t flags_;\n  uint8_t extended_padding_[3];\n",
+                )
+                extended_map_replacements[self.v8_home / "src" / "objects" / "js-interceptor-map.tq"] = (
+                    b"  @ifnot(TAGGED_SIZE_8_BYTES) extended_padding[2]: uint8;\n"
+                    b"  @if(TAGGED_SIZE_8_BYTES) extended_padding[6]: uint8;\n",
+                    b"  extended_padding[3]: uint8;\n",
+                )
+                extended_map_replacements[self.v8_home / "src" / "objects" / "js-interceptor-map-inl.h"] = (
+                    b"void JSInterceptorMap::init_flags_and_clear_extended_padding() {\n"
+                    b"  flags_ = 0;\n  memset(extended_padding_, 0, sizeof(extended_padding_));\n}\n",
+                    b"void JSInterceptorMap::init_flags_and_clear_extended_padding() {\n"
+                    b"  flags_ = 0;\n  memset(extended_map_padding_, 0, sizeof(extended_map_padding_));\n"
+                    b"  memset(extended_padding_, 0, sizeof(extended_padding_));\n}\n",
+                )
+            extended_map_sources = {
+                path: path.read_bytes()
+                for path in extended_map_replacements
+                if path.is_file()
+            }
+            if len(extended_map_sources) == len(extended_map_replacements) and all(
+                old in extended_map_sources[path]
+                for path, (old, _new) in extended_map_replacements.items()
+            ):
+                for path, (old, new) in extended_map_replacements.items():
+                    original = extended_map_sources[path]
+                    originals[path] = original
+                    path.write_bytes(original.replace(old, new, 1))
+                print(
+                    "Applying V8 ExtendedMap object layout compatibility patch "
+                    f"for {self.version}"
+                )
             yield
         finally:
             for path, original in originals.items():

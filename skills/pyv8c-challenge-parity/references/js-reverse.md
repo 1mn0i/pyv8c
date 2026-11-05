@@ -49,7 +49,7 @@ python skills/pyv8c-challenge-parity/scripts/js_reverse.py diff before.js after.
 离线计算局部表达式：
 
 ```powershell
-python skills/pyv8c-challenge-parity/scripts/js_reverse.py run --prelude decoder.js --snippet 'JSON.stringify(names)' --idl-path idls/145.0.7632.162.zip --timeout 20 --out evidence/expression.json
+python skills/pyv8c-challenge-parity/scripts/js_reverse.py run --prelude decoder.js --snippet 'JSON.stringify(names)' --timeout 20 --out evidence/expression.json
 ```
 
 该入口禁用真实网络，由父进程限制执行和关闭总时长；不是安全执行任意宿主代码的沙箱。输入、表达式和结果均属于诊断证据，不构成完整页面行为证明。

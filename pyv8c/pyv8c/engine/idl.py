@@ -23,7 +23,6 @@ from pathlib import Path
 from types import MappingProxyType
 
 from ..foundation.logging import logger
-from .window_order import load as load_window_order
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 #: The one artifact this build reads: a compressed document (a single JSON member) written by the
@@ -59,7 +58,8 @@ DEFINITION_KINDS = (DefinitionKind.kInterface, DefinitionKind.kIdlNamespace,
 
 #: The version of the document this build reads and writes; another is refused by name rather
 #: than read half-way.  Regenerate with ``tools/extract_idl.py``.
-IDL_VERSION = 8
+IDL_VERSION = 10
+LEGACY_IDL_VERSIONS = (8, 9)
 
 
 #: The exposure labels the IDL words worker realms with.
@@ -75,12 +75,13 @@ class Profile:
 
     A profile only narrows: a member it records as omitted is not installed, a name it does not
     carry is not exposed, and an array value it does not state borrows nothing.  A profile
-    measured against another document says nothing about this one, so it is dropped whole
-    instead of half applied.
+    measured against another document cannot narrow this one; its independent Window
+    order observation can still guide the installation order.
     """
 
     browser: str
-    exposed: frozenset
+    #: The single observation supplies both installation order and exposure.
+    own_order: tuple[str, ...] = ()
     #: ``interface -> prototype members the document declares and this browser omits``.
     omitted_prototype: Mapping[str, frozenset] = MappingProxyType({})
     #: The same, for members the document puts on the interface object itself.
@@ -89,6 +90,18 @@ class Profile:
     iteration_methods: Mapping[str, int] = MappingProxyType({})
     #: The document those omissions were measured against; empty when the writer did not say.
     against: str = ""
+    def __post_init__(self):
+        order = self.own_order
+        if (not isinstance(order, (list, tuple)) or
+                any(not isinstance(name, str) or not name for name in order) or
+                len(set(order)) != len(order)):
+            raise ValueError("bindings.own_order must be a list of unique non-empty strings")
+        object.__setattr__(self, "own_order", tuple(order))
+
+    @cached_property
+    def exposed(self):
+        """The membership view of the ordered Window observation."""
+        return frozenset(self.own_order)
 
     @classmethod
     def load(cls, path=None) -> "Profile | None":
@@ -118,7 +131,7 @@ class Profile:
     @cached_property
     def content_key(self):
         """A hashable identity for this profile: its content, not its object."""
-        return (self.browser, tuple(sorted(self.exposed)),
+        return (self.browser, self.own_order,
                 _name_groups(self.omitted_prototype), _name_groups(self.omitted_interface),
                 tuple(sorted(self.iteration_methods.items())))
 
@@ -156,13 +169,22 @@ def _read_profile(target) -> "Profile | None":
     except (OSError, ValueError):
         return None
     section = payload.get("bindings") if isinstance(payload, Mapping) else None
-    names = (section or {}).get("exposed")
-    if not isinstance(names, list) or not names:
+    if not section:
         return None
+    if not isinstance(section, Mapping):
+        raise ValueError("bindings must be an object")
+    from ..foundation.environment import SCHEMA_VERSION
+    if isinstance(payload, Mapping) and "schema" in payload and payload["schema"] != SCHEMA_VERSION:
+        raise ValueError(f"environment schema {payload['schema']!r} is not version {SCHEMA_VERSION}")
+    if "exposed" in section:
+        raise ValueError("bindings.exposed is no longer supported; use bindings.own_order")
+    order = section.get("own_order")
+    if not isinstance(order, list) or not order:
+        raise ValueError("bindings.own_order must be a non-empty list of unique names")
     omits = (section or {}).get("omits")
     return Profile(
         browser=str((payload.get("source") or {}).get("browser") or ""),
-        exposed=frozenset(str(name) for name in names),
+        own_order=order,
         omitted_prototype=_omitted(omits, "prototype"),
         omitted_interface=_omitted(omits, "interface"),
         iteration_methods=_iteration_methods(section),
@@ -176,7 +198,7 @@ def _report_stale_profile(profile, digest) -> None:
         return
     _REPORTED.add(digest[:12])
     logger.warning("pyv8c: the profile was measured against IDL {} but this build reads {} --"
-                   " it is ignored as a whole; re-run tools/collect_environment.py",
+                   " its IDL-dependent surface is ignored; its Window order remains available",
                    (profile.against or "?")[:12], digest[:12])
 
 
@@ -305,7 +327,7 @@ def _report_unwritable_sidecar(target, exc) -> None:
 
 
 def _read_file(target, label) -> tuple:
-    """``(label, digest, metadata, interfaces)`` of one document, decoded once per file version."""
+    """Return one document, decoded once per file version."""
     suffix = target.suffix.lower()
     if suffix not in (".zip", ".json"):
         raise ValueError(f"the IDL document must be a .zip or a .json file: {target}")
@@ -354,7 +376,7 @@ def _read_file(target, label) -> tuple:
 
 
 def _read_document(document) -> tuple:
-    """``(metadata, interfaces)`` of a document this build understands, or a loud refusal."""
+    """Decode the metadata and interfaces, or reject invalid data."""
     if not isinstance(document, dict):
         raise ValueError("the IDL document root must be an object")
     metadata = document.get("idl")
@@ -362,8 +384,8 @@ def _read_document(document) -> tuple:
     if not isinstance(metadata, dict) or not isinstance(interfaces, dict):
         raise ValueError("the IDL document must state an 'idl' object and an 'interfaces' object")
     version = metadata.get("version")
-    if version != IDL_VERSION:
-        raise ValueError(f"unsupported IDL version {version!r}; expected {IDL_VERSION} --"
+    if version not in (*LEGACY_IDL_VERSIONS, IDL_VERSION):
+        raise ValueError(f"unsupported IDL version {version!r}; expected one of {(*LEGACY_IDL_VERSIONS, IDL_VERSION)} --"
                          " regenerate it with tools/extract_idl.py")
     if not interfaces:
         raise ValueError("the IDL document must contain interfaces")
@@ -502,17 +524,19 @@ class Idl:
     #: The cost of the last :meth:`load`, for the startup report.
     _last_timings: dict[str, float] = {}
 
-    def __init__(self, path, digest, metadata, interfaces, profile=None):
+    def __init__(self, path, digest, metadata, interfaces, profile=None, order_profile=None):
         self.path = path
         self.digest = digest
         self.metadata = metadata
         self.interfaces = interfaces
+        order_profile = order_profile if order_profile is not None else profile
         if profile is not None and profile.against and profile.against != digest:
-            # Measured against another document: its omissions and its words mean nothing here,
-            # and applying half of it would install a collection this browser never had.
+            # IDL-dependent exposure and omissions do not apply to another document.
             _report_stale_profile(profile, digest)
             profile = None
         self.profile = profile
+        self.order_profile = order_profile
+        self.observed_window_order = (order_profile.own_order or None) if order_profile is not None else None
         self._iteration_methods = profile.iteration_methods if profile is not None else MappingProxyType({})
         self._interfaces: dict[str, IdlInterface] = {}
         self._positions: dict[str, int] | None = None
@@ -526,30 +550,6 @@ class Idl:
         self._declared: dict[tuple, bool] = {}
         self._exposed: dict[tuple, tuple] = {}
         self._aliases: dict[str, str] | None = None
-        #: The Window installation order that goes with this document, or ``None`` when no
-        #: order document was written for it.  ``window_order_problem`` says why a document
-        #: from another release is carried rather than refused; the Bindings decide whether
-        #: that is reported or fatal.
-        self.window_order, self.window_order_problem = self._load_window_order()
-
-    def _load_window_order(self):
-        """The order document that goes with this collection, and a mismatch to report."""
-        try:
-            order = load_window_order()
-        except (OSError, ValueError) as error:
-            return None, f"the Window order document cannot be read: {error}"
-        if order is None:
-            return None, ""
-        stated = self.metadata.get("chromium_version")
-        if stated and order.chromium_version != stated:
-            return None, (f"the Window order document is for Chromium {order.chromium_version},"
-                           f" this collection is {stated}")
-        recorded = set(order.constructors_before) | set(order.constructors_after) | set(order.constructors_after_late)
-        missing = set(self.exposed("Window")) - recorded
-        if missing:
-            logger.warning("pyv8c: the Window order document omits {} exposed interfaces; they will be installed after the recorded group: {}",
-                           len(missing), sorted(missing)[:10])
-        return order, ""
 
     @classmethod
     def load(cls, path=None, profile=_SHIPPED) -> "Idl":
@@ -564,14 +564,16 @@ class Idl:
             raise FileNotFoundError(f"the IDL document does not exist: {target}")
         label, digest, metadata, interfaces = _read_file(target, label)
         chosen = Profile.load() if profile is _SHIPPED else profile
+        observation = chosen
         if chosen is not None and chosen.against and chosen.against != digest:
             _report_stale_profile(chosen, digest)
             chosen = None
-        key = (digest, chosen.content_key if chosen is not None else None)
+        key = (digest, chosen.content_key if chosen is not None else None,
+               observation.content_key if observation is not None else None)
 
         view = _VIEWS.get(key)
         if view is None:
-            view = cls(label, digest, metadata, interfaces, chosen)
+            view = cls(label, digest, metadata, interfaces, chosen, observation)
             _VIEWS.clear()
             _VIEWS[key] = view
         return view
@@ -581,6 +583,8 @@ class Idl:
         """What a Browser reports about the document it read: its metadata and its size."""
         metadata = dict(self.metadata)
         return {**metadata, "idl": metadata, "path": self.path, "sha256": self.digest,
+                "window_order_source": ("environment" if self.observed_window_order is not None
+                                        else "fallback"),
                 "interface_count": len(self.interfaces)}
 
     @cached_property
@@ -590,7 +594,8 @@ class Idl:
         A compiled specification is keyed on this, so profiles that agree in content share
         their specs and two profiles that differ in one name never do.
         """
-        return self.profile.content_key if self.profile is not None else None
+        return (self.profile.content_key if self.profile is not None else None,
+                self.order_profile.content_key if self.order_profile is not None else None)
 
     def names(self) -> tuple:
         """Every interface name, in document order."""
@@ -803,16 +808,6 @@ class RealmPlan:
     eager: tuple[str, ...]
     #: Built by the time the realm is ready: the eager set, its ancestors and the alias targets.
     ready: tuple[str, ...] = ()
-    #: The global members installed before the interface constructors, in install order.
-    preinstall: tuple[str, ...] = ()
-    #: The interface constructors installed after every global member group.
-    postinstall: tuple[str, ...] = ()
-    #: The conditional constructors Blink resumes after the conditional operations.
-    postinstall_late: tuple[str, ...] = ()
-    #: The legacy factory functions and aliases Blink installs before the constructors.
-    legacy_factories: tuple[str, ...] = ()
-    #: The global interface's member groups, in installation order.
-    member_groups: tuple[str, ...] = ()
 
     @property
     def lazy(self) -> tuple[str, ...]:
@@ -825,34 +820,15 @@ def build_plan(idl, context_type, *, implements=(), expose_unimplemented=True, e
     """Plan one realm class from a collection.
 
     The names a realm installs and the skeleton it builds first are one object, so a realm and
-    its statistics read the same plan.  A Window plan also carries the order Blink installs
-    its global in, when the IDL collection was opened beside a Window order document; a
-    collection without one keeps the order the document implies.
+    its statistics read the same plan. Window order is resolved by its realm once
+    the environment, interface members and host globals are available.
     """
     installs = tuple(sorted(
         name for name in idl.exposed(context_type)
         if expose_unimplemented or name in implements
     ))
-    preinstall = postinstall = postinstall_late = legacy_factories = member_groups = ()
-    order = getattr(idl, "window_order", None)
-    if context_type == "Window" and order is not None:
-        known = set(installs)
-        preinstall = tuple(name for name in order.constructors_before if name in known)
-        ordered = set(order.constructors_before) | set(order.constructors_after) | set(order.constructors_after_late)
-        # Unrecorded interfaces remain available even when the order baseline is stale.
-        postinstall = tuple(name for name in order.constructors_after if name in known) + tuple(
-            name for name in installs if name not in ordered)
-        postinstall_late = tuple(name for name in order.constructors_after_late
-                                 if name in known)
-        legacy_factories = order.legacy_factories
-        member_groups = tuple(order.members)
     return RealmPlan(
         context_type=context_type,
         installs=installs,
         eager=tuple(name for name in installs if name in set(eager) or name == "Window"),
-        preinstall=preinstall,
-        postinstall=postinstall,
-        postinstall_late=postinstall_late,
-        legacy_factories=legacy_factories,
-        member_groups=member_groups,
     )

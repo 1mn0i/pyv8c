@@ -97,7 +97,7 @@ def test_a_document_of_another_version_is_refused(tmp_path):
     document["idl"]["version"] = 2
     path = tmp_path / "version-2.json"
     path.write_text(json.dumps(document), encoding="utf-8")
-    with pytest.raises(ValueError, match=f"expected {IDL_VERSION}"):
+    with pytest.raises(ValueError, match="unsupported IDL version"):
         Browser(idl_path=path)
 
 

@@ -1,5 +1,5 @@
 """The header table held to what Chrome 155 put on the wire; every expectation here
-is a transcription of a real browser's request (``docs/request-headers.md``)."""
+is a transcription of a real browser's request (``docs/pyv8c/request-headers.md``)."""
 
 import pytest
 
@@ -42,9 +42,9 @@ MEDIA_ORDER = (
     "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Referer", "Accept-Language", "Range",
 )
 
-CHROME_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+CHROME_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
 CHROME_HINTS = {
-    "sec-ch-ua": '"Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"',
+    "sec-ch-ua": '"Not:A-Brand";v="8", "Chromium";v="156", "Google Chrome";v="156"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"Windows"',
 }

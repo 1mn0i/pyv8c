@@ -2,7 +2,7 @@
 
 The servers record headers in arrival order, so the expected lists pin the wire order
 and not only the set.  The two exceptions are libcurl's: it puts ``Host`` first and
-moves a caller-supplied ``Connection`` to the end (``docs/request-headers.md``).
+moves a caller-supplied ``Connection`` to the end (``docs/pyv8c/request-headers.md``).
 """
 
 import base64
@@ -50,8 +50,8 @@ CROSS_ORIGIN = ["host", "sec-ch-ua-platform", "user-agent", "sec-ch-ua",
 RECORDS: list[dict] = []
 LOCK = threading.Lock()
 CHROME_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-             "(KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36")
-HINTS = '"Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"'
+             "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36")
+HINTS = '"Not:A-Brand";v="8", "Chromium";v="156", "Google Chrome";v="156"'
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):

@@ -72,24 +72,29 @@ GATES = ("layers", "companions", "startup", "offline", "duplicates")
 def changed_paths(base):
     """Repository-relative paths this change touches, committed or not."""
     listed = subprocess.run(
-        ["git", "diff", "--name-only", base], cwd=REPO, capture_output=True, text=True
+        ["git", "diff", "--name-only", "-z", base], cwd=REPO, capture_output=True, text=True
     )
     if listed.returncode != 0:
         raise SystemExit(f"git diff --name-only {base} failed:\n{listed.stderr.strip()}")
     untracked = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard"],
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
         cwd=REPO,
         capture_output=True,
         text=True,
     )
-    return sorted(set(listed.stdout.split()) | set(untracked.stdout.split()))
+    return sorted(set(filter(None, listed.stdout.split("\0")))
+                  | set(filter(None, untracked.stdout.split("\0"))))
 
 
 def classify(path):
     """Which bucket a changed path falls into."""
     if path.startswith(("tests/", "pyv8c/tests/", "pyv8/tests/")):
         return "test"
-    if path.startswith("pyv8c/pyv8c/") or path.startswith("pyv8c/") and not path.startswith("pyv8c/tests/"):
+    if path.startswith("pyv8/src/"):
+        return "implementation" if path.endswith((".cpp", ".h", ".def")) else "data"
+    if path.startswith("pyv8/pyv8/"):
+        return "implementation" if path.endswith((".py", ".pyi")) else "data"
+    if path.startswith("pyv8c/"):
         return "implementation" if path.endswith(".py") else "data"
     if path.startswith("docs/") or path.endswith(".md"):
         return "docs"
@@ -240,8 +245,23 @@ def gate_offline():
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(REPO / "pyv8c")
     environment["PYV8C_OFFLINE"] = "1"
+    # Editable installations and the root pytest configuration can otherwise put
+    # pyv8 back on sys.path, making this gate pass without testing its promise.
+    runner = """
+import importlib.abc
+import sys
+import pytest
+
+class NoNative(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'pyv8' or fullname.startswith('pyv8.'):
+            raise ModuleNotFoundError('pyv8 deliberately unavailable', name=fullname)
+
+sys.meta_path.insert(0, NoNative())
+raise SystemExit(pytest.main(['-c', 'pyv8c/pyproject.toml', 'pyv8c/tests/unit', '-q']))
+"""
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "pyv8c/tests/unit", "-q"],
+        [sys.executable, "-c", runner],
         cwd=REPO,
         env=environment,
         capture_output=True,

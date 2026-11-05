@@ -12,7 +12,7 @@ from ..foundation.logging import logger
 
 from ..foundation.arguments import is_nullish
 from ..foundation.host_errors import HostStateError
-from ..foundation.error_policy import is_host_failure
+from ..foundation.error_policy import control_exceptions, is_host_failure
 from ..foundation.lifecycle import ResourceScope
 from ..foundation.tasks import TaskQueue
 from ..foundation.urls import origin_tuple
@@ -121,7 +121,7 @@ class Page:
 
     These methods marshal onto the realm's owner thread, so they may be called
     from another thread; the JS objects they return may not (see
-    ``docs/usage.md``).
+    ``docs/pyv8c/usage.md``).
     """
 
     def __init__(self, profile, url="about:blank", *, trace=None, trace_scripts=None,
@@ -280,6 +280,8 @@ class Page:
                 None, error, message=message, filename=filename, line=line,
                 column=column, value=value,
             )
+        except control_exceptions():
+            raise
         except BaseException:  # reporting a script error must not raise
             logger.debug("failed to report an exception", exc_info=True)
         finally:
@@ -305,6 +307,8 @@ class Page:
             return
         try:
             self.lifecycle.dispatch_rejection(event_type, promise, reason)
+        except control_exceptions():
+            raise
         except BaseException:  # reporting a rejection must not raise
             logger.debug("failed to report a rejection", exc_info=True)
 
@@ -710,6 +714,10 @@ class Page:
             try:
                 callback(*args)
                 return True
+            except control_exceptions():
+                # Execution control must unwind: a termination or interrupt is
+                # not a failed cleanup step, and no further page JS may run.
+                raise
             except BaseException as exc:
                 if first_error is None:
                     first_error = exc

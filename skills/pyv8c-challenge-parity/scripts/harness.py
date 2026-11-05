@@ -3,6 +3,7 @@
 from __future__ import annotations
 import argparse
 import hashlib
+from importlib import resources
 import json
 import math
 import os
@@ -51,6 +52,20 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def idl_evidence(browser):
+    """Hash the actual archive or JSON, including packaged-resource labels."""
+    label = str(browser.idl_path)
+    if label.startswith("pyv8c:"):
+        parts = label[len("pyv8c:"):].replace("\\", "/").split("/")
+        if not parts or any(part in ("", ".", "..") for part in parts):
+            raise ValueError(f"invalid packaged IDL label: {label}")
+        data = resources.files("pyv8c").joinpath(*parts).read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+    else:
+        digest = sha(label)
+    return {"idl_path": label, "idl_sha256": digest}
+
+
 def source_state():
     roots = []
     for folder in Path(__file__).resolve().parents:
@@ -65,7 +80,7 @@ def source_state():
         for key, args in [
             ("head", ["rev-parse", "HEAD"]),
             ("status", ["status", "--short"]),
-            ("diff", ["diff", "--binary"]),
+            ("diff", ["diff", "--binary", "HEAD"]),
         ]:
             try:
                 run = subprocess.run(
@@ -232,15 +247,10 @@ def worker(config, result_path):
 
                 options["trace_callback"] = trace
             browser = Browser(**options)
-            result["runtime"].update(
-                idl_path=str(browser.idl_path), idl_sha256=sha(browser.idl_path)
-            )
-            profile_path = (
-                Path(__file__).resolve().parents[3]
-                / "pyv8c/pyv8c/data/chrome-environment.json"
-            )
-            if profile_path.is_file():
-                result["runtime"]["profile_sha256"] = sha(profile_path)
+            result["runtime"].update(idl_evidence(browser))
+            profile_resource = resources.files("pyv8c").joinpath("data", "chrome-environment.json")
+            if profile_resource.is_file():
+                result["runtime"]["profile_sha256"] = hashlib.sha256(profile_resource.read_bytes()).hexdigest()
             page = browser.new_profile().new_page()
         else:
             from playwright.sync_api import sync_playwright

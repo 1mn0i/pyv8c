@@ -9,7 +9,7 @@ import pytest
 @pytest.fixture
 def benchmark(monkeypatch):
     monkeypatch.setattr(sys, "path", sys.path.copy())
-    path = Path(__file__).resolve().parents[3] / 'tools/benchmark.py'
+    path = Path(__file__).resolve().parents[3] / 'benchmarks/benchmark.py'
     spec = importlib.util.spec_from_file_location('audit_benchmark', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -22,6 +22,14 @@ def test_an_unavailable_case_fails_comparison(benchmark, tmp_path, capsys):
     benchmark.BASELINE_FILE = baseline
     assert benchmark.compare({'failed': (None, 'measurement failed')}) is False
     assert 'measurement failed' in capsys.readouterr().out
+
+
+def test_comparison_rejects_a_different_python_version(benchmark, tmp_path, capsys):
+    baseline = tmp_path / 'baseline.json'
+    baseline.write_text('{"python":"0.0.0","cases":{}}')
+    benchmark.BASELINE_FILE = baseline
+    assert benchmark.compare({}) is False
+    assert 'incomparable Python versions' in capsys.readouterr().out
 
 
 def test_measure_preserves_raw_samples(benchmark):

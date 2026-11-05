@@ -1,6 +1,6 @@
 import pytest
 import pyv8
-from pyv8.trace import _display
+from pyv8.trace import _MAX_DISPLAY, _display
 
 
 class Window:
@@ -34,10 +34,10 @@ def test_function_preview_ignores_page_to_string(context):
 
 
 def test_long_function_and_strings_are_bounded(context):
-    value = context.exec_js('(function long(){' + '/*x*/'*10000 + '})')
-    assert len(_display(value)) <= 163
+    value = context.exec_js('(function long(){' + '/*x*/' * (_MAX_DISPLAY // 5 + 1) + '})')
+    assert len(_display(value)) <= _MAX_DISPLAY + 3
     assert _display(value).endswith('...')
-    assert len(_display('\n'*1000000)) <= 163
+    assert len(_display('\n'*1000000)) <= _MAX_DISPLAY + 3
     assert '\n' not in _display('\n'*1000000)
 
 
@@ -45,8 +45,8 @@ def test_tuple_depth_and_item_budget():
     value = (1,)
     for _ in range(2000):
         value = (value,)
-    assert len(_display(value)) <= 163
-    assert len(_display((1,)*100000)) <= 163
+    assert len(_display(value)) <= _MAX_DISPLAY + 3
+    assert len(_display((1,)*100000)) <= _MAX_DISPLAY + 3
     assert _display((1, 2)) == '(1, 2)'
 
 

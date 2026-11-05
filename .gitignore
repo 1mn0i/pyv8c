@@ -1,16 +1,18 @@
 __pycache__/
-*.py[cod]
+*.py[co]
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
 .tox/
+.venv*/
 build/
 dist/
 *.log
 
-# Local Chromium source and version selection
+# Local Chromium source and generated bindings
 .chromium-build/
 
 # Local V8/build state
@@ -26,9 +28,9 @@ dist/
 # Extracted bundled-IDL caches. Releases only contain the ZIP artifact.
 pyv8c/pyv8c/idl/*.json
 pyv8c/pyv8c/idl/*.pyv8ccache
-# The same, beside the version copies kept next to the package.
-idls/*.json
-idls/*.pyv8ccache
+# The same, beside the versioned archives in pyv8c/idls/.
+pyv8c/idls/*.json
+pyv8c/idls/*.pyv8ccache
 
 # One machine's readings, written by tools/collect_fonts.py and collect_text_layout.py --compare.
 tools/fonts-baseline.json

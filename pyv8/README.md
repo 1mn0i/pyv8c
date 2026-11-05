@@ -1,7 +1,7 @@
 # pyv8
 
-桥接内核重构后的接口和关闭语义见 [BRIDGE_KERNEL](../docs/pyv8/BRIDGE_KERNEL.md)，
-实测结果和待验收事项见 [重构报告](../docs/pyv8/BRIDGE_REFACTOR_RESULTS.md)。
+桥接内核重构后的接口和关闭语义见 [BRIDGE_KERNEL](../docs/pyv8/bridge-kernel.md)，
+实测结果和待验收事项见 [重构报告](../docs/pyv8/bridge-refactor-results.md)。
 
 pyv8 是一个基于 Google V8 的 CPython C++ 扩展，用于在 Python 中执行 JavaScript，
 并在 Python 对象与 V8 对象之间建立双向桥接。
@@ -32,7 +32,7 @@ pyv8 更关注 Chromium-like 构造器、原型链、属性描述符、intercept
 
 | 项目 | 当前状态 |
 | --- | --- |
-| CPython | 3.12 至 3.14 |
+| CPython | 3.12 至 3.15（3.15 已在 Windows 进行部分验证） |
 | Python ABI | `cp312-abi3` |
 | 默认 V8 | `15.4.68`（Windows 构建及相关回归已验证） |
 | Temporal | 随 V8 构建启用（`v8_enable_temporal_support=true`） |
@@ -115,7 +115,7 @@ print(context.exec_js("navigator.userAgent"))
 print(context.exec_js("sha256('payload')"))
 ```
 
-IDL 映射统一使用 C++ 定义的 `pyv8.IdlSpec`，完整字段与 realm 装配契约见 [IDL_SPEC.md](../docs/pyv8/IDL_SPEC.md)。
+IDL 映射统一使用 C++ 定义的 `pyv8.IdlSpec`，完整字段与 realm 装配契约见 [idl-spec.md](../docs/pyv8/idl-spec.md)。
 
 ## 安装
 
@@ -127,7 +127,7 @@ IDL 映射统一使用 C++ 定义的 `pyv8.IdlSpec`，完整字段与 realm 装�
 python -m pip install path/to/pyv8-2.1.2-cp312-abi3-<platform>.whl
 ```
 
-`cp312-abi3` wheel 可以由 CPython 3.12 至 3.14 加载，但 Windows、Linux、macOS
+`cp312-abi3` 扩展可供启用 GIL 的 CPython 3.12 至 3.15 使用，但 Windows、Linux、macOS
 以及 x64、arm64 仍然需要各自对应的 wheel。
 
 ### 从源码构建
@@ -176,14 +176,14 @@ $env:PYV8_V8_VERSION = "15.4.68"
 $env:PYV8_VS_HOME = "D:\soft\Microsoft\vs2026"
 $env:PYV8_VS_VERSION = "2026"
 $env:PYV8_WINDOWS_SDK = "D:\Windows Kits\10"
-$env:PYV8_BUILD_ROOT = "D:\code\pyv8env\_pyv8\.pyv8-build"
+$env:PYV8_BUILD_ROOT = "D:\src\pyv8env\pyv8c\pyv8\.pyv8-build"
 $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
 python setup.py build_v8
 python setup.py build_ext --inplace
 ```
 
 详细的编译器要求、环境变量、自定义 V8 路径和 ICU 数据约束见
-[完整使用指南](../docs/pyv8/USER_GUIDE.md#安装与构建)。
+[完整使用指南](../docs/pyv8/user-guide.md#安装与构建)。
 
 ## Chrome DevTools
 
@@ -221,23 +221,23 @@ finally:
 将打印的 `devtools://` URL 粘贴到 Chrome 地址栏。`start_devtools()` 只启动服务；
 `handle.run()` 在调用线程处理调试握手，然后执行回调。默认在下一段宿主脚本的首条语句暂停一次，
 不需要插入 `debugger;`。使用默认 `127.0.0.1`，不要向不可信网络暴露无认证的调试端口。
-配置、线程约束和旧接口迁移见 [DevTools 架构与迁移](../docs/pyv8/DEVTOOLS.md)。
+配置、线程约束和旧接口迁移见 [DevTools 架构与迁移](../docs/pyv8/devtools.md)。
 
 ## 文档
 
-- [完整使用指南](../docs/pyv8/USER_GUIDE.md)
-- [Context 与脚本执行](../docs/pyv8/USER_GUIDE.md#context-与脚本执行)
-- [Python/JavaScript 类型转换](../docs/pyv8/USER_GUIDE.md#类型转换)
-- [Chromium-like 类与原型](../docs/pyv8/USER_GUIDE.md#chromium-like-类与原型)
-- [Property interceptor](../docs/pyv8/USER_GUIDE.md#property-interceptor)
-- [Cross-origin 与 trace](../docs/pyv8/USER_GUIDE.md#cross-origin-与-trace)
-- [多 Isolate 和生命周期](../docs/pyv8/USER_GUIDE.md#多-isolate-与生命周期)
-- [DevTools 调试](../docs/pyv8/USER_GUIDE.md#devtools-调试)
-- [常见问题](../docs/pyv8/USER_GUIDE.md#常见问题)
+- [完整使用指南](../docs/pyv8/user-guide.md)
+- [Context 与脚本执行](../docs/pyv8/user-guide.md#context-与脚本执行)
+- [Python/JavaScript 类型转换](../docs/pyv8/user-guide.md#类型转换)
+- [Chromium-like 类与原型](../docs/pyv8/user-guide.md#chromium-like-类与原型)
+- [Property interceptor](../docs/pyv8/user-guide.md#property-interceptor)
+- [Cross-origin 与 trace](../docs/pyv8/user-guide.md#cross-origin-与-trace)
+- [多 Isolate 和生命周期](../docs/pyv8/user-guide.md#多-isolate-与生命周期)
+- [DevTools 调试](../docs/pyv8/user-guide.md#devtools-调试)
+- [常见问题](../docs/pyv8/user-guide.md#常见问题)
 
 ## 测试
 
-项目使用 tox 4 构建一次 `cp312-abi3` wheel，并在 Python 3.12 至 3.14 的隔离环境中
+项目使用 tox 4 构建一次 `cp312-abi3` wheel，并在 Python 3.12 至 3.15 的隔离环境中
 安装和测试同一个 wheel：
 
 ```bash
@@ -249,7 +249,12 @@ python314 -m tox
 ```bash
 python314 -m tox -e py312
 python314 -m tox -e py314
+python314 -m tox -e py315
 ```
+
+Windows 下已使用启用 GIL 的 CPython 3.15.0 验证原生 ABI3 wheel 和原生测试，以及
+浏览器 WebAssembly 测试。其他平台仍需分别验证。
+free-threaded CPython 3.15 不在支持范围内。
 
 快速原地编译并运行 pytest：
 
@@ -284,4 +289,4 @@ python -m pytest -q -n auto
 
 - 作者：conlin
 - 邮箱：995018884@qq.com
-- GitHub：https://github.com/ConlinH/_pyv8
+- GitHub：https://github.com/ConlinH/pyv8c

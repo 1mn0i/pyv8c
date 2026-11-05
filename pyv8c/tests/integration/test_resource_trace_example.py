@@ -4,12 +4,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pyv8c
+import pytest
 from pyv8c.platform.resources.documents import DocumentResourceController
 from pyv8c.platform.resources.frames import FrameResourceController
 
 
 def test_frame_and_style_trace_hooks_restore_their_methods(monkeypatch, capsys):
     path = Path(__file__).parents[3] / "examples/px3/script/trace.py"
+    if not path.is_file():
+        pytest.skip("optional local PX3 trace example is not present")
     monkeypatch.setitem(__import__("sys").modules, "common", SimpleNamespace(
         URL="http://trace.test/", here=None, launch=None, chrome_page=None,
         snapshot=lambda page, script: page.evaluate(script), there=None))

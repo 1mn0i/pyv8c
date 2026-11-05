@@ -496,23 +496,7 @@ class Binder:
         declared_attributes = self._members(cls, name, parent, "attributes", public_attributes)
         methods = []
         attributes = []
-        late_attributes = []
-        template_late_attributes = []
-        late_methods = []
-        tail_methods = []
         realm_methods = []
-        #: A Window's context-dependent members install after every operation, as
-        #: Blink's object phase does; the template-late group follows them, as it
-        #: does in the reference release.
-        order = getattr(bindings.idl, "window_order", None)
-        late_attribute_names = (set(order.group("late_attributes"))
-                                if order is not None and name == "Window" else set())
-        late_operation_names = (set(order.group("late_operations"))
-                                if order is not None and name == "Window" else set())
-        template_late_names = (set(order.group("late_template"))
-                               if order is not None and name == "Window" else set())
-        tail_names = (set(order.group("tail"))
-                      if order is not None and name == "Window" else set())
         seen = set()
         overrides = self.overrides
         for _location, member in entries:
@@ -537,7 +521,7 @@ class Binder:
                 elif declared is not None:
                     raw = self.wrappers._raw_callback(cls, declared.callback)
                     callback = self.wrappers.method(cls, name, public_name, raw, static=static)
-                    if static and _parameters_for(raw)[:1] == ("_realm",) and public_name not in late_operation_names and public_name not in tail_names:
+                    if static and _parameters_for(raw)[:1] == ("_realm",):
                         realm_methods.append((len(methods), raw))
                 else:
                     # ``fn_<member>``: the class implements it, and finding nothing leaves the stub.
@@ -546,16 +530,10 @@ class Binder:
                         callback = self.stubs.method(name, public_name, static=static)
                     else:
                         callback = self.wrappers.method(cls, name, public_name, raw, static=static)
-                        if static and _parameters_for(raw)[:1] == ("_realm",) and public_name not in late_operation_names and public_name not in tail_names:
+                        if static and _parameters_for(raw)[:1] == ("_realm",):
                             realm_methods.append((len(methods), raw))
                 length = member.length if member.length is not None else (declared.length if declared else 0)
-                if public_name in late_operation_names:
-                    target = late_methods
-                elif public_name in tail_names:
-                    target = tail_methods
-                else:
-                    target = methods
-                target.append(
+                methods.append(
                     MethodSpec(name=public_name, callback=callback, length=int(length),
                                cross_origin_check=cross_origin_check(member), **common)
                 )
@@ -577,13 +555,7 @@ class Binder:
                 else:
                     setter = self._writer(cls, name, public_name, declared, member, setter_prefix)
                 crossing = cross_origin_check(member)
-                if public_name in late_attribute_names:
-                    target = late_attributes
-                elif public_name in template_late_names:
-                    target = template_late_attributes
-                else:
-                    target = attributes
-                target.append(
+                attributes.append(
                     AttributeSpec(name=public_name, getter=getter, setter=setter, replaceable=bool(declared and declared.replaceable), cross_origin_get_check=crossing, cross_origin_set_check=crossing, **common)
                 )
         for public_name, declared in declared_methods.items():
@@ -598,15 +570,9 @@ class Binder:
             raw = self.wrappers._raw_callback(cls, declared.callback)
             static = declared.location == FlagLocation.kInterface
             callback = self.wrappers.method(cls, name, public_name, raw, static=static)
-            if static and _parameters_for(raw)[:1] == ("_realm",) and public_name not in late_operation_names and public_name not in tail_names:
+            if static and _parameters_for(raw)[:1] == ("_realm",):
                 realm_methods.append((len(methods), raw))
-            if public_name in late_operation_names:
-                target = late_methods
-            elif public_name in tail_names:
-                target = tail_methods
-            else:
-                target = methods
-            target.append(declared.replace(callback=callback))
+            methods.append(declared.replace(callback=callback))
         for public_name, declared in declared_attributes.items():
             if bindings.idl.member(name, public_name, "attribute") is None:
                 if bindings.idl.declares(name, public_name, "attribute"):
@@ -619,13 +585,7 @@ class Binder:
             setter = None
             if declared.setter is not None:
                 setter = self.wrappers.setter(cls, name, public_name, declared.setter)
-            if public_name in late_attribute_names:
-                target = late_attributes
-            elif public_name in template_late_names:
-                target = template_late_attributes
-            else:
-                target = attributes
-            target.append(declared.replace(getter=getter, setter=setter))
+            attributes.append(declared.replace(getter=getter, setter=setter))
         template = interface.template
         enabled = set()
         handlers = template.get("handlers") or {}
@@ -666,10 +626,6 @@ class Binder:
         options.update(
             methods=tuple(methods),
             attributes=tuple(attributes),
-            late_attributes=tuple(late_attributes),
-            late_methods=tuple(late_methods),
-            late_template_attributes=tuple(template_late_attributes),
-            tail_methods=tuple(tail_methods),
             constants_value=tuple(constants.values()),
             prototype_late_members=self._late_prototype_members(entries),
             to_string_tag=interface.tag or source.to_string_tag or name,

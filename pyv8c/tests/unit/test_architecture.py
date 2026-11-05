@@ -199,7 +199,7 @@ def test_optional_features_build_only_on_shared_layers():
     """Loading one optional feature must not drag in another one.
 
     A module-body import of a sibling feature would defeat the on-demand
-    contract in docs/architecture.md; its runtime half is the ``sys.modules``
+    contract in docs/pyv8c/architecture.md; its runtime half is the ``sys.modules``
     probe in tests/unit/test_lazy_interface_modules.py.  Only import-time
     imports are inspected: a call body may reach a sibling feature lazily.
 
@@ -240,14 +240,20 @@ def test_offline_scripts_do_not_import_browser_runtime():
         assert "from pyv8c import Browser" not in source
 
 
-def test_every_offline_script_has_only_a_wrapper_in_the_repository_tools():
-    """``tools/X.py`` hands over to ``pyv8c/tools/X.py`` and holds no logic."""
+def test_every_offline_script_has_a_repository_wrapper():
+    """Package tools have wrappers in tools/, except the startup benchmark."""
     pytest.importorskip("pyv8", reason="imports every tool, and two of them reach the extension")
     for path in (ROOT / "tools").glob("*.py"):
         if path.name.startswith("__"):
             continue
         implementation = importlib.import_module(f"pyv8c.tools.{path.stem}")
-        shell = importlib.import_module(f"tools.{path.stem}")
+        if path.stem == "measure_startup":
+            wrapper = ROOT.parents[1] / "benchmarks" / "measure_startup.py"
+            spec = importlib.util.spec_from_file_location("startup_benchmark_wrapper", wrapper)
+            shell = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(shell)
+        else:
+            shell = importlib.import_module(f"tools.{path.stem}")
         assert shell.main is implementation.main, path
 
 

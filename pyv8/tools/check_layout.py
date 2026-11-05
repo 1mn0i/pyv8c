@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that includes only go the way `doc/SOURCE_LAYOUT.md` says they may.
+"""Check that includes follow `docs/pyv8/source-layout.md`.
 
 The binding is arranged so that a file may use what is below it and nothing
 above, in this order: the shims, the isolate, the values, the handles and the
@@ -324,7 +324,7 @@ def main() -> int:
         return 0
     if arguments.enforce:
         print(
-            f"layout is out of place in {violations} place(s); see doc/SOURCE_LAYOUT.md",
+            f"layout is out of place in {violations} place(s); see docs/pyv8/source-layout.md",
             file=sys.stderr,
         )
         return 1

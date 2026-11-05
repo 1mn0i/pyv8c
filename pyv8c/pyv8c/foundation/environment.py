@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 from .system_fonts import FontRecord
 from .urls import origin_tuple
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def environment_of(services):

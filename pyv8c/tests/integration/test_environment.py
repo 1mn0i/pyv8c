@@ -70,7 +70,7 @@ def test_environment_drives_the_client_hints():
             return [data.platform, data.mobile,
                     data.brands.map(brand => brand.brand + '/' + brand.version)];
         })()""") == ["Linux", False,
-                    ["Google Chrome/120", "Chromium/120", "Not(A:Brand/24"]]
+                    ["Not:A-Brand/8", "Chromium/120", "Google Chrome/120"]]
 
         # The hints are derived from the user agent, and an explicit member wins.
         page.evaluate("""(() => {
@@ -88,7 +88,8 @@ def test_environment_drives_the_client_hints():
         # profile's, while the platform the UA names is worked out again.
         assert page.evaluate("window.__hints") == [
             "x86", "64", "6.5.0",
-            BrowserEnvironment().client_hints.full_version_list[0].version,
+            next(brand.version for brand in BrowserEnvironment().client_hints.full_version_list
+                 if brand.brand == "Google Chrome"),
             ["Desktop"],
         ]
     finally:

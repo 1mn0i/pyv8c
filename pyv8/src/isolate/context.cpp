@@ -264,12 +264,8 @@ PyMethodDef context_methods[] = {
      "install one global value with the property attributes the caller names"},
     {"install", (PyCFunction)PythonBoundary<context_install>::call, METH_O,
      "install each name as a non-enumerable lazy constructor"},
-    {"install_late", (PyCFunction)PythonBoundary<context_install_late>::call, METH_NOARGS,
-     "install the global interface's context-dependent attributes"},
-    {"install_late_methods", (PyCFunction)PythonBoundary<context_install_late_methods>::call, METH_NOARGS,
-     "install the conditional operations and template-late attributes"},
-    {"install_tail", (PyCFunction)PythonBoundary<context_install_tail>::call, METH_NOARGS,
-     "install the conditional operations that follow the conditional constructors"},
+    {"install_ordered", (PyCFunction)PythonBoundary<context_install_ordered>::call, METH_O,
+     "install global instance members and lazy constructors in the supplied order"},
     {"gc", (PyCFunction)PythonBoundary<context_gc>::call, METH_NOARGS, NULL},
     {"heap_statistics", (PyCFunction)PythonBoundary<context_heap_statistics>::call, METH_NOARGS,
      "bytes of this isolate's heap in use, committed, and its ceiling, as a dict"},
@@ -512,15 +508,20 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     PyObject* reuse_global = Py_None;
     PyObject* py_microtasks = Py_None;
     PyObject* trace_scripts = Py_None;
-    PyObject* preinstall = Py_None;
-    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", "reuse_global", "microtask_queue", "trace_scripts", "preinstall", NULL};
+    PyObject* ordered_global = Py_False;
+    static const char *keywords[] = {"global_this", "trace", "ctx_type", "timeout", "isolate", "lazy_factory", "trace_callback", "traceable", "reuse_global", "microtask_queue", "trace_scripts", "ordered_global", NULL};
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OOOOOOOOOOO", (char **) keywords,
                                     &global, &trace, &ctx_type, &py_timeout, &py_isolate,
                                     &lazy_factory, &trace_callback, &traceable,
                                     &reuse_global, &py_microtasks, &trace_scripts,
-                                    &preinstall)) {
+                                    &ordered_global)) {
         return NULL;
+    }
+
+    if (ordered_global != Py_True && ordered_global != Py_False) {
+        PyErr_SetString(PyExc_TypeError, "ordered_global must be a bool");
+        return nullptr;
     }
 
     if (py_timeout != Py_None) timeout = PyFloat_AsDouble(py_timeout);
@@ -534,19 +535,6 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     if (trace_callback != Py_None && !PyCallable_Check(trace_callback)) {
         PyErr_SetString(PyExc_TypeError, "trace_callback must be callable or None");
         return nullptr;
-    }
-    if (preinstall != Py_None) {
-        if (!PyTuple_Check(preinstall)) {
-            PyErr_SetString(PyExc_TypeError, "preinstall must be a tuple of names or None");
-            return nullptr;
-        }
-        for (Py_ssize_t index = 0; index < PyTuple_Size(preinstall); ++index) {
-            PyObject* item = PyTuple_GetItem(preinstall, index);
-            if (!PyUnicode_Check(item) || PyUnicode_GetLength(item) == 0) {
-                PyErr_SetString(PyExc_ValueError, "preinstall must contain non-empty strings");
-                return nullptr;
-            }
-        }
     }
     std::vector<std::string> trace_patterns;
     if (trace_scripts != Py_None) {
@@ -620,7 +608,6 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         self->py_isolate = py_isolate;
     }
     self->lazy_factory = NULL;
-    self->preinstall = NULL;
     self->global_template = NULL;
     self->py_global = NULL;
     self->registry = PyDict_New();
@@ -629,12 +616,9 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         Py_INCREF((PyObject*)lazy_factory);
         self->lazy_factory = lazy_factory;
     }
-    if (preinstall != Py_None) {
-        Py_INCREF((PyObject*)preinstall);
-        self->preinstall = preinstall;
-    }
     self->py_global = global;
     self->has_done = false;
+    self->ordered_global = ordered_global == Py_True;
     self->detached = false;
     self->timeout = timeout;
     self->trace = trace == Py_True;
@@ -709,8 +693,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         }
         Local<FunctionTemplate> global_inteface_template = templ->templ.Get(isolate);
         global_template = global_inteface_template->InstanceTemplate();
-        //: The class is kept so ``install_late`` can run the conditional phase
-        //: after the host globals exist.
+        //: Keep the class for ordered installation of global members.
         self->global_template = (PyObject*)templ;
 
     }

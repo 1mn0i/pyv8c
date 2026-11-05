@@ -114,6 +114,29 @@ class WindowsJob:
             raise ctypes.WinError(ctypes.get_last_error())
 
 
+def _wait_for_log_release(paths, timeout=5):
+    """Wait for terminated Windows descendants to release inherited log handles."""
+    from ctypes import wintypes as w
+
+    api = ctypes.WinDLL("kernel32", use_last_error=True)
+    api.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p,
+                                w.DWORD, w.DWORD, w.HANDLE]
+    api.CreateFileW.restype = w.HANDLE
+    api.CloseHandle.argtypes = [w.HANDLE]
+    deadline = time.monotonic() + timeout
+    for path in paths:
+        while True:
+            handle = api.CreateFileW(str(path), 0x80000000, 0, None, 3, 0, None)
+            if handle != ctypes.c_void_p(-1).value:
+                if not api.CloseHandle(handle):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                break
+            error = ctypes.get_last_error()
+            if error not in (32, 33) or time.monotonic() >= deadline:
+                raise ctypes.WinError(error)
+            time.sleep(0.01)
+
+
 def run_worker(script, config, directory, timeout):
     directory = Path(directory)
     cfg = directory / "config.json"
@@ -202,6 +225,11 @@ def run_worker(script, config, directory, timeout):
                 job.close()
             except OSError as exc:
                 cleanup.update(status="error", error=str(exc))
+        if os.name == "nt" and cleanup["forced"]:
+            try:
+                _wait_for_log_release((stdout_path, stderr_path))
+            except OSError as exc:
+                cleanup.update(status="error", error=f"log release: {exc}")
     if cleanup["status"] == "error":
         result["status"] = "error"
     result["process_cleanup"] = cleanup

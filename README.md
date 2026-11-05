@@ -6,19 +6,19 @@ pyv8c 是基于 V8 和 Python 的浏览器脚本运行框架。原生桥接由�
 
 ## 安装
 
-要求 Python 3.12 及以上，并能导入与当前解释器匹配的 `pyv8` 原生扩展。本轮主要验证环境为 Windows、Python 3.12 和本机 Chrome；其他平台及解释器版本需要分别验证。
+要求启用 GIL 的 CPython 3.12 及以上，并能导入与当前解释器匹配的 `pyv8` 原生扩展。Windows 上已对 CPython 3.15.0 完成原生测试和浏览器常规测试；其他平台需要分别验证。free-threaded CPython 暂不支持。
 
-仓库包含 `pyv8/`（V8 绑定）和 `pyv8c/`（浏览器框架）两个独立包。以下命令在仓库根目录执行：
+仓库包含 `pyv8/`（V8 绑定）和 `pyv8c/`（浏览器框架）两个独立包。以下命令在仓库根目录使用 CPython 3.12 执行：
 
 ```powershell
-python -m pip install --config-settings editable_mode=compat -e ./pyv8
-python -m pip install --config-settings editable_mode=compat -e "./pyv8c[network,dev,reference]"
-python -c "import pyv8, pyv8c; print(pyv8.__file__, pyv8c.__file__)"
+python312 -m pip install --config-settings editable_mode=compat -e ./pyv8
+python312 -m pip install --config-settings editable_mode=compat -e "./pyv8c[network,dev,reference]"
+python312 -c "import pyv8, pyv8c; print(pyv8.__file__, pyv8c.__file__)"
 ```
 
 在仓库根目录使用 setuptools 的普通 editable 安装时，同名项目目录可能遮蔽实际包；以上命令启用兼容模式。构建 pyv8 前须配置 V8 构建目录，详见原生项目文档。
 
-`network` 安装默认 HTTP 引擎，`dev` 安装测试工具，`reference` 安装驱动本机 Chrome 的工具，不下载浏览器。原生扩展构建要求见 [pyv8 文档](pyv8/README.md)。两个包可分别构建和发布；框架依赖兼容版本的 pyv8。
+默认 HTTP 和 WebSocket 引擎随基础依赖安装；`network` 保留为空的兼容别名。`dev` 安装测试工具，`canvas` 提供 Pillow 绘图，`cronet` 提供可选网络引擎，`benchmark` 提供可选进程监测，`reference` 安装驱动本机 Chrome 的工具，不下载浏览器。原生扩展构建要求见 [pyv8 文档](pyv8/README.md)。两个包可分别构建和发布；框架依赖兼容版本的 pyv8。
 
 ## 快速开始
 
@@ -57,12 +57,12 @@ Browser                         框架配置、接口装配和回调线程池
 
 ## 文档
 
-- [使用指南](docs/usage.md)：页面 API、等待、环境、网络入口与关闭。
-- [架构设计](docs/architecture.md)：模块职责、执行所有权、绑定和生命周期。
-- [开发指南](docs/development.md)：开发约定、测试、Chrome 对照和性能验证。
-- [任务调度](docs/task-scheduling.md)、[资源加载](docs/resource-loading.md)、[网络传输](docs/network-transports.md)。
-- [请求头](docs/request-headers.md)、[窗口与同源访问](docs/window-security.md)、[IDL 格式](docs/idl-format.md)。
-- [调试器](docs/devtools.md)、[运行跟踪](docs/tracing.md)。
+- [使用指南](docs/pyv8c/usage.md)：页面 API、等待、环境、网络入口与关闭。
+- [架构设计](docs/pyv8c/architecture.md)：模块职责、执行所有权、绑定和生命周期。
+- [开发指南](docs/pyv8c/development.md)：开发约定、测试、Chrome 对照和性能验证。
+- [任务调度](docs/pyv8c/task-scheduling.md)、[资源加载](docs/pyv8c/resource-loading.md)、[网络传输](docs/pyv8c/network-transports.md)。
+- [请求头](docs/pyv8c/request-headers.md)、[窗口与同源访问](docs/pyv8c/window-security.md)、[IDL 格式](docs/pyv8c/idl-format.md)。
+- [调试器](docs/pyv8c/devtools.md)、[运行跟踪](docs/pyv8c/tracing.md)。
 
 完整导航见 [文档索引](docs/README.md)。
 
@@ -72,4 +72,4 @@ pyv8c 不包含 Chromium 的完整渲染、进程和安全沙箱体系。样式�
 
 当前没有实现 OOPIF、完整 COOP/COEP、Origin-Agent-Cluster 和 `document.domain` 模型，也不提供完整 CDP Page、Network、DOM 域。不能以单个网站加载成功或接口数量衡量 Chrome 兼容程度。
 
-具体实现与限制见 [Web 能力与实现范围](docs/web-capabilities.md)。
+具体实现与限制见 [Web 能力与实现范围](docs/pyv8c/web-capabilities.md)。

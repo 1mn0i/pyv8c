@@ -270,7 +270,7 @@ class Isolate:
 # 基本类型
 class Context:
     """V8 JavaScript执行上下文"""
-    def __init__(self, global_this: Any, trace: bool = False, ctx_type: Optional[str] = None, timeout: Optional[float] = None, isolate: Optional[Isolate] = None, lazy_factory: Optional[Callable[[str], Any]] = None, trace_callback: Optional[Callable[..., Any]] = None, traceable: bool = False, reuse_global: Optional[JSObject] = None, microtask_queue: Optional[MicrotaskQueue] = None, trace_scripts: Optional[Tuple[str, ...]] = None) -> None:
+    def __init__(self, global_this: Any, trace: bool = False, ctx_type: Optional[str] = None, timeout: Optional[float] = None, isolate: Optional[Isolate] = None, lazy_factory: Optional[Callable[[str], Any]] = None, trace_callback: Optional[Callable[..., Any]] = None, traceable: bool = False, reuse_global: Optional[JSObject] = None, microtask_queue: Optional[MicrotaskQueue] = None, trace_scripts: Optional[Tuple[str, ...]] = None, ordered_global: bool = False) -> None:
         """Create a realm.
 
         *lazy_factory* answers what a name means here: it takes an interface name and
@@ -314,6 +314,14 @@ class Context:
         ...
     def hide_global(self, name: str, /) -> bool:
         """Take an exposed global back out; False when the realm owns no such name."""
+        ...
+    def install_ordered(self, items: Sequence[Tuple[str, str]], /) -> int:
+        """Install (kind, name) pairs on the owner thread.
+
+        Kinds are ``attribute``, ``method``, ``constructor``, ``host`` and
+        ``builtin``. Configurable data-property built-ins retain their values
+        and descriptors when repositioned; other built-ins stay in place.
+        """
         ...
     def install(self, names: Sequence[str], /) -> int:
         """Install each name as a non-enumerable lazy constructor on the global.

@@ -56,13 +56,22 @@ def test_selected_compiler_and_binary_changes_force_rebuild(tmp_path, monkeypatc
     executable = tmp_path / 'compiler.exe'
     executable.write_bytes(b'version one')
     compiler = SimpleNamespace(compiler_type='fixture', cc=str(executable))
-    owner = SimpleNamespace(compiler=compiler, force=False, _build_fingerprint=lambda config: {'fixture': 1})
+    binary = tmp_path / 'binding.pyd'
+    binary.write_bytes(b'original')
+    owner = SimpleNamespace(compiler=compiler, force=False, _build_fingerprint=lambda config: {'fixture': 1},
+                            get_ext_fullpath=lambda name: str(binary))
     owner._toolchain_identity = lambda: build._toolchain_identity(owner)
     file, original = build._require_rebuild_for_changed_v8(owner, None)
-    file.write_text(json.dumps({'inputs': original}))
+    import hashlib
+    file.write_text(json.dumps({'inputs': original, 'binary_sha256': hashlib.sha256(b'original').hexdigest()}))
     owner.force = False
     build._require_rebuild_for_changed_v8(owner, None)
     assert owner.force is False
+    binary.write_bytes(b'modified')
+    build._require_rebuild_for_changed_v8(owner, None)
+    assert owner.force is True
+    binary.write_bytes(b'original')
+    owner.force = False
     executable.write_bytes(b'version two')
     build._require_rebuild_for_changed_v8(owner, None)
     assert owner.force is True

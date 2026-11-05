@@ -1,7 +1,7 @@
 """MediaRecorder's MIME capability query for the bundled Chromium profile.
 
-Recording support differs from playback and MediaSource support. This table follows
-the local Chrome 155 build represented by the default environment profile.
+Recording support differs from playback and MediaSource support. This table was
+measured against a local Chrome 155 build; it is not generated from the profile.
 """
 
 import re

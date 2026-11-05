@@ -1,6 +1,7 @@
 """What it costs to install the same class into one more realm.
 
-Every context builds its own templates, so every member's name is converted to V8
+This historical experiment measured a build where every context built its own templates,
+so every member's name was converted to V8
 strings and registered again for each realm.  A per-class plan cached across
 realms was on the table; this is the bill it would have saved, measured against a
 class with nothing to install.
@@ -16,8 +17,8 @@ So a full set of DOM interfaces -- a few thousand members -- would reinstall for
 roughly ten milliseconds per realm, once, on a path that already costs a few
 milliseconds to build the realm at all.  That is not worth the per-isolate string
 handles and callback data it would take to share the work, so the install path is
-left as it is and this benchmark is here for whoever revisits it with a workload
-that says otherwise.
+left as it was. Current template sharing differs; repeat the measurement before
+using the historical figures to draw conclusions.
 
 The other half of that plan item was the runtime string: a replaceable attribute
 rebuilds its V8 name on every write.  Only ``[Replaceable]`` attributes do, the

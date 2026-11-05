@@ -1,12 +1,9 @@
 """The order a real Window realm installs its own properties in.
 
-The offline cases pin the document and the plan; these pin what a realm built
-from them actually answers ``Object.getOwnPropertyNames(window)`` with, including
-the two constructor blocks, the four member groups and the legacy aliases.
+These cases verify the observed order, legacy aliases and descriptor behavior
+that a realm exposes through ``Object.getOwnPropertyNames(window)``.
 """
 import pytest
-
-from pyv8c.engine.window_order import load
 
 pytestmark = pytest.mark.native
 
@@ -15,20 +12,11 @@ def _names(page):
     return page.evaluate("Object.getOwnPropertyNames(window)")
 
 
-def test_the_legacy_factories_lead_the_interface_constructors(page):
-    order = load()
+def test_legacy_factories_and_members_follow_observation(page, browser):
     names = _names(page)
-    start = names.index(order.legacy_factories[0])
-    assert names[start:start + len(order.legacy_factories)] == list(order.legacy_factories)
-    assert names[start + len(order.legacy_factories)] == order.constructors_before[0]
-
-
-def test_the_window_members_follow_the_constructor_block(page):
-    order = load()
-    names = _names(page)
-    window = names.index("window")
-    assert names[window - 1] == order.constructors_before[-1]
-    assert names[window] == order.members["early"][0]
+    observed = browser.bindings.idl.observed_window_order
+    selected = [name for name in observed if name in {"Option", "Image", "window", "alert"}]
+    assert [name for name in names if name in set(selected)] == selected
 
 
 def test_the_context_dependent_members_follow_the_operations(page):
@@ -54,56 +42,12 @@ def test_the_legacy_aliases_share_the_target_constructor(page):
     assert page.evaluate("window.WebKitMutationObserver === window.MutationObserver")
 
 
-def test_the_realm_answers_the_document_order(page, browser):
-    order = load()
-    expected = (list(order.legacy_factories)
-                + list(order.constructors_before)
-                + list(order.members["early"])
-                + list(order.members["operations"])
-                + list(order.members["late_attributes"])
-                + list(order.constructors_after)
-                + list(order.members["late_operations"])
-                + list(order.members["late_template"])
-                + list(order.constructors_after_late)
-                + list(order.members["tail"]))
-    names = _names(page)
-    start = names.index(order.legacy_factories[0])
-    actual = names[start:]
-    known = set(expected)
-    actual = [name for name in actual if name in known]
-    profile = browser.bindings.idl.profile
-    exposed = profile.exposed if profile is not None else None
-    expected = [name for name in expected if exposed is None or name in exposed]
-    assert actual == expected
-
-
-def test_without_order_the_legacy_factories_are_still_installed(monkeypatch):
-    from pyv8c import Browser
-    from pyv8c.engine.idl import Idl
-    idl = Idl.load()
-    monkeypatch.setattr(idl, "window_order", None)
-    browser = Browser(real_network=False)
-    try:
-        page = browser.new_profile().new_page()
-        assert page.evaluate("['Option', 'Image', 'Audio'].map(n => typeof window[n])") == ["function"] * 3
-    finally:
-        browser.close()
-
-
-def test_unrecorded_exposed_interface_is_still_installed(monkeypatch):
-    from dataclasses import replace
-    from pyv8c import Browser
-    from pyv8c.engine.idl import Idl
-    idl = Idl.load()
-    order = idl.window_order
-    name = order.constructors_after[0]
-    monkeypatch.setattr(idl, "window_order", replace(order, constructors_after=order.constructors_after[1:]))
-    browser = Browser(real_network=False)
-    try:
-        page = browser.new_profile().new_page()
-        assert page.evaluate(f"typeof window.{name}") == "function"
-    finally:
-        browser.close()
+def test_the_realm_answers_the_environment_order(page, browser):
+    actual = _names(page)
+    expected = browser.bindings.idl.observed_window_order
+    # V8 installs its own built-ins before this binding can define host names.
+    common = set(actual[actual.index("Option"):]) & set(expected)
+    assert [name for name in actual if name in common] == [name for name in expected if name in common]
 
 
 def test_iframe_window_order_and_descriptor_match_parent(page):

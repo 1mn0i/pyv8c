@@ -8,6 +8,8 @@ each interface name answers with, and the mismatches tolerated once each.
 from __future__ import annotations
 
 import threading
+import re
+from bisect import bisect_left
 from dataclasses import replace
 
 from .binder import Binder
@@ -52,12 +54,7 @@ class Bindings:
             raise ValueError("baseline_mismatch must be 'error' or 'warn'")
         #: Reported mismatches, so each difference warns once.
         self._mismatches = set()
-        #: An order document from another release is a baseline difference like any other.
-        if idl.window_order_problem:
-            if not self.report_mismatch(idl.window_order_problem):
-                raise ValueError(idl.window_order_problem)
-            if self.stub_logging == "off":
-                logger.warning("pyv8c: {}", idl.window_order_problem)
+        self._order_mismatches = set()
         self._unimplemented_iteration_sources: set[str] = set()
         self.staged_interfaces = runtime.catalog.skeleton()
         self._validated = False
@@ -80,6 +77,75 @@ class Bindings:
             if self.stub_logging != "off":
                 logger.warning("pyv8c: {}", message)
         return True
+
+    def check_window_order(self, actual, managed_names=()):
+        """Compare a freshly installed Window with the observed environment order."""
+        target = self.idl.observed_window_order
+        if target is None:
+            message = "Window order: environment has no observation; using stable IDL order"
+            with self._lock:
+                if message not in self._order_mismatches:
+                    self._order_mismatches.add(message)
+                    logger.warning("pyv8c: {}", message)
+            return
+        plan = self.plan("Window")
+        members = {member.name for location, member in self.idl.own_members("Window")
+                   if location == "instance"}
+        managed = set(plan.installs) | set(managed_names) | members
+        actual_set, target_set = set(actual), set(target)
+        missing = sorted((target_set & managed) - actual_set)
+        uncovered = sorted((actual_set & managed) - target_set)
+        filtered = sorted((target_set & set(self.idl.interfaces)) - set(plan.installs) - actual_set)
+        unclassified = sorted(target_set - actual_set - managed - set(self.idl.interfaces))
+        rank = {name: index for index, name in enumerate(target)}
+        # Include V8 built-ins in the order comparison even though they are not
+        # classified as missing host interfaces.
+        common = [name for name in actual if name in rank]
+        # A single V8 built-in in a different position must not be reported as
+        # hundreds of independent differences. Keep a longest ordered subsequence.
+        tails, indices, previous = [], [], [-1] * len(common)
+        for index, name in enumerate(common):
+            position = bisect_left(tails, rank[name])
+            if position:
+                previous[index] = indices[position - 1]
+            if position == len(tails):
+                tails.append(rank[name]); indices.append(index)
+            else:
+                tails[position] = rank[name]; indices[position] = index
+        retained = set()
+        cursor = indices[-1] if indices else -1
+        while cursor >= 0:
+            retained.add(cursor)
+            cursor = previous[cursor]
+        inversions = [name for index, name in enumerate(common) if index not in retained]
+        profile = self.idl.order_profile
+        match = re.search(r"(?:Chrome|Chromium)/(\d+(?:\.\d+){1,3})", profile.browser)
+        source_version = match.group(1) if match else None
+        idl_version = self.idl.metadata.get("chromium_version")
+        version = (f"environment={source_version}, IDL={idl_version}"
+                   if source_version and idl_version and source_version != idl_version else None)
+        if not (missing or uncovered or inversions or version or filtered or unclassified):
+            return
+        details = []
+        if version:
+            details.append(f"version mismatch: {version}")
+        if missing:
+            details.append(f"missing managed names ({len(missing)}): {missing[:8]!r}")
+        if uncovered:
+            details.append(f"unobserved managed names ({len(uncovered)}): {uncovered[:8]!r}")
+        if filtered:
+            details.append(f"not installed (exposure or availability, {len(filtered)}): {filtered[:8]!r}")
+        if unclassified:
+            details.append(f"reference-only, unclassified ({len(unclassified)}): {unclassified[:8]!r}")
+        if inversions:
+            details.append(f"order differences ({len(inversions)}): {inversions[:8]!r}")
+        message = "Window order (environment): " + "; ".join(details)
+        if self.baseline_mismatch == "error" and (missing or uncovered or inversions or version):
+            raise ValueError(message)
+        with self._lock:
+            if message not in self._order_mismatches:
+                self._order_mismatches.add(message)
+                logger.warning("pyv8c: {}", message)
 
     def record_unimplemented_iteration_source(self, name):
         """Record a missing host capability without labelling the baseline inconsistent."""

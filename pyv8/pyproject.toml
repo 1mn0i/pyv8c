@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
+requires = ["setuptools>=77.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,7 +10,7 @@ readme = "README.md"
 authors = [
     {name = "conlin", email = "995018884@qq.com"}
 ]
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.12, <4"
 keywords = ["v8", "javascript", "python", "spider"]
 dependencies = [
@@ -19,17 +19,18 @@ dependencies = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: C++",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
 [project.urls]
 Homepage = "https://github.com/ConlinH/pyv8c"
+Documentation = "https://github.com/ConlinH/pyv8c/tree/main/docs/pyv8"
 Repository = "https://github.com/ConlinH/pyv8c"
 Issues = "https://github.com/ConlinH/pyv8c/issues"
 

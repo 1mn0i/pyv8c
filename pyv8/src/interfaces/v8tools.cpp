@@ -552,13 +552,6 @@ namespace bindings {
         return true;
     }
 
-    void InstallExposedConstruct(v8::Isolate* isolate, v8::Local<v8::ObjectTemplate> instance_template, const char* name) {
-            instance_template->SetLazyDataProperty(
-                V8String(isolate, name), CallbackBoundary<ConstructAccessorNameGetterCallback>::call, v8::Local<v8::Value>(), v8::DontEnum,
-                v8::SideEffectType::kHasNoSideEffect);
-    }
-
-
     void InstallExposedConstruct(v8::Local<v8::Context> context, v8::Local<v8::Object> instance_object, const char* name) {
         v8::Isolate* isolate = v8_compat::context_isolate(context);
         instance_object

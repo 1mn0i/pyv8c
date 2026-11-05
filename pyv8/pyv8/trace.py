@@ -7,7 +7,7 @@ from . import JSFunction, JSObject, Null, Undefined
 #: bounded on its own.  An object graph is the older of the two hazards (a page global
 #: held 439 KB of it) and a string is the other: an ``atob`` argument, an XHR body and
 #: the script text a Trusted Types policy builds are each megabytes on one line.
-_MAX_DISPLAY = 160000
+_MAX_DISPLAY = 16000
 
 
 _EXCLUDED_GETTERS = frozenset((
