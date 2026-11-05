@@ -7,6 +7,25 @@ import pytest
 from tests.test_v8_build import v8_build
 
 
+def test_selected_windows_sdk_is_applied_temporarily(tmp_path, monkeypatch):
+    (tmp_path / 'V8_VERSION').write_text('15.4.68')
+    config = v8_build.V8BuildConfig.from_environment(tmp_path, {})
+    sdk = tmp_path / 'sdk'
+    version = '10.0.26100.0'
+    for relative in ('Include/um', 'Include/shared', 'Include/ucrt', 'Lib/um/x64', 'Lib/ucrt/x64'):
+        category, rest = relative.split('/', 1)
+        (sdk / category / version / rest).mkdir(parents=True)
+    toolchain = config.v8_home / 'build/toolchain/win/setup_toolchain.py'
+    toolchain.parent.mkdir(parents=True)
+    original = b"SDK_VERSION = '10.0.28000.0'\n"
+    toolchain.write_bytes(original)
+    monkeypatch.setenv('PYV8_WINDOWS_SDK', str(sdk))
+    monkeypatch.setenv('PYV8_WINDOWS_SDK_VERSION', version)
+    with config._source_compatibility_patches():
+        assert toolchain.read_bytes() == b"SDK_VERSION = '10.0.26100.0'\n"
+    assert toolchain.read_bytes() == original
+
+
 def test_checkout_failure_is_not_silently_bypassed(tmp_path, monkeypatch):
     (tmp_path / 'V8_VERSION').write_text('15.4.68')
     config = v8_build.V8BuildConfig.from_environment(tmp_path, {'PYV8_BUILD_V8': '1'})

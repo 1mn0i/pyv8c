@@ -26,6 +26,25 @@ jobs:
           architecture: x64
       - name: Install build tools
         run: python -m pip install --upgrade pip build twine "setuptools>=77" wheel
+      - name: Select a complete Windows SDK
+        shell: pwsh
+        run: |
+          $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10'
+          $versions = Get-ChildItem "$sdkRoot/Include" -Directory |
+            Where-Object { $_.Name -match '^10\.0\.\d+\.\d+$' } |
+            Sort-Object { [version]$_.Name } -Descending
+          $sdk = $versions | Where-Object {
+            $v = $_.Name
+            (Test-Path "$sdkRoot/Include/$v/um") -and
+            (Test-Path "$sdkRoot/Include/$v/shared") -and
+            (Test-Path "$sdkRoot/Include/$v/ucrt") -and
+            (Test-Path "$sdkRoot/Lib/$v/um/x64") -and
+            (Test-Path "$sdkRoot/Lib/$v/ucrt/x64")
+          } | Select-Object -First 1
+          if (-not $sdk) { throw 'No complete Windows SDK found' }
+          "PYV8_WINDOWS_SDK=$sdkRoot" >> $env:GITHUB_ENV
+          "PYV8_WINDOWS_SDK_VERSION=$($sdk.Name)" >> $env:GITHUB_ENV
+          Write-Host "Selected Windows SDK $($sdk.Name)"
       - name: Build V8
         working-directory: pyv8
         run: python setup.py build_v8

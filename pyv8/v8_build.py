@@ -1119,6 +1119,24 @@ class V8BuildConfig:
     def _source_compatibility_patches(self):
         originals: dict[Path, bytes] = {}
         try:
+            sdk_version = os.environ.get("PYV8_WINDOWS_SDK_VERSION")
+            if sdk_version:
+                if not re.fullmatch(r"10\.0\.\d+\.\d+", sdk_version):
+                    raise V8BuildError(f"invalid Windows SDK version: {sdk_version!r}")
+                sdk_root = Path(os.environ.get("PYV8_WINDOWS_SDK") or os.environ.get("WINDOWSSDKDIR") or "")
+                required = [sdk_root / "Include" / sdk_version / part for part in ("um", "shared", "ucrt")]
+                required += [sdk_root / "Lib" / sdk_version / part / "x64" for part in ("um", "ucrt")]
+                if not all(path.is_dir() for path in required):
+                    raise V8BuildError(f"Windows SDK {sdk_version} is incomplete under {sdk_root}")
+                setup_toolchain = self.v8_home / "build" / "toolchain" / "win" / "setup_toolchain.py"
+                original = setup_toolchain.read_bytes()
+                updated, count = re.subn(rb"(?m)^SDK_VERSION = ['\"]10\.0\.\d+\.\d+['\"]", f"SDK_VERSION = '{sdk_version}'".encode("ascii"), original)
+                if count != 1:
+                    raise V8BuildError("could not locate the Windows SDK version in setup_toolchain.py")
+                if updated != original:
+                    originals[setup_toolchain] = original
+                    setup_toolchain.write_bytes(updated)
+                    print(f"Using Windows SDK {sdk_version} for V8")
             backing_store = self.v8_home / "src" / "objects" / "backing-store.cc"
             if backing_store.is_file():
                 original = backing_store.read_bytes()
