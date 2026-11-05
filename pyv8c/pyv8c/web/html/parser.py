@@ -159,6 +159,11 @@ class DOMParser(_TreeBuilderMixin, HTMLParser):
 def _iter_tokens(source):
     """Yield coarse HTML tokens while preserving script/style raw text."""
     pos, size, raw = 0, len(source), None
+    # Use the same tolerant attribute tokenizer as _StartTagParser. A quote
+    # inside an attribute name or an unquoted value does not open a quoted
+    # value; toggling on every quote can swallow subsequent scripts and tags.
+    tag_tokenizer = HTMLParser(convert_charrefs=False)
+    tag_tokenizer.rawdata = source
     while pos < size:
         if raw:
             match = re.search(r"</\s*" + re.escape(raw) + r"\s*>", source[pos:], re.I)
@@ -182,21 +187,14 @@ def _iter_tokens(source):
         close = re.match(r"</\s*([A-Za-z][\w:-]*)[^>]*>", source[pos:])
         if close:
             yield ("end", close.group(1)); pos += close.end(); continue
-        i, quote = pos + 1, None
-        while i < size:
-            ch = source[i]
-            if quote:
-                if ch == quote: quote = None
-            elif ch in "\"'": quote = ch
-            elif ch == ">": break
-            i += 1
-        if i >= size: yield ("data", source[pos:]); return
-        token = source[pos:i + 1]
-        opening = re.match(r"<\s*([A-Za-z][\w:-]*)", token)
+        opening = re.match(r"<([A-Za-z][\w:-]*)", source[pos:])
         if not opening:
             yield ("data", "<"); pos += 1; continue
+        end = tag_tokenizer.check_for_whole_start_tag(pos)
+        if end < 0: yield ("data", source[pos:]); return
+        token = source[pos:end]
         tag = opening.group(1).lower()
-        yield ("start", token); pos = i + 1
+        yield ("start", token); pos = end
         if tag in _TreeBuilderMixin.raw_text_tags and not token.rstrip().endswith("/>"): raw = tag
 
 

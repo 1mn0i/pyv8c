@@ -1,6 +1,7 @@
 """XMLHttpRequest implementation."""
 import json
 import re
+from functools import partial
 from urllib.parse import urljoin, urlsplit
 
 import pyv8
@@ -9,7 +10,9 @@ from ...idl import interface
 from ...foundation.arguments import (
     MISSING, boolean, byte_string, dom_string, integer, is_nullish, missing_error, usv_string,
 )
-from ..page_errors import InvalidStateError, NotSupportedError, SecurityError, PageSyntaxError, PageTypeError
+from ...foundation.error_policy import control_exceptions
+from ..page_errors import (InvalidStateError, InvalidAccessError, NetworkError,
+                          NotSupportedError, SecurityError, PageSyntaxError, PageTypeError)
 from ..dom.events import Event, EventTarget
 from ..fileapi.blob import Blob
 from .events import ProgressEvent
@@ -48,6 +51,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         #: The load in flight and the deadline armed for it, so a timeout can drop it.
         self._handle = None
         self._timer = None
+        self._generation = 0
+        self._send_flag = False
 
     def get_readyState(self): return self.readyState
     def get_status(self): return self.status
@@ -79,6 +84,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         if name not in self._RESPONSE_TYPES:
             raise PageTypeError(
                 f"'{name}' is not a valid value for enumeration XMLHttpRequestResponseType")
+        if not self._async:
+            raise InvalidAccessError("responseType cannot be set for synchronous Window requests")
         self.response_type = name
 
     def get_responseXML(self):
@@ -90,6 +97,8 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
     def get_timeout(self): return self.timeout
     def set_timeout(self, value):
         """``unsigned long``, and ignored once the request is running."""
+        if not self._async:
+            raise InvalidAccessError("timeout cannot be set for synchronous Window requests")
         if self.readyState not in (self.UNSENT, self.OPENED):
             return
         self.timeout = integer(value, bits=32, signed=False)
@@ -97,6 +106,23 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
     def _state(self, value):
         self.readyState = value
         self._dispatch_event(Event("readystatechange"))
+
+    def _clear_response(self):
+        self._response = None
+        self.status, self.status_text, self.response_url, self.responseText = 0, '', '', ''
+
+    def _invalidate_request(self):
+        # Invalidate callbacks before cancellation, which may complete inline.
+        self._generation += 1
+        self._send_flag = False
+        handle, self._handle = self._handle, None
+        self._stop_timer()
+        if handle is not None:
+            handle.cancel()
+
+    def _current_request(self, generation):
+        return (generation == self._generation and self._services is not None
+                and not self._services.realm_services.closed)
 
     def fn_open(self, method=MISSING, url=MISSING, async_value=True, *args):
         if method is MISSING:
@@ -123,12 +149,18 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         except ValueError as exc:
             raise PageSyntaxError("Invalid URL") from exc
         if not async_value:
-            raise NotSupportedError("synchronous XMLHttpRequest is not supported")
+            resources = getattr(self._services, 'resource_services', None)
+            if not callable(getattr(resources, 'load_resource', None)):
+                raise NotSupportedError("synchronous XMLHttpRequest is unavailable in this realm")
+            if self.timeout or self.response_type:
+                raise InvalidAccessError("synchronous Window requests require default timeout and responseType")
         # A new request starts from nothing: whatever the last one left is gone.
-        self._response = None
-        self.status, self.status_text, self.response_url, self.responseText = 0, "", "", ""
+        self._invalidate_request()
+        self._request_headers = Headers()
+        self._clear_response()
         self._method, self._url, self._async = method.upper(), resolved, async_value
-        self._state(self.OPENED)
+        if self.readyState != self.OPENED:
+            self._state(self.OPENED)
 
     def fn_setRequestHeader(self, key=MISSING, value=MISSING, *_extra):
         if key is MISSING:
@@ -137,7 +169,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             raise missing_error('XMLHttpRequest', 'setRequestHeader', 2, 1, constructor=False)
         key = byte_string(key)
         value = byte_string(value)
-        if self.readyState != self.OPENED:
+        if self.readyState != self.OPENED or self._send_flag:
             raise InvalidStateError("XMLHttpRequest is not in the OPENED state")
         self._request_headers.fn_set(key, value)
 
@@ -172,9 +204,9 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         return "text/plain;charset=UTF-8"
 
     def fn_send(self, body=None, *_extra):
-        if body is pyv8.Undefined:
+        if is_nullish(body):
             body = None
-        if self.readyState != self.OPENED:
+        if self.readyState != self.OPENED or self._send_flag:
             raise InvalidStateError("XMLHttpRequest is not in the OPENED state")
         from ..fileapi.blob import _array_buffer_bytes
         binary = _array_buffer_bytes(body)
@@ -188,20 +220,60 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         content_type = self._default_content_type(body)
         if content_type is not None:
             request["content_type"] = content_type
+        generation = self._generation
+        self._send_flag = True
+        if not self._async:
+            return self._send_sync(request)
         if self._services:
-            self._handle = self._services.resource_services.load_resource_async(
-                self._url, request, self._finish)
+            handle = self._services.resource_services.load_resource_async(
+                self._url, request, partial(self._finish, generation))
+            # Inline completion may already have finished or opened a new request.
+            if not self._current_request(generation) or not self._send_flag:
+                handle.cancel()
+                return
+            self._handle = handle
             if self.timeout:
                 self._timer = self._services.task_services.schedule(
-                    self._on_timeout, self.timeout / 1000.0, repeat=False)
+                    partial(self._on_timeout, generation), self.timeout / 1000.0, repeat=False)
 
-    def _finish(self, response, error):
-        self._handle, self._timer = None, self._stop_timer()
-        if not self._services or self._services.realm_services.closed:
+    def _send_sync(self, request):
+        # The existing synchronous resource path enforces origin, redirects and
+        # document ownership without pumping unrelated tasks or JS callbacks.
+        try:
+            response = self._services.resource_services.load_resource(self._url, request)
+        except control_exceptions():
+            raise
+        except Exception as error:
+            self._send_flag = False
+            self._clear_response()
+            self.readyState = self.DONE
+            raise NetworkError("Synchronous XMLHttpRequest failed") from error
+        self._response = response
+        self.status, self.status_text = response.status, response.status_text
+        self.response_url = str(response.url or self._url)
+        self.responseText = response._body_value()
+        self._send_flag = False
+        # Sync XHR skips observable HEADERS_RECEIVED/LOADING and progress events.
+        self._state(self.DONE)
+        if self.readyState == self.UNSENT:
+            # abort() inside the synchronous DONE handler resets the response.
+            raise NetworkError("Synchronous XMLHttpRequest was aborted")
+        body = response.body
+        loaded = len(body) if isinstance(body, (bytes, bytearray)) else len(str(body).encode('utf-8'))
+        for name in ('load', 'loadend'):
+            self._dispatch_event(ProgressEvent(name, {
+                'isTrusted': True, 'lengthComputable': True, 'loaded': loaded, 'total': loaded}))
+
+    def _finish(self, generation, response, error):
+        if not self._current_request(generation) or not self._send_flag:
             return
+        self._handle, self._timer = None, self._stop_timer()
         if error:
-            self.status = 0
+            self._send_flag = False
+            self._clear_response()
             self._state(self.DONE)
+            if self.readyState == self.UNSENT:
+                return
             # A ProgressEvent with nothing in it, as Chrome sends it: the reason a load
             # failed stays host-side.
             self._dispatch_event(ProgressEvent("error", {"isTrusted": True}))
@@ -214,8 +286,28 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self.response_url = str(response.url or self._url)
         self.responseText = response._body_value()
         self._state(self.HEADERS_RECEIVED)
+        if not self._current_request(generation):
+            self._finish_reentered_response(response)
+            return
         self._state(self.LOADING)
+        if not self._current_request(generation):
+            self._finish_reentered_response(response)
+            return
+        self._send_flag = False
         self._state(self.DONE)
+        if self.readyState == self.UNSENT:
+            return
+        # Chrome retains terminal events when a DONE handler opens another request.
+        self._dispatch_load_events(response)
+
+    def _finish_reentered_response(self, response):
+        # A nested synchronous request can finish inside HEADERS_RECEIVED/LOADING.
+        # Chrome then emits the outer terminal events, without changing the new
+        # response or its state. A new request still in progress stays untouched.
+        if self._current_request(self._generation) and self.readyState == self.DONE:
+            self._dispatch_load_events(response)
+
+    def _dispatch_load_events(self, response):
         body = response.body
         loaded = len(body) if isinstance(body, (bytes, bytearray)) else len(str(body))
         self._dispatch_event(ProgressEvent("load", {
@@ -239,14 +331,16 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         return "".join(lines)
 
     def fn_abort(self, *_extra):
-        handle, self._handle = self._handle, None
-        if handle is not None:
-            handle.cancel()
-        self._timer = self._stop_timer()
-        self._response = None
-        self.readyState = self.UNSENT
-        self._dispatch_event(ProgressEvent("abort", {"isTrusted": True}))
-        self._dispatch_event(ProgressEvent("loadend", {"isTrusted": True}))
+        active = self._send_flag and self.readyState in (self.OPENED, self.HEADERS_RECEIVED, self.LOADING)
+        self._invalidate_request()
+        generation = self._generation
+        self._clear_response()
+        if active:
+            self._state(self.DONE)
+            self._dispatch_event(ProgressEvent("abort", {"isTrusted": True}))
+            self._dispatch_event(ProgressEvent("loadend", {"isTrusted": True}))
+        if generation == self._generation:
+            self.readyState = self.UNSENT
 
     def _stop_timer(self):
         """Disarm the timeout, answering with the ident so the caller can store it."""
@@ -255,18 +349,15 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             self._services.task_services.cancel(timer)
         return None
 
-    def _on_timeout(self):
+    def _on_timeout(self, generation):
         """A timeout drops the request and reports ``loadend`` alone -- no ``error``
         and no ``abort``, which is what Chrome sends.  The realm's task queue runs
         this, so a host loader that blocks the owner thread delays it.
         """
-        self._timer = None
-        handle, self._handle = self._handle, None
-        if handle is None:
+        if not self._current_request(generation) or not self._send_flag:
             return
-        handle.cancel()
-        self._response = None
-        self.status = 0
+        self._invalidate_request()
+        self._clear_response()
         self._state(self.DONE)
         self._dispatch_event(ProgressEvent("loadend", {"isTrusted": True}))
 

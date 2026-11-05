@@ -231,8 +231,14 @@ class ScriptController:
         if self._sandboxed("allow-scripts"):
             return
         try:
-            fn = self.page.v8_context.exec_js("(function(event){" + str(source) + "})")
-            node._handlers[str(name).lower()] = fn
+            name = str(name).lower()
+            target = node._handler_target(name)
+            if target is None:
+                return
+            parameters = 'event,source,lineno,colno,error' \
+                if name == 'onerror' and target is self.page.window else 'event'
+            fn = self.page.v8_context.exec_js('(function(' + parameters + '){' + str(source) + '\n})')
+            node._set_handler(name, fn)
         except control_exceptions():
             raise
         except BaseException as exc:

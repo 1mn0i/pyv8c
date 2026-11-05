@@ -28,6 +28,15 @@ from ..dom.nodes import DocumentFragment
 
 from ..dom.element import Element, _unrendered
 
+# HTML WindowEventHandlers plus the six Window-reflecting body handlers.
+_WINDOW_BODY_HANDLERS = frozenset((
+    'onafterprint', 'onbeforeprint', 'onbeforeunload', 'onhashchange',
+    'onlanguagechange', 'onmessage', 'onmessageerror', 'onoffline', 'ononline',
+    'onpageswap', 'onpagehide', 'onpagereveal', 'onpageshow', 'onpopstate',
+    'onrejectionhandled', 'onstorage', 'onunhandledrejection', 'onunload',
+    'onblur', 'onerror', 'onfocus', 'onload', 'onresize', 'onscroll',
+))
+
 @interface('HTMLElement', 'Element')
 class HTMLElement(Element):
     #: The attributes this interface reflects in a shape of its own, from a table measured on
@@ -54,6 +63,20 @@ class HTMLElement(Element):
     #: keyword or no attribute at all -- reads as "inherit".
     _EDITABLE_VALUES = {"": "true", "true": "true", "false": "false",
                         "plaintext-only": "plaintext-only", "inherit": "inherit"}
+
+    def _handler_target(self, name):
+        if self.localName in ('body', 'frameset') and name in _WINDOW_BODY_HANDLERS:
+            document = self.ownerDocument
+            return document._browsing_window() if document is not None else None
+        return self
+
+    def _attribute_changed_here(self, name, old, new):
+        super()._attribute_changed_here(name, old, new)
+        if self.localName in ('body', 'frameset') and name in _WINDOW_BODY_HANDLERS:
+            if new is None:
+                self._set_handler(name, pyv8.Null)
+            else:
+                self._services.document_services.install_inline_handler(self, name, new)
 
     def get_contentEditable(self):
         value = self.attributes.get("contenteditable")

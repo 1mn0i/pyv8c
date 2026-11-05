@@ -1,5 +1,40 @@
 from pyv8c import Browser
 from pyv8c.web.fetch.response import Response
+import pytest
+
+
+@pytest.mark.parametrize('markup,nodes', [
+    ('<span style="width:80px""><b>label</b></span>', 7),
+    ('<div data-x=unquoted"quote>label</div>', 6),
+    ('<div id="broken><span class="inside">label</span>', 6),
+    ('<div data-x="a>b" title="\' > \'">label</div>', 6),
+    ('text < visibleCount; more text', 5),
+])
+def test_tolerant_tag_boundaries_preserve_following_scripts(page, markup, nodes):
+    # Chrome-observed recovery: stray quotes are not quoted value delimiters.
+    page.set_content('<body>' + markup +
+                     '<script>globalThis.afterTag = true;</script><i id="end">done</i>',
+                     url='https://parser.test/')
+    assert page.evaluate('[globalThis.afterTag === true, !!document.getElementById("end"),'
+                         'document.scripts.length, document.querySelectorAll("*").length]') == [
+                             True, True, 1, nodes]
+
+
+def test_tolerant_tag_boundary_keeps_script_strings_out_of_resource_discovery():
+    requests = []
+    browser = Browser(real_network=False, resource_loader=lambda url, request:
+                      requests.append(url) or {'body': ''})
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<body><div data-x=unquoted"quote>label</div>'
+                         '<script>globalThis.template = "<img src=\'literal.png\'>";</script>'
+                         '<img id="real" src="real.png">', url='https://parser.test/')
+        page.run_until_idle(timeout=2)
+        assert page.evaluate('[document.scripts.length, document.images.length, template]') == [
+            1, 1, "<img src='literal.png'>"]
+        assert requests == ['https://parser.test/real.png']
+    finally:
+        browser.close()
 
 
 def test_parser_blocking_external_script_pauses_and_resumes_parser():

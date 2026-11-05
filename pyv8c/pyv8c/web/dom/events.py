@@ -819,8 +819,17 @@ class EventTarget:
         self._listener_order = 0
         self._handlers = {}
 
-    def _get_handler(self, name): return self._handlers.get(name, pyv8.Null)
-    def _set_handler(self, name, value): self._handlers[name] = event_handler(value)
+    def _handler_target(self, name):
+        return self
+
+    def _get_handler(self, name):
+        target = self._handler_target(name)
+        return pyv8.Null if target is None else target._handlers.get(name, pyv8.Null)
+
+    def _set_handler(self, name, value):
+        target = self._handler_target(name)
+        if target is not None:
+            target._handlers[name] = event_handler(value)
 
     def fn_addEventListener(self, event_type=MISSING, listener=MISSING, options=False, *_extra):
         if event_type is MISSING:
@@ -1044,12 +1053,19 @@ class EventTarget:
         # EventHandler slots may hold non-callable objects; Blink invokes their function.
         if not capture and callable(handler):
             try:
-                if event.type == "error" and self.__class__.__name__ == "Window":
-                    _js_call(handler, self, getattr(event, "message", ""),
-                             getattr(event, "filename", ""), getattr(event, "lineno", 0),
-                             getattr(event, "colno", 0), getattr(event, "error", pyv8.Null))
+                window_error = False
+                if event.type == 'error' and self.__class__.__name__ == 'Window':
+                    from ..fetch.events import ErrorEvent
+                    window_error = isinstance(event, ErrorEvent)
+                if window_error:
+                    result = _js_call(handler, self, event.message, event.filename,
+                                      event.lineno, event.colno, event.error)
+                    if result is True:
+                        event.fn_preventDefault()
                 else:
                     result = _js_call(handler, self, event)
+                    if result is False:
+                        event.fn_preventDefault()
                     if event.type == "beforeunload" and result not in (None, pyv8.Null, pyv8.Undefined, ""):
                         event.defaultPrevented = True
             except _control_exceptions():
@@ -1063,13 +1079,13 @@ class EventTarget:
 
     def __getattr__(self, name):
         if name.startswith("on"):
-            return self._handlers.get(name, pyv8.Null)
+            return self._get_handler(name)
         raise AttributeError(name)
 
     def __setattr__(self, name, value):
         # A plain index beats str.startswith, and almost every assignment fails it.
         if name[:2] == "on" and name != "one" and "_handlers" in self.__dict__:
-            self._handlers[name] = value
+            self._set_handler(name, value)
             return
         object.__setattr__(self, name, value)
 
@@ -1132,10 +1148,10 @@ def _install_handler_slots(cls, names):
     """
     for name in names:
         def getter(self, _name=name):
-            return self._handlers.get(_name, pyv8.Null)
+            return self._get_handler(_name)
 
         def setter(self, value, _name=name):
-            self._handlers[_name] = event_handler(value)
+            self._set_handler(_name, value)
 
         getter.__name__ = "get_" + name
         setter.__name__ = "set_" + name

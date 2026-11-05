@@ -8,6 +8,14 @@ Request、Fetch、XMLHttpRequest 和 Blob 在所属 Realm 的 owner 上读取 Bu
 
 Window、Worker 与 MessagePort 共用结构化克隆，支持循环引用、Map、Date、共享缓冲区视图及已实现的 Blob、File、DOMException。接收值由接收 Realm 创建。transfer 列表先验证类型、重复身份和分离状态，再序列化及准备接收值，最后提交缓冲区分离和端口移动。失败不提交框架所有权变更；getter 自身的副作用不回滚。消息内的 MessagePort 必须列入 transfer。SharedArrayBuffer 转移不受支持。
 
+## XMLHttpRequest
+
+Window 支持通过现有同步资源入口执行同步 XHR，沿用源检查、重定向和文档归属校验。同步请求要求默认 timeout 与 responseType，完成状态及 load/loadend 在 send 返回前可见；网络和 CORS 失败抛 NetworkError。Worker 同步 XHR 仍未实现。
+
+send 的 null、undefined 和无参数输入统一为空请求体。成功 open 会取消旧加载与计时器，清空请求头及响应；迟到响应、错误和超时按请求版本隔离。发送中重复 send 或修改请求头会拒绝。
+
+回调内重开、同步重入及 abort 有本机 Chrome 156 对照，保留实测的外层终止事件。另一个 HEADERS_RECEIVED 回调重开异步请求的案例，Chrome 156 会拼接旧、新正文；框架按请求归属保持新正文独立，该差异不作为 Chrome 一致性通过项。以上不代表完整 XHR 上传、二进制响应或文档响应兼容。
+
 ## Worker
 
 DedicatedWorker 与 SharedWorker 提供 atob、btoa、structuredClone，Base64 与 Window 共用字符串转换和错误规则。
@@ -21,6 +29,10 @@ importNode 创建目标文档所属的节点，支持深浅复制、DocumentFrag
 复选框点击监听器看到预激活后的 checked 状态，取消默认动作后恢复 checked 与 indeterminate。宿主输入、元素 click 和 label 转发共用激活流程。click 使用 PointerEvent，srcElement 跟随事件目标，layer 坐标使用当前布局模型。
 
 文档解析结束后先进入 interactive，再执行 defer 队列，完成后派发 DOMContentLoaded。回调关闭页面或替换文档后，旧流程停止推进。
+
+HTML 起始标签复用容错属性边界扫描，属性名或无引号值中的孤立引号不再吞掉后续脚本，script/style 继续按原始文本处理。这不代表完整 HTML5 树构建算法。
+
+body/frameset 的指定事件处理器映射至所属活动文档的 Window，IDL、内联属性及属性修改/删除共享处理器槽。普通元素事件和 addEventListener 保留元素归属。映射至 Window 的 onerror 内联处理器接收五个错误参数；普通 error 事件接收事件对象，并按处理器返回值执行对应取消规则。
 
 ## 样式与布局
 
