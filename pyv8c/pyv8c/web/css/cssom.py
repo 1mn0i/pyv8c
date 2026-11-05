@@ -42,6 +42,7 @@ class CSSStyleDeclaration:
         self._block = None if block is None else parse_declarations(str(block))
         #: A computed style reads the cascade instead, and nothing writes it back.
         self._computed_values = None if computed is None else dict(computed)
+        self._inline_cache = None
     def _declarations(self):
         if self._block is not None:
             return list(self._block)
@@ -50,7 +51,10 @@ class CSSStyleDeclaration:
                     for name, value in self._computed_values.items()
                     if value not in ("", None)]
         raw = str(self._element.attributes.get("style", "")) if self._element is not None else ""
-        return parse_declarations(raw)
+        cached = self._inline_cache
+        if cached is None or cached[0] != raw:
+            cached = self._inline_cache = (raw, tuple(parse_declarations(raw)))
+        return list(cached[1])
     def _write(self, declarations):
         if self._computed_values is not None:
             return
@@ -67,6 +71,9 @@ class CSSStyleDeclaration:
         # declaration reads back as "" rather than null.
         if text: self._element.attributes["style"] = text
         elif "style" in self._element.attributes: self._element.attributes["style"] = ""
+        # Attribute writes through setAttribute remain visible: _declarations
+        # checks the exact text before reusing this declaration block.
+        self._inline_cache = (text, tuple(declarations))
         retained_math = {name: pair for name, pair in retained_math.items()
                          if any(n == name and v == pair[0] for n, v, _ in declarations)}
         self._element._inline_math_values = (text, retained_math)

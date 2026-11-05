@@ -15,7 +15,7 @@ from .colors import SYSTEM_COLORS
 from .parser import _box_values, parse_declarations, valid_color
 from .stylesheet import stylesheet_source
 from .colors import NAMED_COLORS
-from .selectors import matches
+from .selectors import parse as parse_selector, _matches_ast
 from .values import resolve as resolve_computed_values, length_math, absolute_length_px
 
 
@@ -72,20 +72,22 @@ def _parsed_inline(raw):
     return tuple(parse_declarations(raw))
 
 
-#: How CSS counts a selector: ids, then classes and attributes, then types.
-_SPECIFICITY_PATTERNS = (
-    (0, re.compile(r"#[\w-]+")),
-    (1, re.compile(r"\.[\w-]+|\[[^\]]*\]|::?[\w-]+(?:\([^)]*\))?")),
-    (2, re.compile(r"(?<![\w.#\[:-])[A-Za-z][\w-]*")),
-)
-
-
-def _specificity(selector):
-    """The three numbers CSS orders two rules by when both match."""
-    selector = re.sub(r":not\(([^)]*)\)", r"\1", str(selector))
+def _specificity(group):
+    """Count the parsed selector, so escaped punctuation remains an identifier."""
     counts = [0, 0, 0]
-    for slot, pattern in _SPECIFICITY_PATTERNS:
-        counts[slot] = len(pattern.findall(selector))
+    compounds, _relations = group
+    for simple in compounds:
+        counts[0] += len(simple.ids)
+        counts[1] += len(simple.classes) + len(simple.attrs)
+        counts[2] += simple.tag != '*'
+        for name, argument in simple.pseudos:
+            if name in ('is', 'not', 'where'):
+                nested = tuple(_specificity(part) for part in parse_selector(argument or ''))
+                if name != 'where':
+                    for index, count in enumerate(max(nested, default=(0, 0, 0))):
+                        counts[index] += count
+            else:
+                counts[1] += 1
     return tuple(counts)
 
 
@@ -263,17 +265,23 @@ def _font_relative_property(name):
     return name.startswith('border-') and name.endswith('-width')
 
 
-def _selector_matches(element, selector):
-    """Match one stylesheet selector; unsupported syntax simply never matches."""
+@lru_cache(maxsize=4096)
+def _stylesheet_selector(selector):
+    """Cache a whole selector list and its per-group specificity, or its failure."""
     try:
-        return matches(element, selector)
+        return tuple((group, _specificity(group)) for group in parse_selector(selector))
     except PageSyntaxError:
-        return False
+        return ()
+
+
+def _selector_matches(element, group):
+    """Match a cached stylesheet AST against the current element state."""
+    return _matches_ast(element, group)
 
 
 def document_rules(document):
     """The document's ``<style>`` rules, cached on ``style_version`` as
-    ``(selectors, declarations, counts)`` -- the specificity counted once, not per node."""
+    ``(selector ASTs, declarations, counts)`` -- specificity counted once, not per node."""
     if document is None:
         return ()
     version = getattr(document, "style_version", 0)
@@ -306,9 +314,10 @@ def _parse_style_elements(document):
         if not source:
             continue
         for selector, block in re.findall(r"([^{}]+)\{([^{}]*)\}", source):
-            parts = selector.split(",")
-            rules.append((parts, parse_declarations(block),
-                          tuple(_specificity(part) for part in parts)))
+            parsed = _stylesheet_selector(selector)
+            if parsed:
+                groups, counts = zip(*parsed)
+                rules.append((groups, parse_declarations(block), counts))
     return tuple(rules)
 
 

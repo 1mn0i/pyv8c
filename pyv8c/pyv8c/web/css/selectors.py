@@ -21,10 +21,70 @@ class Simple:
     pseudos: tuple = ()
 
 
+_CSS_SPACE = ' \t\r\n\f'
+
+
+def _selector_units(text):
+    """Keep a CSS escape and its optional hex terminator in one lexical unit."""
+    index = 0
+    while index < len(text):
+        start = index
+        index += 1
+        if text[start] == '\\' and index < len(text):
+            digits = re.match(r'[0-9a-fA-F]{1,6}', text[index:])
+            if digits:
+                index += digits.end()
+                if index < len(text) and text[index] in _CSS_SPACE:
+                    index += 2 if text.startswith('\r\n', index) else 1
+            else:
+                index += 2 if text.startswith('\r\n', index) else 1
+        yield start, text[start:index]
+
+
+def _trim_selector(text):
+    # str.strip() would remove an escaped final space or a hex terminator.
+    units = list(_selector_units(text))
+    while units and units[-1][1] in _CSS_SPACE:
+        units.pop()
+    start = next((i for i, unit in units if unit not in _CSS_SPACE), len(text))
+    return text[start:units[-1][0] + len(units[-1][1])] if units else ''
+
+
+def _decode_escape(unit, *, string=False):
+    digits = re.match(r'[0-9a-fA-F]{1,6}', unit[1:])
+    if digits:
+        code = int(digits.group(), 16)
+        return chr(code) if 0 < code <= 0x10ffff and not 0xd800 <= code <= 0xdfff else '\ufffd'
+    if len(unit) == 1:
+        return '\ufffd'
+    if unit[1] in '\r\n\f':
+        if string:
+            return ''
+        raise SyntaxError('Invalid escape in selector identifier')
+    return unit[1].replace('\0', '\ufffd')
+
+
+def _selector_name(text, start):
+    parts, end = [], start
+    for offset, unit in _selector_units(text[start:]):
+        if unit.startswith('\\'):
+            parts.append(_decode_escape(unit))
+        elif unit.isalnum() or unit in '_-' or ord(unit) >= 0x80:
+            parts.append(unit)
+        else:
+            break
+        end = start + offset + len(unit)
+    if end == start:
+        raise SyntaxError('Expected selector identifier')
+    return ''.join(parts), end
+
+
 def _balanced(text, start, opening="(", closing=")"):
     depth = 0; quote = None
-    for i in range(start, len(text)):
-        ch = text[i]
+    for offset, ch in _selector_units(text[start:]):
+        i = start + offset
+        if ch.startswith('\\'):
+            continue
         if quote:
             if ch == quote: quote = None
         elif ch in "'\"": quote = ch
@@ -37,42 +97,47 @@ def _balanced(text, start, opening="(", closing=")"):
 
 def _groups(text):
     result, start, depth, quote = [], 0, 0, None
-    for i, ch in enumerate(text):
+    for i, ch in _selector_units(text):
+        if ch.startswith('\\'):
+            continue
         if quote:
             if ch == quote: quote = None
         elif ch in "'\"": quote = ch
         elif ch in "[(": depth += 1
         elif ch in "])": depth -= 1
         elif ch == "," and depth == 0:
-            if not text[start:i].strip(): raise SyntaxError("Empty selector group")
-            result.append(text[start:i].strip()); start = i + 1
+            if not _trim_selector(text[start:i]): raise SyntaxError("Empty selector group")
+            result.append(_trim_selector(text[start:i])); start = i + 1
         if depth < 0: raise SyntaxError("Unbalanced selector")
-    if quote or depth or not text[start:].strip(): raise SyntaxError("Invalid selector")
-    result.append(text[start:].strip()); return result
+    if quote or depth or not _trim_selector(text[start:]): raise SyntaxError("Invalid selector")
+    result.append(_trim_selector(text[start:])); return result
 
 
 def _simple(text):
     if not text: raise SyntaxError("Expected compound selector")
-    i = 0; tag = "*"; m = re.match(r"(?:[A-Za-z_][\w-]*|\*)", text)
-    if m: tag, i = m.group().lower(), m.end()
+    i = 0; tag = "*"
+    if text[0] == '*':
+        i = 1
+    elif text[0].isalpha() or text[0] in '_-\\' or ord(text[0]) >= 0x80:
+        tag, i = _selector_name(text, 0); tag = tag.lower()
     ids, classes, attrs, pseudos = [], [], [], []
     while i < len(text):
         kind = text[i]
         if kind in "#.":
-            m = re.match(r"[.#]([\w-]+)", text[i:])
-            if not m: raise SyntaxError("Invalid class or id selector")
-            (ids if kind == "#" else classes).append(m.group(1)); i += m.end(); continue
+            name, i = _selector_name(text, i + 1)
+            (ids if kind == "#" else classes).append(name); continue
         if kind == "[":
             value, i = _balanced(text, i, "[", "]")
             m = re.match(r"^\s*([\w:-]+)\s*(?:(\^=|\$=|\*=|~=|\|=|=)\s*(.*?)\s*)?$", value)
             if not m: raise SyntaxError("Invalid attribute selector")
             val = m.group(3)
             if val is not None and len(val) >= 2 and val[0] in "'\"" and val[-1] == val[0]: val = val[1:-1]
-            attrs.append((m.group(1).lower(), m.group(2), val or "")); continue
+            val = ''.join(_decode_escape(unit, string=True) if unit.startswith('\\') else unit
+                          for _, unit in _selector_units(val or ''))
+            attrs.append((m.group(1).lower(), m.group(2), val)); continue
         if kind == ":":
-            m = re.match(r":([\w-]+)", text[i:])
-            if not m: raise SyntaxError("Invalid pseudo-class")
-            name, i = m.group(1).lower(), i + m.end(); arg = None
+            name, i = _selector_name(text, i + 1)
+            name = name.lower(); arg = None
             if i < len(text) and text[i] == "(": arg, i = _balanced(text, i)
             if name not in {"first-child", "last-child", "nth-child", "first-of-type", "last-of-type", "nth-of-type", "only-child", "only-of-type", "not", "is", "where", "empty", "root", "checked", "enabled", "disabled"}: raise SyntaxError("Unsupported pseudo-class: " + name)
             if name in {"checked", "enabled", "disabled"} and arg is not None: raise SyntaxError(f":{name} does not accept an argument")
@@ -83,29 +148,35 @@ def _simple(text):
 
 def _parse_group(text):
     compounds, relations, buf, depth, quote, pending_space = [], [], "", 0, None, False
-    for ch in text:
-        if quote:
+    for _, ch in _selector_units(text):
+        if ch.startswith('\\'):
+            if pending_space and compounds and len(relations) < len(compounds):
+                relations.append(' '); pending_space = False
+            buf += ch
+        elif quote:
             buf += ch
             if ch == quote: quote = None
         elif ch in "'\"": quote, buf = ch, buf + ch
         elif ch in "[(": depth, buf = depth + 1, buf + ch
         elif ch in "])": depth, buf = depth - 1, buf + ch
-        elif depth == 0 and ch.isspace():
-            if buf.strip(): compounds.append(_simple(buf.strip())); buf = ""; pending_space = True
+        elif depth == 0 and ch in _CSS_SPACE:
+            if _trim_selector(buf): compounds.append(_simple(_trim_selector(buf))); buf = ""; pending_space = True
         elif depth == 0 and ch in ">+~":
-            if buf.strip(): compounds.append(_simple(buf.strip())); buf = ""
+            if _trim_selector(buf): compounds.append(_simple(_trim_selector(buf))); buf = ""
             if not compounds: raise SyntaxError("Combinator without selector")
             relations.append(ch); pending_space = False
         else:
             if pending_space and compounds and len(relations) < len(compounds): relations.append(" "); pending_space = False
             buf += ch
     if quote or depth: raise SyntaxError("Invalid selector")
-    if buf.strip(): compounds.append(_simple(buf.strip()))
+    if _trim_selector(buf): compounds.append(_simple(_trim_selector(buf)))
     if not compounds or len(relations) != len(compounds) - 1: raise SyntaxError("Invalid combinator")
     return compounds, relations
 
 
-@lru_cache(maxsize=512)
+# A stylesheet can contain more selectors than a small query-only cache. Keep
+# their ASTs across element walks instead of reparsing every rule on each node.
+@lru_cache(maxsize=4096)
 def _parse_cached(selector):
     if not isinstance(selector, str) or not selector.strip(): raise SyntaxError("Invalid selector")
     return tuple(_parse_group(group) for group in _groups(selector))

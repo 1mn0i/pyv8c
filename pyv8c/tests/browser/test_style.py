@@ -34,6 +34,25 @@ def test_style_identity_cssom_and_initial_parse(page):
     ]
 
 
+def test_inline_declarations_remain_live_across_attribute_and_cssom_writes(page):
+    assert page.evaluate("""(() => {
+        const element = target, style = element.style;
+        const original = style.color;
+        element.setAttribute('style', 'color: red; width: 4px;');
+        const attribute = [style.color, style.width];
+        style.width = '8px';
+        style.setProperty('height', '12px');
+        const written = [style.color, style.width, style.height];
+        element.removeAttribute('style');
+        const removed = [style.color, style.width, style.length];
+        style.cssText = 'padding: 1px 2px; color: green !important;';
+        style.removeProperty('padding-left');
+        return [original, attribute, written, removed, style.paddingLeft,
+                style.paddingRight, style.getPropertyPriority('color')];
+    })()""") == ['blue', ['red', '4px'], ['red', '8px', '12px'],
+                  ['', '', 0], '', '2px', 'important']
+
+
 def test_color_keywords_serialize_and_invalid_assignments_are_ignored(page):
     assert page.evaluate('''(() => {
       const e = document.createElement('div'); document.body.appendChild(e);

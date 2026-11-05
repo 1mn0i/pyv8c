@@ -26,6 +26,8 @@ importNode 创建目标文档所属的节点，支持深浅复制、DocumentFrag
 
 声明解析识别字符串、URL 和函数内的分隔符。计算入口支持自定义属性继承、var 回退、数值 calc/min/max/clamp、部分颜色及变换计算。层叠规则、字体表、HarfBuzz 测量及样式失效保持统一。only-child 和 only-of-type 按元素兄弟区分。
 
+现有选择器支持转义标点、十六进制标识符和尾部转义空格。样式表复用选择器 AST 分组，避免误拆转义、属性字符串或伪类参数中的逗号；非法普通选择器列表整条忽略。优先级从 AST 计算，is/not 使用参数中的最高值，where 为零。语法、优先级和行内声明可缓存，元素匹配仍读取当前 DOM；属性、class 和 CSSOM 修改后保持实时更新。这些能力不代表完整 Selectors Level 4 或完整 CSS 样式表语法。
+
 getClientRects 返回矩形快照，隐藏或未连接元素返回空列表。目前布局提供单一边框盒，不提供完整行内碎片。支持嵌套 inline-block 的内边距及 min/max-width 约束。Windows 系统色按浅色主题常量验证，不代表深色、高对比度或动态主题兼容。
 
 hasStorageAccess 与 hasUnpartitionedCookieAccess 返回所属 Realm 的 Promise。非活动文档拒绝；有效 origin、安全上下文和祖先站点决定默认状态。当前没有完整存储权限授予流程。
