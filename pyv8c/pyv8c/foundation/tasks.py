@@ -38,6 +38,7 @@ class TaskSource(enum.Enum):
     POSTED_MESSAGE = "posted-message"
     USER_INTERACTION = "user-interaction"
     DOM = "dom-manipulation"
+    MEDIA_ELEMENT = "media-element"
     EMBEDDER = "embedder"
 
 

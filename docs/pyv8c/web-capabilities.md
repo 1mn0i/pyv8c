@@ -48,4 +48,7 @@ OfflineAudioContext.startRendering 提供 Promise 结果，并通过队列派发
 支持 oncomplete 和 addEventListener。OfflineAudioCompletionEvent.renderedBuffer 与
 Promise 的结果保持同一 AudioBuffer 身份；事件构造器要求有效的 renderedBuffer。
 完成事件的顺序与标志已与 Chrome 156 对照，覆盖同步返回后替换 handler 的情形。
+完成通知使用独立的 media-element 任务源，并保留文档代次与关闭取消约束。渲染计算本身仍同步执行。
 底层渲染仍使用框架现有的 Python 音频图，不代表与 Chrome 完整音频实现逐样本一致。
+
+DynamicsCompressorNode 使用有状态的单声道压缩内核，包含前瞻延迟、软拐点、补偿增益、检测器及攻击/释放包络，参数在 32 帧边界采样。默认、低振幅、静音、硬拐点及高频三角波有 Chrome 156 数值对照和容差回归；这不代表完整多声道 Web Audio 或逐位一致。

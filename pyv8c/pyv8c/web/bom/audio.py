@@ -25,6 +25,7 @@ from ...foundation.arguments import (
     sequence,
 )
 from ...foundation.clock import clock_of
+from ...foundation.tasks import TaskSource
 from ...foundation.arguments import IdlArgumentError
 from ..page_errors import PageTypeError, dom_exception
 from ..page_errors import js_error_value
@@ -851,24 +852,13 @@ class OfflineAudioContext(BaseAudioContext):
             self._dispatch_event(event)
             resolve(buffer)
 
-        realm.post_task(complete, label="offline-audio-complete", document_bound=True)
+        # Web Audio completion uses the media element task source. Sharing the
+        # DOM queue lets unrelated frame/resource work delay a finished render.
+        realm.post_task(complete, TaskSource.MEDIA_ELEMENT,
+                        label="offline-audio-complete", document_bound=True)
         return promise
     def fn_resume(self, *_extra): return self._promise()
     def fn_suspend(self, *_extra): return self._promise()
-
-
-#: The level a silent signal is taken to have, so a compressor stays in decibels.
-_SILENCE_DB = 1000.0
-
-
-def _compression_db(level, threshold, knee, ratio):
-    """How far the specification's soft knee takes a level down."""
-    over = level - threshold
-    if over <= -knee / 2:
-        return 0.0
-    if over >= knee / 2 or knee <= 0:
-        return threshold + over / ratio - level
-    return ((1.0 / ratio - 1.0) * (over + knee / 2) ** 2) / (2.0 * knee)
 
 
 @interface('DynamicsCompressorNode', 'AudioNode')
@@ -883,11 +873,10 @@ class DynamicsCompressorNode(AudioNode):
         self._ratio = AudioParam(12.0, minimum=1.0, maximum=20.0)
         self._attack = AudioParam(0.003, minimum=0.0)
         self._release = AudioParam(0.25, minimum=0.0)
-        self._envelope = -_SILENCE_DB
         self._reduction = 0.0
         rate = self._context.get_sampleRate() if self._context is not None else SAMPLE_RATE
-        # Blink's compressor uses a 6ms lookahead, bounded by its 1024-frame ring.
-        self._delay = deque([0.0] * min(int(0.006 * rate), 1023))
+        from .audio_compressor import CompressorDSP
+        self._compressor = CompressorDSP(rate)
 
     def get_threshold(self): return self._threshold
     def get_knee(self): return self._knee
@@ -898,21 +887,11 @@ class DynamicsCompressorNode(AudioNode):
 
     def _compute(self, seconds):
         value = super()._compute(seconds)
-        rate = self._context.get_sampleRate() if self._context is not None else SAMPLE_RATE
-        level = 20.0 * math.log10(abs(value)) if value else -_SILENCE_DB
-        # The detector follows the level with the attack it rises and the release it falls.
-        seconds_constant = self._attack.value_at(seconds) if level > self._envelope \
-            else self._release.value_at(seconds)
-        coefficient = 1.0 if seconds_constant <= 0 else \
-            1.0 - math.exp(-1.0 / (seconds_constant * rate))
-        self._envelope += (level - self._envelope) * coefficient
-        self._reduction = _compression_db(self._envelope, self._threshold.value_at(seconds),
-                                          self._knee.value_at(seconds),
-                                          self._ratio.value_at(seconds))
-        if self._delay:
-            self._delay.append(value)
-            value = self._delay.popleft()
-        return value * 10.0 ** (self._reduction / 20.0)
+        parameters = tuple(parameter.value_at(seconds) for parameter in
+                           (self._threshold, self._knee, self._ratio, self._attack, self._release))
+        output = self._compressor.process(value, parameters)
+        self._reduction = self._compressor.reduction
+        return output
 
 
 @interface('AudioBufferSourceNode', 'AudioScheduledSourceNode')

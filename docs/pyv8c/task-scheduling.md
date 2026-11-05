@@ -10,7 +10,9 @@
 
 ## 任务源与执行入口
 
-任务记录包含来源、所属 Realm/文档、代次、顺序和取消信息。任务源包括 parser、navigation、networking、timer、posted-message、user-interaction、DOM manipulation 和 embedder。
+任务记录包含来源、所属 Realm/文档、代次、顺序和取消信息。任务源包括 parser、navigation、networking、timer、posted-message、user-interaction、DOM manipulation、media-element 和 embedder。
+
+OfflineAudioContext 的完成通知使用 media-element 来源，避免已完成的渲染被无关 DOM 任务积压。该任务仍受所属文档代次与关闭状态约束；complete 事件先于渲染 Promise 的兑现回调。
 
 普通宿主命令进入 embedder 来源，不无限优先清空。调度公平选择可运行来源，并保持来源内要求的 FIFO；parser 阻塞只影响对应文档。关闭、终止和 Inspector 唤醒使用受限控制入口，不能借该入口执行任意页面 JS。
 

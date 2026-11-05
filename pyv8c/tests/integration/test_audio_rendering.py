@@ -197,7 +197,7 @@ def test_compressor_lookahead_matches_chrome_at_two_sample_rates():
 
 
 def test_a_compressor_takes_a_full_scale_tone_down():
-    """A full-scale sine through the defaults lands at -22 dB, which reduction reports."""
+    """Chrome 156: detector reduction and audible gain differ by makeup gain."""
     browser, page = _open()
     try:
         reduction, peak = _render(page, f"""
@@ -214,8 +214,45 @@ def test_a_compressor_takes_a_full_scale_tone_down():
     finally:
         browser.close()
 
-    assert -22.5 < reduction < -21.5, reduction
-    assert abs(peak - 10 ** (-22 / 20)) < 0.01, peak
+    assert abs(reduction - -12.614407539367676) < 0.001, reduction
+    assert abs(peak - 0.5828936100006104) < 0.0001, peak
+
+
+def test_compressor_static_curve_makeup_gain_and_detector_match_chrome():
+    # Chrome 156.0.8078.80, headless Windows, identical graphs and PCM windows.
+    cases = [
+        ("sine", 1000, 48000, 4096, 0.001, "", 0.0010887630051001906, 1.1739967049469768, -12.799138069152832),
+        ("sine", 1000, 48000, 4096, 1, "compressor.ratio.value=1;", 0.6705998182296753, 739.1878723369584, -13.024518966674805),
+        ("sine", 440, 44100, 4096, 0, "", 0, 0, -12.481213569641113),
+        ("sine", 1000, 48000, 8192, 1,
+         "compressor.threshold.value=-10;compressor.knee.value=0;compressor.ratio.value=20;"
+         "compressor.attack.value=.01;compressor.release.value=.05;", 0.6807208061218262, 2646.853668376237, -9.154073715209961),
+        ("triangle", 10000, 44100, 44100, 1,
+         "compressor.threshold.value=-50;compressor.knee.value=40;compressor.ratio.value=12;"
+         "compressor.attack.value=0;compressor.release.value=.25;", 0.3947939872741699, 124.04347776696522, -19.004104614257812),
+    ]
+    browser, page = _open()
+    try:
+        for kind, frequency, rate, length, amplitude, parameters, peak, total, reduction in cases:
+            measured = _render(page, f"""
+                const context = new OfflineAudioContext(1, {length}, {rate});
+                const oscillator = context.createOscillator();
+                oscillator.type = '{kind}'; oscillator.frequency.value = {frequency};
+                const gain = context.createGain(); gain.gain.value = {amplitude};
+                const compressor = context.createDynamicsCompressor(); {parameters}
+                oscillator.connect(gain).connect(compressor).connect(context.destination); oscillator.start();
+                const data = (await context.startRendering()).getChannelData(0);
+                const tail = data.slice({4500 if length == 44100 else 2048}, {5000 if length == 44100 else length});
+                window.__rendered = [tail.reduce((p,v)=>Math.max(p,Math.abs(v)),0),
+                                    tail.reduce((s,v)=>s+Math.abs(v),0), compressor.reduction,
+                                    data.every(Number.isFinite)];
+            """)
+            assert measured[3] is True
+            assert abs(measured[0] - peak) < 0.0001, (kind, measured)
+            assert abs(measured[1] - total) < max(0.03, total * 0.0001), (kind, measured)
+            assert abs(measured[2] - reduction) < 0.004, (kind, measured)
+    finally:
+        browser.close()
 
 
 def test_a_buffer_hands_back_a_float32_array_that_holds_what_was_written():

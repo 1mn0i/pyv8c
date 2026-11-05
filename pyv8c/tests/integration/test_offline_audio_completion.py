@@ -2,6 +2,23 @@
 import pytest
 
 
+def test_completion_uses_media_source_and_remains_document_bound(page, monkeypatch):
+    from pyv8c.foundation.tasks import TaskQueue, TaskSource
+    posted = []
+    original = TaskQueue.post_task
+
+    def record(self, callback, source=TaskSource.DOM, **kwargs):
+        if kwargs.get('label') == 'offline-audio-complete':
+            posted.append((source, kwargs.get('document_bound')))
+        return original(self, callback, source, **kwargs)
+
+    monkeypatch.setattr(TaskQueue, 'post_task', record)
+    page.evaluate('globalThis.done = false; new OfflineAudioContext(1,128,44100)'
+                  '.startRendering().then(() => done = true)')
+    page.wait_for('done', timeout=2)
+    assert posted == [(TaskSource.MEDIA_ELEMENT, True)]
+
+
 def test_complete_event_precedes_promise_and_shares_the_rendered_buffer(page):
     page.evaluate("""
         globalThis.completion = null;

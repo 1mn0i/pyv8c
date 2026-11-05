@@ -32,6 +32,27 @@ def test_source_fifo_and_source_fairness_are_agent_owned():
     assert seen == ['left1', 'network', 'right', 'left2']
 
 
+def test_media_tasks_have_their_own_fifo_and_keep_document_cancellation():
+    agent, left, right = lanes()
+    seen = []
+    for index in range(4):
+        left.post(lambda index=index: seen.append(('dom', index)), TaskSource.DOM)
+    left.post(lambda: seen.append('media1'), TaskSource.MEDIA_ELEMENT)
+    left.post(lambda: seen.append('media2'), TaskSource.MEDIA_ELEMENT)
+    stale = right.post_task(lambda: seen.append('stale'), TaskSource.MEDIA_ELEMENT,
+                            document_bound=True)
+    right.set_task_context(TaskContext(generation=1))
+    left.schedule(lambda: seen.append('timer'), 0)
+    while agent.run_turn():
+        pass
+    assert seen == [('dom', 0), 'media1', 'timer', ('dom', 1), 'media2',
+                    ('dom', 2), ('dom', 3)]
+    assert not stale.pending
+    right.post(lambda: seen.append('after-close'), TaskSource.MEDIA_ELEMENT)
+    right.close()
+    assert not agent.run_turn() and 'after-close' not in seen
+
+
 def test_parser_blocking_is_per_document_and_does_not_reorder_other_work():
     agent, left, right = lanes()
     left._host.blocked = True
