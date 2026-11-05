@@ -1137,6 +1137,17 @@ class V8BuildConfig:
                     originals[setup_toolchain] = original
                     setup_toolchain.write_bytes(updated)
                     print(f"Using Windows SDK {sdk_version} for V8")
+                if _version_tuple(sdk_version) < (10, 0, 26100, 0):
+                    raise V8BuildError("Windows SDK 10.0.26100.0 or newer is required")
+                if _version_tuple(sdk_version) < (10, 0, 28000, 0):
+                    build_gn = self.v8_home / "build" / "config" / "win" / "BUILD.gn"
+                    original_gn = build_gn.read_bytes()
+                    old_macro = b"NTDDI_VERSION=NTDDI_WIN11_BR"
+                    new_macro = b"NTDDI_VERSION=NTDDI_WIN11_GE"
+                    if old_macro in original_gn:
+                        originals[build_gn] = original_gn
+                        build_gn.write_bytes(original_gn.replace(old_macro, new_macro))
+                        print("Using Windows 11 GE target for the selected SDK")
             backing_store = self.v8_home / "src" / "objects" / "backing-store.cc"
             if backing_store.is_file():
                 original = backing_store.read_bytes()

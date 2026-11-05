@@ -19,11 +19,17 @@ def test_selected_windows_sdk_is_applied_temporarily(tmp_path, monkeypatch):
     toolchain.parent.mkdir(parents=True)
     original = b"SDK_VERSION = '10.0.28000.0'\n"
     toolchain.write_bytes(original)
+    build_gn = config.v8_home / 'build/config/win/BUILD.gn'
+    build_gn.parent.mkdir(parents=True)
+    original_gn = b'"NTDDI_VERSION=NTDDI_WIN11_BR",\n'
+    build_gn.write_bytes(original_gn)
     monkeypatch.setenv('PYV8_WINDOWS_SDK', str(sdk))
     monkeypatch.setenv('PYV8_WINDOWS_SDK_VERSION', version)
     with config._source_compatibility_patches():
         assert toolchain.read_bytes() == b"SDK_VERSION = '10.0.26100.0'\n"
+        assert b'NTDDI_VERSION=NTDDI_WIN11_GE' in build_gn.read_bytes()
     assert toolchain.read_bytes() == original
+    assert build_gn.read_bytes() == original_gn
 
 
 def test_checkout_failure_is_not_silently_bypassed(tmp_path, monkeypatch):

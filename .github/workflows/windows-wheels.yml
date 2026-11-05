@@ -31,7 +31,7 @@ jobs:
         run: |
           $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10'
           $versions = Get-ChildItem "$sdkRoot/Include" -Directory |
-            Where-Object { $_.Name -match '^10\.0\.\d+\.\d+$' } |
+            Where-Object { $_.Name -match '^10\.0\.\d+\.\d+$' -and [version]$_.Name -ge [version]'10.0.26100.0' } |
             Sort-Object { [version]$_.Name } -Descending
           $sdk = $versions | Where-Object {
             $v = $_.Name
