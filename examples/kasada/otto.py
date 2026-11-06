@@ -13,8 +13,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-import pyv8
-from pyv8.trace import format_trace
+from pyv8c import pyv8
+from pyv8c.pyv8.trace import format_trace
 from loguru import logger
 from pyv8c import Browser, register_transport
 from pyv8c.network.curl_cffi import CurlCffiTransport

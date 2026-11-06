@@ -7,7 +7,7 @@ import threading
 import pytest
 from websockets.sync.client import connect
 
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:

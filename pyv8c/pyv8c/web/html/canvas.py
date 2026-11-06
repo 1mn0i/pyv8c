@@ -1,7 +1,7 @@
 """The HTML canvas tag and its rendering context selection."""
 import base64
 import re
-import pyv8
+from pyv8c import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, integer
 from .elements import HTMLElement

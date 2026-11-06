@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 import pytest
 
-pytest.importorskip("pyv8", reason="the comparison runs in the native environment")
+pytest.importorskip("pyv8c.pyv8", reason="the comparison runs in the native environment")
 
 from harness import ReferenceUnavailable, chrome_reference
 

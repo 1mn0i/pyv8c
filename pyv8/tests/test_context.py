@@ -1,8 +1,8 @@
-from pyv8 import IdlSpec, MethodSpec
+from pyv8c.pyv8 import IdlSpec, MethodSpec
 import gc
 import sys
 import unittest
-import pyv8
+from pyv8c import pyv8
 
 class TestContext(unittest.TestCase):
     """测试JavaScript上下文的创建和基本功能"""

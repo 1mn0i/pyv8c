@@ -7,7 +7,7 @@ import time
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from typing import TYPE_CHECKING, Literal
 
-import pyv8
+from pyv8c import pyv8
 from ..foundation.logging import logger
 
 from ..foundation.arguments import is_nullish

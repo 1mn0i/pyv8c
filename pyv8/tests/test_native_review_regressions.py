@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 import pytest
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:
@@ -22,7 +22,7 @@ def child(program):
 def test_resizable_storage_refuses_zero_copy_but_allows_snapshot(buffer, view):
     option = "maxByteLength"
     child(f"""
-import pyv8
+from pyv8c import pyv8
 class Window: pass
 c = pyv8.Context(Window)
 try:
@@ -82,7 +82,8 @@ def test_readonly_export_honors_requested_metadata_and_rejects_writable(flags):
 @pytest.mark.parametrize("operation", ["execute", "close", "query"])
 def test_cross_isolate_contention_fails_without_waiting_for_outer_locks(operation):
     child("""
-import pyv8, threading
+from pyv8c import pyv8
+import threading
 class Window: pass
 a, b = pyv8.Isolate(), pyv8.Isolate()
 x, y = a.context(Window), b.context(Window)
@@ -117,7 +118,7 @@ finally:
 
 def test_uncontended_cross_isolate_nesting_and_return_to_outer_isolate():
     child("""
-import pyv8
+from pyv8c import pyv8
 class Window: pass
 a,b = pyv8.Isolate(),pyv8.Isolate()
 x,y = a.context(Window),b.context(Window)
@@ -132,7 +133,8 @@ finally:
 
 def test_implicit_context_queries_use_active_isolate_even_when_default_is_busy():
     child("""
-import pyv8, threading
+from pyv8c import pyv8
+import threading
 class Window: pass
 default = pyv8.Context(Window)
 isolate = pyv8.Isolate()
@@ -177,7 +179,7 @@ finally:
 @pytest.mark.parametrize("depth", [7, 8, 9, 12, 24])
 def test_outer_deadline_survives_deep_nesting_and_unwind(depth):
     child(f"""
-import pyv8
+from pyv8c import pyv8
 class Window: pass
 c=pyv8.Context(Window)
 def descend(n):
@@ -194,7 +196,7 @@ finally: c.close()
 
 def test_short_inner_deadline_beyond_old_limit_and_exception_unwind():
     child("""
-import pyv8
+from pyv8c import pyv8
 class Window: pass
 c=pyv8.Context(Window)
 def descend(n):
@@ -223,7 +225,8 @@ finally: c.close()
 @pytest.mark.parametrize("closing", ["target", "source"])
 def test_import_revalidates_context_and_handle_after_waiting(expression, closing):
     child(f"""
-import pyv8,threading,time
+from pyv8c import pyv8
+import threading,time
 class Window: pass
 isolate=pyv8.Isolate()
 source,target=isolate.context(Window),isolate.context(Window)

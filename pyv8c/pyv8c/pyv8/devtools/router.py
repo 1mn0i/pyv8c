@@ -5,7 +5,7 @@ import threading
 import uuid
 from urllib.parse import quote
 
-from pyv8 import _pyv8
+from .. import _pyv8
 from .requests import Requests
 from .session import Session, Target
 

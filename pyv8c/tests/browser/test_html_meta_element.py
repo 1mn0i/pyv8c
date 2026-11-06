@@ -2,8 +2,8 @@
 
 import pytest
 
-pytest.importorskip("pyv8")
-import pyv8
+pytest.importorskip("pyv8c.pyv8")
+from pyv8c import pyv8
 
 from pyv8c import Browser
 

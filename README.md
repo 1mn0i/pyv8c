@@ -6,19 +6,44 @@ pyv8c 是基于 V8 和 Python 的浏览器脚本运行框架。原生桥接由�
 
 ## 安装
 
-要求启用 GIL 的 CPython 3.12 及以上，并能导入与当前解释器匹配的 `pyv8` 原生扩展。Windows 上已对 CPython 3.15.0 完成原生测试和浏览器常规测试；其他平台需要分别验证。free-threaded CPython 暂不支持。
+Windows x64 发行包将框架与 V8 引擎打包为单个 `pyv8c-*-cp312-abi3-win_amd64.whl`。下载构建产物后可执行 `py -m pip install 路径\pyv8c-版本-cp312-abi3-win_amd64.whl`；它不依赖顶层 `pyv8` 发行包。发行包中的原生引擎也可单独使用：
 
-仓库包含 `pyv8/`（V8 绑定）和 `pyv8c/`（浏览器框架）两个独立包。以下命令在仓库根目录使用 CPython 3.12 执行：
+```python
+from pyv8c import pyv8
 
-```powershell
-python312 -m pip install --config-settings editable_mode=compat -e ./pyv8
-python312 -m pip install --config-settings editable_mode=compat -e "./pyv8c[network,dev,reference]"
-python312 -c "import pyv8, pyv8c; print(pyv8.__file__, pyv8c.__file__)"
+class Global:
+    __v8_idl_spec__ = pyv8.IdlSpec(global_this=True)
+
+context = pyv8.Context(Global())
+try:
+    print(context.exec_js("1 + 2"))
+finally:
+    context.close()
 ```
 
-在仓库根目录使用 setuptools 的普通 editable 安装时，同名项目目录可能遮蔽实际包；以上命令启用兼容模式。构建 pyv8 前须配置 V8 构建目录，详见原生项目文档。
+此安装包由 Windows workflow 生成，暂不发布到 PyPI。源码开发和发行包均使用 `pyv8c.pyv8` 入口。
 
-默认 HTTP 和 WebSocket 引擎随基础依赖安装；`network` 保留为空的兼容别名。`dev` 安装测试工具，`canvas` 提供 Pillow 绘图，`cronet` 提供可选网络引擎，`benchmark` 提供可选进程监测，`reference` 安装驱动本机 Chrome 的工具，不下载浏览器。原生扩展构建要求见 [pyv8 文档](pyv8/README.md)。两个包可分别构建和发布；框架依赖兼容版本的 pyv8。
+本机构建同一发行包时，先按 `pyv8/README.md` 准备 V8，然后在仓库根目录使用 CPython 3.12：
+
+```powershell
+py -3.12 -m pip install build wheel
+py -3.12 -m build --wheel --outdir dist .
+```
+
+生成的 `pyv8c-*-cp312-abi3-win_amd64.whl` 是单包发行物。
+
+要求启用 GIL 的 CPython 3.12 及以上，并能导入与当前解释器匹配的 `pyv8` 原生扩展。Windows 上已对 CPython 3.15.0 完成原生测试和浏览器常规测试；其他平台需要分别验证。free-threaded CPython 暂不支持。
+
+仓库包含 `pyv8/`（V8 绑定源码）和 `pyv8c/`（浏览器框架源码）。以下命令在仓库根目录使用 CPython 3.12 执行：
+
+```powershell
+python312 -m pip install -e ".[network,dev,reference]"
+python312 -c "from pyv8c import pyv8; print(pyv8.__file__)"
+```
+
+构建前须配置 V8 构建目录，详见原生项目文档。
+
+默认 HTTP 和 WebSocket 引擎随基础依赖安装。`dev` 安装测试工具，`canvas` 提供 Pillow 绘图，`cronet` 提供可选网络引擎，`benchmark` 提供可选进程监测，`reference` 安装驱动本机 Chrome 的工具，不下载浏览器。原生扩展构建要求见 [pyv8 文档](pyv8/README.md)。
 
 ## 快速开始
 

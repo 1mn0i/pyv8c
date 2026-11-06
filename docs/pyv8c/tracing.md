@@ -46,7 +46,7 @@ browser = Browser(trace=True, trace_scripts=[
 默认使用 Loguru。自定义 trace_callback 接收八个参数：
 
 ```python
-from pyv8 import format_trace
+from pyv8c.pyv8 import format_trace
 
 def observe(event, receiver, name, arguments, value, error, is_construct, ctx_type):
     message = format_trace(event, receiver, name, arguments, value, error, is_construct, ctx_type)

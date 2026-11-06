@@ -7,7 +7,7 @@ rest of the profile is read from; a different build answers with its own list.
 import base64
 import os
 
-import pyv8
+from pyv8c import pyv8
 from ...idl import interface
 from ...foundation.arguments import (MISSING, dictionary, dom_string, integer, is_nullish,
                                      missing_error)

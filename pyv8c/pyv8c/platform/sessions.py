@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
-from pyv8 import IdlSpec
+from pyv8c.pyv8 import IdlSpec
 
 
 class BindingSession:

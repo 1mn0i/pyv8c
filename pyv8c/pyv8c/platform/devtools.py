@@ -1,7 +1,7 @@
 """Browser host adapters for the shared pyv8 DevTools service."""
 
-from pyv8.devtools import DevToolsHandle, DevToolsOptions, create_service
-from pyv8.devtools.scheduler import Host
+from pyv8c.pyv8.devtools import DevToolsHandle, DevToolsOptions, create_service
+from pyv8c.pyv8.devtools.scheduler import Host
 
 __all__ = ["DevToolsHandle", "DevToolsOptions"]
 

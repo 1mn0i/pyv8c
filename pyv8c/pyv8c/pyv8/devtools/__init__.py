@@ -3,7 +3,7 @@
 import threading
 from typing import Callable, TypeVar
 
-from pyv8._pyv8 import Context
+from .._pyv8 import Context
 from .options import DevToolsOptions
 from .router import Router
 from .scheduler import CallingThread, Host

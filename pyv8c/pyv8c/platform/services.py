@@ -289,7 +289,7 @@ class _RealmCapability(_RealmCapabilityBase):
                 except (KeyError, AttributeError):
                     # Reading a JavaScript object by key raises KeyError; only
                     # the attribute form raises AttributeError.
-                    import pyv8
+                    from pyv8c import pyv8
                     return pyv8.Undefined
             if operation == "set":
                 target[name] = value

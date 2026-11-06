@@ -1,6 +1,6 @@
 # pyv8 使用指南
 
-本文档对应 pyv8 2.1.2。ABI3 目标为启用 GIL 的 CPython 3.12 至 3.15、V8 15.4.68；3.15 已在 Windows 进行部分验证。
+本文档对应 pyv8c 0.1.0 中的内置 V8 引擎。ABI3 目标为启用 GIL 的 CPython 3.12 至 3.15、V8 15.4.68；3.15 已在 Windows 进行部分验证。
 
 桥接内核重构后，JS 对象默认返回句柄，需要 list/dict 时显式调用
 `result.to_python()`。接口、所有权和验证说明见 [桥接内核文档](bridge-kernel.md)。
@@ -42,13 +42,15 @@ Windows 是当前主要开发和完整测试平台。Windows 源码构建建议�
 ### 安装预编译 wheel
 
 ```bash
-python -m pip install path/to/pyv8-2.1.2-cp312-abi3-<platform>.whl
+python -m pip install path/to/pyv8c-0.1.0-cp312-abi3-win_amd64.whl
 ```
 
 `cp312-abi3` 表示同一扩展可以被启用 GIL 的 CPython 3.12 至 3.15 加载。ABI3 不会让二进制跨
 操作系统或 CPU 架构使用，例如 Windows 的 `.pyd` 不能在 Linux 中加载。
 
 ### 准备构建工具
+
+以下源码构建命令均从仓库根目录执行。
 
 ```bash
 python -m pip install --upgrade pip setuptools wheel build tox
@@ -218,7 +220,7 @@ python setup.py build_ext --inplace
 
 ### 初始化时机
 
-`import pyv8` 不启动 V8：扩展只注册类型、记下与自己同目录的 `icudtl.dat`，并做两项
+`from pyv8c import pyv8` 不启动 V8：扩展只注册类型、记下与自己同目录的 `icudtl.dat`，并做两项
 廉价校验（free-threaded CPython、非主解释器会被拒绝）。V8 平台与默认 Isolate 在**首次
 使用**时才启动——首次 `pyv8.Context(...)`、`pyv8.Isolate()`、`pyv8.Script(...)`、
 `pyv8.new(...)`、`pyv8.current_context()`、`pyv8.v8_gc()`、`pyv8.low_memory_notification()`
@@ -229,7 +231,7 @@ python setup.py build_ext --inplace
 启动内容由 `pyv8.configure(...)` 决定，且只能在首次使用前调用：
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 pyv8.configure(params=["--expose-gc"], icudtl_path="/path/to/icudtl.dat")
 print(pyv8.is_initialized())  # False
@@ -287,7 +289,7 @@ print(isolate.external_memory)  # 已报给 V8 的字节数
 ### 创建 Context
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:
@@ -602,7 +604,7 @@ assert wrapper.extra == 42
 ### 构造器基础
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 
 class DOMPoint:
@@ -657,7 +659,7 @@ Python 构造器会额外收到 `win=<当前 Context 的 Python global_this>` �
 显式 IDL 成员使用不可变的具名描述；不再接受位置元组。
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 class Calculator:
     __v8_idl_spec__ = pyv8.IdlSpec(
@@ -711,7 +713,7 @@ flags = (
 ### 常量
 
 ```python
-import pyv8
+from pyv8c import pyv8
 class ReadyState:
     __v8_idl_spec__ = pyv8.IdlSpec(
         constants_value=(
@@ -755,7 +757,7 @@ assert context.exec_js("Element.__proto__.name") == "Node"
 定义下列方法中的任意组合即可安装 named interceptor：
 
 ```python
-import pyv8
+from pyv8c import pyv8
 class NamedCollection:
     def __init__(self):
         self.values = {"first": 1}
@@ -793,7 +795,7 @@ class NamedCollection:
 ### Indexed property handler
 
 ```python
-import pyv8
+from pyv8c import pyv8
 class IndexedCollection:
     def __init__(self):
         self.values = [10, 20]
@@ -839,7 +841,7 @@ Setter/deleter 另有一项声明：类同时继承 `pyv8.JsInterceptorFailure` 
 - 该标记只用于 named/indexed setter 和 deleter，不应加在普通业务异常上。
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 
 class LegacyPropertyError(pyv8.JsTypeError, pyv8.JsInterceptorFailure):
@@ -866,7 +868,7 @@ class LegacyCollection:
 Window-like 对象可以定义访问检查：
 
 ```python
-import pyv8
+from pyv8c import pyv8
 class Window:
     __v8_idl_spec__ = pyv8.IdlSpec(cross_origin_check="__v8_cross_origin_check__")
     def __v8_cross_origin_check__(self, accessor):
@@ -956,7 +958,7 @@ context.trace = False
 默认 `format_trace` 对普通对象只显示类型（如 `<Navigator>`），对函数显示源码（如 `function eval() { [native code] }`）；
 源码经绑定的 raw toString 取得，不会调用被观察对象自己的 `toString`。
 
-未传回调时使用 `pyv8.trace.log_trace`，通过标准 logging 的 `pyv8.trace` logger 输出 INFO 日志。
+未传回调时使用 `pyv8c.pyv8.trace.log_trace`，通过标准 logging 的 `pyv8c.pyv8.trace` logger 输出日志。
 原生层缓存回调和事件名称，关闭时跳过观察作用域与值转换，不改变对象模板。
 回调同步运行在当前 realm 线程，独立重入计数抑制回调内部再次产生 trace 事件。
 回调返回值被忽略；回调自身的 Python/JS 异常被隔离，不替换业务结果或原异常；终止执行时不再派发。
@@ -1043,7 +1045,7 @@ except pyv8.JSException as error:
 基类。**让一个类继承其中一员，就是全部的声明**——没有表要安装，也没有名字要对齐：
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 
 class PageTypeError(pyv8.JsTypeError):
@@ -1111,7 +1113,7 @@ context.exec_js("runTask()", timeout=0.25)
 
 ```python
 import gc
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:
@@ -1222,7 +1224,7 @@ pyv8.shutdown_v8()
 ### 启动调试服务
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:

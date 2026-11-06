@@ -1,7 +1,7 @@
 """``HTMLIFrameElement``: the frame element and the document it holds.  The
 reflected attributes are Chromium's; the resource layer builds the browsing context."""
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import boolean, dom_string

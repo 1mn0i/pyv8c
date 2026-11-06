@@ -3,7 +3,7 @@
 A frame's window is the object another realm is handed, whatever the origins are; its
 own access check decides what a cross-origin caller may reach.
 """
-import pyv8
+from pyv8c import pyv8
 
 
 from ...features.runtime import LazyValueStore

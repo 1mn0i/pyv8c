@@ -1,6 +1,6 @@
 import threading
 import pytest
-pytest.importorskip('pyv8')
+pytest.importorskip('pyv8c.pyv8')
 from pyv8c import Browser
 
 
@@ -86,7 +86,7 @@ def test_rejection_flood_times_out_without_unraisable_hook_errors():
     import sys
     program = r"""
 import sys
-import pyv8
+from pyv8c import pyv8
 from pyv8c import Browser
 from pyv8c.foundation.host_errors import RealmBusyError
 from loguru import logger

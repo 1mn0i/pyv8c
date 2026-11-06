@@ -4,16 +4,15 @@
 
 ## 环境与工作约定
 
-在仓库根目录使用 CPython 3.12 依次安装两个包，并确认加载的是本仓库的代码：
+在仓库根目录使用 CPython 3.12 安装项目，并确认加载的是本仓库的代码：
 
 ```powershell
 $env:PYTHONUTF8 = "1"
-python312 -m pip install --config-settings editable_mode=compat -e ./pyv8
-python312 -m pip install --config-settings editable_mode=compat -e "./pyv8c[network,dev,reference]"
-python312 -c "import pyv8, pyv8c; print(pyv8.__file__, pyv8c.__file__)"
+python312 -m pip install -e ".[network,dev,reference]"
+python312 -c "import pyv8c; from pyv8c import pyv8; print(pyv8.__file__, pyv8c.__file__)"
 ```
 
-在仓库根目录使用 setuptools 的普通 editable 安装时，同名项目目录可能遮蔽实际包；以上命令启用兼容模式。构建 pyv8 前须配置 V8 构建目录，详见原生项目文档。使用 Python 3.15 时按[项目安装说明](../../README.md#安装)先以 Python 3.12 构建 ABI3 wheel。
+构建前须配置 V8 构建目录，详见原生项目文档。使用 Python 3.15 时按[项目安装说明](../../README.md#安装)先以 Python 3.12 构建 ABI3 wheel。
 
 修改前记录仓库的工作区状态，保留已有修改。核对实际加载的原生二进制、解释器、IDL、环境档案和 Chrome；修改 C++ 后必须重建正在使用的扩展，不能只用旧二进制跑 Python 测试。
 
@@ -32,20 +31,20 @@ Feature 的通用运行机制位于 `pyv8c/pyv8c/features/runtime.py`，内置�
 ## 测试通道
 
 ```powershell
-# 从仓库根目录运行两个包的测试，不含 slow
+# 从仓库根目录运行原生模块与框架测试，不含 slow
 python -m pytest -q
 
 # 只运行浏览器框架测试
-python -m pytest -c pyv8c/pyproject.toml pyv8c/tests -q
+python -m pytest -c pytest.ini pyv8c/tests -q
 
 # 不运行 Chrome 对照的常规主套件
-python -m pytest -c pyv8c/pyproject.toml pyv8c/tests/unit pyv8c/tests/integration pyv8c/tests/browser -q
+python -m pytest -c pytest.ini pyv8c/tests/unit pyv8c/tests/integration pyv8c/tests/browser -q
 
 # 慢速生命周期、堆预算及策略复查
-python -m pytest -c pyv8c/pyproject.toml pyv8c/tests -o addopts=--strict-markers -m slow -q
+python -m pytest -c pytest.ini pyv8c/tests -o addopts=--strict-markers -m slow -q
 
 # 标记竞态用例至少重复五轮
-python -m pytest -c pyv8c/pyproject.toml pyv8c/tests -o addopts=--strict-markers -m race --count=5 -q
+python -m pytest -c pytest.ini pyv8c/tests -o addopts=--strict-markers -m race --count=5 -q
 
 # 架构、改动配套、启动、离线导入和重复用例检查
 python tools/check_policy.py
@@ -53,17 +52,12 @@ python tools/check_policy.py
 
 默认 pytest 配置排除 slow，所以 `-m slow` 同时覆盖 addopts，避免选择器冲突。竞态测试也可能标记 slow，重复运行时同样需要覆盖。不要默认并行运行 Chrome 对照。
 
-修改原生支持时，在 `pyv8/` 项目运行构建、测试及其 `tools/check_layout.py`，再回到仓库根目录验证受影响链路：
+修改原生支持时，在仓库根目录运行构建、测试和布局检查：
 
 ```powershell
-Push-Location pyv8
-try {
-    python setup.py build_ext --inplace
-    python -m pytest tests -q
-    python tools/check_layout.py
-} finally {
-    Pop-Location
-}
+python312 setup.py build_ext --inplace
+python -m pytest -c pytest.ini pyv8/tests -q
+python pyv8/tools/check_layout.py
 ```
 
 构建需要该仓库要求的 V8 SDK、编译器和相关设置。不要在其他进程仍加载目标二进制时覆盖它，也不要清理非本次创建的进程。
@@ -72,7 +66,7 @@ try {
 
 ```powershell
 $env:PYV8C_CHROME = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-python -m pytest -c pyv8c/pyproject.toml pyv8c/tests/repros/test_execution_model_vs_chrome.py -q
+python -m pytest -c pytest.ini pyv8c/tests/repros/test_execution_model_vs_chrome.py -q
 ```
 
 对照工具使用本机可执行文件；缺失 Chrome 或 Playwright 的用例可能跳过，跳过不能算通过。记录实际版本和启动参数，不静默替换另一 Chromium 或修改自动化状态。

@@ -1,7 +1,7 @@
 """Fetch response model."""
 import json
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import byte_string, dictionary, integer, is_nullish, usv_string

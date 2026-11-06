@@ -6,7 +6,7 @@ import textwrap
 
 #: The budget is a process-wide V8 setting, so this runs in a process of its own.
 SCRIPT = """
-import pyv8
+from pyv8c import pyv8
 
 pyv8.configure(params=["--max-old-space-size=256"])
 

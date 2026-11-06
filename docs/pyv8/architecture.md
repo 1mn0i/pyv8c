@@ -15,7 +15,7 @@ interfaces             interfaces/      declarations -> templates -> callbacks
 handles                handles/         the Python types that stand for JavaScript values
 values                 values/          values and errors crossing the boundary
 isolate                isolate/         the isolate, the realm, and their lifetimes
-shims                  *.h at the root  ABI3 and V8-version compatibility
+shims                  *.h at the root  ABI3 and V8 API adapters
 ```
 
 A file may include its own layer and the ones below it.  The exceptions are

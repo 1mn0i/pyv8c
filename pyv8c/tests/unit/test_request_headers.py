@@ -3,7 +3,7 @@ is a transcription of a real browser's request (``docs/pyv8c/request-headers.md`
 
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.native
 
 from pyv8c.foundation.environment import BrowserEnvironment

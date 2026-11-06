@@ -25,7 +25,7 @@ static PyType_Slot js_promise_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_promise_spec = {
-    "pyv8.JSPromise",
+    "pyv8c.pyv8.JSPromise",
     sizeof(js_promise),
     0,
     Py_TPFLAGS_DEFAULT,
@@ -234,7 +234,7 @@ static PyType_Slot js_promise_resolver_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_promise_resolver_spec = {
-    "pyv8.PromiseResolver",
+    "pyv8c.pyv8.PromiseResolver",
     sizeof(js_promise_resolver),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,

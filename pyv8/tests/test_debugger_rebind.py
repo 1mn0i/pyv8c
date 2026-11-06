@@ -1,5 +1,5 @@
 import json
-import pyv8
+from pyv8c import pyv8
 import pytest
 
 

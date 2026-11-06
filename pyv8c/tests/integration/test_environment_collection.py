@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 
 from pyv8c import Browser, BrowserEnvironment  # noqa: E402
 from pyv8c.engine.idl import ArrayProto, Idl  # noqa: E402

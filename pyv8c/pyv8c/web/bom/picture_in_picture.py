@@ -1,6 +1,6 @@
 """``documentPictureInPicture``: the handle Chrome exposes before a window opens."""
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ..dom.events import EventTarget

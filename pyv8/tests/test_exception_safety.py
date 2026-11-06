@@ -3,7 +3,7 @@ from tests.values import snapshot
 import time
 import unittest
 
-import pyv8
+from pyv8c import pyv8
 
 
 class TestExceptionSafety(unittest.TestCase):

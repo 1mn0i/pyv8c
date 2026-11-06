@@ -14,27 +14,30 @@ ROOT = Path(__file__).parents[1]
 
 
 def setup_configuration():
-    with patch("setuptools.setup") as setup:
-        namespace = runpy.run_path(str(ROOT / "setup.py"))
-    return namespace, setup.call_args.kwargs["ext_modules"][0]
+    namespace = runpy.run_path(str(ROOT / "build_support.py"))
+    return namespace, namespace["ext_modules"][0]
 
 
 def test_build_declares_every_header_and_macro_table():
     _, extension = setup_configuration()
-    expected = {p.relative_to(ROOT).as_posix() for p in (ROOT / "src").rglob("*")
+    expected = {p.relative_to(ROOT.parent).as_posix() for p in (ROOT / "src").rglob("*")
                 if p.suffix in {".h", ".def"}}
     assert set(extension.depends) == expected
-    assert "src/interfaces/handler_table.def" in extension.depends
+    assert "pyv8/src/interfaces/handler_table.def" in extension.depends
 
 
 def test_header_content_and_toolchain_changes_invalidate_fingerprint(tmp_path, monkeypatch):
     namespace, _ = setup_configuration()
     fingerprint = namespace["PyV8BuildExt"]._build_fingerprint
+    (tmp_path / 'setup.py').write_text('fixture')
+    (tmp_path / 'pyproject.toml').write_text('fixture')
+    tmp_path = tmp_path / 'pyv8'
+    tmp_path.mkdir()
     monkeypatch.setitem(fingerprint.__globals__, "PROJECT_ROOT", tmp_path)
     (tmp_path / "src").mkdir()
     header = tmp_path / "src/contract.h"
     header.write_text("before")
-    for name in ("setup.py", "pyproject.toml", "v8_build.py", "v8.lib", "icudtl.dat"):
+    for name in ("build_support.py", "v8_build.py", "v8.lib", "icudtl.dat"):
         (tmp_path / name).write_text("fixture")
     output = tmp_path / "out"
     output.mkdir()

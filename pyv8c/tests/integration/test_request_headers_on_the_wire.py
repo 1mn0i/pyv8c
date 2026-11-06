@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 pytest.importorskip("curl_cffi", reason="the curl_cffi engine is not installed")
 pytestmark = pytest.mark.native
 

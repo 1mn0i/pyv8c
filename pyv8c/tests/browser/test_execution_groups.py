@@ -78,7 +78,7 @@ def test_evaluate_function_result_can_be_printed_outside_the_realm():
         assert isinstance(nested["fn"], str) and "example" in nested["fn"]
         assert isinstance(nested["values"][0], str)
         handle = page.evaluate_handle("window.AbsoluteOrientationSensor")
-        import pyv8
+        from pyv8c import pyv8
         assert isinstance(handle, pyv8.JSFunction)
         assert "AbsoluteOrientationSensor" in page.executor.call(repr, handle)
     finally:
@@ -86,7 +86,7 @@ def test_evaluate_function_result_can_be_printed_outside_the_realm():
 
 
 def test_evaluate_noncopyable_objects_are_safe_to_print():
-    import pyv8
+    from pyv8c import pyv8
     from pyv8c import Browser
 
     browser = Browser(real_network=False)

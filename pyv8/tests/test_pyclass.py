@@ -1,8 +1,8 @@
 from tests.values import snapshot
 
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
+from pyv8c.pyv8 import IdlSpec, AttributeSpec, MethodSpec
 import unittest
-import pyv8
+from pyv8c import pyv8
 
 class TestPyClass(unittest.TestCase):
     """测试Python类在JavaScript中的暴露"""

@@ -10,9 +10,9 @@ until it was removed.
 import ast
 import pathlib
 
-import pyv8
-import pyv8._pyv8 as native
-import pyv8.flag
+from pyv8c import pyv8
+from pyv8c.pyv8 import _pyv8 as native
+from pyv8c.pyv8 import flag
 
 PACKAGE = pathlib.Path(pyv8.__file__).parent
 NATIVE_STUB = PACKAGE / "_pyv8.pyi"
@@ -83,7 +83,7 @@ def test_every_package_stub_member_exists_on_the_package():
 # The module a native type reports is where its repr, its pickle and every message
 # that names it point: "_pyv8env" was a module that never existed, and "_pyv8" is
 # not what a host imports -- `pyv8` is.
-TYPE_MODULE = "pyv8"
+TYPE_MODULE = "pyv8c.pyv8"
 
 
 def native_types():

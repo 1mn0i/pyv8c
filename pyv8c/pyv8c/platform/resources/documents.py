@@ -1,5 +1,5 @@
 """Document resource ownership, readiness and element completion."""
-import pyv8
+from pyv8c import pyv8
 import time
 from ...foundation.logging import logger
 from .handles import LoadHandle

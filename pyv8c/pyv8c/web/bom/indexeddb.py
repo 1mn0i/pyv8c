@@ -12,8 +12,8 @@ import threading
 from bisect import bisect_left, bisect_right
 from datetime import datetime
 
-import pyv8
-from pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
+from pyv8c import pyv8
+from pyv8c.pyv8.flag import FlagCrossOriginCheck, FlagLocation, FlagReceiverCheck
 
 from ...features.runtime import FeatureImplementation
 from ...idl import interface

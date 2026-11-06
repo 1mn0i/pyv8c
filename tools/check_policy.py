@@ -92,7 +92,7 @@ def classify(path):
         return "test"
     if path.startswith("pyv8/src/"):
         return "implementation" if path.endswith((".cpp", ".h", ".def")) else "data"
-    if path.startswith("pyv8/pyv8/"):
+    if path.startswith("pyv8c/pyv8c/pyv8/"):
         return "implementation" if path.endswith((".py", ".pyi")) else "data"
     if path.startswith("pyv8c/"):
         return "implementation" if path.endswith(".py") else "data"
@@ -238,15 +238,15 @@ def gate_duplicates(strict):
 def gate_offline():
     """``tests/unit`` has to run with no native extension on the import path.
 
-    That is where the offline extractor is used; a module importing pyv8 fails
-    there as a collection error, which goes unnoticed when pyv8 is on the path.
+    That is where the offline extractor is used; a module importing the embedded
+    engine fails there as a collection error when the native extension is absent.
     ``PYV8C_OFFLINE`` keeps this gate's own test from recursing.
     """
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(REPO / "pyv8c")
     environment["PYV8C_OFFLINE"] = "1"
     # Editable installations and the root pytest configuration can otherwise put
-    # pyv8 back on sys.path, making this gate pass without testing its promise.
+    # the embedded engine back on sys.path, masking an unintended dependency.
     runner = """
 import importlib.abc
 import sys
@@ -254,11 +254,11 @@ import pytest
 
 class NoNative(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'pyv8' or fullname.startswith('pyv8.'):
-            raise ModuleNotFoundError('pyv8 deliberately unavailable', name=fullname)
+        if fullname == 'pyv8c.pyv8' or fullname.startswith('pyv8c.pyv8.'):
+            raise ModuleNotFoundError('pyv8c.pyv8 deliberately unavailable', name=fullname)
 
 sys.meta_path.insert(0, NoNative())
-raise SystemExit(pytest.main(['-c', 'pyv8c/pyproject.toml', 'pyv8c/tests/unit', '-q']))
+raise SystemExit(pytest.main(['-c', 'pytest.ini', 'pyv8c/tests/unit', '-q']))
 """
     result = subprocess.run(
         [sys.executable, "-c", runner],
@@ -313,7 +313,7 @@ def gate_startup(runs, record):
     baseline = json.loads(BASELINE_FILE.read_text(encoding="utf-8"))
     minimum, median, modules = measure_startup(runs=runs)
     if median is None:
-        print(f"--   startup: not measured ({modules}); pyv8 has to be importable for this gate")
+        print(f"--   startup: not measured ({modules}); pyv8c.pyv8 has to be importable for this gate")
         return True
 
     budget = startup_budget(baseline)

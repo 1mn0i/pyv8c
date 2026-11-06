@@ -1,5 +1,5 @@
 import pytest
-import pyv8
+from pyv8c import pyv8
 
 
 def test_nested_termination_cannot_be_swallowed_by_a_python_reporter():

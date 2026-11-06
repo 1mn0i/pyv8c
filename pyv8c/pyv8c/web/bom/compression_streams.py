@@ -8,7 +8,7 @@ matching the transform stream's backpressure in Chromium.
 from collections import deque
 import zlib
 
-import pyv8
+from pyv8c import pyv8
 
 from ...features.runtime import FeatureImplementation
 from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error

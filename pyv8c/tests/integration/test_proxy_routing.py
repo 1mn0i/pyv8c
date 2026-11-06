@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 
 from proxy_harness import RecordingProxy
 from pyv8c import Browser, register_transport

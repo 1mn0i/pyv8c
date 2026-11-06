@@ -7,7 +7,7 @@ its descendants reachable; the topmost element wins and the rest of the stack is
 deepest first.  Measured against Chrome 153.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 from .element import Element
 from .layout import Box, _child_elements, layout_snapshot, positioned_box

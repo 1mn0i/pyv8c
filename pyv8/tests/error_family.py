@@ -4,7 +4,7 @@ A class joins the family by inheriting the type that stands for the error a real
 there is no table to install, nothing to undo afterwards, and no name to keep in step.
 A class with a constructor of its own declares its shape on itself.
 """
-import pyv8
+from pyv8c import pyv8
 
 #: The type each standard JavaScript error stands for.
 STANDARD = {

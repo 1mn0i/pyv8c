@@ -59,7 +59,6 @@ DEFINITION_KINDS = (DefinitionKind.kInterface, DefinitionKind.kIdlNamespace,
 #: The version of the document this build reads and writes; another is refused by name rather
 #: than read half-way.  Regenerate with ``tools/extract_idl.py``.
 IDL_VERSION = 10
-LEGACY_IDL_VERSIONS = (8, 9)
 
 
 #: The exposure labels the IDL words worker realms with.
@@ -384,8 +383,8 @@ def _read_document(document) -> tuple:
     if not isinstance(metadata, dict) or not isinstance(interfaces, dict):
         raise ValueError("the IDL document must state an 'idl' object and an 'interfaces' object")
     version = metadata.get("version")
-    if version not in (*LEGACY_IDL_VERSIONS, IDL_VERSION):
-        raise ValueError(f"unsupported IDL version {version!r}; expected one of {(*LEGACY_IDL_VERSIONS, IDL_VERSION)} --"
+    if version != IDL_VERSION:
+        raise ValueError(f"unsupported IDL version {version!r}; expected {IDL_VERSION} --"
                          " regenerate it with tools/extract_idl.py")
     if not interfaces:
         raise ValueError("the IDL document must contain interfaces")

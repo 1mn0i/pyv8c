@@ -3,7 +3,7 @@
 ## 公开接口
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 class Window:
     pass

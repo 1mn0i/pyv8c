@@ -11,7 +11,7 @@ that raises :class:`PageReferenceError` shows a realm a ``ReferenceError``.
 
 Nothing host-only lives here: that is :mod:`pyv8c.foundation.host_errors`.
 """
-import pyv8
+from pyv8c import pyv8
 
 from ..idl import interface
 from ..foundation.error_policy import is_declared

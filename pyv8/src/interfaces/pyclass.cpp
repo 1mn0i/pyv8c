@@ -73,7 +73,7 @@ static PyType_Slot py_class_slots[] = {
     {0, NULL} };
 
 static PyType_Spec py_class_spec = {
-    "pyv8.Class",
+    "pyv8c.pyv8.Class",
     sizeof(py_class),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,

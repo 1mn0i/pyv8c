@@ -78,7 +78,7 @@ def test_optional_interface_modules_stay_unimported_until_first_use():
 
 
 def test_feature_runtime_loads_an_explicit_feature_once():
-    pytest.importorskip("pyv8", reason="the interface decorator reaches the native extension")
+    pytest.importorskip("pyv8c.pyv8", reason="the interface decorator reaches the native extension")
     from types import SimpleNamespace
 
     from pyv8c.features.runtime import FeatureCatalog, FeatureImplementation, FeatureRuntime, FeatureSpec

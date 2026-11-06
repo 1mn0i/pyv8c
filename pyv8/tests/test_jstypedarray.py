@@ -2,7 +2,7 @@ from tests.values import snapshot
 
 import json
 import unittest
-import pyv8
+from pyv8c import pyv8
 
 class TestJSTypedArray(unittest.TestCase):
     """测试JavaScript类型化数组"""

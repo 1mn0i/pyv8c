@@ -160,7 +160,7 @@ PyType_Slot js_serialization_writer_slots[] = {
     {0, NULL}};
 
 PyType_Spec js_serialization_writer_spec = {
-    "pyv8.SerializationWriter",
+    "pyv8c.pyv8.SerializationWriter",
     sizeof(js_serialization_writer),
     0,
     Py_TPFLAGS_DEFAULT,
@@ -282,7 +282,7 @@ PyType_Slot js_serialization_reader_slots[] = {
     {0, NULL}};
 
 PyType_Spec js_serialization_reader_spec = {
-    "pyv8.SerializationReader",
+    "pyv8c.pyv8.SerializationReader",
     sizeof(js_serialization_reader),
     0,
     Py_TPFLAGS_DEFAULT,
@@ -740,7 +740,7 @@ PyType_Slot js_serializer_slots[] = {
     {0, NULL}};
 
 PyType_Spec js_serializer_spec = {
-    "pyv8.Serializer",
+    "pyv8c.pyv8.Serializer",
     sizeof(js_serializer),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,

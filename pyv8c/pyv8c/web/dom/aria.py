@@ -1,5 +1,5 @@
-import pyv8
-from pyv8 import AttributeSpec, V8Attribute
+from pyv8c import pyv8
+from pyv8c.pyv8 import AttributeSpec, V8Attribute
 
 """The ARIA reflection: an attribute on one side, a property on the other.
 

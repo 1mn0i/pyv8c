@@ -491,7 +491,7 @@ def main(argv=None):
             print(f"-- {name}: {results[name][1]}")
 
     if arguments.output:
-        import pyv8
+        from pyv8c import pyv8
         binary = Path(pyv8._pyv8.__file__)
         report = {"python": sys.version, "platform": platform.platform(),
                   "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),

@@ -3,7 +3,7 @@
 They read through owner-supplied getters rather than the node model, which keeps
 them importable by :mod:`dom.nodes` without a cycle.
 """
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, interface_value, is_nullish, missing_error

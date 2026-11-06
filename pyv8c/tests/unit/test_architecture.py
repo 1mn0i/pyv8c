@@ -31,6 +31,7 @@ def _imports(path):
 #: engines, web interface implementations, internal helpers -- belongs to the
 #: module that owns it.
 PUBLIC_SURFACE = {
+    "__version__",
     "Browser", "Profile", "Page", "DevToolsHandle", "DevToolsOptions",
     "BrowserEnvironment",
     "HttpTransport", "WebSocketTransport", "NetworkBackend",
@@ -242,7 +243,7 @@ def test_offline_scripts_do_not_import_browser_runtime():
 
 def test_every_offline_script_has_a_repository_wrapper():
     """Package tools have wrappers in tools/, except the startup benchmark."""
-    pytest.importorskip("pyv8", reason="imports every tool, and two of them reach the extension")
+    pytest.importorskip("pyv8c.pyv8", reason="imports every tool, and two of them reach the extension")
     for path in (ROOT / "tools").glob("*.py"):
         if path.name.startswith("__"):
             continue
@@ -320,7 +321,7 @@ def test_layering_has_no_upward_imports():
 
 @pytest.mark.native
 def test_runtime_interface_catalog_is_frozen_after_bootstrap():
-    pytest.importorskip("pyv8", reason="imports platform modules bound to the native extension")
+    pytest.importorskip("pyv8c.pyv8", reason="imports platform modules bound to the native extension")
     from pyv8c.platform.bootstrap import bootstrap_runtime
 
     runtime = bootstrap_runtime()
@@ -357,7 +358,7 @@ def test_realm_of_prefers_injection_and_falls_back_to_services():
 
 @pytest.mark.native
 def test_page_exposes_narrow_realm_services():
-    pytest.importorskip("pyv8", reason="constructs a live Browser")
+    pytest.importorskip("pyv8c.pyv8", reason="constructs a live Browser")
     from pyv8c import Browser
     from pyv8c.foundation.realm import (
         ContextServices,
@@ -428,7 +429,7 @@ def test_domain_code_uses_page_resource_ownership_api():
 @pytest.mark.native
 def test_page_services_surface_is_structurally_narrow():
     """PageServices must not grow escape hatches into platform internals."""
-    pytest.importorskip("pyv8", reason="constructs a live Browser")
+    pytest.importorskip("pyv8c.pyv8", reason="constructs a live Browser")
     from pyv8c import Browser
 
     source = (ROOT / "platform" / "services.py").read_text(encoding="utf-8")
@@ -448,7 +449,7 @@ def test_page_services_surface_is_structurally_narrow():
 @pytest.mark.native
 def test_page_keeps_only_user_facing_api():
     """Web-serving forwards must not creep back onto the Page facade."""
-    pytest.importorskip("pyv8", reason="imports platform modules bound to the native extension")
+    pytest.importorskip("pyv8c.pyv8", reason="imports platform modules bound to the native extension")
     from pyv8c.platform.browser import Page
 
     for name in (
@@ -468,7 +469,7 @@ def test_page_keeps_only_user_facing_api():
 @pytest.mark.native
 def test_page_net_exposes_both_http_flavours():
     """The host transport and the page's own JS APIs are one surface, under ``net``."""
-    pytest.importorskip("pyv8", reason="imports platform modules bound to the native extension")
+    pytest.importorskip("pyv8c.pyv8", reason="imports platform modules bound to the native extension")
     from pyv8c.platform.net import PageNet
     from pyv8c.platform.page import Page
 

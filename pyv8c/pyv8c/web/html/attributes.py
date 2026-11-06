@@ -9,8 +9,8 @@ Three shapes live here, all of them measured on Chrome 154 rather than described
 * a plain reflection, which is here only because the attribute name is not the dashed
   form of the property: accessKey is accesskey, focusGroup is focusgroup.
 """
-import pyv8
-from pyv8 import AttributeSpec
+from pyv8c import pyv8
+from pyv8c.pyv8 import AttributeSpec
 
 
 #: (property, attribute, default, words the getter accepts, true word, false word)

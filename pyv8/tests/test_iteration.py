@@ -1,6 +1,6 @@
 """Synchronous iterable bindings: semantics, lifetime and host failures."""
 import pytest
-import pyv8
+from pyv8c import pyv8
 from tests.values import snapshot
 
 

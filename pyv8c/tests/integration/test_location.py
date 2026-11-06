@@ -6,7 +6,7 @@ nearest ancestor first, the way Chrome reports it.
 """
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 
 from pyv8c import Browser
 

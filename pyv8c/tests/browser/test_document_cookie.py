@@ -6,7 +6,7 @@ from urllib.request import urlopen
 
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 from pyv8c import Browser
 from pyv8c.web.fetch.response import Response
 

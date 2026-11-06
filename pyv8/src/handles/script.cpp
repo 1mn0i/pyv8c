@@ -59,7 +59,7 @@ static PyType_Slot script_slots[] = {
     {0, NULL}};
 
 static PyType_Spec script_spec = {
-    "pyv8.Script",
+    "pyv8c.pyv8.Script",
     sizeof(script_c),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,

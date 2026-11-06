@@ -8,7 +8,7 @@ standard's own: the canonical name ``encoding`` reports, and the labels that ali
 """
 from __future__ import annotations
 
-import pyv8
+from pyv8c import pyv8
 
 from ..idl import interface
 from ..foundation.arguments import MISSING, dictionary, is_nullish, missing_error, usv_string

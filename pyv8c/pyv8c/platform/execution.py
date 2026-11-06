@@ -1,5 +1,5 @@
 """Window execution ownership; foundation never depends on Page or V8."""
-import pyv8
+from pyv8c import pyv8
 import threading
 import sys
 from functools import partial

@@ -4,7 +4,7 @@ import re
 from functools import partial
 from urllib.parse import urljoin, urlsplit
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import (

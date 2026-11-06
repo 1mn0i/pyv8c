@@ -12,7 +12,7 @@ from threading import Thread
 
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 pytest.importorskip("curl_cffi", reason="these exercise the curl_cffi engine")
 
 from pyv8c import Browser

@@ -1,6 +1,6 @@
 """Style sheets and their document-owned collections."""
 from urllib.parse import urljoin
-import pyv8
+from pyv8c import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, integer, missing_error
 from ..page_errors import IndexSizeError

@@ -1,5 +1,5 @@
 import pytest
-from pyv8 import IdlSpec
+from pyv8c.pyv8 import IdlSpec
 
 from pyv8c import Browser
 from pyv8c.engine.bindings import Idl, Bindings

@@ -7,7 +7,7 @@ focuses the nearest focusable ancestor, else clears focus, and does so on
 Measured on Chrome 153.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 from .events import FocusEvent
 

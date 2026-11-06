@@ -550,7 +550,7 @@ class V8BuildConfig:
             ]
         )
         if self.v8_home == self.bundled_v8_home:
-            candidates.append(self.project_root / "pyv8" / "icudtl.dat")
+            candidates.append(self.project_root.parent / "pyv8c" / "pyv8c" / "pyv8" / "icudtl.dat")
         return next((path for path in candidates if path.is_file()), None)
 
     def validate(self) -> None:

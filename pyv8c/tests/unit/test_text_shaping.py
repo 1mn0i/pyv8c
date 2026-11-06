@@ -60,7 +60,7 @@ def test_a_combining_mark_stays_with_its_letter(face):
 
 
 def test_text_presentation_fallback_keeps_explicit_family_first():
-    pytest.importorskip("pyv8", reason="layout imports the native browser bindings")
+    pytest.importorskip("pyv8c.pyv8", reason="layout imports the native browser bindings")
     from pyv8c.foundation.environment import BrowserEnvironment
     from pyv8c.web.dom.layout import _shaped
 

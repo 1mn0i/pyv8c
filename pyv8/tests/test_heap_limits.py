@@ -6,7 +6,7 @@ import sys
 import textwrap
 import unittest
 
-import pyv8
+from pyv8c import pyv8
 
 #: 必须返回数组并由 Python 持有：返回数字会被 V8 当作无用分配消掉，测不到堆上限。
 HOLD_STRINGS = (
@@ -40,7 +40,7 @@ class TestHeapLimits(unittest.TestCase):
 
         result = self.run_code(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             pyv8.configure(params=["--max-old-space-size=64"])
             context = pyv8.Context(object)
@@ -59,7 +59,7 @@ class TestHeapLimits(unittest.TestCase):
 
         result = self.run_code(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             pyv8.configure(params=["--max-old-space-size=64"])
             context = pyv8.Context(object)

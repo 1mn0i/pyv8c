@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 pytest.importorskip("websockets", reason="the default socket engine needs websockets")
 
 from websockets.sync.server import serve

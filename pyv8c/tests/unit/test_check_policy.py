@@ -30,7 +30,7 @@ def tool():
 def test_a_change_falls_into_the_bucket_that_decides_its_rule(tool):
     assert tool.classify("pyv8/src/isolate/runtime.cpp") == "implementation"
     assert tool.classify("pyv8/src/isolate/runtime.h") == "implementation"
-    assert tool.classify("pyv8/pyv8/__init__.py") == "implementation"
+    assert tool.classify("pyv8c/pyv8c/pyv8/__init__.py") == "implementation"
     assert tool.classify("pyv8/tests/test_context.py") == "test"
     assert tool.classify("pyv8c/tests/unit/test_check_policy.py") == "test"
     assert tool.classify("pyv8c/web/dom/document.py") == "implementation"

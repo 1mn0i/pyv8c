@@ -12,7 +12,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-import pyv8
+from pyv8c import pyv8
 from tests.test_architecture_contracts import ROOT, setup_configuration
 
 
@@ -25,7 +25,7 @@ def checker():
 
 @pytest.mark.parametrize('literal', ["['src', 'src/isolate']", '["src", "src/isolate"]', '("src", "src/isolate")'])
 def test_build_roots_ignore_quote_and_sequence_style(tmp_path, monkeypatch, literal):
-    (tmp_path / 'setup.py').write_text('Extension("fixture", include_dirs=' + literal + ')')
+    (tmp_path / 'build_support.py').write_text('Extension("fixture", include_dirs=' + literal + ')')
     module = checker()
     monkeypatch.setattr(module, 'PROJECT_ROOT', tmp_path)
     assert module.include_roots_the_build_declares() == ['src', 'src/isolate']
@@ -103,7 +103,7 @@ def test_handler_constructor_default_replace_and_immutability(name):
 
 
 def test_handler_keywords_are_declared_in_stub():
-    tree = ast.parse((ROOT / 'pyv8/_pyv8.pyi').read_text(encoding='utf-8'))
+    tree = ast.parse((ROOT.parent / 'pyv8c/pyv8c/pyv8/_pyv8.pyi').read_text(encoding='utf-8'))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'IdlSpec')
     init = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '__init__')
     keywords = {arg.arg for arg in [*init.args.args, *init.args.kwonlyargs]}
@@ -115,7 +115,7 @@ class Window:
 
 
 def child(program):
-    result = subprocess.run([sys.executable, '-c', 'import pyv8,time\nclass Window: pass\n' + program],
+    result = subprocess.run([sys.executable, '-c', 'from pyv8c import pyv8\nimport time\nclass Window: pass\n' + program],
                             capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -306,7 +306,7 @@ def test_compiled_script_and_global_binding_keyword_contracts():
 
 
 def test_stub_has_no_duplicate_members():
-    tree = ast.parse((ROOT / 'pyv8/_pyv8.pyi').read_text(encoding='utf-8'))
+    tree = ast.parse((ROOT.parent / 'pyv8c/pyv8c/pyv8/_pyv8.pyi').read_text(encoding='utf-8'))
     for node in tree.body:
         if not isinstance(node, ast.ClassDef): continue
         seen = set()

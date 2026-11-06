@@ -6,7 +6,7 @@ and the ``matrix3d()`` serialisation both use: ``m11, m12, m13, m14, m21, ...``.
 import math
 import struct
 
-import pyv8
+from pyv8c import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, is_nullish, missing_error, sequence
 from ..page_errors import PageError

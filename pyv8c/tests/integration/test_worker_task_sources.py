@@ -2,7 +2,7 @@
 import threading
 from concurrent.futures import Future
 import pytest
-import pyv8
+from pyv8c import pyv8
 
 from pyv8c import Browser
 from pyv8c.web.workers.runtime import WorkerRuntime

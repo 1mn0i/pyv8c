@@ -1,6 +1,6 @@
 import pytest
-import pyv8
-from pyv8.trace import _MAX_DISPLAY, _display
+from pyv8c import pyv8
+from pyv8c.pyv8.trace import _MAX_DISPLAY, _display
 
 
 class Window:

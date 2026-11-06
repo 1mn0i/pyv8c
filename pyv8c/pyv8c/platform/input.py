@@ -28,7 +28,7 @@ from __future__ import annotations
 import math
 import time
 
-import pyv8
+from pyv8c import pyv8
 
 from ..foundation.host_errors import HostStateError
 from ..web.dom.activation import accepts_mouse_events, prepare_activation, complete_activation

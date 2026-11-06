@@ -82,7 +82,7 @@ def normalize(value):
     the same thing at that boundary, so they read as ``None`` here as well: a case
     that needs to tell them apart asks for ``typeof``, which is a string.
     """
-    import pyv8
+    from pyv8c import pyv8
 
     if value is pyv8.Null or value is pyv8.Undefined:
         return None

@@ -15,7 +15,7 @@ belongs to is closed" -- is kept for the calls that ask for one directly.
 
 from __future__ import annotations
 
-import pyv8
+from pyv8c import pyv8
 
 
 def _no_op(*_args, **_kwargs):

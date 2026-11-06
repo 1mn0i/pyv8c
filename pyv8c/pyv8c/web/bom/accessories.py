@@ -5,7 +5,7 @@ page starts in.
 import re
 import time
 
-import pyv8
+from pyv8c import pyv8
 from ...idl import interface
 from ...foundation.arguments import (MISSING, callback_value, dictionary, dom_string,
                                      missing_error, number)

@@ -54,7 +54,7 @@ static PyType_Slot js_typedarray_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_typedarray_spec = {
-    "pyv8.JSTypeArray",
+    "pyv8c.pyv8.JSTypeArray",
     sizeof(js_typedarray),
     0,
     Py_TPFLAGS_DEFAULT,

@@ -1,7 +1,7 @@
 """Local DOM lookup and named-property rules on both runtimes."""
 import pytest
 
-pytest.importorskip('pyv8')
+pytest.importorskip('pyv8c.pyv8')
 from harness import chrome_reference, ReferenceUnavailable
 from pyv8c import Browser
 

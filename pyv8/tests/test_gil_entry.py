@@ -4,7 +4,7 @@ import sys
 import threading
 import time
 
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:

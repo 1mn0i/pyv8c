@@ -4,8 +4,8 @@ import re
 import math
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-import pyv8
-from pyv8 import AttributeSpec
+from pyv8c import pyv8
+from pyv8c.pyv8 import AttributeSpec
 
 from ...idl import interface
 from ...foundation.arguments import boolean, dom_string, integer, is_nullish

@@ -16,7 +16,7 @@ with ``DataCloneError``, as a browser refuses it.
 """
 import weakref
 
-import pyv8
+from pyv8c import pyv8
 
 from ..foundation.arguments import dictionary, is_nullish, materialize, sequence
 from ..foundation.logging import logger

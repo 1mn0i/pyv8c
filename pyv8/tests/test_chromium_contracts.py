@@ -1,9 +1,9 @@
 from tests.values import snapshot
 
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec, ConstantSpec
+from pyv8c.pyv8 import IdlSpec, AttributeSpec, MethodSpec, ConstantSpec
 import unittest
 
-import pyv8
+from pyv8c import pyv8
 
 
 class TestChromiumContracts(unittest.TestCase):

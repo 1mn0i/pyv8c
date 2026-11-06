@@ -1,6 +1,6 @@
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.native
 
 from pyv8c import Browser, PageTypeError
@@ -59,7 +59,7 @@ def test_a_dom_exception_reaches_python_as_the_browser_stringifies_it():
 def test_the_error_family_is_declared_for_a_realm():
     """Inheriting the family is the whole declaration: what a page sees is what a class
     inherited, which the browser tests hold end to end."""
-    import pyv8
+    from pyv8c import pyv8
 
     assert isinstance(PageTypeError("boom"), pyv8.JsError)
     assert isinstance(PageTypeError("boom"), pyv8.JsTypeError)

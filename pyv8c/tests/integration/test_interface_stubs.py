@@ -1,4 +1,4 @@
-import pyv8
+from pyv8c import pyv8
 from loguru import logger
 
 from pyv8c import Browser

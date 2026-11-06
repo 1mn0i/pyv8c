@@ -4,7 +4,7 @@ from functools import partial
 from threading import Event
 from time import perf_counter
 
-import pyv8
+from pyv8c import pyv8
 
 from ...foundation.arguments import is_nullish
 from ...foundation.host_errors import LoadFailure

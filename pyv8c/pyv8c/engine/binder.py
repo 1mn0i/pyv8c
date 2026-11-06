@@ -11,9 +11,9 @@ import inspect
 import threading
 from dataclasses import dataclass
 
-import pyv8
-from pyv8 import AttributeSpec, ConstantSpec, IdlSpec, MethodSpec
-from pyv8.flag import (
+from pyv8c import pyv8
+from pyv8c.pyv8 import AttributeSpec, ConstantSpec, IdlSpec, MethodSpec
+from pyv8c.pyv8.flag import (
     FlagCrossOriginCheck,
     FlagLocation,
     FlagReceiverCheck,

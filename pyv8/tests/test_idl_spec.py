@@ -4,8 +4,8 @@ import gc
 import unittest
 import weakref
 
-import pyv8
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec, ConstantSpec
+from pyv8c import pyv8
+from pyv8c.pyv8 import IdlSpec, AttributeSpec, MethodSpec, ConstantSpec
 
 
 class TestIdlSpec(unittest.TestCase):
@@ -194,7 +194,7 @@ class TestIdlSpec(unittest.TestCase):
 
 def test_undetectable_requires_a_call_and_constant_ranges():
     import pytest
-    from pyv8 import IdlSpec, ConstantSpec
+    from pyv8c.pyv8 import IdlSpec, ConstantSpec
 
     with pytest.raises(TypeError, match="requires a call"):
         IdlSpec(undetectable=True)
@@ -207,7 +207,7 @@ def test_undetectable_requires_a_call_and_constant_ranges():
 
 def test_a_name_the_realm_only_hands_over_is_answered_by_the_factory():
     """A name that is never a global still gets its overlay before its template."""
-    import pyv8
+    from pyv8c import pyv8
 
     class Extension:
         __v8_idl_spec__ = pyv8.IdlSpec(
@@ -240,7 +240,7 @@ def test_a_name_the_realm_only_hands_over_is_answered_by_the_factory():
 
 def test_a_name_the_realm_cannot_describe_is_asked_about_once():
     """A refusal is remembered, so an unknown name costs one ask per realm."""
-    import pyv8
+    from pyv8c import pyv8
 
     class Other:
         pass
@@ -271,7 +271,7 @@ def test_a_name_the_realm_cannot_describe_is_asked_about_once():
 
 def test_generic_object_template_member_fails_safely_without_a_context():
     import pytest
-    import pyv8
+    from pyv8c import pyv8
 
     class Window:
         pass
@@ -295,7 +295,7 @@ def test_generic_object_template_member_fails_safely_without_a_context():
 
 def test_generic_callable_survives_class_mutation_during_reflection():
     import gc
-    import pyv8
+    from pyv8c import pyv8
 
     class Window:
         pass
@@ -327,7 +327,7 @@ def test_generic_callable_survives_class_mutation_during_reflection():
 def test_explicit_callbacks_are_isolate_local_and_released_on_close():
     import gc
     import weakref
-    import pyv8
+    from pyv8c import pyv8
 
     class Window:
         pass
@@ -380,7 +380,7 @@ def test_explicit_callbacks_are_isolate_local_and_released_on_close():
 
 
 def test_registered_inheritance_flags_override_class_declarations():
-    import pyv8
+    from pyv8c import pyv8
 
     class Window:
         pass

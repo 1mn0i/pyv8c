@@ -3,7 +3,7 @@
 import re
 import time
 
-import pyv8
+from pyv8c import pyv8
 from concurrent.futures import Future
 from dataclasses import dataclass
 

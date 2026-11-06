@@ -7,7 +7,7 @@ were recorded from Chrome, and each rule here is one of theirs.
 
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.native
 
 from pyv8c.web.html.forms import Submission, entry_list, submission

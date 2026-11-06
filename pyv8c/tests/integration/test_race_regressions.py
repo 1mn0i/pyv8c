@@ -25,7 +25,7 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.race
 
 from pyv8c.foundation.executor import RealmExecutor
@@ -95,10 +95,10 @@ def test_devtools_close_disconnects_on_the_realm_owner_thread():
     which never resolves for a Page, so the disconnect ran on the closing
     thread instead of the owner thread that owns V8.
     """
-    from pyv8.devtools import DevToolsOptions
-    from pyv8.devtools.router import Router
-    from pyv8.devtools.scheduler import Host
-    from pyv8.devtools.session import Session
+    from pyv8c.pyv8.devtools import DevToolsOptions
+    from pyv8c.pyv8.devtools.router import Router
+    from pyv8c.pyv8.devtools.scheduler import Host
+    from pyv8c.pyv8.devtools.session import Session
 
     executor = RealmExecutor(name="race-dev-owner")
     try:
@@ -120,7 +120,7 @@ def test_devtools_close_disconnects_on_the_realm_owner_thread():
 
 
 def test_devtools_requires_an_explicit_host_adapter():
-    from pyv8.devtools.scheduler import Host
+    from pyv8c.pyv8.devtools.scheduler import Host
 
     with pytest.raises(TypeError):
         Host(object())
@@ -128,10 +128,10 @@ def test_devtools_requires_an_explicit_host_adapter():
 
 def test_devtools_close_skips_disconnect_when_owner_is_already_closed():
     """A1: closing after the owner died must record a diagnostic, not crash."""
-    from pyv8.devtools import DevToolsOptions
-    from pyv8.devtools.router import Router
-    from pyv8.devtools.scheduler import Host
-    from pyv8.devtools.session import Session
+    from pyv8c.pyv8.devtools import DevToolsOptions
+    from pyv8c.pyv8.devtools.router import Router
+    from pyv8c.pyv8.devtools.scheduler import Host
+    from pyv8c.pyv8.devtools.session import Session
 
     executor = RealmExecutor(name="race-dev-dead-owner")
     executor.close()

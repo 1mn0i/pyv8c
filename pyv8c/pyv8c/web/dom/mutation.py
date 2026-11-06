@@ -2,7 +2,7 @@
 microtask.  Attribute records come from ``setAttribute``/``removeAttribute``; a
 reflected property that writes the attribute table directly is not observed."""
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import (

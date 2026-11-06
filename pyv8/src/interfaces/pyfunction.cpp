@@ -40,7 +40,7 @@ static PyType_Slot py_function_slots[] = {
     {0, NULL} };
 
 static PyType_Spec py_function_spec = {
-    "pyv8.Function",
+    "pyv8c.pyv8.Function",
     sizeof(py_function),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,

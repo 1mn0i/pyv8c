@@ -10,7 +10,7 @@ import re
 import struct
 import zlib
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import (MISSING, IdlArgumentError, dictionary, dom_string, integer,

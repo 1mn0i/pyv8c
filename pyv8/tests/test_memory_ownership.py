@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 import pytest
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:
@@ -319,7 +319,7 @@ assert not thread.is_alive()
 def test_shutdown_and_close_in_subprocess(source):
     result = subprocess.run(
         [sys.executable, '-X', 'faulthandler', '-c',
-         'import pyv8, gc\nclass Window: pass\n' + source],
+         'from pyv8c import pyv8\nimport gc\nclass Window: pass\n' + source],
         capture_output=True, text=True, timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr

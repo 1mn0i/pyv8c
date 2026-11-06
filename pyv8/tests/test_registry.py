@@ -10,9 +10,9 @@ from tests.values import snapshot
 
 import unittest
 
-import pyv8
-from pyv8 import IdlSpec, MethodSpec
-from pyv8.flag import FlagConstructor
+from pyv8c import pyv8
+from pyv8c.pyv8 import IdlSpec, MethodSpec
+from pyv8c.pyv8.flag import FlagConstructor
 
 
 class Window:

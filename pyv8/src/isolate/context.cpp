@@ -469,7 +469,7 @@ static PyType_Slot context_slots[] = {
     {0, NULL} };
 
 static PyType_Spec context_spec = {
-    "pyv8.Context",
+    "pyv8c.pyv8.Context",
     sizeof(context_c),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
@@ -631,7 +631,7 @@ context_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         Py_INCREF((PyObject*)trace_callback);
         self->trace_callback = trace_callback;
     } else if (self->traceable) {
-        PyObject* module = PyImport_ImportModule("pyv8.trace");
+        PyObject* module = PyImport_ImportModule("pyv8c.pyv8.trace");
         if (module != nullptr) {
             self->trace_callback = PyObject_GetAttrString(module, "log_trace");
             Py_DECREF((PyObject*)module);

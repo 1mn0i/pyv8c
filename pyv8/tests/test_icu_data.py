@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import pyv8
+from pyv8c import pyv8
 
 
 class TestICUDataCompatibility(unittest.TestCase):
@@ -28,7 +28,11 @@ class TestICUDataCompatibility(unittest.TestCase):
         package_dir = Path(pyv8.__file__).resolve().parent
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
-            temporary_package = temporary_root / "pyv8"
+            temporary_parent = temporary_root / "pyv8c"
+            temporary_parent.mkdir()
+            (temporary_parent / "__init__.py").write_text("", encoding="utf-8")
+            shutil.copy2(package_dir.parent / "_version.py", temporary_parent / "_version.py")
+            temporary_package = temporary_parent / "pyv8"
             shutil.copytree(package_dir, temporary_package)
 
             icu_path = temporary_package / "icudtl.dat"
@@ -41,7 +45,7 @@ class TestICUDataCompatibility(unittest.TestCase):
             # Importing starts nothing, so the check is asked for by the first use --
             # and it still answers before V8 itself comes up.
             result = subprocess.run(
-                [sys.executable, "-c", "import pyv8; pyv8.Context(object)"],
+                [sys.executable, "-c", "from pyv8c import pyv8; pyv8.Context(object)"],
                 cwd=temporary_root,
                 env=environment,
                 capture_output=True,

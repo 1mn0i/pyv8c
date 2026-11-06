@@ -7,7 +7,7 @@ committed without rebuilding the document, firing ``hashchange`` and no load eve
 
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-import pyv8
+from pyv8c import pyv8
 
 from ...features.runtime import LazyValueStore
 from ...idl import interface

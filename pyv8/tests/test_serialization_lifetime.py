@@ -13,7 +13,7 @@ def child(program):
 def test_serialized_wasm_module_keeps_runtime_alive_until_released():
     child("""
 import gc
-import pyv8
+from pyv8c import pyv8
 isolate = pyv8.Isolate()
 context = isolate.context(object())
 serializer = pyv8.Serializer(context)
@@ -38,7 +38,7 @@ assert pyv8.shutdown_v8() is True
 
 def test_wasm_module_survives_source_isolate_close():
     child("""
-import pyv8
+from pyv8c import pyv8
 source_isolate = pyv8.Isolate()
 source = source_isolate.context(object())
 module = source.exec_js('new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0]))')
@@ -64,7 +64,7 @@ assert pyv8.shutdown_v8() is True
 
 def test_escaped_streams_reject_every_operation_after_the_callback():
     child("""
-import pyv8
+from pyv8c import pyv8
 class Window: pass
 context = pyv8.Context(Window())
 serializer = pyv8.Serializer(context)
@@ -95,7 +95,7 @@ finally: context.close()
 @pytest.mark.parametrize("closed", [False, True])
 def test_serializer_refuses_foreign_or_closed_handles(closed):
     child("""
-import pyv8
+from pyv8c import pyv8
 class Window: pass
 source_isolate = pyv8.Isolate()
 target_isolate = pyv8.Isolate()
@@ -119,7 +119,8 @@ finally:
 
 def test_streams_reject_other_threads_and_invalidate_on_callback_failure():
     child("""
-import pyv8, threading
+from pyv8c import pyv8
+import threading
 class Window: pass
 context = pyv8.Context(Window())
 serializer = pyv8.Serializer(context)

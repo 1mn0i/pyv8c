@@ -10,7 +10,7 @@ when the declaration surface moved to ``__idl_overrides__`` (2026-10-07,
 
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 
 from pyv8c.engine.bindings import Bindings  # noqa: E402
 from pyv8c.engine.idl import Idl  # noqa: E402

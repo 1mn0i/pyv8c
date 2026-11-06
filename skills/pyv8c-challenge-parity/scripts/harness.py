@@ -166,8 +166,8 @@ def worker(config, result_path):
     try:
         if side == "here":
             from pyv8c import Browser
-            import pyv8
-            import pyv8._pyv8 as native
+            from pyv8c import pyv8
+            from pyv8c.pyv8 import _pyv8 as native
 
             result["runtime"].update(
                 native_binary=native.__file__,

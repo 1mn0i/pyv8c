@@ -2,7 +2,7 @@
 import re
 from urllib.parse import urljoin, urlsplit
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, abort_signal, byte_string, dictionary, enum_value, is_nullish, missing_error, usv_string

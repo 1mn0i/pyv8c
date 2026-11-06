@@ -337,7 +337,7 @@ static PyType_Slot debugger_slots[] = {
     {0, nullptr}
 };
 static PyType_Spec debugger_spec = {
-    "pyv8.Debugger", sizeof(debugger_c), 0,
+    "pyv8c.pyv8.Debugger", sizeof(debugger_c), 0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, debugger_slots
 };
 int debugger_type_init() {

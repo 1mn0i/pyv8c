@@ -12,11 +12,11 @@ import json
 import pytest
 from loguru import logger
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.native
 
-import pyv8
-from pyv8 import IdlSpec
+from pyv8c import pyv8
+from pyv8c.pyv8 import IdlSpec
 
 from pyv8c import Browser
 from pyv8c.web.page_errors import PageError, PageTypeError, js_error_value

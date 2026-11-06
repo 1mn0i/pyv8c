@@ -6,7 +6,7 @@ something.  Nothing here moves either, so that empty shape is the whole payload 
 a page can observe is the event and the fields it promises.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dictionary, number

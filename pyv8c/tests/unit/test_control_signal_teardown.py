@@ -38,7 +38,7 @@ def test_resource_scope_still_continues_after_ordinary_failure():
 
 @pytest.mark.native
 def test_page_close_stops_page_callbacks_after_control_signal(monkeypatch):
-    pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+    pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
     from pyv8c import Browser
 
     browser = Browser(real_network=False)
@@ -64,7 +64,7 @@ def test_page_close_stops_page_callbacks_after_control_signal(monkeypatch):
 
 @pytest.mark.native
 def test_exception_reporting_propagates_control_signal(monkeypatch):
-    pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+    pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
     from pyv8c import Browser
 
     browser = Browser(real_network=False)
@@ -84,7 +84,7 @@ def test_exception_reporting_propagates_control_signal(monkeypatch):
 
 @pytest.mark.native
 def test_rejection_reporting_propagates_control_signal(monkeypatch):
-    pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+    pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
     from pyv8c import Browser
 
     browser = Browser(real_network=False)

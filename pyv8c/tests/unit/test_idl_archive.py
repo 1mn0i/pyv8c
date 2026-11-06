@@ -17,6 +17,12 @@ def _document(version=None):
             "interfaces": {"Node": {}, "Element": {"parent": "Node"}}}
 
 
+@pytest.mark.parametrize("version", [8, 9, 11])
+def test_unsupported_format_versions_are_rejected(version):
+    with pytest.raises(ValueError, match="unsupported IDL version"):
+        module._read_document(_document(version))
+
+
 def _forget():
     """Drop the in-process memories, so the next read is a real read."""
     module._DOCUMENTS.clear()

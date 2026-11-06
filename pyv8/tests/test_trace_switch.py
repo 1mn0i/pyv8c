@@ -1,7 +1,7 @@
 """Context-level observer activation and callback lifetime."""
 
 import pytest
-import pyv8
+from pyv8c import pyv8
 
 from tests.test_trace_contracts import Window, Target
 

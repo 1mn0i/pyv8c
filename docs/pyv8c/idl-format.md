@@ -4,7 +4,7 @@
 
 ## 基线与环境档案
 
-运行时默认读取 `pyv8c/pyv8c/idl/idl.zip`，归档中包含一个 JSON 文档，也可通过 Browser 的 `idl_path` 指定 ZIP 或 JSON。当前格式版本为 **10**，包内基线标记 Chromium **154.0.8030.0**。
+运行时默认读取 `pyv8c/pyv8c/idl/idl.zip`，归档中包含一个 JSON 文档，也可通过 Browser 的 `idl_path` 指定 ZIP 或 JSON。只接受当前格式版本 **10**，包内基线标记 Chromium **154.0.8030.0**；其他格式需重新生成。
 
 环境档案位于 `pyv8c/pyv8c/data/chrome-environment.json`，当前 source 记录的采集浏览器为 Chrome **156.0.8078.80**。IDL 的来源版本、环境档案版本、原生 V8 版本和测试使用的 Chrome 是不同信息，不能互相推算。环境档案还记录实际采集参数，应随结果一起核对。
 

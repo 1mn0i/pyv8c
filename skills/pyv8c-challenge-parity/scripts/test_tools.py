@@ -69,9 +69,9 @@ class EvidenceTests(unittest.TestCase):
             )
             package = SimpleNamespace(_pyv8=native, __version__="test")
             modules = {
-                "pyv8c": SimpleNamespace(Browser=Browser),
-                "pyv8": package,
-                "pyv8._pyv8": native,
+                "pyv8c": SimpleNamespace(Browser=Browser, pyv8=package),
+                "pyv8c.pyv8": package,
+                "pyv8c.pyv8._pyv8": native,
             }
             config = {
                 "side": "here",

@@ -5,7 +5,7 @@ type-inspection queries answer nothing because the spec's type tables are not
 modelled.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error

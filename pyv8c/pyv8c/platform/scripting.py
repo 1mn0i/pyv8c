@@ -4,7 +4,7 @@ import re
 from collections import deque
 from urllib.parse import urljoin
 
-import pyv8
+from pyv8c import pyv8
 
 from ..foundation.host_errors import HostStateError
 from ..foundation.tasks import TaskSource

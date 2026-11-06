@@ -5,7 +5,7 @@ carried over: both are visible in the interface, neither is modelled.
 """
 from __future__ import annotations
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error

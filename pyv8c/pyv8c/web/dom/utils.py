@@ -3,7 +3,7 @@
 import re
 from urllib.parse import urlsplit, urlunsplit
 
-from pyv8.flag import V8Attribute
+from pyv8c.pyv8.flag import V8Attribute
 
 from ...foundation.arguments import dom_string
 from ...foundation.urls import form_urlencoded

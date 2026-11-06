@@ -5,7 +5,7 @@
 ## 1. 基本声明
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 class Example:
     __v8_idl_spec__ = pyv8.IdlSpec(
@@ -42,7 +42,7 @@ assert updated.attributes is original.attributes
 
 `replace(**changes)` 创建新对象，并重新校验字段及组合约束；未修改的成员可共享。不可变指描述符字段不能重新赋值，不代表回调捕获的数据或回调所属对象被冻结。
 
-不支持 `spec[key]`、`dict(spec)`、字段赋值、删除或位置参数。成员集合必须是对应描述符组成的 **tuple**，不能传 list 或旧式四元组。完整 Python 签名见 [类型声明](../../pyv8/pyv8/_pyv8.pyi)。
+不支持 `spec[key]`、`dict(spec)`、字段赋值、删除或位置参数。成员集合必须是对应描述符组成的 **tuple**，不能传 list 或旧式四元组。完整 Python 签名见 [类型声明](../../pyv8c/pyv8c/pyv8/_pyv8.pyi)。
 
 ## 2. 接口字段
 
@@ -317,7 +317,7 @@ pyv8c 在上层汇总基线元数据、实现声明和 mixin，通过 binder 生
 
 - [字段结构](../../pyv8/src/interfaces/idl_spec.h)：描述符原生存储布局。
 - [字段注册与校验](../../pyv8/src/interfaces/idl_spec.cpp)：默认值、范围、replace、回调解析与 GC 遍历。
-- [枚举和标志](../../pyv8/pyv8/flag.py)：公开常量。
+- [枚举和标志](../../pyv8c/pyv8c/pyv8/flag.py)：公开常量。
 - [同步迭代](../../pyv8/src/interfaces/iterable.cpp)：indexed、pair、set 安装及执行。
 - [模板安装](../../pyv8/src/interfaces/pyclass.cpp)：成员、继承和对象模板配置。
-- [Python 类型声明](../../pyv8/pyv8/_pyv8.pyi)：公开签名和只读字段。
+- [Python 类型声明](../../pyv8c/pyv8c/pyv8/_pyv8.pyi)：公开签名和只读字段。

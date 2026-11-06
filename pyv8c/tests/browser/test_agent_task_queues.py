@@ -1,7 +1,7 @@
 import threading
 import subprocess
 import sys
-import pyv8
+from pyv8c import pyv8
 
 from pyv8c import Browser
 from pyv8c.foundation.tasks import TaskSource

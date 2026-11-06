@@ -1,10 +1,10 @@
 """Native access-check callbacks, denial, exception forwarding and teardown."""
-from pyv8 import IdlSpec, AttributeSpec
+from pyv8c.pyv8 import IdlSpec, AttributeSpec
 
 import gc
 import weakref
 
-import pyv8
+from pyv8c import pyv8
 
 
 class DOMException(pyv8.JsError):

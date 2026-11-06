@@ -5,7 +5,7 @@ builds the eager core and the stubs its members reference; the rest is built whe
 """
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 from pyv8c import Browser
 
 

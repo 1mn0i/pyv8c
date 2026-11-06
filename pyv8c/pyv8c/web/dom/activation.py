@@ -5,7 +5,7 @@ the ``click`` is not cancelled; a disabled form control is inert.  Behaviour
 measured against Chrome 153.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 
 #: Local names that a ``disabled`` attribute makes inert.

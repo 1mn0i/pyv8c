@@ -1,7 +1,7 @@
-from pyv8 import IdlSpec, MethodSpec
+from pyv8c.pyv8 import IdlSpec, MethodSpec
 import unittest
 
-import pyv8
+from pyv8c import pyv8
 
 
 class TestPyClassMaintenance(unittest.TestCase):

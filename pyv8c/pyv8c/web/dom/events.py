@@ -1,7 +1,7 @@
 """DOM event model: events, event-handler slots and the target dispatch pipeline."""
 import time
 
-import pyv8
+from pyv8c import pyv8
 from ...idl import interface
 from ...foundation.arguments import (
     MISSING,

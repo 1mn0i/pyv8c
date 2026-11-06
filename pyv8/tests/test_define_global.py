@@ -1,7 +1,7 @@
 """Context.define_global installs one value with the attributes the caller names."""
-import pyv8
+from pyv8c import pyv8
 
-from pyv8.flag import V8Attribute
+from pyv8c.pyv8.flag import V8Attribute
 
 
 def make_context():

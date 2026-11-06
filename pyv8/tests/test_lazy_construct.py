@@ -7,11 +7,11 @@ requested name without building a FunctionTemplate. The first property access
 calls the optional lazy_factory, builds the real template and caches it, so
 later accesses never re-enter Python.
 """
-from pyv8 import IdlSpec, AttributeSpec, MethodSpec
+from pyv8c.pyv8 import IdlSpec, AttributeSpec, MethodSpec
 import unittest
 
-import pyv8
-from pyv8.flag import (
+from pyv8c import pyv8
+from pyv8c.pyv8.flag import (
     FlagConstructor,
     FlagLocation,
     FlagReceiverCheck,
@@ -182,7 +182,7 @@ class TestLazyConstruct(unittest.TestCase):
         self.assertEqual(attempts, ["Bad", "Bad"])
 
     def test_without_factory_names_resolve_to_undefined(self):
-        """Backwards compatibility: no lazy_factory keeps the old behaviour."""
+        """Without a lazy factory, an installed name remains undefined."""
         context = pyv8.Context(Window(), ctx_type="Top")
         self.addCleanup(context.close)
         context.install(["Widget"])

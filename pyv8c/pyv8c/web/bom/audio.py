@@ -9,8 +9,8 @@ from collections import deque
 import math
 import sys
 
-import pyv8
-from pyv8 import AttributeSpec
+from pyv8c import pyv8
+from pyv8c.pyv8 import AttributeSpec
 
 from ...features.runtime import FeatureImplementation
 from ...idl import interface

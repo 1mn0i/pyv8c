@@ -9,7 +9,7 @@ def test_collection_does_not_wait_for_active_realm(kind):
     result = subprocess.run([sys.executable, "-c", r'''
 import gc
 import threading
-import pyv8
+from pyv8c import pyv8
 import sys
 
 class Window: pass

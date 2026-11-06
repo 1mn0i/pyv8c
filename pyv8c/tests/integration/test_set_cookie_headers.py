@@ -13,7 +13,7 @@ import threading
 
 import pytest
 
-pytest.importorskip("pyv8", reason="the engine is imported by the package under test")
+pytest.importorskip("pyv8c.pyv8", reason="the engine is imported by the package under test")
 
 from pyv8c import Browser  # noqa: E402
 

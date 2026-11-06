@@ -11,7 +11,7 @@ in JavaScript rather than by a host class, so its prototype stays ``Object.proto
 """
 import math
 
-import pyv8
+from pyv8c import pyv8
 
 from ...foundation.arguments import IdlArgumentError
 from ...foundation.clock import clock_of

@@ -5,7 +5,7 @@ that realm's queue: the sending side never runs the receiving handler itself.
 """
 from __future__ import annotations
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, is_nullish, missing_error

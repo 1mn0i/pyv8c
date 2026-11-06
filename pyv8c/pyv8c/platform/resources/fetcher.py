@@ -4,7 +4,7 @@ from functools import cached_property
 import time
 from urllib.parse import urlsplit
 from ...foundation.error_policy import control_exceptions
-import pyv8
+from pyv8c import pyv8
 from ...foundation.host_errors import LoadFailure
 from ...foundation.realm import WorkerSource
 from ...foundation.urls import absolute_url, origin_tuple, serialize_origin

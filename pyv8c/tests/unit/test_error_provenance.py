@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 
-import pyv8
+from pyv8c import pyv8
 
 from pyv8c import foundation
 from pyv8c.web import page_errors as vocabulary

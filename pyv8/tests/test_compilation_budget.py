@@ -8,7 +8,7 @@ import pytest
 @pytest.mark.parametrize('entry', ['exec', 'script'])
 def test_compilation_observes_budget_and_leaves_context_usable(entry):
     code = r'''
-import pyv8
+from pyv8c import pyv8
 source = 'var values=[' + '0,' * 400000 + '0]; values.length'
 isolate = pyv8.Isolate()
 context = isolate.context(object, timeout=0.001 if ENTRY == 'script' else 0)
@@ -39,7 +39,7 @@ print('recovered')
 @pytest.mark.parametrize('pretend', ['spoof', 'raising'])
 def test_script_argument_requires_a_real_native_script(pretend):
     code = r'''
-import pyv8
+from pyv8c import pyv8
 class Pretender:
     @property
     def __class__(self):
@@ -71,7 +71,7 @@ print('recovered')
 @pytest.mark.parametrize('timeout', [0, 2])
 def test_explicit_exec_budget_overrides_context_compilation_default(timeout):
     code = r'''
-import pyv8
+from pyv8c import pyv8
 source = 'var values=[' + '0,' * 400000 + '0]; values.length'
 isolate = pyv8.Isolate()
 context = isolate.context(object, timeout=0.000001)
@@ -93,7 +93,7 @@ print('completed')
 @pytest.mark.parametrize('invalid', ['filename', 'isolate'])
 def test_invalid_program_does_not_consume_pending_termination(invalid):
     code = r'''
-import pyv8
+from pyv8c import pyv8
 isolate = pyv8.Isolate()
 context = isolate.context(object)
 sibling = pyv8.Isolate()

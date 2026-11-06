@@ -4,7 +4,7 @@ import json
 import threading
 
 import pytest
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:

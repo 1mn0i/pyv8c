@@ -5,9 +5,9 @@ flags are the ones a page can feel, because V8 may elide a call it believes has 
 """
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 
-from pyv8.flag import ArrayProto, DefinitionKind, SideEffectType, V8Attribute  # noqa: E402
+from pyv8c.pyv8.flag import ArrayProto, DefinitionKind, SideEffectType, V8Attribute  # noqa: E402
 from pyv8c.engine.binder import property_flags  # noqa: E402
 from pyv8c.engine.idl import ARRAY_PROTOS, DEFINITION_KINDS, Idl  # noqa: E402
 from pyv8c.tools.extract_idl import _property_mask  # noqa: E402

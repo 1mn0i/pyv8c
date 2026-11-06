@@ -6,7 +6,7 @@ import pytest
 
 
 SCRIPT = r'''
-import pyv8
+from pyv8c import pyv8
 pyv8.configure(params=["--max-old-space-size=256"])
 isolate = pyv8.Isolate()
 queue = pyv8.MicrotaskQueue(isolate)
@@ -65,7 +65,7 @@ def test_heap_termination_allows_compilation_reclamation_and_repeated_use(mode):
 
 def test_heap_stop_allows_diagnostics_but_renewed_growth_is_stopped():
     code = r'''
-import pyv8
+from pyv8c import pyv8
 pyv8.configure(params=['--max-old-space-size=256'])
 isolate = pyv8.Isolate()
 context = isolate.context(object)

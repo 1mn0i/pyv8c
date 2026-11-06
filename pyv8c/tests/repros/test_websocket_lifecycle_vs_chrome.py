@@ -2,7 +2,7 @@
 import pytest
 import threading
 
-pytest.importorskip('pyv8')
+pytest.importorskip('pyv8c.pyv8')
 pytest.importorskip('websockets')
 
 from websockets.sync.server import serve

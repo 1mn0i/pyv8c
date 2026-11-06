@@ -18,8 +18,8 @@ world its template is built for is still read from it.
 
 import unittest
 
-import pyv8
-from pyv8 import IdlSpec
+from pyv8c import pyv8
+from pyv8c.pyv8 import IdlSpec
 
 
 def window_properties_class(seen):

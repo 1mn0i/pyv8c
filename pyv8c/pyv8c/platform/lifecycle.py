@@ -1,6 +1,6 @@
 """Document lifecycle events and ready-state transitions for a Page."""
 
-import pyv8
+from pyv8c import pyv8
 from concurrent.futures import Future
 from threading import RLock
 

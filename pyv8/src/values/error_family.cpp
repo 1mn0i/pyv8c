@@ -28,13 +28,13 @@ struct Member
 };
 
 const Member kMembers[] = {
-    {"Error", "JsError", "pyv8.JsError", nullptr},
-    {"TypeError", "JsTypeError", "pyv8.JsTypeError", PyExc_TypeError},
-    {"RangeError", "JsRangeError", "pyv8.JsRangeError", PyExc_ValueError},
-    {"ReferenceError", "JsReferenceError", "pyv8.JsReferenceError", PyExc_ReferenceError},
-    {"SyntaxError", "JsSyntaxError", "pyv8.JsSyntaxError", PyExc_SyntaxError},
-    {"URIError", "JsURIError", "pyv8.JsURIError", PyExc_ValueError},
-    {"EvalError", "JsEvalError", "pyv8.JsEvalError", nullptr},
+    {"Error", "JsError", "pyv8c.pyv8.JsError", nullptr},
+    {"TypeError", "JsTypeError", "pyv8c.pyv8.JsTypeError", PyExc_TypeError},
+    {"RangeError", "JsRangeError", "pyv8c.pyv8.JsRangeError", PyExc_ValueError},
+    {"ReferenceError", "JsReferenceError", "pyv8c.pyv8.JsReferenceError", PyExc_ReferenceError},
+    {"SyntaxError", "JsSyntaxError", "pyv8c.pyv8.JsSyntaxError", PyExc_SyntaxError},
+    {"URIError", "JsURIError", "pyv8c.pyv8.JsURIError", PyExc_ValueError},
+    {"EvalError", "JsEvalError", "pyv8c.pyv8.JsEvalError", nullptr},
 };
 constexpr int kFamilySize = 7;
 
@@ -214,7 +214,7 @@ bool initialize()
             return false;
         family[member] = (PyTypeObject*)type;
     }
-    static PyType_Spec marker_spec = {"pyv8.JsInterceptorFailure", 0, 0,
+    static PyType_Spec marker_spec = {"pyv8c.pyv8.JsInterceptorFailure", 0, 0,
                                       Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, slots};
     PyObject* marker = PyType_FromSpecWithBases(&marker_spec, (PyObject*)PyExc_Exception);
     if (marker == nullptr)

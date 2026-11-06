@@ -62,7 +62,7 @@ static PyType_Slot js_function_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_function_spec = {
-    "pyv8.JSFunction",
+    "pyv8c.pyv8.JSFunction",
     sizeof(js_function),
     0,
     Py_TPFLAGS_DEFAULT,

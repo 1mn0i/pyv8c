@@ -6,8 +6,6 @@ process only issues ordinary ``evaluate`` calls.  ``run_until_idle`` is a test
 driver that blocks until the realm is idle; it never has to be called for a
 page to run.
 
-Window execution groups always drive themselves; the legacy auto-pump environment
-variable cannot disable a browser group's event loop.
 """
 import statistics
 import time
@@ -15,7 +13,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 from pyv8c import Browser
 
 ORIGIN = "http://127.0.0.1:9"
@@ -311,20 +309,3 @@ def test_timer_fires_after_its_delay(page):
     # used here and the monotonic clock the scheduler fires on; it still
     # catches a timer that ran far too early (delay ignored entirely).
     assert 15 <= elapsed < 500, f"timer fired after {elapsed}ms instead of ~30ms"
-
-
-def test_legacy_environment_cannot_disable_execution_group_loop(page, monkeypatch):
-    monkeypatch.setenv("PYV8C_AUTO_PUMP", "0")
-    browser = Browser(resource_loader=_loader, stub_logging="off")
-    context = browser.new_profile()
-    quiet = context.new_page(ORIGIN + "/")
-    try:
-        quiet.evaluate("""
-            window.__count = 0;
-            setTimeout(function () { window.__count += 1; }, 5);
-        """)
-        time.sleep(0.25)
-        assert quiet.evaluate("window.__count") == 1
-    finally:
-        quiet.close()
-        browser.close()

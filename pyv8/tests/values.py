@@ -1,5 +1,5 @@
 """Explicit data conversion for tests asserting Python snapshots."""
-import pyv8
+from pyv8c import pyv8
 
 
 def snapshot(value):

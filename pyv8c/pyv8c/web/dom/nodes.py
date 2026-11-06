@@ -5,7 +5,7 @@
 modules sit above this one.
 """
 
-import pyv8
+from pyv8c import pyv8
 from ...idl import interface
 from ...foundation.arguments import (
     MISSING,

@@ -19,7 +19,7 @@ static PyType_Slot null_slots[] = {
     {0, NULL} };
 
 static PyType_Spec null_spec = {
-    "pyv8.NullType",
+    "pyv8c.pyv8.NullType",
     sizeof(js_null),
     0,
     Py_TPFLAGS_DEFAULT,

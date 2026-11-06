@@ -11,7 +11,7 @@ import importlib.abc
 import sys
 class BlockNative(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'pyv8' or fullname.startswith('pyv8.'):
+        if fullname == 'pyv8c.pyv8' or fullname.startswith('pyv8c.pyv8.'):
             raise AssertionError('unexpected native import: ' + fullname)
 sys.meta_path.insert(0, BlockNative())
 import pyv8c.platform as platform
@@ -23,7 +23,7 @@ assert not DocumentResourceTracker().has_pending
 assert ResourceOwnership(ResourceScope()).active_count == 0
 assert font_size_px('2em', 24) == 48
 assert 'pyv8c.platform.browser' not in sys.modules
-assert 'pyv8' not in sys.modules
+assert 'pyv8c.pyv8' not in sys.modules
 try:
     platform.missing_capability
 except AttributeError:

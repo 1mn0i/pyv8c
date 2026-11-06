@@ -6,7 +6,7 @@ import time
 from collections import deque
 from functools import partial
 
-import pyv8
+from pyv8c import pyv8
 
 from ...foundation.arguments import is_nullish
 from ...foundation.logging import logger

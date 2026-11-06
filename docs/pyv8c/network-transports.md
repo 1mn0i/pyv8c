@@ -7,9 +7,9 @@
 HTTP 和 WebSocket 是两个可分别替换的角色。默认 HTTP 为 `curl_cffi`，WebSocket 为 `websockets`；`cronet` 可选，使用 cycronet 依赖。
 
 ```powershell
-python -m pip install --config-settings editable_mode=compat -e ./pyv8c
+python -m pip install -e .
 # 需要 cycronet 时单独安装：
-python -m pip install --config-settings editable_mode=compat -e "./pyv8c[cronet]"
+python -m pip install -e ".[cronet]"
 ```
 
 Browser 默认开启真实网络；`real_network=False` 不装配传输，用于本地资源测试。缺失所选引擎依赖会明确失败，不静默切换另一引擎。

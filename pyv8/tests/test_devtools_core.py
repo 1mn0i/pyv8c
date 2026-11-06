@@ -3,9 +3,9 @@
 import threading
 from types import SimpleNamespace
 
-from pyv8.devtools import DevToolsOptions
-from pyv8.devtools.requests import Requests
-from pyv8.devtools.scheduler import CallingThread, Mailbox
+from pyv8c.pyv8.devtools import DevToolsOptions
+from pyv8c.pyv8.devtools.requests import Requests
+from pyv8c.pyv8.devtools.scheduler import CallingThread, Mailbox
 
 
 class FakeContext:
@@ -24,8 +24,8 @@ class FakeContext:
 
 
 def endpoint_for(mailbox):
-    from pyv8.devtools.scheduler import Host
-    from pyv8.devtools.session import Target
+    from pyv8c.pyv8.devtools.scheduler import Host
+    from pyv8c.pyv8.devtools.session import Target
     target = Target(Host(FakeContext(), CallingThread(), lambda: "about:blank", lambda: None), DevToolsOptions())
     target.mailbox = mailbox
     return target
@@ -164,8 +164,8 @@ class RecordingTransport:
 
 
 def test_connection_generation_drops_queued_requests_and_late_responses():
-    from pyv8.devtools.router import Router
-    from pyv8.devtools.scheduler import Host
+    from pyv8c.pyv8.devtools.router import Router
+    from pyv8c.pyv8.devtools.scheduler import Host
 
     router = Router(DevToolsOptions())
     target = router.register(Host(FakeContext(), CallingThread(), lambda: "about:blank", lambda: None))
@@ -190,8 +190,8 @@ def test_connection_generation_drops_queued_requests_and_late_responses():
 
 
 def test_autoattach_parent_scope_and_actual_wait_state():
-    from pyv8.devtools.router import Router
-    from pyv8.devtools.scheduler import Host
+    from pyv8c.pyv8.devtools.router import Router
+    from pyv8c.pyv8.devtools.scheduler import Host
 
     router = Router(DevToolsOptions(pause_on_start=False))
     host = lambda: Host(FakeContext(), CallingThread(), lambda: "about:blank", lambda: None)

@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-pyv8 = pytest.importorskip("pyv8")
+pyv8 = pytest.importorskip("pyv8c.pyv8")
 pytestmark = [pytest.mark.race, pytest.mark.slow]
 from websockets.asyncio.client import connect
 

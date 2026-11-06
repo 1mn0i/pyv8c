@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from importlib import import_module
 
+from ._version import __version__
+
 _EXPORTS = {
     "Browser": ".platform",
     "Profile": ".platform",
@@ -35,7 +37,7 @@ for _name in (
 ):
     _EXPORTS[_name] = ".web.page_errors"
 
-__all__ = tuple(_EXPORTS)
+__all__ = ("__version__", *tuple(_EXPORTS))
 
 
 def __getattr__(name):

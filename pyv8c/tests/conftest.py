@@ -27,7 +27,7 @@ QUIET_BROWSER_OPTIONS = {"stub_logging": "off"}
 
 def require_pyv8():
     """Skip the calling test when the native extension is not importable."""
-    return pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+    return pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 
 
 def default_loader(url, request):

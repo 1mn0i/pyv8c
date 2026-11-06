@@ -1,7 +1,7 @@
 """Native source URL filtering happens before a trace reaches Python."""
 
 import pytest
-import pyv8
+from pyv8c import pyv8
 
 from tests.test_trace_contracts import Target, Window
 

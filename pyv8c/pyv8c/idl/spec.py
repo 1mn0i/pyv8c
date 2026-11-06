@@ -22,8 +22,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
-from pyv8.flag import FlagLocation
+from pyv8c.pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8c.pyv8.flag import FlagLocation
 
 __all__ = ["INTERFACE_FIELDS", "InterfaceSpec", "idl_spec", "members_of",
            "standalone", "stated_fields", "stated_key", "unresolved_members"]

@@ -4,7 +4,7 @@ A script-constructed DataTransfer has no active drag operation. Its data store i
 read/write, while dropEffect and effectAllowed stay at their initial ``none``.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 from ...features.runtime import FeatureImplementation
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error

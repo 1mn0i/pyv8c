@@ -293,7 +293,7 @@ static PyType_Slot js_object_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_object_spec = {
-    "pyv8.JSObject",
+    "pyv8c.pyv8.JSObject",
     sizeof(js_object),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 pytestmark = pytest.mark.native
 
 from pyv8c.features.runtime import LazyValueStore  # noqa: E402

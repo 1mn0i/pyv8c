@@ -3,7 +3,7 @@
 import json
 import time
 
-import pyv8
+from pyv8c import pyv8
 
 
 from ..engine.trace import log_trace

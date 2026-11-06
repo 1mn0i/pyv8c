@@ -38,7 +38,7 @@ class TestLazyStartup(unittest.TestCase):
 
         self.assert_prints(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             print(pyv8.is_initialized(), hasattr(pyv8, "Context"))
             pyv8.v8_version()
@@ -54,7 +54,7 @@ class TestLazyStartup(unittest.TestCase):
 
         self.assert_prints(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             print(pyv8.is_initialized())
             context = pyv8.Context(object)
@@ -70,7 +70,7 @@ class TestLazyStartup(unittest.TestCase):
 
         self.assert_prints(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             isolate = pyv8.Isolate()
             print(pyv8.is_initialized())
@@ -89,7 +89,7 @@ class TestLazyStartup(unittest.TestCase):
             """
             import threading
 
-            import pyv8
+            from pyv8c import pyv8
 
             results = []
 
@@ -111,7 +111,7 @@ class TestLazyStartup(unittest.TestCase):
 
         self.assert_fails_with(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             context = pyv8.Context(object)
             context.close()
@@ -126,7 +126,7 @@ class TestLazyStartup(unittest.TestCase):
 
         self.assert_fails_with(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             pyv8.Context(object)
             pyv8.configure(params=["--expose-gc"])
@@ -139,7 +139,7 @@ class TestLazyStartup(unittest.TestCase):
 
         self.assert_prints(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             print(pyv8.configure(params=["--expose-gc"]))
             print(pyv8.is_initialized())
@@ -154,7 +154,7 @@ class TestLazyStartup(unittest.TestCase):
 
         self.assert_fails_with(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             pyv8.configure(params="--expose-gc")
             """,
@@ -166,7 +166,7 @@ class TestLazyStartup(unittest.TestCase):
 
         output = self.assert_fails_with(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             pyv8.configure(icudtl_path="pyv8-there-is-no-such-directory/icudtl.dat")
             pyv8.Context(object)

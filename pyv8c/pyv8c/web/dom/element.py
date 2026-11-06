@@ -4,7 +4,7 @@ import math
 import struct
 from html import escape
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dictionary, dom_string, interface_value, is_nullish, missing_error

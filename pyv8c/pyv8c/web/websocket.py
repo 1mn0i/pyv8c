@@ -2,7 +2,7 @@
 import re
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-import pyv8
+from pyv8c import pyv8
 
 from ..features.runtime import FeatureImplementation
 from ..idl import interface

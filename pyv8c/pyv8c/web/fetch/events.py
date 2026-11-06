@@ -1,5 +1,5 @@
 """Events shared by Fetch, WebSocket, XHR, and Worker APIs."""
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import (

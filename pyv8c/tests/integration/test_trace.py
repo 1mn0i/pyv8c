@@ -1,9 +1,9 @@
 """Actual browser trace events, rather than V8Context constructor arguments."""
 
 import pytest
-import pyv8
+from pyv8c import pyv8
 from loguru import logger
-from pyv8.trace import format_trace
+from pyv8c.pyv8.trace import format_trace
 
 from pyv8c import Browser
 

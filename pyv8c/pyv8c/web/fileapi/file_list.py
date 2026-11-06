@@ -3,7 +3,7 @@
 Chromium keeps it beside ``blob.py`` and ``file.py`` in ``core/fileapi``; only the empty
 list is modelled, since no file picker exists here, but the shape is Chrome's.
 """
-import pyv8
+from pyv8c import pyv8
 
 from ...foundation.arguments import MISSING, missing_error
 from ...idl import interface

@@ -92,7 +92,7 @@ static PyType_Slot js_exception_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_exception_spec = {
-    "pyv8.JSException",
+    "pyv8c.pyv8.JSException",
     0,
     0,
     Py_TPFLAGS_DEFAULT,
@@ -153,7 +153,7 @@ js_exception_type_init()
         {Py_tp_dealloc, (void*)PythonBoundary<release_exception_state>::call},
         {Py_tp_clear, (void*)PythonBoundary<clear_exception_state>::call},
         {Py_tp_traverse, (void*)PythonBoundary<traverse_exception_state>::call}, {0, nullptr}};
-    PyType_Spec state_spec = {"pyv8.ExceptionState", sizeof(JsExceptionState), 0,
+    PyType_Spec state_spec = {"pyv8c.pyv8.ExceptionState", sizeof(JsExceptionState), 0,
                              Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, state_slots};
     exception_state_type = (PyTypeObject*)PyType_FromSpec(&state_spec);
     if (!exception_state_type) return -1;
@@ -181,7 +181,7 @@ PyTypeObject* js_terminated_type = NULL;
 int
 js_terminated_type_init()
 {
-    js_terminated_type = (PyTypeObject*)PyErr_NewException("pyv8.JavaScriptTerminated", PyExc_BaseException, nullptr);
+    js_terminated_type = (PyTypeObject*)PyErr_NewException("pyv8c.pyv8.JavaScriptTerminated", PyExc_BaseException, nullptr);
     if (js_terminated_type == NULL)
     {
         return -1;

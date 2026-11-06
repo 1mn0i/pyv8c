@@ -5,7 +5,7 @@ rather than in the deprecated FileSystem module that makes it reachable as a glo
 """
 import time
 
-import pyv8
+from pyv8c import pyv8
 
 from ...foundation.arguments import dictionary, dom_string, integer, is_nullish, missing_error
 from ...idl import interface

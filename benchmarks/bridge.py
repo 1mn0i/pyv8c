@@ -24,8 +24,8 @@ def measure(operation, batches=20):
 
 
 def worker():
-    import pyv8
-    from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+    from pyv8c import pyv8
+    from pyv8c.pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
     class Window:
         __v8_idl_spec__ = IdlSpec(global_this=True)
@@ -110,7 +110,7 @@ def main():
                                 text=True, check=True, env=os.environ.copy())
         runs.append(json.loads(result.stdout.strip().splitlines()[-1]))
         print(f"process {index + 1}/{args.processes}", file=sys.stderr)
-    import pyv8
+    from pyv8c import pyv8
     binary = Path(pyv8._pyv8.__file__)
     report = {"python": sys.version, "platform": platform.platform(),
               "binary": str(binary), "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),

@@ -1,0 +1,6 @@
+include README.md
+include pyv8/V8_VERSION
+include pyv8/v8_build.py
+include pyv8/build_support.py
+recursive-include pyv8/src *.cpp *.h *.def
+recursive-include pyv8c/pyv8c *.py *.pyi py.typed *.json *.zip

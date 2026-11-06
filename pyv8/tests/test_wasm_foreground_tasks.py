@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 
 import pytest
-import pyv8
+from pyv8c import pyv8
 
 
 def test_an_idle_context_reports_no_foreground_task():

@@ -3,7 +3,7 @@ import weakref
 import gc
 
 import pytest
-import pyv8
+from pyv8c import pyv8
 
 from pyv8c import Browser
 from pyv8c.foundation.host_errors import RealmBusyError

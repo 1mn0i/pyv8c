@@ -11,7 +11,7 @@ import io
 
 import pytest
 
-import pyv8
+from pyv8c import pyv8
 from tests.error_family import declared
 
 
@@ -143,7 +143,7 @@ def test_a_throwing_fallback_constructor_getter_cannot_crash_the_binding():
     import subprocess
     import sys
     program = """
-import pyv8
+from pyv8c import pyv8
 class Window: pass
 class Mapped(pyv8.JsURIError): pass
 context = pyv8.Context(Window())

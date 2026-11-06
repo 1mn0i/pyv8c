@@ -2,7 +2,7 @@ import gc
 import threading
 import unittest
 
-import pyv8
+from pyv8c import pyv8
 
 
 class TestMultipleIsolate(unittest.TestCase):

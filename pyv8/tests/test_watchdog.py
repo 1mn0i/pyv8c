@@ -2,7 +2,7 @@
 
 import time
 
-import pyv8
+from pyv8c import pyv8
 
 BUSY = "var t = Date.now(); while (Date.now() - t < 5000) {}"
 

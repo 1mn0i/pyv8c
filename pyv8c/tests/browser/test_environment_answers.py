@@ -5,7 +5,7 @@ No pump here: driving the task queue in this file perturbs the frame tests that 
 """
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 
 from pyv8c import Browser  # noqa: E402
 from pyv8c.foundation.environment import BrowserEnvironment  # noqa: E402

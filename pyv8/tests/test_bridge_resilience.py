@@ -1,11 +1,11 @@
 from tests.values import snapshot
 from tests.error_family import declared
 
-from pyv8 import IdlSpec
+from pyv8c.pyv8 import IdlSpec
 import math
 import unittest
 
-import pyv8
+from pyv8c import pyv8
 
 
 class TestBridgeResilience(unittest.TestCase):

@@ -4,7 +4,7 @@ Both share the same collection rule, which is what the filter's three answers me
 node the filter *accepts* is handed out, a node it *skips* is stepped over but its
 children are still visited, and a node it *rejects* takes its whole subtree with it.
 """
-import pyv8
+from pyv8c import pyv8
 from ...idl import interface
 from ...foundation.arguments import (MISSING, callback_value, integer, is_nullish)
 from ..page_errors import PageTypeError

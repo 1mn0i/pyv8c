@@ -1,7 +1,7 @@
 """Constructors, dispatch and handler slots for the DOM event model."""
 import pytest
 
-pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 
 
 
@@ -109,7 +109,7 @@ def test_event_init_members_round_trip(event_page, expression, expected):
 
 
 def test_nullable_event_members_default_to_null(event_page):
-    import pyv8
+    from pyv8c import pyv8
 
     for expression in (
         "new InputEvent('input').data",

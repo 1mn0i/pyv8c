@@ -1,7 +1,7 @@
 """``customElements``: the definitions a page registers.  Defining one never
 upgrades an element -- this DOM has no reaction stack."""
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error

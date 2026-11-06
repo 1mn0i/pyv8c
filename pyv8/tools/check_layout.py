@@ -15,9 +15,9 @@ afterwards.
 `--list` prints the files in each group and is the check that a move put every
 file where the document says it goes.
 
-It also holds the two build files to the same tree: `setup.py` has to hand the
+It also holds the build files to the same tree: `build_support.py` has to hand the
 compiler every group as an include root, because the sources include their
-neighbours by bare name, and `pyproject.toml` has to name package data that is
+neighbours by bare name, and the root `setup.py` has to name package data that is
 actually there.  A group that exists in the tree and not in the build is a group
 whose files cannot see each other.
 """
@@ -28,12 +28,11 @@ import argparse
 import ast
 import re
 import sys
-import tomllib
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = PROJECT_ROOT / "src"
-PACKAGE_ROOT = PROJECT_ROOT / "pyv8"
+PACKAGE_ROOT = PROJECT_ROOT.parent / "pyv8c" / "pyv8c" / "pyv8"
 
 #: Package data the build produces rather than the tree holding it, so its absence
 #: from a fresh checkout says nothing.
@@ -168,8 +167,8 @@ def includes_of(path: Path):
 
 
 def include_roots_the_build_declares() -> list[str]:
-    """The `include_dirs` setup.py hands the compiler, as written there."""
-    text = (PROJECT_ROOT / "setup.py").read_text(encoding="utf-8")
+    """The `include_dirs` build_support.py hands the compiler."""
+    text = (PROJECT_ROOT / "build_support.py").read_text(encoding="utf-8")
     for node in ast.walk(ast.parse(text)):
         if not isinstance(node, ast.Call):
             continue
@@ -180,7 +179,7 @@ def include_roots_the_build_declares() -> list[str]:
                 roots = ast.literal_eval(keyword.value)
                 if not isinstance(roots, (list, tuple)) or not all(isinstance(root, str) for root in roots):
                     raise ValueError('Extension.include_dirs must be a literal list/tuple of paths')
-                return list(roots)
+                return [root.removeprefix('pyv8/') for root in roots]
     return []
 
 
@@ -194,11 +193,14 @@ def resolve_include(source: Path, included: str, roots: list[Path]) -> Path | No
 
 
 def package_data_the_packaging_names() -> list[str]:
-    """Every package-data entry pyproject.toml names."""
-    with (PROJECT_ROOT / "pyproject.toml").open("rb") as handle:
-        packaging = tomllib.load(handle)
-    declared = packaging.get("tool", {}).get("setuptools", {}).get("package-data", {})
-    return [entry for entries in declared.values() for entry in entries]
+    """Every native package-data entry declared by the root setup.py."""
+    tree = ast.parse((PROJECT_ROOT.parent / 'setup.py').read_text(encoding='utf-8'))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'setup':
+            for keyword in node.keywords:
+                if keyword.arg == 'package_data':
+                    return ast.literal_eval(keyword.value).get('pyv8c.pyv8', [])
+    raise ValueError('native package data is not declared')
 
 
 def configuration_problems(groups) -> tuple[list[str], list[str], list[str]]:
@@ -307,9 +309,9 @@ def main() -> int:
         ("includes that reach up, allowed by a composition point", allowed_upward),
         ("includes that reach up with ../", relative_parents),
         ("quoted includes that match no file in the tree", unresolved),
-        ("groups setup.py does not offer as include roots", roots_missing),
-        ("include roots setup.py offers that no group needs", roots_extra),
-        ("package data pyproject.toml names that the tree does not have", data_absent),
+        ("groups build_support.py does not offer as include roots", roots_missing),
+        ("include roots build_support.py offers that no group needs", roots_extra),
+        ("package data setup.py names that the tree does not have", data_absent),
     ):
         print(f"  {title}: {len(entries)}")
         for entry in entries:

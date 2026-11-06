@@ -1,5 +1,5 @@
 """Blob data type and byte conversion helpers."""
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import IdlArgumentError, dictionary, dom_string, enum_value, integer, is_nullish, sequence, usv_string

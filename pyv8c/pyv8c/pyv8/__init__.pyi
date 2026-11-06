@@ -1,7 +1,7 @@
-"""Type surface for ``import pyv8``.
+"""Type surface for ``from pyv8c import pyv8``.
 
 The native half of the package is the extension module, so the names it publishes
-are the ones ``_pyv8.pyi`` declares; this stub hands them out where ``import pyv8``
+are the ones ``_pyv8.pyi`` declares; this stub hands them out where ``pyv8c.pyv8``
 looks, and names the pieces that live in Python.
 """
 

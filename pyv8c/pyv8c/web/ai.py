@@ -1,5 +1,5 @@
 """``Summarizer``: the AI summarisation API, which has no model behind it here."""
-import pyv8
+from pyv8c import pyv8
 
 from ..idl import interface
 

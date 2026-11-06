@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-import pyv8
+from pyv8c import pyv8
 
 
 def test_explicit_queues_are_isolated_and_shared_contexts_keep_fifo():

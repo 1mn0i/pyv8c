@@ -2,7 +2,7 @@
 from pathlib import Path
 import pytest
 from pyv8c.tools.extract_idl import _idl_iteration, _generated_iteration, _apply_iteration, _merge_template, _idl_metadata
-from pyv8c.engine.idl import Idl, write_idl, IDL_VERSION
+from pyv8c.engine.idl import Idl
 
 @pytest.mark.parametrize("body,kind", [
     ('iterable<Node>;', 'indexed'), ('iterable<DOMString, long>;', 'pair'),
@@ -61,11 +61,6 @@ def test_async_is_explicitly_unsupported():
     assert data['Fixture']['async_iteration']=={'supported':False}
 
 
-def test_legacy_format_is_refused(tmp_path):
-    p=write_idl(tmp_path/'old.json',{'idl':{'version':IDL_VERSION-3},'interfaces':{'Fixture':{}}})
-    with pytest.raises(ValueError,match='unsupported IDL version'):Idl.load(p,profile=None)
-
-
 def test_profile_narrows_methods_without_changing_pair_semantics():
     from pyv8c.engine.idl import Profile
     interface={'parent':None,'iteration':{'kind':'pair','default':'entries','methods':['keys','values','entries','forEach'],'iterator':True}}
@@ -78,7 +73,7 @@ def test_profile_narrows_methods_without_changing_pair_semantics():
 
 
 def test_unimplemented_sources_are_recorded_and_do_not_retain_bindings():
-    pytest.importorskip('pyv8')
+    pytest.importorskip('pyv8c.pyv8')
     import weakref, gc
     from pyv8c.engine.bindings import Bindings
     from pyv8c.platform.bootstrap import bootstrap_runtime

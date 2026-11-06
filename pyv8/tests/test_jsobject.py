@@ -1,5 +1,5 @@
 import unittest
-import pyv8
+from pyv8c import pyv8
 
 class TestJSObject(unittest.TestCase):
     """测试JavaScript对象的操作"""

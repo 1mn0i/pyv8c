@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 from pyv8c import Browser
 from pyv8c.foundation.host_errors import LoadFailure
 from pyv8c.platform.resources.handles import LoadHandle

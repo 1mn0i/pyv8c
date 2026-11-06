@@ -1,6 +1,6 @@
 """ReadableStream source callbacks and asynchronous reads."""
 from pyv8c import Browser
-import pyv8
+from pyv8c import pyv8
 
 
 def test_source_start_can_enqueue_now_and_later():

@@ -3,7 +3,7 @@
 No keyboard layout is modelled here, so the map is empty rather than fifty invented keys.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error

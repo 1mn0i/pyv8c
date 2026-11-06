@@ -15,7 +15,7 @@ from .logging import logger
 
 def control_exceptions():
     """Execution control must unwind without making offline imports load V8."""
-    native = sys.modules.get('pyv8')
+    native = sys.modules.get('pyv8c.pyv8')
     terminated = getattr(native, 'JavaScriptTerminated', None)
     controls = (KeyboardInterrupt, SystemExit)
     return controls if terminated is None else (*controls, terminated)
@@ -23,7 +23,7 @@ def control_exceptions():
 
 def is_declared(error) -> bool:
     """Whether *error* is one a realm may be shown: a member of the family."""
-    import pyv8
+    from pyv8c import pyv8
 
     return isinstance(error, pyv8.JsError)
 
@@ -36,7 +36,7 @@ def is_host_failure(error) -> bool:
     JavaScript exception is the page's own, and so is anything that is not a Python
     failure at all: a thrown value, or the text of one.
     """
-    import pyv8
+    from pyv8c import pyv8
 
     if not isinstance(error, BaseException) or isinstance(error, pyv8.JSException):
         return False
@@ -50,7 +50,7 @@ def script_on_the_stack() -> bool:
     on its own isolate, which is the one shape it does not answer for, so whoever
     serves such a realm answers for it instead.
     """
-    import pyv8
+    from pyv8c import pyv8
 
     return pyv8.current_context() is not None
 

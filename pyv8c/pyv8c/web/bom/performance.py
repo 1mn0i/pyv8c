@@ -2,8 +2,8 @@
 
 import math
 
-import pyv8
-from pyv8 import AttributeSpec
+from pyv8c import pyv8
+from pyv8c.pyv8 import AttributeSpec
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error

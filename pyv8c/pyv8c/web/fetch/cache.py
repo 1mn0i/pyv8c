@@ -9,7 +9,7 @@ it came from, because the realm that reads an entry back is usually not the one 
 wrote it, and a value built in one isolate does not belong to another.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, missing_error

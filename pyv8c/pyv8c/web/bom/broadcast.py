@@ -10,7 +10,7 @@ running a handler.  The registry is per origin and lives in the process, like ca
 """
 from __future__ import annotations
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error

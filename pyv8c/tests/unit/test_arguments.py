@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-pyv8 = pytest.importorskip("pyv8", reason="native pyv8 extension is not importable")
+pyv8 = pytest.importorskip("pyv8c.pyv8", reason="native pyv8 extension is not importable")
 pytestmark = pytest.mark.native
 
 from pyv8c.foundation.arguments import (  # noqa: E402

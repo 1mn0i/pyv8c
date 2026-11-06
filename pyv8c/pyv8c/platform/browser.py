@@ -12,7 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
-import pyv8  # patch target for native V8Context instrumentation
+from pyv8c import pyv8  # patch target for native V8Context instrumentation
 
 from ..engine.bindings import Idl, Bindings
 from ..foundation.environment import BrowserEnvironment
@@ -283,8 +283,8 @@ class Browser:
             overlay it.
         :param real_network: assemble ``http_engine`` and ``ws_engine``; ``False``
             keeps this browser offline, and a ready engine handed to either of them
-            is then refused rather than dropped.  The default engines come from the
-            ``[network]`` extra.
+            is then refused rather than dropped.  The default engines are core
+            dependencies.
         :param resource_loader: synchronous ``loader(url, request) -> Response``
             answering every load this browser performs; what it answers never
             reaches a transport.  The offline way to serve a page.

@@ -2,11 +2,6 @@ name: Windows wheels
 
 on:
   workflow_dispatch:
-    inputs:
-      publish:
-        description: Publish the tested wheels to PyPI (requires trusted publishers)
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -49,9 +44,14 @@ jobs:
           "PYV8_WINDOWS_SDK_VERSION=$($sdk.Name)" >> $env:GITHUB_ENV
           $imageVersion = if ($env:ImageVersion) { $env:ImageVersion } else { 'unknown' }
           if ($imageVersion -eq 'unknown') { throw 'Runner image version is required for the V8 cache key' }
-          "image-version=$imageVersion" >> $env:GITHUB_OUTPUT
-          "sdk-version=$($sdk.Name)" >> $env:GITHUB_OUTPUT
-          "v8-version=$((Get-Content pyv8/V8_VERSION -Raw).Trim())" >> $env:GITHUB_OUTPUT
+          $v8Version = (Get-Content pyv8/V8_VERSION -Raw).Trim()
+          "PYV8_V8_VERSION=$v8Version" >> $env:GITHUB_ENV
+          "v8-version=$v8Version" >> $env:GITHUB_OUTPUT
+          $gnOverride = if ($null -ne $env:PYV8_GN_ARGS) { $env:PYV8_GN_ARGS } else { '' }
+          $gnArgs = [Text.Encoding]::UTF8.GetBytes($gnOverride)
+          $gnHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($gnArgs)).ToLowerInvariant()
+          $cacheKey = "v8-v3-${{ runner.os }}-${{ env.PYV8_TARGET_CPU }}-$imageVersion-$($sdk.Name)-$gnHash-${{ hashFiles('pyv8/V8_VERSION', 'pyv8/v8_build.py') }}"
+          "cache-key=$cacheKey" >> $env:GITHUB_OUTPUT
           Write-Host "Selected Windows SDK $($sdk.Name) on image $imageVersion"
       # Restore only an exact match. The image and SDK are part of the key because
       # V8's stamp records GN args and target, but not the Windows toolchain.
@@ -65,16 +65,34 @@ jobs:
             pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/out/pyv8-*.release
             pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/bin
             pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/lib
-          key: v8-v2-${{ runner.os }}-x64-${{ steps.sdk.outputs.image-version }}-${{ steps.sdk.outputs.sdk-version }}-${{ hashFiles('pyv8/V8_VERSION', 'pyv8/v8_build.py', '.github/workflows/windows-wheels.yml') }}
+          key: ${{ steps.sdk.outputs.cache-key }}
+      - name: Validate restored V8 outputs
+        shell: pwsh
+        run: |
+          $versionsRoot = [IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE 'pyv8/.pyv8-build/versions'))
+          $v8Home = [IO.Path]::GetFullPath((Join-Path $versionsRoot '${{ steps.sdk.outputs.v8-version }}/v8'))
+          if (-not $v8Home.StartsWith($versionsRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($v8Home) -ne 'v8') {
+            throw "Unexpected V8 cache path: $v8Home"
+          }
+          if (Test-Path -LiteralPath $v8Home) {
+            $item = Get-Item -LiteralPath $v8Home -Force
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "V8 cache directory is a reparse point: $v8Home" }
+            if (-not (Test-Path -LiteralPath (Join-Path $v8Home '.git'))) {
+              python pyv8/tools/validate_v8_cache.py
+              if ($LASTEXITCODE -ne 0) {
+                Write-Warning 'Discarding incomplete V8 cache; delete the matching GitHub cache entry if this repeats.'
+                Remove-Item -LiteralPath $v8Home -Recurse -Force
+                $global:LASTEXITCODE = 0
+              }
+            }
+          }
       - name: Build V8
         id: v8-build
         working-directory: pyv8
         run: python -c "from v8_build import V8BuildConfig; V8BuildConfig.from_environment('.', download_and_build=True).prepare()"
-      - name: Build both wheels
+      - name: Build the Windows wheel
         run: |
-          python -m build --wheel --outdir dist pyv8
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m build --wheel --outdir dist pyv8c
+          python -m build --wheel --outdir dist .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m twine check dist/*
       - name: Save V8 build cache
@@ -87,7 +105,7 @@ jobs:
             pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/out/pyv8-*.release
             pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/bin
             pyv8/.pyv8-build/versions/${{ steps.sdk.outputs.v8-version }}/v8/third_party/llvm-build/Release+Asserts/lib
-          key: ${{ steps.v8-cache.outputs.cache-primary-key }}
+          key: ${{ steps.sdk.outputs.cache-key }}
       - uses: actions/upload-artifact@v4
         with:
           name: windows-wheels
@@ -124,17 +142,3 @@ jobs:
       - name: Verify installed wheels outside checkout
         working-directory: ${{ runner.temp }}
         run: python -I "${{ github.workspace }}/tools/smoke_wheels.py"
-
-  publish:
-    if: ${{ inputs.publish }}
-    needs: [build, test]
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-wheels
-          path: dist
-      - uses: pypa/gh-action-pypi-publish@release/v1

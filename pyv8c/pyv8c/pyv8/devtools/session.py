@@ -4,7 +4,7 @@ import json
 import threading
 import uuid
 
-from pyv8 import _pyv8
+from .. import _pyv8
 from .scheduler import Mailbox
 
 

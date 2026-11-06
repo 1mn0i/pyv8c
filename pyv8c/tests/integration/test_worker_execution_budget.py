@@ -66,17 +66,3 @@ def test_parent_termination_interrupts_the_active_worker_operation(monkeypatch):
         browser.close()
         for runtime in runtimes:
             runtime.executor._thread.join(3)
-
-
-def test_legacy_auto_pump_environment_cannot_disable_worker_tasks(monkeypatch):
-    monkeypatch.setenv('PYV8C_AUTO_PUMP', '0')
-    browser = Browser(real_network=False, stub_logging='off')
-    try:
-        page = browser.new_profile().new_page()
-        source = "setTimeout(()=>postMessage('ready'),0)"
-        page.evaluate("globalThis.answer=null;globalThis.worker=new Worker(URL.createObjectURL(new Blob(["
-                      + json.dumps(source) + "])));worker.onmessage=e=>answer=e.data")
-        page.wait_for("answer !== null", timeout=0.5)
-        assert page.evaluate('answer') == 'ready'
-    finally:
-        browser.close()

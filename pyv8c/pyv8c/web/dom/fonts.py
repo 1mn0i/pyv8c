@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dictionary, dom_string, is_nullish, missing_error

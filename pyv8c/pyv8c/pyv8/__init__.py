@@ -1,9 +1,10 @@
-"""Public Python facade for the native :mod:`pyv8._pyv8` extension."""
+"""Public Python facade for the native :mod:`pyv8c.pyv8._pyv8` extension."""
 
 from __future__ import annotations
 
 from importlib import import_module
 
+from .._version import __version__
 from . import _pyv8
 from . import flag as _flag
 from .flag import *  # noqa: F401,F403 - flag constants are public API
@@ -32,8 +33,6 @@ globals().update({name: getattr(_pyv8, name) for name in _NATIVE_EXPORTS})
 
 #: The type the extension calls ``Context``, named for what it is: V8's context.
 V8Context = Context
-
-__version__ = "2.1.2"
 
 # DevTools and the trace helpers are re-exported, not imported: the service brings a
 # websocket server and its asyncio tail with it, which a process that never debugs

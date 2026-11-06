@@ -8,7 +8,7 @@ evaluated rather than answered with the wrong nodes.
 
 import re
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error

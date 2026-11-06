@@ -7,7 +7,7 @@ tests below pin both halves: the source runs, and everything else keeps its old 
 
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 
 POLICY = """
 window.__policy = trustedTypes.createPolicy('t', {

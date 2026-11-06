@@ -4,7 +4,7 @@ import math
 import re
 from typing import Any
 
-import pyv8
+from pyv8c import pyv8
 
 
 class IdlArgumentError(pyv8.JsTypeError):

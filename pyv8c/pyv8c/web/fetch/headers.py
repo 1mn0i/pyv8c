@@ -1,6 +1,6 @@
 """Fetch header collection; conversion precedes validation and mutation."""
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import (

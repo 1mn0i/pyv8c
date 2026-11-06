@@ -4,7 +4,7 @@ The table is per instance, so ``localStorage`` and ``sessionStorage`` never shar
 entries and each realm gets its own pair.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error

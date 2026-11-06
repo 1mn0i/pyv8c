@@ -107,10 +107,10 @@ struct Definition
 // IdlSpec unregistered.
 #define PYV8_FIELD_COUNT(fields) (sizeof(fields) / sizeof((fields)[0]))
 static Definition definitions[] = {
-    {&idl_spec_type, "pyv8.IdlSpec", sizeof(IdlSpec), IdlSpec_fields, PYV8_FIELD_COUNT(IdlSpec_fields), nullptr},
-    {&attribute_spec_type, "pyv8.AttributeSpec", sizeof(AttributeSpec), AttributeSpec_fields, PYV8_FIELD_COUNT(AttributeSpec_fields), nullptr},
-    {&method_spec_type, "pyv8.MethodSpec", sizeof(MethodSpec), MethodSpec_fields, PYV8_FIELD_COUNT(MethodSpec_fields), nullptr},
-    {&constant_spec_type, "pyv8.ConstantSpec", sizeof(ConstantSpec), ConstantSpec_fields, PYV8_FIELD_COUNT(ConstantSpec_fields), nullptr},
+    {&idl_spec_type, "pyv8c.pyv8.IdlSpec", sizeof(IdlSpec), IdlSpec_fields, PYV8_FIELD_COUNT(IdlSpec_fields), nullptr},
+    {&attribute_spec_type, "pyv8c.pyv8.AttributeSpec", sizeof(AttributeSpec), AttributeSpec_fields, PYV8_FIELD_COUNT(AttributeSpec_fields), nullptr},
+    {&method_spec_type, "pyv8c.pyv8.MethodSpec", sizeof(MethodSpec), MethodSpec_fields, PYV8_FIELD_COUNT(MethodSpec_fields), nullptr},
+    {&constant_spec_type, "pyv8c.pyv8.ConstantSpec", sizeof(ConstantSpec), ConstantSpec_fields, PYV8_FIELD_COUNT(ConstantSpec_fields), nullptr},
 };
 #undef PYV8_FIELD_COUNT
 static Definition &definition(PyTypeObject *type)
@@ -435,7 +435,9 @@ int idl_spec_init(PyObject *module)
                                {0, nullptr}};
         PyType_Spec spec = {def.name, (int)def.size, 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, slots};
         *def.type = (PyTypeObject *)PyType_FromSpec(&spec);
-        if (*def.type == nullptr || PyModule_AddObject(module, def.name + 5, (PyObject *)*def.type) < 0)
+        const char *separator = std::strrchr(def.name, '.');
+        const char *export_name = separator ? separator + 1 : def.name;
+        if (*def.type == nullptr || PyModule_AddObject(module, export_name, (PyObject *)*def.type) < 0)
             return -1;
     }
     return 0;

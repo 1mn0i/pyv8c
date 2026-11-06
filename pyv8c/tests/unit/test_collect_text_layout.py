@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.parametrize("idl", [None, "custom.zip"])
 def test_comparison_uses_packaged_or_explicit_idl(monkeypatch, tmp_path, idl):
-    pytest.importorskip("pyv8", reason="the reference collector imports browser bindings")
+    pytest.importorskip("pyv8c.pyv8", reason="the reference collector imports browser bindings")
     path = Path(__file__).resolve().parents[3] / "tools" / "collect_text_layout.py"
     spec = importlib.util.spec_from_file_location("collect_text_layout_test", path)
     module = importlib.util.module_from_spec(spec)

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 
 from pyv8c import Browser, BrowserEnvironment
 from pyv8c.foundation.environment import PROFILE

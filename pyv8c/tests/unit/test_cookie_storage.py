@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-pytest.importorskip("pyv8", reason="the engine is imported by the package under test")
+pytest.importorskip("pyv8c.pyv8", reason="the engine is imported by the package under test")
 
 from pyv8c.network.cookies import CookieJar  # noqa: E402
 

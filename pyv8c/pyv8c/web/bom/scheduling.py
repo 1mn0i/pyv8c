@@ -5,7 +5,7 @@ here and each global mixes it in; the IDL declarations stay with the interface
 that exposes them.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 from ...foundation.arguments import (
     MISSING,

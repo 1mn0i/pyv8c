@@ -9,7 +9,7 @@ import sys
 import tracemalloc
 import weakref
 
-import pyv8
+from pyv8c import pyv8
 from pyv8c import Browser
 
 

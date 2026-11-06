@@ -10,7 +10,7 @@ pyv8 是一个基于 Google V8 的 CPython C++ 扩展，用于在 Python 中执�
 pyv8 更关注 Chromium-like 构造器、原型链、属性描述符、interceptor、cross-origin
 检查和调用追踪（trace），为批量模拟浏览器内置对象提供底层 API。
 
-当前项目版本为 **2.1.2**，默认 V8 版本记录在 `V8_VERSION`，当前为
+内置桥接模块与发行包的版本均为 **0.1.0**。默认 V8 版本记录在 `V8_VERSION`，当前为
 **15.4.68**，对应 Chromium 154.0.8030.0 使用的 V8 修订。
 
 ## 核心能力
@@ -42,8 +42,8 @@ pyv8 更关注 Chromium-like 构造器、原型链、属性描述符、intercept
 | subinterpreter | 不支持 |
 | free-threaded CPython | 不支持 |
 
-V8 的 C++ API 会随版本变化。构建器可以下载正式数字 tag，但升级后需要重新验证
-构建和绑定代码；`15.4.68` 已完成 Windows 构建和相关回归，其他平台仍需验证。若存在本地
+V8 的 C++ API 会随版本变化。绑定要求 V8 15.4 或更新版本；构建器可以下载正式数字 tag，
+但更换版本后需要重新验证构建和绑定代码；`15.4.68` 已完成 Windows 构建和相关回归，其他平台仍需验证。若存在本地
 `.pyv8-version`，它会覆盖 `V8_VERSION` 中的默认值。
 
 Windows 上启用 Temporal 时，扩展用 V8 自带的 `clang-cl`/`lld-link` 构建，并按
@@ -53,7 +53,7 @@ Windows 上启用 Temporal 时，扩展用 V8 自带的 `clang-cl`/`lld-link` �
 ## 快速开始
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:
@@ -80,7 +80,7 @@ print(result)  # 42
 暴露 Python 函数和对象：
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:
@@ -119,9 +119,9 @@ IDL 映射统一使用 C++ 定义的 `pyv8.IdlSpec`，完整字段与 realm 装�
 
 ## 安装
 
-Windows x64 的 wheel 由仓库的 `Windows wheels` GitHub Actions 工作流构建；工作流默认只生成可下载的构建产物，不自动发布。它使用 `V8_VERSION` 指定的 V8 版本，并在 CPython 3.12–3.15 上分别安装、验证同一份 ABI3 wheel。Linux 和 macOS 的发行构建尚未配置。
+Windows x64 的发行 wheel 由仓库的 `Windows wheels` GitHub Actions 工作流构建；工作流生成包含原生引擎和框架的单个 `pyv8c` wheel，不发布 PyPI。引擎的公开入口为 `from pyv8c import pyv8`。它使用 `V8_VERSION` 指定的 V8 版本，并在 CPython 3.12–3.15 上分别安装、验证同一份 ABI3 wheel。Linux 和 macOS 的发行构建尚未配置。
 
-维护者可在 GitHub Actions 手动运行该工作流。仅在准备好发布时选择 `publish`：需要先为 `pyv8` 和 `pyv8c` 在 PyPI 配置对应仓库、工作流及 `pypi` 环境的 Trusted Publisher，并保证两个项目版本可发布。GitHub 环境的保护规则可用于发布审批。两个包分别上传，若其中一个上传失败，另一个可能已经发布；需要检查 PyPI 状态后处理。构建成功不代表工作流已经发布。
+维护者可在 GitHub Actions 手动运行该工作流，并从运行记录下载 `windows-wheels` artifact；正式发布流程尚未配置。
 
 仓库不跟踪 `_pyv8` 二进制和 `icudtl.dat`；后者仍随每个 wheel 提供，并须与构建所用 V8 匹配。Windows 工作流缓存 V8 头文件、构建输出及配套 LLVM 工具链；首次运行、缓存失效或缓存被 GitHub 清理后仍需下载并编译 V8。缓存键包含 V8 版本、构建脚本、运行器镜像、CPU 架构和 Windows SDK 版本，改变这些输入会重新构建。缓存受 GitHub 的存储配额及保留策略限制，保存失败不会让已经完成的 wheel 构建失败。
 
@@ -130,7 +130,7 @@ Windows x64 的 wheel 由仓库的 `Windows wheels` GitHub Actions 工作流构�
 下载与目标操作系统和 CPU 架构匹配的 wheel，然后执行：
 
 ```bash
-python -m pip install path/to/pyv8-2.1.2-cp312-abi3-<platform>.whl
+python -m pip install path/to/pyv8c-0.1.0-cp312-abi3-win_amd64.whl
 ```
 
 `cp312-abi3` 扩展可供启用 GIL 的 CPython 3.12 至 3.15 使用，但 Windows、Linux、macOS
@@ -138,7 +138,7 @@ python -m pip install path/to/pyv8-2.1.2-cp312-abi3-<platform>.whl
 
 ### 从源码构建
 
-先安装 Python 构建工具：
+以下命令从仓库根目录执行。先安装 Python 构建工具：
 
 ```bash
 python -m pip install --upgrade pip setuptools wheel build tox
@@ -153,7 +153,7 @@ python setup.py list_v8_versions --limit=15
 # 交互选择、下载并编译 V8
 python setup.py build_v8 --select
 
-# 编译扩展到 pyv8 包目录
+# 编译扩展到 pyv8c.pyv8 包目录
 python setup.py build_ext --inplace
 ```
 
@@ -194,7 +194,7 @@ python setup.py build_ext --inplace
 ## Chrome DevTools
 
 ```python
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:
@@ -276,7 +276,7 @@ python -m pytest -q -n auto
 
 ## 重要限制
 
-- `import pyv8` 不启动 V8：进程级 V8 Runtime 和默认 Isolate 在首次使用时才创建，启动内容
+- `from pyv8c import pyv8` 不启动 V8：进程级 V8 Runtime 和默认 Isolate 在首次使用时才创建，启动内容
   由仅在首次使用前有效的 `pyv8.configure(...)` 决定，`pyv8.is_initialized()` 可查询状态。
 - `shutdown_v8()` 是不可逆操作，关闭后不能在同一进程重新初始化 V8。
 - 关闭 Isolate 前必须释放它创建的 Context、Script、JSObject 和 JSFunction。

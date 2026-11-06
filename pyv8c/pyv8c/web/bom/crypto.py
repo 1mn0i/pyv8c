@@ -11,7 +11,7 @@ import hmac as hmac_module
 import os
 import uuid
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import (MISSING, dictionary, integer, missing_error,

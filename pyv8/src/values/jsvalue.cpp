@@ -106,7 +106,7 @@ static PyType_Slot js_value_slots[] = {
     {0, NULL}};
 
 static PyType_Spec js_value_spec = {
-    "pyv8.JSValue",
+    "pyv8c.pyv8.JSValue",
     sizeof(js_value),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,

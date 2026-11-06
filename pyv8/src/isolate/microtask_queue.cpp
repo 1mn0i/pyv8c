@@ -111,7 +111,7 @@ int microtask_queue_type_init() {
     PyType_Slot slots[] = {{Py_tp_new, (void*)PythonBoundary<queue_new>::call},
                           {Py_tp_dealloc, (void*)queue_dealloc},
                           {Py_tp_methods, methods}, {0, nullptr}};
-    PyType_Spec spec = {"pyv8.MicrotaskQueue", sizeof(microtask_queue_c), 0, Py_TPFLAGS_DEFAULT, slots};
+    PyType_Spec spec = {"pyv8c.pyv8.MicrotaskQueue", sizeof(microtask_queue_c), 0, Py_TPFLAGS_DEFAULT, slots};
     microtask_queue_type = (PyTypeObject*)PyType_FromSpec(&spec);
     return microtask_queue_type ? 0 : -1;
 }

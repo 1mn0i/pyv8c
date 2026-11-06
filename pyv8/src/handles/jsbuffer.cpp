@@ -66,7 +66,7 @@ static PyType_Slot js_buffer_slots[] = {
     {0, NULL} };
 
 static PyType_Spec js_buffer_spec = {
-    "pyv8.JSBuffer",
+    "pyv8c.pyv8.JSBuffer",
     sizeof(js_buffer),
     0,
     Py_TPFLAGS_DEFAULT,

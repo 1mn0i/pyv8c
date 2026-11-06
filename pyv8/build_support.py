@@ -39,7 +39,7 @@ from v8_build import (  # noqa: E402
 # The directories under src belong to the source layout, not to the build, so the
 # list is collected by recursing: a new group must not need a new glob here.
 sources = sorted(
-    str(path.relative_to(PROJECT_ROOT)).replace(os.sep, "/")
+    str(path.relative_to(PROJECT_ROOT.parent)).replace(os.sep, "/")
     for path in (PROJECT_ROOT / "src").rglob("*.cpp")
 )
 
@@ -162,7 +162,7 @@ class PyV8BuildExt(build_ext):
                 'Context.enqueue_microtask will refuse to run'
             )
         for extension in self.extensions:
-            if extension.name != 'pyv8._pyv8':
+            if extension.name != 'pyv8c.pyv8._pyv8':
                 continue
             extension.include_dirs = list(extension.include_dirs or []) + [
                 str(config.include_dir)
@@ -194,9 +194,9 @@ class PyV8BuildExt(build_ext):
                 'icudtl.dat was not found; set PYV8_ICU_DATA to the matching V8 ICU data file'
             )
         if self.inplace:
-            destination = PROJECT_ROOT / 'pyv8' / 'icudtl.dat'
+            destination = PROJECT_ROOT.parent / 'pyv8c' / 'pyv8c' / 'pyv8' / 'icudtl.dat'
         else:
-            destination = Path(self.build_lib) / 'pyv8' / 'icudtl.dat'
+            destination = Path(self.build_lib) / 'pyv8c' / 'pyv8' / 'icudtl.dat'
         destination.parent.mkdir(parents=True, exist_ok=True)
         if source.resolve() != destination.resolve():
             shutil.copy2(source, destination)
@@ -214,8 +214,9 @@ class PyV8BuildExt(build_ext):
             for path in sorted((PROJECT_ROOT / "src").rglob("*"))
             if path.suffix in {".cpp", ".h", ".def"}
         }
-        for name in ("setup.py", "pyproject.toml", "v8_build.py"):
-            source_hashes[name] = file_sha256(PROJECT_ROOT / name)
+        for path in (PROJECT_ROOT.parent / "setup.py", PROJECT_ROOT.parent / "pyproject.toml",
+                     PROJECT_ROOT / "build_support.py", PROJECT_ROOT / "v8_build.py"):
+            source_hashes[str(path.relative_to(PROJECT_ROOT.parent))] = file_sha256(path)
         v8_headers = {
             path.relative_to(config.v8_home).as_posix(): file_sha256(path)
             for path in sorted((config.v8_home / 'include').rglob('*'))
@@ -258,7 +259,7 @@ class PyV8BuildExt(build_ext):
             except (OSError, ValueError):
                 pass
         expected_binary = recorded.get('binary_sha256') if isinstance(recorded, dict) else None
-        binary = Path(self.get_ext_fullpath('pyv8._pyv8'))
+        binary = Path(self.get_ext_fullpath('pyv8c.pyv8._pyv8'))
         if (previous != fingerprint or
                 (expected_binary and binary.is_file() and file_sha256(binary) != expected_binary)):
             self.force = True
@@ -342,7 +343,7 @@ class PyV8BuildExt(build_ext):
             self._copy_icu_data(config)
             fingerprint_file, fingerprint = self._fingerprint_file, self._extension_fingerprint
             fingerprint_file.parent.mkdir(parents=True, exist_ok=True)
-            binary = Path(self.get_ext_fullpath('pyv8._pyv8'))
+            binary = Path(self.get_ext_fullpath('pyv8c.pyv8._pyv8'))
             record = {'inputs': fingerprint,
                       'binary_sha256': file_sha256(binary) if binary.is_file() else None,
                       'compiler': {name: getattr(self.compiler, name, None)
@@ -487,21 +488,21 @@ class ListV8Versions(Command):
 # 设置扩展模块
 ext_modules = [
     Extension(
-        'pyv8._pyv8',
+        'pyv8c.pyv8._pyv8',
         sources=sources,
-        depends=sorted(str(path.relative_to(PROJECT_ROOT)).replace(os.sep, "/")
+        depends=sorted(str(path.relative_to(PROJECT_ROOT.parent)).replace(os.sep, "/")
                        for path in (PROJECT_ROOT / "src").rglob("*")
                        if path.suffix in {".h", ".def"}),
         # Every source keeps including its neighbours by bare file name, so the
         # layout groups are added as include roots rather than written into the
         # includes themselves.
         include_dirs=[
-            'src',
-            'src/isolate',
-            'src/values',
-            'src/handles',
-            'src/tools',
-            'src/interfaces',
+            'pyv8/src',
+            'pyv8/src/isolate',
+            'pyv8/src/values',
+            'pyv8/src/handles',
+            'pyv8/src/tools',
+            'pyv8/src/interfaces',
         ],
         library_dirs=[],
         libraries=libraries,
@@ -512,14 +513,3 @@ ext_modules = [
         language='c++'
     )
 ]
-
-# 使用setuptools的setup函数
-setup(
-    ext_modules=ext_modules,
-    cmdclass={
-        'build_ext': PyV8BuildExt,
-        'build_v8': BuildV8,
-        'list_v8_versions': ListV8Versions,
-    },
-    options={'bdist_wheel': {'py_limited_api': 'cp312'}},
-)

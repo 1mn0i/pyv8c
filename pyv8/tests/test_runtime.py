@@ -5,7 +5,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-import pyv8
+from pyv8c import pyv8
 
 
 class TestRuntimeLifecycle(unittest.TestCase):
@@ -49,7 +49,7 @@ class TestRuntimeLifecycle(unittest.TestCase):
 
         code = textwrap.dedent(
             """
-            import pyv8
+            from pyv8c import pyv8
 
             assert pyv8.shutdown_v8() is False
             assert pyv8.is_initialized() is False
@@ -71,7 +71,7 @@ class TestRuntimeLifecycle(unittest.TestCase):
             import gc
             import weakref
 
-            import pyv8
+            from pyv8c import pyv8
 
 
             class Window:
@@ -119,7 +119,7 @@ class TestRuntimeLifecycle(unittest.TestCase):
     def test_subinterpreter_import_is_explicitly_rejected(self):
         """进程级 RuntimeManager 只能由主解释器加载。"""
 
-        package_root = Path(pyv8.__file__).resolve().parent.parent.as_posix()
+        package_root = Path(pyv8.__file__).resolve().parents[2].as_posix()
         code = textwrap.dedent(
             f"""
             import sys
@@ -130,14 +130,14 @@ class TestRuntimeLifecycle(unittest.TestCase):
                 raise SystemExit(0)
 
             sys.path.insert(0, {package_root!r})
-            import pyv8
+            from pyv8c import pyv8
 
             interpreter = interpreters.create()
             try:
                 subinterpreter_code = (
                     "import sys; "
                     "sys.path.insert(0, {package_root!r}); "
-                    "import pyv8"
+                    "from pyv8c import pyv8"
                 )
                 try:
                     interpreters.run_string(interpreter, subinterpreter_code)
@@ -149,7 +149,7 @@ class TestRuntimeLifecycle(unittest.TestCase):
                     ), message
                 else:
                     raise AssertionError(
-                        "pyv8 import unexpectedly succeeded in a subinterpreter"
+                        "pyv8c.pyv8 import unexpectedly succeeded in a subinterpreter"
                     )
             finally:
                 interpreters.destroy(interpreter)
@@ -171,7 +171,7 @@ class TestRuntimeLifecycle(unittest.TestCase):
             """
             import gc
 
-            import pyv8
+            from pyv8c import pyv8
 
 
             class Window:

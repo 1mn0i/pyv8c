@@ -16,7 +16,7 @@ from uuid import uuid4
 
 import pytest
 
-pytest.importorskip("pyv8")
+pytest.importorskip("pyv8c.pyv8")
 pytestmark = pytest.mark.slow
 from pyv8c import Browser
 

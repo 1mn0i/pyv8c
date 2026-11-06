@@ -4,8 +4,8 @@ import gc
 import weakref
 
 import pytest
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec, MethodSpec
+from pyv8c import pyv8
+from pyv8c.pyv8 import AttributeSpec, IdlSpec, MethodSpec
 
 class Window:
     __v8_idl_spec__ = IdlSpec(global_this=True)

@@ -5,7 +5,7 @@ the two views of one element never disagree.
 """
 import re
 
-import pyv8
+from pyv8c import pyv8
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, missing_error
 from ..page_errors import PageTypeError

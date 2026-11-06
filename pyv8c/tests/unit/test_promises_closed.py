@@ -12,9 +12,9 @@ state a replaced document leaves behind -- so the rule can be asked without V8 a
 """
 import pytest
 
-pytest.importorskip("pyv8", reason="the module is built against the native extension")
+pytest.importorskip("pyv8c.pyv8", reason="the module is built against the native extension")
 
-import pyv8  # noqa: E402
+from pyv8c import pyv8  # noqa: E402
 
 from pyv8c.foundation import promises  # noqa: E402
 from pyv8c.web.page_errors import PageError  # noqa: E402

@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-pyv8 = pytest.importorskip("pyv8")
+pyv8 = pytest.importorskip("pyv8c.pyv8")
 
 OUTSIDE_LATIN1 = ("Failed to execute 'btoa' on 'Window': The string to be encoded contains"
                   " characters outside of the Latin1 range.")

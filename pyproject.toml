@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=77.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyv8c"
+dynamic = ["version"]
+description = "A deterministic Chromium-like BOM/DOM environment on pyv8"
+requires-python = ">=3.12"
+# ``uharfbuzz`` shapes text and ``uniseg`` finds where lines may break; both are hard
+# dependencies, because a page's geometry is only right if the text is measured for real.
+dependencies = [
+    "loguru>=0.7",
+    "curl_cffi>=0.7",
+    "websockets>=16",
+    "uharfbuzz>=0.56",
+    "uniseg>=0.9",
+]
+
+[project.optional-dependencies]
+# The cycronet engine is optional and serves either role when it is chosen.
+cronet = ["cycronet>=144.4.7,<151"]
+# The drawing surface behind CanvasRenderingContext2D and OffscreenCanvas pixels.
+canvas = ["Pillow>=10"]
+dev = [
+    "pytest>=7.4",
+    "pytest-timeout>=2.2",
+    "pytest-repeat>=0.9",
+    "pytest-xdist>=3.6",
+    "Pillow>=10",
+    "cryptography>=42",
+]
+# Process-memory measurements can use psutil; the benchmark also has a fallback.
+benchmark = ["psutil>=5.9"]
+# The reference browser for tests/repros.  It drives the Chrome already installed on
+# the machine (PYV8C_CHROME points it elsewhere); nothing else is downloaded.
+reference = ["playwright>=1.40"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+include = '\.pyi?$'
+
+[tool.setuptools.dynamic]
+version = {attr = "pyv8c._version.__version__"}
+
+[tool.isort]
+profile = "black"
+line_length = 100

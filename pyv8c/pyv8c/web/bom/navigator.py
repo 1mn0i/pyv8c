@@ -2,7 +2,7 @@
 import time
 from urllib.parse import urljoin, urlsplit
 
-import pyv8
+from pyv8c import pyv8
 
 from ...features.runtime import FeatureImplementation, LazyValueStore
 from ...idl import interface

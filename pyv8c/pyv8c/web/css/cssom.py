@@ -1,6 +1,6 @@
 """CSSStyleDeclaration and its live inline and computed views."""
-import pyv8
-from pyv8.flag import V8Attribute
+from pyv8c import pyv8
+from pyv8c.pyv8.flag import V8Attribute
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, integer, missing_error
 from ..dom.utils import OBJECT_PROTOTYPE_NAMES, dash_name as _dash_name

@@ -5,7 +5,7 @@ legacy object in Chromium, so their handlers and ``RadioNodeList`` live here.
 
 from typing import NamedTuple
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import boolean, dom_string

@@ -22,7 +22,7 @@ from harness import (
     observe_here,
 )
 
-pytest.importorskip("pyv8", reason="the corpus runs in the native environment")
+pytest.importorskip("pyv8c.pyv8", reason="the corpus runs in the native environment")
 
 NAMES = [case.name for case in CASES]
 

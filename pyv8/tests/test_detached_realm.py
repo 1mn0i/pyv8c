@@ -10,7 +10,7 @@ is gone -- the reads it brings end in the checks that keep the realm reachable a
 """
 import unittest
 
-import pyv8
+from pyv8c import pyv8
 
 
 class Window:

@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-pyv8 = pytest.importorskip("pyv8")
+pyv8 = pytest.importorskip("pyv8c.pyv8")
 
 NOT_ENCODED = ("Failed to execute 'atob' on 'Window': The string to be decoded is not"
                " correctly encoded.")

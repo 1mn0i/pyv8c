@@ -4,7 +4,7 @@ import gc
 import sys
 import unittest
 
-import pyv8
+from pyv8c import pyv8
 
 class TestConversion(unittest.TestCase):
     """测试Python和JavaScript类型之间的转换"""

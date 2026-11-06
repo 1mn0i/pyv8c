@@ -6,7 +6,7 @@ A value is a string or a ``Blob``; a filename with a blob would need ``File``, w
 build does not implement yet, so the blob is stored as it is.
 """
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import (MISSING, dom_string, missing_error,

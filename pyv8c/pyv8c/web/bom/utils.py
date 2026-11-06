@@ -118,7 +118,7 @@ def settled(services, *, value=None, error=None):
 
 def base64_like(interface, member, data):
     """Shared WebIDL conversion and forgiving Base64 for Window and Workers."""
-    import pyv8
+    from pyv8c import pyv8
     from ...foundation.arguments import MISSING, missing_error, dom_string
     from ...foundation.base64 import forgiving_base64_decode, forgiving_base64_encode
     from ..page_errors import InvalidCharacterError, PageTypeError
@@ -152,7 +152,7 @@ def promise_receiver_error(receiver, cls, method):
     """
     if isinstance(receiver, cls):
         return None
-    import pyv8
+    from pyv8c import pyv8
     from ...foundation.promises import make_promise
     from ..page_errors import PageTypeError
 
@@ -171,7 +171,7 @@ def promise_rejected_in_caller_realm(error, services=None):
     A conversion failure belongs to the realm the call was made through, while a
     successful result belongs to the receiver's realm; a borrowed operation shows both.
     """
-    import pyv8
+    from pyv8c import pyv8
     from ...foundation.promises import make_promise
 
     context = pyv8.current_context()

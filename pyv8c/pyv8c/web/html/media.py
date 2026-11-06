@@ -1,6 +1,6 @@
 """``<audio>`` and ``<video>``, with the lists their playback state exposes.
 Nothing decodes here, so the classes report what a fresh element reports."""
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, boolean, dom_string, missing_error, number

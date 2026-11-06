@@ -9,7 +9,7 @@ The pname tables and the extension lists were measured on Chrome 153.
 """
 from __future__ import annotations
 
-import pyv8
+from pyv8c import pyv8
 
 from ...idl import interface
 from ...foundation.arguments import MISSING, dom_string, is_nullish, missing_error

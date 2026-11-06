@@ -20,7 +20,7 @@ sys.path[:0] = [str(WORKSPACE / 'pyv8'), str(WORKSPACE / 'pyv8c')]
 import moderngl
 from loguru import logger
 
-import pyv8
+from pyv8c import pyv8
 from pyv8c import Browser
 from pyv8c.platform.resources.request_headers import browser_headers
 from pyv8c.web.graphics.webgl import WebGLRenderingContext, WebGLUniformLocation

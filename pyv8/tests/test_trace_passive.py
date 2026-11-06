@@ -1,8 +1,8 @@
 """Trace observes native boundaries without re-executing JavaScript operations."""
 
 import pytest
-import pyv8
-from pyv8 import IdlSpec
+from pyv8c import pyv8
+from pyv8c.pyv8 import IdlSpec
 
 from tests.test_trace_contracts import Window, Target
 
