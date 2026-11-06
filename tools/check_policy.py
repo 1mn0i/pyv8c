@@ -1,11 +1,12 @@
 """The gates a change has to pass, runnable before it is committed.
 
-Five gates, each one something this repository has until now relied on a person
+Six gates, each one something this repository has until now relied on a person
 remembering:
 
 * ``layers``     -- the layering rules.  Delegated to
                     ``tests/unit/test_architecture.py`` rather than restated here, so
                     there is one implementation and no drift.
+* ``native-layout`` -- enforce the C++ source layout and include layering.
 * ``companions`` -- an implementation file changed with no test changed alongside it.
 * ``startup``    -- the documented startup measurement, against a recorded budget.
 * ``offline``    -- ``tests/unit`` runs with no native extension on the path.
@@ -66,7 +67,14 @@ elapsed = (time.perf_counter() - started) * 1000.0
 print(round(elapsed, 1), len(sys.modules))
 """
 
-GATES = ("layers", "companions", "startup", "offline", "duplicates")
+GATES = ("layers", "native-layout", "companions", "startup", "offline", "duplicates")
+
+
+def gate_native_layout():
+    """Enforce the native source layout rather than merely printing findings."""
+    result = subprocess.run([sys.executable, str(REPO / "pyv8" / "tools" / "check_layout.py"),
+                             "--enforce"], cwd=REPO, check=False)
+    return result.returncode == 0
 
 
 def changed_paths(base):
@@ -308,13 +316,13 @@ def gate_startup(runs, record):
 
     if not BASELINE_FILE.exists():
         print("--   startup: no baseline recorded; run with --record-startup")
-        return True
+        return None
 
     baseline = json.loads(BASELINE_FILE.read_text(encoding="utf-8"))
     minimum, median, modules = measure_startup(runs=runs)
     if median is None:
         print(f"--   startup: not measured ({modules}); pyv8c.pyv8 has to be importable for this gate")
-        return True
+        return None
 
     budget = startup_budget(baseline)
     verdict = f"startup: {median} ms median (min {minimum}), budget {round(budget, 1)} ms"
@@ -331,7 +339,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base", default="HEAD", help="git ref to diff against (default: HEAD)")
     parser.add_argument("--gates", default=",".join(GATES), help=f"comma-separated subset of {','.join(GATES)}")
-    parser.add_argument("--strict", action="store_true", help="treat warnings as failures")
+    parser.add_argument("--strict", action="store_true", help="treat warnings and skipped gates as failures")
     parser.add_argument("--runs", type=int, default=3, help="startup measurement repeats")
     parser.add_argument("--record-startup", action="store_true", help="write today's startup as the budget")
     arguments = parser.parse_args(argv)
@@ -344,6 +352,8 @@ def main(argv=None):
     results = []
     if "layers" in selected:
         results.append(gate_layers())
+    if "native-layout" in selected:
+        results.append(gate_native_layout())
     if "companions" in selected:
         results.append(gate_companions(arguments.base, arguments.strict))
     if "startup" in selected:
@@ -353,9 +363,14 @@ def main(argv=None):
     if "duplicates" in selected:
         results.append(gate_duplicates(arguments.strict))
 
-    failed = results.count(False)
-    print(f"{'FAIL' if failed else 'PASS'}: {len(results) - failed}/{len(results)} gate(s) clean")
-    return 1 if failed else 0
+    failed = sum(result is False for result in results)
+    skipped = sum(result is None for result in results)
+    passed = sum(result is True for result in results)
+    if skipped:
+        print(f"{'FAIL' if failed or arguments.strict else 'SKIP'}: {passed} passed, {failed} failed, {skipped} skipped")
+    else:
+        print(f"{'FAIL' if failed else 'PASS'}: {passed}/{len(results)} gate(s) clean")
+    return 1 if failed or (arguments.strict and skipped) else 0
 
 
 if __name__ == "__main__":

@@ -62,6 +62,7 @@ class Request:
         self._body = options.get("body", original._body if original else None)
         self._credentials = enum_value(options.get("credentials", original._credentials if original else "same-origin"), ("omit", "same-origin", "include"))
         self._headers = Headers(options.get("headers", original._headers if original else None))
+        self._headers._set_request_guard()
         self._method = byte_string(options.get("method", original._method if original else "GET"))
         self._mode = enum_value(options.get("mode", original._mode if original else "cors"), ("navigate", "same-origin", "no-cors", "cors"))
         self._redirect = enum_value(options.get("redirect", original._redirect if original else "follow"), ("follow", "error", "manual"))
@@ -94,7 +95,17 @@ class Request:
         binary = _array_buffer_bytes(self._body)
         if binary is not None:
             self._body = binary
+        elif (not is_nullish(self._body) and
+              not isinstance(self._body, (str, bytes, bytearray, memoryview, bool, int, float,
+                                           Blob, URLSearchParams, FormData))):
+            # Streaming request bodies need asynchronous transport and the
+            # use-CORS-preflight flag. Until both exist, do not send them as text.
+            from ..bom.compression_streams import ReadableStream
+            if isinstance(self._body, ReadableStream):
+                raise PageTypeError('ReadableStream request bodies are not supported')
         self._type_the_body()
+        if self._mode == "no-cors":
+            self._headers._set_no_cors_guard()
 
     def _type_the_body(self):
         """Give the body's own type to ``Content-Type`` when the author named none.

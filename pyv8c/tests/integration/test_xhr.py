@@ -34,6 +34,41 @@ def _page(loader):
     return browser, page
 
 
+def test_request_guard_filters_forbidden_headers_and_xhr_combines_values():
+    requests = []
+    def loader(url, request):
+        requests.append((url, request))
+        return _loader(url, request)
+
+    browser, page = _page(loader)
+    try:
+        assert page.evaluate("""(() => {
+            const standalone = new Headers({Cookie: 'standalone'});
+            const request = new Request('/data', {headers: {Cookie: 'bad', 'X-Test': 'one'}});
+            request.headers.set('Sec-Fetch-Site', 'bad');
+            request.headers.set('Permissions-Policy', 'allowed');
+            request.headers.append('X-Test', 'two');
+            return [standalone.get('cookie'), request.headers.get('cookie') === null,
+                    request.headers.get('sec-fetch-site') === null, request.headers.get('x-test'),
+                    request.headers.get('permissions-policy')];
+        })()""") == ['standalone', True, True, 'one, two', 'allowed']
+        page.evaluate("""(() => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', '/data');
+            xhr.setRequestHeader('Cookie', 'bad');
+            xhr.setRequestHeader('X-Test', 'one');
+            xhr.setRequestHeader('X-Test', 'two');
+            xhr.send();
+        })()""")
+        page.run_until_idle(timeout=5)
+        data = next(request for url, request in requests if url.endswith('/data'))
+        headers = {name.lower(): value for name, value in data['headers'].items()}
+        assert headers.get('cookie') != 'bad'
+        assert headers['x-test'] == 'one, two'
+    finally:
+        browser.close()
+
+
 def test_get_all_response_headers_writes_the_block_chrome_writes():
     browser, page = _page(_loader)
     try:

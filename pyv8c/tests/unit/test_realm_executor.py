@@ -12,6 +12,22 @@ from pyv8c.foundation.host_errors import RealmBusyError
 from pyv8c.foundation.executor import RealmExecutor
 
 
+def test_terminated_task_is_not_reported_as_a_page_error():
+    from pyv8c import pyv8
+
+    class Queue:
+        def has_runnable_tasks(self): return True
+        def run_turn(self): raise pyv8.JavaScriptTerminated()
+        def report_error(self, error): raise AssertionError("termination was reported as a page error")
+
+    executor = object.__new__(RealmExecutor)
+    executor.auto_pump = True
+    executor._task_queues = {Queue(): False}
+    executor._queue_cursor = 0
+    executor._checkpoint = None
+    assert executor._run_turn() is True
+
+
 def test_close_settles_waiters_without_holding_submission_lock():
     from concurrent.futures import Future
     from pyv8c.foundation.executor import Command

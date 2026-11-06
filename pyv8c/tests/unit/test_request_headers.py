@@ -213,3 +213,6 @@ def test_referer_and_site_relations_come_from_the_initiator():
     assert site_relation("https://127.0.0.1:8080/x", PAGE_URL) == "cross-site"
     assert same_site("http://a.example.com/", "http://b.example.com/") is True
     assert same_site("http://example.com/", "http://other.test/") is False
+    assert same_site("https://a.github.io/", "https://b.github.io/") is False
+    assert same_site("https://a.example.co.uk/", "https://b.example.co.uk/") is True
+    assert same_site("http://127.0.0.1/", "http://127.0.0.2/") is False

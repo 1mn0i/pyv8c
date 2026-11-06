@@ -28,6 +28,31 @@ def test_jar_stores_every_cookie_from_a_merged_set_cookie_line():
     assert names == {"FSSBBIl1UgzbN7N80T", "FSSBBIl1UgzbN7N80S"}
 
 
+def test_secure_cookie_prefixes_and_samesite_none_require_secure():
+    jar = CookieJar()
+    url = "https://example.test/"
+    for header in ("__Secure-no=1", "__Host-no=1; Secure; Path=/sub",
+                   "__Host-domain=1; Secure; Path=/; Domain=example.test",
+                   "none=1; SameSite=None"):
+        jar.add_from_response(url, header)
+    jar.add_from_response(url, "__Secure-yes=1; Secure")
+    jar.add_from_response(url, "__Host-yes=1; Secure; Path=/")
+    jar.add_from_response(url, "none=2; SameSite=None; Secure")
+    assert set(jar.header_for(url).split("; ")) == {
+        "__Secure-yes=1", "__Host-yes=1", "none=2"}
+
+
+def test_domain_cookies_cannot_claim_a_public_or_private_suffix():
+    jar = CookieJar()
+    jar.add_from_response("https://evil.github.io/", "bad=1; Domain=github.io; Path=/")
+    jar.add_from_response("https://a.example.co.uk/", "bad2=1; Domain=co.uk; Path=/")
+    jar.add_from_response("https://a.example.test/", "bad3=1; Domain=test; Path=/")
+    jar.add_from_response("https://a.example.co.uk/", "valid=1; Domain=example.co.uk; Path=/")
+    assert jar.header_for("https://other.github.io/") == ""
+    assert jar.header_for("https://b.example.test/") == ""
+    assert jar.header_for("https://b.example.co.uk/") == "valid=1"
+
+
 def test_jar_marks_the_dropped_cookie_http_only():
     jar = CookieJar()
     jar.add_from_response(URL, MERGED)

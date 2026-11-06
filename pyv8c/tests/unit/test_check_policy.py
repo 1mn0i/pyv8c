@@ -110,7 +110,14 @@ def test_the_startup_gate_fails_on_a_regression(tool, monkeypatch, tmp_path):
 
 def test_a_missing_baseline_does_not_fail_the_run(tool, monkeypatch, tmp_path):
     monkeypatch.setattr(tool, "BASELINE_FILE", tmp_path / "absent.json")
-    assert tool.gate_startup(runs=1, record=False) is True
+    assert tool.gate_startup(runs=1, record=False) is None
+
+
+def test_skipped_gate_is_not_reported_as_pass_and_strict_mode_fails(tool, monkeypatch, capsys):
+    monkeypatch.setattr(tool, "gate_startup", lambda *args: None)
+    assert tool.main(["--gates", "startup"]) == 0
+    assert "SKIP: 0 passed, 0 failed, 1 skipped" in capsys.readouterr().out
+    assert tool.main(["--gates", "startup", "--strict"]) == 1
 
 
 def test_the_command_runs_on_a_clean_tree(tool):
@@ -136,6 +143,18 @@ def test_an_unknown_gate_is_rejected(tool):
     )
     assert result.returncode != 0
     assert "unknown gate" in result.stderr
+
+
+def test_native_layout_gate_enforces_and_propagates_failure(tool, monkeypatch):
+    from types import SimpleNamespace
+
+    calls = []
+    monkeypatch.setattr(tool.subprocess, "run", lambda command, **kwargs: (
+        calls.append((command, kwargs)) or SimpleNamespace(returncode=1)
+    ))
+    assert tool.gate_native_layout() is False
+    assert calls[0][0][-1] == "--enforce"
+    assert calls[0][0][-2].endswith("check_layout.py")
 
 
 @pytest.mark.slow  # runs the whole unit suite again, through the gate

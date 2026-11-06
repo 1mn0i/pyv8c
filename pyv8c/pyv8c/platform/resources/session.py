@@ -7,20 +7,13 @@ from ...foundation.urls import absolute_url, origin_tuple, serialize_origin, unl
 from ...network.models import NetworkRequest, NetworkResponse
 from ...network.redirects import Deliver, RedirectFailure, next_hop
 from .local import data_url_response, extension_response
+from .cors import (check_cors, network_preflight_request, preflight, preflight_request,
+                   require_inspectable_redirects, validate_preflight)
 
 
 def check_origin(origin, target_origin, mode):
     if mode == 'same-origin' and origin != target_origin:
         raise LoadFailure('same-origin request crossed an origin')
-
-
-def check_cors(headers, origin, credentials):
-    allowed = headers.get('access-control-allow-origin', '')
-    if allowed not in ('*', serialize_origin(origin)):
-        raise LoadFailure('CORS check failed')
-    if credentials == 'include' and (allowed == '*' or
-            headers.get('access-control-allow-credentials', '') != 'true'):
-        raise LoadFailure('credentialed CORS request was not allowed')
 
 
 def plain_response(value, url):
@@ -124,13 +117,35 @@ class ResourceRequestSession:
         method, body = str(options.get('method', 'GET')).upper(), options.get('body')
         headers = ResourceFetchController.header_dict(options.get('headers'))
         follows = kind == 'engine' and bool(getattr(source.http, 'FOLLOWS_ITSELF', False))
+        require_inspectable_redirects(follows, mode, method, headers,
+                                      options.get('content_type') if body is not None else None)
+        if follows and mode != 'navigate' and options.get('redirect', 'follow') != 'follow':
+            raise LoadFailure('this engine follows redirects by itself and cannot be told not to, so '
+                              f"redirect: {options.get('redirect')!r} cannot be honoured")
         hops = 0
         while True:
             active()
             target_origin = tuple(self.profile._blob_origins.get(target, origin_tuple(target)))
             check_origin(origin, target_origin, mode)
-            request = prepare({**options, 'method': method, 'body': body, 'headers': headers},
-                              view, target, initiator, origin)
+            names = preflight(origin, target, mode, method, headers,
+                              options.get('content_type') if body is not None else None)
+            if names is not None:
+                probe = preflight_request(origin, method, names, options.get('timeout'))
+                if kind == 'loader':
+                    value = source(target, probe)
+                    preflight_response = plain_response(value, target)
+                else:
+                    if follows:
+                        raise LoadFailure('transport cannot prevent preflight redirects')
+                    preflight_response = plain_response(source.request_sync(
+                        network_preflight_request(target, origin, probe)), target)
+                active()
+                validate_preflight(preflight_response.status, preflight_response.headers, origin,
+                                   options.get('credentials'), method, names)
+            hop_options = {**options, 'method': method, 'body': body, 'headers': headers}
+            if hops and body is None:
+                hop_options.pop('content_type', None)
+            request = prepare(hop_options, view, target, initiator, origin)
             if kind == 'loader':
                 value = source(target, request)
                 response = plain_response({**value, 'url': target} if isinstance(value, dict) else value, target)

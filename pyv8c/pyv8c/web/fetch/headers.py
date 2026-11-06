@@ -13,7 +13,26 @@ from ...foundation.arguments import (
     missing_error,
     sequence,
 )
+from ...foundation.cors import NO_CORS_HEADER_NAMES, safelisted_header
 from ..page_errors import PageTypeError
+
+_FORBIDDEN_REQUEST_HEADERS = frozenset({
+    "accept-charset", "accept-encoding", "access-control-request-headers",
+    "access-control-request-method", "connection", "content-length", "cookie",
+    "cookie2", "date", "dnt", "expect", "host", "keep-alive", "origin",
+    "referer", "set-cookie", "te", "trailer",
+    "transfer-encoding", "upgrade", "via",
+})
+
+
+def forbidden_request_header(name, value=""):
+    name = str(name).lower()
+    if name in _FORBIDDEN_REQUEST_HEADERS or name.startswith(("proxy-", "sec-")):
+        return True
+    if name in ("x-http-method", "x-http-method-override", "x-method-override"):
+        return any(part.strip().upper() in ("CONNECT", "TRACE", "TRACK")
+                   for part in str(value).split(","))
+    return False
 
 
 @interface('Headers', None)
@@ -42,6 +61,8 @@ class Headers:
 
     def __init__(self, init=pyv8.Undefined, *_extra, **_):
         self._data = {}
+        self._request_guard = False
+        self._no_cors_guard = False
         if init is pyv8.Undefined:
             return
         if isinstance(init, Headers):
@@ -71,6 +92,16 @@ class Headers:
         for key, value in converted:
             self.fn_append(key, value)
 
+    def _set_request_guard(self):
+        self._data = {name: value for name, value in self._data.items()
+                      if not forbidden_request_header(name, value)}
+        self._request_guard = True
+
+    def _set_no_cors_guard(self):
+        self._data = {name: value for name, value in self._data.items()
+                      if name in NO_CORS_HEADER_NAMES and safelisted_header(name, value)}
+        self._no_cors_guard = True
+
     def fn_get(self, key=MISSING, *_extra):
         if key is MISSING:
             raise missing_error('Headers', 'get', 1, 0)
@@ -85,6 +116,9 @@ class Headers:
         key = byte_string(key, prefix="Failed to execute 'set' on 'Headers': ")
         value = byte_string(value, prefix="Failed to execute 'set' on 'Headers': ")
         key, value = header_name(key), header_value(value)
+        if ((self._request_guard and forbidden_request_header(key, value)) or
+                (self._no_cors_guard and (key not in NO_CORS_HEADER_NAMES or not safelisted_header(key, value)))):
+            return
         self._data[key] = value
 
     def fn_append(self, key=MISSING, value=MISSING, *_extra):
@@ -95,13 +129,20 @@ class Headers:
         key = byte_string(key, prefix="Failed to execute 'append' on 'Headers': ")
         value = byte_string(value, prefix="Failed to execute 'append' on 'Headers': ")
         key, value = header_name(key), header_value(value)
-        self._data[key] = self._data[key] + ", " + value if key in self._data else value
+        combined = self._data[key] + ", " + value if key in self._data else value
+        if ((self._request_guard and forbidden_request_header(key, combined)) or
+                (self._no_cors_guard and (key not in NO_CORS_HEADER_NAMES or not safelisted_header(key, combined)))):
+            return
+        self._data[key] = combined
 
     def fn_delete(self, key=MISSING, *_extra):
         if key is MISSING:
             raise missing_error('Headers', 'delete', 1, 0)
         key = byte_string(key, prefix="Failed to execute 'delete' on 'Headers': ")
-        self._data.pop(header_name(key), None)
+        key = header_name(key)
+        if ((not self._request_guard or not forbidden_request_header(key)) and
+                (not self._no_cors_guard or key in NO_CORS_HEADER_NAMES)):
+            self._data.pop(key, None)
 
     def fn_has(self, key=MISSING, *_extra):
         if key is MISSING:

@@ -11,7 +11,7 @@ from pyv8c import pyv8
 from ..foundation.logging import logger
 
 from ..foundation.arguments import is_nullish
-from ..foundation.host_errors import HostStateError
+from ..foundation.host_errors import HostStateError, RealmBusyError
 from ..foundation.error_policy import control_exceptions, is_host_failure
 from ..foundation.lifecycle import ResourceScope
 from ..foundation.tasks import TaskQueue
@@ -480,8 +480,13 @@ class Page:
         deadline = _deadline(timeout)
         while True:
             remaining = _remaining(deadline)
-            if self.evaluate(f'Boolean(({expression}))', timeout=remaining):
-                return
+            try:
+                if self.evaluate(f'Boolean(({expression}))', timeout=remaining):
+                    return
+            except RealmBusyError:
+                if deadline is not None and time.perf_counter() >= deadline:
+                    raise TimeoutError(f'condition did not become true within {timeout}s') from None
+                raise
             if deadline is not None and time.perf_counter() >= deadline:
                 raise TimeoutError(f'condition did not become true within {timeout}s')
             time.sleep(min(0.01, remaining) if remaining is not None else 0.01)

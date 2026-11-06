@@ -1,6 +1,7 @@
 """Typed document registrations; no DOM mutation or event dispatch."""
 from dataclasses import dataclass
 import itertools
+
 from .handles import LoadHandle
 
 @dataclass(slots=True)

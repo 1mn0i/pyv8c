@@ -8,6 +8,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from ...foundation.urls import origin_string
+from ...foundation.sites import site_domain
 
 #: What Chrome asks for, per request destination (``blink/common/loader/network_utils.cc``).
 NAVIGATION_ACCEPT = (
@@ -150,8 +151,8 @@ def fetch_mode(destination, request_mode=None) -> str:
 def same_site(left, right) -> bool:
     """Whether two URLs share a scheme and a registrable domain.
 
-    The registrable domain is the last two labels -- the one place this cannot
-    promise Chrome's answer.
+    Registrable domains use the installed Public Suffix List snapshot, including
+    private suffixes. The snapshot may differ from a particular Chrome build.
     """
     left_parts, right_parts = _parts(left), _parts(right)
     if not left_parts or not right_parts:
@@ -160,12 +161,7 @@ def same_site(left, right) -> bool:
     right_scheme, right_host = right_parts
     if left_scheme != right_scheme:
         return False
-    return (
-        left_host == right_host
-        or left_host.endswith("." + right_host)
-        or right_host.endswith("." + left_host)
-        or _registrable(left_host) == _registrable(right_host)
-    )
+    return site_domain(left_host) == site_domain(right_host)
 
 
 def site_relation(url, current_url) -> str:
@@ -279,12 +275,6 @@ def _parts(url):
         return (parts.scheme.lower(), host) if host else None
     except ValueError:
         return None
-
-
-def _registrable(host):
-    """The last two labels of a host, the stand-in for the public suffix list."""
-    labels = host.split(".")
-    return ".".join(labels[-2:]) if len(labels) > 1 else host
 
 
 __all__ = [

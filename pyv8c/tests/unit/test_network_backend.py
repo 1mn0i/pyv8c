@@ -224,8 +224,10 @@ def test_the_bridge_follows_only_a_follow_request(monkeypatch):
 def test_an_engine_that_cannot_stop_following_refuses_a_manual_redirect(monkeypatch):
     """cronet follows by itself and names no way to stop it, so the modes that forbid
     following are refused rather than quietly obeyed."""
+    calls = []
     class FollowingClient(FakeClient):
         def get(self, url, **kwargs):
+            calls.append(url)
             response = FakeResponse()
             response.url = url
             response.history = ("http://example.test/first",)
@@ -251,6 +253,7 @@ def test_an_engine_that_cannot_stop_following_refuses_a_manual_redirect(monkeypa
         with pytest.raises(LoadFailure) as refused:
             page.services.resource_services.load_resource("/x", {"redirect": "manual"})
         assert "cannot be told not to" in str(refused.value)
+        assert calls == []
     finally:
         browser.close()
 

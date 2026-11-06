@@ -33,7 +33,7 @@ Host、Content-Length 及 HTTP 连接信息部分属于传输层。调用方自�
 
 ## 实现边界
 
-- site 判断不含完整 Public Suffix List，部分公共后缀域名关系可能与 Chrome 不同；same-origin 应按精确 origin 判断。
+- site 判断使用 `tldextract` 自带的离线 Public Suffix List 快照，包含私有后缀；其快照可能与具体 Chrome 版本不同。same-origin 仍按精确 origin 判断。
 - 完整 CORS OPTIONS 预检尚未覆盖，不能仅因请求头正确就认为 Fetch 安全模型完整。
 - 部分 Connection 决策使用 URL scheme 近似，实际协商协议可能不同。
 - 媒体请求的 Range、Accept-Encoding 与头顺序存在版本及实现差异。

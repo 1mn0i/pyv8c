@@ -19,6 +19,7 @@ from .models import (
     NetworkResponse,
     NetworkUnavailableError,
     cookie_header,
+    permits_credentials,
 )
 from .proxy import PROXY_OPTION
 from .registry import signature_option_keys
@@ -138,9 +139,10 @@ class CronetTransport(RequestDelivery):
             raw = fn(request.url, **kwargs)
         response = self._response(raw, request.url)
         set_cookie = response.headers.get("set-cookie")
-        if set_cookie:
+        if set_cookie and permits_credentials(request):
             self.cookies.add_from_response(response.url, set_cookie)
-        self._absorb_client_cookies(raw, response.url)
+        if permits_credentials(request):
+            self._absorb_client_cookies(raw, response.url)
         return response
 
     def _absorb_client_cookies(self, raw, url):

@@ -39,6 +39,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self._url = ""
         self._async = True
         self._request_headers = Headers()
+        self._request_headers._set_request_guard()
         self._response = None
         self.readyState = self.UNSENT
         self.status = 0
@@ -157,6 +158,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         # A new request starts from nothing: whatever the last one left is gone.
         self._invalidate_request()
         self._request_headers = Headers()
+        self._request_headers._set_request_guard()
         self._clear_response()
         self._method, self._url, self._async = method.upper(), resolved, async_value
         if self.readyState != self.OPENED:
@@ -171,7 +173,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         value = byte_string(value)
         if self.readyState != self.OPENED or self._send_flag:
             raise InvalidStateError("XMLHttpRequest is not in the OPENED state")
-        self._request_headers.fn_set(key, value)
+        self._request_headers.fn_append(key, value)
 
     def fn_getResponseHeader(self, name=MISSING, *_extra):
         if name is MISSING:
@@ -214,6 +216,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
             body = binary
         request = {
             "method": self._method, "headers": self._request_headers, "body": body,
+            "credentials": "include" if self.withCredentials else "same-origin",
             "timeout": self.timeout / 1000 if self.timeout else None,
             "resource_type": "xhr",
         }

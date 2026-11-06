@@ -24,6 +24,16 @@ def test_a_tolerated_mismatch_is_counted_once_and_error_mode_counts_none():
     assert _bindings("error").report_mismatch("Window.thing is not present") is False
 
 
+def test_baseline_warning_is_independent_of_stub_logging(monkeypatch):
+    warnings = []
+    monkeypatch.setattr("pyv8c.engine.bindings.logger.warning", lambda *args: warnings.append(args))
+    bindings = _bindings("warn")
+    bindings.report_mismatch("a baseline mismatch")
+    bindings.report_mismatch("a baseline mismatch")
+    assert len(warnings) == 1
+    assert warnings[0][-1] == "a baseline mismatch"
+
+
 def test_no_hand_written_declaration_contradicts_the_baseline():
     """Compiling every interface reports no tolerated difference at all."""
     bindings = _bindings("warn")

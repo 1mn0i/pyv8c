@@ -20,10 +20,11 @@ from loguru import logger
 from pyv8c import Browser, register_transport
 from pyv8c.network.curl_cffi import CurlCffiTransport
 
-PROXY = "http://127.0.0.1:7890"
 BASE_URL = "https://www.southwest.com"
 API_URL = BASE_URL + "/api/air-booking/v1/air-booking/page/air/booking/shopping"
 SDK_HEADERS = tuple(f"Ee30zvqlwf-{suffix}" for suffix in "ABCDFZ")
+
+PROXY = "http://127.0.0.1:7890"
 
 
 def _print_flights(flights):

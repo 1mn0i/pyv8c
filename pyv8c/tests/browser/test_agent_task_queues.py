@@ -99,6 +99,25 @@ def test_posted_host_errors_are_reported_to_their_own_window():
         browser.close()
 
 
+def test_terminated_background_task_does_not_fire_error_or_stop_siblings():
+    browser = Browser(real_network=False, stub_logging='off')
+    try:
+        page = browser.new_profile().new_page()
+        page.set_content('<iframe></iframe>')
+        child = page.document.fn_querySelector('iframe')._child_services._page_realm.page
+        page.evaluate("globalThis.errorCount=0; onerror=()=>{errorCount++}")
+        done = threading.Event()
+        def terminate():
+            raise pyv8.JavaScriptTerminated()
+        page.tasks.post(terminate)
+        child.tasks.post(done.set)
+        assert done.wait(3)
+        assert page.evaluate('errorCount') == 0
+        assert child.evaluate('6 * 7') == 42
+    finally:
+        browser.close()
+
+
 def test_timer_submitted_from_another_thread_wakes_a_parked_agent(monkeypatch):
     browser = Browser(real_network=False, stub_logging='off')
     try:

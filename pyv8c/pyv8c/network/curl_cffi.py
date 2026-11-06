@@ -19,6 +19,7 @@ from .models import (
     NetworkResponse,
     NetworkUnavailableError,
     cookie_header,
+    permits_credentials,
 )
 from .proxy import PROXY_OPTION, curl_proxies
 from .registry import signature_option_keys
@@ -131,7 +132,7 @@ class CurlCffiTransport(RequestDelivery):
             raise LoadFailure(f"{request.method} {request.url} failed: {exc}") from exc
         response = self._response(raw, request.url, time.perf_counter() - started)
         set_cookie = response.headers.get("set-cookie")
-        if set_cookie:
+        if set_cookie and permits_credentials(request):
             self.cookies.add_from_response(response.url, set_cookie)
         return response
 

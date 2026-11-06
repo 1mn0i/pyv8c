@@ -313,10 +313,32 @@ def test_layering_has_no_upward_imports():
     }
     for layer, names in forbidden.items():
         for path in (ROOT / layer).rglob("*.py"):
-            source = path.read_text(encoding="utf-8")
+            parts = path.relative_to(ROOT).with_suffix("").parts
+            package = ".".join(("pyv8c", *parts[:-1]))
+            imports = _absolute_imports(path.read_text(encoding="utf-8"), package)
             for name in names:
-                assert f"pyv8c.{name}" not in source, path
-                assert f"from ..{name}" not in source, path
+                target = f"pyv8c.{name}"
+                assert not any(module == target or module.startswith(target + ".")
+                               for module in imports), path
+
+
+def _absolute_imports(source, package):
+    """Resolve static imports at all nesting levels, including imported names."""
+    modules = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = (importlib.util.resolve_name("." * node.level + (node.module or ""), package)
+                    if node.level else node.module or "")
+            modules.add(base)
+            modules.update(f"{base}.{alias.name}" for alias in node.names)
+    return modules
+
+
+def test_layer_import_analysis_resolves_nested_and_relative_imports():
+    source = """\nfrom pyv8c import platform\ndef delayed():\n    from ... import platform\n    import pyv8c.web.dom\n"""
+    assert {"pyv8c.platform", "pyv8c.web.dom"} <= _absolute_imports(source, "pyv8c.web.dom")
 
 
 @pytest.mark.native

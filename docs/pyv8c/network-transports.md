@@ -50,6 +50,10 @@ NetworkRequest 使用关键字构造，包含 URL、method、headers、body、ti
 
 Profile 始终拥有 CookieJar。传输依据请求凭据决定 Cookie 发送与保存；document.cookie 的访问还受页面规则限制。不要在不相关 Profile 间共享有可变 Cookie 状态的传输实例。
 
+Cookie Domain 使用依赖内置的 Public Suffix List 快照检查；`SameSite=None` 要求 `Secure`，并校验 `__Secure-` / `__Host-` 的部分属性。当前尚未按请求的站点上下文执行 SameSite 发送限制，也未实现完整的分区 Cookie 和安全来源处理，不能将 CookieJar 当成 Chrome 安全边界。
+
+跨源 CORS 请求在需要时先发送不带凭据的 OPTIONS 预检，并验证来源、凭据、方法和请求头；预检未通过不会发送实际请求。当前不缓存预检结果；无法逐跳控制重定向的传输会拒绝需要预检的请求。流式请求体尚未实现，使用 `ReadableStream` 作为请求体会在发送前报错；XHR upload 监听触发的强制预检和私网访问策略尚未实现，加载不可信页面前应由宿主限制网络访问。
+
 ## 自定义传输
 
 HTTP 实现 `request_sync(request)`、`request_async(tasks, request, callback)`、`close()`，并连接框架 CookieJar。异步回调格式为 `(response, error)`，只交付普通数据；资源层负责排队回 owner，传输不能直接修改 DOM。

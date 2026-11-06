@@ -3,8 +3,9 @@ from dataclasses import dataclass
 from functools import cached_property
 import time
 from urllib.parse import urlsplit
-from ...foundation.error_policy import control_exceptions
+
 from pyv8c import pyv8
+from ...foundation.error_policy import control_exceptions
 from ...foundation.host_errors import LoadFailure
 from ...foundation.realm import WorkerSource
 from ...foundation.urls import absolute_url, origin_tuple, serialize_origin
@@ -16,7 +17,9 @@ from ...network.redirects import Deliver, RedirectFailure, next_hop
 from .request_headers import browser_headers, fetch_mode
 from .callbacks import CallbackRunner
 from .handles import LoadHandle
-from .session import select_source as select_request_source, check_cors as validate_cors, check_origin
+from .session import select_source as select_request_source, check_origin
+from .cors import (check_cors as validate_cors, network_preflight_request, preflight,
+                   preflight_request, require_inspectable_redirects, validate_preflight)
 
 
 @dataclass(slots=True)
@@ -207,6 +210,9 @@ class ResourceFetchController:
         """What an engine is told about following: this layer's job, unless the engine
         documents that following cannot be turned off."""
         if getattr(backend.http, "FOLLOWS_ITSELF", False):
+            if self._request_mode(request) != "navigate" and request.get("redirect", "follow") != "follow":
+                raise LoadFailure("this engine follows redirects by itself and cannot be told not to, so"
+                                  f" redirect: {request.get('redirect')!r} cannot be honoured")
             return str(request.get("redirect", "follow"))
         return "manual"
 
@@ -299,6 +305,10 @@ class ResourceFetchController:
         self.cache.put(load.cache_key, payload)
 
     def network_request(self, target, request, load, backend):
+        require_inspectable_redirects(getattr(backend.http, 'FOLLOWS_ITSELF', False),
+                                      self._request_mode(load.options), str(request.get('method', 'GET')),
+                                      self.header_dict(load.options.get('headers')),
+                                      load.options.get('content_type') if request.get('body') is not None else None)
         return NetworkRequest(url=target, method=str(request.get("method", "GET")).upper(),
                               headers=self.header_dict(request.get("headers")), body=request.get("body"),
                               timeout=request.get("timeout"), credentials=request.get("credentials", "same-origin"),
@@ -316,6 +326,8 @@ class ResourceFetchController:
         if not carrier.hops:
             return dict(load.prepared)
         options = {**load.options, "method": carrier.method, "body": carrier.body, "headers": carrier.headers}
+        if carrier.body is None:
+            options.pop('content_type', None)
         return self._request_with_environment_headers(options, self.page, carrier.url, load.initiator_url, load.origin)
 
     def same_origin_response(self, url, load):
@@ -372,6 +384,22 @@ class ResourceFetchController:
 
     def send_sync(self, load, carrier, kind, source):
         self.check_request_origin(carrier.url, load)
+        names = preflight(load.origin, carrier.url, carrier.mode, carrier.method, carrier.headers,
+                          load.options.get('content_type') if carrier.body is not None else None)
+        if names is not None:
+            probe = preflight_request(load.origin, carrier.method, names, load.options.get('timeout'))
+            if kind == 'loader':
+                value = self.callbacks.call_sync(lambda: source(carrier.url, probe), probe.get('timeout'))
+                response = self.convert_response(value, carrier.url, loader=True)
+            else:
+                if getattr(source.http, 'FOLLOWS_ITSELF', False):
+                    raise LoadFailure('transport cannot prevent preflight redirects')
+                response = self.response_object(source.request_sync(
+                    network_preflight_request(carrier.url, load.origin, probe)))
+            validate_preflight(response.status, response.headers._data, load.origin,
+                               load.options.get('credentials'), carrier.method, names)
+            if not self.active(load):
+                raise LoadFailure('Resource owner changed during CORS preflight')
         request = self.hop_request(load, carrier)
         if kind == "loader":
             value = self.callbacks.call_sync(lambda: source(carrier.url, request), request.get("timeout"))
@@ -580,6 +608,50 @@ class _AsyncLoad:
         stage = self.stage
         try:
             self.fetcher.check_request_origin(self.carrier.url, self.load)
+            names = preflight(self.load.origin, self.carrier.url, self.carrier.mode,
+                              self.carrier.method, self.carrier.headers,
+                              self.load.options.get('content_type') if self.carrier.body is not None else None)
+            if names is not None:
+                probe = preflight_request(self.load.origin, self.carrier.method, names,
+                                          self.load.options.get('timeout'))
+                callback = partial(self.enqueue, self.preflight_landed, stage, names)
+                if self.kind == 'loader':
+                    transport = self.fetcher.callbacks.dispatch(
+                        partial(self.source, self.carrier.url, probe), callback,
+                        force_pool=self.force_pool())
+                else:
+                    if self.follows:
+                        raise LoadFailure('transport cannot prevent preflight redirects')
+                    request = network_preflight_request(self.carrier.url, self.load.origin, probe)
+                    transport = self.source.request_async(self.fetcher.page.services.task_services,
+                                                          request, callback)
+                self.bind(transport, stage)
+                return
+            self.send_actual(stage)
+        except control_exceptions():
+            raise
+        except BaseException as error:
+            self.fail(error)
+
+    def preflight_landed(self, stage, names, value, error):
+        if stage != self.stage or not self.active():
+            return
+        try:
+            if error is not None:
+                raise error
+            response = self.fetcher.convert_response(value, self.carrier.url, loader=self.kind == 'loader')
+            validate_preflight(response.status, response.headers._data, self.load.origin,
+                               self.load.options.get('credentials'), self.carrier.method, names)
+            self.stage += 1
+            self.send_actual(self.stage)
+        except control_exceptions():
+            raise
+        except BaseException as error:
+            self.fail(error)
+
+    def send_actual(self, stage):
+        from functools import partial
+        try:
             prepared = self.fetcher.hop_request(self.load, self.carrier)
             reply = _HopReply(self, self.carrier.url, stage)
             if self.kind == "loader":

@@ -6,6 +6,7 @@ import threading
 
 from .tasks import TaskSource
 from .logging import logger
+from .error_policy import control_exceptions
 
 
 class TaskTicket:
@@ -289,7 +290,7 @@ class AgentTaskQueue:
                 selected.callback()
             else:
                 selected.owner.run_callback(selected.callback)
-        except (KeyboardInterrupt, SystemExit):
+        except control_exceptions():
             raise
         except BaseException as error:
             selected.owner.report_error(error)

@@ -23,6 +23,7 @@ from .logging import logger
 
 from . import timer_resolution
 from .host_errors import RealmBusyError
+from .error_policy import control_exceptions
 
 #: Exceptions that must interrupt the process rather than be logged.
 _CONTROL_EXCEPTIONS = (KeyboardInterrupt, SystemExit)
@@ -424,12 +425,17 @@ class RealmExecutor:
         """
         if isinstance(exc, _CONTROL_EXCEPTIONS):
             raise exc
+        if isinstance(exc, control_exceptions()):
+            logger.debug("realm background operation terminated")
+            return
         reported = False
         sink = self._error_sink
         if sink is not None:
             try:
                 sink(exc)
                 reported = True
+            except control_exceptions():
+                raise
             except BaseException:  # reporting must not break the loop
                 reported = False
         if not reported:
@@ -470,6 +476,11 @@ class RealmExecutor:
                     self._checkpoint()
             except _CONTROL_EXCEPTIONS:
                 raise
+            except control_exceptions():
+                # A terminated task is not a page error and must not retire the
+                # owner thread shared by unrelated live realms.
+                logger.debug("realm task terminated")
+                worked = True
             except BaseException as exc:
                 # Task cleanup and microtask checkpoints are part of this turn.
                 # Report against its owner without killing unrelated queued work.
@@ -552,6 +563,9 @@ class RealmExecutor:
                 foreground = self._foreground.run_turn()
             except _CONTROL_EXCEPTIONS:
                 raise
+            except control_exceptions():
+                logger.debug("foreground operation terminated")
+                foreground = True
             except BaseException as error:
                 self._report_exception(error)
                 foreground = True
@@ -561,6 +575,9 @@ class RealmExecutor:
                 rendered = self._rendering.run_frame()
             except _CONTROL_EXCEPTIONS:
                 raise
+            except control_exceptions():
+                logger.debug("rendering operation terminated")
+                rendered = True
             except BaseException as error:
                 self._report_exception(error)
                 rendered = True

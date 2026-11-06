@@ -64,6 +64,12 @@ class NetworkRequest:
     options: dict[str, object] = field(default_factory=dict)
 
 
+def permits_credentials(request):
+    return (request.credentials == 'include' or
+            (request.credentials == 'same-origin' and
+             (not request.origin or same_origin(request.origin, request.url))))
+
+
 def cookie_header(jar, request) -> str:
     """The ``Cookie`` header *request* may carry from *jar*, if any.
 
@@ -71,11 +77,9 @@ def cookie_header(jar, request) -> str:
     ``"same-origin"`` (the default) only where the origins match.  A host-level
     request has no origin, so nothing about it can be cross-origin.
     """
-    if jar is None or request.credentials == "omit":
+    if jar is None or not permits_credentials(request):
         return ""
-    if request.credentials == "include" or not request.origin or same_origin(request.origin, request.url):
-        return jar.header_for(request.url)
-    return ""
+    return jar.header_for(request.url)
 
 
 @dataclass

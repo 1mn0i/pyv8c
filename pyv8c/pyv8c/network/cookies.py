@@ -13,6 +13,7 @@ from threading import RLock
 from urllib.parse import urlsplit
 
 from ..foundation.logging import logger
+from ..foundation.sites import is_public_suffix
 
 _INVALID_COOKIE_NAME_CHARS = frozenset("()<>@,;:") | {"\\", "[", "]", "?", "=", "{", "}", " ", "\t"}
 
@@ -154,7 +155,13 @@ class CookieJar:
         if not self._allows_cookies(parsed_url): return False
         host = (parsed_url.hostname or "").lower()
         if domain and not self._domain_matches(host, domain, False): return False
+        if not host_only and is_public_suffix(domain):
+            if domain != host: return False
+            host_only = True
         if secure and parsed_url.scheme not in ("https", "wss") and source == "script": return False
+        if same_site.lower() == "none" and not secure: return False
+        if name.startswith("__Secure-") and not secure: return False
+        if name.startswith("__Host-") and (not secure or not host_only or path != "/"): return False
         if max_age is not None: expires = time.time() + max_age if max_age > 0 else 0
         key = (domain, path, name)
         with self._lock:

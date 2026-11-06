@@ -15,8 +15,33 @@ import pytest
 
 pytest.importorskip("pyv8c.pyv8")
 from pyv8c import Browser
+from pyv8c.foundation.host_errors import RealmBusyError
+from pyv8c.platform.page import Page
 
 ORIGIN = "http://127.0.0.1:9"
+
+
+def test_wait_for_reports_its_deadline_when_the_owner_is_busy():
+    from types import SimpleNamespace
+
+    def busy(*args, **kwargs):
+        time.sleep(0.02)
+        raise RealmBusyError("owner did not answer")
+
+    page = SimpleNamespace(executor=SimpleNamespace(is_owner_thread=lambda: False), evaluate=busy)
+    with pytest.raises(TimeoutError, match="condition did not become true"):
+        Page.wait_for(page, "false", timeout=0.01)
+
+
+def test_wait_for_preserves_an_early_owner_failure():
+    from types import SimpleNamespace
+
+    def busy(*args, **kwargs):
+        raise RealmBusyError("owner unavailable")
+
+    page = SimpleNamespace(executor=SimpleNamespace(is_owner_thread=lambda: False), evaluate=busy)
+    with pytest.raises(RealmBusyError, match="owner unavailable"):
+        Page.wait_for(page, "false", timeout=1)
 
 #: A worker that exercises the scheduling surface its global scope shares with
 #: a window.  Each source posts separately so the order is observable.

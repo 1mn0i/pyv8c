@@ -74,8 +74,7 @@ class Bindings:
             return False
         if message not in self._mismatches:
             self._mismatches.add(message)
-            if self.stub_logging != "off":
-                logger.warning("pyv8c: {}", message)
+            logger.warning("pyv8c: {}", message)
         return True
 
     def check_window_order(self, actual, managed_names=()):
