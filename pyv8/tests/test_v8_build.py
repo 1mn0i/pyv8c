@@ -537,6 +537,7 @@ class TestV8BuildConfiguration(unittest.TestCase):
         self.assertEqual(command[-1], f"--args={gn_argument}")
         self.assertEqual(len(command), 5)
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows-specific V8 layout patches")
     def test_v8_source_compatibility_patches_are_temporary(self):
         """MSVC 兼容补丁只在构建期间生效，结束后必须恢复 V8 checkout。"""
 
@@ -616,6 +617,7 @@ class TestV8BuildConfiguration(unittest.TestCase):
             self.assertEqual(path.read_bytes(), content)
 
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows-specific V8 layout patches")
     def test_new_extended_map_layout_patch_is_temporary(self):
         config = v8_build.V8BuildConfig.from_environment(
             self.root, {"PYV8_V8_VERSION": "15.4.68", "PYV8_BUILD_V8": "1"})

@@ -61,6 +61,9 @@ else:
 
 if sys.platform.startswith('linux'):
     libraries.append('rt')
+    # V8's default Linux build disables RTTI; subclasses of V8 delegates must
+    # use the same setting or the extension references missing V8 typeinfo.
+    extra_compile_args.append('-fno-rtti')
 
 if sys.platform.startswith('darwin'):
     extra_compile_args.append('-stdlib=libc++')
@@ -164,6 +167,14 @@ class PyV8BuildExt(build_ext):
         for extension in self.extensions:
             if extension.name != 'pyv8c.pyv8._pyv8':
                 continue
+            if sys.platform.startswith('linux'):
+                llvm_bin = config.v8_home / 'third_party' / 'llvm-build' / 'Release+Asserts' / 'bin'
+                if (llvm_bin / 'ld.lld').is_file():
+                    # Chromium's LLVM can emit relocations unsupported by older
+                    # host binutils; use the matching linker for its archives.
+                    extension.extra_link_args = list(extension.extra_link_args or []) + [
+                        '-B' + str(llvm_bin), '-fuse-ld=lld'
+                    ]
             extension.include_dirs = list(extension.include_dirs or []) + [
                 str(config.include_dir)
             ]

@@ -1,5 +1,6 @@
 """Failures must not turn unknown or dirty V8 state into a successful build."""
 from pathlib import Path
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -48,6 +49,7 @@ def test_checkout_failure_is_not_silently_bypassed(tmp_path, monkeypatch):
         config.prepare()
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows-specific V8 layout patches')
 def test_patch_setup_failure_restores_earlier_files(tmp_path, monkeypatch):
     (tmp_path / 'V8_VERSION').write_text('15.4.68')
     config = v8_build.V8BuildConfig.from_environment(tmp_path, {})

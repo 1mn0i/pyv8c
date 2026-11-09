@@ -534,6 +534,12 @@ class V8BuildConfig:
             "v8_monolithic": "true",
             "v8_use_external_startup_data": "false",
         }
+        if sys.platform.startswith("linux"):
+            # The static V8 archive is linked into the Python shared extension.
+            values["v8_monolithic_for_shared_library"] = "true"
+            # Chromium's bundled sysroot may ship a C++ library older than V8
+            # requires; use the host toolchain consistently with the extension.
+            values["use_sysroot"] = "false"
         result = " ".join(f"{key}={value}" for key, value in values.items())
         if self.extra_gn_args:
             result += f" {self.extra_gn_args}"
@@ -1148,8 +1154,18 @@ class V8BuildConfig:
                         originals[build_gn] = original_gn
                         build_gn.write_bytes(original_gn.replace(old_macro, new_macro))
                         print("Using Windows 11 GE target for the selected SDK")
+            if sys.platform.startswith("linux") and self.target_cpu == "x64":
+                mutable_page = self.v8_home / "src" / "heap" / "mutable-page.cc"
+                if mutable_page.is_file():
+                    original = mutable_page.read_bytes()
+                    old = b"std::hardware_destructive_interference_size"
+                    # Older libstdc++ headers omit this constant under Clang.
+                    # It is used only in a cache-line placement assertion here.
+                    if old in original:
+                        originals[mutable_page] = original
+                        mutable_page.write_bytes(original.replace(old, b"64"))
             backing_store = self.v8_home / "src" / "objects" / "backing-store.cc"
-            if backing_store.is_file():
+            if os.name == "nt" and backing_store.is_file():
                 original = backing_store.read_bytes()
                 direct_function_ref = (
                     b"return isolate->heap()->allocator()->RetryCustomAllocate(\n"
@@ -1172,7 +1188,7 @@ class V8BuildConfig:
             atomics_header = (
                 self.v8_home / "src" / "objects" / "js-atomics-synchronization.h"
             )
-            if atomics_header.is_file():
+            if os.name == "nt" and atomics_header.is_file():
                 original = atomics_header.read_bytes()
                 implicit_tail_padding = (
                     b"  ExternalPointerMember<kWaiterQueueNodeTag> waiter_queue_head_;\n"
@@ -1261,7 +1277,7 @@ class V8BuildConfig:
                 for path in extended_map_replacements
                 if path.is_file()
             }
-            if len(extended_map_sources) == len(extended_map_replacements) and all(
+            if os.name == "nt" and len(extended_map_sources) == len(extended_map_replacements) and all(
                 old in extended_map_sources[path]
                 for path, (old, _new) in extended_map_replacements.items()
             ):
