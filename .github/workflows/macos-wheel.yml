@@ -20,6 +20,7 @@ jobs:
           python-version: '3.12'
           architecture: arm64
       - name: Check environment
+        id: environment
         shell: bash
         run: |
           set -euo pipefail
@@ -28,11 +29,32 @@ jobs:
           xcodebuild -version
           python --version
           df -h .
+          test -n "${ImageVersion:-}"
+          echo "image=$ImageVersion" >> "$GITHUB_OUTPUT"
+          echo "v8-version=$(tr -d '\r\n' < pyv8/V8_VERSION)" >> "$GITHUB_OUTPUT"
       - name: Install build and test tools
         run: python -m pip install --upgrade pip build twine 'setuptools>=77' wheel pytest pytest-timeout pytest-repeat pytest-xdist
+      - name: Restore V8 build cache
+        id: v8-cache
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            pyv8/.pyv8-build/versions/${{ steps.environment.outputs.v8-version }}/v8/include
+            pyv8/.pyv8-build/versions/${{ steps.environment.outputs.v8-version }}/v8/out/pyv8-arm64.release
+          key: macos-v8-arm64-${{ steps.environment.outputs.image }}-${{ hashFiles('pyv8/V8_VERSION', 'pyv8/v8_build.py') }}
       - name: Prepare V8
         working-directory: pyv8
         run: python -c "from v8_build import V8BuildConfig; V8BuildConfig.from_environment('.', download_and_build=True).prepare()"
+      - name: Save V8 build cache
+        if: ${{ steps.v8-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            pyv8/.pyv8-build/versions/${{ steps.environment.outputs.v8-version }}/v8/include
+            pyv8/.pyv8-build/versions/${{ steps.environment.outputs.v8-version }}/v8/out/pyv8-arm64.release
+          key: macos-v8-arm64-${{ steps.environment.outputs.image }}-${{ hashFiles('pyv8/V8_VERSION', 'pyv8/v8_build.py') }}
       - name: Build and install wheel
         shell: bash
         run: |

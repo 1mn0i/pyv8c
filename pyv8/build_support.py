@@ -59,11 +59,13 @@ else:
     extra_compile_args = ['-std=c++20', '-fpermissive', '-Wunused-variable']
     extra_link_args = []
 
+if sys.platform.startswith(('linux', 'darwin')):
+    # V8's default non-Windows build disables RTTI; subclasses of V8 delegates
+    # must match or the extension references missing V8 typeinfo at import.
+    extra_compile_args.append('-fno-rtti')
+
 if sys.platform.startswith('linux'):
     libraries.append('rt')
-    # V8's default Linux build disables RTTI; subclasses of V8 delegates must
-    # use the same setting or the extension references missing V8 typeinfo.
-    extra_compile_args.append('-fno-rtti')
 
 if sys.platform.startswith('darwin'):
     extra_compile_args.append('-stdlib=libc++')
