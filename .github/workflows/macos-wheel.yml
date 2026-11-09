@@ -1,0 +1,57 @@
+name: macOS arm64 wheel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-build:
+    runs-on: macos-15
+    timeout-minutes: 360
+    env:
+      PYV8_TARGET_CPU: arm64
+      PYV8_V8_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: arm64
+      - name: Check environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          sw_vers
+          xcodebuild -version
+          python --version
+          df -h .
+      - name: Install build and test tools
+        run: python -m pip install --upgrade pip build twine 'setuptools>=77' wheel pytest pytest-timeout pytest-repeat pytest-xdist
+      - name: Prepare V8
+        working-directory: pyv8
+        run: python -c "from v8_build import V8BuildConfig; V8BuildConfig.from_environment('.', download_and_build=True).prepare()"
+      - name: Build and install wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m build --wheel --no-isolation --outdir dist .
+          python -m twine check dist/*.whl
+          python -m pip install dist/*.whl
+          python -m pip check
+      - name: Test native argument bridge
+        run: python -m pytest pyv8/tests/test_argument_bridge.py -q
+      - name: Verify installed wheel outside checkout
+        working-directory: ${{ runner.temp }}
+        run: python -I "$GITHUB_WORKSPACE/tools/smoke_wheels.py"
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-wheels
+          path: dist/*.whl
+          if-no-files-found: error
+      - name: Report disk space
+        if: always()
+        run: df -h .
