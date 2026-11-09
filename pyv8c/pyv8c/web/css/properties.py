@@ -192,6 +192,7 @@ INITIAL_VALUES = {
 TAG_DISPLAY = {
     "a": "inline", "address": "block", "article": "block", "aside": "block",
     "blockquote": "block", "body": "block", "button": "inline-block", "canvas": "inline",
+    "center": "block",
     "dd": "block", "div": "block", "dl": "block", "dt": "block", "fieldset": "block",
     "figcaption": "block", "figure": "block", "footer": "block", "form": "block",
     "h1": "block", "h2": "block", "h3": "block", "h4": "block", "h5": "block",

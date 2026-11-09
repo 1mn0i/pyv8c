@@ -84,6 +84,24 @@ def active_element(page):
     )
 
 
+def test_positioned_sibling_stack_levels_control_mouse_target(page):
+    page.set_content('''<!doctype html><body style="margin:0">
+      <div style="position:relative;width:300px;height:34px">
+        <button id="thumb" style="position:absolute;left:0;top:0;width:42px;height:34px;z-index:2">drag</button>
+        <div id="label" style="position:absolute;left:0;top:0;width:300px;height:34px;z-index:1"><span id="text">slide</span></div>
+      </div><script>window.targets=[];document.addEventListener('mousedown',e=>targets.push(e.target.id));</script>
+    </body>''')
+    x, y = centre(page, '#thumb')
+    assert page.evaluate(f'document.elementFromPoint({x},{y}).id') == 'thumb'
+    page.mouse.click(x, y)
+    assert page.evaluate('targets') == ['thumb']
+    page.evaluate("document.getElementById('label').style.zIndex='3'")
+    assert page.evaluate(f'document.elementFromPoint({x},{y}).id') != 'thumb'
+    page.mouse.click(x, y)
+    assert page.evaluate('targets.length') == 2
+    assert page.evaluate('targets[1]') in ['label', 'text']
+
+
 # -- moving ------------------------------------------------------------------
 
 

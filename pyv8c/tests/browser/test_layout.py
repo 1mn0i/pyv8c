@@ -75,6 +75,16 @@ def test_an_uninstalled_family_falls_back_instead_of_failing():
     assert layout.text_width("abc", {"font-family": "Definitely Not A Font 123"}) > 0
 
 
+def test_center_is_a_block_containing_a_fixed_width_child(page):
+    page.set_content('''<!doctype html><body style="margin:0;width:640px">
+      <center id="container"><div id="child" style="width:300px;height:34px"></div></center>
+    </body>''')
+    assert page.evaluate('''(() => {
+      const host=document.getElementById('container'),child=document.getElementById('child');
+      return [getComputedStyle(host).display,host.offsetWidth,child.offsetWidth];
+    })()''') == ['block', 640, 300]
+
+
 def test_nested_layout_reuses_cascade_within_one_pass_and_recomputes_after_change(page, monkeypatch):
     from pyv8c.web.css import cascade
     original = cascade._selector_matches

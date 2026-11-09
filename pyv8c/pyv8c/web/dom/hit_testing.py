@@ -59,12 +59,25 @@ def _hit_testable(style):
 
 def _collect(element, boxes, styles, x, y, found):
     """Append the elements under the point in *element*'s subtree, deepest first.
-    Children are walked last-to-first so a later sibling stacks above an earlier."""
+    Positioned siblings use their stack levels; equal levels keep tree order."""
     box = boxes.get(element)
     if box is None:
         return
     hit = _hit_testable(styles.get(element, {})) and _inside(box, x, y)
-    for child in reversed(_child_elements(element)):
+    parent_display = styles.get(element, {}).get('display', 'block')
+
+    def stack_level(child):
+        style = styles.get(child, {})
+        if (style.get('position', 'static') == 'static'
+                and parent_display not in ('flex', 'inline-flex', 'grid', 'inline-grid')):
+            return 0
+        try:
+            return int(style.get('z-index', 'auto'))
+        except (TypeError, ValueError):
+            return 0
+
+    children = sorted(_child_elements(element), key=stack_level)
+    for child in reversed(children):
         if isinstance(child, Element) and styles.get(child, {}).get("display") != "none":
             _collect(child, boxes, styles, x, y, found)
     if hit:
