@@ -29,8 +29,8 @@ too.
 
 import timeit
 
-import pyv8
-from pyv8 import AttributeSpec, IdlSpec
+from pyv8c import pyv8
+from pyv8c.pyv8 import AttributeSpec, IdlSpec
 
 MEMBERS = 60
 

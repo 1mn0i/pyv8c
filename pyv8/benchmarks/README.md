@@ -1,6 +1,6 @@
 # pyv8 原生基准
 
-本目录的脚本只依赖 `pyv8`：
+本目录的脚本使用 `pyv8c` 内置的 V8 引擎，统一通过 `from pyv8c import pyv8` 导入：
 
 - `bench_collections.py`：Python 集合转换和跨边界传递。
 - `bench_install.py`：Realm 中接口成员的安装开销。

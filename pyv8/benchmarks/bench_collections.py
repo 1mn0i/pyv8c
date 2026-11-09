@@ -25,7 +25,7 @@ import statistics
 import sys
 import time
 
-import pyv8
+from pyv8c import pyv8
 
 ITEMS = 1000
 ROUNDS = 100

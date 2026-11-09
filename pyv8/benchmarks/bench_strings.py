@@ -16,7 +16,7 @@ import statistics
 import sys
 import time
 
-import pyv8
+from pyv8c import pyv8
 
 ASCII = "abc"
 UTF8 = "h\u00e9llo \u4e16\u754c"
