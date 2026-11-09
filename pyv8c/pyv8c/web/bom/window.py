@@ -556,7 +556,10 @@ class Window(_SchedulingMixin, WindowProperties):
         self._services.realm_services.window_property("set", "name", self.get_name())
     def _window_value(self, name):
         """The one object this window hands out for a ``[SameObject]`` member."""
-        return self._window_values.value(name)
+        value = self._window_values.value(name)
+        if self._services is not None:
+            self._services.realm_services.retain_object(value)
+        return value
 
     def get_origin(self):
         self._require_same_origin()

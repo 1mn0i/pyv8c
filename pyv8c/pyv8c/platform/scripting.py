@@ -59,6 +59,9 @@ class ScriptController:
     def promise_resolve(self, value):
         return self._realm.promise_resolve(value)
 
+    def retain_object(self, value):
+        return self._realm.retain_object(value)
+
     def enqueue_microtask(self, callback):
         """Queue *callback* as a microtask, in FIFO with promise reactions."""
         return self._realm.enqueue_microtask(callback)

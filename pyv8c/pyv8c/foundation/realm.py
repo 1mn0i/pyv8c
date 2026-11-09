@@ -41,6 +41,9 @@ class RealmServices(Protocol):
     def parse_json(self, text: str) -> Any:
         """Parse JSON inside this realm, so ``null`` and the errors are the browser's."""
         ...
+    def retain_object(self, value: Any) -> Any:
+        """Keep a SameObject wrapper and its JS own properties alive in this realm."""
+        ...
     def evaluate_script(self, source: str) -> Any: ...
     def make_promise(self) -> Any:
         """Return ``(promise, resolve, reject)`` in this realm's V8 context."""

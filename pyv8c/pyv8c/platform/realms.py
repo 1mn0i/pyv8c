@@ -21,6 +21,27 @@ from .services import WorkerRealmServices
 from .sessions import BindingSession
 
 
+def _retain_object(realm, value):
+    context = realm.v8_context
+    if context is not None:
+        roots = getattr(realm, '_object_roots', None)
+        if roots is None:
+            # Context.js_obj deliberately returns a weak view of a host pair.
+            # A JS object is instead a strong, realm-owned edge to its wrappers.
+            roots = realm._object_roots = context.to_js({})
+            realm._object_root_ids = set()
+        identities = realm._object_root_ids
+        if id(value) not in identities:
+            roots[str(id(value))] = value
+            identities.add(id(value))
+    return value
+
+
+def _release_objects(realm):
+    realm._object_roots = None
+    getattr(realm, '_object_root_ids', set()).clear()
+
+
 def _v8_context_kwargs(session, context_type, trace, on_materialize=None, trace_callback=None,
                        traceable=False, trace_scripts=None, exposure_type=None, isolate=None,
                        reuse_global=None, ordered_global=False):
@@ -196,6 +217,9 @@ class WorkerRealm:
     def promise_resolve(self, value):
         return promises.promise_resolve(self.v8_context, value)
 
+    def retain_object(self, value):
+        return _retain_object(self, value)
+
     def close(self):
         first_error = None
 
@@ -211,6 +235,7 @@ class WorkerRealm:
 
         attempt(self._resource_scope.close)
         attempt(self.tasks.close)
+        _release_objects(self)
         if self.v8_context is not None and attempt(self.v8_context.close):
             self.v8_context = None
         attempt(self.config.session.detach)
@@ -347,6 +372,9 @@ class PageRealm:
     def promise_resolve(self, value):
         return promises.promise_resolve(self.v8_context, value)
 
+    def retain_object(self, value):
+        return self.executor.call(_retain_object, self, value)
+
     def close(self):
         """Close the document-scoped parts: the context and the binding session.
 
@@ -360,6 +388,7 @@ class PageRealm:
     def _close_context(self):
         if self.rejections is not None:
             self.rejections.close()
+        _release_objects(self)
         v8_context = self.v8_context
         try:
             close = getattr(v8_context, "close", None)

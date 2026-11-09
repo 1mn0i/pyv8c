@@ -203,6 +203,9 @@ class _RealmCapabilityBase(_TaskSource):
     def parse_json(self, text):
         return parse_json_in(self.v8_context, self._json_window, text)
 
+    def retain_object(self, value):
+        return self._scripting.retain_object(value)
+
     def report_exception(self, exc):
         """Report an uncaught exception through this realm's task queue."""
         self._tasks.report_error(exc)
