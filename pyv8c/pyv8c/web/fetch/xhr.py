@@ -28,7 +28,7 @@ class XMLHttpRequestEventTarget(EventTarget):
 class XMLHttpRequest(XMLHttpRequestEventTarget):
     UNSENT, OPENED, HEADERS_RECEIVED, LOADING, DONE = 0, 1, 2, 3, 4
 
-    #: The IDL's response type enum; the binary and document kinds read as ``Null``.
+    #: The IDL's response type enum; blob and document responses are not implemented.
     _RESPONSE_TYPES = ("", "arraybuffer", "blob", "document", "json", "text")
 
     def __init__(self, *_extra, services=None, _realm=None, **kw):
@@ -41,6 +41,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
         self._request_headers = Headers()
         self._request_headers._set_request_guard()
         self._response = None
+        self._response_buffer = None
         self.readyState = self.UNSENT
         self.status = 0
         self.status_text = ""
@@ -59,12 +60,23 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
     def get_status(self): return self.status
     def get_statusText(self): return self.status_text
     def get_responseURL(self): return self.response_url
-    def get_responseText(self): return self.responseText
+    def get_responseText(self):
+        if self.response_type not in ('', 'text'):
+            raise InvalidStateError('responseText is only available for text responses')
+        return self.responseText
 
     def get_response(self):
         """The body in the shape ``responseType`` asks for, as Chrome leaves it."""
         if self._response is None:
             return "" if self.response_type in ("", "text") else pyv8.Null
+        if self.response_type == 'arraybuffer':
+            if self.readyState != self.DONE:
+                return pyv8.Null
+            if self._response_buffer is None:
+                body = self._response.body
+                data = body if isinstance(body, bytes) else self._response.body_text().encode('utf-8')
+                self._response_buffer = pyv8.JSTypeArray(list(data), pyv8.ArrayType.Uint8Array)._get('buffer')
+            return self._response_buffer
         if self.response_type == "json":
             if not self._services:
                 return json.loads(self.responseText)
@@ -110,6 +122,7 @@ class XMLHttpRequest(XMLHttpRequestEventTarget):
 
     def _clear_response(self):
         self._response = None
+        self._response_buffer = None
         self.status, self.status_text, self.response_url, self.responseText = 0, '', '', ''
 
     def _invalidate_request(self):

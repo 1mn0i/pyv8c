@@ -34,6 +34,54 @@ def _page(loader):
     return browser, page
 
 
+def test_arraybuffer_response_keeps_raw_bytes_and_is_available_only_when_done():
+    payload = b'!\x00\x80\xff\xc3\xa9'
+    def loader(url, request):
+        return {'status': 200, 'body': payload, 'headers': {'content-type': 'application/octet-stream'}}
+    browser, page = _page(loader)
+    try:
+        page.evaluate('''
+          globalThis.result=null;globalThis.states=[];
+          const xhr=new XMLHttpRequest();xhr.open('GET','/binary');xhr.responseType='arraybuffer';
+          globalThis.before=xhr.response===null;
+          xhr.onreadystatechange=()=>states.push([xhr.readyState,xhr.response===null]);
+          xhr.onload=()=>{
+            const body=xhr.response;let textError='';
+            try{void xhr.responseText}catch(e){textError=e.name}
+            result=[body instanceof ArrayBuffer,body===xhr.response,Array.from(new Uint8Array(body)),textError];
+          };xhr.send();
+        ''')
+        page.wait_for('result!==null', timeout=3)
+        assert page.evaluate('before') is True
+        assert page.evaluate('states') == [[2, True], [3, True], [4, False]]
+        assert page.evaluate('result') == [True, True, list(payload), 'InvalidStateError']
+    finally:
+        browser.close()
+
+
+def test_reopening_xhr_drops_cached_arraybuffer_without_changing_old_buffer():
+    def loader(url, request):
+        return {'status': 200, 'body': b'AB' if url.endswith('/first') else b'\x00\xff'}
+    browser, page = _page(loader)
+    try:
+        page.evaluate('''
+          globalThis.result=null;const xhr=new XMLHttpRequest();let first;
+          xhr.open('GET','/first');xhr.responseType='arraybuffer';
+          xhr.onload=()=>{
+            if(!first){
+              first=xhr.response;new Uint8Array(first)[0]=90;
+              globalThis.same=xhr.response===first&&new Uint8Array(xhr.response)[0]===90;
+              xhr.open('GET','/second');globalThis.reset=xhr.response===null;xhr.send();
+            }else result=[same,reset,xhr.response!==first,
+                          Array.from(new Uint8Array(first)),Array.from(new Uint8Array(xhr.response))];
+          };xhr.send();
+        ''')
+        page.wait_for('result!==null', timeout=3)
+        assert page.evaluate('result') == [True, True, True, [90, 66], [0, 255]]
+    finally:
+        browser.close()
+
+
 def test_request_guard_filters_forbidden_headers_and_xhr_combines_values():
     requests = []
     def loader(url, request):
