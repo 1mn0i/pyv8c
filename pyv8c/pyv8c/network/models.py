@@ -60,6 +60,9 @@ class NetworkRequest:
     #: because the caller inspects the hops itself.
     redirect: str = "follow"
     origin: str | None = None
+    #: The schemeful site of the initiating document and its ancestors.
+    site_for_cookies: str | None = None
+    top_level_navigation: bool = False
     #: Transport extensions (impersonate, proxies, verify, ...); unknown keys are ignored.
     options: dict[str, object] = field(default_factory=dict)
 
@@ -79,7 +82,9 @@ def cookie_header(jar, request) -> str:
     """
     if jar is None or not permits_credentials(request):
         return ""
-    return jar.header_for(request.url)
+    site = request.site_for_cookies if request.site_for_cookies is not None else request.origin
+    return jar.header_for(request.url, site_for_cookies=site,
+                          top_level_navigation=request.top_level_navigation, method=request.method)
 
 
 @dataclass

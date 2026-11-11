@@ -3,6 +3,8 @@
 from functools import lru_cache
 import ipaddress
 
+from .urls import canonical_host
+
 # Never fetch at runtime: installed distributions carry their own PSL snapshot.
 @lru_cache(maxsize=1)
 def _extractor():
@@ -14,6 +16,10 @@ def _extractor():
 @lru_cache(maxsize=4096)
 def site_domain(host):
     host = str(host).lower().rstrip(".")
+    try:
+        host = canonical_host(host)
+    except UnicodeError:
+        return ''
     try:
         return str(ipaddress.ip_address(host))
     except ValueError:
@@ -28,6 +34,10 @@ def site_domain(host):
 @lru_cache(maxsize=4096)
 def is_public_suffix(host):
     host = str(host).lower().rstrip(".")
+    try:
+        host = canonical_host(host)
+    except UnicodeError:
+        return True
     try:
         ipaddress.ip_address(host)
         return False

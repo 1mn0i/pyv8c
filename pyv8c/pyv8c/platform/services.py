@@ -551,6 +551,9 @@ class _WorkerCapability:
     def worker_configuration(self):
         from .resources.session import ResourceRequestSession
         browser = self._owner._profile.browser
+        site = serialize_origin(self._owner._origin)
+        if any(not same_site(site, ancestor) for ancestor in self._owner.realm_services.ancestor_origins()):
+            site = 'null'
         session = BindingSession(browser.bindings, self._owner)
         return WorkerContext(
             browser=browser,
@@ -568,7 +571,8 @@ class _WorkerCapability:
                 profile=self._owner._profile, environment=self._owner.environment,
                 origin=tuple(self._owner._origin), base_url=self._owner.realm_services.url,
                 loader=browser.resource_loader, interceptor=browser.resource_interceptor,
-                backend=self._owner._profile.network_backend, cache_enabled=browser.cache_enabled),
+                backend=self._owner._profile.network_backend, cache_enabled=browser.cache_enabled,
+                site_for_cookies=site),
         )
 
     def create_worker_realm(self, config):
@@ -645,6 +649,10 @@ class _ContextCapability:
         origin = origin_string(self._owner.realm_services.url)
         if origin != "null":
             options["origin"] = origin
+        site = serialize_origin(self._owner._origin)
+        if any(not same_site(site, ancestor) for ancestor in self._owner.realm_services.ancestor_origins()):
+            site = 'null'
+        options['site_for_cookies'] = site
         return options
 
     def close_websocket(self, websocket):

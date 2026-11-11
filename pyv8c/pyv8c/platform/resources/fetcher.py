@@ -14,7 +14,7 @@ from ...web.fetch.headers import Headers
 from ...web.fetch.response import Response
 from ...network.models import NetworkRequest
 from ...network.redirects import Deliver, RedirectFailure, next_hop
-from .request_headers import browser_headers, fetch_mode
+from .request_headers import browser_headers, fetch_mode, same_site
 from .callbacks import CallbackRunner
 from .handles import LoadHandle
 from .session import select_source as select_request_source, check_origin, validate_source_scheme
@@ -119,7 +119,8 @@ class ResourceFetchController:
             content_type=request.get("content_type"),
             http_version=http_version,
             extra=ResourceFetchController.header_dict(request.get("headers")),
-            accepted_hints=getattr(getattr(page, "profile", None), "_accept_ch_hints", ()),
+            accepted_hints=(page.profile.accepted_client_hints(target)
+                            if getattr(page, 'profile', None) is not None else ()),
         )
         return request
 
@@ -282,17 +283,9 @@ class ResourceFetchController:
         # requests to that origin, so the profile remembers what was asked for.
         try:
             headers = getattr(getattr(response, "headers", None), "_data", None) or {}
-            asked = next((str(value) for key, value in headers.items()
-                          if str(key).lower() == "accept-ch"), "")
-            if asked:
-                profile = getattr(self.page, "profile", None)
-                if profile is not None:
-                    hints = getattr(profile, "_accept_ch_hints", None)
-                    if hints is None:
-                        hints = set()
-                        profile.__dict__["_accept_ch_hints"] = hints
-                    hints.update(name.strip().lower()
-                                 for name in asked.split(",") if name.strip())
+            profile = getattr(self.page, "profile", None)
+            if profile is not None:
+                profile.remember_client_hints(response.url or load.target, headers)
         except Exception:
             # Header bookkeeping must never fail a load.
             pass
@@ -309,11 +302,20 @@ class ResourceFetchController:
                                       self._request_mode(load.options), str(request.get('method', 'GET')),
                                       self.header_dict(load.options.get('headers')),
                                       load.options.get('content_type') if request.get('body') is not None else None)
+        site = serialize_origin(load.origin)
+        parent = self.page.parent_page
+        while parent is not None:
+            if not same_site(site, serialize_origin(parent.origin)):
+                site = 'null'
+                break
+            parent = parent.parent_page
         return NetworkRequest(url=target, method=str(request.get("method", "GET")).upper(),
                               headers=self.header_dict(request.get("headers")), body=request.get("body"),
                               timeout=request.get("timeout"), credentials=request.get("credentials", "same-origin"),
                               mode=self._request_mode(load.options), redirect=self.engine_redirect(backend, load.options),
-                              origin=serialize_origin(load.origin))
+                              origin=serialize_origin(load.origin), site_for_cookies=site,
+                              top_level_navigation=(self._request_mode(load.options) == 'navigate'
+                                                    and self.page.parent_page is None))
 
     def hop_carrier(self, load):
         options = load.options

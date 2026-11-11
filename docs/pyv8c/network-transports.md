@@ -46,11 +46,11 @@ Browser 的 `proxy` 是统一的 HTTP/HTTPS 代理入口，Profile 可覆盖；�
 
 宿主请求常用关键字包括 headers、params、data、json、cookies、timeout、referer 和 options。宿主与页面请求共享 Profile Cookie 状态，但安全策略、拦截器、缓存和页面覆写行为不同。
 
-NetworkRequest 使用关键字构造，包含 URL、method、headers、body、timeout、credentials、mode、redirect、origin 和 options。NetworkResponse 是普通响应数据，提供 status、headers、body、text、content、json() 等读取入口；它不是 Web Response。
+NetworkRequest 使用关键字构造，包含 URL、method、headers、body、timeout、credentials、mode、redirect、origin、site_for_cookies、top_level_navigation 和 options。NetworkResponse 是普通响应数据，提供 status、headers、body、text、content、json() 等读取入口；它不是 Web Response。
 
-Profile 始终拥有 CookieJar。传输依据请求凭据决定 Cookie 发送与保存；document.cookie 的访问还受页面规则限制。不要在不相关 Profile 间共享有可变 Cookie 状态的传输实例。
+Profile 始终拥有 CookieJar。传输依据请求凭据决定 Cookie 发送与保存；document.cookie 的访问还受页面规则限制。现成传输实例只能由一个活动 Profile 拥有；需要多个 Profile 时使用工厂或注册的传输名称。
 
-Cookie Domain 使用依赖内置的 Public Suffix List 快照检查；`SameSite=None` 要求 `Secure`，并校验 `__Secure-` / `__Host-` 的部分属性。当前尚未按请求的站点上下文执行 SameSite 发送限制，也未实现完整的分区 Cookie 和安全来源处理，不能将 CookieJar 当成 Chrome 安全边界。
+Cookie Domain 使用依赖内置的 Public Suffix List 快照检查；`SameSite=None` 要求 `Secure`，并校验 `__Secure-` / `__Host-` 的部分属性。页面请求按发起站点、祖先站点和顶层导航方法过滤 Strict、Lax 及默认 SameSite Cookie；宿主请求不自动应用页面站点上下文。分区 Cookie 和浏览器完整 Cookie 策略尚未实现，不能将 CookieJar 当成 Chrome 安全边界。
 
 跨源 CORS 请求在需要时先发送不带凭据的 OPTIONS 预检，并验证来源、凭据、方法和请求头；预检未通过不会发送实际请求。当前不缓存预检结果；无法逐跳控制重定向的传输会拒绝需要预检的请求。流式请求体尚未实现，使用 `ReadableStream` 作为请求体会在发送前报错；XHR upload 监听触发的强制预检和私网访问策略尚未实现，加载不可信页面前应由宿主限制网络访问。
 

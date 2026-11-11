@@ -37,9 +37,13 @@ def plain_response(value, url):
         body = bytes(body)
     if body is not None and not isinstance(body, (str, bytes)):
         raise LoadFailure('resource response body is not plain data')
-    if not isinstance(headers, dict) or any(not isinstance(k, str) or not isinstance(v, str)
-                                           for k, v in headers.items()):
+    if not isinstance(headers, dict) or any(
+        not isinstance(k, str) or not (isinstance(v, str) or
+        (isinstance(v, (list, tuple)) and all(isinstance(item, str) for item in v)))
+        for k, v in headers.items()
+    ):
         raise LoadFailure('resource response headers are not plain data')
+    headers = {k: list(v) if isinstance(v, (list, tuple)) else v for k, v in headers.items()}
     return NetworkResponse(url=str(url), body=body, status=int(status), status_text=str(status_text),
                            headers={k.lower(): v for k, v in headers.items()},
                            redirected=bool(redirected), type=str(kind))
@@ -101,6 +105,7 @@ class ResourceRequestSession:
     interceptor: object
     backend: object
     cache_enabled: bool
+    site_for_cookies: str | None = None
 
     def load(self, url, options, cancelled):
         from .fetcher import ResourceFetchController
@@ -108,7 +113,7 @@ class ResourceRequestSession:
         initiator = str(options.get('initiator_url') or self.base_url)
         target = absolute_url(url, initiator)
         origin = self.origin
-        view = SimpleNamespace(environment=self.environment, url=initiator)
+        view = SimpleNamespace(environment=self.environment, url=initiator, profile=self.profile)
         mode = ResourceFetchController._request_mode(options)
         prepare = ResourceFetchController._request_with_environment_headers
         prepared = prepare(options, view, target, initiator, origin)
@@ -171,7 +176,7 @@ class ResourceRequestSession:
                     url=target, method=method, body=body, headers=request['headers'],
                     timeout=request.get('timeout'), credentials=request.get('credentials', 'same-origin'),
                     mode=mode, redirect=str(options.get('redirect', 'follow')) if follows else 'manual',
-                    origin=serialize_origin(origin))), target)
+                    origin=serialize_origin(origin), site_for_cookies=self.site_for_cookies)), target)
             active()
             response_origin = origin_tuple(response.url)
             if mode == 'cors' and response_origin != origin:
@@ -198,6 +203,7 @@ class ResourceRequestSession:
             if options.get('mode') == 'no-cors' and origin != response_origin:
                 response.status, response.body, response.headers, response.type = 0, '', {}, 'opaque'
             active()
+            self.profile.remember_client_hints(response.url or target, response.headers)
             cache.put(key, {'body': response.body, 'status': response.status,
                             'statusText': response.status_text, 'url': response.url,
                             'headers': response.headers, 'redirected': response.redirected, 'type': response.type})

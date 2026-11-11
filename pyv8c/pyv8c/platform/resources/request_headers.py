@@ -161,7 +161,8 @@ def same_site(left, right) -> bool:
     right_scheme, right_host = right_parts
     if left_scheme != right_scheme:
         return False
-    return site_domain(left_host) == site_domain(right_host)
+    left_site, right_site = site_domain(left_host), site_domain(right_host)
+    return bool(left_site and right_site and left_site == right_site)
 
 
 def site_relation(url, current_url) -> str:

@@ -9,6 +9,8 @@ sit in one place.
 from functools import lru_cache
 from urllib.parse import urljoin, urlsplit
 
+import idna
+
 __all__ = [
     "DEFAULT_PORTS", "SPECIAL_SCHEMES", "LOADABLE_SCHEMES",
     "origin_tuple", "same_origin", "serialize_origin", "origin_string",
@@ -35,6 +37,14 @@ def unloadable_scheme(target):
     return f"{scheme}: is not a scheme a page loads, so nothing was requested <{target}>"
 
 
+def canonical_host(host):
+    """Serialize a URL host using non-transitional UTS #46 processing."""
+    host = str(host).lower()
+    if host.isascii():  # Preserve IPv6 and ASCII hostnames such as underscore labels.
+        return host
+    return idna.encode(host, uts46=True, transitional=False).decode('ascii').lower()
+
+
 def origin_tuple(value, *, inherited=None):
     """Return the browser origin triple for a URL, ``(scheme, host, port)``.
 
@@ -59,7 +69,10 @@ def origin_tuple(value, *, inherited=None):
             port = parts.port
         except ValueError:
             return "opaque", object()
-        hostname = parts.hostname.encode("idna").decode("ascii").lower()
+        try:
+            hostname = canonical_host(parts.hostname)
+        except UnicodeError:
+            return "opaque", object()
         return scheme, hostname, port if port is not None else default
     return "opaque", object()
 
@@ -89,14 +102,14 @@ def _origin_string(url):
             return _origin_string(str(url).split(":", 1)[1])
         if parts.scheme not in SPECIAL_SCHEMES or not parts.hostname:
             return "null"
-        host = parts.hostname.lower()
+        host = canonical_host(parts.hostname)
         if ":" in host and not host.startswith("["):
             host = "[" + host + "]"
         port = parts.port
         default_port = DEFAULT_PORTS.get(parts.scheme)
         suffix = (":" + str(port)) if port is not None and port != default_port else ""
         return f"{parts.scheme}://{host}{suffix}"
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, UnicodeError):
         return "null"
 
 

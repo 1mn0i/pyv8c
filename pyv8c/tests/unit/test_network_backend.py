@@ -222,8 +222,7 @@ def test_the_bridge_follows_only_a_follow_request(monkeypatch):
 
 
 def test_an_engine_that_cannot_stop_following_refuses_a_manual_redirect(monkeypatch):
-    """cronet follows by itself and names no way to stop it, so the modes that forbid
-    following are refused rather than quietly obeyed."""
+    """A client that ignores allow_redirects=False cannot publish the followed result."""
     calls = []
     class FollowingClient(FakeClient):
         def get(self, url, **kwargs):
@@ -248,12 +247,12 @@ def test_an_engine_that_cannot_stop_following_refuses_a_manual_redirect(monkeypa
         assert page.evaluate("window.__m") == "TypeError: Failed to fetch"
 
         # The reason stays host-side, where a caller can act on it.
-        from pyv8c.foundation.host_errors import LoadFailure
+        from pyv8c.network.models import NetworkUnavailableError
 
-        with pytest.raises(LoadFailure) as refused:
+        with pytest.raises(NetworkUnavailableError) as refused:
             page.services.resource_services.load_resource("/x", {"redirect": "manual"})
-        assert "cannot be told not to" in str(refused.value)
-        assert calls == []
+        assert "followed a redirect" in str(refused.value)
+        assert len(calls) == 2
     finally:
         browser.close()
 
@@ -320,8 +319,8 @@ def test_websocket_binary_types_and_blob_api(monkeypatch):
     browser.close()
 
 
-def test_header_deduped_cookies_are_restored_from_the_client_jar(monkeypatch):
-    """A client that collapses repeated Set-Cookie headers must not lose cookies."""
+def test_header_deduped_cookies_are_restored_from_raw_headers(monkeypatch):
+    """Read repeated raw headers, preserving each cookie's security attributes."""
 
     class FakeCookieEntry:
         def __init__(self, name, value, path="/"):
@@ -335,6 +334,7 @@ def test_header_deduped_cookies_are_restored_from_the_client_jar(monkeypatch):
         status_code = 202
         reason = ""
         headers = {"set-cookie": "FSSBBIl1UgzbN7N80T=first; Path=/"}
+        _headers = {"set-cookie": ["FSSBBIl1UgzbN7N80T=first; Path=/", "FSSBBIl1UgzbN7N80S=second; Path=/"]}
         content = b""
         url = "http://example.test/page"
         history = ()
@@ -363,6 +363,31 @@ def test_header_deduped_cookies_are_restored_from_the_client_jar(monkeypatch):
     assert "FSSBBIl1UgzbN7N80T=first" in cookie
     assert "FSSBBIl1UgzbN7N80S=second" in cookie
     browser.close()
+
+
+def test_cronet_suppresses_client_cookie_jar_and_preserves_raw_attributes(monkeypatch):
+    """The client jar cannot bypass credentials or reconstruct security attributes."""
+    calls = []
+
+    class Client(FakeClient):
+        def get(self, url, **kwargs):
+            calls.append(kwargs)
+            response = FakeResponse()
+            response.url = url
+            response._headers = {'set-cookie': ['sid=bad; Secure; SameSite=Strict; Path=/']}
+            return response
+
+    monkeypatch.setitem(sys.modules, 'cycronet', types.SimpleNamespace(CronetClient=Client))
+    from pyv8c.network.cronet import CronetTransport
+    transport = CronetTransport()
+    try:
+        transport.request_sync(NetworkRequest(url='http://example.test/', credentials='omit', redirect='manual'))
+        assert calls[-1]['headers']['Cookie'] == ''
+        assert calls[-1]['allow_redirects'] is False
+        transport.request_sync(NetworkRequest(url='http://example.test/', credentials='include', redirect='manual'))
+        assert transport.cookies.header_for('https://example.test/') == ''
+    finally:
+        transport.close()
 
 
 def test_cross_origin_cors_and_no_cors(monkeypatch):

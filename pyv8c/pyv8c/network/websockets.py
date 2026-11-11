@@ -421,7 +421,7 @@ class WebSocketsTransport:
         if call.get("origin"):
             _header_set(headers, "Origin", str(call["origin"]))
         if self.options.get("cookies", True) and self.cookies is not None:
-            cookie = self.cookies.header_for(_allows_cookies(url))
+            cookie = self.cookies.header_for(_allows_cookies(url), site_for_cookies=call.get('site_for_cookies', call.get('origin', 'null')))
             if cookie:
                 _header_set(headers, "Cookie", cookie)
         return user_agent, headers

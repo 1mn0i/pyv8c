@@ -16,6 +16,7 @@ dependencies = [
     "uharfbuzz>=0.56",
     "uniseg>=0.9",
     "tldextract>=5.3,<6",
+    "idna>=3.6,<4",
 ]
 
 [project.optional-dependencies]

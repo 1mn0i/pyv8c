@@ -5,6 +5,7 @@ connection cache.
 """
 import importlib
 import inspect
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
 
@@ -21,6 +22,7 @@ from .models import (
     cookie_header,
     permits_credentials,
 )
+from .redirects import Deliver, next_hop
 from .proxy import PROXY_OPTION
 from .registry import signature_option_keys
 
@@ -50,9 +52,8 @@ class CronetTransport(RequestDelivery):
     delivers goes through the task capability it was given.
     """
 
-    #: cycronet follows redirects itself and names no way to stop it, so the hop-by-hop
-    #: modes are refused for it instead of being obeyed quietly (docs/pyv8c/network-transports.md).
-    FOLLOWS_ITSELF = True
+    #: Resource loading inspects redirects and reapplies cookie policy on each hop.
+    FOLLOWS_ITSELF = False
 
     @classmethod
     def accepted_option_keys(cls, kind: str = "http") -> frozenset[str] | None:
@@ -94,6 +95,11 @@ class CronetTransport(RequestDelivery):
             }
         else:
             headers = {}
+        raw_headers = getattr(raw, '_headers', None)
+        if hasattr(raw_headers, 'items'):
+            for name, values in raw_headers.items():
+                if str(name).lower() == 'set-cookie' and isinstance(values, (list, tuple)):
+                    headers['set-cookie'] = [str(value) for value in values]
         body = getattr(raw, "content", None)
         if body is None:
             body = getattr(raw, "text", "")
@@ -107,12 +113,35 @@ class CronetTransport(RequestDelivery):
         )
 
     def _call(self, request: NetworkRequest):
+        if request.redirect != 'follow':
+            return self._single_call(request)
+        current = request
+        hops = 0
+        while True:
+            response = self._single_call(current)
+            decision = next_hop(status=response.status, method=current.method,
+                                url=current.url, headers=current.headers, body=current.body,
+                                location=response.headers.get('location'), hops=hops,
+                                mode=current.mode, redirect='follow')
+            if isinstance(decision, Deliver):
+                response.redirected = bool(hops) or response.redirected
+                return response
+            headers = dict(decision.headers)
+            if decision.cross_origin:
+                headers = {k: v for k, v in headers.items() if k.lower() != 'cookie'}
+            current = replace(current, url=decision.url, method=decision.method,
+                              body=decision.body, headers=headers)
+            hops += 1
+
+    def _single_call(self, request: NetworkRequest):
         if self._closed:
             raise HostStateError("network backend is closed")
         logger.debug("network download: {} {}", request.method, request.url)
         headers = dict(request.headers)
         cookie = cookie_header(self.cookies, request)
-        if cookie and "cookie" not in {str(name).lower() for name in headers}:
+        if "cookie" not in {str(name).lower() for name in headers}:
+            # cycronet otherwise injects its own session jar, bypassing credentials
+            # and SameSite filtering. An explicit empty header suppresses it.
             headers["Cookie"] = cookie
         method = request.method.lower()
         fn = getattr(self.client, method, None)
@@ -120,9 +149,10 @@ class CronetTransport(RequestDelivery):
             fn = getattr(self.client, "request", None)
             if fn is None:
                 raise NetworkUnavailableError(f"cycronet client has no {method} method")
-            raw = fn(request.method, request.url, headers=headers, data=request.body, timeout=request.timeout)
+            raw = fn(request.method, request.url, headers=headers, data=request.body, timeout=request.timeout,
+                     allow_redirects=False)
         else:
-            kwargs = {"headers": headers}
+            kwargs = {"headers": headers, "allow_redirects": False}
             if request.body is not None:
                 kwargs["data"] = request.body
             if request.timeout is not None:
@@ -138,32 +168,12 @@ class CronetTransport(RequestDelivery):
                     kwargs["timeout"] = request.timeout
             raw = fn(request.url, **kwargs)
         response = self._response(raw, request.url)
+        if response.redirected:
+            raise NetworkUnavailableError('cycronet followed a redirect despite allow_redirects=False')
         set_cookie = response.headers.get("set-cookie")
         if set_cookie and permits_credentials(request):
             self.cookies.add_from_response(response.url, set_cookie)
-        if permits_credentials(request):
-            self._absorb_client_cookies(raw, response.url)
         return response
-
-    def _absorb_client_cookies(self, raw, url):
-        jar = getattr(raw, "cookies", None)
-        entries = getattr(jar, "iter_cookies", None)
-        if entries is None:
-            return
-        try:
-            cookies = list(entries())
-        except Exception:
-            return
-        known = {
-            cookie.split("=", 1)[0]
-            for cookie in self.cookies.header_for(url).split("; ") if cookie
-        }
-        for cookie in cookies:
-            name = getattr(cookie, "name", None)
-            if name is None or name in known:
-                continue
-            path = getattr(cookie, "path", "") or "/"
-            self.cookies.add_from_response(url, f"{name}={getattr(cookie, 'value', '')}; Path={path}")
 
     def websocket(self, page, url, protocols, callbacks, options=None):
         if self._closed:

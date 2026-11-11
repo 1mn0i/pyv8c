@@ -49,7 +49,7 @@ def _with_proxy(role, name, options, proxy):
 
 def _serves(candidate, role):
     """Whether *candidate* can perform this role."""
-    return hasattr(candidate, KIND_METHODS[role])
+    return callable(getattr(candidate, KIND_METHODS[role], None))
 
 
 def _engine(browser, role, value, proxy):
@@ -68,16 +68,19 @@ def _engine(browser, role, value, proxy):
             f"proxy cannot configure a ready {role}_engine; name a registered engine "
             "so the setting has somewhere to go"
         )
-    engine = value() if callable(value) and not _serves(value, role) else value
-    if not _serves(engine, role):
-        raise TypeError(
-            f"{role}_engine must be a registered engine name, an object with "
-            f"{KIND_METHODS[role]}, or a factory for one"
-        )
     if getattr(browser, f"{role}_options"):
         raise TypeError(
             f"{role}_options cannot configure a ready {role}_engine; name a "
             "registered engine to pass options to it"
+        )
+    factory = isinstance(value, type) or (callable(value) and not _serves(value, role))
+    engine = value() if factory else value
+    if not _serves(engine, role):
+        if factory and callable(getattr(engine, 'close', None)):
+            engine.close()
+        raise TypeError(
+            f"{role}_engine must be a registered engine name, an object with "
+            f"{KIND_METHODS[role]}, or a factory for one"
         )
     return engine
 
@@ -137,20 +140,40 @@ def assemble_backend(browser, proxy=None):
 
     engines = {}
     configured = {}
-    for role in KINDS:
-        value = getattr(browser, f"{role}_engine")
-        if value is None:
-            engines[role] = None
-            continue
-        shared = next((first for first, previous in configured.items()
-                       if value is previous or
-                       (isinstance(value, str) and value == previous)), None)
-        if shared is not None:
-            _refuse_shared_options(browser, shared, role, value)
-            engines[role] = engines[shared]
-        else:
-            engines[role] = _engine(browser, role, value, proxy)
-            configured[role] = value
+    created = []
+    try:
+        for role in KINDS:
+            value = getattr(browser, f"{role}_engine")
+            if value is None:
+                if getattr(browser, f"{role}_options"):
+                    raise TypeError(f"{role}_options was given but no {role}_engine is configured")
+                engines[role] = None
+                continue
+            shared = next((first for first, previous in configured.items()
+                           if value is previous or
+                           (isinstance(value, str) and value == previous)), None)
+            if shared is not None:
+                _refuse_shared_options(browser, shared, role, value)
+                engine = engines[shared]
+                if not _serves(engine, role):
+                    raise TypeError(f"shared {role}_engine must implement {KIND_METHODS[role]}")
+                engines[role] = engine
+            else:
+                engine = _engine(browser, role, value, proxy)
+                if isinstance(value, (str, type)) or (callable(value) and not _serves(value, role)):
+                    created.append(engine)
+                if not _serves(engine, role):
+                    raise TypeError(f"{role}_engine must implement {KIND_METHODS[role]}")
+                engines[role] = engine
+                configured[role] = value
+    except BaseException:
+        for engine in reversed(created):
+            try:
+                close = getattr(engine, 'close', None)
+                if callable(close): close()
+            except Exception:
+                pass
+        raise
 
     if all(engine is None for engine in engines.values()):
         _refuse_proxy_without_engine(proxy)

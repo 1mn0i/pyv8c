@@ -31,6 +31,41 @@ from .resources.cache import ResourceCache
 #: the page's owner thread, or a slow one would freeze the realm.
 _LOADER_WORKERS = 4
 _TRACE_SCRIPTS_INHERIT = object()
+_READY_ENGINE_LOCK = threading.Lock()
+_READY_ENGINE_CLAIMS = {}
+
+
+def _claim_ready_engines(engines, token):
+    with _READY_ENGINE_LOCK:
+        for engine in engines:
+            claim = _READY_ENGINE_CLAIMS.get(id(engine))
+            if claim is not None and claim[1] is not token:
+                raise HostStateError('A ready network engine is already owned by another profile; use a factory')
+        for engine in engines:
+            _READY_ENGINE_CLAIMS[id(engine)] = (engine, token)
+
+
+def _release_ready_engines(token):
+    with _READY_ENGINE_LOCK:
+        for key, (_, owner) in list(_READY_ENGINE_CLAIMS.items()):
+            if owner is token:
+                del _READY_ENGINE_CLAIMS[key]
+
+
+def _cleanup_failed_engines(engines, browser, token):
+    """Release only newly constructed engines not owned by another profile."""
+    for engine in engines:
+        if engine is browser.http_engine or engine is browser.ws_engine:
+            continue
+        with _READY_ENGINE_LOCK:
+            claim = _READY_ENGINE_CLAIMS.get(id(engine))
+            belongs_elsewhere = claim is not None and claim[1] is not token
+        if not belongs_elsewhere:
+            try:
+                close = getattr(engine, 'close', None)
+                if callable(close): close()
+            except Exception:
+                pass
 
 
 def _trace_script_patterns(value):
@@ -61,8 +96,13 @@ class Profile:
     """
 
     def __init__(self, browser, *, proxy=None, trace=None, traceable=None, trace_callback=None,
-                 trace_scripts=_TRACE_SCRIPTS_INHERIT):
+                 trace_scripts=_TRACE_SCRIPTS_INHERIT, _engine_token=None):
         self.browser, self.pages = browser, []
+        self._state_lock = threading.RLock()
+        self._close_condition = threading.Condition(self._state_lock)
+        self._close_owner = None
+        self._close_error = None
+        self._closing = False
         self.cookies = CookieJar()
         #: Its own proxy setting, or the browser's while it was given none.
         self.proxy = browser.proxy if proxy is None else proxy
@@ -75,9 +115,24 @@ class Profile:
         self.resource_cache_dir = browser.cache_dir if browser.cache_enabled else None
         self.resource_cache_lock = threading.RLock()
         self.resource_cache = ResourceCache(self)
+        self._client_hints_lock = threading.Lock()
+        self._accept_ch_hints = {}
+        token = _engine_token if _engine_token is not None else object()
         self.network_backend = assemble_backend(browser, proxy=self.proxy)
         if self.network_backend is not None:
-            self.network_backend.cookies = self.cookies
+            engines = []
+            for engine in (self.network_backend.http, self.network_backend.ws,
+                           *self.network_backend._additional.values()):
+                if engine is not None and all(engine is not current for current in engines):
+                    engines.append(engine)
+            try:
+                _claim_ready_engines(engines, token)
+                self.network_backend.cookies = self.cookies
+            except BaseException:
+                _cleanup_failed_engines(engines, browser, token)
+                _release_ready_engines(token)
+                raise
+        self._ready_engine_token = token
         self._blob_urls = {}
         self._blob_origins = {}
         self._databases = {}
@@ -85,7 +140,7 @@ class Profile:
         self._devtools = None
 
     def _ensure_open(self):
-        if self.closed or self.browser._closed:
+        if self.closed or self._closing or self.browser._closed or self.browser._closing:
             raise HostStateError("Profile is closed")
 
     def create_blob_url(self, blob, realm=None):
@@ -120,6 +175,21 @@ class Profile:
     def cookie_jar(self):
         return self.cookies
 
+    def accepted_client_hints(self, url):
+        origin = origin_string(url)
+        if origin == 'null': return ()
+        with self._client_hints_lock:
+            return self._accept_ch_hints.get(origin, ())
+
+    def remember_client_hints(self, url, headers):
+        origin = origin_string(url)
+        if origin == 'null': return
+        entry = next((value for name, value in headers.items() if str(name).lower() == 'accept-ch'), None)
+        if entry is None: return
+        hints = frozenset(name.strip().lower() for name in str(entry).split(',') if name.strip())
+        with self._client_hints_lock:
+            self._accept_ch_hints[origin] = hints
+
     def new_page(self,
                  url: str = "about:blank",
                  *,
@@ -150,7 +220,13 @@ class Profile:
                             else _trace_script_patterns(trace_scripts))
         page = Page(self, trace=trace, trace_scripts=selected_scripts,
                     environment=environment)
-        self.pages.append(page)
+        with self._state_lock:
+            accepted = not (self.closed or self._closing or self.browser._closed or self.browser._closing)
+            if accepted:
+                self.pages.append(page)
+        if not accepted:
+            page.close()
+            raise HostStateError('Profile is closed or closing')
         if str(url) != "about:blank":
             try:
                 page.goto(url)
@@ -160,10 +236,11 @@ class Profile:
         return page
 
     def _discard_page(self, page):
-        try:
-            self.pages.remove(page)
-        except ValueError:
-            pass
+        with self._state_lock:
+            try:
+                self.pages.remove(page)
+            except ValueError:
+                pass
 
     def start_devtools(self,
                        page: Page,
@@ -199,11 +276,23 @@ class Profile:
         re-raised once the rest was attempted.  Execution control signals are
         never treated as an ordinary cleanup failure; they unwind immediately.
         """
-        if self.closed:
-            return
+        with self._close_condition:
+            if self._closing:
+                if self._close_owner == threading.get_ident():
+                    return
+                while self._closing:
+                    self._close_condition.wait()
+                if self._close_error is not None:
+                    raise self._close_error
+            if self.closed:
+                return
+            self._closing = True
+            self._close_owner = threading.get_ident()
+            self._close_error = None
+            pages = list(self.pages)
         first_error = None
         try:
-            for page in list(self.pages):
+            for page in pages:
                 try:
                     page.close()
                 except control_exceptions():
@@ -228,12 +317,24 @@ class Profile:
             if first_error is not None:
                 raise first_error
             self.closed = True
+            token = getattr(self, '_ready_engine_token', None)
+            if token is not None:
+                _release_ready_engines(token)
+                self._ready_engine_token = None
             if self in self.browser.profiles:
                 self.browser.profiles.remove(self)
+        except BaseException as exc:
+            with self._close_condition:
+                self._close_error = exc
+            raise
         finally:
             self._blob_urls.clear()
             self._blob_origins.clear()
             self._databases.clear()
+            with self._close_condition:
+                self._closing = False
+                self._close_owner = None
+                self._close_condition.notify_all()
 
 
 class Browser:
@@ -371,6 +472,7 @@ class Browser:
         self._closed = False
         self._closing = False
         self._state_lock = threading.Lock()
+        self._ready_engine_reserved = False
         # pyv8 starts its global V8 runtime on first use, not at import, so the
         # first realm created below carries that cost.
         self.profiles = []
@@ -487,9 +589,32 @@ class Browser:
                 raise HostStateError("Browser is closed or closing")
         if trace_callback is not None and not callable(trace_callback):
             raise TypeError("trace_callback must be callable or None")
-        profile = Profile(self, proxy=None if proxy is None else normalize_proxy(proxy),
-                          trace=trace, traceable=traceable, trace_callback=trace_callback,
-                          trace_scripts=trace_scripts)
+        ready = []
+        if self.real_network:
+            for value, method in ((self.http_engine, 'request_sync'), (self.ws_engine, 'websocket')):
+                if (value is not None and not isinstance(value, (str, type))
+                        and (not callable(value) or callable(getattr(value, method, None)))
+                        and all(value is not existing for existing in ready)):
+                    ready.append(value)
+        uses_ready = bool(ready)
+        token = object()
+        if uses_ready:
+            with self._state_lock:
+                if self._closed or self._closing:
+                    raise HostStateError('Browser is closed or closing')
+                if self._ready_engine_reserved:
+                    raise HostStateError('A ready network engine can serve only one profile; use a factory for additional profiles')
+                self._ready_engine_reserved = True
+        try:
+            if uses_ready: _claim_ready_engines(ready, token)
+            profile = Profile(self, proxy=None if proxy is None else normalize_proxy(proxy),
+                              trace=trace, traceable=traceable, trace_callback=trace_callback,
+                              trace_scripts=trace_scripts, _engine_token=token)
+        except BaseException:
+            _release_ready_engines(token)
+            if uses_ready:
+                with self._state_lock: self._ready_engine_reserved = False
+            raise
         with self._state_lock:
             accepted = not (self._closed or self._closing)
             if accepted:

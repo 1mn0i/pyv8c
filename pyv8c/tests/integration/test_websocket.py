@@ -12,6 +12,7 @@ import hashlib
 import socket
 import ssl
 import datetime
+from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -137,7 +138,8 @@ def test_a_handshake_carries_the_browser_headers_and_the_jar(echo):
     browser = Browser(ws_engine="websockets", resource_loader=document)
     try:
         context = browser.new_profile()
-        page = context.new_page("http://example.test/")
+        origin = 'http://' + urlsplit(echo.url).netloc
+        page = context.new_page(origin + '/')
         # A page sets cookies for its own host only, so the jar is filled the way
         # a response from the socket's host would have filled it.
         context.cookies.set_from_document(echo.url.replace("ws://", "http://"), "sid=1; path=/")
@@ -147,10 +149,24 @@ def test_a_handshake_carries_the_browser_headers_and_the_jar(echo):
         headers = echo.handshakes[-1]
         # A browser's handshake, not Python's: the document's origin, the
         # environment's headers and the context's cookies for the target.
-        assert headers["origin"] == "http://example.test"
+        assert headers["origin"] == origin
         assert headers["user-agent"].startswith("Mozilla/5.0")
         assert "zh-CN" in headers["accept-language"]
         assert headers["cookie"] == "sid=1"
+    finally:
+        browser.close()
+
+
+def test_cross_site_websocket_omits_lax_cookie(echo):
+    browser = Browser(ws_engine='websockets', resource_loader=document)
+    try:
+        context = browser.new_profile()
+        page = context.new_page('http://example.test/')
+        context.cookies.set_from_document(echo.url.replace('ws://', 'http://'), 'sid=1; path=/; SameSite=Lax')
+        page.evaluate(f"window.__ws = new WebSocket('{echo.url}')")
+        assert wait_for(page, '__ws.readyState === 1')
+        assert echo.handshake_ready.wait(5)
+        assert 'cookie' not in echo.handshakes[-1]
     finally:
         browser.close()
 

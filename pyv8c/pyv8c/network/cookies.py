@@ -13,12 +13,20 @@ from threading import RLock
 from urllib.parse import urlsplit
 
 from ..foundation.logging import logger
-from ..foundation.sites import is_public_suffix
+from ..foundation.sites import is_public_suffix, site_domain
+from ..foundation.urls import canonical_host
 
 _INVALID_COOKIE_NAME_CHARS = frozenset("()<>@,;:") | {"\\", "[", "]", "?", "=", "{", "}", " ", "\t"}
 
 #: A comma starts a new joined cookie only when ``token=`` follows before any ``;`` or ``,``.
 _SET_COOKIE_SEPARATOR = re.compile(r",(?=\s*[^;=,\s]+\s*=)")
+
+
+def _canonical_host(host):
+    try:
+        return canonical_host(host or '')
+    except UnicodeError:
+        return ''
 
 
 def split_set_cookie(header):
@@ -84,7 +92,7 @@ class CookieJar:
         if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
             value = value[1:-1]
         options = {
-            "domain": (parsed_url.hostname or "").lower(),
+            "domain": _canonical_host(parsed_url.hostname),
             "path": self._default_path(parsed_url.path),
             "secure": False, "host_only": True, "http_only": False,
             "same_site": "", "expires": None, "max_age": None,
@@ -93,7 +101,7 @@ class CookieJar:
             key, separator, raw_value = attribute.strip().partition("=")
             key, raw_value = key.lower(), raw_value.strip()
             if key == "domain" and separator:
-                domain = raw_value.lower().lstrip(".")
+                domain = _canonical_host(raw_value.lstrip("."))
                 if not domain:
                     return
                 options["domain"], options["host_only"] = domain, False
@@ -153,19 +161,27 @@ class CookieJar:
     def _store(self, parsed_url, name, value, *, domain, path, secure, host_only,
                http_only=False, same_site="", expires=None, max_age=None, source="script"):
         if not self._allows_cookies(parsed_url): return False
-        host = (parsed_url.hostname or "").lower()
+        host = _canonical_host(parsed_url.hostname)
+        if not host: return False
         if domain and not self._domain_matches(host, domain, False): return False
         if not host_only and is_public_suffix(domain):
             if domain != host: return False
             host_only = True
-        if secure and parsed_url.scheme not in ("https", "wss") and source == "script": return False
+        if secure and parsed_url.scheme not in ("https", "wss") and host not in ('localhost', '127.0.0.1', '::1'): return False
         if same_site.lower() == "none" and not secure: return False
         if name.startswith("__Secure-") and not secure: return False
         if name.startswith("__Host-") and (not secure or not host_only or path != "/"): return False
-        if max_age is not None: expires = time.time() + max_age if max_age > 0 else 0
+        if max_age is not None: expires = time.time() + min(max_age, 400 * 86400) if max_age > 0 else 0
         key = (domain, path, name)
         with self._lock:
             self._purge_expired(); previous = self._cookies.get(key)
+            if parsed_url.scheme != 'https' and not secure:
+                for item in self._cookies.values():
+                    if (item.secure and item.name == name
+                            and (self._domain_matches(domain, item.domain, False)
+                                 or self._domain_matches(item.domain, domain, False))
+                            and self._path_matches(path, item.path)):
+                        return False
             if source == "script" and previous is not None and previous.http_only: return False
             if expires is not None and expires <= time.time():
                 changed = previous is not None; self._cookies.pop(key, None)
@@ -183,12 +199,12 @@ class CookieJar:
         if "=" not in pair: return False
         name, value = (part.strip() for part in pair.split("=", 1))
         if not name or any(char in _INVALID_COOKIE_NAME_CHARS for char in name): return False
-        options = {"domain": (parsed_url.hostname or "").lower(), "path": self._default_path(parsed_url.path), "secure": False, "host_only": True, "http_only": False, "same_site": "", "expires": None, "max_age": None}
+        options = {"domain": _canonical_host(parsed_url.hostname), "path": self._default_path(parsed_url.path), "secure": False, "host_only": True, "http_only": False, "same_site": "", "expires": None, "max_age": None}
         for attribute in attributes:
             key, separator, raw_value = attribute.strip().partition("="); key = key.lower(); raw_value = raw_value.strip()
             if key == "domain" and separator:
-                domain = raw_value.lower().lstrip(".")
-                if not domain or not self._domain_matches((parsed_url.hostname or "").lower(), domain, False): return False
+                domain = _canonical_host(raw_value.lstrip("."))
+                if not domain or not self._domain_matches(_canonical_host(parsed_url.hostname), domain, False): return False
                 options["domain"], options["host_only"] = domain, False
             elif key == "path" and separator and raw_value.startswith("/"): options["path"] = raw_value
             elif key == "secure": options["secure"] = True
@@ -198,13 +214,24 @@ class CookieJar:
             elif key == "max-age" and separator: options["max_age"] = self._parse_max_age(raw_value)
         return self._store(parsed_url, name, value, **options)
 
-    def header_for(self, url): return self._for_url(url, include_http_only=True)
+    def header_for(self, url, *, site_for_cookies=None, top_level_navigation=False, method='GET'):
+        return self._for_url(url, include_http_only=True, site_for_cookies=site_for_cookies,
+                             top_level_navigation=top_level_navigation, method=method)
     def document_for(self, url): return self._for_url(url, include_http_only=False)
 
-    def _for_url(self, url, *, include_http_only):
+    def _for_url(self, url, *, include_http_only, site_for_cookies=None, top_level_navigation=False, method='GET'):
         parsed = urlsplit(url)
         if not self._allows_cookies(parsed): return ""
-        host, path, secure = (parsed.hostname or "").lower(), parsed.path or "/", parsed.scheme in ("https", "wss")
+        host, path, secure = _canonical_host(parsed.hostname), parsed.path or "/", parsed.scheme in ("https", "wss")
+        same_site = True
+        if site_for_cookies is not None:
+            source = urlsplit(str(site_for_cookies))
+            target_scheme = {'ws': 'http', 'wss': 'https'}.get(parsed.scheme, parsed.scheme)
+            source_scheme = {'ws': 'http', 'wss': 'https'}.get(source.scheme, source.scheme)
+            source_site, target_site = site_domain(source.hostname or ''), site_domain(host)
+            same_site = bool(source.hostname and source_scheme == target_scheme
+                             and source_site and target_site and source_site == target_site)
+        safe_navigation = top_level_navigation and str(method).upper() in ('GET', 'HEAD', 'OPTIONS', 'TRACE')
         with self._lock:
             self._purge_expired()
             matched = [
@@ -213,6 +240,8 @@ class CookieJar:
                 and self._domain_matches(host, cookie.domain, cookie.host_only)
                 and self._path_matches(path, cookie.path)
                 and (not cookie.secure or secure)
+                and (same_site or cookie.same_site == 'none'
+                     or (cookie.same_site != 'strict' and safe_navigation))
             ]
             matched.sort(key=lambda cookie: (-len(cookie.path), cookie.creation_index))
             return "; ".join(f"{cookie.name}={cookie.value}" for cookie in matched)
